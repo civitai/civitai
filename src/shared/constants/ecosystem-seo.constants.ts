@@ -3426,6 +3426,187 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     ],
   },
 
+  OpenAI: {
+    key: 'OpenAI',
+    updatedAt: '2026-09-09',
+    slug: 'gpt-image',
+    name: 'GPT Image',
+    metaDescription:
+      "Generate images with OpenAI's GPT Image on Civitai — ChatGPT Images 2.5 Flare and Sunburst, hosted, no API key. Browse GPT Image examples & prompts.",
+    modality: 'image',
+    isNew: true,
+    hero: {
+      intro:
+        "GPT Image is OpenAI's family of image generation and editing models — the ones behind image creation in ChatGPT. You prompt them in plain English rather than tag soup, they render text inside an image better than most, and they edit a picture you supply instead of only generating from scratch. Every version runs hosted on Civitai, so there is no API key, no GPU, and no install.",
+      badges: ['Text-to-Image', 'Image Editing', 'By OpenAI'],
+    },
+    overview: [
+      "GPT Image is OpenAI's line of image models, delivered through ChatGPT and the OpenAI API and hosted here for on-site generation. Unlike the open diffusion ecosystems, it takes ordinary descriptive language rather than weighted tag lists, and it treats image editing as a first-class operation: hand it one or more reference images with an instruction and it works from them. Civitai carries the family across two model pages — gpt-image-1 and 1.5 on one, ChatGPT Images 2.0 and the 2.5 builds on the other — so you can switch generations from the version picker.",
+      'The current generation is ChatGPT Images 2.5, released in September 2026, which OpenAI ships as two API builds. Flare is the default pick: OpenAI describes it as producing higher-quality images than 2.0 at roughly half the latency, which suits social and product work and anything you iterate on repeatedly. Sunburst is aimed at premium visual workflows that benefit from tighter control across edits, so it is the one to reach for on polished product imagery or campaign creative that you refine over several passes. Both take the same controls on Civitai, so switching is just a version change, and OpenAI describes the generation as producing more natural lighting and richer textures and as better at preserving the subjects in your reference photos.',
+      'The previous version, ChatGPT Images 2.0, is still available and remains strong on detailed instruction following, placing and relating objects accurately, and rendering dense text including non-Latin scripts. Choose GPT Image when your prompt reads like a sentence rather than a tag list, when the image needs legible text, or when you are editing a picture you already have. For deep LoRA libraries, custom checkpoints, or a fully local workflow, an open ecosystem such as FLUX.1 or SDXL is the better fit — GPT Image is API-only, with no weights to download and no LoRA support.',
+    ],
+    promptTips: [
+      'Write plain descriptive prose, not tags. The models expect natural language, and spatial arrangements are well understood — a good default shape is "[subject and action]. [setting with spatial detail]." Describe the scene the way you would to a person.',
+      'Skip weight syntax and special tokens entirely. There is no (word:1.2) emphasis here; if something matters, say so in words and give it more of the sentence.',
+      'There is no negative prompt field. You can write exclusions into the prompt ("no watermark, no extra text"), but they are not reliably followed — describing what you do want works better than listing what you do not.',
+      'Put any text that must appear in the image inside quotation marks. Short strings are the most reliable; 2.0 and 2.5 improved markedly on dense and non-Latin text, but a headline still lands more often than a paragraph.',
+      'For edits, attach the reference image and describe only the change. The 2.5 models are tuned to keep the subject of a reference photo recognizable, so re-describing the person or product usually works against you.',
+    ],
+    generatorVersionId: 2880272,
+    featuredModels: [
+      {
+        modelId: 2563220,
+        versionId: 3311436,
+        imageId: 141711098,
+        displayName: 'ChatGPT Images 2.5 Sunburst',
+        note: 'Civitai-hosted · tighter edit control',
+      },
+      {
+        modelId: 2563220,
+        versionId: 3311434,
+        imageId: 141711064,
+        displayName: 'ChatGPT Images 2.5 Flare',
+        note: 'Civitai-hosted · default, faster',
+      },
+      {
+        modelId: 2563220,
+        versionId: 2880272,
+        imageId: 138493687,
+        displayName: 'ChatGPT Images 2.0',
+        note: 'Civitai-hosted · previous generation',
+      },
+    ],
+    featuredExamples: [
+      {
+        imageId: 141711098,
+        prompt:
+          'Near-future cinematic still: six tugs towing an enormous intact iceberg, photorealistic large-format digital cinema look',
+        settings: 'ChatGPT Images 2.0 · 2560×1440',
+      },
+      {
+        imageId: 141711064,
+        prompt:
+          'Night in a dense city, an entire block dropped forty metres into a sinkhole and still standing, rescue floodlights on the rim above',
+        settings: 'ChatGPT Images 2.0 · 2560×1440',
+      },
+      {
+        imageId: 138493687,
+        prompt:
+          'A beautiful Blackfeet Nation woman in traditional dress, feeding her paint horse an apple on a winters morning',
+        settings: 'ChatGPT Images 2.0 · 1536×2304',
+      },
+      {
+        imageId: 141846766,
+        prompt:
+          'The muppets join the battle of the Somme, 1916, British soldiers charging the German trench with bayonets fixed',
+        settings: 'ChatGPT Images 2.0 · 1536×1024',
+      },
+      {
+        imageId: 137852923,
+        prompt: 'Sól (Sunna), Ísland, Urðarbrunnr, örlögþræðir, Huldufólk',
+        settings: 'ChatGPT Images 2.0 · 1728×3072',
+      },
+      {
+        imageId: 138743700,
+        prompt: 'Tyr & Eysa, Glowing Embers - Milonga Sevilla Tango Festival 2009',
+        settings: 'ChatGPT Images 2.0 · 1920×2880',
+      },
+    ],
+    comparison: {
+      peers: ['Nano Banana', 'Seedream', 'FLUX.1'],
+      rows: [
+        {
+          label: 'Best for',
+          values: [
+            'Natural-language prompts, text in image',
+            'Likeness-preserving photo editing',
+            'High-res text-to-image',
+            'Photorealism, LoRAs, versatility',
+          ],
+        },
+        {
+          label: 'Text rendering',
+          values: ['Excellent', 'Good', 'Good', 'Very good'],
+          winner: 0,
+        },
+        {
+          label: 'Image editing',
+          values: [
+            'Native, reference-driven',
+            'Native, multi-turn',
+            'Via edit variant',
+            'In-context (Kontext)',
+          ],
+        },
+        {
+          label: 'Prompt style',
+          values: ['Natural language', 'Natural language', 'Natural language', 'Tags or prose'],
+        },
+        {
+          label: 'LoRA support',
+          values: ['None', 'None', 'None', '{loras:Flux1} LoRAs'],
+          winner: 3,
+        },
+        {
+          label: 'Access',
+          values: ['API (hosted)', 'API (hosted)', 'API (hosted)', 'Open weights + API'],
+        },
+        { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
+      ],
+    },
+    faq: [
+      {
+        q: 'How much does it cost to generate with GPT Image?',
+        a: 'Generation on Civitai runs on Buzz, and GPT Image is a hosted OpenAI model, so each image costs more Buzz than a lightweight open checkpoint — you are paying for compute OpenAI runs on its side. Every account earns free Blue Buzz daily by reacting to images and other on-site activity, so you can try it without spending real money; you will just work through daily Blue Buzz faster than on cheaper models. The 2.5 Flare build is the lighter of the two current options, so it stretches Blue Buzz further than Sunburst.',
+      },
+      {
+        q: "What's the difference between 2.5 Flare and 2.5 Sunburst?",
+        a: 'They are the two builds OpenAI ships for ChatGPT Images 2.5. Flare is the default choice — OpenAI describes it as higher quality than 2.0 at roughly half the latency, which suits social content, product shots and rapid iteration. Sunburst targets premium workflows that need tighter control across edits, such as production-ready campaign creative. Both take identical controls in the generator, so pick either and compare on your own prompt.',
+      },
+      {
+        q: 'Can GPT Image edit an image I already have?',
+        a: 'Yes. Attach one or more reference images in the generator and it switches to edit mode, working from what you supply rather than generating from scratch. The 2.5 models are specifically tuned to keep the subject of a reference photo recognizable when you move it into a new setting, style or composition, so describe only the change you want.',
+      },
+      {
+        q: 'Is GPT Image good at rendering text inside an image?',
+        a: 'It is one of the stronger models for it. Put the exact wording in quotation marks and keep it short for the most reliable result — a headline or a sign lands more often than a paragraph. ChatGPT Images 2.0 brought significant gains on dense text and on non-Latin scripts including Japanese, Korean, Chinese, Hindi and Bengali, and 2.5 builds on that.',
+      },
+      {
+        q: 'Can I use LoRAs with GPT Image?',
+        a: 'No. GPT Image is a hosted OpenAI model with no LoRA support, so you steer it with prompts and reference images rather than stacked LoRAs. If you want a deep LoRA ecosystem, an open model like FLUX.1 or SDXL is the better choice — all are in the Civitai generator.',
+      },
+      {
+        q: 'Do I need a GPU or an OpenAI API key?',
+        a: 'Neither. There are no open weights to download and no local run — OpenAI hosts the model and Civitai handles generation for you, billed in Buzz. You do not need your own OpenAI account or API key to generate here.',
+      },
+    ],
+    attribution: 'a hosted image generation and editing model family by OpenAI (GPT Image)',
+    factCheck: [
+      {
+        field: 'overview',
+        claim: 'Flare produces higher-quality images than 2.0 at roughly half the latency',
+        note: "OpenAI's own claim, but taken from press coverage of the 2026-09-08 announcement — openai.com/index/introducing-chatgpt-images-2-5/ returns 403 to our fetcher, so the primary source was not read directly. Confirm against the announcement before treating it as authoritative.",
+        highlight: 'higher-quality images than 2.0 at roughly half the latency',
+      },
+      {
+        field: 'promptTips',
+        claim: 'Short quoted text strings render most reliably',
+        note: "The orchestrator prompt guide for key 'openai' says 1-4 word strings render reliably and longer ones degrade, but that guide is written for DALL-E 3 / gpt-image-1 and predates 2.0's documented gains on dense text. The tip is hedged rather than quoting the 1-4 word limit; re-check once a 2.5-era guide exists.",
+        highlight: 'Short strings are the most reliable',
+      },
+      {
+        field: 'featuredModels',
+        claim: 'Card images for the two 2.5 builds',
+        note: 'The 2.5 versions were still Draft with no posted images when this page was written, so both cards borrow images from ChatGPT Images 2.0 on the same model page (2563220). Swap in real 2.5 images once the versions are published and have galleries.',
+      },
+      {
+        field: 'featuredExamples',
+        claim: 'All six examples are ChatGPT Images 2.0 generations',
+        note: 'No 2.5 generations existed yet when the page was written. Refresh the gallery with 2.5 output after launch.',
+      },
+    ],
+  },
+
   Veo3: {
     key: 'Veo3',
     updatedAt: '2026-08-27',
@@ -3962,6 +4143,7 @@ export const ECOSYSTEM_SEO_PAGES: EcosystemSeoPage[] = [
   { slug: 'hidream', label: 'HiDream', ecosystemKeys: ['HiDream'] },
   { slug: 'krea2', label: 'Krea 2', ecosystemKeys: ['Krea2'] },
   { slug: 'anima', label: 'Anima', ecosystemKeys: ['Anima'] },
+  { slug: 'gpt-image', label: 'GPT Image', ecosystemKeys: ['OpenAI'] },
   { slug: 'z-image', label: 'Z-Image', ecosystemKeys: ['ZImageTurbo', 'ZImageBase'] },
 ];
 

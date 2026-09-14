@@ -59,9 +59,9 @@ doesn't own; a11y on interactive elements that aren't buttons.
 
 ## UI conventions
 
-**shadcn primitives from `@civitai/ui`.** ~45 exist under
-`packages/civitai-ui/src/lib/components/ui/` — check there before accepting any hand-rolled control.
-A missing primitive is added to that package, never re-implemented in the app.
+**shadcn primitives from `@civitai/ui`.** Check `packages/civitai-ui/src/lib/components/` — primitives
+under `ui/`, hand-written shared components such as `selection/` beside it — before accepting any
+hand-rolled control. A missing one is added to that package, never re-implemented in the app.
 
 - **`NativeSelect` is not the default — use `Select`.** Call it out every time; it doesn't take the
   theme and reads as a browser control next to everything else.

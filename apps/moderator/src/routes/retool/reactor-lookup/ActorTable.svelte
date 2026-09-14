@@ -16,11 +16,15 @@
   let {
     actors,
     meta,
+    belowFloor,
     sharesWithTarget,
     sharesWithOther,
   }: {
     actors: Actor[];
     meta: CategoryMeta;
+    /** Accounts the floor excluded — "nothing here" and "everything was filtered out" are different
+     *  answers, and this table used to give the first for both. */
+    belowFloor: number;
     sharesWithTarget: number[];
     sharesWithOther: number[];
   } = $props();
@@ -56,7 +60,9 @@
 </script>
 
 {#if actors.length === 0}
-  <p class="text-sm text-dark-2">Nothing in this window.</p>
+  <p class="text-sm text-dark-2">
+    {belowFloor > 0 ? 'Nothing over the floor in this window.' : 'Nothing in this window.'}
+  </p>
 {:else}
   <div class="overflow-x-auto">
     <Table>

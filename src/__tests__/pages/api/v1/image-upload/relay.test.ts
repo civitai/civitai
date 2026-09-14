@@ -527,8 +527,11 @@ describe('image-upload relay', () => {
       // truncation point silently restores the original defect: bodies between the two
       // are cut mid-stream, and the running-total cap never fires because the stream
       // ends before it is exceeded. Whoever raises it must raise
-      // `middlewareClientMaxBodySize` in next.config.mjs in the same change — this
-      // fails until they do.
+      // `experimental.proxyClientMaxBodySize` in next.config.mjs in the same change —
+      // this fails until they do. (NOT `middlewareClientMaxBodySize`, which this
+      // comment named until the correction, and NOT a top-level key: the value is read
+      // off `experimental`, so a top-level one is never read. See the constant's own
+      // docstring in the route.)
       expect(MAX_RELAY_BYTES).toBeLessThanOrEqual(NEXT_BODY_TRUNCATION_BYTES);
     });
 

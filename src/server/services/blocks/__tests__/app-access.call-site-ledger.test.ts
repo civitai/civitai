@@ -232,6 +232,20 @@ const GATE_LEDGER: Record<string, string> = {
     'it is masked today because both HTTP callers require isModerator. If that is ever ' +
     'opened to non-mod authors it becomes a slug-hijack vector and needs an explicit ' +
     'owner (or collaborator) check.',
+  'src/server/services/blocks/user-app-surface.service.ts':
+    'NOT an access gate at all — an owner SUPPRESSION on a read of the viewer’s OWN data. ' +
+    'listMyScopeGrants’ activity leg skips a row when AppBlock.app.userId === the viewer, ' +
+    'because an author driving their own block writes ordinary block_scope_invocations rows ' +
+    'and the card would otherwise tell them an app used their account without an install ' +
+    '(2 of the 13 measured pairs are exactly that). It keys on the CANONICAL owner ' +
+    'AppBlock.app.userId, never a denormalized AppListing.userId (D5). 🔴 DELIBERATELY NOT ' +
+    'widened to ACCEPTED collaborators and NOT given a mod bypass: every other entry here ' +
+    'answers "may this caller act on the app", while this one answers "is this row about ' +
+    'the viewer’s relationship to someone else’s app". A seated editor has no install and ' +
+    'no consent of their own, so their activity row is true and informative; suppressing it ' +
+    'would hide a real relationship, and a mod bypass would show a moderator a card about ' +
+    'an app they happen to own. The skip fails OPEN on an unresolvable owner (shows the ' +
+    'row) because dropping rows is the wrong direction for a transparency surface.',
 };
 
 /**

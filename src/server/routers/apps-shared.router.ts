@@ -2,11 +2,26 @@
 //
 // Mounted at `trpc.apps.shared.*` (block-token authed) + `trpc.apps.mod.*`
 // (session moderatorProcedure). This is the FIRST App Blocks surface that opens
-// the per-app datastore to PUBLIC cross-user writes — today per-user KV is
-// reachable only by mods + app-dev-testers (apps.router `assertViewerIsAppDeveloper`).
-// Every control here exists because a community app serves GENERAL users; see the
-// hardened design (`shared-storage-design.md`, "HARDENED per design security
-// review"). Read that before touching auth/counter/trust logic.
+// the per-app datastore to PUBLIC cross-user writes. The per-user KV path
+// (apps.router) is scoped by every query to the writer's OWN
+// (block_instance_id, user_id) rows, and is gated on the RUN capability
+// (`app-blocks-enabled`, via apps.router's `assertAppBlocksEnabledForTokenUser`).
+// It is NO LONGER limited to app authors: `assertViewerIsAppDeveloper` left that
+// path when per-user storage was re-gated on the run capability, and now guards
+// only the mod review-preview ("run for real") branch. That is CLOSE TO, but not
+// identical to, "whoever may open the app at all" — the block-token mint gates on
+// `getFeatureFlags({ user }).appBlocks`, which falls back to the static
+// `availability: ['mod']` evaluation when Flipt returns null, whereas
+// `isAppBlocksEnabled` has no mod floor. So with Flipt unavailable a moderator can
+// mint a token that the per-user KV gate then refuses: a divergence in the SAFE
+// direction, on a path that is already degraded.
+//
+// Here, by contrast, a write is readable, votable and reportable by OTHER users
+// of the app, which is what every control below (min-trust, per-user row cap,
+// rate limits, revocation, content safety) is answering. The security review that
+// motivated those controls is not a document in this repo; the rationale that
+// survives is the per-control comments below — read those before touching
+// auth/counter/trust logic.
 //
 // Data model (per-app schema `app_<slug>`, provisioned by AppStorageProvisioner):
 //   - shared_kv(key ULID PK [SERVER-generated], author_user_id, value jsonb, …)
@@ -30,10 +45,9 @@ import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import { logToAxiom } from '~/server/logging/client';
 import { isAppBlocksSharedStorageEnabled } from '~/server/services/app-blocks-flag';
+import { assertSharedWriteTrust } from '~/server/services/blocks/block-write-trust.service';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
-import { Flags } from '~/shared/utils/flags';
-import { OnboardingSteps } from '~/server/common/enums';
 import {
   assertSharedTextSafe,
   SharedContentBlockedError,
@@ -46,6 +60,7 @@ import {
   checkSharedReportRateLimit,
 } from '~/server/utils/shared-storage-rate-limit';
 import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
+import { appsModUserStorageRouter } from '~/server/routers/apps-mod-storage.router';
 
 // ── Limits (design M2/M3) ─────────────────────────────────────────────────────
 // The app quota row is SHARED with the per-user kv path; these mirror the
@@ -63,12 +78,16 @@ const SHARED_VALUE_BYTE_CAP = 64 * 1024;
 const SHARED_KV_PER_USER_ROW_CAP = 50;
 
 // ── Min-trust gate (design H3 / MIN-TRUST GATE) ───────────────────────────────
-// Account must be older than this to write/vote (anti-sybil). Starts at 7d.
-const MIN_ACCOUNT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-// Flag-toggleable STRONG anti-sybil lever (design H5): require a paid tier to
-// write/vote. OFF by default — flip to true (or wire to a flag) if sybil pressure
-// materializes. `free`/absent tier fails when on.
-const REQUIRE_PAID_TIER = false;
+// MOVED to `~/server/services/blocks/block-write-trust.service` — it now has a
+// SECOND caller (`blocks.createPostFromApp`), and a trust predicate open-coded at
+// two sites is one that will be wrong at one of them. The rule, its signals and
+// its exact deny messages are unchanged.
+//
+// NOT re-exported from here. The importers of this module were enumerated when
+// the predicate moved, and none of them took `assertSharedWriteTrust`,
+// `MIN_ACCOUNT_AGE_MS` or `REQUIRE_PAID_TIER` from it — they take
+// `appsSharedRouter`/`appsModRouter`, `sanitizeDiscordText`, and the counter
+// helpers. Import the predicate from the service that owns it.
 
 type SharedOp =
   | 'list'
@@ -92,53 +111,6 @@ const READ_OPS: ReadonlySet<SharedOp> = new Set<SharedOp>(['list', 'get', 'getCo
 const SHARED_READ_SCOPE = 'apps:storage:shared:read';
 const SHARED_WRITE_SCOPE = 'apps:storage:shared:write';
 
-/**
- * The min-trust gate (design H3). Reuses EXISTING civitai trust signals hydrated
- * from `SessionUser` — no new trust score. FAIL-CLOSED: a vanished subject (null),
- * banned, muted, onboarding-incomplete, unverified-AND-no-OAuth, or too-new account
- * is DENIED. `asserts` narrows `user` to non-null for the caller.
- *
- * "Verified email" is satisfied by `emailVerified` OR a linked OAuth account
- * (`hasLinkedOAuth`, a row in the `Account` table). Rationale: civitai's
- * `emailVerified` is only ever set by the email-CHANGE flow — OAuth sign-in
- * (GitHub/Google/Discord, ~69% of active users) never sets it, so the raw check
- * locked out most legitimate users. A linked OAuth account is a provider-verified
- * identity and a STRONGER anti-sybil signal than an unverified civitai email
- * (minting N GitHub/Google accounts is harder than N unverified civitai accounts).
- * A user with NEITHER a verified email NOR an OAuth link genuinely still needs to
- * verify, so that case keeps the original deny.
- *
- * Signals (all AND-ed):
- *   sub!=anon (caller passes non-null) · !bannedAt · !muted ·
- *   onboarding-complete (Flags.hasFlag(onboarding, Buzz)) ·
- *   (emailVerified present OR hasLinkedOAuth) ·
- *   account age ≥ MIN_ACCOUNT_AGE_MS · [optional] paid tier.
- */
-export function assertSharedWriteTrust(
-  user: SessionUser | null,
-  hasLinkedOAuth: boolean
-): asserts user is SessionUser {
-  const deny = (message: string): never => {
-    throw new TRPCError({ code: 'FORBIDDEN', message });
-  };
-  if (!user) return deny('Your account is not eligible for this action');
-  if (user.bannedAt) return deny('Your account is not eligible for this action');
-  if (user.muted) return deny('Your account has been restricted');
-  if (!Flags.hasFlag(user.onboarding ?? 0, OnboardingSteps.Buzz)) {
-    return deny('Complete onboarding before contributing');
-  }
-  if (!user.emailVerified && !hasLinkedOAuth) {
-    return deny('Verify your email before contributing');
-  }
-  const createdAt = user.createdAt ? new Date(user.createdAt).getTime() : NaN;
-  if (!Number.isFinite(createdAt) || Date.now() - createdAt < MIN_ACCOUNT_AGE_MS) {
-    return deny('Your account is too new to contribute');
-  }
-  if (REQUIRE_PAID_TIER && (!user.tier || user.tier === 'free')) {
-    return deny('A membership is required to contribute');
-  }
-}
-
 interface SharedContext {
   userId: number | null;
   subjectUser: SessionUser | null;
@@ -158,7 +130,10 @@ interface SharedContext {
  *   4. for WRITE ops: authenticated subject + the min-trust gate
  * Anon may READ list/counts; anon NEVER writes/votes.
  */
-export async function resolveSharedContext(blockToken: string, op: SharedOp): Promise<SharedContext> {
+export async function resolveSharedContext(
+  blockToken: string,
+  op: SharedOp
+): Promise<SharedContext> {
   const claims = await verifyBlockToken(blockToken);
   if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
 
@@ -205,15 +180,44 @@ export async function resolveSharedContext(blockToken: string, op: SharedOp): Pr
     throw new TRPCError({ code: 'FORBIDDEN', message: 'invalid token subject' });
   }
   // Hydrate the TOKEN SUBJECT (block-token path has no ctx.user) — needed for both
-  // the flag segment eval and the trust gate. Fail-closed on a vanished subject.
+  // the flag segment eval and the trust gate.
   const subjectUser =
     userId != null
       ? ((await sessionClient.getSessionUserById(userId)) as SessionUser | null)
       : null;
 
-  // Dedicated fail-closed kill-switch (evaluated with the subject's context so the
-  // flag's mod/cohort segments resolve identically to the client gate; anon read →
-  // global eval → fail-closed until a base-enabled GA flip).
+  // 🔴 A VANISHED SUBJECT IS NOT AN ANONYMOUS CALLER — refuse it here, before the
+  // flag. Both used to collapse into the single `subjectUser ?? undefined` below,
+  // and the comment claimed that was "fail-closed on a vanished subject". It was
+  // not: a no-user eval cannot match a segment, but its answer is the flag's own
+  // base `enabled` value, so a base-`enabled: true` GA flip of
+  // `app-blocks-shared-storage` would admit a token whose subject no longer exists.
+  // The WRITE path happened to catch it downstream (the `userId == null` check +
+  // the min-trust gate below); EVERY op in `READ_OPS` skips that block entirely and
+  // has no second belt, so the flag was the only thing standing in front of all of
+  // them. Do not re-enumerate that set here — it is four ops today and adding a
+  // fifth must not silently make this comment wrong. Mechanism + the measurement
+  // against the real wasm engine: GLOBAL-EVAL SEMANTICS in `app-blocks-flag.ts`.
+  //
+  // 🔴 WATCHLISTED as `shared-storage-subject-refusal` in
+  // `scripts/compiled-branch-watchlist.mjs`. Unlike a type-level guard, this is a pure
+  // runtime branch, so a bundler that drops it re-opens the exposure with the source
+  // still correct — which is precisely what shipped in release 5.1.18 (civitai#3983).
+  // MOVING this branch is fine — the gate resolves its anchor from source at run time,
+  // so line numbers do not matter, and the message text is free to change because the
+  // anchor here is the CONDITION on the next line, not the message. DELETING the branch,
+  // or rewriting that condition, fails the production Docker build at
+  // `assert-compiled-branches.mjs` — in the second case update the watchlist entry in the
+  // same commit.
+  if (userId != null && !subjectUser) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'token subject could not be resolved' });
+  }
+
+  // Dedicated kill-switch, evaluated with the subject's context so the flag's
+  // mod/cohort segments resolve identically to the client gate. An ANON token
+  // (`sub:'anon'`, `userId == null`) still reaches this with no user, which is
+  // deliberate: that is a global eval, i.e. the flag's BASE value, and anon shared
+  // access is exactly the GA widening a base-`enabled` flip is meant to perform.
   if (!(await isAppBlocksSharedStorageEnabled({ user: subjectUser ?? undefined }))) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'shared storage is not enabled' });
   }
@@ -299,9 +303,7 @@ export const appsSharedRouter = router({
       const { schema, userId } = await resolveSharedContext(input.blockToken, 'list');
       const pool = requireAppsDb();
 
-      const afterKey = input.cursor
-        ? Buffer.from(input.cursor, 'base64').toString('utf8')
-        : null;
+      const afterKey = input.cursor ? Buffer.from(input.cursor, 'base64').toString('utf8') : null;
       const escapedPrefix = (input.prefix ?? '').replace(/([\\%_])/g, '\\$1');
       const prefixPattern = `${escapedPrefix}%`;
 
@@ -693,10 +695,9 @@ export const appsSharedRouter = router({
       // Visibility/existence pre-check → NOT_FOUND for hidden OR missing (H2). The
       // FK on votes.key is the belt for a race between this and the insert.
       const exists = (
-        await pool.query(
-          `SELECT 1 FROM ${schema}.shared_kv WHERE key = $1 AND hidden_at IS NULL`,
-          [input.key]
-        )
+        await pool.query(`SELECT 1 FROM ${schema}.shared_kv WHERE key = $1 AND hidden_at IS NULL`, [
+          input.key,
+        ])
       ).rowCount;
       if (!exists) throw new TRPCError({ code: 'NOT_FOUND', message: 'request not found' });
 
@@ -800,9 +801,7 @@ export const appsSharedRouter = router({
    * spam). Does not hide the row — a moderator decides via `apps.mod.purgeSharedRow`.
    */
   report: publicProcedure
-    .input(
-      blockTokenInput.extend({ key: sharedKeyInput, reason: z.string().max(500).optional() })
-    )
+    .input(blockTokenInput.extend({ key: sharedKeyInput, reason: z.string().max(500).optional() }))
     .mutation(async ({ input }) => {
       const { userId, slug, schema, appBlockId } = await resolveSharedContext(
         input.blockToken,
@@ -999,6 +998,16 @@ export function assertValidCounterKey(key: unknown): string {
  * from client input.
  */
 export const appsModRouter = router({
+  /**
+   * PER-USER storage moderation (`apps.mod.userStorage.*`) — preview + targeted
+   * purge + account-wide purge. A DIFFERENT surface from `purgeSharedRow` below:
+   * that one is row-scoped on `shared_kv` (app-global, cross-user readable, with
+   * votes cascading off it), this one is user-scoped on `kv` (the user's own
+   * self-scoped data) plus its `user_quota` accounting. Neither reaches the
+   * other's tables — see `user-storage-purge.service.ts` for why they stay apart.
+   */
+  userStorage: appsModUserStorageRouter,
+
   purgeSharedRow: moderatorProcedure
     .input(
       z.object({

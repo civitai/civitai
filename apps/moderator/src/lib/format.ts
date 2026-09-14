@@ -67,6 +67,15 @@ export const relativeTime = (value: Date | string | null): string => {
   return fmt.format(seconds, 'second');
 };
 
+/** "12m" / "5h" / "3d": for a badge or caption, where `relativeTime`'s phrasing is too long. */
+export const shortAge = (value: Date | string, now = Date.now()): string => {
+  const minutes = Math.max(0, Math.floor((now - new Date(value).getTime()) / 60_000));
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+};
+
 /**
  * User-authored rich text (review `details`, comment bodies) is stored as HTML. Svelte escapes it, so
  * rendering it raw shows a moderator the markup — and any filter matching on it matches the tags, which

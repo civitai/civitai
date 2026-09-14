@@ -126,9 +126,11 @@ did is wrong, and the item they skip is the one that failed.
 
 ## UI components
 
-**Use [`@civitai/ui`](../packages/civitai-ui/README.md) (shadcn-svelte) primitives.** ~45 are available —
-check `packages/civitai-ui/src/lib/components/ui/` before hand-rolling anything, and add missing ones to
-that package (`npx shadcn-svelte@latest add <name>`), never to an app.
+**Use [`@civitai/ui`](../packages/civitai-ui/README.md) (shadcn-svelte) primitives.** Check
+`packages/civitai-ui/src/lib/components/` before hand-rolling anything — shadcn primitives in `ui/`,
+hand-written shared components beside it (`selection/`) — and add missing ones to that package, never to
+an app: `npx shadcn-svelte@latest add <name>` for a primitive, a sibling of `ui/` for anything
+hand-written, since `--overwrite` regenerates `ui/`.
 
 ```svelte
 import { Button } from '@civitai/ui/components/ui/button/index.js';

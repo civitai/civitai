@@ -25,6 +25,8 @@ import { getTaskQueueWorker, TaskQueue } from '~/server/search-index/utils/taskQ
 import { createLogger } from '~/utils/logging';
 
 const DEFAULT_UPDATE_INTERVAL = 30 * 1000;
+/** Ids per `updateSync` batch when a processor does not set `updateSyncChunkSize`. */
+export const DEFAULT_UPDATE_SYNC_CHUNK_SIZE = 500;
 const logger = createLogger(`search-index-processor`);
 
 export type SearchIndexContext = {
@@ -65,6 +67,14 @@ type SearchIndexProcessor = {
   primaryKey?: string;
   updateInterval?: number;
   workerCount?: number;
+  /**
+   * Ids per batch for `updateSync`. Each batch becomes one targeted pull task, so this is the
+   * knob that bounds the id list a `pullData` query is handed, and therefore whether that query
+   * fits inside the database statement timeout. Note that it bounds the id list per call, not the
+   * number of calls: a processor that also sets `pullSteps` runs the same batch of ids through
+   * `pullData` once per step. Defaults to `DEFAULT_UPDATE_SYNC_CHUNK_SIZE`.
+   */
+  updateSyncChunkSize?: number;
   pullSteps?: number;
   client?: MeiliSearch | null;
   jobName?: string;
@@ -127,6 +137,7 @@ const processSearchIndexTask = async (
           type: 'transform',
           index: task.index,
           total: task.total,
+          idCount: task.idCount,
           data: pulledData,
         } as TransformTask;
       }
@@ -141,6 +152,7 @@ const processSearchIndexTask = async (
         type: 'push',
         index: task.index,
         total: task.total,
+        idCount: task.idCount,
         data: transformedData,
       } as PushTask;
     } else if (type === 'push') {
@@ -171,6 +183,17 @@ const processSearchIndexTask = async (
 
 export type SearchIndexTaskResult = Awaited<ReturnType<typeof processSearchIndexTask>>;
 
+/**
+ * Outcome of an `updateSync` run. `failedTasks > 0` means those batches were dropped after
+ * exhausting their retries and `failedIds` documents were never written to the index.
+ */
+export type SearchIndexUpdateSyncResult = {
+  indexName: string;
+  totalTasks: number;
+  failedTasks: number;
+  failedIds: number;
+};
+
 export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor) {
   const {
     indexName,
@@ -183,10 +206,26 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     jobName,
     partial,
     queues,
+    updateSyncChunkSize: configuredUpdateSyncChunkSize = DEFAULT_UPDATE_SYNC_CHUNK_SIZE,
   } = processor;
+
+  // `chunk(xs, 0)`, `chunk(xs, -1)`, `chunk(xs, NaN)` and `chunk(xs, -Infinity)` all return `[]`
+  // (lodash-es 4.17.21; `Infinity` is the one non-finite size that does not — it returns a single
+  // batch of everything). A processor configured with any of the empty-returning values would
+  // queue zero tasks, write nothing to the index, and still report `totalTasks: 0,
+  // failedTasks: 0` — the silent success this reporting exists to remove. Clamp a finite value to
+  // at least one id per batch; fall back to the default for a NON-FINITE one. `NaN`, `Infinity`
+  // and `-Infinity` are all of type `number`, so the declared type does not exclude them.
+  // Defensive only: no caller passes one today — `collections.search-index.ts` is the sole
+  // processor that configures this field at all, at 25.
+  const updateSyncChunkSize = Number.isFinite(configuredUpdateSyncChunkSize)
+    ? Math.max(1, Math.floor(configuredUpdateSyncChunkSize))
+    : DEFAULT_UPDATE_SYNC_CHUNK_SIZE;
 
   return {
     indexName,
+    /** Exposed so callers/tests can see the batch size `updateSync` will actually use. */
+    updateSyncChunkSize,
     async getData(ids: number[]) {
       const ctx = {
         db: dbWrite,
@@ -409,9 +448,9 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     async updateSync(
       items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>,
       jobContext?: JobContext
-    ) {
+    ): Promise<SearchIndexUpdateSyncResult> {
       if (!items.length) {
-        return;
+        return { indexName, totalTasks: 0, failedTasks: 0, failedIds: 0 };
       }
 
       // TODO index.update shouldnt run
@@ -421,7 +460,8 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         `createSearchIndexUpdateProcessor :: updateSync :: ${indexName} :: Called with ${items.length} items`
       );
       const queue = new TaskQueue('pull', maxQueueSize);
-      const batches = chunk(items, 500);
+      const batches = chunk(items, updateSyncChunkSize);
+      let totalTasks = 0;
 
       for (const batch of batches) {
         const updateIds = batch
@@ -444,9 +484,11 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
             type: 'pull',
             mode: 'targeted',
             ids: updateIds,
+            idCount: updateIds.length,
             steps: processor.pullSteps,
             currentStep: 0,
           });
+          totalTasks++;
         }
       }
 
@@ -464,6 +506,24 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       });
 
       await Promise.all(workers);
+
+      // A task that exhausted its retries wrote nothing to the index. Report that instead of
+      // resolving as though everything landed — the caller cannot otherwise tell a total failure
+      // from a total success.
+      const result: SearchIndexUpdateSyncResult = {
+        indexName,
+        totalTasks,
+        failedTasks: queue.failedTasks.length,
+        failedIds: queue.failedIdCount,
+      };
+
+      if (result.failedTasks > 0) {
+        console.error(
+          `createSearchIndexUpdateProcessor :: updateSync :: ${indexName} :: ${result.failedTasks} of ${result.totalTasks} batches failed (${result.failedIds} ids not indexed)`
+        );
+      }
+
+      return result;
     },
     async queueUpdate(items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>) {
       await SearchIndexUpdate.queueUpdate({ indexName, items });

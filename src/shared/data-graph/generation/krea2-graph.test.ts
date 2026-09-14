@@ -75,3 +75,38 @@ describe('krea2 img2img:edit bases', () => {
     expect(stepsMax(g)).toBe(60);
   });
 });
+
+describe('krea2 base resolution tier', () => {
+  const dimsOf = (g: any) => {
+    const { width, height } = g.getSnapshot().aspectRatio ?? {};
+    return { width, height };
+  };
+
+  it('is offered on the comfy builds and defaults to 1K', () => {
+    const g = init('txt2img', krea2VersionIds.raw);
+    expect(g.hasNode('resolution')).toBe(true);
+    expect(g.getSnapshot().resolution).toBe('1K');
+    expect(dimsOf(g)).toEqual({ width: 1024, height: 1024 });
+  });
+
+  it('doubles every side at 2K, keeping each divisible by 32', () => {
+    const g = init('txt2img', krea2VersionIds.turbo);
+    g.set({ resolution: '2K', aspectRatio: '16:9' });
+    expect(dimsOf(g)).toEqual({ width: 2752, height: 1536 });
+    const { width, height } = dimsOf(g);
+    expect(width % 32).toBe(0);
+    expect(height % 32).toBe(0);
+  });
+
+  // FAL takes size + aspectRatio only, so a tier there would promise dimensions
+  // the orchestrator never reads.
+  it('is hidden on the FAL size tiers', () => {
+    expect(init('txt2img', krea2VersionIds.medium).hasNode('resolution')).toBe(false);
+    expect(init('txt2img', krea2VersionIds.large).hasNode('resolution')).toBe(false);
+  });
+
+  it('survives on edit, where a FAL version still runs a comfy build', () => {
+    expect(init('img2img:edit', krea2VersionIds.medium).hasNode('resolution')).toBe(true);
+    expect(init('txt2img', communityVersionId).hasNode('resolution')).toBe(true);
+  });
+});

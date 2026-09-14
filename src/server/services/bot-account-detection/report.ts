@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { MAX_FINDINGS_PER_REPORT, type AbuseReportInput } from '@civitai/moderation';
 import type { BotAccountCohortMember, SurfaceCounts } from './cohort';
 import { renderNotes, renderSubScores, type BotAccountScore } from './scoring';
@@ -38,6 +39,41 @@ const MAX_REASON_LENGTH = 2_000;
 export function truncateReason(reason: string, max = MAX_REASON_LENGTH): string {
   if (reason.length <= max) return reason;
   return `${reason.slice(0, max - 1)}…`;
+}
+
+/** The wire contract's own cap on `groupKey`, restated for the same reason `MAX_REASON_LENGTH` is. */
+const MAX_GROUP_KEY_LENGTH = 200;
+
+/**
+ * The prefix a hashed key carries. Distinct from every key-kind prefix a producer may mint (today:
+ * `domain:`), so a hashed key can never be mistaken for, or collide with, an unhashed one.
+ */
+export const HASHED_GROUP_KEY_PREFIX = 'hashed:';
+
+/**
+ * 🔴 THE SAME HAZARD `truncateReason` EXISTS FOR, IN THE SECOND PRODUCER-SUPPLIED STRING THIS
+ * CONTRACT CARRIES. A `groupKey` over the contract's 200-character cap does not lose the one
+ * finding: `abuseReportInput.safeParse` fails `too_big`, `run.ts` validates BEFORE the network call,
+ * and the throw aborts the run — losing that batch and every batch after it. Measured: a 240-char
+ * email domain yields a 247-character key and the whole report is refused (boundary: 193 characters
+ * parses, 194 fails). Four accounts on one uncommon domain is all it takes to reach, and a
+ * wildcard-MX subdomain chain under an attacker-owned apex fits inside DNS's own 253-character
+ * limit — so an unbounded key is a denial-of-detection lever, not just an edge case.
+ *
+ * 🔴 HASHED, NOT TRUNCATED, AND THAT IS THE WHOLE DIFFERENCE FROM `truncateReason`. A reason is
+ * prose and cutting it costs the tail of a sentence. A group key is an IDENTITY: two distinct
+ * domains sharing a 193-character prefix truncate to the SAME string, which would merge two
+ * unrelated clusters into one decision and let a moderator rule a ring they never looked at with one
+ * click. A digest keeps both halves of what a key has to do — every member of one cluster derives
+ * the identical key, because this is a pure function of the key, and two different clusters do not
+ * collide.
+ *
+ * It also discloses strictly LESS than the key it replaces, which keeps the "a key must not carry
+ * anything the reason does not already say" rule satisfied by construction.
+ */
+export function boundGroupKey(key: string, max = MAX_GROUP_KEY_LENGTH): string {
+  if (key.length <= max) return key;
+  return `${HASHED_GROUP_KEY_PREFIX}${createHash('sha256').update(key).digest('hex')}`;
 }
 
 /** `3 comment(s), 0 model(s), 40 image(s)` — the per-surface breakdown, spelled one way. */
@@ -95,11 +131,18 @@ export function renderPostCounts(posts: BotAccountCohortMember['posts']): string
  *
  * `action` is OMITTED rather than set to null — both are accepted by the contract, and omitting it
  * makes the pair unrepresentable in the wrong combination rather than merely correct today.
+ *
+ * 🔴 `groupKey` IS SUPPLIED, NOT DERIVED HERE. It comes from the clustering heuristic, which owns the
+ * one predicate deciding whether a cluster is large enough to be named — the same predicate that
+ * decides whether the domain appears in the reason text. Re-deriving it here would be a second copy
+ * of that rule, and the two would disagree the first time either boundary moved. Defaulting to
+ * `null` keeps every existing caller (and the two other detectors on this board) unchanged.
  */
 export function buildFinding(
   member: BotAccountCohortMember,
   score: BotAccountScore,
-  observedAt: Date
+  observedAt: Date,
+  groupKey: string | null = null
 ): AbuseFinding {
   // Floored at zero: an account timestamped after the scan instant is clock skew between the app and
   // the database, not a negative age, and a negative figure in the reason reads as corrupt data.
@@ -124,6 +167,14 @@ export function buildFinding(
     confidence: score.confidence,
     reason,
     actioned: false,
+    // Spread rather than `groupKey: groupKey ?? undefined`, for the same reason `action` is omitted
+    // above: an ungrouped finding carries no key at all, so "no cluster" is unrepresentable as
+    // anything other than an absent field.
+    //
+    // 🔴 BOUNDED HERE, beside `truncateReason` and for the identical reason — this is the single
+    // place a finding is constructed, so every producer-supplied string the contract caps is brought
+    // inside its cap at one choke point rather than at each site that mints one.
+    ...(groupKey === null ? {} : { groupKey: boundGroupKey(groupKey) }),
   };
 }
 

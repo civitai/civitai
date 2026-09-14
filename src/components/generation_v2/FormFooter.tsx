@@ -106,6 +106,7 @@ import {
 } from '~/shared/constants/generation.constants';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { ExperimentalAlerts } from '~/components/generation_v2/Experimental';
+import { EcosystemBaseModelWarnings } from '~/components/generation_v2/BaseModelWarnings';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import {
   openCompatibilityConfirmModal,
@@ -651,16 +652,17 @@ function PriorityAlertSpace({
     );
   }
 
-  // Experimental warnings sit alongside the priority alert rather than inside the
-  // chain above, for the same reason QueueSnackbar does: the chain is exclusive
-  // and ordered by urgency of the moment, and its first branch (`missingFieldMessage`)
-  // fires whenever a required field is blank. Joining it would hide the warning
-  // for anyone who hasn't written a prompt yet — the moment it's most worth
-  // reading, since nothing has been invested in the selection yet.
+  // Experimental and base-model warnings sit alongside the priority alert rather
+  // than inside the chain above, for the same reason QueueSnackbar does: the chain
+  // is exclusive and ordered by urgency of the moment, and its first branch
+  // (`missingFieldMessage`) fires whenever a required field is blank. Joining it
+  // would hide the warning for anyone who hasn't written a prompt yet — the moment
+  // it's most worth reading, since nothing has been invested in the selection yet.
   return (
     <>
       <QueueSnackbar right={snackbarRight} />
       <ExperimentalWarnings />
+      <BaseModelWarnings />
       {priorityAlert}
     </>
   );
@@ -1033,6 +1035,15 @@ function ExperimentalWarnings() {
       render={({ values }) => <ExperimentalAlerts selection={values} />}
     />
   );
+}
+
+function BaseModelWarnings() {
+  const graph = useGraph<GenerationGraphTypes>();
+  const { ecosystem } = useGraphSubscriptions(graph, ['ecosystem'] as const) as {
+    ecosystem?: string;
+  };
+
+  return <EcosystemBaseModelWarnings ecosystem={ecosystem} />;
 }
 
 // =============================================================================

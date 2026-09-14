@@ -11,6 +11,10 @@ import type {
   Sd1AiToolkitTrainingInput,
   AnimaAiToolkitTrainingInput,
 } from '@civitai/client';
+import {
+  isSafeTensorFormat,
+  NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
+} from '@civitai/shared/training-custom-model';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
@@ -57,7 +61,7 @@ async function isSafeTensor(modelVersionId: number) {
     LIMIT 1
   `;
 
-  return data?.fmt === 'SafeTensor';
+  return isSafeTensorFormat(data?.fmt);
 }
 
 const checkCustomModel = async (
@@ -79,7 +83,7 @@ const checkCustomModel = async (
     if (!isST)
       return {
         ok: false,
-        message: 'Custom model does not have a SafeTensor file. Please choose another model.',
+        message: NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
       };
   }
 
@@ -229,12 +233,14 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
       minSnrGamma: aiToolkitParams.minSnrGamma ?? undefined,
     } as SdxlAiToolkitTrainingInput;
   } else if (aiToolkitParams.ecosystem === 'anima') {
-    // Anima accepts a `model` (the official base AIR, or a custom Anima
-    // checkpoint which the orchestrator trains over the base Anima repo).
-    trainingInput = {
-      ...trainingInput,
-      model,
-    } as AnimaAiToolkitTrainingInput;
+    // The civitai Anima AIR is the sample-image diffusion model, not the trainer base; sending it
+    // here bills its per-image license fee once per epoch checkpoint.
+    if (model !== trainingModelInfo.anima.air) {
+      trainingInput = {
+        ...trainingInput,
+        model,
+      } as AnimaAiToolkitTrainingInput;
+    }
   }
 
   // ACE-Step audio ecosystems accept per-prompt sample overrides. The SDK

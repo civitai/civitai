@@ -13,10 +13,11 @@
  *   toggle-cannot-promote <id>       Toggle cannot-promote flag
  *   toggle-cannot-publish <id>       Toggle cannot-publish flag
  *   articles                         List articles for moderation
- *   training-models                  List training models
- *   approve-training <id>            Approve training data
- *   deny-training <id>               Deny training data
  *   mod-rule <id>                    Get a moderation rule by ID
+ *
+ * Training moderation (training-models / approve-training / deny-training) moved to the
+ * moderator spoke (/audit/training-models, /audit/training-data) in the moderator-app
+ * migration and no longer has a tRPC procedure — see docs/moderator-app/page-migration-checklist.md.
  *
  * Options:
  *   --json                Output raw JSON
@@ -44,7 +45,6 @@ Commands (READ):
   flagged-models                   List flagged models
   model-versions                   List model versions
   articles                         List articles for moderation
-  training-models                  List training models
   mod-rule <id>                    Get a moderation rule by ID
 
 Commands (WRITE):
@@ -53,8 +53,6 @@ Commands (WRITE):
   restore-model <id>               Restore a removed model
   toggle-cannot-promote <id>       Toggle cannot-promote flag on a model
   toggle-cannot-publish <id>       Toggle cannot-publish flag on a model
-  approve-training <id>            Approve training data
-  deny-training <id>               Deny training data
 
 Options:
   --json                Output raw JSON
@@ -74,9 +72,6 @@ Examples:
   node content.mjs toggle-cannot-promote 456
   node content.mjs toggle-cannot-publish 456
   node content.mjs articles --limit 10
-  node content.mjs training-models
-  node content.mjs approve-training 321
-  node content.mjs deny-training 321 --dry-run
   node content.mjs mod-rule 5 --json
 
 Configuration:
@@ -131,12 +126,6 @@ async function main() {
 
     case 'articles': {
       const result = await trpcCall('moderator.articles.query', pagination(), 'GET');
-      output(result, jsonMode);
-      break;
-    }
-
-    case 'training-models': {
-      const result = await trpcCall('moderator.models.queryTraining', pagination(), 'GET');
       output(result, jsonMode);
       break;
     }
@@ -217,32 +206,6 @@ async function main() {
 
       const result = await trpcCall('model.toggleCannotPublish', { id }, 'POST');
       output(result, jsonMode, () => `Toggled cannot-publish for model ${id}`);
-      break;
-    }
-
-    case 'approve-training': {
-      const id = requireId('Training data ID');
-
-      if (dryRun) {
-        console.log(`[DRY RUN] Would approve training data: ${id}`);
-        break;
-      }
-
-      const result = await trpcCall('moderator.trainingData.approve', { id }, 'POST');
-      output(result, jsonMode, () => `Approved training data ${id}`);
-      break;
-    }
-
-    case 'deny-training': {
-      const id = requireId('Training data ID');
-
-      if (dryRun) {
-        console.log(`[DRY RUN] Would deny training data: ${id}`);
-        break;
-      }
-
-      const result = await trpcCall('moderator.trainingData.deny', { id }, 'POST');
-      output(result, jsonMode, () => `Denied training data ${id}`);
       break;
     }
 

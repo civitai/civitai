@@ -122,7 +122,7 @@ async function buildPublicModelResponse(
                   ...file,
                   metadata: removeEmpty(metadata),
                   name: safeDecodeURIComponent(
-                    getDownloadFilename({ model, modelVersion: version, file })
+                    getDownloadFilename({ model, modelVersion: version, file, versionFiles: castedFiles })
                   ),
                   hashes: hashesAsObject(hashes),
                   // Pin the URL to THIS file. Passing `type`/`meta`/`primary`

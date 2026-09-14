@@ -13,13 +13,14 @@ import {
   ThemeIcon,
   Alert,
 } from '@mantine/core';
-import { IconAlertTriangle } from '@tabler/icons-react';
+import { IconAlertTriangle, IconTrash } from '@tabler/icons-react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
+import { PointerCard } from '~/components/Account/SettingsLayout';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export function DeleteCard() {
+export function DeleteCard({ flat }: { flat?: boolean } = {}) {
   const currentUser = useCurrentUser();
   const { logout } = useAccountContext();
   const { data: subscriptions, isLoading: subscriptionsLoading } =
@@ -224,19 +225,37 @@ export function DeleteCard() {
         </Stack>
       </Modal>
 
-      {/* MAIN DELETE ACCOUNT BUTTON */}
-      <Card withBorder>
-        <Stack>
-          <Title order={2}>Delete account</Title>
-          <Text size="sm">
-            Once you delete your account, there is no going back. Please be certain when taking this
-            action.
-          </Text>
-          <Button variant="outline" color="red" onClick={handleDeleteClick}>
-            Delete your account
-          </Button>
-        </Stack>
-      </Card>
+      {flat ? (
+        <PointerCard
+          tone="danger"
+          icon={<IconAlertTriangle size={18} />}
+          title="Delete account"
+          description="You choose what happens to your models and images. This cannot be undone."
+          action={
+            <Button
+              color="red"
+              size="compact-sm"
+              leftSection={<IconTrash size={14} />}
+              onClick={handleDeleteClick}
+            >
+              Delete account
+            </Button>
+          }
+        />
+      ) : (
+        <Card withBorder>
+          <Stack>
+            <Title order={2}>Delete account</Title>
+            <Text size="sm">
+              Once you delete your account, there is no going back. Please be certain when taking
+              this action.
+            </Text>
+            <Button variant="outline" color="red" onClick={handleDeleteClick}>
+              Delete your account
+            </Button>
+          </Stack>
+        </Card>
+      )}
     </>
   );
 }

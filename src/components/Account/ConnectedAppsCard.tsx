@@ -3,7 +3,6 @@ import { openConfirmModal } from '@mantine/modals';
 import { trpc } from '~/utils/trpc';
 import {
   Text,
-  Card,
   Stack,
   Group,
   Title,
@@ -15,6 +14,7 @@ import {
   Progress,
   UnstyledButton,
 } from '@mantine/core';
+import { CardOrSection } from '~/components/Account/SettingsLayout';
 import {
   IconPlugConnected,
   IconTrash,
@@ -38,7 +38,7 @@ const periodLabels: Record<'day' | 'week' | 'month', string> = {
   month: '30d',
 };
 
-export function ConnectedAppsCard() {
+export function ConnectedAppsCard({ flat }: { flat?: boolean } = {}) {
   const utils = trpc.useUtils();
   const [editLimitFor, setEditLimitFor] = useState<{
     clientId: string;
@@ -85,14 +85,16 @@ export function ConnectedAppsCard() {
   if (apps.length === 0 && !isLoading) return null;
 
   return (
-    <Card withBorder>
+    <CardOrSection flat={flat} title="Connected apps">
       <Stack>
-        <Group justify="space-between">
-          <Group gap="xs">
-            <IconPlugConnected size={20} />
-            <Title order={4}>Connected Apps</Title>
+        {!flat && (
+          <Group justify="space-between">
+            <Group gap="xs">
+              <IconPlugConnected size={20} />
+              <Title order={4}>Connected Apps</Title>
+            </Group>
           </Group>
-        </Group>
+        )}
 
         <Box pos="relative">
           <LoadingOverlay visible={isLoading} />
@@ -224,6 +226,6 @@ export function ConnectedAppsCard() {
           initialLimit={editLimitFor.buzzLimit}
         />
       )}
-    </Card>
+    </CardOrSection>
   );
 }

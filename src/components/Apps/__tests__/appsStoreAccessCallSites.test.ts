@@ -28,7 +28,7 @@ import { describe, it, expect } from 'vitest';
  *   - `AppListingsMarketplaceBody.storeGate.browser.test.tsx` — the grid query gate
  *   - `hasAppsStoreAccess.test.ts`                 — the predicate + the SSR seam
  *
- * THREE of the seven sites are pinned STRUCTURALLY ONLY — `pages/apps/index.tsx`
+ * THREE of the eight sites are pinned STRUCTURALLY ONLY — `pages/apps/index.tsx`
  * and `pages/apps/store-preview/[slug].tsx` (Next pages, no component harness) and
  * `components/Apps/RelatedListings.tsx` (its only existing test covers the pure
  * selection helper and never mounts the component, so it never touches
@@ -37,7 +37,10 @@ import { describe, it, expect } from 'vitest';
  * `appsNavVisibility.ts` — has behavioural cover in the same unit project
  * (`AppHeader/appsNavVisibility.test.ts`, which asserts the external-only and
  * catalog-only cohorts resolve `marketplace: true`), so its own argument IS
- * checked.
+ * checked. The eighth — `nav-registry.ts` — has behavioural cover in
+ * `HomeContentToggle/__tests__/nav-defaults.characterization.test.ts`, which drives
+ * `resolveNavItems` over the per-flag cohorts (listings-only, blocks-only,
+ * external-only, none) against the REAL registry.
  *
  * ⚠️ THE SEAM THIS PARAGRAPH USED TO CALL UNTESTED IS NOW HALF-COVERED, and the
  * remaining half is named rather than implied. It said: "that `useGetMenuItems`
@@ -54,10 +57,14 @@ import { describe, it, expect } from 'vitest';
  *
  * 🔴 AND THE SCOPE THAT MATTERS IN CI: the component suites above are REPORT-ONLY
  * (`preview / component-tests`) and do not block a merge. This unit-project ledger
- * does. So in CI six of the seven sites are pinned STRUCTURALLY ONLY, by this file
+ * does. So in CI five of the eight sites are pinned STRUCTURALLY ONLY, by this file
  * — which is precisely why a hole in its masker (see below) is worth more than it
- * looks. (`appsNavVisibility` is the exception: its behavioural test is a unit
- * test, so it blocks too.)
+ * looks. (`appsNavVisibility`, `nav-registry` and `resolveAppsPageAccess` are the
+ * exceptions: their behavioural tests are unit tests, so they block too — the
+ * resolver's cover is the two `resolveAppsPageAccess` describe blocks inside
+ * `hasAppsStoreAccess.test.ts`. Two more are browser-covered (`AppsSubNav`,
+ * `AppListingsMarketplaceBody`) and therefore blocking-covered NOWHERE: enumerated,
+ * 3 + 2 + 3 = 8.)
  *
  * 🔴 TWO MEASURED LIMITS OF THIS FILE — issue #3932, not fixed here. Read them
  * before treating a green run as "no site re-inlines the gate":
@@ -108,8 +115,10 @@ const SRC = path.resolve(__dirname, '../../..');
  *    converted and therefore structurally invisible here; both halves are now
  *    false, and the reason it changed is worth keeping:
  *
- *    that entry is the ONLY in-product route TO `/apps` (the sub-nav's
- *    Marketplace tab only appears once you are already on `/apps/*`), and it read
+ *    that entry was the ONLY in-product route TO `/apps` when it was converted —
+ *    the top-nav pill (`components/HomeContentToggle/nav-registry.ts`, the eighth
+ *    ledger site) is the second. (The sub-nav's Marketplace tab still only appears
+ *    once you are already on `/apps/*`.) It read
  *    `!!features.appBlocks`. So `{appListings, NOT appBlocks}` — the documented
  *    shape of the store launch — and `{appListingsPublicExternal, NOT appBlocks,
  *    NOT appListings}` — the live external-only tester cohort — both passed the
@@ -119,6 +128,12 @@ const SRC = path.resolve(__dirname, '../../..');
  */
 const STORE_GATE_SITES = [
   'components/AppLayout/AppHeader/appsNavVisibility.ts',
+  // 🔴 THE TOP-NAV PILL — the `apps` entry in `navRegistry` (`/apps`, store access only).
+  // Same defect class as the user-menu entry above: a pill visible under different flags
+  // is a menu entry into the `notFound` the `/apps` SSR resolver answers for an
+  // ineligible viewer. Its behavioural cover is the per-flag cohort vectors in
+  // `HomeContentToggle/__tests__/nav-defaults.characterization.test.ts`.
+  'components/HomeContentToggle/nav-registry.ts',
   // 🔴 THE `App` COLUMN'S NAME LINK ON `/apps/activity`. It points at
   // `/apps/store-preview/<slug>`, which `getServerSideProps`-gates on
   // `resolveAppsPageAccess` and answers `notFound` for — so an UNGATED link there is a
@@ -151,8 +166,17 @@ const DEFINING_MODULE = 'shared/utils/app-blocks-access.ts';
  * than allowlisting that file is deliberate: the header is where a future "show
  * the Apps entry when …" tweak would most plausibly open-code the gate, and the
  * re-inline scan below only has teeth over directories it walks.
+ * `components/HomeContentToggle` is here for ONE file — `nav-registry.ts`, the top-nav
+ * pill's `visible` gate. Same deliberate whole-directory scan as AppHeader: the toggle
+ * is where a future "show the Apps pill when …" tweak would most plausibly open-code
+ * the gate.
  */
-const SCAN_ROOTS = ['components/AppLayout/AppHeader', 'components/Apps', 'pages/apps'];
+const SCAN_ROOTS = [
+  'components/AppLayout/AppHeader',
+  'components/HomeContentToggle',
+  'components/Apps',
+  'pages/apps',
+];
 
 /**
  * 🔴 MASKING RUNS THROUGH THE REAL TypeScript PARSER, NOT A QUOTE SCANNER.
@@ -414,13 +438,59 @@ describe('the masker (validate the instrument before reading its verdict)', () =
     // is a fact about comment density and nothing to do with the masker. Measured here
     // after the `/apps/activity` rename: 0.5648.
     //
-    // The re-cut bound is still discriminating, and the control below is what proves it
-    // rather than asserting it: the defect this test exists for — a phantom string opened
-    // by the ASCII apostrophe running to EOF — blanks the whole tail of the file and lands
-    // far above 0.65.
+    // 🔴 AND IT MOVED AGAIN, 0.65 → 0.70, FOR THE CAUSE THE PARAGRAPH ABOVE PREDICTS —
+    // BUT NOT MOSTLY BECAUSE OF THE CHANGE THAT TRIPPED IT. ⚠️ The `0.5648` above is STALE
+    // (it dates from #4699). Measured with this file's own masker at the moment of the
+    // re-cut: `origin/main` ALREADY read ≈0.645 — under 0.005 of headroom on the old 0.65
+    // bound — and the permissions-copy widening moved it by ≈0.01, not by the ≈0.09 an
+    // earlier revision of this paragraph claimed by differencing against the stale figure.
+    // So the bound was going to trip for whoever added the next comment either way, which
+    // is exactly the failure the paragraph above describes. (Point-in-time, and rounded on
+    // purpose — see the next paragraph on why exact ratios do not survive in prose here.)
+    //
+    // 🔴 RE-CUT AGAINST THE CONTROL, NOT AGAINST THE NEW VALUE — the control sits far above
+    // the bound while the live value sits below it, which is the property that matters.
+    //
+    // ⚠️ DELIBERATELY NOT QUOTING THE TWO MEASUREMENTS AS PINNED NUMBERS, because they DRIFT
+    // WITH THIS FILE AND KEEP FALSIFYING THE COMMENT. Three successive revisions quoted a
+    // control figure and each was stale within one edit (0.8510 — an uncommitted
+    // intermediate — then 0.8482, then 0.8499 after one more paragraph landed here); every
+    // line added to `activity.tsx`, code or comment, moves both. The BOUNDS are asserted in
+    // code below and cannot go stale; the ratios are outputs. Re-derive rather than trusting
+    // a number in prose — run this from the repo root:
+    //   node -e "const f=require('fs').readFileSync('src/pages/apps/activity.tsx','utf8'),
+    //     r=t=>t.split('').filter(c=>c===' ').length/t.length,
+    //     i=f.indexOf(String.fromCharCode(97,112,112,39,115));
+    //     console.log(r(f.slice(0,i)+f.slice(i).replace(/[^\n]/g,' ')))"
+    // ⚠️ THE `String.fromCharCode` IS NOT AFFECTATION — it spells the apostrophe in `app's`,
+    // and an earlier revision of this command wrote that literal inside a SINGLE-quoted
+    // `node -e '…'`. The apostrophe closed the shell string, so pasting it gave
+    // `unexpected EOF` and printed nothing: a re-derivation instruction that could not be
+    // run, replacing figures that were merely stale. Verified by RUNNING the form above, as
+    // written, in both bash and zsh — test the pasted form, not the program.
+    // That prints the CONTROL; the live masked ratio is whatever this test reports when the
+    // bound below fails. A bound set just above whatever the file currently reads would
+    // repeat the no-headroom mistake — for the 0.55 bound that margin was 0.0014 (see five
+    // paragraphs up); against 0.65 on `origin/main` it was ≈0.0049, per the measurement
+    // above. (An earlier revision wrote 0.0018 here, which is the margin at THIS PR's own
+    // round-1 commit — a tree this comment never names, and irreconcilable with the ≈0.645
+    // figure 25 lines up.)
+    //
+    // ⚠️ KNOWN COST, recorded rather than discovered later: 0.70 is less sensitive to a
+    // PARTIAL, late-file desync than 0.65 was — a blanking confined to the tail can now
+    // pass. Measured at `775abdfe34` by two independent re-implementations of the masker:
+    // a trailing desync must cover ≈19.6% of the file before it trips 0.70. POINT-IN-TIME
+    // — it moves with `L` and with the tail's own density, exactly like the ratios above,
+    // so re-measure rather than trusting it.
+    // ⚠️ Do NOT re-derive it from `L + p(1−L) = 0.70`; that model gives ≈11.8% because it
+    // assumes the blanked tail becomes ALL spaces, whereas this file's tail is comment- and
+    // JSX-dense and already ≈0.77 spaces after masking. One earlier revision of this clause
+    // carried the naive figure (`≲13%`) for that reason.
+    // Accepted regardless: 0.65 was unusable at the headroom above, and the functional
+    // check in this test is the `features.appBlocks` occurrence count, not the ratio.
     const spaceRatio = (text: string) =>
       text.split('').filter((c) => c === ' ').length / text.length;
-    expect(spaceRatio(masked)).toBeLessThan(0.65);
+    expect(spaceRatio(masked)).toBeLessThan(0.7);
 
     // 🔴 NEGATIVE CONTROL, ON THE REAL FILE: a bound nobody has watched fire is a claim
     // about a number. Reproduce the historical desync — everything after the apostrophe
@@ -428,7 +498,12 @@ describe('the masker (validate the instrument before reading its verdict)', () =
     const apostrophe = raw.indexOf("app's");
     expect(apostrophe, 'the trigger moved; re-point this control').toBeGreaterThan(-1);
     const desynced = raw.slice(0, apostrophe) + raw.slice(apostrophe).replace(/[^\n]/g, ' ');
-    expect(spaceRatio(desynced)).toBeGreaterThan(0.65);
+    // 🔴 THE SAME NUMBER AS THE LIVE BOUND, DELIBERATELY. If this stayed at 0.65 while the
+    // bound above moved to 0.70, the control would no longer prove separation — a desync
+    // measuring 0.66 would satisfy BOTH, so the pair would assert nothing. Move the two
+    // together or the control stops being one. (No measured ratio quoted here either — see
+    // the paragraph above on why those figures drift.)
+    expect(spaceRatio(desynced)).toBeGreaterThan(0.7);
   });
 
   it('nested quotes, templates and regex literals do not desync it either', () => {

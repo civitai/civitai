@@ -16,6 +16,7 @@ import {
   type UpsertAppListingReviewInput,
 } from '~/server/schema/blocks/app-listing-review.schema';
 import { bustCacheTag } from '~/server/utils/cache-helpers';
+import { APP_LISTING_RECOMMEND_MEAN_TAG } from '~/server/services/blocks/app-listing-cache.constants';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -59,14 +60,17 @@ import {
 // getGlobalRecommendMean, tag below, 1h). The per-listing card/detail counts are
 // read straight off the AppListingMetric rollup (uncached), so only the global
 // mean needs busting when a review shifts the counters.
-const GLOBAL_RECOMMEND_MEAN_TAG = 'app-listing:recommend-global-mean';
+// 🔴 The tag string is now the SHARED constant, not a private literal re-spelled
+// here. The producer (`getGlobalRecommendMean`, which writes the tagged key) and
+// this, its only buster, previously declared the same string independently — so a
+// rename on one side silently stopped busting the other. Both read the leaf module.
 
 /**
  * Bust the store-wide recommend-mean cache after a review write. Fire-and-forget
  * (a cache-bus outage must never fail the review).
  */
 async function bustRecommendMeanCache(): Promise<void> {
-  await bustCacheTag([GLOBAL_RECOMMEND_MEAN_TAG]);
+  await bustCacheTag([APP_LISTING_RECOMMEND_MEAN_TAG]);
 }
 
 /** The compound-unique lookup key for `AppListingReview(appListingId, userId)`. */

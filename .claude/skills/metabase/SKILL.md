@@ -55,9 +55,30 @@ node .claude/skills/metabase/metabase.mjs create-question \
 
 **Variable types:** `text`, `number`, `date`, `date/single`, `date/range`, `date/month-year`, `date/quarter-year`, `date/relative`, `date/all-options`
 
-### update-question — Change display type or visualization
+### run-card — Run a SAVED question, with its parameters
+
+`run-query` runs ad-hoc SQL, which does **not** tell you whether a saved card works: a card
+whose parameters are mis-wired stores the right SQL and still returns nothing. Run the card
+itself to check.
 
 ```bash
+node .claude/skills/metabase/metabase.mjs run-card --id 3301 --params '{"from":"2026-09-09","to":"2026-10-01"}'
+node .claude/skills/metabase/metabase.mjs run-card --id 3303          # no parameters
+```
+
+Names in `--params` are `{{variable}}` names; an unknown one is an error rather than a
+silently ignored filter.
+
+### update-question — Change SQL, display, description, or archive it
+
+```bash
+# Replace the SQL (reads the card back and fails if the stored query differs)
+node .claude/skills/metabase/metabase.mjs update-question --id 123 --query "SELECT 1"   --variables '{"from":{"id":"f","name":"from","display-name":"From","type":"date"}}'
+
+# Description, or retire a superseded card
+node .claude/skills/metabase/metabase.mjs update-question --id 123 --description "..."
+node .claude/skills/metabase/metabase.mjs update-question --id 123 --archived true
+
 # Change to bar chart
 node .claude/skills/metabase/metabase.mjs update-question --id 123 --display bar
 
@@ -65,6 +86,33 @@ node .claude/skills/metabase/metabase.mjs update-question --id 123 --display bar
 node .claude/skills/metabase/metabase.mjs update-question --id 123 --display line \
   --visualization '{"graph.dimensions":["date"],"graph.metrics":["count"]}'
 ```
+
+**Pass real SQL as `--query-file`, not `--query`.** A query with a comment header does not survive a
+shell argument intact, and a swallowed value is parsed as boolean `true` — which writes a card with no
+query and reports success. `create-question` and `run-query` take `--query-file` too.
+
+An empty or whitespace-only `--query-file` is refused, because a file's emptiness is invisible to the
+caller — the program opened it, not them. An inline `--query "   "` is still accepted: it was typed
+deliberately by someone who can see what they typed.
+
+A write that contains a `{{snippet: ...}}` reference also verifies the snippet tag landed, not just the
+SQL. The two fail independently: a dropped tag leaves the query byte-identical and the card unrunnable.
+
+Write a reference as `{{snippet: name}}`, lowercase. `{{snippet:name}}` is fine — Metabase normalises the
+missing space — but it does **not** normalise a space *before* the colon, and it **preserves the case of
+the prefix**. Both `{{snippet : name}}` and `{{SNIPPET: name}}` are references Metabase demands a tag for
+under that exact spelling, which this tool does not write, so the card cannot run. Both are refused rather
+than written.
+
+🔴 **A comment line whose only content is `--` breaks parameter binding for the whole query** on the
+ClickHouse driver: every variable fails with *"we got more parameters than we can handle"*, which points
+at neither the line nor the cause. **Indentation does not save it** — an indented `--`, the usual form
+inside a CTE, breaks binding the same way. A trailing space or tab is the fix.
+
+`create-question`, `update-question`, `run-query`, `create-snippet` and `update-snippet` all refuse text
+containing one. **No test can catch this**: the query runs clean until a variable is *bound*, so an
+unparameterised run and a card that merely exists both look correct. The guard is the only check that
+reaches it.
 
 **Display types:** `table`, `bar`, `line`, `area`, `pie`, `scalar`, `row`, `funnel`, `map`, `scatter`, `waterfall`, `combo`, `smartscalar`, `progress`, `gauge`, `pivot`
 
@@ -189,6 +237,38 @@ node .claude/skills/metabase/metabase.mjs get --type question --id 101
 node .claude/skills/metabase/metabase.mjs get --type dashboard --id 456
 ```
 
+### Snippets — one derivation shared by many cards
+
+A snippet is text pasted into `{{snippet: <name>}}` at run time, so several cards can share one
+expression instead of each carrying a copy that drifts.
+
+```bash
+node .claude/skills/metabase/metabase.mjs list-snippets [--json]
+node .claude/skills/metabase/metabase.mjs create-snippet --name "image engine" \
+  (--file engine.sql | --content "SQL") [--description "..."]
+node .claude/skills/metabase/metabase.mjs update-snippet --id 1 \
+  [--file engine.sql | --content "SQL"] [--name "..."] [--description "..."]
+```
+
+Each write reads the snippet back and reports only on the fields it actually sent — a metadata-only
+update says "stored description matches", never "content matches", because it did not send content and
+did not check it.
+
+🔴 **Snippet text is the one place the `--` guard could not otherwise reach.** A snippet is substituted
+verbatim into every card that references it, and those cards' own SQL may contain nothing but
+`{{snippet: name}}` — so a bare `--` inside a snippet body breaks binding everywhere it is used and no
+per-card check can see it. `create-snippet` and `update-snippet` guard their content for that reason.
+
+**A snippet takes no parameters** — it is literal substitution, not a function. So a fragment can only
+reference bare column names, and a card using it must select from the table with **no alias** on those
+columns.
+
+Referencing one from a card is handled for you: both `create-question` and `update-question` scan the
+SQL for `{{snippet: ...}}` and add the matching template tag, because a card missing that tag fails at
+run time with `missing required parameters` and the auto-detect for ordinary `{{variable}}` syntax does
+not match a name containing a colon. A reference to a snippet that does not exist is refused before
+anything is written.
+
 ### list-collections / list-databases
 
 ```bash
@@ -267,6 +347,24 @@ By default, `{{variable}}` template tags render as plain text inputs. To make th
 - Each command reads the existing template tag ID and wires it up correctly
 
 **Important:** Each call to `set-dropdown` or `set-date-picker` preserves other existing parameters. You can call them one at a time.
+
+## MBQL 4 vs MBQL 5 — the shape a GET returns is not the shape a PUT accepts
+
+A `GET /card/:id` returns MBQL 5: `dataset_query` has `stages` and `lib/type`, the SQL lives
+at `stages[0].native` as a string, and `template-tags` is an **array** of records. A write
+must send the MBQL 4 shape — `{database, type: 'native', native: {query, 'template-tags'}}`
+with tags as an **object keyed by name**. Spreading what a GET returned into a PUT is
+rejected with `MBQL 4 keys like :type, :query, or :native are not allowed in MBQL 5 queries
+with :lib/type`.
+
+The array-vs-object half is the one that bites quietly: looking a tag up by name on the
+array finds nothing, and `set-dropdown` / `set-date-picker` then report
+`Template tag "from" not found ... Available tags: 0, 1` — which reads as a missing variable
+rather than a wrong shape. Every command here normalises both shapes; new ones must too.
+
+Related: `POST /dashboard/:id/cards` no longer exists. Dashcards are written by PUTting the
+whole `dashcards` array back to `/dashboard/:id`, with a negative placeholder `id` on each
+new entry.
 
 ## Tips
 

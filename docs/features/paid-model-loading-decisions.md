@@ -29,7 +29,10 @@ The coverage model those answers produced — and the audit behind it — is
 ## Who needs to answer what
 
 Every open item carries a **`@dev:`** block with the question stated in one line and a space to
-answer in place. Search the file for `@dev:` to jump between them, or take just your own row:
+answer in place. Search the file for `@dev:` to jump between them, or take just your own row.
+
+Justin's six questions were asked on a separate page, which has served its purpose and is gone —
+his answers are quoted verbatim in §1 and §2 below.
 
 | Who | Items |
 | --- | --- |
@@ -165,6 +168,25 @@ is dead code. Removing it widens covered checkpoints by roughly two orders of ma
 ⚠️ The audit that followed found the neighbouring table is the opposite case: **`EcosystemCheckpoints`
 must stay**, because 62 of 63 checkpoint defaults are covered through it and none through
 `CoveredCheckpoint`. See [coverage](paid-model-loading-coverage.md#the-two-tables-do-opposite-jobs).
+
+⚠️ **Amended 2026-09-09.** `CoveredCheckpoint` is no longer a conjunct — Justin's condition holds —
+but it returns as a **disjunct** in `20260909180000_generation_coverage_next_safetensor_checkpoints`,
+excusing 6 auction-resident checkpoints from the new SafeTensor requirement. Auction membership no
+longer decides coverage; it stands in for residency until C11 retires the job, and is deleted with it.
+
+### 2.7 ⚠️ Diffusers is loadable — except for checkpoints
+
+Justin ruled Diffusers loadable on 2026-09-08, and the first `GenerationCoverageNext` migration
+removed it from the excluded-format list for every type. The loader serves **SafeTensor only**, so
+the checkpoint branch was narrowed back on 2026-09-09 — 174 Diffusers checkpoints sit among the
+2,242 versions that lose coverage. Diffusers is untouched for LoRA/TI/VAE/LoCon/DoRA/Upscaler.
+
+**Open:** whether Justin accepts the narrowing as an implementation constraint, or wants the loader
+to grow Diffusers support. *Decides:* Justin. *Closes when:* he answers here, or the migration is
+applied to production with the narrowing intact.
+
+@dev: The loader can only serve SafeTensor today. OK to drop Diffusers/GGUF/PickleTensor checkpoints
+from coverage (2,242 versions, 0.43% of checkpoint generation), or should the loader learn them?
 
 ### 2.4 ✅ The C4 webhook — not now
 

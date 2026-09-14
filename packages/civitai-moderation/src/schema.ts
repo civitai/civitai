@@ -86,6 +86,20 @@ const abuseFinding = z
     // and a producer serialising a nullable field emits `null`. Refusing that would lose every run
     // from the commonest possible payload.
     action: z.string().min(1).max(64).nullish(),
+    // 🔴 OPTIONAL, AND IT HAS TO STAY THAT WAY. Three detectors already post to this board and none
+    // of them sends this field; a required key here would 400 every one of their reports and take
+    // the whole surface down to add a feature none of them uses.
+    //
+    // What it is: the producer's own claim that several findings in THIS report are one actor, so a
+    // moderator rules them once instead of N times. An opaque key — the reader groups on equality
+    // and never parses it — scoped to the run by the reader, because the same key in two runs is two
+    // separate decisions over two different cohorts.
+    //
+    // 🔴 A PRODUCER MUST NOT PUT ANYTHING IN HERE THAT THE FINDING'S OWN `reason` DOES NOT ALREADY
+    // SAY. The key is rendered on a board with a wider audience than the investigative tools, so it
+    // is a disclosure surface, not just an identifier. `.nullish()` for the same reason `action` has
+    // it: a serialiser emitting `null` for an absent optional must not lose the report.
+    groupKey: z.string().min(1).max(200).nullish(),
   })
   .superRefine((f, ctx) => {
     // 🔴 `!= null`, NOT `!== undefined`. Loose equality is deliberate: it treats `null` and

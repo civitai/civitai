@@ -22,7 +22,9 @@ import {
   getModelFileFormat,
   inferGgufQuantType,
   inferSafetensorsPrecision,
+  resolveUploadPrecision,
 } from '~/utils/file-helpers';
+import { useModelFileOptions } from '~/hooks/useModelFileOptions';
 import { resolveOfficialFileHash } from '~/components/Resource/official-match';
 import { useFileHash } from '~/hooks/useFileHash';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -117,6 +119,7 @@ export const useFilesContext = () => {
 
 export function FilesProvider({ model, version, children }: FilesProviderProps) {
   const queryUtils = trpc.useUtils();
+  const { precisions } = useModelFileOptions();
   const { hashFile } = useFileHash();
   const upload = useS3UploadStore((state) => state.upload);
   const setItems = useS3UploadStore((state) => state.setItems);
@@ -570,7 +573,12 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       const fileName = item.file.name.toLowerCase();
       if (fileName.endsWith('.safetensors') || fileName.endsWith('.sft')) {
         inferSafetensorsPrecision(item.file)
-          .then((fp) => {
+          .then((headerFp) => {
+            const fp = resolveUploadPrecision({
+              fileName: item.name,
+              headerFp,
+              precisions,
+            });
             if (fp) handleUpdateFile(item.uuid, { fp });
           })
           .catch(() => null);

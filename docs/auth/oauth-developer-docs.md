@@ -13,7 +13,7 @@ Civitai supports OAuth 2.0 for third-party applications to authenticate users an
 
 ## Registering an Application
 
-Visit your [Account Settings](/user/account) and scroll to the **OAuth Applications** section. Click **Register App** and fill in:
+Visit your [Account Settings](/user/account) → **Security & Apps** and find the **OAuth Applications** section. Click **Register App** and fill in:
 
 - **App Name** — displayed to users on the consent screen
 - **Description** — what your app does

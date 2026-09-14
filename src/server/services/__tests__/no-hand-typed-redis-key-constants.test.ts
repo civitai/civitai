@@ -164,7 +164,6 @@ const HAND_TYPED_BASELINE: string[] = [
   'src/server/games/new-order/__tests__/cooldown.test.ts',
   'src/server/jobs/__tests__/cache-cleanup.test.ts',
   'src/server/jobs/__tests__/restore-user-images.test.ts',
-  'src/server/jobs/__tests__/rewards-abuse-prevention.test.ts',
   'src/server/metrics/__tests__/base.metrics.test.ts',
   'src/server/orchestrator/__tests__/get-orchestrator-token.sysredis-soft.test.ts',
   'src/server/redis/__tests__/queues.test.ts',
@@ -272,6 +271,6 @@ describe('no hand-typed Redis key constants in a guarded mock', () => {
   // load-bearing, add the entry AND raise this number in the same commit, with a note saying
   // which it is. A raise is then a visible, reviewable claim rather than a silent one.
   it('the baseline is exactly the recorded size', () => {
-    expect(HAND_TYPED_BASELINE.length).toBe(50);
+    expect(HAND_TYPED_BASELINE.length).toBe(49);
   });
 });

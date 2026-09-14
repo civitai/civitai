@@ -21,6 +21,7 @@ import { reve } from './reve.graph';
 import { museImage } from './muse-image.graph';
 import { mai } from './mai.graph';
 import { ernie } from './ernie.graph';
+import { ideogram } from './ideogram.graph';
 import { seedream } from './seedream.graph';
 import { anima } from './anima.graph';
 import { mageFlow } from './mage-flow.graph';
@@ -94,6 +95,7 @@ export const imageHub = defineGraph<RootCtx>()
       [['MuseImage'], museImage],
       [['MAI'], mai],
       [['Ernie'], ernie],
+      [['Ideogram'], ideogram],
       [['Seedream'], seedream],
       [['Anima'], anima],
       [['MageFlow'], mageFlow],

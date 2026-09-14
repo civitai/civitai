@@ -1,4 +1,4 @@
-import { Avatar, Box, Center, Skeleton, Stack, Text } from '@mantine/core';
+import { Avatar, Box, Button, Center, Group, Skeleton, Stack, Text } from '@mantine/core';
 import { useReducedMotion } from '@mantine/hooks';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
@@ -40,6 +40,13 @@ import {
   resolveCollectionIdentity,
   type CollectionLookupBudget,
 } from './collectionFollowGate';
+import {
+  buildCreatePostConsentCopy,
+  createPostSettlement,
+  resolveCreatePostRequest,
+  type CreatePostPreview,
+} from './createPostFromAppGate';
+import { CreatePostConsentBody } from './CreatePostConsentBody';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
@@ -383,10 +390,15 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * width. The claim that matters — no app renders narrower than the page that launched it
  * — still holds at equality; the headroom it used to have does not. It also clears the
  * widest app-imposed well (1100) by ~45%, so the cap can never letterbox an app
- * that has already thought about its own width, while leaving a two-pane shell
- * like Notepad or Sensei a ~1350px content pane — the case the cap exists for.
- * Concretely it holds five columns of a `minmax(300px, 1fr)` grid (1288 holds
- * four, 2560 holds eight).
+ * that has already thought about its own width, while leaving a two-pane shell — a
+ * fixed sidebar beside an unbounded `flex: 1` pane — a ~1350px content pane. That
+ * SHAPE is the case the cap exists for: it is the one that had nothing of its own
+ * bounding it. ⚠️ NO PARTICULAR APP IS NAMED AS THAT CASE, and the census above is
+ * not a list of apps this cap governs — an individual app of that shape may be
+ * excused by the ledger, which is why the membership is not restated in this file
+ * (see the note on that below). This paragraph is about what the VALUE 1600 buys
+ * where it applies, not about where it applies. Concretely it holds five columns of
+ * a `minmax(300px, 1fr)` grid (1288 holds four, 2560 holds eight).
  *
  * 🔴 DO NOT RE-DERIVE THIS CAP FROM "THE WIDEST FIRST-PARTY SURFACE". That phrasing
  * used to appear here and it is a moving target: the apps container has taken three
@@ -417,10 +429,14 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * So an opt-out here is per-APP and would unbound all three modes, not tidy up
  * one. That may well be right — a ticker and a wall want width, and the player's
  * media is `object-fit: contain` so a centred column simply shrinks it — but it
- * is a bigger product call than "the app already governs this", and it is not
- * mine to make. NO LEDGER ENTRY IS WRITTEN TODAY, and the ledger's expected set
- * in `__tests__/pageBlockHostMaxWidth.test.ts` is `[]` so that the first one has
- * to be added deliberately.
+ * is a bigger product call than "the app already governs this", and it was not
+ * made in the commit that shipped the cap.
+ *
+ * ⚠️ AN APP THE CENSUS CALLS UNCAPPED IS NOT AUTOMATICALLY A LEDGER MEMBER, AND THE
+ * MEMBERSHIP IS DELIBERATELY NOT RESTATED HERE — a count or a list in this comment
+ * is a claim that rots on the next entry. The ledger lives in `globals.css` with
+ * each member's reasoning on its own rule, and its membership is ENUMERATED in
+ * `__tests__/pageBlockHostMaxWidth.test.ts`, which fails on growth AND shrink.
  *
  * 🔴 STATE THE COST HONESTLY: this binds on a maximised browser on a 1080p
  * monitor (~1905 CSS px of viewport), not only on ultrawides — that is a common
@@ -719,6 +735,31 @@ export function PageBlockHost({
   const reviewNack = reviewMode && !reviewRunForReal;
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [status, setStatus] = useState<Status>('loading');
+  /**
+   * Which app's missing-permissions notice the viewer dismissed.
+   *
+   * Not persisted across a page load, deliberately: the notice is the only thing
+   * standing between "the app silently cannot do the thing" and the viewer, so a
+   * remembered dismissal would make the hole permanent for exactly the people who
+   * have already met it once.
+   *
+   * 🔴 THE APP ID, NOT A BOOLEAN, AND THE BOOLEAN WAS A REAL BUG. This component
+   * is NOT remounted when the viewer moves between two `/apps/run/<slug>` pages —
+   * `_app.tsx` puts no `key` on `<Component>` and the run page renders this with
+   * none — and the chrome THIS component draws is itself that one-click path
+   * ("Recently run" items are `NextLink`s). So a bare flag meant dismissing app
+   * A's notice silently suppressed app B's for the rest of the SPA session, for
+   * apps the viewer had never seen it for. Found by the ROUND-1 AUDIT, which
+   * reproduced it with a two-armed control; the committed test carries the
+   * with-dismiss arm, and the without-dismiss arm is covered by the mutation
+   * that reverts this to a boolean.
+   *
+   * The three structural facts this rests on were RE-VERIFIED here rather than
+   * taken from the audit on trust: `_app.tsx:175` renders `<Component>` with no
+   * `key`, the run page renders `<PageBlockHost` unkeyed, and
+   * `IframeHost.tsx:642` links each "Recently run" item to `/apps/run/<id>`.
+   */
+  const [consentNoticeDismissedFor, setConsentNoticeDismissedFor] = useState<string | null>(null);
   // Mirror of `status`, read by the Retry handler (for the prior terminal state,
   // WITHOUT putting a side-effect (onRetryToken) inside the setStatus updater —
   // which React may double-invoke under StrictMode → a double re-mint) AND by the
@@ -1583,6 +1624,42 @@ export function PageBlockHost({
   // chrome remounts the host on a render-only ↔ run-for-real flip, so each mode
   // gets its own budget, and the notification ids are mode-specific to match.
   const reviewConsentLatchRef = useRef(INITIAL_REVIEW_CONSENT_LATCH);
+  /**
+   * Open the host's consent UI for a set of withheld scopes.
+   *
+   * 🔴 ONE OPENER, TWO CALLERS, ON PURPOSE. The block-initiated REQUEST_CONSENT
+   * handler below and the host's own missing-permissions notice must build
+   * IDENTICAL props — a second inline `dialogStore.trigger` would be the same
+   * rule in two places, and the two would drift on the first prop that changes.
+   */
+  const openConsentModal = useCallback(
+    (scopes: string[]) => {
+      dialogStore.trigger({
+        // 🔴 A STABLE ID, BECAUSE `trigger` DEDUPES ON `id` AND NOTHING ELSE.
+        // Without one it falls back to `Date.now()` (dialogStore.ts:47), so two
+        // clicks in different milliseconds stack TWO consent modals. That was
+        // latent while the only caller was a message handler; the notice below is
+        // the first HUMAN-clickable trigger, which is what makes it reachable.
+        // Measured BY THE ROUND-1 AUDIT, attributed rather than restated as my
+        // own: two clicks 30ms apart produced 2 dialogs. The committed
+        // idempotence test reproduces the mechanism without the timing.
+        id: `block-consent-${appBlockId}`,
+        component: BlockConsentModal,
+        props: {
+          appBlockId,
+          // PageBlockHost surfaces the app name as `appName` (the model host
+          // uses `install.manifest.name`).
+          blockName: appName,
+          missingScopes: scopes,
+          onGranted: () => {
+            onConsentGranted?.();
+          },
+        },
+      });
+    },
+    [appBlockId, appName, onConsentGranted]
+  );
+
   // Lazy consent (A6): the block (rendered in full for a logged-in viewer whose
   // page token is missing a consent-gated scope, e.g. `ai:write:budgeted` once
   // the page money scope is enabled) asks the host to open the consent UI when
@@ -1665,19 +1742,7 @@ export function PageBlockHost({
 
       const scopesToGrant = resolveRequestConsent(gateStatus, missingScopes ?? []);
       if (scopesToGrant != null) {
-        dialogStore.trigger({
-          component: BlockConsentModal,
-          props: {
-            appBlockId,
-            // PageBlockHost surfaces the app name as `appName` (the model host
-            // uses `install.manifest.name`).
-            blockName: appName,
-            missingScopes: scopesToGrant,
-            onGranted: () => {
-              onConsentGranted?.();
-            },
-          },
-        });
+        openConsentModal(scopesToGrant);
         return;
       }
       // Issue B — nothing is grantable-via-consent. Distinguish the BENIGN case
@@ -1872,6 +1937,10 @@ export function PageBlockHost({
   // same bearer-token-in-URL reason as the other block-token bridges.
   const publishGenerationOutputsMutation = trpc.blocks.publishGenerationOutputs.useMutation();
   const getImagesByIdsMutation = trpc.blocks.getImagesByIds.useMutation();
+  // CREATE_POST_FROM_APP is TWO calls: a read-only preview that resolves the
+  // consent payload server-side, then the write. Both are block-token-authed.
+  const previewPostFromAppMutation = trpc.blocks.previewPostFromApp.useMutation();
+  const createPostFromAppMutation = trpc.blocks.createPostFromApp.useMutation();
 
   // Wildcard-pack import (W13). SESSION-authed (protectedProcedure) — it does NOT
   // take a block token; the viewer's real cookie session authenticates, which is
@@ -3922,6 +3991,148 @@ export function PageBlockHost({
     unfollowCollectionMutation,
   ]);
 
+  // ── CREATE_POST_FROM_APP → CREATE_POST_RESULT ──────────────────────────────
+  //
+  // A block asks the host to publish a REAL Post on the viewer's profile from the
+  // app's OWN outputs. The strictly-more-consequential sibling of
+  // PUBLISH_GENERATION_OUTPUTS: that one makes a bare Image row with no feed
+  // presence; this one makes public, feed-visible, reward-earning content under
+  // the VIEWER'S byline.
+  //
+  // 🔴 TWO SERVER CALLS, AND THE FIRST ONE IS WHAT MAKES THE DIALOG A CONSENT
+  // SCREEN. `previewPostFromApp` resolves — server-side, from ids the server
+  // verified — the exact copy, the tag names that will ACTUALLY be applied, the
+  // host-fetched model/version names, and real image thumbnails. Only then is the
+  // viewer asked. A dialog rendering the BLOCK'S strings and the BLOCK'S
+  // thumbnails would let a sandboxed iframe show one post and publish another,
+  // which is the failure `collectionFollowGate.ts` documents for the follow
+  // bridge — and it binds harder here, because this dialog names copy, tags,
+  // images AND a destination rather than one object.
+  //
+  // 🔴 THE PREVIEW IS NOT AUTHORIZATION. `createPostFromApp` re-runs every guard
+  // from scratch — scope, flags, write-trust, per-source ownership, the
+  // self-dealing guard, rate limits. A preview/commit divergence is a UX bug,
+  // never a hole; the client could skip the preview entirely and get the same
+  // refusals.
+  //
+  // REQUEST-style ⇒ every terminal path (refusal / preview failure / cancel /
+  // success / error) MUST reply exactly once or the block hangs for TEN MINUTES
+  // (the `human` timeout bucket). `createPostSettlement` owns that latch AND the
+  // consent latch that keeps `declined` meaning "NO POST WAS CREATED" — it is the
+  // FIXED shape from the follow gate, deliberately not the bare `settled` boolean
+  // the publish handler above still carries. Only a payload with no usable
+  // requestId is dropped: there is nothing to reply to.
+  useEffect(() => {
+    const off = onMessage<unknown>('CREATE_POST_FROM_APP', (raw) => {
+      const gate = resolveCreatePostRequest({
+        raw,
+        // `readGateStatus()` (not a closed-over `status`) — see its definition.
+        ready: readGateStatus() === 'ready',
+        signedIn: viewer != null,
+        reviewNack,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('CREATE_POST_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, sources, title, detail, tags, modelVersionId } = gate.request;
+      const settlement = createPostSettlement({
+        requestId,
+        emit: (payload) => send('CREATE_POST_RESULT', payload),
+      });
+      if (!token) {
+        settlement.reply({ error: 'no block token' });
+        return;
+      }
+      void (async () => {
+        // Resolve WHAT the viewer is being asked to publish, server-side, from
+        // the same payload we are about to act on. A failed preview refuses WITH
+        // a reply — never a hang, and never a dialog missing the content it
+        // promised to show.
+        let preview: CreatePostPreview;
+        try {
+          preview = (await previewPostFromAppMutation.mutateAsync({
+            blockToken: token,
+            sources: sources as never,
+            ...(title != null ? { title } : {}),
+            ...(detail != null ? { detail } : {}),
+            ...(tags ? { tags } : {}),
+            ...(modelVersionId != null ? { modelVersionId } : {}),
+          })) as CreatePostPreview;
+        } catch (err) {
+          // Scope / flag / trust / ownership / self-dealing refusals all surface
+          // here as a legible message rather than a wedged button. The server's
+          // refusals are deliberately uniform where they would otherwise be an
+          // existence oracle.
+          settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+          return;
+        }
+        if (preview.images.length === 0) {
+          settlement.reply({ error: 'no images to post' });
+          return;
+        }
+        const copy = buildCreatePostConsentCopy({ appName, preview });
+        dialogStore.trigger({
+          // Per-request id so two CREATE_POST_FROM_APP calls can't dedup against
+          // each other in the dialog store's silent `if (!exists)` drop — a
+          // dropped dialog would be a request that never replies, i.e. a hang.
+          id: `block-create-post-${requestId}`,
+          component: ConfirmDialog,
+          props: {
+            title: copy.title,
+            message: <CreatePostConsentBody copy={copy} preview={preview} />,
+            labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+            confirmProps: { color: 'blue' },
+            size: 'lg',
+            onConfirm: async () => {
+              // SYNCHRONOUS, before any await: from here on a dismissal must not
+              // be able to claim `declined` for a post that is being created.
+              settlement.markConsented();
+              try {
+                const result = await createPostFromAppMutation.mutateAsync({
+                  blockToken: token,
+                  sources: sources as never,
+                  ...(title != null ? { title } : {}),
+                  ...(detail != null ? { detail } : {}),
+                  ...(tags ? { tags } : {}),
+                  ...(modelVersionId != null ? { modelVersionId } : {}),
+                  // 🔴 THE COUNT THE VIEWER ACTUALLY SAW, echoed from the
+                  // SERVER'S OWN preview — never from the block. Preview and
+                  // write resolve `sources` independently, so a workflow that
+                  // gains an output between them would publish more images than
+                  // the dialog displayed. The server refuses on a mismatch. This
+                  // value is host chrome, not block input: the block never holds
+                  // the block token and cannot reach the procedure.
+                  confirmedImageCount: preview.images.length,
+                });
+                settlement.reply({ result });
+              } catch (err) {
+                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+              }
+            },
+            // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
+            // the block's promise explicitly rather than leaving it to time out —
+            // unless consent was already given, in which case this is a no-op and
+            // the confirm path settles it.
+            onCancel: settlement.decline,
+          },
+        });
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    token,
+    readGateStatus,
+    viewer,
+    reviewNack,
+    appName,
+    previewPostFromAppMutation,
+    createPostFromAppMutation,
+  ]);
+
   // ONE sanitized label for the whole launch surface — the avatar initial, the
   // loading skeleton's accessible name and the visible "Starting …" copy all derive from
   // this, so they can never disagree about the fallback. Same sanitizer the
@@ -4130,10 +4341,17 @@ export function PageBlockHost({
       data-block-instance-id={blockInstanceId}
       // #3/#6: surface the consent signal as an observable attribute. The page
       // token still mints with the granted subset (so the block loads — consent
-      // is NOT terminal here), but a block requesting an ungranted consent-gated
-      // scope drives its own REQUEST_CONSENT against the missing set. This makes
-      // the host-known signal visible to the block frame / debugging rather than
-      // silently swallowed.
+      // is NOT terminal here), and a block requesting an ungranted consent-gated
+      // scope drives its own REQUEST_CONSENT against the missing set.
+      //
+      // ⚠️ THIS ATTRIBUTE IS OBSERVABILITY, NOT THE BACKSTOP, AND AN EARLIER
+      // VERSION OF THIS COMMENT LEFT THAT AMBIGUOUS. For a long time it was the
+      // ONLY thing `needsConsent` reached: nothing read it, and the modal opened
+      // only when a block PULLED it, so any app that never sent REQUEST_CONSENT
+      // was silently broken with no host-side signal to the viewer at all. The
+      // notice rendered below the chrome is the backstop; this stays for
+      // debugging. ⚠️ NOT read by any test — an earlier draft of this comment
+      // said "and for tests", which was false: nothing asserts on it.
       data-needs-consent={needsConsent ? 'true' : 'false'}
     >
       <AppBlockChrome
@@ -4149,6 +4367,99 @@ export function PageBlockHost({
         slotId={PAGE_SLOT_ID}
         canOpenPage={canOpenPage}
       />
+      {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP. The mint is FAIL-CLOSED on a missing
+          `app_user_scope_grants` row, so a viewer who has never consented gets a
+          token with every consent-gated scope withheld — and until this existed,
+          the ONLY thing that could tell them was the block itself, via
+          REQUEST_CONSENT. An app that did not think to ask left the viewer with a
+          working-looking control that could never succeed.
+
+          Measured 2026-09-08 on `playable-collections`: a real 2-Buzz tip was
+          refused on both legs at the scope gate, the Buzz ledger confirms nothing
+          moved, and the viewer saw only "None of that tip came back confirmed" —
+          no prompt, no explanation, permanently. `social:tip:self` was granted on
+          ONE row in the whole grants table, so that was the ORDINARY path.
+
+          🔴 A NOTICE, NOT AN AUTO-OPENED MODAL, DELIBERATELY. A block can be fully
+          usable unconsented — `collections:read:self` is consent-exempt, so
+          `playable-collections` browses public collections fine with no grant at
+          all — and an unconditional modal would interrupt every viewer of every
+          app that merely REQUESTS a consent-gated scope. The viewer decides.
+
+          🔴 `!reviewMode` IS STRICTER THAN THE BLOCK-INITIATED PATH, NOT A MIRROR
+          OF IT — an earlier version of this comment claimed it matched, and that
+          was wrong. That path's absolute rule is "never a MODAL at the mod", and
+          it deliberately emits a PASSIVE notice instead, because dropping the
+          request silently "meant the reviewer got nothing at all… which reads as
+          'this app is broken'" (see its comment above). This suppresses the notice
+          ENTIRELY, which re-creates that silence.
+          Accepted because it is UNREACHABLE today — `ReviewBlockPreviewHost`
+          hardcodes `missingScopes={[]}` / `needsConsent={false}` and
+          `mintReviewBlockToken` returns neither field — and because the safety
+          property (no scope grant from the sandbox) holds either way. 🔴 If those
+          props are ever threaded from `mintData`, do NOT simply delete this term:
+          render the notice WITHOUT its Review button, or route it through
+          `resolveReviewConsentNotice` as the block path does.
+
+          Gated through `resolveRequestConsent`, the SAME predicate the
+          block-initiated path uses, so the two cannot disagree about when consent
+          is offerable: it requires `ready` (no notice over a still-loading block)
+          and a non-empty missing set.
+
+          Through `toHostGateStatus` for the same reason the message handlers go
+          through it: this component's `Status` carries an extra `'error'` member
+          that `HostStatus` does not, so the converter is the one place that
+          decides how it maps. A cast here would have compiled and silently
+          disagreed with every other gate. (`pnpm typecheck` caught exactly that —
+          the first version of this passed `status` raw.) */}
+      {consentNoticeDismissedFor !== appBlockId &&
+        !reviewMode &&
+        needsConsent &&
+        resolveRequestConsent(toHostGateStatus(status), missingScopes ?? []) != null && (
+          <Box
+            role="status"
+            data-testid="block-consent-notice"
+            px="md"
+            py="xs"
+            style={{
+              borderBottom: '1px solid var(--mantine-color-default-border)',
+              background: 'var(--mantine-color-body)',
+            }}
+          >
+            <Group justify="space-between" wrap="nowrap" gap="sm">
+              <Text size="sm">{appName} is missing permissions it needs to work fully.</Text>
+              <Group gap="xs" wrap="nowrap">
+                <Button
+                  size="compact-sm"
+                  variant="light"
+                  data-testid="block-consent-notice-review"
+                  onClick={() => {
+                    // Recomputed at CLICK time, not captured at render: a
+                    // TOKEN_REFRESH between the two can shrink the missing set,
+                    // and granting a scope the viewer already has is a worse
+                    // prompt than no prompt.
+                    const scopes = resolveRequestConsent(
+                      toHostGateStatus(status),
+                      missingScopes ?? []
+                    );
+                    if (scopes != null) openConsentModal(scopes);
+                  }}
+                >
+                  Review permissions
+                </Button>
+                <Button
+                  size="compact-sm"
+                  variant="subtle"
+                  aria-label="Dismiss the missing-permissions notice"
+                  data-testid="block-consent-notice-dismiss"
+                  onClick={() => setConsentNoticeDismissedFor(appBlockId)}
+                >
+                  Dismiss
+                </Button>
+              </Group>
+            </Group>
+          </Box>
+        )}
       {/* Async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD). Each
           renders nothing; it polls the authoritative scan gate in the background —
           SURVIVING the upload modal's close — and on a verdict fires

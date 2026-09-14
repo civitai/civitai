@@ -9,7 +9,9 @@ import {
   controlNetCategoryLabels,
   controlNetPreprocessors,
   type ControlNetCategory,
+  videoControlNetPreprocessors,
   type ControlNetPreprocessorKey,
+  type VideoControlNetPreprocessorKey,
 } from '~/shared/constants/controlnets.constants';
 import {
   baseModelByName,
@@ -637,6 +639,125 @@ export const controlNetsDef = cachedFactory(function controlNetsDef(opts: {
       step: { min: 0, max: 1, step: 0.05 },
     },
   } satisfies FieldDef<ControlNetEntry[] | undefined, ControlNetsMeta>;
+});
+
+// --- controlVideo ---------------------------------------------------------------
+
+const controlVideoValueSchema = z.object({
+  url: z.string(),
+  metadata: z
+    .object({ fps: z.number(), width: z.number(), height: z.number(), duration: z.number() })
+    .optional(),
+});
+
+const controlVideoInputSchema = z.object({
+  preprocessor: z.string(),
+  mode: z.enum(controlNetModes).optional(),
+  video: z.union([z.string(), controlVideoValueSchema]).optional(),
+  strength: z.coerce.number().min(0).max(1).optional(),
+  startPercent: z.coerce.number().min(0).max(1).optional(),
+  endPercent: z.coerce.number().min(0).max(1).optional(),
+});
+
+const controlVideoOutputSchema = z.object({
+  preprocessor: z.enum(
+    videoControlNetPreprocessors as unknown as [
+      VideoControlNetPreprocessorKey,
+      ...VideoControlNetPreprocessorKey[]
+    ]
+  ),
+  mode: z.enum(controlNetModes),
+  video: controlVideoValueSchema,
+  strength: z.number().min(0).max(1),
+  startPercent: z.number().min(0).max(1),
+  endPercent: z.number().min(0).max(1),
+});
+export type ControlVideoValue = z.infer<typeof controlVideoOutputSchema>;
+
+export interface ControlVideoMeta {
+  options: ControlNetOption[];
+  groups: { category: ControlNetCategory; label: string; options: ControlNetOption[] }[];
+  strength: { min: number; max: number; default: number; step: number };
+  percent: { min: number; max: number; step: number };
+}
+
+/** common.ts `controlVideoNode` */
+export const controlVideoDef = cachedFactory(function controlVideoDef(opts: {
+  preprocessors: readonly VideoControlNetPreprocessorKey[];
+}) {
+  const seen = new Set<VideoControlNetPreprocessorKey>();
+  const validKeys = opts.preprocessors.filter((key) => {
+    if (seen.has(key) || !controlNetPreprocessors[key]) return false;
+    seen.add(key);
+    return true;
+  });
+  const allowedKeys = new Set<string>(validKeys);
+
+  const options: ControlNetOption[] = validKeys.map((key) => {
+    const info = controlNetPreprocessors[key];
+    return {
+      value: key,
+      label: info.label,
+      description: info.description,
+      category: info.category,
+      recommended: info.recommended ?? false,
+      requiresPreprocessedImage: info.requiresPreprocessedImage ?? false,
+    };
+  });
+  const groupMap = new Map<ControlNetCategory, ControlNetOption[]>();
+  for (const opt of options) {
+    const bucket = groupMap.get(opt.category);
+    if (bucket) bucket.push(opt);
+    else groupMap.set(opt.category, [opt]);
+  }
+  const groups = [...groupMap.entries()].map(([category, opts2]) => ({
+    category,
+    label: controlNetCategoryLabels[category],
+    options: opts2,
+  }));
+
+  return {
+    input: controlVideoInputSchema
+      .refine((e) => allowedKeys.has(e.preprocessor), {
+        message: 'Unsupported ControlNet preprocessor for this model',
+        path: ['preprocessor'],
+      })
+      .optional()
+      .transform((entry) => {
+        if (!entry) return undefined;
+        const video = typeof entry.video === 'string' ? { url: entry.video } : entry.video;
+        const requiresPreprocessed =
+          controlNetPreprocessors[entry.preprocessor as ControlNetPreprocessorKey]
+            ?.requiresPreprocessedImage ?? false;
+        return {
+          preprocessor: entry.preprocessor,
+          mode: requiresPreprocessed ? 'preprocessed' : entry.mode ?? 'auto',
+          video: video?.url ? video : undefined,
+          strength: entry.strength ?? 1,
+          startPercent: entry.startPercent ?? 0,
+          endPercent: entry.endPercent ?? 1,
+        };
+      }),
+    output: z
+      .unknown()
+      .optional()
+      .transform((entry) =>
+        typeof entry === 'object' &&
+        entry !== null &&
+        !!(entry as { video?: { url?: string } }).video?.url
+          ? entry
+          : undefined
+      )
+      .pipe(controlVideoOutputSchema.optional()),
+    default: undefined,
+    scope: rootScope(),
+    meta: {
+      options,
+      groups,
+      strength: { min: 0, max: 1, default: 1, step: 0.05 },
+      percent: { min: 0, max: 1, step: 0.05 },
+    },
+  } satisfies FieldDef<ControlVideoValue | undefined, ControlVideoMeta>;
 });
 
 /** v1's Low/Balanced/High guidance presets — shared by chroma, flux, flux2 and pony-v7. */

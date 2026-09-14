@@ -198,9 +198,12 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *
  * ## Gates / hard caps (every one server-side + fail-closed — scope doc §4.1)
  *  - MOD-ONLY (`isAppBlocksEnabled({ user })` + `user.isModerator`) — match the
- *    pre-GA mod posture. The runtime spend procedures already call
- *    `assertViewerIsModerator`, so a non-mod could mint but not spend; we keep
- *    mint mod-gated anyway. RELAX in lockstep with the runtime belt at GA.
+ *    pre-GA mod posture. ⚠️ This bullet used to add "the runtime spend procedures
+ *    already call `assertViewerIsModerator`, so a non-mod could mint but not spend".
+ *    That is FALSE today: the symbol occurs ZERO times in blocks.router / apps.router,
+ *    and the runtime capability gate it described was removed from the money paths by
+ *    the scope-enforcement work. THIS MINT GATE IS NOW THE ONLY CAPABILITY CHECK on
+ *    this path, and it is mint-time only — see the BLAST RADIUS note at the sign step.
  *  - SCOPE CLAMP: granted ⊆ the scope source ⊆ DEV_TOKEN_SCOPE_ALLOWLIST
  *    (EXCLUDES `social:tip:self` + `block:settings:*`) ⊆ [the app's OAuth
  *    ceiling — approved path ONLY] ⊆ requested (if the body narrows), then the
@@ -585,14 +588,13 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       signAppId: block.appId,
       signAppBlockId: block.id,
       // Synthetic, revocable PAGE instance id — same shape as the prod page mint.
-      // NOTE (revocation-wiring caveat): dev page tokens share the
-      // `page_<appBlockId>` instanceId shape with PRODUCTION page mints. The
-      // revocation WRITE path (block-revocation.service.ts revokeInstance /
-      // clearInstance) is currently UNWIRED (no callers). If it is ever wired,
-      // dev instance ids on THIS path must be namespaced distinctly (e.g.
-      // `devpage_`) and/or the revocation marker TTL must cover the 4h dev token
-      // lifetime — otherwise a dev revocation (or a 4h marker) would bleed into
-      // production page tokens for the SAME app (collision on `page_<appBlockId>`).
+      // That shared shape means one revocation would reach BOTH, so a caller
+      // that revokes by page instance id must namespace dev ids first (e.g.
+      // `devpage_`). No such caller exists: both wired call sites in
+      // block-registry.service revoke `blockUserSubscription.blockInstanceId`,
+      // which `newBlockInstanceId` mints as `bki_<ulid>`. The marker's TTL is
+      // not what gates this — it decides how long a revocation lasts, never
+      // which id it is written under.
       blockInstanceId: `${PAGE_INSTANCE_PREFIX}${block.id}`,
       // DEV budget default = the APPROVED manifest's declared per-gen budget so
       // an app whose `page.buzzBudgetPerGen` exceeds the flat 50 default is
@@ -927,11 +929,22 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // the 4h max-age cap off it, leaving every PRODUCTION token at 15min).
   //
   // BLAST RADIUS of the 4h lifetime — the token carries NO mod claim, so the
-  // mint-TIME moderator check (step 2) does NOT bound it. What bounds the
-  // money/settings paths is the LIVE per-request moderator re-check
-  // (`assertViewerIsModerator` in apps.router / blocks.router): a demoted/banned
-  // mod's 4h token is rejected there as soon as the demotion lands. The token is
-  // further self-bound, per-call budget capped, and forced-SFW.
+  // mint-TIME moderator check (step 2) does NOT bound it.
+  //
+  // 🔴 NOTHING RE-CHECKS THE MINTER'S CAPABILITY FOR THOSE 4 HOURS, AND THERE IS NO
+  // REPLACEMENT BOUND. This comment used to name a "LIVE per-request moderator
+  // re-check (`assertViewerIsModerator` in apps.router / blocks.router)"; that symbol
+  // occurs ZERO times in either router today (grep it), and the same runtime gate its
+  // successor provided was removed from every money path by the scope-enforcement
+  // work. So a user whose moderator capability is revoked keeps a working, spend-
+  // capable dev token until it expires — up to 4h.
+  //
+  // What DOES bound it is only what the token itself carries: it is SELF-BOUND (the
+  // `sub` is the minter, so any spend is their OWN Buzz), per-call budget capped at
+  // the lower DEV_BUZZ_BUDGET_CAP, subject to the same cumulative per-user daily cap
+  // as everything else, forced-SFW, and revocable through BlockRevocation on its
+  // `blockInstanceId`. That bounds the HARM (self-inflicted, capped) — it does not
+  // bound the LIFETIME, and no comment here should imply otherwise.
   const result = await signDevScopedPageToken({
     userId: user.id,
     signBlockId: resolved.signBlockId,

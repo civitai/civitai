@@ -6,6 +6,7 @@ import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-chec
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
 import { botAccountDetection } from '~/server/jobs/bot-account-detection';
+import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
@@ -66,6 +67,7 @@ import { handleAuctions } from '~/server/jobs/handle-auctions';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
 import type { Job } from '~/server/jobs/job';
+import { createDisconnectHandler } from '~/server/jobs/job';
 import { jobQueueJobs } from '~/server/jobs/job-queue';
 import { newOrderJobs } from '~/server/jobs/new-order-jobs';
 import { placementJobs } from '~/server/jobs/placement-jobs';
@@ -97,7 +99,6 @@ import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-wi
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 import { minorHashSweep } from '~/server/jobs/minor-hash-sweep';
 import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking';
-import { rewardsAbusePrevention } from '~/server/jobs/rewards-abuse-prevention';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesFallbackJob } from '~/server/jobs/scan-files';
 import { searchIndexCleanupJob } from '~/server/jobs/search-index-cleanup';
@@ -172,7 +173,6 @@ export const jobs: Job[] = [
   ...csamJobs,
   resourceGenerationAvailability,
   cacheCleanup,
-  rewardsAbusePrevention,
   nextauthCleanup,
   syncEmailBlocklist,
   applyTagRules,
@@ -196,6 +196,7 @@ export const jobs: Job[] = [
   updateCreatorResourceCompensation,
   confirmMutes,
   botAccountDetection,
+  reactionWithdrawalDetection,
   confirmPendingBlockAttributions,
   bulkPayoutBlockAttributions,
   reapDevTunnelsJob,
@@ -277,10 +278,12 @@ export default WebhookEndpoint(async (req, res) => {
 
     const jobRunner = run({ req });
 
-    const cancelHandler = async () => {
-      await jobRunner.cancel();
-      await lock.release();
-    };
+    // Cancel the context, and release the lock UNLESS the job opted out of that release. See
+    // `createDisconnectHandler` and `JobOptions.keepLockOnDisconnect`: for a job that legitimately
+    // runs longer than the caller's client timeout, releasing here hands the freed lock straight
+    // to the caller's retry and produces two concurrent runs of the same work. Default is
+    // unchanged — cancel then release.
+    const cancelHandler = createDisconnectHandler(options, jobRunner, lock);
 
     res.on('close', cancelHandler);
     result = await jobRunner.result;

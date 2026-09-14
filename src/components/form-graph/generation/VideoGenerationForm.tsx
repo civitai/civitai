@@ -1,4 +1,4 @@
-import { Checkbox, Input, Stack } from '@mantine/core';
+import { Checkbox, Input, Select, Stack } from '@mantine/core';
 import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller, MultiController } from 'form-graph/react';
 
@@ -7,7 +7,6 @@ import { GenerationTextEditor } from '~/components/Generate/Input/GenerationText
 import { ResourceAlerts } from '~/components/generation_v2/ResourceAlerts';
 import { AspectRatioInput } from '~/components/generation_v2/inputs/AspectRatioInput';
 import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
-import { ResourceSelectInput } from '~/components/generation_v2/inputs/ResourceSelectInput';
 import { ResourceSelectMultipleInput } from '~/components/generation_v2/inputs/ResourceSelectMultipleInput';
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SelectInput } from '~/components/generation_v2/inputs/SelectInput';
@@ -15,6 +14,17 @@ import { InterpolationFactorInput } from '~/components/generation_v2/inputs/Inte
 import { ScaleFactorInput } from '~/components/generation_v2/inputs/ScaleFactorInput';
 import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
 import { VideoInput } from '~/components/generation_v2/inputs/VideoInput';
+import { PreprocessKindParamsInput } from '~/components/generation_v2/inputs/PreprocessKindParamsInput';
+import { PreprocessorExamples } from '~/components/generation_v2/inputs/PreprocessorExamples';
+import {
+  getGroupedPreprocessKindOptions,
+  getPreprocessKindExamples,
+  getPreprocessKindInfo,
+} from '~/shared/constants/controlnets.constants';
+import {
+  ControlVideoInput,
+  type ControlVideoInputProps,
+} from '~/components/generation_v2/inputs/ControlVideoInput';
 import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
@@ -22,6 +32,8 @@ import { videoHub } from '~/shared/form-graph/generation/video/hub.graph';
 import { wanVersionDefs, wanVersionOptions } from '~/shared/form-graph/generation/video/wan.graph';
 
 import { ControllerLabel, VersionGroupSelector, useWildcardHandlers } from './form-helpers';
+import { CheckpointRow } from './inputs/CheckpointRow';
+import { openCheckpointPicker, readResources } from './inputs/openCheckpointPicker';
 import type { GenerationStore } from './store';
 
 /**
@@ -37,37 +49,54 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
     <Stack gap="sm">
       <div className="flex flex-col gap-1">
         <Controller
-          graph={videoHub}
-          name="model"
-          render={({ value, meta, onChange }) => {
-            const defaultModelId = meta?.defaultModelId;
-            return (
-              <>
-                <ResourceSelectInput
-                  value={value}
-                  onChange={onChange}
-                  label={<ControllerLabel label="Model" />}
-                  buttonLabel="Select Model"
-                  modalTitle="Select Model"
-                  options={meta?.options}
-                  allowRemove={false}
-                  allowSwap={!meta?.modelLocked}
-                  onRevertToDefault={
-                    defaultModelId
-                      ? () => onChange({ id: defaultModelId, model: { type: 'Checkpoint' } })
-                      : undefined
-                  }
-                />
-                {meta?.versions ? (
-                  <VersionGroupSelector
-                    versions={meta.versions}
-                    modelId={value?.id}
-                    onChange={onChange}
-                  />
-                ) : null}
-              </>
-            );
-          }}
+          graph={generationHub}
+          name="ecosystem"
+          render={({ value: ecosystem, meta: ecosystemMeta, onChange: onEcosystemChange }) => (
+            <Controller
+              graph={videoHub}
+              name="model"
+              render={({ value, meta, onChange }) => {
+                const defaultModelId = meta?.defaultModelId;
+                return (
+                  <>
+                    <CheckpointRow
+                      value={value}
+                      ecosystem={ecosystem}
+                      options={meta?.options}
+                      locked={meta?.modelLocked}
+                      onOpenPicker={() =>
+                        openCheckpointPicker({
+                          options: meta?.options,
+                          onSelect: onChange,
+                          onEcosystemChange,
+                          resources: readResources(store),
+                          ecosystem: {
+                            value: ecosystem,
+                            compatibleEcosystems: ecosystemMeta?.compatibleEcosystems,
+                            excludeEcosystems: ecosystemMeta?.hiddenEcosystems,
+                            ecosystemStates: ecosystemMeta?.ecosystemStates,
+                            outputType: ecosystemMeta?.mediaType,
+                          },
+                        })
+                      }
+                      onRevertToDefault={
+                        defaultModelId
+                          ? () => onChange({ id: defaultModelId, model: { type: 'Checkpoint' } })
+                          : undefined
+                      }
+                    />
+                    {meta?.versions ? (
+                      <VersionGroupSelector
+                        versions={meta.versions}
+                        modelId={value?.id}
+                        onChange={onChange}
+                      />
+                    ) : null}
+                  </>
+                );
+              }}
+            />
+          )}
         />
         <Controller
           graph={videoHub}
@@ -105,6 +134,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
             modalTitle="Select Resources"
             options={meta?.options}
             limit={meta?.limit}
+            role="resource"
           />
         )}
       />
@@ -152,6 +182,66 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
         graph={videoHub}
         name="video"
         render={({ value, onChange }) => <VideoInput value={value} onChange={onChange} />}
+      />
+      {/* vid2vid:preprocess — the standalone control-preprocessor workflow */}
+      <Controller
+        graph={generationHub}
+        name="preprocessKind"
+        render={({ value, meta, onChange }) => {
+          const available = (meta?.options ?? [])
+            .map((o) => o.value)
+            .filter((v) => getPreprocessKindExamples(v).length > 0);
+          const groups = getGroupedPreprocessKindOptions(available);
+          const ordered = groups.flatMap((g) => g.items.map((i) => i.value));
+          const cycle = (delta: number) => {
+            if (!ordered.length) return;
+            const i = ordered.indexOf(value);
+            onChange(ordered[(i + delta + ordered.length) % ordered.length] as typeof value);
+          };
+          return (
+            <PreprocessorExamples
+              examples={getPreprocessKindExamples(value)}
+              description={getPreprocessKindInfo(value)?.description}
+              note="Preview shown on a still image — the preprocessor runs over every frame of your video."
+              onPrev={() => cycle(-1)}
+              onNext={() => cycle(1)}
+              header={
+                <Select
+                  label="Preprocessor"
+                  description="Choose a control signal, or browse previews with the arrows below."
+                  data={groups}
+                  value={value}
+                  onChange={(v) => v && onChange(v as typeof value)}
+                  allowDeselect={false}
+                  searchable
+                  onFocus={(e) => e.currentTarget.select()}
+                  comboboxProps={{ withinPortal: true }}
+                />
+              }
+            />
+          );
+        }}
+      />
+      <Controller
+        graph={generationHub}
+        name="preprocessResolution"
+        render={({ value, meta, onChange }) => (
+          <SliderInput
+            label="Resolution"
+            value={value}
+            onChange={onChange}
+            min={meta?.min ?? 64}
+            max={meta?.max ?? 2048}
+            step={meta?.step ?? 8}
+          />
+        )}
+      />
+      <Controller
+        graph={generationHub}
+        name="kindParams"
+        render={({ value, meta, onChange }) => (
+          <PreprocessKindParamsInput value={value} onChange={onChange} specs={meta?.specs} />
+        )}
       />
       <Controller
         graph={generationHub}
@@ -599,6 +689,19 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
               onChange={(v) => onChange(v as typeof value)}
               label="Interpolator"
               options={meta?.options}
+            />
+          )}
+        />
+        {/* MiniMax H3 comfy txt2vid declares this field */}
+        <Controller
+          graph={videoHub}
+          name="controlVideo"
+          render={({ value, meta, onChange, error }) => (
+            <ControlVideoInput
+              value={value as ControlVideoInputProps['value']}
+              onChange={onChange as ControlVideoInputProps['onChange']}
+              meta={meta as ControlVideoInputProps['meta']}
+              error={error?.message}
             />
           )}
         />

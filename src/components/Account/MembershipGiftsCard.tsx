@@ -13,6 +13,7 @@ import {
 } from '@mantine/core';
 import { IconGift } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
+import { PointerCard } from '~/components/Account/SettingsLayout';
 import buzzClasses from '~/components/Buzz/buzz.module.scss';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -97,7 +98,8 @@ type FilterType = 'all' | 'received' | 'sent';
 export function MembershipGiftsCard({
   compact,
   showGiftAction = true,
-}: { compact?: boolean; showGiftAction?: boolean } = {}) {
+  pointer,
+}: { compact?: boolean; showGiftAction?: boolean; pointer?: boolean } = {}) {
   const features = useFeatureFlags();
   const [page, setPage] = useState(1);
   const [filter, setFilter] = useState<FilterType>('all');
@@ -137,6 +139,16 @@ export function MembershipGiftsCard({
   }, [data]);
 
   if (!features.giftMemberships || isLoading || rows.length === 0) return null;
+
+  if (pointer)
+    return (
+      <PointerCard
+        icon={<IconGift size={18} />}
+        title="Gift memberships"
+        description="Codes you have bought or been given, and who redeemed them."
+        href="/pricing/gift"
+      />
+    );
 
   const hasBoth = rows.some((r) => r.kind === 'received') && rows.some((r) => r.kind === 'sent');
   const filtered = filter === 'all' ? rows : rows.filter((r) => r.kind === filter);

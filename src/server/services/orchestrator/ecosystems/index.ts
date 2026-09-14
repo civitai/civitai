@@ -25,8 +25,9 @@ import type {
   VideoGenStepTemplate,
   VideoInterpolationStepTemplate,
 } from '@civitai/client';
+import type { PreprocessVideoStepTemplate } from '@civitai/orchestration-client';
 import { maxRandomSeed } from '~/server/common/constants';
-import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
+import { usesComfyEngine } from '~/shared/constants/generation.constants';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { GenerationHandlerCtx } from '../orchestration-new.service';
 
@@ -44,6 +45,7 @@ import { createNanoBananaInput } from './nano-banana.handler';
 import { createAnimaInput } from './anima.handler';
 import { createChromaInput } from './chroma.handler';
 import { createErnieInput } from './ernie.handler';
+import { createIdeogramInput } from './ideogram.handler';
 import { createLensInput } from './lens.handler';
 import { createKrea2Input } from './krea2.handler';
 import { createMAIInput } from './mai.handler';
@@ -97,7 +99,10 @@ export type StepInput =
   | MiniMaxMusic3StepTemplate
   | ChatCompletionStepTemplate
   | PromptEnhancementStepTemplate
-  | PreprocessImageStepTemplate;
+  | PreprocessImageStepTemplate
+  // Sourced from @civitai/orchestration-client: the pinned @civitai/client
+  // predates preprocessVideo and has no equivalent type.
+  | PreprocessVideoStepTemplate;
 
 /** Validated output from the generation graph with ecosystem */
 export type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
@@ -161,6 +166,9 @@ export type PonyV7Ctx = EcosystemGraphOutput & { ecosystem: 'PonyV7' };
 
 /** Ernie context */
 export type ErnieCtx = EcosystemGraphOutput & { ecosystem: 'Ernie' };
+
+/** Ideogram context */
+export type IdeogramCtx = EcosystemGraphOutput & { ecosystem: 'Ideogram' };
 
 /** Lens context */
 export type LensCtx = EcosystemGraphOutput & { ecosystem: 'Lens' };
@@ -260,6 +268,7 @@ export { createHiDreamInput } from './hi-dream.handler';
 export { createHiDreamO1Input } from './hi-dream-o1.handler';
 export { createPonyV7Input } from './pony-v7.handler';
 export { createErnieInput } from './ernie.handler';
+export { createIdeogramInput } from './ideogram.handler';
 export { createLensInput } from './lens.handler';
 export { createKrea2Input } from './krea2.handler';
 export { createMAIInput } from './mai.handler';
@@ -327,13 +336,13 @@ export async function createEcosystemStepInput(
 
   const steps = await createEcosystemStep(normalizedData, handlerCtx);
 
-  // Enhanced compatibility mode: set engine to 'comfyui' for every textToImage step
-  // in EXPERIMENTAL_MODE_SUPPORTED_MODELS ecosystems.
   if (
-    'enhancedCompatibility' in data &&
-    data.enhancedCompatibility &&
-    // Belt-and-suspenders check in case data.ecosystem leaks an unsupported ecosystem through a non-UI path
-    EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(data.ecosystem)
+    usesComfyEngine({
+      ecosystem: data.ecosystem,
+      modelId: 'model' in data ? (data as { model?: { id?: number } }).model?.id : undefined,
+      enhancedCompatibility:
+        'enhancedCompatibility' in data ? (data.enhancedCompatibility as boolean) : undefined,
+    })
   ) {
     for (const step of steps) {
       if (step.$type === 'textToImage') {
@@ -443,6 +452,10 @@ async function createEcosystemStep(
     // Ernie
     case 'Ernie':
       return createErnieInput(normalizedData, handlerCtx);
+
+    // Ideogram 4 (comfy)
+    case 'Ideogram':
+      return createIdeogramInput(normalizedData, handlerCtx);
 
     // Lens (Civitai-internal, comfy)
     case 'Lens':

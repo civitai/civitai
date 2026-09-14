@@ -4,6 +4,9 @@
 
 This plan addresses the migration to support multiple sub-domains where each supports one primary Buzz currency (Yellow or Green) while allowing Blue Buzz everywhere. The implementation enforces currency restrictions at both transaction and UI levels.
 
+> **Shipped — with a different hook signature than the blocks below.** `useAvailableBuzz(baseTypes: BuzzSpendType[] = [])` takes an array, not an `includeBlue` boolean, and blue is **not** included by default: `useQueryBuzz()` with no argument totals the domain's own type alone. The Phase 2 code blocks are the original proposal; read `src/components/Buzz/useAvailableBuzz.ts` and `src/components/Buzz/useBuzz.ts` for the shipped shape.
+
+
 ## Current Architecture Analysis
 
 ### Current Buzz Implementation

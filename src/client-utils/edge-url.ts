@@ -69,6 +69,30 @@ export function shouldForceOptimized(width?: number | null) {
 }
 
 /**
+ * The `optimized` flag the render path emits.
+ *
+ * `hiDpi` forces it because the 2x variant is where the format choice stops being free:
+ * unoptimized, a 1600px variant of a detailed image measures ~1MB against ~305kB optimized.
+ * Nothing a user picked is lost — a resized variant is re-encoded, so the generation
+ * parameters carried in the source PNG's `tEXt` chunk are absent from it in either format.
+ * `original` requests never reach here with `hiDpi`, so the preference still governs the
+ * lightbox and downloads.
+ */
+export function resolveOptimized({
+  optimized,
+  width,
+  hiDpi,
+  imageFormat,
+}: {
+  optimized?: boolean;
+  width?: number | null;
+  hiDpi?: boolean;
+  imageFormat?: string | null;
+}) {
+  return !!(optimized || shouldForceOptimized(width) || hiDpi || imageFormat === 'optimized');
+}
+
+/**
  * Snap a requested width up to the next value in `COMMON_IMAGE_WIDTHS`.
  *
  * Behavior matches `ServeImageMiddleware.cs` in civitai-image-cacher:
@@ -76,7 +100,7 @@ export function shouldForceOptimized(width?: number | null) {
  *  - Otherwise, return the first ladder value strictly greater than `width`.
  *  - If no ladder value is greater (i.e. the request exceeds the ladder top),
  *    return the original width unchanged so callers that explicitly oversized
- *    aren't capped here. The existing 1800 cap in `getEdgeUrl` still applies.
+ *    aren't capped here. `clampEdgeWidth` still applies.
  */
 export function snapWidthToCommonSize(width: number): number {
   for (const size of COMMON_IMAGE_WIDTHS) {
@@ -84,6 +108,67 @@ export function snapWidthToCommonSize(width: number): number {
     if (size > width) return size;
   }
   return width;
+}
+
+/** Ceiling `getEdgeUrl` applies to a requested width, after the ladder snap. */
+export const MAX_EDGE_WIDTH = 1800;
+
+export function clampEdgeWidth(width: number) {
+  return Math.min(width, MAX_EDGE_WIDTH);
+}
+
+/**
+ * Device-pixel-ratio the hi-DPI `srcSet` targets.
+ *
+ * 3x is deliberately not offered: at the widths these surfaces request it clears the ladder
+ * top and lands on `MAX_EDGE_WIDTH`, so a 3x candidate would buy 1800px over 1600px — 12%
+ * more pixels for a whole extra variant to generate, cache and download.
+ */
+export const SRCSET_DPR = 2;
+
+/**
+ * `srcSet` pairing the 1x variant with one sized for a `SRCSET_DPR` display.
+ *
+ * x-descriptors rather than a `devicePixelRatio` read: the ratio is unknown during SSR, so
+ * choosing a width from it would emit different markup on server and client — a hydration
+ * mismatch, and a second download of whichever variant lost. The browser resolves a
+ * descriptor list itself, before React runs.
+ *
+ * Returns undefined when the 2x variant would land on the same rung as the 1x one, so the
+ * attribute is omitted rather than listing one URL twice.
+ */
+export function getEdgeUrlSrcSet(src: string, options: Omit<EdgeUrlProps, 'src'> = {}) {
+  const { width, original } = options;
+  if (!src || src.startsWith('http') || src.startsWith('blob')) return undefined;
+  if (!width || original) return undefined;
+
+  const base = clampEdgeWidth(snapWidthToCommonSize(width));
+  const scaled = clampEdgeWidth(snapWidthToCommonSize(width * SRCSET_DPR));
+  if (scaled <= base) return undefined;
+
+  return [
+    `${srcSetSafe(getEdgeUrl(src, { ...options, width: base }))} 1x`,
+    `${srcSetSafe(getEdgeUrl(src, { ...options, width: scaled }))} ${SRCSET_DPR}x`,
+  ].join(', ');
+}
+
+/**
+ * A delivery URL ends in the image's `name`, which routinely contains spaces
+ * ("..._Unstable Bastard_312879214.png"). `src` tolerates that — the browser encodes it — but
+ * in `srcset` whitespace TERMINATES the URL, so the rest of the filename is read as the
+ * descriptor, found invalid, and the candidate is silently dropped. Every candidate drops and
+ * the browser falls back to `src`, i.e. the 1x variant, with no error anywhere.
+ *
+ * Only ASCII whitespace needs escaping, and each character is encoded as itself: the srcset
+ * parser ends a URL at whitespace alone, so the commas `getEdgeUrl` puts in the params segment
+ * are already safe where they sit, and a non-breaking space is not a terminator — rewriting one
+ * to %20 would request a different object than `src` does.
+ */
+function srcSetSafe(url: string) {
+  return url.replace(
+    /[\t\n\f\r ]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`
+  );
 }
 
 export function getEdgeUrl(
@@ -118,8 +203,7 @@ export function getEdgeUrl(
   // Snap width to the cacher's CommonSizes ladder *before* the 1800 cap so the cap
   // remains the final word for over-ladder values. Height is not snapped — the
   // cacher only snaps width.
-  if (width) width = snapWidthToCommonSize(width);
-  if (width && width > 1800) width = 1800;
+  if (width) width = clampEdgeWidth(snapWidthToCommonSize(width));
   if (height && height > 1000) height = 1000;
 
   const modifiedParams = {

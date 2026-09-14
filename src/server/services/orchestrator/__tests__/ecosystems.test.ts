@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 
 import { createEcosystemStepInput } from '../ecosystems';
+import { createFormGraphStepInput } from '../form-graph';
+import { fluxProAirId, fluxUltraAirId } from '~/shared/constants/generation.constants';
 import type { GenerationHandlerCtx } from '../orchestration-new.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -69,11 +71,11 @@ describe('createEcosystemStepInput - Enhanced Compatibility', () => {
     expect((textToImageStep as any).input.engine).toBe('comfyui');
   });
 
-  it('should override engine to "comfyui" for Flux1 when enhancedCompatibility is true', async () => {
+  it('should override engine to "comfyui" for SD1 when enhancedCompatibility is true', async () => {
     const data = {
-      ecosystem: 'Flux1',
+      ecosystem: 'SD1',
       workflow: 'txt2img',
-      model: { id: 789 },
+      model: { id: 123 },
       prompt: 'a cat',
       aspectRatio: { width: 1024, height: 1024 },
       enhancedCompatibility: true,
@@ -101,5 +103,127 @@ describe('createEcosystemStepInput - Enhanced Compatibility', () => {
     const textToImageStep = steps.find((step) => step.$type === 'textToImage');
     expect(textToImageStep).toBeDefined();
     expect((textToImageStep as any).input.engine).toBeUndefined();
+  });
+});
+
+/**
+ * Asserts comfy's field names (`sampler`/`scheduler`), not just the engine: an sdcpp-shaped
+ * payload (`sampleMethod`/`schedule`) under engine 'comfy' silently drops the sampler, and the
+ * handlers' casts hide it from typecheck.
+ */
+describe.each([
+  ['data-graph', createEcosystemStepInput],
+  ['form-graph', createFormGraphStepInput],
+] as const)('%s dispatcher — imageGen ecosystems run on comfy', (_lane, dispatch) => {
+  const mockCtx = {
+    airs: { getOrThrow: (id: number) => `urn:air:test:checkpoint:${id}` },
+    user: { id: 1, isModerator: false },
+    baseStepIndex: 0,
+  } as unknown as GenerationHandlerCtx;
+
+  const base = {
+    workflow: 'txt2img',
+    prompt: 'a cat',
+    aspectRatio: { width: 1024, height: 1024 },
+    model: { id: 123 },
+  };
+
+  function imageGenInput(steps: Awaited<ReturnType<typeof dispatch>>) {
+    const step = steps.find((s) => s.$type === 'imageGen');
+    expect(step).toBeDefined();
+    return (step as { input: Record<string, unknown> }).input;
+  }
+
+  // zImageMode 'base': the form-graph lane only forwards sampler/scheduler in base mode.
+  it.each(['ZImageTurbo', 'ZImageBase'])(
+    '%s submits comfy with comfy field names',
+    async (ecosystem) => {
+      const input = imageGenInput(
+        await dispatch(
+          { ...base, ecosystem, zImageMode: 'base', sampler: 'heun', scheduler: 'simple' } as never,
+          mockCtx
+        )
+      );
+      expect(input.engine).toBe('comfy');
+      expect(input).toMatchObject({ sampler: 'heun', scheduler: 'simple' });
+      expect(input).not.toHaveProperty('sampleMethod');
+      expect(input).not.toHaveProperty('schedule');
+    }
+  );
+
+  it('Qwen submits comfy', async () => {
+    const input = imageGenInput(await dispatch({ ...base, ecosystem: 'Qwen' } as never, mockCtx));
+    expect(input.engine).toBe('comfy');
+  });
+});
+
+/**
+ * Pins both lanes to `usesComfyEngine` directly — the differential suite only compares the lanes
+ * to each other.
+ */
+describe.each([
+  ['data-graph', createEcosystemStepInput],
+  ['form-graph', createFormGraphStepInput],
+] as const)('%s dispatcher — engine defaults after the sdcpp/comfy split', (_lane, dispatch) => {
+  const mockCtx = {
+    airs: {
+      getOrThrow: (id: number) => `urn:air:test:checkpoint:${id}`,
+    },
+    user: { id: 1, isModerator: false },
+    baseStepIndex: 0,
+  } as unknown as GenerationHandlerCtx;
+
+  const base = {
+    workflow: 'txt2img',
+    prompt: 'a cat',
+    aspectRatio: { width: 1024, height: 1024 },
+  };
+
+  function engineOf(steps: Awaited<ReturnType<typeof dispatch>>) {
+    const step = steps.find((s) => s.$type === 'textToImage');
+    expect(step).toBeDefined();
+    return (step as { input: { engine?: string } }).input.engine;
+  }
+
+  // Comfy-only ecosystems: no toggle, and falling through to sdcpp would silently re-route them.
+  it.each(['Pony', 'Illustrious', 'NoobAI', 'Flux1', 'FluxKrea'])(
+    '%s runs comfyui with no enhancedCompatibility flag at all',
+    async (ecosystem) => {
+      const steps = await dispatch({ ...base, ecosystem, model: { id: 123 } } as never, mockCtx);
+      expect(engineOf(steps)).toBe('comfyui');
+    }
+  );
+
+  it('Flux1 runs comfyui even when enhancedCompatibility is explicitly false', async () => {
+    const steps = await dispatch(
+      { ...base, ecosystem: 'Flux1', model: { id: 123 }, enhancedCompatibility: false } as never,
+      mockCtx
+    );
+    expect(engineOf(steps)).toBe('comfyui');
+  });
+
+  // Pro/Ultra sit inside comfy-only Flux1 but keep their own engine. Assert the exact value:
+  // `not.toBe('comfyui')` also passes when the engine is unset for an unrelated reason.
+  it.each([fluxUltraAirId, fluxProAirId])(
+    'model %i keeps its own engine inside Flux1',
+    async (id) => {
+      const steps = await dispatch(
+        { ...base, ecosystem: 'Flux1', model: { id } } as never,
+        mockCtx
+      );
+      expect(engineOf(steps)).toBeUndefined();
+    }
+  );
+
+  it.each([
+    [undefined, undefined],
+    [false, undefined],
+    [true, 'comfyui'],
+  ])('SDXL with enhancedCompatibility=%s runs %s', async (flag, expected) => {
+    const steps = await dispatch(
+      { ...base, ecosystem: 'SDXL', model: { id: 123 }, enhancedCompatibility: flag } as never,
+      mockCtx
+    );
+    expect(engineOf(steps)).toBe(expected);
   });
 });

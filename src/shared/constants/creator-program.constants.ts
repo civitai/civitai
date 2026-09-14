@@ -4,6 +4,14 @@ import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
 
 export const EXTRACTION_PHASE_DURATION = 3; // days
 
+/**
+ * The ledger description on an extraction fee.
+ *
+ * A constant because the Buzz dashboard renders a `Fee` description only when it
+ * recognises the string, so a reword here has to travel to that allowlist.
+ */
+export const EXTRACTION_FEE_DESCRIPTION = 'Extraction fee';
+
 type ExtractionFee = {
   min: number;
   max?: number;

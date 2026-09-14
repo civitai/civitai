@@ -74,6 +74,22 @@ const CASES: Array<{ workflow: string; shapes: AnyRecord[] }> = [
     ],
   },
   {
+    workflow: 'vid2vid:preprocess',
+    shapes: [
+      {},
+      { video: VID(640, 480, 24) },
+      { video: VID(640, 480, 24), preprocessKind: 'dwpose' },
+      {
+        video: VID(1280, 720, 30),
+        preprocessKind: 'canny',
+        preprocessResolution: 1024,
+        kindParams: { lowThreshold: 50, highThreshold: 150 },
+      },
+      { video: VID(640, 480, 24), preprocessKind: 'openpose' },
+      { video: VID(640, 480, 24), preprocessKind: 'not-a-kind' },
+    ],
+  },
+  {
     workflow: 'vid2vid:upscale',
     shapes: [
       {},

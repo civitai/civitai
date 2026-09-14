@@ -2,6 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { usersByIds } from './users.service';
 import { getImagesForPost, type BulkBatch } from './bulk-image.service';
+import { getReactions, type ImageReactionRow, type ReactionPage } from './image-reactions.service';
 import type { MediaType } from '../media/edge-url';
 
 // The PAGE LOAD half of Image Lookup (Retool's "Image Lookup" app). Everything here is Postgres and
@@ -60,17 +61,6 @@ export type ImageTag = {
 /** Tags the scanner assigned but did not apply — why an image was flagged without being visibly tagged. */
 export type ShadowTag = { id: number; name: string; confidence: number | null };
 
-export type ImageReactionRow = {
-  key: string;
-  userId: number;
-  username: string | null;
-  bannedAt: Date | null;
-  reaction: string;
-  createdAt: Date;
-  /** Differs from `createdAt` when the reaction was changed rather than first given. */
-  updatedAt: Date | null;
-};
-
 export type ImageReportRow = {
   id: number;
   reason: string;
@@ -95,11 +85,13 @@ export type ImageModActivity = {
   moderatorUsername: string | null;
 };
 
+export type { ImageReactionRow };
+
 export type ImageLookupResult = {
   image: ImageDetail;
   tags: ImageTag[];
   shadowTags: ShadowTag[];
-  reactions: { rows: ImageReactionRow[]; truncated: boolean };
+  reactions: ReactionPage;
   reports: ImageReportRow[];
   modActivity: { rows: ImageModActivity[]; truncated: boolean };
 };
@@ -370,46 +362,6 @@ async function getShadowTags(imageId: number): Promise<ShadowTag[]> {
     .where('stoi.imageId', '=', imageId)
     .orderBy('stoi.confidence', 'desc')
     .execute();
-}
-
-// Retool listed every reaction row. Capped here: a popular image carries thousands, and the question a
-// moderator asks of this list ("who reacted, and are they connected?") is answered by the IP clustering
-// in the signals panel rather than by an exhaustive list.
-async function getReactions(
-  imageId: number,
-  limit = 100
-): Promise<{ rows: ImageReactionRow[]; truncated: boolean }> {
-  const rows = await dbRead
-    .selectFrom('ImageReaction as ir')
-    .leftJoin('User as u', 'u.id', 'ir.userId')
-    .select([
-      'ir.id',
-      'ir.userId',
-      'ir.reaction',
-      'ir.createdAt',
-      'ir.updatedAt',
-      'u.username',
-      'u.bannedAt',
-    ])
-    .where('ir.imageId', '=', imageId)
-    .orderBy('ir.createdAt', 'desc')
-    .limit(limit + 1)
-    .execute();
-
-  const truncated = rows.length > limit;
-  const page = rows.slice(0, limit).map((r) => ({
-    // `ImageReaction` is unique on (imageId, userId, reaction), so one user appears once per reaction
-    // type — the row id is the only single-column key that holds.
-    key: String(r.id),
-    userId: r.userId,
-    username: r.username,
-    bannedAt: r.bannedAt,
-    reaction: String(r.reaction),
-    createdAt: r.createdAt,
-    updatedAt: r.updatedAt,
-  }));
-
-  return { rows: page, truncated };
 }
 
 async function getReports(imageId: number): Promise<ImageReportRow[]> {

@@ -17,6 +17,7 @@ import { Krea2StyleReferencesInput } from '~/components/generation_v2/inputs/Kre
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SelectInput } from '~/components/generation_v2/inputs/SelectInput';
 import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
+import { PreprocessKindParamsInput } from '~/components/generation_v2/inputs/PreprocessKindParamsInput';
 import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
 import { PreprocessorExamples } from '~/components/generation_v2/inputs/PreprocessorExamples';
 import { UpscaleDimensionsInput } from '~/components/generation_v2/inputs/UpscaleDimensionsInput';
@@ -29,6 +30,8 @@ import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { imageHub } from '~/shared/form-graph/generation/image/hub.graph';
 
 import { ControllerLabel, VersionGroupSelector, useWildcardHandlers } from './form-helpers';
+import { CheckpointRow } from './inputs/CheckpointRow';
+import { openCheckpointPicker, readResources } from './inputs/openCheckpointPicker';
 import type { GenerationStore } from './store';
 
 /**
@@ -46,42 +49,57 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
     <Stack gap="sm">
       <div className="flex flex-col gap-1">
         <Controller
-          graph={imageHub}
-          name="model"
-          render={({ value, meta, onChange }) => {
-            const defaultModelId = meta?.defaultModelId;
-            return (
-              <>
-                <ResourceSelectInput
-                  value={value}
-                  onChange={onChange}
-                  label={
-                    <ControllerLabel
-                      label="Model"
-                      info="Models are the resources you're generating with. Using a different base model can drastically alter the style and composition of images, while adding additional resources can change the characters, concepts and objects."
+          graph={generationHub}
+          name="ecosystem"
+          render={({ value: ecosystem, meta: ecosystemMeta, onChange: onEcosystemChange }) => (
+            <Controller
+              graph={imageHub}
+              name="model"
+              render={({ value, meta, onChange }) => {
+                const defaultModelId = meta?.defaultModelId;
+                return (
+                  <>
+                    <CheckpointRow
+                      value={value}
+                      ecosystem={ecosystem}
+                      options={meta?.options}
+                      locked={meta?.modelLocked}
+                      onOpenPicker={() =>
+                        openCheckpointPicker({
+                          options: meta?.options,
+                          onSelect: onChange,
+                          onEcosystemChange,
+                          // Read at click time rather than subscribing: the
+                          // footer is the only consumer, and a subscription
+                          // would re-render this row on every strength drag.
+                          resources: readResources(store),
+                          ecosystem: {
+                            value: ecosystem,
+                            compatibleEcosystems: ecosystemMeta?.compatibleEcosystems,
+                            excludeEcosystems: ecosystemMeta?.hiddenEcosystems,
+                            ecosystemStates: ecosystemMeta?.ecosystemStates,
+                            outputType: ecosystemMeta?.mediaType,
+                          },
+                        })
+                      }
+                      onRevertToDefault={
+                        defaultModelId
+                          ? () => onChange({ id: defaultModelId, model: { type: 'Checkpoint' } })
+                          : undefined
+                      }
                     />
-                  }
-                  buttonLabel="Select Model"
-                  modalTitle="Select Model"
-                  options={meta?.options}
-                  allowRemove={false}
-                  allowSwap={!meta?.modelLocked}
-                  onRevertToDefault={
-                    defaultModelId
-                      ? () => onChange({ id: defaultModelId, model: { type: 'Checkpoint' } })
-                      : undefined
-                  }
-                />
-                {meta?.versions ? (
-                  <VersionGroupSelector
-                    versions={meta.versions}
-                    modelId={value?.id}
-                    onChange={onChange}
-                  />
-                ) : null}
-              </>
-            );
-          }}
+                    {meta?.versions ? (
+                      <VersionGroupSelector
+                        versions={meta.versions}
+                        modelId={value?.id}
+                        onChange={onChange}
+                      />
+                    ) : null}
+                  </>
+                );
+              }}
+            />
+          )}
         />
       </div>
       <Controller
@@ -96,6 +114,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
             modalTitle="Select Resources"
             options={meta?.options}
             limit={meta?.limit}
+            role="resource"
           />
         )}
       />
@@ -206,55 +225,9 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
       <Controller
         graph={generationHub}
         name="kindParams"
-        render={({ value, meta, onChange }) => {
-          const specs = meta?.specs;
-          if (!specs?.length) return null;
-          const params = value ?? {};
-          const setParam = (key: string, v: unknown) => onChange({ ...params, [key]: v });
-          return (
-            <div className="flex flex-col gap-2">
-              {specs.map((spec) => {
-                if (spec.type === 'slider') {
-                  const current = (params[spec.key] as number | undefined) ?? spec.defaultValue;
-                  return (
-                    <SliderInput
-                      key={spec.key}
-                      label={spec.label}
-                      value={current}
-                      onChange={(v) => setParam(spec.key, v)}
-                      min={spec.min}
-                      max={spec.max}
-                      step={spec.step ?? 1}
-                    />
-                  );
-                }
-                if (spec.type === 'boolean') {
-                  const current = (params[spec.key] as boolean | undefined) ?? spec.defaultValue;
-                  return (
-                    <Switch
-                      key={spec.key}
-                      label={spec.label}
-                      checked={current}
-                      onChange={(e) => setParam(spec.key, e.currentTarget.checked)}
-                    />
-                  );
-                }
-                const current = (params[spec.key] as string | undefined) ?? spec.defaultValue;
-                return (
-                  <Select
-                    key={spec.key}
-                    label={spec.label}
-                    data={spec.options.map((o) => ({ label: o, value: o }))}
-                    value={current}
-                    onChange={(v) => v && setParam(spec.key, v)}
-                    allowDeselect={false}
-                    comboboxProps={{ withinPortal: true }}
-                  />
-                );
-              })}
-            </div>
-          );
-        }}
+        render={({ value, meta, onChange }) => (
+          <PreprocessKindParamsInput value={value} onChange={onChange} specs={meta?.specs} />
+        )}
       />
       <Controller
         graph={imageHub}
@@ -319,6 +292,23 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
       />
       <Controller
         graph={imageHub}
+        name="resolution"
+        render={({ value, meta, onChange }) => (
+          <div className="flex flex-col gap-1">
+            <Input.Label>Resolution</Input.Label>
+            <SegmentedControlWrapper
+              value={value}
+              onChange={(v) => onChange(v as typeof value)}
+              data={(meta as { options: { label: string; value: string }[] }).options.map((o) => ({
+                label: o.label,
+                value: o.value,
+              }))}
+            />
+          </div>
+        )}
+      />
+      <Controller
+        graph={imageHub}
         name="aspectRatio"
         render={({ value, meta, onChange }) => {
           const priorityOptions =
@@ -336,23 +326,6 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
             />
           );
         }}
-      />
-      <Controller
-        graph={imageHub}
-        name="resolution"
-        render={({ value, meta, onChange }) => (
-          <div className="flex flex-col gap-1">
-            <Input.Label>Resolution</Input.Label>
-            <SegmentedControlWrapper
-              value={value}
-              onChange={(v) => onChange(v as typeof value)}
-              data={(meta as { options: { label: string; value: string }[] }).options.map((o) => ({
-                label: o.label,
-                value: o.value,
-              }))}
-            />
-          </div>
-        )}
       />
       <Controller
         graph={imageHub}

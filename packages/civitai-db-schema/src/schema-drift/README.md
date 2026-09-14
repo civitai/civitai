@@ -264,7 +264,7 @@ They now run in the `Package unit tests` job, from the `packages/*/vitest.config
 the root `vitest.config.mts`:
 
 ```bash
-pnpm run test:packages:run          # all nine package suites
+pnpm run test:packages:run          # every package suite
 pnpm --filter @civitai/db-schema test   # just this one
 ```
 
@@ -278,11 +278,9 @@ Two things it is worth being precise about, because both are easy to overstate:
 - **It is not an interlock.** `main` has branch protection but no `required_status_checks`, so
   a red `Package unit tests` does not prevent a merge. It renders red rather than
   red-but-ignored, which is the real difference from the `Unit tests` job.
-- **The workspace gap is not closed, only the `packages/*` part of it.** `apps/*` has four
-  more vitest configs and ~43 test files that still no CI job runs. Same one-line fix — another
-  glob in the same `projects` array — plus teaching the ledger script about `apps/`, which
-  currently hardcodes `packages/`. Deliberately left to a follow-up rather than widened into
-  the change that closed the first part.
+- **`apps/*` runs in a sibling job**, `App unit tests + typecheck`, closed the same way: another
+  glob in the same `projects` array, and the ledger script takes the workspace (`packages` or
+  `apps`) as an argument rather than hardcoding one.
 
 ## Gating a pull request
 

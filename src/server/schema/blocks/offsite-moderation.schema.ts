@@ -77,8 +77,9 @@ export type ListListingReportsInput = z.infer<typeof listListingReportsSchema>;
  * `20260706120100_w13_p3b_app_listing_moderation_events`; the last three
  * (`reset-to-pending`/`owner-unpublish`/`owner-republish`) are added by the W13
  * post-approval-mgmt widen `20260713120000_w13_post_approval_mod_actions` (a strict
- * superset — additive DROP+ADD CHECK), and `message-owner` by
- * `20260824120000_app_listing_mod_action_message_owner`. A drift here would let a proc
+ * superset — additive DROP+ADD CHECK), `message-owner` by
+ * `20260824120000_app_listing_mod_action_message_owner`, and `purge-user-storage` by
+ * `20260912120000_app_listing_mod_action_purge_user_storage`. A drift here would let a proc
  * write an `action` the DB rejects (23514). The action-agreement unit test pins this
  * tuple against the LATEST action-CHECK migration's IN-list.
  *
@@ -103,6 +104,29 @@ export const APP_LISTING_MODERATION_ACTIONS = [
   // table of its own because it is a moderator action against a listing, attributable
   // to an actor and reviewable in the same history — which is all a message needs.
   'message-owner',
+  // App Blocks per-user STORAGE takedown. Like `message-owner` it changes no
+  // listing state — the row exists to make a destructive act against a USER's
+  // stored data attributable and reviewable.
+  //
+  // `reason` carries the moderator's rationale and `before.targetUserId` the
+  // target. The rest of the shape is PATH-DEPENDENT, and this docstring twice
+  // described only one path:
+  //
+  //   `before` — a MODERATOR purge (`initiator: 'moderator'`) carries a per-row
+  //     snapshot: key, block instance, size, `updatedAt`, and an md5 fingerprint
+  //     of the value, never the value itself. An ACCOUNT-WIPE purge
+  //     (`initiator: 'system:account-wipe'`) carries NO per-row detail at all —
+  //     just counts and bytes, plus `rowDetailWithheld: 'erasure'`. Writing the
+  //     key names and fingerprints of an erased account into a permanent row
+  //     would be a durable derived artefact of the content being erased.
+  //   `after` — NOT simply "what was removed". `outcome` is `'purged'`,
+  //     `'failed'` or `'unknown'`; on `'unknown'` the count is deliberately
+  //     ABSENT and `observedDeleteRowCount` bounds what MAY be gone.
+  //
+  // `user-storage-purge.service.ts` is the authority on both; its header block
+  // enumerates every `after` state. Do not re-describe them here — this comment
+  // has been falsified by a later commit of the same change twice already.
+  'purge-user-storage',
 ] as const;
 export type AppListingModerationAction = (typeof APP_LISTING_MODERATION_ACTIONS)[number];
 

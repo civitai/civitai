@@ -38,10 +38,26 @@ export function isAir(identifier: string) {
   return Air.isAir(identifier);
 }
 
-export function getAirModelLink(identifier: string) {
+/**
+ * Link to a civitai model page for an AIR, or `null` when the AIR points
+ * elsewhere. Only civitai AIRs carry numeric model/version ids; a HuggingFace
+ * AIR (e.g. the video base models' training URNs) parses fine but its id
+ * segments are strings, so `model`/`version` come out `NaN`.
+ */
+export function getCivitaiAirModelLink(identifier: string) {
   const parsed = parseAIRSafe(identifier);
-  if (!parsed) return '/';
+  if (
+    !parsed ||
+    parsed.source !== 'civitai' ||
+    !Number.isFinite(parsed.model) ||
+    !Number.isFinite(parsed.version)
+  )
+    return null;
   return `/models/${parsed.model}?modelVersionId=${parsed.version}`;
+}
+
+export function getAirModelLink(identifier: string) {
+  return getCivitaiAirModelLink(identifier) ?? '/';
 }
 
 const typeUrnMap: Partial<Record<ModelType, string>> = {

@@ -85,3 +85,34 @@ describe('minimax default variant', () => {
     expect(snapshot.minimaxVariant).toBe('api');
   });
 });
+
+// The orchestrator's controlVideo operation replaces imageToVideo rather than
+// composing with it — its input carries no frame slots — so exposing the node
+// anywhere but comfy txt2vid would silently drop the user's frames or reference
+// images at submit time. A node gated off is absent from the context snapshot.
+describe('minimax control video availability', () => {
+  const available = (graph: any) => 'controlVideo' in graph.getSnapshot();
+
+  it('is available on comfy txt2vid', () => {
+    expect(available(init('txt2vid', minimaxVersionIds.comfy))).toBe(true);
+  });
+
+  it.each(['img2vid', 'img2vid:first-last', 'img2vid:ref2vid'])(
+    'is unavailable on comfy %s',
+    (workflow) => {
+      expect(available(init(workflow, minimaxVersionIds.comfy, frame))).toBe(false);
+    }
+  );
+
+  it('is unavailable on the hosted API variant', () => {
+    expect(available(init('txt2vid', minimaxVersionIds['v1.0']))).toBe(false);
+  });
+
+  it('offers exactly the five preprocessors the H3 ControlNet Union supports', () => {
+    const graph = init('txt2vid', minimaxVersionIds.comfy);
+    const options = graph.getSnapshot('controlVideo').meta.options as { value: string }[];
+    expect(options.map((o) => o.value).sort()).toEqual(
+      ['canny', 'depthAnythingV2', 'dwpose', 'hed', 'mlsd'].sort()
+    );
+  });
+});

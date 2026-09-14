@@ -8,9 +8,11 @@ import {
   DOMAIN_ZERO_AT,
   IP_ONE_AT,
   IP_ZERO_AT,
+  domainClusterIsNamedInReason,
   domainClusterSize,
   isCommonEmailDomain,
   largestIpCluster,
+  registrationClusterGroupKey,
   registrationClusterHeuristic,
 } from '../heuristics/clustering';
 import { rampScore } from '../heuristics/ramp';
@@ -18,8 +20,11 @@ import {
   CLUSTER_ONE_AT,
   CLUSTER_ZERO_AT,
   contentTemplatingHeuristic,
+  contentTemplatingSourceScore,
   largestContentCluster,
 } from '../heuristics/similarity';
+import { filenameFingerprint } from '../evidence';
+import { FILENAME_FINGERPRINT_PREFIX, TEXT_FINGERPRINT_PREFIX } from '../fingerprint-keys';
 import {
   MIN_AGE_HOURS,
   MIN_ITEMS,
@@ -494,6 +499,112 @@ describe('content-templating', () => {
     expect(note).toContain('check out my page at linkmask');
   });
 
+  // -------------------------------------------------------------------------------------------
+  // The filename half
+  // -------------------------------------------------------------------------------------------
+
+  /** A signals index holding one filename cluster of `size`, owned by member 42. */
+  const filenameSignals = (name: string, size: number) => {
+    const key = filenameFingerprint(name) as string;
+    return signalsWith({ fingerprints: { 42: [key] }, membersPerFingerprint: { [key]: size } });
+  };
+
+  it('🔴 THE BOUNDARY, BOTH SIDES: two accounts sharing a filename score 0, three score', () => {
+    // 🔴 THREE DISTINCT MEMBERS IS THE SMALLEST SCORING GROUP, and — together with the fact that
+    // every member is an account under 24h old — it IS the innocent-collision defence. There is
+    // deliberately no stoplist of generic filenames: the measured rings share exactly the
+    // unremarkable names a stoplist would remove.
+    //
+    // LITERAL sizes and a LITERAL expected score, not expressions over the constants: a boundary
+    // case written in terms of `CLUSTER_ZERO_AT` is vacuous about its value.
+    expect(score(member(), filenameSignals('logo.jpg', 2))).toBe(0);
+    expect(score(member(), filenameSignals('logo.jpg', 3))).toBeCloseTo(0.125, 12);
+  });
+
+  it('a lone account is not a cluster', () => {
+    expect(score(member(), filenameSignals('logo.jpg', 1))).toBe(0);
+  });
+
+  it('saturates on a large filename ring', () => {
+    expect(score(member(), filenameSignals('logo.jpg', 26))).toBe(1);
+  });
+
+  it('🔴 REGRESSION: the PROSE floors do not reach filenames — both of these cluster', () => {
+    // 🔴 THE FILENAMES A CONFIRMED RING ACTUALLY SHARED. `contentFingerprint` rejects both outright
+    // (`1900.jpg.jpeg` → "nummask jpg jpeg", 16 chars / 3 tokens; `logo.jpg` → "logo jpg", 8 / 2,
+    // against floors of 24 and 4 — measured by executing the shipped normaliser). Had this source
+    // reused the prose fingerprint, the entire signal would have been discarded before scoring.
+    expect(score(member(), filenameSignals('1900.jpg.jpeg', 3))).toBeGreaterThan(0);
+    expect(score(member(), filenameSignals('logo.jpg', 3))).toBeGreaterThan(0);
+  });
+
+  it('🔴 explain() quotes the PLAIN filename, never the namespaced key', () => {
+    // The prefix is an implementation detail of the shared index. A moderator shown “file:logo.jpg”
+    // would reasonably conclude the account uploaded a file by that literal name.
+    const note = contentTemplatingHeuristic.explain(
+      evidence(member(), filenameSignals('logo.jpg', 8)),
+      0.75
+    );
+    expect(note).toContain('8 new accounts uploaded a file with the same name');
+    expect(note).toContain('logo.jpg');
+    expect(note).not.toContain(FILENAME_FINGERPRINT_PREFIX);
+    // And it is named as a FILENAME, not reported as posted text — the two call for different
+    // moderator actions and the wording is the only thing that distinguishes them.
+    expect(note).not.toContain('posted the same text');
+  });
+
+  it('🔴 explain() still says "text" for a TEXT cluster — the two are not merged', () => {
+    const s = signalsWith({
+      fingerprints: { 42: [`${TEXT_FINGERPRINT_PREFIX}free buzz at linkmask for nummask`] },
+      membersPerFingerprint: { [`${TEXT_FINGERPRINT_PREFIX}free buzz at linkmask for nummask`]: 5 },
+    });
+    const note = contentTemplatingHeuristic.explain(evidence(member(), s), 0.5);
+    expect(note).toContain('5 new accounts posted the same text');
+    expect(note).toContain('free buzz at linkmask');
+    expect(note).not.toContain(TEXT_FINGERPRINT_PREFIX);
+    expect(note).not.toContain('uploaded a file');
+  });
+
+  it('scores on the LARGEST cluster across both sources, whichever surface it is on', () => {
+    const textK = `${TEXT_FINGERPRINT_PREFIX}free buzz at linkmask for nummask`;
+    const fileK = filenameFingerprint('logo.jpg') as string;
+    const s = signalsWith({
+      fingerprints: { 42: [textK, fileK] },
+      membersPerFingerprint: { [textK]: 3, [fileK]: 9 },
+    });
+    expect(largestContentCluster(42, s)).toEqual({ size: 9, fingerprint: fileK });
+  });
+
+  it('🔴 contentTemplatingSourceScore isolates ONE source, so the two can be graded apart', () => {
+    // 🔴 WITHOUT THIS THE COUNTERS CANNOT SEE WHICH HALF FIRED — and an invisible zero-firing half
+    // is precisely how the comment-only version survived five production runs.
+    const textK = `${TEXT_FINGERPRINT_PREFIX}free buzz at linkmask for nummask`;
+    const fileK = filenameFingerprint('logo.jpg') as string;
+    const s = signalsWith({
+      fingerprints: { 42: [textK, fileK] },
+      // The text cluster is below the floor; the filename cluster is not.
+      membersPerFingerprint: { [textK]: 2, [fileK]: 9 },
+    });
+    expect(contentTemplatingSourceScore(42, s, TEXT_FINGERPRINT_PREFIX)).toBe(0);
+    expect(contentTemplatingSourceScore(42, s, FILENAME_FINGERPRINT_PREFIX)).toBeGreaterThan(0);
+    // The blended score is carried entirely by the filename half.
+    expect(score(member(), s)).toBe(
+      contentTemplatingSourceScore(42, s, FILENAME_FINGERPRINT_PREFIX)
+    );
+  });
+
+  it('🔴 a source score ignores the OTHER source entirely, even when it is larger', () => {
+    // The isolation has to hold in both directions, or the decomposition just re-reports the max.
+    const textK = `${TEXT_FINGERPRINT_PREFIX}free buzz at linkmask for nummask`;
+    const fileK = filenameFingerprint('logo.jpg') as string;
+    const s = signalsWith({
+      fingerprints: { 42: [textK, fileK] },
+      membersPerFingerprint: { [textK]: 9, [fileK]: 3 },
+    });
+    expect(contentTemplatingSourceScore(42, s, FILENAME_FINGERPRINT_PREFIX)).toBeCloseTo(0.125, 12);
+    expect(contentTemplatingSourceScore(42, s, TEXT_FINGERPRINT_PREFIX)).toBeCloseTo(0.875, 12);
+  });
+
   it('bounds the quote, so one long text cannot truncate the whole finding', () => {
     // `reason` is capped at 2,000 characters by the wire contract and an over-long quote here would
     // cost the post counts and the other two notes, not just itself.
@@ -561,5 +672,113 @@ describe('the three heuristics together', () => {
       ['content-templating', 1],
     ]);
     expect(result.confidence).toBeCloseTo(2 / 3, 12);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The cluster key the board rules on
+// ---------------------------------------------------------------------------------------------
+
+describe('registrationClusterGroupKey', () => {
+  const key = (m: BotAccountCohortMember, s: CohortSignals) => registrationClusterGroupKey(m, s);
+  const explain = (m: BotAccountCohortMember, s: CohortSignals) =>
+    registrationClusterHeuristic.explain?.(
+      evidence(m, s),
+      registrationClusterHeuristic.score(evidence(m, s))
+    ) ?? null;
+
+  it('names the shared domain once the cluster is big enough to be reported', () => {
+    // LITERAL size, so this is a statement about behaviour at four rather than about whatever
+    // `DOMAIN_ZERO_AT` happens to say — the constant is pinned separately above.
+    const s = signalsWith({ membersPerDomain: { 'ring.test': 4 } });
+    expect(key(member({ emailDomain: 'ring.test' }), s)).toBe('domain:ring.test');
+  });
+
+  it('returns nothing AT the boundary — a cluster of three is not reported, so it is not a key', () => {
+    // 🔴 THE OFF-BY-ONE. `DOMAIN_ZERO_AT` is the largest cluster still worth nothing, so three is
+    // silent and four speaks. A `>` → `>=` mutant groups every three-account coincidence into one
+    // ruling, and publishes a domain the reason never mentions.
+    const s = signalsWith({ membersPerDomain: { 'ring.test': 3 } });
+    expect(key(member({ emailDomain: 'ring.test' }), s)).toBeNull();
+  });
+
+  it.each([
+    ['an account whose domain nobody else shares', { 'ring.test': 1 }],
+    ['a domain absent from the index entirely', {}],
+  ])('returns nothing for %s', (_label, membersPerDomain) => {
+    expect(key(member({ emailDomain: 'ring.test' }), signalsWith({ membersPerDomain }))).toBeNull();
+  });
+
+  it('returns nothing for an account with no email domain at all', () => {
+    expect(key(member({ emailDomain: null }), signalsWith({ membersPerDomain: {} }))).toBeNull();
+  });
+
+  it('🔴 returns nothing for a COMMON provider, however large the cluster', () => {
+    // `gmail.com` is the largest cluster in every cohort, every day. Keying on it would collapse the
+    // day's most ordinary accounts into ONE ruling — a single click recording a verdict about
+    // hundreds of unrelated people.
+    const s = signalsWith({ membersPerDomain: { 'gmail.com': 250 } });
+    expect(key(member({ emailDomain: 'gmail.com' }), s)).toBeNull();
+  });
+
+  it('is IDENTICAL for every member of one cluster, and different across clusters', () => {
+    // Stability within a run is what makes one ruling cover the ring: two members deriving two
+    // strings would be two decisions wearing one name.
+    const s = signalsWith({ membersPerDomain: { 'ring.test': 9, 'other.test': 9 } });
+    const a = key(member({ userId: 1, emailDomain: 'ring.test' }), s);
+    const b = key(member({ userId: 2, emailDomain: 'ring.test' }), s);
+    const c = key(member({ userId: 3, emailDomain: 'other.test' }), s);
+    expect(a).toBe('domain:ring.test');
+    expect(b).toBe(a);
+    expect(c).not.toBe(a);
+  });
+
+  it('🔴 NEVER carries a domain the reason text does not already name — swept, both directions', () => {
+    // THE DISCLOSURE RULE. The board has a wider audience than the investigative tools, and a key is
+    // rendered. A key naming a domain the finding's own reason never mentions would be a disclosure
+    // the finding does not otherwise make — so the two must move together at EVERY size, not just at
+    // the one a single case happens to pick.
+    for (const size of [0, 1, 2, 3, 4, 5, 9, 15, 40]) {
+      const s = signalsWith({ membersPerDomain: { 'ring.test': size } });
+      const m = member({ emailDomain: 'ring.test' });
+      const named = (explain(m, s) ?? '').includes('ring.test');
+      expect(key(m, s) === null, `size ${size}: key present but domain unnamed in the reason`).toBe(
+        !named
+      );
+    }
+  });
+
+  it('the sweep above is not vacuous — the reason DOES name the domain at a reportable size', () => {
+    // 🔴 POSITIVE CONTROL. An `explain` that returned null at every size would satisfy the iff above
+    // by making both halves false forever, and it would read as coverage.
+    const s = signalsWith({ membersPerDomain: { 'ring.test': 9 } });
+    const m = member({ emailDomain: 'ring.test' });
+    expect(explain(m, s)).toContain('ring.test');
+    expect(key(m, s)).toBe('domain:ring.test');
+  });
+
+  it('🔴 never carries a registration IP, which the reason deliberately withholds', () => {
+    // The IP is the STRONGER signal and is left out of the reason on purpose — `explain` says so and
+    // points a moderator at the tool built for that lookup. Keying on it would publish, on the
+    // board, the one fact this heuristic goes out of its way not to publish.
+    const s = signalsWith({
+      ips: { 42: ['203.0.113.9'] },
+      membersPerIp: { '203.0.113.9': 40 },
+      membersPerDomain: {},
+      sources: { registrationIps: true },
+    });
+    const m = member({ emailDomain: null });
+    expect(registrationClusterHeuristic.score(evidence(m, s))).toBeGreaterThan(0);
+    expect(key(m, s)).toBeNull();
+  });
+});
+
+describe('domainClusterIsNamedInReason', () => {
+  it('is the one predicate both the reason clause and the key read', () => {
+    // Literal boundary, pinned here so a mutation to it fails with its own name attached rather than
+    // only as a knock-on somewhere else.
+    expect(domainClusterIsNamedInReason(3)).toBe(false);
+    expect(domainClusterIsNamedInReason(4)).toBe(true);
+    expect(domainClusterIsNamedInReason(0)).toBe(false);
   });
 });

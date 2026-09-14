@@ -9,7 +9,7 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
-import { IconBrush, IconDownload, IconLock } from '@tabler/icons-react';
+import { IconBrush, IconCheck, IconDownload, IconLock, IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
 import { BidModelButton } from '~/components/Auction/BidModelButton';
@@ -20,6 +20,7 @@ import type { Props as DescriptionTableProps } from '~/components/DescriptionTab
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -47,6 +48,7 @@ import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import type { ResourceSelectSource } from '../resource-select.types';
+import { getResourceCompatibility } from '~/components/generation_v2/inputs/ResourceItemContent';
 import { TopRightIcons } from './TopRightIcons';
 
 const IMAGE_CARD_WIDTH = 450;
@@ -60,7 +62,17 @@ export function ResourceSelectCard({
   height?: number;
   selectSource?: ResourceSelectSource;
 }) {
-  const { onSelect } = useResourceSelectContext();
+  const {
+    onSelect,
+    role,
+    multiSelect,
+    isStaged,
+    addStaged,
+    removeStaged,
+    resources,
+    staged,
+    limit,
+  } = useResourceSelectContext();
   const currentUser = useCurrentUser();
   const [loading, setLoading] = useState(false);
 
@@ -74,7 +86,12 @@ export function ResourceSelectCard({
   const selectedVersion = versions[_selectedIndex];
   const [flipped, setFlipped] = useState(false);
 
-  const handleSelect = async () => {
+  /**
+   * `take` commits the resource and closes the picker; `stage` adds it to the
+   * batch and leaves the picker open. Same fetch either way — only the
+   * destination differs.
+   */
+  const handleSelect = async (mode: 'take' | 'stage' = 'take') => {
     const version = selectedVersion;
     if (!version) return;
     const { id } = version;
@@ -94,11 +111,21 @@ export function ResourceSelectCard({
         return;
       }
       const previewImage = resource.image ?? image;
+      // `atLimit` was computed at render; two fast clicks near the cap both pass
+      // it and the second would be dropped by `addStaged` in silence. Every
+      // other rejection on this card says something, so this one does too.
+      if (mode === 'stage' && limit !== undefined && staged.length >= limit) {
+        showErrorNotification({
+          error: new Error(`You can add ${limit} more ${limit === 1 ? 'resource' : 'resources'}`),
+        });
+        return;
+      }
+      const commit = mode === 'stage' ? addStaged : onSelect;
       if (selectSource !== 'generation') {
-        onSelect({ ...resource, image: previewImage });
+        commit({ ...resource, image: previewImage });
       } else {
         if (resource?.canGenerate || resource?.substitute?.canGenerate)
-          onSelect({ ...resource, image: previewImage });
+          commit({ ...resource, image: previewImage });
         else
           showErrorNotification({
             error: new Error('This model is no longer available for generation'),
@@ -107,6 +134,20 @@ export function ResourceSelectCard({
     });
     setLoading(false);
   };
+
+  // Compatibility of the shown version against the form's current ecosystem —
+  // the same predicate the form's own resource list badges with.
+  const compatibility =
+    role === 'resource'
+      ? getResourceCompatibility(selectedVersion?.baseModel, data.type, { resources })
+      : 'full';
+  const incompatible = compatibility === null;
+  const isAdded = multiSelect && selectedVersion ? isStaged(selectedVersion.id) : false;
+  const atLimit = multiSelect && limit !== undefined && staged.length >= limit && !isAdded;
+  // Batch mode starts the moment something is staged. Until then the main
+  // button is the one-click path it has always been; once a batch exists,
+  // committing a single resource behind the user's back would discard it.
+  const batching = multiSelect && staged.length > 0;
 
   // Read favorite state straight from the bookmarked-models query so the
   // toggle's optimistic cache update drives the button — single source of truth,
@@ -270,36 +311,99 @@ export function ResourceSelectCard({
             ))}
 
           <div className="flex flex-col gap-2 p-3 text-black dark:text-white">
-            <Text size="sm" fw={700} lineClamp={1} lh={1} data-testid="resource-select-name">
+            <Text
+              component={Link}
+              href={getModelUrl({
+                modelId: data.id,
+                modelName: data.name,
+                modelVersionId: selectedVersion.id,
+              })}
+              target="_blank"
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              size="sm"
+              fw={700}
+              lh={1}
+              data-testid="resource-select-name"
+              // `self-start` so the link's hit area is the name, not the full
+              // width of the card — the parent is a flex column, where the
+              // default `align-items: stretch` would fill the cross axis.
+              className="max-w-full self-start truncate hover:underline"
+            >
               {data.name}
             </Text>
-            <div className="flex justify-between gap-2">
-              <Select
-                className="flex-1"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                }}
-                readOnly={versions.length <= 1}
-                value={_selectedIndex?.toString()}
-                data={versions.map((version, index) => ({
-                  label: version.name,
-                  value: index.toString(),
-                }))}
-                onChange={(index) => setSelectedIndex(Number(index ?? 0))}
-                styles={{
-                  input: { cursor: versions.length <= 1 ? 'auto !important' : undefined },
-                }}
-              />
+            <div className="flex items-center justify-between gap-2">
+              {/* In `checkpoint` role the version is a field under the model row,
+                  not part of the pick — see the header comment on
+                  ResourceSelectRole. */}
+              {role !== 'checkpoint' && (
+                <Select
+                  className="flex-1"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                  readOnly={versions.length <= 1}
+                  value={_selectedIndex?.toString()}
+                  data={versions.map((version, index) => ({
+                    label: version.name,
+                    value: index.toString(),
+                  }))}
+                  onChange={(index) => setSelectedIndex(Number(index ?? 0))}
+                  styles={{
+                    input: { cursor: versions.length <= 1 ? 'auto !important' : undefined },
+                  }}
+                />
+              )}
+              {compatibility === 'partial' && (
+                <Badge color="yellow" variant="light" size="sm">
+                  Partial support
+                </Badge>
+              )}
+              {incompatible && (
+                <Badge color="red" variant="light" size="sm">
+                  Incompatible
+                </Badge>
+              )}
+              {/* The batch control, separate from the primary action: adding one
+                  resource stays a single click, and building a set is opt-in
+                  rather than the toll everyone pays. */}
+              {multiSelect && !incompatible && (
+                <Tooltip
+                  label={isAdded ? 'Remove from selection' : 'Add to selection'}
+                  position="top"
+                  withArrow
+                >
+                  <LegacyActionIcon
+                    aria-label={isAdded ? 'Remove from selection' : 'Add to selection'}
+                    aria-pressed={isAdded}
+                    variant={isAdded ? 'filled' : 'default'}
+                    disabled={atLimit}
+                    onClick={(e: React.MouseEvent) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      // Un-staging needs no round trip — the resource is in hand.
+                      if (isAdded && selectedVersion) removeStaged(selectedVersion.id);
+                      else handleSelect('stage');
+                    }}
+                  >
+                    {isAdded ? <IconCheck size={16} /> : <IconPlus size={16} />}
+                  </LegacyActionIcon>
+                </Tooltip>
+              )}
               <Button
+                className={role === 'checkpoint' ? 'flex-1' : undefined}
                 loading={loading}
+                disabled={incompatible || (batching && atLimit)}
+                variant={isAdded ? 'light' : 'filled'}
                 onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  handleSelect();
+                  if (!batching) return void handleSelect('take');
+                  if (isAdded && selectedVersion) removeStaged(selectedVersion.id);
+                  else handleSelect('stage');
                 }}
               >
-                Select
+                {batching ? (isAdded ? 'Added' : 'Add') : 'Select'}
               </Button>
             </div>
           </div>

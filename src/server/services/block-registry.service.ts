@@ -44,6 +44,7 @@ import {
   toPublicScreenshots,
 } from '~/server/schema/blocks/subscription.schema';
 import { isLaunchSlot, PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
+import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
 import { isMatureContentRating } from '~/server/utils/server-domain';
 
 const CACHE_TTL_SECONDS = 60;
@@ -2248,6 +2249,10 @@ export class BlockRegistry {
         where: { id: existing.id },
         data: { ...updateData, blockInstanceId: instanceId },
       });
+      // Re-installing over a disabled row revives the SAME blockInstanceId, so
+      // a marker left by toggleEnabled(false) would 403 the revived install
+      // until it expires. Same clear toggleEnabled(true) does.
+      await BlockRevocation.clearInstance(instanceId);
       resultInstanceId = instanceId;
     } else {
       const instanceId = newBlockInstanceId();
@@ -2305,16 +2310,15 @@ export class BlockRegistry {
     approvedScopes: string[];
   }): Promise<void> {
     const { recordScopeGrant, consentGatedScopes } = await import('./blocks/scope-grant.service');
-    // The app's effective scope set = manifest.scopes ∩ approvedScopes (the
-    // moderator-approved snapshot is the ceiling). Grant only the consent-
-    // gated subset of that — exempt scopes never need a grant.
-    const manifestScopes = Array.isArray((opts.manifest as { scopes?: unknown }).scopes)
-      ? (opts.manifest as { scopes: unknown[] }).scopes.filter(
-          (s): s is string => typeof s === 'string'
-        )
-      : [];
-    const approved = new Set(opts.approvedScopes ?? []);
-    const effective = manifestScopes.filter((s) => approved.has(s));
+    // The app's effective scope set = manifest.scopes ∩ approvedScopes, via the SHARED
+    // `effectiveBlockScopes` helper — the same rule `blocks.router`'s `grantScopes` enforces as
+    // its consent ceiling and `getInstallConfig` discloses at install time, and the permissions
+    // tab (`listMyScopeGrants`) displays. Grant only the consent-gated subset of that — exempt
+    // scopes never need a grant.
+    const effective = effectiveBlockScopes(
+      opts.manifest as { scopes?: unknown },
+      opts.approvedScopes
+    );
     const toGrant = consentGatedScopes(effective);
     await recordScopeGrant({
       userId: opts.userId,
@@ -3494,6 +3498,26 @@ export class BlockRegistry {
         featuredOrder: true,
       },
     });
+    // 🔴 NO CATALOG BUST HERE, DELIBERATELY — and the reason is not "category doesn't
+    // matter", it is that this writes the WRONG TABLE for that cache. The `/apps` catalog
+    // statement filters `app_listings.category`; this function writes
+    // `app_blocks.category`. The two are synced in ONE direction and at ONE moment —
+    // `approveRequest` copies the block's curated scalars onto the listing on approve, and
+    // busts there. Nothing in the cached statement reads any column this function writes
+    // (`category`, `featured`, `featuredOrder`); of `app_blocks` it reads only
+    // `current_version_deployed_at`, via the deploy gate. A bust here was measured inert.
+    //
+    // If the catalog query ever grows a predicate over an `app_blocks` column this
+    // function writes, add the bust back — and add the row
+    // `'src/server/services/block-registry.service.ts::BlockRegistry::setMarketplaceMeta'`
+    // to `LEDGER` in
+    // `~/server/services/blocks/__tests__/app-listing.catalog-bust-ledger.test.ts`, which
+    // is what will fail and make that a deliberate decision rather than an omission.
+    // (That spelling is exact and verified: the ledger's attributor names class methods
+    // `Class::method`. An earlier version of it was anchored at column 0 and reported an
+    // added bust here as an unrelated top-level helper, which made this instruction
+    // unfollowable.)
+
     return {
       appBlockId: updated.id,
       status: updated.status,

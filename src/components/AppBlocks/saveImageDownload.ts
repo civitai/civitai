@@ -30,6 +30,13 @@
  */
 export const CIVITAI_IMAGE_HOSTS: readonly string[] = [
   'image.civitai.com',
+  // Same hostname as the default of `NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT` (src/env/client-schema.ts),
+  // for a different reason: there it is the base URL the browser CALLS, here it is a host this
+  // bridge may FETCH from. Keep them separate — but a blob URL minted by that origin must be
+  // fetchable here, so if the public orchestrator host changes, this entry changes with it. Asserted
+  // in src/__tests__/pages/training-studio-embed-orchestrator-origin.test.ts. This list may legally
+  // hold MORE hosts than that one origin (an old host kept fetchable across a migration, the image
+  // CDN); it may not hold fewer.
   'orchestration.civitai.com',
 ];
 

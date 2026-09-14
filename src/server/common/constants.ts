@@ -197,6 +197,12 @@ export const constants = {
     'Enhancement LoRA': 14,
     Other: 15,
   },
+  modelAssociations: {
+    limit: 10,
+    // Server ceiling, deliberately above the UI limit: 9 models already hold 11-12
+    // associations, and rejecting their saves would strand them.
+    maxPerSave: 20,
+  },
   cardSizes: {
     model: 320,
     image: 320,

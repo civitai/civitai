@@ -59,6 +59,9 @@ import {
 const SETTLE_PREFIX = 'system:blocks:custom-comfy-settle';
 const BUZZ_KEY = 'system:blocks:buzz-cap:42:2026-07-17';
 const APP_KEY = 'system:blocks:app-spend-cap:app_test:2026-07-17';
+// The per-(user, app, UTC-day) CONSENT budget key — the ceiling the VIEWER set for
+// this one app. Present on the record only when they set one.
+const CONSENT_KEY = 'system:blocks:consent-budget:42:apb_test:2026-07-17';
 
 beforeEach(() => {
   for (const fn of [
@@ -89,6 +92,7 @@ function seedRecord(
     buzzCapKey: string;
     appSpendKey: string | null;
     devSessionId: string | null;
+    consentBudgetKey: string | null;
     ceiling: number;
     engine: string;
     recipe: string;
@@ -180,14 +184,24 @@ describe('persistCustomComfySettle', () => {
   });
 
   it('no-ops on an empty workflowId (never writes)', async () => {
-    await persistCustomComfySettle({ workflowId: '', buzzCapKey: BUZZ_KEY, appSpendKey: null, ceiling: 180 });
+    await persistCustomComfySettle({
+      workflowId: '',
+      buzzCapKey: BUZZ_KEY,
+      appSpendKey: null,
+      ceiling: 180,
+    });
     expect(mockSysRedis.set).not.toHaveBeenCalled();
   });
 
   it('swallows a Redis error (best-effort, degrades to reserve-without-settle)', async () => {
     mockSysRedis.set.mockRejectedValue(new Error('redis down'));
     await expect(
-      persistCustomComfySettle({ workflowId: 'wf_1', buzzCapKey: BUZZ_KEY, appSpendKey: null, ceiling: 180 })
+      persistCustomComfySettle({
+        workflowId: 'wf_1',
+        buzzCapKey: BUZZ_KEY,
+        appSpendKey: null,
+        ceiling: 180,
+      })
     ).resolves.toBeUndefined();
   });
 });
@@ -285,9 +299,83 @@ describe('settleCustomComfySpend', () => {
     expect(mockRefundDevSessionBuzz).not.toHaveBeenCalled();
   });
 
+  // ── CONSENT BUDGET leg. A post-paid job reserves the CEILING against the user's
+  // own per-app limit too, so the settle MUST give the over-reservation back there as
+  // well: without it a job that reserved 5,000 and billed 200 leaves the user's limit
+  // charged 5,000 for the rest of the day, which is exactly what the field's own
+  // comment says must not happen.
+  //
+  // 🔴 THESE ARE THE MUTATION-KILLING TESTS FOR M2 (audit round 1): deleting the
+  // `if (record.consentBudgetKey) … decrBy` block from settleCustomComfySpend survived
+  // the entire 5,214-test suite, because no test ever put a consentBudgetKey on a
+  // record.
+  it('refunds `ceiling - actual` on the CONSENT budget key too when one is present', async () => {
+    seedRecord({ consentBudgetKey: CONSENT_KEY, ceiling: 180 });
+    await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 30 });
+    // Platform daily key…
+    expect(mockSysRedis.decrBy).toHaveBeenCalledWith(BUZZ_KEY, 150);
+    // …and the user's OWN per-app ceiling, same over-reservation.
+    expect(mockSysRedis.decrBy).toHaveBeenCalledWith(CONSENT_KEY, 150);
+    expect(mockRefundAppSpend).toHaveBeenCalledWith(APP_KEY, 150);
+  });
+
+  it('refunds ALL FOUR counters for a submit that held every leg', async () => {
+    seedRecord({ consentBudgetKey: CONSENT_KEY, devSessionId: DEV_SESSION_ID, ceiling: 180 });
+    await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 30 });
+    expect(mockSysRedis.decrBy).toHaveBeenCalledWith(BUZZ_KEY, 150);
+    expect(mockSysRedis.decrBy).toHaveBeenCalledWith(CONSENT_KEY, 150);
+    expect(mockRefundAppSpend).toHaveBeenCalledWith(APP_KEY, 150);
+    expect(mockRefundDevSessionBuzz).toHaveBeenCalledWith(DEV_SESSION_ID, 150);
+  });
+
+  it('a record WITHOUT a consentBudgetKey never touches a consent-budget key', async () => {
+    seedRecord({ ceiling: 180 }); // the viewer set no budget
+    await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 30 });
+    expect(mockSysRedis.decrBy).toHaveBeenCalledWith(BUZZ_KEY, 150);
+    const consentCalls = mockSysRedis.decrBy.mock.calls.filter((c) =>
+      String(c[0]).startsWith('system:blocks:consent-budget:')
+    );
+    expect(consentCalls).toHaveLength(0);
+  });
+
+  it('a full-ceiling spend refunds NOTHING on the consent budget either', async () => {
+    seedRecord({ consentBudgetKey: CONSENT_KEY, ceiling: 180 });
+    await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 200 });
+    expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
+  });
+
+  it('a consent-budget refund FAILURE never throws and never skips the other legs', async () => {
+    seedRecord({ consentBudgetKey: CONSENT_KEY, devSessionId: DEV_SESSION_ID, ceiling: 180 });
+    mockSysRedis.decrBy.mockImplementation(async (key: string) => {
+      if (key === CONSENT_KEY) throw new Error('redis down');
+      return 0;
+    });
+    await expect(
+      settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 30 })
+    ).resolves.toBeUndefined();
+    // The legs AFTER the failing one still ran — a lost refund over-counts on ONE
+    // counter (stricter), it does not abandon the rest of the settle.
+    expect(mockRefundDevSessionBuzz).toHaveBeenCalledWith(DEV_SESSION_ID, 150);
+    expect(mockRefundAppSpend).toHaveBeenCalledWith(APP_KEY, 150);
+  });
+
+  it('persists the consentBudgetKey onto the record verbatim', async () => {
+    await persistCustomComfySettle({
+      workflowId: 'wf_1',
+      buzzCapKey: BUZZ_KEY,
+      appSpendKey: APP_KEY,
+      consentBudgetKey: CONSENT_KEY,
+      ceiling: 180,
+    });
+    const [, value] = mockSysRedis.set.mock.calls[0] as [string, string, { EX: number }];
+    expect(JSON.parse(value)).toMatchObject({ consentBudgetKey: CONSENT_KEY });
+  });
+
   it('never throws when the GET fails (leaves the ceiling reserved — stricter)', async () => {
     mockSysRedis.get.mockRejectedValue(new Error('redis down'));
-    await expect(settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 30 })).resolves.toBeUndefined();
+    await expect(
+      settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 30 })
+    ).resolves.toBeUndefined();
     expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
   });
 

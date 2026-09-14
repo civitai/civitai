@@ -49,7 +49,7 @@ const CONTEXTS: [string, GenerationCtx][] = [
       gateRules: [
         {
           // hidden selection drops at the boundary and falls back to the
-          // default ecosystem (Seedance)
+          // default ecosystem (MiniMaxH3)
           id: 'test-hide-ltxv2',
           name: 'hide LTXV2',
           availableTo: 'nobody',

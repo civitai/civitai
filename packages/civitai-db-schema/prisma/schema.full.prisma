@@ -467,6 +467,7 @@ model User {
   metrics              UserMetric[]
   reports              Report[]
   feedback             Feedback[]
+  feedbackHandled      Feedback[]                 @relation("FeedbackHandledBy")
   questions            Question[]
   answers              Answer[]
   commentsv2           CommentV2[]
@@ -1500,6 +1501,7 @@ model Report {
   automated      ReportAutomated?
   model3d        Model3DReport?
   model3dReview  Model3DReviewReport?
+  announcement   AnnouncementReport?
 }
 
 model ResourceReviewReport {
@@ -2360,8 +2362,17 @@ model Feedback {
   status    String   @default("new")
   createdAt DateTime @default(now())
 
+  /// Moderator-internal. Never seeded into a Bug — a Bug is public, this is not.
+  triageNote  String?
+  handledById Int?
+  handledBy   User?     @relation("FeedbackHandledBy", fields: [handledById], references: [id], onDelete: SetNull)
+  handledAt   DateTime?
+  bugId       Int?
+  bug         Bug?      @relation(fields: [bugId], references: [id], onDelete: SetNull)
+
   @@index([area, status, createdAt(sort: Desc)])
   @@index([userId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
 }
 
 enum ApiKeyType {
@@ -3720,6 +3731,15 @@ model AppUserScopeGrant {
   grantedScopes  String[]  @default([]) @map("granted_scopes")
   grantedAt      DateTime  @default(now()) @map("granted_at") @db.Timestamptz(6)
   revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(6)
+  /// The per-UTC-day Buzz ceiling the VIEWER set for THIS app at consent time.
+  /// NULL = the user set no budget, and the app spends under the platform's own
+  /// per-user daily ceiling (`BLOCK_BUZZ_CAP_PER_DAY`, 50,000) alone — which is
+  /// exactly the behaviour of every grant written before this column existed, so
+  /// no backfill is needed and nobody is silently tightened. Non-NULL adds a
+  /// SECOND reservation at spend time keyed on (user, app, UTC-day); both caps
+  /// apply and the tighter one binds. Meaningful only alongside the
+  /// `ai:write:budgeted` scope (nothing else in a grant can spend).
+  buzzBudgetPerDay Int?    @map("buzz_budget_per_day")
 
   @@unique([userId, appBlockId], map: "app_user_scope_grants_user_app_uniq")
   @@map("app_user_scope_grants")
@@ -4143,6 +4163,7 @@ model Announcement {
   profileOnly Boolean            @default(false)
   targetUsers AnnouncementUser[]
   spends      AnnouncementSpend[]
+  reports     AnnouncementReport[]
 
   @@index([userId, startsAt])
 }
@@ -5905,6 +5926,7 @@ model Bug {
   disabled    Boolean       @default(false)
   domain      DomainColor[] @default([all])
   tags        String[]      @default([])
+  feedback    Feedback[]
 
   @@index([status, publishedAt])
 }
@@ -6167,6 +6189,16 @@ model ChallengeReport {
 
   @@id([reportId, challengeId])
   @@index([challengeId], type: Hash)
+}
+
+model AnnouncementReport {
+  announcementId Int
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  reportId       Int          @unique
+  report         Report       @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, announcementId])
+  @@index([announcementId], type: Hash)
 }
 
 model ChallengeJudge {

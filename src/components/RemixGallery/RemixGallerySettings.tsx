@@ -15,6 +15,7 @@ import {
 } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { SettingsSection } from '~/components/Account/SettingsLayout';
 import { PlacementFreeSlotSlider } from '~/components/Placement/PlacementFreeSlotSlider';
 import { PlacementPriceSlider } from '~/components/Placement/PlacementPriceSlider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -35,7 +36,7 @@ import { trpc } from '~/utils/trpc';
  * There is no "accept all" here. A sticker comes from a moderated catalog; a
  * remix gallery accepts arbitrary user media, so every submission is reviewed.
  */
-export function RemixGallerySettings() {
+export function RemixGallerySettings({ flat }: { flat?: boolean } = {}) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const utils = trpc.useUtils();
@@ -122,23 +123,21 @@ export function RemixGallerySettings() {
       price: nextPrice === '' ? null : nextPrice,
     });
 
-  return (
-    <>
-      <Divider
-        label={
-          <Group gap={4} wrap="nowrap">
-            Remix galleries on your images
-            <InfoPopover size="xs" iconProps={{ size: 14 }} width={340}>
-              <Text size="sm" maw={320} style={{ whiteSpace: 'normal' }}>
-                Let other people pay to feature their remixes on your work. You review every
-                submission and decide what a remix means on your own images. Turning this on does
-                not share your prompt — hidden prompts stay hidden.
-              </Text>
-            </InfoPopover>
-          </Group>
-        }
-      />
+  const heading = (
+    <Group gap={4} wrap="nowrap">
+      Remix galleries on your images
+      <InfoPopover size="xs" iconProps={{ size: 14 }} width={340}>
+        <Text size="sm" maw={320} style={{ whiteSpace: 'normal' }}>
+          Let other people pay to feature their remixes on your work. You review every submission
+          and decide what a remix means on your own images. Turning this on does not share your
+          prompt — hidden prompts stay hidden.
+        </Text>
+      </InfoPopover>
+    </Group>
+  );
 
+  const body = (
+    <>
       <SegmentedControl
         value={mode}
         onChange={(value) => {
@@ -302,6 +301,20 @@ export function RemixGallerySettings() {
       {/* No "set a price first" warning: the surface carries a default, so an
           unset price is a normal state rather than a broken one. Saying
           otherwise would tell a creator to fix something that is working. */}
+    </>
+  );
+
+  if (flat)
+    return (
+      <SettingsSection title={heading}>
+        <div className="flex flex-col gap-4">{body}</div>
+      </SettingsSection>
+    );
+
+  return (
+    <>
+      <Divider label={heading} />
+      {body}
     </>
   );
 }

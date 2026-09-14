@@ -15,6 +15,7 @@ import type { GetServerSideProps } from 'next';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
 type VerifyEmailPageProps = {
@@ -27,6 +28,8 @@ export default function VerifyEmailPage({ token }: VerifyEmailPageProps) {
   const [message, setMessage] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [currentEmail, setCurrentEmail] = useState('');
+  const [isEmailChange, setIsEmailChange] = useState(false);
+  const currentUser = useCurrentUser();
 
   const { data: tokenData, error: tokenError } = trpc.user.validateEmailToken.useQuery(
     { token: token || '' },
@@ -34,9 +37,12 @@ export default function VerifyEmailPage({ token }: VerifyEmailPageProps) {
   );
 
   const verifyEmailMutation = trpc.user.verifyEmailChange.useMutation({
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       setStatus('success');
       setMessage(data.message);
+      // `refreshSession` emits a session:refresh signal, but that only reaches a tab holding a
+      // live connection and this page is public — so pull the session rather than rely on it.
+      await currentUser?.refresh();
     },
     onError: (error) => {
       setStatus('error');
@@ -44,7 +50,6 @@ export default function VerifyEmailPage({ token }: VerifyEmailPageProps) {
     },
   });
 
-  // Update status based on token validation
   useEffect(() => {
     if (!token) {
       setStatus('error');
@@ -56,6 +61,7 @@ export default function VerifyEmailPage({ token }: VerifyEmailPageProps) {
       setStatus('pending');
       setNewEmail(tokenData.newEmail);
       setCurrentEmail(tokenData.currentEmail);
+      setIsEmailChange(tokenData.isEmailChange);
     }
   }, [token, tokenData, tokenError]);
 
@@ -66,7 +72,8 @@ export default function VerifyEmailPage({ token }: VerifyEmailPageProps) {
     }
   };
 
-  const handleReturnToAccount = () => {
+  const handleReturnToAccount = async () => {
+    await currentUser?.refresh();
     router.push('/user/account');
   };
 
@@ -84,34 +91,43 @@ export default function VerifyEmailPage({ token }: VerifyEmailPageProps) {
               {status === 'pending' && (
                 <>
                   <Text ta="center" size="lg" fw={500}>
-                    Confirm Email Change
+                    {isEmailChange ? 'Confirm Email Change' : 'Confirm Your Email Address'}
                   </Text>
                   <Text ta="center" c="dimmed">
-                    You&rsquo;re about to change your email address:
+                    {isEmailChange
+                      ? 'You\u2019re about to change your email address:'
+                      : 'Confirm this is your email address:'}
                   </Text>
-                  {currentEmail && newEmail && (
-                    <Stack gap="xs" align="center">
-                      <Group gap="xs" align="center">
-                        <Text size="md" fw={500}>
-                          From:
-                        </Text>
-                        <Text size="md" c="red" fw={600}>
-                          {currentEmail}
-                        </Text>
-                      </Group>
-                      <Text size="xl" c="dimmed">
-                        ↓
-                      </Text>
-                      <Group gap="xs" align="center">
-                        <Text size="md" fw={500}>
-                          To:
-                        </Text>
-                        <Text size="md" c="green" fw={600}>
+                  {isEmailChange
+                    ? currentEmail &&
+                      newEmail && (
+                        <Stack gap="xs" align="center">
+                          <Group gap="xs" align="center">
+                            <Text size="md" fw={500}>
+                              From:
+                            </Text>
+                            <Text size="md" c="red" fw={600}>
+                              {currentEmail}
+                            </Text>
+                          </Group>
+                          <Text size="xl" c="dimmed">
+                            ↓
+                          </Text>
+                          <Group gap="xs" align="center">
+                            <Text size="md" fw={500}>
+                              To:
+                            </Text>
+                            <Text size="md" c="green" fw={600}>
+                              {newEmail}
+                            </Text>
+                          </Group>
+                        </Stack>
+                      )
+                    : newEmail && (
+                        <Text size="md" fw={600}>
                           {newEmail}
                         </Text>
-                      </Group>
-                    </Stack>
-                  )}
+                      )}
                   <Text ta="center" c="dimmed" size="sm">
                     Please confirm this action. You will not need to sign in again.
                   </Text>
@@ -120,7 +136,7 @@ export default function VerifyEmailPage({ token }: VerifyEmailPageProps) {
                       Cancel
                     </Button>
                     <Button onClick={handleConfirmChange} disabled={!newEmail}>
-                      Yes, Change Email
+                      {isEmailChange ? 'Yes, Change Email' : 'Verify Email'}
                     </Button>
                   </Group>
                 </>
@@ -138,7 +154,11 @@ export default function VerifyEmailPage({ token }: VerifyEmailPageProps) {
               {status === 'success' && (
                 <>
                   <IconCheck size={48} color="green" />
-                  <Alert color="green" title="Success!" w="100%">
+                  <Alert
+                    color="green"
+                    title={isEmailChange ? 'Email updated!' : 'Email verified!'}
+                    w="100%"
+                  >
                     {message}
                   </Alert>
                   <Button onClick={handleReturnToAccount} fullWidth>

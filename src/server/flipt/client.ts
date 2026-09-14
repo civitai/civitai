@@ -40,6 +40,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // Gates every non-legacy judging engine. Default-off, so a challenge whose `judgingEngine`
   // column points at the pairwise ladder still runs the legacy absolute path until this is on.
   CHALLENGE_PAIRWISE_JUDGING = 'challenge-pairwise-judging',
+  // Streams the two large evidence archives straight to object storage instead of staging them
+  // on the container's local scratch volume first. DEFAULT-OFF — `isFlipt` returns false for an
+  // unknown flag or an unreachable Flipt, which leaves the long-standing disk-staging path in
+  // charge. Evaluated ONCE per report, never per archive, so a mid-report flip cannot produce a
+  // bundle assembled two different ways. Flip OFF to roll back without a deploy; the disk path
+  // is kept intact and reachable for exactly that reason.
+  CSAM_ARCHIVE_STREAM_UPLOAD = 'csam-archive-stream-upload',
   COMIC_CREATOR = 'comic-creator',
   GENERATION_PRESETS = 'generation-presets',
   GENERATION_TESTING = 'generation-testing',
@@ -118,7 +125,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // the entity is the content OWNER and no SessionUser for the owner is on hand there. Every
   // identity/tier/cohort segment in flipt-state is a STRING_COMPARISON constraint that reads the
   // context, so a segment rule here returns the flag default and looks exactly like "blurbs are
-  // off". The site is recorded in ENTITY_WITHOUT_CONTEXT_LEDGER (flipt-eval-context.test.ts).
+  // off". Nothing checks that automatically.
   TEXT_BLURBS = 'text-blurbs',
 
   // 🔴 BOOLEAN ONLY — neither a segment NOR a percentage rollout works on this one.
@@ -234,7 +241,11 @@ const flipt = (globalThis.__civitaiFliptClient ??= createFliptClient({
 // It returns the flag's base `enabled` value instead, which is indistinguishable
 // from an honest "this user is not in the segment" — no error, no log line. Pass
 // `buildFliptContext(user)`, or at minimum the properties you actually know.
-// Enforced by `src/server/flipt/__tests__/flipt-eval-context.test.ts`.
+// `buildFliptContext`’s output is pinned by `flipt-eval-context.test.ts`, against a HAND-COPIED
+// model of the segment constraints — nothing reads flipt-state, so a segment changing shape
+// upstream is caught by review only. No call site is SCANNED — though a few high-cost sites
+// have their own seam tests asserting the evaluation arguments by name: `resolveTestingAccess`,
+// the feedback gate, and the app-blocks store pair.
 export const isFlipt = flipt.isEnabled;
 export const getFliptVariant = flipt.getVariant;
 export const getFliptBoolean = flipt.getBoolean;

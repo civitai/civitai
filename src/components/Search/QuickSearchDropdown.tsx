@@ -2,6 +2,7 @@ import type { AutocompleteProps } from '@mantine/core';
 import { Group, Select } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { withUserHydration } from '~/components/Search/userHydration';
 import { IconChevronDown } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { InstantSearch, useSearchBox } from 'react-instantsearch';
@@ -36,10 +37,12 @@ import { truncate } from 'lodash-es';
 // Wrapped so a Meili outage degrades this dropdown to an empty result set
 // instead of an uncaught `MeiliSearchCommunicationError`. Fails quietly (no
 // banner) — the header quick-search just shows nothing during a blip.
-const meilisearch = createResilientSearchClient(
-  instantMeiliSearch(env.NEXT_PUBLIC_SEARCH_HOST as string, env.NEXT_PUBLIC_SEARCH_CLIENT_KEY, {
-    primaryKey: 'id',
-  })
+const meilisearch = withUserHydration(
+  createResilientSearchClient(
+    instantMeiliSearch(env.NEXT_PUBLIC_SEARCH_HOST as string, env.NEXT_PUBLIC_SEARCH_CLIENT_KEY, {
+      primaryKey: 'id',
+    })
+  )
 );
 
 // TODO: These styles were taken from the original SearchBar component. We should probably migrate that searchbar to use this component.

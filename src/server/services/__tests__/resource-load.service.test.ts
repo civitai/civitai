@@ -40,6 +40,9 @@ const version = {
   files: [{ type: 'Model', scannedAt: new Date(), metadata: { format: 'SafeTensor' } }],
 };
 
+/** The SafeTensor rule is checkpoint-scoped, so format cases need a checkpoint, not the LoRA above. */
+const checkpointVersion = { ...version, model: { ...version.model, type: 'Checkpoint' } };
+
 const versionAir = 'urn:air:sdxl:lora:civitai:42@501';
 
 /**
@@ -188,6 +191,100 @@ describe('the purchase path refuses before it submits', () => {
       submitResourceLoad({ modelVersionId: 501, userId: 7, token: 'user-token', currencies: [] })
     ).rejects.toThrow(/no model file to load/);
     expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  // The loader serves SafeTensor only. These are the formats an earlier deny-list
+  // (`not Core ML, not ONNX`) let through, so each one fails on a revert to that shape.
+  it.each([
+    ['PickleTensor', 'the historical .ckpt/.pt format'],
+    ['GGUF', 'quantised container'],
+    ['Diffusers', 'multi-file HF layout'],
+    ['Other', 'unlabelled'],
+    ['pt', 'free-text value no enum defines'],
+    [undefined, 'format never set'],
+  ])('refuses a %s weight file — %s', async (format) => {
+    orchestratorReturns({ status: 'unavailable', queuePosition: null });
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
+      {
+        ...checkpointVersion,
+        files: [{ type: 'Model', scannedAt: new Date(), metadata: format ? { format } : {} }],
+      },
+    ]);
+
+    // Not the external-provider copy: these versions HAVE weights, just unservable ones.
+    // Asserting the specific message is what stops the two reasons collapsing back into one.
+    await expect(
+      submitResourceLoad({ modelVersionId: 501, userId: 7, token: 'user-token', currencies: [] })
+    ).rejects.toThrow(/only load SafeTensor files/);
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('reports the reason on the state, so a CTA can explain it before the user tries', async () => {
+    orchestratorReturns({ status: 'unavailable', queuePosition: null });
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
+      {
+        ...checkpointVersion,
+        files: [{ type: 'Model', scannedAt: new Date(), metadata: { format: 'GGUF' } }],
+      },
+    ]);
+
+    const [state] = await getResourceLoadState([501]);
+    expect(state.loadable).toBe(false);
+    expect(state.unloadableReason).toBe('unsupported-format');
+  });
+
+  // The scoping the coverage view spends a paragraph on: applying the SafeTensor rule to every
+  // type would refuse the PickleTensor embeddings and LoRAs the view deliberately keeps covered.
+  it.each(['LORA', 'TextualInversion'])(
+    'does not apply the SafeTensor rule to a %s',
+    async (type) => {
+      orchestratorReturns({ status: 'unavailable', queuePosition: null });
+      dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
+        {
+          ...version,
+          model: { ...version.model, type },
+          files: [{ type: 'Model', scannedAt: new Date(), metadata: { format: 'PickleTensor' } }],
+        },
+      ]);
+
+      const [state] = await getResourceLoadState([501]);
+      expect(state.loadable).toBe(true);
+      expect(state.unloadableReason).toBeUndefined();
+    }
+  );
+
+  it('distinguishes an API model, which has no weights at all', async () => {
+    orchestratorReturns({ status: 'unavailable', queuePosition: null });
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
+      {
+        ...version,
+        files: [{ type: 'Training Data', scannedAt: new Date(), metadata: { format: 'Other' } }],
+      },
+    ]);
+
+    const [state] = await getResourceLoadState([501]);
+    expect(state.unloadableReason).toBe('no-weights');
+  });
+
+  it('accepts a version whose SafeTensor sits alongside unsupported formats', async () => {
+    orchestratorReturns({ status: 'unavailable', queuePosition: null });
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
+      {
+        ...version,
+        files: [
+          { type: 'Model', scannedAt: new Date(), metadata: { format: 'GGUF' } },
+          { type: 'Model', scannedAt: new Date(), metadata: { format: 'SafeTensor' } },
+        ],
+      },
+    ]);
+
+    await submitResourceLoad({
+      modelVersionId: 501,
+      userId: 7,
+      token: 'user-token',
+      currencies: [],
+    });
+    expect(submitWorkflow).toHaveBeenCalled();
   });
 
   it('refuses a version that does not exist', async () => {

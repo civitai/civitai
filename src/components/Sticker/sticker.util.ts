@@ -43,6 +43,12 @@ export type ResolvedSticker = {
   animated?: boolean;
   /** What one more use costs. Absent = this sticker doesn't sell top-ups. */
   pricePerUse?: number;
+  /**
+   * Who made it. `null` is a staff-authored cosmetic with no creator;
+   * `undefined` means NOT FETCHED — only `useOwnedSticker` populates this, and
+   * `useStickerCosmetics`, which every other sticker surface uses, never does.
+   */
+  createdById?: number | null;
 };
 
 const STICKER_FETCH_CHUNK = STICKER_OFFER_LIMIT;
@@ -63,13 +69,14 @@ export function useOwnedSticker() {
   const sticker = useMemo(() => {
     const owned = data?.sticker ?? [];
     const resolved = owned
-      .map(({ id, name, data: stickerData, obtainedAt }) => ({
+      .map(({ id, name, data: stickerData, obtainedAt, createdById }) => ({
         id,
         name,
         slug: stickerData?.slug,
         url: stickerData?.url,
         animated: stickerData?.animated,
         pricePerUse: stickerData?.pricePerUse,
+        createdById,
         obtainedAt,
       }))
       .filter((x) => !!x.slug && !!x.url)

@@ -167,7 +167,7 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                               >
                                 <ImagePreview
                                   image={image}
-                                  edgeImageProps={{ width: 800 }}
+                                  edgeImageProps={{ width: 800, hiDpi: features.hiDpiPreviews }}
                                   aspectRatio={(image.width ?? 1) / (image.height ?? 1)}
                                   // radius="md"
                                   style={{ width: '100%' }}

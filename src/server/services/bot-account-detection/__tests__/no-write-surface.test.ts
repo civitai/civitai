@@ -730,7 +730,7 @@ describe('the detector has no write surface', () => {
     expect(importSpecifiers(planted)).toEqual(['~/server/services/user-restriction.service']);
   });
 
-  it('performs exactly seven database operations, all of them reads', () => {
+  it('performs exactly eight database operations, all of them reads', () => {
     // 🔴 THE LEDGER. A write added anywhere in these files is an eighth member and fails here; a
     // read removed is a missing member and fails here too (dropping `commentV2` would silently turn
     // every newer-comment-only account into a false negative).
@@ -741,6 +741,16 @@ describe('the detector has no write surface', () => {
     // nothing (it reads counts the cohort already carried) and the clustering heuristic's email
     // half added nothing (a wider `select` on the existing `user.findMany` is not a new operation).
     //
+    // 🔴 THEN SEVEN TO EIGHT, AND `image.findMany` IS THE WHOLE COST OF THE FILENAME SOURCE. It is
+    // the second fingerprint surface for `content-templating` — uploaded `Image.name` values — and
+    // it is a `findMany` rather than the `image.groupBy` already on this list: the cohort's groupBy
+    // counts a member's images, this one reads their NAMES. A read of the same table is still a new
+    // operation and still a new member here, which is the property this ledger exists for.
+    //
+    // It is deliberately budgeted (`MAX_FILENAME_SAMPLES`) and deliberately UNFILTERED on
+    // `ingestion`/`needsReview` — see `filenameSampleArgs`, where dropping the blocked rows would
+    // remove exactly the population the heuristic reads.
+    //
     // 🔴 THIS LEDGER CANNOT SEE THE CLICKHOUSE READ — `DB_CALL` anchors on a `db` handle and the
     // ClickHouse client is not one. That is not a gap being tolerated; it is why the separate
     // ClickHouse ledger below exists. Adding a source that is not Prisma leaves this assertion
@@ -750,6 +760,7 @@ describe('the detector has no write surface', () => {
       'comment.groupBy',
       'commentV2.findMany',
       'commentV2.groupBy',
+      'image.findMany',
       'image.groupBy',
       'model.groupBy',
       'user.findMany',
@@ -771,10 +782,12 @@ describe('the detector has no write surface', () => {
     // specifier — that is the "which BINDING" gap named in the file header — so the ClickHouse
     // ledger below asserts the method set and the statement text separately.
     expect(importSpecifiers(detectorSources())).toEqual([
+      '../fingerprint-keys',
       '../scoring',
       './clustering',
       './cohort',
       './evidence',
+      './fingerprint-keys',
       './heuristics',
       './job',
       './ramp',
@@ -788,6 +801,12 @@ describe('the detector has no write surface', () => {
       // with, shared rather than copied; a second hand-written copy is how two readers of one table
       // silently stop agreeing about what an address means.
       '@civitai/shared/clickhouse-ip-filters',
+      // Node's `crypto`, for `boundGroupKey`'s digest in `report.ts` — a cluster key over the wire
+      // contract's 200-character cap is hashed rather than truncated, because truncating an IDENTITY
+      // merges two unrelated clusters into one ruling. `createHash` is the only binding taken, it
+      // reaches no data system, and it cannot act on an account. The header's "which BINDING" caveat
+      // is why that is spelled out here rather than left to the specifier.
+      'crypto',
       '~/server/clickhouse/client',
       '~/server/db/client',
       '~/server/logging/client',

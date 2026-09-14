@@ -23,6 +23,7 @@ import type {
   PlacementTransactionKind,
 } from '~/shared/utils/placement';
 import {
+  PLACEMENT_LEDGER_TEXT,
   PLACEMENT_SURFACES,
   declineFeeAmount,
   isPlacementSurface,
@@ -197,46 +198,6 @@ export const PAYOUT_KINDS = [
 ] as const;
 
 /**
- * What a placement leg reads as in someone's Buzz history.
- *
- * Keyed by surface as well as leg because the two surfaces are different events
- * to the person reading the row: a sticker is put on your image, a remix is
- * added to your gallery. The internal leg name is unchanged and still identifies
- * the leg everywhere it is used to find money — the `PlacementTransaction` row,
- * the external transaction id, every recovery query.
- */
-const LEDGER_TEXT: Record<PlacementSurface, Record<PlacementTransactionKind, string>> = {
-  sticker: {
-    holdFee: 'Sticker placement fee, held while the creator decides',
-    holdPrincipal: 'Sticker placement, held while the creator decides',
-    toOwner: 'Someone placed a sticker on your image',
-    feeToOwner: 'Fee for a sticker you declined',
-    toSeller: 'Someone used your sticker',
-    // Deliberately says nothing about why. One refund path serves a decline, an
-    // expiry, an owner removal and a cosmetic takedown, and a leg cannot tell
-    // them apart — so naming one of them here would be wrong on the other three.
-    principalToPlacer: 'Refund: your sticker placement',
-    feeToPlacer: 'Refund: sticker placement fee',
-    // Neither of these two reaches Buzz — the platform legs keep the money in
-    // escrow and record a receipt instead — so this text is what a row WOULD say
-    // if that ever changes, and nothing renders it today.
-    toPlatform: 'Platform share of a sticker placement',
-    forfeit: 'Forfeited sticker placement',
-  },
-  remixGallery: {
-    holdFee: 'Remix submission fee, held while the creator decides',
-    holdPrincipal: 'Remix submission, held while the creator decides',
-    toOwner: 'Someone added a remix to your gallery',
-    feeToOwner: 'Fee for a remix you declined',
-    toSeller: 'Share of a remix submission',
-    principalToPlacer: 'Refund: your remix submission',
-    feeToPlacer: 'Refund: remix submission fee',
-    toPlatform: 'Platform share of a remix submission',
-    forfeit: 'Forfeited remix submission',
-  },
-};
-
-/**
  * `/user/transactions` renders a "View Image" link from `entityType`/`entityId`,
  * so the row reaches the image the placement is on and the copy never has to
  * name a raw id. Both columns are on the row every caller already holds, so this
@@ -248,7 +209,9 @@ const placementLedgerEntry = (
 ) => ({
   // Guarded rather than cast: `surface` is a TEXT column, and this is a money
   // path where a dull row beats a TypeError that strands the leg.
-  description: isPlacementSurface(target.surface) ? LEDGER_TEXT[target.surface][kind] : 'Placement',
+  description: isPlacementSurface(target.surface)
+    ? PLACEMENT_LEDGER_TEXT[target.surface][kind]
+    : 'Placement',
   details:
     target.targetType === 'image' && target.targetId
       ? { entityType: 'Image', entityId: target.targetId }

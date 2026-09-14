@@ -13,6 +13,7 @@
  *    - img2img:upscale → comfy step (img2img-upscale)
  *    - img2img:remove-background → comfy step
  *    - img2img:preprocess → preprocessImage step
+ *    - vid2vid:preprocess → preprocessVideo step
  *    - All other workflows → ecosystem discriminator
  *
  * 2. ecosystem DISCRIMINATOR (second level - via ecosystemGraph):
@@ -25,7 +26,11 @@ import type {
   WorkflowCost,
   WorkflowStepTemplate,
 } from '@civitai/client';
+// The pinned @civitai/client predates preprocessVideo; this comes from
+// orchestration-client.
+import type { PreprocessVideoStepTemplate } from '@civitai/orchestration-client';
 import { TimeSpan } from '@civitai/client';
+import { createVideoPreprocessStep } from './ecosystems/video-preprocess.handler';
 import {
   generationGraph,
   type GenerationGraphTypes,
@@ -780,11 +785,13 @@ async function createImagePreprocessInput(
     throw throwBadRequestError('Image URL is required for preprocess');
   }
 
+  // kindParams is a free-form record, so it spreads FIRST — last-wins would
+  // let a caller override the validated kind and the clamped resolution.
   const input = removeEmpty({
+    ...(data.kindParams ?? {}),
     kind: data.preprocessKind,
     image: sourceImage.url,
     resolution: data.preprocessResolution,
-    ...(data.kindParams ?? {}),
   }) as unknown as PreprocessImageInput;
 
   const step: StepInput = {
@@ -861,6 +868,10 @@ async function createStepInputs(
 
     case 'img2img:preprocess':
       rawResult = await createImagePreprocessInput(data, metadataCtx.sourceCtx);
+      break;
+
+    case 'vid2vid:preprocess':
+      rawResult = createVideoPreprocessStep(data) as StepInput;
       break;
 
     default: {
@@ -2285,7 +2296,7 @@ type NormalizedBlobItem =
 /**
  * Normalizes step output (images/videos/audio) to a common format
  */
-function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] {
+export function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] {
   const output = step.output;
   if (!output) return [];
 
@@ -2314,6 +2325,11 @@ function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] {
     case 'videoEnhancement':
     case 'videoInterpolation':
       return output.video ? [{ ...output.video, type: 'video' as const }] : [];
+    // vid2vid:preprocess emits the control map as its deliverable, so its
+    // output is not suppressed and has to normalize here. The blob is a
+    // VideoBlob, so it cannot share the preprocessImage case above.
+    case 'preprocessVideo':
+      return output.blob ? [{ ...(output.blob as VideoBlob), type: 'video' as const }] : [];
     case 'aceStepAudio':
       // Cover-image mode returns VideoBlob; audio-only returns AudioBlob. Discriminate on blob.type.
       if (!output.blob) return [];

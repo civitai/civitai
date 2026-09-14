@@ -4,7 +4,7 @@
  * Controls for Qwen and Qwen 2 ecosystems.
  * Uses ecosystem discriminator to select between Qwen and Qwen 2 subgraphs.
  *
- * Qwen (sdcpp engine):
+ * Qwen (comfy engine):
  * - Supports txt2img and img2img:edit workflows with model version selection
  * - Model versions differ per workflow: txt2img (v2509, v2512), img2img:edit (v2509, v2511)
  * - Nodes: aspectRatio, cfgScale, steps, seed, resources
@@ -112,7 +112,7 @@ const qwen3AspectRatios = [
 type QwenCtx = { ecosystem: string; workflow: string };
 
 // =============================================================================
-// Qwen Subgraph (sdcpp engine)
+// Qwen Subgraph (comfy engine)
 // =============================================================================
 
 const qwenSubGraph = new DataGraph<QwenCtx, GenerationCtx>()

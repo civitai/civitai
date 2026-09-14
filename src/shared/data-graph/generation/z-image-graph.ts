@@ -8,7 +8,6 @@
  * - Turbo: Fast generation with fixed sampler/scheduler
  * - Base: Full controls with customizable sampler/scheduler
  *
- * Uses SdCpp samplers (euler, heun) and schedulers (simple, discrete).
  * Supports LoRA resources.
  */
 
@@ -51,15 +50,10 @@ const zImageModeVersionOptions = [
   { label: 'Base', value: zImageVersionIds.base },
 ];
 
-// =============================================================================
-// Sampler / Scheduler Options (SdCpp)
-// =============================================================================
-
-/** ZImage sampler options (SdCppSampleMethod) */
 const zImageSamplers = ['euler', 'heun'] as const;
 
-/** ZImage scheduler options (SdCppSchedule) */
-const zImageSchedules = ['simple', 'discrete'] as const;
+/** Must be valid comfy scheduler names — comfy has no 'discrete'. */
+const zImageSchedules = ['simple'] as const;
 
 // =============================================================================
 // Mode Subgraphs
@@ -127,7 +121,7 @@ const baseModeGraph = new DataGraph<ZImageModeCtx, GenerationCtx>()
  * - turbo: basic controls (no sampler/scheduler)
  * - base: full controls (sampler/scheduler exposed)
  *
- * Uses SdCpp samplers/schedulers. Supports LoRA resources.
+ * Supports LoRA resources.
  */
 export const zImageGraph = new DataGraph<{ ecosystem: string; workflow: string }, GenerationCtx>()
   // Merge checkpoint graph with version options (defaultModelId inferred from baseModel)

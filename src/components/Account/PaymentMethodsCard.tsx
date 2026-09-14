@@ -2,7 +2,6 @@ import type { GroupProps } from '@mantine/core';
 import {
   Accordion,
   Button,
-  Card,
   Center,
   Divider,
   Group,
@@ -17,6 +16,7 @@ import React from 'react';
 import { formatDate } from '~/utils/date-helpers';
 import { useMutateStripe, useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
 import { IconCreditCard, IconTrash } from '@tabler/icons-react';
+import { CardOrSection } from '~/components/Account/SettingsLayout';
 import { openConfirmModal } from '@mantine/modals';
 import { StripePaymentMethodSetup } from '~/components/Stripe/StripePaymentMethodSetup';
 import type { UserPaymentMethod } from '~/types/router';
@@ -121,7 +121,7 @@ const querySchema = z.object({
   missingPaymentMethod: booleanString().optional(),
 });
 
-const StripePaymentMethods = () => {
+const StripePaymentMethods = ({ flat }: { flat?: boolean }) => {
   const { deletingPaymentMethod, deletePaymentMethod } = useMutateStripe();
   const { userPaymentMethods, isLoading: isLoadingPaymentMethods } = useUserPaymentMethods();
   const router = useRouter();
@@ -151,11 +151,9 @@ const StripePaymentMethods = () => {
   };
 
   return (
-    <Card withBorder>
+    <CardOrSection flat={flat} title="Payment methods" id="payment-methods">
       <Stack>
-        <Title order={2} id="payment-methods">
-          Payment methods
-        </Title>
+        {!flat && <Title order={2}>Payment methods</Title>}
         {result.success && result.data.missingPaymentMethod && (
           <Text c="red" size="sm">
             It looks like you are trying to upgrade your membership but we do not have a payment
@@ -215,11 +213,11 @@ const StripePaymentMethods = () => {
           </Accordion.Item>
         </Accordion>
       </Stack>
-    </Card>
+    </CardOrSection>
   );
 };
 
-const PaddlePaymentMethods = () => {
+const PaddlePaymentMethods = ({ flat }: { flat?: boolean }) => {
   const { managementUrls, isLoading } = useSubscriptionManagementUrls();
   const { paddle } = usePaddle();
   const currentUser = useCurrentUser();
@@ -260,11 +258,9 @@ const PaddlePaymentMethods = () => {
   }
 
   return (
-    <Card withBorder>
+    <CardOrSection flat={flat} title="Payment methods" id="payment-methods">
       <Stack>
-        <Title order={2} id="payment-methods">
-          Payment methods
-        </Title>
+        {!flat && <Title order={2}>Payment methods</Title>}
 
         <Divider label="Your payment methods" />
         {isLoading && (
@@ -290,11 +286,11 @@ const PaddlePaymentMethods = () => {
           </Stack>
         )}
       </Stack>
-    </Card>
+    </CardOrSection>
   );
 };
 
-export function PaymentMethodsCard() {
+export function PaymentMethodsCard({ flat }: { flat?: boolean } = {}) {
   const paymentProvider = usePaymentProvider();
   const { subscriptionLoading, subscriptionPaymentProvider } = useActiveSubscription();
 
@@ -309,7 +305,7 @@ export function PaymentMethodsCard() {
   }
 
   if (currentPaymentProvider === PaymentProvider.Paddle) {
-    return <PaddlePaymentMethods />;
+    return <PaddlePaymentMethods flat={flat} />;
   }
 
   return null;

@@ -403,6 +403,10 @@ export enum OrchEngineTypes {
 
 export enum BlocklistType {
   EmailDomain = 'EmailDomain',
+  // Opt-in per entry: an entry here blocks the domain AND every subdomain of it. Separate from
+  // `EmailDomain` so suffix matching is a decision a moderator makes about one domain, never a
+  // behaviour change applied to the ~8,800 entries the upstream sync maintains.
+  EmailDomainSuffix = 'EmailDomainSuffix',
   LinkDomain = 'LinkDomain',
   MessagePattern = 'MessagePattern',
   UsernameExact = 'UsernameExact',

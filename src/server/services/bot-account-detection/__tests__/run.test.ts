@@ -283,6 +283,7 @@ describe('🔴 the seam between the evidence and the scoring', () => {
       ids.map((userId) => ({ userId, ip: '203.0.113.9' })),
     listContentSamples: async (ids: number[]) =>
       ids.map((userId) => ({ userId, content: RING_TEXT })),
+    listFilenameSamples: async () => [],
   };
 
   it('🔴 the cohort-level evidence REACHES the scoring, and the finding proves it', async () => {
@@ -328,6 +329,186 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     expect(finding?.reason).toContain('6 new accounts posted the same text');
   });
 
+  it('🔴 A SHARED FILENAME ALONE REACHES THE BOARD, with no comments anywhere in the run', async () => {
+    // 🔴 THE END-TO-END CASE THE WHOLE CHANGE EXISTS FOR, and the one no component test can make.
+    // `evidence.test.ts` covers the index and `heuristics.test.ts` covers the scorer over
+    // hand-built signals; neither ever builds the combined state, which is how a heuristic that
+    // fired ZERO times across five production runs kept looking healthy. This run has NO content
+    // rows at all — the exact production shape, where three consecutive daily cohorts totalling
+    // ~25,000 accounts produced 65 comments between them — and the finding still lands.
+    const scenario = ringRun({
+      hasRegistrationIps: false,
+      listRegistrationIps: async () => [],
+      listContentSamples: async () => [],
+      // Mixed case on purpose: these are ONE cluster, not two.
+      listFilenameSamples: async (ids: number[]) =>
+        ids.map((userId) => ({ userId, name: userId % 2 === 0 ? 'Logo.jpg' : 'logo.jpg' })),
+    });
+    const result = await scenario.result;
+
+    const finding = scenario.reports[0].findings.find((f) => f.userId === 1);
+    expect(finding).toBeDefined();
+    const sub = subScoresOf(finding as { reason: string });
+    expect(Object.keys(sub).sort()).toEqual([
+      'content-templating',
+      'posting-velocity',
+      'registration-cluster',
+    ]);
+
+    // The templating heuristic fired on filenames ALONE — its text half had nothing to read.
+    expect(sub['content-templating']).toBeGreaterThan(0);
+    // And the reason names it as a FILENAME and quotes the PLAIN name, not the namespaced key.
+    expect(finding?.reason).toContain('uploaded a file with the same name');
+    expect(finding?.reason).toContain('logo.jpg');
+    expect(finding?.reason).not.toContain('file:logo.jpg');
+
+    // 🔴 THE DECOMPOSITION. Without these two counters the shadow phase cannot grade the halves
+    // apart, which is precisely how the comment-only version survived five runs looking fine.
+    expect(result.counters['heuristic:content-templating:fired_filename']).toBeGreaterThan(0);
+    expect(result.counters['heuristic:content-templating:fired_text']).toBe(0);
+
+    // 🔴 THE EXISTING SERIES KEEPS ITS MEANING. `evidence_distinct_content_fingerprints` counts
+    // TEXT fingerprints only. Had it been left as `membersPerFingerprint.size` it would now include
+    // filenames, and the day this shipped would have read as an explosion of comment templating.
+    expect(result.counters.evidence_distinct_content_fingerprints).toBe(0);
+    expect(result.counters.evidence_distinct_filename_fingerprints).toBe(1);
+    expect(result.counters.evidence_filename_samples).toBe(1);
+  });
+
+  it('🔴 the filename source is reported UNAVAILABLE when the read fails, not as a quiet zero', async () => {
+    // A zero from a source that never ran is not a zero from a source that found nothing, and the
+    // counter plus the summary sentence are the only things that tell a reader which one this is.
+    const scenario = ringRun({
+      hasRegistrationIps: false,
+      listRegistrationIps: async () => [],
+      listContentSamples: async () => [],
+      listFilenameSamples: async () => {
+        throw new Error('replica timeout');
+      },
+    });
+    const result = await scenario.result;
+    expect(result.counters.evidence_filename_samples).toBe(0);
+    expect(scenario.reports[0].summary).toContain('THE UPLOADED-FILENAME READ FAILED');
+    // The run still completed and still filed a report — a dead source degrades it, never kills it.
+    expect(result.reportsSent).toBeGreaterThan(0);
+  });
+
+  it('🔴 A FAILED FILENAME READ AND A QUIET DAY PRODUCE DIFFERENT COUNTERS', async () => {
+    // 🔴 THE SEAM THIS WHOLE CHANGE EXISTS FOR, ASSERTED AS A COMPARISON RATHER THAN AS A VALUE.
+    // A production run's filename read failed on every attempt and the run reported success. Its
+    // counters — `evidence_filename_samples: 0`, `evidence_members_sampled_for_filenames: 0`,
+    // `evidence_distinct_filename_fingerprints: 0`, `evidence_filename_budget_exhausted: 0` — were
+    // number for number the counters of a day on which nobody uploaded anything. Nothing alerted,
+    // every dashboard was green, and the only record was one log line. A test asserting any single
+    // counter's VALUE would have passed on both runs; only asserting that the two runs DIFFER
+    // states the property that was missing.
+    const failed = ringRun({
+      hasRegistrationIps: false,
+      listRegistrationIps: async () => [],
+      listContentSamples: async () => [],
+      listFilenameSamples: async () => {
+        throw new Error('replica timeout');
+      },
+    });
+    const failedCounters = (await failed.result).counters;
+
+    // The control: the identical run whose filename read worked perfectly and found nothing.
+    const quiet = ringRun({
+      hasRegistrationIps: false,
+      listRegistrationIps: async () => [],
+      listContentSamples: async () => [],
+      listFilenameSamples: async () => [],
+    });
+    const quietCounters = (await quiet.result).counters;
+
+    // The two counter maps differ. ⚠️ LABELLED HONESTLY: this line alone is an INVARIANT GUARD, not
+    // regression coverage — it passes on the pre-change code too, because on a non-empty cohort
+    // with a working reader `evidence_filename_samples` and
+    // `evidence_members_sampled_for_filenames` already separated these two runs. It is kept because
+    // it is the property a reader will look for; the coverage is in the two blocks below.
+    expect(failedCounters).not.toEqual(quietCounters);
+
+    // 🔴 REGRESSION COVERAGE STARTS HERE: this key does not exist on the pre-change code. Asserted
+    // in BOTH directions — a counter only ever asserted non-zero could be hardcoded non-zero and
+    // still pass.
+    expect(failedCounters.evidence_source_read_failures).toBe(1);
+    expect(quietCounters.evidence_source_read_failures).toBe(0);
+    expect(failedCounters.evidence_filename_read_failed).toBe(1);
+    expect(quietCounters.evidence_filename_read_failed).toBe(0);
+
+    // 🔴 EMITTED ON EVERY RUN, ZEROS INCLUDED. A key that is absent on a healthy run cannot be
+    // alerted on with a threshold — the absence reads as "no data", not as "nothing broke".
+    expect(Object.keys(quietCounters)).toContain('evidence_source_read_failures');
+    expect(Object.keys(quietCounters)).toContain('evidence_filename_read_failed');
+    expect(Object.keys(quietCounters)).toContain('evidence_content_read_failed');
+    expect(Object.keys(quietCounters)).toContain('evidence_registration_ips_read_failed');
+
+    // ⚠️ TWO COUNTERS THIS ASSERTION FIRST OVERCLAIMED, CORRECTED BY WATCHING IT FAIL RATHER THAN
+    // BY REASONING. `evidence_filename_samples` and `evidence_members_sampled_for_filenames` DO
+    // separate a failed read from a quiet day on a non-empty cohort (0 vs 1, and 0 vs 6). Only
+    // these two carry no information at all, and saying more than that would be the same kind of
+    // claim-wider-than-the-code this file keeps finding:
+    for (const key of [
+      'evidence_distinct_filename_fingerprints',
+      'evidence_filename_budget_exhausted',
+    ])
+      expect(failedCounters[key]).toBe(quietCounters[key]);
+
+    // 🔴 THE THIRD ARM, AND THE ONE THAT MATCHES THE PRODUCTION INCIDENT: a run with NO evidence
+    // reader at all — the source never ran. EVERY filename counter is byte-identical to the failed
+    // run's, which is precisely why the report sentence used to have to say "the read either did
+    // not run or failed": nothing published could choose between them. The new key chooses.
+    const neverRan = run([account(1)]);
+    await neverRan.result;
+    const absentCounters = neverRan.reports[0].counters ?? {};
+    for (const key of [
+      'evidence_filename_samples',
+      'evidence_members_sampled_for_filenames',
+      'evidence_distinct_filename_fingerprints',
+      'evidence_filename_budget_exhausted',
+      'evidence_filename_budget',
+    ])
+      expect([key, absentCounters[key]]).toEqual([key, failedCounters[key]]);
+    expect(absentCounters.evidence_source_read_failures).toBe(0);
+    expect(failedCounters.evidence_source_read_failures).toBe(1);
+  });
+
+  it('🔴 a healthy run reports ZERO read failures — the other arm of the same key', async () => {
+    // A failure counter that is never watched going to zero is a counter nobody can trust a zero
+    // from. This arm is what makes the non-zero above attributable.
+    const scenario = ringRun({
+      hasRegistrationIps: true,
+      listRegistrationIps: async () => [],
+      listContentSamples: async () => [],
+      listFilenameSamples: async () => [],
+    });
+    const counters = (await scenario.result).counters;
+    expect(counters.evidence_source_read_failures).toBe(0);
+    expect(counters.evidence_registration_ips_read_failed).toBe(0);
+    expect(counters.evidence_content_read_failed).toBe(0);
+    expect(counters.evidence_filename_read_failed).toBe(0);
+    expect(scenario.reports[0].summary).not.toContain('READ FAILED');
+  });
+
+  it('🔴 several sources failing are COUNTED, not collapsed to a boolean', async () => {
+    // The aggregate has to be a count for a reader to tell one broken source from all of them —
+    // the run where everything went is not the same incident as the run where one did.
+    const scenario = ringRun({
+      hasRegistrationIps: true,
+      listRegistrationIps: async () => {
+        throw new Error('clickhouse down');
+      },
+      listContentSamples: async () => {
+        throw new Error('replica timeout');
+      },
+      listFilenameSamples: async () => {
+        throw new Error('replica timeout');
+      },
+    });
+    const counters = (await scenario.result).counters;
+    expect(counters.evidence_source_read_failures).toBe(3);
+  });
+
   it('the same cohort with NO evidence reader scores both ring heuristics 0 — the control', async () => {
     // The other arm. Without it the case above cannot attribute anything: a finding whose ring
     // sub-scores are non-zero proves the seam only if they are zero when the evidence is absent,
@@ -368,6 +549,7 @@ describe('the evidence sources are reported, not assumed', () => {
             { userId: 2, ip: 'x' },
           ],
           listContentSamples: async () => [],
+          listFilenameSamples: async () => [],
         },
         sendReport: out.sendReport,
         now: clock(),
@@ -381,10 +563,63 @@ describe('the evidence sources are reported, not assumed', () => {
     expect(counters.evidence_members_sampled_for_content).toBe(2);
   });
 
-  it('warns in the summary when the IP source was unavailable', async () => {
+  it('warns in the summary when the IP source DID NOT RUN, and says which of the two it was', async () => {
+    // 🔴 STRENGTHENED FROM A SUBSTRING BOTH BRANCHES SPELL. This used to assert only
+    // `'REGISTRATION-IP DATA WAS UNAVAILABLE'`, which is present in the did-not-run branch AND in
+    // the read-failed branch — so the one distinguishing clause this PR adds to the IP sentence
+    // could be deleted with this test still green (mutation: the failure condition forced to
+    // `false`; the suite stayed 362/362). The whole normalised sentence is pinned instead, because
+    // a guard on a word the other branch also spells is walkable by construction.
     const scenario = run([account(1)]);
     await scenario.result;
-    expect(scenario.reports[0].summary).toContain('REGISTRATION-IP DATA WAS UNAVAILABLE');
+    expect(scenario.reports[0].summary).toContain(
+      '🔴 REGISTRATION-IP DATA WAS UNAVAILABLE this run, so the clustering heuristic scored on ' +
+        'email domain alone — a low score from it is not evidence that accounts share no IP.'
+    );
+    // No ClickHouse client is a normal deployment, not an incident: the failure clause must be
+    // absent, and the counter with it.
+    expect(scenario.reports[0].summary).not.toContain('BECAUSE THE READ FAILED');
+    expect(scenario.reports[0].counters?.evidence_source_read_failures).toBe(0);
+  });
+
+  it('🔴 says the IP read FAILED, in the clause that separates a broken read from an absent client', async () => {
+    // 🔴 THE SOURCE ON WHICH "UNAVAILABLE" IS ALSO A NORMAL STEADY STATE. Every deployment without
+    // ClickHouse configured prints "REGISTRATION-IP DATA WAS UNAVAILABLE" on every run, forever —
+    // so on this one source the word a moderator reads carries no information at all, and the
+    // failure clause is the entire disclosure. With it deleted, a broken ClickHouse read is
+    // indistinguishable from the deployment that never had one, which is the exact ambiguity this
+    // PR exists to remove.
+    //
+    // The full sentence, not a keyword: the two branches differ only by the inserted clause.
+    const { reader } = recordingReader([account(1), account(2)]);
+    const out = sink();
+    await runBotAccountDetection(
+      {
+        reader,
+        evidence: {
+          hasRegistrationIps: true,
+          listRegistrationIps: async () => {
+            throw new Error('clickhouse down');
+          },
+          listContentSamples: async () => [],
+          listFilenameSamples: async () => [],
+        },
+        sendReport: out.sendReport,
+        now: clock(),
+        heuristics: [],
+      },
+      { pageSize: 10, maxAccounts: 10, minConfidence: 0 }
+    );
+
+    expect(out.reports[0].summary).toContain(
+      '🔴 REGISTRATION-IP DATA WAS UNAVAILABLE this run BECAUSE THE READ FAILED (counted in ' +
+        'evidence_source_read_failures), so the clustering heuristic scored on email domain alone ' +
+        '— a low score from it is not evidence that accounts share no IP.'
+    );
+    // And the counter it names is actually non-zero, so the sentence points somewhere real.
+    expect(out.reports[0].counters?.evidence_source_read_failures).toBe(1);
+    // The run still degraded rather than died.
+    expect(out.reports[0].counters?.cohort_size).toBe(2);
   });
 
   it('🔴 says so when the IP read RAN and matched nothing — the wrong-query signature', async () => {
@@ -403,6 +638,7 @@ describe('the evidence sources are reported, not assumed', () => {
           hasRegistrationIps: true,
           listRegistrationIps: async () => [],
           listContentSamples: async () => [],
+          listFilenameSamples: async () => [],
         },
         sendReport: out.sendReport,
         now: clock(),
@@ -432,6 +668,7 @@ describe('the evidence sources are reported, not assumed', () => {
           hasRegistrationIps: true,
           listRegistrationIps: async () => [{ userId: 1, ip: '203.0.113.4' }],
           listContentSamples: async () => [],
+          listFilenameSamples: async () => [],
         },
         sendReport: out.sendReport,
         now: clock(),
@@ -458,6 +695,7 @@ describe('the evidence sources are reported, not assumed', () => {
           listContentSamples: async () => {
             throw new Error('replica timeout');
           },
+          listFilenameSamples: async () => [],
         },
         sendReport: out.sendReport,
         now: clock(),
@@ -469,7 +707,11 @@ describe('the evidence sources are reported, not assumed', () => {
     expect(result.reportsSent).toBe(1);
     expect(result.cohortSize).toBe(2);
     expect(out.reports[0].counters?.evidence_content_samples).toBe(0);
-    expect(out.reports[0].summary).toContain('CONTENT SAMPLE DATA WAS UNAVAILABLE');
+    // 🔴 IT NAMES A FAILURE, NOT AN ABSENCE. The sentence used to read "the read either did not run
+    // or failed", which is one sentence covering two situations with different remedies — an
+    // unwired deployment and a broken read that needs fixing today.
+    expect(out.reports[0].summary).toContain('THE CONTENT SAMPLE READ FAILED');
+    expect(out.reports[0].counters?.evidence_content_read_failed).toBe(1);
     // Not reported as an exhausted budget: that would send a grading pass looking for a cohort too
     // large rather than for a broken replica.
     expect(out.reports[0].counters?.evidence_content_budget_exhausted).toBe(0);
@@ -488,6 +730,7 @@ describe('the evidence sources are reported, not assumed', () => {
           hasRegistrationIps: false,
           listRegistrationIps: async () => [],
           listContentSamples: async () => [],
+          listFilenameSamples: async () => [],
         },
         sendReport: out.sendReport,
         now: clock(),
@@ -497,6 +740,44 @@ describe('the evidence sources are reported, not assumed', () => {
     );
     expect(out.reports[0].counters?.evidence_content_samples).toBe(1);
     expect(out.reports[0].summary).not.toContain('CONTENT SAMPLE DATA WAS UNAVAILABLE');
+    expect(out.reports[0].summary).not.toContain('THE CONTENT SAMPLE READ FAILED');
+  });
+
+  it('🔴 the DID-NOT-RUN half of both disclosures, pinned whole and pinned APART from the FAILED half', async () => {
+    // 🔴 THE UNTESTED HALF OF THE SENTENCE THIS PR SPLIT IN TWO. Every existing case drives the
+    // FAILED branch; nothing asserted the other one, so the two texts could be SWAPPED and the
+    // suite stayed 362/362 (mutation: the did-not-run branch made to emit the FAILED text). The
+    // damage of that swap is the PR's own motivating failure inverted — a deployment with no
+    // evidence reader at all would tell a moderator "THE UPLOADED-FILENAME READ FAILED this run …
+    // it is a broken read", sending someone to chase a healthy replica that was never asked
+    // anything.
+    //
+    // A run with NO evidence reader: `emptyCohortSignals()` sets every availability flag false and
+    // every `readFailures` flag false, which is exactly the did-not-run state.
+    const scenario = run([account(1)]);
+    await scenario.result;
+    const summary = scenario.reports[0].summary ?? '';
+
+    expect(summary).toContain(
+      '🔴 UPLOADED-FILENAME DATA WAS UNAVAILABLE this run — the read did not run — so the ' +
+        'filename half of the content-templating heuristic scored 0 for every member for want of ' +
+        'data. That is not evidence that no accounts uploaded files under the same name.'
+    );
+    expect(summary).toContain(
+      '🔴 CONTENT SAMPLE DATA WAS UNAVAILABLE this run — the read did not run — so the ' +
+        'content-templating heuristic scored 0 for every member for want of data. That is not ' +
+        'evidence that no accounts posted the same text. The rest of the run was scored normally.'
+    );
+
+    // 🔴 DISTINGUISHABLE FROM, NOT MERELY PRESENT. "The sentence is there" is true of the mutant
+    // too — it is the wrong sentence being there that does the harm — so the claim has to be that
+    // the FAILED text is ABSENT, and that the counters agree with the words.
+    expect(summary).not.toContain('THE UPLOADED-FILENAME READ FAILED');
+    expect(summary).not.toContain('THE CONTENT SAMPLE READ FAILED');
+    expect(summary).not.toContain('it is a broken read');
+    expect(scenario.reports[0].counters?.evidence_source_read_failures).toBe(0);
+    expect(scenario.reports[0].counters?.evidence_content_read_failed).toBe(0);
+    expect(scenario.reports[0].counters?.evidence_filename_read_failed).toBe(0);
   });
 
   it('🔴 says the budget ran out, in the summary as well as the counters', async () => {
@@ -515,6 +796,7 @@ describe('the evidence sources are reported, not assumed', () => {
           // Two rows per chunk against a budget of 2: the first chunk spends it and the walk stops.
           listContentSamples: async (ids) =>
             ids.map((userId) => ({ userId, content: 'x'.repeat(30) })),
+          listFilenameSamples: async () => [],
         },
         sendReport: out.sendReport,
         now: clock(),
@@ -530,6 +812,138 @@ describe('the evidence sources are reported, not assumed', () => {
         'sampled newest-first, so the unsampled remainder is the OLDEST end of the window and ' +
         'scored 0 on content templating for want of data.'
     );
+  });
+});
+
+/**
+ * 🔴 THE LOG PAYLOAD THIS CHANGE NAMES AS THE THING THAT CLOSES THE LOOP — AND IT HAD NO COVERAGE
+ * AT ALL. Neither `readFailures` nor `bot-account-detection:signals` appeared anywhere in this file
+ * before these cases: deleting the `readFailures` key from the log call left the suite 362/362
+ * green. The irony is the finding — this PR argues the `readFailures` COUNTERS have no consumer and
+ * that the failure is closed by the log line and the report summary, and those were the two
+ * surfaces with no guards on them while the counters were asserted in both directions on all four
+ * keys.
+ *
+ * The scenario these must catch: any later edit to that payload returns the detector to its
+ * pre-PR state — a failed source whose only record was a log line that no longer records it — with
+ * CI green.
+ */
+describe('🔴 the signals log line carries the failure half, not just the availability half', () => {
+  /** Captures `log(name, data)` so a payload is a value a test can assert on. */
+  function logCapture() {
+    const calls: Array<{ name: string; data: Record<string, unknown> }> = [];
+    return {
+      calls,
+      log: (name: string, data: Record<string, unknown>) => {
+        calls.push({ name, data });
+      },
+      /** The one `bot-account-detection:signals` payload, or a failure naming what WAS logged. */
+      signals() {
+        const hit = calls.filter((c) => c.name === 'bot-account-detection:signals');
+        expect(
+          hit,
+          `expected exactly one bot-account-detection:signals log line, got names: ${calls
+            .map((c) => c.name)
+            .join(', ')}`
+        ).toHaveLength(1);
+        return hit[0].data;
+      },
+    };
+  }
+
+  const logRun = (evidence: Parameters<typeof runBotAccountDetection>[0]['evidence']) => {
+    const { reader } = recordingReader([account(1), account(2)]);
+    const out = sink();
+    const cap = logCapture();
+    return {
+      ...cap,
+      ...out,
+      result: runBotAccountDetection(
+        {
+          reader,
+          evidence,
+          sendReport: out.sendReport,
+          now: clock(),
+          heuristics: [],
+          log: cap.log,
+        },
+        { pageSize: 10, maxAccounts: 10, minConfidence: 0 }
+      ),
+    };
+  };
+
+  it('🔴 publishes readFailures with its real shape, one flag per source', async () => {
+    // Only the IP read throws. The payload must say WHICH source broke — a boolean sum, or the key
+    // omitted entirely, both read the same as the day nothing broke.
+    const scenario = logRun({
+      hasRegistrationIps: true,
+      listRegistrationIps: async () => {
+        throw new Error('clickhouse down');
+      },
+      listContentSamples: async () => [],
+      listFilenameSamples: async () => [],
+    });
+    await scenario.result;
+
+    // `toEqual` on the whole object, not a property probe: it fails when the key is DELETED, when a
+    // flag is dropped from the shape, and when the wrong source is blamed.
+    expect(scenario.signals().readFailures).toEqual({
+      registrationIps: true,
+      contentSamples: false,
+      filenameSamples: false,
+    });
+    // The availability half is still there beside it — the failure half is an addition, not a
+    // replacement, and a reader needs both to tell a broken read from an absent client.
+    expect(scenario.signals().registrationIps).toBe(false);
+  });
+
+  it('🔴 publishes it as all-false on a clean run — the control that makes a `true` mean something', async () => {
+    // A field that appears only in the bad case cannot be alerted on, and a field only ever
+    // observed in the bad case cannot be shown to be `false` for the right reason. Both reads
+    // answer, both answer with nothing, and every flag must still be present and `false`.
+    const scenario = logRun({
+      hasRegistrationIps: true,
+      listRegistrationIps: async () => [],
+      listContentSamples: async () => [],
+      listFilenameSamples: async () => [],
+    });
+    await scenario.result;
+    expect(scenario.signals().readFailures).toEqual({
+      registrationIps: false,
+      contentSamples: false,
+      filenameSamples: false,
+    });
+  });
+
+  it('🔴 a FAILED filename read and a QUIET one differ IN THE LOG LINE, not only in the counters', async () => {
+    // The seam stated as a comparison rather than as a value, for the reason the counter version of
+    // this case states: a production run's filename read failed on every attempt and its counters
+    // were, number for number, the counters of a day on which nobody uploaded anything. The log
+    // line is the surface this PR nominates as the fix, so the property has to hold THERE too.
+    const failed = logRun({
+      hasRegistrationIps: false,
+      listRegistrationIps: async () => [],
+      listContentSamples: async () => [],
+      listFilenameSamples: async () => {
+        throw new Error('replica timeout');
+      },
+    });
+    await failed.result;
+    const quiet = logRun({
+      hasRegistrationIps: false,
+      listRegistrationIps: async () => [],
+      listContentSamples: async () => [],
+      listFilenameSamples: async () => [],
+    });
+    await quiet.result;
+
+    // Identical on the availability half — which is precisely why that half cannot carry the
+    // distinction.
+    expect(failed.signals().filenameSamples).toBe(false);
+    expect(quiet.signals().filenameSamples).toBe(true);
+    expect(failed.signals().readFailures).not.toEqual(quiet.signals().readFailures);
+    expect(failed.signals().readFailures).toMatchObject({ filenameSamples: true });
+    expect(quiet.signals().readFailures).toMatchObject({ filenameSamples: false });
   });
 });
 
@@ -1151,5 +1565,147 @@ describe('the shadow-mode invariant: nothing is muted, banned or restricted', ()
     const payload = JSON.stringify(scenario.reports);
     expect(payload).not.toContain('"actioned":true');
     expect(payload).not.toContain('"action"');
+  });
+});
+
+describe('🔴 the cluster key reaches the board', () => {
+  /**
+   * Six accounts registered on ONE uncommon email domain, run end to end through the PRODUCTION
+   * heuristic registry.
+   *
+   * Six, not four: `DOMAIN_ZERO_AT` is 3, so six overshoots the boundary rather than sitting on it —
+   * a fixture landing exactly ON a boundary cannot see a mutant that shifts it by one.
+   */
+  const RING_DOMAIN = 'ring-provider.test';
+  const ringAccounts = (domain: string, n = 6) =>
+    Array.from({ length: n }, (_, i) => ({ ...account(i + 1), email: `u${i + 1}@${domain}` }));
+
+  /**
+   * 🔴 AN EVIDENCE READER IS REQUIRED EVEN THOUGH IT RETURNS NOTHING, and finding that out is itself
+   * the point: `membersPerDomain` is built by `collectCohortSignals`, which `run.ts` only calls when
+   * `deps.evidence` is present. Without one the domain index is EMPTY, so a real six-account ring
+   * scores 0 and carries no key — the same reason the sibling block above needs a control arm. This
+   * reader answers both remote sources with nothing, so the IP and content halves stay at 0 and
+   * anything the findings carry came from the domain half alone.
+   */
+  const domainOnlyEvidence = {
+    hasRegistrationIps: false,
+    listRegistrationIps: async () => [],
+    listContentSamples: async () => [],
+    listFilenameSamples: async () => [],
+  };
+
+  const domainRun = (accounts: NewAccountRow[]) => {
+    const { reader } = recordingReader(accounts);
+    const out = sink();
+    return {
+      ...out,
+      result: runBotAccountDetection(
+        { reader, evidence: domainOnlyEvidence, sendReport: out.sendReport, now: clock() },
+        { pageSize: 10, maxAccounts: 10, minConfidence: 0 }
+      ),
+    };
+  };
+
+  it('every member of the ring is emitted with the SAME key', async () => {
+    // 🔴 THE SEAM `run.ts` OWNS, and the mutant it exists for: handing `buildFinding` an empty
+    // signals index, or forgetting the argument entirely, leaves every finding ungrouped while
+    // `heuristics.test.ts` and `report.test.ts` both stay green — each covers one side and neither
+    // ever builds the combined state. Every ring on the board would then be ruled one account at a
+    // time, with nothing anywhere reporting a fault.
+    const scenario = domainRun(ringAccounts(RING_DOMAIN));
+    await scenario.result;
+
+    const findings = scenario.reports[0].findings;
+    expect(findings).toHaveLength(6);
+    // The LITERAL key, not a re-derivation: an assertion computed from the code under test cannot
+    // see the prefix change or the wrong attribute being used.
+    expect(findings.map((f) => f.groupKey)).toEqual(Array(6).fill('domain:ring-provider.test'));
+  });
+
+  it('🔴 the key names only what the reason already says — checked on the emitted finding', () => {
+    // The disclosure rule, asserted where it matters: on the payload that reaches the board.
+    const scenario = domainRun(ringAccounts(RING_DOMAIN));
+    return scenario.result.then(() => {
+      for (const f of scenario.reports[0].findings) {
+        expect(f.groupKey).toBe('domain:ring-provider.test');
+        expect(f.reason).toContain(RING_DOMAIN);
+      }
+    });
+  });
+
+  it('a cohort with DISTINCT domains is emitted ungrouped — the control', async () => {
+    // Without this the case above attributes nothing: findings carrying a key prove the wiring only
+    // if findings carry none when there is no ring, and "always sets a key" is a real mutant.
+    const scenario = domainRun(Array.from({ length: 6 }, (_, i) => account(i + 1)));
+    await scenario.result;
+
+    const findings = scenario.reports[0].findings;
+    expect(findings).toHaveLength(6);
+    expect(findings.every((f) => f.groupKey === undefined)).toBe(true);
+  });
+
+  it('a ring on a COMMON provider is emitted ungrouped', async () => {
+    // `gmail.com` is the largest cluster in every cohort, every day. A key there would collapse the
+    // day's most ordinary accounts into one ruling.
+    const scenario = domainRun(ringAccounts('gmail.com'));
+    await scenario.result;
+    expect(scenario.reports[0].findings.every((f) => f.groupKey === undefined)).toBe(true);
+  });
+
+  it('the payloads still satisfy the real wire contract', async () => {
+    const scenario = domainRun(ringAccounts(RING_DOMAIN));
+    await scenario.result;
+    for (const report of scenario.reports)
+      expect(() => abuseReportInput.parse(report)).not.toThrow();
+  });
+
+  /**
+   * 🔴 A PATHOLOGICAL DOMAIN MUST NOT BE ABLE TO STOP THE DETECTOR.
+   *
+   * `normalizeEmailDomain` bounds the domain at nothing, so `domain:${domain}` was producer-supplied
+   * and unbounded against a contract that caps `groupKey` at 200 characters. Over the cap the report
+   * is REFUSED — and because this run validates before the network call, the throw takes the run
+   * down, losing that batch and every batch after it. Four accounts on one uncommon domain is all
+   * that is needed, and a wildcard-MX subdomain chain under an attacker-owned apex fits inside DNS's
+   * own 253-character limit: a denial-of-detection lever, not an edge case.
+   */
+  const ABSURD_DOMAIN = `${'a'.repeat(236)}.test`;
+
+  it('🔴 a ring on an absurdly long domain still produces a report the contract accepts', async () => {
+    expect(ABSURD_DOMAIN).toHaveLength(241);
+    const scenario = domainRun(ringAccounts(ABSURD_DOMAIN));
+    await scenario.result;
+
+    expect(scenario.reports).toHaveLength(1);
+    for (const report of scenario.reports)
+      expect(() => abuseReportInput.parse(report)).not.toThrow();
+  });
+
+  it('and every member of THAT ring still shares one key', async () => {
+    // Bounding is only useful if it keeps the grouping: a per-member key would give a forty-account
+    // ring forty separate decisions, which is the state this feature exists to remove.
+    const scenario = domainRun(ringAccounts(ABSURD_DOMAIN));
+    await scenario.result;
+
+    const keys = scenario.reports[0].findings.map((f) => f.groupKey);
+    expect(keys).toHaveLength(6);
+    expect(new Set(keys).size, 'the ring must still be ONE cluster').toBe(1);
+    // Inside the contract's cap, and not the raw key.
+    expect((keys[0] as string).length).toBeLessThanOrEqual(200);
+    expect(keys[0]).not.toBe(`domain:${ABSURD_DOMAIN}`);
+  });
+
+  it('a SECOND absurd domain gets a different key — the clusters do not merge', async () => {
+    // Truncation would give both the same 200-character string, and a moderator ruling one ring
+    // would rule the other. Two domains sharing a long prefix, which is the shape a subdomain chain
+    // under one apex actually has.
+    const other = `${'a'.repeat(230)}zzzzzz.test`;
+    expect(other).toHaveLength(241);
+    const a = domainRun(ringAccounts(ABSURD_DOMAIN));
+    await a.result;
+    const b = domainRun(ringAccounts(other));
+    await b.result;
+    expect(a.reports[0].findings[0].groupKey).not.toBe(b.reports[0].findings[0].groupKey);
   });
 });

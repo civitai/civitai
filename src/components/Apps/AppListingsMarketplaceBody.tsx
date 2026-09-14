@@ -257,6 +257,31 @@ export function AppListingsMarketplaceBody() {
       enabled: hasAppsStoreAccess(features),
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       /**
+       * 🔴 60s. Without a `staleTime` react-query's default is ZERO, which means
+       * every remount and every window refocus refetches — and the `/apps` grid is
+       * a page viewers leave and come straight back to (open an app, hit back;
+       * tab away, tab back). Each of those was a fresh network round trip for a
+       * catalog that had not moved.
+       *
+       * WHY 60 AND NOT MORE: the PROPERTY is that the client window stays strictly
+       * shorter than the server-side TTL (`CacheTTL.sm`, 180s at the time of writing,
+       * on `listAvailableListings`'s keyset query), so the client is never the longer
+       * of the two staleness sources. That inequality — and only that — is what
+       * `AppListingsMarketplaceBody.keepPreviousData.browser.test.tsx` asserts, against
+       * the real constant. The specific 3× headroom is a judgement, not a pinned
+       * ratio: pick any value under `CacheTTL.sm`. The moderator-
+       * visible worst case for a listing entering or leaving the store is bounded
+       * by the server side, which every listing-state mutation busts explicitly
+       * (`bustAppListingCatalogCache`) — a client window that outlived the server
+       * TTL would have made those busts invisible for the difference.
+       *
+       * It does NOT interact with `placeholderData` below: `staleTime` governs
+       * whether a cached entry for THIS key is refetched; `keepPreviousData`
+       * governs what is rendered while a DIFFERENT key loads. A sort/filter change
+       * is a new key, so it still fetches immediately regardless of this value.
+       */
+      staleTime: 60 * 1000,
+      /**
        * 🔴 KEEP THE PREVIOUS RESULT WHILE A NEW ONE LOADS. The query key is
        * `{kind, category, sort, limit}`, so every sort/filter change is a NEW
        * key — and without this `data` goes `undefined` for the duration of the

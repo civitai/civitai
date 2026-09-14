@@ -266,7 +266,9 @@ export const modelRouter = router({
   getResourceSelect: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getResourceSelectSchema)
-    .query(({ ctx, input }) => getResourceSelectModels(input, { user: ctx.user })),
+    .query(({ ctx, input }) =>
+      getResourceSelectModels(input, { user: ctx.user, signal: ctx.signal })
+    ),
   upsert: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(modelUpsertSchema)

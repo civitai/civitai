@@ -50,9 +50,9 @@ export const videoHub = defineGraph<RootCtx>()
     const usableEcosystems = disabledSet.size
       ? compatibleEcosystems.filter((key) => !disabledSet.has(key))
       : compatibleEcosystems;
-    const defaultValue = usableEcosystems.includes('Seedance')
-      ? 'Seedance'
-      : usableEcosystems[0] ?? compatibleEcosystems[0] ?? 'Seedance';
+    const defaultValue = usableEcosystems.includes('MiniMaxH3')
+      ? 'MiniMaxH3'
+      : usableEcosystems[0] ?? compatibleEcosystems[0] ?? 'MiniMaxH3';
 
     return {
       ...ecosystemFieldSchemas(

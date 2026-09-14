@@ -1,17 +1,19 @@
 /**
  * Qwen family handler for the form-graph lane — three engines by ecosystem:
- * Qwen (sdcpp 20b, versioned), Qwen2 (fal), Qwen3 (DashScope qwen api).
+ * Qwen (comfy 20b, versioned), Qwen2 (fal), Qwen3 (DashScope qwen api).
  */
 
 import type {
   ImageGenStepTemplate,
-  Qwen20bCreateImageGenInput,
-  Qwen20bEditImageGenInput,
   Qwen2CreateFalImageGenInput,
   Qwen2EditFalImageGenInput,
   QwenApiCreateImageGenInput,
   QwenApiEditImageGenInput,
 } from '@civitai/client';
+import type {
+  ComfyQwen20bCreateImageGenInput,
+  ComfyQwen20bEditImageGenInput,
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { defineHandler } from '../ecosystems/handler-factory';
 import { resourcesToLoras } from './types';
@@ -118,7 +120,7 @@ export const createQwenInput = defineHandler<
   const loras = resourcesToLoras(qwen1Data?.resources, ctx.airs);
 
   const baseInput = {
-    engine: 'sdcpp',
+    engine: 'comfy',
     ecosystem: 'qwen',
     model: '20b' as const,
     version,
@@ -144,7 +146,7 @@ export const createQwenInput = defineHandler<
               operation: 'editImage',
               images: data.images?.map((x) => x.url) ?? [],
             }
-      ) as Qwen20bCreateImageGenInput | Qwen20bEditImageGenInput,
+      ) as ComfyQwen20bCreateImageGenInput | ComfyQwen20bEditImageGenInput,
     },
   ];
 });

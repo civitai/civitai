@@ -123,6 +123,7 @@ const pathnamesTokens = [
   '/user/[username]/collections',
   '/user/[username]',
   '/user/account',
+  '/user/account/[[...section]]',
   '/games/knights-of-new-order',
   '/user/earn-potential',
   '/user/[username]/manage-categories',

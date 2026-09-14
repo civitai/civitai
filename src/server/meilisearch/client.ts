@@ -1,5 +1,12 @@
 import { createHash } from 'crypto';
-import type { EnqueuedTask, DocumentsQuery, ResourceResults } from 'meilisearch';
+import type {
+  EnqueuedTask,
+  DocumentsQuery,
+  Index,
+  ResourceResults,
+  SearchParams,
+  SearchResponse,
+} from 'meilisearch';
 import { MeiliSearch } from 'meilisearch';
 import pLimit from 'p-limit';
 import { env } from '~/env/server';
@@ -844,14 +851,11 @@ function recordCallOutcome(backend: MeiliBackend, isTrial: boolean, failed: bool
  *   - Background / job / indexing callers (updateDocs and friends) are NOT
  *     wrapped — they have their own retry loops and slowness there is fine.
  *
- * AbortSignal: meilisearch-js 0.x doesn't accept AbortSignal on .search() /
- * .getDocuments(), so the loser of the Promise.race below continues running
- * in the background. The orphan SDK promise will eventually settle when the
- * backend responds (or RSTs the connection) — at that point we've already
- * released the limiter slot, so the orphan does not block new callers.
- * fetchDocumentsAbortable() (above) is the cancellable path for the slow-
- * fetch flow; we don't try to force-cancel SDK calls from here — out of
- * scope.
+ * Cancellation: `fn` receives a signal that aborts on `opts.signal` or on the
+ * timeout. Only a call that hands it to its request (`search(q, params,
+ * { signal })`) is cancelled; any other call loses the race and settles in the
+ * background. Either way the limiter slot is released at the race, and a
+ * search Meili has already started runs to completion regardless.
  *
  * The queue is intentionally unbounded: a saturated queue means every call
  * will time out at MEILI_CALL_TIMEOUT_MS and reject naturally — the timeout
@@ -861,8 +865,8 @@ function recordCallOutcome(backend: MeiliBackend, isTrial: boolean, failed: bool
 async function runWithLimiter<T>(
   key: LimiterKey,
   backendLabel: string,
-  fn: () => Promise<T>,
-  opts: { useTimeout?: boolean; timeoutMs?: number } = {}
+  fn: (signal: AbortSignal) => Promise<T>,
+  opts: { useTimeout?: boolean; timeoutMs?: number; signal?: AbortSignal } = {}
 ): Promise<T> {
   const useTimeout = opts.useTimeout ?? true;
   const timeoutMs = opts.timeoutMs ?? env.MEILI_CALL_TIMEOUT_MS;
@@ -890,13 +894,14 @@ async function runWithLimiter<T>(
   return limiters[key](async () => {
     let timer: NodeJS.Timeout | undefined;
     let failedForCircuit = false;
-    // Capture the SDK call so we can absorb a late rejection if the timeout
-    // wins the race. meilisearch-js doesn't accept AbortSignal here, so the
-    // SDK call keeps running and will eventually settle (success or RST).
-    // Without this catch, a late rejection bubbles to `unhandledRejection` —
-    // Node ≥15's default exit-on-unhandled would turn our brownout protection
-    // into pod-crash amplification.
-    const sdkCall = fn();
+    const timeoutCtrl = new AbortController();
+    const signal = opts.signal
+      ? AbortSignal.any([opts.signal, timeoutCtrl.signal])
+      : timeoutCtrl.signal;
+    // Absorb a late rejection after the timeout wins the race. Without this
+    // catch it bubbles to `unhandledRejection`, and Node's exit-on-unhandled
+    // turns brownout protection into pod-crash amplification.
+    const sdkCall = fn(signal);
     sdkCall.catch(() => undefined);
     try {
       if (!useTimeout) {
@@ -926,6 +931,7 @@ async function runWithLimiter<T>(
                 `Meilisearch call exceeded ${timeoutMs}ms timeout`
               )
             );
+            timeoutCtrl.abort();
           }, timeoutMs);
           // Don't keep the event loop alive for this timer; the surrounding
           // Promise.race resolves either way.
@@ -983,10 +989,28 @@ export function withMeiliHealthProbe<T>(fn: () => Promise<T>): Promise<T> {
  * (generous, not removed) so a hung backend still can't hold event-loop slots
  * to Traefik's 30s router timeout — the 2026-05-29 SIGKILL path.
  */
-export function withMeiliResourceSelect<T>(fn: () => Promise<T>): Promise<T> {
+export function withMeiliResourceSelect<T>(
+  fn: (signal: AbortSignal) => Promise<T>,
+  { signal }: { signal?: AbortSignal } = {}
+): Promise<T> {
   return runWithLimiter('resourceSelect', 'resourceSelect', fn, {
     timeoutMs: env.MEILI_RESOURCE_SELECT_TIMEOUT_MS,
+    signal,
   });
+}
+
+// meilisearch-js swallows a failed body read and resolves `undefined`, so an abort
+// (or a dropped connection) mid-body would otherwise look like a successful search.
+export async function searchWithSignal<D extends Record<string, any>>(
+  index: Index,
+  query: string,
+  params: SearchParams,
+  signal: AbortSignal
+): Promise<SearchResponse<D>> {
+  const res = await index.search<D>(query, params, { signal });
+  signal.throwIfAborted();
+  if (!res) throw new MeilisearchFetchError(502, 'response body did not arrive');
+  return res;
 }
 
 // Methods on a Meilisearch index that issue a network call to the backend and

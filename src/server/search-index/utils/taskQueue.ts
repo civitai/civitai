@@ -12,6 +12,12 @@ type BaseTask = {
   index?: number;
   total?: number;
   start?: number;
+  /**
+   * How many source ids this task is responsible for. Carried through the pull -> transform ->
+   * push chain (the derived tasks no longer hold the id list) so that a task which ends up
+   * failing can be attributed back to a number of documents that were never indexed.
+   */
+  idCount?: number;
 };
 
 export type PullTask = BaseTask &
@@ -45,6 +51,28 @@ export type OnCompleteTask = BaseTask & {
 
 type TaskStatus = 'queued' | 'processing' | 'completed' | 'failed';
 
+/**
+ * What is retained about a task that exhausted its retries.
+ *
+ * Deliberately NOT the `Task` itself: a push task carries `data` (an entire transformed batch,
+ * up to a processor's document batch size) and any multi-step pull task carries `currentData`.
+ * Holding the task object would keep those payloads alive for the whole life of the queue —
+ * which, on a degraded backend where many batches fail, is a large amount of memory retained for
+ * the sake of a number. `idCount` is the only field any production consumer reads (via
+ * `failedIdCount`); `type` and `retries` are kept for diagnostics and are so far read only by the
+ * specs.
+ */
+export type FailedTaskRecord = {
+  type: Task['type'];
+  /** Source ids this task was responsible for; none of them reached the index. */
+  idCount: number;
+  /**
+   * Retries the task had already made when it gave up — it was attempted `retries + 1` times.
+   * A task with `maxRetries: 0` is attempted once and records 0.
+   */
+  retries: number;
+};
+
 const MAX_QUEUE_SIZE_DEFAULT = 50;
 const RETRY_TIMEOUT = 1000;
 
@@ -54,6 +82,16 @@ export class TaskQueue {
   processing: Set<Task>;
   stats: Record<TaskStatus, number>;
   maxQueueSize: number;
+  /**
+   * Summaries of the tasks that exhausted their retries, kept so a caller can report what was NOT
+   * indexed. Summaries rather than tasks — see `FailedTaskRecord`.
+   */
+  failedTasks: FailedTaskRecord[];
+  /**
+   * Tasks that are between "failed" and "back on a queue" — see `failTask`. Counted by
+   * `isQueueEmpty` so the workers cannot all exit during the retry backoff.
+   */
+  retrying: number;
 
   constructor(queueEntry: Task['type'] = 'pull', maxQueueSize = MAX_QUEUE_SIZE_DEFAULT) {
     this.queues = {
@@ -71,6 +109,8 @@ export class TaskQueue {
       failed: 0,
     };
     this.maxQueueSize = maxQueueSize;
+    this.failedTasks = [];
+    this.retrying = 0;
   }
 
   get data() {
@@ -79,6 +119,11 @@ export class TaskQueue {
       processing: this.processing,
       stats: this.stats,
     };
+  }
+
+  /** Number of source ids belonging to tasks that permanently failed. */
+  get failedIdCount(): number {
+    return this.failedTasks.reduce((acc, record) => acc + record.idCount, 0);
   }
 
   async waitForQueueCapacity(queue: Task[]): Promise<void> {
@@ -138,20 +183,40 @@ export class TaskQueue {
     task.retries = task.retries ?? 0;
 
     if (task.retries < task.maxRetries) {
-      // Requeue it:
-      await sleep(RETRY_TIMEOUT);
-      task.retries++;
-      this.addTask(task);
+      // Requeue it. The task is no longer processing and not yet queued, so `retrying` is what
+      // keeps it visible to isQueueEmpty() across the backoff. It is redundant with the `await`
+      // in getTaskQueueWorker rather than an alternative to it: measured, either mechanism on its
+      // own keeps the retry alive, and only with neither do the workers all decide the queue is
+      // empty and resolve before the retry is added back.
+      this.stats.processing--;
+      this.retrying++;
+      try {
+        await sleep(RETRY_TIMEOUT);
+        task.retries++;
+        await this.addTask(task);
+      } finally {
+        this.retrying--;
+      }
       return;
     }
 
+    // Summarise rather than retain. On this path only — the task has given up, the retry branch
+    // above having already returned with it back on `queues[type]` — no structure on the queue
+    // reaches the task or its `data`/`currentData` payload once this returns. (Pinned queue-wide,
+    // not just for `failedTasks`, by the reachability walk in
+    // `src/server/search-index/utils/__tests__/taskQueue.test.ts`.)
+    this.failedTasks.push({
+      type: task.type,
+      idCount: task.idCount ?? 0,
+      retries: task.retries,
+    });
     this.updateTaskStatus(task, 'failed');
   }
 
   isQueueEmpty(): boolean {
     const queueSize = Object.values(this.queues).reduce((acc, queue) => acc + queue.length, 0);
     const processingSize = this.processing.size;
-    const totalSize = queueSize + processingSize;
+    const totalSize = queueSize + processingSize + this.retrying;
     return totalSize === 0;
   }
 }
@@ -174,7 +239,20 @@ export const getTaskQueueWorker = (
       const result = await processor(task);
 
       if (result === 'error') {
-        queue.failTask(task);
+        // Awaited so the re-queue completes before this worker re-evaluates `isQueueEmpty()`.
+        // That is redundant with `retrying`, not an alternative to it: measured, either
+        // mechanism ALONE keeps the retry alive, and only with neither do all the workers
+        // resolve before the task is added back. See the retry branch in `failTask`.
+        //
+        // 🔴 It does NOT stop a rejection from `failTask` being dropped. This worker is a
+        // `new Promise(async (resolve) => …)`, and a throw inside an async executor rejects
+        // the executor's own unobserved promise, never the outer one — so the rejection is
+        // unhandled with or without this `await`. What the `await` changes is that the worker
+        // then never settles, hanging the `Promise.all(workers)` in `updateSync` instead of
+        // returning. Nothing in `failTask`'s own body throws today — it mutates queue state,
+        // sleeps, and calls `addTask` — so this is a latent shape, not a live bug. But do not
+        // read the `await` as error handling.
+        await queue.failTask(task);
       } else {
         queue.completeTask(task);
         if (result !== 'done') {

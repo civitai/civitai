@@ -85,6 +85,111 @@ export async function inferSafetensorsPrecision(file: File): Promise<ModelFileFp
 }
 
 /**
+ * The precisions whose answer from the header is authoritative, so a file name may never
+ * contradict one. Deliberately NOT every precision `SAFETENSORS_DTYPE_TO_FP` can emit: that map
+ * also emits `int8` and `mxfp8`, which a dtype states only sometimes — MXFP8 scales are usually
+ * written as U8 rather than F8_E8M0, and GPTQ int8 packs into the unmapped I32 — so a name may
+ * supply those, and `resolveUploadPrecision` still keeps either when the header did observe it.
+ * Adding a row to that map does not update this set; keep the two in step by hand.
+ */
+const DTYPE_STATEABLE_FP = new Set(['fp32', 'fp16', 'bf16', 'fp8']);
+
+const isAlphanumeric = (char: string) => /[A-Za-z0-9]/.test(char);
+
+/**
+ * Whether `name[index]` starts a word. A separator counts, and so does a camelCase hump — whose
+ * lowercase letter may sit behind a version number, as in `v20NF4` and `_51NVFP4`. An UPPERCASE
+ * letter before the token does not count, digits between or not: trained-file job ids are 26-char
+ * base32, uppercase letters AND digits, so `F2NF4J1W4CGCKYETAEQJT9B5A0` has to be refused by the
+ * same rule that accepts `TzigoAnimeFlux_v2NF4`. That refuses all 12 of the prod names where a
+ * digit precedes an uppercase token and keeps the 4 real ones. Index 0 is a word start by
+ * construction, so an id that BEGINS with a token is still accepted — 1 row in 40,351, left
+ * alone. Missing an all-lowercase glued name (`ltx23devnvfp4`) is the side to fail on.
+ */
+function startsWord(name: string, index: number) {
+  if (index === 0) return true;
+  if (!isAlphanumeric(name[index - 1])) return true;
+  if (!/[A-Z]/.test(name[index])) return false;
+
+  let before = index - 1;
+  while (before >= 0 && /[0-9]/.test(name[before])) before--;
+  if (before < 0 || !isAlphanumeric(name[before])) return true;
+  return /[a-z]/.test(name[before]);
+}
+
+/** A trailing digit means the token was part of a longer number (`_int40_`), not the token. */
+function endsWord(name: string, index: number) {
+  return index >= name.length || !/[0-9]/.test(name[index]);
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * `fp8_scaled` is written `fp8-scaled` or `fp8 scaled` about as often, so each run of
+ * separators in the option becomes an optional one.
+ */
+function tokenPattern(precision: string) {
+  return precision
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .map(escapeRegExp)
+    .join('[-_. ]?');
+}
+
+/**
+ * Find a precision named in a file's name. Candidates are the values `precisions` offers minus
+ * `DTYPE_STATEABLE_FP` — which is narrower than "what a dtype can state", so `int8` and `mxfp8`
+ * are candidates here and a header answering one of the other four CAN be contradicted. That is
+ * the accepted tradeoff, not an oversight; `resolveUploadPrecision` carries the rest of the rule.
+ * Longest option first, which matters only when a mod adds a variant of an existing option —
+ * `fp4` inside `nvfp4` is refused by the word-start rule, not by the ordering.
+ */
+export function inferPrecisionFromFileName(
+  fileName: string,
+  precisions: readonly string[]
+): ModelFileFp | null {
+  const candidates = precisions
+    .filter((precision) => precision && !DTYPE_STATEABLE_FP.has(precision.toLowerCase()))
+    .sort((a, b) => b.length - a.length);
+
+  for (const precision of candidates) {
+    const pattern = tokenPattern(precision);
+    if (!pattern) continue;
+    const matcher = new RegExp(pattern, 'gi');
+    let match: RegExpExecArray | null;
+    while ((match = matcher.exec(fileName)) !== null) {
+      if (startsWord(fileName, match.index) && endsWord(fileName, match.index + match[0].length))
+        return precision as ModelFileFp;
+      matcher.lastIndex = match.index + 1;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Combine the two signals for an upload. A header answer outside `DTYPE_STATEABLE_FP` was
+ * observed directly and wins outright (F8_E8M0 scales are MXFP8 whatever the name says). One
+ * inside it loses to any name that claims a candidate precision — deliberately, since that is
+ * how a U8-packed NVFP4 body stops being read as the fp32 of its leftover tensors, and the
+ * uploader can still edit the field.
+ */
+export function resolveUploadPrecision({
+  fileName,
+  headerFp,
+  precisions,
+}: {
+  fileName: string;
+  headerFp: ModelFileFp | null;
+  precisions: readonly string[];
+}): ModelFileFp | null {
+  if (headerFp && !DTYPE_STATEABLE_FP.has(headerFp)) return headerFp;
+  return inferPrecisionFromFileName(fileName, precisions) ?? headerFp;
+}
+
+/**
  * Maps llama.cpp's LLAMA_FTYPE enum (stored in GGUF `general.file_type`) to the
  * quant-type strings the upload form offers. Unquantized ftypes (F32/F16/BF16)
  * and quant schemes not in the form are intentionally omitted -> no auto-fill.

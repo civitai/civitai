@@ -10,7 +10,7 @@
  */
 
 import { maxRandomSeed } from '~/server/common/constants';
-import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
+import { usesComfyEngine } from '~/shared/constants/generation.constants';
 import { isWanEcosystem } from '~/shared/form-graph/generation/video/wan.graph';
 import type { GenerationHandlerCtx, StepInput } from '../ecosystems';
 import { createChromaInput } from './chroma.handler';
@@ -26,6 +26,7 @@ import { createReveInput } from './reve.handler';
 import { createMuseImageInput } from './muse-image.handler';
 import { createMAIInput } from './mai.handler';
 import { createErnieInput } from './ernie.handler';
+import { createIdeogramInput } from './ideogram.handler';
 import { createSeedreamInput } from './seedream.handler';
 import { createAnimaInput } from './anima.handler';
 import { createMageFlowInput } from './mage-flow.handler';
@@ -77,6 +78,7 @@ export { createReveInput } from './reve.handler';
 export { createMuseImageInput } from './muse-image.handler';
 export { createMAIInput } from './mai.handler';
 export { createErnieInput } from './ernie.handler';
+export { createIdeogramInput } from './ideogram.handler';
 export { createSeedreamInput } from './seedream.handler';
 export { createAnimaInput } from './anima.handler';
 export { createMageFlowInput } from './mage-flow.handler';
@@ -121,13 +123,12 @@ export async function createFormGraphStepInput(
 
   const steps = await createStep(normalizedData, handlerCtx);
 
-  // Enhanced compatibility mode: comfyui engine for every textToImage step.
-  // Assumes parsed data: the graph never emits enhancedCompatibility for flux
-  // ultra (whose step must keep its own engine) — unparsed input would bypass
-  // that guarantee.
   if (
-    loose.enhancedCompatibility &&
-    EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(loose.ecosystem ?? '')
+    usesComfyEngine({
+      ecosystem: loose.ecosystem ?? '',
+      modelId: loose.model?.id,
+      enhancedCompatibility: loose.enhancedCompatibility,
+    })
   ) {
     for (const step of steps) {
       if (step.$type === 'textToImage') {
@@ -210,6 +211,9 @@ function createStep(
 
     case 'Ernie':
       return createErnieInput(data, handlerCtx);
+
+    case 'Ideogram':
+      return createIdeogramInput(data, handlerCtx);
 
     case 'Seedream':
       return createSeedreamInput(data, handlerCtx);

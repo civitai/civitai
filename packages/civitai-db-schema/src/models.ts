@@ -539,6 +539,7 @@ export interface User {
   metrics?: UserMetric[];
   reports?: Report[];
   feedback?: Feedback[];
+  feedbackHandled?: Feedback[];
   questions?: Question[];
   answers?: Answer[];
   commentsv2?: CommentV2[];
@@ -1228,6 +1229,7 @@ export interface Report {
   automated?: ReportAutomated | null;
   model3d?: Model3DReport | null;
   model3dReview?: Model3DReviewReport | null;
+  announcement?: AnnouncementReport | null;
 }
 
 export interface ResourceReviewReport {
@@ -1815,6 +1817,12 @@ export interface Feedback {
   context: JsonValue;
   status: string;
   createdAt: Date;
+  triageNote: string | null;
+  handledById: number | null;
+  handledBy?: User | null;
+  handledAt: Date | null;
+  bugId: number | null;
+  bug?: Bug | null;
 }
 
 export interface ApiKey {
@@ -2355,6 +2363,7 @@ export interface AppUserScopeGrant {
   grantedScopes: string[];
   grantedAt: Date;
   revokedAt: Date | null;
+  buzzBudgetPerDay: number | null;
 }
 
 export interface AppDevForgejoIdentity {
@@ -2681,6 +2690,7 @@ export interface Announcement {
   profileOnly: boolean;
   targetUsers?: AnnouncementUser[];
   spends?: AnnouncementSpend[];
+  reports?: AnnouncementReport[];
 }
 
 export interface AnnouncementSpend {
@@ -3861,6 +3871,7 @@ export interface Bug {
   disabled: boolean;
   domain: DomainColor[];
   tags: string[];
+  feedback?: Feedback[];
 }
 
 export interface NewOrderPlayer {
@@ -4004,6 +4015,13 @@ export interface ChallengeEntryComparison {
 export interface ChallengeReport {
   challengeId: number;
   challenge?: Challenge;
+  reportId: number;
+  report?: Report;
+}
+
+export interface AnnouncementReport {
+  announcementId: number;
+  announcement?: Announcement;
   reportId: number;
   report?: Report;
 }

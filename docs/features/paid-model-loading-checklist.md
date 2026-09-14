@@ -146,8 +146,17 @@ every measured number are in [paid-model-loading-coverage.md](paid-model-loading
       model with a loadable file. The LORA/TI/VAE/LoCon/DoRA/Upscaler branch is unchanged.
   - [x] drop the `CoveredCheckpoint` conjunct, and allow `Diffusers` while keeping Core ML and ONNX
         excluded — [the numbers](paid-model-loading-coverage.md#what-changes-in-numbers)
+  - [x] **checkpoints require a SafeTensor weight file** —
+        `20260909180000_generation_coverage_next_safetensor_checkpoints`, 2026-09-09. Narrows the
+        2026-09-08 view: Diffusers stays loadable for every type *except* checkpoints, and
+        `CoveredCheckpoint` returns as a disjunct excusing 6 auction-resident versions.
+        **Written, not yet applied to any environment.**
   - [ ] 🔴 keep `EcosystemCheckpoints` — 62 of 63 checkpoint defaults depend on it
-  - [x] diffed against production 2026-09-08 — nothing loses coverage; [the numbers](paid-model-loading-coverage.md#what-changes-in-numbers)
+  - [x] diffed against production 2026-09-08 — nothing lost coverage *at that point*; [the numbers](paid-model-loading-coverage.md#what-changes-in-numbers)
+  - [ ] 🔴 **2,242 covered checkpoints lose coverage when the SafeTensor migration is applied**
+        (33,811 -> 31,569; 834 with generation history, 6.5M lifetime generations). A narrowing, so
+        there is no safe window — apply it when the readers of `covered` are ready.
+        *Closes when:* applied to production and the covered-checkpoint count reads 31,569.
 - [ ] **Set `usageControl = 'ExternalGeneration'` on the 36 mislabelled API versions.** All
       published, none POI, coverage preserved 36/36. Mod-only to set via the app, so it is a direct
       DB write.
@@ -239,9 +248,11 @@ the platform second.
 - [ ] **C11 — retire auctions.** ([868ktt5b2](https://app.clickup.com/t/868ktt5b2)) Do not scope
       until 868gtq1kt (splitting featuring out of auctions) has an answer — auctions do two jobs
       and paid loading replaces one. ~89 files under `src/`.
-  - [x] the `CoveredCheckpoint` conflict is resolved by removing it from coverage (Phase 1.6), so
-        the auction job can no longer un-cover a paid checkpoint. What remains is deciding whether
-        that job should keep writing rows nothing reads.
+  - [x] the `CoveredCheckpoint` conflict is resolved by removing it as a coverage *conjunct*
+        (Phase 1.6), so the auction job can no longer un-cover a paid checkpoint. It survives as a
+        disjunct covering 6 auction-resident versions that lack a SafeTensor file — those would lose
+        coverage on the next auction prune, but none is loadable, so none can have been paid for.
+        What remains is deciding whether that job should keep writing rows nothing else reads.
 
 ---
 

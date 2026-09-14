@@ -53,6 +53,7 @@ import { refreshSession } from '~/server/auth/session-invalidation';
 import type { CapDefinition } from '~/shared/constants/creator-program.constants';
 import {
   CAP_DEFINITIONS,
+  EXTRACTION_FEE_DESCRIPTION,
   MIN_CREATOR_SCORE,
   MIN_WITHDRAWAL_AMOUNT,
   PEAK_EARNING_WINDOW,
@@ -583,7 +584,7 @@ export async function extractBuzz(userId: number) {
         toAccountId: 0,
         type: TransactionType.Fee,
         externalTransactionId: `extraction-fee-${monthAccount}-${userId}-${buzzType}`,
-        description: 'Extraction fee',
+        description: EXTRACTION_FEE_DESCRIPTION,
       });
     }
   }

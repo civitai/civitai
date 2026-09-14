@@ -23,6 +23,28 @@ import type * as TrpcMod from '~/utils/trpc';
  *   · `no header CTA` — main renders `actions={<Button …>Browse marketplace</Button>}`.
  * The exact per-test messages are in the PR body.
  *
+ * ── LATER ADDITION: `Hidden`, then `Apps & permissions`, join the SLOT gate ────
+ * `Hidden` lists slot installs the viewer has hidden from their model pages, so it
+ * carries `features.appBlocks` exactly as `Installs` does. Its red-at-previous-state is
+ * `the exact ledger` case below and the stale-link case, which rendered a bar with
+ * NOTHING selected until `resolveActivityTab` stopped testing the gated tab BY NAME.
+ *
+ * 🔴 `Apps & permissions` IS NOW GATED TOO, AND AN EARLIER REVISION OF THIS FILE ARGUED
+ * THE OPPOSITE. The retracted premise was that a page-flag-only viewer has scope grants
+ * to read. They do not: `ScopeGrantsPanel`'s only read is `blocks.listMyScopeGrants`,
+ * whose `enforceAppBlocksFlag` middleware evaluates the `app-blocks-enabled` Flipt key —
+ * exactly `features.appBlocks` — and returns `[]` without it, so the tab showed that
+ * cohort an empty state, always. `AppsSubNav.tsx` had already retracted the same premise
+ * for the same cohort (they cannot run a full-page app: `/apps/run/[slug]/[[...path]]`
+ * requires BOTH flags). Gating it displays nothing that was ever displayed.
+ *
+ * ── CONSEQUENCE: THE BAR NOW COLLAPSES ────────────────────────────────────────
+ * With three of four tabs gated, a slotless viewer is left with `Recent activity` alone,
+ * so the page hides its `Tabs.List` below two visible tabs (mirroring `AppsSubNav`'s
+ * `links.length < 2`). Every slotless arm below therefore waits on a PANEL, not a tab —
+ * there is no `role="tab"` to wait for, and a `getByRole('tab')` there would hang to
+ * timeout and read as a broken page.
+ *
  * ── WHY THE MOCKS ARE THESE MOCKS ─────────────────────────────────────────────
  * The page module calls `createServerSideProps` at import time, which pulls the server
  * graph into a browser bundle — stubbed, exactly as `AppsWideLayout.geometry.test.tsx`
@@ -34,6 +56,42 @@ import type * as TrpcMod from '~/utils/trpc';
 
 const mocks = vi.hoisted(() => ({
   flags: {} as Record<string, boolean>,
+  /** Shared `mutate` spy for every `useMutation` in the tree — the budget editor is the
+   *  only mutation these tests drive, and they clear it first. */
+  mutate: vi.fn(),
+  /**
+   * 🔴 DRIVES THE QUERY-ERROR ARM FOR `blocks.listMyScopeGrants`, AND IT IS THE ONLY WAY TO
+   * RENDER THE STATE THE PANEL USED TO GET WRONG. On an error `data` is `undefined` with
+   * `isLoading` false — indistinguishable from "the viewer has no rows" — so the panel fell
+   * through to an empty state that ASSERTS "No app has made a recorded API call on your account,
+   * and you have no installs, subscriptions or consents": a claim about the viewer's record, made
+   * from a read that never arrived. Per-proc rather than global so every other read stays unchanged.
+   */
+  scopeGrantsError: false,
+  /**
+   * 🔴 THE SECOND ERROR SHAPE, AND THE ONE `scopeGrantsError` ABOVE CANNOT EXPRESS. react-query
+   * sets `isError` for a failed REFETCH too, and in that state it RETAINS `data` — so an error arm
+   * placed before the list arm throws away a complete valid list. Both the correct and the broken
+   * component render identically under `scopeGrantsError` (because `data` is undefined either
+   * way), which is exactly why that fixture is blind to this mutant and this one exists.
+   */
+  scopeGrantsRefetchError: false,
+  /**
+   * 🔴 THE THIRD ERROR SHAPE: A FAILED REFETCH THAT RETAINS AN **EMPTY** LIST. `data` is `[]`, so
+   * it is neither the undefined of `scopeGrantsError` nor the populated list of
+   * `scopeGrantsRefetchError`, and it is the one cell the `!grants` guard deliberately does NOT
+   * close (`[]` is truthy). The arm exists so that choice is pinned rather than assumed — see the
+   * residual test below, which is a BOUNDARY PIN and not regression coverage.
+   */
+  scopeGrantsEmptyRefetchError: false,
+  /**
+   * 🔴 NOT AN ERROR AT ALL, AND THAT IS THE POINT — the cell `isError && !grants` could not see.
+   * With the default `networkMode: 'online'` (no override in `src/utils/trpc.ts`) an offline FIRST
+   * fetch parks at `status='pending' fetchStatus='paused'`: `isFetching` false, so `isLoading`
+   * (`isPending && isFetching`) is false; `isError` false; `data` undefined. Measured in
+   * `@tanstack/query-core@5.101.0/build/modern/queryObserver.js:310,332`.
+   */
+  scopeGrantsPaused: false,
 }));
 
 /**
@@ -78,16 +136,125 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     mutate: vi.fn(),
     mutateAsync: vi.fn(),
     invalidate: vi.fn(),
+    // Explicit `false`, not absent: a component branching on `isError` must see a real boolean
+    // on every OTHER query too, or the arm under test cannot be attributed to the one proc.
+    isError: false,
   };
-  /** The reads whose CONTENT this file depends on — everything else is inert. */
-  const DATA: Record<string, unknown> = {
-    // EMPTY on purpose: the empty states are where the three surviving marketplace
-    // anchors live, and their presence is one of the criteria under test.
-    'blocks.listMySubscriptions': [],
-    'blocks.listMyScopeGrants': [],
-    'blocks.listMyAppActivity': { pages: [{ items: [], nextCursor: null }] },
-    'blocks.listMyScopeInvocations': { pages: [{ items: [], nextCursor: null }] },
-    'blocks.getNavSummary': {
+  /**
+   * The reads whose CONTENT this file depends on — everything else is inert.
+   *
+   * 🔴 VALUES ARE THUNKS, EVALUATED PER `useQuery` CALL, so an arm's flags can decide
+   * what a procedure returns. A fixture that hard-codes the SAME value in every flag arm
+   * cannot observe the mutant that matters: it can only ever produce the constant's own
+   * value, so the assertion is blind to whether the server would have refused the read.
+   */
+  const DATA: Record<string, () => unknown> = {
+    // EMPTY on purpose: the empty states are where the surviving marketplace anchors
+    // live, and their presence is one of the criteria under test.
+    'blocks.listMySubscriptions': () => [],
+    // 🔴 MIRRORS `enforceAppBlocksFlag`, NOT A CONSTANT. The real procedure evaluates the
+    // `app-blocks-enabled` Flipt key — exactly `features.appBlocks` — and short-circuits
+    // to `[]` without it. Encoding that here is what makes "the permissions panel is
+    // empty for a slotless viewer" a consequence of the flag rather than of the fixture.
+    'blocks.listMyScopeGrants': () =>
+      mocks.flags.appBlocks
+        ? [
+            {
+              appBlockId: 1,
+              blockId: 'demo-block',
+              name: 'Demo App',
+              slug: 'demo-app',
+              scopes: ['read:profile'],
+              // `origin` mirrors the server's precedence rule: a subscription-backed row is
+              // 'install'. Present on EVERY row here because the server now always emits it —
+              // a fixture that omitted it would leave `buildScopeGrantSurfaceLine` taking an
+              // `undefined` origin and falling through to the counts, which is precisely the
+              // count-derived inference the field exists to replace. The card assertions below
+              // would still pass, for the wrong reason, on a state production cannot produce.
+              origin: 'install' as const,
+              surfaces: { modelInstallCount: 1, subscriptionScopes: [] },
+              // No spend scope granted → no budget control on this card. Keeping one
+              // such row is what makes the control's presence on the OTHER row a fact
+              // about `spendScopeGranted` rather than about the panel rendering at all.
+              buzzBudgetPerDay: null,
+              spendScopeGranted: false,
+            },
+            {
+              appBlockId: 'apb_spend',
+              blockId: 'spender',
+              name: 'Spender',
+              slug: 'spender',
+              scopes: ['ai:write:budgeted'],
+              origin: 'install' as const,
+              surfaces: { modelInstallCount: 0, subscriptionScopes: ['viewer_personal'] },
+              buzzBudgetPerDay: 750,
+              spendScopeGranted: true,
+            },
+            // 🔴 THE GRANT-ONLY SHAPE — `0` installs AND `0` subscription scopes. This is the
+            // row `listMyScopeGrants` only began emitting when it started enumerating
+            // `app_user_scope_grants`, and by the production counts it is the DOMINANT
+            // population, not an edge case. Without it no fixture at this tier renders the
+            // card the change exists to create, so a regression in how it renders — the
+            // surface line, the budget control, an empty scope list — ships green.
+            // Distinct from `apb_spend` in exactly the field under test: that row also has
+            // `modelInstallCount: 0` but carries a subscription scope, so it cannot
+            // exercise the `0 / 0` branch of `buildSurfaceLine`.
+            //
+            // 🔴 `spendScopeGranted: false` DELIBERATELY, and this is a REAL COVERAGE GAP,
+            // not a tidy choice — recorded rather than glossed. With it `true` the card
+            // renders an `AppBudgetControl` (a null budget still emits `app-budget-row` AND
+            // `app-budget-value`, showing the "none" copy), which would flip the two
+            // `toHaveLength(1)` assertions below to 2 and make `app-budget-edit` ambiguous
+            // for the Save test's `.click()`. Those counts are the discriminating half of
+            // the budget tests, so quietly relaxing them to 2 would weaken a real guard to
+            // admit a fixture. RESIDUAL: no component-tier case renders a budget control on
+            // a GRANT-ONLY card. That combination is covered at the service tier
+            // (`user-app-surface.orchestration.test.ts` asserts `spendScopeGranted: true`
+            // plus a budget for a grant-only row), and the service tier cannot see the card.
+            {
+              appBlockId: 'apb_grant_only',
+              blockId: 'consented',
+              name: 'Consented Only',
+              slug: 'consented-only',
+              scopes: ['ai:write:budgeted'],
+              // 🔴 THE FIELD THAT MAKES THE SURFACE-LINE ASSERTION BELOW MEAN SOMETHING. This
+              // row and an ACTIVITY-ONLY row are both `0 / 0`, so the counts cannot tell them
+              // apart; only `origin` can. Stating it here is what makes "this card says
+              // 'Granted at consent'" a consequence of the provenance rather than of the two
+              // zeroes — the exact confusion that shipped the false line.
+              origin: 'consent' as const,
+              surfaces: { modelInstallCount: 0, subscriptionScopes: [] },
+              buzzBudgetPerDay: null,
+              spendScopeGranted: false,
+            },
+            /* 🔴 THE ACTIVITY-ONLY SHAPE, AND IT WAS THE ONE ROW CLASS NO FIXTURE AT ANY TIER
+               PRODUCED. Complete enumeration at the time it was added: `apps-grant-surface-line`
+               appeared ONLY in `src/pages/apps/activity.tsx` with zero references anywhere else,
+               and the component-tier fixture carried `origin: 'install'` ×2 and `'consent'` ×1 and
+               no activity row — so the seam `grant.origin → buildScopeGrantSurfaceLine /
+               scopeGrantEmptyScopeLabel` was UNPINNED. Passing the wrong origin, or rendering the
+               activity copy on every card, was invisible in every tier. The leaf's own behaviour
+               is well covered (`app-surface-provenance.test.ts`); it is the WIRING that was not.
+
+               `0 / 0` and `scopes: []` are the row class, not a convenience: that is exactly what
+               makes it indistinguishable from the `Consented Only` row above by counts alone, and
+               therefore what makes the assertions below a claim about `origin`. */
+            {
+              appBlockId: 'apb_activity',
+              blockId: 'acted',
+              name: 'Acted Only',
+              slug: 'acted-only',
+              scopes: [],
+              origin: 'activity' as const,
+              surfaces: { modelInstallCount: 0, subscriptionScopes: [] },
+              buzzBudgetPerDay: null,
+              spendScopeGranted: false,
+            },
+          ]
+        : [],
+    'blocks.listMyAppActivity': () => ({ pages: [{ items: [], nextCursor: null }] }),
+    'blocks.listMyScopeInvocations': () => ({ pages: [{ items: [], nextCursor: null }] }),
+    'blocks.getNavSummary': () => ({
       hasInstalls: true,
       hasActivity: true,
       hasSubmissions: false,
@@ -95,17 +262,66 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       isReviewer: false,
       hasEditableApps: false,
       hasPendingInvites: false,
-    },
+    }),
   };
-  const node = (data?: unknown): unknown =>
+  /**
+   * Per-proc error arms, keyed exactly like `DATA`.
+   *
+   * 🔴 FOUR SHAPES, BECAUSE react-query HAS FOUR REACHABLE "the panel holds no usable list"
+   * STATES — and the guard under test is a claim about ALL of them, not about `isError`.
+   * `'empty-refetch'` retains `[]`; `'paused'` is not an error at all (offline first fetch under
+   * the default `networkMode: 'online'`). The two docblocks on `mocks` above carry the
+   * measurements.
+   *
+   * 🔴 `'load'` is a FIRST-fetch failure: `data`
+   * undefined, `isLoadingError` true. `'refetch'` is a failure AFTER a success: `isError` true,
+   * `isRefetchError` true, `data` STILL PRESENT. Measured against this repo's 5.101 with its own
+   * defaults. The distinction is the whole point of the arm — the broken and the fixed component
+   * are indistinguishable under `'load'`.
+   */
+  type QueryArm = false | 'load' | 'refetch' | 'empty-refetch' | 'paused';
+  const ERRORS: Record<string, () => QueryArm> = {
+    'blocks.listMyScopeGrants': () =>
+      mocks.scopeGrantsRefetchError
+        ? 'refetch'
+        : mocks.scopeGrantsEmptyRefetchError
+        ? 'empty-refetch'
+        : mocks.scopeGrantsPaused
+        ? 'paused'
+        : mocks.scopeGrantsError
+        ? 'load'
+        : false,
+  };
+  const node = (read?: () => unknown, errored?: () => QueryArm): unknown =>
     new Proxy(
       {},
       {
         get(_t, key: string) {
           if (key === 'useQuery' || key === 'useInfiniteQuery') {
-            return () => (data === undefined ? inert : { ...inert, data });
+            // Called at RENDER time, so `mocks.flags` is the arm's own value.
+            if (read === undefined) return () => inert;
+            // Each error arm mirrors react-query exactly. `'load'`: `data` undefined, `isLoading`
+            // false — returning data alongside it would make the test pass against a component
+            // that reads neither. `'refetch'`: `isError` true WITH `data`, which is the state
+            // react-query really reports once a success has landed.
+            return () => {
+              const mode = errored?.();
+              if (mode === 'load') return { ...inert, isError: true, isLoadingError: true };
+              if (mode === 'refetch')
+                return { ...inert, isError: true, isRefetchError: true, data: read() };
+              // A refetch failure that retains an EMPTY list. `data` is `[]`, which is TRUTHY —
+              // the cell the `!grants` guard does not close, pinned by the residual test below.
+              if (mode === 'empty-refetch')
+                return { ...inert, isError: true, isRefetchError: true, data: [] };
+              // Offline FIRST fetch: `isPending` true with `fetchStatus: 'paused'`, so `isFetching`
+              // and therefore `isLoading` are false, `isError` is false, `data` undefined. The
+              // extra fields are fidelity, not inputs — this panel reads only the three above.
+              if (mode === 'paused')
+                return { ...inert, isPending: true, fetchStatus: 'paused', isPaused: true };
+              return { ...inert, data: read() };
+            };
           }
-          if (key === 'useMutation') return () => inert;
+          if (key === 'useMutation') return () => ({ ...inert, mutate: mocks.mutate });
           if (key === 'invalidate' || key === 'fetch') return vi.fn();
           if (key === 'then') return undefined; // never look thenable to await
           return node();
@@ -124,7 +340,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           {
             get(_t2, proc: string) {
               if (proc === 'then') return undefined;
-              return node(DATA[`${router}.${proc}`]);
+              return node(DATA[`${router}.${proc}`], ERRORS[`${router}.${proc}`]);
             },
           }
         );
@@ -166,6 +382,10 @@ const bodyMarketplaceLinks = () =>
 
 beforeEach(() => {
   mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
+  mocks.scopeGrantsError = false;
+  mocks.scopeGrantsRefetchError = false;
+  mocks.scopeGrantsEmptyRefetchError = false;
+  mocks.scopeGrantsPaused = false;
   router.query = {};
   router.pathname = '/apps/activity';
   vi.mocked(router.replace).mockClear();
@@ -224,45 +444,115 @@ describe('the page opens on Recent activity', () => {
   });
 });
 
-describe('🔴 the Installs tab is gated on the SLOT flag', () => {
+describe('🔴 the INSTALL-ONLY tabs are gated on the SLOT flag', () => {
   test('present for a viewer WITH appBlocks', async () => {
     mocks.flags = { appBlocks: true, appBlocksPages: false, appListings: true };
     renderWithProviders(<AppActivityPage />);
     await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
     expect(pageTab('Installs'), 'a slot-flag viewer must get the Installs tab').toBeDefined();
+    expect(pageTab('Hidden'), 'a slot-flag viewer must get the Hidden tab').toBeDefined();
   });
 
   test('🔴 ABSENT for a viewer with appBlocksPages but NOT appBlocks', async () => {
     // The cohort criterion 2 widened the page for. They have activity and no slot
-    // install, so the tab's own content — subscriptions and per-model installs — is
-    // exactly what they cannot have.
+    // install, so those tabs' own content — subscriptions, per-model installs, and the
+    // per-model installs they have HIDDEN — is exactly what they cannot have.
     mocks.flags = { appBlocks: false, appBlocksPages: true, appListings: true };
     renderWithProviders(<AppActivityPage />);
-    await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
+    await expect.element(page.getByText(/Recent actions apps have taken/)).toBeInTheDocument();
     expect(
       pageTab('Installs'),
       'the Installs tab must be hidden without appBlocks'
     ).toBeUndefined();
-    // …and the page is still a page: the other three tabs render.
+    expect(pageTab('Hidden'), 'the Hidden tab must be hidden without appBlocks').toBeUndefined();
+    // 🔴 `Apps & permissions` IS GATED TOO, and its DATA SOURCE is the reason. The panel's
+    // only read is `blocks.listMyScopeGrants`, whose `enforceAppBlocksFlag` middleware
+    // returns `[]` for exactly this viewer — so ungated the tab showed them its installs
+    // empty state, always. There was no cohort for whom it held content. (An earlier
+    // revision of this file argued the opposite; that premise was false at the data layer
+    // and is retracted.)
+    expect(
+      pageTab('Apps & permissions'),
+      'the permissions tab must be hidden without appBlocks — its own query refuses'
+    ).toBeUndefined();
+    // 🔴 THE WHOLE LIST, NOT JUST THE ABSENCES — pinned as an exact ledger so that
+    // gating or un-gating a tab cannot slip through green. It is EMPTY rather than
+    // one-long because exactly ONE tab survives the gates and the bar then collapses
+    // (see the `< 2` test below); the panel itself still renders, which is what the
+    // `expect.element` above asserts.
+    expect(pageTabs().map((el) => el.textContent?.trim())).toEqual([]);
+  });
+
+  test('🔴 a stale `?tab=hidden` link renders a PAGE, not an empty bar', async () => {
+    // THE SYMPTOM the resolver fix exists to prevent, asserted where it is actually
+    // felt. `?tab=hidden` is a link this viewer can legitimately hold — a teammate's
+    // share, a bookmark from before a flag moved, their own history. Before the
+    // resolver widened, `hidden` was handed to `Tabs.value` while no such tab was
+    // rendered, and Mantine drew a bar with NOTHING selected over an empty panel: a
+    // blank page with no error and no console warning.
+    mocks.flags = { appBlocks: false, appBlocksPages: true, appListings: true };
+    router.query = { tab: 'hidden' };
+    renderWithProviders(<AppActivityPage />);
+    // 🔴 ASSERTED ON THE PANEL, NOT THE TAB. This viewer's bar now collapses (one visible
+    // tab), so there is no `role="tab"` to select — the symptom this guards against is
+    // "a blank page", and the panel's own copy is what proves a page rendered. Falling
+    // back is still what puts `activity` in `Tabs.value`; if the resolver handed Mantine
+    // the unrendered `hidden`, no panel would render and this element would be absent.
+    await expect.element(page.getByText(/Recent actions apps have taken/)).toBeInTheDocument();
+  });
+
+  test('🔴 …and the SAME link still selects Hidden for a viewer who HAS the flag', async () => {
+    // NEGATIVE CONTROL for the fallback above: without it, a page that ignored `?tab=`
+    // entirely, or one that hard-coded the default, would pass that test.
+    mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
+    router.query = { tab: 'hidden' };
+    renderWithProviders(<AppActivityPage />);
+    await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
+    expect(selectedPageTab()?.textContent?.trim()).toBe('Hidden');
+  });
+
+  test('🔴 the bar COLLAPSES at one visible tab, mirroring `AppsSubNav`', async () => {
+    // `AppsSubNav` hides its bar below two rows (`links.length < 2`). This bar now does
+    // the same, and the branch is REACHABLE: with `permissions` gated on the slot flag,
+    // the slotless viewer is left with `activity` alone, and a one-tab bar is chrome
+    // offering no choice. `appsActivityTabs.test.ts` holds the unit-tier tripwire that
+    // `visibleActivityTabs(SLOTLESS).length === 1`.
+    mocks.flags = { appBlocks: false, appBlocksPages: true, appListings: true };
+    renderWithProviders(<AppActivityPage />);
+    await expect.element(page.getByText(/Recent actions apps have taken/)).toBeInTheDocument();
+    expect(pageTabs().length, 'a one-tab bar must not render at all').toBe(0);
+  });
+
+  test('🔴 POSITIVE CONTROL: the bar DOES render above the threshold', async () => {
+    // Without this, the collapse above is satisfied by a page that never renders a bar.
+    // Same component, one flag flipped: four tabs survive, so the list is present.
+    mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
+    renderWithProviders(<AppActivityPage />);
+    await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
     expect(pageTabs().map((el) => el.textContent?.trim())).toEqual([
       'Recent activity',
+      'Installs',
       'Apps & permissions',
       'Hidden',
     ]);
   });
 
-  test('🔴 …and the page still LOADS for that viewer (criterion 2, client half)', async () => {
+  test('🔴 …and the page still LOADS for the slotless viewer (criterion 2, client half)', async () => {
     // The page body re-checks the gate with `canAccessAppsActivity`. If that had stayed
-    // on `appBlocks` alone this would render `<NotFound />` and no tabs at all — which is
-    // what makes the tab test above non-vacuous rather than a test of a 404.
+    // on `appBlocks` alone this would render `<NotFound />` and no content at all — which
+    // is what makes the collapse test above non-vacuous rather than a test of a 404.
+    // Asserted on the PANEL, since this viewer's bar is collapsed by design.
     mocks.flags = { appBlocks: false, appBlocksPages: true, appListings: true };
     renderWithProviders(<AppActivityPage />);
-    await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
-    expect(pageTabs().length).toBeGreaterThan(0);
+    await expect.element(page.getByText(/Recent actions apps have taken/)).toBeInTheDocument();
+    expect(document.querySelector('[data-testid="mock-notfound"]')).toBeNull();
   });
 
   test('🔴 NEGATIVE CONTROL: NEITHER runtime flag renders no tabs at all', async () => {
-    // Guards the three cases above against a body that renders the page unconditionally.
+    // Guards the cases above against a body that renders the page unconditionally.
+    // 🔴 LOAD-BEARING NOW THAT THE BAR COLLAPSES: "zero tabs" is no longer a signature
+    // unique to the 404, so this arm asserts the 404 MARKER, and the case above asserts
+    // the marker's ABSENCE. Neither is inferable from the tab count any more.
     mocks.flags = { appBlocks: false, appBlocksPages: false, appListings: true };
     renderWithProviders(<AppActivityPage />);
     await expect.element(page.getByTestId('mock-notfound')).toBeInTheDocument();
@@ -278,14 +568,24 @@ describe('🔴 the header marketplace CTA is gone; the empty-state anchors remai
     // back under different words.
     renderWithProviders(<AppActivityPage />);
     await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
-    // THREE, not one: Mantine's `Tabs.Panel` is `keepMounted` by default, so every
-    // panel's children are in the DOM regardless of which tab is selected. That is what
-    // makes ONE assertion cover all three empty states — `EmptyActivity`, the Installs
-    // `EmptyState` and the permissions `EmptyState`.
+    // TWO, not one: Mantine's `Tabs.Panel` is `keepMounted` by default, so every panel's
+    // children are in the DOM regardless of which tab is selected. That is what makes ONE
+    // assertion cover both surviving empty states — `EmptyActivity` and the Installs
+    // `EmptyState`.
+    //
+    // 🔴 TWO RATHER THAN THREE BECAUSE THE FIXTURE STOPPED LYING. This arm holds
+    // `appBlocks: true`, so `blocks.listMyScopeGrants` now returns a GRANT (mirroring the
+    // real procedure, which only short-circuits to `[]` without that flag) and the
+    // permissions panel renders its grid instead of an empty state. When the fixture
+    // hard-coded `[]` in every arm, that third anchor was an artefact of the fixture, not
+    // of the page.
     expect(
       bodyMarketplaceLinks().map((el) => el.textContent?.trim()),
       'the header CTA is back, or an empty-state anchor is gone'
-    ).toEqual(['Browse the marketplace', 'Browse the marketplace', 'Browse the marketplace']);
+    ).toEqual(['Browse the marketplace', 'Browse the marketplace']);
+    // …and the permissions panel really did render CONTENT rather than an empty state —
+    // the positive control that makes the count above a fact about the flag.
+    expect(page.getByText('Demo App').elements().length).toBeGreaterThan(0);
   });
 
   /**
@@ -309,14 +609,15 @@ describe('🔴 the header marketplace CTA is gone; the empty-state anchors remai
     // the STORE gate passes on nothing.
     mocks.flags = { appBlocks: false, appBlocksPages: true, appListings: false };
     renderWithProviders(<AppActivityPage />);
-    await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
+    // The bar is collapsed for this viewer (one visible tab), so wait on the PANEL.
+    await expect.element(page.getByText(/Recent actions apps have taken/)).toBeInTheDocument();
     expect(
       bodyMarketplaceLinks().map((el) => el.textContent?.trim()),
       'a link into a `notFound` was offered to a viewer with no store access'
     ).toEqual([]);
     // …and the page itself still rendered, so the empty anchor list is not the empty list
-    // of a 404. Two empty states mount for this viewer (activity + permissions); the
-    // Installs panel is slot-flag-gated away.
+    // of a 404. Exactly ONE empty state mounts for this viewer — `EmptyActivity`; the
+    // Installs, permissions and Hidden panels are all slot-flag-gated away.
     expect(page.getByText(/No activity yet/).elements().length).toBeGreaterThan(0);
   });
 
@@ -325,15 +626,16 @@ describe('🔴 the header marketplace CTA is gone; the empty-state anchors remai
     // also be satisfied by empty states that lost their CTA for everyone.
     mocks.flags = { appBlocks: false, appBlocksPages: true, appListings: true };
     renderWithProviders(<AppActivityPage />);
-    await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
+    // Bar collapsed for this viewer — wait on the panel.
+    await expect.element(page.getByText(/Recent actions apps have taken/)).toBeInTheDocument();
     expect(bodyMarketplaceLinks().length).toBeGreaterThan(0);
   });
 
   test('🔴 NEGATIVE CONTROL: the count is not trivially "whatever renders"', async () => {
-    // At `origin/main` this same query returns FOUR anchors — the three empty states plus
-    // the `AppsPageLayout` `actions` button, whose text is `Browse marketplace` (no
-    // "the"). So the assertion above is red there on both the length AND the extra
-    // member, and neither half is a copy match against a string this test invented.
+    // At `origin/main` this same query returns FOUR anchors — three empty states plus the
+    // `AppsPageLayout` `actions` button, whose text is `Browse marketplace` (no "the").
+    // So the assertion above is red there on both the length AND the extra member, and
+    // neither half is a copy match against a string this test invented.
     renderWithProviders(<AppActivityPage />);
     await expect.element(page.getByRole('tab', { name: /Recent activity/ })).toBeInTheDocument();
     expect(bodyMarketplaceLinks().length).toBeGreaterThan(0);
@@ -341,5 +643,468 @@ describe('🔴 the header marketplace CTA is gone; the empty-state anchors remai
       bodyMarketplaceLinks().some((el) => el.textContent?.trim() === 'Browse marketplace'),
       'the removed header CTA is back'
     ).toBe(false);
+  });
+});
+
+/**
+ * The per-app daily Buzz limit on the Permissions panel.
+ *
+ * 🔴 WHY THIS SUITE EXISTS. Before it, `buzzBudgetPerDay` was returned by the API and
+ * read by NO component: the consent modal is the only writer and it only offers the
+ * field while `ai:write:budgeted` is still MISSING, which is true exactly once per app,
+ * forever. A user could therefore set a limit and then had no way to see it, raise it,
+ * lower it or clear it — and the floor is 1, so a too-low value refused every generation
+ * with no path back through the product. `recordScopeGrant`'s documented null-clears
+ * branch had ZERO callers.
+ *
+ * ── RED BEFORE THIS CHANGE ────────────────────────────────────────────────────
+ * Every test below fails against the previous revision of `pages/apps/activity.tsx` for
+ * the reason it names: there is no `app-budget-row`, no `app-budget-edit`, and no
+ * mutation to observe.
+ */
+describe('Apps & permissions — the per-app daily Buzz limit', () => {
+  beforeEach(() => {
+    mocks.mutate.mockClear();
+    // Select the Permissions tab. Mantine keeps every panel MOUNTED but the unselected
+    // ones are not VISIBLE, and a browser-mode `click`/`fill` waits for visibility — so
+    // without this the interaction tests hang to timeout and read as a broken control.
+    router.query = { tab: 'permissions' };
+  });
+
+  test('renders the stored limit for an app the viewer granted the spend scope', async () => {
+    renderWithProviders(<AppActivityPage />);
+    await expect.element(page.getByTestId('app-budget-value')).toBeInTheDocument();
+    // The whole line, not a keyword: "750" alone would pass on copy that said the
+    // opposite of what the number means.
+    await expect
+      .element(page.getByTestId('app-budget-value'))
+      .toHaveTextContent('Daily Buzz limit: 750 Buzz/day');
+  });
+
+  // 🔴 THE DISCRIMINATING HALF. The fixture holds FOUR apps and only one has the spend
+  // scope GRANTED, so exactly one control may render. Without this, a control rendered
+  // unconditionally would pass the test above.
+  // (⚠️ Said TWO until the grant-only fixture was added, then THREE until the activity-only
+  // fixture was — twice a claim staled by the same commit that added the card. The count is
+  // re-derived from `apps-grant-surface-line` below rather than restated a fourth time.)
+  test('renders NO limit control for an app without the granted spend scope', async () => {
+    renderWithProviders(<AppActivityPage />);
+    await expect.element(page.getByTestId('apps-installed-grants-grid')).toBeInTheDocument();
+    // Positive control: EVERY fixture app really rendered, so "one control" is a fact about
+    // the grant and not about a panel that only drew one card.
+    expect(page.getByTestId('app-budget-value').elements()).toHaveLength(1);
+    const names = Array.from(
+      document.querySelectorAll('[data-testid="apps-installed-grants-grid"] .truncate')
+    ).map((el) => el.textContent?.trim());
+    expect(names).toContain('Demo App');
+    expect(names).toContain('Spender');
+    // 🔴 THE GRANT-ONLY CARD RENDERS AT ALL. Before `listMyScopeGrants` enumerated
+    // `app_user_scope_grants`, a row with no install and no subscription could not exist,
+    // so nothing at this tier ever drew this card — and by the production counts it is the
+    // dominant population. Asserting it here is what makes the two length checks below
+    // "one control across THREE cards" rather than "one control across the two that
+    // happened to render".
+    expect(names).toContain('Consented Only');
+    expect(names).toContain('Acted Only');
+    // Its surface line names the provenance it actually came from. Pinned as the whole
+    // string: a keyword match would pass on the previous text ("Subscriptions: none"),
+    // which on a consent surface reads as a claim that the app has no access.
+    expect(
+      Array.from(document.querySelectorAll('[data-testid="apps-installed-grants-grid"]')).some(
+        (el) => el.textContent?.includes('Granted at consent · no install or subscription')
+      ),
+      'the grant-only card must name its provenance, not report "Subscriptions: none"'
+    ).toBe(true);
+    expect(page.getByTestId('app-budget-row').elements()).toHaveLength(1);
+  });
+
+  /**
+   * 🔴 THE SEAM, NOT THE LEAF: `grant.origin` → `buildScopeGrantSurfaceLine` /
+   * `scopeGrantEmptyScopeLabel`. The leaf's own behaviour is pinned behaviourally in the node-env
+   * `unit` project (`src/shared/constants/__tests__/app-surface-provenance.test.ts`, 3/3 provenance
+   * mutants die). What was unpinned until this test is the WIRING: complete enumeration showed
+   * `apps-grant-surface-line` referenced ONLY in `src/pages/apps/activity.tsx`, with no activity
+   * fixture anywhere, so the page could pass the wrong `origin` — or render the activity copy on
+   * every card — and no tier would notice.
+   *
+   * 🔴 EXPECTATIONS ARE DERIVED BY CALLING THE OWNER, NOT TRANSCRIBED. A "these two agree" guard
+   * written as a hand-copied literal on each side pins nothing: reword the leaf and its own copy
+   * of the literal and both stay green while the page silently diverges. This is the same
+   * correction already applied to the drawer's browser test.
+   *
+   * 🔴 AND THE "EXACTLY ONE" COUNTS ARE THE HALF THAT CATCHES THE OPPOSITE MUTANT. A page that
+   * dropped the `origin` branch and emitted the activity copy unconditionally satisfies every
+   * `toContain`; only a count can see it.
+   */
+  test('🔴 the activity-origin card renders the activity copy, and no other card does', async () => {
+    const { buildScopeGrantSurfaceLine, scopeGrantEmptyScopeLabel } = await import(
+      '~/shared/constants/app-surface-provenance'
+    );
+    const ACTIVITY_LINE = buildScopeGrantSurfaceLine({
+      origin: 'activity',
+      modelInstallCount: 0,
+      subscriptionScopes: [],
+    });
+    const CONSENT_LINE = buildScopeGrantSurfaceLine({
+      origin: 'consent',
+      modelInstallCount: 0,
+      subscriptionScopes: [],
+    });
+    const ACTIVITY_EMPTY_LABEL = scopeGrantEmptyScopeLabel('activity');
+    // Guard the guards: an owner returning '' would make every match below vacuous, and two
+    // identical strings would make the "exactly one" counts meaningless.
+    expect(ACTIVITY_LINE.length).toBeGreaterThan(5);
+    expect(ACTIVITY_EMPTY_LABEL.length).toBeGreaterThan(40);
+    expect(ACTIVITY_LINE).not.toBe(CONSENT_LINE);
+
+    renderWithProviders(<AppActivityPage />);
+    await expect.element(page.getByTestId('apps-installed-grants-grid')).toBeInTheDocument();
+
+    const lines = Array.from(
+      document.querySelectorAll('[data-testid="apps-grant-surface-line"]')
+    ).map((el) => el.textContent?.trim());
+    // One line per fixture row — the positive control that the panel drew every card.
+    expect(lines).toHaveLength(4);
+    // EXACTLY ONE activity line, and exactly one consent line: the two row classes are both
+    // `0 / 0`, so a page deriving provenance from the counts could not tell them apart and would
+    // emit the same string twice.
+    expect(lines.filter((l) => l === ACTIVITY_LINE)).toHaveLength(1);
+    expect(lines.filter((l) => l === CONSENT_LINE)).toHaveLength(1);
+
+    // …and the activity row's EMPTY-SCOPE label is the origin-derived one, rendered exactly once.
+    const gridText =
+      document.querySelector('[data-testid="apps-installed-grants-grid"]')?.textContent ?? '';
+    expect(gridText).toContain(ACTIVITY_EMPTY_LABEL);
+    expect(gridText.split(ACTIVITY_EMPTY_LABEL)).toHaveLength(2);
+    // 🔴 THE DEFAULT THIS LABEL EXISTS TO DISPLACE must not reach the card: `BlockScopeList`'s own
+    // fallback tells the viewer the app requests no permissions, which is false by construction
+    // for a row minted from the app's scope-gated calls.
+    expect(gridText).not.toContain("doesn't request any permissions");
+  });
+
+  /**
+   * 🔴 A FAILED READ MUST NOT BE RENDERED AS A FACT ABOUT THE VIEWER'S HISTORY. Without the error
+   * branch, `isError` left `grants` `undefined` with `isLoading` false — byte-for-byte the
+   * no-rows state — so the panel rendered "No app has made a recorded API call on your account, and
+   * you have no installs, subscriptions or consents." That is an assertion about the viewer's
+   * record, made from a read that never arrived.
+   *
+   * 🔴 THE SECOND HALF IS THE ONE THAT CATCHES A REGRESSION: showing the error text does not prove
+   * the false claim is gone, because a component rendering BOTH passes. The `not.toContain` on the
+   * empty-state sentence is the pin. Same defect and same fix in
+   * `src/components/AppBlocks/AppPermissionsActivityDrawer.tsx`.
+   */
+  test('🔴 a query ERROR shows a read failure, not a claim about installs and consents', async () => {
+    mocks.scopeGrantsError = true;
+    renderWithProviders(<AppActivityPage />);
+    await expect
+      .element(page.getByText(/couldn't load your apps and permissions just now/))
+      .toBeInTheDocument();
+    expect(document.body.textContent ?? '').not.toContain('No app has made a recorded API call');
+    // …and no card grid at all, so the error state cannot be mistaken for a partial render.
+    expect(page.getByTestId('apps-installed-grants-grid').elements()).toHaveLength(0);
+  });
+
+  /**
+   * 🔴 THE OTHER HALF OF THE ERROR CONTRACT, AND THE TEST ABOVE IS STRUCTURALLY BLIND TO IT.
+   * react-query sets `isError` for a failed REFETCH as well as a failed first fetch, and in the
+   * refetch case it RETAINS `data`. Measured against this repo's `@tanstack/react-query` 5.101
+   * with its own defaults (`retry: false`, `refetchOnWindowFocus: false`):
+   *
+   *   after success  : status=success isError=false isLoadingError=false isRefetchError=false data=[…]
+   *   after refetch X: status=error   isError=true  isLoadingError=false isRefetchError=true  data=[…]
+   *
+   * So a bare `if (isError)` sitting BEFORE the list arm discards a complete valid list. The live
+   * path is the most ordinary interaction on this page: saving a daily Buzz limit (or toggling an
+   * install) calls `utils.blocks.listMyScopeGrants.invalidate()`, the refetch hits one transient
+   * 5xx, and the batch cohort retries ZERO times (`queryRetry` in `src/utils/trpc.ts`) — and the
+   * whole "Apps & permissions" grid is replaced by read-failure copy while the client still holds
+   * every row. That is strictly WORSE than the pre-change behaviour, which rendered the correct
+   * list. The arm above cannot see it: under a first-fetch failure `data` is undefined, so the
+   * broken and the fixed component render identically.
+   */
+  test('🔴 a failed REFETCH keeps the list it already has — `isError` alone would discard it', async () => {
+    mocks.scopeGrantsRefetchError = true;
+    renderWithProviders(<AppActivityPage />);
+    // The rows the client still holds are rendered, not replaced.
+    await expect.element(page.getByTestId('apps-installed-grants-grid')).toBeInTheDocument();
+    const gridText =
+      document.querySelector('[data-testid="apps-installed-grants-grid"]')?.textContent ?? '';
+    // All four fixture rows, so this is the full retained list and not a partial render.
+    for (const name of ['Demo App', 'Spender', 'Consented Only', 'Acted Only']) {
+      expect(gridText).toContain(name);
+    }
+    // 🔴 WHICH ASSERTION KILLS THE MUTANT — MEASURED, NOT ASSUMED. Reverting the guard to bare
+    // `isError` fails this test on the GRID WAIT above, with
+    // `VitestBrowserElementError: Cannot find element with locator:
+    // getByTestId('apps-installed-grants-grid')` — i.e. on the claim that the retained list is
+    // rendered, which is the guard's own reason. The `not.toContain` below never executes on that
+    // mutant and is NOT what catches it; it is the second pin, for a component that renders BOTH
+    // the list and the read-failure sentence — which the grid assertion alone would pass.
+    expect(document.body.textContent ?? '').not.toContain(
+      "couldn't load your apps and permissions just now"
+    );
+  });
+
+  /**
+   * 🔴 THE CELL NEITHER ARM ABOVE CAN REACH, AND IT NEEDS NO ERROR — WHICH IS WHY `isError &&
+   * !grants` COULD NOT SEE IT. With the default `networkMode: 'online'` and no override in
+   * `src/utils/trpc.ts`, an offline FIRST fetch parks at `status='pending' fetchStatus='paused'`:
+   * `isLoading` is `isPending && isFetching` and `isFetching` is false, so `isLoading` is false,
+   * `isError` is false, and `data` is undefined. The conjunct form therefore fell through and
+   * asserted "you have no installs, subscriptions or consents" from a fetch that never left the
+   * browser. Pre-existing and live, closed by dropping the `isError &&`.
+   *
+   * MUTATION-VERIFIED: restoring `if (isError && !grants)` makes this test fail on the read-failure
+   * WAIT below — `VitestBrowserElementError: Cannot find element with locator:
+   * getByText(/couldn't load your apps and permissions just now/)` — i.e. on this guard's own
+   * sentence, not on another guard's error. The `not.toContain` is the second pin, for a component
+   * rendering BOTH.
+   */
+  test('🔴 an offline PAUSED first fetch shows the read failure, not a claim about the viewer', async () => {
+    mocks.scopeGrantsPaused = true;
+    renderWithProviders(<AppActivityPage />);
+    await expect
+      .element(page.getByText(/couldn't load your apps and permissions just now/))
+      .toBeInTheDocument();
+    expect(document.body.textContent ?? '').not.toContain('No app has made a recorded API call');
+    expect(page.getByTestId('apps-installed-grants-grid').elements()).toHaveLength(0);
+  });
+
+  /**
+   * ⚠️ A BOUNDARY PIN, NOT REGRESSION COVERAGE — SAID PLAINLY BECAUSE A TEST THAT READS AS COVERAGE
+   * WHILE PROVIDING NONE IS WORSE THAN NONE. The defect this file's error arms exist for was never
+   * reachable in this cell; the cell is the one the `!grants` guard deliberately leaves OPEN, and
+   * this test records that choice so the next person does not have to re-derive it.
+   *
+   * THE CELL: a refetch failure that retains an EMPTY list. `data` is `[]`, which is truthy, so
+   * `!grants` is false and control reaches the empty state — which asserts the viewer has no
+   * installs, subscriptions or consents while the read that would have proved it failed. LATENT,
+   * not live: `staleTime: Infinity` + `refetchOnWindowFocus: false` mean only an explicit
+   * `invalidate()` refetches, and both invalidators (`src/pages/apps/activity.tsx` `:111`, `:414`)
+   * render from a card — i.e. only when the list already has >= 1 row.
+   *
+   * MUTATION-VERIFIED AS A PIN: widening the guard to `if (!grants || isError)` fails this test on
+   * the empty-state assertion below (`expected … to contain 'No app has made a recorded API
+   * call'`). That is the mutant a future "fix" of this residual would introduce, and failing here is
+   * the intended signal to update the residual comment with it — not a bug.
+   */
+  test('⚠️ RESIDUAL: a refetch failure retaining an EMPTY list still reaches the empty state', async () => {
+    mocks.scopeGrantsEmptyRefetchError = true;
+    renderWithProviders(<AppActivityPage />);
+    await expect
+      .element(page.getByText(/No app has made a recorded API call on your account/))
+      .toBeInTheDocument();
+    // The read-failure copy is NOT shown here — that is the over-claim this cell still carries.
+    expect(document.body.textContent ?? '').not.toContain(
+      "couldn't load your apps and permissions just now"
+    );
+  });
+
+  test('Save sends the new limit for THAT app, and widens no scope', async () => {
+    renderWithProviders(<AppActivityPage />);
+    await page.getByTestId('app-budget-edit').click();
+    const input = page.getByTestId('app-budget-input');
+    await input.clear();
+    await input.fill('2500');
+    await page.getByTestId('app-budget-save').click();
+    expect(mocks.mutate).toHaveBeenCalledTimes(1);
+    // 🔴 `scopes` IS THE SPEND SCOPE ALONE. `grantScopes` is ADDITIVE, so sending the
+    // app's manifest scopes here would GRANT every scope it declares — a silent widening
+    // performed by a control that says "limit". Re-sending the one scope the user has
+    // already granted unions with itself and cannot change the stored set.
+    expect(mocks.mutate.mock.calls[0][0]).toEqual({
+      appBlockId: 'apb_spend',
+      scopes: ['ai:write:budgeted'],
+      buzzBudgetPerDay: 2500,
+    });
+  });
+
+  test('Remove limit sends an EXPLICIT null (the clear branch), not an omitted key', async () => {
+    renderWithProviders(<AppActivityPage />);
+    await page.getByTestId('app-budget-edit').click();
+    await page.getByTestId('app-budget-clear').click();
+    expect(mocks.mutate).toHaveBeenCalledTimes(1);
+    const payload = mocks.mutate.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload).toEqual({
+      appBlockId: 'apb_spend',
+      scopes: ['ai:write:budgeted'],
+      buzzBudgetPerDay: null,
+    });
+    // The SERVER distinguishes an omitted key (leave the stored value alone) from an
+    // explicit null (clear it) via an `in` test, and `toEqual` above would also accept
+    // an absent key. This is the half that pins the clear.
+    expect(Object.hasOwn(payload, 'buzzBudgetPerDay')).toBe(true);
+    expect(payload.buzzBudgetPerDay).toBeNull();
+  });
+
+  test('an out-of-range value disables Save rather than sending one the server refuses', async () => {
+    renderWithProviders(<AppActivityPage />);
+    await page.getByTestId('app-budget-edit').click();
+    const input = page.getByTestId('app-budget-input');
+    await input.clear();
+    await input.fill('999999');
+    await expect.element(page.getByTestId('app-budget-save')).toBeDisabled();
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
+
+  test('warns when the entered limit is too low to fund a generation', async () => {
+    renderWithProviders(<AppActivityPage />);
+    await page.getByTestId('app-budget-edit').click();
+    // 750 (the stored value the editor opens on) is fundable → no warning.
+    expect(page.getByTestId('app-budget-low-warning').elements()).toHaveLength(0);
+    const input = page.getByTestId('app-budget-input');
+    await input.clear();
+    await input.fill('5');
+    await expect.element(page.getByTestId('app-budget-low-warning')).toBeInTheDocument();
+    // 🔴 PINNED AS A WHOLE NORMALISED STRING, and DELIBERATELY AS A LITERAL — it must NOT
+    // read BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY. The components share that constant so they
+    // cannot drift from each other; if this expectation read it too, the assertion would be
+    // tautological and a reworded relapse would pass silently. FIVE wordings of this sentence
+    // shipped false, every one keyword-clean, which is what a whole-string literal catches.
+    // The rules the wording must satisfy are in that constant's docblock.
+    {
+      const el = page.getByTestId('app-budget-low-warning');
+      const text = ((await el.element().textContent) ?? '').replace(/\s+/g, ' ').trim();
+      expect(text).toBe(
+        '5 Buzz/day is a low limit. Each generation reserves Buzz up front, and is refused if that reservation exceeds your remaining limit for the day — so a low limit can make an app look broken. You can change it here at any time.'
+      );
+    }
+  });
+});
+
+/**
+ * 🔴 THE PERMISSIONS TAB MUST NOT INSTRUCT AN ACTION THAT DOES NOT DO WHAT IT SAYS.
+ *
+ * The retracted copy read: "This is a reflection of the current state — to revoke access,
+ * remove the install or subscription on the Installs tab." Removing an install does NOT
+ * revoke the scope grant. `BlockRegistry.deleteSubscription` deletes the
+ * `block_user_subscriptions` row and nothing else; `uninstallFromModel` additionally
+ * revokes the block INSTANCE token, which invalidates already-minted tokens but leaves the
+ * consent row intact. The grant lives in `app_user_scope_grants`, whose only writes in the
+ * entire repo are the two in `~/server/services/blocks/scope-grant.service.ts`, both
+ * setting `revokedAt: null`. Nothing writes a non-null `revoked_at`; nothing deletes a row.
+ * So the scopes survive the uninstall and the next mint carries them with no fresh prompt.
+ *
+ * 🔴 PINNED AS THE WHOLE NORMALISED STRING, AND MATCHED **EXACTLY**. The artifact under
+ * test is PROSE, so a guard on keywords is walkable by rewording — a future edit could
+ * reintroduce "remove the install to revoke" without tripping any `/revoke/`-shaped
+ * matcher, because the honest copy contains that word too. Pinning the whole sentence
+ * means a cosmetic reword fails this test; that cost is the price of a machine-readable
+ * claim about what the page tells users. If you are here because you reworded it, re-read
+ * the paragraph above and confirm your new wording is still TRUE before updating it.
+ *
+ * 🔴 `{ exact: true }` IS LOAD-BEARING, NOT TIDINESS — without it this guard was WALKABLE
+ * and the paragraph above was false. `page.getByText(str)` is SUBSTRING matching, so the
+ * pin caught a reword (which changes the string) and NOT an append (which leaves it
+ * byte-intact). MEASURED at the parent of this commit: appending
+ * "To withdraw a permission, remove the install on the Installs tab." to the same `<Text>`
+ * left the literal untouched and the whole file passed **26/26** — i.e. the exact
+ * instruction this block exists to retract could be put back, as a second sentence, with
+ * every test green. With `exact: true` that same append fails 2 of 26 on this locator.
+ *
+ * 🔴 BUT `exact: true` ALONE CLOSES ONLY THE SAME-ELEMENT APPEND — it is geometry, not
+ * string semantics, and an audit walked it: the locator matches the deepest element whose
+ * whole normalised subtree text equals the string, so moving the same sentence into a
+ * SIBLING `<Text>` in the same `<Stack>` leaves the pinned `<p>` byte-identical and the
+ * pin matches again. MEASURED: that sibling walk passed 26/26 with `exact: true` in place.
+ * Adding a line of copy as a new `<Text>` is at least as natural as extending an existing
+ * one, so this was the likely shape, not an exotic one. What closes it is the PAGE-WIDE
+ * absence check in the tripwire below — which is why that assertion is a phrase class
+ * rather than a literal, and why it reads `document.body.textContent` rather than this
+ * element. The two guards cover different geometry ON PURPOSE: this one pins the exact
+ * sentence, that one bans the instruction anywhere on the page.
+ *
+ * ⚠️ CONTAINMENT NOTE for the tripwire's wait: its anchor comes from the ACTIVITY panel,
+ * which is ungated, while the permissions panel is gated on `appBlocks`. So in a state
+ * where the permissions panel is absent entirely, the tripwire passes vacuously — the
+ * coverage for that state lives in the two tests that DO wait on the copy itself, which
+ * fail loudly in the same run. Do not read the tripwire alone as proof the panel exists.
+ */
+describe('🔴 the revoke instruction is retracted, not reworded', () => {
+  // 🔴 WIDENED WITH THE DATA SOURCE AGAIN, AND FOR THE SAME REASON AS LAST TIME — NOT REWORDED
+  // FOR STYLE. The previous revision of this literal added "or granted permissions to" when
+  // `listMyScopeGrants` began enumerating live `app_user_scope_grants` rows. It now also
+  // enumerates `block_scope_invocations` / `block_buzz_attribution`, so an app that ACTED on the
+  // account with no install and no consent is a row too — and listing only the three
+  // relationships the viewer CHOSE described a population narrower than what the panel below
+  // lists. That is the same overstatement this block exists to catch, pointing the other way,
+  // for the second time.
+  //
+  // 🔴 THIS IS THE WHOLE-STRING PIN WORKING, NOT AN OBSTACLE TO ROUTE AROUND. The change to the
+  // page failed these two tests in CI's component tier, which is exactly what a pin on the whole
+  // normalised string is for: a copy change cannot land silently. The literal moves because the
+  // CLAIM moved; do not relax `exact: true` to avoid updating it.
+  const PERMISSIONS_TAB_COPY =
+    "The apps you've installed, subscribed to or granted permissions to, plus any app that " +
+    'has acted on your account without either — what each one may use, and where you have ' +
+    'it. Removing an install on the Installs tab takes the app off that surface, but it does ' +
+    'not withdraw a permission you have already granted — withdrawing one is not possible ' +
+    'yet. Recent activity is the full record of what apps have actually done on your account.';
+
+  /**
+   * A string from the ACTIVITY panel, deliberately not from the copy under test. Used as
+   * the render-wait for the absence check below — see the comment there for why the wait
+   * and the assertion must not be the same string.
+   */
+  const ACTIVITY_PANEL_ANCHOR = 'Recent actions apps have taken';
+
+  test('the panel states plainly that withdrawing a permission is not possible', async () => {
+    // `Tabs.Panel` is `keepMounted` by default, so the permissions panel's copy is in the
+    // DOM without a click — the same property the marketplace-anchor count above relies on.
+    mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
+    renderWithProviders(<AppActivityPage />);
+    await expect.element(page.getByText(PERMISSIONS_TAB_COPY, { exact: true })).toBeInTheDocument();
+  });
+
+  test('🔴 …and the retracted sentence is nowhere on the page', async () => {
+    // A second, cheaper tripwire aimed at a LITERAL revert (a `git revert`, a bad merge
+    // resolution) rather than at a reword — the pin above is what covers rewording. Kept
+    // because the two fail with very different messages, and this one names the defect.
+    mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
+    renderWithProviders(<AppActivityPage />);
+    // 🔴 WAIT ON A STABLE ANCHOR, NOT ON THE COPY UNDER TEST — and the distinction is the
+    // whole fix here. `renderWithProviders` is async and is not awaited, so an absence
+    // check placed first runs against an EMPTY body and passes vacuously. This tripwire
+    // previously waited on `PERMISSIONS_TAB_COPY` itself, which supplied the await but made
+    // the check unreachable in the one scenario it names: on a literal revert that copy is
+    // gone, so the wait failed first and this assertion never ran — measured, all three
+    // tests died with the same locator error and this message never appeared. Reordering
+    // alone does NOT fix it; it just trades unreachable for vacuous (also measured).
+    //
+    // So: wait on a string from a DIFFERENT panel, which survives any rewrite of the copy
+    // under test. That proves the page rendered without coupling the wait to the thing
+    // being asserted about.
+    await expect.element(page.getByText(ACTIVITY_PANEL_ANCHOR)).toBeInTheDocument();
+    // 🔴 A PHRASE CLASS, NOT A LITERAL — and for an ABSENCE check that is the STRONGER
+    // choice, which is the exact inverse of the presence pin above. There, prose is
+    // walkable by rewording, so the whole string is pinned. Here, rewording IS the attack:
+    // a literal `toContain('to revoke access, remove the install')` is walked by
+    // "remove your install", "to withdraw a permission, remove the install", or any other
+    // spelling of the same false instruction.
+    //
+    // 🔴 PURPOSIVE, NOT MERELY CO-OCCURRING, because the honest copy legitimately mentions
+    // BOTH halves in one sentence in order to CONTRAST them ("Removing an install … does
+    // not withdraw a permission"). MEASURED against a looser co-occurrence pattern: it
+    // false-positives on an imperative rewrite of the HONEST copy ("Remove an install …
+    // but it does not withdraw a permission"). Requiring the infinitive-of-purpose
+    // ("to revoke/withdraw … remove … install", or the reverse order) rejects all three
+    // honest variants tried and catches all four dishonest ones.
+    const REVOKE_BY_UNINSTALL =
+      /\bto\s+(revoke|withdraw)\b[\s\S]{0,60}\bremov\w*\b[\s\S]{0,25}\binstall|\bremov\w*\b[\s\S]{0,25}\binstall[\s\S]{0,60}\bto\s+(revoke|withdraw)\b/i;
+    expect(
+      document.body.textContent ?? '',
+      'the copy instructs an uninstall as a way to revoke access, which it is not'
+    ).not.toMatch(REVOKE_BY_UNINSTALL);
+  });
+
+  test('🔴 POSITIVE CONTROL: the body text really is readable from here', async () => {
+    // Without this, the `not.toContain` above passes for a page that rendered nothing at
+    // all — the reassuring-zero shape. Assert a string the page MUST carry, taken from a
+    // different panel so it cannot be satisfied by the copy under test.
+    mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
+    renderWithProviders(<AppActivityPage />);
+    await expect.element(page.getByText(PERMISSIONS_TAB_COPY, { exact: true })).toBeInTheDocument();
+    expect(document.body.textContent ?? '').toContain(ACTIVITY_PANEL_ANCHOR);
   });
 });

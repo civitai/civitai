@@ -20,7 +20,7 @@ import {
   metadataExtraction,
   promptEnhancement,
 } from './workflows/image-simple.graph';
-import { videoInterpolation, videoUpscale } from './workflows/video-enhance.graph';
+import { videoInterpolation, videoPreprocess, videoUpscale } from './workflows/video-enhance.graph';
 
 /**
  * The composed root, mirroring `generation-graph.ts`'s head: workflow (key
@@ -85,6 +85,7 @@ const STANDALONE_WORKFLOWS = new Set([
   'img2img:upscale',
   'img2img:remove-background',
   'img2img:preprocess',
+  'vid2vid:preprocess',
   'img2meta',
   'prompt:enhance',
 ]);
@@ -95,6 +96,7 @@ const workflowKinds = branch('workflowKind', [
   [['img2img:upscale'], imageUpscale],
   [['img2img:remove-background'], imageRemoveBackground],
   [['img2img:preprocess'], imagePreprocess],
+  [['vid2vid:preprocess'], videoPreprocess],
   [['img2meta'], metadataExtraction],
   [['prompt:enhance'], promptEnhancement],
   [['ecosystem'], outputHubs],

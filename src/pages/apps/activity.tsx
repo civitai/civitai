@@ -8,6 +8,7 @@ import {
   Divider,
   Group,
   Loader,
+  NumberInput,
   Select,
   Stack,
   Tabs,
@@ -25,7 +26,7 @@ import {
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { Meta } from '~/components/Meta/Meta';
@@ -42,13 +43,28 @@ import type {
 import { BlockScopeList } from '~/components/Apps/BlockScopeList';
 import { AppActivityPanel } from '~/components/Apps/AppActivityPanel';
 import {
+  ACTIVITY_TAB_LABELS,
   ACTIVITY_TAB_QUERY_KEY,
   activityTabQuery,
   isActivityTab,
+  isActivityTabVisible,
   resolveActivityTab,
+  visibleActivityTabs,
 } from '~/components/Apps/appsActivityTabs';
+import type { ActivityTab } from '~/components/Apps/appsActivityTabs';
+import {
+  buildScopeGrantSurfaceLine,
+  scopeGrantEmptyScopeLabel,
+} from '~/shared/constants/app-surface-provenance';
 import { resolveActivityPageAccess } from '~/components/Apps/resolveActivityPageAccess';
 import { canAccessAppsActivity, hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
+import {
+  BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY,
+  BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY,
+  BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY,
+  BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
+  BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
+} from '~/shared/constants/block-scope.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -133,7 +149,7 @@ function PinnedInstallRow({ sub }: PinnedInstallRowProps) {
           <Text size="sm">
             This removes the install row entirely. The app will stop appearing on{' '}
             <strong>{targetName}</strong>. Any platform default for the same slot will become
-            eligible again. The app's data and any other installs of it are untouched.
+            eligible again. The app&apos;s data and any other installs of it are untouched.
           </Text>
         </Stack>
       ),
@@ -327,7 +343,10 @@ function EmptyState({ label }: { label: string }) {
     <Center py="md">
       <Stack align="center" gap="xs">
         <IconPlugConnected size={28} opacity={0.5} />
-        <Text size="sm" c="dimmed">
+        {/* `ta`/`maw` so a two-sentence label wraps as a centred block rather than one
+            page-wide line — the labels here now name what the tab covers, not just what
+            is absent. Mirrors `HiddenBlocksPanel`'s own empty state. */}
+        <Text size="sm" c="dimmed" ta="center" maw={460}>
           {label}
         </Text>
         {canSeeStore && (
@@ -340,29 +359,174 @@ function EmptyState({ label }: { label: string }) {
   );
 }
 
+/** The ONE scope in the vocabulary that can spend the viewer's Buzz. */
+const SPEND_SCOPE = 'ai:write:budgeted';
+
 /**
- * Surface where the user has the app installed in one short string.
+ * The per-app daily Buzz limit, rendered and EDITABLE.
+ *
+ * 🔴 WHY THIS EXISTS AT ALL. Before it, the budget was write-once and invisible: the
+ * consent modal is the only writer and it only sends the field while
+ * `ai:write:budgeted` is still MISSING, which is true exactly once per app, forever.
+ * So a user could set a limit and then had no way to raise it, lower it, clear it, or
+ * even SEE it — and a low value (the floor is 1) meant every generation from that app
+ * was refused with no recoverable path through the product. The server raise/clear
+ * path already existed (`blocks.grantScopes`); nothing was wired to it.
+ *
+ * 🔴 THE `scopes` PAYLOAD IS DELIBERATELY `[SPEND_SCOPE]` AND MUST STAY THAT WAY.
+ * `grantScopes` is ADDITIVE over the scope set, so sending the app's manifest scopes
+ * here would GRANT every scope the app declares — a silent widening performed by a
+ * control that says "limit". Re-sending the one scope the user has already granted
+ * (which `spendScopeGranted` is exactly the proof of) unions with itself: the stored
+ * set cannot change. It is also the scope the server requires to be present for a
+ * budget to mean anything, so the write can never be the ignored-budget no-op.
+ *
+ * CLEARING sends an explicit `null`, which is the service's "clear it" state — a
+ * DIFFERENT thing from omitting the key (leave it alone), and the only caller of that
+ * branch.
+ *
+ * ⚠️ KNOWN LIMIT, STATED RATHER THAN PAPERED OVER: `grantScopes` requires the app to be
+ * `approved` AND the sent scope to be inside `manifest ∩ approvedScopes`. If an app is later
+ * un-approved, or a new version drops `ai:write:budgeted` from its manifest so it falls out of
+ * that intersection, this control surfaces the server's error instead of editing —
+ * the user's stored limit is then not editable here. It is also not ENFORCING anything
+ * in that state (no token can carry the spend scope, so no spend reaches the budget),
+ * so nothing is stuck at a ceiling; the limit is simply frozen until the app is
+ * approved again. Fixing it properly means a budget-only server path that does not go
+ * through the scope ceiling.
  */
-function buildSurfaceLine(surfaces: {
-  modelInstallCount: number;
-  subscriptionScopes: string[];
-}): string {
-  const parts: string[] = [];
-  if (surfaces.modelInstallCount > 0) {
-    parts.push(
-      `${surfaces.modelInstallCount} model install${surfaces.modelInstallCount === 1 ? '' : 's'}`
+function AppBudgetControl({
+  appBlockId,
+  appName,
+  budget,
+}: {
+  appBlockId: string;
+  appName: string;
+  budget: number | null;
+}) {
+  const utils = trpc.useUtils();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState<number | string>(
+    budget ?? BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY
+  );
+  const mutation = trpc.blocks.grantScopes.useMutation({
+    onSuccess: async () => {
+      await utils.blocks.listMyScopeGrants.invalidate();
+      setEditing(false);
+    },
+    onError: (e) =>
+      showErrorNotification({ title: 'Could not change the limit', error: new Error(e.message) }),
+  });
+
+  // Mantine's NumberInput hands back a string mid-edit (and '' when cleared), so
+  // narrow to a real integer in range before it can reach the mutation. The server
+  // re-validates the same bounds regardless — this only keeps the request well-formed
+  // and the Save button honest.
+  const parsed = typeof value === 'number' ? value : Number.parseInt(String(value), 10);
+  const valid =
+    Number.isInteger(parsed) &&
+    parsed >= BLOCK_CONSENT_BUDGET_MIN_PER_DAY &&
+    parsed <= BLOCK_CONSENT_BUDGET_MAX_PER_DAY;
+
+  const save = (next: number | null) =>
+    mutation.mutate({ appBlockId, scopes: [SPEND_SCOPE], buzzBudgetPerDay: next });
+
+  if (!editing) {
+    return (
+      <Group justify="space-between" gap="xs" wrap="nowrap" data-testid="app-budget-row">
+        <Text size="xs" c="dimmed" data-testid="app-budget-value">
+          {budget === null
+            ? 'Daily Buzz limit: none — only your account-wide daily cap applies'
+            : `Daily Buzz limit: ${budget.toLocaleString()} Buzz/day`}
+        </Text>
+        <Button
+          size="compact-xs"
+          variant="subtle"
+          data-testid="app-budget-edit"
+          onClick={() => {
+            setValue(budget ?? BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY);
+            setEditing(true);
+          }}
+        >
+          {budget === null ? 'Set limit' : 'Change'}
+        </Button>
+      </Group>
     );
   }
-  if (surfaces.subscriptionScopes.length > 0) {
-    parts.push(
-      `Subscriptions: ${surfaces.subscriptionScopes
-        .map((s) => (s === 'publisher_all_my_models' ? 'publisher' : 'viewer'))
-        .join(' / ')}`
-    );
-  } else if (surfaces.modelInstallCount === 0) {
-    parts.push('Subscriptions: none');
-  }
-  return parts.join(' · ');
+
+  return (
+    <Stack gap={6} data-testid="app-budget-editor">
+      <NumberInput
+        size="xs"
+        label={`Daily Buzz limit for ${appName}`}
+        description={`Most this app can spend of your Buzz per day. Max ${BLOCK_CONSENT_BUDGET_MAX_PER_DAY.toLocaleString()}.`}
+        min={BLOCK_CONSENT_BUDGET_MIN_PER_DAY}
+        max={BLOCK_CONSENT_BUDGET_MAX_PER_DAY}
+        step={100}
+        allowDecimal={false}
+        allowNegative={false}
+        value={value}
+        onChange={setValue}
+        error={valid ? null : 'Enter a whole number within the allowed range'}
+        data-testid="app-budget-input"
+      />
+      {/* A very low limit is a real setting, not a mistake — but it is also the one
+          that makes an app look broken, so say what it does at the point it is set.
+          This is what keeps the floor of 1 tolerable; see BLOCK_CONSENT_BUDGET_MIN_PER_DAY.
+
+          🔴 THE SENTENCE ITSELF NOW LIVES IN ONE PLACE —
+          BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY — shared with the consent modal so the two
+          cannot drift, and the rules governing its wording live in that constant's
+          docblock. READ THEM BEFORE EDITING: five successive wordings shipped false, each
+          introduced by the fix for the previous one, and the rule that replaced them is
+          structural — the sentence asserts NO figure and NO claim about which actions
+          still run, because every such claim proved falsifiable.
+
+          🔴 STILL OPEN, and this note is its only record — do not delete it again. The
+          warning renders only below LOW (90), so a user at 100/day is told nothing while
+          a qwen-image run (reserves 180) or an inline app (up to 250) is still refused.
+          Thresholding on HIGH, or on INLINE_MAX_BUZZ, would close it at the cost of
+          warning step-only apps that are fine. Deliberately not decided here. */}
+      {valid && parsed < BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY ? (
+        <Text size="xs" c="orange" data-testid="app-budget-low-warning">
+          {parsed.toLocaleString()} {BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY} You can change it here
+          at any time.
+        </Text>
+      ) : null}
+      <Group gap="xs" justify="flex-end">
+        <Button
+          size="compact-xs"
+          variant="default"
+          disabled={mutation.isPending}
+          onClick={() => setEditing(false)}
+        >
+          Cancel
+        </Button>
+        {budget !== null ? (
+          <Button
+            size="compact-xs"
+            variant="light"
+            color="gray"
+            loading={mutation.isPending}
+            data-testid="app-budget-clear"
+            onClick={() => save(null)}
+          >
+            Remove limit
+          </Button>
+        ) : null}
+        <Button
+          size="compact-xs"
+          color="yellow"
+          disabled={!valid}
+          loading={mutation.isPending}
+          data-testid="app-budget-save"
+          onClick={() => save(parsed)}
+        >
+          Save
+        </Button>
+      </Group>
+    </Stack>
+  );
 }
 
 function ScopeGrantsPanel() {
@@ -375,8 +539,44 @@ function ScopeGrantsPanel() {
       </Center>
     );
   }
-  if (!grants || grants.length === 0) {
-    return <EmptyState label="No apps installed or subscribed yet." />;
+  /* 🔴 A READ THAT NEVER ARRIVED MUST NOT BE RENDERED AS A FACT ABOUT THE VIEWER'S HISTORY: an
+     undefined `grants` with `isLoading` false otherwise falls through to the empty state below,
+     which ASSERTS the viewer has no installs, subscriptions or consents. Same fix in
+     `AppPermissionsActivityDrawer`.
+
+     🔴 `!grants` ALONE — "no data" is the condition; an error is one way to reach it, and the other
+     is live today. Default `networkMode: 'online'` (no override in `src/utils/trpc.ts`) parks an
+     offline first fetch at `status='pending' fetchStatus='paused'`, so `isLoading`, `isError` and
+     `data` are all falsy, and the `isError &&` conjunct this replaces asserted the empty state from
+     a fetch that never left the browser. A failed REFETCH — the case that conjunct existed for —
+     keeps `data`, so the list arm still wins.
+
+     ⚠️ RESIDUAL, NAMED: a refetch failure retaining an EMPTY list still reaches the empty state,
+     `[]` being truthy. Latent — `staleTime: Infinity` + `refetchOnWindowFocus: false` mean only an
+     explicit `invalidate()` refetches, and both invalidators (`:111`, `:414`) render from a card.
+     All three cells are pinned in `src/components/Apps/AppActivityPage.browser.test.tsx`. */
+  if (!grants) {
+    return (
+      <EmptyState label="We couldn't load your apps and permissions just now. This is a problem reading the list, not a statement about what you have installed or granted — reload to try again." />
+    );
+  }
+  if (grants.length === 0) {
+    /* 🔴 NOT "no app has any access to your account" — that is the claim this string used
+       to make, and it was false.
+
+       TWO SILENT POPULATIONS REMAIN: (a) blocks OTHER people installed, and (b) an app the viewer
+       never installed whose scopes are all in `CONSENT_EXEMPT_SCOPES`, which therefore never gets
+       a grant row. The ACTIVITY leg closes (a) and (b) ALIKE, and only for an app that has made
+       scope-gated API CALLS. 🔴 A block that consumes the viewer's data purely over the host-bridge
+       postMessage protocol writes NO `block_scope_invocations` row, so BOTH survive for that class
+       and this page is still silent about it.
+
+       🔴 THE SENTENCE BELOW IS NOW SCOPED TO THE RECORD. It opened "Nothing has touched your
+       account yet" — a universal about activity that the paragraph above refutes, written by THIS
+       PR (not inherited). An empty grant list proves no RECORDED call, which is what it now says. */
+    return (
+      <EmptyState label="No app has made a recorded API call on your account, and you have no installs, subscriptions or consents. An app that holds access but has never used it does not appear here — Recent activity is the record of the API calls that were made." />
+    );
   }
   return (
     <AppsCardGrid testId="apps-installed-grants-grid">
@@ -393,13 +593,53 @@ function ScopeGrantsPanel() {
                     {grant.slug}
                   </Badge>
                 </Group>
-                <Text size="xs" c="dimmed">
-                  {buildSurfaceLine(grant.surfaces)}
+                <Text size="xs" c="dimmed" data-testid="apps-grant-surface-line">
+                  {buildScopeGrantSurfaceLine({ origin: grant.origin, ...grant.surfaces })}
                 </Text>
               </Stack>
             </Group>
             <Divider />
-            <BlockScopeList scopes={grant.scopes} />
+            {/* 🔴 AN EXPLICIT `emptyLabel`, PER ROW CLASS. This was a bare
+                `<BlockScopeList scopes={grant.scopes} />`, which fell through to the component's
+                own default — "This app doesn't request any permissions — it only consumes data
+                from the host-bridge postMessage protocol." That was filed as an UNREACHABLE nit
+                while every row came from an install or a consent; the activity-only row makes it
+                REACHABLE AND WRONG BY CONSTRUCTION, since such a row carries `scopes: []` and
+                exists precisely because the app made scope-gated API calls. Telling that viewer
+                the app has no access is the one direction a permissions page must never be wrong
+                in. `scopeGrantEmptyScopeLabel` owns both labels so the two consumers of this
+                component cannot drift. */}
+            <BlockScopeList
+              scopes={grant.scopes}
+              emptyLabel={scopeGrantEmptyScopeLabel(grant.origin)}
+            />
+            {/* ⚠️ NO SECOND RECENT-ACTIVITY POINTER HERE. An earlier revision rendered an
+                `<Anchor>` reading "See what it did under Recent activity" directly beneath
+                `<BlockScopeList>` — whose `emptyLabel` for this row class already ENDS with
+                "…is under Recent activity". Two adjacent DOM nodes saying the same thing, the
+                second of them adding a `useRouter()` call to this component for its href alone.
+                It was also inaccurate in its own right: `activityTabQuery('activity', …)` lands
+                on the UNFILTERED feed, so a link promising "what IT did" delivered what every
+                app did. The prose half is kept — the drawer shares that label and has no tab to
+                link to — and the link is deleted rather than narrowed. */}
+            {/* Only for an app the viewer has actually GRANTED the spend scope to —
+                `spendScopeGranted` is the viewer's GRANT ROW, not the app-side set rendered by
+                `BlockScopeList` just above (which is `manifest.scopes ∩ approved_scopes`, what
+                the app may be granted). ⚠️ This sentence used to contrast the grant with "the
+                manifest"; that named the wrong set once the displayed list became the
+                intersection. The identical sentence in `AppPermissionsActivityDrawer` was
+                corrected and this sibling was missed. A budget on an app that cannot spend bounds
+                nothing, and the server would ignore the write. */}
+            {grant.spendScopeGranted ? (
+              <>
+                <Divider />
+                <AppBudgetControl
+                  appBlockId={grant.appBlockId}
+                  appName={grant.name}
+                  budget={grant.buzzBudgetPerDay}
+                />
+              </>
+            ) : null}
           </Stack>
         </Card>
       ))}
@@ -424,8 +664,8 @@ function HiddenBlocksPanel() {
         <Stack align="center" gap="xs">
           <IconEyeOff size={28} opacity={0.5} />
           <Text size="sm" c="dimmed" ta="center" maw={420}>
-            You haven't hidden any apps. Use the ⋯ menu on an app to hide it on this device — it
-            only affects what you see, never the publisher or other viewers.
+            You haven&apos;t hidden any apps. Use the ⋯ menu on an app to hide it on this device —
+            it only affects what you see, never the publisher or other viewers.
           </Text>
         </Stack>
       </Center>
@@ -477,22 +717,44 @@ function HiddenBlocksPanel() {
   );
 }
 
+/**
+ * The icon for each tab. Lives here rather than beside `ACTIVITY_TAB_LABELS` because
+ * `appsActivityTabs.ts` is deliberately React-free (that is what lets it run in the
+ * node-env `unit` project). Typed as a total `Record` so adding a tab to
+ * `ACTIVITY_TAB_VALUES` fails the build here rather than rendering an undefined icon.
+ */
+const ACTIVITY_TAB_ICONS: Record<ActivityTab, typeof IconHistory> = {
+  activity: IconHistory,
+  subscriptions: IconPlugConnected,
+  permissions: IconShieldLock,
+  hidden: IconEyeOff,
+};
+
 export default function AppActivityPage() {
   const features = useFeatureFlags();
   const router = useRouter();
-  // 🔴 The Installs tab's gate is the `appBlocks` SLOT flag; the PAGE's is
+  // 🔴 The gated tabs' predicate is the `appBlocks` SLOT flag; the PAGE's is
   // `appBlocks || appBlocksPages`. A tab's predicate is its content's own gate,
   // restated — and this one is NON-VACUOUS only because the page gate widened.
-  const canSeeInstalls = !!features.appBlocks;
+  // `SLOT_GATED_ACTIVITY_TABS` is the ledger of which tabs that covers, and everything
+  // below — the bar, the panels and the `?tab=` resolver — reads it through this ONE
+  // value, so none of them can disagree with another.
+  const visibility = { canSeeSlotGatedTabs: !!features.appBlocks };
   const { data: subs, isLoading } = trpc.blocks.listMySubscriptions.useQuery(undefined, {
-    enabled: canSeeInstalls,
+    enabled: visibility.canSeeSlotGatedTabs,
   });
 
   // 🔴 URL-backed, controlled tabs. `resolveActivityTab` returns the default for an
   // absent value, so an empty first-render `router.query` renders what SSR did.
-  const activeTab = resolveActivityTab(router.query[ACTIVITY_TAB_QUERY_KEY], {
-    canSeeInstalls,
-  });
+  const activeTab = resolveActivityTab(router.query[ACTIVITY_TAB_QUERY_KEY], visibility);
+
+  // 🔴 THE BAR IS DERIVED, NOT HAND-SPELLED. This used to be four `canSee… &&` guards
+  // inline in the JSX below — four sites the node-env `unit` project could not see, so
+  // deleting one of them (rendering a tab whose panel stayed gated) left that whole
+  // suite green and only the report-only `component` tier caught it. Mapping the
+  // ledger's own output means the unit-tier guard on `SLOT_GATED_ACTIVITY_TABS` now
+  // governs what actually renders.
+  const visibleTabs = visibleActivityTabs(visibility);
 
   const groupedApps = useMemo(() => groupSubscriptionsByApp(subs ?? []), [subs]);
 
@@ -534,7 +796,7 @@ export default function AppActivityPage() {
       <Meta title="App activity — Civitai" deIndex />
       <AppsPageLayout
         title="Your app activity"
-        subtitle="What Civitai Apps have done on your behalf, what they can access, and where they show up."
+        subtitle="What Civitai Apps have done on your account, what the apps you've installed declare they can access, and where they show up."
       >
         {/* 🔴 CONTROLLED, NOT `defaultValue` — that is what puts the selection in the
             URL. `replace` + `shallow`: no re-run of `getServerSideProps`, and no history
@@ -551,22 +813,23 @@ export default function AppActivityPage() {
           }}
           variant="outline"
         >
-          <Tabs.List>
-            <Tabs.Tab value="activity" leftSection={<IconHistory size={14} />}>
-              Recent activity
-            </Tabs.Tab>
-            {canSeeInstalls && (
-              <Tabs.Tab value="subscriptions" leftSection={<IconPlugConnected size={14} />}>
-                Installs
-              </Tabs.Tab>
-            )}
-            <Tabs.Tab value="permissions" leftSection={<IconShieldLock size={14} />}>
-              Apps & permissions
-            </Tabs.Tab>
-            <Tabs.Tab value="hidden" leftSection={<IconEyeOff size={14} />}>
-              Hidden
-            </Tabs.Tab>
-          </Tabs.List>
+          {/* 🔴 A `< 2` COLLAPSE, MIRRORING `AppsSubNav`'s `links.length < 2` — and it is
+              REACHABLE, which is why it exists. A viewer without the slot flag sees only
+              `Recent activity`, and a one-tab bar is chrome offering no choice. (The
+              earlier state of this file argued the floor was 2 and declined to build a
+              branch that could never run; gating `permissions` inverted that.) */}
+          {visibleTabs.length >= 2 && (
+            <Tabs.List>
+              {visibleTabs.map((tab) => {
+                const Icon = ACTIVITY_TAB_ICONS[tab];
+                return (
+                  <Tabs.Tab key={tab} value={tab} leftSection={<Icon size={14} />}>
+                    {ACTIVITY_TAB_LABELS[tab]}
+                  </Tabs.Tab>
+                );
+              })}
+            </Tabs.List>
+          )}
 
           <Tabs.Panel value="activity" pt="md">
             <Stack gap="sm">
@@ -578,9 +841,11 @@ export default function AppActivityPage() {
             </Stack>
           </Tabs.Panel>
 
-          {/* 🔴 THE PANEL IS GATED TOO. A `Tabs.Panel` with no tab is unreachable but
-              still MOUNTS its children on every render. */}
-          {canSeeInstalls && (
+          {/* 🔴 THE PANEL IS GATED TOO, THROUGH THE SAME PREDICATE THE BAR USES. A
+              `Tabs.Panel` with no tab is unreachable but still MOUNTS its children on
+              every render. Reading `isActivityTabVisible` rather than a local boolean is
+              what makes "the bar and the panels cannot disagree" a fact about the code. */}
+          {isActivityTabVisible('subscriptions', visibility) && (
             <Tabs.Panel value="subscriptions" pt="md">
               {isLoading ? (
                 <Center py="xl">
@@ -600,27 +865,62 @@ export default function AppActivityPage() {
             </Tabs.Panel>
           )}
 
-          <Tabs.Panel value="permissions" pt="md">
-            <Stack gap="sm">
-              <Text size="sm" c="dimmed">
-                What each app you've installed can request, and where you have it. This is a
-                reflection of the current state — to revoke access, remove the install or
-                subscription on the Installs tab.
-              </Text>
-              <ScopeGrantsPanel />
-            </Stack>
-          </Tabs.Panel>
+          {/* 🔴 GATED, AND ITS OWN DATA SOURCE IS WHY. `ScopeGrantsPanel`'s only read is
+              `blocks.listMyScopeGrants`, whose `enforceAppBlocksFlag` middleware returns
+              `[]` for a viewer without the slot flag — so ungated this showed the installs
+              empty state to every such viewer, always. Gating it displays nothing that was
+              ever displayed.
 
-          <Tabs.Panel value="hidden" pt="md">
-            <Stack gap="sm">
-              <Text size="sm" c="dimmed">
-                Apps you've hidden on this device. Hiding is local to your browser — it never
-                affects the publisher's install or other viewers. Restore one to have it show on its
-                model page again.
-              </Text>
-              <HiddenBlocksPanel />
-            </Stack>
-          </Tabs.Panel>
+              🔴 THE COPY BELOW USED TO INSTRUCT AN ACTION THAT DOES NOT DO WHAT THE SENTENCE
+              SAID: "to revoke access, remove the install or subscription on the Installs
+              tab". Neither uninstall path touches the consent row.
+              `BlockRegistry.deleteSubscription` deletes the `block_user_subscriptions` row
+              and nothing else; `uninstallFromModel` additionally revokes the block INSTANCE
+              token, which kills tokens already minted but leaves the grant standing. The
+              grant lives in `app_user_scope_grants`, and the only writes to it anywhere in
+              the repo are in `~/server/services/blocks/scope-grant.service.ts`, both of
+              which set `revokedAt: null` — nothing writes a non-null `revoked_at` and
+              nothing deletes a row. So `getGrantedScopes` keeps returning the same scopes
+              afterwards and the next mint carries them with no fresh prompt. Withdrawing
+              consent is genuinely not implemented; the copy says so rather than pointing at
+              a control that does not do it. Do not soften this back into an instruction
+              until a real revoke path exists. */}
+          {isActivityTabVisible('permissions', visibility) && (
+            <Tabs.Panel value="permissions" pt="md">
+              <Stack gap="sm">
+                {/* 🔴 "…OR THAT HAS ACTED ON YOUR ACCOUNT" IS THE NEW CLAUSE AND IT IS THE POINT
+                    OF THE TAB NOW. The sentence listed three relationships the viewer had CHOSEN
+                    (install / subscribe / consent), which was an exact description of the three
+                    things the panel could render and is why the gap was invisible: an app that
+                    acted on you with none of them was outside what the heading even claimed to
+                    cover. */}
+                <Text size="sm" c="dimmed">
+                  The apps you&apos;ve installed, subscribed to or granted permissions to, plus any
+                  app that has acted on your account without either — what each one may use, and
+                  where you have it. Removing an install on the Installs tab takes the app off that
+                  surface, but it does not withdraw a permission you have already granted —
+                  withdrawing one is not possible yet. Recent activity is the full record of what
+                  apps have actually done on your account.
+                </Text>
+                <ScopeGrantsPanel />
+              </Stack>
+            </Tabs.Panel>
+          )}
+
+          {/* 🔴 THE PANEL IS GATED TOO — same reason as `subscriptions` above: an
+              unreachable `Tabs.Panel` still MOUNTS its children on every render. */}
+          {isActivityTabVisible('hidden', visibility) && (
+            <Tabs.Panel value="hidden" pt="md">
+              <Stack gap="sm">
+                <Text size="sm" c="dimmed">
+                  Apps you&apos;ve hidden on this device. Hiding is local to your browser — it never
+                  affects the publisher&apos;s install or other viewers. Restore one to have it show
+                  on its model page again.
+                </Text>
+                <HiddenBlocksPanel />
+              </Stack>
+            </Tabs.Panel>
+          )}
         </Tabs>
       </AppsPageLayout>
     </>

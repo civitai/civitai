@@ -412,6 +412,8 @@ const comicModelEnum = z.enum([
   'SeedreamLite',
   'OpenAI',
   'OpenAI2',
+  'OpenAI25Flare',
+  'OpenAI25Sunburst',
   'Qwen',
   'Grok',
 ]);

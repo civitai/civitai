@@ -70,13 +70,25 @@ beforeEach(() => {
   isFeedbackAreaEnabledMock.mockResolvedValue(true);
 });
 
+/**
+ * Synthetic v4 uuids — the shape `createFeedbackSchema` now REQUIRES of an image id,
+ * and the shape both mint paths emit (`randomUUID()`, in the presign at
+ * `src/pages/api/v1/image-upload/index.ts` and in the relay's own server-side mint in
+ * `src/utils/s3-utils.ts`). Not keys copied out of production: this repo is public and
+ * a real id is a live object key in our store.
+ */
+const UUID_1 = '11111111-2222-4333-8444-555555555555';
+const UUID_2 = 'aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee';
+const UUID_3 = '00000000-0000-4000-a000-000000000000';
+const UUID_SHOT = '99999999-8888-4777-b666-555544443333';
+
 const submission = {
   area: 'bitdex-image-feed' as const,
   message: 'the feed repeated itself',
   context: {
     path: '/images',
-    images: ['cf-1', 'cf-2', 'cf-3'],
-    screenshotId: 'cf-shot',
+    images: [UUID_1, UUID_2, UUID_3],
+    screenshotId: UUID_SHOT,
     sessionId: 'faro-abc',
   },
 };
@@ -92,18 +104,36 @@ describe('feedback.create — extended context reaches the service', () => {
       userId: USER_ID,
       context: {
         path: '/images',
-        images: ['cf-1', 'cf-2', 'cf-3'],
-        screenshotId: 'cf-shot',
+        images: [UUID_1, UUID_2, UUID_3],
+        screenshotId: UUID_SHOT,
         sessionId: 'faro-abc',
       },
     });
   });
 
+  // 🔴 All four are VALID uuids, deliberately. With placeholder ids this test went on
+  // passing after image ids became uuid-shaped — but for the wrong reason, rejected on
+  // SHAPE before the count was ever reached, which is a count guard that no longer
+  // guards the count. Keeping them well-formed leaves the array length as the only
+  // thing this case can fail on.
   it('rejects a four-image submission at the boundary, before the service is reached', async () => {
     await expect(
       caller().create({
         ...submission,
-        context: { ...submission.context, images: ['a', 'b', 'c', 'd'] },
+        context: { ...submission.context, images: [UUID_1, UUID_2, UUID_3, UUID_SHOT] },
+      })
+    ).rejects.toThrow();
+    expect(createFeedbackMock).not.toHaveBeenCalled();
+  });
+
+  // The boundary's OTHER rejection, and the one that did not exist before: an id that
+  // is not a uuid never reaches the service. Same assertion shape as the count case
+  // above, so the two failure modes are visibly siblings.
+  it('rejects an image id that is not a uuid, before the service is reached', async () => {
+    await expect(
+      caller().create({
+        ...submission,
+        context: { ...submission.context, images: ['https://attacker.example/x.png'] },
       })
     ).rejects.toThrow();
     expect(createFeedbackMock).not.toHaveBeenCalled();
@@ -126,7 +156,7 @@ describe('feedback.create — extended context reaches the service', () => {
     await caller().create({
       area: 'bitdex-image-feed',
       message: 'no faro here',
-      context: { path: '/images', images: ['cf-1'] },
+      context: { path: '/images', images: [UUID_1] },
     });
 
     expect(createFeedbackMock).toHaveBeenCalledTimes(1);

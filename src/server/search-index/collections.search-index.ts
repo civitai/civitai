@@ -475,6 +475,11 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
       endId,
     };
   },
+  // Measured against production data: a 25-id targeted pull runs in ~0.18s, but the planner flips
+  // around 50 ids and a 50-id pull already costs ~1.4s — about the same as 300 ids. Under load
+  // those larger batches have hit the ~10s statement timeout and lost the whole batch, so keep the
+  // sync batch on the fast side of that flip rather than near the default of 500.
+  updateSyncChunkSize: 25,
   pullData,
   transformData,
   pushData,

@@ -681,6 +681,58 @@ export const getPendingReviewCount = (collectionId: number) =>
     where: { collectionId, status: CollectionItemStatus.REVIEW },
   });
 
+/**
+ * How many submissions are waiting on this user, per collection, for the badge on the user menu's
+ * My Collections entry and on each row of the collections sidebar.
+ *
+ * One grouped query rather than one per collection: `getPendingReviewCount` answers for a single
+ * collection, and this runs for every signed-in user on every session (it rides on
+ * `user.checkNotifications` — see the handler). Calling that one in a loop would be a round trip
+ * per owned collection, and the median user owns two while the largest owns 757.
+ *
+ * Deliberately unfiltered by `CollectionMode`. Contest collections are 96% of everything pending
+ * on prod and are reviewed through the same `/collections/[id]/review` page, so a mode filter here
+ * would blank the badge for nearly every queue that exists.
+ *
+ * `MANAGE` is the same permission the `Review N` button on the collection page is gated on, so the
+ * badge can never point at a queue the viewer cannot open. Note that `MANAGE` is nearly universal
+ * in `CollectionContributor` (1.8M rows) because creating a collection writes a self-row; only 135
+ * rows across 66 users are non-owner. The contributor branch is small; the owner branch does the
+ * work.
+ *
+ * Prod covers this with `CollectionItem_collectionId_status_covered`
+ * (`(collectionId, status, createdAt DESC) INCLUDE (...)`) as an Index Only Scan with both
+ * equality columns in the Index Cond — 0.65 ms for a typical user, 136 ms cold for the largest.
+ * That index is NOT in `schema.full.prisma`, so an environment built from the schema alone does
+ * not have it and this query will be slower there. That is known, not a regression.
+ */
+export async function getPendingCollectionReviewCounts({ userId }: { userId: number }) {
+  const rows = await dbRead.$queryRaw<{ collectionId: number; pending: number }[]>`
+    SELECT ci."collectionId", count(*)::int AS pending
+    FROM "CollectionItem" ci
+    WHERE ci."status" = ${CollectionItemStatus.REVIEW}::"CollectionItemStatus"
+      AND ci."collectionId" IN (
+        SELECT c."id" FROM "Collection" c WHERE c."userId" = ${userId}
+        UNION
+        SELECT cc."collectionId" FROM "CollectionContributor" cc
+         WHERE cc."userId" = ${userId}
+           AND ${CollectionContributorPermission.MANAGE}::"CollectionContributorPermission"
+               = ANY(cc."permissions")
+      )
+    GROUP BY ci."collectionId"
+  `;
+
+  const byCollection: Record<number, number> = {};
+  let total = 0;
+  for (const row of rows) {
+    const pending = Number(row.pending);
+    byCollection[Number(row.collectionId)] = pending;
+    total += pending;
+  }
+
+  return { total, byCollection };
+}
+
 const inputToCollectionType = {
   modelId: CollectionType.Model,
   articleId: CollectionType.Article,

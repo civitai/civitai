@@ -1,5 +1,6 @@
 import { NON_PUBLIC_IP_RANGES, publicIpOnlySql } from '@civitai/shared/clickhouse-ip-filters';
 import { describe, expect, it, vi } from 'vitest';
+import { MAX_COHORT_ACCOUNTS } from '../cohort';
 import type { BotAccountCohortMember, SurfaceCounts } from '../cohort';
 import {
   MAX_CONTENT_CHARS,
@@ -18,11 +19,27 @@ import {
   emptyCohortSignals,
   normalizeContent,
   registrationIpSql,
+  MAX_FILENAME_SAMPLES,
+  MAX_FILENAMES_PER_MEMBER,
+  FILENAME_READ_BATCH_SIZE,
+  filenameFingerprint,
+  filenameSampleArgs,
+  normalizeFilename,
   type ContentSampleRow,
   type EvidenceClickhouse,
   type EvidenceReader,
+  type FilenameSampleRow,
   type RegistrationIpRow,
 } from '../evidence';
+import {
+  FILENAME_FINGERPRINT_PREFIX,
+  TEXT_FINGERPRINT_PREFIX,
+  unprefixFingerprint,
+} from '../fingerprint-keys';
+
+/** The NAMESPACED index key for a piece of text — what `membersPerFingerprint` is keyed by.
+ *  `contentFingerprint` itself still returns the bare normalised form. */
+const textKey = (raw: string) => `${TEXT_FINGERPRINT_PREFIX}${contentFingerprint(raw) as string}`;
 
 const surface = (partial: Partial<SurfaceCounts> = {}): SurfaceCounts => {
   const row = { comments: 0, models: 0, images: 0, ...partial };
@@ -188,6 +205,151 @@ describe('contentFingerprint', () => {
   });
 });
 
+// ---------------------------------------------------------------------------------------------
+// Filename normalisation and fingerprinting
+// ---------------------------------------------------------------------------------------------
+
+describe('normalizeFilename', () => {
+  it('🔴 lowercases, which is what folds two halves of one real cluster together', () => {
+    // Not cosmetic. In one production cohort `Logo.jpg` and `logo.jpg` were two separate clusters
+    // of ten — two groups sitting low on the ramp instead of one group of twenty.
+    expect(normalizeFilename('Logo.jpg')).toBe('logo.jpg');
+    expect(normalizeFilename('LOGO.JPG')).toBe('logo.jpg');
+    expect(normalizeFilename('logo.jpg')).toBe('logo.jpg');
+  });
+
+  it('trims and collapses whitespace', () => {
+    expect(normalizeFilename('  my   photo.png  ')).toBe('my photo.png');
+  });
+
+  it('🔴 does NOT mask digits — masking would collapse every numbered upload into one key', () => {
+    // The whole reason this is not `normalizeContent`. Under that function both of these become
+    // `nummask jpg jpeg`, so every `<digits>.jpg` on the site is ONE cluster and the largest group
+    // in any cohort becomes an artefact of camera naming rather than a ring.
+    expect(normalizeFilename('1900.jpg.jpeg')).toBe('1900.jpg.jpeg');
+    expect(normalizeFilename('2749.jpg.jpeg')).toBe('2749.jpg.jpeg');
+    expect(normalizeFilename('1900.jpg.jpeg')).not.toBe(normalizeFilename('2749.jpg.jpeg'));
+  });
+
+  it('🔴 does NOT strip punctuation — the dot and the extension are part of the identity', () => {
+    expect(normalizeFilename('my-file_v2.final.png')).toBe('my-file_v2.final.png');
+  });
+});
+
+describe('filenameFingerprint', () => {
+  it('namespaces the key, so a filename is never confused with a text fingerprint', () => {
+    expect(filenameFingerprint('logo.jpg')).toBe(`${FILENAME_FINGERPRINT_PREFIX}logo.jpg`);
+  });
+
+  it('🔴 THE REGRESSION THIS SOURCE EXISTS FOR: the PROSE floors are not applied to filenames', () => {
+    // 🔴 MEASURED BY EXECUTING THE SHIPPED NORMALISER, not by reading it. `contentFingerprint`
+    // rejects BOTH of these outright — `1900.jpg.jpeg` normalises to `"nummask jpg jpeg"` (16
+    // chars, 3 tokens) and `logo.jpg` to `"logo jpg"` (8 chars, 2 tokens), against floors of 24
+    // chars and 4 tokens. Both were filenames a confirmed ring actually shared, so reusing the
+    // prose floors here would have discarded the signal this whole change is about.
+    //
+    // The floors are right for prose and wrong for filenames: they exist because a SHORT SENTENCE
+    // is written independently by unrelated people, which is a fact about sentences.
+    expect(contentFingerprint('1900.jpg.jpeg')).toBeNull();
+    expect(contentFingerprint('logo.jpg')).toBeNull();
+    expect(filenameFingerprint('1900.jpg.jpeg')).not.toBeNull();
+    expect(filenameFingerprint('logo.jpg')).not.toBeNull();
+  });
+
+  it('🔴 folds case, so `Logo.jpg` and `logo.jpg` are ONE cluster key', () => {
+    expect(filenameFingerprint('Logo.jpg')).toBe(filenameFingerprint('logo.jpg'));
+  });
+
+  it('🔴 refuses a missing or blank name rather than keying on the empty string', () => {
+    // `Image.name` is nullable. An upload with no name is not a member of the empty-string
+    // cluster, and letting it become one would build the largest cluster in every cohort out of
+    // accounts that share nothing at all.
+    expect(filenameFingerprint(null)).toBeNull();
+    expect(filenameFingerprint(undefined)).toBeNull();
+    expect(filenameFingerprint('')).toBeNull();
+    expect(filenameFingerprint('   ')).toBeNull();
+  });
+});
+
+describe('unprefixFingerprint', () => {
+  it('strips either namespace and leaves an unprefixed key alone', () => {
+    expect(unprefixFingerprint(`${FILENAME_FINGERPRINT_PREFIX}logo.jpg`)).toBe('logo.jpg');
+    expect(unprefixFingerprint(`${TEXT_FINGERPRINT_PREFIX}free buzz linkmask`)).toBe(
+      'free buzz linkmask'
+    );
+    expect(unprefixFingerprint('no prefix here')).toBe('no prefix here');
+  });
+
+  it('🔴 does not truncate a normalised text at its first colon', () => {
+    // The naive implementation — slice at `indexOf(':')` — would eat the front of any text
+    // containing a colon, which every generation-parameter paste does.
+    expect(unprefixFingerprint('steps: 20, sampler: euler')).toBe('steps: 20, sampler: euler');
+  });
+});
+
+describe('filenameSampleArgs', () => {
+  it('reads the newest images of exactly ONE account, bounded, two columns', () => {
+    const args = filenameSampleArgs(1, 50);
+    expect(args.where.userId).toBe(1);
+    expect(args.select).toEqual({ userId: true, name: true });
+    expect(args.take).toBe(50);
+  });
+
+  it('🔴 pins `userId` to a SCALAR EQUALITY — never an `IN (…)` list under a LIMIT', () => {
+    // 🔴 THE REGRESSION GUARD FOR THE READ THAT NEVER COMPLETED. The shipped shape was
+    // `WHERE userId IN (…hundreds…) AND createdAt <= $1 ORDER BY id DESC LIMIT <take>`, and on a
+    // table the size of `Image` the planner's estimate for a wide `IN (…)` list is off by three
+    // orders of magnitude — it expects six figures' worth of matches where the cohort owns three. On that
+    // estimate a backward primary-key scan looks cheap, because the LIMIT is expected to be hit
+    // immediately. A day's new accounts own FEWER rows than the LIMIT asks for, so the LIMIT is
+    // never reached, the early exit never fires, and the scan walks the whole table. Measured on a
+    // replica: over 150 seconds versus 20 ms for the per-account read, and the connection was
+    // closed under it in production.
+    //
+    // 🔴 THE GUARD IS ON THE SHAPE, NOT ON THE LIST WIDTH, because narrowing the list does not fix
+    // it: the same backward primary-key scan was measured at 100, 50 and 25 ids — a shorter list
+    // lowers the estimate and the LIMIT together and leaves the reasoning intact. Only an equality
+    // on the leading column of `image_userid_id_idx` makes the ORDER BY index-supplied and the
+    // LIMIT reachable. So this asserts a NUMBER, which no `{ in: [...] }` of any width satisfies.
+    const where = filenameSampleArgs(7, 10).where;
+    expect(typeof where.userId).toBe('number');
+    expect(where.userId).not.toHaveProperty('in');
+  });
+
+  it('🔴 orders by id, NOT createdAt', () => {
+    // `schema.prisma` declares `(userId, postId)` and `(userId, id)` (`image_userid_id_idx`) on
+    // `Image` and no `(userId, createdAt)`, so ordering on `createdAt` would sort a member's image
+    // history outside any declared index. `id` is monotonic on an append-only table, so descending
+    // `id` is descending upload order — and the `take` means the ORDER decides which rows a bounded
+    // read keeps.
+    expect(filenameSampleArgs(1, 10).orderBy).toEqual({ id: 'desc' });
+  });
+
+  it('🔴 DOES NOT FILTER ON ingestion OR needsReview — the blocked rows ARE the signal', () => {
+    // 🔴 THE MOST LOAD-BEARING ABSENCE IN THIS MODULE, pinned as a ledger rather than as prose.
+    // There is a partial index covering `ingestion = 'Scanned' AND needsReview IS NULL`, so adding
+    // either predicate looks like free performance — and would delete exactly the population this
+    // heuristic reads, because the images a templated ring uploads are the ones the scanner blocks.
+    // An account surviving while its content is removed is the case the detector exists for.
+    //
+    // Asserted as the EXACT key set of `where`, so a new filter of ANY name fails here. A test
+    // naming only `ingestion` and `needsReview` would be walkable by a third predicate.
+    expect(Object.keys(filenameSampleArgs(1, 10).where).sort()).toEqual(['userId']);
+    expect(Object.keys(filenameSampleArgs(1, 10, new Date()).where).sort()).toEqual([
+      'createdAt',
+      'userId',
+    ]);
+  });
+
+  it('bounds on createdAt when given a window, and omits it when not', () => {
+    const before = new Date('2026-09-03T12:00:00.000Z');
+    expect(filenameSampleArgs(1, 10, before).where).toMatchObject({
+      createdAt: { lte: before },
+    });
+    expect(filenameSampleArgs(1, 10).where).not.toHaveProperty('createdAt');
+  });
+});
+
 describe('the module constants', () => {
   it('🔴 pins every bound a run is sized by, so moving one is a deliberate edit', () => {
     // 🔴 FOUR OF THESE WERE UNTESTED. A constant nothing asserts can be changed by a mutant — or by
@@ -196,11 +358,45 @@ describe('the module constants', () => {
     // width of every `IN (…)` list, and the truncation is what bounds both the memory a run holds
     // and what counts as "the same text".
     expect(MAX_CONTENT_SAMPLES).toBe(5_000);
+    // 🔴 A SEPARATE BUDGET, AND LARGER. Pinned so a later "tidy-up" that folds the filename read
+    // into the content allowance is a deliberate, visible edit rather than a silent one — the two
+    // populations are wildly unequal (a day's new accounts produce a handful of comments and
+    // thousands of images) and sharing one budget starves the half with the signal in it.
+    expect(MAX_FILENAME_SAMPLES).toBe(20_000);
+    expect(MAX_FILENAME_SAMPLES).toBeGreaterThan(MAX_CONTENT_SAMPLES);
     expect(EVIDENCE_CHUNK_SIZE).toBe(500);
     expect(MAX_CONTENT_CHARS).toBe(512);
     expect(MIN_FINGERPRINT_CHARS).toBe(24);
     expect(MIN_FINGERPRINT_TOKENS).toBe(4);
     expect(MAX_IPS_PER_ACCOUNT).toBe(4);
+    // 🔴 THE PER-ACCOUNT CAP, PINNED FOR THE SAME REASON `MAX_IPS_PER_ACCOUNT` IS — they are the
+    // same idea on the two sources, and the defect they both prevent is one account spending an
+    // allowance the rest of its batch needed.
+    expect(MAX_FILENAMES_PER_MEMBER).toBe(50);
+    // 🔴 THE BATCH IS A CONCURRENCY WINDOW AND MUST STAY WELL UNDER THE `IN (…)` WIDTH. The filename
+    // read is one statement per member, so setting this to the chunk width would put 500 statements
+    // in flight from one job against a pool the whole process shares.
+    expect(FILENAME_READ_BATCH_SIZE).toBe(10);
+    expect(FILENAME_READ_BATCH_SIZE).toBeLessThan(EVIDENCE_CHUNK_SIZE);
+    // The worst-case overshoot past the budget, as arithmetic rather than prose: one batch's rows,
+    // which must stay small against the budget it can overshoot.
+    expect(FILENAME_READ_BATCH_SIZE * MAX_FILENAMES_PER_MEMBER).toBeLessThan(
+      MAX_FILENAME_SAMPLES / 10
+    );
+  });
+
+  it('pins the cohort size over which filename coverage is UNCONDITIONAL (invariant guard)', () => {
+    // 🔴 AN INVARIANT GUARD, NOT REGRESSION COVERAGE — it is green before this assertion existed and
+    // catches no bug. It exists because the per-member cap's coverage claim is CONDITIONAL on a
+    // budget that did not move with it, and that condition was being stated in prose only. Worst
+    // case is `members × MAX_FILENAMES_PER_MEMBER` rows against `MAX_FILENAME_SAMPLES`, so every
+    // member is reached unconditionally only up to this many members.
+    expect(MAX_FILENAME_SAMPLES / MAX_FILENAMES_PER_MEMBER).toBe(400);
+    // 🔴 AND IT IS REACHABLE, which is the half that makes the condition worth writing down: the
+    // cohort walk admits far more accounts than that, so a wave day can still stop the filename walk
+    // short — `sources.filenameBudgetExhausted` is what says it did. Raising the per-member cap
+    // without raising the budget narrows this range in direct proportion.
+    expect(MAX_FILENAME_SAMPLES / MAX_FILENAMES_PER_MEMBER).toBeLessThan(MAX_COHORT_ACCOUNTS);
   });
 
   it('renders a ClickHouse DateTime literal, not an ISO string', () => {
@@ -356,6 +552,9 @@ describe('buildCohortSignals', () => {
     contentSamples: true,
     contentBudgetExhausted: false,
     membersSampledForContent: 3,
+    filenameSamples: true,
+    filenameBudgetExhausted: false,
+    membersSampledForFilenames: 3,
   };
 
   it('🔴 counts DISTINCT accounts per IP, not rows', () => {
@@ -389,9 +588,113 @@ describe('buildCohortSignals', () => {
       ]),
       sources,
     });
-    const fp = contentFingerprint(text) as string;
+    // The INDEX key is namespaced; `contentFingerprint` itself still returns the bare normalised
+    // form, which is what the reason string quotes. See `fingerprint-keys.ts`.
+    const fp = textKey(text);
     expect(s.membersPerFingerprint.get(fp)).toBe(2);
     expect(s.fingerprintsByUser.get(1)).toEqual([fp]);
+  });
+
+  it('🔴 counts DISTINCT accounts per FILENAME, not uploads', () => {
+    // The same invariant in the filename axis, and the one that stops a single prolific account
+    // manufacturing a ring out of itself: account 1 uploads `logo.jpg` ninety times and is ONE
+    // member of that cluster. Without this a lone bulk uploader tops the run's distribution.
+    const s = buildCohortSignals({
+      members: [member(1), member(2)],
+      registrationIps: [],
+      contentSamples: [],
+      filenameSamples: Array.from({ length: 90 }, () => ({ userId: 1, name: 'logo.jpg' })).concat([
+        { userId: 2, name: 'logo.jpg' },
+      ]),
+      sources,
+    });
+    expect(s.membersPerFingerprint.get(filenameFingerprint('logo.jpg') as string)).toBe(2);
+    expect(s.fingerprintsByUser.get(1)).toEqual([filenameFingerprint('logo.jpg')]);
+  });
+
+  it('🔴 folds case across ACCOUNTS, so `Logo.jpg` and `logo.jpg` are one cluster of three', () => {
+    // The real cohort shape this was measured on: two spellings of one filename, each looking like
+    // a small group, that are one larger group once folded.
+    const s = buildCohortSignals({
+      members: [member(1), member(2), member(3)],
+      registrationIps: [],
+      contentSamples: [],
+      filenameSamples: [
+        { userId: 1, name: 'Logo.jpg' },
+        { userId: 2, name: 'logo.jpg' },
+        { userId: 3, name: 'LOGO.JPG' },
+      ],
+      sources,
+    });
+    expect(s.membersPerFingerprint.get(filenameFingerprint('logo.jpg') as string)).toBe(3);
+    // And exactly one key exists for them, rather than three that each fall below the floor.
+    expect([...s.membersPerFingerprint.keys()]).toEqual([filenameFingerprint('logo.jpg')]);
+  });
+
+  it('🔴 A FILENAME CANNOT COLLIDE WITH A TEXT FINGERPRINT OF THE SAME STRING', () => {
+    // 🔴 THE NAMESPACE GUARD, AND IT IS NOT HYPOTHETICAL. `normalizeContent` strips the dot out of
+    // `logo.jpg` and yields `logo jpg`; a comment saying "logo jpg" normalises to that too. Sharing
+    // one `Map<string, number>` without prefixes would merge uploaders and commenters into a single
+    // cluster — a ring of three assembled out of two unrelated behaviours.
+    //
+    // Built so the two WOULD collide without the prefixes: the text below is chosen to normalise to
+    // exactly the filename's own normalised form.
+    const text = 'logo jpg download free now';
+    const s = buildCohortSignals({
+      members: [member(1), member(2), member(3)],
+      registrationIps: [],
+      contentSamples: [
+        { userId: 1, content: text },
+        { userId: 2, content: text },
+      ],
+      filenameSamples: [
+        { userId: 3, name: normalizeContent(text) },
+        { userId: 4, name: normalizeContent(text) },
+      ],
+      sources,
+    });
+    // Two separate clusters of 2 — NOT one cluster of 3 (member 4 is outside the cohort).
+    expect(s.membersPerFingerprint.get(textKey(text))).toBe(2);
+    expect(s.membersPerFingerprint.get(filenameFingerprint(normalizeContent(text)) as string)).toBe(
+      1
+    );
+    // The two keys are different strings even though the underlying value is identical.
+    expect(textKey(text)).not.toBe(filenameFingerprint(normalizeContent(text)));
+    expect(unprefixFingerprint(textKey(text))).toBe(
+      unprefixFingerprint(filenameFingerprint(normalizeContent(text)) as string)
+    );
+  });
+
+  it('drops an upload with no filename rather than clustering on the empty string', () => {
+    const s = buildCohortSignals({
+      members: [member(1), member(2), member(3)],
+      registrationIps: [],
+      contentSamples: [],
+      filenameSamples: [
+        { userId: 1, name: null },
+        { userId: 2, name: null },
+        { userId: 3, name: '  ' },
+      ],
+      sources,
+    });
+    expect([...s.membersPerFingerprint.keys()]).toEqual([]);
+  });
+
+  it('🔴 ignores FILENAME rows for accounts outside the cohort', () => {
+    // The twin of the content/IP guard: a row for an id the run is not scoring must not inflate a
+    // cluster nobody is a member of.
+    const s = buildCohortSignals({
+      members: [member(1), member(2)],
+      registrationIps: [],
+      contentSamples: [],
+      filenameSamples: [
+        { userId: 1, name: 'logo.jpg' },
+        { userId: 2, name: 'logo.jpg' },
+        { userId: 999, name: 'logo.jpg' },
+      ],
+      sources,
+    });
+    expect(s.membersPerFingerprint.get(filenameFingerprint('logo.jpg') as string)).toBe(2);
   });
 
   it('🔴 ignores rows for accounts outside the cohort', () => {
@@ -451,17 +754,25 @@ describe('buildCohortSignals', () => {
       registrationIps: [],
       contentSamples: [],
       sources: {
+        readFailures: { registrationIps: true, contentSamples: false, filenameSamples: false },
         registrationIps: false,
         contentSamples: true,
         contentBudgetExhausted: true,
         membersSampledForContent: 7,
+        filenameSamples: true,
+        filenameBudgetExhausted: true,
+        membersSampledForFilenames: 4,
       },
     });
     expect(s.sources).toEqual({
+      readFailures: { registrationIps: true, contentSamples: false, filenameSamples: false },
       registrationIps: false,
       contentSamples: true,
       contentBudgetExhausted: true,
       membersSampledForContent: 7,
+      filenameSamples: true,
+      filenameBudgetExhausted: true,
+      membersSampledForFilenames: 4,
     });
   });
 });
@@ -472,10 +783,18 @@ describe('emptyCohortSignals', () => {
     // flags default to false for that reason — including `contentSamples`, whose false means "no
     // content was read", never "the cohort posted nothing that matched".
     expect(emptyCohortSignals().sources).toEqual({
+      // 🔴 THE ONE GROUP WHOSE `false` IS NOT "did not run". An index over nothing is not an
+      // outage, and defaulting these to true would make every empty cohort page an operator.
+      readFailures: { registrationIps: false, contentSamples: false, filenameSamples: false },
       registrationIps: false,
       contentSamples: false,
       contentBudgetExhausted: false,
       membersSampledForContent: 0,
+      // The filename source defaults the same way and for the same reason: a run with no evidence
+      // reader must not look like a cohort that shared no filenames.
+      filenameSamples: false,
+      filenameBudgetExhausted: false,
+      membersSampledForFilenames: 0,
     });
   });
 });
@@ -498,21 +817,26 @@ describe('chunk', () => {
 function fakeReader(opts: {
   ips?: RegistrationIpRow[];
   content?: ContentSampleRow[];
+  filenames?: FilenameSampleRow[];
   hasIps?: boolean;
   ipError?: Error;
   contentError?: Error;
+  filenameError?: Error;
 }): EvidenceReader & {
   ipCalls: number[][];
   ipWindows: Array<Date | undefined>;
   contentCalls: Array<{ ids: number[]; take: number }>;
+  filenameCalls: Array<{ ids: number[]; take: number; createdBefore: Date | undefined }>;
 } {
   const ipCalls: number[][] = [];
   const ipWindows: Array<Date | undefined> = [];
   const contentCalls: Array<{ ids: number[]; take: number }> = [];
+  const filenameCalls: Array<{ ids: number[]; take: number; createdBefore: Date | undefined }> = [];
   return {
     ipCalls,
     ipWindows,
     contentCalls,
+    filenameCalls,
     hasRegistrationIps: opts.hasIps ?? true,
     listRegistrationIps: async (ids, createdAfter) => {
       ipCalls.push(ids);
@@ -524,6 +848,18 @@ function fakeReader(opts: {
       contentCalls.push({ ids, take });
       if (opts.contentError) throw opts.contentError;
       return (opts.content ?? []).filter((r) => ids.includes(r.userId)).slice(0, take);
+    },
+    // 🔴 THE FAKE MODELS THE PER-MEMBER CAP, and getting this wrong is how the defect stayed
+    // invisible. It used to `.slice(0, take)` the whole batch — i.e. the fake encoded the same
+    // global-take semantics the broken query had, so no test built on it could ever observe an
+    // account being evicted by another. A fake that reproduces the code's mistake makes the suite
+    // agree with the bug.
+    listFilenameSamples: async (ids, perMemberTake, createdBefore) => {
+      filenameCalls.push({ ids, take: perMemberTake, createdBefore });
+      if (opts.filenameError) throw opts.filenameError;
+      return ids.flatMap((id) =>
+        (opts.filenames ?? []).filter((r) => r.userId === id).slice(0, perMemberTake)
+      );
     },
   };
 }
@@ -590,7 +926,7 @@ describe('collectCohortSignals', () => {
     });
     const s = await collectCohortSignals(reader, members, { chunkSize: 2 });
     expect(s.sources.registrationIps).toBe(false);
-    expect(s.membersPerFingerprint.get(contentFingerprint(text) as string)).toBe(3);
+    expect(s.membersPerFingerprint.get(textKey(text))).toBe(3);
   });
 
   it('🔴 a failing CONTENT read degrades the run instead of killing it', async () => {
@@ -627,6 +963,7 @@ describe('collectCohortSignals', () => {
     const reader: EvidenceReader = {
       hasRegistrationIps: false,
       listRegistrationIps: async () => [],
+      listFilenameSamples: async () => [],
       listContentSamples: async (ids) => {
         calls += 1;
         if (calls > 1) throw new Error('replica timeout');
@@ -647,6 +984,262 @@ describe('collectCohortSignals', () => {
     // free to be wrong.
     const s = await collectCohortSignals(fakeReader({ content: [] }), members, { chunkSize: 2 });
     expect(s.sources.contentSamples).toBe(true);
+  });
+
+  it('walks the cohort for filenames and indexes what comes back', async () => {
+    const reader = fakeReader({
+      filenames: [
+        { userId: 1, name: 'logo.jpg' },
+        { userId: 2, name: 'Logo.jpg' },
+        { userId: 3, name: 'logo.jpg' },
+      ],
+    });
+    const s = await collectCohortSignals(reader, members, { chunkSize: 2 });
+    expect(s.sources.filenameSamples).toBe(true);
+    expect(s.membersPerFingerprint.get(filenameFingerprint('logo.jpg') as string)).toBe(3);
+  });
+
+  it('🔴 a failing FILENAME read degrades the run instead of killing it, and says so', async () => {
+    // 🔴 WHAT THIS FIXTURE CAN AND CANNOT SHOW. `filenameError` throws on EVERY call, so the walk
+    // fails on its FIRST batch with nothing yet in hand. This test therefore pins that a filename
+    // failure DEGRADES the run — no throw escapes, availability goes false, the flag is not
+    // mistaken for an exhausted budget, and `membersSampledForFilenames` claims nobody — and it
+    // does NOT show that data already read is discarded, because there is none to discard. That
+    // claim needs a failure in a LATER batch; it is carried by '…and `collectCohortSignals`
+    // DISCARDS the partial data already read and RECORDS the failure' in the `createEvidenceReader`
+    // block below. This comment used to assert the discard here, over a fixture that cannot reach
+    // it — reading as coverage while providing none, which is the defect class this module's tests
+    // exist to remove.
+    const text = 'Grab your 100 free credits at https://spam.example now';
+    const s = await collectCohortSignals(
+      fakeReader({
+        filenameError: new Error('replica timeout'),
+        content: [
+          { userId: 1, content: text },
+          { userId: 2, content: text },
+          { userId: 3, content: text },
+        ],
+      }),
+      members,
+      { chunkSize: 2 }
+    );
+    expect(s.sources.filenameSamples).toBe(false);
+    expect(s.sources.filenameBudgetExhausted).toBe(false);
+    expect(s.sources.membersSampledForFilenames).toBe(0);
+    // 🔴 THE OTHER SOURCE IS UNHARMED. The two reads fail independently, which is exactly why they
+    // carry separate flags rather than one shared one.
+    expect(s.sources.contentSamples).toBe(true);
+    expect(s.membersPerFingerprint.get(textKey(text))).toBe(3);
+  });
+
+  it('🔴 a failing CONTENT read does not take the filename read down with it', async () => {
+    // The mirror direction, asserted separately: a single flag covering both would let a live
+    // filename read vouch for a comment read that never happened, or vice versa.
+    const s = await collectCohortSignals(
+      fakeReader({
+        contentError: new Error('down'),
+        filenames: [
+          { userId: 1, name: 'logo.jpg' },
+          { userId: 2, name: 'logo.jpg' },
+          { userId: 3, name: 'logo.jpg' },
+        ],
+      }),
+      members,
+      { chunkSize: 2 }
+    );
+    expect(s.sources.contentSamples).toBe(false);
+    expect(s.sources.filenameSamples).toBe(true);
+    expect(s.membersPerFingerprint.get(filenameFingerprint('logo.jpg') as string)).toBe(3);
+  });
+
+  it('🔴 stops reading filenames once ITS OWN budget is spent, and records that it did', async () => {
+    const reader = fakeReader({
+      filenames: Array.from({ length: 5 }, (_, i) => ({ userId: i + 1, name: `f${i}.jpg` })),
+    });
+    // 🔴 `filenameBatchSize` IS PASSED, NOT INHERITED FROM `chunkSize`. The budget can only be seen
+    // to stop the walk if the walk has more than one batch in it, and this test used to get that
+    // implicitly from a default that narrowed the batch to the chunk width. That coupling is gone —
+    // see the option's docstring — so the condition the test needs is now stated. Same assertions,
+    // same conditions; nothing here is weakened.
+    const s = await collectCohortSignals(reader, members, {
+      chunkSize: 2,
+      filenameBatchSize: 2,
+      maxFilenameSamples: 2,
+    });
+    expect(s.sources.filenameBudgetExhausted).toBe(true);
+    expect(s.sources.membersSampledForFilenames).toBeLessThan(members.length);
+  });
+
+  it('🔴 records WHICH read threw, in a field nothing but a `catch` can set', async () => {
+    // 🔴 THE SILENT-ZERO SEAM. Every other evidence field answers "was this heuristic blind", and
+    // each of them reads the same on a quiet day as on a broken one. `readFailures` is the field
+    // that does not: it is written only inside a `catch`, so a non-zero has no quiet-day reading.
+    const failed = await collectCohortSignals(
+      fakeReader({ filenameError: new Error('replica timeout') }),
+      members,
+      { chunkSize: 2 }
+    );
+    expect(failed.sources.readFailures).toEqual({
+      registrationIps: false,
+      contentSamples: false,
+      filenameSamples: true,
+    });
+
+    // 🔴 THE CONTROL THAT MAKES THE ABOVE MEAN ANYTHING: the identical run with a source that
+    // simply found nothing. Every OTHER field this pair produces is identical — the availability
+    // flag, the sample count, the budget — which is exactly the ambiguity being removed.
+    const quiet = await collectCohortSignals(fakeReader({ filenames: [] }), members, {
+      chunkSize: 2,
+    });
+    expect(quiet.sources.readFailures).toEqual({
+      registrationIps: false,
+      contentSamples: false,
+      filenameSamples: false,
+    });
+  });
+
+  it('🔴 an ABSENT ClickHouse client is not a read failure', async () => {
+    // The distinction the availability flag cannot draw and this one must: a deployment with no
+    // ClickHouse configured is a normal state, and reporting it as a failure would make the signal
+    // permanently non-zero on those deployments and therefore unalertable — the same uselessness as
+    // a permanently-zero one, from the other end.
+    const s = await collectCohortSignals(fakeReader({ hasIps: false }), members, { chunkSize: 2 });
+    expect(s.sources.registrationIps).toBe(false);
+    expect(s.sources.readFailures.registrationIps).toBe(false);
+  });
+
+  it('🔴 an EMPTY cohort is not a read failure either', async () => {
+    const s = await collectCohortSignals(fakeReader({}), []);
+    expect(s.sources.readFailures).toEqual({
+      registrationIps: false,
+      contentSamples: false,
+      filenameSamples: false,
+    });
+  });
+
+  it('records a failing IP read and a failing content read on their own flags', async () => {
+    // Asserted per source rather than as an aggregate, so one source's failure cannot be reported
+    // under another's name — the same argument the availability flags are split for.
+    const ip = await collectCohortSignals(fakeReader({ ipError: new Error('down') }), members, {
+      chunkSize: 2,
+    });
+    expect(ip.sources.readFailures).toMatchObject({
+      registrationIps: true,
+      contentSamples: false,
+      filenameSamples: false,
+    });
+    const content = await collectCohortSignals(
+      fakeReader({ contentError: new Error('down') }),
+      members,
+      { chunkSize: 2 }
+    );
+    expect(content.sources.readFailures).toMatchObject({
+      registrationIps: false,
+      contentSamples: true,
+      filenameSamples: false,
+    });
+  });
+
+  it('🔴 walks filenames in its OWN batches, narrower than the chunk width', async () => {
+    // The filename read is one statement per member now, so the `IN (…)` width is the wrong unit:
+    // reusing `chunkSize` would put 500 statements in flight at once. The default is the narrower
+    // of the two, which keeps a caller that deliberately asked for a small chunk reading filenames
+    // at that same granularity.
+    const many = Array.from({ length: 60 }, (_, i) => member(i + 1, 'ring.test'));
+    const reader = fakeReader({});
+    await collectCohortSignals(reader, many, { chunkSize: 500 });
+    expect(FILENAME_READ_BATCH_SIZE).toBeLessThan(EVIDENCE_CHUNK_SIZE);
+    for (const call of reader.filenameCalls)
+      expect(call.ids.length).toBeLessThanOrEqual(FILENAME_READ_BATCH_SIZE);
+    // The content read is unaffected: it still uses the chunk width it was given.
+    expect(reader.contentCalls.map((c) => c.ids.length)).toEqual([60]);
+  });
+
+  it('🔴 a NARROW chunkSize does not narrow the filename batch — they are different units', async () => {
+    // 🔴 RED BEFORE THIS CHANGE. The default was `Math.min(chunkSize, FILENAME_READ_BATCH_SIZE)`, so
+    // a caller that deliberately asked for a small page — an on-demand pass run narrow to limit
+    // blast radius — silently cut filename read concurrency with it. Two unrelated dials moving
+    // together is exactly what the option's own docstring says must not happen, and the coupling
+    // existed only to serve the tests here, which now pass the knob explicitly.
+    const many = Array.from({ length: 30 }, (_, i) => member(i + 1, 'ring.test'));
+    const reader = fakeReader({});
+    await collectCohortSignals(reader, many, { chunkSize: 2 });
+    expect(reader.filenameCalls.map((c) => c.ids.length)).toEqual([10, 10, 10]);
+    // The point is INDEPENDENCE, not that the filename read overrides the caller: the content read
+    // still walks at the width it was given. Asserted as the full list of widths rather than with
+    // `.every`, which is true of an empty array and would pass if the content read never ran.
+    expect(reader.contentCalls.map((c) => c.ids.length)).toEqual(
+      Array.from({ length: 15 }, () => 2)
+    );
+  });
+
+  it('honours an explicit filenameBatchSize (invariant guard — the knob had no caller before)', async () => {
+    // Green at the PR head too: the option always worked, it simply had no caller anywhere in the
+    // tree, which is why its coupling to `chunkSize` was never exercised as a knob. Asserted now
+    // because removing the coupling is what makes this the only way to narrow the batch.
+    const many = Array.from({ length: 12 }, (_, i) => member(i + 1, 'ring.test'));
+    const reader = fakeReader({});
+    await collectCohortSignals(reader, many, { chunkSize: 500, filenameBatchSize: 3 });
+    expect(reader.filenameCalls.map((c) => c.ids.length)).toEqual([3, 3, 3, 3]);
+  });
+
+  it('does not claim filename exhaustion when the whole cohort fit inside the budget', async () => {
+    const s = await collectCohortSignals(fakeReader({ filenames: [] }), members, { chunkSize: 2 });
+    expect(s.sources.filenameBudgetExhausted).toBe(false);
+    expect(s.sources.membersSampledForFilenames).toBe(members.length);
+  });
+
+  it('🔴 the two budgets are INDEPENDENT — a spent content budget does not starve filenames', async () => {
+    // 🔴 THE FAILURE THIS PREVENTS RUNS IN THE WORST DIRECTION. The comment read is cheap and finds
+    // almost nothing; the filename read is the one with the signal in it. A single shared budget
+    // spent in source order would let the empty half consume the allowance on a wave day and
+    // truncate the half being relied on — silently reproducing the defect this change fixes.
+    const reader = fakeReader({
+      content: Array.from({ length: 40 }, (_, i) => ({
+        userId: (i % 5) + 1,
+        content: 'Grab your 100 free credits at https://spam.example now',
+      })),
+      filenames: [
+        { userId: 1, name: 'logo.jpg' },
+        { userId: 2, name: 'logo.jpg' },
+        { userId: 3, name: 'logo.jpg' },
+      ],
+    });
+    const s = await collectCohortSignals(reader, members, {
+      chunkSize: 2,
+      maxContentSamples: 1,
+    });
+    expect(s.sources.contentBudgetExhausted).toBe(true);
+    // The filename walk covered the whole cohort regardless.
+    expect(s.sources.filenameBudgetExhausted).toBe(false);
+    expect(s.sources.membersSampledForFilenames).toBe(members.length);
+    expect(s.membersPerFingerprint.get(filenameFingerprint('logo.jpg') as string)).toBe(3);
+  });
+
+  it('hands the run clock down to the filename read as an upper bound', async () => {
+    const reader = fakeReader({});
+    const createdBefore = new Date('2026-09-03T12:00:00.000Z');
+    await collectCohortSignals(reader, members, { chunkSize: 5, createdBefore });
+    expect(reader.filenameCalls.map((c) => c.createdBefore)).toEqual([createdBefore]);
+  });
+
+  it('🔴 asks for a PER-MEMBER cap, never the remaining budget', async () => {
+    // 🔴 THE INVERSION OF THE TEST THIS REPLACES, AND THE INVERSION IS THE FIX. The old assertion
+    // was `take <= remaining budget` — i.e. it pinned the budget as a cap on the RESULT, which is
+    // precisely the shape that let the newest rows in a chunk evict every other account in it. The
+    // cap handed down must be the per-member one and must NOT shrink with the budget, because a
+    // budget-shaped cap is a cap accounts compete for. The budget still bounds the run; it does so
+    // by stopping the WALK, not by narrowing what one member may contribute.
+    const reader = fakeReader({
+      filenames: Array.from({ length: 5 }, (_, i) => ({ userId: i + 1, name: `f${i}.jpg` })),
+    });
+    await collectCohortSignals(reader, members, {
+      chunkSize: 2,
+      maxFilenameSamples: 3,
+      maxFilenamesPerMember: 7,
+    });
+    expect(reader.filenameCalls.length).toBeGreaterThan(0);
+    for (const call of reader.filenameCalls) expect(call.take).toBe(7);
   });
 
   it('hands the run window down to the registration-IP read', async () => {
@@ -713,6 +1306,7 @@ describe('createEvidenceReader', () => {
   const db = {
     comment: { findMany: vi.fn(async () => [{ userId: 1, content: 'a' }]) },
     commentV2: { findMany: vi.fn(async () => [{ userId: 2, content: 'b' }]) },
+    image: { findMany: vi.fn(async () => [{ userId: 3, name: 'logo.jpg' }]) },
   };
 
   it('🔴 reports the IP source as unavailable when there is no ClickHouse client', async () => {
@@ -730,6 +1324,175 @@ describe('createEvidenceReader', () => {
       { userId: 1, content: 'a' },
       { userId: 2, content: 'b' },
     ]);
+  });
+
+  it('🔴 reads the image surface ONCE PER MEMBER, passing the bound through', async () => {
+    // 🔴 ONE STATEMENT PER ACCOUNT, NOT ONE PER LIST. It used to be a single `IN (…)` read, and
+    // that single statement carried both defects this change removes — see `filenameSampleArgs`.
+    // The fan-out is asserted by CALL COUNT and by the arguments of each call, because "it returned
+    // rows" is true of the broken shape too.
+    const reader = createEvidenceReader({ db, ch: null });
+    db.image.findMany.mockClear();
+    const before = new Date('2026-09-03T12:00:00.000Z');
+    expect(await reader.listFilenameSamples([1, 2], 10, before)).toEqual([
+      { userId: 3, name: 'logo.jpg' },
+      { userId: 3, name: 'logo.jpg' },
+    ]);
+    expect(db.image.findMany).toHaveBeenCalledTimes(2);
+    expect(db.image.findMany).toHaveBeenNthCalledWith(1, filenameSampleArgs(1, 10, before));
+    expect(db.image.findMany).toHaveBeenNthCalledWith(2, filenameSampleArgs(2, 10, before));
+  });
+
+  it('🔴 EVERY MEMBER CONTRIBUTES — a prolific uploader cannot evict the rest of the batch', async () => {
+    // 🔴 THE COVERAGE HALF OF THE DEFECT, AT THE SEAM WHERE IT LIVED, AGAINST A FAKE THAT OBEYS
+    // PRISMA'S SEMANTICS RATHER THAN THE CODE'S ASSUMPTIONS. The old read was ONE statement per
+    // batch under ONE `take` with `ORDER BY id DESC`, so the newest rows in the batch consumed the
+    // whole allowance: if a handful of accounts owned them, every other account in the batch
+    // contributed NOTHING and the counters looked healthy while doing it. That is the shape a ring
+    // of low-volume accounts is invisible in — which is the population this heuristic exists for.
+    //
+    // Measured on ten consecutive real daily cohorts: the global cap reached every member on eight
+    // of them and collapsed on the other two — barely half the uploading members on one, about four
+    // fifths on the other. It collapses on
+    // the days the cohort uploaded MOST.
+    //
+    // The fixture is built so a global cap MUST fail it: one account owns every one of the newest
+    // rows, and the cap is smaller than that account's holding.
+    const rows = [
+      ...Array.from({ length: 20 }, (_, i) => ({ id: 1000 + i, userId: 1, name: 'prolific.jpg' })),
+      { id: 10, userId: 2, name: 'ring.jpg' },
+      { id: 9, userId: 3, name: 'ring.jpg' },
+    ];
+    // 🔴 A `findMany` THAT BEHAVES LIKE ONE, AND THAT UNDERSTANDS BOTH SHAPES — the second half is
+    // what makes this a regression test rather than a type error dressed as one. It honours a
+    // scalar `userId` AND an `{ in: [...] }` list, so running this test against the pre-change
+    // source reproduces the shipped statement faithfully (ONE query, the whole list, `ORDER BY id
+    // DESC`, one `take`) and fails because accounts 2 and 3 were EVICTED — not because the fake
+    // could not parse the old argument. A fake that only speaks the new shape would go red at base
+    // for the wrong reason and prove nothing about the behaviour.
+    const image = {
+      findMany: vi.fn(async (args: ReturnType<typeof filenameSampleArgs>) => {
+        const target = args.where.userId as unknown as number | { in: number[] };
+        const matches =
+          typeof target === 'number'
+            ? (r: (typeof rows)[number]) => r.userId === target
+            : (r: (typeof rows)[number]) => target.in.includes(r.userId);
+        return rows
+          .filter(matches)
+          .sort((a, b) => b.id - a.id)
+          .slice(0, args.take)
+          .map((r) => ({ userId: r.userId, name: r.name }));
+      }),
+    };
+    const reader = createEvidenceReader({
+      db: { ...db, image } as unknown as Parameters<typeof createEvidenceReader>[0]['db'],
+      ch: null,
+    });
+
+    const got = await reader.listFilenameSamples([1, 2, 3], 5);
+    const contributors = new Set(got.map((r) => r.userId));
+    // The assertion that a global cap of 5 over these rows cannot satisfy: under it, the five
+    // newest rows are all account 1's and accounts 2 and 3 are absent.
+    expect(contributors).toEqual(new Set([1, 2, 3]));
+    // And the prolific account is still capped, so the fix does not trade eviction for unbounded
+    // reads: the total is `members × cap`, never `members × everything`.
+    expect(got.filter((r) => r.userId === 1)).toHaveLength(5);
+  });
+
+  it('🔴 ONE per-member read rejecting inside the fan-out REJECTS THE WHOLE BATCH', async () => {
+    // 🔴 THE ONLY PLACE IN THIS MODULE WHERE N INDEPENDENT I/O CALLS ARE COMBINED, AND IT HAD NO
+    // PARTIAL-FAILURE GUARD. Every existing failure case throws at the `EvidenceReader` BOUNDARY
+    // (`fakeReader({ filenameError })`), one level ABOVE this seam — nothing drove a single
+    // per-member `findMany` rejection through `createEvidenceReader`. Mutating the `Promise.all`
+    // here to a `Promise.allSettled` that keeps the fulfilled results left the suite 362/362 green.
+    //
+    // 🔴 "MAKE IT RESILIENT WITH allSettled" IS THE OBVIOUS FUTURE EDIT AND IT INVERTS THIS
+    // MODULE'S CENTRAL INVARIANT. A fingerprint count built from SOME of the members understates
+    // every ring that straddles the missing ones, and understating is the direction that produces a
+    // confident zero — while `evidence_source_read_failures` would read 0, because nothing threw
+    // out of this method. A quieter, lower, cleaner-looking number: the exact failure shape this
+    // whole PR exists to remove, arrived at from the other side.
+    const image = {
+      findMany: vi.fn(async (args: ReturnType<typeof filenameSampleArgs>) => {
+        // Only ONE member's read fails, and it is not the first — so a fan-out that abandoned the
+        // rest on the first rejection, and one that kept everything else, both still have data.
+        if ((args.where.userId as unknown as number) === 2) throw new Error('replica timeout');
+        return [{ userId: args.where.userId as unknown as number, name: 'logo.jpg' }];
+      }),
+    };
+    const reader = createEvidenceReader({
+      db: { ...db, image } as unknown as Parameters<typeof createEvidenceReader>[0]['db'],
+      ch: null,
+    });
+
+    // ALL OR NOTHING: the rejection propagates, so the caller never sees members 1 and 3's rows.
+    // Under `allSettled`-keep-fulfilled this resolves to two rows instead and the assertion fails
+    // with its own message rather than with someone else's.
+    await expect(reader.listFilenameSamples([1, 2, 3], 5)).rejects.toThrow('replica timeout');
+  });
+
+  it('🔴 …and `collectCohortSignals` DISCARDS the partial data already read and RECORDS the failure', async () => {
+    // The other half of the invariant, driven end to end through the REAL reader rather than
+    // through a fake that models the boundary. The structural claim above (it rejects) is not the
+    // claim that matters on its own — what matters is what the walk then does with it: the rows
+    // ALREADY IN HAND from an earlier batch are dropped, availability goes false, and
+    // `readFailures.filenameSamples` goes true so the run is legible as BROKEN rather than as quiet.
+    //
+    // 🔴 THE FIXTURE MUST SPAN MORE THAN ONE BATCH AND THE FAILURE MUST LAND IN A LATER ONE, or the
+    // discard is unreachable and this test is coverage that covers nothing. It previously used 3
+    // members at `filenameBatchSize: 3` — ONE batch, which rejects with `filenameSamples` still
+    // empty, so every assertion below held whether or not the discard existed and deleting
+    // `filenameSamples.length = 0;` from `collectCohortSignals`'s filename `catch` left the module
+    // suite fully green. Nine members at batch size 3 fail in batch TWO of three: batch one's rows
+    // are in hand when the failure arrives, so only the discard can remove them, and batch three is
+    // never issued. This mirrors the content-side template — 'discards the PARTIAL content already
+    // read when a later chunk fails' in the `collectCohortSignals` block above. In production the
+    // batch is `FILENAME_READ_BATCH_SIZE` (10) over up to `MAX_COHORT_ACCOUNTS` members, roughly
+    // 2,500 batches, so failing after the first batch is the ORDINARY case, not the exotic one.
+    const image = {
+      findMany: vi.fn(async (args: ReturnType<typeof filenameSampleArgs>) => {
+        const userId = args.where.userId as unknown as number;
+        // Member 5 sits in the SECOND batch of [1,2,3] [4,5,6] [7,8,9].
+        if (userId === 5) throw new Error('replica timeout');
+        return [{ userId, name: 'ring.jpg' }];
+      }),
+    };
+    const reader = createEvidenceReader({
+      db: { ...db, image } as unknown as Parameters<typeof createEvidenceReader>[0]['db'],
+      ch: null,
+    });
+    const members = Array.from({ length: 9 }, (_, i) => member(i + 1, 'ring.test'));
+    const s = await collectCohortSignals(reader, members, {
+      chunkSize: 9,
+      filenameBatchSize: 3,
+    });
+
+    // 🔴 THE ASSERTION THE DISCARD OWNS. Without it, batch one's three `ring.jpg` rows survive the
+    // `catch` and this map holds one filename key counted at 3 — three accounts scored as a
+    // filename ring out of a read that FAILED, while `sources.filenameSamples` is false and
+    // `readFailures` says so, because `buildCohortSignals` indexes the rows it is handed and
+    // consults neither flag.
+    expect([...s.membersPerFingerprint.keys()]).toEqual([]);
+    expect(s.sources.filenameSamples).toBe(false);
+    expect(s.sources.readFailures.filenameSamples).toBe(true);
+    expect(s.sources.membersSampledForFilenames).toBe(0);
+    // Six statements, not nine: the walk stops at the failing batch instead of carrying on into the
+    // third. Asserted by count because "it returned nothing" is true of a walk that kept going too.
+    expect(image.findMany).toHaveBeenCalledTimes(6);
+    // And the failure is scoped to its own source — the other two flags are untouched.
+    expect(s.sources.readFailures).toEqual({
+      registrationIps: false,
+      contentSamples: false,
+      filenameSamples: true,
+    });
+  });
+
+  it('issues no filename statement for an empty id list or a zero take', async () => {
+    const reader = createEvidenceReader({ db, ch: null });
+    db.image.findMany.mockClear();
+    expect(await reader.listFilenameSamples([], 10)).toEqual([]);
+    expect(await reader.listFilenameSamples([1], 0)).toEqual([]);
+    expect(db.image.findMany).not.toHaveBeenCalled();
   });
 
   it('issues no statement for an empty id list or a zero take', async () => {

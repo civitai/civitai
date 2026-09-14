@@ -59,7 +59,7 @@ Legend: 🛠️ devops/config · 🧪 smoke test · 👁️ monitor · 🧹 clea
   (`setSessionCookie(..., { deviceCookie })`). Verify the reverse too (sign in first on `.red`).
 - [ ] 🧪 **Moderator impersonate → then EXIT impersonation** (the browser-client exit path — recently fixed to
   `POST /api/auth/impersonate/exit`).
-- [ ] 🧪 **Connected accounts** (`/user/account`): link + unlink each provider (Discord/Google/GitHub/Reddit)
+- [ ] 🧪 **Connected accounts** (`/user/account/security`, or `/user/account` on the legacy page): link + unlink each provider (Discord/Google/GitHub/Reddit)
   — routes through the hub's `?link=true` flow.
 - [ ] 🧪 **Discord Linked-Roles** (`/discord/link-role`): connect, then confirm roles actually sync.
 - [ ] 🧪 **Same-site spokes** (`moderator.civitai.com`, `advertising.civitai.com`): they read the shared

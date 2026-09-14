@@ -1,7 +1,7 @@
 type UserMetaScores = { scores?: { total?: number } };
 
 /**
- * The Creator Score, as `/user/account` displays it — `User.meta.scores.total`, the sum of the six
+ * The Creator Score, as the account Profile pane displays it — `User.meta.scores.total`, the sum of the six
  * per-category scores the nightly job writes.
  *
  * Read it through here rather than reaching for a per-category score. Every gate that says "creator

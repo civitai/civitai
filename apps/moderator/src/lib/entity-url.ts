@@ -84,3 +84,8 @@ export const chatAuditUserUrl = (username: string) =>
  *  point on the moderation pages, and dropping it lands the reviewer on whichever version is current. */
 export const modelVersionUrl = (civitaiUrl: string, modelId: number, versionId: number) =>
   `${civitaiUrl}/models/${modelId}?modelVersionId=${versionId}`;
+
+/** The public Known Issues board. 🔴 THERE IS NO DEEP LINK — `src/pages/issues/index.tsx` reads no
+ *  id, so a link naming a specific issue still lands on the index. Here so that stays one claim in
+ *  one place, and so a future deep link is one edit. */
+export const issuesUrl = (civitaiUrl: string) => `${civitaiUrl}/issues`;
