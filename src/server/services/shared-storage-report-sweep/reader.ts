@@ -12,6 +12,13 @@ import { appSchemaIdent, sanitizeAppSlug } from '~/server/utils/apps-slug';
  */
 export type SharedReportReader = {
   listUserReports(args: { since: Date; until: Date; limit: number }): Promise<SharedReportScan>;
+  /**
+   * Which of these accounts are moderators — the half of the mod-row test that a user cannot spell.
+   *
+   * A set rather than a predicate so the run makes ONE query for the whole scan instead of one per
+   * row, and so an empty input costs no query at all.
+   */
+  listModeratorIds(userIds: number[]): Promise<Set<number>>;
 };
 
 /** One `shared_kv_reports` row, joined to the metadata of the row it concerns. */
@@ -52,9 +59,23 @@ export type SharedReportScan = {
  * declines to FK `shared_kv_reports.key` for exactly that reason), so an inner join would silently
  * drop every report whose row a moderator already purged — and report them as "none found".
  *
- * `reporter_user_id IS NOT NULL` is what makes this the USER-report sweep. The same table also
- * carries the auto-audit's rows (`key IS NULL`, no reporter), which already have their own alerting
- * and are not what this job exists to surface.
+ * 🔴 THREE THINGS WRITE `shared_kv_reports`, AND ONLY ONE OF THEM IS A USER REPORT. Getting this
+ * wrong is not a missing row, it is the board filling with entries a moderator already dealt with:
+ *
+ *   1. the USER-report path            — `key` set, reporter = the reporting user, reason = free text
+ *   2. the auto content-safety path    — `key IS NULL`, reporter = the BLOCKED WRITER, `auto:<cat>`
+ *   3. `apps.mod.purgeSharedRow`       — `key` set, reporter = THE ACTING MODERATOR, `mod:<action>`
+ *
+ * (2) is excluded structurally by `key IS NOT NULL` — note that it DOES carry a reporter id, so
+ * `reporter_user_id IS NOT NULL` alone would not have caught it.
+ *
+ * (3) shares both of those columns with a real user report, so the table alone cannot separate them.
+ * The `mod:` prefix is excluded here — but 🔴 A PREFIX ON A USER-SUPPLIED STRING IS WALKABLE: the
+ * reason on path (1) is the reporter's own free text, so anyone could type `mod:purge` and drop
+ * their own report out of this sweep, which is an evasion of the exact surface this job exists to
+ * provide. So the prefix is only HALF the test — `run.ts` also requires the reporter to actually BE
+ * a moderator before discarding the row, and a non-moderator cannot satisfy that half. A moderator
+ * filing a genuine user report writes an ordinary reason and is kept by the first half.
  */
 export function buildUserReportQuery(schemaIdent: string): string {
   return `
@@ -74,6 +95,15 @@ export function buildUserReportQuery(schemaIdent: string): string {
      ORDER BY r.created_at ASC
      LIMIT $3`;
 }
+
+/**
+ * The reason prefix `apps.mod.purgeSharedRow` stamps on the audit row it files.
+ *
+ * Exported because it is a COUPLING to another file, not a local detail: if that call site ever
+ * changes its prefix, this sweep silently starts publishing moderator actions to the board as user
+ * reports. `__tests__/job-wiring.test.ts` pins the pair against the router's source.
+ */
+export const MOD_ACTION_REASON_PREFIX = 'mod:';
 
 export type AppIdentity = { slug: string; appBlockId: string; schemaIdent: string };
 
@@ -177,6 +207,16 @@ export function createSharedReportReader(): SharedReportReader | null {
       }
 
       return { rows, appsScanned: apps.length, appsFailed, truncated };
+    },
+
+    async listModeratorIds(userIds) {
+      const ids = [...new Set(userIds)];
+      if (!ids.length) return new Set();
+      const mods = await dbRead.user.findMany({
+        where: { id: { in: ids }, isModerator: true },
+        select: { id: true },
+      });
+      return new Set(mods.map((u) => u.id));
     },
   };
 }

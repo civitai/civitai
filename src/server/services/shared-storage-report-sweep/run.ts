@@ -1,5 +1,5 @@
 import { MAX_FINDINGS_PER_REPORT, type AbuseReportInput } from '@civitai/moderation';
-import type { SharedReportReader, SharedReportRow } from './reader';
+import { MOD_ACTION_REASON_PREFIX, type SharedReportReader, type SharedReportRow } from './reader';
 import { buildReports, confidenceFor, renderSummary, toFinding, type ReportedRow } from './report';
 
 /**
@@ -48,6 +48,10 @@ export type SharedStorageReportSweepDeps = {
 
 export type SharedStorageReportSweepResult = {
   scanned: number;
+  /** Rows that survived the moderator-audit-row filter — the actual user reports. */
+  userReports: number;
+  /** `apps.mod.purgeSharedRow` audit rows discarded. Counted so "the board is quiet" stays legible. */
+  modActionRowsSkipped: number;
   rowsReported: number;
   unattributed: number;
   appsScanned: number;
@@ -83,6 +87,8 @@ export async function runSharedStorageReportSweep(
       appsFailed: 0,
       truncated: false,
       reports: 0,
+      userReports: 0,
+      modActionRowsSkipped: 0,
       skipped: 'apps-db-unavailable',
     };
   }
@@ -94,7 +100,25 @@ export async function runSharedStorageReportSweep(
     limit: MAX_REPORT_ROWS_SCANNED,
   });
 
-  const { rows, unattributed } = groupReports(scan.rows);
+  // 🔴 DROP THE MODERATOR'S OWN AUDIT ROWS BEFORE GROUPING. `apps.mod.purgeSharedRow` files a
+  // `shared_kv_reports` row for every action a moderator takes, with the same two columns set as a
+  // real user report — so without this the board would fill with entries recording that a moderator
+  // had already dealt with something, attributed to that moderator as the "reporter".
+  //
+  // 🔴 BOTH HALVES ARE REQUIRED AND NEITHER IS SUFFICIENT. The `mod:` prefix alone is a guard on a
+  // USER-SUPPLIED STRING — the reason on a real report is the reporter's own free text, so anyone
+  // could type `mod:purge` and delete their own report from the only surface that would have shown
+  // it. Requiring the reporter to BE a moderator is the half no ordinary account can satisfy.
+  // Conversely the moderator half alone would swallow a moderator's own genuine user report, which
+  // carries an ordinary reason and must reach the board like anyone else's.
+  const candidates = scan.rows.filter((r) => r.reason?.startsWith(MOD_ACTION_REASON_PREFIX));
+  const moderatorIds = await deps.reader.listModeratorIds(candidates.map((r) => r.reporterUserId));
+  const userReportRows = scan.rows.filter(
+    (r) => !(r.reason?.startsWith(MOD_ACTION_REASON_PREFIX) && moderatorIds.has(r.reporterUserId))
+  );
+  const modActionRows = scan.rows.length - userReportRows.length;
+
+  const { rows, unattributed } = groupReports(userReportRows);
 
   // Strongest evidence first, matching the order the board renders findings in — so a run split
   // across batches puts the most-reported rows in the first one.
@@ -102,6 +126,8 @@ export async function runSharedStorageReportSweep(
 
   const counters: Record<string, number> = {
     reports_scanned: scan.rows.length,
+    user_reports: userReportRows.length,
+    mod_action_rows_skipped: modActionRows,
     rows_reported: rows.length,
     unattributed_reports: unattributed,
     apps_scanned: scan.appsScanned,
@@ -116,7 +142,7 @@ export async function runSharedStorageReportSweep(
     finishedAt: deps.now(),
     summary: renderSummary({
       rows,
-      reports: scan.rows.length - unattributed,
+      reports: userReportRows.length - unattributed,
       unattributed,
       windowHours: SHARED_REPORT_WINDOW_HOURS,
       apps: scan.appsScanned,
@@ -137,6 +163,8 @@ export async function runSharedStorageReportSweep(
 
   return {
     scanned: scan.rows.length,
+    userReports: userReportRows.length,
+    modActionRowsSkipped: modActionRows,
     rowsReported: rows.length,
     unattributed,
     appsScanned: scan.appsScanned,

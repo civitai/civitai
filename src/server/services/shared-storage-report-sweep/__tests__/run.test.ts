@@ -38,11 +38,22 @@ function reportRow(over: Partial<SharedReportRow> = {}): SharedReportRow {
 
 function readerReturning(
   rows: SharedReportRow[],
-  over: { appsScanned?: number; appsFailed?: number; truncated?: boolean } = {}
-): SharedReportReader & { calls: { since: Date; until: Date; limit: number }[] } {
+  over: {
+    appsScanned?: number;
+    appsFailed?: number;
+    truncated?: boolean;
+    /** Which reporter ids the main DB says are moderators. Empty by default — the common case. */
+    moderatorIds?: number[];
+  } = {}
+): SharedReportReader & {
+  calls: { since: Date; until: Date; limit: number }[];
+  modLookups: number[][];
+} {
   const calls: { since: Date; until: Date; limit: number }[] = [];
+  const modLookups: number[][] = [];
   return {
     calls,
+    modLookups,
     async listUserReports(args) {
       calls.push(args);
       return {
@@ -51,6 +62,11 @@ function readerReturning(
         appsFailed: over.appsFailed ?? 0,
         truncated: over.truncated ?? false,
       };
+    },
+    async listModeratorIds(userIds) {
+      modLookups.push(userIds);
+      const mods = new Set(over.moderatorIds ?? []);
+      return new Set(userIds.filter((id) => mods.has(id)));
     },
   };
 }
@@ -207,6 +223,93 @@ describe('🔴 the reported CONTENT never reaches the board', () => {
     expect(() => abuseReportInput.parse(sent[0])).not.toThrow();
     expect(sent[0].findings).toHaveLength(2);
     expect(sanitizeReportReason('x'.repeat(100_000)).length).toBe(500);
+  });
+});
+
+/**
+ * 🔴 THREE THINGS WRITE `shared_kv_reports` AND ONLY ONE IS A USER REPORT.
+ *
+ * The auto content-safety path writes `key IS NULL` (excluded by the SQL, and note it DOES carry a
+ * reporter id, so a `reporter_user_id IS NOT NULL` filter alone would not have caught it). The
+ * moderator action path writes the SAME two columns a real report does. Neither the table nor the
+ * declared types can separate that third writer from a user report — only the pair of tests below
+ * can, and each half is walkable alone.
+ */
+describe('🔴 moderator audit rows are not user reports', () => {
+  it('discards a mod-action row — reason prefix AND the reporter really is a moderator', async () => {
+    const { sent, run } = sweep(
+      readerReturning(
+        [
+          reportRow({ id: 'mod', reporterUserId: 7, reason: 'mod:purge:spam' }),
+          reportRow({ id: 'user', reporterUserId: 4242, key: 'k2' }),
+        ],
+        { moderatorIds: [7] }
+      )
+    );
+    const result = await run;
+
+    expect(result.modActionRowsSkipped).toBe(1);
+    expect(result.userReports).toBe(1);
+    expect(sent[0].findings).toHaveLength(1);
+    expect(sent[0].findings[0].reason).toContain('#4242');
+    expect(sent[0].findings[0].reason).not.toContain('#7');
+    expect(sent[0].counters?.mod_action_rows_skipped).toBe(1);
+  });
+
+  it('🔴 a NON-moderator typing `mod:` cannot delete their own report from the board', async () => {
+    // The evasion the prefix alone would allow: the reason on a real report is the reporter's own
+    // free text, so this is the one surface the reported abuse would have appeared on.
+    const { sent, run } = sweep(
+      readerReturning([reportRow({ reporterUserId: 4242, reason: 'mod:purge — nothing to see' })], {
+        moderatorIds: [],
+      })
+    );
+    const result = await run;
+
+    expect(result.modActionRowsSkipped).toBe(0);
+    expect(sent[0].findings).toHaveLength(1);
+    expect(sent[0].findings[0].reason).toContain('#4242');
+  });
+
+  it('🔴 a MODERATOR filing a genuine report is kept — the mod half alone would swallow it', async () => {
+    const { sent, run } = sweep(
+      readerReturning([reportRow({ reporterUserId: 7, reason: 'this is harassment' })], {
+        moderatorIds: [7],
+      })
+    );
+    const result = await run;
+
+    expect(result.modActionRowsSkipped).toBe(0);
+    expect(sent[0].findings).toHaveLength(1);
+    expect(sent[0].findings[0].reason).toContain('#7');
+  });
+
+  it('asks the main DB only about the rows the prefix already flagged', async () => {
+    // One query per run, and none at all when nothing carries the prefix — the lookup is the
+    // expensive half and it must not become one call per report row.
+    const plain = readerReturning([reportRow(), reportRow({ id: 'b', key: 'k2' })]);
+    await sweep(plain).run;
+    expect(plain.modLookups).toEqual([[]]);
+
+    const mixed = readerReturning([
+      reportRow({ id: 'a', reporterUserId: 7, reason: 'mod:purge' }),
+      reportRow({ id: 'b', reporterUserId: 4242 }),
+    ]);
+    await sweep(mixed).run;
+    expect(mixed.modLookups).toEqual([[7]]);
+  });
+
+  it('a run of nothing but mod rows reports as quiet, not as broken', async () => {
+    const { sent, run } = sweep(
+      readerReturning([reportRow({ reporterUserId: 7, reason: 'mod:purge' })], {
+        moderatorIds: [7],
+      })
+    );
+    await run;
+    expect(sent[0].findings).toEqual([]);
+    expect(sent[0].summary).toContain('No user reports');
+    expect(sent[0].counters?.reports_scanned).toBe(1);
+    expect(sent[0].counters?.mod_action_rows_skipped).toBe(1);
   });
 });
 

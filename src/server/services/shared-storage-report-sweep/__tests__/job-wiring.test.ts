@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { sharedStorageReportSweep } from '~/server/jobs/shared-storage-report-sweep';
 import { UNRUNNABLE_JOB_CRON } from '~/server/jobs/job';
 import { SHARED_REPORT_WINDOW_HOURS } from '~/server/services/shared-storage-report-sweep/run';
+import { MOD_ACTION_REASON_PREFIX } from '~/server/services/shared-storage-report-sweep/reader';
 
 /** The schedule this job publishes. Daily, clear of the other writers of the same board. */
 const DAILY_0700_UTC = '0 7 * * *';
@@ -121,6 +122,22 @@ describe('the report path has a reader, and it is this job', () => {
     expect(router.length).toBeGreaterThan(1_000); // positive control on the read
     expect(router).not.toContain('notifyModsOfSharedReport');
     expect(router).not.toContain('DISCORD_WEBHOOK_MOD_ALERTS');
+  });
+
+  it('🔴 the mod-action reason prefix this sweep filters on is the one the router WRITES', () => {
+    // 🔴 A CROSS-FILE COUPLING WITH NO TYPE BETWEEN THE TWO SIDES. `apps.mod.purgeSharedRow` stamps
+    // `mod:<action>` on the audit row it files; this sweep discards rows carrying that prefix from
+    // a moderator. Change the prefix at the write site and nothing breaks, nothing type-errors, and
+    // the board quietly starts publishing every moderator action as a user report.
+    expect(router).toContain('`mod:${input.action}');
+    expect(MOD_ACTION_REASON_PREFIX).toBe('mod:');
+
+    // The auto content-safety writer is the OTHER non-user writer, and the reason it is excluded is
+    // its NULL key rather than its prefix — pinned because the SQL's `key IS NOT NULL` is load-
+    // bearing for it and reads like an ordinary null-guard.
+    expect(router).toContain('`auto:${e.category}`');
+    const autoCall = router.slice(router.indexOf('`auto:${e.category}`') - 200);
+    expect(autoCall.slice(0, 200)).toContain('key: null');
   });
 
   it('🔴 the row it still writes is named as this job’s input', () => {
