@@ -335,10 +335,18 @@ describe('opening a row goes through the one choke point', () => {
    *
    * ENUMERATED, NOT LISTED, for the reason the paragraph above gives about the `.svelte` half: a
    * hardcoded pair is how a third site goes unscanned. `feedback*.ts` in `$lib` is this page's whole
-   * module family. `feedback-tabs.ts` lands in it as the choke point itself and contributes nothing:
-   * it writes the param through a COMPUTED key (`[FEEDBACK_OPEN_PARAM]:`), which neither pattern
-   * matches, so it is not a false positive.
+   * module family.
+   *
+   * 🔴 THE OBJECT-KEY PATTERN MATCHES THE COMPUTED SPELLING TOO, AND WIDENING THE SCAN IS WHAT MADE
+   * THAT NECESSARY. `feedbackOpenHref` writes `{ [FEEDBACK_OPEN_PARAM]: id }`, which a bare
+   * `/\bopen:/` cannot see. While the scan was `.svelte`-only that was merely "not a false
+   * positive"; now that it covers `$lib/feedback*.ts`, the obvious way to add a SECOND `.ts` writer
+   * is to copy the line out of the choke point — and the copy would have passed. So both spellings
+   * are matched, and the choke point is excluded BY FILENAME rather than by being unmatchable,
+   * which is the difference between a guard that is scoped and a guard that is blind.
    */
+  const OPEN_CHOKE_POINT = 'feedback-tabs.ts';
+
   it('sets the open param to an id only through feedbackOpenHref', () => {
     const files = readdirSync(feedbackDir).filter((file) => file.endsWith('.svelte'));
     expect(files.length).toBeGreaterThan(4);
@@ -346,13 +354,16 @@ describe('opening a row goes through the one choke point', () => {
       /^feedback.*\.ts$/.test(file)
     );
     expect(libFiles.length).toBeGreaterThan(4);
+    // The exclusion is only sound while the file it names exists to be excluded.
+    expect(libFiles).toContain(OPEN_CHOKE_POINT);
 
     // Two spellings reach the param, and each needs its own witness — see the control below.
     const seen = { objectKey: [] as string[], searchParams: [] as string[] };
     const sets: string[] = [];
     for (const file of [...files, ...libFiles]) {
+      if (file === OPEN_CHOKE_POINT) continue;
       const text = libFiles.includes(file) ? libSource(file) : source(file);
-      for (const match of text.matchAll(/\bopen:\s*([^,}]+)/g)) {
+      for (const match of text.matchAll(/(?:\bopen:|\[FEEDBACK_OPEN_PARAM\]:)\s*([^,}]+)/g)) {
         seen.objectKey.push(`${file} — ${match[0]}`);
         if (match[1].trim() !== 'null') sets.push(`${file} — ${match[0]}`);
       }
@@ -388,21 +399,17 @@ describe('opening a row goes through the one choke point', () => {
 
 describe('the queue is ordered by the server, never by the browser', () => {
   /**
-   * 🔴 A LEDGER OVER THE SEAM NOBODY OWNS: the column set exists in TWO shapes that nothing links.
-   * `FEEDBACK_SORT_COLUMNS` decides which `?sort=` values the server honours; `COLUMNS` in
-   * `+page.svelte` decides which headers an operator can click. `satisfies` ties the union to the
-   * SQL map in the service and says nothing about the table, so a seventh column is URL-sortable
-   * with no way to reach it — and a column REMOVED from the union leaves a header that produces a
-   * link the server ignores. Both are silent.
-   *
-   * Fails when the set GROWS or SHRINKS, which is why it is an equality over sorted lists rather
-   * than a containment check in either direction.
-   */
-  /**
    * The header row is data-driven; the two `colspan`s that have to match it are not, and a literal
    * that disagrees leaves the detail panel and the empty-state row a cell short. Nothing can observe
    * that — this app has no Svelte test tier — so the pin is on the SPELLING, which is the only thing
-   * a text scan can hold. It is also the whole claim the `COLUMNS` comment makes.
+   * a text scan can hold.
+   *
+   * ⚠️ READ THE TITLE NARROWLY: this does NOT verify that every colspan is derived, it verifies that
+   * `+page.svelte` contains exactly two `colspan={COLUMNS.length}` and no `colspan={<digits>}`. A
+   * `colspan="9"` string attribute — valid Svelte and idiomatic HTML — walks straight past it, and
+   * so does `colspan={ 9 }`. It also reddens on a CORRECTLY written third colspan, because the count
+   * is pinned. Both are accepted: a pin that has to be re-read when the table grows is the cost of
+   * having any pin at all here.
    */
   it('derives every colspan from COLUMNS rather than spelling a number', () => {
     const page = source('+page.svelte');
@@ -438,6 +445,17 @@ describe('the queue is ordered by the server, never by the browser', () => {
     }
   });
 
+  /**
+   * 🔴 A LEDGER OVER THE SEAM NOBODY OWNS: the column set exists in TWO shapes that nothing links.
+   * `FEEDBACK_SORT_COLUMNS` decides which `?sort=` values the server honours; `COLUMNS` in
+   * `+page.svelte` decides which headers an operator can click. `satisfies` ties the union to the
+   * SQL map in the service and says nothing about the table, so a seventh column is URL-sortable
+   * with no way to reach it — and a column REMOVED from the union leaves a header that produces a
+   * link the server ignores. Both are silent.
+   *
+   * Fails when the set GROWS or SHRINKS, which is why it is an equality over sorted lists rather
+   * than a containment check in either direction.
+   */
   it('gives every server-sortable column a header, and no header a column the server refuses', () => {
     const page = source('+page.svelte');
     const declared = [...page.matchAll(/sortable: '([^']+)'/g)].map((m) => m[1]);

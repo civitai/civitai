@@ -13,12 +13,16 @@ export const IMAGE_PAGE_PARAM = 'imgPage';
  * `cursor` carries its id. Only `/feedback` writes it today (`$lib/feedback-sort.ts`).
  *
  * 🔴 IT LIVES HERE, WITH THE OTHER PAGING PARAMS, RATHER THAN IN THE PAGE THAT INVENTED IT. A page
- * that owned its own clearing rule would be a SECOND door onto the one below: seven files in this
- * app reach for `clearPaging`, and the next control added to a compound-cursor page reaches for it
- * too. Then the value half survives a batch change — and it is the OPERAND of the keyset comparison,
- * so the "first" page of the new query starts somewhere in the middle of the old ordering. Under one
- * page of rows that is invisible, so it is not caught by looking. Deleting a param a page never sets
- * costs nothing; a rule with two doors costs a wrong page.
+ * that owned its own clearing rule would be a SECOND door onto the one below: ten files in this app
+ * reach for `clearPaging` (measured — `grep -rl clearPaging src/`, excluding this file and the
+ * tests), and the next control added to a compound-cursor page reaches for it too. Then the value
+ * half survives a batch change — and it is the OPERAND of the keyset comparison, so the "first" page
+ * of the new query starts somewhere in the middle of the old ordering. Under one page of rows that
+ * is invisible, so it is not caught by looking. Deleting a param a page never sets costs nothing; a
+ * rule with two doors costs a wrong page.
+ *
+ * That was not hypothetical: `FeedbackPromote.svelte`'s `siblingHref` was already a third door,
+ * dropping `?cursor=` through this helper and leaving `?cursorValue=` orphaned behind it.
  */
 export const CURSOR_VALUE_PARAM = 'cursorValue';
 

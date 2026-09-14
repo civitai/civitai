@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { feedbackNextPageHref } from '$lib/feedback-sort';
 
 /**
  * What only the action layer decides: that a service outcome is TRANSLATED rather than discarded,
@@ -126,6 +127,61 @@ describe('load', () => {
     const result = await loaded('?status=');
 
     expect(result.statuses).toEqual([]);
+  });
+
+  /**
+   * 🔴 THE SEAM, WALKED END TO END: the link the pager RENDERS, fed to the loader that READS it.
+   *
+   * Every other test in this arc is scoped to one surface. `feedback-sort.test.ts` proves the href
+   * builder in isolation; the pglite tier proves the keyset in isolation, threading `cursorValue` as
+   * a VARIABLE and never as a URL; this file proves loader→service arguments. All three were green
+   * over a builder that shipped the PREVIOUS page's `?cursorValue=` whenever the new boundary's
+   * value was null — because no test ever handed one surface's output to the next. What linked them
+   * was a shared constant, which is a type-level link, not a behavioural one.
+   *
+   * So this asserts the RELATIONSHIP: whatever `feedbackNextPageHref` writes, `load` parses back to
+   * the same pair. The null case is first because it is the one that was broken.
+   */
+  it('parses back exactly what the pager wrote, both halves, in both value states', async () => {
+    const current = new URL('https://moderator.test/feedback?status=new&sort=handled&dir=asc');
+
+    for (const [value, expected] of [
+      // Entering the trailing null block: the previous page's value must not survive.
+      [null, null],
+      ['quinn', 'quinn'],
+      // An empty string is a VALUE, and must not collapse to the null spelling.
+      ['', ''],
+    ] as const) {
+      vi.clearAllMocks();
+      const href = feedbackNextPageHref(current, 77, value);
+      await loaded(new URL(href, current).search);
+
+      expect(getFeedbackList, `the pager wrote ${href}`).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cursor: 77,
+          cursorValue: expected,
+          sort: { column: 'handled', direction: 'asc' },
+        })
+      );
+    }
+  });
+
+  /**
+   * The same walk from a URL that ALREADY carries a value half — the state the bug needed. A builder
+   * that only ever SET the param leaves the old one in place, and the loader faithfully parses that
+   * stale value back, so the server reads a non-null boundary and re-serves the same page forever.
+   */
+  it('does not let a previous page value survive into a null boundary', async () => {
+    const carrying = new URL(
+      'https://moderator.test/feedback?status=new&sort=handled&dir=asc&cursor=91&cursorValue=mira'
+    );
+
+    const href = feedbackNextPageHref(carrying, 77, null);
+    await loaded(new URL(href, carrying).search);
+
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: 77, cursorValue: null })
+    );
   });
 
   /**

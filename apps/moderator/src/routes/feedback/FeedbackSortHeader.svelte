@@ -37,6 +37,16 @@
   aria-sort={column.sortable ? feedbackSortAria(sort, column.sortable) : undefined}
 >
   {#if column.sortable}
+    <!--
+      ⚠️ `flex w-full` MAKES THE WHOLE CELL THE HIT TARGET, AND IT OVERRIDES THE CELL'S ALIGNMENT.
+      A flex container lays its children out by `justify-content`, not by the `text-align` it
+      inherits from the `<th>` — so a sortable column that ever carries `text-right` through
+      `column.class` would render left-aligned while every other cell in that column stayed right.
+      No such column exists (the only right-aligned one is 📎, which is deliberately not sortable),
+      so this is a note for whoever adds the first: it needs `justify-end` HERE, not just the cell
+      class. The anchor was `inline-flex` before it moved out of `+page.svelte`, which respected the
+      cell but gave a hit target only as wide as the label.
+    -->
     <a
       href={feedbackSortHref(page.url, column.sortable)}
       data-sveltekit-noscroll

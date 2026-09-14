@@ -149,8 +149,8 @@ describe('clearPaging', () => {
    * 🔴 BOTH HALVES, AND FROM THE SHARED HELPER RATHER THAN A PAGE-LOCAL WRAPPER. A value half
    * surviving a new batch is not a harmless leftover — it is the operand of the keyset comparison,
    * so the "first" page of the new query starts in the middle of the old one. A wrapper that added
-   * the delete would be a SECOND door onto this rule: seven files in this app reach for
-   * `clearPaging`, and the next control added here would reach for it too.
+   * the delete would be a SECOND door onto this rule: ten files in this app reach for `clearPaging`,
+   * and the next control added here would reach for it too.
    *
    * Asserted from `$lib/feedback-sort`'s point of view because this page is the only writer of the
    * param today — if the delete is ever moved back out of `clearPaging`, this is what goes red.

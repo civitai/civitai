@@ -52,13 +52,26 @@ const service = await import('../feedback.service');
  * 🔴 WHAT MATTERS IS THAT A PAGE EDGE LANDS INSIDE A TIE GROUP, not outside one. A boundary that
  * falls exactly on a group edge never exercises the `(col = cursor AND id < cursorId)` arm, so a
  * fixture whose groups line up with the page could leave that arm unreachable while every assertion
- * passes. With 60 rows and 3–5 value groups, every group is 12–20 rows wide in SORTED order — far
- * wider than either page size — so a cut at 7 or at 50 is inside a group in every ordering.
+ * passes. The group sizes this seed loop actually produces, in SORTED order, counted rather than
+ * argued:
  *
- * ⚠️ An earlier version of this paragraph claimed "none of the cycle lengths divides PAGE", and that
- * was FALSE for the pair it mattered for: the `issue` cycle is 7 and one of the two page sizes is 7
- * (3, 4 and 5 also divide `ROWS`). It was also the wrong property — the cycles run in INSERTION
- * order and the pages are cut in SORTED order, so their arithmetic relationship says nothing. The
+ *     age      1 × 60          area   20 / 20 / 20      user    12 × 5
+ *     status   15 × 4          handled 20 / 20 / 20     issue   26 / 25 / 9
+ *
+ * At a page size of 7 every cut on the five non-`age` columns is strictly inside a group. At 50 the
+ * single cut is inside a group on all five as well (the smallest group that spans row 50 is
+ * `issue`'s 25-wide middle block). ⚠️ `age` IS THE EXCEPTION AND IT IS BENIGN: its groups are
+ * singletons, so every cut lands on a group edge and the tie arm is never exercised — which costs
+ * nothing, because for `age` the sort `ref` IS `f.id`, the tie-break column, so that arm is
+ * structurally dead rather than merely unvisited.
+ *
+ * ⚠️ TWO EARLIER VERSIONS OF THIS PARAGRAPH CARRIED FALSE NUMBERS, which is why this one carries
+ * measured ones. The first claimed "none of the cycle lengths divides PAGE" — false for the pair it
+ * mattered for (the `issue` cycle is 7 and one page size is 7; 3, 4 and 5 also divide `ROWS`) and
+ * the wrong property besides, since the cycles run in INSERTION order and the pages are cut in
+ * SORTED order. The second claimed "every group is 12–20 rows wide … far wider than either page
+ * size … inside a group in every ordering", which is wrong for `issue` (26 and 9), wrong against a
+ * page size of 50 (the widest group is 26), and wrong for `age` outright. The
  * `seeds more rows than a page holds` case below measures the property that is actually load-bearing
  * rather than arguing for it.
  */
@@ -338,6 +351,13 @@ describe('the compound keyset, across a manufactured page boundary', () => {
    *
    * Asserted against the ARRIVAL TIMES the fixture seeded, not against the id, so it is a claim about
    * what the cell shows rather than a restatement of the key the implementation chose.
+   *
+   * ⚠️ `age asc` IS NOW BYTE-FOR-BYTE THE DEFAULT ORDERING — inverting it makes the SQL `f.id DESC`,
+   * which is what an unsorted queue already does. That is correct (the default view IS newest-first,
+   * i.e. ascending age) and it has one consequence worth stating: an operator's FIRST click on Age
+   * changes only the arrow, and the `age`/`asc` arm of the two big `pageThrough` loops cannot
+   * distinguish "the sort was applied" from "the sort was ignored". The `desc` half below is what
+   * discriminates — it orders `f.id ASC`, which nothing else on this page produces.
    */
   it('puts the YOUNGEST row first on ascending age, and the oldest first on descending', async () => {
     const youngestFirst = [...seeded].sort((a, b) => b.arrival - a.arrival).map((r) => r.id);
