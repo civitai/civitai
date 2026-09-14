@@ -21,8 +21,11 @@ import { renderWithProviders } from '../../../test/component-setup';
 const STUB_SELECT_LABEL = 'stub search select';
 
 const { queryState, mutate, capturedMutationInput } = vi.hoisted(() => ({
+  // Every field a fixture sets is read by a guard in the component. Keep them explicit: a
+  // fixture that omits one makes the guard reading it pass for want of a value rather than for
+  // the reason it exists, and the obvious later tidy — filling the shape in — un-fixes it.
   queryState: {
-    value: {} as { data?: unknown[]; isLoading: boolean },
+    value: undefined as unknown as QueryFixture,
   },
   mutate: vi.fn(),
   capturedMutationInput: { value: undefined as unknown },
@@ -77,6 +80,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     }),
     model: {
       getAssociatedResourcesSimple: {
+        // Returns the fixture object itself, so `data` is reference-stable across renders the way
+        // React Query's structural sharing makes it in the app. Do not rebuild it per call: the
+        // seeding effect depends on that array's identity, and a fresh one each render is an
+        // unbounded setState loop — a pure microtask spin the runner reports as neither a failure
+        // nor a timeout.
         useQuery: () => queryState.value,
       },
       setAssociatedResources: {
@@ -119,11 +127,53 @@ const savedRows = [
   },
 ];
 
+type QueryFixture = {
+  data?: typeof savedRows;
+  isLoading: boolean;
+  isFetching: boolean;
+  isError: boolean;
+  isSuccess: boolean;
+};
+
 /** Never resolves — the loading state has to be absorbing, or the assertion races a real load. */
-const pending = { data: undefined, isLoading: true };
-const resolved = { data: savedRows, isLoading: false };
+const pending: QueryFixture = {
+  data: undefined,
+  isLoading: true,
+  isFetching: true,
+  isError: false,
+  isSuccess: false,
+};
+const resolved: QueryFixture = {
+  data: savedRows,
+  isLoading: false,
+  isFetching: false,
+  isError: false,
+  isSuccess: true,
+};
 /** Settled with nothing delivered: the saved list is unknown, so it is not safe to edit. */
-const failed = { data: undefined, isLoading: false };
+const failed: QueryFixture = {
+  data: undefined,
+  isLoading: false,
+  isFetching: false,
+  isError: true,
+  isSuccess: false,
+};
+/** Rows on screen, a correction still in flight — the list shown may not be the saved one. */
+const refetching: QueryFixture = {
+  data: savedRows,
+  isLoading: false,
+  isFetching: true,
+  isError: false,
+  isSuccess: true,
+};
+/** A background refetch failed. The rows are still the delivered ones; only the status moved. */
+const refetchFailed: QueryFixture = {
+  data: savedRows,
+  isLoading: false,
+  isFetching: false,
+  isError: true,
+  isSuccess: false,
+};
 /**
  * What a stale cache looks like once it is corrected: the third row is an association saved in
  * an earlier edit that the cached copy did not know about.
@@ -139,7 +189,13 @@ const lateRow = {
     user: { id: 1, username: 'owner' },
   },
 };
-const resolvedCorrected = { data: [...savedRows, lateRow], isLoading: false };
+const resolvedCorrected: QueryFixture = {
+  data: [...savedRows, lateRow],
+  isLoading: false,
+  isFetching: false,
+  isError: false,
+  isSuccess: true,
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -166,7 +222,10 @@ describe('AssociateModels — the search dropdown waits for the saved list', () 
     // awaited a committed render, so there is nothing left to poll for — and an awaited absence
     // matcher spends the whole 15s budget before reporting a present element, which turns a
     // caught regression into a run that reads like a hang.
-    expect(page.getByRole('button', { name: STUB_SELECT_LABEL }).query()).toBeNull();
+    expect(
+      page.getByRole('button', { name: STUB_SELECT_LABEL }).query(),
+      'search dropdown'
+    ).toBeNull();
   });
 
   test('is not rendered, and the failure is named, when the query delivers nothing', async () => {
@@ -178,20 +237,55 @@ describe('AssociateModels — the search dropdown waits for the saved list', () 
     // budget on whichever one a regression removed.
     await expect.element(page.getByRole('button', { name: 'Save Changes' })).toBeInTheDocument();
 
+    // Labelled: four null-shaped assertions in this file would otherwise report the same header.
     expect(
-      page.getByText(/Couldn't load this model's suggested resources/i).query()
+      page.getByText(/Couldn't load this model's suggested resources/i).query(),
+      'failure copy'
     ).not.toBeNull();
-    expect(page.getByRole('button', { name: STUB_SELECT_LABEL }).query()).toBeNull();
+    expect(
+      page.getByRole('button', { name: STUB_SELECT_LABEL }).query(),
+      'search dropdown'
+    ).toBeNull();
     // The bug this replaces: a failed query fell through to the empty-state copy, telling the
     // creator their model has no suggested resources and to search above for a box that the
     // guard had just removed.
-    expect(page.getByText(/search above to add one/i).query()).toBeNull();
+    expect(page.getByText(/search above to add one/i).query(), 'empty-state copy').toBeNull();
   });
 
   test('is rendered once the associations query resolves', async () => {
     renderModal();
 
     await expect.element(page.getByRole('button', { name: STUB_SELECT_LABEL })).toBeInTheDocument();
+  });
+
+  test('is still rendered when a BACKGROUND refetch fails and the rows are intact', async () => {
+    // The whole reason the predicate is delivery rather than `isSuccess`. A failed background
+    // refetch keeps the delivered rows and only moves the status, so the list on screen is the
+    // saved one and editing it is safe. Gating on `isSuccess` here would yank the search box out
+    // from under an open edit. This test is also what stops a future tidy-up of the fixtures from
+    // quietly making an `isSuccess` gate look correct again.
+    queryState.value = refetchFailed;
+    renderModal();
+
+    await expect.element(page.getByRole('button', { name: STUB_SELECT_LABEL })).toBeInTheDocument();
+  });
+
+  test('is not rendered while a correction to the saved list is still in flight', async () => {
+    // Rows are on screen but they may not be the saved set: a save whose invalidate found no
+    // active observer leaves the cache stale, and the reopen refetches. An edit started here sets
+    // `changed`, the seeding effect below then refuses the correction, and the set-replace deletes
+    // the row this modal never saw. Same destruction as the in-flight case, one layer out.
+    queryState.value = refetching;
+    renderModal();
+
+    // Anchored on a row rather than on the Save button: this proves the list HAS rendered, which
+    // is what makes the dropdown's absence attributable to the guard rather than to an empty view.
+    await expect.element(page.getByText('Saved two')).toBeInTheDocument();
+
+    expect(
+      page.getByRole('button', { name: STUB_SELECT_LABEL }).query(),
+      'search dropdown'
+    ).toBeNull();
   });
 
   test('saving after an add keeps every saved association in the payload', async () => {
@@ -234,6 +328,12 @@ describe('AssociateModels — the search dropdown waits for the saved list', () 
     queryState.value = resolvedCorrected;
     await rerender(<AssociateModels fromId={5} type="Suggested" ownerId={1} />);
 
+    // Await the corrected row rather than inferring it from the payload: `rerender` yields
+    // microtasks while React schedules the seeding effect on a macrotask, so without this the
+    // test leans on `.click()` burning enough real time. The corrected fixture is static, so
+    // this state is absorbing and awaiting its arrival is safe.
+    await expect.element(page.getByText('Saved in the edit before this one')).toBeInTheDocument();
+
     await page.getByRole('button', { name: STUB_SELECT_LABEL }).click();
     await page.getByRole('button', { name: 'Save Changes' }).click();
 
@@ -245,6 +345,36 @@ describe('AssociateModels — the search dropdown waits for the saved list', () 
       { id: 11, resourceType: 'model', resourceId: 101 },
       { id: 12, resourceType: 'model', resourceId: 102 },
       { id: 13, resourceType: 'model', resourceId: 103 },
+      { id: undefined, resourceType: 'model', resourceId: 300 },
+    ]);
+  });
+
+  /**
+   * THE DELIBERATE TRADEOFF, pinned so it is not read as an oversight and quietly "fixed".
+   *
+   * When a correction lands on top of work the user has already done, the edit wins and the
+   * correction is dropped — so the payload below does NOT carry id 13, and saving it would delete
+   * that row. Clobbering the edit instead is worse: it discards work the user can see, silently.
+   * What makes the tradeoff acceptable is that the app does not let the user reach this state —
+   * the dropdown is withheld while `isFetching`, so an edit cannot begin during a correction. If
+   * you remove that gate, this becomes reachable and this test is the one that says so.
+   */
+  test('keeps the in-progress edit, and drops the correction, when both arrive', async () => {
+    const { rerender } = await renderModal();
+
+    await page.getByRole('button', { name: STUB_SELECT_LABEL }).click();
+
+    queryState.value = resolvedCorrected;
+    await rerender(<AssociateModels fromId={5} type="Suggested" ownerId={1} />);
+
+    await page.getByRole('button', { name: 'Save Changes' }).click();
+
+    const input = capturedMutationInput.value as {
+      associations: Array<{ id?: number; resourceId: number }>;
+    };
+    expect(input.associations).toEqual([
+      { id: 11, resourceType: 'model', resourceId: 101 },
+      { id: 12, resourceType: 'model', resourceId: 102 },
       { id: undefined, resourceType: 'model', resourceId: 300 },
     ]);
   });

@@ -44,7 +44,11 @@ export function AssociateModels({
   const [changed, setChanged] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
-  const { data: savedAssociations, isLoading } = trpc.model.getAssociatedResourcesSimple.useQuery({
+  const {
+    data: savedAssociations,
+    isLoading,
+    isFetching,
+  } = trpc.model.getAssociatedResourcesSimple.useQuery({
     fromId,
     type,
     browsingLevel: allBrowsingLevelsFlag,
@@ -183,12 +187,14 @@ export function AssociateModels({
 
   return (
     <Stack>
-      {/* Withheld until the saved list has arrived. Selecting into an empty local list leaves
-          that list a partial view of the saved one, and the save is a set-replace — every row
-          missing from the payload is deleted. The predicate is delivery, not `isSuccess`: a
-          failed BACKGROUND refetch keeps the rows but flips status to error, and pulling the
-          search box out from under an open edit is a different bug. */}
-      {savedAssociations && associatedResources.length < limit && (
+      {/* Withheld until the saved list has arrived AND is not being corrected. Editing against a
+          partial view of the saved set is what destroys data: the save is a set-replace, so every
+          row missing from the payload is deleted. Delivery covers the first load; `!isFetching`
+          covers a reopen over an invalidated cache, where rows are on screen but a refetch is
+          still in flight and an edit made now would make the effect below refuse the correction.
+          The predicate is delivery, NOT `isSuccess` — a failed background refetch keeps the rows
+          but flips status, and pulling the search box out from under an open edit is its own bug. */}
+      {savedAssociations && !isFetching && associatedResources.length < limit && (
         <QuickSearchDropdown
           supportedIndexes={['models', 'articles']}
           onItemSelected={handleSelect}
