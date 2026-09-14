@@ -6,7 +6,6 @@ import { ActiveWildcards } from '~/components/Generate/Input/ActiveWildcards';
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
 import { ResourceAlerts } from '~/components/generation_v2/ResourceAlerts';
 import { AspectRatioInput } from '~/components/generation_v2/inputs/AspectRatioInput';
-import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
 import { ResourceSelectMultipleInput } from '~/components/generation_v2/inputs/ResourceSelectMultipleInput';
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SelectInput } from '~/components/generation_v2/inputs/SelectInput';
@@ -35,6 +34,7 @@ import { ControllerLabel, VersionGroupSelector, useWildcardHandlers } from './fo
 import { GateRuleWarnings } from './GateRuleWarnings';
 import { CheckpointRow } from './inputs/CheckpointRow';
 import { openCheckpointPicker, readResources } from './inputs/openCheckpointPicker';
+import { SourceImagesInput } from './inputs/SourceImagesInput';
 import type { GenerationStore } from './store';
 
 /**
@@ -168,14 +168,11 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
         graph={videoHub}
         name="images"
         render={({ value, meta, onChange, error }) => (
-          <ImageUploadMultipleInput
-            label="Source images"
+          <SourceImagesInput
+            store={store}
             value={value}
             onChange={onChange}
-            max={meta?.max}
-            slots={meta?.slots}
-            warnOnMissingAiMetadata={meta?.warnOnMissingAiMetadata}
-            aspectRatios={meta?.aspectRatios as `${number}:${number}`[] | undefined}
+            meta={meta}
             error={error?.message}
           />
         )}

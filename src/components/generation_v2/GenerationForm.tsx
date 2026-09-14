@@ -111,11 +111,10 @@ import {
   ImageUploadMultipleInput,
   type ImageStatusAnnotation,
 } from './inputs/ImageUploadMultipleInput';
+import { useSourceImageAnnotations } from './inputs/useSourceImageAnnotations';
 import type { ImageMetadataApply } from '~/components/Generation/Input/ImageMetadataModal';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
-import { fetchBlobAsFile } from '~/utils/file-utils';
-import { ExifParser } from '~/utils/metadata';
 import { VideoInput } from './inputs/VideoInput';
 import { InterpolationFactorInput } from './inputs/InterpolationFactorInput';
 import { PriorityInput } from './inputs/PriorityInput';
@@ -2727,11 +2726,10 @@ function ImagesInput({
   workflow?: string;
 }) {
   const annotationsSnapshot = useGraphSubscription(graph, 'annotations');
-  const graphAnnotations = annotationsSnapshot?.value as
-    | ({ label: string; color: string; tooltip?: string } | null)[]
-    | undefined;
-  const aiMetaAnnotations = useAiMetadataAnnotations(value);
-  const annotations = useMergedAnnotations(graphAnnotations, aiMetaAnnotations);
+  const annotations = useSourceImageAnnotations(
+    value,
+    annotationsSnapshot?.value as (ImageStatusAnnotation | null)[] | undefined
+  );
   // The active graph IS the applicability rule: a param is offered only when
   // there's a node to put it in, so a video workflow drops the image-only
   // settings on its own and no per-workflow list has to be maintained here.
@@ -2775,59 +2773,6 @@ function ImagesInput({
       metadataApply={metadataApply}
     />
   );
-}
-
-/**
- * For moderators, checks each image for valid AI metadata (EXIF).
- * Returns a parallel annotation array or undefined for non-moderators.
- */
-function useAiMetadataAnnotations(
-  images: { url: string }[] | null | undefined
-): (ImageStatusAnnotation | null)[] | undefined {
-  const currentUser = useCurrentUser();
-  const [results, setResults] = useState<Record<string, boolean>>({});
-
-  useEffect(() => {
-    if (!currentUser?.isModerator || !images?.length) return;
-
-    for (const { url } of images) {
-      if (url in results) continue;
-      fetchBlobAsFile(url).then(async (file) => {
-        if (!file) return;
-        const parser = await ExifParser(file);
-        const meta = await parser.getMetadata();
-        const hasAiMeta = Object.keys(meta).length > 0 || parser.isMadeOnSite();
-        setResults((prev) => ({ ...prev, [url]: hasAiMeta }));
-      });
-    }
-  }, [currentUser?.isModerator, images]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  if (!currentUser?.isModerator || !images?.length) return undefined;
-
-  return images.map(({ url }) => {
-    if (!(url in results)) return null;
-    return results[url]
-      ? { label: 'AI Meta', color: 'green', tooltip: 'Valid AI metadata detected' }
-      : { label: 'No AI Meta', color: 'yellow', tooltip: 'No AI metadata found in image' };
-  });
-}
-
-/** Merge two parallel annotation arrays, preferring graph annotations over AI meta. */
-function useMergedAnnotations(
-  graph: (ImageStatusAnnotation | null)[] | undefined,
-  aiMeta: (ImageStatusAnnotation | null)[] | undefined
-): (ImageStatusAnnotation | null)[] | undefined {
-  return useMemo(() => {
-    if (!graph && !aiMeta) return undefined;
-    if (!graph) return aiMeta;
-    if (!aiMeta) return graph;
-    const len = Math.max(graph.length, aiMeta.length);
-    const merged: (ImageStatusAnnotation | null)[] = [];
-    for (let i = 0; i < len; i++) {
-      merged.push(graph[i] ?? aiMeta[i] ?? null);
-    }
-    return merged;
-  }, [graph, aiMeta]);
 }
 
 // =============================================================================

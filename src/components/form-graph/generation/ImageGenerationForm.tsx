@@ -8,7 +8,6 @@ import { ResourceAlerts } from '~/components/generation_v2/ResourceAlerts';
 import { AspectRatioInput } from '~/components/generation_v2/inputs/AspectRatioInput';
 import { ControlNetsInput } from '~/components/generation_v2/inputs/ControlNetsInput';
 
-import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
 import { OutputFormatInput } from '~/components/generation_v2/inputs/OutputFormatInput';
 import { PriorityInput } from '~/components/generation_v2/inputs/PriorityInput';
 import { ResourceSelectInput } from '~/components/generation_v2/inputs/ResourceSelectInput';
@@ -33,6 +32,7 @@ import { ControllerLabel, VersionGroupSelector, useWildcardHandlers } from './fo
 import { GateRuleWarnings } from './GateRuleWarnings';
 import { CheckpointRow } from './inputs/CheckpointRow';
 import { openCheckpointPicker, readResources } from './inputs/openCheckpointPicker';
+import { SourceImagesInput } from './inputs/SourceImagesInput';
 import type { GenerationStore } from './store';
 
 /**
@@ -171,14 +171,11 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         graph={imageHub}
         name="images"
         render={({ value, meta, onChange, error }) => (
-          <ImageUploadMultipleInput
-            label="Source images"
+          <SourceImagesInput
+            store={store}
             value={value}
             onChange={onChange}
-            max={meta?.max}
-            slots={meta?.slots}
-            warnOnMissingAiMetadata={meta?.warnOnMissingAiMetadata}
-            aspectRatios={meta?.aspectRatios as `${number}:${number}`[] | undefined}
+            meta={meta}
             error={error?.message}
           />
         )}
