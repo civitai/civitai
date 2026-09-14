@@ -83,12 +83,14 @@ vi.mock('~/server/services/block-revocation.service', () => ({
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: (...a: unknown[]) => mockLogToAxiom(...a),
 }));
-// NOTE: the report op's Discord notify does a dynamic `import('~/env/server')`; we
-// deliberately do NOT mock env (mocking it clobbers env.LOGGING and breaks the trpc
-// import chain). In the test env DISCORD_WEBHOOK_MOD_ALERTS is unset, so the notify
-// short-circuits to a no-op before any fetch — exactly the fire-and-forget path.
+// NOTE: `report` no longer has any outbound side effect. The mod-Discord webhook it
+// used to fire was replaced by the `shared-storage-report-sweep` job, which reads the
+// `shared_kv_reports` rows this op writes and files them on the moderator abuse board;
+// the reporter-free-text hardening that used to live here (`sanitizeDiscordText`) moved
+// with it, to `~/server/services/shared-storage-report-sweep/report.ts`. What this op
+// still owes is the row plus the Axiom emit, and both are asserted below.
 
-import { appsSharedRouter, appsModRouter, sanitizeDiscordText } from '../apps-shared.router';
+import { appsSharedRouter, appsModRouter } from '../apps-shared.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 
@@ -741,44 +743,6 @@ describe('FIX 1 abuse observability (alert emits)', () => {
       code: 'NOT_FOUND',
     });
     expect(auditEmits('app-blocks-shared-storage-report')).toHaveLength(0);
-  });
-});
-
-// FIX 1 (Discord phishing vector): the reporter-supplied `reason` is embedded in
-// the mod-alerts Discord message. A hostile reporter must not be able to plant a
-// masked/phishing link or other markdown. `sanitizeDiscordText` neutralizes it and
-// the embed field wraps the result in an inline code span.
-describe('sanitizeDiscordText (mod-alert reason hardening)', () => {
-  it('neutralizes a masked link + backticks (no live markdown survives)', () => {
-    const hostile = 'click [here](https://phish.example) `rm -rf` **bold** ~~s~~ ||spoiler|| > q';
-    const out = sanitizeDiscordText(hostile);
-    // structural markdown / masked-link characters are gone
-    for (const ch of ['[', ']', '(', ')', '`', '*', '_', '~', '|', '>']) {
-      expect(out).not.toContain(ch);
-    }
-    expect(out).not.toMatch(/\]\(/); // the masked-link `](` sequence specifically
-    // the human-readable words survive as inert plain text
-    expect(out).toContain('here');
-    expect(out).toContain('https://phish.example');
-  });
-
-  it('the embed field value (code-span wrapped) contains no live masked link', () => {
-    // mirror the exact construction used in notifyModsOfSharedReport
-    const fieldValue = `\`${sanitizeDiscordText('[x](http://evil) `boom`') || 'user-report'}\``;
-    expect(fieldValue).not.toMatch(/\]\(/); // no masked link
-    // exactly two backticks (the wrapping span) — none survived from the input
-    expect((fieldValue.match(/`/g) ?? []).length).toBe(2);
-    expect(fieldValue.startsWith('`')).toBe(true);
-    expect(fieldValue.endsWith('`')).toBe(true);
-  });
-
-  it('an all-markdown reason collapses to empty → falls back to user-report', () => {
-    const fieldValue = `\`${sanitizeDiscordText('[]()``') || 'user-report'}\``;
-    expect(fieldValue).toBe('`user-report`');
-  });
-
-  it('caps the sanitized output at 500 chars', () => {
-    expect(sanitizeDiscordText('a'.repeat(1000)).length).toBe(500);
   });
 });
 

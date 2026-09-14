@@ -86,8 +86,8 @@ const SHARED_KV_PER_USER_ROW_CAP = 50;
 // NOT re-exported from here. The importers of this module were enumerated when
 // the predicate moved, and none of them took `assertSharedWriteTrust`,
 // `MIN_ACCOUNT_AGE_MS` or `REQUIRE_PAID_TIER` from it — they take
-// `appsSharedRouter`/`appsModRouter`, `sanitizeDiscordText`, and the counter
-// helpers. Import the predicate from the service that owns it.
+// `appsSharedRouter`/`appsModRouter` and the counter helpers. Import the
+// predicate from the service that owns it.
 
 type SharedOp =
   | 'list'
@@ -810,11 +810,12 @@ export const appsSharedRouter = router({
       const uid = userId as number;
 
       // F1 (pre-GA): `report` is now block-reachable (PageBlockHost / IframeHost),
-      // and each report files a row AND fires a mod-channel Discord webhook. Every
-      // OTHER shared write op is rate-limited; this one was not — so a trusted user
-      // could loop it into report-table growth + mod-channel flooding. Bound the
-      // per-(user, app) report velocity on its own daily bucket (fail-open, like the
-      // other buckets — the containment is defence-in-depth, not the auth boundary).
+      // and each report files a row that the `shared-storage-report-sweep` job puts in
+      // front of a moderator. Every OTHER shared write op is rate-limited; this one was
+      // not — so a trusted user could loop it into report-table growth and, through the
+      // sweep, into flooding the moderator abuse board. Bound the per-(user, app) report
+      // velocity on its own daily bucket (fail-open, like the other buckets — the
+      // containment is defence-in-depth, not the auth boundary).
       const rl = await checkSharedReportRateLimit(uid, appBlockId);
       if (!rl.allowed) {
         throw new TRPCError({
@@ -831,10 +832,10 @@ export const appsSharedRouter = router({
       const reason = input.reason ?? 'user-report';
 
       // F1 dedup: a repeat report of the SAME row by the SAME reporter is a no-op —
-      // no 2nd row, no 2nd webhook, no 2nd alert. `filed` is false when this
-      // (reporter, key) pair already has a report row, and the observability +
-      // mod-notify side effects below are skipped entirely. Only a genuinely-new
-      // report fires them (distinct keys / distinct reporters are unaffected).
+      // no 2nd row, no 2nd alert, and nothing extra for the sweep to file. `filed` is
+      // false when this (reporter, key) pair already has a report row, and the
+      // observability emit below is skipped entirely. Only a genuinely-new report fires
+      // it (distinct keys / distinct reporters are unaffected).
       const filed = await insertUserSharedReportDeduped(schema, {
         key: input.key,
         reporterUserId: uid,
@@ -849,6 +850,14 @@ export const appsSharedRouter = router({
       // METADATA ONLY (userId / slug / appBlockId / reason / reported key), NEVER the
       // reported content itself. Fire-and-forget (`.catch`) so a logging outage can
       // never fail a legitimate report.
+      //
+      // 🔴 THIS IS OBSERVABILITY, NOT THE MOD SURFACE, AND THE TWO ARE NOT
+      // INTERCHANGEABLE. An Axiom event is queryable by whoever goes looking; it is
+      // not a queue a moderator can triage, rank or rule on. The row filed just above
+      // is read by the `shared-storage-report-sweep` job, which files it on the
+      // moderator abuse board at `/abuse` — that is what makes a user report ACTIONABLE
+      // and it is the replacement for the mod-Discord webhook this path used to fire.
+      // Deleting that job without a replacement re-opens the hole described above.
       logToAxiom(
         {
           name: 'app-blocks-shared-storage-report',
@@ -861,16 +870,6 @@ export const appsSharedRouter = router({
         },
         'block-audit'
       ).catch(() => {});
-      // Also fire the mod-Discord notify if the webhook is wired (same pattern as
-      // the W1 publish-request flow). Self-contained + fire-and-forget: never awaited
-      // in a way that can block/fail the report, and swallows its own errors.
-      void notifyModsOfSharedReport({
-        slug,
-        appBlockId,
-        reportedKey: input.key,
-        reporterUserId: uid,
-        reason,
-      });
 
       return { ok: true as const };
     }),
@@ -1191,8 +1190,8 @@ async function insertSharedReport(
  * F1 — file a USER report row with per-(reporter, key) dedup. A single
  * conditional INSERT that no-ops when this reporter already has a report row for
  * this key. Returns true iff a NEW row was filed — the caller then emits the
- * abuse alert + fires the mod webhook; false on a duplicate (skip both, so a
- * re-report can't grow the table or re-ping the mod channel).
+ * abuse alert; false on a duplicate (skip it, so a re-report can't grow the table
+ * or re-raise the same row on the moderator abuse board the sweep writes to).
  *
  * `reporter_user_id` and `key` are both non-null on the user-report path (the
  * subject uid + a validated key), so `WHERE NOT EXISTS` is exact. It is scoped to
@@ -1200,7 +1199,7 @@ async function insertSharedReport(
  * (`key IS NULL`) or another user's report of the same key. NOTE (honest bound):
  * under two TRULY-simultaneous identical reports READ COMMITTED can admit both —
  * the per-(user, app) report rate limit is the hard ceiling; this collapses the
- * common repeat-click / retry case, which is the actual webhook-spam vector.
+ * common repeat-click / retry case, which is the actual report-spam vector.
  */
 async function insertUserSharedReportDeduped(
   schema: string,
@@ -1217,81 +1216,6 @@ async function insertUserSharedReportDeduped(
     [`skr_${newUlid()}`, args.key, args.reporterUserId, args.reason]
   );
   return (res.rowCount ?? 0) > 0;
-}
-
-/**
- * Neutralize Discord markdown in reporter-supplied free text before it is embedded
- * in a mod-alerts message. A hostile reporter must NOT be able to plant a masked
- * link `[label](https://phish.example)` (phishing) or other markdown/formatting in
- * the mod channel. We strip the structural markdown characters — masked-link
- * brackets/parens `[ ] ( )`, backticks, and emphasis/strike/spoiler/quote markers
- * `* _ ~ | >` — then collapse whitespace. The caller ALSO wraps the result in an
- * inline code span (belt-and-suspenders: no markdown, no URL auto-link, and no
- * mention ping renders inside a code span). Returns a bounded, single-line string.
- * NOTE: the Axiom copy of `reason` is deliberately left RAW — it is a structured
- * log field, never rendered, so escaping there would only corrupt the record.
- */
-export function sanitizeDiscordText(input: string): string {
-  return input
-    .replace(/[`[\]()*_~|>]/g, ' ') // drop markdown / masked-link structural chars
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 500);
-}
-
-/**
- * FIX 1 — fire-and-forget mod-Discord notify on a USER report of a shared row.
- * Mirrors the W1 publish-request `notifyModsOfNewRequest` pattern: posts to
- * `DISCORD_WEBHOOK_MOD_ALERTS` if it is set, otherwise a no-op. NEVER throws (a
- * Discord outage must not affect the report), and the caller does not await it —
- * so the report op returns immediately. Carries METADATA ONLY: slug / app-block /
- * reported key / reporter id + the reporter's stated reason (bounded to 500 chars
- * by the input schema). It does NOT — and cannot — include the reported content
- * (the op only holds the row key).
- */
-async function notifyModsOfSharedReport(opts: {
-  slug: string;
-  appBlockId: string;
-  reportedKey: string;
-  reporterUserId: number;
-  reason: string;
-}): Promise<void> {
-  try {
-    const { env } = await import('~/env/server');
-    if (!env.DISCORD_WEBHOOK_MOD_ALERTS) return;
-    const baseUrl = (process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '');
-    const appUrl = baseUrl ? `${baseUrl}/${opts.slug}` : opts.slug;
-    const payload = {
-      embeds: [
-        {
-          title: `Shared-storage report: ${opts.slug}`,
-          url: appUrl,
-          color: 0xe03131,
-          fields: [
-            { name: 'App block', value: `\`${opts.appBlockId}\``, inline: true },
-            { name: 'Reported by', value: `user #${opts.reporterUserId}`, inline: true },
-            { name: 'Row key', value: `\`${opts.reportedKey}\`` },
-            // Reporter free text: markdown-neutralized + code-span-wrapped so a
-            // hostile reason can't plant a masked/phishing link in the mod channel
-            // (the other fields are already backtick-wrapped).
-            { name: 'Reason', value: `\`${sanitizeDiscordText(opts.reason) || 'user-report'}\`` },
-          ],
-          footer: { text: 'App Blocks shared storage' },
-          timestamp: new Date().toISOString(),
-        },
-      ],
-    };
-    await fetch(env.DISCORD_WEBHOOK_MOD_ALERTS, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(5_000),
-    }).catch(() => {
-      /* fire and forget */
-    });
-  } catch {
-    /* never let Discord break a report */
-  }
 }
 
 function isForeignKeyViolation(err: unknown): boolean {
