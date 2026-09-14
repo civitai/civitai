@@ -8,16 +8,41 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 /**
  * THE `page.fullBleed` MOUNTER SEAM — the relationship no single component owns.
  *
- * 🔴 THE DEFECT THIS EXISTS FOR, MEASURED ON THE PR HEAD, NOT IMAGINED. Replacing
- * ALL FIVE mounter-side forwardings of the resolved `fullBleed` value with a
- * literal `false` made the feature inert on all three surfaces — the public run
- * page, the author dev tunnel and the moderator review preview — and left 302 node
- * files / 6,475 tests AND 26/26 browser tests GREEN. Every component was
- * hermetically covered: `PageBlockHost` has a measured two-point width case
- * (`PageBlockHostMaxWidth.browser.test.tsx`), the manifest read has resolver tests,
- * the validator has schema tests. None of them ever built the COMBINED state,
- * because each fixture supplied the prop itself. The bug lives in the wiring
- * between them, which is exactly the surface nobody's test loads.
+ * 🔴 THE DEFECT THIS EXISTS FOR, MEASURED, NOT IMAGINED. Replacing ALL FIVE
+ * mounter-side forwardings of the resolved `fullBleed` value with a literal `false`
+ * made the feature inert on all three surfaces — the public run page, the author dev
+ * tunnel and the moderator review preview — and THE NODE TIER DID NOT NOTICE. Every
+ * component was hermetically covered: `PageBlockHost` has a measured two-point width
+ * case (`PageBlockHostMaxWidth.browser.test.tsx`), the manifest read has resolver
+ * tests, the validator has schema tests. None of them ever built the COMBINED state,
+ * because each fixture supplied the prop itself. The bug lives in the wiring between
+ * them, which is exactly the surface nobody's test loads.
+ *
+ * ⚠️ THE SCOPE OF THAT CLAIM, BECAUSE AN EARLIER VERSION OF THIS PARAGRAPH QUOTED
+ * TWO COUNTS WITHOUT ONE. It read "left 302 node files / 6,475 tests AND 26/26
+ * browser tests GREEN". Both were narrowed runs stated as if they were tiers: the
+ * node tier is ~1,787 files, so 302 of them is roughly a sixth of it, and the 26 was
+ * two browser files.
+ *
+ *   · THE NODE HALF HOLDS AT TIER SCOPE — re-measured, not inherited. With all five
+ *     forwardings set to `false` AND THIS FILE DELETED (so it cannot be the thing
+ *     catching the mutation), the whole `unit*` project ran 1,786 files / 40,666
+ *     tests and returned three failures, all three in
+ *     `src/server/__tests__/eventloop-watchdog.capture.test.ts` — a wall-clock file
+ *     whose unmutated baseline on the same tree was already two failures out of the
+ *     same nine, at 1,787 files / 40,678 tests. Nothing else moved. (Those totals are
+ *     a scope marker for the run, not a target: they drift with every commit and
+ *     nothing fails when they do.)
+ *   · THE BROWSER HALF IS NOT RESTATED, BECAUSE IT NO LONGER HOLDS AND MUST NOT BE
+ *     RE-DERIVED. The commit that added this file also added `a mint that DECLARES
+ *     page.fullBleed reaches the host, and one that does not DOES NOT` to
+ *     `ReviewBlockPreviewHost.browser.test.tsx`, which closes site 5. Measured on the
+ *     current tree with the same five-site mutation and this file deleted, those two
+ *     browser files come back 1 failed / 23 passed and the failure is that case — so
+ *     a browser run does not sit green through this mutation any more, and the
+ *     historical "26/26" cannot be reproduced without deleting that case too. Sites
+ *     1–4 were NOT re-measured at browser-tier scope; no claim is made about them
+ *     there.
  *
  * The existing structural pin — "`fullBleed` is a REQUIRED prop"
  * (`pageBlockHostMaxWidth.test.ts`) — catches an OMITTED prop via `tsc` and can
