@@ -63,8 +63,19 @@ export function AppsRailNavView({
           <React.Fragment key={group.id}>
             {/* 🔴 THE HEADING IS HIDDEN WHEN COLLAPSED, NOT REMOVED FROM THE TREE.
                 `aria-hidden` + `hidden` would drop it from the accessibility tree too;
-                a 56px rail has no room for the word but a screen reader still wants the
-                grouping, so it is visually clipped (`sr-only`) instead. */}
+                a 56px rail has no room for the word, so it is visually clipped
+                (`sr-only`) instead and stays announceable.
+
+                ⚠️ IT IS ADJACENT TEXT, NOT A PROGRAMMATIC GROUP, and an earlier revision
+                of this comment claimed the stronger thing ("a screen reader still wants
+                the grouping"). There is no `role="group"`, no `aria-labelledby` tying the
+                links to this heading, and no list wrapping them — they are loose anchors
+                that happen to follow a `<Text>`. A screen reader announces the heading
+                when the user reaches it and announces each link separately; nothing
+                associates the two. That is a defensible choice for a six-row rail, but
+                the association is NOT delivered, so do not cite this as grouping
+                semantics. Making it real means `role="group"` + `aria-labelledby` on a
+                wrapper, or a `<ul>`/`<li>` list — a markup change, not a comment change. */}
             <Text
               size="xs"
               fw={600}

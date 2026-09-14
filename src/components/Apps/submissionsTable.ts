@@ -80,9 +80,16 @@ export const SUBMISSIONS_TABLE_MIN_WIDTH = 1424;
  *   1920       fits       fits        fits
  *
  * 🔴 THE FIRST ROW IS THE ONE THAT SETTLES IT: `/apps/build` ALREADY SCROLLS AT 1440
- * TODAY — the container yields 1408 against this 1424 floor, 16px short — so the rail
- * does not INTRODUCE horizontal scrolling on this page, it widens a band that already
- * exists by one viewport step (1600). The table has carried a real
+ * TODAY — by this paragraph's own method (net of the 10px reserved scrollbar and the
+ * 32px gutter) the container yields `1440 − 10 − 32 = 1398` against this 1424 floor,
+ * 26px short — so the rail does not INTRODUCE horizontal scrolling on this page, it
+ * widens a band that already exists by one viewport step (1600).
+ *
+ * ⚠️ An earlier revision wrote "1408 … 16px short", which deducts the gutter but NOT the
+ * scrollbar — inconsistent with the sentence two lines above that says both are already
+ * netted out. The conclusion is unaffected (1398 and 1408 are both below 1424, so the
+ * row still reads SCROLLS); the arithmetic was simply wrong, and a reader re-deriving it
+ * would not reproduce it. The table has carried a real
  * `Table.ScrollContainer` since it was written, so the affordance is present and works.
  *
  * 🔴 NO EXEMPTION WAS ADDED, DELIBERATELY. The two ways to exempt it are both worse than

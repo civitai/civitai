@@ -575,10 +575,18 @@ export function AppListingsMarketplaceBody() {
               `APPS_PAGE_CONTAINER_WIDTH` = 2560, which yields 2528 of grid with no rail
               — or 2242 with the `/apps` LEFT RAIL open, which is where the four-column
               rung is derived from (2560 − 10 thin scrollbar − 32 gutter − 276 rail).
-              `/apps` therefore renders FOUR columns at 548.5px with the rail open, or
-              620px collapsed — wider than the 460px four-up the 1920 container shipped,
+              `/apps` therefore renders FOUR columns at 548.5px with the rail OPEN,
+              599.5px COLLAPSED, and 617.5px with NO RAIL — all three wider than the
+              460px four-up the 1920 container shipped,
               which is the point: the `LISTING_CARD_MIN_WIDTH` floor is 460, so a column
-              is only added where every card ends up at least as big as it is today. A
+              is only added where every card ends up at least as big as it is today.
+              ⚠️ THERE ARE THREE RAIL STATES AND AN EARLIER REVISION QUOTED TWO OF THEM AS
+              ONE — it read &quot;548.5px with the rail open, or 620px collapsed&quot;, but 620 is
+              the NO-RAIL figure and collapsed is 599.5. All three are stated above,
+              derived the same way the four-column rung is (`2560 − 10 scrollbar − 32
+              gutter − chrome`), where chrome is 276 open / 72 collapsed / 0 none. The
+              620/2528 pairing found elsewhere omits the 10px scrollbar the rung itself
+              deducts; it is the same quantity measured by a different convention. A
               FIFTH column would need 2840 of grid and is unreachable at this cap in
               every rail state; the rung is declared anyway so a future cap raise
               engages it.

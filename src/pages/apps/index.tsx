@@ -111,8 +111,12 @@ export default function AppsPage() {
             The store spends that width as an explicit column ladder driven by a
             container query (`LISTING_GRID_COLUMN_STEPS`): 1/2/3/4 exactly where the
             retired Mantine breakpoints put them, then 4 from 2242px of grid — so this
-            page renders FOUR columns at 548.5px on a 2560 monitor with the `/apps` left
-            rail OPEN, and four at 620px if the rail is collapsed away. ⚠️ THE LADDER WAS
+            page renders FOUR columns on a 2560 monitor in every rail state, at 548.5px
+            with the `/apps` left rail OPEN, 599.5px COLLAPSED, and 617.5px with NO RAIL.
+            ⚠️ An earlier revision read &quot;four at 620px if the rail is collapsed away&quot;,
+            conflating two of the three states: 620 is the no-rail figure (and omits the
+            10px scrollbar the four-column rung itself deducts), while collapsed is
+            599.5. ⚠️ THE LADDER WAS
             RE-TUNED WITH THAT RAIL: `lg`/`xl` mean three columns now and the 1600–2240
             band renders three, deliberately — see `LISTING_GRID_SPAN` for the measured
             before/after and why a narrower rail does not avoid it. A fifth column is
