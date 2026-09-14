@@ -1,4 +1,5 @@
 import { NON_PUBLIC_IP_RANGES, publicIpOnlySql } from '@civitai/shared/clickhouse-ip-filters';
+import { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { MAX_COHORT_ACCOUNTS } from '../cohort';
 import type { BotAccountCohortMember, SurfaceCounts } from '../cohort';
@@ -22,20 +23,25 @@ import {
   MAX_FILENAME_SAMPLES,
   MAX_FILENAMES_PER_MEMBER,
   FILENAME_READ_BATCH_SIZE,
+  MAX_STAGED_IMAGE_SAMPLES,
+  MAX_STAGED_IMAGES_PER_MEMBER,
   filenameFingerprint,
   filenameSampleArgs,
   normalizeFilename,
+  stagedImageSampleArgs,
   type ContentSampleRow,
   type EvidenceClickhouse,
   type EvidenceReader,
   type FilenameSampleRow,
   type RegistrationIpRow,
+  type StagedImageRow,
 } from '../evidence';
 import {
   FILENAME_FINGERPRINT_PREFIX,
   TEXT_FINGERPRINT_PREFIX,
   unprefixFingerprint,
 } from '../fingerprint-keys';
+import { STAGED_ONE_AT } from '../heuristics/staging';
 
 /** The NAMESPACED index key for a piece of text — what `membersPerFingerprint` is keyed by.
  *  `contentFingerprint` itself still returns the bare normalised form. */
@@ -350,6 +356,91 @@ describe('filenameSampleArgs', () => {
   });
 });
 
+describe('stagedImageSampleArgs', () => {
+  it('🔴 pins the staged budget CONSTANTS, separately from the behavioural cases', () => {
+    // Every walk case below passes its own budget and its own per-member cap explicitly, so none of
+    // them says anything about the shipped values. This does.
+    //
+    // 🔴 THE PER-MEMBER CAP IS ALSO THE LARGEST COUNT THE HEURISTIC CAN EVER SEE, which the
+    // filename cap is not — a filename sample folds into a set, while this one IS the measurement.
+    // That is harmless only while the scoring ramp saturates well below it, so the relationship is
+    // asserted rather than left to a reader to notice. The margin WIDENED when the volume boundary
+    // was re-derived downwards, so the assertion is written against the constant rather than
+    // restating its value — a literal here goes stale exactly when the coupling it guards moves.
+    expect(MAX_STAGED_IMAGE_SAMPLES).toBe(20_000);
+    expect(MAX_STAGED_IMAGES_PER_MEMBER).toBe(50);
+    expect(MAX_STAGED_IMAGES_PER_MEMBER).toBeGreaterThan(STAGED_ONE_AT * 4);
+  });
+
+  it('reads ONE account’s unattached, metadata-free uploads, bounded, two columns', () => {
+    const args = stagedImageSampleArgs(1, 50);
+    expect(args.where.userId).toBe(1);
+    expect(args.select).toEqual({ userId: true, createdAt: true });
+    expect(args.take).toBe(50);
+  });
+
+  it('🔴 requires BOTH staged facts — neither half alone is the signal', () => {
+    // `postId IS NULL` alone is ordinary: an upload sits unattached for as long as it takes someone
+    // to finish a post, so a snapshot at any instant catches real people mid-flow. `meta IS NULL`
+    // alone is more ordinary still — every image uploaded from a disk rather than generated here
+    // has no generation metadata. It is the PAIR that is unusual, so a mutant dropping either
+    // predicate widens the population to something the heuristic's boundaries were not set against.
+    //
+    // Asserted as the EXACT key set, so dropping one predicate fails AND adding a third does too.
+    expect(Object.keys(stagedImageSampleArgs(1, 10).where).sort()).toEqual([
+      'meta',
+      'postId',
+      'userId',
+    ]);
+    expect(stagedImageSampleArgs(1, 10).where.postId).toBeNull();
+  });
+
+  it('🔴 matches BOTH spellings of a null `meta`, not just the SQL one', () => {
+    // 🔴 THE HALF-POPULATION BUG THIS PREVENTS. `Image.meta` is a `Json?`, so "no metadata" is
+    // written two ways — a database NULL and the JSON literal `null` — and the two are
+    // indistinguishable to anyone reading the site. A filter matching one of them scores half of an
+    // identical population and reports the difference as a fact about the accounts.
+    //
+    // `Prisma.AnyNull` is the only filter value that covers both; `equals: null` on a `Json?` column
+    // is rejected by the query engine as ambiguous rather than silently meaning either. Asserted
+    // against the sentinel itself rather than against a string, because the sentinel IS the
+    // contract with the query engine.
+    expect(stagedImageSampleArgs(1, 10).where.meta).toEqual({ equals: Prisma.AnyNull });
+    expect(stagedImageSampleArgs(1, 10).where.meta.equals).toBe(Prisma.AnyNull);
+    // The negative half of the same claim: NOT the DB-null-only sentinel, which is the mistake a
+    // reader reaching for "meta is null" makes first.
+    expect(stagedImageSampleArgs(1, 10).where.meta.equals).not.toBe(Prisma.DbNull);
+    expect(stagedImageSampleArgs(1, 10).where.meta.equals).not.toBe(Prisma.JsonNull);
+  });
+
+  it('🔴 pins `userId` to a SCALAR EQUALITY — never an `IN (…)` list under a LIMIT', () => {
+    // The same regression guard the filename read carries, for the same measured reason: a wide
+    // `IN (…)` over `Image` under a `LIMIT` produced a backward primary-key scan that walked the
+    // whole table, and narrowing the list does not fix it. This read is newer than that incident
+    // and would have been written the broken way just as easily.
+    const where = stagedImageSampleArgs(7, 10).where;
+    expect(typeof where.userId).toBe('number');
+    expect(where.userId).not.toHaveProperty('in');
+  });
+
+  it('🔴 orders by id, NOT createdAt — even though createdAt is the column it reads', () => {
+    // The tempting mistake, and the one a reader would call an obvious improvement: the heuristic's
+    // burst half is about TIME, so ordering by time looks natural. There is no declared
+    // `(userId, createdAt)` index, so that sort would run outside every declared index, while `id`
+    // is monotonic on an append-only table and descending `id` is descending upload order. The
+    // `take` bounds the read, so the order decides WHICH rows survive it.
+    expect(stagedImageSampleArgs(1, 10).orderBy).toEqual({ id: 'desc' });
+  });
+
+  it('bounds on createdAt when given a window, and omits it when not', () => {
+    const before = new Date('2026-09-03T12:00:00.000Z');
+    expect(stagedImageSampleArgs(1, 10, before).where).toMatchObject({
+      createdAt: { lte: before },
+    });
+    expect(stagedImageSampleArgs(1, 10).where).not.toHaveProperty('createdAt');
+  });
+});
+
 describe('the module constants', () => {
   it('🔴 pins every bound a run is sized by, so moving one is a deliberate edit', () => {
     // 🔴 FOUR OF THESE WERE UNTESTED. A constant nothing asserts can be changed by a mutant — or by
@@ -555,6 +646,9 @@ describe('buildCohortSignals', () => {
     filenameSamples: true,
     filenameBudgetExhausted: false,
     membersSampledForFilenames: 3,
+    stagedImages: true,
+    stagedImageBudgetExhausted: false,
+    membersSampledForStagedImages: 3,
   };
 
   it('🔴 counts DISTINCT accounts per IP, not rows', () => {
@@ -748,13 +842,163 @@ describe('buildCohortSignals', () => {
     expect(s.membersPerFingerprint.size).toBe(0);
   });
 
+  // -------------------------------------------------------------------------------------------
+  // The staged-image fold
+  // -------------------------------------------------------------------------------------------
+
+  /** `n` staged uploads for one member, all in distinct seconds unless `second` says otherwise. */
+  const staged = (userId: number, isos: string[]): StagedImageRow[] =>
+    isos.map((iso) => ({ userId, createdAt: new Date(iso) }));
+
+  it('🔴 counts staged ROWS, not distinct members — the one fold here that must', () => {
+    // 🔴 THE INVERSION OF THIS FILE'S CENTRAL RULE, AND IT IS CORRECT HERE. Every other fold counts
+    // DISTINCT ACCOUNTS, because every other heuristic asks "how many others share this" and one
+    // account repeating itself must not manufacture a ring. `asset-staging` asks how much THIS
+    // account staged, so its unit is the upload — deduplicating to one-per-member would collapse
+    // the whole signal to a boolean and the scoring ramp would have nothing to range over.
+    //
+    // Four rows from one member. A fold that counted members returns 1 here, which is below the
+    // scoring boundary, i.e. the mutant silently switches the heuristic off rather than skewing it.
+    const s = buildCohortSignals({
+      members: [member(1)],
+      registrationIps: [],
+      contentSamples: [],
+      stagedImageSamples: staged(1, [
+        '2026-09-03T10:00:00.000Z',
+        '2026-09-03T10:05:00.000Z',
+        '2026-09-03T10:11:00.000Z',
+        '2026-09-03T10:30:00.000Z',
+      ]),
+      sources,
+    });
+    expect(s.stagedImagesByUser.get(1)?.count).toBe(4);
+  });
+
+  it('🔴 finds the largest SAME-SECOND group, not the total and not the first group', () => {
+    // Seven uploads: two sharing one second, three sharing a later one, two alone. The answer is 3.
+    // Deliberately distinct from the count (7), from the first group's size (2), from the number of
+    // groups (5) and from 1 — so a mutant returning any of those cannot land on it. The largest
+    // group is also NOT the first one seen, which is what makes this a test of the max rather than
+    // of the iteration.
+    const s = buildCohortSignals({
+      members: [member(1)],
+      registrationIps: [],
+      contentSamples: [],
+      stagedImageSamples: staged(1, [
+        '2026-09-03T10:00:00.000Z',
+        '2026-09-03T10:00:00.500Z',
+        '2026-09-03T10:00:04.000Z',
+        '2026-09-03T10:00:09.100Z',
+        '2026-09-03T10:00:09.400Z',
+        '2026-09-03T10:00:09.900Z',
+        '2026-09-03T10:00:14.000Z',
+      ]),
+      sources,
+    });
+    expect(s.stagedImagesByUser.get(1)).toEqual({ count: 7, largestSameSecondBurst: 3 });
+  });
+
+  it('🔴 a WHOLE second, not a rolling window — 999ms apart across the boundary is not a burst', () => {
+    // Stated as a limitation rather than defended: two uploads 100ms apart that straddle a second
+    // boundary are NOT counted together, which is a false negative the truncation buys in exchange
+    // for a threshold nobody has to pick. A reader who assumes a window would read this heuristic's
+    // burst number as larger than it is.
+    const s = buildCohortSignals({
+      members: [member(1)],
+      registrationIps: [],
+      contentSamples: [],
+      stagedImageSamples: staged(1, ['2026-09-03T10:00:00.950Z', '2026-09-03T10:00:01.050Z']),
+      sources,
+    });
+    expect(s.stagedImagesByUser.get(1)).toEqual({ count: 2, largestSameSecondBurst: 1 });
+  });
+
+  it('keeps members’ staged facts apart', () => {
+    // One index, many members: a fold that accumulated into a shared record would score every
+    // member on the cohort's total. The two members have different counts AND different bursts, so
+    // a cross-contaminating mutant cannot produce both.
+    const s = buildCohortSignals({
+      members: [member(1), member(2)],
+      registrationIps: [],
+      contentSamples: [],
+      stagedImageSamples: [
+        ...staged(1, ['2026-09-03T10:00:00.100Z', '2026-09-03T10:00:00.200Z']),
+        ...staged(2, [
+          '2026-09-03T11:00:00.000Z',
+          '2026-09-03T12:00:00.000Z',
+          '2026-09-03T13:00:00.000Z',
+        ]),
+      ],
+      sources,
+    });
+    expect(s.stagedImagesByUser.get(1)).toEqual({ count: 2, largestSameSecondBurst: 2 });
+    expect(s.stagedImagesByUser.get(2)).toEqual({ count: 3, largestSameSecondBurst: 1 });
+  });
+
+  it('🔴 ignores a row for an account outside the cohort', () => {
+    // The same guard the IP and fingerprint folds carry: a row for an id the run is not scoring —
+    // a stale row, an account banned since — must not appear in the index at all, or a member that
+    // was never scored acquires facts nothing will ever read and the map's size stops matching the
+    // cohort.
+    const s = buildCohortSignals({
+      members: [member(1)],
+      registrationIps: [],
+      contentSamples: [],
+      stagedImageSamples: [
+        ...staged(1, ['2026-09-03T10:00:00.000Z']),
+        ...staged(99, ['2026-09-03T10:00:00.000Z']),
+      ],
+      sources,
+    });
+    expect([...s.stagedImagesByUser.keys()]).toEqual([1]);
+  });
+
+  it('🔴 an UNPARSEABLE timestamp counts as an upload but never as a burst', () => {
+    // 🔴 THE MAXIMAL SCORE BUILT OUT OF BAD DATA. `NaN` is a usable Map key — SameValueZero treats
+    // two NaNs as the same key — so admitting undated rows into the per-second tally would gather
+    // EVERY one of a member's bad rows into a single "burst" and saturate the burst half. That is
+    // the one direction a detector must not fail in: a top-confidence finding on the strength of
+    // corrupt timestamps.
+    //
+    // The row is still counted as an upload, because it IS one; only the time-based claim is
+    // withheld. Three bad rows plus one good one: count 4, burst 1.
+    const s = buildCohortSignals({
+      members: [member(1)],
+      registrationIps: [],
+      contentSamples: [],
+      stagedImageSamples: [
+        { userId: 1, createdAt: new Date('not a date') },
+        { userId: 1, createdAt: new Date('not a date') },
+        { userId: 1, createdAt: new Date('not a date') },
+        { userId: 1, createdAt: new Date('2026-09-03T10:00:00.000Z') },
+      ],
+      sources,
+    });
+    expect(s.stagedImagesByUser.get(1)).toEqual({ count: 4, largestSameSecondBurst: 1 });
+  });
+
+  it('indexes nothing when the staged samples are absent entirely', () => {
+    const s = buildCohortSignals({
+      members: [member(1)],
+      registrationIps: [],
+      contentSamples: [],
+      sources,
+    });
+    expect(s.stagedImagesByUser.size).toBe(0);
+  });
+
   it('carries the source flags through unchanged', () => {
     const s = buildCohortSignals({
       members: [],
       registrationIps: [],
       contentSamples: [],
       sources: {
-        readFailures: { registrationIps: true, contentSamples: false, filenameSamples: false },
+        readFailures: {
+          registrationIps: true,
+          contentSamples: false,
+          filenameSamples: false,
+          stagedImages: false,
+        },
         registrationIps: false,
         contentSamples: true,
         contentBudgetExhausted: true,
@@ -762,10 +1006,18 @@ describe('buildCohortSignals', () => {
         filenameSamples: true,
         filenameBudgetExhausted: true,
         membersSampledForFilenames: 4,
+        stagedImages: true,
+        stagedImageBudgetExhausted: true,
+        membersSampledForStagedImages: 2,
       },
     });
     expect(s.sources).toEqual({
-      readFailures: { registrationIps: true, contentSamples: false, filenameSamples: false },
+      readFailures: {
+        registrationIps: true,
+        contentSamples: false,
+        filenameSamples: false,
+        stagedImages: false,
+      },
       registrationIps: false,
       contentSamples: true,
       contentBudgetExhausted: true,
@@ -773,6 +1025,9 @@ describe('buildCohortSignals', () => {
       filenameSamples: true,
       filenameBudgetExhausted: true,
       membersSampledForFilenames: 4,
+      stagedImages: true,
+      stagedImageBudgetExhausted: true,
+      membersSampledForStagedImages: 2,
     });
   });
 });
@@ -785,7 +1040,12 @@ describe('emptyCohortSignals', () => {
     expect(emptyCohortSignals().sources).toEqual({
       // 🔴 THE ONE GROUP WHOSE `false` IS NOT "did not run". An index over nothing is not an
       // outage, and defaulting these to true would make every empty cohort page an operator.
-      readFailures: { registrationIps: false, contentSamples: false, filenameSamples: false },
+      readFailures: {
+        registrationIps: false,
+        contentSamples: false,
+        filenameSamples: false,
+        stagedImages: false,
+      },
       registrationIps: false,
       contentSamples: false,
       contentBudgetExhausted: false,
@@ -795,6 +1055,12 @@ describe('emptyCohortSignals', () => {
       filenameSamples: false,
       filenameBudgetExhausted: false,
       membersSampledForFilenames: 0,
+      // And the staged-image source, for the third time and for the same reason: `asset-staging`
+      // scoring 0 on a run where nobody read anything must not read as "these accounts published
+      // what they uploaded".
+      stagedImages: false,
+      stagedImageBudgetExhausted: false,
+      membersSampledForStagedImages: 0,
     });
   });
 });
@@ -818,25 +1084,40 @@ function fakeReader(opts: {
   ips?: RegistrationIpRow[];
   content?: ContentSampleRow[];
   filenames?: FilenameSampleRow[];
+  staged?: StagedImageRow[];
   hasIps?: boolean;
   ipError?: Error;
   contentError?: Error;
   filenameError?: Error;
+  stagedError?: Error;
 }): EvidenceReader & {
   ipCalls: number[][];
   ipWindows: Array<Date | undefined>;
   contentCalls: Array<{ ids: number[]; take: number }>;
   filenameCalls: Array<{ ids: number[]; take: number; createdBefore: Date | undefined }>;
+  stagedCalls: Array<{ ids: number[]; take: number; createdBefore: Date | undefined }>;
 } {
   const ipCalls: number[][] = [];
   const ipWindows: Array<Date | undefined> = [];
   const contentCalls: Array<{ ids: number[]; take: number }> = [];
   const filenameCalls: Array<{ ids: number[]; take: number; createdBefore: Date | undefined }> = [];
+  const stagedCalls: Array<{ ids: number[]; take: number; createdBefore: Date | undefined }> = [];
   return {
     ipCalls,
     ipWindows,
     contentCalls,
     filenameCalls,
+    stagedCalls,
+    // 🔴 THE FAKE MODELS THE PER-MEMBER CAP, for the reason spelled out on `listFilenameSamples`
+    // below: a fake that slices the whole batch encodes the very defect the real read was changed to
+    // remove, and then no test built on it can observe one account evicting another.
+    listStagedImageSamples: async (ids, perMemberTake, createdBefore) => {
+      stagedCalls.push({ ids, take: perMemberTake, createdBefore });
+      if (opts.stagedError) throw opts.stagedError;
+      return ids.flatMap((id) =>
+        (opts.staged ?? []).filter((r) => r.userId === id).slice(0, perMemberTake)
+      );
+    },
     hasRegistrationIps: opts.hasIps ?? true,
     listRegistrationIps: async (ids, createdAfter) => {
       ipCalls.push(ids);
@@ -964,6 +1245,7 @@ describe('collectCohortSignals', () => {
       hasRegistrationIps: false,
       listRegistrationIps: async () => [],
       listFilenameSamples: async () => [],
+      listStagedImageSamples: async () => [],
       listContentSamples: async (ids) => {
         calls += 1;
         if (calls > 1) throw new Error('replica timeout');
@@ -1070,6 +1352,140 @@ describe('collectCohortSignals', () => {
     expect(s.sources.membersSampledForFilenames).toBeLessThan(members.length);
   });
 
+  // -------------------------------------------------------------------------------------------
+  // The staged-image walk
+  // -------------------------------------------------------------------------------------------
+
+  /** `n` staged rows for a member, one second apart, so nothing bursts unless a case says so. */
+  const stagedRows = (userId: number, n: number, iso = '2026-09-03T10:00:00.000Z') =>
+    Array.from({ length: n }, (_, i) => ({
+      userId,
+      createdAt: new Date(new Date(iso).getTime() + i * 1000),
+    }));
+
+  it('walks the cohort for staged images and indexes what comes back', async () => {
+    const reader = fakeReader({ staged: [...stagedRows(1, 3), ...stagedRows(4, 1)] });
+    const s = await collectCohortSignals(reader, members, { chunkSize: 2, filenameBatchSize: 2 });
+    expect(s.sources.stagedImages).toBe(true);
+    expect(s.sources.membersSampledForStagedImages).toBe(members.length);
+    expect(s.stagedImagesByUser.get(1)?.count).toBe(3);
+    expect(s.stagedImagesByUser.get(4)?.count).toBe(1);
+    expect(s.stagedImagesByUser.has(2)).toBe(false);
+  });
+
+  it('🔴 passes the PER-MEMBER cap and the snapshot bound to the read', async () => {
+    // The cap is per account, not across the batch — a cap one account can spend is the defect the
+    // filename read was rewritten to remove, and this read was written after it. The snapshot bound
+    // is what makes two runs over one window sample the same rows instead of drifting.
+    const before = new Date('2026-09-03T12:00:00.000Z');
+    const reader = fakeReader({});
+    await collectCohortSignals(reader, members, {
+      chunkSize: 5,
+      filenameBatchSize: 2,
+      maxStagedImagesPerMember: 7,
+      createdBefore: before,
+    });
+    expect(reader.stagedCalls.map((c) => c.take)).toEqual([7, 7, 7]);
+    expect(reader.stagedCalls.map((c) => c.createdBefore)).toEqual([before, before, before]);
+    // Batched at the filename width, not at the chunk width: five members at batch size 2 is three
+    // calls, not one call of five.
+    expect(reader.stagedCalls.map((c) => c.ids)).toEqual([[1, 2], [3, 4], [5]]);
+  });
+
+  it('🔴 a failing STAGED read degrades the run instead of killing it, and says so', async () => {
+    // A dead source must not throw the run away, and it must not look like a quiet day. For this
+    // heuristic specifically the quiet-day reading is not merely weaker, it is FALSE: "these
+    // accounts published what they uploaded", asserted about accounts nobody looked at.
+    const text = 'Grab your 100 free credits at https://spam.example now';
+    const log = vi.fn();
+    const s = await collectCohortSignals(
+      fakeReader({
+        stagedError: new Error('replica timeout'),
+        content: [
+          { userId: 1, content: text },
+          { userId: 2, content: text },
+          { userId: 3, content: text },
+        ],
+      }),
+      members,
+      { chunkSize: 2, filenameBatchSize: 2, log }
+    );
+    expect(s.sources.stagedImages).toBe(false);
+    expect(s.sources.readFailures.stagedImages).toBe(true);
+    // A failed read is not an exhausted budget — reporting it as one sends a grading pass looking
+    // for a cohort too large rather than for a broken replica.
+    expect(s.sources.stagedImageBudgetExhausted).toBe(false);
+    expect(s.sources.membersSampledForStagedImages).toBe(0);
+    expect(log.mock.calls.map(([name]) => name)).toContain(
+      'bot-account-detection:staged-images-failed'
+    );
+    // 🔴 THE OTHER SOURCES ARE UNHARMED — three reads, three independent failure modes. Without
+    // this the case would pass just as well on a mutant that abandoned the whole walk.
+    expect(s.sources.contentSamples).toBe(true);
+    expect(s.membersPerFingerprint.get(textKey(text))).toBe(3);
+  });
+
+  it('🔴 DISCARDS the staged rows already in hand when a LATER batch fails', async () => {
+    // 🔴 THE ASSERTION THE DISCARD OWNS, and the first-batch fixture above cannot make it: there is
+    // nothing in hand to discard when the very first call throws. Five members at batch size 2 fail
+    // in batch TWO, so batch one's rows exist when the failure arrives and only the discard removes
+    // them. Without it, member 1 keeps three staged uploads out of a read that FAILED — a scored
+    // finding built on a broken read, while the flags say the source is unavailable.
+    let call = 0;
+    const reader: EvidenceReader = {
+      hasRegistrationIps: false,
+      listRegistrationIps: async () => [],
+      listContentSamples: async () => [],
+      listFilenameSamples: async () => [],
+      listStagedImageSamples: async (ids) => {
+        call += 1;
+        if (call > 1) throw new Error('replica timeout');
+        return ids.flatMap((id) => stagedRows(id, 3));
+      },
+    };
+    const s = await collectCohortSignals(reader, members, { chunkSize: 5, filenameBatchSize: 2 });
+    expect(call).toBe(2);
+    expect(s.stagedImagesByUser.size).toBe(0);
+    expect(s.sources.stagedImages).toBe(false);
+    expect(s.sources.readFailures.stagedImages).toBe(true);
+  });
+
+  it('🔴 stops the staged walk when its OWN budget runs out, and says which', async () => {
+    // Its own budget, not a share of the filename one: two reads sharing an allowance is one read
+    // able to spend the other's. The budget is checked per batch, so a run can overshoot by at most
+    // one batch's worth — bounded and stated rather than eliminated.
+    const reader = fakeReader({ staged: members.flatMap((m) => stagedRows(m.userId, 3)) });
+    const s = await collectCohortSignals(reader, members, {
+      chunkSize: 5,
+      filenameBatchSize: 1,
+      maxStagedImageSamples: 4,
+    });
+    expect(s.sources.stagedImageBudgetExhausted).toBe(true);
+    expect(s.sources.membersSampledForStagedImages).toBeLessThan(members.length);
+    // The read itself did not fail — an exhausted budget and a broken read are different states
+    // and the flags must not blur them.
+    expect(s.sources.stagedImages).toBe(true);
+    expect(s.sources.readFailures.stagedImages).toBe(false);
+  });
+
+  it('🔴 a failing FILENAME read does not take the staged read down with it', async () => {
+    // The mirror of the case above, on the pair most likely to be conflated: both reads hit the
+    // SAME table through the same `image.findMany`, so a single shared flag — or a walk that gave
+    // up after the first failure — would be invisible in production and would read as "nobody
+    // staged anything" on every day the filename read had a bad minute.
+    const s = await collectCohortSignals(
+      fakeReader({
+        filenameError: new Error('replica timeout'),
+        staged: stagedRows(1, 4),
+      }),
+      members,
+      { chunkSize: 2, filenameBatchSize: 2 }
+    );
+    expect(s.sources.filenameSamples).toBe(false);
+    expect(s.sources.stagedImages).toBe(true);
+    expect(s.stagedImagesByUser.get(1)?.count).toBe(4);
+  });
+
   it('🔴 records WHICH read threw, in a field nothing but a `catch` can set', async () => {
     // 🔴 THE SILENT-ZERO SEAM. Every other evidence field answers "was this heuristic blind", and
     // each of them reads the same on a quiet day as on a broken one. `readFailures` is the field
@@ -1083,6 +1499,7 @@ describe('collectCohortSignals', () => {
       registrationIps: false,
       contentSamples: false,
       filenameSamples: true,
+      stagedImages: false,
     });
 
     // 🔴 THE CONTROL THAT MAKES THE ABOVE MEAN ANYTHING: the identical run with a source that
@@ -1095,6 +1512,7 @@ describe('collectCohortSignals', () => {
       registrationIps: false,
       contentSamples: false,
       filenameSamples: false,
+      stagedImages: false,
     });
   });
 
@@ -1114,6 +1532,7 @@ describe('collectCohortSignals', () => {
       registrationIps: false,
       contentSamples: false,
       filenameSamples: false,
+      stagedImages: false,
     });
   });
 
@@ -1449,9 +1868,16 @@ describe('createEvidenceReader', () => {
     // read when a later chunk fails' in the `collectCohortSignals` block above. In production the
     // batch is `FILENAME_READ_BATCH_SIZE` (10) over up to `MAX_COHORT_ACCOUNTS` members, roughly
     // 2,500 batches, so failing after the first batch is the ORDINARY case, not the exotic one.
+    // 🔴 THE STAGED-IMAGE READ SHARES THIS MOCK, BECAUSE IT SHARES THE TABLE. Both reads are
+    // `image.findMany`, so a mock that threw for member 5 whatever it was asked would fail BOTH
+    // walks — and this case's closing assertion, that the failure is scoped to its own source,
+    // would then be passing because the fixture made every source fail rather than because the
+    // code keeps them apart. Discriminating on the arguments is what keeps the two claims separate.
+    const isStaged = (args: { where: Record<string, unknown> }) => 'postId' in args.where;
     const image = {
       findMany: vi.fn(async (args: ReturnType<typeof filenameSampleArgs>) => {
         const userId = args.where.userId as unknown as number;
+        if (isStaged(args as unknown as { where: Record<string, unknown> })) return [];
         // Member 5 sits in the SECOND batch of [1,2,3] [4,5,6] [7,8,9].
         if (userId === 5) throw new Error('replica timeout');
         return [{ userId, name: 'ring.jpg' }];
@@ -1478,12 +1904,20 @@ describe('createEvidenceReader', () => {
     expect(s.sources.membersSampledForFilenames).toBe(0);
     // Six statements, not nine: the walk stops at the failing batch instead of carrying on into the
     // third. Asserted by count because "it returned nothing" is true of a walk that kept going too.
-    expect(image.findMany).toHaveBeenCalledTimes(6);
-    // And the failure is scoped to its own source — the other two flags are untouched.
+    // Counted over the FILENAME calls only — the staged-image walk issues its own nine against the
+    // same mock, so a bare `toHaveBeenCalledTimes` would be reading the sum of two walks.
+    const filenameCalls = image.findMany.mock.calls.filter(
+      ([args]) => !isStaged(args as unknown as { where: Record<string, unknown> })
+    );
+    expect(filenameCalls).toHaveLength(6);
+    // And the failure is scoped to its own source — the other three flags are untouched. The
+    // staged-image flag is the sharp one here: its read hit the SAME mock on the SAME table and
+    // completed, so a `true` would mean one source's failure had been recorded under another's name.
     expect(s.sources.readFailures).toEqual({
       registrationIps: false,
       contentSamples: false,
       filenameSamples: true,
+      stagedImages: false,
     });
   });
 
@@ -1492,6 +1926,60 @@ describe('createEvidenceReader', () => {
     db.image.findMany.mockClear();
     expect(await reader.listFilenameSamples([], 10)).toEqual([]);
     expect(await reader.listFilenameSamples([1], 0)).toEqual([]);
+    expect(db.image.findMany).not.toHaveBeenCalled();
+  });
+
+  it('🔴 reads STAGED images once per member too, with the staged predicates on every call', async () => {
+    // 🔴 THE SAME SHAPE AS THE FILENAME READ AND FOR THE SAME MEASURED REASON — a wide `IN (…)` over
+    // `Image` under a `LIMIT` never completed. Asserted by call count AND by each call's arguments,
+    // because "it returned rows" is true of the broken shape as well. The predicates are checked on
+    // every call rather than on the first: a fan-out that built the filter once and reused it for
+    // member one only is a shape this assertion would otherwise pass.
+    const reader = createEvidenceReader({ db, ch: null });
+    db.image.findMany.mockClear();
+    const before = new Date('2026-09-03T12:00:00.000Z');
+    await reader.listStagedImageSamples([4, 5, 6], 9, before);
+    expect(db.image.findMany).toHaveBeenCalledTimes(3);
+
+    // The mock is declared with no parameters, so its recorded calls are untyped. Narrowed once
+    // here rather than at each assertion, to the shape the builder under test actually returns.
+    const stagedArgs = db.image.findMany.mock.calls.map(
+      ([a]) => a as unknown as ReturnType<typeof stagedImageSampleArgs>
+    );
+    expect(stagedArgs.map((a) => a.where.userId)).toEqual([4, 5, 6]);
+    for (const args of stagedArgs) {
+      expect(args.where.postId).toBeNull();
+      expect(args.where.meta).toEqual({ equals: Prisma.AnyNull });
+      expect(args.where).toHaveProperty('createdAt', { lte: before });
+      expect(args.take).toBe(9);
+    }
+  });
+
+  it('🔴 ONE per-member staged read rejecting inside the fan-out REJECTS THE WHOLE BATCH', async () => {
+    // 🔴 DO NOT "MAKE THIS RESILIENT" WITH `Promise.allSettled`. Keeping the fulfilled half would
+    // not produce a vaguer answer here, it would produce a LOWER one: this heuristic scores a member
+    // on how many staged uploads it HAS, so a member whose rows went missing is scored 0 and reads
+    // as an account that published everything. The rejection is what makes
+    // `collectCohortSignals` discard the batch and record the failure instead.
+    const image = {
+      findMany: vi.fn(async (args: ReturnType<typeof stagedImageSampleArgs>) => {
+        const userId = args.where.userId as unknown as number;
+        if (userId === 2) throw new Error('replica timeout');
+        return [{ userId, createdAt: new Date('2026-09-03T10:00:00.000Z') }];
+      }),
+    };
+    const reader = createEvidenceReader({
+      db: { ...db, image } as unknown as Parameters<typeof createEvidenceReader>[0]['db'],
+      ch: null,
+    });
+    await expect(reader.listStagedImageSamples([1, 2, 3], 5)).rejects.toThrow('replica timeout');
+  });
+
+  it('issues no staged statement for an empty id list or a zero take', async () => {
+    const reader = createEvidenceReader({ db, ch: null });
+    db.image.findMany.mockClear();
+    expect(await reader.listStagedImageSamples([], 10)).toEqual([]);
+    expect(await reader.listStagedImageSamples([1], 0)).toEqual([]);
     expect(db.image.findMany).not.toHaveBeenCalled();
   });
 

@@ -782,6 +782,14 @@ describe('the detector has no write surface', () => {
     // specifier — that is the "which BINDING" gap named in the file header — so the ClickHouse
     // ledger below asserts the method set and the statement text separately.
     expect(importSpecifiers(detectorSources())).toEqual([
+      // 🔴 TYPE-ONLY, AND THIS LEDGER CANNOT TELL. `heuristics/staging.ts` takes
+      // `import type { StagedImageFacts } from '../evidence'` — erased at compile time, so the
+      // runtime module graph of `heuristics/` is unchanged and the directory keeps the property
+      // `fingerprint-keys.ts` exists to protect (no heuristic pulls `dbRead` or the ClickHouse
+      // client into its graph). `scoring.ts` already takes `./evidence` the same way. What this
+      // list CAN say is that the specifier is a local module inside this tree, which is the check
+      // that matters: it exports no client and nothing that can act on an account.
+      '../evidence',
       '../fingerprint-keys',
       '../scoring',
       './clustering',
@@ -794,6 +802,7 @@ describe('the detector has no write surface', () => {
       './report',
       './scoring',
       './similarity',
+      './staging',
       './velocity',
       '@civitai/moderation',
       // Pure string constants and one string builder — no client, no env, no IO. It is the SAME
@@ -806,6 +815,21 @@ describe('the detector has no write surface', () => {
       // merges two unrelated clusters into one ruling. `createHash` is the only binding taken, it
       // reaches no data system, and it cannot act on an account. The header's "which BINDING" caveat
       // is why that is spelled out here rather than left to the specifier.
+      // 🔴 A NEW EXTERNAL SPECIFIER, AND THE HEADER'S "WHICH BINDING" CAVEAT APPLIES HARDEST HERE.
+      // The binding taken is `Prisma` and only `Prisma` — the generated namespace of query
+      // sentinels and types — used for exactly one thing: `Prisma.AnyNull`, the filter value that
+      // matches BOTH a SQL `NULL` and the JSON literal `null` on a `Json?` column. There is no
+      // other way to spell that filter: `{ equals: null }` on a `Json?` field is rejected by the
+      // query engine as ambiguous, and the alternative — selecting `meta` and testing it in
+      // JavaScript — would pull a generation-parameter blob per row off the largest table this
+      // detector reads.
+      //
+      // What else the specifier yields, stated rather than assumed away: `@prisma/client` also
+      // exports `PrismaClient`, a CONSTRUCTOR. It is not imported here, and constructing one needs
+      // a connection URL this module never reads — but that is a fact about today's source, and
+      // this ledger is the thing that forces the question to be asked again next time. The
+      // operation ledger above is what would catch a call made through one.
+      '@prisma/client',
       'crypto',
       '~/server/clickhouse/client',
       '~/server/db/client',
