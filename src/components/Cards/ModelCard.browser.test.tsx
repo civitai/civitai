@@ -363,7 +363,7 @@ describe('ModelCard paid-gate badge', () => {
     expect((described as unknown as Element).textContent).toBe('Paid');
   });
 
-  test('renders "Early Access" as text for an active timed window', async () => {
+  test('renders a clock-dollar for an active timed window, not the words', async () => {
     const deadline = new Date(Date.now() + 60 * 60 * 1000);
     renderWithProviders(
       <WithPalette>
@@ -372,10 +372,18 @@ describe('ModelCard paid-gate badge', () => {
         />
       </WithPalette>
     );
-    expect((await awaitBadge('access')).textContent).toBe('Early Access');
+    const el = await awaitBadge('access');
+    expect(el.textContent).toBe('');
+    expect(el.querySelector('svg')!.getAttribute('class') ?? '').toContain(
+      'tabler-icon-clock-dollar'
+    );
+    // Same accessible-name contract as the paid chip: an abstract glyph names itself or it names
+    // nothing, and `getAttribute('aria-label')` alone would pass with no role at all.
+    expect(el.getAttribute('role')).toBe('img');
+    await expect.element(page.getByRole('img', { name: 'Early Access' })).toBeInTheDocument();
   });
 
-  test('a model carrying BOTH gates reads "Early Access" — the window is the fact with a clock on it', async () => {
+  test('a model carrying BOTH gates reads Early Access — the window is the fact with a clock on it', async () => {
     const deadline = new Date(Date.now() + 60 * 60 * 1000);
     renderWithProviders(
       <WithPalette>
@@ -384,7 +392,7 @@ describe('ModelCard paid-gate badge', () => {
         />
       </WithPalette>
     );
-    expect((await awaitBadge('access')).textContent).toBe('Early Access');
+    expect((await awaitBadge('access')).getAttribute('aria-label')).toBe('Early Access');
   });
 
   test('an EXPIRED timed window renders no paid marker — the client re-checks the deadline against now', async () => {
@@ -478,9 +486,9 @@ describe('ModelCard New badge coexists with the money badge', () => {
     );
     expect((await awaitBadge('recency')).textContent).toBe('New');
     const access = await awaitBadge('access');
-    expect(access.textContent).toBe('Early Access');
-    // The text arm carries its own name, so it neither needs nor gets the icon arm's role.
-    expect(access.getAttribute('role')).toBeNull();
+    expect(access.getAttribute('aria-label')).toBe('Early Access');
+    // Both arms are icon-only now, so both must carry the role that exposes the name.
+    expect(access.getAttribute('role')).toBe('img');
   });
 
   test('a new UNGATED model renders the New badge and no money badge', async () => {

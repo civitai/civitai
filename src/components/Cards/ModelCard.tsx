@@ -10,6 +10,7 @@ import { memo, useMemo } from 'react';
 import {
   IconArchiveFilled,
   IconBolt,
+  IconClockDollar,
   IconLockDollar,
   IconBookmark,
   IconDownload,
@@ -86,24 +87,21 @@ function ModelCardContent({ data }: Props) {
     if (isNSFW) modFlagLabels.push('NSFW');
   }
 
-  // Green, not the `success` teal the Early Access chip uses: that sits a few degrees from the
-  // Updated chip's `teal[5]` and the two read as the same colour at chip size.
   // `.chip` fixes height at 26px; Mantine's `circle` only rounds the corners and sizes the width
   // from the badge size, so the two together give a narrow oval. Pin both axes to the chip height.
+  const roundChip = { width: 26, height: 26, padding: 0 } as const;
+  // Green rather than the `success` teal: that sits a few degrees from the Updated chip's old teal,
+  // and the two read as one colour at chip size.
   const paidBadgeStyle = useMemo(
-    () =>
-      isPaidAccess
-        ? { backgroundColor: theme.colors.green[7], width: 26, height: 26, padding: 0 }
-        : undefined,
+    () => (isPaidAccess ? { backgroundColor: theme.colors.green[7], ...roundChip } : undefined),
     [isPaidAccess, theme]
   );
   // Ungated cards never touch `theme.colors.success`, which is an app-level scale a bare
   // MantineProvider does not carry. Gated ones still do, so this narrows the blast radius rather
   // than removing it.
-  const accessBadgeStyle = useMemo(
-    () =>
-      isEarlyAccess || isPaidAccess ? { backgroundColor: theme.colors.success[5] } : undefined,
-    [isEarlyAccess, isPaidAccess, theme]
+  const earlyAccessBadgeStyle = useMemo(
+    () => (isEarlyAccess ? { backgroundColor: theme.colors.success[5], ...roundChip } : undefined),
+    [isEarlyAccess, theme]
   );
   // New and Updated share one blue. They are the same kind of fact — this model changed recently —
   // and two colours for that read as two unrelated states, especially beside a third chip.
@@ -209,17 +207,24 @@ function ModelCardContent({ data }: Props) {
               </Badge>
             )}
             {isEarlyAccess ? (
-              <Badge
-                className={cardClasses.chip}
-                variant="filled"
-                radius="xl"
-                data-status-badge="access"
-                style={accessBadgeStyle}
+              <Tooltip
+                label="Early Access"
+                position="bottom"
+                events={{ hover: true, focus: true, touch: true }}
               >
-                <Text c="white" size="xs" tt="capitalize">
-                  Early Access
-                </Text>
-              </Badge>
+                <Badge
+                  className={cardClasses.chip}
+                  variant="filled"
+                  radius="xl"
+                  data-status-badge="access"
+                  role="img"
+                  aria-label="Early Access"
+                  circle
+                  style={earlyAccessBadgeStyle}
+                >
+                  <IconClockDollar size={16} color="white" />
+                </Badge>
+              </Tooltip>
             ) : isPaidAccess ? (
               // `role` is load-bearing, not decoration: Mantine's Badge root is a bare `div`, and ARIA
               // drops an accessible name from a role-less generic, so without this the icon reaches a
@@ -228,7 +233,13 @@ function ModelCardContent({ data }: Props) {
               // Mantine's default is hover only (`focus: false, touch: false`). The badge is the
               // sole explanation of an abstract glyph, so it should also answer a tap and a
               // keyboard focus, not just a mouse.
-              <Tooltip label="Paid" events={{ hover: true, focus: true, touch: true }}>
+              // Below the badge, not above: these chips sit on the card's top edge, so a tooltip
+              // rendered above one lands off the top of a first-row card.
+              <Tooltip
+                label="Paid"
+                position="bottom"
+                events={{ hover: true, focus: true, touch: true }}
+              >
                 <Badge
                   className={cardClasses.chip}
                   variant="filled"
