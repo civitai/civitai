@@ -172,6 +172,87 @@
    retired together — deliberately, in one commit, not left as a dead cascade that
    the next person mistakes for the mechanism. Until then it is load-bearing.
 
+   🔴 BOTH APPS ARE OURS, SO THIS IS A TWO-PR ERRAND, NOT A TRANSITION WINDOW ANYONE
+   HAS TO LIVE INSIDE. Measured: `ZacxDev/civitai-app-playable-collections` and
+   `ZacxDev/civitai-app-sensei`, same owner, and BOTH manifests already carry a `page`
+   object — so each declaration is a ONE-LINE addition to `block.manifest.json`. Two
+   one-line PRs and two approvals retire everything below. Nobody is waiting on a
+   third party (the entry for sensei used to imply otherwise by contrast; it does not
+   now).
+
+   🔴 NOTHING FIRES WHEN THE RETIREMENT CONDITION BECOMES TRUE, AND THE DEAD RULE'S
+   DEATH IS UNOBSERVABLE BY CONSTRUCTION. Two separate gaps, and neither is fixable
+   by adding an assertion here:
+
+     · The membership expectation fires when someone EDITS this ledger, not when the
+       reason to edit it arrives. An approved `fullBleed` declaration on either app
+       leaves every test in this repo green.
+     · Once an app declares the flag the host omits `max-width` ENTIRELY — no
+       `var()` — so that app's rule below is never consulted again. The membership
+       test still passes (the rule is still written here); the browser ledger cases
+       still pass, because they INJECT the rule and render a NON-declaring app. So a
+       rule can be permanently dead while two independent mechanisms report green,
+       indefinitely. Whoever retires this cannot be alerted by CI; they have to
+       come looking. Hence the checklist below, written for a reader of THIS file
+       rather than of the commit that introduced the field.
+
+   WHAT THE RETIREMENT COMMIT DELETES — verified against the tree, by name rather
+   than by line number so it does not rot on the next edit here:
+
+     · THIS comment block, both `MIGRATION ENTRY` comments, and both rules — i.e.
+       everything from the `FULL-BLEED CSS LEDGER` header above down to the closing
+       brace of the `data-block-id='sensei'` rule. (It is ~230 lines, and the
+       sensei ENTRY comment alone is ~78 of them; do not stop at the first comment
+       terminator you reach.)
+     · `src/components/AppBlocks/__tests__/pageBlockHostMaxWidth.test.ts`, three
+       cases: 'the full-bleed opt-out ledger — membership is explicit…', 'stamps
+       BOTH ledger attributes on the host root…', and 'globals.css documents the
+       opt-out against the attributes the host actually stamps'.
+     · ALL of `src/components/AppBlocks/__tests__/ledgerSelectorSurvivesProdStrip.test.ts`
+       — it exists only to keep these selectors production-valid.
+     · The ledger cases in `src/components/AppBlocks/PageBlockHostMaxWidth.browser.test.tsx`:
+       'an app can opt out of the cap with a CSS rule keyed on `data-block-id`' and
+       'LEDGER — every member is full-bleed at 2560x1080…'. Leave the MANIFEST
+       two-point case; it consults no cascade.
+     · The `##### The CSS ledger this replaced` section in
+       `docs/features/app-blocks.md`.
+
+   …AND SEPARATELY, IF THE SAME COMMIT ALSO INLINES THE CAP. Once nothing overrides
+   `--app-page-max-width` there is no longer a reason for the property to exist, and
+   the host can read `APP_PAGE_MAX_WIDTH_PX` directly. That is a SECOND, optional
+   step with its own fallout, and it is the half an enumeration of this retirement
+   has already been written without:
+
+     · the `--app-page-max-width` declaration on `:root` above.
+     · ⚠️ `pageBlockHostMaxWidth.test.ts` → '`--app-page-max-width` is declared once
+       in shipped `src/`…' must be RETIRED OR RE-POINTED, not merely left alone: it
+       demands exactly one default declaration and its own message says "Zero means
+       it was renamed, removed or commented out". Deleting the property turns it red.
+     · ⚠️ same file → "pins the host's cap declarations verbatim…" pins the host's
+       `maxWidth` / `marginInline` pair as one exact string, INCLUDING the `var()`
+       call and its numeric fallback. Inlining the cap rewrites that expression, so
+       the expected string in the guard moves in the same commit. (Deliberately
+       described here rather than quoted: a verbatim copy of that expression in this
+       comment is a second thing to keep in step, and its `var()` spelling is picked
+       up by the single-declaration guard above.)
+     · the browser case 'the cap is read from `--app-page-max-width` — overriding it
+       moves the rendered width', which exists to prove the property is the source.
+     · the `🔴 THIS IS THE `var()` FALLBACK, NOT THE SOURCE` paragraph on
+       `APP_PAGE_MAX_WIDTH_PX` in `PageBlockHost.tsx`, which would then describe a
+       property that no longer exists.
+
+   🔴 AND THE ONE THING THAT MUST NOT GO EARLY: the INVARIANT case in
+   `pageBlockHostMaxWidth.test.ts` — 'the cap is never written as an inline custom
+   property, which would beat the ledger'. It is load-bearing TODAY and the browser
+   tier CANNOT replace it, which was MEASURED rather than reasoned: an implementation
+   that sets this custom property to `none` as an INLINE style on the element passes
+   all three arms of the browser ledger case 12/12 green, because an inline custom
+   property beats the injected `:root` override — that node-tier invariant is the
+   only thing that kills it. It becomes retirable when the PROPERTY itself goes (the
+   second step above) and not one commit sooner, because until then a future edit can
+   still make the cascade inert while every browser arm stays green. Delete it with
+   the property, never with the rules.
+
    The membership set is ASSERTED in
    `src/components/AppBlocks/__tests__/pageBlockHostMaxWidth.test.ts` and fails if it
    grows OR shrinks. Growth is now a REVIEW SIGNAL rather than routine maintenance:
@@ -268,6 +349,9 @@
    that version is APPROVED. Delete this rule and its row in the membership
    expectation in the same commit; until then it is the only thing keeping the app
    full bleed, because a manifest it has already shipped cannot gain a field.
+   `ZacxDev/civitai-app-playable-collections` is a repo we control and its manifest
+   already carries a `page` object, so the declaration is a one-line change here too
+   — this is not a wait on a third party.
 
    A collection PLAYER, and every one of its open-collection surfaces is uncapped by
    the app itself.
@@ -303,7 +387,10 @@
    🔴 RETIRES WHEN: this app ships a manifest declaring `page.fullBleed: true` and
    that version is APPROVED. Delete this rule and its row in the membership
    expectation in the same commit. `ZacxDev/civitai-app-sensei` is a repo we control,
-   so this one is a straightforward follow-up rather than a wait on a third party.
+   so this is a straightforward follow-up. ⚠️ AND SO IS THE OTHER ENTRY — an earlier
+   wording here said "rather than a wait on a third party", which implied by contrast
+   that Playable Collections was one. It is not: both apps are ours (see the header),
+   and both manifests already carry a `page` object, so each is a one-line change.
 
    A two-pane chat shell, and ONE OF THE TWO APPS THIS CAP WAS CREATED FOR.
 
