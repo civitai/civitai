@@ -135,23 +135,41 @@ describe('a base-`enabled: true` flip, measured against the real Flipt engine', 
     }
   });
 
-  it('FIXTURE-GUARD CONTROL: the derivation helper REFUSES a template without a segment rollout', async () => {
-    // Makes the guard reachable rather than merely present — the three refusal arms
+  it('FIXTURE-GUARD CONTROL: the derivation helper REFUSES every template shape that is not a clean segment rollout', async () => {
+    // Makes the guard reachable rather than merely present — the four refusal arms
     // are otherwise exercised by nothing, which is the shape this whole PR is about.
+    // Each arm carries its OWN expected message, so an arm cannot pass by tripping a
+    // DIFFERENT arm's error and read as covered.
     const { deriveSnapshotFromFlagShape: derive } = await import('./fixtures/flipt-fixture-server');
     const ask = [{ key: 'x', enabled: true }];
-    const shapes: Array<[string, unknown]> = [
-      ['no rollouts key', { key: 't', enabled: false }],
-      ['empty rollouts', { key: 't', enabled: false, rollouts: [] }],
+    const NO_SEGMENT = /carries no SEGMENT_ROLLOUT_TYPE rollout/;
+    const shapes: Array<[string, unknown, RegExp]> = [
+      ['no rollouts key', { key: 't', enabled: false }, NO_SEGMENT],
+      ['empty rollouts', { key: 't', enabled: false, rollouts: [] }, NO_SEGMENT],
       [
         'threshold rollout only',
         { key: 't', enabled: false, rollouts: [{ type: 'THRESHOLD_ROLLOUT_TYPE' }] },
+        NO_SEGMENT,
+      ],
+      // 🔴 THE ARM `.some()` ALONE ADMITTED, and the reason this guard was widened: a
+      // percentage ramp captured ALONGSIDE the segment rollout. The segment rollout IS
+      // present, so the three arms above cannot catch it — and a 100% threshold makes
+      // `base-false-control` evaluate true for every subject, which is exactly the
+      // attribution this fixture exists to protect.
+      [
+        'threshold rollout ALONGSIDE the segment rollout',
+        {
+          key: 't',
+          enabled: false,
+          rollouts: [{ type: 'THRESHOLD_ROLLOUT_TYPE' }, { type: 'SEGMENT_ROLLOUT_TYPE' }],
+        },
+        /carries a THRESHOLD_ROLLOUT_TYPE rollout alongside its segment rollout/,
       ],
     ];
-    for (const [label, flag] of shapes) {
+    for (const [label, flag, expected] of shapes) {
       expect(() =>
         derive({ namespace: { key: 'default' }, flags: [flag] } as never, 't', ask)
-      ).toThrow(/carries no SEGMENT_ROLLOUT_TYPE rollout/);
+      ).toThrow(expected);
       expect(label).toBeTruthy();
     }
     // POSITIVE CONTROL — the real template is accepted, so the three refusals above

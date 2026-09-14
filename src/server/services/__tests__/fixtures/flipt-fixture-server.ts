@@ -126,11 +126,31 @@ export function deriveSnapshotFromFlagShape(
   //     `base-false-control` backstop too, because that control would also be `true`.
   // Every `true` in the consuming suite is attributable to the base value only if the
   // template really carries a segment rollout, so that is what gets checked.
-  if (!Array.isArray(rollouts) || !rollouts.some((r) => r?.type === 'SEGMENT_ROLLOUT_TYPE')) {
+  // 🔴 BOTH ARMS, because the threshold case above is NOT removed by requiring a segment
+  // rollout to exist: a re-capture can carry a THRESHOLD rollout ALONGSIDE the segment one,
+  // which `.some()` admits while `base-false-control` then evaluates `true` for everyone —
+  // the precise failure this guard's own comment names. Checking only `.some()` made the
+  // description wider than the implementation.
+  const hasSegment =
+    Array.isArray(rollouts) && rollouts.some((r) => r?.type === 'SEGMENT_ROLLOUT_TYPE');
+  const hasThreshold =
+    Array.isArray(rollouts) && rollouts.some((r) => r?.type === 'THRESHOLD_ROLLOUT_TYPE');
+  if (!hasSegment || hasThreshold) {
+    // The two arms get DISTINCT text so a mutation of either dies for its own reason
+    // rather than to the other's error.
+    // 🔴 `hasSegment &&` is load-bearing and was missing in the first cut of this fix: a
+    // THRESHOLD-only template has no segment rollout either, so keying the message on
+    // `hasThreshold` alone made it announce a rollout "alongside its segment rollout"
+    // that is not there. The existing FIXTURE-GUARD CONTROL arm caught it.
     throw new Error(
-      `deriveSnapshotFromFlagShape: template flag '${templateKey}' carries no ` +
-        `SEGMENT_ROLLOUT_TYPE rollout — the derived snapshot would not model a ` +
-        `segment-rolled-out flag at all`
+      hasSegment && hasThreshold
+        ? `deriveSnapshotFromFlagShape: template flag '${templateKey}' carries a ` +
+          `THRESHOLD_ROLLOUT_TYPE rollout alongside its segment rollout — a percentage ` +
+          `ramp makes base-false-control evaluate true for every subject, so the ` +
+          `consuming suite would stop attributing its results to the base value`
+        : `deriveSnapshotFromFlagShape: template flag '${templateKey}' carries no ` +
+          `SEGMENT_ROLLOUT_TYPE rollout — the derived snapshot would not model a ` +
+          `segment-rolled-out flag at all`
     );
   }
   return {

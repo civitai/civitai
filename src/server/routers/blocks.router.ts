@@ -394,11 +394,14 @@ async function assertAppEditAccess(
  * VANISHED user, not an anon caller. There are **16** such parse sites, not 17:
  * the 17th gate call is `assertViewerIsAppDeveloper`, which shares the parse site
  * of the enabled-gate call immediately above it rather than adding one, so the two
- * sets OVERLAP and must not be added. (Do not count raw occurrences of the
- * identifier either — the total also covers this function's own declaration and
- * several prose mentions, so it MOVES whenever anyone edits a nearby comment and
- * no figure is recorded here. Count the CALL SITES:
- * `grep -c 'await assertAppBlocksEnabledForTokenUser'` → 16.)
+ * sets OVERLAP and must not be added. (No raw-occurrence total is recorded here,
+ * and none should be: a grep for either identifier also matches this docblock's
+ * own prose and the import at the top of the file, and for the gate it matches a
+ * DIFFERENT function of the same name in `apps.router.ts`. Nor is a re-derivation
+ * command given — the obvious one contains the identifier it searches for, so it
+ * matches the very line it is written on and returns one too many. Enumerate the
+ * call sites if you need the number; this paragraph has now been wrong four
+ * rounds running, each time by writing a figure down.)
  * `authorizeBlockBridgeToken` (caller) already rejected invalid/expired
  * tokens, revoked instances and non-approved apps before this runs — the "revoked"
  * half of that sentence used to be false, because the caller ran a bare

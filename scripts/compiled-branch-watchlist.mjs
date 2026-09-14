@@ -53,9 +53,20 @@
  *
  * 🔴 CHOOSING THE ANCHOR TEXT — the real rot vector, and it is NOT line numbers.
  * Anchors are resolved to a line at run time, so an anchor survives the code moving,
- * and comment churn above it cannot break it. What DOES break it is the anchored TEXT
+ * and comment churn above it cannot SHIFT it. What DOES break it is the anchored TEXT
  * changing, and a miss is `die(2)` — which `--warn-only` deliberately does not
- * downgrade, so the first red is the production image build. Two rules follow:
+ * downgrade, so the first red is the production image build.
+ *
+ * 🔴 An earlier revision of this paragraph said "comment churn above it cannot break
+ * it", full stop. That is FALSE and it misled a reader into treating a docblock edit in
+ * a watchlisted module as free. `resolveAnchor` scans EVERY line, comments included, and
+ * more than one match is also a hard error — so a COMMENT that merely CONTAINS the
+ * anchor text breaks resolution just as a reword does. Rule 1 below makes this likelier,
+ * not less: the shortest fragment is the easiest for prose to collide with. It is caught
+ * by this gate's own unit suite rather than first at the image build
+ * (`scripts/__tests__/assert-compiled-branches.test.ts` asserts every anchor resolves to
+ * exactly one line), which is the only reason it is not a deploy-blocking trap. Two
+ * rules follow:
  *
  *   1. Anchor a substring that survives REFORMATTING. Do not include a trailing `,`
  *      or `});`, and do not anchor a whole long line: a line near `printWidth` reflows
