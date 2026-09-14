@@ -302,6 +302,14 @@ describe('ModelCard paid-gate badge', () => {
     // Resolved BY ROLE AND NAME rather than by reading two attributes: `getAttribute('aria-label')`
     // passes with no role at all, and ARIA drops an accessible name from a role-less generic, which
     // is exactly what Mantine's Badge root is. This query is the accessibility tree's own answer.
+    // Fast structural check FIRST, so a revert fails in milliseconds with a named cause. The role
+    // query below is the one that actually proves the name resolves, but it is a polling locator:
+    // on a missing role it can only fail by exhausting the 15s budget, which is a slow, mute way to
+    // learn something this line says immediately.
+    expect(
+      document.querySelector('[data-status-badge="access"]')!.getAttribute('role'),
+      'the access badge lost its role, so its aria-label reaches no screen reader'
+    ).toBe('img');
     await expect.element(page.getByRole('img', { name: 'Paid' })).toBeInTheDocument();
   });
 
