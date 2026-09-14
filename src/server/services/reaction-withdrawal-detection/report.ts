@@ -46,8 +46,10 @@ export function renderReason(a: WithdrawalAccount): string {
   return truncateReason(parts.join(' '));
 }
 
-/** 🔴 A reason over the contract's limit does not lose the finding, it 400s the REPORT and loses
- *  every finding in the batch. Truncated here; the ellipsis is the record that something was cut. */
+/** 🔴 A reason over the contract's limit does not lose the finding, it loses the whole REPORT and
+ *  every finding in the batch with it. The failure is LOCAL, not a spoke 4xx: `moderatorApp.abuseReport`
+ *  runs `abuseReportInput.parse(input)` before the fetch, so it throws a ZodError in this process and
+ *  nothing is sent. Truncated here; the ellipsis is the record that something was cut. */
 export function truncateReason(reason: string, max = MAX_REASON_LENGTH): string {
   return reason.length <= max ? reason : `${reason.slice(0, max - 1)}…`;
 }

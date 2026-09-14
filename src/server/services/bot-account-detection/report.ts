@@ -31,10 +31,12 @@ type AbuseFinding = AbuseReportInput['findings'][number];
 const MAX_REASON_LENGTH = 2_000;
 
 /**
- * 🔴 A reason over the contract's limit does not lose the finding, it 400s the REPORT and loses
- * every finding in the batch. So it is truncated here rather than left to fail, and the ellipsis is
- * the record that something was cut. Reason text is generated from bounded facts plus a username and
- * a per-heuristic list, both of which can grow.
+ * 🔴 A reason over the contract's limit does not lose the finding, it loses the whole REPORT — every
+ * finding in the batch with it. The failure is LOCAL, not a spoke 4xx: `moderatorApp.abuseReport`
+ * runs `abuseReportInput.parse(input)` before the fetch, so an over-long reason throws a ZodError in
+ * this process and nothing is ever sent. So it is truncated here rather than left to fail, and the
+ * ellipsis is the record that something was cut. Reason text is generated from bounded facts plus a
+ * username and a per-heuristic list, both of which can grow.
  */
 export function truncateReason(reason: string, max = MAX_REASON_LENGTH): string {
   if (reason.length <= max) return reason;

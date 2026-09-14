@@ -26,6 +26,7 @@ const {
   mockCreateNotification,
   mockSignalSend,
   mockFetchThroughCache,
+  mockHandleLogError,
 } = vi.hoisted(() => {
   const stub = () => ({
     increment: vi.fn(),
@@ -43,6 +44,7 @@ const {
     mockCreateNotification: vi.fn(),
     mockSignalSend: vi.fn(),
     mockFetchThroughCache: vi.fn(),
+    mockHandleLogError: vi.fn(),
   };
 });
 
@@ -70,7 +72,7 @@ vi.mock('~/server/games/new-order/utils', () => ({
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 vi.mock('~/server/utils/errorHandling', () => ({
-  handleLogError: vi.fn(),
+  handleLogError: mockHandleLogError,
   throwBadRequestError: vi.fn(),
   throwInternalServerError: vi.fn(),
   throwNotFoundError: vi.fn(),
@@ -117,7 +119,9 @@ const SMITE_ROW = {
   remaining: 50,
 };
 
-const call = (onSmiteCreated?: (smite: { id: number }) => void) =>
+// Mirrors the parameter's own type, `void | Promise<void>`, so the async-hook case below is a real
+// call rather than one smuggled past a narrower local alias.
+const call = (onSmiteCreated?: (smite: { id: number }) => void | Promise<void>) =>
   smitePlayer({ playerId: 7, modId: 1, reason: 'r', size: 50, onSmiteCreated });
 
 beforeEach(() => {
@@ -226,7 +230,7 @@ describe('smitePlayer — onSmiteCreated is the durable-write signal', () => {
     expect(onSmiteCreated).not.toHaveBeenCalled();
   });
 
-  it('a hook that THROWS does not abort the tail', async () => {
+  it('a hook that THROWS does not abort the tail, and the failure is LOGGED', async () => {
     // The precondition used to be prose on the parameter — "must not throw" — which is a request,
     // not a guard, on a seam any future caller can reach. `smitePlayer` has already committed the
     // penalty by this point, so a caller's own bug must not be able to strand the account with a
@@ -239,6 +243,56 @@ describe('smitePlayer — onSmiteCreated is the durable-write signal', () => {
 
     expect(smitesCounterStub.increment).toHaveBeenCalledTimes(1);
     expect(mockSignalSend).toHaveBeenCalledTimes(1);
+
+    // 🔴 CONTAINED IS NOT THE SAME AS SWALLOWED, and the catch was bare until this assertion existed.
+    // Before this seam was exported the throw reached the abuse-detection job's own `handleLogError`;
+    // a silent catch here removed that without replacing it, so a caller's bug became invisible on
+    // the one path where the penalty is already live. The KEY is asserted, not just the call: an
+    // alert can match a stable key and cannot match a sentence, and a bare `toHaveBeenCalled()`
+    // would pass on any unrelated log the tail happens to emit.
+    expect(mockHandleLogError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'caller hook exploded' }),
+      'new-order:smite-hook-failed',
+      { smiteId: SMITE_ROW.id }
+    );
+  });
+
+  it('🔴 a hook that REJECTS is contained too — the shape a `=> void` position silently admits', async () => {
+    // TypeScript's void-return rule accepts an `async` function wherever a `() => void` is expected,
+    // so this is the shape a future caller is most likely to write — and it is NOT covered by the
+    // `try` alone. `Promise.resolve(onSmiteCreated?.(smite))` cannot catch it either way round: a
+    // sync throw happens during argument evaluation, before `Promise.resolve` runs, while a
+    // rejection happens after the `try` block has already exited. Only the `.catch` on the result
+    // reaches it, and without that it is a genuine unhandled rejection — this repo installs no
+    // global `unhandledRejection` handler to fall back on.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      await expect(
+        call(async () => {
+          throw new Error('caller hook rejected');
+        })
+      ).resolves.not.toThrow();
+
+      // The tail ran to completion, exactly as for the synchronous shape.
+      expect(smitesCounterStub.increment).toHaveBeenCalledTimes(1);
+      expect(mockSignalSend).toHaveBeenCalledTimes(1);
+
+      expect(mockHandleLogError).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'caller hook rejected' }),
+        'new-order:smite-hook-failed',
+        { smiteId: SMITE_ROW.id }
+      );
+
+      // A macrotask turn, so a rejection left without a handler has actually been reported by the
+      // time this is read. Asserting it directly is what makes this a test of the defect rather than
+      // of the log line: the log could be produced and the rejection still escape.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 
   it('is optional — a caller that passes nothing is unaffected', async () => {

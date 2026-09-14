@@ -22,6 +22,10 @@ import { MAX_REASON_LENGTH } from '@civitai/moderation';
  *  - It is a SOURCE-TEXT check over a directory listing, not a type or dependency check. It cannot
  *    see a cap reached indirectly — a bound read from a helper, a re-export, an object field, or a
  *    producer that lives somewhere other than `src/server/services/<name>/report.ts`.
+ *  - It matches the IDENTIFIER, so the nearest-neighbour shape walks straight past it: a producer
+ *    that writes `const REASON_CAP = 2_000` holds exactly the copy this file exists to catch and
+ *    stays off the ledger, green. Pinning the literal instead would fire on every unrelated 2_000 in
+ *    a producer, so the name is the tractable half — but it is the half a rename defeats.
  *  - A green run says the SET did not change. It says nothing about whether the values agree; the
  *    behavioural pinning of the imported bound lives in `report.test.ts` beside this file.
  *
@@ -54,25 +58,28 @@ const KNOWN_PRODUCERS = [
 ].sort();
 
 /**
- * A DECLARATION of the identifier, not a mention of it. Anchored to the start of a line so a
- * trailing `// const MAX_REASON_LENGTH` cannot match, and applied to comment-stripped source so a
- * leading one cannot either — all three of these files name the identifier in prose.
+ * A DECLARATION of the identifier, not a mention of it, and applied to RAW source.
+ *
+ * The `[ \t]*` between the line anchor and the keyword admits whitespace and nothing else, which is
+ * what makes reading raw source safe for the ordinary comment shapes: `/` is not `[ \t]`, so neither
+ * a commented-out `// const MAX_REASON_LENGTH = 2_000` nor a JSDoc ` * const MAX_REASON_LENGTH` can
+ * satisfy it, and a trailing `foo(); // const MAX_REASON_LENGTH` fails the anchor outright. All
+ * three of these files name the identifier in prose and none of those mentions match.
+ *
+ * It is NOT comment-aware, and that is deliberate. A previous version stripped comments first with
+ * `/\/\*[\s\S]*?\*\//g`, which is blind to string literals: a producer whose `report.ts` contained
+ * `/*` inside any string — a URL, a glob — opened a phantom comment that ran to the next block-
+ * comment terminator and deleted the real declaration before this regex ever saw it, so the producer
+ * passed green. That is
+ * a SILENT PASS in the exact direction this file exists to prevent, bought for nothing, since the
+ * anchor above already handles every motive the stripper cited.
+ *
+ * The residual risk runs the other way and is the safe one: an unprefixed `const MAX_REASON_LENGTH`
+ * inside a block comment now matches, so the ledger GROWS and the assertion fails loudly. A guard
+ * that over-reports gets looked at; one that under-reports does not.
  */
 const LOCAL_DECLARATION =
   /(?:^|\n)[ \t]*(?:export[ \t]+)?(?:const|let|var)[ \t]+MAX_REASON_LENGTH\b/;
-
-/**
- * Remove block comments and whole-line `//` comments. Deliberately not a parser — it exists only so
- * a PROSE mention cannot satisfy `LOCAL_DECLARATION`, and the controls below pin both directions, so
- * any mangling it did would surface as a loud failure rather than a silent pass.
- */
-function stripComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n')
-    .filter((line) => !line.trimStart().startsWith('//'))
-    .join('\n');
-}
 
 /** Every `src/server/services/<name>/report.ts`, by directory name. */
 function discoverProducers(): string[] {
@@ -83,8 +90,7 @@ function discoverProducers(): string[] {
     .sort();
 }
 
-const read = (name: string) =>
-  stripComments(fs.readFileSync(path.join(SERVICES_DIR, name, 'report.ts'), 'utf8'));
+const read = (name: string) => fs.readFileSync(path.join(SERVICES_DIR, name, 'report.ts'), 'utf8');
 
 describe('MAX_REASON_LENGTH — producer drift ledger', () => {
   it('finds the producer files it claims to scan', () => {

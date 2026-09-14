@@ -71,8 +71,12 @@ export const MAX_FINDINGS_PER_REPORT = 1_000;
  * this value today by coincidence of the number, not by construction. The set of producers still
  * holding a local copy is pinned as an explicit ledger in
  * `src/server/services/new-order-abuse-detection/__tests__/max-reason-length-ledger.test.ts`, which
- * fails if it grows or shrinks — so a NEW producer cannot quietly copy the literal, and migrating
- * one of the two is a deliberate act rather than a silent change.
+ * fails if it grows or shrinks.
+ *
+ * That ledger catches the COMMON shape, not every shape. It matches the identifier
+ * `MAX_REASON_LENGTH` declared in a `src/server/services/<name>/report.ts`, so a copy under a
+ * different name (`const REASON_CAP = 2_000`), or one in a producer laid out differently, stays
+ * green. Read it as a tripwire on the likely case rather than a guarantee that no copy can appear.
  */
 export const MAX_REASON_LENGTH = 2_000;
 

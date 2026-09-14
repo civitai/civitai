@@ -214,10 +214,17 @@ export async function smitePlayer({
    *
    * Optional, and no existing caller passes it — behaviour for everyone else is unchanged.
    *
-   * Keep it to recording a fact. A throw here cannot abort the tail — the call site swallows it —
-   * but a hook that throws still records nothing, so the caller is back to not knowing.
+   * Keep it to recording a fact. Both failure shapes are contained at the call site and logged under
+   * `new-order:smite-hook-failed`: a synchronous throw by the `try`, and a rejected promise by a
+   * `.catch` on the result. The return type admits `Promise<void>` explicitly because TypeScript's
+   * void-return rule accepts an `async` function at a `=> void` position anyway — spelling it out is
+   * what stops that being a silent unhandled rejection rather than a documented case.
+   *
+   * ⚠️ TWO LIMITS. The tail does NOT await an async hook, so its write may land after this function
+   * returns and it cannot be depended on for ordering. And a hook that fails still records nothing —
+   * the log is the only trace, so the caller is back to not knowing.
    */
-  onSmiteCreated?: (smite: { id: number }) => void;
+  onSmiteCreated?: (smite: { id: number }) => void | Promise<void>;
 }) {
   const smite = await dbWrite.newOrderSmite.create({
     data: {
@@ -228,13 +235,29 @@ export async function smitePlayer({
       remaining: size,
     },
   });
+  // The tail must not depend on a caller's hook. This is a newly-exported seam on a function that
+  // has already committed the penalty, and the prose asking callers not to throw was the only thing
+  // holding — structural here, so a future caller cannot turn its own bug into a half-applied smite.
+  //
+  // 🔴 BOTH SHAPES, AND THE ORDER MATTERS. `Promise.resolve(onSmiteCreated?.(smite))` cannot catch a
+  // SYNCHRONOUS throw on its own: the hook is evaluated as the argument, so it throws before
+  // `Promise.resolve` is ever called and before any `.catch` is attached. The `try` covers that one;
+  // the `.catch` covers a rejected promise, which a `=> void` position silently accepts from an
+  // `async` hook and which would otherwise be an unhandled rejection — there is no global
+  // `unhandledRejection` handler in this repo to fall back on.
+  //
+  // Logged, not swallowed. A stable, opaque key in this file's established style, so an alert can
+  // match it; the id goes in the details rather than the name, which would make every failure its
+  // own unmatchable key. The rationale this replaced — "the hook's own failure is the hook's to
+  // report" — cannot hold: a hook that threw has by construction not reported. Before this seam
+  // existed the throw reached the job's own `handleLogError`; without a log here it now reaches
+  // nothing at all.
+  const reportHookFailure = (e: unknown) =>
+    handleLogError(e as Error, 'new-order:smite-hook-failed', { smiteId: smite.id });
   try {
-    onSmiteCreated?.(smite);
-  } catch {
-    // The tail must not depend on a caller's hook. This is a newly-exported seam on a function that
-    // has already committed the penalty, and the prose asking callers not to throw was the only
-    // thing holding — structural here, so a future caller cannot turn its own bug into a half-applied
-    // smite. Deliberately silent: the hook's own failure is the hook's to report.
+    void Promise.resolve(onSmiteCreated?.(smite)).catch(reportHookFailure);
+  } catch (e) {
+    reportHookFailure(e);
   }
 
   const activeSmiteCount = await dbWrite.newOrderSmite.count({
