@@ -261,10 +261,20 @@ export async function smitePlayer({
   // value — `throw null`, a rejected non-`Error` payload — makes the LOGGER throw a TypeError: out
   // of the `catch` below on the sync path, taking the tail with it, and out of the `.catch` on the
   // async path as an unhandled rejection. Both are the failures this block exists to prevent.
+  //
+  // 🔴 AND THE NORMALISATION ITSELF MUST NOT THROW, which is why the value is carried as `cause`
+  // rather than stringified. `String(e)` reintroduces exactly those two failures for any value whose
+  // primitive conversion throws — a null-prototype object, an object with a throwing `toString`, a
+  // revoked `Proxy` — because it runs INSIDE the handler that is supposed to contain them; measured,
+  // the tail was skipped and the counter took 0 calls. `new Error(msg, { cause: e })` stores the
+  // reference and reads no property of `e`, so it runs no user code for any throw value.
+  // `Object.prototype.toString.call(e)` is NOT equivalent: it still throws on a revoked `Proxy`.
   const reportHookFailure = (e: unknown) =>
-    handleLogError(e instanceof Error ? e : new Error(String(e)), 'new-order:smite-hook-failed', {
-      smiteId: smite.id,
-    });
+    handleLogError(
+      e instanceof Error ? e : new Error('non-Error hook throw', { cause: e }),
+      'new-order:smite-hook-failed',
+      { smiteId: smite.id }
+    );
   try {
     void Promise.resolve(onSmiteCreated?.(smite)).catch(reportHookFailure);
   } catch (e) {

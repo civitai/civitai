@@ -91,7 +91,7 @@ const AUTO_SMITE_SIZE = newOrderConfig.smiteSize * 50;
  * a call that wrote nothing — and every "this one smites" case here would silently be asserting the
  * failure path while reading like the success one.
  */
-type SmiteArgs = { playerId: number; onSmiteCreated?: (smite: { id: number }) => void };
+type SmiteArgs = { playerId: number; onSmiteCreated?: (smite: { id: number }) => unknown };
 let nextSmiteId = 1;
 const smiteSucceeds = async (args: SmiteArgs) => {
   args.onSmiteCreated?.({ id: nextSmiteId++ });
@@ -436,7 +436,7 @@ describe('runAbuseDetectionScan abuse-board report', () => {
     mockSmitePlayer
       .mockImplementationOnce(smiteSucceeds)
       .mockImplementationOnce(
-        async (args: { onSmiteCreated?: (smite: { id: number }) => void }) => {
+        async (args: { onSmiteCreated?: (smite: { id: number }) => unknown }) => {
           // The durable half succeeded — this is the signal `smitePlayer` fires the instant the row is
           // committed — and the throw is everything after it.
           args.onSmiteCreated?.({ id: 987 });

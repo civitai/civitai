@@ -45,9 +45,16 @@ const {
     mockSignalSend: vi.fn(),
     mockFetchThroughCache: vi.fn(),
     // 🔴 FAITHFUL TO THE REAL `handleLogError`, WHICH DEREFS `e.message` WITH NO GUARD
-    // (`src/server/utils/errorHandling.ts`). A bare `vi.fn()` accepts `null` without complaint, so
-    // the two non-`Error` cases below would pass against code that throws a TypeError in
-    // production — the fake would encode a safety the real function does not have.
+    // (`src/server/utils/errorHandling.ts`) — BUT IT IS NOT WHAT MAKES THE NON-`Error` CASES GO RED.
+    // `expect.any(Error)` is: measured, with a bare `vi.fn()` here AND the normalisation reverted,
+    // those cases still fail, at the argument match (`-  Any<Error>  +  null`). What the faithful
+    // mock adds is production-symptom fidelity on the SYNC case — the failure presents as a rejected
+    // promise, the way it would in production, instead of an argument mismatch. On the ASYNC case it
+    // changes nothing.
+    //
+    // So do not relax `expect.any(Error)` to `expect.anything()` on the strength of this mock. That
+    // is the single edit that makes both cases vacuous, and it is the one a reader who believes the
+    // mock is the guard would feel free to make.
     mockHandleLogError: vi.fn((e: Error) => {
       void new Error(e.message ?? 'Unexpected error occurred', { cause: e });
     }),
@@ -321,6 +328,33 @@ describe('smitePlayer — onSmiteCreated is the durable-write signal', () => {
     // …and the failure was still reported, as an `Error` the logger can actually consume. Pinning
     // `expect.any(Error)` is the structural half: it fails on the raw `null` regardless of whether
     // the mock happens to deref it.
+    expect(mockHandleLogError).toHaveBeenCalledWith(
+      expect.any(Error),
+      'new-order:smite-hook-failed',
+      { smiteId: SMITE_ROW.id }
+    );
+  });
+
+  it('🔴 contains a throw value that cannot be STRINGIFIED — `Object.create(null)`', async () => {
+    // A different mechanism from `throw null` above, one line earlier: there the logger could not
+    // deref the value, here the NORMALISATION cannot convert it. `String(e)` on a null-prototype
+    // object throws `TypeError: Cannot convert object to primitive value`, and it runs inside the
+    // `catch` that exists to contain the hook — so the tail is skipped and `smitePlayer` rejects
+    // with the row already committed, the same half-applied smite. An object with a throwing
+    // `toString` and a revoked `Proxy` are the same defect through the same line; this pins the
+    // shape that needs no setup to build.
+    await expect(
+      call(() => {
+        throw Object.create(null);
+      })
+    ).resolves.not.toThrow();
+
+    // Both halves, as a pair. Before the value was carried as `cause`, the call rejected with
+    // `TypeError: Cannot convert object to primitive value` and this line read 0 — the tail skipped
+    // outright, which is the whole defect and not something the rejection alone establishes.
+    expect(smitesCounterStub.increment).toHaveBeenCalledTimes(1);
+    expect(mockSignalSend).toHaveBeenCalledTimes(1);
+
     expect(mockHandleLogError).toHaveBeenCalledWith(
       expect.any(Error),
       'new-order:smite-hook-failed',
