@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import ts from 'typescript';
 import { describe, expect, test } from 'vitest';
 import {
   APPS_RAIL_COLLAPSED_WIDTH,
@@ -170,289 +171,162 @@ describe('🔴 SEAM — the stylesheet switches at exactly APPS_RAIL_MIN_VIEWPOR
     expect(wide).toMatch(/\.railDrawerTrigger\s*\{[^}]*display:\s*none/);
   });
 
-  test('the layout renders BOTH classes (a stylesheet nothing references changes no pixels)', () => {
-    // 🔴 LINE COMMENTS ARE STRIPPED **FIRST**, AND THE ORDER IS NOT A STYLE CHOICE.
-    // `AppsPageLayout.tsx` contains the line comment "…so `/apps/*` starts directly under
-    // the global header…". A block-comment-first strip — the order most of this repo's
-    // source scanners use — reads that `/*` as an OPENING delimiter and deletes
-    // everything up to the next `*/`, which is ~80 lines later. Measured here: it removed
-    // the `classes.railRow` render entirely and this assertion failed against completely
-    // correct code. A route-shaped glob in prose is ordinary in this codebase, so the
-    // hazard is general rather than specific to this file.
-    const stripComments = (s: string) =>
-      s.replace(/^[ \t]*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-
-    // The control for that ordering, on a fixture rather than on the file under test — a
-    // control built from the artifact it is validating cannot fail independently of it.
-    expect(stripComments('// a `/*` in prose\nconst keep = 1;\n')).toContain('const keep = 1;');
-    expect(stripComments('/* real block */ const also = 2;')).toContain('const also = 2;');
-    expect(stripComments('/* real block */ const also = 2;')).not.toContain('real block');
-
-    const layout = stripComments(
-      fs.readFileSync(path.resolve(__dirname, '../AppsPageLayout.tsx'), 'utf8')
+  test('the layout renders BOTH classes, and NO media query decides a render', () => {
+    /**
+     * 🔴 THIS IS AN AST WALK, AND FOUR ROUNDS OF AUDIT SAY IT HAS TO BE.
+     *
+     * The previous four revisions of this guard were hand-rolled character scanners —
+     * strip comments, mask string literals, brace-match `useEffect` bodies, compare
+     * offsets. Every single one was bypassable, and each bypass was found only by the
+     * round that audited the previous fix:
+     *
+     *   r5  an UNANCHORED regex proved token ORDER, never containment — a `matchMedia`
+     *       in the render body survived at 12/12 green.
+     *   r6  brace counting ran on raw text, so `const openBrace = '{';` inside the effect
+     *       mis-sized the body and the render-body read was swallowed. Green again.
+     *   r7  the literal mask had no unterminated-literal handling, so an apostrophe in
+     *       JSX text (`Don't`) blanked everything up to the next quote — including a real
+     *       read. Green again.
+     *   r8  the `//` and `/*` branches ran in BOTH scans, so an ordinary route glob in
+     *       page copy (`title="… src/*.tsx"`) blanked the rest of the file. Green again.
+     *
+     * The r8 defect is the one that settles the argument: this very file, ~100 lines
+     * above, already documented that exact hazard for a DIFFERENT helper — "a
+     * route-shaped glob in prose is ordinary in this codebase" — and the scanner was
+     * written with that warning in view and still had the bug. A scanner that needs 60
+     * lines of limits prose, and is wrong anyway, is the wrong instrument.
+     *
+     * An AST walk removes the whole class STRUCTURALLY rather than patching instances:
+     * comments are TRIVIA and never become nodes, so no comment can hide or fabricate a
+     * read; string contents are `StringLiteral`, never `Identifier`, so copy that merely
+     * mentions "matchMedia" is not a violation (the r8 false positive) while
+     * `window['matchMedia']` still is; and effect nesting is the tree itself, so there is
+     * no brace matching to fool and no offsets to compare.
+     *
+     * `typescript` is already a devDependency and 20 test files in this repo parse source
+     * this way, three of them as TSX — this is the house pattern, not new infrastructure.
+     *
+     * WHAT IT DOES NOT COVER, stated rather than discovered later: a name assembled at
+     * runtime (`window['match' + 'Media']`). That needs constant folding. Its UNGUARDED
+     * form already throws `ReferenceError: window is not defined` in
+     * `__tests__/appsPageLayoutRender.test.ts`, which renders this component through
+     * `react-dom/server`; only a `typeof window !== 'undefined'`-guarded, runtime-assembled
+     * name escapes both, and nobody writes that.
+     */
+    const file = path.resolve(__dirname, '../AppsPageLayout.tsx');
+    const source = fs.readFileSync(file, 'utf8');
+    const sourceFile = ts.createSourceFile(
+      file,
+      source,
+      ts.ScriptTarget.Latest,
+      /* setParentNodes */ true,
+      ts.ScriptKind.TSX
     );
-    expect(layout).toContain('AppsPageLayout.module.scss');
-    expect(layout).toContain('classes.rail');
-    expect(layout).toContain('classes.railDrawerTrigger');
-    expect(layout).toContain('classes.railRow');
-    // 🔴 AND NO MEDIA-QUERY HOOK DECIDES WHAT RENDERS, which is the thing the stylesheet
-    // exists instead of. `useMediaQuery` has no server answer, so a hook-driven swap is
-    // the hydration mismatch this surface has already paid for once.
-    expect(layout).not.toMatch(/useMediaQuery|useIsMobile|useContainerQuery/);
 
-    // ⚠️ THE LAYOUT DOES READ `matchMedia` — ONCE, IN AN EFFECT, AND ONLY TO CLOSE THE
-    // DRAWER. That is deliberate and is NOT the banned shape: the rail/drawer swap is a
-    // CSS media query, so React never learns the breakpoint was crossed and an OPEN drawer
-    // survives a resize past 1300 — leaving two `App sections` landmarks and a focus trap
-    // over a usable rail. An effect that can only CLOSE something cannot decide a render,
-    // so it cannot reintroduce an SSR/first-paint divergence. Pinned as BOTH halves, so
-    // neither the ban above nor this carve-out can be widened into the other: EVERY
-    // `window.matchMedia` read must live inside a `useEffect` body, and none may appear in
-    // the returned JSX.
-    //
-    // 🔴 THIS HALF IS A CONTAINMENT CHECK, NOT A REGEX, AND THE DIFFERENCE IS THE WHOLE
-    // POINT. It used to read `/useEffect\(\(\) => \{[\s\S]*?window\.matchMedia\(/`, which
-    // is UNANCHORED: it is satisfied by any `useEffect(() => {` appearing anywhere before
-    // any `window.matchMedia(`, and so establishes only that the two tokens occur in that
-    // ORDER — never that one CONTAINS the other. Measured: injecting
-    // `window.matchMedia('(min-width: 1300px)').matches` into the component's RENDER BODY
-    // (after the effects, before the JSX) left this file fully GREEN at 12/12, while the
-    // JSX half correctly reds. A render-body read is exactly the banned shape — the server
-    // has no `matchMedia` and a client ≥1300 returns true — so the guard was reading as
-    // cover for the hydration class while providing none for it.
-    //
-    // 🔴 BRACE COUNTING RUNS ON A LITERAL-MASKED COPY, AND SKIPPING THAT MASK IS A
-    // MEASURED BYPASS OF THIS ENTIRE GUARD. An earlier revision counted braces on
-    // `layout` and claimed in this comment that "the only braces left inside an effect
-    // body are the balanced `${…}` of a template literal". Both halves were false: the
-    // effect body already contains two ordinary block braces (`if (mql.matches) {` and the
-    // `onChange` arrow), and `stripComments` above only removes LINE-START `//` comments,
-    // so a trailing comment survives intact. Adding ONE line of perfectly ordinary code
-    // inside the effect — `const openBrace = '{';`, or a trailing comment mentioning a
-    // `{` — raises `depth`, so the body-end scan runs past the effect's real `}` and a
-    // render-body `matchMedia` then reports as "inside an effect body". Measured: with
-    // either of those plus the banned render-body read, this file was GREEN at 12/12.
-    // The `unbalanced braces` assertion does not fire either, because depth still reaches
-    // zero — just later.
-    //
-    // So: blank the CONTENTS of comments and string/template literals, preserving length
-    // so every offset below still indexes the real file.
-    //
-    // ⚠️ KNOWN LIMITS, and this list is not a proof of completeness — it is what has been
-    // measured. (1) Regex literals are NOT masked (telling `/` division from a regex needs
-    // a real tokeniser); `AppsPageLayout.tsx` contains none today, and the `endsBeforeJsx`
-    // backstop reds on the runaway body that would cause. (2) The quote scanner has no
-    // unterminated-literal handling — see the TWO SCANS note directly below, which is why
-    // reads are never taken from the string-masked copy.
-    //
-    // An earlier revision framed the residual risk as regex-literals-only. It was not:
-    // limit (2) was live and unlisted, and it was the one that actually shipped a bypass.
-    // Treat this list as "the holes we have found", never as "the holes there are".
-    //
-    // 🔴 TWO SCANS, AND USING ONE FOR BOTH JOBS IS A MEASURED BYPASS. String masking is
-    // required for BRACE COUNTING and is actively harmful for FINDING READS, because the
-    // quote scanner has no notion of an unterminated literal: an ordinary apostrophe in
-    // JSX text — `Don't`, `app's` — opens a pseudo-string that blanks everything up to
-    // the next `'` in the file, which is typically the opening quote of a real string
-    // many lines later. Anything in between DISAPPEARS from the scan. An earlier revision
-    // masked once and used that copy for both, so this JSX:
-    //
-    //     <span>Don't</span>
-    //     {window.matchMedia('(min-width: 1300px)').matches && <span>y</span>}
-    //
-    // left the file GREEN at 12/12 with a media query in the rendered tree — the banned
-    // shape, invisible because the read had been blanked. The previous revision of this
-    // guard, which did no quote tracking at all, caught it. So: mask strings for braces,
-    // NEVER for reads.
-    const maskLiterals = (src: string, maskStrings = true) => {
-      const out = src.split('');
-      const blank = (at: number) => {
-        if (out[at] !== '\n') out[at] = ' ';
-      };
-      let i = 0;
-      while (i < src.length) {
-        const c = src[i];
-        const next = src[i + 1];
-        if (c === '/' && next === '/') {
-          while (i < src.length && src[i] !== '\n') blank(i++);
-          continue;
-        }
-        if (c === '/' && next === '*') {
-          blank(i++);
-          blank(i++);
-          while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) blank(i++);
-          if (i < src.length) {
-            blank(i++);
-            blank(i++);
-          }
-          continue;
-        }
-        if (maskStrings && (c === '"' || c === "'" || c === '`')) {
-          i++; // keep the opening quote itself
-          while (i < src.length) {
-            if (src[i] === '\\') {
-              blank(i++);
-              if (i < src.length) blank(i++);
-              continue;
-            }
-            if (src[i] === c) break;
-            blank(i++);
-          }
-          i++; // skip the closing quote
-          continue;
-        }
-        i++;
-      }
-      return out.join('');
+    // Hooks whose callback runs AFTER paint — a media query read here cannot decide what
+    // was rendered, so it cannot diverge between server and client.
+    const EFFECT_HOOKS = new Set(['useEffect', 'useLayoutEffect', 'useInsertionEffect']);
+    // `matchMedia` is the raw API; the other three are this repo's hook wrappers, none of
+    // which has a server answer. Banning them here keeps ONE rule in ONE place — the old
+    // revision spelled the hook ban as a separate regex assertion, so the same rule lived
+    // in two forms that could drift apart.
+    const BANNED = new Set(['matchMedia', 'useMediaQuery', 'useIsMobile', 'useContainerQuery']);
+
+    const classUses = new Set<string>();
+    const violations: string[] = [];
+    let readsInsideEffect = 0;
+
+    const positionOf = (node: ts.Node) => {
+      const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+      return `${line + 1}:${character + 1}`;
     };
 
-    // Controls on FIXTURES, not on the file under test — a control built from the artifact
-    // it validates cannot fail independently of it. Each asserts the mask both blanks the
-    // hazard and preserves length/real code.
-    const braceInString = `const a = '{'; if (x) { y(); }`;
-    expect(maskLiterals(braceInString)).toHaveLength(braceInString.length);
-    expect(
-      (maskLiterals(braceInString).match(/\{/g) ?? []).length,
-      'the brace inside the string literal survived the mask'
-    ).toBe(1);
-    const braceInComment = `doIt(); // note a { here\nnext();`;
-    expect(
-      (maskLiterals(braceInComment).match(/\{/g) ?? []).length,
-      'the brace inside the trailing comment survived the mask'
-    ).toBe(0);
-    expect(maskLiterals(braceInComment)).toContain('doIt();');
-    expect(maskLiterals(braceInComment)).toContain('next();');
-    // The control for the runaway above: an unpaired apostrophe followed by real code.
-    // With string masking ON the code between it and the next quote is swallowed (that is
-    // the bypass); with masking OFF it must survive intact, which is what the READ scan
-    // relies on. This fixture is what the previous revision lacked.
-    const apostropheRunaway = `<span>Don't</span>\n{window.matchMedia('(x)')}`;
-    expect(maskLiterals(apostropheRunaway, true)).not.toContain('window.matchMedia');
-    expect(maskLiterals(apostropheRunaway, false)).toContain('window.matchMedia');
-    expect(maskLiterals(apostropheRunaway, false)).toHaveLength(apostropheRunaway.length);
-
-    const raw = fs.readFileSync(path.resolve(__dirname, '../AppsPageLayout.tsx'), 'utf8');
-    // Braces: comments AND string/template literals blanked.
-    const scan = maskLiterals(raw);
-    // Reads: comments blanked ONLY. Both are length-preserving, so offsets are comparable.
-    const scanReads = maskLiterals(raw, false);
-    expect(scanReads).toHaveLength(scan.length);
-    // ⚠️ THE RECOGNISER IS NARROWER THAN THE SENTENCE ABOVE, AND THAT IS RECORDED RATHER
-    // THAN PAPERED OVER. `effectOpen` matches the LITERAL spelling `useEffect(() => {`.
-    // A read inside `useEffect(function () {…})`, `useEffect(async () => {…})`, a
-    // multi-line `useEffect(\n  () => {`, or a `useLayoutEffect` is a legitimate effect
-    // this loop would report as "NOT inside any useEffect body" — a false positive with a
-    // confidently wrong diagnosis. It is not a false NEGATIVE, so the ban cannot be
-    // silently escaped by respelling; and if respelling removes the only match, the
-    // `effectBodies.length > 0` control below fires with its own self-diagnosing message
-    // rather than passing vacuously.
-    //
-    // Measured in the ONLY file this guard scans — `AppsPageLayout.tsx` — which holds
-    // exactly ONE `useEffect(() => {` and zero `useEffect(function`, `useEffect(async` or
-    // `useLayoutEffect`. So the narrow spelling costs nothing here. Widen it when that
-    // stops being true; do not widen it speculatively, because every spelling added is
-    // another brace-matching shape to validate.
-    //
-    // ⚠️ Scope that claim to THIS file, not to `src/`. Grepping the tree for those
-    // spellings returns hits from THIS COMMENT — the prose naming the hazard is itself a
-    // match — so a repo-wide count here would be measuring its own text. The guard reads
-    // one file; the count that means anything is the one for that file.
-    const effectBodies: Array<[number, number]> = [];
-    const effectOpen = /useEffect\(\(\) => \{/g;
-    for (let m = effectOpen.exec(scan); m; m = effectOpen.exec(scan)) {
-      let depth = 1;
-      let i = m.index + m[0].length;
-      const bodyStart = i;
-      for (; i < scan.length && depth > 0; i++) {
-        if (scan[i] === '{') depth++;
-        else if (scan[i] === '}') depth--;
+    const record = (name: string, node: ts.Node, effectDepth: number) => {
+      if (effectDepth > 0) {
+        readsInsideEffect += 1;
+        return;
       }
-      expect(depth, 'unbalanced braces while scanning a useEffect body').toBe(0);
-      effectBodies.push([bodyStart, i]);
-    }
+      violations.push(`${name} at ${positionOf(node)}`);
+    };
+
+    const visit = (node: ts.Node, effectDepth: number) => {
+      // An import of a banned hook is not itself a render-time read; flagging it would
+      // report the wrong line. The USE is what this guard is about.
+      if (ts.isImportDeclaration(node)) return;
+
+      let depth = effectDepth;
+      if (ts.isCallExpression(node)) {
+        const callee = node.expression;
+        const calleeName = ts.isIdentifier(callee)
+          ? callee.text
+          : ts.isPropertyAccessExpression(callee)
+          ? callee.name.text
+          : undefined;
+        if (calleeName && EFFECT_HOOKS.has(calleeName)) depth = effectDepth + 1;
+      }
+
+      if (
+        ts.isPropertyAccessExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === 'classes'
+      ) {
+        classUses.add(node.name.text);
+      }
+
+      // `window.matchMedia(…)`, `globalThis.matchMedia(…)`, a bare/destructured
+      // `matchMedia`, and an alias assignment `const mm = window.matchMedia` all surface
+      // here as an Identifier node. A comment mentioning the word does not — comments are
+      // trivia. Neither does a string containing it.
+      if (ts.isIdentifier(node) && BANNED.has(node.text)) record(node.text, node, depth);
+      // …and the one non-Identifier spelling: `window['matchMedia']`.
+      if (
+        ts.isElementAccessExpression(node) &&
+        node.argumentExpression &&
+        ts.isStringLiteralLike(node.argumentExpression) &&
+        BANNED.has(node.argumentExpression.text)
+      ) {
+        record(node.argumentExpression.text, node, depth);
+      }
+
+      node.forEachChild((child) => visit(child, depth));
+    };
+    visit(sourceFile, 0);
+
+    // POSITIVE CONTROL on the walk itself: if the parse silently produced nothing, every
+    // assertion below would pass vacuously over an empty tree.
     expect(
-      effectBodies.length,
-      'no `useEffect(() => {` found — re-point this guard'
+      classUses.size,
+      'the AST walk found no `classes.*` usage — re-point this guard'
     ).toBeGreaterThan(0);
 
-    // 🔴 MATCH THE BARE IDENTIFIER, NOT `window.matchMedia(`, AND READ FROM `scanReads`.
-    // The narrow spelling is a false NEGATIVE — the one direction that fails OPEN — so the
-    // ban was escapable by rewording rather than by defeating the logic. All four of these
-    // were measured GREEN against `/window\.matchMedia\(/` while being real hydration
-    // hazards in the render body:
-    //
-    //     globalThis.matchMedia('(min-width: 1300px)').matches
-    //     const mm = window.matchMedia; mm(…)
-    //     const { matchMedia } = window; matchMedia(…)
-    //     window['matchMedia'](…)
-    //
-    // `\bmatchMedia\b` catches all four: the last needs the literal UNMASKED, which is the
-    // second reason reads come from `scanReads`. Comments are masked there, so the
-    // docstrings in the component that discuss `matchMedia` are not counted as reads.
-    //
-    // This direction is worth the extra false positives an alias might cause: a false
-    // positive is a red test someone reads, a false negative is the banned shape shipping
-    // silently. (`effectOpen`'s narrowness, noted above, has the opposite sign — it can
-    // only over-report — which is why it is left narrow and this is not.)
-    const reads: number[] = [];
-    const mediaRead = /\bmatchMedia\b/g;
-    for (let m = mediaRead.exec(scanReads); m; m = mediaRead.exec(scanReads)) reads.push(m.index);
-    // Positive control: if this ever finds nothing, the loop below is vacuous and would
-    // pass over a file that had removed the carve-out entirely.
-    expect(reads.length, 'no `matchMedia` found — re-point this guard').toBeGreaterThan(0);
-    // ⚠️ ANCHORED ON `<Container`, NOT ON `return (`. The FIRST `return (` in this file is
-    // the drawer effect's own cleanup (`return () => mql.removeEventListener(...)`), so
-    // slicing there covers 60 lines of hook body and docblock as well as the JSX. That is
-    // a superset today — it passes, and is not a false negative — but a SECOND legitimate
-    // effect reading `matchMedia` would red it with the message "a media query reached
-    // the rendered tree", diagnosing a non-defect. The component's JSX is the only thing
-    // this rule is about, and `<Container` is where it starts.
-    //
-    // 🔴 THIS CHECK RUNS BEFORE THE CONTAINMENT LOOP BELOW, AND THE ORDER IS DELIBERATE.
-    // A `matchMedia` in the JSX is also outside every effect body, so the containment loop
-    // would catch it too — but it would report it with the containment message, and this
-    // assertion would never execute. A guard that can only ever be pre-empted by another
-    // guard is dead coverage: it reads as a second check and cannot fail independently.
-    // Ordering it first gives each half its own killing mutant and its own diagnosis —
-    // JSX read → "a media query reached the rendered tree"; render-body read → the
-    // containment message. Both verified by mutation.
-    const jsxStart = scanReads.indexOf('<Container');
-    expect(jsxStart, 'the rendered tree was not found — re-point this guard').toBeGreaterThan(-1);
-    expect(scanReads.slice(jsxStart), 'a media query reached the rendered tree').not.toMatch(
-      /matchMedia/
-    );
+    // The stylesheet is only load-bearing if the component actually references it.
+    expect(source).toContain('AppsPageLayout.module.scss');
+    expect(classUses).toContain('rail');
+    expect(classUses).toContain('railDrawerTrigger');
+    expect(classUses).toContain('railRow');
 
-    // 🔴 BACKSTOP ON THE BRACE MATCHER ITSELF. Every effect is declared before the
-    // component returns, so every effect body must END before the JSX begins. A body that
-    // overshoots means the depth counter was fooled — by an unmasked regex literal, or by
-    // any construct this scanner does not model — and an overshooting body is exactly what
-    // swallows a render-body read and silently disarms the containment check below. This
-    // fires on the CAUSE rather than on one known trigger, for that FAILURE MODE.
-    //
-    // ⚠️ SCOPE IT HONESTLY — an earlier revision said this "holds for bypasses that have
-    // not been thought of", and that is wider than what it does. It covers a body that
-    // GROWS. It cannot see a read that DISAPPEARS: the apostrophe runaway described at the
-    // masker above blanks the read itself, leaving every effect body untouched, so this
-    // loop and the containment loop both pass over a file with a media query in its
-    // rendered tree. That class is handled by reading from `scanReads` instead, not here.
-    // No assertion in this block can see it.
-    for (const [start, end] of effectBodies) {
-      expect(
-        end,
-        `a useEffect body starting at ${start} ends at ${end}, past the JSX at ${jsxStart} — ` +
-          'the brace matcher was fooled, so the containment check below cannot be trusted'
-      ).toBeLessThan(jsxStart);
-    }
+    // 🔴 THE BAN. A media query outside an effect decides a render, and the server has no
+    // `matchMedia` while a client ≥1300 returns true — the SSR/first-paint divergence this
+    // surface has already paid for once.
+    expect(
+      violations,
+      'a banned media-query read appears OUTSIDE a useEffect — it decides a render and ' +
+        'diverges between server and client. The rail/drawer swap is a CSS media query on ' +
+        'purpose; if you need the breakpoint in JS, read it in an effect that only CLOSES ' +
+        'something, as the drawer-close effect does.'
+    ).toEqual([]);
 
-    for (const at of reads) {
-      expect(
-        effectBodies.some(([start, end]) => at >= start && at < end),
-        `a \`matchMedia\` reference at offset ${at} is NOT inside any useEffect body — ` +
-          'a media query outside an effect decides a render and diverges between server and client. ' +
-          'This matches the bare identifier, so an alias or destructure (`const mm = window.matchMedia`) ' +
-          'counts as a reference where it is WRITTEN, not where it is called'
-      ).toBe(true);
-    }
+    // 🔴 SECOND POSITIVE CONTROL, and it is the one that stops this whole test going
+    // vacuous. `violations` is empty both when the carve-out is correct AND when someone
+    // deletes the drawer-close effect entirely. The layout is SUPPOSED to read
+    // `matchMedia` exactly once, in an effect, to close a drawer left open across a resize
+    // past 1300 — otherwise two `App sections` landmarks coexist and a focus trap sits
+    // over a usable rail. Assert the carve-out still exists.
+    expect(
+      readsInsideEffect,
+      'the drawer-close effect no longer reads `matchMedia` — an open drawer now survives ' +
+        'a resize past APPS_RAIL_MIN_VIEWPORT, leaving two nav landmarks on screen'
+    ).toBeGreaterThan(0);
   });
 });
 
