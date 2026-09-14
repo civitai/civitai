@@ -210,7 +210,9 @@ export function mapSearchInputToFeedQuery(
   params.set('limit', String(limit));
   if (feedCursor) params.set('cursor', feedCursor);
   else if (offset) params.set('offset', String(offset));
-  if (before) params.set('before', String(before));
+  // The site freezes a paged set at the first page's minute only for Newest; the other
+  // sorts page a live set, so a cut there would compare different sets.
+  if (before && sort === 'newest') params.set('before', String(before));
   return { ok: true, query: params.toString() };
 }
 
