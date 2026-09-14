@@ -386,6 +386,14 @@ const POST_PREVIEW_EDGE_WIDTH = 450;
  * Unresolvable ids are REFUSED, not skipped — the viewer is shown thumbnails and
  * agrees to that set, so silently posting fewer images than were confirmed would
  * make the confirm inaccurate.
+ *
+ * ⚠️ TIMING, because it is the first thing an app author will hit and it reads as
+ * a bug: an image published through the grid bridge is NOT immediately postable.
+ * That bridge returns its ids before any scan has run, and the clamp above
+ * requires a terminal `Scanned` — so an app that publishes and posts in the same
+ * breath gets a refusal. It must poll the existing scan gate first, exactly as it
+ * already does before displaying the image. (That wait also makes replica lag a
+ * non-issue for this `dbRead`: seconds have passed by the time the id is usable.)
  */
 export async function resolveAppPublishedImages(input: {
   imageIds: number[];
