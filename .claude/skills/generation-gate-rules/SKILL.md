@@ -31,7 +31,7 @@ Adding the rule **before** the code deploys is safe. A rule that names something
 
 - **`add` is idempotent.** If the rule already exists, it does nothing. If another rule already covers the target, it says so.
 - **`remove` never edits a rule it doesn't own unless you pass `--from-rule`.** Without the flag, it lists the hand-made rules that gate the target.
-- **Every write re-reads the rules first**, because `setGateRules` replaces the whole array. An edit someone makes in the mod UI between that read and the write is still lost, so run `list` afterwards to check.
+- **Writes touch one rule at a time** (`saveGateRule` / `deleteGateRule`), so they never overwrite someone else's rules. `remove --from-rule` still reads the rule first, so an edit made to *that* rule in between is lost.
 
 **Another rule on the same target can override this one.** "Available to nobody, hidden" is the kill switch: it hides the target from moderators too, and `hidden` from any rule that applies wins. Point that out to the user instead of editing their rule.
 

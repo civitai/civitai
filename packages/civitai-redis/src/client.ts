@@ -2007,6 +2007,13 @@ export const REDIS_SYS_KEYS = {
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
     REMIX_AUDIT_CHECKED: 'generation:remix-audit-checked',
     CLIENT: 'generation:client',
+    // One field per entry, keyed by id, so saving one rule or message never rewrites the rest.
+    GATE_RULES: 'generation:gate-rules:by-id',
+    // Never delete: the migration would rerun and restore every legacy rule deleted since.
+    GATE_RULES_MIGRATED: 'generation:gate-rules:migrated',
+    MESSAGES: 'generation:messages:by-id',
+    // Never delete: the migration would rerun and restore every legacy message deleted since.
+    MESSAGES_MIGRATED: 'generation:messages:migrated',
     /**
      * MEASUREMENT ONLY — a dark probe, not a cache. Holds `1` against a truncated SHA-256 of the
      * exact string sent to the external prompt classifier, so we can count how often that string
@@ -2084,6 +2091,9 @@ export const REDIS_SYS_KEYS = {
     PENDING_IMAGE_RESTORES: 'system:pending-image-restores',
     // Hash { sampleRate: '0'..'1', until?: ISO-8601 | epoch ms }; missing or 0 = off.
     FEED_REQUEST_CAPTURE: 'system:feed-request-capture',
+    // Hash { sampleRate, until?, timeoutMs?, maxInflight? }: mirror a share of image-feed
+    // searches to the candidate feed service and record the comparison. Off when missing.
+    FEED_SHADOW: 'system:feed-shadow',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',

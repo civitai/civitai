@@ -76,15 +76,29 @@ const versionIdToVariant = new Map<number, OpenAIVariant>([
 // Aspect Ratios
 // =============================================================================
 
-/**
- * Shared aspect ratios. Supported across the family:
- * - GPT-1/1.5 `size` enum: 1024x1024 | 1536x1024 | 1024x1536
- * - GPT-2 and 2.5 accept numeric width/height; same three resolutions are valid.
- */
-const openaiAspectRatios = [
+/** GPT-1/1.5 `size` is an enum: 1024x1024 | 1536x1024 | 1024x1536. */
+const openaiGpt1AspectRatios = [
   { label: '1:1', value: '1:1', width: 1024, height: 1024 },
   { label: '3:2', value: '3:2', width: 1536, height: 1024 },
   { label: '2:3', value: '2:3', width: 1024, height: 1536 },
+];
+
+/**
+ * GPT-2/2.5 take free width/height. Provider limits: both edges multiples of 16,
+ * max edge 3840, ratio <= 3:1, total pixels 655,360–8,294,400.
+ */
+const openaiGpt2AspectRatios = [
+  { label: '21:9', value: '21:9', width: 1680, height: 720 },
+  { label: '16:9', value: '16:9', width: 1536, height: 864 },
+  { label: '3:2', value: '3:2', width: 1536, height: 1024 },
+  { label: '4:3', value: '4:3', width: 1344, height: 1008 },
+  { label: '5:4', value: '5:4', width: 1280, height: 1024 },
+  { label: '1:1', value: '1:1', width: 1024, height: 1024 },
+  { label: '4:5', value: '4:5', width: 1024, height: 1280 },
+  { label: '3:4', value: '3:4', width: 1008, height: 1344 },
+  { label: '2:3', value: '2:3', width: 1024, height: 1536 },
+  { label: '9:16', value: '9:16', width: 864, height: 1536 },
+  { label: '9:21', value: '9:21', width: 720, height: 1680 },
 ];
 
 // =============================================================================
@@ -113,6 +127,7 @@ const qualityNode = {
 
 /** GPT-1 / GPT-1.5: supports transparent background. */
 const openaiGpt1Graph = new DataGraph<{ ecosystem: string }, GenerationCtx>()
+  .node('aspectRatio', aspectRatioNode({ options: openaiGpt1AspectRatios, defaultValue: '1:1' }))
   .node('transparent', {
     input: z.boolean().optional(),
     output: z.boolean(),
@@ -120,11 +135,17 @@ const openaiGpt1Graph = new DataGraph<{ ecosystem: string }, GenerationCtx>()
   })
   .node('quality', qualityNode);
 
-/** GPT-2 and GPT-2.5: no transparent — quality is the only variant-specific control. */
-const openaiGpt2Graph = new DataGraph<{ ecosystem: string }, GenerationCtx>().node(
-  'quality',
-  qualityNode
-);
+/** GPT-2 and GPT-2.5: no transparent background. */
+const openaiGpt2Graph = new DataGraph<{ ecosystem: string }, GenerationCtx>()
+  .node(
+    'aspectRatio',
+    aspectRatioNode({
+      options: openaiGpt2AspectRatios,
+      defaultValue: '1:1',
+      priorityOptions: ['16:9', '3:2', '1:1', '2:3', '9:16'],
+    })
+  )
+  .node('quality', qualityNode);
 
 // =============================================================================
 // OpenAI Graph V2
@@ -158,8 +179,6 @@ export const openaiGraph = new DataGraph<
       }),
     []
   )
-  // Aspect ratio (shared across all OpenAI models)
-  .node('aspectRatio', aspectRatioNode({ options: openaiAspectRatios, defaultValue: '1:1' }))
   // Seed lives at the top level so both variant subgraphs expose it. GPT-2
   // doesn't actually use it in the API, but keeping the node keeps the
   // ecosystem's Ctx union shape consistent with the rest of the generator.

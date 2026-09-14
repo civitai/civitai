@@ -4,11 +4,11 @@ import { Controller, MultiController } from 'form-graph/react';
 
 import { ActiveWildcards } from '~/components/Generate/Input/ActiveWildcards';
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
+import { PromptEditorShell } from '~/components/Generate/Input/PromptEditorShell';
 import { ResourceAlerts } from '~/components/generation_v2/ResourceAlerts';
 import { AspectRatioInput } from '~/components/generation_v2/inputs/AspectRatioInput';
 import { ControlNetsInput } from '~/components/generation_v2/inputs/ControlNetsInput';
 
-import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
 import { OutputFormatInput } from '~/components/generation_v2/inputs/OutputFormatInput';
 import { PriorityInput } from '~/components/generation_v2/inputs/PriorityInput';
 import { ResourceSelectInput } from '~/components/generation_v2/inputs/ResourceSelectInput';
@@ -29,9 +29,16 @@ import {
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { imageHub } from '~/shared/form-graph/generation/image/hub.graph';
 
-import { ControllerLabel, VersionGroupSelector, useWildcardHandlers } from './form-helpers';
+import {
+  ControllerLabel,
+  PromptLabel,
+  VersionGroupSelector,
+  useWildcardHandlers,
+} from './form-helpers';
+import { GateRuleWarnings } from './GateRuleWarnings';
 import { CheckpointRow } from './inputs/CheckpointRow';
 import { openCheckpointPicker, readResources } from './inputs/openCheckpointPicker';
+import { SourceImagesInput } from './inputs/SourceImagesInput';
 import type { GenerationStore } from './store';
 
 /**
@@ -102,6 +109,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
           )}
         />
       </div>
+      <GateRuleWarnings />
       <Controller
         graph={imageHub}
         name="resources"
@@ -169,14 +177,11 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         graph={imageHub}
         name="images"
         render={({ value, meta, onChange, error }) => (
-          <ImageUploadMultipleInput
-            label="Source images"
+          <SourceImagesInput
+            store={store}
             value={value}
             onChange={onChange}
-            max={meta?.max}
-            slots={meta?.slots}
-            warnOnMissingAiMetadata={meta?.warnOnMissingAiMetadata}
-            aspectRatios={meta?.aspectRatios as `${number}:${number}`[] | undefined}
+            meta={meta}
             error={error?.message}
           />
         )}
@@ -244,22 +249,30 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         graph={imageHub}
         name="prompt"
         render={({ value, meta, onChange, error }) => (
-          <GenerationTextEditor
-            value={value}
-            onChange={onChange}
-            snippets={meta?.snippets}
-            triggerWords={meta?.triggerWords}
-            attentionEdit
+          <PromptEditorShell
             label={
-              <ControllerLabel
+              <PromptLabel
+                store={store}
+                prompt={value}
                 label="Prompt"
                 info="Type out what you'd like to generate in the prompt, add aspects you'd like to avoid in the negative prompt."
                 required={meta?.required}
               />
             }
-            placeholder="Your prompt goes here..."
             error={error?.message}
-          />
+            triggerWords={meta?.triggerWords}
+          >
+            <GenerationTextEditor
+              value={value}
+              onChange={onChange}
+              snippets={meta?.snippets}
+              triggerWords={meta?.triggerWords}
+              attentionEdit
+              placeholder="Your prompt goes here..."
+              minRows={2}
+              className="!border-0 !bg-transparent"
+            />
+          </PromptEditorShell>
         )}
       />
       <Controller<boolean | undefined, undefined>
@@ -312,9 +325,10 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         name="aspectRatio"
         render={({ value, meta, onChange }) => {
           const priorityOptions =
-            meta && meta.options.length > 5
+            meta?.priorityOptions ??
+            (meta && meta.options.length > 5
               ? meta.options.slice(1, 6).map((o) => o.value)
-              : undefined;
+              : undefined);
           return (
             <AspectRatioInput
               value={value}

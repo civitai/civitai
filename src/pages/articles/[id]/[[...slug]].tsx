@@ -359,7 +359,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               ? `${env.NEXT_PUBLIC_BASE_URL}/user/${article.user.username}`
               : undefined,
           }
-        : undefined,
+        : { '@type': 'Person', name: 'Civitai user' },
     datePublished: article.publishedAt,
     dateModified: article.updatedAt,
     publisher: {

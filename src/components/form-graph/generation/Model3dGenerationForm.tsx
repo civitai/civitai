@@ -9,7 +9,8 @@ import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
 import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { model3dHub } from '~/shared/form-graph/generation/model3d/hub.graph';
 
-import { ControllerLabel } from './form-helpers';
+import { ControllerLabel, PromptLabel } from './form-helpers';
+import { GateRuleWarnings } from './GateRuleWarnings';
 import type { GenerationStore } from './store';
 
 /**
@@ -46,6 +47,7 @@ function OptionButtons({
 export function Model3dGenerationForm({ store }: { store: GenerationStore }) {
   return (
     <Stack gap="sm">
+      <GateRuleWarnings />
       <Controller
         graph={model3dHub}
         name="polygenVersion"
@@ -91,7 +93,9 @@ export function Model3dGenerationForm({ store }: { store: GenerationStore }) {
             value={value}
             onChange={onChange}
             label={
-              <ControllerLabel
+              <PromptLabel
+                store={store}
+                prompt={value}
                 label="Prompt"
                 info="Describe the 3D model you want to generate."
                 required={meta?.required}

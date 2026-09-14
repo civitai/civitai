@@ -19,6 +19,13 @@ import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import { toClickhouseInt64 } from '~/server/clickhouse/int64';
 import { feedRequestCapture } from '~/server/services/feed-request-capture.service';
+import { feedShadow } from '~/server/services/feed-shadow.service';
+import {
+  feedFliptContext,
+  feedPrimaryAvailable,
+  fetchFeedPrimary,
+  serveFromFeed,
+} from '~/server/services/feed-primary.service';
 import { purgeCache } from '~/server/cloudflare/client';
 import {
   CacheTTL,
@@ -3119,9 +3126,8 @@ export const getAllImagesIndex = async (
   }
 
   let nextCursor: string | undefined;
-  if (searchNextCursor) {
-    nextCursor = `${offset + input.limit}|${searchNextCursor}`;
-  }
+  if (typeof searchNextCursor === 'string') nextCursor = searchNextCursor;
+  else if (searchNextCursor) nextCursor = `${offset + input.limit}|${searchNextCursor}`;
 
   return {
     nextCursor,
@@ -3188,6 +3194,8 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   blockedFor?: string[];
   signal?: AbortSignal;
   actor?: string;
+  /** Hydrate exactly these ids: a page the feed service already selected and ordered. */
+  feedIds?: number[];
   // Unhandled
   //prioritizedUserIds?: number[];
   //userIds?: number | number[];
@@ -3238,13 +3246,15 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   const started = Date.now();
   try {
     const result = await searchImages(input);
-    void feedRequestCapture().record(input, {
-      source: 'getImagesFromSearch',
-      filterMode: result.filterMode,
+    const outcome = {
+      source: 'getImagesFromSearch' as const,
+      filterMode: result.source === 'feed' ? ('feed' as const) : result.filterMode,
       elapsedMs: Date.now() - started,
       resultIds: result.data.map((i: { id: number }) => i.id),
       nextCursor: result.nextCursor,
-    });
+    };
+    void feedRequestCapture().record(input, outcome);
+    if (result.source !== 'feed') void feedShadow().compare(input, outcome);
     return result;
   } catch (err) {
     void feedRequestCapture().record(input, {
@@ -3267,6 +3277,7 @@ async function searchImages(input: ImageSearchInput) {
     };
   let searchFn = getImagesFromSearchPreFilter;
   let filterMode: 'pre' | 'post' = 'pre';
+  let feedFirst = false;
   // Wrap Flipt feature-flag evaluation so the trace shows whether per-request
   // flag fetch is contributing to the parent span's latency. Routes through
   // getFliptBoolean instead of direct per-request wasm evaluateBoolean calls on
@@ -3276,13 +3287,46 @@ async function searchImages(input: ImageSearchInput) {
   // fallthrough (flags default off → pre-filter).
   input = await withSpan('image:flipt:eval', async () => {
     const entityId = input.currentUserId?.toString() || 'anonymous';
-    const postFilter = await getFliptBoolean(FLIPT_FEATURE_FLAGS.FEED_POST_FILTER, entityId);
+    const [postFilter, feedPrimary] = await Promise.all([
+      getFliptBoolean(FLIPT_FEATURE_FLAGS.FEED_POST_FILTER, entityId),
+      feedPrimaryAvailable()
+        ? getFliptBoolean(
+            FLIPT_FEATURE_FLAGS.FEED_SERVICE_PRIMARY,
+            entityId,
+            feedFliptContext(input)
+          )
+        : false,
+    ]);
     if (postFilter) {
       searchFn = getImagesFromSearchPostFilter;
       filterMode = 'post';
     }
+    feedFirst = feedPrimary;
     return input;
   });
+
+  // The feed service selects and orders the page; Meilisearch only hydrates those ids
+  // through the same search function, so every post-filter still applies. Anything the
+  // feed cannot answer (unmapped shape, timeout, error) falls through to Meilisearch.
+  if (feedFirst) {
+    const served = await withSpan('image:feedPrimary', () =>
+      serveFromFeed(input, {
+        fetchFeed: fetchFeedPrimary,
+        hydrate: async (ids) =>
+          (
+            await searchFn({
+              ...input,
+              feedIds: ids,
+              limit: ids.length,
+              offset: 0,
+              entry: undefined,
+              cursor: undefined,
+            })
+          ).data,
+      })
+    );
+    if (served.ok) return { ...served.page, source: 'feed' as const, filterMode };
+  }
 
   const result = await searchFn(input);
 
@@ -3946,6 +3990,8 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     filters.push(makeMeiliImageSearchFilter('techniqueIds', `IN [${techniques.join(',')}]`));
   if (postIds?.length)
     filters.push(makeMeiliImageSearchFilter('postId', `IN [${postIds.join(',')}]`));
+  if (input.feedIds?.length)
+    filters.push(makeMeiliImageSearchFilter('id', `IN [${input.feedIds.join(',')}]`));
   if (baseModels?.length)
     filters.push(makeMeiliImageSearchFilter('baseModel', `IN [${strArray(baseModels)}]`));
 
@@ -4585,6 +4631,8 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     filters.push(makeMeiliImageSearchFilter('techniqueIds', `IN [${techniques.join(',')}]`));
   if (postIds?.length)
     filters.push(makeMeiliImageSearchFilter('postId', `IN [${postIds.join(',')}]`));
+  if (input.feedIds?.length)
+    filters.push(makeMeiliImageSearchFilter('id', `IN [${input.feedIds.join(',')}]`));
   if (baseModels?.length)
     filters.push(makeMeiliImageSearchFilter('baseModel', `IN [${strArray(baseModels)}]`));
 

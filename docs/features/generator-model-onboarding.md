@@ -11,7 +11,7 @@ How a new model gets from nothing to generatable. That covers a new ecosystem, a
 | 2 | Model, `Draft`, owned by CivitaiOfficial, with description — or the existing model's description updated for the new version | `model.upsert` + `moderator.models.transferOwnership` | `write-model-description`, then `official-model-admin` (`create-model` / `update-description`) once the user has approved the text | always (review only if nothing changes) |
 | 3 | Version, `Draft`, with its base model and `usageControl` | `modelVersion.upsert` | `official-model-admin` (`create-version`) | always |
 | 4 | Coverage row, then a cache bust | `"EcosystemCheckpoints"`, written through `postgres-query --writable` | `generation-coverage` (`add`) | always |
-| 5 | Gate rule that hides it from non-mods | Redis `generation:gate-rules` | `generation-gate-rules` (`add`) or `/moderator/generation-config` | always |
+| 5 | Gate rule that hides it from non-mods | Redis `generation:gate-rules:by-id` | `generation-gate-rules` (`add`) or `/moderator/generation-config` | always |
 | 6 | Generation support, in both generator lanes | constants, graphs, handlers | `add-generation-support` | always |
 | 7 | Prompt-enhancement guide | orchestrator prompt-analysis service | `add-prompt-enhancement-guide` | new ecosystem (image/video only) |
 | — | **Deploy**, then mods test on the live generator | | `generator-launch` (`check`) | |

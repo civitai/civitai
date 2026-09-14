@@ -2,7 +2,6 @@ import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { Prisma } from '@prisma/client';
 import { type ModelVersionTerms } from '@civitai/buzz';
 import { uniqBy } from 'lodash-es';
-import { z } from 'zod';
 import type { SessionUser } from '~/types/session';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
@@ -46,10 +45,16 @@ import type { GenerationResource } from '~/shared/types/generation.types';
 
 import {
   applicableRulesFor,
+  canGenerateBlockedTargets,
   gateRuleSchema,
-  rulesToStates,
+  type CanGenerateBlockedTargets,
   type GateRule,
 } from '~/shared/data-graph/generation/gates';
+import {
+  applicableMessagesFor,
+  generatorMessageSchema,
+  type GeneratorMessage,
+} from '~/shared/generation/messages';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/shared/utils/air';
@@ -732,35 +737,142 @@ export async function resolveTestingAccess(user: {
   });
 }
 
-const gateRulesArraySchema = z.array(gateRuleSchema);
+type EntrySchema<T> = { safeParse(value: unknown): { success: boolean; data?: T } };
 
 /**
- * The operator-authored gate rules (the normalized "rules" model). Stored as a
- * single JSON array under `generation:gate-rules`; the only gating store, though
- * it coexists with the self-hosted toggle. Fail-open to `[]` so a bad/missing
- * value never blocks generation.
+ * Parse stored entries one at a time and drop the unreadable ones. A single
+ * entry a build doesn't understand — a presentation added by a newer deploy,
+ * say — must not silence the rest, least of all hidden and kill-switch rules.
  */
-export async function getGateRules(): Promise<GateRule[]> {
-  // Wall-clock deadline: getGateRules runs in getGenerationConfig's
-  // Promise.all on every gen submit — a silent sysRedis half-open would park it.
-  const cached = await withSysReadDeadline(
-    sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:gate-rules')
-  )
-    .then((data) => (data ? fromJson<GateRule[]>(data) : null))
-    .catch((err) => {
-      logSysRedisFailOpen('read-degraded', 'getGateRules', err);
-      return null;
-    });
-  const parsed = gateRulesArraySchema.safeParse(cached ?? []);
-  return parsed.success ? parsed.data : [];
+function parseEntries<T>(schema: EntrySchema<T>, values: unknown[]): T[] {
+  const entries: T[] = [];
+  for (const value of values) {
+    const parsed = schema.safeParse(value);
+    if (parsed.success && parsed.data) entries.push(parsed.data);
+  }
+  return entries;
 }
 
-/** Persists the full gate-rules array. The mod UI is the single source of truth. */
-export async function setGateRules(rules: GateRule[]): Promise<GateRule[]> {
-  const parsed = gateRulesArraySchema.parse(rules);
-  await sysRedis.hSet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:gate-rules', toJson(parsed));
+type PerEntryHashKey =
+  | typeof REDIS_SYS_KEYS.GENERATION.GATE_RULES
+  | typeof REDIS_SYS_KEYS.GENERATION.MESSAGES;
+type PerEntryMarkerKey =
+  | typeof REDIS_SYS_KEYS.GENERATION.GATE_RULES_MIGRATED
+  | typeof REDIS_SYS_KEYS.GENERATION.MESSAGES_MIGRATED;
+
+const hasStringId = (value: unknown): value is { id: string } =>
+  !!value && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string';
+
+/**
+ * A config store kept as one sysRedis hash (field = entry id), migrated on first
+ * use from an older single JSON array in the features hash. The array is left in
+ * place as a backup and never read again once the marker is set.
+ */
+function perEntryStore<T extends { id: string }>({
+  hashKey,
+  markerKey,
+  legacyField,
+  schema,
+}: {
+  hashKey: PerEntryHashKey;
+  markerKey: PerEntryMarkerKey;
+  legacyField: string;
+  schema: EntrySchema<T>;
+}) {
+  // Copies raw entries, not parsed ones, so an entry only a newer build understands
+  // survives. `hSetNX` lets concurrent first runs agree, but a run after a delete
+  // re-adds the deleted entry from the legacy array — the marker is set last and
+  // must never be cleared.
+  const migrate = async () => {
+    const legacy = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, legacyField);
+    const raw = legacy ? fromJson<unknown[]>(legacy) : null;
+    const entries = Array.isArray(raw) ? raw.filter(hasStringId) : [];
+    await Promise.all(entries.map((entry) => sysRedis.hSetNX(hashKey, entry.id, toJson(entry))));
+    await sysRedis.set(markerKey, '1');
+  };
+  const ensureMigrated = async () => {
+    if (!(await sysRedis.get(markerKey))) await migrate();
+  };
+
+  return {
+    async read(): Promise<T[]> {
+      const [migrated, stored] = await Promise.all([
+        sysRedis.get(markerKey),
+        sysRedis.hGetAll(hashKey),
+      ]);
+      let values = stored;
+      if (!migrated) {
+        await migrate();
+        values = await sysRedis.hGetAll(hashKey);
+      }
+      return parseEntries(
+        schema,
+        Object.values(values).map((value) => fromJson(value))
+      );
+    },
+    async save(entry: T) {
+      await ensureMigrated();
+      await sysRedis.hSet(hashKey, entry.id, toJson(entry));
+    },
+    async remove(id: string) {
+      await ensureMigrated();
+      await sysRedis.hDel(hashKey, id);
+    },
+  };
+}
+
+const gateRuleStore = perEntryStore<GateRule>({
+  hashKey: REDIS_SYS_KEYS.GENERATION.GATE_RULES,
+  markerKey: REDIS_SYS_KEYS.GENERATION.GATE_RULES_MIGRATED,
+  legacyField: 'generation:gate-rules',
+  schema: gateRuleSchema,
+});
+
+const generatorMessageStore = perEntryStore<GeneratorMessage>({
+  hashKey: REDIS_SYS_KEYS.GENERATION.MESSAGES,
+  markerKey: REDIS_SYS_KEYS.GENERATION.MESSAGES_MIGRATED,
+  legacyField: 'generation:messages',
+  schema: generatorMessageSchema,
+});
+
+/**
+ * The operator-authored gate rules. Fail-open to `[]` so a bad or unreachable
+ * store never blocks generation.
+ */
+export async function getGateRules(): Promise<GateRule[]> {
+  // Wall-clock deadline: this runs in getGenerationConfig's Promise.all on every
+  // gen submit — a silent sysRedis half-open would park it.
+  return withSysReadDeadline(gateRuleStore.read()).catch((err) => {
+    logSysRedisFailOpen('read-degraded', 'getGateRules', err);
+    return [];
+  });
+}
+
+export async function saveGateRule(rule: GateRule): Promise<GateRule> {
+  const parsed = gateRuleSchema.parse(rule);
+  await gateRuleStore.save(parsed);
   return parsed;
 }
+
+export const deleteGateRule = (id: string) => gateRuleStore.remove(id);
+
+/** Oldest first — the store is a hash, so it has no order of its own. */
+export async function getGeneratorMessages(): Promise<GeneratorMessage[]> {
+  const messages = await withSysReadDeadline(generatorMessageStore.read()).catch((err) => {
+    logSysRedisFailOpen('read-degraded', 'getGeneratorMessages', err);
+    return [] as GeneratorMessage[];
+  });
+  return messages.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
+}
+
+export async function saveGeneratorMessage(message: GeneratorMessage) {
+  const parsed = generatorMessageSchema.parse(message);
+  const record = { ...parsed, createdAt: parsed.createdAt ?? Date.now() };
+  await generatorMessageStore.save(record);
+  return record;
+}
+
+export const deleteGeneratorMessage = (id: string) => generatorMessageStore.remove(id);
 
 export type GenerationConfig = {
   unstableResources: number[];
@@ -782,6 +894,12 @@ export type GenerationConfig = {
    * the server.
    */
   gateRules: GateRule[];
+  /**
+   * Mod-authored messages for THIS user (audience-filtered server side, so copy
+   * aimed at one tier never ships in another's payload). Rendered above the
+   * submit row when the selection matches their targets.
+   */
+  generatorMessages: GeneratorMessage[];
 };
 
 /**
@@ -817,12 +935,14 @@ export function getSelfHostedDisabledEcosystems({
 export async function getGenerationConfig(
   user: { id?: number; isModerator?: boolean; tier?: string } = {}
 ): Promise<GenerationConfig> {
-  const [unstableResources, hasTestingAccess, status, gateRules] = await Promise.all([
-    getUnstableResources(),
-    resolveTestingAccess(user),
-    getGenerationStatus(),
-    getGateRules(),
-  ]);
+  const [unstableResources, hasTestingAccess, status, gateRules, generatorMessages] =
+    await Promise.all([
+      getUnstableResources(),
+      resolveTestingAccess(user),
+      getGenerationStatus(),
+      getGateRules(),
+      getGeneratorMessages(),
+    ]);
   const selfHostedMode = status.selfHostedMode;
   const isMember = (user.tier ?? 'free') !== 'free';
   return {
@@ -837,6 +957,10 @@ export async function getGenerationConfig(
       isModerator: !!user.isModerator,
       isMember,
       hasTestingAccess,
+    }),
+    generatorMessages: applicableMessagesFor(generatorMessages, {
+      isMember,
+      tier: user.tier ?? 'free',
     }),
   };
 }
@@ -891,34 +1015,25 @@ export async function getShouldChargeForResources(
 const explicitCoveredModelAirs = [fluxUltraAir, ponyV7Air];
 const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
 
-/** The `hidden` gate targets for the site-wide `canGenerate` check. */
-export type CanGenerateHiddenGates = { ecosystems: Set<string>; versionIds: Set<number> };
-
 /**
- * Resolve the ecosystems / version IDs the gate rules HIDE for this user — the
- * only state that hard-blocks `canGenerate` (disabled / members-only are
- * generator-UI affordances, not a site-wide block). Membership is intentionally
- * ignored here (no tier lookup): `isMember: true` drops member-restricted rules,
- * leaving the moderator / tester / kill-switch / hidden rules, which need only
- * the (already-resolved) testing-access flag + mod status.
+ * The ecosystems / version IDs the gate rules HIDE for this user — the only state
+ * that hard-blocks `canGenerate`. Membership is intentionally ignored (no tier
+ * lookup): `isMember: true` drops member-restricted rules, leaving the
+ * moderator / tester / kill-switch rules, which need only the (already-resolved)
+ * testing-access flag + mod status.
  */
 export async function getCanGenerateHiddenGates(user: {
   id?: number;
   isModerator?: boolean;
-}): Promise<CanGenerateHiddenGates> {
+}): Promise<CanGenerateBlockedTargets> {
   const [rules, hasTestingAccess] = await Promise.all([getGateRules(), resolveTestingAccess(user)]);
-  const states = rulesToStates(
+  return canGenerateBlockedTargets(
     applicableRulesFor(rules, {
       isModerator: !!user.isModerator,
       isMember: true,
       hasTestingAccess,
     })
   );
-  const ecosystems = new Set<string>();
-  for (const [key, r] of states.ecosystems) if (r.state === 'hidden') ecosystems.add(key);
-  const versionIds = new Set<number>();
-  for (const [id, r] of states.modelVersionIds) if (r.state === 'hidden') versionIds.add(id);
-  return { ecosystems, versionIds };
 }
 
 /**
@@ -942,7 +1057,7 @@ export function getResourceCanGenerate({
     flags: number;
   };
   user: { id?: number; isModerator?: boolean };
-  hiddenGates: CanGenerateHiddenGates;
+  hiddenGates: CanGenerateBlockedTargets;
 }): boolean {
   const isUnavailable = isGenerationDisabled(resource.flags);
   const isOwnedByUser = !!user.id && user.id === resource.modelUserId;
@@ -1044,7 +1159,10 @@ export async function resolveCanGenerateForVersions(
     getVisibleSystemWildcardSetIdsByVersionId(wildcardVersionIds, { sfwOnly: ctx.sfwOnly }),
     needsStandardGate
       ? getCanGenerateHiddenGates(ctx.user)
-      : Promise.resolve<CanGenerateHiddenGates>({ ecosystems: new Set(), versionIds: new Set() }),
+      : Promise.resolve<CanGenerateBlockedTargets>({
+          ecosystems: new Set(),
+          versionIds: new Set(),
+        }),
   ]);
 
   // Generation alias (Option B): evaluate a cover version using its target's

@@ -1,7 +1,7 @@
 /**
  * Generation gating — rules model.
  *
- * A `GateRule` is ONE named gate — *who* it applies to (`audience`) and *how* a
+ * A `GateRule` is ONE named gate — *who* it applies to (`availableTo`) and *how* a
  * gated item is presented (`presentation`) — with any number of targets
  * (ecosystems / workflows / model-version IDs) attached. It replaces the sparse
  * matrix of per-(target × state) lists with a single normalized shape a mod can
@@ -32,10 +32,12 @@ import { z } from 'zod';
 export const gateAvailableToSchema = z.enum(['moderators', 'testers', 'members', 'nobody']);
 export type GateAvailableTo = z.infer<typeof gateAvailableToSchema>;
 
-// HOW a gated item is presented to a gated user. `disabled` is always SHOWN
-// (greyed, not selectable, with messaging); `hidden` is always removed;
-// `experimental` does NOT gate at all — the item stays fully usable and only
-// picks up the "Experimental Build" alert (see `experimentalTargets`).
+// HOW a gated item is presented to a gated user. `hidden` is always removed.
+// `disabled` keeps a MODEL VERSION selectable so the form can say why, and it is
+// refused by `gatedSelectionRefusal`; a disabled ecosystem/workflow still fails
+// its node's output refine. `experimental` does NOT gate at all: the item stays
+// fully usable and only picks up the "Experimental Build" alert.
+// Standalone messaging is NOT a gate — see `shared/generation/messages.ts`.
 export const gatePresentationSchema = z.enum(['disabled', 'hidden', 'experimental']);
 export type GatePresentation = z.infer<typeof gatePresentationSchema>;
 
@@ -43,12 +45,12 @@ export const gateRuleSchema = z.object({
   id: z.string(),
   /** Mod-facing name, e.g. "Maintenance window", "Premium tier". */
   name: z.string().default(''),
-  /** Who keeps access. Not consulted when `presentation` is `experimental`. */
+  /** Who keeps access. Not consulted for `experimental`. */
   availableTo: gateAvailableToSchema,
   presentation: gatePresentationSchema,
   /**
-   * OPTIONAL extra copy layered on top of the state's standard UI — it never
-   * replaces the badge/alert/CTA, only adds context.
+   * Extra copy layered on top of the state's standard UI — it never replaces
+   * the badge/alert/CTA, only adds context.
    */
   message: z.string().nullish(),
   // attach any number of targets:
@@ -90,10 +92,11 @@ export function applicableRulesFor(rules: GateRule[], user: GateUserCtx): GateRu
  * non-members (with an upsell), whereas `disabled` is off for the whole gated
  * audience.
  *   - `hidden`     → removed from the picker.
- *   - `disabled`   → shown greyed, the standard "currently unavailable" UI.
- *   - `memberOnly` → shown greyed, the standard members-only UI **including the
- *                    upsell alert + Become-a-member CTA** (same as the existing
- *                    self-hosted memberOnly experience).
+ *   - `disabled`   → still selectable, badged; generation is refused with the
+ *                    standard "currently unavailable" copy.
+ *   - `memberOnly` → shown greyed and unselectable, the standard members-only UI
+ *                    **including the upsell alert + Become-a-member CTA** (same
+ *                    as the existing self-hosted memberOnly experience).
  * The state's standard messaging ALWAYS renders. A rule's `message` is OPTIONAL
  * extra copy layered on top — it never replaces the badge/alert/CTA.
  */
@@ -188,6 +191,92 @@ export function rulesToStates(rules: GateRule[]): ResolvedGates {
   }
 
   return { ecosystems, workflows, modelVersionIds };
+}
+
+export type CanGenerateBlockedTargets = { ecosystems: Set<string>; versionIds: Set<number> };
+
+const hiddenKeys = <K>(states: Map<K, GateResolution>) =>
+  new Set([...states].filter(([, r]) => r.state === 'hidden').map(([key]) => key));
+
+/**
+ * The targets that hard-block `canGenerate`, from already-applicable rules —
+ * `hidden` only. A disabled or members-only target stays selectable; its
+ * generation requests are refused instead.
+ */
+export function canGenerateBlockedTargets(rules: GateRule[]): CanGenerateBlockedTargets {
+  const states = rulesToStates(rules);
+  return {
+    ecosystems: hiddenKeys(states.ecosystems),
+    versionIds: hiddenKeys(states.modelVersionIds),
+  };
+}
+
+/**
+ * Version ids no picker offers. `disabled` is the exception: it stays
+ * selectable so the form can say why generation is blocked, which is the whole
+ * point of the state.
+ */
+export function unselectableVersionIds(rules: GateRule[]): number[] {
+  return [...rulesToStates(rules).modelVersionIds]
+    .filter(([, r]) => r.state !== 'disabled')
+    .map(([id]) => id);
+}
+
+export type GateSubject = 'ecosystem' | 'workflow' | 'modelVersion';
+export type GateSelection = { ecosystem?: string; workflow?: string; versionIds?: number[] };
+export type SelectionGate = { subject: GateSubject; state: GateState; message?: string };
+
+/** Every gate the current selection hits, most-restrictive target first. */
+export function selectionGates(rules: GateRule[], selection: GateSelection): SelectionGate[] {
+  const states = rulesToStates(rules);
+  const gates: SelectionGate[] = [];
+  const add = (subject: GateSubject, gate?: GateResolution) => {
+    if (gate) gates.push({ subject, state: gate.state, message: gate.message });
+  };
+  add('ecosystem', selection.ecosystem ? states.ecosystems.get(selection.ecosystem) : undefined);
+  add('workflow', selection.workflow ? states.workflows.get(selection.workflow) : undefined);
+  for (const id of selection.versionIds ?? []) add('modelVersion', states.modelVersionIds.get(id));
+  return gates;
+}
+
+const GATE_SUBJECT_NOUN: Record<GateSubject, string> = {
+  ecosystem: 'This base model',
+  workflow: 'This workflow',
+  modelVersion: 'This model version',
+};
+
+/** What a gated selection tells the user — the rule's own copy layered on top. */
+export function gateMessage({ subject, state, message }: SelectionGate): string {
+  const base =
+    state === 'memberOnly'
+      ? `${GATE_SUBJECT_NOUN[subject]} is only available to members.`
+      : `${GATE_SUBJECT_NOUN[subject]} is currently unavailable.`;
+  return message ? `${base} ${message}` : base;
+}
+
+/**
+ * SERVER: why this selection can't generate, or `undefined`. In practice only a
+ * `disabled` model version reaches here — gated ecosystems and workflows are
+ * already rejected by their nodes' output refines.
+ */
+export function gatedSelectionRefusal(
+  rules: GateRule[],
+  selection: GateSelection
+): string | undefined {
+  const [gate] = selectionGates(rules, selection);
+  return gate ? gateMessage(gate) : undefined;
+}
+
+/**
+ * CLIENT: the `disabled` gates on this selection. These block whatIf and the
+ * generate button while the item stays selected and selectable; every other
+ * state is already kept out of the pickers or refused by the graph.
+ */
+export function disabledSelectionGates(
+  rules: GateRule[],
+  selection: GateSelection
+): SelectionGate[] {
+  return selectionGates(rules, selection).filter((gate) => gate.state === 'disabled');
 }
 
 /** Target → the rule's optional extra copy for the experimental alert. */

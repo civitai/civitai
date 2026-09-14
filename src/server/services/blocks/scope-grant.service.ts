@@ -330,6 +330,23 @@ export async function recordScopeGrant(opts: {
  * gated branch — the host surfaces it as `needs_consent`, the user grants it, and
  * only then does a token carry it. (This is the deliberate contrast to the #3090
  * exemption above: read:self always mints; read:private mints only after consent.)
+ *
+ * `posts:write:self` (create a REAL Post on the viewer's profile from an app's
+ * own outputs) is likewise INTENTIONALLY ABSENT, for a strictly stronger version
+ * of the `collections:read:private` reason. It is the first block scope that
+ * writes PUBLIC, feed-visible, reward-earning content under the VIEWER'S name.
+ * No server-side visibility/ownership check can substitute for it, because the
+ * app IS acting on the subject's own account — ownership is satisfied by
+ * construction, which is exactly what makes it dangerous rather than safe. So it
+ * flows through the gated branch: the host surfaces it as `needs_consent`, the
+ * user grants it, and only then does a token carry it.
+ *
+ * ⚠️ THE GRANT IS NOT THE WHOLE CONSENT. A one-time grant cannot inform about
+ * content that differs on every call, so `blocks.createPostFromApp` is ALSO
+ * gated on a per-post host-chrome confirm rendering the HOST-RESOLVED title /
+ * detail / tags / image thumbnails / gallery target. Do NOT "simplify" that
+ * confirm away as redundant with this grant — they answer different questions
+ * ("may this app post as me at all" vs "may it post THIS").
  */
 const CONSENT_EXEMPT_SCOPES = new Set([
   // NOTE: block:settings:* is intentionally ABSENT — those scopes were removed

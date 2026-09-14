@@ -14,7 +14,7 @@ Both commands only read. They use `CIVITAI_API_KEY` from `.claude/skills/mod-act
 
 ## `check`
 
-Reports the version's status, whether it's `covered`, whether **you** can generate with it (`canGenerate`), whether it has an `EcosystemCheckpoints` row, and which gate rules hide it or its ecosystem.
+Reports the version's status, whether it's `covered`, whether **you** can generate with it (`canGenerate`), whether it has an `EcosystemCheckpoints` row, and which gate rules apply to it or its ecosystem (`hidden` removes it from view; `disabled` leaves it selectable but refuses generation).
 
 Before launch, expect `Draft`, `covered: true`, `canGenerate: true`, a coverage row, and a moderators-only rule.
 
@@ -26,7 +26,7 @@ Prints numbered post-deploy steps with this version's real URLs and commands, an
 
 1. **Test as a moderator.** If `canGenerate` is false, it says not to publish.
 2. **Publish**, with the green **Publish** button in the version panel of `/models/<modelId>?modelVersionId=<id>`. It says whether this publishes the model and the version together (the model is still a Draft) or only the version.
-3. **Remove the gate.** It prints one `generation-gate-rules` command for each rule that hides the version or its ecosystem, including rules set by hand.
+3. **Remove the gate.** It prints one `generation-gate-rules` command for each rule that hides or blocks the version or its ecosystem, including rules set by hand.
 4. **Confirm as a non-mod.**
 5. **Optional follow-ups:** `GenerationBaseModel`, `AuctionBase`, training, the landing page, and `coverage remove` for `ExternalGeneration` versions.
 

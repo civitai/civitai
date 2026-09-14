@@ -1,6 +1,7 @@
 # Generator Announcements
 
 > Status: **Proposal** · Owner: Briant · Source: [ClickUp 868k0b98x](https://app.clickup.com/t/868k0b98x)
+> Not the same thing as [generator messages](./generator-messages.md), which shipped: those are non-blocking footer copy from their own store. This proposal is specifically the blocking OK-modal acknowledgment.
 
 ## Goal
 

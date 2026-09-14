@@ -2,8 +2,6 @@
 /**
  * Generation gate rules: hide a generator ecosystem or model version from everyone except
  * moderators, and remove that again. See SKILL.md. Writes are dry runs unless --writable.
- *
- * setGateRules replaces the whole array, so every write re-reads it first.
  */
 
 import { API_URL, createCli, isMain, trpcCall, whoami } from '../mod-actions/lib.mjs';
@@ -26,7 +24,7 @@ export function describeRule(rule) {
   }${rule.message ? `\n    message: ${rule.message}` : ''}`;
 }
 
-// The other presentations (`experimental`, `notice`) annotate a usable item and gate nothing.
+// The other presentation (`experimental`) annotates a usable item and gates nothing.
 const GATING_PRESENTATIONS = ['hidden', 'disabled'];
 
 /**
@@ -96,8 +94,8 @@ if (isMain(import.meta.url)) {
       modelVersionIds: target.list === 'modelVersionIds' ? [target.value] : [],
     };
 
-    if (!writable) return dryRun('generation.setGateRules (appending)', rule);
-    await trpcCall('generation.setGateRules', [...rules, rule]);
+    if (!writable) return dryRun('generation.saveGateRule', rule);
+    await trpcCall('generation.saveGateRule', rule);
     console.log(`Added rule:\n${describeRule(rule)}`);
   };
 
@@ -106,32 +104,31 @@ if (isMain(import.meta.url)) {
     const fromRule = flags['from-rule'];
     const rules = await readRules();
 
-    let next;
     if (fromRule) {
       const rule = rules.find((r) => r.id === fromRule);
       if (!rule) fail(`no rule with id ${fromRule}`);
       if (!rule[target.list].includes(target.value)) fail(`${target.label} is not in rule ${fromRule}`);
-      next = rules.map((r) =>
-        r.id === fromRule ? { ...r, [target.list]: r[target.list].filter((v) => v !== target.value) } : r
-      );
-    } else {
-      if (!rules.some((r) => r.id === target.ruleId)) {
-        const others = rules.filter((r) => r[target.list].includes(target.value));
-        if (!others.length) return console.log(`No rule gates ${target.label}.`);
-        console.log(`No rule of this skill's for ${target.label}, but these rules gate it:`);
-        for (const r of others) console.log(describeRule(r));
-        return console.log('Re-run with --from-rule <id> to remove it from one of them.');
-      }
-      next = rules.filter((r) => r.id !== target.ruleId);
+      const updated = { ...rule, [target.list]: rule[target.list].filter((v) => v !== target.value) };
+      if (!writable) return dryRun('generation.saveGateRule', updated);
+      await trpcCall('generation.saveGateRule', updated);
+      return console.log(`Removed ${target.label} from rule ${fromRule}.`);
+    }
+
+    if (!rules.some((r) => r.id === target.ruleId)) {
+      const others = rules.filter((r) => r[target.list].includes(target.value));
+      if (!others.length) return console.log(`No rule gates ${target.label}.`);
+      console.log(`No rule of this skill's for ${target.label}, but these rules gate it:`);
+      for (const r of others) console.log(describeRule(r));
+      return console.log('Re-run with --from-rule <id> to remove it from one of them.');
     }
 
     if (!writable) {
-      console.log(`[dry run] generation.setGateRules → ${API_URL}`);
-      console.log(`Would remove ${target.label} ${fromRule ? `from rule ${fromRule}` : `(rule ${target.ruleId})`}.`);
+      console.log(`[dry run] generation.deleteGateRule → ${API_URL}`);
+      console.log(`Would delete rule ${target.ruleId} (${target.label}).`);
       return console.log('Re-run with --writable to apply.');
     }
-    await trpcCall('generation.setGateRules', next);
-    console.log(`Removed ${target.label}. ${next.length} rule(s) remain.`);
+    await trpcCall('generation.deleteGateRule', { id: target.ruleId });
+    console.log(`Removed ${target.label} (deleted rule ${target.ruleId}).`);
   };
 
   const HELP = `Usage: node .claude/skills/generation-gate-rules/gate.mjs <command> [flags]

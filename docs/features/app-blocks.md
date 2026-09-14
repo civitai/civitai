@@ -66,6 +66,13 @@ check at request time (`enforceContextBinding`).
 | `ai:write:budgeted`              | positive `buzzBudget`                             |                                                                                                                                                                         |
 | ~~`block:settings:read` / `:write`~~ | —                                             | **REMOVED** from the scope registry (no runtime capability ever verified them; the settings paths authorize on valid-token + app-developer + installer-resolution). A manifest declaring either is REJECTED |
 | `apps:storage:read` / `:write`   | scope present on `claims.scopes` per op           | per-app KV store (App Storage); no OAuth bit (`SKIP_OAUTH_CHECK`) — gated by the approved-scope snapshot + `resolveStorageContext`                                      |
+| `posts:write:self`               | non-anon `sub`                                    | **SENSITIVE + CONSENT-GATED.** Create a REAL, published Post on the viewer's own profile from the app's own outputs (`CREATE_POST_FROM_APP` → `blocks.createPostFromApp`), optionally attached to a model version's gallery. Maps to the REAL `MediaWrite` OAuth bit. Deliberately NOT consent-exempt, so a token carries it only after an explicit grant — AND the host opens a per-post confirm rendering the host-resolved content, because a blanket grant cannot inform about content that differs every time. Behind its own fail-closed flag (`app-blocks-post-creation`), independent of `app-blocks-enabled` |
+
+⚠️ **This table is NOT exhaustive and the constant is the authority.** Absent
+from it today: `apps:storage:shared:read` / `:write` (the cross-user shared
+datastore) and `collections:read:self` / `:write:self` / `:read:private`. Read
+`src/shared/constants/block-scope.constants.ts` for the live set rather than
+inferring absence from this list.
 
 Unknown scopes are rejected at runtime (deny-by-default in middleware).
 

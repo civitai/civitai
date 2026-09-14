@@ -93,9 +93,17 @@ No baseline to beat. The check is whether they arrive already saturated, and whe
 advice is right — `ideogram` and `hidream-o1` are sourced; the other five were drafted earlier
 and have known-fixed defects but no live evidence.
 
+> **`ideogram` is live without a measurement, and was sourced from the wrong model.** The live
+> guide is byte-identical to `authored/ideogram.txt`; it went out some time after 2026-08-06
+> (the 08-05 and 08-06 backups still hold the default) with no run recorded. It was sourced from
+> Ideogram's hosted product, but the generator runs the open-weights Ideogram 4 on comfy
+> (PR #4766). Its Magic Prompt and style-preset bullets describe features that pipeline does not
+> have, and it says nothing about the JSON-style prompting the model responds to. Revise it for
+> the open-weights model, then measure it like any other candidate.
+
 | Ecosystem    | Source quality                                                                            | Sat.                | Measured                                          | Deployed |
 | ------------ | ----------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------- | -------- |
-| `ideogram`   | sourced (text-length curve, Magic Prompt)                                                 | ?                   | —                                                 | no       |
+| `ideogram`   | sourced from the **hosted** Ideogram, not the open-weights model generated with — see note | ?                   | —                                                 | after 2026-08-06, date unknown |
 | `hidream-o1` | sourced (distinct model, reasoning prompt agent)                                          | 0 saturated on arrival | 1x | 2026-08-10 |
 | `boogu`      | drafted; D3/D4 fixed, unverified                                                          | 0 saturated on arrival | 1x | 2026-08-10 |
 | `mageflow`   | drafted; D6 fixed, negative-prompt bug unverified                                         | 0 saturated on arrival | 1x | 2026-08-10 |

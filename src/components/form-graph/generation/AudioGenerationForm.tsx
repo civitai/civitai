@@ -3,6 +3,7 @@ import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller } from 'form-graph/react';
 
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
+import { PromptEditorShell } from '~/components/Generate/Input/PromptEditorShell';
 import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
@@ -10,9 +11,11 @@ import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControl
 import { audioHub } from '~/shared/form-graph/generation/audio/hub.graph';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 
-import { ControllerLabel, VersionGroupSelector } from './form-helpers';
+import { ControllerLabel, PromptLabel, VersionGroupSelector } from './form-helpers';
+import { GateRuleWarnings } from './GateRuleWarnings';
 import { CheckpointRow } from './inputs/CheckpointRow';
 import { openCheckpointPicker } from './inputs/openCheckpointPicker';
+import type { GenerationStore } from './store';
 
 /**
  * The AUDIO generation form — one `<Controller graph={audioHub}>` per field.
@@ -21,7 +24,7 @@ import { openCheckpointPicker } from './inputs/openCheckpointPicker';
  * but has no control, matching v1.
  */
 
-export function AudioGenerationForm() {
+export function AudioGenerationForm({ store }: { store: GenerationStore }) {
   return (
     <Stack gap="sm">
       <Controller
@@ -64,6 +67,7 @@ export function AudioGenerationForm() {
           />
         )}
       />
+      <GateRuleWarnings />
       <Controller
         graph={audioHub}
         name="generateCover"
@@ -122,20 +126,28 @@ export function AudioGenerationForm() {
         graph={audioHub}
         name="prompt"
         render={({ value, meta, onChange, error }) => (
-          <GenerationTextEditor
-            value={value}
-            onChange={onChange}
-            triggerWords={meta?.triggerWords}
+          <PromptEditorShell
             label={
-              <ControllerLabel
+              <PromptLabel
+                store={store}
+                prompt={value}
                 label="Prompt"
                 info="Describe the song concept in plain English — a chat model drafts the lyrics, music description, BPM, and key from it."
                 required={meta?.required}
               />
             }
-            placeholder="Describe the song you want to generate..."
             error={error?.message}
-          />
+            triggerWords={meta?.triggerWords}
+          >
+            <GenerationTextEditor
+              value={value}
+              onChange={onChange}
+              triggerWords={meta?.triggerWords}
+              placeholder="Describe the song you want to generate..."
+              minRows={2}
+              className="!border-0 !bg-transparent"
+            />
+          </PromptEditorShell>
         )}
       />
       <Controller

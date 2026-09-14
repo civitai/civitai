@@ -113,6 +113,35 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   // via the host consent gate before a token carries it (contrast read:self,
   // which is exempt and always mints). See scope-grant.service.ts.
   'collections:read:private': SKIP_OAUTH_CHECK,
+  // posts:write:self — create a REAL Post on the VIEWER'S OWN profile from the
+  // app's own generation outputs (`blocks.createPostFromApp` →
+  // `CREATE_POST_FROM_APP`). This is the first block scope that writes PUBLIC,
+  // feed-visible, reward-earning content under the viewer's name, so it is
+  // deliberately the strictest-wired scope in the vocabulary:
+  //
+  //   - A REAL OAuth BIT, not SKIP_OAUTH_CHECK. `TokenScope.MediaWrite` is
+  //     labelled "Upload media & create posts" and already backs the native
+  //     `post.create` route, so the capability has a pre-existing bit and there
+  //     is no reason to opt out of the ceiling. ⚠️ That ceiling is only a real
+  //     gate for an OauthClient whose `allowedScopes` was DERIVED at approve
+  //     (`deriveOauthBitmaskFromBlockScopes`); a client still carrying the DB
+  //     default `33554431` (= TokenScope.Full) satisfies MediaWrite trivially.
+  //     The load-bearing gates are the per-op server checks + the consent grant,
+  //     exactly as for the SKIP_OAUTH_CHECK scopes — the bit is defence in depth.
+  //   - SENSITIVE (see SENSITIVE_BLOCK_SCOPES) ⇒ a manifest declaring it MUST
+  //     carry a non-empty `scopeJustifications` entry or submit is rejected.
+  //   - CONSENT-GATED: deliberately NOT in CONSENT_EXEMPT_SCOPES
+  //     (scope-grant.service.ts), so the user must grant it through the host
+  //     consent modal before a token can carry it — same posture as
+  //     `collections:read:private`, for a strictly more consequential capability.
+  //   - :self ⇒ a non-anon subject is required in `enforceContextBinding`.
+  //     There is no anonymous profile to post to.
+  //
+  // The scope is NOT the whole consent story: the host ALSO opens a per-post
+  // chrome confirm rendering the host-resolved title / detail / tags / images /
+  // gallery target, because the content differs every time and a blanket grant
+  // cannot inform. See `createPostFromAppGate.ts`.
+  'posts:write:self': TokenScope.MediaWrite,
 } as const;
 
 export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
@@ -294,7 +323,8 @@ export function isKnownBlockScope(scope: string): scope is BlockScopeString {
  *   - spend the viewer's Buzz          (`ai:write:budgeted`, `social:tip:self`)
  *   - read the viewer's Buzz balance   (`buzz:read:self`)
  *   - read the viewer's PRIVATE data   (`collections:read:private`)
- *   - write data OTHER users see       (`apps:storage:shared:write`)
+ *   - write data OTHER users see       (`apps:storage:shared:write`,
+ *                                       `posts:write:self`)
  *
  * This set does two things. (1) PRESENTATION — it drives the distinct,
  * warning-styled emphasis wherever scopes are surfaced. (2) ENFORCEMENT — it
@@ -317,6 +347,11 @@ export const SENSITIVE_BLOCK_SCOPES: ReadonlySet<string> = new Set([
   'buzz:read:self',
   'collections:read:private',
   'apps:storage:shared:write',
+  // Writes PUBLIC, feed-visible, reward-earning content under the VIEWER'S name.
+  // The most consequential entry in this set: `apps:storage:shared:write` is
+  // visible to other viewers OF THAT APP, this one is visible to the whole site
+  // and carries the viewer's byline.
+  'posts:write:self',
 ]);
 
 export function isSensitiveBlockScope(scope: string): boolean {

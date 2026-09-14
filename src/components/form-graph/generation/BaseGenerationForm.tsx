@@ -22,6 +22,7 @@ import { generationGraphPanel } from '~/store/generation-graph.store';
 import { GenerationLayout, GenerationFooter } from '~/components/generation_v2/GenerationLayout';
 import { PresetControl } from '~/components/generation_v2/preset/PresetControl';
 import { SelectedWorkflowDisplay } from '~/components/generation_v2/inputs/WorkflowInput';
+import { ExperimentalRulesSync } from '~/components/generation_v2/Experimental';
 import { MetadataExtractionPanel } from '~/components/generation_v2/inputs/MetadataExtractionPanel';
 import { MetadataExtractionFooter } from '~/components/generation_v2/FormFooter';
 import { PromptEnhancePanel } from '~/components/Generation/PromptEnhance/PromptEnhancePanel';
@@ -106,6 +107,7 @@ export function BaseGenerationForm() {
 
   return (
     <FormProvider store={store}>
+      <ExperimentalRulesSync />
       <WhatIfProvider store={store} ext={ext}>
         <GenerationFormBody store={store} isMember={ext.user?.isMember ?? false} />
       </WhatIfProvider>
@@ -230,7 +232,7 @@ function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMem
           ) : output === 'video' ? (
             <VideoGenerationForm store={store} />
           ) : output === 'audio' ? (
-            <AudioGenerationForm />
+            <AudioGenerationForm store={store} />
           ) : (
             <Model3dGenerationForm store={store} />
           )}

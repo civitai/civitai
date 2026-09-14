@@ -28,7 +28,11 @@ Supporting skills: `deploy-status` (the deploy stops), `postgres-query` (used by
 
 ## Phase 0 — Classify
 
-Ask for the model name and a reference link, plus the Civitai model URL if the model already exists. Then work out the case:
+Ask for the model name and a reference link, plus the Civitai model URL if the model already exists.
+
+First work out the **kind**: `api-only` (the provider runs it, no files) or `hosted-weights` (we run it from files the user uploads). Settle it with the "Versions: API-only or hosted weights" steps in `official-model-admin`: gather the evidence, then have the user confirm. Never guess it. Settle the kind before the case, because the kind decides the case.
+
+Then work out the **case**:
 
 | Case | Phases | Deploys |
 | --- | --- | --- |
@@ -37,9 +41,18 @@ Ask for the model name and a reference link, plus the Civitai model URL if the m
 | **C.** New model, existing base model | 2–5, 7 → deploy → 8 | 1 |
 | **D.** New version of an existing official model | 2–5, 7 → deploy → 8 | 1 |
 
-Then work out the **kind**: `api-only` (the provider runs it, no files) or `hosted-weights` (we run it from files the user uploads). Settle it with the "Versions: API-only or hosted weights" steps in `official-model-admin`: gather the evidence, then have the user confirm. Never guess it.
+### Choosing the case: new ecosystem, new base model, or neither
 
-The kind changes Phase 3. A hosted-weights version adds a stop while the user uploads its files.
+Adding a base model or an ecosystem costs a second deploy and is hard to undo once resources are published against it. So the default is **neither**. Go down this list and take the first rule that matches:
+
+1. **API-only, and the model's line already has an ecosystem → C or D.** Add a new version under the existing base model. Don't add a base model or an ecosystem: nobody trains resources against an API-only model, so there's nothing compatibility could apply to. For example, later Nano Banana releases stay under the one `Nano Banana` base model.
+2. **API-only, and it's the first model from its line → A.** It still needs an ecosystem to generate under. Name it for the line, not the release (`MuseImage`, not `MuseImage1`), so later releases fit under rule 1.
+3. **Hosted weights, and existing resources work on it → B.** Existing resources (LoRAs, embeddings and other addons) in the ecosystem run on the new checkpoint, so add a base model inside the existing ecosystem. Example: `SDXL 0.9` → `SDXL 1.0` → `SDXL 1.0 LCM`, all in `ECO.SDXL`. If the new checkpoint is a drop-in release that creators won't need to tell apart, prefer C.
+4. **Hosted weights, and existing resources do not work on it → A.** Create a new versioned ecosystem. Example: `LTXV` → `LTXV2` → `LTXV 2.3` → `LTXV 2.5`, each its own ecosystem. Apply the compatibility test in `add-ecosystem` ("The test: does this need its own ecosystem?"). It judges compatibility by the weights actually shipped, not the vendor's family name, and when you're unsure it says to split.
+
+Show the user which rule matched and the evidence for it: the kind, whether the line already has an ecosystem, and for hosted weights, why existing resources do or don't work on it. The user confirms the case. Never guess it, just as you never guess the kind.
+
+The kind also changes Phase 3. A hosted-weights version adds a stop while the user uploads its files.
 
 Show the user the case, the kind, the phases and where the run will stop, for deploys and for uploads. Get their confirmation before continuing.
 

@@ -244,7 +244,7 @@ const UNRECOGNIZED_ID = 987654321;
 const QWEN_DEFAULT = getWorkflowCapability('Qwen', 'txt2img')?.defaultModelId as number;
 
 /** A server-shaped context carrying a fresh per-request collector. */
-function ctx() {
+function ctx(overrides: Record<string, unknown> = {}) {
   return {
     limits: { maxQuantity: 4, maxResources: 10, vidQuantity: 1 },
     user: { isMember: false, tier: 'free' },
@@ -253,6 +253,7 @@ function ctx() {
     selfHostedMode: 'enabled',
     gateRules: [],
     modelSubstitutions: createModelSubstitutionCollector(classifyModelSubstitutionReason, 'api'),
+    ...overrides,
   } as never;
 }
 
@@ -278,6 +279,55 @@ describe('the graph fixture is still what these tests assume', () => {
     // substitutes and every assertion would pass vacuously.
     expect(getWorkflowCapability('Qwen', 'txt2img')?.modelLocked).toBe(true);
     expect(typeof QWEN_DEFAULT).toBe('number');
+  });
+});
+
+// A `disabled` version is deliberately still selectable and still parses, so
+// this refusal is the ONLY thing between it and a billed submit. `QWEN_DEFAULT`
+// rather than an arbitrary id: an unrecognised one is substituted away before
+// the refusal is reached, and the test would pass for the wrong reason.
+describe('gate rules — a disabled version is refused, not costed', () => {
+  const disabledRule = {
+    id: 'gate-1',
+    name: 'maintenance',
+    availableTo: 'nobody',
+    presentation: 'disabled',
+    message: 'Back Monday.',
+    ecosystems: [],
+    workflows: [],
+    modelVersionIds: [QWEN_DEFAULT],
+  };
+
+  it('🔴 refuses the zero-spend estimate', async () => {
+    await expect(
+      whatIfFromGraph({
+        input: input(QWEN_DEFAULT),
+        externalCtx: ctx({ gateRules: [disabledRule] }),
+        ...common,
+      } as never)
+    ).rejects.toThrow('This model version is currently unavailable. Back Monday.');
+  });
+
+  it('🔴 refuses the submit', async () => {
+    await expect(
+      generateFromGraph({
+        input: input(QWEN_DEFAULT),
+        externalCtx: ctx({ gateRules: [disabledRule] }),
+        ...common,
+      } as never)
+    ).rejects.toThrow('This model version is currently unavailable. Back Monday.');
+  });
+
+  // Negative control: the same input with no rules must get past the refusal,
+  // or the two assertions above would pass on any unrelated failure.
+  it('lets the same request through when no rule targets it', async () => {
+    const result = (await whatIfFromGraph({
+      input: input(QWEN_DEFAULT),
+      externalCtx: ctx(),
+      ...common,
+    } as never)) as { modelSubstitutions?: unknown };
+
+    expect(result.modelSubstitutions).toBeUndefined();
   });
 });
 

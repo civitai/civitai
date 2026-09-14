@@ -14,16 +14,21 @@ import {
   getGenerationData,
   getGenerationStatus,
   getGateRules,
+  getGeneratorMessages,
   getGenerationConfig,
   getResourceData,
   resolveImageMeta,
-  setGateRules,
+  saveGateRule,
+  deleteGateRule,
+  saveGeneratorMessage,
+  deleteGeneratorMessage,
   setGenerationStatus,
   setSelfHostedGenerationStatus,
   // textToImage,
   // textToImageTestRun,
   toggleGenerationDisabled,
 } from '~/server/services/generation/generation.service';
+import { generatorMessageSchema } from '~/shared/generation/messages';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { edgeCacheIt, purgeOnSuccess, rateLimit } from '~/server/middleware.trpc';
 import { resolveWildcardPackForUser } from '~/server/services/wildcard-pack.service';
@@ -114,9 +119,19 @@ export const generationRouter = router({
       })
     ),
   getGateRules: moderatorProcedure.query(() => getGateRules()),
-  setGateRules: moderatorProcedure
-    .input(z.array(gateRuleSchema))
-    .mutation(({ input }) => setGateRules(input)),
+  saveGateRule: moderatorProcedure
+    .input(gateRuleSchema)
+    .mutation(({ input }) => saveGateRule(input)),
+  deleteGateRule: moderatorProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(({ input }) => deleteGateRule(input.id)),
+  getGeneratorMessages: moderatorProcedure.query(() => getGeneratorMessages()),
+  saveGeneratorMessage: moderatorProcedure
+    .input(generatorMessageSchema)
+    .mutation(({ input }) => saveGeneratorMessage(input)),
+  deleteGeneratorMessage: moderatorProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(({ input }) => deleteGeneratorMessage(input.id)),
   toggleGenerationDisabled: moderatorProcedure
     .input(getByIdSchema)
     .mutation(({ input, ctx }) =>
