@@ -310,6 +310,14 @@ export function renderNotes(subScores: HeuristicScore[]): string | null {
  * the shadow phase's job is to see marginal cases — a tight threshold would report only the accounts
  * nobody needed a detector to find, and would teach us nothing about where the real line sits.
  *
+ * 🔴 IT IS A LITERAL, NOT A DERIVATION — SO IT IS TIED TO `n = 3` THE SAME WAY `SOLE_SIGNAL_DOMINANCE`
+ * IS, AND NOTHING ENFORCES IT. The arithmetic above reads the registry's size; this constant does
+ * not. A fourth registered heuristic leaves the value untouched and silently invalidates the
+ * argument for it — 0.45 alone blends to 0.1125 rather than 0.15, so the same cut admits only a
+ * signal about 0.6 convinced. Re-derive here when `heuristics/index.ts` grows. The guards in
+ * `__tests__/scoring.test.ts` pin `1/n > this` and `0.4/n < this`, and both still hold at `n = 4`,
+ * so they will not catch it either.
+ *
  * 🔴 IT IS A STARTING POINT, NOT A CALIBRATION, and nothing here pretends otherwise. No run has
  * produced a graded finding, so this number is derived from the weighting rather than from data.
  * The `confidence_bucket_*` counters below exist precisely to replace it: after a few runs the
