@@ -247,6 +247,35 @@ describe('a SUSPENDED app is refused on the REST routes that can spend or write'
     expect(res.statusCode).toBe(200);
   });
 
+  /**
+   * 🔴 THE `not_found` POLICY, AT THE ROUTE, AND IT IS THE SHARP END OF IT: a token whose
+   * `(appId, blockId)` resolves to NO `app_blocks` row can still spend Buzz.
+   *
+   * That is the decision, stated where it costs something rather than only in a docblock.
+   * The reasoning: every moderator takedown leaves a row with `status !== 'approved'`, so
+   * the whole of this gate's value is the `not_approved` case above. A missing row is not
+   * a takedown — it is a row deleted or re-keyed mid-session, blockId drift, or an
+   * id-minting bug — i.e. a HEALTHY app, and refusing it would 404 a live public endpoint
+   * with no toggle to pull. It is counted and logged instead, so the false-positive rate
+   * is observable rather than inferred from support tickets.
+   *
+   * It is pinned HERE, on the money route, because this is the assertion whose failure a
+   * future author must read before widening the gate back over this branch.
+   */
+  it('NO app_blocks ROW on /tip — SERVED, and the Buzz transfer runs', async () => {
+    findUniqueMock.mockResolvedValue(null);
+    const token = await mintToken(['social:tip:self']);
+    const res = makeRes();
+
+    await (tipRoute as unknown as (req: NextApiRequest, res: NextApiResponse) => Promise<void>)(
+      makeReq(token, { toUserId: 77, amount: 100 }),
+      res
+    );
+
+    expect(mockTipTransaction).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(200);
+  });
+
   it('POSITIVE CONTROL — the SAME follow on an APPROVED app REACHES the contributor write', async () => {
     findUniqueMock.mockResolvedValue({ status: 'approved' });
     const token = await mintToken(['collections:write:self']);

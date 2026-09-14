@@ -81,6 +81,8 @@ import { describe, expect, it } from 'vitest';
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const ROUTER = 'src/server/routers/blocks.router.ts';
 const GUARD = 'src/server/services/blocks/block-bridge-auth.service.ts';
+/** The shared row-lookup + `approved` comparison both halves of the runtime resolve through. */
+const APPROVAL_PREDICATE = 'src/server/services/blocks/block-approval.service.ts';
 
 /**
  * The bridge call sites, by owning procedure. `authorizeBlockBuzzRead` is the router's
@@ -1001,18 +1003,72 @@ describe('no unguarded block-bridge token verification', () => {
 
   it('still SPELLS the two checks the guard exists for', () => {
     const guard = read(GUARD);
-    // 🔴 THIS IS A SPELLING CHECK, NOT A BEHAVIOURAL ONE — it asserts these three strings
-    // are still present, and that is ALL it can see. It is walkable in both directions: a
-    // semantically identical rewrite (`status === 'approved' ? … : throw`) FAILS it while
-    // the behaviour is intact, and a comparison against the WRONG value spelled this way
-    // PASSES it. So it cannot certify either check is correct — it only catches one
-    // dropped wholesale while everything still type-checks.
+    // 🔴 THIS IS A SPELLING CHECK, NOT A BEHAVIOURAL ONE — it asserts these strings are
+    // still present, and that is ALL it can see. It is walkable in both directions: a
+    // semantically identical rewrite FAILS it while the behaviour is intact, and a
+    // comparison against the WRONG value spelled this way PASSES it. So it cannot certify
+    // either check is correct — it only catches one dropped wholesale while everything
+    // still type-checks.
     //
     // What actually pins the behaviour is `blocks.router.bridgeTokenGuard.test.ts` (a
     // different vitest project, which is why this cheap presence check exists at all). If
     // you are tempted to read this test as coverage, read that file instead.
     expect(guard).toMatch(/BlockRevocation\.isRevoked\(\s*claims\.blockInstanceId\s*\)/);
-    expect(guard).toMatch(/appBlock\.findUnique/);
-    expect(guard).toMatch(/status !== 'approved'/);
+    // 🔴 THE APPROVAL CHECK IS NO LONGER SPELLED IN THIS FILE. The row lookup and the
+    // `approved` comparison moved to the shared predicate `resolveAppBlockApprovalVerdict`
+    // (`block-approval.service.ts`), which the REST gate resolves through as well, so
+    // neither half of the runtime can drift on WHICH row is read or WHAT counts as
+    // approved. What this file must still spell is that the guard DELEGATES to it; what
+    // the predicate module must still spell is the lookup itself. Both halves are asserted,
+    // because either one alone passes while the check is gone: the delegation without the
+    // predicate is a call to nothing, and the predicate without the delegation is dead code.
+    expect(guard).toMatch(/\bresolveAppBlockApprovalVerdict\s*\(/);
+    // 🔴 CODE LINES ONLY, and this is not fussiness — a whole-file `toMatch` for
+    // `status === 'approved'` PASSES on the predicate module's own docblock, which quotes
+    // that exact expression while describing the mint endpoint. Measured: weakening the
+    // real comparison to `!== 'suspended'` left the whole-file form GREEN. A spelling
+    // check that its own prose satisfies is not weak, it is inert.
+    const predicateCode = read(APPROVAL_PREDICATE)
+      .split('\n')
+      .filter((line) => !/^\s*(?:\/\/|\*|\/\*)/.test(line))
+      .join('\n');
+    expect(predicateCode).toMatch(/appBlock\.findUnique/);
+    expect(predicateCode).toMatch(/status === 'approved'/);
+  });
+
+  /**
+   * 🔴 THE DIVERGENCE THAT CONSOLIDATION MUST NOT SWALLOW, pinned where a reader of the
+   * bridge will meet it.
+   *
+   * The bridge and the REST gate share the predicate and deliberately DISAGREE on what a
+   * missing row means: the bridge answers `NOT_FOUND`, the REST wrapper serves the request
+   * and only counts it. A "cleanup" that routed the bridge through the REST policy helper
+   * (`resolveRestApprovalVerdict`) would look like more consolidation and would silently
+   * change two things at once — the missing-row response, and what an unreachable replica
+   * does (that helper swallows the error into a `lookup_failed` verdict, where this path
+   * lets it propagate).
+   *
+   * ⚠️ WHAT THIS CAN SEE: that the guard file does not name the REST policy helper. It is
+   * a spelling check like the one above and inherits every limit of one. The BEHAVIOUR it
+   * protects — `NOT_FOUND` on a missing row — is pinned in
+   * `blocks.router.bridgeTokenGuard.test.ts`, which is the file to change if this ever
+   * becomes a decision rather than an accident.
+   */
+  it('does NOT route the bridge through the REST policy wrapper — the two differ on a missing row', () => {
+    const guard = read(GUARD);
+    const offenders = guard
+      .split('\n')
+      .map((line, i) => [line, i + 1] as const)
+      .filter(([line]) => /\bresolveRestApprovalVerdict\b/.test(line))
+      .filter(([line]) => !/^\s*(?:\/\/|\*|\/\*)/.test(line))
+      .map(([line, n]) => `${GUARD}:${n}: ${line.trim()}`);
+
+    expect(
+      offenders,
+      `${GUARD} names resolveRestApprovalVerdict in code. That helper carries the REST ` +
+        "policy, not the bridge's: it SERVES a missing row (the bridge answers NOT_FOUND) " +
+        'and converts a failed read into a lookup_failed verdict (the bridge lets it ' +
+        'propagate). Resolve through resolveAppBlockApprovalVerdict and map the verdict here.'
+    ).toEqual([]);
   });
 });

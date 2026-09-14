@@ -27,12 +27,12 @@ vi.mock('~/server/flipt/client', () => ({ isFlipt: isFliptMock }));
 vi.mock('~/server/services/block-revocation.service', () => ({
   BlockRevocation: { isRevoked: isRevokedMock },
 }));
-// Only the refusal emitter is replaced; everything else in the metrics module (the RED
+// Only the verdict emitter is replaced; everything else in the metrics module (the RED
 // counters the middleware also touches) stays real.
-const { recordRefusalMock } = vi.hoisted(() => ({ recordRefusalMock: vi.fn() }));
+const { recordVerdictMock } = vi.hoisted(() => ({ recordVerdictMock: vi.fn() }));
 vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  recordBlockRestApprovalRefusal: recordRefusalMock,
+  recordBlockRestApprovalVerdict: recordVerdictMock,
 }));
 
 import { dbMock } from '~/__tests__/mocks';
@@ -226,12 +226,38 @@ describe('withBlockScope — the gate on the real request path', () => {
     expect(res.body).toEqual({ error: 'app block is not approved' });
   });
 
-  it('NO ROW: 404, and the handler never runs', async () => {
+  /**
+   * 🔴 NO ROW IS NOT A TAKEDOWN, SO IT DOES NOT REFUSE. Every moderator takedown leaves a
+   * row whose `status` is not `approved`, which means the whole of this gate's value sits
+   * in the `not_approved` branch above. A missing row is the opposite shape: a
+   * signature-valid token whose `(appId, blockId)` resolves to nothing — a row deleted or
+   * re-keyed mid-session, blockId drift, an id-minting bug — i.e. a HEALTHY app, carrying
+   * all of the false-positive risk and none of the value. It is OBSERVED (counted + logged)
+   * and SERVED.
+   *
+   * This is the assertion that pins the decision. It was RED before it — the gate answered
+   * 404 here — and a regression that reinstates the refusal fails on the handler count
+   * first, which is the half that says a healthy app was turned away.
+   */
+  it('NO ROW: the request is SERVED — the handler runs and answers 200', async () => {
     findUniqueMock.mockResolvedValue(null);
     const { handler, res } = await drive(await mint());
-    expect(handler).not.toHaveBeenCalled();
-    expect(res.statusCode).toBe(404);
-    expect(res.body).toEqual({ error: 'app block not found' });
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ via: 'handler' });
+  });
+
+  it('NO ROW in "any valid block token" mode (no requiredScope) is SERVED too', async () => {
+    findUniqueMock.mockResolvedValue(null);
+    const handler = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
+      res.status(200).json({ via: 'handler' });
+    });
+    const route = withBlockScope(handler as never, { endpoint: 'models' });
+    const res = makeRes();
+    await route(makeReq(await mint()) as never, res as never);
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(200);
   });
 
   it('LOOKUP FAILURE: 503, and the handler never runs — fail CLOSED, unlike revocation', async () => {
@@ -333,26 +359,38 @@ describe('withBlockScope — the gate on the real request path', () => {
  * emitter that fired the wrong reason — or fired on the happy path — would make the
  * series say the opposite of what an operator would read it as.
  */
-describe('the refusal counter is emitted, once, with the right reason', () => {
-  it.each([
-    [{ status: 'suspended' }, 'not_approved'],
-    [null, 'not_found'],
-  ])('%p → reason %s', async (row, reason) => {
-    findUniqueMock.mockResolvedValue(row);
+describe('the verdict counter is emitted, once, with the right reason', () => {
+  it('a SUSPENDED app → reason not_approved', async () => {
+    findUniqueMock.mockResolvedValue({ status: 'suspended' });
     await drive(await mint());
-    expect(recordRefusalMock.mock.calls).toEqual([[reason]]);
+    expect(recordVerdictMock.mock.calls).toEqual([['not_approved']]);
+  });
+
+  /**
+   * 🔴 BOTH HALVES IN ONE TEST, and that pairing is the point. `not_found` is the one
+   * reason that is counted WITHOUT refusing, so the counter and the response are the two
+   * things that must hold together: counted-and-refused is the old behaviour, and
+   * served-but-uncounted is the gate going silent on its own false-positive channel. Two
+   * separate tests would each pass against one of those.
+   */
+  it('NO ROW → counted under reason not_found AND still served', async () => {
+    findUniqueMock.mockResolvedValue(null);
+    const { handler, res } = await drive(await mint());
+    expect(recordVerdictMock.mock.calls).toEqual([['not_found']]);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(200);
   });
 
   it('a lookup failure → reason lookup_failed', async () => {
     findUniqueMock.mockRejectedValue(new Error('replica unreachable'));
     await drive(await mint());
-    expect(recordRefusalMock.mock.calls).toEqual([['lookup_failed']]);
+    expect(recordVerdictMock.mock.calls).toEqual([['lookup_failed']]);
   });
 
   it('NEGATIVE CONTROL — an APPROVED app emits nothing', async () => {
     findUniqueMock.mockResolvedValue({ status: 'approved' });
     await drive(await mint());
-    expect(recordRefusalMock).not.toHaveBeenCalled();
+    expect(recordVerdictMock).not.toHaveBeenCalled();
   });
 
   it('NEGATIVE CONTROL — a REVOKED instance is not counted as an approval refusal', async () => {
@@ -362,6 +400,6 @@ describe('the refusal counter is emitted, once, with the right reason', () => {
     isRevokedMock.mockResolvedValue(true);
     findUniqueMock.mockResolvedValue({ status: 'suspended' });
     await drive(await mint());
-    expect(recordRefusalMock).not.toHaveBeenCalled();
+    expect(recordVerdictMock).not.toHaveBeenCalled();
   });
 });

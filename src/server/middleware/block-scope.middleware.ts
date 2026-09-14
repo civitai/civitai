@@ -3,7 +3,7 @@ import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import {
   ensureRegisterAppBlockRuntimeMetrics,
-  recordBlockRestApprovalRefusal,
+  recordBlockRestApprovalVerdict,
   statusToRequestResult,
   type AppBlockEndpoint,
 } from '~/server/metrics/app-block-runtime.metrics';
@@ -857,14 +857,23 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     }
 
     // APPROVED-STATUS GATE. The whole argument, the `dev` exemption, how it reconciles
-    // with the two shared-storage resolvers' different rules, and why it fails CLOSED
-    // live on `resolveRestApprovalVerdict` in
+    // with the two shared-storage resolvers' different rules, and the two postures live
+    // on `resolveRestApprovalVerdict` in
     // `~/server/services/blocks/block-approval.service` — one docblock, not two.
     //
-    // 🔴 The revocation check above fails OPEN and this one fails CLOSED. That is not an
-    // inconsistency in this function: revocation's fail-open lives INSIDE the primitive
-    // (`BlockRevocation.isRevoked` swallows a Redis error and returns false), so a
-    // "cleanup" here could not align them even if it wanted to.
+    // 🔴 ONLY TWO OF THE THREE NON-OK VERDICTS REFUSE. `not_approved` is the branch that
+    // carries the whole of this gate's value (every moderator takedown leaves a row whose
+    // status is not `approved`), and `lookup_failed` fails CLOSED because a read we could
+    // not complete tells us nothing. `not_found` is neither: a signature-valid, non-dev
+    // token that resolves to NO row is a HEALTHY app — a row deleted or re-keyed
+    // mid-session, blockId drift, an id-minting bug — so refusing it would 404 a live
+    // public endpoint in exchange for closing no takedown path. It is COUNTED and LOGGED
+    // and the request is SERVED.
+    //
+    // 🔴 The revocation check above fails OPEN and `lookup_failed` here fails CLOSED. That
+    // is not an inconsistency in this function: revocation's fail-open lives INSIDE the
+    // primitive (`BlockRevocation.isRevoked` swallows a Redis error and returns false), so
+    // a "cleanup" here could not align them even if it wanted to.
     //
     // ORDER MATTERS AND MIRRORS THE BRIDGE: revocation is a Redis GET and responds to a
     // USER action within seconds, so it runs first and a revoked-AND-suspended instance
@@ -872,17 +881,24 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // survived it.
     const approval = await resolveRestApprovalVerdict(claims);
     if (approval !== 'ok' && approval !== 'dev_exempt') {
-      recordBlockRestApprovalRefusal(approval);
-      if (approval === 'not_found') {
-        res.status(404).json({ error: 'app block not found' });
+      recordBlockRestApprovalVerdict(approval);
+      if (approval === 'not_approved') {
+        res.status(403).json({ error: 'app block is not approved' });
         return;
       }
       if (approval === 'lookup_failed') {
         res.status(503).json({ error: 'app block status unavailable' });
         return;
       }
-      res.status(403).json({ error: 'app block is not approved' });
-      return;
+      // `not_found` — OBSERVED, NOT REFUSED; execution falls through to the handler.
+      // The ids go in the log rather than on the counter: this fires once per such
+      // request with nothing rate-limiting it, and an `app_block_id` label would be
+      // retained in the Node heap forever, per pod.
+      approval satisfies 'not_found';
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[block-scope] approved-status lookup found no app_blocks row; SERVING (observe-only) appId=${claims.appId} blockId=${claims.blockId} endpoint=${opts.endpoint}`
+      );
     }
 
     // "Any valid block token" mode (opts.requiredScope omitted): the token has

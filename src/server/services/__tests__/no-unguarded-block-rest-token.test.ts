@@ -18,13 +18,18 @@ import { describe, expect, it } from 'vitest';
  *      routes export `baseHandler` separately for their own unit tests, so the
  *      unwrapped value is right there, in scope, one word away from the export.
  *
+ * A THIRD regression lives at the bottom of this file rather than here, because it is
+ * about the PREDICATE and not about the wrapper: a second open-coded copy of the
+ * approval check appearing somewhere else in the tree. See
+ * `the approval predicate is not open-coded a second time`.
+ *
  * WHAT THIS FILE IS NOT. It does not verify that the gate WORKS — that is
- * `block-scope.approved-gate.test.ts` (the predicate and the four verdicts) and
- * `suspended-app-rest-refusal.test.ts` (two real routes, a real JWT, a suspended app,
- * and the money/write call that must not happen). Read those if you are asking whether
- * a suspended app is refused. This file only pins the POPULATION and the wrapping
- * relationship, and it is written that way on purpose: a structural check that claims
- * behavioural coverage is worse than none, because it stops anyone looking.
+ * `block-scope.approved-gate.test.ts` (the predicate and its verdicts, including the one
+ * that is counted and SERVED rather than refused) and `suspended-app-rest-refusal.test.ts`
+ * (two real routes, a real JWT, a suspended app, and the money/write call that must not
+ * happen). Read those if you are asking whether a suspended app is refused. This file only
+ * pins POPULATIONS and RELATIONSHIPS, and it is written that way on purpose: a structural
+ * check that claims behavioural coverage is worse than none, because it stops anyone looking.
  *
  * A RELATIONSHIP, NOT A COUNT, in both ledgers below:
  *
@@ -318,11 +323,17 @@ describe('no unguarded block-REST token verification', () => {
     ).toEqual([]);
   });
 
-  it('the middleware takes the approval decision in ONE place', () => {
-    // 🔴 A SPELLING CHECK, and that is ALL it can see: a semantically identical rewrite
-    // would fail it, and a call to a WRONG predicate spelled this way would pass it. It
-    // catches the gate being dropped wholesale while everything still type-checks, and
-    // nothing more. What pins the behaviour is block-scope.approved-gate.test.ts.
+  it('the middleware resolves the approval verdict in ONE place', () => {
+    // 🔴 SCOPE, STATED NARROWLY ON PURPOSE: this counts calls IN THE MIDDLEWARE, and that
+    // is all it claims. It says nothing about a second predicate living in another file —
+    // which is a real class, and the ledger test below is what covers it. An earlier
+    // version of this file carried only this assertion under the heading "ONE place",
+    // which read as a repo-wide claim it could not back; a second copy of the same three
+    // steps sat in `block-bridge-auth.service.ts` the whole time, unseen.
+    //
+    // It is also a SPELLING check: a semantically identical rewrite would fail it, and a
+    // call to a WRONG predicate spelled this way would pass it. What pins the behaviour is
+    // block-scope.approved-gate.test.ts.
     const middleware = read(MIDDLEWARE);
     const calls = middleware
       .split('\n')
@@ -333,5 +344,145 @@ describe('no unguarded block-REST token verification', () => {
         'a second predicate, which is how the thirteen open-coded copies the bridge guard ' +
         'replaced came to disagree with each other.'
     ).toBe(1);
+  });
+});
+
+/**
+ * 🔴 THE REPO-WIDE HALF, and the reason it exists: the middleware check above could not
+ * see a second copy of the predicate in another file, and there WAS one —
+ * `block-bridge-auth.service.ts` open-coded the same three steps (dev exemption, the
+ * `appId_blockId` lookup, `status === 'approved'`) while the middleware check reported
+ * "ONE place". The two are now consolidated onto `resolveAppBlockApprovalVerdict`, and
+ * this ledger is what makes a THIRD copy visible.
+ *
+ * WHAT IS DERIVED: every non-test file under the scanned roots that names the
+ * `appId_blockId` unique — i.e. that resolves the backing `app_blocks` row directly. That
+ * is deliberately WIDER than "takes an approval decision": widening it to the lookup means
+ * a new copy is caught at the point it reads the row, before its author has written the
+ * comparison, and a site that reads the row for some OTHER purpose costs one ledger line
+ * to record. Narrowing it to `status === 'approved'` would let a copy spelled
+ * `!== 'approved'`, or one that selects the status and compares it two functions later,
+ * through — and those are the shapes a copy actually takes.
+ *
+ * 🔴 KNOWN LIMITS, stated rather than implied:
+ *   - Text, not a call graph, and keyed on the unique's NAME. A lookup that reached the
+ *     same row another way — by primary key, through a helper, via a raw query — is
+ *     invisible. This catches the copy-the-block-and-edit-it shape, which is the one that
+ *     happened, not every conceivable route to the row.
+ *   - It cannot tell an approval check from any other use of the row. That is what the
+ *     rationale sentence is for, and the test can only check that someone wrote one.
+ *   - Scoped to `src/server` and `src/pages`. A lookup somewhere else entirely is outside it.
+ */
+const BACKING_ROW_SCAN_ROOTS = ['src/server', 'src/pages'];
+
+/** The `app_blocks` compound unique — naming it means resolving the backing row directly. */
+const BACKING_ROW_LOOKUP_RE = /\bappId_blockId\b/;
+
+const BACKING_ROW_LOOKUP_LEDGER: Record<string, string> = {
+  'src/server/services/blocks/block-approval.service.ts':
+    'THE PREDICATE. The one place the row is resolved from token claims and compared against `approved`. Both halves of the runtime — withBlockScope (REST) and assertAppBlockApproved (the tRPC bridge) — resolve their verdict here. A new approval check belongs in this file or calling it, not beside it.',
+  'src/server/routers/apps.router.ts':
+    'resolveStorageContext — per-user KV. Reads the row and refuses a non-approved one itself, and is STRICTER than the predicate by construction: it exempts only reviewRunForReal, not `dev` generally, because per-user KV must resolve to a real Postgres schema and a plain dev token names none. Folding it into the predicate would widen an exemption it deliberately does not have.',
+  'src/server/routers/apps-shared.router.ts':
+    'resolveSharedContext — shared, app-global KV. Same shape, exempts NOTHING: shared storage is cross-user state and run-for-real never grants apps:storage:shared:* at all, so there is no case to exempt. Also stricter than the predicate, for a reason about its target rather than about approval.',
+  'src/pages/api/v1/developer/block-manifests.ts':
+    'NOT an approval check. The developer manifest-upload path, keyed on an authenticated appId rather than on token claims: it reads the existing row to refuse server-controlled trustTier/renderMode changes, then upserts on the same unique. It gates on trust tier, never on status.',
+};
+
+/** Files the walk must skip: test suites are allowed to spell anything. */
+function isTestPath(rel: string): boolean {
+  return rel.includes(`${path.sep}__tests__${path.sep}`) || /\.test\.tsx?$/.test(rel);
+}
+
+function walkSource(relDir: string, out: string[] = []): string[] {
+  const abs = path.join(REPO_ROOT, relDir);
+  for (const entry of fs.readdirSync(abs, { withFileTypes: true })) {
+    const rel = path.join(relDir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === '__tests__' || entry.name === 'node_modules') continue;
+      walkSource(rel, out);
+      continue;
+    }
+    if (!PAGE_EXTENSIONS.includes(path.extname(entry.name))) continue;
+    if (isTestPath(rel)) continue;
+    out.push(rel);
+  }
+  return out;
+}
+
+/** Non-test source files that resolve the backing `app_blocks` row, on a line of CODE. */
+function backingRowLookupSites(): string[] {
+  const hits: string[] = [];
+  for (const root of BACKING_ROW_SCAN_ROOTS) {
+    for (const rel of walkSource(root)) {
+      const names = read(rel)
+        .split('\n')
+        .some((line) => BACKING_ROW_LOOKUP_RE.test(line) && !/^\s*(?:\/\/|\*|\/\*)/.test(line));
+      if (names) hits.push(rel);
+    }
+  }
+  return hits.sort();
+}
+
+describe('the approval predicate is not open-coded a second time', () => {
+  it('POSITIVE CONTROL — the lookup regex matches a real lookup and ignores a comment', () => {
+    expect(
+      BACKING_ROW_LOOKUP_RE.test(
+        'where: { appId_blockId: { appId: claims.appId, blockId: claims.blockId } },'
+      )
+    ).toBe(true);
+    expect(BACKING_ROW_LOOKUP_RE.test('select: { status: true },')).toBe(false);
+    // The comment filter is the other half: a docblock naming the unique is prose.
+    const commentLine = ' * resolved by the same `appId_blockId` unique the siblings use.';
+    expect(BACKING_ROW_LOOKUP_RE.test(commentLine)).toBe(true);
+    expect(/^\s*(?:\/\/|\*|\/\*)/.test(commentLine)).toBe(true);
+  });
+
+  it('POSITIVE CONTROL — the walk reaches both roots, deeply, and skips test files', () => {
+    const files = BACKING_ROW_SCAN_ROOTS.flatMap((root) => walkSource(root));
+    // An empty or shallow walk would make the set assertion below trivially satisfiable.
+    expect(files.length).toBeGreaterThan(500);
+    expect(files).toContain('src/server/services/blocks/block-approval.service.ts');
+    expect(files).toContain('src/pages/api/v1/blocks/collections/[id]/follow.ts');
+    expect(files.filter(isTestPath)).toEqual([]);
+  });
+
+  it('LEDGERS every site that resolves the backing app_blocks row', () => {
+    expect(
+      backingRowLookupSites(),
+      'The set of non-test files that resolve an app_blocks row by its (appId, blockId) ' +
+        'unique changed. If you ADDED one, add it to BACKING_ROW_LOOKUP_LEDGER with a ' +
+        'one-line statement of what it does with the row — and if that is an APPROVAL ' +
+        'check, it is a second copy of the predicate: call resolveAppBlockApprovalVerdict ' +
+        'instead. If one DISAPPEARED it was deleted, renamed, or consolidated. This fails ' +
+        'in both directions on purpose, and it is the only check here that can see a ' +
+        'second predicate in another FILE.'
+    ).toEqual(Object.keys(BACKING_ROW_LOOKUP_LEDGER).sort());
+  });
+
+  it('every ledger entry says what the site does with the row', () => {
+    const thin = Object.entries(BACKING_ROW_LOOKUP_LEDGER)
+      .filter(([, why]) => why.trim().length < 40)
+      .map(([file]) => file);
+    expect(
+      thin,
+      'These entries carry no usable rationale. Say whether the site takes an approval ' +
+        'decision, and if it does, why it is not calling the shared predicate.'
+    ).toEqual([]);
+  });
+
+  /**
+   * The consolidation itself, as a standing assertion rather than a moment in history: the
+   * bridge guard must resolve its verdict through the predicate and must not resolve the
+   * row itself. The ledger above already fails if that file reappears in the derived set —
+   * this states the same fact in the direction a reader will look for it, and names the
+   * call that has to be there.
+   */
+  it('the tRPC bridge guard delegates to the predicate instead of re-reading the row', () => {
+    const guard = read('src/server/services/blocks/block-bridge-auth.service.ts');
+    expect(guard).toMatch(/\bresolveAppBlockApprovalVerdict\s*\(/);
+    expect(BACKING_ROW_LOOKUP_LEDGER).not.toHaveProperty(
+      'src/server/services/blocks/block-bridge-auth.service.ts'
+    );
   });
 });
