@@ -160,6 +160,65 @@ describe('BlockRegistry.resolvePageBlockBySlug — sandbox + scopes', () => {
     }
   });
 
+  // `page.fullBleed` is the app's SELF-SERVICE opt-out from the run page's width
+  // cap, and it is the mechanism that replaced a hand-maintained CSS exemption
+  // ledger in `src/styles/globals.css`. This projection is the ONLY path from the
+  // approved manifest to the host prop, so if it dropped the field every declaring
+  // app would render capped with nothing failing anywhere. Publisher-controlled
+  // JSON, hence the same strict `=== true` as `bootSkeleton` above — and the same
+  // reason for living in the UNIT tier: the rendering half is in the browser
+  // project, which CI runs report-only.
+  it('fullBleed: true only for a literal boolean true under `page`', async () => {
+    mockDbRead.appBlock.findFirst.mockResolvedValue(
+      pageRow({
+        manifest: PAGE_MANIFEST({ page: { path: '/', title: 'Hello', fullBleed: true } }),
+        trustTier: 'verified',
+      })
+    );
+    const res = await BlockRegistry.resolvePageBlockBySlug('hello-page', { db: 'read' });
+    expect(res?.fullBleed).toBe(true);
+  });
+
+  it('fullBleed: false when absent — the cap stays the default for every app that says nothing', async () => {
+    // The additive-compatibility claim at the projection layer: every manifest
+    // already approved omits this key, and each must keep the capped behaviour it
+    // has today.
+    mockDbRead.appBlock.findFirst.mockResolvedValue(
+      pageRow({ manifest: PAGE_MANIFEST(), trustTier: 'verified' })
+    );
+    const res = await BlockRegistry.resolvePageBlockBySlug('hello-page', { db: 'read' });
+    expect(res?.fullBleed).toBe(false);
+  });
+
+  it('fullBleed: a TRUTHY non-boolean does NOT enable it, and neither does the key at TOP level', async () => {
+    for (const value of ['true', 'false', 1, {}, [], 'yes']) {
+      mockDbRead.appBlock.findFirst.mockResolvedValue(
+        pageRow({
+          manifest: PAGE_MANIFEST({ page: { path: '/', title: 'Hello', fullBleed: value } }),
+          trustTier: 'verified',
+        })
+      );
+      const res = await BlockRegistry.resolvePageBlockBySlug('hello-page', { db: 'read' });
+      expect(res?.fullBleed, `page.fullBleed=${JSON.stringify(value)}`).toBe(false);
+    }
+
+    // 🔴 THE FIELD IS UNDER `page`, NOT AT THE TOP LEVEL, and this is the mistake an
+    // author is most likely to make — `bootSkeleton` IS top-level, so the two
+    // neighbouring booleans live at different depths. A top-level `fullBleed` must
+    // NOT work, or the published schema (whose `page` block is
+    // `additionalProperties: false` and whose top level is not) would be describing
+    // a different contract from the one the host honours.
+    mockDbRead.appBlock.findFirst.mockResolvedValue(
+      pageRow({ manifest: PAGE_MANIFEST({ fullBleed: true }), trustTier: 'verified' })
+    );
+    const topLevel = await BlockRegistry.resolvePageBlockBySlug('hello-page', { db: 'read' });
+    expect(
+      topLevel?.fullBleed,
+      'a TOP-LEVEL `fullBleed` enabled full bleed. The field is `page.fullBleed`; accepting both ' +
+        'depths means the schema and the host disagree about where it lives.'
+    ).toBe(false);
+  });
+
   it('returns scopes:[] when the manifest declares none', async () => {
     mockDbRead.appBlock.findFirst.mockResolvedValue(
       pageRow({ manifest: PAGE_MANIFEST(), trustTier: 'verified' })

@@ -181,6 +181,9 @@ const baseProps = {
   iframeSrc: SAME_ORIGIN_SRC,
   surface: 'page-run' as const,
   bootSkeleton: false,
+  // Required. The full-bleed manifest declaration (`manifest.page.fullBleed`);
+  // false is the default every app that declares nothing gets.
+  fullBleed: false,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'collections-app',

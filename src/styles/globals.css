@@ -127,11 +127,21 @@
      are written against the frame and take effect on the content. Inspect
      `app-page-content` for the resolved `max-width`.
 
-     🔴 IT IS DECLARED HERE, AND ONLY HERE, SO THAT AN APP CAN OPT OUT — see the
-     ledger below. The host reads it through `var()` rather than writing it as
-     an inline value precisely so a stylesheet rule can override it; an inline
+     🔴 IT IS DECLARED HERE, AND ONLY HERE, SO THAT A STYLESHEET RULE CAN
+     OVERRIDE IT — see the ledger below. The host reads it through `var()` rather
+     than writing it as an inline value precisely so such a rule can win; an inline
      custom property on either of those elements would beat every such rule and
-     make the opt-out inert. `APP_PAGE_MAX_WIDTH_PX` in `PageBlockHost.tsx` carries the
+     make the override inert.
+
+     ⚠️ THIS PROPERTY IS NO LONGER HOW AN APP GOES FULL BLEED. An app declares
+     `page.fullBleed: true` in its own manifest and `PageBlockHost` then omits the
+     `max-width` for that app entirely — no `var()`, so this property is not
+     consulted for it at all. What remains here is the DEFAULT every app that
+     declares nothing gets, plus the two MIGRATION entries below. When reading why a
+     given app is or is not capped, read the host's `fullBleed` prop first; this
+     cascade answers only for apps that did not declare the field.
+
+     `APP_PAGE_MAX_WIDTH_PX` in `PageBlockHost.tsx` carries the
      same number as the `var()` fallback (CSS cannot import a TS constant), and
      `__tests__/pageBlockHostMaxWidth.test.ts` is what keeps the two in step —
      the same arrangement `--header-height`/`HEADER_HEIGHT_PX` uses. The
@@ -139,23 +149,55 @@
   --app-page-max-width: 1600px;
 }
 
-/* FULL-BLEED OPT-OUT LEDGER — one rule per app, and the ONLY way out of the cap.
-   The members ARE the rules below, each carrying its own reasoning; this header
-   deliberately no longer states how many there are, because it used to say "one
-   member today" and that sentence went stale the moment a second app was added.
-   A count here is a claim with nothing checking it, three lines above the list it
-   miscounts. The membership set is ASSERTED in
-   `src/components/AppBlocks/__tests__/pageBlockHostMaxWidth.test.ts` and fails if
-   it grows OR shrinks, so adding or removing a rule here without updating that
-   expectation is a test failure, not a silent change.
+/* FULL-BLEED CSS LEDGER — A CLOSED MIGRATION PATH, NOT THE MECHANISM.
 
-   🔴 WHY THIS IS CSS AND NOT A MANIFEST FIELD. The App Block manifest schema is
-   byte-mirrored across three repos (`public/schemas/app-block/v1.json`, the Go
-   CLI, `@civitai/app-sdk`) and has to move in lockstep, and this host is pinned
-   to `@civitai/app-sdk@^0.14.0` while guests ship 0.35.x — so a new manifest
-   field would be UNTYPED at exactly the point the host consumes it. A rule here
-   is one line, needs no schema motion, and cannot be forged: the guest is
-   cross-origin and can never reach this cascade.
+   🔴 READ THIS FIRST: AN APP GOES FULL BLEED THROUGH ITS OWN MANIFEST NOW.
+   `page.fullBleed: true` in `block.manifest.json` — declared by the app author,
+   validated at submit (`block-manifest-validator.service.ts`), reviewed by a
+   moderator at approve, projected server-side in `block-registry.service.ts`, and
+   honoured by `PageBlockHost`'s `fullBleed` prop, which omits the `max-width`
+   declaration entirely for that app. Nothing in this file is involved in that path.
+
+   🔴 SO DO NOT ADD AN ENTRY HERE. The two rules below predate the manifest
+   field: those apps are full bleed in production TODAY via this cascade, and they
+   cannot declare the field until they ship a new manifest version through review.
+   Deleting their rules before then would letterbox two live apps. Each is marked as
+   a migration entry, with the condition that retires it. The host is deliberately
+   `flag OR ledger rule`, so the two paths are independent and the migration can be
+   done one app at a time.
+
+   WHAT SHOULD HAPPEN TO THIS BLOCK. Each app ships `page.fullBleed: true`, that
+   version is approved, the rule here is deleted along with its row in the
+   membership expectation, and when the last one goes this block and its guards are
+   retired together — deliberately, in one commit, not left as a dead cascade that
+   the next person mistakes for the mechanism. Until then it is load-bearing.
+
+   The membership set is ASSERTED in
+   `src/components/AppBlocks/__tests__/pageBlockHostMaxWidth.test.ts` and fails if it
+   grows OR shrinks. Growth is now a REVIEW SIGNAL rather than routine maintenance:
+   an app being added here is an app going full bleed without passing through
+   manifest review, so the failing expectation is the right place to ask why the
+   manifest field was not used.
+
+   🔴 WHY THIS WAS EVER CSS — AND THE ARGUMENT THAT JUSTIFIED IT WAS FALSE.
+   This header used to state: "The App Block manifest schema is byte-mirrored across
+   three repos (`public/schemas/app-block/v1.json`, the Go CLI, `@civitai/app-sdk`)
+   and has to move in lockstep, and this host is pinned to `@civitai/app-sdk@^0.14.0`
+   while guests ship 0.35.x — so a new manifest field would be UNTYPED at exactly the
+   point the host consumes it." The pin is real; the CONCLUSION does not follow,
+   because THE HOST DOES NOT CONSUME THE MANIFEST THROUGH THE SDK TYPE. Measured:
+   `block-manifest-validator.service.ts` has no `@civitai/app-sdk` import and
+   validates against this repo's own rules, and `src/components/AppBlocks/types.ts`
+   declares the host's own `BlockManifest` (its "Matches @civitai/app-sdk/blocks v1"
+   line is a comment, not an import). The SDK type is not in the chain, so the SDK
+   pin could not make a new field untyped where the host reads it. The mirror is also
+   two declarations, not three: the published schema is canonical and the Go CLI
+   MIRRORS it.
+
+   The other half of that old argument was sound and still is: a manifest field
+   cannot be forged at runtime — the guest is cross-origin and can reach neither the
+   approved manifest nor this cascade — which is why a DECLARED field, and not a
+   guest-supplied message, is the right shape for this.
 
    🔴 NEVER KEY A RULE HERE ON `data-testid` — IT DOES NOT EXIST IN PRODUCTION,
    AND THAT IS EXACTLY HOW THIS LEDGER SHIPPED BROKEN. `next.config.mjs` sets
@@ -171,87 +213,64 @@
    mechanically: `src/components/AppBlocks/__tests__/ledgerSelectorSurvivesProdStrip.test.ts`
    parses the strip list out of `next.config.mjs` and the selectors out of this
    file — INCLUDING the ones in these comments, since the template below is what
-   the next entry gets copied from — and fails if any of them depends on an
+   any surviving edit gets copied from — and fails if any of them depends on an
    attribute production removes. That is also why the broken selector is described
    above in words rather than spelled out: a literal example of the wrong shape,
    even a historical one, is a copyable example.
 
-   HOW TO ADD ONE. `PageBlockHost` stamps `data-block-id` (the app's slug — the
-   same value that builds `<slug>.civit.ai`) alongside `data-app-page-frame` on
-   its root, so:
+   THE RULE SHAPE, kept because the two entries below use it and the guards above
+   read it. `PageBlockHost` stamps `data-block-id` (the app's slug — the same value
+   that builds `<slug>.civit.ai`) alongside `data-app-page-frame` on its root, so:
 
      [data-app-page-frame][data-block-id='my-canvas-app'] {
        --app-page-max-width: none;
      }
 
-   `none` is the full-bleed value; a narrower app can take a px value instead.
-   Add the rule together with a one-line reason, the way every other ledger in
-   this repo is kept — an entry with no stated reason cannot be reviewed later.
+   `none` is the full-bleed value. A NARROWER px value is the one thing this cascade
+   can still express that the manifest field cannot — `fullBleed` is a boolean, so an
+   app wanting a tighter frame than 1600 has no manifest spelling for it. That is a
+   real, deliberate gap: a narrowing rule is a platform-side decision about one app's
+   layout, which is what we just moved AWAY from, and no app has asked. If one does,
+   the answer is to widen the manifest field (a value, not a flag) rather than to
+   reopen this list.
 
-   WHEN IT IS WARRANTED — TWO GROUNDS, AND AN ENTRY MUST SAY WHICH ONE IT CLAIMS.
-   They are not the same KIND of thing, and conflating them is how the cap dies:
-   ground (1) is an argument that can be checked against the app, ground (2) is an
-   override that cannot.
+   🔴 WHERE THE PRODUCT JUDGEMENT NOW LIVES, AND WHO MAKES IT. This block used to
+   carry two "grounds" an entry had to claim, and a retraction explaining that they
+   recorded a decision rather than justifying it — because the trade (~150px of
+   gutter) and the reach (wide desktop displays only) are properties of the 1600 cap
+   and are therefore IDENTICAL for every app, so no reviewer could use them to tell
+   one request from another. Those bullets are gone rather than carried forward: the
+   decision is now made at MODERATOR APPROVE, on the app's manifest, which is a
+   better home for it than a CSS list in the platform repo. An OWNER OVERRIDE is no
+   longer a special ground either — every app now has the same channel, so there is
+   nothing for an override to bypass.
 
-   (1) THE SURFACE IS THE CANVAS: an infinite grid, a timeline, a map, a
-   side-by-side compare — where a centred column is actively worse. This is where
-   the default's reasoning bites — an app cannot know how wide the viewer's monitor
-   is and almost none of them defend against it themselves — so an entry here has
-   to argue its way past that rather than assert a preference. NOT for "it looks
-   bigger": that exclusion has force HERE, because here there is a claim about the
-   surface to be wrong about, and a reviewer can open the app and disagree.
+   AUTHOR-FACING GUIDANCE, AND WHAT A REVIEWER SHOULD ASK, both live where the author
+   reads them: the `page.fullBleed` description in
+   `public/schemas/app-block/v1.json`, and `docs/features/app-blocks.md`. In short —
+   declare it when a centred column is actively worse for the surface (an infinite
+   grid, a timeline, a map, a side-by-side compare, a player, a two-pane shell), not
+   to look bigger; and a reviewer's question is about the SURFACE ("what on this page
+   spends 2560px that 1600px cannot?"), which they can answer by opening the app,
+   rather than about the cap's cost, which is the same for everyone.
 
-   (2) AN EXPLICIT PRODUCT DECISION BY THE REPO OWNER. This is ground (1)'s
-   opposite in one specific way: nothing is malfunctioning, the cap binds exactly
-   as designed, and the trade is taken anyway. An entry on this ground is
-   admissible ONLY if it records the three things a reviewer would need to
-   re-examine it later, none of which can be recovered from the diff:
+   The mechanism is MEASURED, not merely written down: the ledger cases in
+   `src/components/AppBlocks/PageBlockHostMaxWidth.browser.test.tsx` parse the rules
+   out of THIS file and inject them at a 2560px viewport, asserting every member goes
+   back to full width while a non-member stays capped — so this block cannot rot into
+   a comment describing something that no longer works. The manifest path is measured
+   in the same file, as a two-point pair (`fullBleed` true → uncapped, false →
+   capped) that consults no cascade at all. */
 
-     · WHO decided — the specific decider, not "we", and not the PR author by
-       default. A role ("the repo owner, directly") satisfies this; a personal name
-       is not required, and this file is world-readable, which is a reason not to
-       ask for one;
-     · WHAT TRADE was accepted — the cost as it was stated at the time, and what
-       the decision was taken AGAINST if there was an alternative on the table;
-     · WHAT IT IS WORTH — the benefit's CLASS, measured: which display widths it
-       reaches, and which it provably does not.
+/* MIGRATION ENTRY 1 of 2 — Playable Collections (`playable-collections`).
 
-   🔴 BE HONEST ABOUT WHAT THOSE THREE BULLETS DO: THEY MAKE AN ENTRY RECORDED AND
-   REVIEWABLE, NOT JUSTIFIED. An earlier version of this comment claimed they also
-   refuse "it looks bigger" — that a preference has "no author, no stated cost and
-   no measured reach" so the bullets exclude it. That is RETRACTED: it does not
-   hold, and believing it would let this ground swallow the cap. All three are
-   satisfiable by procedure alone, with nothing said about the app:
+   🔴 RETIRES WHEN: this app ships a manifest declaring `page.fullBleed: true` and
+   that version is APPROVED. Delete this rule and its row in the membership
+   expectation in the same commit; until then it is the only thing keeping the app
+   full bleed, because a manifest it has already shipped cannot gain a field.
 
-     · every request has a requester, so WHO is always available;
-     · WHAT TRADE is the same ~150px-gutter arithmetic for EVERY app — it is a
-       property of the 1600 cap, not of the app asking;
-     · WHAT IT IS WORTH measures the reach of the EXEMPTION, not of the benefit —
-       "which display widths it reaches" has a literally identical answer for any
-       two apps.
-
-   So ground (2) is an OWNER OVERRIDE, and the bullets are the receipt for it. What
-   actually limits it is that it takes an owner decision each time and leaves a
-   record naming who took it — not a test a reviewer can apply on their own. A
-   reviewer who finds all three bullets present has confirmed the entry is
-   reviewable, and nothing more; whether the override should have been made is the
-   owner's call to answer, not the bullets'.
-
-   🔴 WHICH MEANS THE SHAPE TO WATCH FOR IS AN ENTRY COPIED FROM ANOTHER. Ground (2)
-   does NOT waive ground (1) generally, and a run of entries each admitted on
-   "the owner said so" is the cap being repealed one app at a time rather than
-   reconsidered once. If that is what is happening, the honest change is to move or
-   drop the 1600 default — a decision with its own evidence, taken where the
-   arithmetic lives, on `APP_PAGE_MAX_WIDTH_PX` — not to keep appending here.
-
-   The mechanism is MEASURED, not merely written down: the "opt-out" cases in
-   `src/components/AppBlocks/PageBlockHostMaxWidth.browser.test.tsx` inject a
-   rule of exactly this shape at a 2560px viewport and assert the host goes back
-   to full width — so this block cannot rot into a comment describing something
-   that no longer works. */
-
-/* Playable Collections (`playable-collections`) — a collection PLAYER, and every
-   one of its open-collection surfaces is uncapped by the app itself.
+   A collection PLAYER, and every one of its open-collection surfaces is uncapped by
+   the app itself.
 
    Read at the app's deployed ref (`sync/deployed-0.2.2`), whose manifest declares
    this same `blockId`. The app does carry a 960px well, but it is `contentStyle`
@@ -272,35 +291,40 @@
    which fails if this set GROWS OR SHRINKS, and it is EXERCISED by the red/green
    pair in `PageBlockHostMaxWidth.browser.test.tsx` — that suite parses THIS file
    and injects the rule below verbatim, so deleting or mistyping it fails a test
-   rather than silently letterboxing the app again. */
+   rather than silently letterboxing the app again. That is also what makes the
+   migration safe to do later: removing this rule without removing its row is a red
+   test, not a silent regression. */
 [data-app-page-frame][data-block-id='playable-collections'] {
   --app-page-max-width: none;
 }
 
-/* Sensei (`sensei`) — a two-pane chat shell, and ONE OF THE TWO APPS THIS CAP WAS
-   CREATED FOR.
+/* MIGRATION ENTRY 2 of 2 — Sensei (`sensei`).
 
-   🔴 ADMITTED ON GROUND (2) ABOVE — AN EXPLICIT PRODUCT DECISION, NOT A BUG FIX,
-   AND SAYING SO IS THE POINT OF THIS ENTRY. Nothing here is malfunctioning for this
-   app: the cap binds exactly as designed and the opt-out mechanism works. A later
+   🔴 RETIRES WHEN: this app ships a manifest declaring `page.fullBleed: true` and
+   that version is APPROVED. Delete this rule and its row in the membership
+   expectation in the same commit. `ZacxDev/civitai-app-sensei` is a repo we control,
+   so this one is a straightforward follow-up rather than a wait on a third party.
+
+   A two-pane chat shell, and ONE OF THE TWO APPS THIS CAP WAS CREATED FOR.
+
+   🔴 NOTHING WAS MALFUNCTIONING FOR THIS APP, AND SAYING SO IS THE POINT OF THIS
+   ENTRY. The cap binds exactly as designed and the override mechanism works. A later
    reader must not go looking for the defect that motivated it, because there isn't
-   one. The three things ground (2) requires, on the record:
+   one. What is on the record, verbatim rather than reconstructed:
 
      · WHO — the repo owner, directly. The ask was "sensei app container should be
        full-width".
-     · WHAT TRADE — full bleed was chosen over an alternative that was on the table:
-       pairing the exemption with an internal measure on the transcript itself. The
-       ~150px-either-side cost at 1080p, quantified below, was stated in front of him
-       before he chose; "truly full-bleed" is what he chose knowing it.
-     · WHAT IT IS WORTH — the measured display-width class; see "WHAT THE EXEMPTION
-       IS WORTH, STATED NARROWLY" below.
+     · WHAT WAS TRADED — full bleed was chosen over an alternative that was on the
+       table: pairing the exemption with an internal measure on the transcript
+       itself. The ~150px-either-side cost at 1080p, quantified below, was stated in
+       front of him before he chose; "truly full-bleed" is what he chose knowing it.
 
-   That is the WHOLE record. Nothing else about the owner's reasoning is known, and
-   this entry deliberately does not extrapolate one. Ground (2) says plainly what
-   that makes this entry: RECORDED AND REVIEWABLE, not justified by an argument about
-   sensei. 🔴 SO THIS IS NOT A TEMPLATE. A third entry is not admitted by producing
-   the same three bullets — see the retraction under ground (2) for why the bullets
-   cannot do that work — it is admitted by the owner deciding again.
+   ⚠️ THAT RECORD IS A HISTORY, NOT AN ADMISSION TEST, and the header's own
+   retraction says why: the trade and the reach are properties of the 1600 cap, so
+   they are identical for every app and can distinguish no two requests. It is kept
+   because it is the reason THIS rule exists, which a later reader cannot recover
+   from the diff — not as a form a future entry fills in. There are no future
+   entries; the manifest field is the channel now.
 
    THE RATIONALE OF RECORD, AND IT HAS NOW BEEN RE-TAKEN. The census on
    `APP_PAGE_MAX_WIDTH_PX` in `PageBlockHost.tsx` reads: "TWO do not cap at all —
@@ -343,12 +367,15 @@
    unsourced there too.
 
    🔴 NOTEPAD IS THE SIBLING CASE AND IS DELIBERATELY NOT A MEMBER. The census line
-   names both apps; only one is being excused, and the asymmetry is intended rather
-   than an oversight. If Notepad should follow, that is its own entry with its own
-   reasoning and its own row in the membership expectation.
+   names both apps; only one was excused here, and the asymmetry was intended rather
+   than an oversight. If Notepad should follow, it now does so by declaring
+   `page.fullBleed` in its own manifest — which is exactly the asymmetry the manifest
+   field dissolves, and the clearest illustration of why the CSS list was the wrong
+   home for this decision.
 
    🔴 THIS ENTRY IS ALSO ASSERTED IN `__tests__/pageBlockHostMaxWidth.test.ts`,
-   which fails if this set GROWS OR SHRINKS. */
+   which fails if this set GROWS OR SHRINKS — so the migration above cannot be done
+   halfway. */
 [data-app-page-frame][data-block-id='sensei'] {
   --app-page-max-width: none;
 }

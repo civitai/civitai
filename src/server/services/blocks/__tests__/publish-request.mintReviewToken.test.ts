@@ -197,6 +197,48 @@ describe('mintReviewBlockToken', () => {
     }
   });
 
+  it("carries the manifest's `page.fullBleed` — the review IS the gate on it now", async () => {
+    // 🔴 NOT MERELY RENDER FIDELITY. `page.fullBleed` replaced a platform-side CSS
+    // exemption ledger, so moderator approve is now the gate on whether an app gets
+    // the full page width. If this projection dropped the field, the review preview
+    // would render the capped column for every app and the moderator would be
+    // approving a declaration whose effect they never see.
+    mockFindUnique.mockResolvedValue({
+      id: PUBREQ,
+      status: 'pending',
+      slug: 'bleed-app',
+      manifest: { scopes: [], page: { path: '/', title: 'Bleed', fullBleed: true } },
+    });
+    const res = await mintReviewBlockToken({ publishRequestId: PUBREQ, modUserId: MOD_ID });
+    expect(res.fullBleed).toBe(true);
+  });
+
+  it('page.fullBleed defaults to false, and a TRUTHY non-boolean does not enable it', async () => {
+    // Same strict `=== true` as `bootSkeleton` above, and for a sharper reason: this
+    // manifest is UNREVIEWED, so the submit-time validator's boolean check is the
+    // only thing that has looked at it — and a manifest stored before that check
+    // existed never passed it at all. A coerced `"false"` would be TRUE and would
+    // show the moderator a full-bleed app that declared the opposite.
+    for (const [pageValue, expected] of [
+      [undefined, false],
+      [{ path: '/', title: 'x' }, false],
+      [{ path: '/', title: 'x', fullBleed: 'true' }, false],
+      [{ path: '/', title: 'x', fullBleed: 1 }, false],
+      [{ path: '/', title: 'x', fullBleed: {} }, false],
+      [{ path: '/', title: 'x', fullBleed: false }, false],
+      [{ path: '/', title: 'x', fullBleed: true }, true],
+    ] as const) {
+      mockFindUnique.mockResolvedValue({
+        id: PUBREQ,
+        status: 'pending',
+        slug: 'bleed-app',
+        manifest: pageValue === undefined ? { scopes: [] } : { scopes: [], page: pageValue },
+      });
+      const res = await mintReviewBlockToken({ publishRequestId: PUBREQ, modUserId: MOD_ID });
+      expect(res.fullBleed, `manifest.page = ${JSON.stringify(pageValue)}`).toBe(expected);
+    }
+  });
+
   it('THROWS for a missing request (no oracle) and never signs', async () => {
     mockFindUnique.mockResolvedValue(null);
     await expect(

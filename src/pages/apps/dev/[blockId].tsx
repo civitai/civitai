@@ -46,6 +46,9 @@ interface DevTunnelProps {
   iframeSrc: string | null;
   /** manifest.bootSkeleton — carried so the dev tunnel matches production. */
   bootSkeleton: boolean;
+  /** manifest.page.fullBleed — carried for the same reason: this is the surface an
+   *  author checks their own app on, so it must show the width the run page will. */
+  fullBleed: boolean;
   /** The assigned dev host (for the "no active tunnel" copy). */
   host: string | null;
 }
@@ -132,6 +135,7 @@ export const getServerSideProps = createServerSideProps<DevTunnelProps>({
         scopes: app.scopes,
         iframeSrc,
         bootSkeleton: app.bootSkeleton,
+        fullBleed: app.fullBleed,
         host,
       },
     };
@@ -146,6 +150,7 @@ export default function DevTunnelPage(props: DevTunnelProps) {
     appName,
     iframeSrc,
     bootSkeleton,
+    fullBleed,
     sandbox,
     trustTier,
     scopes,
@@ -262,6 +267,7 @@ export default function DevTunnelPage(props: DevTunnelProps) {
             appName={appName}
             iframeSrc={iframeSrc}
             bootSkeleton={bootSkeleton}
+            fullBleed={fullBleed}
             // 🔴 The author dev tunnel. `resolveDevPageBlockForAuthor` applies NO
             // status filter, so this mounts ARBITRARY UNPUBLISHED code that no
             // query can enumerate. `blockInitFragmentEnabled` refuses this

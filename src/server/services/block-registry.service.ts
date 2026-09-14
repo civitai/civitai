@@ -376,6 +376,25 @@ export interface PageBlockSsr {
    *  exists, so a declaration over an empty `#root` reaches production. A
    *  platform-build check is planned (talos-infra). */
   bootSkeleton: boolean;
+  /**
+   * `manifest.page.fullBleed` — the app's SELF-SERVICE opt-out from the run page's
+   * ultrawide width cap (`--app-page-max-width` / `APP_PAGE_MAX_WIDTH_PX`). Read
+   * from the APPROVED manifest snapshot, so it carries the same trust as every
+   * other field projected here, and it is UNFORGEABLE at runtime: the guest is
+   * cross-origin and cannot reach the approved manifest or the host's cascade.
+   *
+   * 🔴 UNLIKE `bootSkeleton` ABOVE, THIS ONE IS VALIDATED. The submit/approve
+   * validator rejects a non-boolean `page.fullBleed`, so the `=== true` below can
+   * only ever be reading a real boolean or an absent key — a manifest saying
+   * `"fullBleed": "true"` never reaches an approved snapshot.
+   *
+   * This is what replaced the hand-maintained CSS exemption ledger in
+   * `src/styles/globals.css`: an app opts in through its own manifest, reviewed at
+   * approve like every other manifest field, with no platform PR per app. The two
+   * ledger entries that predate it still work (the host honours flag OR ledger
+   * rule) and are marked there as a migration path.
+   */
+  fullBleed: boolean;
 }
 
 /**
@@ -398,6 +417,12 @@ export interface DevPageBlockResolution {
    *  host veil while production stood it down, i.e. the one surface an author
    *  checks was the one that could not show them the feature. */
   bootSkeleton: boolean;
+  /** `manifest.page.fullBleed` — carried for the SAME reason `bootSkeleton` is:
+   *  the dev tunnel is the surface an author checks their own app on, so if it
+   *  hardcoded `false` an author declaring full bleed would see their app capped
+   *  here and capped nowhere else, and would reasonably conclude the field does
+   *  nothing. Read from the author's PENDING manifest on the ephemeral path. */
+  fullBleed: boolean;
   trustTier: 'unverified' | 'verified' | 'internal';
   name: string;
   pageTitle: string;
@@ -1864,7 +1889,11 @@ export class BlockRegistry {
       typeof iframe === 'object' && iframe !== null
         ? (iframe as { sandbox?: unknown }).sandbox
         : '';
-    const page = (manifest.page ?? {}) as { title?: unknown; icon?: unknown };
+    const page = (manifest.page ?? {}) as {
+      title?: unknown;
+      icon?: unknown;
+      fullBleed?: unknown;
+    };
     const name = typeof manifest.name === 'string' ? manifest.name : ab.blockId;
     // #3/#6: surface the page's declared scopes so the host can compute the
     // ACTUAL granted scope set (declared − missing) for BLOCK_INIT, mirroring
@@ -1881,6 +1910,11 @@ export class BlockRegistry {
       // STRICT `=== true`: the manifest is publisher JSON, so a truthy-but-not-
       // boolean value ("false", 0, {}) must not enable a host behaviour change.
       bootSkeleton: (manifest as { bootSkeleton?: unknown }).bootSkeleton === true,
+      // Same strict `=== true`, for the same reason: publisher JSON must not be
+      // able to change a host behaviour with a truthy non-boolean. Here the
+      // validator ALSO rejects a non-boolean at submit, so this is the second of
+      // two gates rather than the only one.
+      fullBleed: page.fullBleed === true,
       sandbox: typeof sandbox === 'string' ? sandbox : '',
       // #2: use the COLUMN (authoritative), never `manifest.trustTier`.
       trustTier:
@@ -1963,7 +1997,7 @@ export class BlockRegistry {
       });
     const manifest = (ab.manifest ?? {}) as Record<string, unknown>;
     const iframe = (manifest.iframe ?? {}) as { sandbox?: unknown };
-    const page = (manifest.page ?? {}) as { title?: unknown };
+    const page = (manifest.page ?? {}) as { title?: unknown; fullBleed?: unknown };
     const name = typeof manifest.name === 'string' ? manifest.name : ab.blockId;
     const declaredScopes = Array.isArray((manifest as { scopes?: unknown }).scopes)
       ? (manifest as { scopes: unknown[] }).scopes.filter((s): s is string => typeof s === 'string')
@@ -1983,6 +2017,7 @@ export class BlockRegistry {
       scopes: declaredScopes,
       // Same strict `=== true` as the SSR projection: publisher JSON.
       bootSkeleton: (manifest as { bootSkeleton?: unknown }).bootSkeleton === true,
+      fullBleed: page.fullBleed === true,
       contentRating: typeof ab.contentRating === 'string' ? ab.contentRating : null,
     };
   }
@@ -2100,14 +2135,23 @@ export class BlockRegistry {
     // already selected and already read below for `scopes`; there was nothing
     // to fetch.
     let ephemeralBootSkeleton = false;
+    // 🔴 READ FROM THE PENDING MANIFEST, for the identical reason `bootSkeleton`
+    // above is. An author who declares `page.fullBleed` and opens
+    // /apps/dev/<blockId> to check it must see the presentation the run page will
+    // give them; hardcoding `false` here would make the one surface that exists to
+    // show them the feature the one surface that cannot.
+    let ephemeralFullBleed = false;
     const ephemeralSource: 'pending' | 'brand-new' = pending ? 'pending' : 'brand-new';
     if (pending) {
       const pendingManifest = (pending.manifest ?? {}) as {
         scopes?: unknown;
         bootSkeleton?: unknown;
+        page?: unknown;
       };
       // Same strict `=== true` as every other read of this field.
       ephemeralBootSkeleton = pendingManifest.bootSkeleton === true;
+      ephemeralFullBleed =
+        ((pendingManifest.page ?? {}) as { fullBleed?: unknown }).fullBleed === true;
       const declared = Array.isArray(pendingManifest.scopes)
         ? pendingManifest.scopes.filter((s): s is string => typeof s === 'string')
         : [];
@@ -2133,6 +2177,10 @@ export class BlockRegistry {
       // the safe side, since it shows SOMETHING rather than trusting an empty
       // #root.
       bootSkeleton: ephemeralBootSkeleton,
+      // From the PENDING manifest when there is one; a truly unclaimed slug has no
+      // manifest at all and stays false, i.e. capped — the safe side, and the same
+      // default every app that says nothing gets.
+      fullBleed: ephemeralFullBleed,
       status: 'ephemeral',
       trustTier: 'unverified',
       name: blockId,

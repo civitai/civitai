@@ -232,6 +232,12 @@ export function ReviewBlockPreviewHost({
         // The app's own declaration, from the manifest under review — so the
         // moderator sees the presentation the approved app will actually have.
         bootSkeleton={mintData.bootSkeleton === true}
+        // The app's `page.fullBleed` declaration, from the manifest under review. For
+        // this field that is not only render fidelity: the manifest field REPLACED a
+        // platform-side CSS exemption ledger, so this review IS the gate on whether
+        // the app gets the full page width. A preview that always rendered the capped
+        // column would hide the declaration being decided on.
+        fullBleed={mintData.fullBleed === true}
         appBlockId={mintData.appBlockId}
         blockId={mintData.blockId}
         appId={mintData.appId}

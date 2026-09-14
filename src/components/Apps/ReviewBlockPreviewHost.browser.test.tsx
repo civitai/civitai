@@ -88,6 +88,7 @@ const RENDER_ONLY_MINT: MintReviewBlockTokenResult = {
   appName: 'My App',
   sandbox: 'allow-scripts',
   bootSkeleton: false,
+  fullBleed: false,
   runForReal: false,
   buzzCap: null,
 };

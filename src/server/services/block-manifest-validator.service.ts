@@ -130,6 +130,15 @@ interface RawManifest {
    * minted with (a page is stateless, so unlike a model slot the budget cannot
    * come from an install settings row — it comes from this manifest field,
    * server-clamped to the per-gen cap; omitted ⇒ the platform default).
+   *
+   * `fullBleed` is the app's SELF-SERVICE opt-out from the run host's width cap
+   * (`--app-page-max-width`, 1600px). Optional + default false, so every existing
+   * manifest is unchanged; declaring it is what any app does instead of asking for
+   * a platform-side CSS exemption, and the gate on it is the moderator review this
+   * manifest already goes through. Declared under `page` rather than under
+   * `iframe` because the cap exists on the full-page run surface ONLY — the model
+   * slot surfaces have no width cap to opt out of — and `page` is where the other
+   * page-surface-only knob (`buzzBudgetPerGen`) already lives.
    */
   page?: unknown;
   /**
@@ -732,6 +741,7 @@ export class BlockManifestValidator {
           path?: unknown;
           title?: unknown;
           icon?: unknown;
+          fullBleed?: unknown;
           buzzBudgetPerGen?: unknown;
         };
         if (typeof page.path !== 'string' || page.path.length === 0) {
@@ -748,6 +758,32 @@ export class BlockManifestValidator {
         }
         if (page.icon !== undefined && (typeof page.icon !== 'string' || page.icon.length > 128)) {
           errors.push('page.icon must be a string ≤128 chars');
+        }
+        // SELF-SERVICE FULL BLEED — optional opt-out from the run host's width
+        // cap. Must be a real BOOLEAN when present.
+        //
+        // 🔴 THE TYPE CHECK IS THE WHOLE GATE, AND IT HAS TO BE HERE RATHER THAN
+        // ONLY IN THE PUBLISHED SCHEMA. `public/schemas/app-block/v1.json` declares
+        // this `"type": "boolean"`, but that schema is EDITOR VALIDATION — nothing
+        // on the submit path evaluates it, so without this line a manifest saying
+        // `"fullBleed": "true"` (a string) reaches the host, where the read is a
+        // strict `=== true` and therefore silently means FALSE. The author sees
+        // their app capped, their editor said the manifest was fine, and no error
+        // exists anywhere to explain it. Rejecting it at submit is what turns that
+        // into a message.
+        //
+        // Rejected rather than coerced, deliberately. A coerced `"false"` is TRUE
+        // and would opt an app in against its own manifest — the same hazard the
+        // convention guard `__tests__/no-coerce-boolean-in-api.test.ts` bans
+        // `z.coerce.boolean()` under `src/pages/api` for, after it shipped four
+        // times there.
+        //
+        // The direction that would hurt is the SCHEMA being more permissive than
+        // this check (green in the author's editor, refused at submit with nothing
+        // explaining the difference), so the two are pinned equal by
+        // `blocks/__tests__/manifest-full-bleed.schema-drift.test.ts`.
+        if (page.fullBleed !== undefined && typeof page.fullBleed !== 'boolean') {
+          errors.push('page.fullBleed must be a boolean (true or false), not a string or number');
         }
         // W10 generation spend — optional per-gen Buzz budget for the page's
         // `ai:write:budgeted` tokens. Must be a positive, finite integer when

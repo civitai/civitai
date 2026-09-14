@@ -430,11 +430,57 @@ background paints the far gutter.
 #### Asking for full bleed
 
 Some apps genuinely want the whole width — an infinite grid, a canvas, a
-timeline, a map, a fullscreen player. There is **no manifest field** for this
-(the manifest schema is mirrored across three repos and has to move in lockstep,
-and the host runs an older `@civitai/app-sdk` than guests do, so a new field
-would be untyped where the host reads it). Instead it is one CSS rule on the
-civitai side, keyed on the `data-block-id` the host stamps:
+timeline, a map, a side-by-side compare, a fullscreen player, a two-pane shell
+whose fixed sidebar sits beside an unbounded pane. **Declare it in your own
+manifest:**
+
+```json
+{
+  "page": {
+    "path": "/",
+    "title": "My Canvas App",
+    "fullBleed": true
+  }
+}
+```
+
+That is the whole mechanism. It is optional and defaults to `false`, so an
+existing manifest is unaffected by its existence; it is validated at submit
+(a non-boolean is rejected with `page.fullBleed must be a boolean`), it is
+reviewed by a moderator at approve like every other field in your manifest, and
+the run host reads it from the approved snapshot. **No pull request to the
+civitai repository is involved, and there is no per-app exemption list any more.**
+
+It lives under `page` rather than `iframe` because the cap exists on the
+full-page run surface only — the model-page slot surfaces impose no width cap, so
+there is nothing there to opt out of.
+
+**What it changes and what it does not.** The cap is inert below its own width, so
+declaring this changes nothing at 1280, 1366, 1440 or 1536 (every laptop class),
+nothing on a tablet, and nothing on a phone in either orientation. It changes
+wide desktop displays only: it begins to bind on a maximised browser on a 1080p
+monitor (~1905 CSS px of viewport), where the cap otherwise costs ~150px either
+side, and on a 2560px display it hands your app the remaining ~960px.
+
+**When not to declare it:** to look bigger. Your app cannot see how wide the
+viewer's monitor is, and an unbounded line length — or one form stretched across
+2560px — reads worse than the cap does. A reviewer's question is about your
+*surface*: what on this page spends 2560px that 1600px cannot? That is something
+they can answer by opening your app, and it is the reason the decision moved into
+manifest review rather than staying a CSS list maintained by platform engineers.
+
+**You can check it before you submit.** The dev tunnel (`/apps/dev/<blockId>`)
+reads `page.fullBleed` from your pending manifest and renders the width the run
+page will, so the surface you verify on is the surface a user gets.
+
+**If you want a narrower frame rather than no frame,** this field is not it —
+`fullBleed` is a boolean. Ask a maintainer; the honest fix would be to widen the
+manifest field to take a value, not to reopen a per-app list.
+
+##### The CSS ledger this replaced
+
+Two apps were full bleed before the manifest field existed, via a hand-maintained
+rule in `src/styles/globals.css` keyed on the `data-block-id` the host stamps:
 
 ```css
 [data-app-page-frame][data-block-id='your-app-slug'] {
@@ -442,32 +488,43 @@ civitai side, keyed on the `data-block-id` the host stamps:
 }
 ```
 
-🔴 **Never key this rule on `data-testid` — that attribute does not exist in
-production.** `next.config.mjs` sets `compiler.reactRemoveProperties` under
-`NODE_ENV === 'production'`, so every testid is compiled out of the live DOM. A
-rule keyed on one works in every preview and local build and matches **zero
-elements on civitai.com** — the app stays letterboxed and nothing looks broken.
-That is not hypothetical: this ledger shipped that spelling and
-`playable-collections` rendered capped in production while every test tier passed.
-`data-app-page-frame` is the presence marker the host stamps for exactly this
-purpose, on the same element as `data-block-id`; both halves of the selector must
-be on that one element.
+Those rules **still work** — the host honours the manifest flag *or* a ledger rule
+— and they are kept only until each of those two apps ships a manifest declaring
+the field. They are marked as migration entries in `globals.css`, each with the
+condition that retires it. **Do not add one.** If you are reading this because you
+want full bleed, the manifest field above is the answer; an addition here is an app
+going full bleed without passing through manifest review, and the membership test
+will fail and ask why.
 
-Those rules live in the **full-bleed opt-out ledger** in
-`src/styles/globals.css`, next to the `--app-page-max-width` declaration; the
-comment there carries the template and the review criteria. Open a PR adding
-your app's line with a one-line reason, or ask a maintainer to. A narrower value
-(`--app-page-max-width: 1100px`) is equally valid if your app wants a tighter
-frame than the default.
+🔴 **If you ever do touch that ledger: never key the rule on `data-testid` — that
+attribute does not exist in production.** `next.config.mjs` sets
+`compiler.reactRemoveProperties` under `NODE_ENV === 'production'`, so every testid
+is compiled out of the live DOM. A rule keyed on one works in every preview and
+local build and matches **zero elements on civitai.com** — the app stays
+letterboxed and nothing looks broken. That is not hypothetical: this ledger shipped
+that spelling and `playable-collections` rendered capped in production while every
+test tier passed. `data-app-page-frame` is the presence marker the host stamps for
+exactly this purpose, on the same element as `data-block-id`; both halves of the
+selector must be on that one element.
 
-**Currently opted out** — read the ledger in `src/styles/globals.css`, which is the
-authority for both the membership and each entry's reason, and whose comment states
-the grounds on which an entry is admitted. Neither the list nor a count is
-mirrored here, because a copy on this page is a second claim that rots on the next
-entry without anything noticing. The ledger's membership is asserted in a test, so a
-rule cannot be added or removed without that being a deliberate, reviewed change.
+**Currently in the ledger** — read `src/styles/globals.css`, which is the authority
+for both the membership and each entry's reason. Neither the list nor a count is
+mirrored here, because a copy on this page is a second claim that rots without
+anything noticing. The membership is asserted in a test that fails on growth *and*
+on shrink, so an entry cannot be added or removed without that being a deliberate,
+reviewed change.
 
-**What actually guards the snippet above.** The CSS block on this page is read by
+**What actually guards the manifest snippet.** `page.fullBleed` is pinned by
+`src/server/services/blocks/__tests__/manifest-full-bleed.schema-drift.test.ts`,
+which asserts the published schema and the submit-time validator agree about it
+(neither more permissive than the other), that the cap value quoted in the schema's
+own author-facing description equals `APP_PAGE_MAX_WIDTH_PX`, that every viewport
+width that description calls unaffected really is below the cap, and that an
+existing manifest with no `fullBleed` key still validates. The host's two-point
+behaviour — declared ⇒ uncapped, not declared ⇒ capped — is measured in
+`src/components/AppBlocks/PageBlockHostMaxWidth.browser.test.tsx`.
+
+**What actually guards the CSS snippet.** The CSS block on this page is read by
 `src/components/AppBlocks/__tests__/ledgerSelectorSurvivesProdStrip.test.ts`,
 which parses the strip list out of `next.config.mjs` and fails if the selector
 shown here depends on an attribute production removes — and parses

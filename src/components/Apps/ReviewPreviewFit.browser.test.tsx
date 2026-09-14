@@ -168,6 +168,7 @@ const RENDER_ONLY_MINT: MintReviewBlockTokenResult = {
   appName: 'Review Fit App',
   sandbox: 'allow-scripts',
   bootSkeleton: false,
+  fullBleed: false,
   runForReal: false,
   buzzCap: null,
 };
@@ -216,6 +217,9 @@ const directHostProps = {
   // Required. These suites cover the DEFAULT (host-veil) presentation;
   // the bootSkeleton path is covered in PageBlockHostLaunchReveal.
   bootSkeleton: false,
+  // Required. The full-bleed manifest declaration (`manifest.page.fullBleed`);
+  // false is the default every app that declares nothing gets.
+  fullBleed: false,
   sandbox: RENDER_ONLY_MINT.sandbox,
   trustTier: 'unverified' as const,
   slug: RENDER_ONLY_MINT.blockId,

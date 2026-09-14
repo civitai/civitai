@@ -454,6 +454,45 @@ export interface BlockManifest {
    * anyway, which is exactly why it is easy to misspell.
    */
   bootSkeleton?: boolean;
+  /**
+   * The manifest's full-page surface descriptor. Only the fields this host reads
+   * are named; the index signature admits the rest.
+   *
+   * 🔴 `page` IS WHY THIS HOST DOES NOT NEED `@civitai/app-sdk`'S MANIFEST TYPE,
+   * AND SAYING SO CORRECTS A CLAIM THAT WAS LOAD-BEARING FOR A YEAR. The ledger
+   * comment in `globals.css` used to justify a CSS-side exemption list on the
+   * grounds that a new manifest field "would be UNTYPED at exactly the point the
+   * host consumes it", because `package.json` pins `@civitai/app-sdk@^0.14.0`
+   * while guests ship 0.35.x. The premise is false: nothing on the host's
+   * manifest path imports that package. `block-manifest-validator.service.ts`
+   * validates against this repo's own rules and this file declares the host's own
+   * shape — the SDK pin cannot make a field untyped here, because the SDK type is
+   * not in the chain. (The SDK's `ManifestIframe`/page types still lack
+   * `fullBleed`, which is a real gap for a TypeScript APP AUTHOR — it is a
+   * follow-up in `civitai/civitai-app-starters`, and it is not this host's
+   * dependency.)
+   */
+  page?: {
+    path?: string;
+    title?: string;
+    icon?: string;
+    buzzBudgetPerGen?: number;
+    /**
+     * The app declares it wants the full width of the run page rather than the
+     * centred column `APP_PAGE_MAX_WIDTH_PX` gives it. Read by `PageBlockHost`
+     * through the server projections in `block-registry.service.ts`, never
+     * directly from a manifest blob in the browser.
+     *
+     * Publisher-controlled, and read from the APPROVED manifest snapshot — so it
+     * is exactly as trustworthy as the rest of that snapshot, and the blast
+     * radius of a wrong declaration is cosmetic and confined to this app's own
+     * page. Unlike `bootSkeleton`, it IS validated: the submit/approve validator
+     * rejects a non-boolean, so `"fullBleed": "true"` is a submit error rather
+     * than a silent false.
+     */
+    fullBleed?: boolean;
+    [key: string]: unknown;
+  };
   [key: string]: unknown;
 }
 

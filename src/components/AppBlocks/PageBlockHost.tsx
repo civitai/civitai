@@ -425,6 +425,22 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * is a bigger product call than "the app already governs this", and it was not
  * made in the commit that shipped the cap.
  *
+ * 🔴 THE PRIMARY WAY OUT OF THIS CAP IS NOW THE APP'S OWN MANIFEST, NOT THIS REPO.
+ * An app declares `page.fullBleed: true` and the host skips the cap for it (see the
+ * `fullBleed` prop below); the gate is the moderator review the manifest already
+ * passes. The CSS exemption ledger in `globals.css` still exists and still works,
+ * but only as a MIGRATION PATH for the two apps that were members before the field
+ * existed — it is not where a new app goes.
+ *
+ * ⚠️ THAT MAKES THIS CAP EASY TO ESCAPE, WHICH IS THE POINT AND ALSO THE COST. The
+ * census above is the argument that the long tail will take it up: nine of eleven
+ * page apps cap themselves between 640 and 1100, i.e. most apps that declare
+ * `fullBleed` will get the width and then not use it. That is a product decision
+ * taken deliberately — "all apps should be able to go full-bleed if they want" —
+ * and the thing it trades away is that the cap was previously an opinion an app had
+ * to argue past. If it turns out most apps declare it, the honest follow-up is to
+ * reconsider the DEFAULT here with its own evidence, not to re-close the field.
+ *
  * ⚠️ AN APP THE CENSUS CALLS UNCAPPED IS NOT AUTOMATICALLY A LEDGER MEMBER, AND THE
  * MEMBERSHIP IS DELIBERATELY NOT RESTATED HERE — a count or a list in this comment
  * is a claim that rots on the next entry. The ledger lives in `globals.css` with
@@ -496,6 +512,41 @@ export interface PageBlockHostProps {
   // first person to see the real one would have been a user. Required means
   // a new host is a type error until someone decides what it should do.
   bootSkeleton: boolean;
+  /**
+   * `manifest.page.fullBleed` — THE APP'S OWN, SELF-SERVICE OPT-OUT FROM THE
+   * ULTRAWIDE WIDTH CAP. True ⇒ the app's column is not capped at
+   * `APP_PAGE_MAX_WIDTH_PX`; it takes the whole frame.
+   *
+   * 🔴 THIS IS WHAT REPLACED THE PER-APP CSS EXEMPTION LEDGER, AND WHY. The cap
+   * used to be escapable in exactly one way: a rule in
+   * `src/styles/globals.css` keyed on `data-block-id`, added by a pull request to
+   * THIS repo, one per app. That mechanism made "can my app go full bleed" a
+   * question only a platform contributor could answer, for a decision that is
+   * entirely about the app. Any app can now declare it in its own manifest, and
+   * the gate is the moderator review the manifest already passes through.
+   *
+   * 🔴 THE LEDGER STILL WORKS, AND MUST — THIS IS `FLAG OR LEDGER RULE`. The two
+   * apps that were members when this shipped (`playable-collections`, `sensei`)
+   * cannot declare the flag until they ship a new manifest version through review,
+   * so deleting their rules would letterbox them in the interim. The ledger entries
+   * are marked in `globals.css` as a migration path to be deleted per app once each
+   * declares the field. Concretely the two paths are independent: this flag skips
+   * the `max-width` declaration entirely, while an app WITHOUT it still reads
+   * `var(--app-page-max-width, …)`, which is what a ledger rule overrides.
+   *
+   * 🔴 REQUIRED, NOT OPTIONAL-WITH-A-DEFAULT, for the reason `bootSkeleton` records
+   * one comment above: an implicit `= false` is how the DEV TUNNEL and the
+   * MODERATOR REVIEW preview silently rendered the pre-feature presentation, so the
+   * author checking their own app and the moderator approving it both saw something
+   * a user would not. That failure mode is identical here and arguably worse,
+   * because for this field the moderator's view IS the review. Required means a new
+   * host surface is a type error until someone decides what it should do.
+   *
+   * Publisher-controlled, so it is read `=== true` server-side and validated at
+   * submit (`page.fullBleed must be a boolean`) rather than coerced. The blast
+   * radius of a wrong declaration is cosmetic and confined to this app's own page.
+   */
+  fullBleed: boolean;
   /**
    * Which surface mounted this host. REQUIRED, and passed explicitly by each
    * call site rather than inferred, because it is one of the two axes the
@@ -695,6 +746,7 @@ export function PageBlockHost({
   appName,
   iframeSrc,
   bootSkeleton,
+  fullBleed,
   surface,
   sandbox,
   trustTier,
@@ -4329,7 +4381,25 @@ export function PageBlockHost({
 
           🔴 ULTRAWIDE CAP — the app is a CENTRED column past `APP_PAGE_MAX_WIDTH_PX`,
           full width below it. See that constant for the value's justification and
-          `--app-page-max-width` in globals.css for the per-app opt-out ledger.
+          `--app-page-max-width` in globals.css for the two ways out of it.
+
+          🔴 TWO INDEPENDENT OPT-OUTS, AND THIS IS THE `OR` BETWEEN THEM. `fullBleed`
+          is the app's own manifest declaration (`manifest.page.fullBleed`, projected
+          server-side and reviewed at approve) and it drops the `max-width` entirely
+          — no `var()`, so no cascade is consulted for this app at all. Every app
+          that does NOT declare it keeps reading `var(--app-page-max-width, …)`,
+          which is exactly the property the CSS exemption ledger in globals.css
+          overrides. So the ledger's two remaining entries keep working until those
+          apps ship a manifest declaring the field, which is the whole migration
+          path; see the ledger header.
+
+          ⚠️ THE ONE CASE WHERE THE TWO DISAGREE, STATED RATHER THAN DISCOVERED: a
+          ledger rule may set a NARROWER px value instead of `none` (globals.css
+          documents that as legitimate). If an app both declared `fullBleed` AND had
+          such a rule, this branch wins and the narrowing rule is inert — because
+          `max-width: none` is inline and no stylesheet rule on this element beats
+          it. No entry does that today, and the honest resolution is to delete the
+          ledger rule rather than to re-derive a precedence order here.
 
           🔴 BOTH CAP DECLARATIONS ARE INERT BELOW THE CAP, WHICH IS THE REQUIREMENT.
           `width: 100%` already resolves narrower than the cap on any ordinary display,
@@ -4374,13 +4444,19 @@ export function PageBlockHost({
           have misled anyone auditing whether it could go. */}
       <Box
         data-testid="app-page-content"
+        // Observability only, NOT the mechanism — the `maxWidth` below is. It exists
+        // so a test (and DevTools) can tell "the manifest declaration never reached
+        // this host" apart from "the cap is broken", which a width measurement alone
+        // cannot: both look like the wrong number of pixels. It survives the
+        // production `data-testid` strip, unlike the testid beside it.
+        data-full-bleed={fullBleed ? 'true' : 'false'}
         style={{
           display: 'flex',
           flexDirection: 'column',
           flex: 1,
           minHeight: 0,
           width: '100%',
-          maxWidth: `var(--app-page-max-width, ${APP_PAGE_MAX_WIDTH_PX}px)`,
+          maxWidth: fullBleed ? 'none' : `var(--app-page-max-width, ${APP_PAGE_MAX_WIDTH_PX}px)`,
           marginInline: 'auto',
         }}
       >

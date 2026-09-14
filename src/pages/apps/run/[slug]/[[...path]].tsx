@@ -46,6 +46,9 @@ interface PageProps {
   iframeSrc: string;
   /** manifest.bootSkeleton — the app paints its own boot state; the host stands back. */
   bootSkeleton: boolean;
+  /** manifest.page.fullBleed — the app declared it wants the full page width rather
+   *  than the centred column the ultrawide cap gives it. Reviewed at approve. */
+  fullBleed: boolean;
   sandbox: string;
   trustTier: 'unverified' | 'verified' | 'internal';
   slug: string;
@@ -169,6 +172,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         pageTitle: page.pageTitle,
         iframeSrc: page.iframeSrc,
         bootSkeleton: page.bootSkeleton,
+        fullBleed: page.fullBleed,
         sandbox: page.sandbox,
         trustTier: page.trustTier,
         slug: page.blockId,
@@ -191,6 +195,7 @@ function AppPage(props: PageProps) {
     appName,
     iframeSrc,
     bootSkeleton,
+    fullBleed,
     sandbox,
     trustTier,
     slug,
@@ -424,6 +429,7 @@ function AppPage(props: PageProps) {
           appName={appName}
           iframeSrc={iframeSrc}
           bootSkeleton={bootSkeleton}
+          fullBleed={fullBleed}
           // The public full-page run surface.
           surface="page-run"
           // 🔴 THE DOUBLE-SCROLLBAR FIX, and it is only half of one — it is

@@ -137,6 +137,9 @@ const baseProps = {
   // Required. These suites cover the DEFAULT (host-veil) presentation;
   // the bootSkeleton path is covered in PageBlockHostLaunchReveal.
   bootSkeleton: false,
+  // Required. The full-bleed manifest declaration (`manifest.page.fullBleed`);
+  // false is the default every app that declares nothing gets.
+  fullBleed: false,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: BLOCK_ID,
@@ -495,6 +498,93 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
       'the host did not follow a `--app-page-max-width: 900px` override at 2560x1080 — the ' +
         'cap is not actually being read from the custom property, so no CSS opt-out can work'
     ).toBe(900);
+  });
+
+  /**
+   * 🔴 THE MANIFEST OPT-OUT, MEASURED — `manifest.page.fullBleed`, the app's own
+   * self-service declaration and the mechanism that replaced the per-app CSS
+   * exemption ledger. This is the only tier that can see a width, so it is the only
+   * tier that can make this claim at all.
+   *
+   * TWO POINTS IN ONE TEST, DELIBERATELY, and at the SAME viewport with the SAME
+   * cascade — the arms differ in exactly one prop. Either arm alone is worthless:
+   * "the declared app is full width" is equally satisfied by a cap that stopped
+   * working for everybody (it is green on the pre-cap base revision), and "the
+   * undeclared app is capped" is just the existing cap test again. The delta between
+   * them is the feature.
+   *
+   * THE THIRD ARM pins the INDEPENDENCE of the two opt-out paths: with
+   * `--app-page-max-width` driven to a value no implementation would pick, a
+   * declaring app must STILL be full width, because the manifest path omits the
+   * `max-width` declaration outright rather than resolving it through the custom
+   * property. That independence is what the CSS ledger's migration rests on — the
+   * two remaining entries keep working precisely because the flag does not share a
+   * channel with them — so it is asserted rather than assumed.
+   *
+   * ⚠️ BE HONEST ABOUT WHAT THE THIRD ARM DOES **NOT** CATCH, because an earlier
+   * version of this comment claimed the opposite and was measured false. It said the
+   * arm would catch an implementation that "simplified" the flag into setting
+   * `--app-page-max-width: none` INLINE on this element. It does not: an inline
+   * custom property beats the injected `:root` override, so that implementation
+   * renders full width and passes all three arms (measured — 12/12 green). It is also
+   * behaviourally equivalent for the feature as it stands today; what makes it wrong
+   * is that it breaks the invariant the CSS ledger depends on, and that claim is owned
+   * by `__tests__/pageBlockHostMaxWidth.test.ts` ("the cap is never written as an
+   * inline custom property"), which kills that mutant 4 tests deep. No rendered tier
+   * can make that claim, because no cascade can beat an inline property.
+   *
+   * ⚠️ AND WHICH ARM KILLS WHAT IS NOT WHERE YOU WOULD GUESS. Moving the branch into
+   * the `var()` FALLBACK — `var(--app-page-max-width, ${fullBleed ? 'none' : …})`, the
+   * tidier-looking refactor that is wrong exactly where globals.css IS loaded — dies
+   * on POINT 1, not on point 3, because the harness puts the real `:root` value in
+   * play so the fallback is never consulted (measured). Point 3 is a claim about
+   * independence, not a second catch-all.
+   *
+   * The `data-full-bleed` attribute is read first as the INSTRUMENT check. A width
+   * measurement alone cannot tell "the declaration never reached the host" from "the
+   * cap is broken" — both are the wrong number of pixels — and this suite's props go
+   * through `renderInPageChain`, so a prop that stopped being forwarded would look
+   * exactly like a feature that does not work.
+   */
+  test('MANIFEST — an app declaring `page.fullBleed` is NOT capped, while one that does not still is', async () => {
+    // POINT 1: declared.
+    const declared = await mountAt(2560, 1080, { fullBleed: true });
+    expect(
+      declared.host.getAttribute('data-full-bleed'),
+      'the `fullBleed` prop did not reach the app column at all, so the width below is not ' +
+        'evidence about the feature. Check `renderInPageChain` forwards it and that the host ' +
+        'still stamps `data-full-bleed`.'
+    ).toBe('true');
+    expect(
+      declared.hostWidth,
+      `at 2560x1080 an app declaring \`page.fullBleed\` is ${declared.hostWidth}px inside a ` +
+        `${declared.parentWidth}px frame — it is still being capped, so the manifest opt-out ` +
+        'does nothing and the only way out of the cap is a platform-side CSS rule again'
+    ).toBe(declared.parentWidth);
+    await cleanup();
+
+    // POINT 2: not declared, same viewport, same cascade, one prop different.
+    const undeclaredArm = await mountAt(2560, 1080, { fullBleed: false });
+    expect(undeclaredArm.host.getAttribute('data-full-bleed')).toBe('false');
+    expect(
+      undeclaredArm.hostWidth,
+      `at 2560x1080 an app that declares NOTHING is full-bleed (${undeclaredArm.hostWidth}px of ` +
+        `${undeclaredArm.parentWidth}px). The cap is meant to stay the default for every app ` +
+        'that says nothing — nine of the eleven shipped page apps cap themselves below 1100px ' +
+        'and rely on it. Either the branch is inverted or the cap is gone.'
+    ).toBeLessThan(undeclaredArm.parentWidth);
+    await cleanup();
+
+    // POINT 3: the manifest path consults no cascade.
+    injectCss(':root { --app-page-max-width: 900px; }');
+    const declaredUnderOverride = await mountAt(2560, 1080, { fullBleed: true });
+    expect(
+      declaredUnderOverride.hostWidth,
+      'a `--app-page-max-width: 900px` override changed the width of an app that declared ' +
+        '`page.fullBleed`. The manifest opt-out is supposed to omit the `max-width` declaration ' +
+        'entirely, so no cascade can reach it; if it now routes through the custom property — or ' +
+        'writes it inline — the ledger rules the two migration apps still depend on are inert.'
+    ).toBe(declaredUnderOverride.parentWidth);
   });
 
   /**

@@ -4501,6 +4501,13 @@ export type MintReviewBlockTokenResult = {
    *  stand its veil down exactly as the run page will. Without this a moderator
    *  approved against a presentation the shipped app does not have. */
   bootSkeleton: boolean;
+  /** The pending manifest's `page.fullBleed` (render fidelity, same reason as
+   *  `bootSkeleton`) — and here it is more than fidelity: this field IS one of the
+   *  things the moderator is now deciding. It is the self-service replacement for
+   *  the platform-side CSS exemption ledger, so approve time is the gate on whether
+   *  an app gets the full page width. A preview that always rendered the capped
+   *  column would hide the very declaration under review. */
+  fullBleed: boolean;
   /**
    * MOD REVIEW SANDBOX "run for real" (#2831) — true iff this token was minted
    * with `runForReal:true` (a mod's consent-gated opt-in to run the unapproved app
@@ -4598,6 +4605,13 @@ export async function mintReviewBlockToken(opts: {
   // already projected for name/sandbox/scopes — the key was simply omitted.
   // Same strict `=== true` as every other read: publisher JSON.
   const manifestBootSkeleton = (manifest as { bootSkeleton?: unknown }).bootSkeleton === true;
+  // Same strict `=== true`, from the PENDING manifest's page descriptor. The
+  // validator has already rejected a non-boolean at submit, so this is the second
+  // of two gates; it is still written strictly because this projection also serves
+  // a manifest that was stored before that validation existed.
+  const manifestFullBleed =
+    ((manifest as { page?: unknown }).page as { fullBleed?: unknown } | undefined)?.fullBleed ===
+    true;
   const manifestSandbox =
     manifest.iframe && typeof manifest.iframe.sandbox === 'string'
       ? manifest.iframe.sandbox
@@ -4708,6 +4722,7 @@ export async function mintReviewBlockToken(opts: {
     appName: manifestName,
     sandbox: manifestSandbox,
     bootSkeleton: manifestBootSkeleton,
+    fullBleed: manifestFullBleed,
     runForReal,
     buzzCap: runForReal ? REVIEW_RUN_FOR_REAL_BUZZ_CAP : null,
   };

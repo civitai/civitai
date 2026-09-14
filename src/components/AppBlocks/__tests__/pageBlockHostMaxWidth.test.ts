@@ -49,6 +49,11 @@ import { describe, expect, it } from 'vitest';
  *     without changing anything visible
  *
  *   · the value is read through `var()` and never written inline
+ *   · the cap is skipped for an app whose MANIFEST declares `page.fullBleed`, and
+ *     read through `var()` for every app that does not — the `flag OR ledger rule`
+ *     relationship, which neither half's own pin can express
+ *   · `fullBleed` is a REQUIRED prop, so a new host surface is a type error rather
+ *     than a silent revert to capped
  *
  * 🔴 WHAT IS **NOT** PINNED HERE, AND WHY. That the ledger's selector survives the
  * PRODUCTION compiler is a different claim, and this file cannot make it: it reads
@@ -423,18 +428,30 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
    * an unrelated change and an app that needs full bleed is quietly letterboxed
    * again). Modelled on the `fill` opt-in ledger in `pageRunScrollContract.test.ts`.
    *
-   * 🔴 THE EXPECTATION IS AN ENUMERATION, NOT A FLOOR. It was `[]` when the
-   * mechanism shipped, which is what forced the first entry to be argued for
-   * rather than appended; `playable-collections` was then added by an explicit
-   * product decision, with the reasoning recorded beside the rule in
-   * `globals.css`. Adding a row here is the intended maintenance path — relaxing
-   * this to a `toContain`, a length check or a superset test is not, and would
-   * throw away the shrink half. `sensei` was the second entry and it DID fail this
-   * test first, which is the workflow working as designed: the rule went in, this
-   * assertion went red naming `+ "sensei"` as the set delta, and only then was the
-   * expectation updated.
+   * 🔴 THE SET IS NOW EXPECTED TO SHRINK TO ZERO, AND WHAT THAT CHANGES. An app
+   * goes full bleed by declaring `page.fullBleed` in its own manifest; this CSS
+   * ledger is a MIGRATION PATH for the two apps that were members before the field
+   * existed and that cannot gain it without shipping a new, re-approved manifest.
+   * So the two directions no longer mean the same thing as each other:
    *
-   * WHY EACH MEMBER IS HERE (keep this list in step with the rules):
+   *   · SHRINK is the intended end state, one app at a time — delete the rule in
+   *     `globals.css` and its row here in the SAME commit, once that app's
+   *     `page.fullBleed: true` manifest is approved. This assertion is what stops
+   *     the two halves being done separately, which would letterbox a live app.
+   *     When the last row goes, retire this test with the ledger rather than
+   *     leaving an `[]` expectation that reads as an empty feature.
+   *   · GROWTH is now a REVIEW SIGNAL rather than routine maintenance. A new entry
+   *     is an app going full bleed without passing through manifest review, so the
+   *     right response to this test going red with an addition is to ask why the
+   *     manifest field was not used — not to append a row. The one thing this
+   *     cascade can still express that the field cannot is a NARROWER px value
+   *     (the field is a boolean); `globals.css` records why that is deliberately
+   *     not a reason to add an entry.
+   *
+   * Relaxing this to a `toContain`, a length check or a superset test would throw
+   * away the shrink half, which is now the half that matters most.
+   *
+   * WHY EACH MEMBER IS STILL HERE (keep this list in step with the rules):
    *   · `playable-collections` — a collection player whose three open-collection
    *     view modes are all uncapped by the app; the 960px well it does have
    *     applies only to its browse shell, behind an early return. Full reasoning
@@ -442,9 +459,11 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
    *   · `sensei` — a two-pane chat shell, and one of the TWO apps the census on
    *     `APP_PAGE_MAX_WIDTH_PX` says the cap was created for. Excused by an
    *     explicit product decision by the repo owner, NOT because anything here
-   *     malfunctions. Notepad — the other half of that same census line — is
-   *     deliberately NOT a member. Full reasoning, including what the census is and
-   *     is not evidence for, lives on the rule in `globals.css`.
+   *     malfunctions. Notepad — the other half of that same census line — was
+   *     deliberately NOT a member, an asymmetry the manifest field dissolves.
+   *
+   * Both rows retire the same way: that app's manifest declares the field, it is
+   * approved, then the rule and the row go together.
    *
    * The ids are read from the SELECTORS, not from a hand-kept list elsewhere, so
    * a rule nobody told this test about is what it notices. `code()` strips
@@ -484,16 +503,19 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
    * test. That is the trade for a machine-checkable claim, and `code()` runs
    * first, so commenting a line out changes the string exactly as deleting it does.
    */
-  it("pins the host's cap declarations verbatim — a dropped `auto` margin, `var()` or fallback all fail", () => {
+  it("pins the host's cap declarations verbatim — a dropped `auto` margin, `var()`, fallback or manifest branch all fail", () => {
     const src = code(read(HOST));
     expect(
-      region(src, /maxWidth: `var\(--app-page-max-width[\s\S]*?marginInline: 'auto',/, 'width cap'),
+      region(src, /maxWidth: fullBleed \?[\s\S]*?marginInline: 'auto',/, 'width cap'),
       'This is a DELIBERATE verbatim pin, not an incidental string match. If you changed this ' +
         'pair on purpose (including a pure reformat), update the expected string here in the ' +
         'same commit. If you did not, you have either uncentred the app, hardcoded the cap past ' +
-        'its own opt-out, or removed the fallback that caps a host rendered without globals.css.'
+        'its own opt-out, removed the fallback that caps a host rendered without globals.css, or ' +
+        'collapsed the `fullBleed` branch — which either caps every app that declared the ' +
+        'manifest field or uncaps every app that did not.'
     ).toBe(
-      "maxWidth: `var(--app-page-max-width, ${APP_PAGE_MAX_WIDTH_PX}px)`, marginInline: 'auto',"
+      "maxWidth: fullBleed ? 'none' : `var(--app-page-max-width, ${APP_PAGE_MAX_WIDTH_PX}px)`, " +
+        "marginInline: 'auto',"
     );
   });
 
@@ -604,7 +626,7 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
         'the same commit.'
     ).toBe(
       "{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, width: '100%', " +
-        'maxWidth: `var(--app-page-max-width, ${APP_PAGE_MAX_WIDTH_PX}px)`, ' +
+        "maxWidth: fullBleed ? 'none' : `var(--app-page-max-width, ${APP_PAGE_MAX_WIDTH_PX}px)`, " +
         "marginInline: 'auto', }"
     );
   });
@@ -664,6 +686,44 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
         'per-install and is NOT what an app author knows their app by, so a ledger entry written ' +
         'against the slug would match nothing.'
     ).toBe('data-block-id={blockId}');
+  });
+
+  /**
+   * 🔴 THE MANIFEST OPT-OUT IS A **REQUIRED** PROP, WHICH IS THE ONLY DETERMINISTIC
+   * THING KEEPING A NEW HOST SURFACE HONEST.
+   *
+   * There are three mounters today (`/apps/run/[slug]`, `/apps/dev/[blockId]`,
+   * `ReviewBlockPreviewHost`) and each has to pass the app's declaration. An
+   * OPTIONAL `fullBleed?: boolean` with an implicit `= false` compiles for all
+   * three, and for a fourth — and then the surface that omitted it renders every
+   * app capped no matter what its manifest says. That is not hypothetical here:
+   * `bootSkeleton`'s own comment on this component records exactly that failure,
+   * where the dev tunnel and the moderator preview both silently showed the
+   * pre-feature presentation, so the author checking their own app and the
+   * moderator approving it were the two people who could not see the feature.
+   * For THIS field the moderator's view is the review itself, so the same defect
+   * would mean approving a declaration whose effect is invisible.
+   *
+   * Pinned on the declaration rather than on the call sites deliberately: a
+   * source-level enumeration of mounters is a regex over a tree that has to be
+   * kept in step with reality, whereas a required prop is checked by `tsc` for
+   * every present and future caller at once.
+   */
+  it('`fullBleed` is a REQUIRED prop — an optional one silently re-caps any new host surface', () => {
+    const src = code(read(HOST));
+    expect(
+      /^\s*fullBleed: boolean;$/m.test(src),
+      'PageBlockHostProps no longer declares `fullBleed: boolean` as a REQUIRED prop. If it was ' +
+        'made optional, every existing mounter still compiles while a new one can omit it and ' +
+        'render every app capped regardless of its manifest — with nothing failing. If it was ' +
+        'renamed, re-point this guard and the two pins above deliberately.'
+    ).toBe(true);
+    expect(
+      /fullBleed\?\s*:/.test(src),
+      'PageBlockHostProps declares `fullBleed?:` — an OPTIONAL prop. See this test\'s comment: ' +
+        'the implicit default is what made `bootSkeleton` invisible on the dev tunnel and the ' +
+        'moderator preview, and for this field the moderator preview IS the gate.'
+    ).toBe(false);
   });
 
   /**
