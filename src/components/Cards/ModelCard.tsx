@@ -86,12 +86,14 @@ function ModelCardContent({ data }: Props) {
     if (isNSFW) modFlagLabels.push('NSFW');
   }
 
+  // Green, not the `success` teal the Early Access chip uses: that sits a few degrees from the
+  // Updated chip's `teal[5]` and the two read as the same colour at chip size.
   // `.chip` fixes height at 26px; Mantine's `circle` only rounds the corners and sizes the width
   // from the badge size, so the two together give a narrow oval. Pin both axes to the chip height.
   const paidBadgeStyle = useMemo(
     () =>
       isPaidAccess
-        ? { backgroundColor: theme.colors.success[5], width: 26, height: 26, padding: 0 }
+        ? { backgroundColor: theme.colors.green[7], width: 26, height: 26, padding: 0 }
         : undefined,
     [isPaidAccess, theme]
   );

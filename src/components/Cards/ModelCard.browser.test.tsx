@@ -237,7 +237,12 @@ function WithPalette({ children }: { children: React.ReactNode }) {
   return (
     <MantineProvider
       theme={{
-        colors: { success: scale('#12b886'), teal: scale('#0ca678'), blue: scale('#228be6') },
+        colors: {
+          success: scale('#12b886'),
+          teal: scale('#0ca678'),
+          blue: scale('#228be6'),
+          green: scale('#37b24d'),
+        },
       }}
     >
       {children}
@@ -397,16 +402,19 @@ describe('ModelCard paid-gate badge', () => {
     expect(recencyBadge()).toBeNull();
   });
 
-  test('the Paid badge uses the Early Access colour, not the New/Updated one', async () => {
+  test('the Paid badge is green — distinct from BOTH the Updated teal and the Early Access teal', async () => {
     renderWithProviders(
       <WithPalette>
         <ModelCard data={{ ...makeData(), earlyAccessDeadline: null, hasActivePaidAccess: true }} />
       </WithPalette>
     );
     const el = (await awaitBadge('access')) as HTMLElement;
-    // Reusing the Early Access treatment is the community ask #4678 answered, and it lives in an
-    // inline style rather than a class, so it survives the harness having no stylesheet.
-    expect(el.style.backgroundColor).toBe('rgb(18, 184, 134)');
+    // `success` (Early Access) and `teal` (Updated) sit a few degrees apart and read as one colour
+    // at chip size, which is why the paid chip left that family. Asserting the green AND both
+    // absences is what makes a drift back into either of them visible.
+    expect(el.style.backgroundColor).toBe('rgb(55, 178, 77)');
+    expect(el.style.backgroundColor).not.toBe('rgb(18, 184, 134)');
+    expect(el.style.backgroundColor).not.toBe('rgb(12, 166, 120)');
   });
 
   test('an ungated model renders no status badge at all', async () => {
