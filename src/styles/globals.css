@@ -311,9 +311,38 @@
    validates against this repo's own rules, and `src/components/AppBlocks/types.ts`
    declares the host's own `BlockManifest` (its "Matches @civitai/app-sdk/blocks v1"
    line is a comment, not an import). The SDK type is not in the chain, so the SDK
-   pin could not make a new field untyped where the host reads it. The mirror is also
+   pin could not make a new field untyped where the host reads it.
+
+   🔴 BUT THE *COUNT* IN THAT OLD ARGUMENT WAS RIGHT, AND RETRACTING IT DELETED A REAL
+   FOLLOW-UP. A previous version of this paragraph went on to say "the mirror is also
    two declarations, not three: the published schema is canonical and the Go CLI
-   MIRRORS it.
+   MIRRORS it." That sentence is FALSE. There are three, and all three are strict.
+   Measured from this worktree:
+     · `public/schemas/app-block/v1.json` — canonical, and the ONLY one of the three
+       that has `page.fullBleed` today.
+     · `schema/app-block.manifest.schema.json` in `civitai/cli` (Go) — `page` is
+       `additionalProperties: false` over `path`/`title`/`icon`/`buzzBudgetPerGen`.
+       No `fullBleed`.
+     · `@civitai/app-sdk` VENDORS the schema at `schemas/app-block/v1.json` and
+       exposes it as a PUBLIC export subpath (`"./schemas/app-block/v1.json"` is in
+       its `package.json` `exports`) — so it is a third declaration an author can
+       validate against, not an internal copy. At 0.14.0, the version this host pins,
+       its `page` block is the same four properties and also
+       `additionalProperties: false`. No `fullBleed`.
+
+   🔴 THE CONSEQUENCE IS AN OPEN FOLLOW-UP, NOT A FOOTNOTE: BECAUSE ALL THREE ARE
+   STRICT, AN APP AUTHOR CANNOT DECLARE `page.fullBleed` THROUGH THE NORMAL PATH
+   TODAY. Measured with the released CLI (`civitai 0.1.101`): a real manifest with the
+   field fails `civitai app validate` with `page: additional properties 'fullBleed'
+   not allowed`, rc 1 — the same manifest without it is valid, rc 0 — and
+   `civitai app submit` runs that same validation ahead of packaging, so it refuses
+   before any network call. (`--skip-validate` waives the CLI's opinion and the
+   server-side validator here does accept the field, so a determined author has a way
+   through; the tooling every author is told to trust does not.) So the schema STILL
+   has to move first for this feature to be usable — that half of the old argument was
+   never the part that was wrong. CLOSING CONDITION: `page.fullBleed` present in
+   `civitai/cli`'s schema AND in a released `@civitai/app-sdk`, checked by running
+   `civitai app validate` on a manifest that declares it and getting rc 0.
 
    The other half of that old argument was sound and still is: a manifest field
    cannot be forged at runtime — the guest is cross-origin and can reach neither the
