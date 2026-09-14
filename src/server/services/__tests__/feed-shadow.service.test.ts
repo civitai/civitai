@@ -61,7 +61,17 @@ describe('mapSearchInputToFeedQuery', () => {
     expect(q.get('sort')).toBe('reactions');
     expect(q.get('periodDays')).toBe('7');
     expect(q.get('offset')).toBe('400');
-    expect(q.get('before')).toBe('1788000000000');
+    expect(q.get('before')).toBeNull();
+  });
+
+  it('freezes a paged set at the cursor minute only for Newest, as the site does', () => {
+    const q = (sort: string) => {
+      const m = mapSearchInputToFeedQuery({ ...base, sort, cursor: '400|1788000012345' });
+      return m.ok ? new URLSearchParams(m.query) : new URLSearchParams();
+    };
+    expect(q('Newest').get('before')).toBe('1788000000000');
+    expect(q('Most Reactions').get('before')).toBeNull();
+    expect(q('Oldest').get('before')).toBeNull();
   });
 
   it('names the first thing it cannot express', () => {
