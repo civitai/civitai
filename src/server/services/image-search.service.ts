@@ -252,7 +252,24 @@ export async function runImageSearch(
         const useFlat = flatMeta !== undefined ? flatMeta : !useLegacyMethod;
         return useFlat ? imageMeta : { id: image.id, meta: imageMeta };
       })(),
-      username: image.user.username,
+      // `/api/v1/images` publishes `username` as a STRING, and a typed client
+      // fails to decode the whole 200 when it is not one — which is how #4768
+      // was reported (civitai/cli#513: "cannot unmarshal number into Go struct
+      // field .items.username of type string").
+      //
+      // The real repair is upstream, in the feed's entity cache, which used to
+      // infer a field's type from its stored text and so read the all-digit
+      // username `0222` back as the number `222`
+      // (`event-engine-common/caches/value-codec.ts`). This is a belt on the
+      // published contract, nothing more: it can keep a number from reaching the
+      // wire, but it CANNOT recover a name the cache already lost — `222` casts
+      // to `'222'`, which is still not `'0222'`. Do not read it as the fix.
+      //
+      // Only a `number` is coerced. `String()` on its own would be a regression:
+      // the legacy DB branch can carry a null username for a deleted account,
+      // and `String(null)` is the four-character string `'null'`.
+      username:
+        typeof image.user.username === 'number' ? String(image.user.username) : image.user.username,
       baseModel: image.baseModel,
       modelVersionIds: image.modelVersionIds,
       tags: withTags ? image.tags?.map((t) => ({ id: t.id, name: t.name })) ?? [] : undefined,
