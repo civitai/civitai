@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import JSZip from 'jszip';
 
 import { NsfwLevel } from '~/server/common/enums';
@@ -26,7 +26,6 @@ import { NsfwLevel } from '~/server/common/enums';
  *     ensurePushWebhook, commitFiles, listRepoTree, getBlobContent, getRepo).
  *   - ~/server/utils/app-block-ids.newUlid is mocked deterministic so
  *     assertions can hit the generated ids by value.
- *   - global.fetch is mocked for the Discord webhook path.
  */
 
 /**
@@ -68,7 +67,6 @@ const {
       // `findUnique` added: recordPendingFromPush resolves the app owner's
       // userId via dbRead.appBlock.findUnique({ app: { userId } }).
       appBlock: { findFirst: vi.fn(), findUnique: vi.fn() },
-      user: { findUnique: vi.fn() },
       // Added 2026-05-28 for C-2 fix: approveRequest now reads the
       // OauthClient row after a P2002 collision to recover the existing
       // client on retry.
@@ -243,13 +241,12 @@ vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingModerationEventId: () => 'alme_reset_close',
 }));
 
-// Override the global env mock with the keys submitVersion / approveRequest /
-// notifyModsOfNewRequest read. The setup.ts proxy returns undefined for
-// anything not whitelisted; we preserve the proxy fallback for keys we don't
-// explicitly set (e.g. LOGGING is an array read at db-client module init).
+// Override the global env mock with the keys submitVersion / approveRequest
+// read. The setup.ts proxy returns undefined for anything not whitelisted; we
+// preserve the proxy fallback for keys we don't explicitly set (e.g. LOGGING is
+// an array read at db-client module init).
 const _publishEnvOverrides: Record<string, unknown> = {
   NEXTAUTH_URL: 'https://example.test',
-  DISCORD_WEBHOOK_MOD_ALERTS: 'https://discord.example/hook',
   FORGEJO_BASE_URL: 'https://forgejo.example',
   FORGEJO_ADMIN_TOKEN: 'tok-test',
   FORGEJO_WEBHOOK_SECRET: 'sec-test',
@@ -312,9 +309,8 @@ async function makeValidBundle(over: Record<string, unknown> = {}): Promise<Buff
 
 beforeEach(() => {
   // M-2 manifests here: publish-request.service uses raw `process.env.NEXTAUTH_URL`
-  // for the review URL embedded in the Discord notify (and the git-push webhook
-  // callback URL in approveRequest), not the typed `env` import. Inject it so
-  // the URL assertions work.
+  // for the git-push webhook callback URL in approveRequest, not the typed `env`
+  // import. Inject it so the URL assertions work.
   process.env.NEXTAUTH_URL = 'https://example.test';
   mockUlidSeq.i = 0;
   mockAplSeq.i = 0;
@@ -363,10 +359,9 @@ beforeEach(() => {
       (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: 'Scanned' }))
   );
 
-  // Default: no pending conflict, no existing app block, user lookup OK.
+  // Default: no pending conflict, no existing app block.
   mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
   mockDbRead.appBlock.findFirst.mockResolvedValue(null);
-  mockDbRead.user.findUnique.mockResolvedValue({ username: 'tester' });
   mockDbWrite.appBlockPublishRequest.create.mockResolvedValue({ id: 'will-be-overwritten' });
 
   // W13 auto-create-on-approve defaults: no pre-existing listing (so the happy
@@ -406,16 +401,6 @@ beforeEach(() => {
     }
     return {};
   });
-
-  // Mock fetch (Discord webhook) to never fail by default.
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async () => ({ ok: true, status: 200 } as Response))
-  );
-});
-
-afterEach(() => {
-  vi.unstubAllGlobals();
 });
 
 // ---- submitVersion ---------------------------------------------------------
@@ -787,47 +772,6 @@ describe('submitVersion', () => {
       })
     ).rejects.toThrow(/connection reset/);
   });
-
-  it('Discord notify is invoked with the right shape on submission', async () => {
-    const { submitVersion } = await import('../publish-request.service');
-    const fetchSpy = vi.fn(
-      async (_url: string, _init?: RequestInit) => ({ ok: true, status: 200 } as Response)
-    );
-    vi.stubGlobal('fetch', fetchSpy);
-
-    const buf = await makeValidBundle();
-    await submitVersion({
-      bundleBuffer: buf,
-      submittedByUserId: 42,
-    });
-
-    // fire-and-forget notify — poll until it lands instead of hand-timing the
-    // microtask queue (a new `await` before the fetch would silently make a
-    // single-tick wait flaky).
-    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
-    const [url, init] = fetchSpy.mock.calls[0];
-    expect(url).toBe('https://discord.example/hook');
-    expect((init as RequestInit).method).toBe('POST');
-    const body = JSON.parse((init as RequestInit).body as string);
-    expect(body.embeds[0].title).toMatch(/New publish request: hello v0\.1\.0/);
-    expect(body.embeds[0].url).toBe('https://example.test/apps/review');
-  });
-
-  it('Discord notify failure does not block submission', async () => {
-    const { submitVersion } = await import('../publish-request.service');
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => {
-        throw new Error('discord down');
-      })
-    );
-    const buf = await makeValidBundle();
-    const result = await submitVersion({
-      bundleBuffer: buf,
-      submittedByUserId: 42,
-    });
-    expect(result.publishRequestId).toMatch(/^pubreq_/);
-  });
 });
 
 // ---- withdrawRequest -------------------------------------------------------
@@ -1170,8 +1114,7 @@ describe('getMyPendingForSlug', () => {
     await getMyPendingForSlug({ slug: 'hello-world', userId: 42 });
     // mockDbRead surfaces are typed as bare vi.fn() with no signature, so
     // their .calls tuple is `[]`. Reach through `unknown` to inspect the
-    // captured args (same pattern other tests use for the Discord fetch
-    // spy).
+    // captured args.
     const calls = (
       mockDbRead.appBlockPublishRequest.findFirst as unknown as {
         mock: { calls: Array<[{ where: Record<string, unknown> }]> };
