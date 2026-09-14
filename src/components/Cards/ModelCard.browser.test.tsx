@@ -274,7 +274,7 @@ async function cardPainted() {
 const justPublished = () => new Date(Date.now() - 60 * 1000);
 
 describe('ModelCard paid-gate badge', () => {
-  test('renders a Buzz bolt for a permanent gate, not the word "Paid"', async () => {
+  test('renders a diamond for a permanent gate, not the word "Paid"', async () => {
     renderWithProviders(
       <WithPalette>
         <ModelCard data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }} />
@@ -285,14 +285,18 @@ describe('ModelCard paid-gate badge', () => {
     // absence of the text as well as the presence of the icon is what makes a revert to the word
     // visible here rather than only in a screenshot.
     expect(el.textContent).toBe('');
-    // `querySelector('svg')` alone is satisfied by ANY icon, under a title that names the bolt.
-    // Tabler stamps its own class, so this reddens on a swap to a different glyph.
+    // `querySelector('svg')` alone is satisfied by ANY icon, under a title that names the glyph.
+    // Tabler stamps its own class, so this reddens on a swap to a different one — including back to
+    // the Buzz bolt, which is the specific regression this pins: the bolt already means "tip" on
+    // this same card, and two different meanings on one glyph is what the diamond replaced.
     const icon = el.querySelector('svg');
     expect(icon, 'no icon rendered in the access badge').toBeTruthy();
-    expect(icon!.getAttribute('class') ?? '').toContain('bolt');
+    const cls = icon!.getAttribute('class') ?? '';
+    expect(cls).toContain('diamond');
+    expect(cls).not.toContain('bolt');
   });
 
-  test('the bolt carries an accessible name, not merely an aria-label attribute', async () => {
+  test('the diamond carries an accessible name, not merely an aria-label attribute', async () => {
     renderWithProviders(
       <WithPalette>
         <ModelCard data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }} />
@@ -313,7 +317,7 @@ describe('ModelCard paid-gate badge', () => {
     await expect.element(page.getByRole('img', { name: 'Paid' })).toBeInTheDocument();
   });
 
-  test('the bolt is explained on hover — it is the only thing that names it for a sighted user', async () => {
+  test('the diamond is explained on hover — it is the only thing that names it for a sighted user', async () => {
     renderWithProviders(
       <WithPalette>
         <ModelCard data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }} />
@@ -322,6 +326,8 @@ describe('ModelCard paid-gate badge', () => {
     const el = await awaitBadge('access');
     // Deleting the Tooltip wrapper leaves every other assertion in this file green, which is why
     // this exists. It has to hover: Mantine wires `aria-describedby` only once the tooltip opens.
+    // The label is the whole explanation of an abstract glyph — a diamond does not say "paid" on
+    // its own the way the word did.
     // Awaiting an ARRIVING state, never a leaving one — the tooltip stays open while the pointer
     // rests on the badge, so the matcher cannot lose a race against it.
     await userEvent.hover(el);

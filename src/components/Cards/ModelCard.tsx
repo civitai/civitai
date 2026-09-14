@@ -10,6 +10,7 @@ import { memo, useMemo } from 'react';
 import {
   IconArchiveFilled,
   IconBolt,
+  IconDiamondFilled,
   IconBookmark,
   IconDownload,
   IconLock,
@@ -29,7 +30,6 @@ import { ModelCardContextMenu } from '~/components/Cards/ModelCardContextMenu';
 import { getCardBaseModels, getModelRecency } from '~/components/Cards/model-card.utils';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useElementInView } from '~/components/IntersectionObserver/ElementInView';
 import { AnimatedCount, Metrics } from '~/components/Metrics';
 import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
@@ -40,7 +40,7 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
-import { Availability, Currency, ModelModifier } from '~/shared/utils/prisma/enums';
+import { Availability, ModelModifier } from '~/shared/utils/prisma/enums';
 import { getModelUrl } from '~/utils/string-helpers';
 
 function ModFlagBadge({ labels }: { labels: string[] }) {
@@ -213,7 +213,7 @@ function ModelCardContent({ data }: Props) {
               </Badge>
             ) : isPaidAccess ? (
               // `role` is load-bearing, not decoration: Mantine's Badge root is a bare `div`, and ARIA
-              // drops an accessible name from a role-less generic, so without this the bolt reaches a
+              // drops an accessible name from a role-less generic, so without this the icon reaches a
               // screen reader as nothing at all. The Tooltip is hover-only — Badge renders no
               // tabIndex — so it cannot serve as the name either.
               <Tooltip label="Paid">
@@ -226,7 +226,7 @@ function ModelCardContent({ data }: Props) {
                   aria-label="Paid"
                   style={accessBadgeStyle}
                 >
-                  <CurrencyIcon currency={Currency.BUZZ} size={16} color="white" fill="white" />
+                  <IconDiamondFilled size={16} color="white" />
                 </Badge>
               </Tooltip>
             ) : null}
