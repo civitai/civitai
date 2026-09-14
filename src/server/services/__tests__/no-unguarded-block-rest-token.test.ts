@@ -440,6 +440,42 @@ describe('the REST route scan can actually see what it claims to', () => {
     }
   });
 
+  /**
+   * 🔴 THE CONTROL FOR THE FAIL-OPEN THAT WAS SHIPPED IN THE RELATIONSHIP CHECK. The
+   * wrapped-default scan read the RAW file, so a commented-out wrapper satisfied it while
+   * the bare handler was exported. Measured on `blocks/me.ts`: 24/24 PASS with no token
+   * verification, no revocation check and no approved-status gate on a live route.
+   */
+  it('POSITIVE CONTROL — a COMMENTED-OUT wrapped export does not satisfy the relationship', () => {
+    const commentedOut = [
+      "import { withBlockScope } from '~/server/middleware/block-scope.middleware';",
+      'const baseHandler = async () => {};',
+      "// export default withBlockScope(baseHandler, { endpoint: 'me' });",
+      'export default baseHandler;',
+    ].join('\n');
+    // It IS in the population — the import line is code — so the relationship is the only
+    // thing that can separate it, and it must read the code, not the prose.
+    expect(namesWrapperInCode(commentedOut)).toBe(true);
+    expect(DEFAULT_EXPORT_WRAPPED_RE.test(commentedOut)).toBe(true); // raw file: FALSE PASS
+    expect(DEFAULT_EXPORT_WRAPPED_RE.test(codeLinesOnly(commentedOut))).toBe(false); // the fix
+  });
+
+  it('POSITIVE CONTROL — the one-place predicate check counts CALLS and ignores prose', () => {
+    const twoOnOneLine =
+      'const v = c ? resolveRestApprovalVerdict(a) : resolveRestApprovalVerdict(b);';
+    expect((twoOnOneLine.match(/\bresolveRestApprovalVerdict\s*\(/g) ?? []).length).toBe(2);
+    // The line-wise form scored this as 1 — two predicates passing "exactly once".
+    expect(
+      twoOnOneLine.split('\n').filter((l) => /\bresolveRestApprovalVerdict\s*\(/.test(l)).length
+    ).toBe(1);
+    // And a prose mention WITH an argument list must not count at all.
+    const prose = [
+      ' * resolveRestApprovalVerdict(claims) resolves the verdict.',
+      'const x = 1;',
+    ].join('\n');
+    expect((codeLinesOnly(prose).match(/\bresolveRestApprovalVerdict\s*\(/g) ?? []).length).toBe(0);
+  });
+
   it('POSITIVE CONTROL — a prose-only mention is NOT in the wrapped population', () => {
     // The `/api/v1/me.ts` shape: the wrapper is named only to explain why it is absent.
     // A population keyed on the raw substring scored this as an unwrapped block route.
@@ -633,8 +669,21 @@ describe('no unguarded block-REST token verification', () => {
   });
 
   it('THE RELATIONSHIP — every ledgered route WRAPS its default export', () => {
+    // 🔴 CODE LINES ONLY, and this file's CENTRAL assertion was fail-OPEN without it. The
+    // test used to read the raw file, so a route could satisfy "wraps its default export"
+    // with a COMMENTED-OUT wrapper while exporting the bare handler:
+    //
+    //     // export default withBlockScope(baseHandler, { endpoint: 'me', … });
+    //     export default baseHandler;
+    //
+    // Measured on `blocks/me.ts`: that shape gave 24/24 PASS — no token verification, no
+    // revocation check, no approved-status gate, and the guard whose stated purpose is this
+    // exact regression said nothing. It is regression #2 from this file's own header, and
+    // the same prose-satisfies-a-code-assertion shape as `codeLinesOnly`'s four recorded
+    // instances. The population check (`namesWrapperInCode`) already filtered comments; the
+    // RELATIONSHIP check did not, so the two halves disagreed about what counts as code.
     const unwrapped = blockScopedRoutes().filter(
-      (rel) => !DEFAULT_EXPORT_WRAPPED_RE.test(read(rel))
+      (rel) => !DEFAULT_EXPORT_WRAPPED_RE.test(codeLinesOnly(read(rel)))
     );
 
     expect(
@@ -683,10 +732,18 @@ describe('no unguarded block-REST token verification', () => {
     // It is also a SPELLING check: a semantically identical rewrite would fail it, and a
     // call to a WRONG predicate spelled this way would pass it. What pins the behaviour is
     // block-scope.approved-gate.test.ts.
-    const middleware = read(MIDDLEWARE);
-    const calls = middleware
-      .split('\n')
-      .filter((line) => /\bresolveRestApprovalVerdict\s*\(/.test(line));
+    // 🔴 CODE LINES ONLY, and COUNT THE CALLS, NOT THE LINES — both halves were wrong.
+    // (a) The scan read the raw file, and the middleware names this identifier FOUR times
+    // (an import, the real call, and two comments). It counted 1 only because none of the
+    // comment mentions happens to be followed by `(` — the same luck-of-punctuation the
+    // bridge sibling records as its instances (3) and (4). One future sentence writing
+    // `resolveRestApprovalVerdict(claims)` in prose flips this to a false RED, and worse:
+    // with such a sentence present, DELETING the real call leaves the count at 1 and the
+    // gate gone, GREEN. (b) Counting matching LINES means two calls on one line —
+    // `cond ? await resolveRestApprovalVerdict(a) : await resolveRestApprovalVerdict(b)` —
+    // scored 1, i.e. two predicates passing a check whose message says "exactly once".
+    const middleware = codeLinesOnly(read(MIDDLEWARE));
+    const calls = middleware.match(/\bresolveRestApprovalVerdict\s*\(/g) ?? [];
     expect(
       calls.length,
       `${MIDDLEWARE} must call resolveRestApprovalVerdict exactly once. A second call is ` +
