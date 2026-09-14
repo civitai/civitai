@@ -1,35 +1,34 @@
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useState } from 'react';
 import type { AppsRailState } from '~/components/Apps/appsRailGeometry';
 import {
   APPS_RAIL_COOKIE,
   APPS_RAIL_COOKIE_MAX_AGE,
   APPS_RAIL_DEFAULT_STATE,
-  APPS_RAIL_STORAGE_KEY,
-  parseAppsRailState,
 } from '~/components/Apps/appsRailGeometry';
 
 /**
  * `/apps/*` LEFT RAIL — the SSR cookie seed and the client store.
  *
- * 🔴 WHY THERE IS A COOKIE AT ALL, AND WHY `localStorage` ALONE IS NOT ENOUGH.
- * Every `/apps/*` page is server-rendered through `createServerSideProps`, and
- * `localStorage` does not exist on a server. Seeding the rail from `localStorage` alone
- * therefore means the server ALWAYS renders it open: a viewer who collapsed it gets an
- * open rail in the HTML, then a 260 → 56 jump on hydration. That is not only a flash —
- * the store grid underneath is a container query, so 204px of returned width
- * RE-LADDERS the whole grid and every card resizes. The cookie is what lets the SERVER
- * render the state the viewer chose.
+ * 🔴 THE COOKIE IS THE ONLY STORE, AND IT HAS TO BE. Every `/apps/*` page is
+ * server-rendered through `createServerSideProps`, and a cookie is the only client value
+ * that reaches the server. Seeding the rail from anything else means the server ALWAYS
+ * renders it open: a viewer who collapsed it gets an open rail in the HTML, then a
+ * 260 → 56 jump on hydration. That is not only a flash — the store grid underneath is a
+ * container query, so 204px of returned width RE-LADDERS the whole grid and every card
+ * resizes. The cookie is what lets the SERVER render the state the viewer chose. It is
+ * parsed in `_app`'s `getInitialProps` alongside `consent` / `disableHidden` /
+ * `referrals` (see `~/shared/utils/cookies`) and handed to {@link AppsRailProvider}
+ * exactly the way those three are handed to their own providers.
  *
- * So the two stores have different jobs and neither is redundant:
- *   • the COOKIE is the SSR seed. It is parsed in `_app`'s `getInitialProps` alongside
- *     `consent` / `disableHidden` / `referrals` (see `~/shared/utils/cookies`) and handed
- *     to {@link AppsRailProvider} exactly the way those three are handed to their own
- *     providers. That is the established pattern in this repo for an SSR-seeded client
- *     value, and it is what makes the first paint correct.
- *   • `localStorage` is the client-side store the rail persists to, and it is the
- *     FALLBACK when no cookie reaches the server (cookie cleared, a surface rendered
- *     outside `_app`, a test). It is read in an EFFECT, never during render — see
- *     {@link useAppsRail} for why that ordering is the hydration-safe one.
+ * ⚠️ THERE WAS A SECOND STORE AND IT IS DELETED. `localStorage` was written alongside the
+ * cookie and adopted in a post-mount effect when no cookie reached the server. It served
+ * exactly one cohort — cookie cleared, storage survived — who now simply re-collapse the
+ * rail once and are carried by the cookie thereafter. It cost two audit rounds and caught
+ * nothing: round 0 found the fallback was DEAD CODE in production (the zod schema could
+ * never return `undefined`, so the discriminator that gated it never fired), and round 2
+ * found that the fix making it reachable reintroduced a reflow on EVERY hard load,
+ * because adopting from storage without re-seeding the cookie leaves the server in the
+ * state that made the adoption necessary. One store cannot disagree with itself.
  *
  * The pure geometry (widths, gap, the 1300px threshold, the cookie parser) lives in
  * `appsRailGeometry.ts` and is re-exported below, so a consumer imports one name from
@@ -38,14 +37,14 @@ import {
 export * from '~/components/Apps/appsRailGeometry';
 
 /**
- * The SSR SEED.
+ * The SSR SEED — the cookie value the server rendered with.
  *
- * `null` means "no seed reached this tree" — which is different from "the seed said
- * open", and the difference decides whether {@link useAppsRail} is allowed to adopt a
- * `localStorage` value after mount. With a seed present the cookie is authoritative and
- * adopting anything else would be the very reflow the cookie exists to prevent.
+ * Its default IS {@link APPS_RAIL_DEFAULT_STATE} rather than a "no seed" sentinel. The
+ * old `null` sentinel existed only to tell {@link useAppsRail} whether it was allowed to
+ * adopt a `localStorage` value after mount; with that store deleted there is nothing to
+ * decide, and an absent cookie and a cookie saying "open" mean the same thing.
  */
-const AppsRailSeedContext = createContext<AppsRailState | null>(null);
+const AppsRailSeedContext = createContext<AppsRailState>(APPS_RAIL_DEFAULT_STATE);
 
 type AppsRailStore = {
   state: AppsRailState;
@@ -71,13 +70,14 @@ export function AppsRailProvider({
   children,
 }: {
   /**
-   * The rail cookie as the server parsed it — or `undefined` when the request carried
-   * NO rail cookie.
+   * The rail cookie as the server parsed it — or `undefined` when the request carried NO
+   * rail cookie, which defaults to {@link APPS_RAIL_DEFAULT_STATE}.
    *
-   * 🔴 `undefined` IS LOAD-BEARING AND MUST NOT BE DEFAULTED AWAY BY THE CALLER. It is the
-   * only signal that lets {@link useAppsRail} fall back to `localStorage`; collapse it to
-   * `'open'` and that whole half of the feature becomes write-only. See the note on
-   * `appsRail` in `~/shared/utils/cookies` for how that shipped once and what caught it.
+   * ⚠️ `undefined` USED TO BE LOAD-BEARING AND NO LONGER IS. It was the discriminator
+   * that told `useAppsRail` whether to consult `localStorage`; with that store deleted
+   * there is nothing to discriminate for, and an absent cookie simply means "open". The
+   * zod schema in `~/shared/utils/cookies` still yields `undefined` for an absent cookie
+   * — that is deliberate and untouched, it just no longer carries a second meaning here.
    */
   value: AppsRailState | undefined;
   children: React.ReactNode;
@@ -88,50 +88,38 @@ export function AppsRailProvider({
   // so React skips every consumer and the toggle renders nothing — the classic
   // silent-no-op shape for a context store.
   const store = React.useMemo<AppsRailStore>(() => ({ state, setState }), [state]);
-  // `?? null` — the context's own "no seed" value. `undefined` would be indistinguishable
-  // from an absent Provider once it reaches `useContext`, which is the same collapse one
-  // level down.
   return (
-    <AppsRailSeedContext.Provider value={value ?? null}>
+    <AppsRailSeedContext.Provider value={value ?? APPS_RAIL_DEFAULT_STATE}>
       <AppsRailStoreContext.Provider value={store}>{children}</AppsRailStoreContext.Provider>
     </AppsRailSeedContext.Provider>
   );
 }
 
-/** Write the state to BOTH stores. No-ops outside a browser. */
+/**
+ * Write the state to the cookie. No-ops outside a browser.
+ *
+ * 🔴 THE COOKIE IS THE ONLY STORE. There was a parallel `localStorage` write here; it is
+ * deleted. The cookie is the mechanism — it is the only one that reaches the SERVER, so
+ * it is what decides the SSR seed and therefore the first paint. `localStorage` could
+ * only ever serve one cohort (cookie cleared, storage survived), who now re-collapse the
+ * rail once and are carried by the cookie thereafter. That cohort cost two audit rounds
+ * — round 0 found the fallback was DEAD CODE in production, and round 2 found the fix
+ * for it reintroduced a reflow on every hard load — and caught nothing in exchange.
+ */
 export function persistAppsRailState(next: AppsRailState) {
   if (typeof document === 'undefined') return;
-  try {
-    window.localStorage.setItem(APPS_RAIL_STORAGE_KEY, next);
-  } catch {
-    // Private mode / storage disabled. The cookie below still carries the state.
-  }
   // `SameSite=Lax` and no `Secure`: this is a layout preference, never a credential, and
   // it has to survive plain-http local development.
   document.cookie = `${APPS_RAIL_COOKIE}=${next}; path=/; max-age=${APPS_RAIL_COOKIE_MAX_AGE}; SameSite=Lax`;
 }
 
-/** Read the client-side store. `null` when absent or unreadable. */
-export function readAppsRailStorage(): AppsRailState | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = window.localStorage.getItem(APPS_RAIL_STORAGE_KEY);
-    return raw === null ? null : parseAppsRailState(raw);
-  } catch {
-    return null;
-  }
-}
-
 /**
  * The rail's collapse state and its toggle.
  *
- * 🔴 THE INITIAL VALUE COMES FROM THE COOKIE SEED, NOT FROM `localStorage`, AND THE
- * ORDERING IS THE POINT. Reading `localStorage` during render would make the first
- * client render differ from the server's whenever the two disagree, which is a
- * hydration mismatch; reading it in an EFFECT cannot, because effects run after
- * hydration has already matched. So the cookie decides the first paint and
- * `localStorage` is consulted only when NO seed arrived at all — the case where the
- * server could not have known, so there is nothing to mismatch with.
+ * 🔴 THE COOKIE IS THE ONLY STORE, SO THE FIRST PAINT CANNOT DISAGREE WITH THE SERVER.
+ * The initial value is the SSR seed and nothing else is read during render — there is no
+ * post-mount adoption, so the class of hydration mismatch this module's header warns
+ * about is now structurally absent rather than merely avoided by careful ordering.
  */
 export function useAppsRail(): {
   collapsed: boolean;
@@ -143,38 +131,10 @@ export function useAppsRail(): {
   // The provider-less fallback (component tests, any surface rendered outside `_app`).
   // Per-mount rather than global, which is why the "one global value" guard drives the
   // PROVIDER — see the note on `AppsRailProvider`.
-  const [local, setLocal] = useState<AppsRailState>(seed ?? APPS_RAIL_DEFAULT_STATE);
+  const [local, setLocal] = useState<AppsRailState>(seed);
 
   const state = shared ? shared.state : local;
   const setState = shared ? shared.setState : setLocal;
-
-  const adopted = useRef(false);
-  useEffect(() => {
-    // Only when the server could not have known. With a seed present the cookie is
-    // authoritative and adopting a different value here would re-introduce the reflow
-    // the cookie exists to prevent.
-    if (adopted.current || seed !== null) return;
-    adopted.current = true;
-    const stored = readAppsRailStorage();
-    if (!stored) return;
-    setState(stored);
-    // 🔴 RE-SEED THE COOKIE, OR THIS REFLOW HAPPENS ON EVERY HARD LOAD, FOREVER.
-    // Adopting from storage without writing the cookie back leaves the server in exactly
-    // the state that made the adoption necessary: the next full page load of ANY
-    // `/apps/*` route SSRs the rail OPEN (260px), hydration matches, and this effect
-    // snaps it to 56px again — taking the container-queried store grid with it. That is
-    // the "260 → 56 jump on hydration … re-ladders the whole grid and every card resizes"
-    // this module's own header says the cookie exists to prevent, reintroduced by the fix
-    // that made the fallback reachable. Client-side navigation is unaffected (the
-    // Provider is above the router outlet); direct entry, refresh and any external link
-    // into `/apps/*` are not.
-    //
-    // With the write, the cohort pays the flash ONCE and the cookie carries them
-    // thereafter — which is what `~/shared/utils/cookies` already promises in prose
-    // ("after ONE post-mount adoption"). Caught by a delta audit of the very commit that
-    // made this branch live.
-    persistAppsRailState(stored);
-  }, [seed, setState]);
 
   const setCollapsed = useCallback(
     (next: boolean) => {

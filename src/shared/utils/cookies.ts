@@ -43,21 +43,23 @@ const cookiesSchema = z.object({
    * `.catch('open')` and the closed enum together mean an unknown or truncated value can
    * only ever fail OPEN — a visible navigation — never hidden.
    *
-   * 🔴 `.optional()` AND NOT `.default('open')`, AND THE DIFFERENCE IS A WHOLE FEATURE.
-   * `undefined` here means "this request carried no rail cookie", which is the ONLY signal
-   * that lets the client fall back to `localStorage`. A `.default('open')` collapses that
-   * case into an indistinguishable `'open'`, so `AppsRailProvider` always receives a real
-   * seed, `useAppsRail`'s `seed !== null` short-circuit fires on every render, and
-   * `readAppsRailStorage()` NEVER EXECUTES IN PRODUCTION — the `localStorage` half becomes
-   * write-only while three docstrings go on describing it as a working fallback. That is
-   * exactly how it shipped in the first draft of this change, and nothing caught it: the
-   * only test exercising the adoption branch reaches it through the provider-less path,
-   * which `_app` never takes. Found by an adversarial round-0 audit, not by a test.
+   * ⚠️ `.optional()` HERE NO LONGER GATES A SECOND STORE, AND THE OLD NOTE SAID IT DID.
+   * It used to read that `undefined` is "the ONLY signal that lets the client fall back to
+   * `localStorage`". That fallback is DELETED — the cookie is now the rail's only store —
+   * so an absent cookie and a cookie saying `'open'` mean the same thing to
+   * `AppsRailProvider`, which defaults `undefined` to the open state.
    *
-   * The cohort it is for is real and not rare: a viewer whose cookies are cleared (privacy
-   * tooling, a 1-year expiry, a browser "clear cookies but keep site data" setting) while
-   * `localStorage` survives. With the discriminator intact they keep their collapsed rail
-   * after one post-mount adoption; without it they silently get the default back.
+   * The history is kept because it is why the store went rather than got fixed: with
+   * `.catch('open').default('open')` the schema could never return `undefined`, so the
+   * discriminator never fired and the whole `localStorage` half was DEAD CODE in
+   * production while three docstrings described it as a working fallback. Found by a
+   * round-0 audit, not by a test. Making it reachable then reintroduced a reflow on every
+   * hard load (round 2). Two rounds spent on a cohort — cookies cleared, storage survived
+   * — who now re-collapse the rail once and are carried by the cookie thereafter.
+   *
+   * `.catch('open')` IS still load-bearing: a present-but-unparseable cookie must resolve
+   * to `'open'` rather than to `undefined`, so a corrupted value fails open by declaration
+   * rather than by accident. Pinned in `appsRailGeometry.test.ts`.
    */
   appsRail: z.enum(['open', 'collapsed']).optional().catch('open'),
 });

@@ -5,8 +5,8 @@ import { cleanup } from 'vitest-browser-react';
 import { renderWithProviders } from '../../../test/component-setup';
 
 /**
- * The `/apps/*` rail's COLLAPSE STATE — one global value, SSR-seeded from a cookie,
- * persisted to `localStorage` and mirrored back to that cookie.
+ * The `/apps/*` rail's COLLAPSE STATE — one global value, SSR-seeded from a cookie and
+ * persisted back to that same cookie, which is the only store.
  *
  * 🔴 THE TWO CLAIMS THIS FILE OWNS, AND WHY EACH IS A REAL DEFECT IF IT BREAKS.
  *
@@ -19,9 +19,9 @@ import { renderWithProviders } from '../../../test/component-setup';
  *     `AppsRailProvider`, which `_app` mounts ABOVE the router outlet — and this file is
  *     what makes "above the outlet" an observation rather than a claim about a file.
  *
- * (2) THE SSR SEED IS THE COOKIE, NOT `localStorage`. Every `/apps/*` page is
- *     server-rendered and `localStorage` does not exist on a server, so a rail seeded from
- *     storage alone always renders OPEN on the server: a viewer who collapsed it gets a
+ * (2) THE SSR SEED IS THE COOKIE, AND THE COOKIE IS THE ONLY STORE. Every `/apps/*` page
+ *     is server-rendered, and a cookie is the only client value that reaches a server, so
+ *     a rail seeded from anything else always renders OPEN on the server: a viewer who collapsed it gets a
  *     260 → 56 jump on hydration, and the store grid underneath is a CONTAINER QUERY, so
  *     204px of returned width re-ladders every card on the page rather than shifting one
  *     bar. A collapsed cookie must produce a collapsed FIRST render, with no effect
@@ -52,14 +52,8 @@ vi.mock('next/router', () => ({
 }));
 
 const { AppsPageLayout } = await import('~/components/Apps/AppsPageLayout');
-const {
-  AppsRailProvider,
-  APPS_RAIL_COOKIE,
-  APPS_RAIL_STORAGE_KEY,
-  APPS_RAIL_WIDTH,
-  APPS_RAIL_COLLAPSED_WIDTH,
-  readAppsRailStorage,
-} = await import('~/components/Apps/appsRailState');
+const { AppsRailProvider, APPS_RAIL_COOKIE, APPS_RAIL_WIDTH, APPS_RAIL_COLLAPSED_WIDTH } =
+  await import('~/components/Apps/appsRailState');
 
 /** The rail's rendered width, or null when it did not render. */
 function railWidth(): number | null {
@@ -90,7 +84,6 @@ function readCookie(name: string): string | undefined {
 beforeEach(() => {
   mocks.pathname = '/apps';
   try {
-    window.localStorage.removeItem(APPS_RAIL_STORAGE_KEY);
   } catch {
     // storage disabled — the cookie assertions still hold
   }
@@ -136,79 +129,26 @@ describe('🔴 the SSR cookie seed decides the FIRST render', () => {
   });
 
   /**
-   * 🔴 THE ADOPTION PATH, REACHED THE WAY `_app` REACHES IT — and the test whose absence
-   * let a dead feature ship.
+   * ⚠️ THE `localStorage` ADOPTION PATH IS DELETED, AND THE TESTS FOR IT WITH IT.
    *
-   * `useAppsRail` only consults `localStorage` when NO seed arrived, and the only test
-   * that exercised that branch did it by omitting the Provider entirely — a shape `_app`
-   * never produces. Meanwhile the cookie schema was `.catch('open').default('open')`, so
-   * the real Provider ALWAYS received a seed and the branch was unreachable in
-   * production. The suite was green, three docstrings described a working fallback, and
-   * the fallback did not exist.
+   * Three tests lived here: one drove the adoption, one asserted the adoption re-seeded
+   * the cookie, and one checked a collapsed seed beat an open stored value. All three
+   * described a second store that no longer exists — the cookie is now the only one.
    *
-   * This renders the Provider the way `_app` does — `value={cookies.appsRail}` — with the
-   * value the schema now yields for a request carrying no rail cookie: `undefined`.
+   * The history is worth keeping because it is why the store was removed rather than
+   * fixed: round 0 found the fallback was DEAD CODE in production (the cookie schema was
+   * `.catch('open').default('open')`, so the real Provider ALWAYS received a seed and the
+   * branch was unreachable — the suite was green, three docstrings described a working
+   * fallback, and the fallback did not exist), and round 2 found that making it reachable
+   * reintroduced a reflow on EVERY hard load. Two rounds spent, nothing caught.
+   *
+   * What survives is the claim that outlived the feature: an ABSENT cookie must render
+   * the rail OPEN, so "no seed" is never read as "collapsed".
    */
-  test('🔴 a cookie-less request ADOPTS localStorage after mount (the real _app shape)', async () => {
-    window.localStorage.setItem(APPS_RAIL_STORAGE_KEY, 'collapsed');
-    await page.viewport(1440, 900);
-    renderWithProviders(
-      <AppsRailProvider value={undefined}>
-        <Page testid="body" />
-      </AppsRailProvider>
-    );
-    await expect.element(page.getByTestId('body')).toBeInTheDocument();
-
-    // The FIRST paint is still the default — it has to be, or the server HTML and the
-    // first client render would differ and that is the hydration mismatch the cookie
-    // exists to prevent. The adoption happens in an EFFECT, after hydration has matched.
-    await vi.waitFor(() => {
-      expect(railWidth()).toBe(APPS_RAIL_COLLAPSED_WIDTH);
-    });
-  });
-
-  test('🔴 the adoption RE-SEEDS the cookie, so the reflow happens ONCE and not forever', async () => {
-    // 🔴 THE FIX THAT MADE THIS BRANCH LIVE ALSO MADE IT REPEAT. Adopting from storage
-    // without writing the cookie back leaves the SERVER in exactly the state that made
-    // the adoption necessary: the next hard load of any `/apps/*` route SSRs the rail
-    // open, hydration matches, and the effect snaps it to 56px again — taking the
-    // container-queried store grid with it. Every full page load, indefinitely. Client
-    // navigation is unaffected (the Provider is above the outlet); direct entry, refresh
-    // and any external link into `/apps/*` are not.
-    //
-    // Caught by a delta audit of the very commit that made the branch reachable — the
-    // shape the ladder predicts: a fix round's own change is the next finding.
-    window.localStorage.setItem(APPS_RAIL_STORAGE_KEY, 'collapsed');
-    expect(
-      readCookie(APPS_RAIL_COOKIE),
-      'the fixture must start with NO rail cookie'
-    ).toBeUndefined();
-    await page.viewport(1440, 900);
-    renderWithProviders(
-      <AppsRailProvider value={undefined}>
-        <Page testid="body" />
-      </AppsRailProvider>
-    );
-    await expect.element(page.getByTestId('body')).toBeInTheDocument();
-    await vi.waitFor(() => {
-      expect(railWidth()).toBe(APPS_RAIL_COLLAPSED_WIDTH);
-    });
-
-    // …and the cookie now carries it, so the NEXT server render seeds collapsed and there
-    // is no second flash.
-    await vi.waitFor(() => {
-      expect(
-        readCookie(APPS_RAIL_COOKIE),
-        'the rail adopted from storage but never wrote the cookie — this reflow will ' +
-          'repeat on every hard load'
-      ).toBe('collapsed');
-    });
-  });
-
-  test('🔴 DISCRIMINATING CONTROL: the same cookie-less render with EMPTY storage stays open', async () => {
-    // Without this arm, "it collapsed" would also be satisfied by a rail that collapses
-    // whenever the seed is undefined — i.e. by the storage read being ignored in the
-    // other direction.
+  test('🔴 a cookie-less request renders the rail OPEN — absent means default', async () => {
+    // With the `localStorage` half deleted, an absent cookie and a cookie saying "open"
+    // are the same thing, and this is what pins that: `value={undefined}` must render the
+    // full rail rather than collapsing, so "no seed" can never be read as "collapsed".
     await page.viewport(1440, 900);
     renderWithProviders(
       <AppsRailProvider value={undefined}>
@@ -227,26 +167,6 @@ describe('🔴 the SSR cookie seed decides the FIRST render', () => {
     renderWithProviders(<Page testid="body" />);
     await expect.element(page.getByTestId('body')).toBeInTheDocument();
     expect(railWidth()).toBe(APPS_RAIL_WIDTH);
-  });
-
-  test('🔴 a collapsed seed BEATS an open `localStorage` value on the first render', async () => {
-    // The ordering claim on `useAppsRail`: the cookie is read during render, storage only
-    // in an effect and only when NO seed arrived. If storage were read during render the
-    // two could disagree on the first client paint, which is the hydration mismatch the
-    // cookie exists to prevent — and it would show up as the rail expanding a frame after
-    // load for exactly the viewers who had collapsed it.
-    window.localStorage.setItem(APPS_RAIL_STORAGE_KEY, 'open');
-    await page.viewport(1440, 900);
-    renderWithProviders(
-      <AppsRailProvider value="collapsed">
-        <Page testid="body" />
-      </AppsRailProvider>
-    );
-    await expect.element(page.getByTestId('body')).toBeInTheDocument();
-    expect(railWidth()).toBe(APPS_RAIL_COLLAPSED_WIDTH);
-    // …and it STAYS collapsed after the effects have run, so nothing adopts storage late.
-    await new Promise((res) => setTimeout(res, 50));
-    expect(railWidth()).toBe(APPS_RAIL_COLLAPSED_WIDTH);
   });
 });
 
@@ -317,8 +237,8 @@ describe('🔴 the collapse state is ONE GLOBAL VALUE, not one per route', () =>
   });
 });
 
-describe('the toggle writes BOTH stores', () => {
-  test('collapsing persists to localStorage AND to the cookie', async () => {
+describe('the toggle writes the cookie', () => {
+  test('collapsing persists to the COOKIE — the only store', async () => {
     await page.viewport(1440, 900);
     renderWithProviders(
       <AppsRailProvider value="open">
@@ -326,21 +246,19 @@ describe('the toggle writes BOTH stores', () => {
       </AppsRailProvider>
     );
     await expect.element(page.getByTestId('body')).toBeInTheDocument();
-    expect(readAppsRailStorage()).toBeNull();
     expect(readCookie(APPS_RAIL_COOKIE)).toBeUndefined();
 
     await userEvent.click(toggle());
 
-    // Both, because they have different jobs: storage is the client-side store, the
-    // cookie is what lets the SERVER render the right first paint next time.
-    expect(readAppsRailStorage()).toBe('collapsed');
+    // The cookie is what lets the SERVER render the right first paint next time, and
+    // since the `localStorage` half was deleted it is the ONLY store — there is no second
+    // value that could disagree with it.
     expect(readCookie(APPS_RAIL_COOKIE)).toBe('collapsed');
 
     // …and expanding writes both back, so a viewer cannot get stuck collapsed on the
     // server while the client shows open.
     await userEvent.click(toggle());
     expect(railWidth()).toBe(APPS_RAIL_WIDTH);
-    expect(readAppsRailStorage()).toBe('open');
     expect(readCookie(APPS_RAIL_COOKIE)).toBe('open');
   });
 

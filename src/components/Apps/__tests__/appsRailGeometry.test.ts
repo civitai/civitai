@@ -1,6 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import ts from 'typescript';
 import { describe, expect, test } from 'vitest';
 import {
   APPS_RAIL_COLLAPSED_WIDTH,
@@ -8,7 +7,6 @@ import {
   APPS_RAIL_DEFAULT_STATE,
   APPS_RAIL_GAP,
   APPS_RAIL_MIN_VIEWPORT,
-  APPS_RAIL_STORAGE_KEY,
   APPS_RESERVED_SCROLLBAR,
   appsRailChromeWidth,
   parseAppsRailState,
@@ -36,6 +34,25 @@ import { parseCookies } from '~/shared/utils/cookies';
  * are hand-written CSS literals. Each half is individually correct-looking while
  * disagreeing with the other, and neither throws — the rail would simply appear at a
  * different width than every constant and comment in the codebase says it does.
+ *
+ * ⚠️ THE MEDIA-QUERY BAN USED TO LIVE HERE AND HAS MOVED — look for it in
+ * `eslint-local-rules.js`, not in this file. It was a ~250-line hand-rolled source
+ * scanner (comment-strip, string-mask, brace-match `useEffect` bodies, compare offsets)
+ * that applied to exactly ONE file and was found bypassable in FIVE consecutive audit
+ * rounds: an unanchored regex, brace-counting on raw text, an unterminated-apostrophe
+ * mask runaway, a `/*` route-glob runaway, and a dependency-array depth bug. Every red in
+ * its entire history was a planted mutant — it never caught a real violation.
+ *
+ * It is now `local-rules/no-ssr-divergent-media-query`, which parses with the real
+ * TypeScript parser, applies wherever `.eslintrc.js` switches it on rather than to one
+ * hardcoded path, and additionally covers `useContainerSmallerThan` — the hook
+ * `CollectionsLayout` actually uses, which the scanner never named.
+ *
+ * Its headline hazard has a second, independent backstop that needs no scanner at all:
+ * an UNGUARDED render-body `window.matchMedia` throws `ReferenceError: window is not
+ * defined` under `renderToStaticMarkup`. Measured at the commit that removed the walk —
+ * `__tests__/appsPageLayoutRender.test.ts` goes 17 passed -> 17 failed on exactly that
+ * mutation.
  */
 
 describe('the rail costs what the ladder and the layout think it costs', () => {
@@ -170,262 +187,6 @@ describe('🔴 SEAM — the stylesheet switches at exactly APPS_RAIL_MIN_VIEWPOR
     expect(wide).toMatch(/\.rail\s*\{[^}]*display:\s*block/);
     expect(wide).toMatch(/\.railDrawerTrigger\s*\{[^}]*display:\s*none/);
   });
-
-  test('the layout renders BOTH classes, and NO media query decides a render', () => {
-    /**
-     * 🔴 THIS IS AN AST WALK, AND FOUR ROUNDS OF AUDIT SAY IT HAS TO BE.
-     *
-     * The previous four revisions of this guard were hand-rolled character scanners —
-     * strip comments, mask string literals, brace-match `useEffect` bodies, compare
-     * offsets. Every single one was bypassable, and each bypass was found only by the
-     * round that audited the previous fix:
-     *
-     *   r5  an UNANCHORED regex proved token ORDER, never containment — a `matchMedia`
-     *       in the render body survived at 12/12 green.
-     *   r6  brace counting ran on raw text, so `const openBrace = '{';` inside the effect
-     *       mis-sized the body and the render-body read was swallowed. Green again.
-     *   r7  the literal mask had no unterminated-literal handling, so an apostrophe in
-     *       JSX text (`Don't`) blanked everything up to the next quote — including a real
-     *       read. Green again.
-     *   r8  the `//` and `/*` branches ran in BOTH scans, so an ordinary route glob in
-     *       page copy (`title="… src/*.tsx"`) blanked the rest of the file. Green again.
-     *
-     * The r8 defect is the one that settles the argument: this very file, ~100 lines
-     * above, already documented that exact hazard for a DIFFERENT helper — "a
-     * route-shaped glob in prose is ordinary in this codebase" — and the scanner was
-     * written with that warning in view and still had the bug. A scanner that needs 60
-     * lines of limits prose, and is wrong anyway, is the wrong instrument.
-     *
-     * An AST walk removes the whole class STRUCTURALLY rather than patching instances:
-     * comments are TRIVIA and never become nodes, so no comment can hide or fabricate a
-     * read; string contents are `StringLiteral`, never `Identifier`, so copy that merely
-     * mentions "matchMedia" is not a violation (the r8 false positive) while
-     * `window['matchMedia']` still is; and effect nesting is the tree itself, so there is
-     * no brace matching to fool and no offsets to compare.
-     *
-     * `typescript` is already a devDependency and 20 test files in this repo parse source
-     * this way, three of them as TSX — this is the house pattern, not new infrastructure.
-     *
-     * WHAT IT DOES NOT COVER, stated rather than discovered later: a name that is not a
-     * literal at parse time. `window['match' + 'Media']`, and equally
-     * `const MM = 'matchMedia'; (window as any)[MM](…)` — a variable key needs constant
-     * folding, which this walk does not do.
-     *
-     * ⚠️ An earlier revision bounded that gap as "only a `typeof window`-GUARDED,
-     * runtime-assembled name escapes both", and that is too tight — it was refuted by a
-     * counter-example carrying no guard at all:
-     * `(globalThis as any)['match' + 'Media']?.('(min-width: 1300px)')?.matches ?? false`
-     * passes this walk AND the SSR render test, because optional chaining on `globalThis`
-     * throws nothing on the server. The honest bound is narrower: a runtime-assembled name
-     * escapes this walk, and escapes the SSR test too whenever it cannot throw there —
-     * whether by a `typeof` guard, by `?.`, or by reading off `globalThis`.
-     *
-     * The mitigation that IS true: the UNGUARDED, directly-spelled form throws
-     * `ReferenceError: window is not defined` in `__tests__/appsPageLayoutRender.test.ts`,
-     * which renders this component through `renderToStaticMarkup` — verified, not assumed.
-     */
-    const file = path.resolve(__dirname, '../AppsPageLayout.tsx');
-    const source = fs.readFileSync(file, 'utf8');
-    const sourceFile = ts.createSourceFile(
-      file,
-      source,
-      ts.ScriptTarget.Latest,
-      /* setParentNodes */ true,
-      ts.ScriptKind.TSX
-    );
-
-    // Hooks whose CALLBACK runs AFTER paint — a media query read there cannot decide what
-    // was rendered, so it cannot diverge between server and client.
-    // `useIsomorphicLayoutEffect` is the repo's SSR-safe alias; omitting it made a
-    // legitimate effect red with a confidently wrong diagnosis.
-    const EFFECT_HOOKS = new Set([
-      'useEffect',
-      'useLayoutEffect',
-      'useInsertionEffect',
-      'useIsomorphicLayoutEffect',
-    ]);
-    // 🔴 TWO BANS, NOT ONE, AND COLLAPSING THEM LOSES COVERAGE.
-    //
-    // `matchMedia` is the raw API and is legitimate INSIDE an effect callback — the
-    // drawer-close carve-out uses it — so it is depth-gated.
-    //
-    // The three hook wrappers are NEVER legitimate in this component at any depth: they
-    // have no server answer, and calling one inside an effect is not even valid React.
-    // The revision that folded them into the depth-gated set NARROWED the rule it claimed
-    // to subsume — the regex it replaced was unconditional, and
-    // `useEffect(() => { void useMediaQuery('(min-width: 1300px)'); }, [])` went green.
-    // Keeping them unconditional restores the union of the two old guards rather than
-    // their intersection.
-    const DEPTH_GATED = new Set(['matchMedia']);
-    const ALWAYS_BANNED = new Set(['useMediaQuery', 'useIsMobile', 'useContainerQuery']);
-
-    const classUses = new Set<string>();
-    const violations: string[] = [];
-    let readsInsideEffect = 0;
-
-    const positionOf = (node: ts.Node) => {
-      const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
-      return `${line + 1}:${character + 1}`;
-    };
-
-    const record = (name: string, node: ts.Node, effectDepth: number) => {
-      if (ALWAYS_BANNED.has(name)) {
-        violations.push(`${name} at ${positionOf(node)} (banned at any depth)`);
-        return;
-      }
-      if (effectDepth > 0) {
-        readsInsideEffect += 1;
-        return;
-      }
-      violations.push(`${name} at ${positionOf(node)}`);
-    };
-
-    const nameOf = (node: ts.Node): string | undefined => {
-      if (ts.isIdentifier(node) && (DEPTH_GATED.has(node.text) || ALWAYS_BANNED.has(node.text))) {
-        return node.text;
-      }
-      // The one non-Identifier spelling: `window['matchMedia']`.
-      if (
-        ts.isElementAccessExpression(node) &&
-        node.argumentExpression &&
-        ts.isStringLiteralLike(node.argumentExpression) &&
-        (DEPTH_GATED.has(node.argumentExpression.text) ||
-          ALWAYS_BANNED.has(node.argumentExpression.text))
-      ) {
-        return node.argumentExpression.text;
-      }
-      return undefined;
-    };
-
-    const visit = (node: ts.Node, effectDepth: number) => {
-      // An import of a banned hook is not itself a render-time read; flagging it would
-      // report the wrong line. The USE is what this guard is about.
-      if (ts.isImportDeclaration(node)) return;
-      // A TYPE position is not a runtime read. `let x: typeof matchMedia` and
-      // `type M = typeof window.matchMedia` both surface their entity name as an
-      // Identifier, so without this they red against code that reads nothing.
-      if (ts.isTypeNode(node) || ts.isTypeAliasDeclaration(node)) return;
-
-      if (
-        ts.isPropertyAccessExpression(node) &&
-        ts.isIdentifier(node.expression) &&
-        node.expression.text === 'classes'
-      ) {
-        classUses.add(node.name.text);
-      }
-
-      const banned = nameOf(node);
-      if (banned) record(banned, node, effectDepth);
-
-      // 🔴 ONLY THE CALLBACK IS "INSIDE THE EFFECT" — NOT THE WHOLE CALL.
-      //
-      // An earlier revision raised the depth on the CallExpression and handed it to every
-      // child, which includes the callee AND every argument — the DEPENDENCY ARRAY among
-      // them. A deps array is evaluated during RENDER, not after paint, so this made
-      //
-      //     }, [drawerOpened, closeDrawer,
-      //         typeof window !== 'undefined' && window.matchMedia(`…`).matches]);
-      //
-      // a legal render-time media query: violations empty, suite green. That was a
-      // REGRESSION, not an inherited gap — the offset-based scanner it replaced reds on
-      // exactly that input, because the deps array sits past the callback's closing brace.
-      // The tree-shaped rewrite lost the distinction and had to have it put back.
-      //
-      // So: argument 0 of an effect call is visited one level deeper; the callee, the deps
-      // array and every other argument stay at the caller's depth.
-      let callbackArg: ts.Node | undefined;
-      if (ts.isCallExpression(node)) {
-        const callee = node.expression;
-        const calleeName = ts.isIdentifier(callee)
-          ? callee.text
-          : ts.isPropertyAccessExpression(callee)
-          ? callee.name.text
-          : undefined;
-        if (calleeName && EFFECT_HOOKS.has(calleeName)) callbackArg = node.arguments[0];
-      }
-
-      node.forEachChild((child) => {
-        visit(child, child === callbackArg ? effectDepth + 1 : effectDepth);
-      });
-    };
-    visit(sourceFile, 0);
-
-    // POSITIVE CONTROL on the walk itself: if the parse silently produced nothing, every
-    // assertion below would pass vacuously over an empty tree.
-    expect(
-      classUses.size,
-      'the AST walk found no `classes.*` usage — re-point this guard'
-    ).toBeGreaterThan(0);
-
-    // 🔴 THE STYLESHEET LINK IS CHECKED AT THE IMPORT, NOT IN THE SOURCE TEXT.
-    //
-    // This read `expect(source).toContain('AppsPageLayout.module.scss')` against the RAW
-    // file for one revision, and that is walkable by a COMMENT: `AppsPageLayout.tsx`
-    // contains the line "…lives in the stylesheet — see `AppsPageLayout.module.scss`.",
-    // which satisfies `toContain` on its own. Measured: repointing the import at a
-    // different existing stylesheet — so the rail's `@media (min-width: 1300px)` switch
-    // never applies and the rail renders at EVERY width — was 12/12 GREEN, as was
-    // replacing it with `const classes: Record<string, string> = {}`. The scanner this
-    // rewrite replaced reds on both, because it stripped comments first.
-    //
-    // That is exactly the defect class this whole rewrite exists to remove, reintroduced
-    // by dropping the strip. The fix is not to re-add a comment strip — it is to stop
-    // asking the source TEXT and ask the module graph: find the ImportDeclaration whose
-    // specifier ends in the stylesheet, which no comment can forge. It also keeps the
-    // `SEAM` describe below honest, since that reads the stylesheet off disk and is
-    // meaningless if the component imports a different one.
-    const stylesheetImports = sourceFile.statements.filter(
-      (statement): statement is ts.ImportDeclaration =>
-        ts.isImportDeclaration(statement) &&
-        ts.isStringLiteralLike(statement.moduleSpecifier) &&
-        statement.moduleSpecifier.text.endsWith('AppsPageLayout.module.scss')
-    );
-    expect(
-      stylesheetImports.length,
-      'AppsPageLayout.tsx does not IMPORT AppsPageLayout.module.scss — the rail/drawer ' +
-        'breakpoint switch lives in that file, so a different (or missing) stylesheet ' +
-        'means the rail renders at every width. A mention in a comment does not count.'
-    ).toBe(1);
-
-    expect(classUses).toContain('rail');
-    expect(classUses).toContain('railDrawerTrigger');
-    expect(classUses).toContain('railRow');
-
-    // 🔴 THE BAN. A media query outside an effect decides a render, and the server has no
-    // `matchMedia` while a client ≥1300 returns true — the SSR/first-paint divergence this
-    // surface has already paid for once.
-    expect(
-      violations,
-      'a banned media-query read appears OUTSIDE a useEffect — it decides a render and ' +
-        'diverges between server and client. The rail/drawer swap is a CSS media query on ' +
-        'purpose; if you need the breakpoint in JS, read it in an effect that only CLOSES ' +
-        'something, as the drawer-close effect does.'
-    ).toEqual([]);
-
-    // 🔴 SECOND POSITIVE CONTROL, and it is the one that stops this whole test going
-    // vacuous. `violations` is empty both when the carve-out is correct AND when someone
-    // deletes the drawer-close effect entirely. The layout is SUPPOSED to read
-    // `matchMedia` exactly once, in an effect, to close a drawer left open across a resize
-    // past 1300 — otherwise two `App sections` landmarks coexist and a focus trap sits
-    // over a usable rail. Assert the carve-out still exists.
-    //
-    // ⚠️ WHAT THIS CONTROL DOES AND DOES NOT PROVE, because an earlier revision left the
-    // second half unsaid. It proves a `matchMedia` read survives inside an effect
-    // CALLBACK. It does NOT prove that read still closes anything: a read in dead code
-    // (`if (false) { void window.matchMedia; }`) satisfies it. Until the deps-array hole
-    // above was closed it was weaker still — a read in the DEPENDENCY ARRAY counted, so an
-    // effect that had stopped closing the drawer altogether passed while the drawer
-    // survived a resize past 1300, which is the exact defect this message names.
-    //
-    // The behavioural half is not this test's job and is not claimed here: closing on a
-    // resize past the breakpoint is asserted in the browser tier. This is a structural
-    // tripwire against silent DELETION, and that is all it should be read as.
-    expect(
-      readsInsideEffect,
-      'the drawer-close effect no longer reads `matchMedia` — an open drawer now survives ' +
-        'a resize past APPS_RAIL_MIN_VIEWPORT, leaving two nav landmarks on screen'
-    ).toBeGreaterThan(0);
-  });
 });
 
 describe('the persisted state fails OPEN, always', () => {
@@ -438,35 +199,16 @@ describe('the persisted state fails OPEN, always', () => {
     expect(parseAppsRailState('collapsed')).toBe('collapsed');
   });
 
-  test('the cookie and the localStorage key are ONE name', () => {
-    // Two literals would let the SSR seed and the client store drift apart, which
-    // presents as "the rail forgets, but only after a reload".
-    expect(APPS_RAIL_STORAGE_KEY).toBe(APPS_RAIL_COOKIE);
-    expect(APPS_RAIL_COOKIE).toBe('apps-rail');
-  });
-
-  test('🔴 the LIVE parser: a present cookie seeds, an ABSENT one stays undefined', () => {
-    // 🔴 THE `undefined` HALF IS THE WHOLE TEST, AND IT IS THE BUG THIS FILE SHIPPED.
-    // `appsRail` was `.catch('open').default('open')`, which can never return undefined —
-    // so `_app` always handed `AppsRailProvider` a real seed, `useAppsRail`'s
-    // `seed !== null` short-circuit fired on every render, and the `localStorage` fallback
-    // three docstrings describe was DEAD CODE in production. Nothing caught it: the only
-    // test reaching the adoption branch went through the provider-less path, which `_app`
-    // never takes. It is now `.optional().catch('open')`, and this asserts the
-    // discriminator survives.
-    expect(parseCookies({ 'apps-rail': 'collapsed' }).appsRail).toBe('collapsed');
-    expect(parseCookies({ 'apps-rail': 'open' }).appsRail).toBe('open');
-    // …and the ABSENT case, which is what licenses the localStorage fallback.
-    expect(parseCookies({}).appsRail).toBeUndefined();
-    expect(parseCookies({ mode: 'All' }).appsRail).toBeUndefined();
-  });
-
   test('🔴 the LIVE parser still fails OPEN on garbage, rather than to undefined', () => {
-    // The other direction, and it is not the same claim: a PRESENT-but-unparseable value
-    // must not be read as "no cookie", or a corrupted cookie would silently hand control
-    // to `localStorage` instead of failing open. `.catch('open')` is what keeps those two
-    // apart; dropping it in favour of a bare `.optional()` passes the test above and
-    // breaks this one.
+    // ⚠️ RETAINED, WITH A NEW REASON. Its original rationale was that a corrupted cookie
+    // must not "hand control to `localStorage` instead of failing open" — and that store
+    // is now deleted, so that sentence no longer describes anything. The BEHAVIOUR it
+    // pins is still live and still load-bearing: the cookie is the sole SSR seed, so a
+    // present-but-unparseable value must resolve to `'open'` rather than to `undefined`.
+    // `.catch('open')` is what does that; a bare `.optional()` would leave the seed
+    // undefined and the rail would still render open by default — but for an accidental
+    // reason rather than a declared one, and the next schema edit would be free to break
+    // it silently.
     for (const value of ['COLLAPSED', 'true', '1', 'x', '']) {
       expect(parseCookies({ 'apps-rail': value }).appsRail, `"${value}"`).toBe('open');
     }

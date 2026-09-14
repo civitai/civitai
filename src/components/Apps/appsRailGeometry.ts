@@ -107,9 +107,6 @@ export const APPS_RAIL_DEFAULT_STATE: AppsRailState = 'open';
  */
 export { APPS_RAIL_COOKIE };
 
-/** The `localStorage` key — the client-side store. Same name on purpose. */
-export const APPS_RAIL_STORAGE_KEY = APPS_RAIL_COOKIE;
-
 /** A year, in seconds — the rail's cookie lifetime. */
 export const APPS_RAIL_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
