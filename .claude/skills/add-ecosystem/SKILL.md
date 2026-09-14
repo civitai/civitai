@@ -11,6 +11,13 @@ Adds a new ecosystem and base model entry to [basemodel.constants.ts](src/shared
 
 Use when a new model provider or variant is being added to Civitai — e.g., new provider (Baidu's Ernie), new architecture (Flux's Kontext), or a variant of an existing family whose resources aren't interchangeable with its siblings.
 
+This skill has two modes, and you should only be here if one of them applies:
+
+- **New ecosystem**: a new line, or a checkpoint that existing resources in its ecosystem won't run on (for example `LTXV` → `LTXV2`).
+- **Base model only**: a hosted-weights checkpoint that existing resources in its ecosystem *do* run on (for example `SDXL 0.9` → `SDXL 1.0`). Skip the `ECO`, family and ecosystem steps. Add only the `BM` constant and the `baseModelRecords` entry, pointing at the existing ecosystem.
+
+**A new release of an API-only model that already has an ecosystem needs neither.** It becomes a new model version under the existing base model, with no constants change. Stop and say so. `onboard-generator-model` Phase 0 has the full decision.
+
 ## The test: does this need its own ecosystem?
 
 Answer this **before** picking IDs. The ecosystem is the **compatibility** key, not a UI grouping and not a media label:
@@ -30,7 +37,7 @@ That is the whole test. [getGenerationSupport](src/shared/constants/basemodel.co
 | Split, but they're compatible | Resources don't cross | Add `crossEcosystemRules` entries — additive, that's what the mechanism is for |
 | Merged, but they're incompatible | Incompatible resources offered as compatible | Change the ecosystem key → **changes the AIR URN namespace on already-published resources** |
 
-Splitting is reversible; merging is not. This is doubly true for API-only / `modelLocked` ecosystems, where no community resources exist yet — the split costs nothing today and preserves the option.
+Splitting is reversible; merging is not. This is doubly true when you're creating the first ecosystem for an API-only line: no community resources exist yet, so the split costs nothing today and keeps the option open. This doesn't apply to a later release in that line, which gets no new records at all (see "When to use").
 
 Media-specific *labelling* for creators is a `BaseModelRecord` concern, not an ecosystem one — several base models can share one ecosystem, each with its own `name` and `type`.
 
