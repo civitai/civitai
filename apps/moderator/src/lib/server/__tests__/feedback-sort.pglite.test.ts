@@ -1,6 +1,10 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FEEDBACK_SORT_COLUMNS, type FeedbackSortColumn } from '$lib/feedback-sort';
+import {
+  FEEDBACK_SORT_COLUMNS,
+  FEEDBACK_SORT_DIRECTIONS,
+  type FeedbackSortColumn,
+} from '$lib/feedback-sort';
 import {
   feedbackKysely,
   freshFeedbackDb,
@@ -158,19 +162,23 @@ afterEach(async () => {
 });
 
 /**
- * The value the operator is ORDERING, read off the SEEDED fixture rather than off a returned row.
+ * The value the SQL is ORDERING BY, read off the SEEDED fixture rather than off a returned row.
  *
- * 🔴 `age` IS THE RENDERED DURATION, NOT THE ID — and that is the whole point of the column, not a
- * detail of this helper. The cell is `shortAge(createdAt)`, which GROWS as the row gets older, so
- * ascending age is descending arrival. Expressing it as `-arrival` here makes the expectation a
- * statement about what is on screen; expressing it as `row.id` would make it a restatement of
- * whichever key the implementation happened to pick, which is exactly how an inverted arrow shipped
- * once already. Everything else sorts by the value its own cell shows.
+ * 🔴 `age` IS THE ARRIVAL TIME, NOT THE RENDERED DURATION, AND THE SIGN MOVED HERE FOR A REASON.
+ * The direction token is now the SQL direction on every column without exception — the service
+ * carries no `invert` flag any more, and the one place the Age CELL's opposite reading exists is
+ * `READS_INVERTED` in `$lib/feedback-sort.ts`, where it reaches a glyph and an ARIA token and
+ * nothing else. So this helper expresses the KEY, and the claim about what is on screen is made
+ * where it can be observed: `feedback-sort.test.ts` asserts the arrow and `aria-sort`, and
+ * `has ONE sorted state on age` below asserts the arrival order against the seeded timestamps.
+ *
+ * Arrival rather than `row.id` even so: the two agree here (the table is insert-only), and writing
+ * the id would make the expectation a restatement of whichever key the implementation picked.
  */
 const valueOf = (row: Seeded, column: FeedbackSortColumn): string | number | null => {
   switch (column) {
     case 'age':
-      return -row.arrival;
+      return row.arrival;
     case 'area':
       return row.area;
     case 'user':
@@ -299,7 +307,7 @@ describe('the compound keyset, across a manufactured page boundary', () => {
    */
   it('returns every row exactly once at the REAL page size, on every column and direction', async () => {
     for (const column of FEEDBACK_SORT_COLUMNS) {
-      for (const direction of ['asc', 'desc'] as const) {
+      for (const direction of FEEDBACK_SORT_DIRECTIONS[column]) {
         const { ids, pages } = await pageThrough(column, direction, service.FEEDBACK_PAGE_SIZE);
 
         expect(pages, `${column} ${direction} never crossed a page boundary`).toBeGreaterThan(1);
@@ -314,7 +322,7 @@ describe('the compound keyset, across a manufactured page boundary', () => {
    */
   it('survives a boundary every seven rows, on every column and direction', async () => {
     for (const column of FEEDBACK_SORT_COLUMNS) {
-      for (const direction of ['asc', 'desc'] as const) {
+      for (const direction of FEEDBACK_SORT_DIRECTIONS[column]) {
         const { ids, pages } = await pageThrough(column, direction, 7);
 
         expect(pages, `${column} ${direction} paged in one shot`).toBeGreaterThan(8);
@@ -343,33 +351,35 @@ describe('the compound keyset, across a manufactured page boundary', () => {
   });
 
   /**
-   * 🔴 ASCENDING AGE IS THE YOUNGEST ROW FIRST, WHICH IS THE NEWEST ARRIVAL — the one column whose
-   * rendered value runs OPPOSITE to its SQL key, and the one place an arrow can point at the truth
-   * while the cells count the other way. `shortAge` is `now - createdAt`, so it grows as the id
-   * shrinks; `ORDER BY f.id ASC` would put `12d` above `10m` under a header reading `Age ↑` and an
-   * `aria-sort="ascending"` a screen reader has no way to check.
+   * 🔴 `age` HAS ONE SORTED STATE AND IT IS THE OLDEST REPORT FIRST — the one view the default
+   * ordering cannot express, and the reason this column survived the collapse at all.
    *
-   * Asserted against the ARRIVAL TIMES the fixture seeded, not against the id, so it is a claim about
-   * what the cell shows rather than a restatement of the key the implementation chose.
+   * 🔴 THE STATE THAT WAS REMOVED IS WHAT THIS TEST IS REALLY ABOUT, so it asserts the NEGATIVE too.
+   * `age` sorts on `f.id` and the default ordering is `f.id DESC`, so "youngest first" was
+   * byte-identical to no sort: the header cycled through a state that moved not one row, and the
+   * `age`/no-op arm of the two big `pageThrough` loops above could not distinguish "the sort was
+   * applied" from "the sort was ignored". Pinning `sorted ≠ unsorted` here is what keeps a future
+   * edit from quietly reinstating a sort that does nothing.
    *
-   * ⚠️ `age asc` IS NOW BYTE-FOR-BYTE THE DEFAULT ORDERING — inverting it makes the SQL `f.id DESC`,
-   * which is what an unsorted queue already does. That is correct (the default view IS newest-first,
-   * i.e. ascending age) and it has one consequence worth stating: an operator's FIRST click on Age
-   * changes only the arrow, and the `age`/`asc` arm of the two big `pageThrough` loops cannot
-   * distinguish "the sort was applied" from "the sort was ignored". The `desc` half below is what
-   * discriminates — it orders `f.id ASC`, which nothing else on this page produces.
+   * Asserted against the ARRIVAL TIMES the fixture seeded rather than against the id, so it is a
+   * claim about when the reports came in rather than a restatement of the key the implementation
+   * chose. How that order READS on screen — `↓`, `aria-sort="descending"`, because the cell renders
+   * a duration — is asserted in `feedback-sort.test.ts`, where a glyph can be observed.
    */
-  it('puts the YOUNGEST row first on ascending age, and the oldest first on descending', async () => {
-    const youngestFirst = [...seeded].sort((a, b) => b.arrival - a.arrival).map((r) => r.id);
-    const oldestFirst = [...youngestFirst].reverse();
+  it('has ONE sorted state on age, and it is the oldest report first', async () => {
+    const oldestFirst = [...seeded].sort((a, b) => a.arrival - b.arrival).map((r) => r.id);
+    const newestFirst = [...oldestFirst].reverse();
     // The instrument: distinct arrival times, or neither claim can be observed.
     expect(new Set(seeded.map((r) => r.arrival)).size).toBe(ROWS);
+    expect(FEEDBACK_SORT_DIRECTIONS.age).toEqual(['asc']);
 
-    const asc = await pageThrough('age', 'asc', 7);
-    expect(asc.ids).toEqual(youngestFirst);
+    const { ids } = await pageThrough('age', 'asc', 7);
+    expect(ids, 'the age sort did not put the oldest report first').toEqual(oldestFirst);
 
-    const desc = await pageThrough('age', 'desc', 7);
-    expect(desc.ids).toEqual(oldestFirst);
+    // 🔴 AND IT IS NOT THE ORDERING THE PAGE ALREADY HAD — the whole defect the collapse removed.
+    expect(ids, 'the age sort returned the default ordering').not.toEqual(newestFirst);
+    const unsorted = await pageThrough(null, 'asc', 7);
+    expect(unsorted.ids, 'the default ordering is not newest-first').toEqual(newestFirst);
   });
 
   /** The default ordering is untouched: no sort, no value half, same `id DESC` keyset as before. */
@@ -395,69 +405,135 @@ describe('the compound keyset, across a manufactured page boundary', () => {
 
 describe('what the query builder refuses', () => {
   /**
-   * 🔴 THE SECOND REFUSAL. `parseFeedbackSort` is the first, and it is a URL parser — a caller that
-   * is not a URL (a script, an internal API, a new route) never goes through it. The column names a
-   * SQL identifier, so the service checks it against its own map and falls back to the DEFAULT
-   * ordering rather than handing the builder an arbitrary string.
+   * 🔴 THE SECOND REFUSAL, AND IT THROWS WHERE THE FIRST DEGRADES. `parseFeedbackSort` is the first,
+   * and it is a URL parser: its input is typed by whoever is holding the keyboard, so a hostile
+   * `?sort=` has to degrade rather than 500 a queue nobody can then open. A caller that is not a URL
+   * — a script, an internal API, a new route — never goes through it, and at THIS layer the value is
+   * an argument, so an unknown column is a programming error.
    *
-   * The fixture values are chosen to be distinguishable from a pass-through: if the column WERE
-   * interpolated, `f.area` would order by area (a different order from `id DESC`) and the injection
-   * strings would raise rather than return rows.
-   */
-  it('falls back to the default ordering for a column that is not on its map', async () => {
-    const byId = [...seeded].map((r) => r.id).sort((a, b) => b - a);
-
-    for (const hostile of ['attachments', 'f.area', 'createdAt', '1; drop table "Feedback"', '']) {
-      const page = await service.getFeedbackList({
-        statuses: [],
-        sort: { column: hostile as FeedbackSortColumn, direction: 'asc' },
-        limit: ROWS,
-      });
-      expect(
-        page.items.map((r) => r.id),
-        `"${hostile}" changed the ordering`
-      ).toEqual(byId);
-      expect(page.nextCursorValue).toBeNull();
-    }
-  });
-
-  /**
-   * 🔴 THE DIRECTION IS THE SECOND UNTRUSTED FIELD, AND IT IS REFUSED HERE TOO. It never reaches SQL
-   * as text — it selects between two literal branches — so the failure it causes is quieter: a
-   * garbage value silently means `desc` at both branches, and the operator is shown a descending
-   * queue with nothing on the page claiming a direction. Refused, the whole sort is dropped and the
-   * default ordering is what comes back.
+   * 🔴 IT USED TO FALL BACK TO THE DEFAULT ORDERING, AND THAT WAS THE SAME SHAPE THIS PAGE REFUSES
+   * ON THE CLIENT. A silent degradation returns A PAGE OF REAL ROWS IN AN ORDERING THE CALLER DID
+   * NOT ASK FOR, WITH NO SIGNAL — indistinguishable from a working sort for anyone reading the
+   * result, exactly as a `.sort()` over one loaded page is indistinguishable from a real ordering of
+   * the queue. The fallback was also unpinnable: the mutant that removed the guard died on a
+   * `TypeError` out of the map read before any fallback assertion could be reached, so the advertised
+   * behaviour had no test that observed it. Throwing removes the claim and the mutant's escape.
    *
-   * `asc` is the discriminating expectation, not `desc`: a fall-through to `desc` on `area` is
-   * distinguishable from the default `id DESC` too, but only `asc` distinguishes "refused" from
-   * "defaulted to the first state of the cycle", which is what the URL parser does.
+   * The parameter is union-typed and the one production caller pre-validates, so these cases have to
+   * CAST to reach the guard at all — which is the point: nothing that compiles can get here.
    */
-  it('falls back to the default ordering for a direction that is not asc or desc', async () => {
-    const byId = [...seeded].map((r) => r.id).sort((a, b) => b - a);
-    const byAreaAsc = expectedOrder('area', 'asc');
-    // The instrument: the two orderings must differ, or this test cannot tell them apart.
-    expect(byAreaAsc).not.toEqual(byId);
-
-    for (const hostile of ['sideways', 'DESC', '', 'asc; --']) {
-      const page = await service.getFeedbackList({
-        statuses: [],
-        sort: { column: 'area', direction: hostile as 'asc' },
-        limit: ROWS,
-      });
-      expect(
-        page.items.map((r) => r.id),
-        `"${hostile}" was accepted as a direction`
-      ).toEqual(byId);
+  it('THROWS for a column that is not on its map, rather than quietly reordering', async () => {
+    /**
+     * 🔴 THE PROTOTYPE KEYS ARE NOT PADDING. The refusal's reachability clause indexes an object
+     * literal with this value, and `FEEDBACK_SORT_DIRECTIONS['__proto__']` is `Object.prototype`
+     * while `['toString']` is a function — neither has `.includes`. A guard whose allowlist check
+     * stopped short-circuiting would answer these with a `TypeError` instead of the refusal, which
+     * `toBeInstanceOf` distinguishes and a bare `rejects.toThrow()` would not.
+     */
+    for (const hostile of [
+      'attachments',
+      'f.area',
+      'createdAt',
+      '1; drop table "Feedback"',
+      '',
+      '__proto__',
+      'constructor',
+      'toString',
+    ]) {
+      await expect(
+        service.getFeedbackList({
+          statuses: [],
+          sort: { column: hostile as FeedbackSortColumn, direction: 'asc' },
+          limit: ROWS,
+        }),
+        `"${hostile}" did not throw`
+      ).rejects.toBeInstanceOf(service.InvalidFeedbackSort);
     }
 
-    // Positive control: a REAL direction on the same column is not the default ordering, so the
-    // assertion above is not passing because every input produces `byId`.
+    // 🔴 POSITIVE CONTROL. Every assertion above is a rejection, and a call shape that ALWAYS
+    // rejected would satisfy all of them — including one broken well before the guard. A real column
+    // on the identical shape resolves, and resolves to the ordering it names.
     const real = await service.getFeedbackList({
       statuses: [],
       sort: { column: 'area', direction: 'asc' },
       limit: ROWS,
     });
-    expect(real.items.map((r) => r.id)).toEqual(byAreaAsc);
+    expect(real.items.map((r) => r.id)).toEqual(expectedOrder('area', 'asc'));
+  });
+
+  /**
+   * 🔴 THE DIRECTION IS THE SECOND UNTRUSTED FIELD, AND IT IS REFUSED HERE TOO. It never reaches SQL
+   * as text — it selects between two literal branches — so the failure it causes is quieter: a
+   * garbage value silently means `desc` at both branches, and the caller is handed a descending
+   * queue having asked for something else.
+   */
+  it('THROWS for a direction that is not asc or desc', async () => {
+    for (const hostile of ['sideways', 'DESC', '', 'asc; --']) {
+      await expect(
+        service.getFeedbackList({
+          statuses: [],
+          sort: { column: 'area', direction: hostile as 'asc' },
+          limit: ROWS,
+        }),
+        `"${hostile}" was accepted as a direction`
+      ).rejects.toBeInstanceOf(service.InvalidFeedbackSort);
+    }
+
+    // Positive control, as above: both real directions on the same column resolve, and to two
+    // DIFFERENT orderings — so the rejections are about the value and not about the call.
+    for (const direction of ['asc', 'desc'] as const) {
+      const real = await service.getFeedbackList({
+        statuses: [],
+        sort: { column: 'area', direction },
+        limit: ROWS,
+      });
+      expect(real.items.map((r) => r.id)).toEqual(expectedOrder('area', direction));
+    }
+    expect(expectedOrder('area', 'asc')).not.toEqual(expectedOrder('area', 'desc'));
+  });
+
+  /**
+   * 🔴 A DIRECTION THE COLUMN DOES NOT OFFER IS REFUSED TOO, AND `age desc` IS THE WHOLE REASON THIS
+   * CHECK EXISTS. It is a well-formed `FeedbackSortDirection` on a column that is on the map, so the
+   * two checks above both pass it — and it orders `f.id DESC`, which IS the default ordering, so
+   * serving it would put an arrow over rows that did not move. That is the state the header collapse
+   * removed; refusing it here is what stops a programmatic caller reintroducing it below the URL.
+   *
+   * ⚠️ Nothing in the type system says this: `FeedbackSort` offers `'asc' | 'desc'` for every column,
+   * so `{ column: 'age', direction: 'desc' }` TYPE-CHECKS CLEANLY and is refused only at runtime.
+   * There is no cast on this case, which is what proves it.
+   */
+  it('THROWS for a direction the column does not offer, not only for a malformed one', async () => {
+    await expect(
+      service.getFeedbackList({
+        statuses: [],
+        sort: { column: 'age', direction: 'desc' },
+        limit: ROWS,
+      }),
+      'age accepted the state the two-state collapse removed'
+    ).rejects.toBeInstanceOf(service.InvalidFeedbackSort);
+
+    // Two controls, and they isolate different halves. `age` in the direction it DOES offer
+    // resolves, so the refusal is not about the column; `desc` one column over resolves, so it is
+    // not about the word. Only the PAIR is refused.
+    expect(
+      (
+        await service.getFeedbackList({
+          statuses: [],
+          sort: { column: 'age', direction: 'asc' },
+          limit: ROWS,
+        })
+      ).items
+    ).toHaveLength(ROWS);
+    expect(
+      (
+        await service.getFeedbackList({
+          statuses: [],
+          sort: { column: 'area', direction: 'desc' },
+          limit: ROWS,
+        })
+      ).items
+    ).toHaveLength(ROWS);
   });
 
   /**

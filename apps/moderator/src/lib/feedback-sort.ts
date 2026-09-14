@@ -33,6 +33,92 @@ export type FeedbackSortColumn = (typeof FEEDBACK_SORT_COLUMNS)[number];
 export type FeedbackSortDirection = 'asc' | 'desc';
 export type FeedbackSort = { column: FeedbackSortColumn; direction: FeedbackSortDirection };
 
+export const isFeedbackSortColumn = (value: unknown): value is FeedbackSortColumn =>
+  typeof value === 'string' && (FEEDBACK_SORT_COLUMNS as readonly string[]).includes(value);
+
+export const isFeedbackSortDirection = (value: unknown): value is FeedbackSortDirection =>
+  value === 'asc' || value === 'desc';
+
+/**
+ * The directions each column offers, IN CYCLE ORDER — what a click walks through before returning
+ * to the default ordering. Five columns are tri-state (asc → desc → none); `age` is not.
+ *
+ * 🔴 `age` OFFERS ONE DIRECTION, AND ITS SECOND STATE WAS A NO-OP RATHER THAN A PREFERENCE. This
+ * column sorts on `f.id` (see `FEEDBACK_SORT_KEYS` for why it is not a timestamp), and the DEFAULT
+ * ordering is already `f.id DESC` — newest first, which is youngest-age first. So the "youngest
+ * first" state produced byte-identical rows to no sort at all: measured against the 26 live rows,
+ * the first column in the table cycled click → an arrow appeared and nothing moved, click →
+ * reversed, click → the arrow vanished and nothing moved. Oldest-first is the one view the default
+ * ordering cannot express, so it is the one state this column has.
+ *
+ * 🔴 THE DIRECTION TOKEN IS THE SERVER'S, NOT THE SCREEN'S — `age`'s single state is `asc` because
+ * the SQL is `f.id ASC` (earliest arrival first), and it READS as descending because the Age cell
+ * renders a duration. `READS_INVERTED` below is what turns one into the other, and it is the only
+ * place that flip exists. `feedbackSortHref` writes no `?dir=` at all for a one-state column, so
+ * nothing in the URL claims a direction the header contradicts.
+ *
+ * ⚠️ THE OTHER FIVE ARE DELIBERATELY DIFFERENT, NOT MERELY UNCHANGED. Their cells render the value
+ * the server orders by, so both directions show something the default cannot. Read this table
+ * rather than assuming one uniform cycle across the header strip.
+ */
+export const FEEDBACK_SORT_DIRECTIONS = {
+  age: ['asc'],
+  area: ['asc', 'desc'],
+  user: ['asc', 'desc'],
+  status: ['asc', 'desc'],
+  handled: ['asc', 'desc'],
+  issue: ['asc', 'desc'],
+} as const satisfies Record<FeedbackSortColumn, readonly FeedbackSortDirection[]>;
+
+/** The directions a column offers, widened off the `as const` so callers can search it. */
+const directionsFor = (column: FeedbackSortColumn): readonly FeedbackSortDirection[] =>
+  FEEDBACK_SORT_DIRECTIONS[column];
+
+/**
+ * A state this page can actually reach — a known column, in a direction that column offers.
+ *
+ * 🔴 THE COLUMN CHECK MUST COME FIRST, AND IT IS NOT DECORATION: the clause after it INDEXES AN
+ * OBJECT LITERAL WITH THE UNTRUSTED VALUE, and `FEEDBACK_SORT_DIRECTIONS['__proto__']` is
+ * `Object.prototype` while `['toString']` is a function — neither has `.includes`, so a prototype
+ * key reaching that line is a `TypeError` out of a predicate, not a `false`. Short-circuiting on the
+ * allowlist is what keeps the lookup total. Pinned with `__proto__`/`constructor`/`toString` in
+ * `feedback-sort.test.ts` and in the service's own refusal cases.
+ *
+ * ⚠️ THE MIDDLE CLAUSE IS A TYPE NARROWING, AND ITS RUNTIME CHECK IS SUBSUMED BY THE THIRD — do not
+ * read it as independent coverage. `['asc', 'desc'].includes('sideways')` is already `false`, so
+ * removing `isFeedbackSortDirection` changes no behaviour; it is here because `sort.direction` is
+ * `unknown` and `readonly FeedbackSortDirection[]`'s `includes` will not take it. The clause that
+ * carries the refusal is the third one.
+ */
+export const isFeedbackSortState = (sort: {
+  column: unknown;
+  direction: unknown;
+}): sort is FeedbackSort =>
+  isFeedbackSortColumn(sort.column) &&
+  isFeedbackSortDirection(sort.direction) &&
+  directionsFor(sort.column).includes(sort.direction);
+
+/**
+ * The columns whose CELL renders the NEGATION of the value the server orders by.
+ *
+ * 🔴 EXACTLY ONE, AND IT IS A CLAIM ABOUT THE SCREEN RATHER THAN ABOUT SQL. The Age cell is
+ * `shortAge(createdAt)` — a DURATION, which grows as the row gets older, i.e. as its id shrinks. The
+ * server orders by `f.id`, so `f.id ASC` is the OLDEST arrival first, which is the LARGEST duration
+ * first, which reads as DESCENDING age. The arrow and `aria-sort` describe what is on screen, so
+ * they flip here and nowhere else.
+ *
+ * 🔴 THIS USED TO BE AN `invert` FLAG ON THE SERVICE'S SQL MAP, AND MOVING IT IS THE POINT, NOT A
+ * tidy-up. There it was consulted TWICE — by the `ORDER BY` and by the keyset's comparison operator
+ * — so a flip applied to one and not the other produced an ordering the cursor walks backwards
+ * through, every page turn re-serving rows the previous page already showed. Here the worst a wrong
+ * flip can do is point a glyph the wrong way: it reaches no query and no cursor.
+ */
+const READS_INVERTED: readonly FeedbackSortColumn[] = ['age'];
+
+/** How the active column's state READS on screen: the direction of the value its cell renders. */
+const readsAscending = (sort: FeedbackSort): boolean =>
+  READS_INVERTED.includes(sort.column) ? sort.direction === 'desc' : sort.direction === 'asc';
+
 export const FEEDBACK_SORT_PARAM = 'sort';
 export const FEEDBACK_SORT_DIR_PARAM = 'dir';
 
@@ -51,47 +137,65 @@ export const FEEDBACK_SORT_DIR_PARAM = 'dir';
  */
 export const FEEDBACK_CURSOR_VALUE_PARAM = CURSOR_VALUE_PARAM;
 
-export const isFeedbackSortColumn = (value: unknown): value is FeedbackSortColumn =>
-  typeof value === 'string' && (FEEDBACK_SORT_COLUMNS as readonly string[]).includes(value);
-
-export const isFeedbackSortDirection = (value: unknown): value is FeedbackSortDirection =>
-  value === 'asc' || value === 'desc';
-
 /**
  * `?sort=`/`?dir=` as a sort, or `null` for the default ordering.
  *
  * 🔴 AN ALLOWLIST MEMBERSHIP TEST, NEVER A PASS-THROUGH. Both params are typed on the URL by whoever
  * is holding the keyboard, and the column ends up naming a SQL identifier — so an unknown value has
- * to be refused here rather than reach the query builder. `getFeedbackList` refuses a second time on
- * its own map; neither layer ever interpolates the value into SQL.
+ * to be refused here rather than reach the query builder. Neither layer ever interpolates the value
+ * into SQL.
  *
- * An unknown column degrades to the default ordering (the whole sort is dropped, not just the
- * column), and an unknown DIRECTION on a known column degrades to `asc` — the first state of the
- * cycle, which is what a bare `?sort=area` from a hand-written link should mean. Same `.catch()`
- * contract every other param on this page has: a bad value must never 500 a queue nobody can then
- * open.
+ * 🔴 THIS LAYER DEGRADES; THE SERVICE THROWS, AND THAT ASYMMETRY IS DELIBERATE. Here the input is a
+ * URL somebody typed, so a bad value must never 500 a queue nobody can then open — an unknown column
+ * drops the whole sort (not just the column), and a direction the column does not offer falls back
+ * to the FIRST state of that column's cycle, which is what a bare `?sort=area` from a hand-written
+ * link should mean. The same `.catch()` contract every other param on this page has. At the service
+ * layer the input is an ARGUMENT, so an unknown value is a programming error and degrading it would
+ * return a page of real rows in an ordering nobody asked for, with no signal — see
+ * `InvalidFeedbackSort` in `feedback.service.ts`.
+ *
+ * ⚠️ WHAT THIS FUNCTION EMITS MUST ALWAYS BE A STATE THE SERVICE ACCEPTS, or the asymmetry above
+ * turns into a 500 on a hand-typed URL. That is why the fallback reads the column's own cycle rather
+ * than a hardcoded `asc`: `age` does not offer `asc`'s counterpart, so `?sort=age&dir=desc` resolves
+ * to `age`'s single state instead of passing `desc` through. Pinned as a relationship in
+ * `feedback-sort.test.ts`.
  */
 export function parseFeedbackSort(params: URLSearchParams): FeedbackSort | null {
   const column = params.get(FEEDBACK_SORT_PARAM);
   if (!isFeedbackSortColumn(column)) return null;
+  const offered = directionsFor(column);
   const direction = params.get(FEEDBACK_SORT_DIR_PARAM);
-  return { column, direction: isFeedbackSortDirection(direction) ? direction : 'asc' };
+  return {
+    column,
+    direction:
+      isFeedbackSortDirection(direction) && offered.includes(direction) ? direction : offered[0],
+  };
 }
 
 /**
- * The tri-state cycle: ascending → descending → none, and none → ascending.
+ * The cycle: each of the column's own directions in turn, then none, then back to the first.
  *
- * Clicking a DIFFERENT column always starts that column at ascending rather than inheriting the
- * direction of the one before it — the previous column's direction was a statement about a different
- * ordering, and carrying it over means the first click on a new column lands on a state the operator
- * did not choose.
+ * For the five tri-state columns that is ascending → descending → none. For `age` it is a TWO-state
+ * toggle — its one sorted state, then back to the default ordering — because its other state was
+ * byte-identical to that default; `FEEDBACK_SORT_DIRECTIONS` carries the measurement.
+ *
+ * Clicking a DIFFERENT column always starts that column at ITS first state rather than inheriting
+ * the direction of the one before it — the previous column's direction was a statement about a
+ * different ordering, and carrying it over means the first click on a new column lands on a state
+ * the operator did not choose. It would also be unrepresentable here: `desc` is not a state `age`
+ * has.
  */
 export function nextFeedbackSort(
   current: FeedbackSort | null,
   column: FeedbackSortColumn
 ): FeedbackSort | null {
-  if (current?.column !== column) return { column, direction: 'asc' };
-  return current.direction === 'asc' ? { column, direction: 'desc' } : null;
+  const offered = directionsFor(column);
+  if (current?.column !== column) return { column, direction: offered[0] };
+  // A direction this column does not offer can only come from a hand-edited URL the parser already
+  // normalises; restarting the cycle is the visible answer if one ever reaches here.
+  const at = offered.indexOf(current.direction);
+  const next = at < 0 ? offered[0] : offered[at + 1];
+  return next ? { column, direction: next } : null;
 }
 
 /**
@@ -113,7 +217,16 @@ export function feedbackSortHref(url: URL, column: FeedbackSortColumn): string {
   const sort = nextFeedbackSort(parseFeedbackSort(url.searchParams), column);
   return urlWith(next, {
     [FEEDBACK_SORT_PARAM]: sort?.column ?? null,
-    [FEEDBACK_SORT_DIR_PARAM]: sort?.direction ?? null,
+    /**
+     * 🔴 A ONE-STATE COLUMN WRITES NO `?dir=` AT ALL, AND THAT IS THE HONEST SPELLING RATHER THAN A
+     * saving. `age`'s single state is `asc` to the server (`f.id ASC`) and reads as DESCENDING on
+     * screen, because the cell renders a duration — so writing the token would put `dir=asc` in the
+     * URL under a `↓` header and an `aria-sort="descending"`. A direction param that contradicts the
+     * screen is the defect this column already shipped once. Absence claims nothing, and the parser
+     * resolves a bare `?sort=age` to that one state anyway.
+     */
+    [FEEDBACK_SORT_DIR_PARAM]:
+      sort && directionsFor(sort.column).length > 1 ? sort.direction : null,
   });
 }
 
@@ -147,20 +260,28 @@ export function feedbackNextPageHref(url: URL, cursor: number, value: string | n
  *
  * Every sortable header carries one — `none` on the inactive ones is what tells a screen reader the
  * column is sortable but unsorted, where an absent attribute says nothing at all.
+ *
+ * 🔴 IT DESCRIBES THE RENDERED VALUE, NOT THE SQL. On `age` those run opposite (`READS_INVERTED`),
+ * so its one sorted state — oldest report first — is announced as `descending`: a sighted operator
+ * can see a contradiction between an arrow and the cells and self-correct, and a screen reader is
+ * told one word with nothing to check it against.
  */
 export function feedbackSortAria(
   current: FeedbackSort | null,
   column: FeedbackSortColumn
 ): 'ascending' | 'descending' | 'none' {
   if (current?.column !== column) return 'none';
-  return current.direction === 'asc' ? 'ascending' : 'descending';
+  return readsAscending(current) ? 'ascending' : 'descending';
 }
 
-/** The arrow next to an active header, and an empty string on every other column. */
+/**
+ * The arrow next to an active header, and an empty string on every other column. Points the way the
+ * CELLS run, which is why it reads `readsAscending` rather than the direction token.
+ */
 export function feedbackSortMarker(
   current: FeedbackSort | null,
   column: FeedbackSortColumn
 ): string {
   if (current?.column !== column) return '';
-  return current.direction === 'asc' ? '↑' : '↓';
+  return readsAscending(current) ? '↑' : '↓';
 }

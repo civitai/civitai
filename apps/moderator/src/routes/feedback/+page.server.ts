@@ -47,7 +47,11 @@ export const load: PageServerLoad = async ({ url, request }) => {
   const { status, area, cursor, open, cursorValue } = parseQuery(url, querySchema, ['status']);
   // Both params are typed by whoever is holding the keyboard. `parseFeedbackSort` is an allowlist
   // membership test, so an unknown column degrades to the default ordering rather than reaching the
-  // query builder — and the service refuses a second time on its own map.
+  // query builder.
+  //
+  // 🔴 THE SERVICE REFUSES A SECOND TIME AND THROWS RATHER THAN DEGRADING, so this line is also the
+  // thing that keeps a hand-typed `?sort=` off the error boundary: everything the parser emits is a
+  // state `getFeedbackList` accepts. Do not "simplify" this to reading the params directly.
   const sort = parseFeedbackSort(url.searchParams);
   /**
    * 🔴 PRESENT-BUT-REJECTED IS NOT ABSENT, AND THE TWO ARE OPPOSITE INSTRUCTIONS. `.catch(undefined)`

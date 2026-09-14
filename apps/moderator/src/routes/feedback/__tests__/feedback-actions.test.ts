@@ -232,6 +232,32 @@ describe('load', () => {
   });
 
   /**
+   * 🔴 THE LOADER IS WHAT KEEPS A HAND-TYPED URL OFF THE ERROR BOUNDARY, now that the service THROWS
+   * on a sort state it does not have rather than degrading. `age` is a two-state column — `desc` is
+   * the ordering the page already had, so the header never links to it — but `?sort=age&dir=desc` is
+   * a spelling a stale bookmark carries and a `FeedbackSortDirection` the type system accepts. The
+   * parser has to normalise it to `age`'s one state before it reaches `getFeedbackList`.
+   *
+   * ⚠️ The assertion is that the state REACHING THE SERVICE is the normalised one. Asserting only
+   * "the load did not throw" would pass over a loader that dropped the sort entirely, which is a
+   * different and silent answer.
+   */
+  it('normalises a direction the sorted column does not offer, rather than passing it to a service that throws', async () => {
+    await loaded('?status=new&sort=age&dir=desc');
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ sort: { column: 'age', direction: 'asc' } })
+    );
+
+    // The control: a direction a TRI-STATE column does offer is passed through untouched, so the
+    // rewrite above is about `age` and not about `desc`.
+    vi.clearAllMocks();
+    await loaded('?status=new&sort=area&dir=desc');
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ sort: { column: 'area', direction: 'desc' } })
+    );
+  });
+
+  /**
    * The value half of the compound cursor. Forwarded as TEXT — which column it belongs to, and
    * therefore how it has to be coerced, is the service's to know (`FEEDBACK_SORT_KEYS`). `load`
    * bounds its LENGTH only, because an unbounded parameter is free work for whoever edits the URL.

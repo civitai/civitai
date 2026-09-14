@@ -3,10 +3,12 @@ import { clearPaging } from '$lib/paging';
 import {
   FEEDBACK_CURSOR_VALUE_PARAM,
   FEEDBACK_SORT_COLUMNS,
+  FEEDBACK_SORT_DIRECTIONS,
   feedbackNextPageHref,
   feedbackSortAria,
   feedbackSortHref,
   feedbackSortMarker,
+  isFeedbackSortState,
   nextFeedbackSort,
   parseFeedbackSort,
   type FeedbackSort,
@@ -77,7 +79,7 @@ describe('parseFeedbackSort', () => {
 
   /**
    * A direction is the SECOND untrusted input, and it degrades differently: an unknown one leaves a
-   * KNOWN column sorted ascending — the first state of the cycle, which is what a hand-written
+   * KNOWN column sorted at the FIRST state of that column's own cycle — which is what a hand-written
    * `?sort=area` should mean — rather than dropping a sort the operator did ask for.
    */
   it('degrades an unknown direction on a known column to ascending', () => {
@@ -141,6 +143,158 @@ describe('the tri-state cycle', () => {
     expect(feedbackSortMarker({ column: 'user', direction: 'desc' }, 'user')).toBe('↓');
     expect(feedbackSortMarker({ column: 'user', direction: 'desc' }, 'status')).toBe('');
     expect(feedbackSortMarker(null, 'status')).toBe('');
+  });
+});
+
+/**
+ * 🔴 `age` IS A TWO-STATE TOGGLE AND THE OTHER FIVE ARE NOT — a deliberate inconsistency in the
+ * header strip, so it is pinned rather than left to be discovered.
+ *
+ * The removed state was a NO-OP, not a preference. `age` sorts on `f.id`, and the default ordering
+ * is already `f.id DESC` — newest first, i.e. youngest age first — so "ascending age" returned
+ * byte-identical rows to no sort at all. Against the 26 live rows the first column in the table
+ * cycled: click → an arrow appeared and nothing moved, click → reversed, click → the arrow vanished
+ * and nothing moved. Oldest-first is the one view the default cannot express, so it is the one state
+ * this column keeps.
+ */
+describe('the age column is a two-state toggle', () => {
+  /**
+   * 🔴 THE LEDGER, AND IT FAILS IN BOTH DIRECTIONS — a column that gains a state and a column that
+   * loses one both redden it. An equality per column rather than a count, so "five of six are
+   * tri-state" is a claim about which five.
+   */
+  it('offers one direction on age and two on every other column', () => {
+    expect(Object.keys(FEEDBACK_SORT_DIRECTIONS).sort()).toEqual([...FEEDBACK_SORT_COLUMNS].sort());
+    expect(FEEDBACK_SORT_DIRECTIONS.age).toEqual(['asc']);
+
+    for (const column of FEEDBACK_SORT_COLUMNS) {
+      if (column === 'age') continue;
+      expect(FEEDBACK_SORT_DIRECTIONS[column], `${column} is not tri-state`).toEqual([
+        'asc',
+        'desc',
+      ]);
+    }
+  });
+
+  /**
+   * Two clicks return to the default ordering where the other five take three. The tri-state arm is
+   * the discriminating control: without it, a mutant that made EVERY column two-state would pass.
+   */
+  it('cycles default → sorted → default in two clicks, where a tri-state column takes three', () => {
+    const sorted = nextFeedbackSort(null, 'age');
+    expect(sorted).toEqual({ column: 'age', direction: 'asc' });
+    expect(nextFeedbackSort(sorted, 'age')).toBeNull();
+
+    const tri = nextFeedbackSort(null, 'area');
+    expect(tri).toEqual({ column: 'area', direction: 'asc' });
+    expect(nextFeedbackSort(tri, 'area')).toEqual({ column: 'area', direction: 'desc' });
+  });
+
+  /**
+   * 🔴 NO `?dir=` IS WRITTEN FOR A ONE-STATE COLUMN. The token would say `asc` — the SQL direction —
+   * under a `↓` header and an `aria-sort="descending"`, and a direction param that contradicts the
+   * screen is the defect this column already shipped once. Absence claims nothing.
+   */
+  it('writes no dir param, and the second click leaves no sort params behind', () => {
+    const first = feedbackSortHref(url('?status=new'), 'age');
+    expect(first).toBe('/feedback?status=new&sort=age');
+
+    const second = feedbackSortHref(url(new URL(first, 'https://x.test').search), 'age');
+    expect(second).toBe('/feedback?status=new');
+  });
+
+  /** A hand-typed direction resolves to the one state rather than passing through — including the
+   * `desc` this column used to offer, which is the spelling a stale bookmark carries. */
+  it('normalises any hand-typed direction to its single state', () => {
+    for (const dir of ['desc', 'asc', 'sideways', '', 'DESC'])
+      expect(
+        parseFeedbackSort(params(`?sort=age&dir=${encodeURIComponent(dir)}`)),
+        `dir=${dir} was not normalised`
+      ).toEqual({ column: 'age', direction: 'asc' });
+
+    expect(parseFeedbackSort(params('?sort=age'))).toEqual({ column: 'age', direction: 'asc' });
+    // And the stray param does not survive the next click.
+    expect(feedbackSortHref(url('?sort=age&dir=desc'), 'age')).toBe('/feedback');
+  });
+
+  /**
+   * 🔴 THE ARROW AND THE ARIA TOKEN DESCRIBE THE CELLS, AND ON THIS COLUMN THEY RUN OPPOSITE TO THE
+   * DIRECTION TOKEN. The Age cell is `shortAge(createdAt)` — a duration, which grows as the id
+   * shrinks — so `f.id ASC` (oldest arrival first) is the LARGEST duration first, which reads as
+   * descending. A sighted operator can see an arrow contradict the cells and self-correct; a screen
+   * reader is told one word and has nothing to check it against.
+   *
+   * The `area` arm is the control: the same `asc` token on a column whose cell IS its key reads the
+   * other way, so this is a claim about the inversion rather than about the word `asc`.
+   */
+  it('reads as DESCENDING on screen even though its direction token is asc', () => {
+    const sorted = parseFeedbackSort(params('?sort=age'));
+    expect(sorted).toEqual({ column: 'age', direction: 'asc' });
+
+    expect(feedbackSortAria(sorted, 'age')).toBe('descending');
+    expect(feedbackSortMarker(sorted, 'age')).toBe('↓');
+
+    expect(feedbackSortAria({ column: 'area', direction: 'asc' }, 'area')).toBe('ascending');
+    expect(feedbackSortMarker({ column: 'area', direction: 'asc' }, 'area')).toBe('↑');
+  });
+});
+
+/**
+ * 🔴 THE SEAM BETWEEN THE TWO REFUSALS, WHICH NOW BEHAVE DIFFERENTLY ON PURPOSE. This parser
+ * DEGRADES a hostile value because its input is a URL somebody typed; `getFeedbackList` THROWS
+ * because its input is an argument. That asymmetry is only safe while everything this parser can
+ * emit is a state the service accepts — otherwise a hand-typed `?sort=` stops being a graceful
+ * fallback and becomes the error boundary.
+ *
+ * Nothing in the type system links the two: `FeedbackSort` says `'asc' | 'desc'` for every column,
+ * so `{ column: 'age', direction: 'desc' }` type-checks cleanly and is refused at runtime. This is
+ * the guard over that relationship, and it lives here rather than in either module.
+ */
+describe('everything the parser emits, the service accepts', () => {
+  it('emits only reachable states, for every column and a hostile direction set', () => {
+    const directions = ['asc', 'desc', 'DESC', 'sideways', '', 'desc ', '__proto__'];
+    let emitted = 0;
+
+    for (const column of FEEDBACK_SORT_COLUMNS)
+      for (const dir of directions) {
+        const sort = parseFeedbackSort(params(`?sort=${column}&dir=${encodeURIComponent(dir)}`));
+        expect(sort, `?sort=${column}&dir=${dir} dropped a known column`).not.toBeNull();
+        expect(
+          isFeedbackSortState(sort!),
+          `?sort=${column}&dir=${dir} emitted ${JSON.stringify(sort)}, which the service refuses`
+        ).toBe(true);
+        emitted++;
+      }
+
+    // The instrument, both halves: the loop ran over the population it names, and the predicate is
+    // capable of saying no — to a direction the column does not offer AND to an unknown column.
+    expect(emitted).toBe(FEEDBACK_SORT_COLUMNS.length * directions.length);
+    expect(isFeedbackSortState({ column: 'age', direction: 'desc' })).toBe(false);
+    expect(isFeedbackSortState({ column: 'attachments', direction: 'asc' })).toBe(false);
+    expect(isFeedbackSortState({ column: 'area', direction: 'sideways' })).toBe(false);
+  });
+
+  /**
+   * 🔴 A PROTOTYPE KEY MUST RETURN `false`, NOT THROW — and this is a claim about the ORDER of the
+   * predicate's clauses, not about its verdict. The reachability clause INDEXES AN OBJECT LITERAL
+   * with the untrusted column, and `FEEDBACK_SORT_DIRECTIONS['__proto__']` is `Object.prototype`
+   * while `['toString']` is a function; neither has `.includes`, so a prototype key that reaches
+   * that line is a `TypeError` escaping a predicate rather than a refusal. The allowlist check
+   * short-circuits before it, which is the only reason the lookup is total.
+   *
+   * ⚠️ ASSERTED AS `.toBe(false)` RATHER THAN `not.toThrow()`: a predicate that threw would fail
+   * either way, but only this form ALSO catches one that returns the truthy `Object.prototype`.
+   */
+  it('refuses a prototype key rather than throwing out of the map lookup', () => {
+    for (const column of ['__proto__', 'constructor', 'toString', 'valueOf', 'hasOwnProperty'])
+      expect(
+        isFeedbackSortState({ column, direction: 'asc' }),
+        `"${column}" was not refused cleanly`
+      ).toBe(false);
+
+    // The control: the same call shape on a real column says yes, so the refusals above are about
+    // the key and not about a predicate wired to `false`.
+    expect(isFeedbackSortState({ column: 'area', direction: 'asc' })).toBe(true);
   });
 });
 

@@ -2,8 +2,7 @@ import { dbRead, dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
 import type { FeedbackStatus } from '$lib/feedback';
 import {
-  isFeedbackSortColumn,
-  isFeedbackSortDirection,
+  isFeedbackSortState,
   type FeedbackSort,
   type FeedbackSortColumn,
 } from '$lib/feedback-sort';
@@ -109,49 +108,58 @@ export type FeedbackRow = {
  */
 const FEEDBACK_SORT_KEYS = {
   /**
-   * 🔴 `invert`, AND IT IS THE ONLY COLUMN THAT NEEDS IT, BECAUSE IT IS THE ONLY ONE WHOSE CELL
-   * RENDERS THE NEGATION OF ITS KEY. The Age cell is `shortAge(createdAt)` — a DURATION, which grows
-   * as the id shrinks. So `f.id ASC` is ascending ARRIVAL, which is DESCENDING age: the header would
-   * read `Age ↑` and `aria-sort="ascending"` over a column counting down `12d, 9d, 4h, 10m`. A
-   * sighted operator can see the contradiction and self-correct; a screen reader is told "ascending"
-   * and has nothing to check it against. Inverting here keeps the integer key — and everything the
-   * paragraph above argues for it — while making the arrow mean what it says.
+   * 🔴 THE DIRECTION TOKEN IS THE SQL DIRECTION, HERE AND ON EVERY OTHER COLUMN — `asc` means
+   * `f.id ASC`, i.e. earliest arrival first, i.e. the OLDEST report first. It reads as DESCENDING on
+   * screen, because the Age cell renders `shortAge(createdAt)` — a duration, which grows as the id
+   * shrinks. That flip is a statement about the cell, so it lives with the header
+   * (`READS_INVERTED` in `$lib/feedback-sort.ts`) and reaches nothing in this file.
+   *
+   * 🔴 IT USED TO LIVE HERE, AS AN `invert` FLAG THIS MAP CARRIED AND `sqlAscending` CONSULTED, AND
+   * THAT WAS THE WRONG LAYER. Two readers needed it — the `ORDER BY` and the keyset's comparison
+   * operator — so a flip applied to one and not the other produced an ordering the cursor walks
+   * backwards through, every page turn re-serving rows the previous page already showed. Nothing in
+   * this module inverts anything now; `ascending` below is the operator's direction, read once.
+   *
+   * ⚠️ `age` IS ALSO THE ONE COLUMN WITH A SINGLE SORTED STATE. Its other one ordered `f.id DESC`,
+   * which IS the default ordering, so it moved no rows — `FEEDBACK_SORT_DIRECTIONS` carries the
+   * measurement, and this service refuses the state rather than serving a sort that does nothing.
    */
-  age: { ref: 'f.id', field: 'id', kind: 'int', nullable: false, invert: true },
-  area: { ref: 'f.area', field: 'area', kind: 'text', nullable: false, invert: false },
+  age: { ref: 'f.id', field: 'id', kind: 'int', nullable: false },
+  area: { ref: 'f.area', field: 'area', kind: 'text', nullable: false },
   // Nullable twice over: `User.username` is itself nullable, and the join is a LEFT one.
-  user: { ref: 'u.username', field: 'username', kind: 'text', nullable: true, invert: false },
-  status: { ref: 'f.status', field: 'status', kind: 'text', nullable: false, invert: false },
+  user: { ref: 'u.username', field: 'username', kind: 'text', nullable: true },
+  status: { ref: 'f.status', field: 'status', kind: 'text', nullable: false },
   // Every untriaged row has no handler — this column's null block is most of the default view.
-  handled: {
-    ref: 'h.username',
-    field: 'handledByUsername',
-    kind: 'text',
-    nullable: true,
-    invert: false,
-  },
-  issue: { ref: 'f.bugId', field: 'bugId', kind: 'int', nullable: true, invert: false },
+  handled: { ref: 'h.username', field: 'handledByUsername', kind: 'text', nullable: true },
+  issue: { ref: 'f.bugId', field: 'bugId', kind: 'int', nullable: true },
 } as const satisfies Record<
   FeedbackSortColumn,
-  {
-    ref: string;
-    field: keyof FeedbackRow;
-    kind: 'int' | 'text';
-    nullable: boolean;
-    invert: boolean;
-  }
+  { ref: string; field: keyof FeedbackRow; kind: 'int' | 'text'; nullable: boolean }
 >;
 
 /**
- * The direction the SQL actually orders by, which is the operator's direction unless the column's
- * rendered value runs opposite to its key.
+ * Thrown when a caller hands `getFeedbackList` a sort state this page does not have — an unknown
+ * column, an unknown direction, or a direction the column does not offer.
  *
- * 🔴 ONE FUNCTION, BECAUSE TWO PLACES READ IT AND THEY MUST NEVER DISAGREE: the `ORDER BY` and the
- * keyset's comparison operator. A flip applied to one and not the other produces an ordering the
- * cursor walks backwards through — every page turn returning rows the previous page already showed.
+ * 🔴 IT THROWS WHERE `parseFeedbackSort` DEGRADES, AND THE TWO LAYERS ARE DELIBERATELY DIFFERENT.
+ * That parser's input is a URL somebody typed, so a hostile `?sort=` must degrade to the default
+ * ordering rather than 500 a queue nobody can then open. This function's input is an ARGUMENT, and
+ * degrading it would hand the caller A PAGE OF REAL DATA IN AN ORDERING THEY DID NOT ASK FOR, WITH
+ * NO SIGNAL — the same silently-wrong shape this page refuses on the client side, where a
+ * `.sort()` over one loaded page presents itself as an ordering of the queue. An unreachable state
+ * at this layer is a programming error, and the only useful thing to do with one is say so.
+ *
+ * The one production caller (`routes/feedback/+page.server.ts`) pre-validates through
+ * `parseFeedbackSort`, and the parameter is union-typed, so a test has to CAST to reach this at all.
+ * The pairing is what has to hold: everything the parser can emit, this accepts — pinned in
+ * `feedback-sort.test.ts` and exercised in `feedback-sort.pglite.test.ts`.
  */
-const sqlAscending = (sort: FeedbackSort): boolean =>
-  FEEDBACK_SORT_KEYS[sort.column].invert ? sort.direction === 'desc' : sort.direction === 'asc';
+export class InvalidFeedbackSort extends Error {
+  constructor(readonly sort: unknown) {
+    super(`not a feedback sort state: ${JSON.stringify(sort)}`);
+    this.name = 'InvalidFeedbackSort';
+  }
+}
 
 /** The boundary row's value in the sorted column, as it travels through the URL. */
 const sortValueOf = (row: FeedbackRow, column: FeedbackSortColumn): string | null => {
@@ -212,23 +220,32 @@ export async function getFeedbackList(input: {
 }> {
   const limit = input.limit ?? FEEDBACK_PAGE_SIZE;
   /**
-   * 🔴 REFUSED HERE TOO, not only at the URL parser. The column names a SQL identifier, and this is
-   * the last place before the query builder sees it — a caller that stops validating (a new route, a
-   * script, an internal API) must not be able to hand this function an arbitrary string. The lookup
-   * is a map read, so an unknown key can only ever produce the DEFAULT ordering; nothing is ever
-   * interpolated.
+   * 🔴 REFUSED HERE TOO, not only at the URL parser — and refused by THROWING. The column names a
+   * SQL identifier, and this is the last place before the query builder sees it, so a caller that
+   * stops validating (a new route, a script, an internal API) must not be able to hand this function
+   * an arbitrary string. The lookup is a map read and nothing is ever interpolated, so the WORST
+   * case was never an injection — it was a silent fallback, which is why the fallback is gone. See
+   * `InvalidFeedbackSort`.
    *
-   * BOTH fields, not just the column. The direction never reaches SQL as text — it selects between
-   * two literal branches — but a garbage value would silently mean `desc` in both of them, and a
-   * guard that covers one of the two untrusted fields while claiming to be the last line of defence
-   * reads as more than it is.
+   * ALL THREE facts, not just the column: the column is on the list, the direction is a direction,
+   * and the direction is one THAT COLUMN OFFERS. The third is what keeps `age` two-state all the way
+   * down — its `desc` is the default ordering wearing a sort's clothes, and serving it would put an
+   * arrow over rows that did not move.
    */
-  const sort =
-    input.sort &&
-    isFeedbackSortColumn(input.sort.column) &&
-    isFeedbackSortDirection(input.sort.direction)
-      ? input.sort
-      : null;
+  if (input.sort && !isFeedbackSortState(input.sort)) throw new InvalidFeedbackSort(input.sort);
+  const sort: FeedbackSort | null = input.sort ?? null;
+
+  /**
+   * The direction the SQL orders by — the operator's direction, with no inversion anywhere in this
+   * module (`FEEDBACK_SORT_KEYS.age` records where the one display flip went, and why).
+   *
+   * 🔴 ONE VALUE, BECAUSE TWO PLACES READ IT AND THEY MUST NEVER DISAGREE: the `ORDER BY` and the
+   * keyset's comparison operator. Read as two separate expressions they can be changed
+   * independently, and a direction applied to one and not the other produces an ordering the cursor
+   * walks backwards through — every page turn returning rows the previous page already showed. A
+   * single local cannot be flipped at one site only.
+   */
+  const ascending = sort?.direction === 'asc';
 
   /**
    * ⚠️ THE REPLICA, DELIBERATELY, AND IT HAS A COST — read this before "fixing" it. Every write
@@ -305,9 +322,7 @@ export async function getFeedbackList(input: {
    */
   if (sort) {
     const { ref } = FEEDBACK_SORT_KEYS[sort.column];
-    query = query.orderBy(ref, (ob) =>
-      sqlAscending(sort) ? ob.asc().nullsLast() : ob.desc().nullsLast()
-    );
+    query = query.orderBy(ref, (ob) => (ascending ? ob.asc().nullsLast() : ob.desc().nullsLast()));
   }
   query = query.orderBy('f.id', 'desc');
 
@@ -330,7 +345,7 @@ export async function getFeedbackList(input: {
        */
       if (boundary !== undefined) {
         const cursorId = input.cursor;
-        const after = sqlAscending(sort) ? '>' : '<';
+        const after = ascending ? '>' : '<';
         query = query.where((eb) => {
           const col = eb.ref(ref);
           /**
