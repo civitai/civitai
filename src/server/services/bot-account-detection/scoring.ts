@@ -389,12 +389,22 @@ export const MIN_REPORTED_CONFIDENCE = 0.1125;
  *
  * Naming the invariant half separately makes the relationship checkable —
  * `MIN_REPORTED_CONFIDENCE × registry size === LONE_SIGNAL_CUT` — which is exactly what
- * `__tests__/scoring.test.ts` asserts. This is the constant that carries the JUDGEMENT; the
- * threshold is arithmetic on it.
+ * `__tests__/scoring.test.ts` asserts. That RELATIONSHIP is the part doing work here.
  *
- * It is still a judgement and not a measurement, for the reason `MIN_REPORTED_CONFIDENCE` gives at
- * length: no run has produced a graded finding yet, and the `confidence_bucket_*` counters are what
- * will replace it.
+ * 🔴 THE VALUE ITSELF IS INHERITED, NOT DECIDED, AND IT MUST NOT BE READ AS A JUDGEMENT ANYONE
+ * MADE. `0.45` is the back-derivation of the previous literal threshold: the cut was `0.15` against
+ * a registry of three, and `0.15 × 3 = 0.45`. Extracting it named a quantity that had been implicit
+ * and made it checkable — a real improvement — but extraction is not calibration, and nothing in
+ * this repository has ever chosen 0.45 on evidence. An earlier draft of this comment defended it as
+ * "the constant that carries the JUDGEMENT"; that was a claim about a decision that never happened,
+ * and it is retracted here rather than left to be cited.
+ *
+ * So: PROVISIONAL. It is carried forward unchanged because changing it would move the reported
+ * population of every heuristic at once, which is a decision that wants its own evidence and its
+ * own change — not a side effect of adding a signal. `asset-staging`'s boundaries are derived
+ * AGAINST this number (see `STAGED_ONE_AT`), so it is load-bearing for that heuristic's firing
+ * point; that makes it more important to be honest about its provenance, not less. The
+ * `confidence_bucket_*` counters are what can eventually replace it with a measured value.
  */
 export const LONE_SIGNAL_CUT = 0.45;
 

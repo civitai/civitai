@@ -273,9 +273,18 @@ describe('the reporting threshold', () => {
       LONE_SIGNAL_CUT,
       12
     );
-    // Pinned as a literal too, so this case cannot be satisfied by moving BOTH numbers: the
-    // lone-signal cut is the judgement, and changing it is a decision about how convinced a single
-    // signal must be, not arithmetic.
+    // 🔴 PINNED AS A LITERAL TOO — BUT AS A PROVISIONAL, INHERITED VALUE, NOT AS A DECISION.
+    // An earlier version of this comment defended the pin as "the judgement", and that was wrong:
+    // nobody ever judged 0.45. It is the back-derivation of the previous literal cut, 0.15 against
+    // a registry of three. Extracting it made the relationship above checkable; it did not make the
+    // number evidence. See `LONE_SIGNAL_CUT`'s own docstring, which now says so.
+    //
+    // The pin's remaining job is narrow and worth keeping: without it the relationship assertion
+    // above can be satisfied by moving BOTH numbers, so a future author could re-derive the cut
+    // against a silently changed lone-signal bar and this case would stay green. With it, changing
+    // the bar requires editing a test that says out loud that the value is inherited — which is the
+    // point at which someone has to supply evidence for a new one. `asset-staging`'s boundaries are
+    // derived against this number, so it is load-bearing for a firing point even while provisional.
     expect(LONE_SIGNAL_CUT).toBe(0.45);
     // A worked instance, with literals rather than expressions over the constants — the same
     // reasoning the boundary cases in `heuristics.test.ts` are written with. A registry of four
