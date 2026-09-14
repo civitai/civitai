@@ -238,9 +238,13 @@ function ImageCard({
         ) : (
           <EdgeMedia
             src={entry.image.url}
-            type="image"
-            className="size-full object-contain"
+            type={entry.image.type}
+            // Forces playback past the viewer's autoplay setting — a judge comparing two
+            // clips must not have to start each one by hand.
+            anim
             width={600}
+            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+            wrapperProps={{ className: 'size-full' }}
           />
         )}
 

@@ -2171,6 +2171,7 @@ export type Crucible = {
   description: string | null;
   imageId: number | null;
   nsfwLevel: Generated<number>;
+  contentType: Generated<MediaType>;
   entryFee: Generated<number>;
   entryLimit: Generated<number>;
   maxTotalEntries: number | null;

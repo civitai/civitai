@@ -23,6 +23,7 @@ import {
   IconRefresh,
   IconSend,
   IconUpload,
+  IconVideo,
   IconX,
 } from '@tabler/icons-react';
 import React, { useMemo, useState } from 'react';
@@ -32,7 +33,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
 import { MediaType } from '~/shared/utils/prisma/enums';
-import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
+import { getMimeTypesFromMediaTypes } from '~/shared/constants/mime-types';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { Flags } from '~/shared/utils/flags';
@@ -47,6 +48,7 @@ export interface CrucibleSubmitEntryModalProps {
   entryFee: number;
   entryLimit: number;
   nsfwLevel: number;
+  contentType: MediaType;
   currentEntryCount: number;
   /** Optional array of allowed resource names to display in requirements */
   allowedResourceNames?: string[];
@@ -237,7 +239,7 @@ function ImageCard({
           {/* Already submitted message */}
           {isAlreadySubmitted && (
             <Text size="xs" c="dimmed">
-              This image is already submitted to this crucible.
+              This entry is already submitted to this crucible.
             </Text>
           )}
         </HoverCard.Dropdown>
@@ -256,7 +258,7 @@ function ImageCard({
 }
 
 /**
- * CrucibleSubmitEntryModal - Modal for selecting and submitting images to a crucible
+ * CrucibleSubmitEntryModal - Modal for selecting and submitting entries to a crucible
  */
 export default function CrucibleSubmitEntryModal({
   crucibleId,
@@ -264,6 +266,7 @@ export default function CrucibleSubmitEntryModal({
   entryFee,
   entryLimit,
   nsfwLevel,
+  contentType,
   currentEntryCount,
   allowedResourceNames,
   onSuccess,
@@ -271,6 +274,9 @@ export default function CrucibleSubmitEntryModal({
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
+  const isVideo = contentType === MediaType.video;
+  const noun = isVideo ? 'video' : 'image';
+  const nounPlural = `${noun}s`;
 
   const [selectedImages, setSelectedImages] = useState<number[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -291,18 +297,22 @@ export default function CrucibleSubmitEntryModal({
         queryUtils.image.getMyImages.invalidate();
         setUploadedCount((prev) => prev + 1);
         showSuccessNotification({
-          title: 'Image uploaded',
-          message: 'Your image is now available for selection',
+          title: `${isVideo ? 'Video' : 'Image'} uploaded`,
+          message: `Your ${noun} is now available for selection`,
         });
       } else if (props.status === 'error') {
         showErrorNotification({
           title: 'Upload failed',
-          error: new Error('Failed to upload image. Please try again.'),
+          error: new Error(`Failed to upload ${noun}. Please try again.`),
         });
       } else if (props.status === 'blocked') {
         showErrorNotification({
-          title: 'Image blocked',
-          error: new Error(`Image was blocked: ${props.blockedFor || 'Content policy violation'}`),
+          title: `${isVideo ? 'Video' : 'Image'} blocked`,
+          error: new Error(
+            `${isVideo ? 'Video' : 'Image'} was blocked: ${
+              props.blockedFor || 'Content policy violation'
+            }`
+          ),
         });
       }
     },
@@ -321,7 +331,7 @@ export default function CrucibleSubmitEntryModal({
     fetchNextPage,
     isFetchingNextPage,
   } = trpc.image.getMyImages.useInfiniteQuery(
-    { mediaTypes: [MediaType.image], limit: 40 },
+    { mediaTypes: [contentType], limit: 40 },
     {
       enabled: !!currentUser,
       getNextPageParam: (lastPage) => lastPage.nextCursor,
@@ -354,6 +364,7 @@ export default function CrucibleSubmitEntryModal({
   // Returns detailed validation criteria for hover card display
   const validateImage = (image: (typeof images)[0]) => {
     const isCompatibleNsfw = isNsfwLevelCompatible(image.nsfwLevel ?? 1, nsfwLevel);
+    const matchesContentType = image.type === contentType;
     const isAlreadySubmitted = submittedImageIds.has(image.id);
     const imageNsfwLabel = getNsfwLabel(image.nsfwLevel ?? 1);
     const requiredNsfwLabel = getNsfwLabel(nsfwLevel);
@@ -375,10 +386,10 @@ export default function CrucibleSubmitEntryModal({
           ]
         : []),
       {
-        label: 'Image type',
-        passes: image.type === MediaType.image,
-        passText: 'Valid image format',
-        failReason: 'Must be an image file',
+        label: 'Media type',
+        passes: matchesContentType,
+        passText: `Valid ${noun} format`,
+        failReason: `Must be a ${noun} file`,
       },
       {
         label: 'Content level',
@@ -389,13 +400,15 @@ export default function CrucibleSubmitEntryModal({
     ];
 
     return {
-      isValid: isCompatibleNsfw && !isAlreadySubmitted,
+      isValid: isCompatibleNsfw && matchesContentType && !isAlreadySubmitted,
       isAlreadySubmitted,
       criteria,
       message: isAlreadySubmitted
         ? 'Already submitted'
+        : !matchesContentType
+        ? `This crucible only accepts ${nounPlural}`
         : !isCompatibleNsfw
-        ? `Content level mismatch (${imageNsfwLabel} image, requires ${requiredNsfwLabel})`
+        ? `Content level mismatch (${imageNsfwLabel} ${noun}, requires ${requiredNsfwLabel})`
         : undefined,
     };
   };
@@ -610,8 +623,8 @@ export default function CrucibleSubmitEntryModal({
                   fontSize: '0.75rem',
                 }}
               >
-                <IconPhoto size={14} />
-                <span>Images only</span>
+                {isVideo ? <IconVideo size={14} /> : <IconPhoto size={14} />}
+                <span>{isVideo ? 'Videos only' : 'Images only'}</span>
               </div>
 
               {/* Content Level Badge */}
@@ -633,7 +646,7 @@ export default function CrucibleSubmitEntryModal({
           {/* Drop Zone */}
           <Dropzone
             onDrop={handleDrop}
-            accept={IMAGE_MIME_TYPE}
+            accept={getMimeTypesFromMediaTypes([contentType])}
             disabled={!canUpload || isUploading || currentUser?.muted}
             loading={isUploading}
             className={clsx(
@@ -654,7 +667,7 @@ export default function CrucibleSubmitEntryModal({
                 <IconCloudUpload size={48} className="text-blue-500" stroke={1.5} />
               </Dropzone.Idle>
               <Text c="white" fw={600}>
-                Drag images here to add entries
+                Drag {nounPlural} here to add entries
               </Text>
               <Text size="sm" c="dimmed">
                 or{' '}
@@ -679,7 +692,7 @@ export default function CrucibleSubmitEntryModal({
                 }}
               />
               <Text size="xs" c="dimmed" ta="center" mt={4}>
-                Uploading {uploadingFiles.length} {uploadingFiles.length === 1 ? 'image' : 'images'}
+                Uploading {uploadingFiles.length} {uploadingFiles.length === 1 ? noun : nounPlural}
                 ...
               </Text>
             </div>
@@ -693,10 +706,10 @@ export default function CrucibleSubmitEntryModal({
           ) : images.length === 0 ? (
             <div className="rounded-lg border border-[#373a40] bg-[#2c2e33] p-8 text-center">
               <Text c="white" fw={600} mb={4}>
-                No images found
+                No {nounPlural} found
               </Text>
               <Text size="sm" c="dimmed">
-                Upload images above or generate images to get started.
+                Upload {nounPlural} above or generate {nounPlural} to get started.
               </Text>
             </div>
           ) : (

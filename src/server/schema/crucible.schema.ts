@@ -1,9 +1,10 @@
 import * as z from 'zod';
-import { CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '~/server/common/enums';
 import { infiniteQuerySchema } from './base.schema';
 import { isUUID } from '~/utils/string-helpers';
 import {
+  CRUCIBLE_CONTENT_TYPES,
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_MAX_ENTRIES,
   CRUCIBLE_MAX_ENTRY_FEE,
@@ -43,6 +44,7 @@ export type CrucibleImageSchema = z.infer<typeof crucibleImageSchema>;
 
 // Re-export crucible constants for backward compatibility
 export {
+  CRUCIBLE_CONTENT_TYPES,
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
 } from '~/shared/constants/crucible.constants';
@@ -66,6 +68,7 @@ export const createCrucibleInputSchema = z.object({
   description: z.string().nonempty(),
   coverImage: crucibleImageSchema,
   nsfwLevel: z.number(),
+  contentType: z.enum(CRUCIBLE_CONTENT_TYPES).default(MediaType.image),
   entryFee: z.number().min(0).max(CRUCIBLE_MAX_ENTRY_FEE),
   entryLimit: z.number().min(1).max(CRUCIBLE_MAX_ENTRIES),
   maxTotalEntries: z.number().min(1).optional(),
