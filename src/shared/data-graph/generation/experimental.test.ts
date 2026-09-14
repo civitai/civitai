@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  experimentalDismissId,
-  liveExperimentalDismissIds,
-  resolveExperimental,
-  resolveExperimentalMatches,
-  type ExperimentalTarget,
-} from './experimental';
+import { resolveExperimental, resolveExperimentalMatches } from './experimental';
 import { experimentalTargets, gateRuleSchema, type GateRule } from './gates';
 
 const rule = (overrides: Partial<GateRule>): GateRule =>
@@ -72,97 +66,14 @@ describe('resolveExperimental', () => {
       resolveExperimental(targets, { kind: 'ecosystem', key: PLAIN_ECOSYSTEM })
     ).toBeUndefined();
   });
-});
 
-describe('experimentalDismissId', () => {
-  const target: ExperimentalTarget = { kind: 'modelVersion', key: 3216500 };
+  it('keys an ecosystem and a version sharing a key apart', () => {
+    const targets = targetsFor(rule({ ecosystems: ['42'], modelVersionIds: [42] }));
 
-  it('is stable for the same message', () => {
-    expect(experimentalDismissId(target, 'Same copy')).toBe(
-      experimentalDismissId(target, 'Same copy')
-    );
-  });
+    const eco = resolveExperimental(targets, { kind: 'ecosystem', key: '42' });
+    const version = resolveExperimental(targets, { kind: 'modelVersion', key: 42 });
 
-  // The property the whole design rests on: an edited warning re-notifies
-  // everyone who dismissed the previous wording.
-  it('changes when the message changes', () => {
-    expect(experimentalDismissId(target, 'Original copy')).not.toBe(
-      experimentalDismissId(target, 'Original copy, plus a new caveat')
-    );
-  });
-
-  it('does not collide across kinds that share a key', () => {
-    const ids = [
-      experimentalDismissId({ kind: 'ecosystem', key: '42' }),
-      experimentalDismissId({ kind: 'workflow', key: '42' }),
-      experimentalDismissId({ kind: 'modelVersion', key: 42 }),
-    ];
-
-    expect(new Set(ids).size).toBe(3);
-  });
-
-  it('distinguishes a message from no message', () => {
-    expect(experimentalDismissId(target)).not.toBe(experimentalDismissId(target, 'Some copy'));
-  });
-});
-
-// A dismissal is pruned against this set, so anything MISSING here is a
-// dismissal silently discarded — the warning reappears for someone who
-// dismissed it. Every id `resolveExperimental` can hand out has to be in it.
-describe('liveExperimentalDismissIds', () => {
-  it('contains the id of every live target, exactly as resolved', () => {
-    const rules = [
-      rule({ ecosystems: ['MiniMaxH3'], message: 'Eco copy' }),
-      rule({ id: 'r2', workflows: ['img2vid:ref2vid'] }),
-      rule({ id: 'r3', modelVersionIds: [3216500], message: 'Version copy' }),
-    ];
-    const targets = targetsFor(...rules);
-    const live = liveExperimentalDismissIds(targets);
-
-    const candidates: ExperimentalTarget[] = [
-      { kind: 'ecosystem', key: 'MiniMaxH3' },
-      { kind: 'workflow', key: 'img2vid:ref2vid' },
-      { kind: 'modelVersion', key: 3216500 },
-      { kind: 'ecosystem', key: STATIC_EXPERIMENTAL_ECOSYSTEM },
-    ];
-
-    for (const candidate of candidates) {
-      const match = resolveExperimental(targets, candidate);
-      expect(match, `${candidate.kind}:${candidate.key} should resolve`).toBeDefined();
-      expect(live).toContain(match!.dismissId);
-    }
-  });
-
-  it('includes statically experimental ecosystems with no rule', () => {
-    const live = liveExperimentalDismissIds(targetsFor());
-
-    expect(live).toContain(
-      experimentalDismissId({ kind: 'ecosystem', key: STATIC_EXPERIMENTAL_ECOSYSTEM })
-    );
-  });
-
-  it('omits an ecosystem that is neither ruled nor flagged', () => {
-    const live = liveExperimentalDismissIds(targetsFor());
-
-    expect(live).not.toContain(experimentalDismissId({ kind: 'ecosystem', key: PLAIN_ECOSYSTEM }));
-  });
-
-  // The orphan-collection property: a previous message's id is NOT live, so a
-  // dismissal of the old wording gets pruned and the new wording re-notifies.
-  it('omits the id of a superseded message', () => {
-    const targets = targetsFor(rule({ modelVersionIds: [7], message: 'New copy' }));
-    const live = liveExperimentalDismissIds(targets);
-
-    expect(live).toContain(experimentalDismissId({ kind: 'modelVersion', key: 7 }, 'New copy'));
-    expect(live).not.toContain(experimentalDismissId({ kind: 'modelVersion', key: 7 }, 'Old copy'));
-  });
-
-  it('ignores rules that are not experimental', () => {
-    const live = liveExperimentalDismissIds(
-      targetsFor(rule({ presentation: 'disabled', modelVersionIds: [999] }))
-    );
-
-    expect(live).not.toContain(experimentalDismissId({ kind: 'modelVersion', key: 999 }));
+    expect(eco?.key).not.toBe(version?.key);
   });
 });
 

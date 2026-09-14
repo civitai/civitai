@@ -6,7 +6,7 @@ import {
   ecosystemByKey,
   getEcosystemDefaults,
 } from '~/shared/constants/basemodel.constants';
-import { rulesToStates } from '~/shared/data-graph/generation/gates';
+import { unselectableVersionIds } from '~/shared/data-graph/generation/gates';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 import {
   getResourceSelectOptions,
@@ -137,8 +137,9 @@ export function checkpointDef(opts: {
   const modelVersionId = defaultModelId ?? ecosystemDefaults?.model?.id;
   const modelLocked = opts.modelLocked ?? ecosystemDefaults?.modelLocked ?? false;
 
-  // Gate-hidden versions never reach the picker; the server enforces the same.
-  const ruleVersionIds = [...rulesToStates(ext.gateRules ?? []).modelVersionIds.keys()];
+  // A `disabled` version stays in the picker and is refused at whatIf/submit
+  // instead; see `unselectableVersionIds`.
+  const ruleVersionIds = unselectableVersionIds(ext.gateRules ?? []);
   const visibleVersions =
     versions && ruleVersionIds.length ? filterVersionGroup(versions, ruleVersionIds) : versions;
   const validVersionIds = visibleVersions ? getAllVersionIds(visibleVersions) : undefined;

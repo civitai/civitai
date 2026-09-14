@@ -11,6 +11,7 @@ import { audioHub } from '~/shared/form-graph/generation/audio/hub.graph';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 
 import { ControllerLabel, VersionGroupSelector } from './form-helpers';
+import { GateRuleWarnings } from './GateRuleWarnings';
 import { CheckpointRow } from './inputs/CheckpointRow';
 import { openCheckpointPicker } from './inputs/openCheckpointPicker';
 
@@ -64,6 +65,7 @@ export function AudioGenerationForm() {
           />
         )}
       />
+      <GateRuleWarnings />
       <Controller
         graph={audioHub}
         name="generateCover"

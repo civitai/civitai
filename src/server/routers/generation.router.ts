@@ -14,16 +14,19 @@ import {
   getGenerationData,
   getGenerationStatus,
   getGateRules,
+  getGeneratorMessages,
   getGenerationConfig,
   getResourceData,
   resolveImageMeta,
   setGateRules,
+  setGeneratorMessages,
   setGenerationStatus,
   setSelfHostedGenerationStatus,
   // textToImage,
   // textToImageTestRun,
   toggleGenerationDisabled,
 } from '~/server/services/generation/generation.service';
+import { generatorMessageSchema } from '~/shared/generation/messages';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { edgeCacheIt, purgeOnSuccess, rateLimit } from '~/server/middleware.trpc';
 import { resolveWildcardPackForUser } from '~/server/services/wildcard-pack.service';
@@ -117,6 +120,10 @@ export const generationRouter = router({
   setGateRules: moderatorProcedure
     .input(z.array(gateRuleSchema))
     .mutation(({ input }) => setGateRules(input)),
+  getGeneratorMessages: moderatorProcedure.query(() => getGeneratorMessages()),
+  setGeneratorMessages: moderatorProcedure
+    .input(z.array(generatorMessageSchema))
+    .mutation(({ input }) => setGeneratorMessages(input)),
   toggleGenerationDisabled: moderatorProcedure
     .input(getByIdSchema)
     .mutation(({ input, ctx }) =>

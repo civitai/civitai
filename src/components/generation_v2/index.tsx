@@ -82,4 +82,4 @@ export { AccordionLayout } from './AccordionLayout';
 export { openCompatibilityConfirmModal } from './CompatibilityConfirmModal';
 export { WhatIfProvider, useWhatIfContext } from './WhatIfProvider';
 export { ResourceAlerts, ReadyAlert } from './ResourceAlerts';
-export { ExperimentalFlask, ExperimentalAlerts } from './Experimental';
+export { ExperimentalFlask, GateRuleAlerts } from './Experimental';

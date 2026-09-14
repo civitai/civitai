@@ -32,6 +32,7 @@ import { videoHub } from '~/shared/form-graph/generation/video/hub.graph';
 import { wanVersionDefs, wanVersionOptions } from '~/shared/form-graph/generation/video/wan.graph';
 
 import { ControllerLabel, VersionGroupSelector, useWildcardHandlers } from './form-helpers';
+import { GateRuleWarnings } from './GateRuleWarnings';
 import { CheckpointRow } from './inputs/CheckpointRow';
 import { openCheckpointPicker, readResources } from './inputs/openCheckpointPicker';
 import type { GenerationStore } from './store';
@@ -122,6 +123,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
           )}
         />
       </div>
+      <GateRuleWarnings />
       <Controller
         graph={videoHub}
         name="resources"

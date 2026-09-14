@@ -148,6 +148,7 @@ import { useGenerationGraphStore } from '~/store/generation-graph.store';
 import { useRemixStore } from '~/store/remix.store';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { PresetControl } from '~/components/generation_v2/preset/PresetControl';
+import { GateRuleWarnings } from './GateRuleWarnings';
 
 // =============================================================================
 // Component
@@ -631,6 +632,8 @@ export function GenerationForm() {
                 )}
               />
             </div>
+
+            <GateRuleWarnings />
 
             {/* API version selector (e.g. Veo 3.1). Hidden while a single
                 version is offered — the value is still sent. */}
