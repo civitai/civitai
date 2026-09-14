@@ -1,6 +1,7 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 // Type-only, so they are erased before the hoisted `vi.mock` factories run.
 import type * as ModelCardContext from '~/components/Cards/ModelCardContext';
+import type * as ModelCardUtils from '~/components/Cards/model-card.utils';
 import type * as TrpcModule from '~/utils/trpc';
 
 // =============================================================================
@@ -107,7 +108,14 @@ vi.mock('~/components/Buzz/InteractiveTipBuzzButton', () => ({
 vi.mock('~/components/IntersectionObserver/ElementInView', () => ({
   useElementInView: () => true,
 }));
-vi.mock('~/components/Cards/model-card.utils', () => ({ getCardBaseModels: () => [] }));
+// Spread, not a hand-listed factory. `getCardBaseModels` is stubbed because the fixture carries no
+// baseModels; `getModelRecency` must stay REAL, because the New badge is what several tests below
+// assert on. A hand-listed factory here is also what would have hidden this whole file: the card
+// gained a second import from this module, and an omitted export dies at import as `Tests no tests`.
+vi.mock('~/components/Cards/model-card.utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelCardUtils>()),
+  getCardBaseModels: () => [],
+}));
 
 import { MantineProvider } from '@mantine/core';
 import type { MantineColorsTuple } from '@mantine/core';
@@ -236,29 +244,51 @@ function WithPalette({ children }: { children: React.ReactNode }) {
   );
 }
 
-async function statusBadgeText(): Promise<string | null> {
+// Two slots now, not one. They are queried separately on purpose: the bug this file failed to catch
+// was a New badge that computed correctly and then lost a ternary to the money badge, which is
+// invisible to any assertion that reads "the status badge" as a singular thing.
+const recencyBadge = () => document.querySelector('[data-status-badge="recency"]');
+const accessBadge = () => document.querySelector('[data-status-badge="access"]');
+
+async function awaitBadge(which: 'recency' | 'access'): Promise<Element> {
   let el: Element | null = null;
   await vi.waitFor(() => {
-    el = document.querySelector('[data-status-badge]');
-    expect(
-      el,
-      'no status badge rendered — the card decided this model carries no New/Updated/Early Access/Paid state'
-    ).toBeTruthy();
+    el = which === 'recency' ? recencyBadge() : accessBadge();
+    expect(el, `no ${which} status badge rendered`).toBeTruthy();
   });
-  return (el as unknown as Element).textContent;
+  return el as unknown as Element;
 }
 
+// The card renders nothing else asynchronously that these tests wait on, so a negative assertion
+// needs something already-settled to hang off or it passes before the card has painted at all.
+async function cardPainted() {
+  await vi.waitFor(() => {
+    expect(document.querySelector('[data-reviewed]')).toBeTruthy();
+  });
+}
+
+// A publish time the shared fixture deliberately lacks. `makeData()` sets `publishedAt: null`, and
+// that single line is what hid this bug for six days: isNew was false in every test in this file, so
+// no assertion here could ever see New compete with the money badge.
+const justPublished = () => new Date(Date.now() - 60 * 1000);
+
 describe('ModelCard paid-gate badge', () => {
-  test('renders "Paid" for a permanent gate, which has no deadline to read', async () => {
+  test('renders a Buzz bolt for a permanent gate, not the word "Paid"', async () => {
     renderWithProviders(
       <WithPalette>
         <ModelCard data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }} />
       </WithPalette>
     );
-    expect(await statusBadgeText()).toBe('Paid');
+    const el = await awaitBadge('access');
+    // The icon replaced the word so the badge is narrow enough to sit beside New. Asserting the
+    // absence of the text as well as the presence of the icon is what makes a revert to the word
+    // visible here rather than only in a screenshot.
+    expect(el.textContent).toBe('');
+    expect(el.querySelector('svg')).toBeTruthy();
+    expect(el.getAttribute('aria-label')).toBe('Paid');
   });
 
-  test('renders "Early Access" for an active timed window, not "Paid"', async () => {
+  test('renders "Early Access" as text for an active timed window', async () => {
     const deadline = new Date(Date.now() + 60 * 60 * 1000);
     renderWithProviders(
       <WithPalette>
@@ -267,7 +297,7 @@ describe('ModelCard paid-gate badge', () => {
         />
       </WithPalette>
     );
-    expect(await statusBadgeText()).toBe('Early Access');
+    expect((await awaitBadge('access')).textContent).toBe('Early Access');
   });
 
   test('a model carrying BOTH gates reads "Early Access" — the window is the fact with a clock on it', async () => {
@@ -279,7 +309,7 @@ describe('ModelCard paid-gate badge', () => {
         />
       </WithPalette>
     );
-    expect(await statusBadgeText()).toBe('Early Access');
+    expect((await awaitBadge('access')).textContent).toBe('Early Access');
   });
 
   test('an EXPIRED timed window renders no paid marker — the client re-checks the deadline against now', async () => {
@@ -291,11 +321,10 @@ describe('ModelCard paid-gate badge', () => {
         />
       </WithPalette>
     );
-    // Nothing else in the fixture sets New/Updated, so the badge must be absent entirely.
-    await vi.waitFor(() => {
-      expect(document.querySelector('[data-reviewed]')).toBeTruthy();
-    });
-    expect(document.querySelector('[data-status-badge]')).toBeNull();
+    await cardPainted();
+    expect(accessBadge()).toBeNull();
+    // Nothing in the fixture sets New/Updated either, so neither slot is filled.
+    expect(recencyBadge()).toBeNull();
   });
 
   test('the Paid badge uses the Early Access colour, not the New/Updated one', async () => {
@@ -304,9 +333,8 @@ describe('ModelCard paid-gate badge', () => {
         <ModelCard data={{ ...makeData(), earlyAccessDeadline: null, hasActivePaidAccess: true }} />
       </WithPalette>
     );
-    await statusBadgeText();
-    const el = document.querySelector('[data-status-badge]') as HTMLElement;
-    // Reusing the Early Access treatment is the community ask this PR answers, and it lives in an
+    const el = (await awaitBadge('access')) as HTMLElement;
+    // Reusing the Early Access treatment is the community ask #4678 answered, and it lives in an
     // inline style rather than a class, so it survives the harness having no stylesheet.
     expect(el.style.backgroundColor).toBe('rgb(18, 184, 134)');
   });
@@ -319,9 +347,111 @@ describe('ModelCard paid-gate badge', () => {
         />
       </WithPalette>
     );
-    await vi.waitFor(() => {
-      expect(document.querySelector('[data-reviewed]')).toBeTruthy();
-    });
-    expect(document.querySelector('[data-status-badge]')).toBeNull();
+    await cardPainted();
+    expect(accessBadge()).toBeNull();
+    expect(recencyBadge()).toBeNull();
+  });
+});
+
+// =============================================================================
+// The reported bug: alexds9's models were both new AND paid-gated, and the New
+// badge vanished. It was never wrong in the data — `isNew` was true — it lost a
+// ternary to `isPaidAccess` in a single shared slot (#4678).
+//
+// These assertions are the ones that redden on a revert of that split. Verified
+// by reverting it, not by adding them and watching them pass.
+// =============================================================================
+describe('ModelCard New badge coexists with the money badge', () => {
+  test('a model that is BOTH new and paid-gated renders BOTH badges', async () => {
+    renderWithProviders(
+      <WithPalette>
+        <ModelCard
+          data={{
+            ...makeData(),
+            publishedAt: justPublished(),
+            hasActivePaidAccess: true,
+            earlyAccessDeadline: null,
+          }}
+        />
+      </WithPalette>
+    );
+    const recency = await awaitBadge('recency');
+    const access = await awaitBadge('access');
+    expect(recency.textContent).toBe('New');
+    expect(access.getAttribute('aria-label')).toBe('Paid');
+  });
+
+  test('a model that is BOTH new and in early access renders BOTH badges', async () => {
+    renderWithProviders(
+      <WithPalette>
+        <ModelCard
+          data={{
+            ...makeData(),
+            publishedAt: justPublished(),
+            hasActivePaidAccess: false,
+            earlyAccessDeadline: new Date(Date.now() + 60 * 60 * 1000),
+          }}
+        />
+      </WithPalette>
+    );
+    expect((await awaitBadge('recency')).textContent).toBe('New');
+    expect((await awaitBadge('access')).textContent).toBe('Early Access');
+  });
+
+  test('a new UNGATED model renders the New badge and no money badge', async () => {
+    // The populated control for the two tests above: it proves they are reading a real New badge
+    // rather than a card that renders a recency chip no matter what.
+    renderWithProviders(
+      <WithPalette>
+        <ModelCard
+          data={{
+            ...makeData(),
+            publishedAt: justPublished(),
+            hasActivePaidAccess: false,
+            earlyAccessDeadline: null,
+          }}
+        />
+      </WithPalette>
+    );
+    expect((await awaitBadge('recency')).textContent).toBe('New');
+    expect(accessBadge()).toBeNull();
+  });
+
+  test('the New badge keeps the blue treatment, not the money badge green', async () => {
+    renderWithProviders(
+      <WithPalette>
+        <ModelCard
+          data={{
+            ...makeData(),
+            publishedAt: justPublished(),
+            hasActivePaidAccess: true,
+            earlyAccessDeadline: null,
+          }}
+        />
+      </WithPalette>
+    );
+    const recency = (await awaitBadge('recency')) as HTMLElement;
+    // Distinct from success (#12b886) in the harness palette on purpose: if the two badges shared a
+    // colour, a card that rendered the money chip twice would satisfy every assertion above.
+    expect(recency.style.backgroundColor).toBe('rgb(34, 139, 230)');
+  });
+
+  test('an Updated model that is also paid-gated renders "Updated" beside the money badge', async () => {
+    const publishedAt = new Date(Date.now() - 20 * 60 * 60 * 1000);
+    renderWithProviders(
+      <WithPalette>
+        <ModelCard
+          data={{
+            ...makeData(),
+            publishedAt,
+            lastVersionAt: new Date(publishedAt.getTime() + 3 * 60 * 60 * 1000),
+            hasActivePaidAccess: true,
+            earlyAccessDeadline: null,
+          }}
+        />
+      </WithPalette>
+    );
+    expect((await awaitBadge('recency')).textContent).toBe('Updated');
+    expect((await awaitBadge('access')).getAttribute('aria-label')).toBe('Paid');
   });
 });

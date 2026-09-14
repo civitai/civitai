@@ -2,6 +2,7 @@ import {
   Badge,
   getPrimaryShade,
   Text,
+  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
@@ -25,7 +26,7 @@ import { RemixButton } from '~/components/Cards/components/RemixButton';
 import { useModelCardContext, useModelSaleBadge } from '~/components/Cards/ModelCardContext';
 import { SaleDiscountLabel } from '~/components/Model/ModelVersions/ModelVersionSaleBadge';
 import { ModelCardContextMenu } from '~/components/Cards/ModelCardContextMenu';
-import { getCardBaseModels } from '~/components/Cards/model-card.utils';
+import { getCardBaseModels, getModelRecency } from '~/components/Cards/model-card.utils';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { useElementInView } from '~/components/IntersectionObserver/ElementInView';
@@ -38,9 +39,7 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
-import { constants } from '~/server/common/constants';
 import { Availability, ModelModifier } from '~/shared/utils/prisma/enums';
-import { aDayAgo } from '~/utils/date-helpers';
 import { getModelUrl } from '~/utils/string-helpers';
 
 function ModFlagBadge({ labels }: { labels: string[] }) {
@@ -65,12 +64,7 @@ function ModelCardContent({ data }: Props) {
 
   const currentUser = useCurrentUser();
 
-  const isNew = data.publishedAt && data.publishedAt > aDayAgo;
-  const isUpdated =
-    data.lastVersionAt &&
-    data.publishedAt &&
-    data.lastVersionAt > aDayAgo &&
-    data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
+  const { isNew, isUpdated } = getModelRecency(data);
   const isEarlyAccess = data.earlyAccessDeadline && data.earlyAccessDeadline > new Date();
   // Any live gate. `isEarlyAccess` stays a client-side deadline check because a search document can
   // be 15 minutes stale; this flag covers the gates with no deadline to check — permanent ones, and
@@ -91,16 +85,21 @@ function ModelCardContent({ data }: Props) {
     if (isNSFW) modFlagLabels.push('NSFW');
   }
 
-  const statusBadgeStyle = useMemo(
+  // Guarded rather than unconditional: `theme.colors.success` is an app-level scale, and reading it
+  // on every render makes the card throw under any theme that lacks one. The single badge this
+  // replaced short-circuited past it the same way.
+  const accessBadgeStyle = useMemo(
+    () =>
+      isEarlyAccess || isPaidAccess ? { backgroundColor: theme.colors.success[5] } : undefined,
+    [isEarlyAccess, isPaidAccess, theme]
+  );
+  const recencyBadgeStyle = useMemo(
     () => ({
-      backgroundColor:
-        isEarlyAccess || isPaidAccess
-          ? theme.colors.success[5]
-          : isUpdated
-          ? theme.colors.teal[5]
-          : theme.colors.blue[getPrimaryShade(theme, colorScheme)],
+      backgroundColor: isUpdated
+        ? theme.colors.teal[5]
+        : theme.colors.blue[getPrimaryShade(theme, colorScheme)],
     }),
-    [isEarlyAccess, isPaidAccess, isUpdated, theme, colorScheme]
+    [isUpdated, theme, colorScheme]
   );
 
   const { useModelVersionRedirect, activeBaseModels, salesByModelId, hasSaleProvider } =
@@ -186,24 +185,38 @@ function ModelCardContent({ data }: Props) {
               </Badge>
             )}
 
-            {(isNew || isUpdated || isEarlyAccess || isPaidAccess) && (
+            {(isNew || isUpdated) && (
               <Badge
                 className={cardClasses.chip}
                 variant="filled"
                 radius="xl"
-                data-status-badge
-                style={statusBadgeStyle}
+                data-status-badge="recency"
+                style={recencyBadgeStyle}
               >
                 <Text c="white" size="xs" tt="capitalize">
-                  {isEarlyAccess
-                    ? 'Early Access'
-                    : isPaidAccess
-                    ? 'Paid'
-                    : isUpdated
-                    ? 'Updated'
-                    : 'New'}
+                  {isUpdated ? 'Updated' : 'New'}
                 </Text>
               </Badge>
+            )}
+            {(isEarlyAccess || isPaidAccess) && (
+              <Tooltip label={isEarlyAccess ? 'Early Access' : 'Paid access'} withinPortal>
+                <Badge
+                  className={cardClasses.chip}
+                  variant="filled"
+                  radius="xl"
+                  data-status-badge="access"
+                  aria-label={isEarlyAccess ? 'Early Access' : 'Paid'}
+                  style={accessBadgeStyle}
+                >
+                  {isEarlyAccess ? (
+                    <Text c="white" size="xs" tt="capitalize">
+                      Early Access
+                    </Text>
+                  ) : (
+                    <IconBolt size={16} color="white" fill="white" />
+                  )}
+                </Badge>
+              </Tooltip>
             )}
             {isArchived && (
               <Badge
