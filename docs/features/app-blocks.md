@@ -456,11 +456,27 @@ full-page run surface only — the model-page slot surfaces impose no width cap,
 there is nothing there to opt out of.
 
 **What it changes and what it does not.** The cap is inert below its own width, so
-declaring this changes nothing at 1280, 1366, 1440 or 1536 (every laptop class),
-nothing on a tablet, and nothing on a phone in either orientation. It changes
-wide desktop displays only: it begins to bind on a maximised browser on a 1080p
-monitor (~1905 CSS px of viewport), where the cap otherwise costs ~150px either
-side, and on a 2560px display it hands your app the remaining ~960px.
+declaring this field does nothing on a phone, nothing on a tablet, and nothing at
+any of the laptop widths — it reaches wide desktop displays only. **The exact
+widths, and the viewport where the cap starts to bind, are stated in the
+`page.fullBleed` `description` in `public/schemas/app-block/v1.json`** — read them
+there. That copy is the author-facing authority *and* it is guarded: a test
+asserts every width the description calls unaffected really is below
+`APP_PAGE_MAX_WIDTH_PX`, and that the one it calls affected really is above it, in
+both directions. The numbers are deliberately **not** mirrored onto this page,
+because a second copy here would go on telling you the old answer after the cap
+moves and nothing would fail.
+
+**For most apps it is cosmetically inert** — check that before spending a review
+round-trip on it. If your app imposes a max-width of its own (most shipped ones do,
+as noted above), your own well binds before the platform cap ever does: declaring
+`fullBleed` then changes which background paints the far gutter and nothing else,
+and nothing about your content moves at any width. It is worth declaring when your
+layout is genuinely unbounded — the two apps it made a real difference for are both
+`100dvh` two-pane shells with no width of their own. A moderator should expect the
+same thing from the other side: for most applicants the before-and-after
+screenshots are identical, which is a property of the field rather than a reason to
+refuse it.
 
 **When not to declare it:** to look bigger. Your app cannot see how wide the
 viewer's monitor is, and an unbounded line length — or one form stretched across
