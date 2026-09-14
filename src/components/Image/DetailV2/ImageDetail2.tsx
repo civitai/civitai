@@ -293,7 +293,7 @@ export function ImageDetail2() {
             ? `${env.NEXT_PUBLIC_BASE_URL}/user/${image.user.username}`
             : undefined,
         }
-      : undefined;
+      : { '@type': 'Person', name: 'Civitai user' };
   const creditText = image.user.username && !image.user.deletedAt ? image.user.username : undefined;
   const copyrightNotice =
     image.user.username && !image.user.deletedAt ? `© ${image.user.username}` : undefined;
