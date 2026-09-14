@@ -364,6 +364,39 @@ describe('opening a row goes through the one choke point', () => {
   });
 });
 
+describe('the queue is ordered by the server, never by the browser', () => {
+  /**
+   * 🔴 A CLIENT-SIDE SORT IS THE SILENTLY-WRONG ANSWER HERE, AND IT IS THE OBVIOUS ONE. The list is
+   * keyset-paged at `FEEDBACK_PAGE_SIZE`, so `[...data.items].sort(…)` orders the 50 rows that
+   * happen to be loaded and presents them as an ordering of the queue: the arrow points the right
+   * way, the visible rows are in order, and it is wrong for every queue past its first page. With 26
+   * live rows it is not merely hard to spot — it is INDISTINGUISHABLE from the correct
+   * implementation on every query anyone can run today. The ordering lives in `getFeedbackList`, and
+   * `lib/server/__tests__/feedback-sort.pglite.test.ts` is where it is proved across a boundary.
+   *
+   * Scoped to `+page.svelte` deliberately: that is the file that holds the table and the only one
+   * with `data.items` in scope. Scanning the whole directory would flag a legitimate `.sort()` over
+   * something else entirely in a sibling panel — a guard that reddens for the wrong reason is one
+   * people learn to click through.
+   */
+  it('renders data.items in the order the server returned them', () => {
+    const page = source('+page.svelte');
+
+    // The each-block is what renders the queue; pin that it reads `data.items` directly, so a
+    // reordered local copy would have to change this line to be used at all.
+    expect(page).toContain('{#each data.items as row (row.id)}');
+
+    // 🔴 POSITIVE CONTROL. `not.toContain` over an empty string passes, and so does a pattern that
+    // cannot match the spelling anyone would actually write. Feed the scan a planted sort — in the
+    // exact shape this component would use — and watch it match before reading the verdict.
+    const REORDERS = /\.(sort|toSorted|reverse|toReversed)\s*\(/g;
+    const planted = 'const rows = [...data.items].sort((a, b) => (a.area < b.area ? -1 : 1));';
+    expect(planted.match(REORDERS)).toHaveLength(1);
+
+    expect(page.match(REORDERS) ?? []).toEqual([]);
+  });
+});
+
 describe('round-1 defects that a simplify would reintroduce', () => {
   /**
    * `splitContext` deduplicates `images` among themselves; nothing compares `screenshotId` against

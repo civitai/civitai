@@ -12,7 +12,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const triageFeedback = vi.fn();
 const promoteFeedbackToBug = vi.fn();
 const linkFeedbackToBug = vi.fn();
-const getFeedbackList = vi.fn(async () => ({ items: [], nextCursor: null }));
+// The shape the real service returns, both halves of the keyset included. A fake that omits a field
+// the loader forwards is a fake the loader can be broken against and still pass.
+const getFeedbackList = vi.fn(async () => ({ items: [], nextCursor: null, nextCursorValue: null }));
 const getFeedbackAreas = vi.fn(async () => [] as string[]);
 const getSiblingFeedback = vi.fn(async () => []);
 
@@ -150,6 +152,43 @@ describe('load', () => {
     await expect(Promise.resolve(load(loadEvent('?status=new')))).rejects.toThrow(
       'connection terminated'
     );
+  });
+
+  /**
+   * 🔴 THE SORT REACHES THE QUERY, AND A HOSTILE ONE DOES NOT. `?sort=`/`?dir=` are typed by whoever
+   * is holding the keyboard and the column ends up naming a SQL identifier, so what `load` hands the
+   * service is the claim worth pinning here — the allowlist itself is tested in
+   * `lib/__tests__/feedback-sort.test.ts`, and the service refuses a second time on its own map.
+   */
+  it('passes a known sort through and degrades an unknown one to the default ordering', async () => {
+    await loaded('?status=new&sort=area&dir=desc');
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ sort: { column: 'area', direction: 'desc' } })
+    );
+
+    for (const hostile of ['attachments', 'createdAt', 'f.id', 'id%3B+drop+table', '']) {
+      vi.clearAllMocks();
+      await loaded(`?status=new&sort=${hostile}&dir=asc`);
+      expect(getFeedbackList, `"${hostile}" reached the service`).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: null })
+      );
+    }
+  });
+
+  /**
+   * The value half of the compound cursor. Forwarded as TEXT — which column it belongs to, and
+   * therefore how it has to be coerced, is the service's to know (`FEEDBACK_SORT_KEYS`). `load`
+   * bounds its LENGTH only, because an unbounded parameter is free work for whoever edits the URL.
+   */
+  it('forwards the cursor value half, and drops one past its length bound', async () => {
+    await loaded('?status=new&sort=user&dir=asc&cursor=12&cursorValue=grace');
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: 12, cursorValue: 'grace' })
+    );
+
+    vi.clearAllMocks();
+    await loaded(`?status=new&sort=user&dir=asc&cursor=12&cursorValue=${'x'.repeat(301)}`);
+    expect(getFeedbackList).toHaveBeenCalledWith(expect.objectContaining({ cursorValue: null }));
   });
 
   it('degrades a cursor Postgres would ERROR on, rather than passing it to the query', async () => {

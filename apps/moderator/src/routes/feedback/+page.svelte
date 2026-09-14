@@ -16,6 +16,13 @@
   import { urlWith } from '$lib/url';
   import { feedbackOpenHref } from '$lib/feedback-tabs';
   import {
+    FEEDBACK_CURSOR_VALUE_PARAM,
+    feedbackSortAria,
+    feedbackSortHref,
+    feedbackSortMarker,
+    type FeedbackSortColumn,
+  } from '$lib/feedback-sort';
+  import {
     feedbackAttachmentCount,
     feedbackStatusBadgeClass,
     handledByLabel,
@@ -62,6 +69,41 @@
   const pageError = $derived(
     !data.openVisible && form && 'error' in form && form.error ? String(form.error) : null
   );
+
+  /**
+   * 🔴 THE NEXT-PAGE LINK CARRIES BOTH HALVES OF THE KEYSET. `?cursor=` is still the boundary row's
+   * id; `?cursorValue=` is its value in the SORTED column, and the pair is what makes the boundary
+   * unique when the sort column repeats (`area`, `status` and a handler's username all do).
+   *
+   * 🔴 `searchParams.set`, NOT `urlWith`, for the value half. `urlWith` deletes on an EMPTY STRING as
+   * well as on null — that is the right rule for a filter control, where empty means "not filtering",
+   * and the wrong one here, where an empty string is a VALUE and absence means "the boundary row's
+   * value is null". Collapsing the two would make every row past an empty-string boundary
+   * unreachable: the server would look for the null block, find nothing, and report no next page.
+   */
+  const nextPageHref = $derived.by(() => {
+    if (data.nextCursor === null) return null;
+    const next = new URL(urlWith(page.url, { cursor: data.nextCursor, open: null }), page.url);
+    if (data.nextCursorValue !== null)
+      next.searchParams.set(FEEDBACK_CURSOR_VALUE_PARAM, data.nextCursorValue);
+    return next.pathname + next.search;
+  });
+
+  /** The nine columns, in order. `null` is a header that does not sort — see `FEEDBACK_SORT_COLUMNS`. */
+  const COLUMNS: { label: string; sort: FeedbackSortColumn | null; class?: string }[] = [
+    { label: 'Age', sort: 'age' },
+    { label: 'Area', sort: 'area' },
+    { label: 'User', sort: 'user' },
+    { label: 'Message', sort: null },
+    // 🔴 NOT SORTABLE. The count is derived from JSONB by `feedbackAttachmentCount`; sorting it
+    // server-side needs a second implementation of that arithmetic in SQL, unindexed, which nothing
+    // makes agree with the TypeScript one. The reasoning is in `$lib/feedback-sort.ts`.
+    { label: '📎', sort: null, class: 'text-right' },
+    { label: 'Status', sort: 'status' },
+    { label: 'Handled', sort: 'handled' },
+    { label: 'Issue', sort: 'issue' },
+    { label: '', sort: null, class: 'w-px' },
+  ];
 </script>
 
 <header class="page-header">
@@ -122,15 +164,37 @@
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>Age</TableHead>
-          <TableHead>Area</TableHead>
-          <TableHead>User</TableHead>
-          <TableHead>Message</TableHead>
-          <TableHead class="text-right">📎</TableHead>
-          <TableHead>Status</TableHead>
-          <TableHead>Handled</TableHead>
-          <TableHead>Issue</TableHead>
-          <TableHead class="w-px"></TableHead>
+          <!--
+            🔴 REAL LINKS, NOT BUTTONS, AND THE SORT IS APPLIED BY THE SERVER. Two separate reasons,
+            both load-bearing:
+              - The list is keyset-paged at `FEEDBACK_PAGE_SIZE`. Sorting the loaded rows in the
+                browser orders ONE page and presents it as an ordering of the queue — right on every
+                screen, wrong for any queue past its first page, and indistinguishable from correct
+                while the table is small. Nothing in this component sorts anything.
+              - `?sort=`/`?dir=` live in the URL because every successful write calls
+                `invalidateAll()`, and because `replaceState` does not update `page.url` in this
+                version of SvelteKit — shallow routing here is inert while looking live. A link
+                navigates, which is also what keeps the control working without JS.
+          -->
+          {#each COLUMNS as column (column.label)}
+            <TableHead
+              class={column.class}
+              aria-sort={column.sort ? feedbackSortAria(data.sort, column.sort) : undefined}
+            >
+              {#if column.sort}
+                <a
+                  href={feedbackSortHref(page.url, column.sort)}
+                  class="inline-flex items-center gap-1 hover:text-white"
+                >
+                  {column.label}<span class="text-xs tabular-nums"
+                    >{feedbackSortMarker(data.sort, column.sort)}</span
+                  >
+                </a>
+              {:else}
+                {column.label}
+              {/if}
+            </TableHead>
+          {/each}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -213,7 +277,5 @@
     </Table>
   </div>
 
-  <CursorPager
-    href={data.nextCursor ? urlWith(page.url, { cursor: data.nextCursor, open: null }) : null}
-  />
+  <CursorPager href={nextPageHref} />
 {/if}
