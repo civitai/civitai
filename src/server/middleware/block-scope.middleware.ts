@@ -3,10 +3,12 @@ import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import {
   ensureRegisterAppBlockRuntimeMetrics,
+  recordBlockRestApprovalRefusal,
   statusToRequestResult,
   type AppBlockEndpoint,
 } from '~/server/metrics/app-block-runtime.metrics';
 import { isAppBlocksRuntimeEnabled } from '~/server/services/app-blocks-flag';
+import { resolveRestApprovalVerdict } from '~/server/services/blocks/block-approval.service';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
   BLOCK_TOKEN_AUDIENCE,
@@ -851,6 +853,35 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // before the wrapped handler runs. Fail-open on Redis incidents.
     if (await BlockRevocation.isRevoked(claims.blockInstanceId)) {
       res.status(403).json({ error: 'block instance revoked' });
+      return;
+    }
+
+    // APPROVED-STATUS GATE. The whole argument, the `dev` exemption, how it reconciles
+    // with the two shared-storage resolvers' different rules, and why it fails CLOSED
+    // live on `resolveRestApprovalVerdict` in
+    // `~/server/services/blocks/block-approval.service` — one docblock, not two.
+    //
+    // 🔴 The revocation check above fails OPEN and this one fails CLOSED. That is not an
+    // inconsistency in this function: revocation's fail-open lives INSIDE the primitive
+    // (`BlockRevocation.isRevoked` swallows a Redis error and returns false), so a
+    // "cleanup" here could not align them even if it wanted to.
+    //
+    // ORDER MATTERS AND MIRRORS THE BRIDGE: revocation is a Redis GET and responds to a
+    // USER action within seconds, so it runs first and a revoked-AND-suspended instance
+    // is reported as revoked. This DB read runs second and only on instances that
+    // survived it.
+    const approval = await resolveRestApprovalVerdict(claims);
+    if (approval !== 'ok' && approval !== 'dev_exempt') {
+      recordBlockRestApprovalRefusal(approval);
+      if (approval === 'not_found') {
+        res.status(404).json({ error: 'app block not found' });
+        return;
+      }
+      if (approval === 'lookup_failed') {
+        res.status(503).json({ error: 'app block status unavailable' });
+        return;
+      }
+      res.status(403).json({ error: 'app block is not approved' });
       return;
     }
 
