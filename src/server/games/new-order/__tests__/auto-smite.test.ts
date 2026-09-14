@@ -13,7 +13,7 @@ const {
 } = vi.hoisted(() => ({
   mockClickhouseQuery: vi.fn().mockResolvedValue([]),
   mockGetVotingRateLimitConfig: vi.fn().mockResolvedValue(null),
-  mockSmitePlayer: vi.fn().mockResolvedValue(undefined),
+  mockSmitePlayer: vi.fn(),
   mockHandleLogError: vi.fn(),
   mockAbuseReport: vi.fn().mockResolvedValue(undefined),
   counterStub: {
@@ -82,6 +82,22 @@ const mockLogToAxiom = loggingMock.logToAxiom;
 const SYSTEM_USER_ID = constants.system.user.id;
 const AUTO_SMITE_SIZE = newOrderConfig.smiteSize * 50;
 
+/**
+ * 🔴 A SUCCESSFUL `smitePlayer` FIRES `onSmiteCreated`, SO A FAKE THAT ONLY RESOLVES IS NOT ONE.
+ *
+ * The real service commits the smite row and invokes the hook there, before a tail of non-durable
+ * work that can throw with the penalty already live (measured in `smite-durable-write.test.ts`).
+ * The job records board membership from that hook, so a fake that resolves WITHOUT firing it models
+ * a call that wrote nothing — and every "this one smites" case here would silently be asserting the
+ * failure path while reading like the success one.
+ */
+type SmiteArgs = { playerId: number; onSmiteCreated?: (smite: { id: number }) => void };
+let nextSmiteId = 1;
+const smiteSucceeds = async (args: SmiteArgs) => {
+  args.onSmiteCreated?.({ id: nextSmiteId++ });
+  return undefined;
+};
+
 const strictSuspect = (overrides: Partial<Record<string, number>> = {}) => ({
   userId: 100,
   totalRatings: 200,
@@ -99,7 +115,7 @@ beforeEach(() => {
   mockGetVotingRateLimitConfig.mockReset();
   mockGetVotingRateLimitConfig.mockResolvedValue(null);
   mockSmitePlayer.mockReset();
-  mockSmitePlayer.mockResolvedValue(undefined);
+  mockSmitePlayer.mockImplementation(smiteSucceeds);
   mockAbuseReport.mockReset();
   mockAbuseReport.mockResolvedValue(undefined);
 });
@@ -151,11 +167,14 @@ describe('runAbuseDetectionScan auto-smite branch', () => {
     await runAbuseDetectionScan();
 
     expect(mockSmitePlayer).toHaveBeenCalledTimes(1);
+    // The WHOLE argument set, not a subset — so dropping the durable-write hook fails here as well
+    // as in the outcome cases below, which is the cheaper place to notice it.
     expect(mockSmitePlayer).toHaveBeenCalledWith({
       playerId: 100,
       modId: SYSTEM_USER_ID,
       reason: expect.stringContaining('only 1 unique rating value'),
       size: AUTO_SMITE_SIZE,
+      onSmiteCreated: expect.any(Function),
     });
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -278,16 +297,22 @@ describe('runAbuseDetectionScan auto-smite branch', () => {
       autoSmiteAbusers: true,
     });
     mockSmitePlayer
-      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(smiteSucceeds)
       .mockRejectedValueOnce(new Error('db down'))
-      .mockResolvedValueOnce(undefined);
+      .mockImplementationOnce(smiteSucceeds);
 
     await runAbuseDetectionScan();
 
     expect(mockSmitePlayer).toHaveBeenCalledTimes(3);
+    // 🔴 The WHOLE key, not a substring, and the player id in the DETAILS. `handleLogError`'s second
+    // argument becomes the Axiom `name` an alert matches on; this used to interpolate the id into a
+    // free-text sentence there, which is both unmatchable and unbounded in cardinality — one distinct
+    // alert name per failing player. A `stringContaining` assertion would keep passing if someone put
+    // the sentence back.
     expect(mockHandleLogError).toHaveBeenCalledWith(
       expect.any(Error),
-      expect.stringContaining('auto-smite failed for player 401')
+      'new-order-abuse-detection:auto-smite-failed',
+      expect.objectContaining({ playerId: 401, smited: false })
     );
   });
 });
@@ -350,9 +375,25 @@ describe('runAbuseDetectionScan abuse-board report', () => {
     expect(report.counters).toMatchObject({ suspects: 2, auto_smited: 1, filed_for_review: 1 });
   });
 
-  it('files a suspect whose smite THREW as not-actioned', async () => {
-    // 🔴 The outcome, not the intent. 401 was selected for smiting and the write failed, so it is
-    // still an open case — filing it as actioned would tell a moderator it had been dealt with.
+  /**
+   * 🔴 THE TWO SHAPES OF "THE SMITE CALL THREW", AND THEY MUST BE ASSERTED AS A PAIR.
+   *
+   * `smitePlayer` commits the smite ROW and then does a pile of non-durable work — a count, a
+   * possible career reset, a Redis counter increment, a signal, a notification — any of which can
+   * throw with the penalty already live. So a throw says nothing on its own about whether the account
+   * was penalised, and the two cases want OPPOSITE rows on the board:
+   *
+   *  - threw with NOTHING written  → open case, `actioned: false`. Claiming otherwise tells a
+   *    moderator an account was dealt with when it was not.
+   *  - threw AFTER the row landed  → a live penalty, `actioned: true`. Filing it open puts "No action
+   *    was taken by this scan" beside a smite that already exists and invites a second one.
+   *
+   * Either case alone passes with the flag collapsed in the direction it happens to want — recording
+   * membership after the `await` passes the first and fails the second; recording it before the call
+   * passes the second and fails the first. The pair is what pins membership to the durable write.
+   */
+  it('files a suspect whose smite threw with NOTHING WRITTEN as not-actioned', async () => {
+    // 401 was selected for smiting and the row was never created, so it is still an open case.
     mockClickhouseQuery.mockResolvedValue([
       strictSuspect({ userId: 400 }),
       strictSuspect({ userId: 401 }),
@@ -363,7 +404,10 @@ describe('runAbuseDetectionScan abuse-board report', () => {
       perDay: 1,
       autoSmiteAbusers: true,
     });
-    mockSmitePlayer.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('db down'));
+    // Rejects without ever invoking `onSmiteCreated` — the shape of the `create` itself failing.
+    mockSmitePlayer
+      .mockImplementationOnce(smiteSucceeds)
+      .mockRejectedValueOnce(new Error('db down'));
 
     await runAbuseDetectionScan();
 
@@ -372,7 +416,49 @@ describe('runAbuseDetectionScan abuse-board report', () => {
     expect(byUser.get(400)).toMatchObject({ actioned: true, action: 'smite' });
     expect(byUser.get(401)?.actioned).toBe(false);
     expect(byUser.get(401)).not.toHaveProperty('action');
+    expect(byUser.get(401)?.reason).toContain('No action was taken');
     expect(report.counters).toMatchObject({ auto_smited: 1, filed_for_review: 1 });
+  });
+
+  it('files a suspect whose smite ROW WAS WRITTEN but whose call then threw as actioned', async () => {
+    // 501's penalty is live in the database; only the non-durable tail failed. The board must say so,
+    // or a moderator reads an already-penalised account as an untouched one.
+    mockClickhouseQuery.mockResolvedValue([
+      strictSuspect({ userId: 500 }),
+      strictSuspect({ userId: 501 }),
+    ]);
+    mockGetVotingRateLimitConfig.mockResolvedValue({
+      perMinute: 1,
+      perHour: 1,
+      perDay: 1,
+      autoSmiteAbusers: true,
+    });
+    mockSmitePlayer
+      .mockImplementationOnce(smiteSucceeds)
+      .mockImplementationOnce(
+        async (args: { onSmiteCreated?: (smite: { id: number }) => void }) => {
+          // The durable half succeeded — this is the signal `smitePlayer` fires the instant the row is
+          // committed — and the throw is everything after it.
+          args.onSmiteCreated?.({ id: 987 });
+          throw new Error('counter backend unavailable');
+        }
+      );
+
+    await runAbuseDetectionScan();
+
+    const report = filedReport();
+    const byUser = new Map(report.findings.map((f) => [f.userId, f]));
+    expect(byUser.get(500)).toMatchObject({ actioned: true, action: 'smite' });
+    expect(byUser.get(501)).toMatchObject({ actioned: true, action: 'smite' });
+    expect(byUser.get(501)?.reason).toContain('Auto-smited');
+    expect(byUser.get(501)?.reason).not.toContain('No action was taken');
+    expect(report.counters).toMatchObject({ suspects: 2, auto_smited: 2, filed_for_review: 0 });
+    // The failure is still recorded — a live penalty whose tail broke is not a silent success.
+    expect(mockHandleLogError).toHaveBeenCalledWith(
+      expect.any(Error),
+      'new-order-abuse-detection:auto-smite-failed',
+      expect.objectContaining({ playerId: 501, smited: true })
+    );
   });
 
   it('files a run that found nobody, so a quiet detector is distinguishable from a clean day', async () => {

@@ -1,4 +1,4 @@
-import type { AbuseReportInput } from '@civitai/moderation';
+import { MAX_REASON_LENGTH, type AbuseReportInput } from '@civitai/moderation';
 
 /**
  * Turning the Knights of New Order rating-abuse scan into abuse-board reports.
@@ -52,10 +52,6 @@ export const ABUSE_SCAN_WINDOW_HOURS = 24;
  *  and every test assert the same token. */
 export const SMITE_ACTION = 'smite';
 
-/** The wire contract's own cap on `reason`. Restated as a constant because the truncation below is
- *  arithmetic on it, and a literal in two places drifts. */
-const MAX_REASON_LENGTH = 2_000;
-
 /** One row of the detection query. Structural, not imported from the job, so this module can be
  *  exercised without dragging in ClickHouse, Redis and the smite service. */
 export type AbuseSuspect = {
@@ -71,8 +67,20 @@ export type AbuseSuspect = {
 type Finding = AbuseReportInput['findings'][number];
 
 /**
- * 🔴 A reason over the contract's limit does not lose the finding, it 400s the REPORT and loses
- * every finding in the batch. Truncated here; the ellipsis is the record that something was cut.
+ * A reason over the contract's limit does not lose the finding, it 400s the REPORT and loses every
+ * finding in the batch. Truncated here; the ellipsis is the record that something was cut.
+ *
+ * ⚠️ DEFENCE IN DEPTH, NOT LIVE PROTECTION — it has never trimmed anything and cannot with today's
+ * template. `renderReason`'s longest possible output is 311 characters, measured by rendering every
+ * numeric field at `Number.MAX_SAFE_INTEGER` in both branches (269 smited, 311 open — the open
+ * sentence is the longer of the two), against a cap of `MAX_REASON_LENGTH`. A typical finding is
+ * ~220. So this guards a FUTURE template that adds a producer-supplied or unbounded string, not any
+ * input the query can hand it; do not cite it as the thing keeping today's reasons in bounds.
+ *
+ * The bound is IMPORTED from the contract rather than restated. It used to be a local literal beside
+ * the contract's own `.max(...)`, which is a copy that can drift silently: the two disagreeing means
+ * either a trim to a length the parser has already rejected, or no trim where one was needed, and
+ * both present as a detector's runs disappearing from the board rather than as a failure here.
  */
 export function truncateReason(reason: string, max = MAX_REASON_LENGTH): string {
   return reason.length <= max ? reason : `${reason.slice(0, max - 1)}…`;
@@ -156,10 +164,21 @@ export function confidenceFor(suspect: AbuseSuspect): number {
  * `action` entirely rather than passing `null`, which makes the forbidden combination
  * unrepresentable instead of merely absent today.
  *
- * 🔴 `smited` MUST BE THE OUTCOME, NOT THE INTENT. Pass whether `smitePlayer` actually returned —
- * the job's smite loop swallows per-player failures and continues, so "was selected for smiting" and
- * "was smited" are different sets, and claiming the first on the board tells a moderator an account
- * was dealt with when it was not.
+ * 🔴 `smited` MEANS "A SMITE ROW WAS WRITTEN FOR THIS ACCOUNT BY THIS RUN" — the durable penalty,
+ * not the intent to apply one and not the smite call returning cleanly. All three are different
+ * sets, and the board is wrong in a different direction for each of the two it is not:
+ *
+ *  - SELECTED-for-smiting over-claims. The job's loop swallows a per-player failure and carries on,
+ *    so an account whose write never happened would read as dealt with when nothing was done.
+ *  - CALL-RETURNED under-claims, which is the worse of the two because it reads as the safe option.
+ *    `smitePlayer` commits the row first and then does non-durable work that can throw (see its
+ *    `onSmiteCreated` comment); an account caught by that IS penalised, and filing it `actioned:
+ *    false` puts "No action was taken by this scan" on the board beside a live smite, inviting a
+ *    moderator to apply a second one.
+ *
+ * So the job hooks the write itself and this flag carries exactly that fact — no more. It does NOT
+ * claim the player was notified, that their counter moved, or that a third-strike career reset
+ * completed; each of those is in the tail that can fail independently of the penalty.
  */
 export function toFinding(suspect: AbuseSuspect, smited: boolean): Finding {
   const base = {
@@ -187,7 +206,8 @@ export function renderSummary(suspects: AbuseSuspect[], smitedCount: number): st
 
 export type BuildReportArgs = {
   suspects: AbuseSuspect[];
-  /** The accounts `smitePlayer` actually succeeded on. Membership, not selection — see `toFinding`. */
+  /** The accounts this run committed a smite row for. Membership, not selection, and keyed on the
+   *  durable write rather than on the call returning — see `toFinding`. */
   smitedUserIds: ReadonlySet<number>;
   /** The producer's clock at the start of the run. */
   startedAt: Date;

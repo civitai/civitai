@@ -54,6 +54,19 @@ const MAX_INT4 = 2_147_483_647;
  */
 export const MAX_FINDINGS_PER_REPORT = 1_000;
 
+/**
+ * Characters one finding's `reason` may carry.
+ *
+ * EXPORTED for the same structural reason as the cap above, one step earlier in the pipe: a producer
+ * that renders a reason has to truncate it to this bound BEFORE it calls, because an over-long reason
+ * does not lose the finding — it fails the parse and loses the whole report, every correctly-built
+ * finding beside it included. Producers were each restating the literal, which is a copy that can
+ * drift silently: lowering the bound here would leave every producer trimming to the old, now-invalid
+ * length, and the first sign of it would be a detector's runs vanishing from the board. Importing the
+ * constant makes the producer's truncation and the parser's cap equal by construction.
+ */
+export const MAX_REASON_LENGTH = 2_000;
+
 /** Declared once and used by both timestamp fields, so neither can regress without the other. */
 const isoWithOffset = z.iso.datetime({ offset: true });
 
@@ -72,7 +85,7 @@ const abuseFinding = z
     confidence: z.number().min(0).max(1),
     // Why. The evidence-citing sentence, which is the whole value of the row to a moderator, so an
     // empty one is not a finding.
-    reason: z.string().min(1).max(2_000),
+    reason: z.string().min(1).max(MAX_REASON_LENGTH),
     // 🔴 Whether the producer ACTED. False is the common case and the interesting one: it is a
     // detection the system chose not to act on, which is exactly what no existing surface can
     // represent and what a human review queue needs.

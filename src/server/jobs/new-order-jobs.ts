@@ -576,9 +576,11 @@ export async function runAbuseDetectionScan() {
       LIMIT 50
     `;
 
-  // The accounts the smite loop actually succeeded on — MEMBERSHIP, not selection. The loop below
-  // swallows a per-player failure and carries on, so a target that threw is still an open case and
-  // must not be filed on the board as one that was dealt with.
+  // The accounts this run wrote a smite ROW for — MEMBERSHIP, not selection, and keyed on the
+  // durable write rather than on the smite call returning. The loop below swallows a per-player
+  // failure and carries on; a target whose row was never written is still an open case and must not
+  // be filed on the board as one that was dealt with, and a target whose row WAS written must not be
+  // filed as open just because the non-durable tail of `smitePlayer` threw after it.
   const smitedUserIds = new Set<number>();
 
   if (suspects.length > 0) {
@@ -626,10 +628,21 @@ export async function runAbuseDetectionScan() {
             modId: constants.system.user.id,
             reason,
             size: newOrderConfig.smiteSize * 50,
+            // 🔴 MEMBERSHIP IS RECORDED FROM THE DURABLE WRITE, NOT FROM THE CALL RETURNING.
+            //
+            // `smitePlayer` commits the smite row FIRST and then does a pile of non-durable work —
+            // an active-smite count, a possible career reset, a Redis counter increment, a signal,
+            // a notification. A throw anywhere in that tail leaves the penalty live in Postgres.
+            // Recording membership after the `await` would then omit an account that IS smited, and
+            // the board would file it as an open case with "No action was taken by this scan" on a
+            // player who had just been penalised — inviting a moderator to apply a second one.
+            //
+            // The hook fires the instant the row is committed, so the set means exactly "a smite
+            // row exists for this account because of this run". See `smitePlayer`'s own comment.
+            onSmiteCreated: () => {
+              smitedUserIds.add(s.userId);
+            },
           });
-          // Recorded only past the await, so a throw leaves the account out of the set and its
-          // board finding reads `actioned: false` — which is what actually happened.
-          smitedUserIds.add(s.userId);
           await logToAxiom({
             type: 'warning',
             name: 'new-order-auto-smite',
@@ -637,7 +650,17 @@ export async function runAbuseDetectionScan() {
             message: `Auto-smite issued for player ${s.userId}`,
           }).catch(() => null);
         } catch (e) {
-          handleLogError(e as Error, `auto-smite failed for player ${s.userId}`);
+          // 🔴 A STABLE KEY, WITH THE ID IN THE DETAILS. `handleLogError`'s second argument becomes
+          // the Axiom `name`: an alert can match a key and cannot match a sentence, and an
+          // interpolated player id makes every failure its own unbounded, unmatchable name. Same
+          // rule, same spelling as `new-order-abuse-detection:report-failed` below.
+          //
+          // `smited` records whether the penalty landed anyway — the row can be written and the
+          // call still throw, and those two failures want different responses.
+          handleLogError(e as Error, 'new-order-abuse-detection:auto-smite-failed', {
+            playerId: s.userId,
+            smited: smitedUserIds.has(s.userId),
+          });
         }
       }
     }
@@ -702,10 +725,19 @@ const newOrderAbuseDetection = createJob(
   //
   // What the lock is worth, which is the part that IS established: the run-jobs route caps the hold
   // at exactly this value and then releases it while the run continues, so past that point a retry
-  // can start a second concurrent run. Two runs of this scan do not merely double the work — each
-  // files its own board report, and the receiving table's idempotency key is `(detector, started_at)`,
-  // so two different start instants APPEND a near-identical run rather than replacing the first and a
-  // moderator sees the same cohort twice.
+  // can start a second concurrent run.
+  //
+  // 🔴 AND THE WORST CASE OF THAT IS DOUBLE ENFORCEMENT, NOT A DUPLICATED PAGE. An earlier version of
+  // this comment said a second run only means "a moderator sees the same cohort twice"; that is the
+  // cosmetic half and it understated the rest. `smitePlayer` is NOT idempotent — every call INSERTS
+  // another smite row, so a concurrent run smites the same cohort a second time, and on the account
+  // that the second row carries to the third-strike rule `smitePlayer` chains into `resetPlayer`,
+  // which wipes that player's New Order career and notifies them. That is an irreversible penalty
+  // applied because a lock expired, and nothing downstream de-duplicates it.
+  //
+  // The cosmetic half is real too: each run files its own board report, the receiving table's
+  // idempotency key is `(detector, started_at)`, and two different start instants APPEND a
+  // near-identical run rather than replacing the first.
   { lockExpiration: 10 * 60 }
 );
 

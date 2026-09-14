@@ -195,7 +195,30 @@ export async function smitePlayer({
   modId,
   reason,
   size,
-}: SmitePlayerInput & { modId: number }) {
+  onSmiteCreated,
+}: SmitePlayerInput & {
+  modId: number;
+  /**
+   * 🔴 THE DURABLE-WRITE SIGNAL, AND THE ONLY THING THAT CAN CARRY IT OUT OF A FAILED CALL.
+   *
+   * Called once, synchronously, the instant the smite ROW is committed — before the active-smite
+   * count, before any career reset, before the counter increment, the signal and the notification.
+   * Everything past the `create` is either derived state or best-effort delivery; the row is the
+   * penalty, and once it exists the player is smited whether or not this function returns.
+   *
+   * A return value cannot express that, because the case that matters is the one where there IS no
+   * return: `smitesCounter.increment` re-throws a non-connection ClickHouse error out of `getCount`
+   * and then writes to `sysRedis` unguarded, so a Redis blip throws AFTER the penalty is live. A
+   * caller that records "smited" from the call succeeding therefore under-counts a live penalty; a
+   * caller that hooks this over-counts nothing, because the row is already committed when it fires.
+   *
+   * Optional, and no existing caller passes it — behaviour for everyone else is unchanged.
+   *
+   * 🔴 Must not throw: it runs inside this function's own control flow, so an exception here would
+   * abort the tail it was meant to be independent of. Keep it to recording a fact.
+   */
+  onSmiteCreated?: (smite: { id: number }) => void;
+}) {
   const smite = await dbWrite.newOrderSmite.create({
     data: {
       targetPlayerId: playerId,
@@ -205,6 +228,7 @@ export async function smitePlayer({
       remaining: size,
     },
   });
+  onSmiteCreated?.(smite);
 
   const activeSmiteCount = await dbWrite.newOrderSmite.count({
     where: { targetPlayerId: playerId, cleansedAt: null },
@@ -1896,7 +1920,9 @@ export async function getPlayerHistory({
   // page 1 — acceptable for a history view.)
   if (cursor)
     HAVING.push(
-      `(max(createdAt), imageId) < (parseDateTimeBestEffort('${cursor.createdAt.toISOString()}'), ${cursor.imageId})`
+      `(max(createdAt), imageId) < (parseDateTimeBestEffort('${cursor.createdAt.toISOString()}'), ${
+        cursor.imageId
+      })`
     );
 
   const judgments = await clickhouse.$query<{

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { abuseReportInput } from '@civitai/moderation';
+import { MAX_REASON_LENGTH, abuseReportInput } from '@civitai/moderation';
 import {
   ABUSE_SCAN_WINDOW_HOURS,
   NEW_ORDER_ABUSE_DETECTOR,
@@ -80,20 +80,38 @@ describe('renderReason', () => {
 });
 
 describe('truncateReason', () => {
-  it('leaves a reason at the cap untouched and cuts one over it to the cap', () => {
-    expect(truncateReason('a'.repeat(2_000))).toHaveLength(2_000);
-    const cut = truncateReason('a'.repeat(2_001));
-    expect(cut).toHaveLength(2_000);
+  it('trims against the CONTRACT’s bound, not a local copy of it', () => {
+    // 🔴 The cap the producer trims to and the cap the parser enforces must be ONE number. They were
+    // two literals in two packages, which drift silently and in both damaging directions — trimming
+    // to a length the parser already rejects, or not trimming where it would have. The value is
+    // pinned as well as the identifier, so lowering the contract's bound is a deliberate act that
+    // shows up here rather than a silent re-interpretation of every producer's truncation.
+    expect(MAX_REASON_LENGTH).toBe(2_000);
+    expect(truncateReason('a'.repeat(MAX_REASON_LENGTH))).toHaveLength(MAX_REASON_LENGTH);
+    const cut = truncateReason('a'.repeat(MAX_REASON_LENGTH + 1));
+    expect(cut).toHaveLength(MAX_REASON_LENGTH);
     expect(cut.endsWith('…')).toBe(true);
   });
 
-  it('keeps a generated reason inside the contract cap even on absurd inputs', () => {
-    // A 400 here does not lose the finding, it loses the REPORT.
-    const reason = renderReason(
-      suspect({ userId: 2_147_483_647, totalRatings: 999_999_999, uniqueRatings: 999_999 }),
-      true
-    );
-    expect(reason.length).toBeLessThanOrEqual(2_000);
+  it('is defence in depth: the generated reason cannot reach the cap on any input', () => {
+    // ⚠️ This records HEADROOM, not a save. Every numeric field at `Number.MAX_SAFE_INTEGER` — the
+    // ceiling for a JSON number off ClickHouse — renders 269 characters smited and 311 open, against
+    // a cap of 2,000, and a realistic finding is ~220. So `truncateReason` has never trimmed anything
+    // and cannot with this template; it guards a future one that interpolates an unbounded string.
+    // Asserted against a quarter of the cap rather than the cap, which a 6x longer template clears.
+    const absurd = suspect({
+      userId: Number.MAX_SAFE_INTEGER,
+      totalRatings: Number.MAX_SAFE_INTEGER,
+      uniqueRatings: Number.MAX_SAFE_INTEGER,
+      dominantRating: Number.MAX_SAFE_INTEGER,
+      dominantPct: Number.MAX_SAFE_INTEGER,
+      avgPerMinute: Number.MAX_SAFE_INTEGER,
+    });
+    for (const smited of [true, false]) {
+      const reason = renderReason(absurd, smited);
+      expect(reason.length).toBeLessThan(MAX_REASON_LENGTH / 4);
+      expect(reason.endsWith('…')).toBe(false); // nothing was cut
+    }
     expect(abuseReportInput.safeParse(reportOf([suspect()], new Set([100]))).success).toBe(true);
   });
 });
