@@ -10,7 +10,7 @@ import { memo, useMemo } from 'react';
 import {
   IconArchiveFilled,
   IconBolt,
-  IconDiamondFilled,
+  IconLockDollar,
   IconBookmark,
   IconDownload,
   IconLock,
@@ -86,6 +86,15 @@ function ModelCardContent({ data }: Props) {
     if (isNSFW) modFlagLabels.push('NSFW');
   }
 
+  // `.chip` fixes height at 26px; Mantine's `circle` only rounds the corners and sizes the width
+  // from the badge size, so the two together give a narrow oval. Pin both axes to the chip height.
+  const paidBadgeStyle = useMemo(
+    () =>
+      isPaidAccess
+        ? { backgroundColor: theme.colors.success[5], width: 26, height: 26, padding: 0 }
+        : undefined,
+    [isPaidAccess, theme]
+  );
   // Ungated cards never touch `theme.colors.success`, which is an app-level scale a bare
   // MantineProvider does not carry. Gated ones still do, so this narrows the blast radius rather
   // than removing it.
@@ -216,7 +225,10 @@ function ModelCardContent({ data }: Props) {
               // drops an accessible name from a role-less generic, so without this the icon reaches a
               // screen reader as nothing at all. The Tooltip is hover-only — Badge renders no
               // tabIndex — so it cannot serve as the name either.
-              <Tooltip label="Paid">
+              // Mantine's default is hover only (`focus: false, touch: false`). The badge is the
+              // sole explanation of an abstract glyph, so it should also answer a tap and a
+              // keyboard focus, not just a mouse.
+              <Tooltip label="Paid" events={{ hover: true, focus: true, touch: true }}>
                 <Badge
                   className={cardClasses.chip}
                   variant="filled"
@@ -224,9 +236,11 @@ function ModelCardContent({ data }: Props) {
                   data-status-badge="access"
                   role="img"
                   aria-label="Paid"
-                  style={accessBadgeStyle}
+                  // Icon-only, so a pill leaves dead space either side of a square glyph.
+                  circle
+                  style={paidBadgeStyle}
                 >
-                  <IconDiamondFilled size={16} color="white" />
+                  <IconLockDollar size={16} color="white" />
                 </Badge>
               </Tooltip>
             ) : null}

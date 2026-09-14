@@ -274,7 +274,7 @@ async function cardPainted() {
 const justPublished = () => new Date(Date.now() - 60 * 1000);
 
 describe('ModelCard paid-gate badge', () => {
-  test('renders a diamond for a permanent gate, not the word "Paid"', async () => {
+  test('renders a lock-dollar for a permanent gate, not the word "Paid"', async () => {
     renderWithProviders(
       <WithPalette>
         <ModelCard data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }} />
@@ -294,19 +294,20 @@ describe('ModelCard paid-gate badge', () => {
     const icon = el.querySelector('svg');
     expect(icon, 'no icon rendered in the access badge').toBeTruthy();
 
-    // The FULL tabler name, not the substring `diamond`. Five diamond icons ship and all five class
-    // names contain it, so `toContain('diamond')` stays green for `IconDiamondOff` — a diamond with
-    // a slash through it, whose plain reading on a paid badge is "NOT paid".
-    expect(icon!.getAttribute('class') ?? '').toContain('tabler-icon-diamond-filled');
+    // The FULL tabler name. A substring like `lock` matches IconLock, IconLockOff, IconLockOpen and
+    // a dozen others — IconLockOff on a paid badge reads as "NOT paid", which is the mutation that
+    // matters. `diamond` had exactly this problem before it was tightened.
+    expect(icon!.getAttribute('class') ?? '').toContain('tabler-icon-lock-dollar');
 
-    // Filled vs outline is not in the class alone: tabler emits `fill={color}`/`stroke="none"` for
-    // filled and `fill="none"` for outline. This separates them, and catches `color` being dropped —
-    // the chip's white comes from Mantine CSS the harness never loads, so nothing else would notice.
-    expect(icon!.getAttribute('fill')).toBe('white');
+    // `IconLockDollar` is an OUTLINE icon, so tabler emits `stroke={color}` and `fill="none"` — the
+    // opposite of the filled diamond this replaced. Reading stroke catches `color` being dropped;
+    // the chip's white comes from Mantine CSS the harness never loads, so nothing else would.
+    expect(icon!.getAttribute('stroke')).toBe('white');
 
     // Run the bolt prohibition over the whole badge rather than the first icon's class, where it
     // could never fail: no tabler class contains both substrings.
     expect(el.innerHTML).not.toContain('bolt');
+    expect(el.innerHTML).not.toContain('diamond');
   });
 
   test('the access badge carries an accessible name, not merely an aria-label attribute', async () => {
