@@ -814,6 +814,7 @@ export default function ModelDetailsV2({
     description: removeTags(model.description ?? ''),
     name: model.name,
     image: imageUrl,
+    // Google rejects an aggregateRating whose item has no author, so deleted users get a placeholder.
     author:
       !model.user.deletedAt && model.user.username
         ? {
@@ -823,7 +824,7 @@ export default function ModelDetailsV2({
               ? `${env.NEXT_PUBLIC_BASE_URL}/user/${model.user.username}`
               : undefined,
           }
-        : undefined,
+        : { '@type': 'Person', name: 'Civitai user' },
     datePublished: model.publishedAt,
     ...(totalRatingCount > 0 && {
       aggregateRating: {
