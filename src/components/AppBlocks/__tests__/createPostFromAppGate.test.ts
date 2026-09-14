@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   buildCreatePostConsentCopy,
+  CREATE_POST_HOST_ERRORS,
   createPostSettlement,
   resolveCreatePostRequest,
   type CreatePostPreview,
@@ -247,5 +248,66 @@ describe('buildCreatePostConsentCopy', () => {
     expect(
       buildCreatePostConsentCopy({ appName: 'App', preview: preview() }).droppedTagsLine
     ).toBeNull();
+  });
+});
+
+describe('CREATE_POST_HOST_ERRORS — the reply contract', () => {
+  it('every refusal this layer can emit is a declared code', () => {
+    // A typed constant rather than scattered literals so the SDK can branch on
+    // them and `tsc` catches a typo at the emit site.
+    const emitted = [
+      resolveCreatePostRequest({
+        raw: { requestId: 'r' },
+        ready: true,
+        signedIn: true,
+        reviewNack: true,
+      }),
+      resolveCreatePostRequest({
+        raw: { requestId: 'r' },
+        ready: false,
+        signedIn: true,
+        reviewNack: false,
+      }),
+      resolveCreatePostRequest({
+        raw: { requestId: 'r' },
+        ready: true,
+        signedIn: false,
+        reviewNack: false,
+      }),
+      resolveCreatePostRequest({
+        raw: { requestId: 'r' },
+        ready: true,
+        signedIn: true,
+        reviewNack: false,
+      }),
+    ]
+      .filter((d): d is Extract<typeof d, { kind: 'refuse' }> => d.kind === 'refuse')
+      .map((d) => d.error);
+
+    expect(emitted).toHaveLength(4);
+    for (const e of emitted) expect(CREATE_POST_HOST_ERRORS).toContain(e);
+  });
+
+  it('the settlement emits the declared `declined` code verbatim', () => {
+    const emit = vi.fn();
+    createPostSettlement({ requestId: 'r', emit }).decline();
+    expect(emit).toHaveBeenCalledWith({ requestId: 'r', error: 'declined' });
+    expect(CREATE_POST_HOST_ERRORS).toContain('declined');
+  });
+
+  it('🔴 the list is CLOSED for HOST codes but must NOT bound what a block RECEIVES', () => {
+    // The SDK-side validator has to accept ANY string. The server's own refusal
+    // messages travel through the SAME field, and a reply that fails validation
+    // is DROPPED before correlation — wedging the block for ten minutes rather
+    // than surfacing the reason. Pinned with a real server message so the
+    // constant can never be mistaken for an allowlist.
+    const serverMessage = 'this app may not attach posts to its own publisher’s models';
+    expect(CREATE_POST_HOST_ERRORS as readonly string[]).not.toContain(serverMessage);
+
+    // …and the settlement carries it through untouched, which is what the block
+    // must be able to display.
+    const emit = vi.fn();
+    createPostSettlement({ requestId: 'r', emit }).reply({ error: serverMessage });
+    expect(emit).toHaveBeenCalledWith({ requestId: 'r', error: serverMessage });
   });
 });

@@ -65,9 +65,47 @@ export type CreatePostPreview = {
   gallery: { modelVersionId: number; modelName: string; versionName: string } | null;
 };
 
+/**
+ * The refusal codes the HOST itself emits, as opposed to the free-text server
+ * messages that also flow through the same `error` field.
+ *
+ * 🔴 THE REPLY'S `error` MUST STAY SHAPE-CHECKED, NEVER MEMBERSHIP-CHECKED, AND
+ * THIS CONSTANT IS NOT A LICENCE TO CHANGE THAT. The SDK has one validator that
+ * constrains an error to an enum (`isValidWildcardPackResult`) and one that
+ * deliberately does not (`isValidCollectionFollowResult`), and the second one
+ * carries the reasoning: a reply failing validation is DROPPED at the top of the
+ * transport, before correlation, so the pending request is never rejected — it
+ * just sits until its own timer fires. For a consent-gated message that timer is
+ * TEN MINUTES. Constraining `error` to a set would therefore convert every
+ * server failure ("this app may not attach posts to its own publisher's models",
+ * a rate limit, a blocked title) into a wedged button with no network call and
+ * no error for the author to see.
+ *
+ * So: this exists so the host's OWN codes are greppable, typed, and stable for a
+ * block that wants to branch on them — `satisfies readonly string[]` keeps them
+ * string-typed rather than widening — and the SDK-side validator must accept any
+ * string. The union is the set a block can RELY on, not the set it may RECEIVE.
+ */
+export const CREATE_POST_HOST_ERRORS = [
+  /** Mod-review sandbox with run-for-real off. */
+  'review-mode',
+  /** The block has not finished loading. */
+  'block is not ready',
+  /** Anonymous viewer — there is no profile to post to. */
+  'sign in to post',
+  /** The payload named no sources, or the server resolved none. */
+  'no images to post',
+  /** The host holds no block token yet. */
+  'no block token',
+  /** The viewer dismissed the confirm. Guaranteed to mean NO post was created. */
+  'declined',
+] as const satisfies readonly string[];
+
+export type CreatePostHostError = (typeof CREATE_POST_HOST_ERRORS)[number];
+
 export type CreatePostGateDecision =
   | { kind: 'drop' }
-  | { kind: 'refuse'; requestId: string; error: string }
+  | { kind: 'refuse'; requestId: string; error: CreatePostHostError }
   | {
       kind: 'proceed';
       request: {
