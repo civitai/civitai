@@ -41,10 +41,24 @@ const versionIdToVariant = new Map<number, OpenAIVariant>([
   [openaiVersionIds['v2.5-sunburst'], 'gpt2'],
 ]);
 
-const openaiAspectRatios = [
+const openaiGpt1AspectRatios = [
   { label: '1:1', value: '1:1', width: 1024, height: 1024 },
   { label: '3:2', value: '3:2', width: 1536, height: 1024 },
   { label: '2:3', value: '2:3', width: 1024, height: 1536 },
+];
+
+const openaiGpt2AspectRatios = [
+  { label: '21:9', value: '21:9', width: 1680, height: 720 },
+  { label: '16:9', value: '16:9', width: 1536, height: 864 },
+  { label: '3:2', value: '3:2', width: 1536, height: 1024 },
+  { label: '4:3', value: '4:3', width: 1344, height: 1008 },
+  { label: '5:4', value: '5:4', width: 1280, height: 1024 },
+  { label: '1:1', value: '1:1', width: 1024, height: 1024 },
+  { label: '4:5', value: '4:5', width: 1024, height: 1280 },
+  { label: '3:4', value: '3:4', width: 1008, height: 1344 },
+  { label: '2:3', value: '2:3', width: 1024, height: 1536 },
+  { label: '9:16', value: '9:16', width: 864, height: 1536 },
+  { label: '9:21', value: '9:21', width: 720, height: 1680 },
 ];
 
 export const qualityOptions = ['high', 'medium', 'low'] as const;
@@ -72,10 +86,20 @@ const variantOf = (ext: OpenAIModeExt): OpenAIVariant => {
 };
 
 const gpt1 = defineGraph<OpenAIModeExt>()
+  .field('aspectRatio', aspectRatioDef({ options: openaiGpt1AspectRatios, default: '1:1' }))
   .field('transparent', boolDef(false))
   .field('quality', QUALITY);
 
-const gpt2 = defineGraph<OpenAIModeExt>().field('quality', QUALITY);
+const gpt2 = defineGraph<OpenAIModeExt>()
+  .field(
+    'aspectRatio',
+    aspectRatioDef({
+      options: openaiGpt2AspectRatios,
+      default: '1:1',
+      priorityOptions: ['16:9', '3:2', '1:1', '2:3', '9:16'],
+    })
+  )
+  .field('quality', QUALITY);
 
 /** Tagged: v1's `openaiVariant` computed becomes the branch key. */
 const variants = branch('openaiVariant', variantOf, { gpt1, gpt2 });
@@ -91,7 +115,6 @@ export const openai = defineGraph<FamilyExt>({ scope: familyScope })
       defaultModelId: defaultOpenaiVersionId,
     })
   )
-  .field('aspectRatio', aspectRatioDef({ options: openaiAspectRatios, default: '1:1' }))
   .field('seed', SEED)
   .use(variants)
   .use(promptOnlyTextBlock);

@@ -1,3 +1,6 @@
+import { FEEDBACK_AREAS } from '@civitai/shared/feedback.constants';
+import type { LightboxItem } from './lightbox';
+
 export const FEEDBACK_STATUSES = ['new', 'reviewed', 'actioned', 'dismissed'] as const;
 export type FeedbackStatus = (typeof FEEDBACK_STATUSES)[number];
 
@@ -21,27 +24,20 @@ export const feedbackStatusBadgeClass = (status: string): string =>
   isFeedbackStatus(status) ? FEEDBACK_STATUS_BADGE[status] : '';
 
 /**
- * 🔴 A MIRROR of `FEEDBACK_AREAS` in the main app's `src/shared/constants/feedback.constants.ts`,
- * which is not exported from any workspace package — so nothing keeps the two in step. The union in
- * `feedbackAreaOptions` is what bounds the damage. To make them ONE value, move the constant into
- * `@civitai/shared` and leave a re-export shim, as `basemodel.constants.ts` already does.
- */
-export const FEEDBACK_KNOWN_AREAS = [
-  'bitdex-image-feed',
-  'apps-marketplace',
-  'site-bug-report',
-] as const;
-
-/**
  * The area filter's options.
  *
  * 🔴 THE UNION IS THE WHOLE POINT. Reading the TS registry alone hides the rows of any area retired
  * from it, and reading the table alone hides an area that has no rows yet. Both failures are silent
  * — an empty list reads as "no such feedback", never as "that option is missing".
+ *
+ * The registry half is now the PRODUCER'S OWN constant (`@civitai/shared/feedback.constants`), not a
+ * mirror of it. This file used to carry a hand-copied `FEEDBACK_KNOWN_AREAS` because the constant
+ * lived in the Next app's `src/` and nothing here could reach it; it has been lifted into the shared
+ * package with a re-export shim at the old path, so there is one value again.
  */
 export function feedbackAreaOptions(
   distinctAreas: readonly string[],
-  knownAreas: readonly string[] = FEEDBACK_KNOWN_AREAS
+  knownAreas: readonly string[] = FEEDBACK_AREAS
 ): string[] {
   return [...new Set([...distinctAreas, ...knownAreas])].filter(Boolean).sort();
 }
@@ -217,9 +213,51 @@ export function handledByLabel(row: {
   return row.handledById != null ? `#${row.handledById}` : 'deleted account';
 }
 
-/** Attachments on a row, for the list's 📎 column. Counts the opt-in page capture as one. */
+/**
+ * 🔴 THE TWO CAPTIONS CARRY DIFFERENT PRIVACY WEIGHT AND THE DISTINCTION IS DELIBERATE. A file the
+ * reporter chose to attach is theirs; the opt-in page capture is a picture of whatever was on their
+ * screen, which can include another user's content or UI. Collapsing them to one word ("Attachment")
+ * loses the only thing on screen that tells a moderator which of those they are looking at.
+ */
+export const FEEDBACK_ATTACHMENT_CAPTIONS = {
+  image: 'Attached by the reporter',
+  screenshot: 'Opt-in capture of their own viewport',
+} as const;
+
+/**
+ * Every attachment on a row, in display order, as lightbox frames.
+ *
+ * 🔴 IT TAKES A `FeedbackContext`, NOT `row.context`, AND THAT IS THE SECURITY SEAM. `FeedbackContext`
+ * is the OUTPUT of `splitContext`, so both fields have already been through `IMAGE_KEY` — the filter
+ * standing between a stored, client-supplied id and an `<img src>` in a moderator's browser. Handing
+ * this raw JSONB would route an unfiltered id straight into `getEdgeUrl`, which returns its argument
+ * VERBATIM for anything starting with `http`/`blob`, and hand the reporter a read receipt naming who
+ * opened their report and when. The type is the structural half of that guard; the behavioural half
+ * is pinned in `src/lib/__tests__/feedback.test.ts`.
+ */
+export function feedbackAttachmentItems(context: FeedbackContext): LightboxItem[] {
+  const items: LightboxItem[] = context.images.map((id) => ({
+    id,
+    caption: FEEDBACK_ATTACHMENT_CAPTIONS.image,
+  }));
+  if (context.screenshotId) {
+    items.push({
+      id: context.screenshotId,
+      caption: FEEDBACK_ATTACHMENT_CAPTIONS.screenshot,
+    });
+  }
+  return items;
+}
+
+/**
+ * Attachments on a row, for the list's 📎 column. Counts the opt-in page capture as one.
+ *
+ * Derived from the item list rather than re-adding the two fields: the count and the lightbox must
+ * never disagree about what is on a row, and two open-coded copies of "images plus maybe a capture"
+ * is exactly how they would.
+ */
 export const feedbackAttachmentCount = (context: FeedbackContext): number =>
-  context.images.length + (context.screenshotId ? 1 : 0);
+  feedbackAttachmentItems(context).length;
 
 /**
  * Loki's global `retention_period`, which `{source="faro-rum"}` sits on — it declares no

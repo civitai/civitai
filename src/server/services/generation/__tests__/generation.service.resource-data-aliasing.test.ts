@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 
 /**
  * Cross-request isolation for the moderation flags on a cached generation resource.
@@ -46,8 +47,13 @@ vi.mock('~/server/redis/client', async () => {
       get: vi.fn(),
       set: vi.fn(),
     },
-    // getGateRules reads this; null => no gate rules configured.
-    sysRedis: { hGet: vi.fn().mockResolvedValue(null), hSet: vi.fn() },
+    // Both config stores already migrated and empty.
+    sysRedis: {
+      hGet: vi.fn().mockResolvedValue(null),
+      hSet: vi.fn(),
+      get: vi.fn().mockResolvedValue('1'),
+      hGetAll: vi.fn().mockResolvedValue({}),
+    },
     withSysReadDeadline: vi.fn((p: Promise<unknown>) => p),
   };
 });
@@ -175,6 +181,17 @@ beforeEach(() => {
   degradedInc.mockClear();
   originFetchInc.mockClear();
   queryRawMock.mockReset();
+  vi.mocked(logSysRedisFailOpen).mockClear();
+});
+
+// The gate-rule read must succeed against the sysRedis mock, or every test here quietly
+// runs with no rules through the fail-open path.
+afterEach(() => {
+  expect(vi.mocked(logSysRedisFailOpen)).not.toHaveBeenCalledWith(
+    expect.anything(),
+    'getGateRules',
+    expect.anything()
+  );
 });
 
 describe('getResourceData — per-user moderation-flag stripping is caller-local', () => {

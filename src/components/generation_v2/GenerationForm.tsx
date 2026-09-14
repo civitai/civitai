@@ -21,7 +21,6 @@
 import {
   Button,
   Checkbox,
-  Divider,
   Group,
   Input,
   Menu,
@@ -30,7 +29,6 @@ import {
   Radio,
   Select,
   Switch,
-  Text,
   Textarea,
   TextInput,
   Tooltip,
@@ -42,8 +40,7 @@ import React, { useCallback, useMemo, useState, useRef, useEffect } from 'react'
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { CopyButton } from '~/components/CopyButton/CopyButton';
-import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
+import { TriggerWordsStrip } from '~/components/Generate/Input/PromptEditorShell';
 
 import {
   Controller,
@@ -111,11 +108,10 @@ import {
   ImageUploadMultipleInput,
   type ImageStatusAnnotation,
 } from './inputs/ImageUploadMultipleInput';
+import { useSourceImageAnnotations } from './inputs/useSourceImageAnnotations';
 import type { ImageMetadataApply } from '~/components/Generation/Input/ImageMetadataModal';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
-import { fetchBlobAsFile } from '~/utils/file-utils';
-import { ExifParser } from '~/utils/metadata';
 import { VideoInput } from './inputs/VideoInput';
 import { InterpolationFactorInput } from './inputs/InterpolationFactorInput';
 import { PriorityInput } from './inputs/PriorityInput';
@@ -1144,51 +1140,12 @@ export function GenerationForm() {
                       minRows={2}
                       className="!border-0 !bg-transparent"
                     />
-                    {/* Nested trigger words controller — surfaces the active
-                        model/resources' trained words as copy-able chips
-                        below the editor. Auto-hides when the active
-                        subgraph didn't merge `triggerWordsGraph`. */}
                     <Controller
                       graph={graph}
                       name="triggerWords"
-                      render={({ value }) => {
-                        const triggerWords = value as string[] | undefined;
-                        if (!triggerWords || triggerWords.length === 0) return null;
-                        return (
-                          <div className="mb-1 flex flex-col gap-2 px-2">
-                            <Divider />
-                            <Text c="dimmed" className="text-xs font-semibold">
-                              Trigger words
-                            </Text>
-                            <div className="mb-2 flex items-center gap-1">
-                              <TrainedWords
-                                type="LORA"
-                                trainedWords={triggerWords}
-                                badgeProps={{
-                                  style: {
-                                    textTransform: 'none',
-                                    height: 'auto',
-                                    cursor: 'pointer',
-                                  },
-                                }}
-                              />
-                              <CopyButton value={triggerWords.join(', ')}>
-                                {({ copied, copy, Icon, color }) => (
-                                  <Button
-                                    variant="subtle"
-                                    color={color ?? 'blue.5'}
-                                    onClick={copy}
-                                    size="compact-xs"
-                                    classNames={{ root: 'shrink-0', inner: 'flex gap-1' }}
-                                  >
-                                    {copied ? 'Copied' : 'Copy All'} <Icon size={14} />
-                                  </Button>
-                                )}
-                              </CopyButton>
-                            </div>
-                          </div>
-                        );
-                      }}
+                      render={({ value }) => (
+                        <TriggerWordsStrip triggerWords={value as string[] | undefined} />
+                      )}
                     />
                   </Paper>
                 </Input.Wrapper>
@@ -2727,11 +2684,10 @@ function ImagesInput({
   workflow?: string;
 }) {
   const annotationsSnapshot = useGraphSubscription(graph, 'annotations');
-  const graphAnnotations = annotationsSnapshot?.value as
-    | ({ label: string; color: string; tooltip?: string } | null)[]
-    | undefined;
-  const aiMetaAnnotations = useAiMetadataAnnotations(value);
-  const annotations = useMergedAnnotations(graphAnnotations, aiMetaAnnotations);
+  const annotations = useSourceImageAnnotations(
+    value,
+    annotationsSnapshot?.value as (ImageStatusAnnotation | null)[] | undefined
+  );
   // The active graph IS the applicability rule: a param is offered only when
   // there's a node to put it in, so a video workflow drops the image-only
   // settings on its own and no per-workflow list has to be maintained here.
@@ -2775,59 +2731,6 @@ function ImagesInput({
       metadataApply={metadataApply}
     />
   );
-}
-
-/**
- * For moderators, checks each image for valid AI metadata (EXIF).
- * Returns a parallel annotation array or undefined for non-moderators.
- */
-function useAiMetadataAnnotations(
-  images: { url: string }[] | null | undefined
-): (ImageStatusAnnotation | null)[] | undefined {
-  const currentUser = useCurrentUser();
-  const [results, setResults] = useState<Record<string, boolean>>({});
-
-  useEffect(() => {
-    if (!currentUser?.isModerator || !images?.length) return;
-
-    for (const { url } of images) {
-      if (url in results) continue;
-      fetchBlobAsFile(url).then(async (file) => {
-        if (!file) return;
-        const parser = await ExifParser(file);
-        const meta = await parser.getMetadata();
-        const hasAiMeta = Object.keys(meta).length > 0 || parser.isMadeOnSite();
-        setResults((prev) => ({ ...prev, [url]: hasAiMeta }));
-      });
-    }
-  }, [currentUser?.isModerator, images]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  if (!currentUser?.isModerator || !images?.length) return undefined;
-
-  return images.map(({ url }) => {
-    if (!(url in results)) return null;
-    return results[url]
-      ? { label: 'AI Meta', color: 'green', tooltip: 'Valid AI metadata detected' }
-      : { label: 'No AI Meta', color: 'yellow', tooltip: 'No AI metadata found in image' };
-  });
-}
-
-/** Merge two parallel annotation arrays, preferring graph annotations over AI meta. */
-function useMergedAnnotations(
-  graph: (ImageStatusAnnotation | null)[] | undefined,
-  aiMeta: (ImageStatusAnnotation | null)[] | undefined
-): (ImageStatusAnnotation | null)[] | undefined {
-  return useMemo(() => {
-    if (!graph && !aiMeta) return undefined;
-    if (!graph) return aiMeta;
-    if (!aiMeta) return graph;
-    const len = Math.max(graph.length, aiMeta.length);
-    const merged: (ImageStatusAnnotation | null)[] = [];
-    for (let i = 0; i < len; i++) {
-      merged.push(graph[i] ?? aiMeta[i] ?? null);
-    }
-    return merged;
-  }, [graph, aiMeta]);
 }
 
 // =============================================================================

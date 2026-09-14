@@ -4,9 +4,9 @@ import { Controller, MultiController } from 'form-graph/react';
 
 import { ActiveWildcards } from '~/components/Generate/Input/ActiveWildcards';
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
+import { PromptEditorShell } from '~/components/Generate/Input/PromptEditorShell';
 import { ResourceAlerts } from '~/components/generation_v2/ResourceAlerts';
 import { AspectRatioInput } from '~/components/generation_v2/inputs/AspectRatioInput';
-import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
 import { ResourceSelectMultipleInput } from '~/components/generation_v2/inputs/ResourceSelectMultipleInput';
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SelectInput } from '~/components/generation_v2/inputs/SelectInput';
@@ -31,10 +31,16 @@ import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { videoHub } from '~/shared/form-graph/generation/video/hub.graph';
 import { wanVersionDefs, wanVersionOptions } from '~/shared/form-graph/generation/video/wan.graph';
 
-import { ControllerLabel, VersionGroupSelector, useWildcardHandlers } from './form-helpers';
+import {
+  ControllerLabel,
+  PromptLabel,
+  VersionGroupSelector,
+  useWildcardHandlers,
+} from './form-helpers';
 import { GateRuleWarnings } from './GateRuleWarnings';
 import { CheckpointRow } from './inputs/CheckpointRow';
 import { openCheckpointPicker, readResources } from './inputs/openCheckpointPicker';
+import { SourceImagesInput } from './inputs/SourceImagesInput';
 import type { GenerationStore } from './store';
 
 /**
@@ -168,14 +174,11 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
         graph={videoHub}
         name="images"
         render={({ value, meta, onChange, error }) => (
-          <ImageUploadMultipleInput
-            label="Source images"
+          <SourceImagesInput
+            store={store}
             value={value}
             onChange={onChange}
-            max={meta?.max}
-            slots={meta?.slots}
-            warnOnMissingAiMetadata={meta?.warnOnMissingAiMetadata}
-            aspectRatios={meta?.aspectRatios as `${number}:${number}`[] | undefined}
+            meta={meta}
             error={error?.message}
           />
         )}
@@ -286,22 +289,30 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
         graph={videoHub}
         name="prompt"
         render={({ value, meta, onChange, error }) => (
-          <GenerationTextEditor
-            value={value}
-            onChange={onChange}
-            snippets={meta?.snippets}
-            triggerWords={meta?.triggerWords}
-            attentionEdit
+          <PromptEditorShell
             label={
-              <ControllerLabel
+              <PromptLabel
+                store={store}
+                prompt={value}
                 label="Prompt"
                 info="Type out what you'd like to generate."
                 required={meta?.required}
               />
             }
-            placeholder="Your prompt goes here..."
             error={error?.message}
-          />
+            triggerWords={meta?.triggerWords}
+          >
+            <GenerationTextEditor
+              value={value}
+              onChange={onChange}
+              snippets={meta?.snippets}
+              triggerWords={meta?.triggerWords}
+              attentionEdit
+              placeholder="Your prompt goes here..."
+              minRows={2}
+              className="!border-0 !bg-transparent"
+            />
+          </PromptEditorShell>
         )}
       />
       <Controller
@@ -329,6 +340,12 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
             onChange={onChange}
             label="Aspect Ratio"
             options={meta?.options ?? []}
+            priorityOptions={
+              meta?.priorityOptions ??
+              (meta && meta.options.length > 5
+                ? meta.options.slice(1, 6).map((o) => o.value)
+                : undefined)
+            }
             maxVisible={5}
           />
         )}

@@ -72,7 +72,7 @@ describe('messagesForSelection', () => {
     expect(messagesForSelection([eco], { ecosystem: 'Flux1', versionIds: [9] })).toEqual([]);
   });
 
-  it('keeps the moderator-authored order', () => {
+  it('keeps the order given', () => {
     const first = message({ id: 'm1' });
     const second = message({ id: 'm2' });
     expect(messagesForSelection([second, first], {}).map((m) => m.id)).toEqual(['m2', 'm1']);

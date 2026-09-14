@@ -232,7 +232,7 @@ function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMem
           ) : output === 'video' ? (
             <VideoGenerationForm store={store} />
           ) : output === 'audio' ? (
-            <AudioGenerationForm />
+            <AudioGenerationForm store={store} />
           ) : (
             <Model3dGenerationForm store={store} />
           )}
