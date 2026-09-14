@@ -2,8 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { createFeedbackSchema, getFeedbackAreaSchema } from '~/server/schema/feedback.schema';
 import {
   FEEDBACK_AREAS,
+  FEEDBACK_CONSOLE_ERROR_MAX_COUNT,
+  FEEDBACK_CONSOLE_ERROR_MAX_LENGTH,
   FEEDBACK_FILTER_VALUE_MAX_LENGTH,
   FEEDBACK_IMAGE_MAX_COUNT,
+  FEEDBACK_NETWORK_ERROR_MAX_COUNT,
+  FEEDBACK_NETWORK_INITIATOR_MAX_LENGTH,
+  FEEDBACK_NETWORK_URL_MAX_LENGTH,
   FEEDBACK_PATH_MAX_LENGTH,
   FEEDBACK_SESSION_ID_MAX_LENGTH,
   feedbackAreaFlagKey,
@@ -230,6 +235,164 @@ describe('feedback schema — context bounds', () => {
       const parsed = parse({ images: [UUID_A], notAField: 'x' } as Record<string, unknown>);
       expect(parsed.context).not.toHaveProperty('notAField');
       expect(parsed.context?.images).toEqual([UUID_A]);
+    });
+  });
+
+  /**
+   * 🔴 THE SURVIVE-THE-PARSE BLOCK. THIS IS THE ONE THAT MATTERS AND HERE IS WHY.
+   *
+   * `feedbackContextSchema` is a `z.object`, and a `z.object` STRIPS an undeclared key without an
+   * error, without a log and without failing the submission. So "the client sends consoleErrors
+   * and the mutation succeeds" is TRUE both when the field is declared and when it is not — it is
+   * the same observable for two different mechanisms, and the feature looks built either way.
+   * Only reading the key back OUT of the parsed value tells them apart.
+   *
+   * 🔴 THE NEGATIVE CONTROL IS PART OF THE ASSERTION, NOT DECORATION. The same `parse()` call
+   * carries a genuinely-unknown key, and the test asserts that one IS gone. Without it, a
+   * `toHaveProperty` that could never fail — because some future change made the schema
+   * passthrough — would read exactly like proof that the declaration works.
+   */
+  describe('consoleErrors / networkErrors survive the parse', () => {
+    const NETWORK_ENTRY = {
+      url: 'https://civitai.com/api/trpc/x',
+      status: 500,
+      initiatorType: 'fetch',
+    };
+
+    it('carries both new keys out of the parse while a genuinely unknown key is stripped', () => {
+      const parsed = parse({
+        consoleErrors: ['TypeError: x is not a function'],
+        networkErrors: [NETWORK_ENTRY],
+        // The control. If THIS survives, the two assertions above prove nothing about declaring
+        // a field — they would pass for any key at all.
+        definitelyNotAField: ['TypeError: x is not a function'],
+      } as Record<string, unknown>);
+
+      expect(parsed.context?.consoleErrors).toEqual(['TypeError: x is not a function']);
+      expect(parsed.context?.networkErrors).toEqual([NETWORK_ENTRY]);
+      expect(parsed.context).not.toHaveProperty('definitelyNotAField');
+    });
+
+    it('carries every field of a network entry, not just the ones it is keyed on', () => {
+      // A nested `z.object` strips too. `initiatorType` is the one a reader assumes is fine
+      // because it is a closed set, and it is the one that would go missing silently.
+      const parsed = parse({ networkErrors: [NETWORK_ENTRY] });
+      expect(parsed.context?.networkErrors?.[0]).toEqual({
+        url: 'https://civitai.com/api/trpc/x',
+        status: 500,
+        initiatorType: 'fetch',
+      });
+    });
+
+    it('accepts both fields omitted', () => {
+      const parsed = parse({ path: '/images' });
+      expect(parsed.context?.consoleErrors).toBeUndefined();
+      expect(parsed.context?.networkErrors).toBeUndefined();
+    });
+
+    it('accepts an empty array on both', () => {
+      // The producer omits an empty array rather than sending one, but a stored `[]` must not be
+      // the thing that fails a submission.
+      const parsed = parse({ consoleErrors: [], networkErrors: [] });
+      expect(parsed.context?.consoleErrors).toEqual([]);
+      expect(parsed.context?.networkErrors).toEqual([]);
+    });
+  });
+
+  /**
+   * The bounds. Every expectation is a LITERAL rather than the constant, for the reason stated in
+   * this file's header: a test that reads the bound out of the schema follows a widening instead
+   * of reporting it.
+   */
+  describe('consoleErrors / networkErrors bounds', () => {
+    const entry = (url: string) => ({ url, status: 404, initiatorType: 'fetch' });
+
+    it('is 10 entries each, 300 chars of console text, 300 chars of URL', () => {
+      expect(FEEDBACK_CONSOLE_ERROR_MAX_COUNT).toBe(10);
+      expect(FEEDBACK_CONSOLE_ERROR_MAX_LENGTH).toBe(300);
+      expect(FEEDBACK_NETWORK_ERROR_MAX_COUNT).toBe(10);
+      expect(FEEDBACK_NETWORK_URL_MAX_LENGTH).toBe(300);
+      expect(FEEDBACK_NETWORK_INITIATOR_MAX_LENGTH).toBe(20);
+    });
+
+    it('accepts exactly 10 console errors and rejects 11', () => {
+      expect(
+        parse({ consoleErrors: Array.from({ length: 10 }, () => 'boom') }).context?.consoleErrors
+      ).toHaveLength(10);
+      expect(() => parse({ consoleErrors: Array.from({ length: 11 }, () => 'boom') })).toThrow();
+    });
+
+    it('accepts a 300-character console error and rejects 301', () => {
+      expect(parse({ consoleErrors: [id(300)] }).context?.consoleErrors?.[0]).toHaveLength(300);
+      expect(() => parse({ consoleErrors: [id(301)] })).toThrow();
+    });
+
+    it('accepts exactly 10 network errors and rejects 11', () => {
+      expect(
+        parse({ networkErrors: Array.from({ length: 10 }, () => entry('https://a.io/x')) }).context
+          ?.networkErrors
+      ).toHaveLength(10);
+      expect(() =>
+        parse({ networkErrors: Array.from({ length: 11 }, () => entry('https://a.io/x')) })
+      ).toThrow();
+    });
+
+    it('accepts a 300-character URL and rejects 301', () => {
+      expect(
+        parse({ networkErrors: [entry(id(300))] }).context?.networkErrors?.[0].url
+      ).toHaveLength(300);
+      expect(() => parse({ networkErrors: [entry(id(301))] })).toThrow();
+    });
+
+    it('rejects an over-long initiatorType', () => {
+      expect(() =>
+        parse({ networkErrors: [{ url: 'https://a.io/x', status: 404, initiatorType: id(21) }] })
+      ).toThrow();
+    });
+
+    /**
+     * An empty string is not an error message, and the moderator panel renders one as an empty
+     * bordered `<li>` that reads as "an error we failed to display". `recordConsoleError` already
+     * refuses empties, so this bound costs our own producer nothing — it exists for a client that
+     * is not our producer. Same shape as `sessionId`'s `.min(1)`.
+     */
+    it('rejects an empty console error', () => {
+      expect(() => parse({ consoleErrors: [''] })).toThrow();
+      // The positive control: a one-character message is still fine, so this is a `min(1)` and
+      // not an accidental ban on short messages.
+      expect(parse({ consoleErrors: ['x'] }).context?.consoleErrors).toEqual(['x']);
+    });
+
+    it('rejects a non-string console error', () => {
+      expect(() => parse({ consoleErrors: [42] })).toThrow();
+      expect(() => parse({ consoleErrors: 'boom' })).toThrow();
+    });
+
+    /**
+     * 🔴 `status` IS BOUNDED 400..599 AND THAT IS A CONTRACT, NOT A TYPO. The field is named
+     * `networkErrors`; a 200 in it would be a lie told to a moderator. The producer filters to
+     * 4xx/5xx before recording, so this is the second half of one rule.
+     */
+    it('rejects a status outside 400..599', () => {
+      for (const status of [0, 200, 302, 399, 600]) {
+        expect(() =>
+          parse({ networkErrors: [{ url: 'https://a.io/x', status, initiatorType: 'fetch' }] })
+        ).toThrow();
+      }
+      expect(
+        parse({ networkErrors: [{ url: 'https://a.io/x', status: 400, initiatorType: 'fetch' }] })
+          .context?.networkErrors?.[0].status
+      ).toBe(400);
+      expect(
+        parse({ networkErrors: [{ url: 'https://a.io/x', status: 599, initiatorType: 'fetch' }] })
+          .context?.networkErrors?.[0].status
+      ).toBe(599);
+    });
+
+    it('rejects a network entry missing a field', () => {
+      expect(() => parse({ networkErrors: [{ url: 'https://a.io/x', status: 404 }] })).toThrow();
+      expect(() => parse({ networkErrors: [{ status: 404, initiatorType: 'fetch' }] })).toThrow();
+      expect(() => parse({ networkErrors: ['https://a.io/x'] })).toThrow();
     });
   });
 

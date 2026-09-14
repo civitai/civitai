@@ -80,4 +80,49 @@ export const FEEDBACK_SESSION_ID_MAX_LENGTH = 64;
  */
 export const FEEDBACK_FILTER_VALUE_MAX_LENGTH = 200;
 
+/**
+ * The browser-telemetry snapshot: how many console errors and failed requests a submission may
+ * carry, and how long each captured string may be.
+ *
+ * 🔴 THESE ARE A PRIVACY BOUND FIRST AND A STORAGE BOUND SECOND, which is the opposite reading
+ * from every other constant in this file. A console error routinely carries a URL with its query
+ * parameters, an auth failure, or a fragment of whatever the page was rendering — and `context` is
+ * a JSONB column with no retention policy, read by moderators. So the ceiling is not "what fits",
+ * it is "how much of a stranger's session is it proportionate to keep forever to triage one bug".
+ * Ten entries is roughly one screenful; it is deliberately not fifty.
+ *
+ * Worst case per row, which is the number to re-derive if either is widened:
+ *   10 × 300  = 3.0 KB of console text
+ * + 10 × ~330 = 3.3 KB of network entries (url + initiatorType + status)
+ *   ≈ 6.3 KB, against a `FEEDBACK_MESSAGE_MAX_LENGTH` of 2000.
+ *
+ * As everywhere else here, `feedbackContextSchema` REJECTS an over-count or over-length value
+ * rather than clipping it, so the CAPTURE side must clip to these numbers — see
+ * `src/utils/feedback/browserErrorLog.ts`, which is why they are exported rather than inline.
+ */
+export const FEEDBACK_CONSOLE_ERROR_MAX_COUNT = 10;
+export const FEEDBACK_CONSOLE_ERROR_MAX_LENGTH = 300;
+export const FEEDBACK_NETWORK_ERROR_MAX_COUNT = 10;
+
+/**
+ * Length ceiling on ONE captured request URL.
+ *
+ * Separate from `FEEDBACK_PATH_MAX_LENGTH` even though both are 300 today: that one bounds a bare
+ * same-origin pathname, this one bounds an `origin + pathname` with the query string already
+ * stripped, and a third-party origin can be long. Coupling them would make widening one silently
+ * widen the other.
+ */
+export const FEEDBACK_NETWORK_URL_MAX_LENGTH = 300;
+
+/**
+ * Length ceiling on `initiatorType`.
+ *
+ * It is a closed set in the Resource Timing spec (`fetch`, `xmlhttprequest`, `img`, `script`,
+ * `css`, `link`, `other`, …), so this bound should never fire. It is here because the value still
+ * arrives from a client and the field is still a JSONB leaf — bounded by length rather than by an
+ * enum so a browser that adds a new initiator type degrades to storing it, not to a rejected
+ * submission on the surface that exists to collect reports.
+ */
+export const FEEDBACK_NETWORK_INITIATOR_MAX_LENGTH = 20;
+
 export const feedbackAreaFlagKey = (area: FeedbackArea) => `feedback-area-${area}`;
