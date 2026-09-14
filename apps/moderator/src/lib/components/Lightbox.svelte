@@ -36,26 +36,6 @@
   const open = $derived(index !== null && index >= 0 && index < items.length);
   const current = $derived(open ? items[index as number] : null);
 
-  /**
-   * 🔴 FOCUS RESTORE IS EXPLICIT, and bits-ui's own restore is deliberately PREVENTED rather than
-   * relied on. This dialog has no `Dialog.Trigger` — it is opened from whichever thumbnail button was
-   * clicked, of which there are several — so there is no single element the library could restore to.
-   * Captured on open, used in `onCloseAutoFocus`, and cleared either way so a second open cannot
-   * restore to a stale node.
-   */
-  let restoreTo: HTMLElement | null = null;
-  $effect(() => {
-    if (open) restoreTo ??= (document.activeElement as HTMLElement | null) ?? null;
-  });
-
-  function restoreFocus() {
-    const target = restoreTo;
-    restoreTo = null;
-    // `isConnected`: the panel can be re-rendered under the dialog (a triage save calls
-    // `invalidateAll()`), and focusing a detached node silently moves focus to <body> instead.
-    if (target?.isConnected) target.focus();
-  }
-
   function close() {
     onClose();
   }
@@ -94,12 +74,26 @@
     if (!next) close();
   }}
 >
+  <!--
+    🔴 FOCUS RESTORE IS THE LIBRARY'S, AND THIS COMPONENT DELIBERATELY DOES NOT HAND-ROLL IT. An
+    earlier draft here `preventDefault`ed `onCloseAutoFocus` and restored focus itself, on the
+    premise that a dialog with no `Dialog.Trigger` gives the library nothing to restore to. THAT
+    PREMISE IS FALSE, and reading the source is what settled it: `focus-scope-manager.js:14-26`
+    captures `document.activeElement` at `register()` — which `mount()` calls BEFORE
+    `#handleOpenAutoFocus` — and `focus-scope.svelte.js:72-90` focuses it again on unmount, guarded by
+    `document.contains` and a `try/catch`. No trigger is involved; whatever had focus when the scope
+    opened is what gets it back, which is exactly the thumbnail button that was clicked.
+
+    So the trap to avoid is re-adding a manual restore: a hand-rolled capture races the library's own
+    (its `focusFirst` runs in a `requestAnimationFrame`), and preventing the library's restore to run
+    your own replaces a guarded implementation with an unguarded one.
+
+    The one case worth knowing: if the panel is re-rendered underneath (a triage save calls
+    `invalidateAll()`) the thumbnail node can be detached, and `document.contains` then declines to
+    focus it rather than throwing. Focus falls to the body — degraded, not broken.
+  -->
   <Dialog.Content
     class="max-h-[90vh] w-[min(92vw,72rem)] max-w-[92vw] overflow-auto sm:max-w-[92vw]"
-    onCloseAutoFocus={(event) => {
-      event.preventDefault();
-      restoreFocus();
-    }}
     {onkeydown}
   >
     <Dialog.Header>
@@ -120,9 +114,13 @@
     </Dialog.Header>
 
     {#if current}
-      <!-- Keyed on the id so paging swaps the element rather than mutating one <img>'s src, which
-           would leave the previous frame painted until the next one decodes. -->
-      {#key current.id}
+      <!-- Keyed on the INDEX, not on `current.id`, so paging swaps the element rather than mutating
+           one <img>'s src — which would leave the previous frame painted until the next decodes.
+           Index rather than id because ids are NOT unique here: `splitContext` deduplicates `images`
+           among themselves and never compares `screenshotId` against them, so a reporter who
+           attached the same file the capture produced yields two frames sharing an id, and keying on
+           it would make paging between exactly those two a no-op. -->
+      {#key index}
         <EdgeImage
           src={current.id}
           width={1600}
