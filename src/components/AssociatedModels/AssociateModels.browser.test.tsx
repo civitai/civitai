@@ -210,6 +210,19 @@ const refetchFailed: QueryFixture = {
   isSuccess: false,
   dataUpdatedAt: 1000,
 };
+/**
+ * A model with NO saved resources, whose list could not be verified. The empty-state branch has
+ * to carry the same explanation the list branch does — otherwise the creator is told to search
+ * above, at a box that is greyed out, with nothing saying why.
+ */
+const emptyUnverified: QueryFixture = {
+  data: [],
+  isLoading: false,
+  isStale: true,
+  isError: true,
+  isSuccess: false,
+  dataUpdatedAt: 1000,
+};
 const resolvedCorrected: QueryFixture = {
   data: [...savedRows, lateRow],
   isLoading: false,
@@ -280,6 +293,9 @@ describe('AssociateModels — nothing is editable unless the list is the saved l
     // accessible name CONTAINS the icon's label, so a role query matches the card first and the
     // assertion reads the wrong element.
     await expect.element(page.getByLabelText('Remove resource').first()).toBeEnabled();
+    expect(
+      page.getByText('Saved two').element().closest('[aria-roledescription="sortable"]')
+    ).toHaveAttribute('aria-disabled', 'false');
   });
 
   test('every edit affordance is inert while a correction is in flight', async () => {
@@ -297,7 +313,23 @@ describe('AssociateModels — nothing is editable unless the list is the saved l
       'search input'
     ).toBeDisabled();
     expect(page.getByLabelText('Remove resource').first().query(), 'remove button').toBeDisabled();
-    expect(page.getByText(/editing is paused/i).query(), 'paused notice').not.toBeNull();
+    // Drag is the affordance with no disabled ATTRIBUTE of its own: dnd-kit announces it through
+    // `aria-disabled` on the sortable node. Without this the rows stay draggable while every
+    // button beside them is greyed out, and a reorder sets `changed` — which is the deletion.
+    expect(
+      page.getByText('Saved two').element().closest('[aria-roledescription="sortable"]')
+    ).toHaveAttribute('aria-disabled', 'true');
+    // Assert WHICH notice: both branches of the ternary contain "editing is paused", so a matcher
+    // on that phrase alone stays green while an inverted condition tells a user mid-refetch that
+    // the check failed.
+    expect(
+      page.getByText(/Checking this list for changes/i).query(),
+      'checking notice'
+    ).not.toBeNull();
+    expect(
+      page.getByText(/Couldn't check whether/i).query(),
+      'failure notice must not show'
+    ).toBeNull();
   });
 
   /**
@@ -321,6 +353,10 @@ describe('AssociateModels — nothing is editable unless the list is the saved l
       page.getByText(/Couldn't check whether this list is up to date/i).query(),
       'could-not-verify notice'
     ).not.toBeNull();
+    expect(
+      page.getByText(/Checking this list for changes/i).query(),
+      'in-flight notice must not show'
+    ).toBeNull();
   });
 
   test('a selection forced past the disabled input still commits nothing', async () => {
@@ -339,6 +375,27 @@ describe('AssociateModels — nothing is editable unless the list is the saved l
     expect(mutate).not.toHaveBeenCalled();
   });
 
+  test('an unverified EMPTY list explains itself instead of pointing at a dead search box', async () => {
+    queryState.value = emptyUnverified;
+    renderModal();
+
+    await expect.element(page.getByRole('button', { name: 'Save Changes' })).toBeInTheDocument();
+
+    expect(page.getByText(/No suggested resources yet/i).query(), 'empty copy').not.toBeNull();
+    expect(
+      page.getByText(/search above to add one/i).query(),
+      'the instruction that would be a lie here'
+    ).toBeNull();
+    expect(
+      page.getByText(/Couldn't check whether this list is up to date/i).query(),
+      'could-not-verify notice'
+    ).not.toBeNull();
+    expect(
+      page.getByRole('button', { name: STUB_SELECT_LABEL }).query(),
+      'search input'
+    ).toBeDisabled();
+  });
+
   test('saving after an add keeps every saved association in the payload', async () => {
     // Start pending so the local list is genuinely empty at mount and has to be seeded by the
     // effect when the data lands. Rendering straight into the resolved state would seed the list
@@ -355,12 +412,17 @@ describe('AssociateModels — nothing is editable unless the list is the saved l
     expect(mutate).toHaveBeenCalledTimes(1);
     const input = capturedMutationInput.value as {
       associations: Array<{ id?: number; resourceId: number }>;
+      reciprocal: number[];
     };
     expect(input.associations).toEqual([
       { id: 11, resourceType: 'model', resourceId: 101 },
       { id: 12, resourceType: 'model', resourceId: 102 },
       { id: undefined, resourceType: 'model', resourceId: 300 },
     ]);
+    // The added row IS link-back eligible here (newly added, owned by `ownerId`), so the chip is
+    // rendered. An unticked chip must send nothing: `reciprocal` writes a link on someone else's
+    // model, and it is not something a save should opt into on the creator's behalf.
+    expect(input.reciprocal, 'reciprocal').toEqual([]);
   });
 
   test('adopts a corrected saved list that arrives after the first, stale one', async () => {

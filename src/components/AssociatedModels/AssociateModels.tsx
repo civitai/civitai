@@ -62,11 +62,13 @@ export function AssociateModels({
 
   // The one question every edit affordance asks: is the list on screen the saved list?
   // `isStale` is set by `invalidate` and cleared only by a SUCCESSFUL fetch, so it stays true
-  // while a correction is in flight, has failed, or is paused offline — all three are states in
-  // which the rows shown may not be what is saved. Editing a list that is not the saved one is
-  // what destroys data here: `setAssociatedResources` is a set-replace, so every row missing
-  // from the payload is deleted. `!isFetching` is NOT enough — a failed background refetch goes
-  // back to idle while `data` is still the last successful, pre-correction payload.
+  // while a correction is in flight, has failed, or is paused offline. `!isFetching` is NOT
+  // enough: a failed background refetch goes back to idle while `data` is still the last
+  // successful, pre-correction payload.
+  // Save and Reset sit outside this flag and are safe only because `staleTime: Infinity` plus
+  // this component's own save being the key's ONLY invalidator means the sole stale window is
+  // one where `isSaving` already disables them. Add a second invalidator, a `refetchInterval`,
+  // or drop the `await` in `onSuccess`, and they need the flag too.
   const canEdit = !!savedAssociations && !isStale;
 
   const { mutate, isPending: isSaving } = trpc.model.setAssociatedResources.useMutation({
@@ -228,6 +230,16 @@ export function AssociateModels({
         />
       )}
 
+      {/* Outside the branches below: a model with no saved resources renders the empty state, and
+          that branch needs the reason for a dead search box just as much as the list does. */}
+      {savedAssociations && !canEdit && (
+        <Text c="dimmed" size="xs">
+          {isError
+            ? `Couldn't check whether this list is up to date, so editing is paused. Close this and reopen to try again.`
+            : `Checking this list for changes — editing is paused while we check.`}
+        </Text>
+      )}
+
       {isLoading ? (
         <Center p="xl">
           <Loader />
@@ -239,17 +251,10 @@ export function AssociateModels({
         </Text>
       ) : !associatedResources.length ? (
         <Text align="center" c="dimmed" size="sm" py="lg">
-          No {type.toLowerCase()} resources yet — search above to add one
+          No {type.toLowerCase()} resources yet{canEdit ? ' — search above to add one' : ''}
         </Text>
       ) : (
         <Stack gap="xs">
-          {!canEdit && (
-            <Text c="dimmed" size="xs">
-              {isError
-                ? `Couldn't check whether this list is up to date, so editing is paused. Close this and reopen to try again.`
-                : `Checking this list for changes — editing is paused for a moment.`}
-            </Text>
-          )}
           <Group justify="space-between" gap="xs" wrap="nowrap">
             <Text c="dimmed" size="xs">
               Drag to reorder
@@ -273,7 +278,12 @@ export function AssociateModels({
             >
               <Stack gap={4}>
                 {associatedResources.map((association) => (
-                  <SortableItem key={association.item.id} id={association.item.id} cursor="grab">
+                  <SortableItem
+                    key={association.item.id}
+                    id={association.item.id}
+                    cursor="grab"
+                    disabled={!canEdit}
+                  >
                     <Card
                       withBorder
                       pl={4}
@@ -353,7 +363,11 @@ export function AssociateModels({
         <Button variant="default" onClick={handleReset} disabled={!changed || isSaving}>
           Reset
         </Button>
-        <Button onClick={handleSave} loading={isSaving} disabled={!changed}>
+        {/* `!canEdit` as well as `!changed`: a save is the destructive commit, and the four edit
+            affordances going inert while the button that writes them stays live is the same gap
+            one level up. Unreachable today only because this component's own save is the key's
+            only invalidator. */}
+        <Button onClick={handleSave} loading={isSaving} disabled={!changed || !canEdit}>
           Save Changes
         </Button>
       </Group>
