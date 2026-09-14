@@ -44,15 +44,12 @@ export function AssociateModels({
   const [changed, setChanged] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
-  const {
-    data = [],
-    isLoading,
-    isSuccess,
-  } = trpc.model.getAssociatedResourcesSimple.useQuery({
+  const { data: savedAssociations, isLoading } = trpc.model.getAssociatedResourcesSimple.useQuery({
     fromId,
     type,
     browsingLevel: allBrowsingLevelsFlag,
   });
+  const data = savedAssociations ?? [];
   const [associatedResources, setAssociatedResources] = useState<State>(data);
   const [linkBack, setLinkBack] = useState<number[]>([]);
   const [searchMode, setSearchMode] = useState<'me' | 'all'>('all');
@@ -144,12 +141,13 @@ export function AssociateModels({
 
   const toggleSearchMode = () => setSearchMode((current) => (current === 'me' ? 'all' : 'me'));
 
+  // Gated on `changed`, not on the local list being empty: a list seeded from a stale cache is
+  // non-empty, so only-when-empty refuses the correction and the next set-replace deletes
+  // whatever the stale copy never knew about. Depend on the query's own array rather than the
+  // `?? []` fallback, which is a fresh array per render and would re-run this forever.
   useEffect(() => {
-    if (!associatedResources.length && data.length) {
-      setAssociatedResources(data);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+    if (!changed && savedAssociations) setAssociatedResources(savedAssociations);
+  }, [savedAssociations, changed]);
 
   const onlyMe = searchMode === 'me';
 
@@ -185,10 +183,12 @@ export function AssociateModels({
 
   return (
     <Stack>
-      {/* Not rendered until the saved list has arrived. Selecting into an empty local list
-          while the query is still in flight leaves that list a partial view of the saved one,
-          and the save is a set-replace — every row missing from the payload is deleted. */}
-      {isSuccess && associatedResources.length < limit && (
+      {/* Withheld until the saved list has arrived. Selecting into an empty local list leaves
+          that list a partial view of the saved one, and the save is a set-replace — every row
+          missing from the payload is deleted. The predicate is delivery, not `isSuccess`: a
+          failed BACKGROUND refetch keeps the rows but flips status to error, and pulling the
+          search box out from under an open edit is a different bug. */}
+      {savedAssociations && associatedResources.length < limit && (
         <QuickSearchDropdown
           supportedIndexes={['models', 'articles']}
           onItemSelected={handleSelect}
@@ -210,6 +210,11 @@ export function AssociateModels({
         <Center p="xl">
           <Loader />
         </Center>
+      ) : !savedAssociations ? (
+        <Text align="center" c="dimmed" size="sm" py="lg">
+          Couldn&apos;t load this model&apos;s {type.toLowerCase()} resources. Close this and try
+          again — nothing has been changed.
+        </Text>
       ) : !associatedResources.length ? (
         <Text align="center" c="dimmed" size="sm" py="lg">
           No {type.toLowerCase()} resources yet — search above to add one
