@@ -224,6 +224,21 @@ export const APP_SPEND_CAP_REJECTION_REASONS = ['daily', 'velocity', 'unavailabl
 
 export type AppSpendCapRejectionReason = (typeof APP_SPEND_CAP_REJECTION_REASONS)[number];
 
+/**
+ * The NON-`ok` verdicts of `withBlockScope`'s approved-status gate. Kept as a code-owned
+ * union (not a free string) so the `reason` label stays a bounded 3-series set.
+ *
+ * 🔴 TWO OF THESE REFUSE AND ONE DOES NOT, which is why this is not called `…REFUSALS`:
+ * `not_found` is counted and then SERVED. See the counter's own comment for the argument.
+ */
+export const APP_BLOCK_REST_APPROVAL_VERDICT_REASONS = [
+  'not_approved',
+  'not_found',
+  'lookup_failed',
+] as const;
+export type AppBlockRestApprovalVerdictReason =
+  (typeof APP_BLOCK_REST_APPROVAL_VERDICT_REASONS)[number];
+
 /** Known render slots. Anything else is bucketed to 'other' to bound the label. */
 const KNOWN_SLOT_IDS = new Set([
   'app.page',
@@ -396,6 +411,7 @@ type Bundle = {
   customComfyWallclockSeconds: Histogram<string>;
   capLimitsDegradedTotal: Counter<string>;
   spendCapRejectionsTotal: Counter<string>;
+  restApprovalVerdictsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
   launchTotalSeconds: Histogram<string>;
   launchPhaseSeconds: Histogram<string>;
@@ -642,6 +658,49 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['reason']
   );
 
+  // ── REST approved-status GATE verdicts ───────────────────────────────────────
+  // Emitted by `withBlockScope`'s approved-status gate — one increment per REST
+  // request whose verdict was NOT `ok`, by reason. `ok` and `dev_exempt` are not
+  // counted: they are the steady state and would swamp the series.
+  //
+  // 🔴 READ THE `refused?` COLUMN BEFORE ALERTING ON THIS. Two of the three reasons
+  // refuse and one deliberately does not, so `sum(rate(...))` across the label is a
+  // number with no meaning — it adds requests that were turned away to requests that
+  // were served. Always split by `reason`.
+  //
+  //   not_approved  — REFUSED, 403. The gate WORKING, and the ONLY branch that
+  //                   carries the gate's value: every moderator takedown leaves a
+  //                   row whose status is not `approved`. Expected to be zero most
+  //                   days and to spike for exactly one token lifetime after a
+  //                   takedown.
+  //   not_found     — 🔴 SERVED, NOT REFUSED. A signature-valid token whose
+  //                   (appId, blockId) resolves to no row is a HEALTHY app — a row
+  //                   deleted or re-keyed mid-session, blockId drift, an id-minting
+  //                   bug — so this branch carried all of the false-positive risk
+  //                   and none of the value, and refusing on it would 404 a live
+  //                   public endpoint with no toggle to pull. It is OBSERVED
+  //                   instead: a non-zero rate here is the signal that the
+  //                   id-resolution assumption is wrong and something upstream
+  //                   needs fixing, NOT an authorization event and NOT an outage.
+  //                   It is a separate series precisely so that it never has to be
+  //                   inferred out of a combined "the gate refused something" number.
+  //   lookup_failed — REFUSED, 503. The replica read threw. Infra, not policy;
+  //                   fail-closed, because a read we cannot complete leaves us
+  //                   unable to establish that the app is allowed to run at all.
+  //
+  // 🔴 ONE LABEL, `reason`, over a 3-value code-owned union → 3 series, TOTAL.
+  // No `app_block_id`: this fires once per non-ok request with nothing caching or
+  // rate-limiting it, and prom-client retains every distinct label set in the Node
+  // heap forever across ~130 scraped pods. Attribution belongs in the caller's log
+  // line — the same alert-on-the-metric / attribute-from-the-log split the two
+  // counters above use, and it is why the `not_found` branch logs appId/blockId.
+  const restApprovalVerdictsTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_rest_approval_verdicts_total',
+    'Non-ok verdicts of the withBlockScope approved-status gate on App Block REST requests, by reason. NOT all refusals — split by reason before alerting: not_approved = the backing app_blocks row is not approved, REFUSED 403 (the gate enforcing a takedown); not_found = a signature-valid token resolved to no app_blocks row, SERVED (observe-only: a healthy app, counted so the false-positive rate is visible); lookup_failed = the replica read threw, and the outcome is ROUTE-DEPENDENT — 503 on the routes that fail closed, SERVED on the five that declare onApprovalLookupFailure. This counter carries ONLY `reason`, so it cannot itself tell refused from served on lookup_failed; which routes serve is the ledger LOOKUP_FAILURE_SERVE_RATIONALE in no-unguarded-block-rest-token.test.ts, and civitai_app_block_requests_total{endpoint,result} is the sibling series that carries endpoint',
+    ['reason']
+  );
+
   // ── `kind: 'step'` prepaidFixed PRICE CHECK ──────────────────────────────────
   // 🔴 Instruments whether the registry's DECLARED price still matches what the
   // orchestrator actually bills for a `prepaidFixed` step type. A declared price
@@ -802,6 +861,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     customComfyWallclockSeconds,
     capLimitsDegradedTotal,
     spendCapRejectionsTotal,
+    restApprovalVerdictsTotal,
     stepPriceCheckTotal,
     launchTotalSeconds,
     launchPhaseSeconds,
@@ -995,6 +1055,30 @@ export function recordAppSpendCapRejection(reason: AppSpendCapRejectionReason): 
     spendCapRejectionsTotal.inc({ reason });
   } catch {
     /* instrument-only — never let a metrics error touch the spend guardrail */
+  }
+}
+
+/**
+ * Fail-soft emit of one non-`ok` REST approved-status GATE verdict. Called from
+ * `withBlockScope` (`block-scope.middleware.ts`).
+ *
+ * 🔴 TOTAL, like every emitter in this module, and here the reason is sharper than
+ * usual: the thing it instruments is an authorization gate on the block REST surface,
+ * and two of its three reasons are decided refusals. If a metrics error propagated, a
+ * verdict the gate had already settled would leave as an uncaught 500 instead of the
+ * 403/503 it chose — or, on `not_found`, would turn a request the gate decided to SERVE
+ * into a 500. Either way the observability would change the response it exists to
+ * observe.
+ *
+ * COST: one in-heap counter increment on a path that has already left the happy case. An
+ * APPROVED app never reaches here, so the steady state on a healthy fleet is zero emits.
+ */
+export function recordBlockRestApprovalVerdict(reason: AppBlockRestApprovalVerdictReason): void {
+  try {
+    const { restApprovalVerdictsTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    restApprovalVerdictsTotal.inc({ reason });
+  } catch {
+    /* instrument-only — never let a metrics error change the response the gate chose */
   }
 }
 

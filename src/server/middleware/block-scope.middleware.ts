@@ -3,10 +3,12 @@ import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import {
   ensureRegisterAppBlockRuntimeMetrics,
+  recordBlockRestApprovalVerdict,
   statusToRequestResult,
   type AppBlockEndpoint,
 } from '~/server/metrics/app-block-runtime.metrics';
 import { isAppBlocksRuntimeEnabled } from '~/server/services/app-blocks-flag';
+import { resolveRestApprovalVerdict } from '~/server/services/blocks/block-approval.service';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
   BLOCK_TOKEN_AUDIENCE,
@@ -173,6 +175,49 @@ export interface WithBlockScopeOpts {
    * surface; the scope gate would add nothing.
    */
   requiredScope?: string;
+
+  /**
+   * WHAT THIS ROUTE DOES WHEN THE APPROVED-STATUS READ **FAILS** (verdict
+   * `lookup_failed` — the replica threw, so we do not know whether the app is
+   * allowed to run). ABSENT = refuse with 503, i.e. FAIL CLOSED, which is the
+   * default for every route that does not opt out and the right default for a
+   * route added later by someone who has not read this.
+   *
+   * `'serve'` opts a route into serving the request instead. It is still COUNTED
+   * (`reason="lookup_failed"`) and still logged — only the response changes.
+   *
+   * 🔴 WHY ANY ROUTE OPTS OUT, and it is an AVAILABILITY argument, not a security
+   * one. This read is new: before the approved-status gate the catalog routes made
+   * no DB read at all. Failing them closed therefore does not restore some previous
+   * posture — it INTRODUCES a coupling from every block REST route to one replica,
+   * and a replica blip becomes a fleet-wide, simultaneous 503 for every block at
+   * once. On a route where refusing removes no exposure, that trade is all cost.
+   *
+   * 🔴 IT IS THE SAME ARGUMENT THE `not_found` BRANCH ALREADY WON, applied to the
+   * other verdict that is not a takedown. Every moderator takedown leaves a row
+   * whose status is not `approved`, so 100% of this gate's protective value is in
+   * `not_approved` — which is NOT opt-outable here and never refuses less. A read
+   * that failed is not evidence of a takedown; it is evidence of an infra problem.
+   *
+   * 🔴 WHERE IT MAY BE USED, AND THE TEST IS EXPOSURE, NOT CONVENIENCE. Only on a
+   * route where a suspended app reaching the handler obtains nothing it could not
+   * obtain anyway. The set is asserted in BOTH directions, with a written rationale
+   * per entry, in `no-unguarded-block-rest-token.test.ts`
+   * (`LOOKUP_FAILURE_SERVE_RATIONALE`) — a route cannot quietly join or leave it.
+   * Do NOT add it to a route that spends, writes, or discloses anything scoped to
+   * the viewer; `tip.ts` is the worked counter-example and must always 503 here.
+   *
+   * ⚠️ NOT derivable from `requiredScope`, and that was the first thing tried. The
+   * no-exposure set is NOT the no-`requiredScope` set: `models/[id]` declares
+   * `requiredScope: 'models:read:self'` and is nevertheless the CLEAREST no-exposure
+   * case in the table (dual-auth — an anonymous caller already gets the same body),
+   * while the four unscoped catalog routes are a weaker version of the same argument
+   * (public but maturity-clamped per token). One is a scope declaration and the
+   * other is a statement about what the body discloses; they are different questions
+   * that happen to correlate, so the declaration is explicit here rather than
+   * inferred from a proxy that is wrong on the most important entry.
+   */
+  onApprovalLookupFailure?: 'serve';
 
   /**
    * Opt-in: answer CORS for an OPAQUE-origin caller (`Origin: null`) by echoing
@@ -819,6 +864,19 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // label 'dev' so that vector is closed while real per-app attribution is
     // preserved for non-dev tokens.
     const appBlockIdLabel = claims.dev === true ? 'dev' : claims.appBlockId;
+
+    // ONE resolver for `opts.endpoint`, used by BOTH readers of it below (the RED
+    // metric labels and the `not_found` log line). It was open-coded at the metric
+    // site only, and the log line interpolated the union RAW — which stringifies the
+    // FUNCTION on the one call site that passes a resolver (`blocks/tools.ts`), so
+    // that log read `endpoint=(req) => (req.method === 'POST' ? …)` instead of naming
+    // the endpoint. Consolidated rather than fixed twice: a second copy is how the
+    // two readers came to disagree in the first place.
+    //
+    // Called per read, never memoised, because the resolver is a function OF THE
+    // REQUEST and both readers must see the request actually being described.
+    const resolveEndpointLabel = (): AppBlockEndpoint =>
+      typeof opts.endpoint === 'function' ? opts.endpoint(req) : opts.endpoint;
     const metricStart = process.hrtime.bigint();
     let metricRecorded = false;
     const recordBlockMetric = () => {
@@ -830,9 +888,7 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
         // request that is actually being recorded. Both `finish` and `close`
         // run through the recorded-once guard above, so it resolves at most
         // once per request either way.
-        const endpointLabel =
-          typeof opts.endpoint === 'function' ? opts.endpoint(req) : opts.endpoint;
-        const labels = { app_block_id: appBlockIdLabel, endpoint: endpointLabel };
+        const labels = { app_block_id: appBlockIdLabel, endpoint: resolveEndpointLabel() };
         const elapsedSeconds = Number(process.hrtime.bigint() - metricStart) / 1e9;
         requestDurationSeconds.observe(labels, elapsedSeconds);
         requestsTotal.inc({ ...labels, result: statusToRequestResult(res.statusCode) });
@@ -852,6 +908,83 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     if (await BlockRevocation.isRevoked(claims.blockInstanceId)) {
       res.status(403).json({ error: 'block instance revoked' });
       return;
+    }
+
+    // APPROVED-STATUS GATE. The whole argument, the `dev` exemption, how it reconciles
+    // with the two shared-storage resolvers' different rules, and the two postures live
+    // on `resolveRestApprovalVerdict` in
+    // `~/server/services/blocks/block-approval.service` — one docblock, not two.
+    //
+    // 🔴 WHICH VERDICTS REFUSE IS NOT UNIFORM ACROSS THE THREE, AND FOR ONE OF THEM IT IS
+    // NOT UNIFORM ACROSS ROUTES EITHER.
+    //
+    //   `not_approved`  — ALWAYS 403, on every route. This branch carries the whole of the
+    //                     gate's value: every moderator takedown leaves a row whose status
+    //                     is not `approved`. Nothing opts out of it.
+    //   `lookup_failed` — 503 BY DEFAULT (fail closed: a read we could not complete tells
+    //                     us nothing), but SERVED on routes that declare
+    //                     `onApprovalLookupFailure: 'serve'`. See that option's docblock
+    //                     for the argument; the short form is that this read is NEW, so
+    //                     failing it closed introduces a fleet-wide availability coupling
+    //                     rather than restoring a previous posture, and on a route where
+    //                     refusing removes no exposure that trade is all cost.
+    //   `not_found`     — ALWAYS SERVED. A signature-valid, non-dev token that resolves to
+    //                     NO row is a HEALTHY app — a row deleted or re-keyed mid-session,
+    //                     blockId drift, an id-minting bug — so refusing it would 404 a
+    //                     live public endpoint in exchange for closing no takedown path.
+    //
+    // All three are COUNTED regardless, before any of them branches. The counter is the
+    // alerting signal and it must not depend on what the route then decided to do.
+    //
+    // 🔴 The revocation check above fails OPEN and `lookup_failed` here fails CLOSED. That
+    // is not an inconsistency in this function: revocation's fail-open lives INSIDE the
+    // primitive (`BlockRevocation.isRevoked` swallows a Redis error and returns false), so
+    // a "cleanup" here could not align them even if it wanted to.
+    //
+    // ORDER MATTERS AND MIRRORS THE BRIDGE: revocation is a Redis GET and responds to a
+    // USER action within seconds, so it runs first and a revoked-AND-suspended instance
+    // is reported as revoked. This DB read runs second and only on instances that
+    // survived it.
+    const approval = await resolveRestApprovalVerdict(claims);
+    if (approval !== 'ok' && approval !== 'dev_exempt') {
+      recordBlockRestApprovalVerdict(approval);
+      if (approval === 'not_approved') {
+        res.status(403).json({ error: 'app block is not approved' });
+        return;
+      }
+      if (approval === 'lookup_failed') {
+        if (opts.onApprovalLookupFailure !== 'serve') {
+          res.status(503).json({ error: 'app block status unavailable' });
+          return;
+        }
+        // SERVED by this route's declared policy; execution falls through to the handler.
+        //
+        // 🔴 DELIBERATELY NOT LOGGED HERE. `resolveRestApprovalVerdict` has already logged
+        // this failure, THROTTLED, with the underlying error message — and an unthrottled
+        // second line at this call site would re-create exactly the problem that throttle
+        // exists for: a replica incident fails every block REST request on every pod at
+        // once, so a per-request line here is a log-volume event at full REST rate. The
+        // `not_found` branch below DOES log per request because it is bounded by one app's
+        // traffic rather than the whole fleet's, and because its ids are the only
+        // attribution that branch has.
+      } else {
+        // `not_found` — OBSERVED, NOT REFUSED; execution falls through to the handler.
+        // The ids go in the log rather than on the counter: this fires once per such
+        // request with nothing rate-limiting it, and an `app_block_id` label would be
+        // retained in the Node heap forever, per pod.
+        //
+        // 🔴 THIS LINE IS THE ENTIRE ATTRIBUTION MECHANISM for the one branch the gate
+        // serves, so `endpoint` goes through `resolveEndpointLabel()` — interpolating
+        // `opts.endpoint` raw stringifies the FUNCTION on a resolver call site and the
+        // line then names no endpoint at all.
+        approval satisfies 'not_found';
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[block-scope] approved-status lookup found no app_blocks row; SERVING (observe-only) appId=${
+            claims.appId
+          } blockId=${claims.blockId} endpoint=${resolveEndpointLabel()}`
+        );
+      }
     }
 
     // "Any valid block token" mode (opts.requiredScope omitted): the token has
