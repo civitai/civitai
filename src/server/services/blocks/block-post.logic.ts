@@ -153,8 +153,30 @@ export function validateBlockPostText(input: {
  * RESOLVED to DROPPED — a tag stops being applied and the name shows up in the
  * consent dialog's dropped list instead. That is a degradation, not a security
  * hole (the display guard above is the reason this exists and it still holds), but
- * it is a real behaviour change and it should be settled against production data —
- * `SELECT count(*) FROM "Tag" WHERE name ~ '[\p{Cf}]'` — rather than assumed here.
+ * it is a real behaviour change and it should be settled against production
+ * data rather than assumed here.
+ *
+ * ⚠️ THE CHECK QUERY ENUMERATES THE CLASS DELIBERATELY — DO NOT "SIMPLIFY" IT
+ * BACK TO A PROPERTY CLASS. PostgreSQL's regex engine (ARE) has no `\p{...}`,
+ * so `name ~ '[\p{Cf}]'` does not return a wrong answer, it does not run at all:
+ * `ERROR:  invalid regular expression: invalid escape \ sequence` (measured on a
+ * throwaway PostgreSQL 17.10). An operator who hits that either abandons the
+ * check — leaving this assumption unverified, which is the one thing this note
+ * exists to prevent — or reads it as a fault somewhere else. ARE does support its
+ * own `\uXXXX` / `\UXXXXXXXX` escapes, so spell the members out. Escapes rather
+ * than literal characters, so the query itself carries nothing invisible:
+ *
+ *     SELECT count(*) FROM "Tag"
+ *     WHERE name ~ '[\u00AD\u0600-\u0605\u061C\u06DD\u070F\u0890-\u0891\u08E2\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF\uFFF9-\uFFFB\U000110BD\U000110CD\U00013430-\U0001343F\U0001BCA0-\U0001BCA3\U0001D173-\U0001D17A\U000E0001\U000E0020-\U000E007F]';
+ *
+ * That is the complete Cf set as of Unicode 15.0; re-derive it if the premise is
+ * ever rechecked against a newer one. Verified on PostgreSQL 17.10 (UTF8, which
+ * the `\U` escapes require) with both controls: it matches rows carrying U+00AD,
+ * U+200D, U+202E, U+FEFF and U+E0020, and does not match `café` or an emoji.
+ *
+ * Note the `\p{Cf}` in the CODE below is correct and must stay — that is
+ * JavaScript's regex engine, which does have property classes. Only the SQL
+ * transcription needs the long form.
  */
 export function normalizeBlockPostTagNames(tags: unknown): string[] {
   if (!Array.isArray(tags)) return [];

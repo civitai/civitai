@@ -546,13 +546,30 @@ export async function resolveAppPublishedImages(input: {
 
 /**
  * Walk `sources[]` in order and resolve every one, enforcing the image cap as a
- * REFUSAL rather than a truncation.
+ * REFUSAL rather than a truncation — with the one exception noted below.
  *
  * ⚠️ THE CAP IS A REFUSAL HERE AND A SILENT `break` IN `publishGenerationOutputs`,
  * AND THE DIVERGENCE IS DELIBERATE. Truncating a grid publish costs you tiles;
  * truncating a POST would publish a different set than the one the viewer saw
  * thumbnails of and clicked Publish on. A confirm that can be right about the
  * content and wrong about the set is not a consent screen.
+ *
+ * ⚠️ THE REFUSAL IS NOT UNCONDITIONAL — A BLANKED SLOT ABSORBS THE HEADROOM. The
+ * `maxCount` below asks for one MORE than the remaining budget precisely so an
+ * over-cap request overshoots the cap and is refused rather than clipped. But the
+ * skip arm (`continue`, for an index the block did NOT name landing on a blanked
+ * slot) consumes one of those selected slots without contributing to `out`, which
+ * spends that +1. Measured at this revision: 22 available outputs with
+ * `imageIndexes` omitted and NO blanked slot refuses with `BAD_REQUEST`; the same
+ * request with ONE off-allowlist slot among the first 21 returns 20 images,
+ * silently dropping the 21st.
+ *
+ * That residue is a truncation, and it is tolerable for the same reason the skip
+ * arm is: the preview path runs this identical resolver, so the blanked slot is
+ * already absent from the thumbnails the viewer consented to. The set published is
+ * still the set shown — this loses a tile, it never substitutes one. The invariant
+ * the paragraph above protects therefore holds; what has an exception is only the
+ * weaker claim that an over-cap request is always VISIBLE as an error.
  */
 export async function resolveBlockPostSources(input: {
   sources: BlockPostSource[];
@@ -885,9 +902,18 @@ export async function writeBlockPost(input: {
     // WHY A RAW INSERT AND NOT `enqueueJobs`: that helper is bound to the global
     // `dbWrite` client, so calling it here would open a SECOND connection outside
     // this transaction and re-open the exact non-atomicity this placement removes.
-    // The statement is byte-for-byte the one `create_job_queue_record` runs
-    // (`nsfw_level_update_triggers.sql`), `ON CONFLICT DO NOTHING` included, so a
-    // retry is a no-op and the parity with the trigger is exact.
+    // The statement below is character-identical to `enqueueJobs`'s own per-row
+    // SQL (`src/server/services/job-queue.service.ts`), `ON CONFLICT DO NOTHING`
+    // included — that is the honest citation, and the one to diff against.
+    //
+    // It is NOT byte-for-byte the trigger's: `create_job_queue_record`
+    // (`nsfw_level_update_triggers.sql`) writes `VALUES (entityId,
+    // entityType::"EntityType", type::"JobQueueType")` — no `::integer`, and from
+    // different value sources. The parity that MATTERS is still exact, and it is
+    // about the conflict target rather than the text: both use a bare `ON CONFLICT
+    // DO NOTHING`, and `JobQueue`'s primary key is `@@id([entityType, entityId,
+    // type])`, so this inserts the same row the trigger would have and a retry is
+    // a no-op.
     //
     // ENQUEUEING rather than calling `updatePostNsfwLevels` directly is also what
     // the trigger does, and it matters: the cron runs `getNsfwLevelRelatedEntities`
@@ -948,6 +974,19 @@ export async function writeBlockPost(input: {
  * the one that behaves DIFFERENTLY — so a sweep of `programmability/` alone gets
  * this wrong). A fifth appearing here is a defect: re-derive rather than trusting
  * this list.
+ *
+ * 🔴 AND RE-DERIVE FROM `pg_trigger` ON THE PRODUCTION DATABASE, NOT FROM THIS
+ * REPO — THE REPO IS NOT A COMPLETE RECORD OF WHAT IS ON THE TABLE. This tree has
+ * already carried a fifth it structurally could not see: `bitdex_post_54f0a619`
+ * appears ONLY as a `DROP TRIGGER IF EXISTS ... ON "Post"`, in
+ * `packages/civitai-db-schema/prisma/migrations/20260901190000_drop_bitdex_write_triggers/migration.sql`,
+ * with no `CREATE` anywhere in the tree — it was created out-of-band and lived in
+ * production. An enumeration of `CREATE TRIGGER` statements cannot find a trigger
+ * that was never committed as one. The authoritative read is:
+ *
+ *     SELECT tgname, pg_get_triggerdef(oid)
+ *     FROM pg_trigger
+ *     WHERE tgrelid = '"Post"'::regclass AND NOT tgisinternal;
  *
  *   1. `post_nsfw_level_change`      `AFTER UPDATE OF "publishedAt" OR DELETE`
  *      → DOES NOT FIRE. Re-issued — but NOT here: it is issued INSIDE
@@ -1051,11 +1090,11 @@ export async function applyBlockPostPublishEffects(input: {
   // transaction, because it decides whether the post is visible at all and this
   // function's failures are swallowed by the router. See both docblocks.
 
-  // 🔴 `publish_post_metrics_trigger` is also `AFTER UPDATE OF "publishedAt"`,
-  // also `AFTER UPDATE OF "publishedAt"`, so no seed `PostMetric` row is created
-  // either. The COUNTS recover on their own (the metrics job upserts them), but
-  // `ageGroup` is written ONLY by this trigger, and a NULL one drops the post out
-  // of every age-bucketed metric read. Mirrors `publish_post_metrics()` exactly:
+  // 🔴 `publish_post_metrics_trigger` is also `AFTER UPDATE OF "publishedAt"`, so
+  // no seed `PostMetric` row is created either. The COUNTS recover on their own
+  // (the metrics job upserts them), but `ageGroup` is written ONLY by this
+  // trigger, and a NULL one drops the post out of every age-bucketed metric
+  // read. Mirrors `publish_post_metrics()` exactly:
   // the AllTime row, and `ageGroup = 'Day'` — which is what that function
   // computes for a `publishedAt` of now (its NULL branch is the scheduled-post
   // case, and this path never schedules).

@@ -322,10 +322,22 @@ describe('an all-`published` post ends up VISIBLE to a non-owner', () => {
     expect(queuedJobsFrom(dbMock.dbWrite.$executeRaw.mock.calls)).toEqual([
       { entityId: POST_ID, entityType: EntityType.Post, type: JobQueueType.UpdateNsfwLevel },
     ]);
-    // And the statement is the trigger's own, `ON CONFLICT DO NOTHING` included —
-    // a retry of the whole publish must not fail on a duplicate row.
-    const sql = (dbMock.dbWrite.$executeRaw.mock.calls[0][0] as string[]).join('?');
-    expect(sql.replace(/\s+/g, ' ')).toContain('ON CONFLICT DO NOTHING');
+    // And the statement carries `ON CONFLICT DO NOTHING` — a retry of the whole
+    // publish must not fail on a duplicate row.
+    //
+    // Selected by CONTENT, not by position. `calls[0]` is the enqueue today, but
+    // `ON CONFLICT` is a common idiom on this path (the `PostMetric` seed carries
+    // one too), so an index-targeted assertion would silently re-target the moment
+    // any raw statement is issued earlier in the transaction — and keep passing
+    // against the substitute while the `JobQueue` insert lost its conflict clause.
+    // Same `INSERT INTO "JobQueue"` token `queuedJobsFrom` filters on.
+    const jobQueueStatements = dbMock.dbWrite.$executeRaw.mock.calls
+      .map((call) => (call[0] as string[]).join('?').replace(/\s+/g, ' '))
+      .filter((sql) => sql.includes('INSERT INTO "JobQueue"'));
+    // Positive control on the selector itself: a filter that matched nothing would
+    // make the assertion below vacuous rather than failing.
+    expect(jobQueueStatements).toHaveLength(1);
+    expect(jobQueueStatements[0]).toContain('ON CONFLICT DO NOTHING');
   });
 
   it('issues the enqueue on the TRANSACTION client, so it cannot commit without the post', async () => {
