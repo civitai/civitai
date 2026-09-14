@@ -17,8 +17,8 @@
     grafanaUrl,
   }: {
     /**
-     * 🔴 The row's `Feedback.area`. Load-bearing, not decoration: filter values are formatted per
-     * `(area, key)`, because a key means whatever the surface that wrote it meant. See
+     * 🔴 The row's `Feedback.area`. Load-bearing, not decoration: the `browsingLevel` decode is
+     * guarded on `(area, key)`, because a key means whatever the surface that wrote it meant. See
      * `$lib/feedback-filters.ts`.
      */
     area: string;
@@ -84,10 +84,10 @@
   {#if context.filters}
     <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-0.5 text-sm">
       {#each Object.entries(context.filters) as [key, value] (key)}
-        <!-- 🔴 Formatted per `(area, key)`, never by key alone. `browsingLevel` is a BITMASK on
+        <!-- 🔴 Formatted on `(area, key)`, never by key alone. `browsingLevel` is a BITMASK on
              `bitdex-image-feed` — `28` means "R, X, XXX", not level 28 — and means nothing at all
              anywhere else. A global key match would relabel a future area's identically-named value
-             as a content rating. Unregistered keys keep the rendering they have always had. -->
+             as a content rating. Every other pair keeps the rendering it has always had. -->
         {@const formatted = formatFeedbackFilterValue(area, key, value)}
         <dt class="text-dark-2">{key}</dt>
         <dd class="font-mono wrap-anywhere" title={formatted.title ?? undefined}>

@@ -3,20 +3,27 @@ import { urlWith } from './url';
 /**
  * The detail panel's tabs.
  *
- * Order is the triage order: read the complaint, see where they were, look at what they sent, act,
- * then link it to an issue.
+ * Order is the triage order: read the complaint AND what they sent with it, see where they were,
+ * act, then link it to an issue.
+ *
+ * 🔴 THERE IS NO `attachments` TAB, AND THAT IS A DECISION, NOT AN OMISSION. Message + attachment is
+ * the core triage pairing — "this looked wrong" plus the picture of it — so they render TOGETHER on
+ * the default tab, at a cost of zero navigations. An earlier revision of this panel gave attachments
+ * their own tab; that cost two navigations to see a pairing that previously cost none, and the
+ * containment it bought was marginal because thumbnails already load only once a ROW is expanded.
+ * `?tab=attachments` degrades to the default via `feedbackTabFromUrl`, which is exactly where the
+ * attachments now are, so an old shared link still lands on them.
  */
 export const FEEDBACK_TABS = [
   { id: 'message', label: 'Message' },
   { id: 'context', label: 'Context' },
-  { id: 'attachments', label: 'Attachments' },
   { id: 'triage', label: 'Triage' },
   { id: 'issue', label: 'Issue' },
 ] as const;
 
 export type FeedbackTab = (typeof FEEDBACK_TABS)[number]['id'];
 
-/** The complaint itself — the only thing that is always worth reading first. */
+/** The complaint and its attachments — the only thing that is always worth reading first. */
 export const DEFAULT_FEEDBACK_TAB: FeedbackTab = 'message';
 
 export const FEEDBACK_TAB_PARAM = 'tab';

@@ -23,11 +23,12 @@
 
   {#if items.length}
     <!-- 🔴 Unverified, client-supplied ids: a page capture can carry NSFW content or another user's
-         UI. ROW-LEVEL EXPANSION IS THE CONTAINMENT — nothing loads until a moderator opens a row —
-         and the tab strip narrows that further, since this section only mounts once they select
-         Attachments. So do NOT hoist these into the list view, and do not render this section
-         alongside the others. If this page ever reaches a non-moderator, add `blur={40}` and a click
-         to clear. -->
+         UI. ROW-LEVEL EXPANSION IS THE CONTAINMENT, AND IT IS THE ONLY ONE — nothing loads until a
+         moderator opens a row, and this section then renders on the default tab alongside the
+         message. It does NOT sit behind a tab of its own; that was tried and reverted, because a
+         second gate behind an existing one bought little and cost the message+attachment pairing two
+         navigations. So do NOT hoist these into the list view — that is the gate that matters. If
+         this page ever reaches a non-moderator, add `blur={40}` and a click to clear. -->
     <div class="flex flex-wrap gap-3">
       <!-- 🔴 KEYED BY INDEX, NOT BY `item.id`, AND THAT IS NOT LAZINESS. `splitContext` deduplicates
            `images` among THEMSELVES, but nothing compares `screenshotId` against them — so a row

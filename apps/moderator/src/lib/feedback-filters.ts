@@ -64,31 +64,41 @@ export function formatBrowsingLevel(value: FilterValue): FormattedFilterValue | 
 }
 
 /**
- * Per-`(area, key)` formatters. Anything not named here renders generically.
+ * The one area whose `browsingLevel` filter is a bitmask.
  *
- * 🔴 SCOPED BY AREA ON PURPOSE, and a global `if (key === 'browsingLevel')` is the bug this shape
- * exists to refuse. `context.filters` is `Record<string, string | number | boolean>` written by
+ * 🔴 It is also the only area that can carry that key AT ALL. Measured in this round over the whole
+ * repo: the live feedback-context builders are `src/components/Apps/appsStoreFeedbackContext.ts`
+ * (writes `kind`, `category`, `sort`, `query`) and `src/components/Feedback/FeedbackDrawer.tsx`
+ * (writes `path` only) — neither writes `browsingLevel`, and BitDex was decommissioned 2026-09-01 so
+ * no producer can start. The 23 historical `bitdex-image-feed` rows are the entire population this
+ * decode exists for.
+ */
+const BITMASK_BROWSING_LEVEL_AREA = 'bitdex-image-feed';
+
+/**
+ * The one entry point the panel calls. Every other `(area, key)` keeps today's generic rendering.
+ *
+ * 🔴 GUARDED ON `area` AS WELL AS `key`, and a bare `if (key === 'browsingLevel')` is the bug this
+ * shape exists to refuse. `context.filters` is `Record<string, string | number | boolean>` written by
  * whichever surface mounted the prompt; `browsingLevel` means a bitmask on `bitdex-image-feed` and
  * nothing at all anywhere else. A key match alone would relabel a future area's identically-named
- * value as a content rating, which is a wrong answer that reads exactly like a right one.
+ * value as a content rating — a wrong answer that reads exactly like a right one.
  *
- * 🔴 A `Map`, NOT a plain object, and that is load-bearing rather than taste. Both `area` and `key`
- * are untrusted — `area` is a stored TEXT column and `key` comes out of a JSONB blob with no schema
- * at rest — so an object lookup on `'toString'` or `'constructor'` returns an inherited FUNCTION,
- * `formatter?.(value)` calls it, and the panel renders whatever that returned. `Map.get` has no
- * prototype chain, so a key nobody registered simply misses.
+ * 🔴 TWO `===` COMPARISONS, NOT A LOOKUP, AND THAT IS THE POINT. Both `area` and `key` are untrusted
+ * — `area` is a stored TEXT column and `key` comes out of a JSONB blob with no schema at rest. An
+ * earlier revision of this file indexed them into a two-level registry, which is exactly the surface
+ * where `'toString'` resolves to an inherited FUNCTION that then gets CALLED (a `Map` closed that,
+ * but only by hardening a lookup that did not need to exist for a one-entry table). A comparison has
+ * no prototype chain to harden. **If a keyed lookup ever comes back here it must be a `Map`** — see
+ * the repo's own live lesson where `scope in MAP` passed 12 prototype keys as known.
  */
-const FEEDBACK_FILTER_FORMATTERS: ReadonlyMap<
-  string,
-  ReadonlyMap<string, (value: FilterValue) => FormattedFilterValue | null>
-> = new Map([['bitdex-image-feed', new Map([['browsingLevel', formatBrowsingLevel]])]]);
-
-/** The one entry point the panel calls. Unknown `(area, key)` keeps today's generic rendering. */
 export function formatFeedbackFilterValue(
   area: string,
   key: string,
   value: FilterValue
 ): FormattedFilterValue {
-  const formatter = FEEDBACK_FILTER_FORMATTERS.get(area)?.get(key);
-  return formatter?.(value) ?? genericFilterValue(value);
+  if (area === BITMASK_BROWSING_LEVEL_AREA && key === 'browsingLevel') {
+    return formatBrowsingLevel(value) ?? genericFilterValue(value);
+  }
+  return genericFilterValue(value);
 }

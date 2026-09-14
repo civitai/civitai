@@ -20,20 +20,19 @@ describe('the tab ledger', () => {
    * nothing, with no error anywhere. This fails on an add or a removal and makes the author look.
    */
   it('is exactly these tabs, in this order', () => {
-    expect(FEEDBACK_TABS.map((t) => t.id)).toEqual([
-      'message',
-      'context',
-      'attachments',
-      'triage',
-      'issue',
-    ]);
-    expect(FEEDBACK_TABS.map((t) => t.label)).toEqual([
-      'Message',
-      'Context',
-      'Attachments',
-      'Triage',
-      'Issue',
-    ]);
+    expect(FEEDBACK_TABS.map((t) => t.id)).toEqual(['message', 'context', 'triage', 'issue']);
+    expect(FEEDBACK_TABS.map((t) => t.label)).toEqual(['Message', 'Context', 'Triage', 'Issue']);
+  });
+
+  /**
+   * 🔴 THERE IS NO `attachments` TAB. Attachments render WITH the message on the default tab, because
+   * "this looked wrong" plus the picture of it is one triage claim and splitting it cost two
+   * navigations for a pairing that previously cost none. Pinned here so a future edit that re-adds
+   * the tab has to come back and read the reason rather than discovering it from a screenshot.
+   */
+  it('has no attachments tab', () => {
+    expect(FEEDBACK_TABS.map((t) => t.id)).not.toContain('attachments');
+    expect(isFeedbackTab('attachments')).toBe(false);
   });
 
   it('opens on the complaint', () => {
@@ -66,7 +65,16 @@ describe('isFeedbackTab', () => {
 describe('feedbackTabFromUrl', () => {
   it('reads the selected tab', () => {
     expect(feedbackTabFromUrl(at('?open=12&tab=triage'))).toBe('triage');
-    expect(feedbackTabFromUrl(at('?tab=attachments'))).toBe('attachments');
+    expect(feedbackTabFromUrl(at('?tab=context'))).toBe('context');
+  });
+
+  /**
+   * A link shared while the attachments tab existed still opens onto the attachments — they are on
+   * the default tab now, and an unknown `?tab=` degrades to the default. The value of this case is
+   * that the degrade lands somewhere CORRECT, not merely somewhere safe.
+   */
+  it('lands an old ?tab=attachments link on the tab that now holds them', () => {
+    expect(feedbackTabFromUrl(at('?tab=attachments&open=12'))).toBe('message');
   });
 
   /**

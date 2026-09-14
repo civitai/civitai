@@ -102,11 +102,19 @@
 
   <FeedbackTabs active={activeTab} />
 
-  <!-- Only the selected tab is rendered. That is deliberate for Attachments in particular: the
-       containment model on this page is that nothing loads until a moderator asks for it, and a
-       hidden-but-mounted panel is a weaker claim than one that was never built. -->
+  <!-- Only the selected tab is rendered: the containment model on this page is that nothing loads
+       until a moderator asks for it, and a hidden-but-mounted panel is a weaker claim than one that
+       was never built.
+
+       🔴 ATTACHMENTS RENDER WITH THE MESSAGE, ON THE DEFAULT TAB — not behind a tab of their own.
+       "This looked wrong" and the picture of it are one claim, and reading them together is the
+       whole triage step; splitting them cost two navigations for a pairing that previously cost
+       none. The containment argument for splitting them does not survive: thumbnails already only
+       mount once the ROW is expanded, so a tab in front of them bought a second gate on top of an
+       existing one, not a first gate. Row expansion is still the containment. -->
   {#if activeTab === 'message'}
     <p class="wrap-break-word text-sm whitespace-pre-wrap">{row.message}</p>
+    <FeedbackAttachments {context} />
   {:else if activeTab === 'context'}
     <FeedbackContextPanel
       area={row.area}
@@ -115,8 +123,6 @@
       {civitaiUrl}
       {grafanaUrl}
     />
-  {:else if activeTab === 'attachments'}
-    <FeedbackAttachments {context} />
   {:else if activeTab === 'triage'}
     <section class="flex min-w-0 flex-col gap-3">
       <h3 class="text-xs tracking-wide text-dark-2 uppercase">Triage</h3>

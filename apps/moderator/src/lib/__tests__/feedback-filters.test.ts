@@ -105,7 +105,7 @@ describe('genericFilterValue', () => {
 });
 
 /**
- * 🔴 THE REGISTRY IS SCOPED BY `(area, key)`, AND THAT IS THE POINT OF IT. A global
+ * 🔴 THE DECODE IS GUARDED ON `area` AS WELL AS `key`, AND THAT IS THE POINT OF IT. A bare
  * `if (key === 'browsingLevel')` would relabel a future area's identically-named value as a content
  * rating — a wrong answer that reads exactly like a right one, on a queue whose whole job is telling
  * a moderator what a reporter saw.
@@ -123,25 +123,90 @@ describe('formatFeedbackFilterValue', () => {
       title: null,
     });
     expect(formatFeedbackFilterValue('site-bug-report', 'browsingLevel', 28).text).toBe('28');
-    // And under an area nobody has registered at all.
+    // And under an area no producer has ever written.
     expect(formatFeedbackFilterValue('some-future-area', 'browsingLevel', 28).text).toBe('28');
   });
 
-  it('leaves a different key alone under the registered area', () => {
+  /**
+   * 🔴 THE NUMERIC CASE IS THE ONLY ONE THAT CAN SEE THE MUTANT, and it is here deliberately.
+   * `formatBrowsingLevel` rejects anything that is not a non-negative int4, so a STRING fixture falls
+   * through the decoder whether or not the key half of the guard exists — `'newest'`, `'none'` and
+   * `''` all render identically with `key === 'browsingLevel'` deleted. Measured in this round:
+   * dropping the key half left every string case green and was killed by nothing in this block.
+   * A number under a non-`browsingLevel` key is what makes the assertion reachable.
+   */
+  it('leaves a different key alone under the decoded area', () => {
     expect(formatFeedbackFilterValue('bitdex-image-feed', 'sort', 'newest').text).toBe('newest');
     expect(formatFeedbackFilterValue('bitdex-image-feed', 'category', 'none').text).toBe('(none)');
     expect(formatFeedbackFilterValue('bitdex-image-feed', 'query', '').text).toBe('—');
+    // 28 is a value the decoder renders as `R, X, XXX`, so this cannot pass by coincidence.
+    expect(formatFeedbackFilterValue('bitdex-image-feed', 'resultCount', 28)).toEqual({
+      text: '28',
+      title: null,
+    });
   });
 
   /**
-   * 🔴 BOTH LOOKUP KEYS ARE UNTRUSTED — `area` is a stored TEXT column, `key` comes out of a JSONB
-   * blob with no schema at rest. Indexed into a plain object, `'toString'` and `'constructor'` return
-   * inherited FUNCTIONS, `formatter?.(value)` calls one, and the panel renders whatever came back.
-   * The implementation uses `Map`, which has no prototype chain; this pins the behaviour so a future
-   * "simplify it to a record" edit fails here instead of shipping.
+   * 🔴 THE BYTE-IDENTICAL PIN. Every `(area, key, value)` triple the panel can actually be handed
+   * today, with its EXACT rendered output hand-typed. This table is what makes the removal of the
+   * former two-level `(area, key)` formatter registry a refactor rather than a behaviour change: if
+   * any reachable input renders differently from the registry's output, one of these rows moves.
+   *
+   * The reachable population, measured in this round rather than assumed:
+   *   - `area` ∈ `FEEDBACK_AREAS` — `bitdex-image-feed`, `apps-marketplace`, `site-bug-report`. It is
+   *     a stored TEXT column, so an unknown slug is included too.
+   *   - `key`s that live producers write: `kind`, `category`, `sort`, `query`
+   *     (`src/components/Apps/appsStoreFeedbackContext.ts`). `FeedbackDrawer.tsx` writes `path` only,
+   *     which is not a `filters` entry at all.
+   *   - `browsingLevel`, which no live producer writes: it exists only on the 23 historical
+   *     `bitdex-image-feed` rows, because BitDex was decommissioned 2026-09-01.
+   */
+  const reachable: Array<[string, string, string | number | boolean, string, string | null]> = [
+    // area                key              value      text            title
+    ['bitdex-image-feed', 'browsingLevel', 1, 'PG', '1'],
+    ['bitdex-image-feed', 'browsingLevel', 3, 'PG, PG-13', '3'],
+    ['bitdex-image-feed', 'browsingLevel', 7, 'PG, PG-13, R', '7'],
+    ['bitdex-image-feed', 'browsingLevel', 28, 'R, X, XXX', '28'],
+    ['bitdex-image-feed', 'browsingLevel', 30, 'PG-13, R, X, XXX', '30'],
+    ['bitdex-image-feed', 'browsingLevel', 31, 'PG, PG-13, R, X, XXX', '31'],
+    // The same key on every other area: untouched, including the sentinels.
+    ['apps-marketplace', 'browsingLevel', 28, '28', null],
+    ['site-bug-report', 'browsingLevel', 28, '28', null],
+    ['some-future-area', 'browsingLevel', 28, '28', null],
+    // The keys live producers actually write, on the area that writes them.
+    ['apps-marketplace', 'kind', 'all', 'all', null],
+    ['apps-marketplace', 'kind', 'installed', 'installed', null],
+    ['apps-marketplace', 'category', 'none', '(none)', null],
+    ['apps-marketplace', 'category', 'productivity', 'productivity', null],
+    ['apps-marketplace', 'sort', 'newest', 'newest', null],
+    ['apps-marketplace', 'query', '', '—', null],
+    ['apps-marketplace', 'query', 'upscale', 'upscale', null],
+    // And those same keys under the decoded area, which must not pick up the decode.
+    ['bitdex-image-feed', 'category', 'none', '(none)', null],
+    ['bitdex-image-feed', 'query', '', '—', null],
+    ['bitdex-image-feed', 'sort', 'newest', 'newest', null],
+    // A non-string value on an undecoded key still stringifies.
+    ['site-bug-report', 'nsfw', true, 'true', null],
+    ['site-bug-report', 'page', 4, '4', null],
+  ];
+
+  it.each(reachable)('renders (%s, %s, %s) as exactly %s', (area, key, value, text, title) => {
+    expect(formatFeedbackFilterValue(area, key, value)).toEqual({ text, title });
+  });
+
+  /**
+   * ⚠️ AN INVARIANT GUARD, NOT REGRESSION COVERAGE — labelled as one rather than counted as the other.
+   *
+   * When this file held a two-level `(area, key)` registry these cases pinned a LIVE hazard: indexed
+   * into a plain object, `'toString'` and `'constructor'` resolve to inherited FUNCTIONS, and
+   * `formatter?.(value)` CALLS one. The registry is gone — the decode is now two `===` comparisons,
+   * which have no prototype chain — so **this guard no longer has a live hazard behind it**, and it
+   * would pass with the guard's own reason deleted. It is kept only because `area` and `key` remain
+   * untrusted (a TEXT column and a schemaless JSONB blob), so a future edit that reintroduces a keyed
+   * lookup here — which must then be a `Map` — fails here instead of shipping.
    */
   it.each(['toString', 'constructor', 'valueOf', 'hasOwnProperty', '__proto__'])(
-    'does not resolve the inherited key %s as a formatter, on either axis',
+    'renders the inherited key %s generically, on either axis',
     (hostile) => {
       expect(formatFeedbackFilterValue(hostile, 'browsingLevel', 28)).toEqual({
         text: '28',
@@ -155,8 +220,8 @@ describe('formatFeedbackFilterValue', () => {
     }
   );
 
-  it('falls back to generic rendering when the registered formatter declines the value', () => {
-    // Registered `(area, key)`, but a value no browsing level could be: the panel must show the
+  it('falls back to generic rendering when the decoder declines the value', () => {
+    // The decoded `(area, key)`, but a value no browsing level could be: the panel must show the
     // string, not a confident `?`.
     expect(formatFeedbackFilterValue('bitdex-image-feed', 'browsingLevel', 'all')).toEqual({
       text: 'all',
