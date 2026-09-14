@@ -115,6 +115,14 @@ export type AppIdentity = { slug: string; appBlockId: string; schemaIdent: strin
  * list is then intersected with what actually exists in the apps database: storage is provisioned at
  * approval time, so an approved block can legitimately have no schema yet, and querying it would
  * raise `42P01` per app per run.
+ *
+ * 🔴 A SIDE EFFECT WORTH NAMING, BECAUSE IT IS LOAD-BEARING AND NOT OBVIOUS: the mod review sandbox
+ * gets its own `apprev_<publishRequestId>` schema with the SAME tables, and a moderator running an
+ * unapproved app "for real" can file reports in it. Those must never reach the board — they are
+ * scribbles on a disposable preview, not abuse. They cannot, because every name here is built as
+ * `app_${slug}` and the `apprev_` prefix can never alias an `app_` one (see `apps-slug.ts`: an
+ * `app_<slug>` schema always has `_` at index 3). So the exclusion is by construction rather than by
+ * a filter someone could drop — but it is invisible unless said out loud.
  */
 export async function listSharedStorageApps(): Promise<AppIdentity[]> {
   if (!appsDb) return [];
