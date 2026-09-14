@@ -22,6 +22,7 @@ import {
   filenameSampleArgs,
   normalizeFilename,
   stagedImageSampleArgs,
+  type CohortSignals,
   type EvidenceClickhouse,
   type EvidenceReader,
   type FilenameSampleRow,
@@ -455,7 +456,25 @@ describe('publicIpOnlySql', () => {
 // ---------------------------------------------------------------------------------------------
 
 describe('buildCohortSignals', () => {
-  const sources = {
+  /**
+   * The source flags every case in this block hands `buildCohortSignals`.
+   *
+   * 🔴 ANNOTATED, WHICH IS THE POINT, NOT DECORATION. This fixture was written as a bare object
+   * literal and silently went out of date the day `CohortSignals['sources']` grew `readFailures`:
+   * every one of the fifteen call sites below became a TS2741, and not one gate in this repo could
+   * see it — `tsconfig.json` drops this directory from the program and vitest does not typecheck.
+   * With the annotation the next field added to that type is one error here rather than fifteen
+   * over there, and it lands on the fixture that actually needs updating.
+   *
+   * `readFailures` is all-false: every case in this block is about the FOLD, and a fold reads the
+   * rows it is handed and consults no flag. The cases that are about the flags build their own.
+   */
+  const sources: CohortSignals['sources'] = {
+    readFailures: {
+      registrationIps: false,
+      filenameSamples: false,
+      stagedImages: false,
+    },
     registrationIps: true,
     filenameSamples: true,
     filenameBudgetExhausted: false,
@@ -1415,12 +1434,44 @@ describe('collectCohortSignals', () => {
 // ---------------------------------------------------------------------------------------------
 
 describe('createEvidenceReader', () => {
+  /**
+   * The port's dependency bag, named once.
+   *
+   * 🔴 `NonNullable`, BECAUSE THE PARAMETER HAS A DEFAULT. `createEvidenceReader(deps = {})`
+   * makes its parameter optional, so `Parameters<typeof createEvidenceReader>[0]` is
+   * `{…} | undefined` and indexing `['db']` off it does not compile. Spelled out because the naked
+   * form was written at four call sites here and every one of them was a type error invisible to
+   * every gate in this repo: `tsconfig.json` excludes this whole directory from the program, and
+   * vitest does not typecheck. Nothing would have gone red.
+   */
+  type ReaderDeps = NonNullable<Parameters<typeof createEvidenceReader>[0]>;
+
+  /**
+   * The shared image double.
+   *
+   * 🔴 IT ANSWERS THE FILENAME OVERLOAD, AND THE CAST AT EACH CALL SITE IS WHY THAT IS SAYABLE.
+   * `EvidenceDb['image']['findMany']` is an OVERLOAD PAIR — one signature returning
+   * `FilenameSampleRow[]`, one returning `StagedImageRow[]` — and a single `vi.fn` cannot be
+   * assignable to both while returning one row shape. The cases that drive the staged read through
+   * this double assert its CALL ARGUMENTS and never its rows, so answering one overload is the
+   * honest encoding rather than a gap; the cases that need real staged rows build their own double.
+   *
+   * The declared parameter is not decoration either: with an implementation that takes none, the
+   * mock's recorded calls are typed `[]` and destructuring `([a]) => …` off an empty tuple does not
+   * compile. It is declared on the TYPE ARGUMENT rather than on the implementation so the double
+   * still ignores what it is handed, without an unused binding.
+   */
   const db = {
-    image: { findMany: vi.fn(async () => [{ userId: 3, name: 'logo.jpg' }]) },
+    image: {
+      findMany: vi.fn<(args: unknown) => Promise<{ userId: number; name: string }[]>>(async () => [
+        { userId: 3, name: 'logo.jpg' },
+      ]),
+    },
   };
+  const readerDb = db as unknown as ReaderDeps['db'];
 
   it('🔴 reports the IP source as unavailable when there is no ClickHouse client', async () => {
-    const reader = createEvidenceReader({ db, ch: null });
+    const reader = createEvidenceReader({ db: readerDb, ch: null });
     expect(reader.hasRegistrationIps).toBe(false);
     // And asking anyway returns nothing rather than throwing — the caller's flag is the record.
     expect(await reader.listRegistrationIps([1, 2])).toEqual([]);
@@ -1431,7 +1482,7 @@ describe('createEvidenceReader', () => {
     // that single statement carried both defects this change removes — see `filenameSampleArgs`.
     // The fan-out is asserted by CALL COUNT and by the arguments of each call, because "it returned
     // rows" is true of the broken shape too.
-    const reader = createEvidenceReader({ db, ch: null });
+    const reader = createEvidenceReader({ db: readerDb, ch: null });
     db.image.findMany.mockClear();
     const before = new Date('2026-09-03T12:00:00.000Z');
     expect(await reader.listFilenameSamples([1, 2], 10, before)).toEqual([
@@ -1485,7 +1536,7 @@ describe('createEvidenceReader', () => {
       }),
     };
     const reader = createEvidenceReader({
-      db: { ...db, image } as unknown as Parameters<typeof createEvidenceReader>[0]['db'],
+      db: { ...db, image } as unknown as ReaderDeps['db'],
       ch: null,
     });
 
@@ -1521,7 +1572,7 @@ describe('createEvidenceReader', () => {
       }),
     };
     const reader = createEvidenceReader({
-      db: { ...db, image } as unknown as Parameters<typeof createEvidenceReader>[0]['db'],
+      db: { ...db, image } as unknown as ReaderDeps['db'],
       ch: null,
     });
 
@@ -1565,7 +1616,7 @@ describe('createEvidenceReader', () => {
       }),
     };
     const reader = createEvidenceReader({
-      db: { ...db, image } as unknown as Parameters<typeof createEvidenceReader>[0]['db'],
+      db: { ...db, image } as unknown as ReaderDeps['db'],
       ch: null,
     });
     const members = Array.from({ length: 9 }, (_, i) => member(i + 1, 'ring.test'));
@@ -1602,7 +1653,7 @@ describe('createEvidenceReader', () => {
   });
 
   it('issues no filename statement for an empty id list or a zero take', async () => {
-    const reader = createEvidenceReader({ db, ch: null });
+    const reader = createEvidenceReader({ db: readerDb, ch: null });
     db.image.findMany.mockClear();
     expect(await reader.listFilenameSamples([], 10)).toEqual([]);
     expect(await reader.listFilenameSamples([1], 0)).toEqual([]);
@@ -1615,7 +1666,7 @@ describe('createEvidenceReader', () => {
     // because "it returned rows" is true of the broken shape as well. The predicates are checked on
     // every call rather than on the first: a fan-out that built the filter once and reused it for
     // member one only is a shape this assertion would otherwise pass.
-    const reader = createEvidenceReader({ db, ch: null });
+    const reader = createEvidenceReader({ db: readerDb, ch: null });
     db.image.findMany.mockClear();
     const before = new Date('2026-09-03T12:00:00.000Z');
     await reader.listStagedImageSamples([4, 5, 6], 9, before);
@@ -1649,14 +1700,14 @@ describe('createEvidenceReader', () => {
       }),
     };
     const reader = createEvidenceReader({
-      db: { ...db, image } as unknown as Parameters<typeof createEvidenceReader>[0]['db'],
+      db: { ...db, image } as unknown as ReaderDeps['db'],
       ch: null,
     });
     await expect(reader.listStagedImageSamples([1, 2, 3], 5)).rejects.toThrow('replica timeout');
   });
 
   it('issues no staged statement for an empty id list or a zero take', async () => {
-    const reader = createEvidenceReader({ db, ch: null });
+    const reader = createEvidenceReader({ db: readerDb, ch: null });
     db.image.findMany.mockClear();
     expect(await reader.listStagedImageSamples([], 10)).toEqual([]);
     expect(await reader.listStagedImageSamples([1], 0)).toEqual([]);
@@ -1676,7 +1727,7 @@ describe('createEvidenceReader', () => {
         { targetUserId: '8', ip: '' },
       ]) as EvidenceClickhouse['$query'],
     };
-    const reader = createEvidenceReader({ db, ch });
+    const reader = createEvidenceReader({ db: readerDb, ch });
     expect(await reader.listRegistrationIps([7, 8])).toEqual([{ userId: 7, ip: '203.0.113.9' }]);
   });
 });
