@@ -1,21 +1,20 @@
 /**
- * chatCompletion text-scan spike endpoint — CU 868m4de9j.
+ * chatCompletion text-scan measurement endpoint.
  * =============================================================================
  *
  * Hidden testing route guarded by WEBHOOK_TOKEN via `?token=` query param.
  *
- * Submits a RAW `chatCompletion` workflow step — not `xGuardModeration` — so we
- * can measure whether a general instruct model can replace the purpose-built
- * guard model behind text moderation. Writes no `EntityModeration` row and no
- * audit entry.
+ * Submits a RAW `chatCompletion` workflow step rather than `xGuardModeration`,
+ * to measure how a given model behaves as a text classifier. Writes no
+ * `EntityModeration` row and no audit entry.
  *
- * Every unknown this spike has to settle is a separate toggle, so they can be
- * probed one at a time instead of as one pass/fail:
+ * Each request knob is independent, so they can be probed one at a time
+ * instead of as one pass/fail:
  *
  *   responseFormat        'none' | 'json_object' | 'json_schema'
- *   chatTemplateKwargs    arbitrary object (reported to 500 on an older build)
+ *   chatTemplateKwargs    arbitrary object
  *   logprobs/topLogprobs  whether a usable distribution comes back
- *   model                 the fallback ladder
+ *   model                 AIR or OpenRouter provider id
  *
  * Usage:
  *   POST /api/testing/chat-completion-scan?token=$WEBHOOK_TOKEN
@@ -24,30 +23,26 @@
  * Actions:
  *
  *   { "action": "whatif", ... }
- *     Price the request without running it. Answers "is text-only AIR still
- *     0 Buzz", and prices an OpenRouter fallback for comparison.
+ *     Price the request without running it.
  *
- *   { "action": "scan", "text": "...", "labels": ["nsfw"], ... }
+ *   { "action": "scan", "text": "...", "labels": ["..."], ... }
  *     One synchronous scan. Returns the raw assistant content, the
  *     server-parsed `output.parsed` when a JSON responseFormat was requested,
  *     logprobs, token usage, and an outcome classification.
  *
  *   { "action": "fetch", "workflowId": "..." }
- *     Re-read a finished workflow through `getWorkflow`. This is how we verify
- *     `parsed` survives onto the persisted workflow — which is what the real
- *     callback handler reads. A local dev server cannot receive an orchestrator
+ *     Re-read a finished workflow through `getWorkflow`, to check that `parsed`
+ *     survives onto the persisted workflow — which is what a real callback
+ *     handler reads. A local dev server cannot receive an orchestrator
  *     callback, so this stands in for it.
  *
  *   { "action": "batch", "texts": ["...", "..."], ... }
  *     Up to 50 texts, concurrency-limited. Returns per-item outcomes plus a
- *     refusal-rate and score-distribution summary — the two measurements that
- *     decide whether a general model can do this job at all.
+ *     refusal-rate and score-distribution summary.
  *
- * Label POLICY text is an input, never a default in this file: policy text and
- * thresholds must not be committed (CLAUDE.md Security §2). `labels` here are
- * bare names; pass definitions via `labelDefinitions` or `systemPrompt` at call
- * time. Export the live ones with
- * `.claude/skills/xguard-manager/manage.mjs get text`.
+ * Label definitions and policy text are INPUTS, never defaults in this file.
+ * `labels` are bare names; pass any definitions via `labelDefinitions` or
+ * `systemPrompt` at call time.
  */
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { ChatCompletionStepTemplate } from '@civitai/client';
@@ -61,8 +56,8 @@ const DEFAULT_MODEL =
   'urn:air:qwen3:repository:huggingface:gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090@main.tar';
 
 /**
- * Structural only — it states the output shape and says nothing about what any
- * label means. Keeping policy out of it is what makes this file committable.
+ * Structural only: states the output shape and says nothing about what any
+ * label means. Label semantics belong in `labelDefinitions` at call time.
  */
 const DEFAULT_SYSTEM_PROMPT = `You are a content classification service. You will be given a block of user-submitted text and a list of labels.
 
@@ -125,10 +120,8 @@ type ScanInput = Extract<z.infer<typeof schema>, { action: 'scan' }>;
 
 /**
  * A refusal, a truncation and a malformed reply all look like "no labels
- * triggered" to a naive parser, and conflating them is the failure mode this
- * whole spike exists to rule out — so they are separate outcomes, and the raw
- * content is returned for every non-`ok` so a human can check the call rather
- * than trusting this function.
+ * triggered" to a naive parser, so they are kept as separate outcomes and the
+ * raw content is returned for every non-`ok` case.
  */
 type Outcome = 'ok' | 'refused' | 'malformed' | 'empty' | 'truncated' | 'missing_labels';
 
@@ -245,7 +238,7 @@ Labels to score: ${input.labels.join(', ')}${definitions}`;
 
   return {
     $type: 'chatCompletion',
-    name: 'textScanSpike',
+    name: 'textScan',
     input: chatInput,
   } as ChatCompletionStepTemplate;
 }
@@ -400,8 +393,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       count: results.length,
       byOutcome,
       refusalRate: results.length ? (byOutcome.refused ?? 0) / results.length : 0,
-      // Clustering here is the real finding, not the centre: scores bunched on
-      // a few round values cannot support a threshold, however accurate they are.
+      // distinctValues matters more than the centre: scores bunched on a few
+      // round values cannot support a threshold, however accurate they are.
       scoreDistribution: allScores.length
         ? {
             n: allScores.length,
