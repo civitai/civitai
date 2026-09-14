@@ -151,6 +151,18 @@ export function AppsPageLayout({
     // but it was a `removeEventListener` + `matchMedia()` + `addEventListener` per frame
     // while the drawer was open. `close` is the one member that IS stable
     // (`useCallback([onClose])`), and it is the only one this effect uses.
+    //
+    // 🔴 THE DISABLE BELOW IS LOAD-BEARING — DO NOT "FIX" THE WARNING BY ADDING
+    // `drawer`. `react-hooks/exhaustive-deps` sees `drawer.close()` as a METHOD CALL and
+    // demands the receiver rather than the member. That demand is wrong here: the
+    // closure has no `this`, `close` is destructured-by-access and used as a plain
+    // function, and `useDisclosure(false)` passes no handlers, so `onClose` is
+    // `undefined` and `close`'s `useCallback([onClose])` identity is stable for the life
+    // of the component. Taking the rule's advice re-introduces exactly the per-frame
+    // `removeEventListener` + `matchMedia()` + `addEventListener` churn described above,
+    // and does so silently — nothing fails, the page just does that work on every
+    // scroll-driven render while the drawer is open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drawerOpened, drawer.close]);
 
   /**

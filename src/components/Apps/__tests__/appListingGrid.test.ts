@@ -52,8 +52,14 @@ describe('LISTING_GRID_SPAN — the legacy breakpoint spans the narrow ladder is
   });
 
   test('base / sm / md are UNCHANGED (1 / 2 / 3 columns)', () => {
-    // Nothing below `lg` renders the rail at all (`APPS_RAIL_MIN_VIEWPORT` is 1300), so
-    // nothing below `lg` had a reason to move.
+    // ⚠️ These spans are NOT rail-gated, and an earlier revision of this comment said
+    // they were ("nothing below `lg` renders the rail, so nothing below `lg` had a
+    // reason to move"). That rationale is refuted by this file's own cost table below:
+    // `LISTING_GRID_SPAN` is a global constant on GRID width, applied to every viewer,
+    // and the rail is only one of the things that can consume width. A viewer below
+    // 1300px has no rail and is still governed by these spans. They are unchanged here
+    // because the re-tune deliberately scoped itself to `lg`/`xl`, not because anything
+    // structurally exempts the narrow breakpoints.
     expect(LISTING_GRID_SPAN.base).toBe(12);
     expect(LISTING_GRID_SPAN.sm).toBe(6);
     expect(LISTING_GRID_SPAN.md).toBe(4);
@@ -101,14 +107,23 @@ describe('🔴 the column LADDER — grid width → column count', () => {
    * threshold, on it, and comfortably inside the band. A fixture that sits exactly on a
    * threshold cannot see an off-by-one in the wrong direction.
    *
-   * 🔴 THE 1376 / 1888 / 2100 ROWS ARE THE MOST IMPORTANT IN THIS TABLE, and they exist
-   * because of an arithmetic COLLISION rather than because anything is near a rung:
-   * `4 × 460 + 3 × 16 = 1888`, so at today's floor the four-column rung would land on
-   * exactly the retired 1920 container's content width IF the floor governed the narrow
-   * half. It does not — but that is a claim about a derivation, and this is the width
-   * band where being wrong about it is invisible. 1376 is the `xl` low end: the safe
-   * middle of the desktop range, and the first thing a floor-governed narrow half would
-   * silently break. See the dedicated describe below.
+   * 🔴 THE ROW WITH THE MOST DISCRIMINATING POWER IS 1376 — it is the `xl` low end, the
+   * safe middle of the desktop range, and the first row that would silently change if
+   * the narrow half of the ladder were ever floor-governed rather than breakpoint-
+   * governed. The rows that move under that mutation are 960 / 1100 / 1167 / 1168 /
+   * 1376; prune those last.
+   *
+   * ⚠️ 1888 and 2100 read THREE COLUMNS EITHER WAY and are therefore NOT the load-
+   * bearing rows — an earlier revision of this header named them alongside 1376 as "the
+   * most important in this table", which pointed a pruner at the two rows that cannot
+   * fail. They are kept for band coverage, not as witnesses. The COLLISION describe
+   * below states the same thing outright: 1412 itself would read three, and the browser
+   * fixtures at 1888 / 2450 / 2528 would all stay green under that mutation.
+   *
+   * The collision is still worth recording, because it is why 1888 looks significant
+   * and is not: `4 × 460 + 3 × 16 = 1888`, so a floor-governed four-column rung would
+   * land on exactly the retired 1920 container's content width. That coincidence makes
+   * the row a natural place to assume coverage exists. It does not.
    */
   const LADDER: { contentWidth: number; columns: number; why: string }[] = [
     { contentWidth: 0, columns: 1, why: 'degenerate — a zero-width grid is still one column' },
@@ -193,7 +208,9 @@ describe('🔴 the column LADDER — grid width → column count', () => {
     expect([...widths].sort((a, b) => a - b)).toEqual(widths);
     const columns = LISTING_GRID_COLUMN_STEPS.map((s) => s.columns);
     expect([...columns].sort((a, b) => a - b)).toEqual(columns);
-    // No redundant rung — `lg` and `xl` are both four columns and must collapse to one.
+    // No redundant rung — `lg` and `xl` are both THREE columns (span 4 of 12) since the
+    // rail re-tune, so they must collapse to a single rung. (This said "four columns"
+    // until the re-tune landed; it was correct at `origin/main` and stale after.)
     expect(new Set(columns).size).toBe(columns.length);
   });
 });

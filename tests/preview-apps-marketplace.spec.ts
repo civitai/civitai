@@ -48,21 +48,34 @@ import { trpcQuery } from './preview-trpc';
  *    redirects to `/apps/store-preview/<slug>` (or `notFound` when the app has no
  *    approved listing). It no longer renders, so this spec asserts the REDIRECT
  *    rather than a heading on it.
- *  - Marketplace page (`/apps/index.tsx`) renders the `AppsSubNav` tabs bar, whose
- *    rows come from `SUB_NAV_LINKS` in `~/components/Apps/AppsSubNav`. The row this
- *    spec keys on is `{ href: '/apps', label: 'Marketplace' }` — the only
- *    UNCONDITIONAL one. It is NOT necessarily the first tab: `/apps/get-started`
- *    ("Build apps") precedes it for any viewer holding `appBlocksGetStarted`, which a
- *    mod does, so the assertion below selects the tab BY NAME and the order is
- *    irrelevant to it. Plus a search `TextInput` (placeholder "Search by name or block
- *    id"). It no
- *    longer renders a `<Title>Civitai App Blocks</Title>`: the app-blocks nav
- *    refactor (#2749/#2758) made `AppsPageLayout` DELIBERATELY OMIT the page title
- *    on the marketplace surface ("omit for a header with just the tabs, e.g. the
- *    marketplace" — AppsPageLayout.tsx:36), so the heading no longer exists by
- *    design. We assert the "Marketplace" tab instead — it uniquely identifies the
- *    rendered apps surface for an appBlocks-enabled viewer; a non-appBlocks viewer
- *    gets the Next 404 (resolveAppsPageAccess.ts → notFound).
+ *  - Marketplace page (`/apps/index.tsx`) renders the apps navigation as a LEFT RAIL of
+ *    links, whose rows come from `appsSections` in `~/components/Apps/apps-sections`.
+ *    The row this spec keys on is `{ path: '/apps', label: 'Marketplace' }` — the only
+ *    one whose `visible` predicate is unconditional for a store-eligible viewer. It is
+ *    NOT necessarily the first row, so the assertion below selects it BY NAME and the
+ *    order is irrelevant to it.
+ *
+ *    🔴 THE RAIL IS VIEWPORT-GATED, so this spec asserts BOTH nav forms: the drawer
+ *    trigger at this config's default 1280×720 (below `APPS_RAIL_MIN_VIEWPORT`, 1300),
+ *    and the `App sections` landmark plus the `Marketplace` LINK after widening to
+ *    1440. See the block comment on the assertion itself for why both are required.
+ *
+ *    ⚠️ This docblock described an `AppsSubNav` TABS BAR sourced from `SUB_NAV_LINKS`
+ *    until the rail landed. Both are gone — `AppsSubNav.tsx` was DELETED by this PR and
+ *    `SUB_NAV_LINKS` no longer exists — and the stale text is what made the assertion
+ *    below look correct while it queried a `role="tab"` that nothing renders. It also
+ *    claimed a search `TextInput` (placeholder "Search by name or block id"); that was
+ *    already stale before this PR (absent at `origin/main`, removed upstream in #2767),
+ *    and is dropped here rather than left to rot further.
+ *
+ *    The page renders no `<Title>Civitai App Blocks</Title>`: the app-blocks nav
+ *    refactor (#2749/#2758) made `AppsPageLayout` DELIBERATELY OMIT the page title on
+ *    the marketplace surface ("omit for a header with just the chrome, e.g. the
+ *    marketplace" — the `title` prop's docstring in `AppsPageLayout.tsx`; the wording
+ *    was "just the tabs" before the rail, and this citation pointed at a line number
+ *    that has since drifted onto unrelated text). The nav is therefore what uniquely
+ *    identifies the rendered apps surface for an appBlocks-enabled viewer; a
+ *    non-appBlocks viewer gets the Next 404 (resolveAppsPageAccess.ts → notFound).
  */
 
 const ROLE = 'mod' as const;
