@@ -110,13 +110,15 @@ export default function AppsPage() {
             the store's column arithmetic true.
             The store spends that width as an explicit column ladder driven by a
             container query (`LISTING_GRID_COLUMN_STEPS`): 1/2/3/4 exactly where the
-            retired Mantine breakpoints put them, then 5 from 2364px of grid — so this
-            page renders five columns at ~490.8px on a 2560 monitor (492.8px against the
-            2560 CONTAINER; a 2560 viewport loses ~10px more to the scroll container's
-            thin scrollbar where the platform reserves one), wider than the 460px four-up
-            the 1920 container shipped. A sixth column is declared at
-            2840 and is unreachable at this cap. Container and ladder are pinned
-            together in `appListingGrid.ts` and its test so neither can drift alone. */}
+            retired Mantine breakpoints put them, then 4 from 2242px of grid — so this
+            page renders FOUR columns at 548.5px on a 2560 monitor with the `/apps` left
+            rail OPEN, and four at 620px if the rail is collapsed away. ⚠️ THE LADDER WAS
+            RE-TUNED WITH THAT RAIL: `lg`/`xl` mean three columns now and the 1600–2240
+            band renders three, deliberately — see `LISTING_GRID_SPAN` for the measured
+            before/after and why a narrower rail does not avoid it. A fifth column is
+            declared at 2840 and is unreachable at this cap in every rail state. Container
+            and ladder are pinned together in `appListingGrid.ts` and its test so neither
+            can drift alone. */}
         <AppListingsMarketplaceBody />
       </AppsPageLayout>
     </>

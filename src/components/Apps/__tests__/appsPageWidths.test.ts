@@ -31,6 +31,7 @@ import {
   SUBMISSIONS_CONTAINER_CHROME,
   SUBMISSIONS_TABLE_MIN_WIDTH,
 } from '~/components/Apps/submissionsTable';
+import { APPS_RESERVED_SCROLLBAR, appsRailChromeWidth } from '~/components/Apps/appsRailGeometry';
 
 /**
  * `/apps/*` geometry pins (blocking `unit` project).
@@ -591,7 +592,7 @@ describe('🔴 the card-list column ladder steps exactly where the surplus appea
   test('one column through the OLD container, two in the current one', () => {
     // The whole justification for `/apps/activity` becoming a grid: it must change
     // nothing a 1440 or 1920 monitor showed, and spend the 640px the ultrawide pass
-    // added. A min column of 1200 is what puts the step between the two.
+    // added. The min column is what puts the step between the two.
     expect(columnsAt(1408)).toBe(1); // 1440 viewport
     expect(columnsAt(LEGACY_USABLE)).toBe(1); // the old 1920 container
     expect(columnsAt(USABLE)).toBe(2); // the current 2560 container
@@ -599,12 +600,59 @@ describe('🔴 the card-list column ladder steps exactly where the surplus appea
 
   test('the step is not sitting on either fixture width', () => {
     // A ladder whose rung lands ON a width the tests measure cannot detect an
-    // off-by-one. The second column arrives at 2416, which is 528 above the old
-    // container's content width and 112 below the current one.
-    expect(columnsAt(2415)).toBe(1);
-    expect(columnsAt(2416)).toBe(2);
-    expect(USABLE - 2416).toBeGreaterThan(64);
-    expect(2416 - LEGACY_USABLE).toBeGreaterThan(64);
+    // off-by-one. 🔴 THE RUNG MOVED 2416 → 2216 WITH THE RAIL RE-TUNE
+    // (`APPS_CARD_LIST_MIN_COLUMN` 1200 → 1100), and this literal is the independent
+    // witness for that: it is written out rather than recomputed from the constant, so a
+    // constant change without a decision fails here.
+    expect(columnsAt(2215)).toBe(1);
+    expect(columnsAt(2216)).toBe(2);
+    expect(USABLE - 2216).toBeGreaterThan(64);
+    expect(2216 - LEGACY_USABLE).toBeGreaterThan(64);
+  });
+
+  /**
+   * 🔴 THE RAIL-OPEN RUNG — the reason the constant moved at all, and the case the old
+   * value silently lost.
+   *
+   * The left rail takes 276px off every `/apps/*` body, so at a 2560 viewport the card
+   * list gets 2242 of grid rather than 2528. At the old 1200 that is ONE column: the
+   * 640px content-to-control gap this constant exists to close reopened on exactly the
+   * monitors it was written for. 1100 restores the second column there and changes
+   * nothing at 1300 / 1440 / 1920, where a single column was already correct.
+   *
+   * RED AT `origin/main` BY CONSTRUCTION: at `APPS_CARD_LIST_MIN_COLUMN = 1200`,
+   * `columnsAt(2242)` is 1.
+   */
+  test('🔴 with the rail OPEN, a 2560 viewport still gets TWO columns', () => {
+    const railOpenGrid =
+      APPS_PAGE_CONTAINER_WIDTH -
+      APPS_RESERVED_SCROLLBAR -
+      APPS_CONTAINER_GUTTER -
+      appsRailChromeWidth(false);
+    expect(railOpenGrid).toBe(2242);
+    expect(columnsAt(railOpenGrid)).toBe(2);
+
+    // …and the narrower viewports are UNCHANGED — one column with the rail open, exactly
+    // as they were with no rail at 1200. This is the half that makes the constant change
+    // a repair rather than a new density opinion.
+    for (const viewport of [1300, 1440, 1920]) {
+      const grid =
+        Math.min(viewport - APPS_RESERVED_SCROLLBAR, APPS_PAGE_CONTAINER_WIDTH) -
+        APPS_CONTAINER_GUTTER -
+        appsRailChromeWidth(false);
+      expect(columnsAt(grid), `@${viewport} rail open`).toBe(1);
+    }
+
+    // 🔴 AND THE LOOSEST-VALUE CLAIM, MEASURED RATHER THAN ASSERTED. 1100 is the largest
+    // min-column that restores the second column at 2242; 1120 already fails. Without
+    // this, any smaller value would satisfy the assertions above while stepping to two
+    // columns somewhere narrower that nothing asked to change.
+    const columnsAtMin = (w: number, min: number) =>
+      Math.max(1, Math.floor((w + APPS_CARD_LIST_GAP) / (min + APPS_CARD_LIST_GAP)));
+    expect(APPS_CARD_LIST_MIN_COLUMN).toBe(1100);
+    expect(columnsAtMin(railOpenGrid, 1100)).toBe(2);
+    expect(columnsAtMin(railOpenGrid, 1120)).toBe(1);
+    expect(columnsAtMin(railOpenGrid, 1200)).toBe(1);
   });
 });
 
@@ -659,10 +707,10 @@ describe('🔴 the store width and the store grid ladder are a MATCHED PAIR', ()
   });
 
   test('the container yields the card width the top of the reachable ladder was tuned for', () => {
-    //   container 2560 − 2×16 Container padding = 2528 of grid
-    //   the widest REACHABLE rung is FIVE columns from 2364; gap 16 → 4 gaps between them
-    //   → (2528 − 4×16) / 5 = 492.8 px per card.
-    //   (SIX is declared at 2840 and deliberately out of reach here — see
+    //   container 2560 − 2×16 Container padding = 2528 of grid, with NO rail
+    //   the widest REACHABLE rung is FOUR columns from 2242; gap 16 → 3 gaps between them
+    //   → (2528 − 3×16) / 4 = 620 px per card.
+    //   (FIVE is declared at 2840 and deliberately out of reach in every rail state — see
     //   `__tests__/appListingGrid.test.ts`, which pins that as the thing that fails if
     //   this container is ever raised past it.)
     const GUTTER = 16;
@@ -670,34 +718,51 @@ describe('🔴 the store width and the store grid ladder are a MATCHED PAIR', ()
     expect(usable).toBe(2528);
     const columns = listingGridColumnsAt(usable);
     const cardWidth = (usable - GUTTER * (columns - 1)) / columns;
-    expect(columns).toBe(5);
-    expect(cardWidth).toBe(492.8);
+    expect(columns).toBe(4);
+    expect(cardWidth).toBe(620);
     // 🔴 THE PAIRING, AS A RELATIONSHIP RATHER THAN TWO NUMBERS: a container change
     // that outran the ladder would land cards under the floor the ladder exists to
     // hold, and this is what notices.
     expect(cardWidth).toBeGreaterThanOrEqual(LISTING_CARD_MIN_WIDTH);
     // 🔴 AND THE DIRECTION, WHICH IS THE PRODUCT DECISION: widening the container from
-    // 1920 to 2560 makes each card BIGGER (492.8 vs 460), not smaller-and-more-numerous.
-    // Without this, a ladder re-tune that added columns faster would satisfy everything
-    // above while quietly reversing the 2026-07 larger-covers pass on wide screens.
+    // 1920 to 2560 makes each card BIGGER, not smaller-and-more-numerous. Without this,
+    // a ladder re-tune that added columns faster would satisfy everything above while
+    // quietly reversing the 2026-07 larger-covers pass on wide screens.
     expect(cardWidth).toBeGreaterThan((1920 - APPS_CONTAINER_GUTTER - 3 * GUTTER) / 4);
+
+    // 🔴 …AND THE SAME CLAIM IN THE STATE A VIEWER ACTUALLY SEES, which is the one the
+    // rail re-tune is about. With the rail OPEN the grid is 2242 and the card is 548.5 —
+    // still wider than the 460 the 1920 container shipped, and wider than the 490.8 a
+    // 2560 viewport rendered before the rail. A re-tune that satisfied only the no-rail
+    // row above would be measuring a state no `/apps` page is in.
+    const railOpen = usable - appsRailChromeWidth(false) - APPS_RESERVED_SCROLLBAR;
+    expect(railOpen).toBe(2242);
+    expect(listingGridColumnsAt(railOpen)).toBe(4);
+    expect((railOpen - GUTTER * 3) / 4).toBe(548.5);
+    expect((railOpen - GUTTER * 3) / 4).toBeGreaterThan(490.8);
   });
 
-  test('🔴 the retired container widths still produce the column counts they shipped', () => {
-    // The ultrawide pass must not have moved anything BELOW its own new territory.
-    // 1600 and 1920 are the two container widths this store has actually shipped at;
-    // both still resolve to four columns, at the card widths those passes measured.
+  test('🔴 the retired container widths now produce THREE columns — the re-tune, stated', () => {
+    // ⚠️ INVERTED BY THE RAIL RE-TUNE, AND KEPT RATHER THAN DELETED. This used to assert
+    // that 1600 and 1920 "still produce the column counts they shipped" (four each). They
+    // do not any more, and that is the decision a designer is signing off: the 1600–2240
+    // band drops from four columns to three so the open rail does not shrink the card.
+    // Asserting the NEW values here is what makes the change visible in a diff rather
+    // than a silently-deleted guard.
     for (const [container, columns, cardWidth] of [
-      [1600, 4, 380],
-      [1920, 4, 460],
+      [1600, 3, 512],
+      [1920, 3, 618.6667],
     ] as const) {
       const usable = container - APPS_CONTAINER_GUTTER;
       expect(listingGridColumnsAt(usable), `container ${container}`).toBe(columns);
-      expect((usable - 16 * (columns - 1)) / columns, `container ${container}`).toBe(cardWidth);
+      expect((usable - 16 * (columns - 1)) / columns, `container ${container}`).toBeCloseTo(
+        cardWidth,
+        3
+      );
     }
-    // The `xl` SPAN is still four columns — the legacy object the narrow half of the
-    // ladder is derived from has not been quietly re-tuned.
-    expect(12 / LISTING_GRID_SPAN.xl).toBe(4);
+    // The `xl` SPAN is THREE columns now — the legacy object the narrow half of the
+    // ladder is derived from moved with the re-tune, deliberately.
+    expect(12 / LISTING_GRID_SPAN.xl).toBe(3);
   });
 });
 

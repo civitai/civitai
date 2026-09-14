@@ -219,19 +219,25 @@ const VIEWPORT = { width: 2880, height: 900 } as const;
  * TWO column counts, both NAMED in every assertion, because one measurement is
  * not a general claim.
  *
- * 1376 is mid-band in the four-column rung (the `xl` low end); 2450 is mid-band in
- * the five-column rung. 🔴 2364 — the five-column threshold itself — is
- * deliberately avoided: a fixture sitting on its own boundary cannot detect an
- * off-by-one, and the ladder's rungs are asserted against below so this cannot rot
- * into a coincidence.
+ * 1376 is mid-band in the THREE-column rung; 2450 is mid-band in the FOUR-column rung.
+ * 🔴 2242 — the four-column threshold itself — is deliberately avoided: a fixture sitting
+ * on its own boundary cannot detect an off-by-one, and the ladder's rungs are asserted
+ * against below so this cannot rot into a coincidence.
+ *
+ * ⚠️ THE GRID WIDTHS ARE UNCHANGED; THE COUNTS MOVED. The rail re-tune shifted the ladder
+ * (`lg`/`xl` now mean three columns, four starts at 2242), so 1376 renders 3 where it used
+ * to render 4 and 2450 renders 4 where it used to render 5. Keeping the WIDTHS put and
+ * re-deriving the COUNTS is deliberate: both fixtures are still comfortably mid-band under
+ * the new ladder, so the mid-band property this file depends on survives without inventing
+ * two new numbers.
  */
 const WIDTHS = [
-  { gridWidth: 1376, columns: 4 },
-  { gridWidth: 2450, columns: 5 },
+  { gridWidth: 1376, columns: 3 },
+  { gridWidth: 2450, columns: 4 },
 ] as const;
 
 /** The ladder's rungs, so a fixture can be checked against them. */
-const RUNGS = [736, 960, 1168, 2364, 2840];
+const RUNGS = [736, 960, 2242, 2840];
 
 /**
  * Render the store body at an explicit grid width and hand back the cells of
@@ -484,8 +490,8 @@ describe('🔴 a skeleton cell occupies EXACTLY the box the card cell will', () 
    * audit measured it PASSING with `padding: 8px` on `.gridContainer` and the
    * component's subtraction removed — i.e. firing identically on its own control,
    * which attributes nothing. The cause is structural, not a bad assertion: both
-   * fixtures sit deliberately MID-BAND (1376 is 208px above the 1168 rung, 2450 is
-   * 86px above 2364) so an off-by-one cannot reach them, and that same margin means no
+   * fixtures sit deliberately MID-BAND (1376 is 416px above the 960 rung, 2450 is
+   * 208px above 2242) so an off-by-one cannot reach them, and that same margin means no
    * plausible padding can move the column count either. The property that makes them
    * good PARITY fixtures is what blinds them here. It IS reachable — at `padding: 50px`
    * it reds with its own message — but only at a padding nobody would write.
@@ -616,7 +622,8 @@ describe('🔴 a skeleton cell occupies EXACTLY the box the card cell will', () 
    * reserved line": `ListingCard.creator` is nullable, `AppListingCard`'s
    * `CreatorChip` returned `null` for a listing without one, and this skeleton
    * reserved that line unconditionally — so such a card was shorter by the creator
-   * line plus the meta stack's gap (measured −22.29px at 1376/4, −22.30px at 2450/5).
+   * line plus the meta stack's gap (measured −22.29px at 1376/3, −22.30px at 2450/4 — the
+   * widths are unchanged, the column counts moved with the rail re-tune).
    *
    * The store card renders NO author chip at all now (2026-09-06, operator's call)
    * and the skeleton reserves no creator line, so the two arms are the SAME height

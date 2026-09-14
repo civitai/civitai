@@ -102,8 +102,13 @@
 
 /* ── The narrow half: the retired Mantine breakpoints, re-expressed in GRID width ───
    Each threshold is that breakpoint's viewport px MINUS the apps Container's 32px
-   gutter: sm 768 → 736, md 992 → 960, lg 1200 → 1168. `xl` (1408) is absent
-   deliberately — it and `lg` are both four columns, so it was never a rung.
+   gutter: sm 768 → 736, md 992 → 960. `lg` (1200) and `xl` (1408) are absent
+   deliberately — since the rail re-tune all three of md/lg/xl mean THREE columns, so
+   they collapse into the single 960 rung and neither was ever a rung of its own.
+   ⚠️ THERE USED TO BE A `1168` RULE HERE (four columns from `lg`). It is GONE, not
+   renumbered: four columns now start at 2242 in the wide half below. Restoring it would
+   put four columns back in the 1168–2241 band, which is exactly the density decision the
+   re-tune asks a designer to sign off.
 
    🔴 THIS IS NOT "BYTE-EQUIVALENT TO THE OLD MEDIA QUERIES", and the claim that it was
    has been retired. The page's scroll container (`.scroll-area`) is `scrollbar-width:
@@ -125,37 +130,33 @@
   }
 }
 
-@container (min-width: 1168px) {
+/* ── The wide half: one recorded derivation PER RUNG, not one shared floor ──────────
+   🔴 THE FOUR-COLUMN RUNG COMES FROM THE PAGE'S OWN CHROME:
+   `2560 − 10 scrollbar − 32 gutter − 276 rail = 2242`. It is placed exactly where a
+   2560 monitor with the `/apps` rail OPEN can hold a fourth column, and nowhere
+   narrower — so 2560 renders four cards at 548.5px rather than three at 750, and the
+   1600–2240 band renders three. That band dropping from four columns to three is the
+   density decision this re-tune asks a designer to sign off; it is not a side effect.
+
+   🔴 THE FIVE-COLUMN RULE IS UNREACHABLE AT TODAY'S CONTAINER CAP, DELIBERATELY, AND IN
+   EVERY RAIL STATE. Max grid is 2528 with no rail, 2456 collapsed, 2252 open — 2840
+   clears none. 2840 is carried over unchanged from what used to be the SIX-column rung
+   (`6 × 460 + 5 × 16`); five columns there gives 555.2px cards, over the 460 floor. The
+   rule is kept so a future container-cap raise engages it automatically;
+   `__tests__/appListingGrid.test.ts` asserts both its presence and its unreachability,
+   so raising the cap past 2840 fails loudly.
+
+   🔴 DO NOT LET THE CARD FLOOR DECIDE THE NARROW RUNGS ABOVE. `3 × 460 + 2 × 16 = 1412`,
+   so a floor-governed narrow half would move three columns from 960 to 1412 and drop the
+   whole 960–1411 band to two. */
+@container (min-width: 2242px) {
   .grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
-/* ── The wide half: NEW, and derived from the 460px card-width floor ────────────────
-   `n × 460 + (n − 1) × 16`. 5 → 2364, 6 → 2840. 460 is the card width the store
-   renders TODAY at its widest (four columns in the retired 1920 container), so a
-   column is only ever added where doing so makes every card at least as big as it is
-   now — never more cards at a smaller size.
-
-   🔴 THE 2840 RULE IS UNREACHABLE AT TODAY'S CONTAINER CAP, DELIBERATELY. The apps
-   Container is 2560, so this grid tops out at 2528 (less any reserved scrollbar) and
-   the reachable ladder is 1/2/3/4/5 — a 2560 container renders FIVE columns at 492.8px,
-   a 2560 viewport ~490.8px. The rule is kept so a future cap
-   raise engages six automatically; `__tests__/appListingGrid.test.ts` asserts both the
-   rule's presence and its unreachability, so raising the cap past 2840 fails loudly.
-
-   🔴 DO NOT LET THIS FLOOR DECIDE THE NARROW RUNGS ABOVE. `4 × 460 + 3 × 16 = 1888` —
-   exactly the retired 1920 container's content width — so a floor-governed narrow half
-   would move four columns from 1168 to 1888 and drop the whole 1168–1887 band, the
-   `xl` low end (1376) included, to three columns. */
-@container (min-width: 2364px) {
-  .grid {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-  }
-}
-
 @container (min-width: 2840px) {
   .grid {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }

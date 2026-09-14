@@ -42,7 +42,7 @@ import {
  * It runs NO effects — not `useEffect`, not `useLayoutEffect` — so it reproduces the
  * server's output faithfully even though this suite runs in a browser where `window`
  * exists. That is what makes the assertion below a claim about production SSR rather
- * than about this harness. (`AppsSubNav.ssrHydration.browser.test.tsx` uses the same
+ * than about this harness. (`AppsRailNav.ssrHydration.browser.test.tsx` uses the same
  * instrument for the same reason.)
  */
 
@@ -113,11 +113,18 @@ describe('🔴 the server emits a real skeleton grid, not an empty one', () => {
         'Check that `columns` is seeded from APP_LISTING_SKELETON_SSR_COLUMNS rather ' +
         'than 0: the layout effect that corrects it does NOT run during SSR.'
     ).toBe(APP_LISTING_SKELETON_SSR_COLUMNS * APP_LISTING_SKELETON_ROWS);
-    // …and the seed is the derived desktop rung, not something hand-picked. 4 is typed
-    // out here and derived there, so a test that reads the value and asserts it equals
-    // itself is not what this is.
-    expect(APP_LISTING_SKELETON_SSR_COLUMNS).toBe(4);
-    expect(cells).toBe(8);
+    // …and the seed is the derived desktop rung, not something hand-picked. The literal
+    // is typed out here and derived there, so a test that reads the value and asserts it
+    // equals itself is not what this is.
+    //
+    // 🔴 THREE, NOT FOUR, SINCE THE RAIL RE-TUNE. The seed is
+    // `listingGridColumnsAt(xl − gutter)`, and `lg`/`xl` moved from four columns to three
+    // when the `/apps` nav became a 276px left rail (see `appListingGrid.ts`). The number
+    // is re-derived here rather than deleted precisely because it is the value a real
+    // desktop first paint reserves: seeding four now would over-reserve by one cell per
+    // row on every SSR render.
+    expect(APP_LISTING_SKELETON_SSR_COLUMNS).toBe(3);
+    expect(cells).toBe(6);
   });
 
   test('🔴 the server markup contains no <div> inside a <p> — no hydration mismatch', () => {

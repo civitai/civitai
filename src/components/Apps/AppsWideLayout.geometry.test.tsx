@@ -82,6 +82,42 @@ import type { MyAppRow } from '~/components/Apps/myAppsView';
 import type { OffsiteReviewRequest, OnsiteReviewRequest } from '~/components/Apps/unifiedReviewRow';
 import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constants';
 
+/**
+ * 🔴 THE LEFT RAIL IS STUBBED OUT OF THIS FILE, AND THE REASON IS THE FILE'S SUBJECT.
+ *
+ * Every fixture below is named as a CONTENT WIDTH (736 / 1168 / 1408 / 2528) and every
+ * number in the file is a function of that input: how a proportional `<colgroup>` spends
+ * it, where a card grid steps, how tall a row gets when a column is squeezed. The rail
+ * changes the INPUT (it takes 276px off the body on every `/apps/*` route); it does not
+ * change any of those mechanisms. Re-baselining ~40 measured literals to rail-reduced
+ * widths would mean re-deriving each of them from the implementation that just changed —
+ * and would delete this file's coverage at exactly the 1408 / 2528 content widths the
+ * ultrawide pass was written against.
+ *
+ * So `useAppsNavSections` returns an EMPTY list, which is a real production state (the
+ * `< 2 sections` collapse) and makes `AppsPageLayout` render no rail and give the body the
+ * full container. The rail's own cost is pinned exactly once, where it belongs:
+ * `AppsPageLayout.chromeAlignment.browser.test.tsx` measures `bodyLeft − navLeft === 276`
+ * on all 12 routes in both rail states, and `__tests__/appsRailGeometry.test.ts` pins the
+ * constant it comes from.
+ *
+ * ⚠️ WHAT THAT LEAVES UNMEASURED, STATED RATHER THAN LEFT TO BE DISCOVERED: no test in
+ * this file reads these tables at the content width a 1440 viewer with an OPEN rail
+ * actually gets (1132). The `RAIL-OPEN` describe at the end of this file is the deliberate
+ * partial answer — it records the two degradations that width causes, as measured facts
+ * rather than as assumptions — but it is two arms, not the file's full battery.
+ */
+/**
+ * The section list the layout sees, as a MUTABLE holder rather than a fixed `[]`. Vitest's
+ * browser mode cannot `vi.spyOn` an ESM export ("Module namespace is not configurable"),
+ * so the RAIL-OPEN block at the end of this file flips this instead — which is also the
+ * clearer mechanism: one place decides whether the chrome is in the tree.
+ */
+const navState = vi.hoisted(() => ({ sections: [] as unknown[] }));
+vi.mock('~/components/Apps/useAppsNavSections', () => ({
+  useAppsNavSections: () => navState.sections,
+}));
+
 // The sub-nav needs a qualifying viewer or it renders no `<nav>` at all — same fixture
 // as `AppsPageLayout.chromeAlignment.browser.test.tsx`, for the same reason.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -1220,6 +1256,96 @@ describe('/apps/activity — the space-between row keeps its control near its co
     // the track floor here, so this fixture CAN see the defect. Without this, a viewport
     // that quietly grew past 1200 would make both checks vacuous.
     expect(gridBox).toBeLessThan(1200);
+    await cleanup();
+  });
+});
+
+/**
+ * 🔴 RAIL-OPEN — the ONE arm in this file that renders the chrome the rest of it stubs
+ * away, and the partial answer to the gap stated at the top.
+ *
+ * Everything above measures a wide-layout mechanism against a CONTENT WIDTH, with the rail
+ * removed via the `< 2 sections` collapse so the four fixture widths keep meaning what
+ * they say. That is the right scoping for those claims and the wrong scoping for one
+ * question: what does a real viewer with an OPEN rail actually get? The rail takes 276px
+ * off the body on every `/apps/*` route, so a 1440 monitor hands these components 1132 of
+ * content and a 2560 one hands them 2252.
+ *
+ * This block measures that directly, at the one place it changes a PRODUCT outcome rather
+ * than a pixel: the `/apps/activity` card list's column count, which is what
+ * `APPS_CARD_LIST_MIN_COLUMN` exists to control. The constant moved 1200 → 1100 in this
+ * same change precisely because at 1200 the second column stopped arriving AT ALL once the
+ * rail was open — the 640px content-to-control gap the constant exists to close reopened
+ * on exactly the monitors it was written for.
+ *
+ * ⚠️ TWO ARMS, NOT A BATTERY. This does not re-measure the tables above at 1132; that
+ * remains genuinely uncovered, and the accepted consequence is recorded on
+ * `SUBMISSIONS_TABLE_MIN_WIDTH` (the `/apps/build` table scrolls one viewport step
+ * earlier).
+ */
+describe('🔴 RAIL-OPEN — the content width a real /apps viewer gets', () => {
+  // A qualifying viewer, so the rail renders — set through the file's `navState` holder
+  // and restored after each render, so this block cannot leak the rail into the arms above.
+  const railGrid = () => (
+    <AppsCardGrid testId="apps-installed-apps-grid">
+      <InstalledAppCard app={INSTALLED_APP} onManage={vi.fn()} />
+      <InstalledAppCard app={INSTALLED_APP} onManage={vi.fn()} />
+    </AppsCardGrid>
+  );
+
+  async function renderWithRail(viewport: { width: number; height: number }) {
+    const registry = await import('~/components/Apps/apps-sections');
+    navState.sections = registry.appsSections.slice(0, 2);
+    try {
+      const { observed } = await renderAtViewport(
+        <AppsPageLayout title="Fixture">{railGrid()}</AppsPageLayout>,
+        viewport
+      );
+      expect(observed).toEqual({ width: viewport.width, height: viewport.height });
+      const rail = document.querySelector('[data-apps-chrome="rail"]') as HTMLElement | null;
+      const bodyColumn = document.querySelector(
+        '[data-apps-chrome="body-column"]'
+      ) as HTMLElement | null;
+      const gridEl = document.querySelector('[data-apps-card-grid]') as HTMLElement;
+      return {
+        railShown: rail ? getComputedStyle(rail).display !== 'none' : false,
+        bodyWidth: bodyColumn ? Math.round(bodyColumn.getBoundingClientRect().width) : null,
+        columns: getComputedStyle(gridEl).gridTemplateColumns.split(' ').length,
+      };
+    } finally {
+      navState.sections = [];
+    }
+  }
+
+  test('the rail really is open, and the body really is 276px narrower', async () => {
+    // The precondition for the column assertions below. Without it, "one column at 1440"
+    // would also be satisfied by a render in which the rail never appeared.
+    const narrow = await renderWithRail(NARROW);
+    expect(narrow.railShown, 'the rail did not render — the section stub did not take').toBe(true);
+    expect(narrow.bodyWidth).toBe(NARROW.content - 276);
+    await cleanup();
+
+    const wide = await renderWithRail(WIDE);
+    expect(wide.railShown).toBe(true);
+    expect(wide.bodyWidth).toBe(WIDE.content - 276);
+    await cleanup();
+  });
+
+  test('🔴 the card list is ONE column at 1440 and TWO at 2560, WITH the rail open', async () => {
+    // The product claim `APPS_CARD_LIST_MIN_COLUMN = 1100` exists to hold, measured in the
+    // engine rather than in arithmetic. At the retired 1200 the 2560 case is ONE column —
+    // that is the regression the constant change repairs, and it is invisible to every
+    // other test in this file because they all render without the rail.
+    const narrow = await renderWithRail(NARROW);
+    expect(narrow.columns, '1440 with the rail open should stay a single column').toBe(1);
+    await cleanup();
+
+    const wide = await renderWithRail(WIDE);
+    expect(
+      wide.columns,
+      'a 2560 monitor with the rail open fell back to ONE card column — the ' +
+        'content-to-control gap APPS_CARD_LIST_MIN_COLUMN exists to close is back'
+    ).toBe(2);
     await cleanup();
   });
 });

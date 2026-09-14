@@ -369,17 +369,25 @@ export const APP_LISTING_SKELETON_ROWS = 2;
  * axis — the shift this component's header already declares as unresolved — and can
  * never produce a wrongly-sized cell.
  *
- * That is what makes 4 the right default rather than 1. It is DERIVED, not chosen:
- * `listingGridColumnsAt` at the `xl` breakpoint's grid width, i.e. the widest rung
- * the legacy Mantine half of the ladder reaches, which is what a desktop first paint
- * lands on. The two ways it is wrong, both count-only:
- *   · a PHONE (1 column) paints 8 stacked cells and settles to 2. The grid is the
+ * That is what makes the derived rung the right default rather than 1. It is DERIVED,
+ * not chosen: `listingGridColumnsAt` at the `xl` breakpoint's grid width, i.e. the
+ * widest rung the legacy Mantine half of the ladder reaches, which is what a desktop
+ * first paint lands on.
+ *
+ * ⚠️ THE VALUE IS 3 SINCE THE RAIL RE-TUNE, NOT 4 — the expression is unchanged and the
+ * ladder moved under it (`lg`/`xl` mean three columns now, four starts at 2242 of grid).
+ * That is the derivation working as intended; it is flagged here only because the
+ * paragraphs below used to quote 4 and 8, and a stale worked example reads as a
+ * specification.
+ *
+ * The two ways it is wrong, both count-only:
+ *   · a PHONE (1 column) paints 6 stacked cells and settles to 2. The grid is the
  *     last element on the page, so shrinking it moves nothing above it, and the
  *     surplus is below the fold;
- *   · a 2364px+ grid (5 columns) paints 8 and settles to 10 — it under-reserves by
+ *   · a 2242px+ grid (4 columns) paints 6 and settles to 8 — it under-reserves by
  *     two cells rather than by the whole grid.
  * Seeding 1 instead would be correct on a phone and would make every desktop first
- * paint render two full-width cards that then become eight quarter-width ones —
+ * paint render two full-width cards that then become six third-width ones —
  * a PER-CELL shift, which is the thing this PR exists to remove.
  */
 export const APP_LISTING_SKELETON_SSR_COLUMNS = listingGridColumnsAt(
@@ -399,15 +407,15 @@ export const APP_LISTING_SKELETON_SSR_COLUMNS = listingGridColumnsAt(
  * coincidence.
  *
  * `getBoundingClientRect()` rather than `clientWidth`: the latter is rounded to an
- * integer, so a container at 1167.6px would report 1168 and pick the four-column rung
- * while the (fractional) container query stays on three.
+ * integer, so a container at 959.6px would report 960 and pick the three-column rung
+ * while the (fractional) container query stays on two.
  *
  * 🔴 EXPORTED SO IT CAN BE GUARDED DIRECTLY, AND THAT EXPORT IS THE POINT. The first
  * attempt guarded this relationship end-to-end — "the cell count is two rows of the
  * grid CSS actually laid out" — and an audit measured that guard PASSING with and
  * without the desync it was written for. The reason is structural rather than a
  * mistake in the assertion: the parity fixtures sit deliberately MID-BAND (1376 is
- * 208px above the 1168 rung, 2450 is 86px above 2364) so that they cannot be tripped
+ * 416px above the 960 rung, 2450 is 208px above 2242) so that they cannot be tripped
  * by an off-by-one, and that same margin means no plausible padding can move the
  * column count. The property that makes them good parity fixtures is what blinded the
  * desync guard. Two guards wanted opposite fixtures and were sharing one list.

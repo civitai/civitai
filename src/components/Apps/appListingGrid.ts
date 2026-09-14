@@ -1,4 +1,5 @@
 import { APPS_CONTAINER_GUTTER, APPS_PAGE_CONTAINER_WIDTH } from '~/components/Apps/appsPageWidths';
+import { APPS_RESERVED_SCROLLBAR, appsRailChromeWidth } from '~/components/Apps/appsRailGeometry';
 
 /**
  * App Store Listings (W13) — the `/apps` store's GEOMETRY constants, split out of
@@ -17,15 +18,31 @@ import { APPS_CONTAINER_GUTTER, APPS_PAGE_CONTAINER_WIDTH } from '~/components/A
  * the ladder, retained as the SOURCE the narrow half of
  * {@link LISTING_GRID_COLUMN_STEPS} is derived from.
  *
- * `xl: 3` → FOUR columns on a wide viewport. This is the product-feedback change
- * ("make app cover images larger — fewer columns per row?"): it was `2.4` (five
- * columns), and dropping to four gives each card ~25% more width, which the
- * responsive 16:9 cover in `AppListingCard` turns directly into bigger art.
+ * 🔴 `lg` AND `xl` MOVED 3 → 4 (i.e. four columns → THREE) IN THE RAIL RE-TUNE, AND
+ * THAT IS THE COMMIT THIS FILE'S REVIEWER IS BEING ASKED TO SIGN OFF. The legacy
+ * breakpoint half now tops out at THREE columns; four and five are placed by the wide
+ * half below, which starts at 2242px of grid. Consequence, stated as the cost rather
+ * than as the mechanism: **the 1600–2240 band drops from four store columns to three.**
  *
- * Every other breakpoint is UNCHANGED (base 12 → 1 col, sm 6 → 2, md 4 → 3,
- * lg 3 → 4). Deliberately a one-breakpoint change: the narrower breakpoints were
- * already at a comfortable card width, and widening them would push cards past a
- * readable measure on tablets.
+ * Why, in one line: the `/apps` nav became a 276px left rail, which the store grid pays
+ * for out of its own width. Against the OLD ladder a 1600 viewport kept four columns and
+ * each card shrank 377.5 → 308.5px, and 1920 shrank 457.5 → 388.5 — i.e. the rail would
+ * have partially undone the 2026-07 "make app cover images larger" pass at exactly the
+ * two most common desktop widths. Dropping a column instead spends the loss on FEWER,
+ * WIDER cards, which is the direction both prior passes chose deliberately: every
+ * viewport now renders a card WIDER than it does today (1600: 377.5 → 416.7, 1920:
+ * 457.5 → 523.3, 2560: 490.8 → 548.5).
+ *
+ * ⚠️ A NARROWER RAIL DOES NOT AVOID THIS — measured, not assumed. A 200px rail keeps
+ * four columns at 1440 but at 283.5px each, which is worse than either option here.
+ *
+ * `base` / `sm` / `md` are UNCHANGED (12 → 1 col, 6 → 2, 4 → 3): no viewport that
+ * narrow renders the rail at all, so nothing below `lg` has a reason to move.
+ *
+ * Historical note, kept because it explains the shape of this object: `xl` was `2.4`
+ * (five columns) before the 2026-07 covers pass, which moved it to `3` (four columns)
+ * for ~25% more card width. This change continues that direction rather than reversing
+ * it.
  *
  * 🔴 IT IS NO LONGER PASSED TO A `Grid.Col span=`. The grid moved from Mantine's
  * 12-column `<Grid>` to a CSS grid driven by a CONTAINER query (see
@@ -44,8 +61,8 @@ export const LISTING_GRID_SPAN = {
   base: 12,
   sm: 6,
   md: 4,
-  lg: 3,
-  xl: 3,
+  lg: 4,
+  xl: 4,
 } as const;
 
 /**
@@ -102,9 +119,16 @@ export const MANTINE_BREAKPOINT_PX = {
 export const LISTING_GRID_GUTTER = 16;
 
 /**
- * 🔴 THE MINIMUM CARD WIDTH A NEW, WIDER RUNG OF THE LADDER MUST HOLD, px — the
- * constant the 5- and 6-column thresholds are DERIVED from, so a threshold can never
- * be moved without moving this.
+ * 🔴 THE MINIMUM CARD WIDTH A WIDE RUNG OF THE LADDER MUST HOLD, px.
+ *
+ * ⚠️ IT IS NO LONGER THE THING THE WIDE THRESHOLDS ARE DERIVED FROM, AND THAT DEMOTION
+ * IS THE RAIL RE-TUNE'S ONE REAL LOSS OF RIGOUR — stated here rather than left to be
+ * discovered. The four-column rung is now set by the page's own chrome
+ * ({@link LISTING_FOUR_COLUMN_MIN_WIDTH}); this constant has become the FLOOR that rung
+ * must clear rather than the rule that places it, and that direction is asserted in
+ * `__tests__/appListingGrid.test.ts` instead of falling out of the arithmetic. A rung
+ * can therefore now be moved without moving this — which is exactly why the assertion
+ * exists.
  *
  * ── WHY 460, AND WHY IT IS NOT "THE NARROWEST CARD WE EVER SHIPPED" ─────────────────
  * 460 is the card width the store renders TODAY at its widest: four columns in the
@@ -122,18 +146,23 @@ export const LISTING_GRID_GUTTER = 16;
  *
  * ── 🔴 460 COLLIDES WITH THE OLD CONTAINER, AND THAT IS A TRAP, NOT A COINCIDENCE ───
  * `4 × 460 + 3 × 16 = 1888` — exactly the content width of the RETIRED 1920 container.
- * So IF this floor ever governed the narrow half of the ladder, four columns would
- * require 1888 of grid and the `xl` low end (viewport 1408 → 1376 of grid) would
- * silently drop to THREE columns, destroying the below-1888 equivalence this change
- * is built on — at a width nobody would think to test, because it used to be the safe
- * middle of the range.
+ * So IF this floor ever governed the narrow half of the ladder, three columns would be
+ * the most the `md`-derived rung could offer and the whole band between it and the wide
+ * half would shift — at widths nobody would think to test, because they used to be the
+ * safe middle of the range.
  *
- * It does not, and cannot: {@link LISTING_GRID_COLUMN_STEPS} builds its narrow rungs
- * from {@link LISTING_GRID_SPAN} + {@link MANTINE_BREAKPOINT_PX} and never reads this
- * constant, so the two halves are structurally independent. That independence is
- * asserted directly — 4 columns at 1376, at 1887 and at 1888 — and mutation-checked
- * in `__tests__/appListingGrid.test.ts` by making the floor govern everywhere and
- * watching the 1376 rung go red. Do not remove those assertions on the grounds that
+ * ⚠️ THE CONCRETE FORM OF THAT TRAP MOVED WITH THE RAIL RE-TUNE, AND THE OLD WORDING IS
+ * CORRECTED RATHER THAN DELETED because it is the sentence someone will quote. It used
+ * to read: a floor-governed narrow half would push four columns from 1168 to 1888 and
+ * drop the `xl` low end (1376 of grid) to three. There is no 1168 rung any more — `lg`
+ * and `xl` mean THREE columns now — so 1376 legitimately renders three and the old
+ * assertion would be asserting the defect. What survives unchanged is the STRUCTURE:
+ * {@link LISTING_GRID_COLUMN_STEPS} builds its narrow rungs from
+ * {@link LISTING_GRID_SPAN} + {@link MANTINE_BREAKPOINT_PX} and never reads this
+ * constant, so the two halves stay structurally independent — now checked at the
+ * `md`-derived three-column rung (960, vs the 1412 a floor-governed one would give) and
+ * mutation-checked in `__tests__/appListingGrid.test.ts` by making the floor govern
+ * everywhere and watching that rung go red. Do not remove those assertions on the grounds that
  * the derivation "obviously" cannot do this; the collision is what makes them cheap
  * to lose and expensive to be without.
  *
@@ -180,11 +209,77 @@ export function minContentWidthForColumns(columns: number): number {
  * needing this list edited; `__tests__/appListingGrid.test.ts` asserts the
  * unreachability explicitly, so raising the cap past 2840 fails loudly and the density
  * decision gets made deliberately rather than inherited.
+ *
+ * ⚠️ THE PARAGRAPHS ABOVE DESCRIBE THE PRE-RAIL LADDER AND ARE KEPT ONLY AS PROVENANCE.
+ * They are superseded by {@link WIDE_COLUMN_STEPS} below, which the rail re-tune
+ * replaced this list with. Do not restore `[5, 6]` from them.
  */
-const WIDE_COLUMN_COUNTS = [5, 6] as const;
 
 /** One rung of the ladder: at `minContentWidth` px of grid and up, render `columns`. */
 export type ListingGridColumnStep = { minContentWidth: number; columns: number };
+
+/**
+ * THE FOUR-COLUMN RUNG, px of grid — and the one threshold in this file that is derived
+ * from the PAGE'S OWN CHROME rather than from a card-width floor.
+ *
+ * `2560 − 10 − 32 − 276 = 2242`: the widest common desktop, minus a reserved thin
+ * scrollbar, minus the apps `Container`'s gutter, minus the open rail plus its gap. So
+ * the fourth column arrives exactly at the point where a 2560 monitor with the rail
+ * OPEN can hold it, and nowhere narrower — which is what makes 2560 render four cards
+ * at 548.5px instead of three at 750.
+ *
+ * 🔴 IT IS PLACED FOR THE SCROLLBAR-RESERVING PLATFORM, WHICH IS THE TIGHTER OF THE
+ * TWO. macOS overlay scrollbars and touch reserve nothing, so those yield 2252 of grid
+ * — 10px MORE — and clear this rung comfortably. Placing it at 2252 instead would have
+ * left every Windows and Linux 2560 monitor 10px short of its own four-column layout,
+ * which is the silent-off-by-a-scrollbar defect the container-query note below already
+ * records once.
+ *
+ * ⚠️ IT IS NOT DERIVED FROM {@link LISTING_CARD_MIN_WIDTH}, and the check that keeps it
+ * honest runs the other direction: `__tests__/appListingGrid.test.ts` asserts the card
+ * width AT this rung (548.5px) still clears that floor. A threshold chosen from the
+ * chrome is only acceptable while it lands above the floor; if a future rail width
+ * pushes it below, that test goes red rather than the store quietly shipping small
+ * cards.
+ */
+export const LISTING_FOUR_COLUMN_MIN_WIDTH =
+  APPS_PAGE_CONTAINER_WIDTH -
+  APPS_RESERVED_SCROLLBAR -
+  APPS_CONTAINER_GUTTER -
+  appsRailChromeWidth(false);
+
+/**
+ * The rungs added ABOVE the legacy Mantine ladder.
+ *
+ * 🔴 AN EXPLICIT TABLE, NOT A COUNT LIST RUN THROUGH ONE FLOOR — AND THE CHANGE IS
+ * DELIBERATE RATHER THAN A LOSS OF RIGOUR. Before the rail these were `[5, 6]` fed to
+ * {@link minContentWidthForColumns}, i.e. both derived from the single 460px card
+ * floor. They no longer share one derivation: the four-column rung is set by the PAGE
+ * CHROME (see {@link LISTING_FOUR_COLUMN_MIN_WIDTH}) and the five-column rung is still
+ * a card-width figure. Pretending one floor produced both would mean inventing a floor
+ * that produces neither number, so each rung carries its own reason instead — and the
+ * invariant that used to fall out of the shared derivation ("a column is never added
+ * below the floor") is asserted directly in the test rather than assumed.
+ *
+ * 🔴 FIVE IS DECLARED BUT UNREACHABLE AT TODAY'S CONTAINER CAP, ON PURPOSE — and it is
+ * unreachable in ALL THREE rail states, which is a stronger claim than the old
+ * six-column rung's and worth stating because that note only had one state to consider.
+ * Max grid is 2528 with no rail, 2456 collapsed, 2252 open; 2840 clears none of them.
+ * The rung is kept rather than deleted so a future container-cap raise engages it
+ * automatically; `__tests__/appListingGrid.test.ts` asserts the unreachability
+ * explicitly, so raising the cap past 2840 fails loudly and the density decision gets
+ * made deliberately rather than inherited.
+ *
+ * 2840 is carried over unchanged from what used to be the SIX-column rung
+ * (`6 × 460 + 5 × 16`). Re-used rather than re-derived: it is a real card-floor figure,
+ * five columns at 2840 gives 555.2px cards — comfortably over the 460 floor and slightly
+ * over what four columns get at their own rung — and inventing a new number for a rung
+ * nobody can reach would be arithmetic for its own sake.
+ */
+const WIDE_COLUMN_STEPS: readonly ListingGridColumnStep[] = [
+  { minContentWidth: LISTING_FOUR_COLUMN_MIN_WIDTH, columns: 4 },
+  { minContentWidth: 2840, columns: 5 },
+];
 
 /**
  * 🔴 THE COLUMN LADDER — the store grid's column count as a function of the GRID's own
@@ -217,12 +312,12 @@ export type ListingGridColumnStep = { minContentWidth: number; columns: number }
  * one grid.
  *
  * ── HOW THE TWO HALVES ARE BUILT, AND WHY THEY ARE INDEPENDENT ──────────────────────
- * The NARROW rungs (1 / 2 / 3 / 4) are DERIVED from {@link LISTING_GRID_SPAN} and
+ * The NARROW rungs (1 / 2 / 3) are DERIVED from {@link LISTING_GRID_SPAN} and
  * {@link MANTINE_BREAKPOINT_PX} rather than retyped: a breakpoint fires at viewport `V`,
  * `/apps` takes no body measure, and the apps `Container` is full-bleed below its cap,
- * so the rung is placed at `V − APPS_CONTAINER_GUTTER` of GRID. `lg` and `xl` both mean
- * four columns, so the `xl` rung collapses into the `lg` one and the ladder has no
- * redundant step.
+ * so the rung is placed at `V − APPS_CONTAINER_GUTTER` of GRID. `md`, `lg` and `xl` all
+ * mean three columns since the rail re-tune, so they collapse into ONE rung (960) and the
+ * ladder has no redundant step.
  *
  * 🔴 THE RUNGS ARE UNCHANGED AS FUNCTIONS OF **GRID** WIDTH — NOT OF VIEWPORT WIDTH, AND
  * THE DIFFERENCE IS A REAL BEHAVIOUR CHANGE THAT IS KEPT ON PURPOSE. This module used to
@@ -242,15 +337,17 @@ export type ListingGridColumnStep = { minContentWidth: number; columns: number }
  * why the behaviour is kept and the claim was retired instead. Both halves are driven
  * end-to-end in `AppListingsMarketplaceBody.stretch.geometry.test.tsx`.
  *
- * The WIDE rungs come from {@link WIDE_COLUMN_COUNTS} through
- * {@link minContentWidthForColumns}, i.e. straight out of the card-width floor.
+ * The WIDE rungs (4 / 5) come from {@link WIDE_COLUMN_STEPS}, which carries a separate
+ * recorded derivation PER RUNG — the four-column one from the page chrome, the
+ * five-column one from the card-width floor. See that table for why they no longer share
+ * one.
  *
  * 🔴 THE LOOP BELOW NEVER READS {@link LISTING_CARD_MIN_WIDTH} FOR A NARROW RUNG, AND
  * THAT SEPARATION IS LOAD-BEARING RATHER THAN TIDY. At the current 460 floor,
- * `minContentWidthForColumns(4)` is 1888 — so a version of this that let the floor
- * decide everywhere would move four columns from 1168 to 1888 and drop the whole
- * 1168–1887 band (the `xl` low end included) to THREE columns. See the collision note
- * on {@link LISTING_CARD_MIN_WIDTH}.
+ * `minContentWidthForColumns(3)` is 1412 — so a version of this that let the floor
+ * decide everywhere would move three columns from 960 to 1412 and drop the whole
+ * 960–1411 band to TWO columns. See the collision note on
+ * {@link LISTING_CARD_MIN_WIDTH}.
  *
  * The resulting table (grid width → columns) and its equality with the `@container`
  * rules in `AppListingsMarketplaceBody.module.scss` are both pinned in
@@ -270,9 +367,7 @@ export const LISTING_GRID_COLUMN_STEPS: readonly ListingGridColumnStep[] = (() =
     if (steps.length > 0 && steps[steps.length - 1].columns === columns) continue;
     steps.push({ minContentWidth, columns });
   }
-  for (const columns of WIDE_COLUMN_COUNTS) {
-    steps.push({ minContentWidth: minContentWidthForColumns(columns), columns });
-  }
+  for (const step of WIDE_COLUMN_STEPS) steps.push({ ...step });
   return steps;
 })();
 
