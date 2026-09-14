@@ -415,6 +415,33 @@ describe('browser error log — buffers', () => {
   });
 
   /**
+   * 🔴 THE REPEAT INDEX IS KEYED BY UNTRUSTED TEXT, so it must be a `Map` and not a plain object.
+   * With `{}` the lookup `index[message]` for a message of `'__proto__'`, `'constructor'` or
+   * `'toString'` returns an inherited value that is TRUTHY — so the recorder would take the
+   * "already seen" branch, do `count += 1` on something that is not an entry, and the message would
+   * be stored NOWHERE while the first sighting silently vanished. Prototype keys are not exotic
+   * here: `console.error(someObj)` formats to JSON, and React and library errors mention these
+   * names routinely.
+   *
+   * Pins the data structure by BEHAVIOUR rather than by grepping for the word `Map`.
+   */
+  it('records a message that collides with an Object prototype key', () => {
+    for (const hostile of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
+      recordConsoleError(hostile);
+    }
+    expect(readConsoleErrors()).toEqual([
+      { message: '__proto__', count: 1 },
+      { message: 'constructor', count: 1 },
+      { message: 'toString', count: 1 },
+      { message: 'hasOwnProperty', count: 1 },
+    ]);
+
+    // And they still collapse like any other message, rather than taking a different branch.
+    recordConsoleError('__proto__');
+    expect(readConsoleErrors()[0]).toEqual({ message: '__proto__', count: 2 });
+  });
+
+  /**
    * The schema bounds `count` at `>= 1`, so a stored entry must never claim zero occurrences. This
    * is the producer half: an entry exists only because it was recorded at least once.
    */
