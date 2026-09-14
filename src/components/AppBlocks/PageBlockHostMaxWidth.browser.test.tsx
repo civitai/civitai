@@ -540,11 +540,20 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
    * play so the fallback is never consulted (measured). Point 3 is a claim about
    * independence, not a second catch-all.
    *
-   * The `data-full-bleed` attribute is read first as the INSTRUMENT check. A width
-   * measurement alone cannot tell "the declaration never reached the host" from "the
-   * cap is broken" — both are the wrong number of pixels — and this suite's props go
-   * through `renderInPageChain`, so a prop that stopped being forwarded would look
-   * exactly like a feature that does not work.
+   * The `data-full-bleed` attribute is read first as the INSTRUMENT check, and the
+   * reason to read THAT signal is not that it is the only one available — an earlier
+   * version of this note claimed a width measurement alone cannot separate "the
+   * declaration never reached the host" from "the cap is broken", and that is wrong.
+   * `getComputedStyle(host).maxWidth` resolves to `none` vs `1600px` on this same
+   * element and names the branch taken outright; this suite already calls
+   * `getComputedStyle(host)` in the case above. Either signal would do.
+   *
+   * It is read because it is the signal that also exists in PRODUCTION: it survives
+   * the `data-testid` strip that the testid beside it does not, so it is what a human
+   * debugging the live app has to go on, and asserting on it here keeps the test and
+   * that debugging story pointed at one attribute. What the check buys, on either
+   * signal: this suite's props go through `renderInPageChain`, so a prop that stopped
+   * being forwarded would otherwise look exactly like a feature that does not work.
    */
   test('MANIFEST — an app declaring `page.fullBleed` is NOT capped, while one that does not still is', async () => {
     // POINT 1: declared.

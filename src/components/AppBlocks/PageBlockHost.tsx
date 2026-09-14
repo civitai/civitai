@@ -4475,11 +4475,26 @@ export function PageBlockHost({
           have misled anyone auditing whether it could go. */}
       <Box
         data-testid="app-page-content"
-        // Observability only, NOT the mechanism — the `maxWidth` below is. It exists
-        // so a test (and DevTools) can tell "the manifest declaration never reached
-        // this host" apart from "the cap is broken", which a width measurement alone
-        // cannot: both look like the wrong number of pixels. It survives the
-        // production `data-testid` strip, unlike the testid beside it.
+        // 🔴 PRODUCTION DEBUGGABILITY, NOT A TEST INSTRUMENT — and the difference is
+        // worth stating because the test-instrument claim is FALSE. This comment used
+        // to say a width measurement alone cannot tell "the declaration never reached
+        // this host" from "the cap is broken". It can: `getComputedStyle(el).maxWidth`
+        // resolves to `none` vs `1600px` on THIS element, which names the branch
+        // taken outright, and `PageBlockHostMaxWidth.browser.test.tsx` already calls
+        // `getComputedStyle` on it. So the two assertions that read this attribute
+        // could be rewritten against computed style with nothing lost, and this
+        // attribute is not what makes them possible.
+        //
+        // What it does earn is a signal in the LIVE DOM. `next.config.mjs` sets
+        // `reactRemoveProperties: { properties: ['^data-testid$'] }` whenever
+        // `NODE_ENV === 'production'`, so the testid beside it is compiled out of the
+        // shipped app — that same strip is what once made a ledger selector match
+        // zero elements on civitai.com while every test tier passed (globals.css
+        // records it). `data-full-bleed` is not in the strip list, so it is the one
+        // place a human debugging a live app can read whether the approved manifest's
+        // declaration actually arrived, rather than inferring it from a rendered
+        // width that the app's own CSS could equally explain. Keep it out of that
+        // list. It is NOT the mechanism — the `maxWidth` below is.
         data-full-bleed={fullBleed ? 'true' : 'false'}
         style={{
           display: 'flex',
