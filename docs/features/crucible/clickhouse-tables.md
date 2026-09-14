@@ -1,132 +1,130 @@
 # Crucible ClickHouse Tables
 
-This document defines the ClickHouse table schemas for Crucible vote tracking and analytics.
+ClickHouse schemas for Crucible vote tracking and analytics.
+
+## 🔴 Column names must equal the payload keys
+
+`Tracker.send()` POSTs the tracked object **verbatim** to `<CLICKHOUSE_TRACKER_URL>/track/<table>`.
+Nothing in this repo maps JavaScript keys to column names. So a column whose name differs from its
+payload key does not land — and ClickHouse drops unknown JSON keys rather than rejecting the row, so
+the failure is a row of zeros with no error anywhere.
+
+Table names are free (`views`, `modelEvents`, `knights_new_order_image_rating` all coexist). **Column
+names are not**: they have to match the object `tracker.ts` sends, which is camelCase throughout.
+`knights_new_order_image_rating` is the worked example — a snake_case table with camelCase columns
+(`imageId`, `createdAt`, `userAgent`).
 
 ## Vote Tracking Table
 
 ### crucible_votes
 
-Stores individual votes for analytics, auditing, and potential replay.
+Individual votes, for analytics, auditing, and potential replay.
 
 ```sql
-CREATE TABLE crucible_votes (
-  crucible_id UInt32,
-  winner_entry_id UInt32,
-  loser_entry_id UInt32,
-  user_id UInt32,
-  created_at DateTime DEFAULT now()
-) ENGINE = MergeTree()
-PARTITION BY toYYYYMM(created_at)
-ORDER BY (crucible_id, created_at)
-TTL created_at + INTERVAL 90 DAY;
+CREATE TABLE crucible_votes
+(
+    `userId` UInt32,
+    `crucibleId` UInt32,
+    `winnerEntryId` UInt32,
+    `loserEntryId` UInt32,
+    `createdAt` DateTime DEFAULT now()
+)
+ENGINE = SharedMergeTree
+PARTITION BY toYYYYMM(createdAt)
+ORDER BY (crucibleId, createdAt)
+TTL createdAt + toIntervalDay(90);
 ```
 
-### Indexes
+`SharedMergeTree` is what ClickHouse Cloud substitutes for `MergeTree` on this cluster; write either.
 
-The `ORDER BY (crucible_id, created_at)` clause creates a primary index that efficiently supports:
-- Queries filtering by `crucible_id`
-- Time-range queries within a crucible
-- Aggregate queries per crucible
+`ORDER BY (crucibleId, createdAt)` is the primary index, and covers the queries this table exists for:
+filter by crucible, time-range within a crucible, aggregate per crucible.
 
-### Buffer Table (Optional)
-
-For high-volume write scenarios, use a buffer table:
+### Buffer table
 
 ```sql
 CREATE TABLE crucible_votes_buffer AS crucible_votes
-ENGINE = Buffer(
-  default,           -- database
-  crucible_votes,    -- destination table
-  16,                -- num_layers
-  10, 100,           -- min/max seconds
-  10000, 1000000,    -- min/max rows
-  10000000, 100000000 -- min/max bytes
-);
+ENGINE = Buffer('default', 'crucible_votes', 16, 10, 100, 10000, 1000000, 10000000, 100000000);
 ```
+
+Nothing in this repo writes to the buffer by name — the tracker posts `crucible_votes` and the tracker
+service decides. It exists for high-volume write smoothing; its columns must stay identical to the
+destination's.
 
 ## Usage
 
-### Tracking Votes
+### Tracking votes
 
-Votes are tracked via the `Tracker.crucibleVote()` method in `src/server/clickhouse/client.ts`:
+`Tracker.crucibleVote()` in `src/server/clickhouse/tracker.ts`, called from `submitVote()`:
 
 ```typescript
-// In submitVote service function
-await tracker.crucibleVote({
-  crucibleId,
-  winnerEntryId,
-  loserEntryId,
-});
+tracker.crucibleVote({ crucibleId, winnerEntryId, loserEntryId });
 ```
 
-### Querying Vote Data
+It passes `skipActorMeta: true`, which stamps `userId` and drops `ip`/`userAgent`. A vote is a
+gameplay event, not an attribution surface, so the narrower actor meta is the intent — the table has
+no `ip` or `userAgent` column to receive them.
+
+`src/server/clickhouse/__tests__/tracker.crucibleVote.test.ts` pins the wire payload against the column
+list above, written there as literals. ⚠️ It asserts what the **app sends**; it cannot reach ClickHouse,
+so it catches a drifting payload but not a drifting DDL. The DDL side is this document.
+
+### Querying vote data
 
 ```typescript
 import { clickhouse } from '~/server/clickhouse/client';
 
-// Get vote count per crucible
 const result = await clickhouse.$query`
-  SELECT
-    crucible_id,
-    count() as total_votes,
-    uniq(user_id) as unique_voters
+  SELECT crucibleId, count() as totalVotes, uniq(userId) as uniqueVoters
   FROM crucible_votes
-  WHERE crucible_id = ${crucibleId}
-  GROUP BY crucible_id
+  WHERE crucibleId = ${crucibleId}
+  GROUP BY crucibleId
 `;
 
-// Get user's voting history for a crucible
 const userVotes = await clickhouse.$query`
-  SELECT winner_entry_id, loser_entry_id, created_at
+  SELECT winnerEntryId, loserEntryId, createdAt
   FROM crucible_votes
-  WHERE crucible_id = ${crucibleId}
-    AND user_id = ${userId}
-  ORDER BY created_at DESC
+  WHERE crucibleId = ${crucibleId} AND userId = ${userId}
+  ORDER BY createdAt DESC
   LIMIT 100
 `;
 ```
 
-### Analytics Queries
+### Analytics queries
 
 ```typescript
-// Daily vote volume
 const dailyStats = await clickhouse.$query`
-  SELECT
-    toDate(created_at) as date,
-    count() as votes,
-    uniq(user_id) as voters
+  SELECT toDate(createdAt) as date, count() as votes, uniq(userId) as voters
   FROM crucible_votes
-  WHERE crucible_id = ${crucibleId}
+  WHERE crucibleId = ${crucibleId}
   GROUP BY date
   ORDER BY date
 `;
 
-// Most voted-on entries
 const topEntries = await clickhouse.$query`
-  SELECT
-    entry_id,
-    count() as appearances
+  SELECT entryId, count() as appearances
   FROM (
-    SELECT winner_entry_id as entry_id FROM crucible_votes WHERE crucible_id = ${crucibleId}
+    SELECT winnerEntryId as entryId FROM crucible_votes WHERE crucibleId = ${crucibleId}
     UNION ALL
-    SELECT loser_entry_id as entry_id FROM crucible_votes WHERE crucible_id = ${crucibleId}
+    SELECT loserEntryId as entryId FROM crucible_votes WHERE crucibleId = ${crucibleId}
   )
-  GROUP BY entry_id
+  GROUP BY entryId
   ORDER BY appearances DESC
   LIMIT 10
 `;
 ```
 
-## Data Retention
+## Data retention
 
-- Votes are retained for 90 days (configurable via TTL)
-- Final results are persisted in PostgreSQL `CrucibleEntry.score` and `position` fields
-- Redis ELO cache is cleared when crucible ends
+- Votes are retained 90 days (the TTL above)
+- Final results live in PostgreSQL: `CrucibleEntry.score` and `CrucibleEntry.position`
+- The Redis ELO cache is cleared when a crucible ends
 
-## Related Files
+## Related files
 
 | File | Purpose |
 |------|---------|
-| `src/server/clickhouse/client.ts` | `Tracker.crucibleVote()` method |
-| `src/server/services/crucible.service.ts` | `submitVote()` calls tracker |
+| `src/server/clickhouse/tracker.ts` | `Tracker.crucibleVote()` |
+| `src/server/clickhouse/__tests__/tracker.crucibleVote.test.ts` | Pins the wire payload to the columns |
+| `src/server/services/crucible.service.ts` | `submitVote()` calls the tracker |
 | `src/server/redis/crucible-elo.redis.ts` | Real-time ELO cache |
