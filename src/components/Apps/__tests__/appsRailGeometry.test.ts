@@ -206,9 +206,47 @@ describe('🔴 SEAM — the stylesheet switches at exactly APPS_RAIL_MIN_VIEWPOR
     // survives a resize past 1300 — leaving two `App sections` landmarks and a focus trap
     // over a usable rail. An effect that can only CLOSE something cannot decide a render,
     // so it cannot reintroduce an SSR/first-paint divergence. Pinned as BOTH halves, so
-    // neither the ban above nor this carve-out can be widened into the other: the call
-    // must live inside a `useEffect`, and it must not appear in the returned JSX.
-    expect(layout).toMatch(/useEffect\(\(\) => \{[\s\S]*?window\.matchMedia\(/);
+    // neither the ban above nor this carve-out can be widened into the other: EVERY
+    // `window.matchMedia` read must live inside a `useEffect` body, and none may appear in
+    // the returned JSX.
+    //
+    // 🔴 THIS HALF IS A CONTAINMENT CHECK, NOT A REGEX, AND THE DIFFERENCE IS THE WHOLE
+    // POINT. It used to read `/useEffect\(\(\) => \{[\s\S]*?window\.matchMedia\(/`, which
+    // is UNANCHORED: it is satisfied by any `useEffect(() => {` appearing anywhere before
+    // any `window.matchMedia(`, and so establishes only that the two tokens occur in that
+    // ORDER — never that one CONTAINS the other. Measured: injecting
+    // `window.matchMedia('(min-width: 1300px)').matches` into the component's RENDER BODY
+    // (after the effects, before the JSX) left this file fully GREEN at 12/12, while the
+    // JSX half correctly reds. A render-body read is exactly the banned shape — the server
+    // has no `matchMedia` and a client ≥1300 returns true — so the guard was reading as
+    // cover for the hydration class while providing none for it.
+    //
+    // Brace-matching is safe here because `layout` is comment-stripped above, and the only
+    // braces left inside an effect body are the balanced `${…}` of a template literal.
+    const effectBodies: Array<[number, number]> = [];
+    const effectOpen = /useEffect\(\(\) => \{/g;
+    for (let m = effectOpen.exec(layout); m; m = effectOpen.exec(layout)) {
+      let depth = 1;
+      let i = m.index + m[0].length;
+      const bodyStart = i;
+      for (; i < layout.length && depth > 0; i++) {
+        if (layout[i] === '{') depth++;
+        else if (layout[i] === '}') depth--;
+      }
+      expect(depth, 'unbalanced braces while scanning a useEffect body').toBe(0);
+      effectBodies.push([bodyStart, i]);
+    }
+    expect(
+      effectBodies.length,
+      'no `useEffect(() => {` found — re-point this guard'
+    ).toBeGreaterThan(0);
+
+    const reads: number[] = [];
+    const mediaRead = /window\.matchMedia\(/g;
+    for (let m = mediaRead.exec(layout); m; m = mediaRead.exec(layout)) reads.push(m.index);
+    // Positive control: if this ever finds nothing, the loop below is vacuous and would
+    // pass over a file that had removed the carve-out entirely.
+    expect(reads.length, 'no `window.matchMedia(` found — re-point this guard').toBeGreaterThan(0);
     // ⚠️ ANCHORED ON `<Container`, NOT ON `return (`. The FIRST `return (` in this file is
     // the drawer effect's own cleanup (`return () => mql.removeEventListener(...)`), so
     // slicing there covers 60 lines of hook body and docblock as well as the JSX. That is
@@ -216,11 +254,28 @@ describe('🔴 SEAM — the stylesheet switches at exactly APPS_RAIL_MIN_VIEWPOR
     // effect reading `matchMedia` would red it with the message "a media query reached
     // the rendered tree", diagnosing a non-defect. The component's JSX is the only thing
     // this rule is about, and `<Container` is where it starts.
+    //
+    // 🔴 THIS CHECK RUNS BEFORE THE CONTAINMENT LOOP BELOW, AND THE ORDER IS DELIBERATE.
+    // A `matchMedia` in the JSX is also outside every effect body, so the containment loop
+    // would catch it too — but it would report it with the containment message, and this
+    // assertion would never execute. A guard that can only ever be pre-empted by another
+    // guard is dead coverage: it reads as a second check and cannot fail independently.
+    // Ordering it first gives each half its own killing mutant and its own diagnosis —
+    // JSX read → "a media query reached the rendered tree"; render-body read → the
+    // containment message. Both verified by mutation.
     const jsxStart = layout.indexOf('<Container');
     expect(jsxStart, 'the rendered tree was not found — re-point this guard').toBeGreaterThan(-1);
     expect(layout.slice(jsxStart), 'a media query reached the rendered tree').not.toMatch(
       /matchMedia/
     );
+
+    for (const at of reads) {
+      expect(
+        effectBodies.some(([start, end]) => at >= start && at < end),
+        `a \`window.matchMedia\` read at offset ${at} is NOT inside any useEffect body — ` +
+          'a media query outside an effect decides a render and diverges between server and client'
+      ).toBe(true);
+    }
   });
 });
 

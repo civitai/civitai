@@ -129,8 +129,11 @@ describe('🔴 the column LADDER — grid width → column count', () => {
    * bearing rows — an earlier revision of this header named them alongside 1376 as "the
    * most important in this table", which pointed a pruner at the two rows that cannot
    * fail. They are kept for band coverage, not as witnesses. The COLLISION describe
-   * below states the same thing outright: 1412 itself would read three, and the browser
-   * fixtures at 1888 / 2450 / 2528 would all stay green under that mutation.
+   * below agrees on the part that is true: 1412 itself would read three, and the browser
+   * fixtures at 1888 / 2450 / 2528 would all stay green under that mutation. ⚠️ It also
+   * used to add that the defect "would be invisible everywhere except here" — that half
+   * is false and is corrected there; the mutation reds 16 tests in this file, the
+   * stylesheet seam test among them.
    *
    * The collision is still worth recording, because it is why 1888 looks significant
    * and is not: `4 × 460 + 3 × 16 = 1888`, so a floor-governed four-column rung would
@@ -247,10 +250,23 @@ describe('🔴 THE COLLISION — the card-width floor must NOT govern the narrow
    * 2364, so that sentence describes a ladder this file no longer tests. The live form:
    * the lowest narrow rung is `md` at 960, its floor-derived counterpart is
    * `3 × 460 + 2 × 16 = 1412`, and a floor-governed narrow half would drop the ENTIRE
-   * 960–1411 band to two columns. Every other assertion in this file would still pass —
-   * 1412 itself would read three (the floor's own rung), the stylesheet seam would still
-   * agree, and the browser fixtures at 1888 / 2450 / 2528 would all be green. The defect
-   * would be invisible everywhere except here.
+   * 960–1411 band to two columns.
+   *
+   * ⚠️ THIS PARAGRAPH USED TO CLAIM THE DEFECT "WOULD BE INVISIBLE EVERYWHERE EXCEPT
+   * HERE", AND THAT IS MEASURABLY FALSE — it was written when the ladder had a 1168 rung
+   * and a five-column rung at 2364, and it was never re-run after the re-tune. Applying
+   * the mutation at HEAD reds **16 tests in this file, 12 of them OUTSIDE this describe**:
+   * the seven LADDER rows, `guard-the-guard`, the five-rung ledger, `each retired
+   * breakpoint maps to its rung`, the rail-open card-width table, and — directly against
+   * the old wording — THE STYLESHEET SEAM TEST ITSELF (`the @container rules EQUAL the
+   * derived ladder`). In the browser tier it reds 1000, 1376 and the container-query
+   * test. What IS true is the narrow half of it: 1412 reads three either way, and the
+   * browser fixtures at 1888 / 2450 / 2528 stay green.
+   *
+   * The correction matters because the false version licensed DELETING the ladder table,
+   * the seam test and the browser fixtures as redundant — while this file's own header
+   * says those same seven rows are the witnesses and must be pruned last. Two
+   * contradictory pruning instructions in one file; this is the one that was wrong.
    *
    * At the old 383 floor `4 × 383 + 3 × 16 = 1580`, comfortably away from every number in
    * play, and a floor-governed narrow half would have broken loudly. It is the NEW value

@@ -53,9 +53,15 @@ import { trpcQuery } from './preview-trpc';
  *    The row this spec keys on is `{ id: 'marketplace', path: '', label: 'Marketplace' }`
  *    — `path` is the URL segment UNDER `/apps`, so the marketplace row's is the empty
  *    string, not `'/apps'`. It is the only row whose `visible` predicate is unconditional
- *    for a store-eligible viewer (`(_s, c) => c.canSeeStore`; every other row is
- *    summary-conditional). It is NOT necessarily the first row, so the assertion below
- *    selects it BY NAME and the order is irrelevant to it.
+ *    for a store-eligible viewer: `(_s, c) => c.canSeeStore`, which is exactly the gate
+ *    the page itself is behind. ⚠️ An earlier revision of this line added "every other
+ *    row is summary-conditional" as the reason — that is wrong for the BUILD row, which
+ *    is `(_s, c) => c.canBuild`, context-conditional and deliberately summary-free. The
+ *    conclusion still holds by a different route: `canBuild` is
+ *    `hasAppsStoreAccess(features) && (isAppDeveloper || appBlocksGetStarted)`, strictly
+ *    NARROWER than `canSeeStore`, so it cannot be visible where the marketplace row is
+ *    not. It is NOT necessarily the first row, so the assertion below selects it BY NAME
+ *    and the order is irrelevant to it.
  *
  *    🔴 THE RAIL IS VIEWPORT-GATED, so this spec asserts BOTH nav forms: the drawer
  *    trigger at this config's default 1280×720 (below `APPS_RAIL_MIN_VIEWPORT`, 1300),
