@@ -1348,25 +1348,43 @@ function getOrdinalPosition(position: number): string {
 }
 
 /**
- * Parse prize positions JSON from database
+ * Parse prize positions JSON from the database.
+ *
+ * `createCrucible` stores the `z.record(position, percentage)` its input schema validates, so the
+ * stored value is `{"1": 50, "2": 30}` — an object. Reading it as an array alone returned `[]` for
+ * every crucible ever created, which zeroed `prizeAmount` on every entry: entry fees were collected
+ * into the pool and nothing was ever paid out. Nothing type-checks across the JSON boundary, so
+ * both shapes are accepted here rather than trusting either.
  */
 function parsePrizePositions(prizePositionsJson: unknown): PrizePosition[] {
-  if (!prizePositionsJson || !Array.isArray(prizePositionsJson)) {
+  if (!prizePositionsJson || typeof prizePositionsJson !== 'object') {
     return [];
   }
 
-  return prizePositionsJson
+  if (Array.isArray(prizePositionsJson)) {
+    return prizePositionsJson
+      .filter(
+        (item): item is { position: number; percentage: number } =>
+          typeof item === 'object' &&
+          item !== null &&
+          typeof item.position === 'number' &&
+          typeof item.percentage === 'number'
+      )
+      .map((item) => ({
+        position: item.position,
+        percentage: item.percentage,
+      }));
+  }
+
+  return Object.entries(prizePositionsJson)
+    .map(([position, percentage]) => ({
+      position: Number(position),
+      percentage: Number(percentage),
+    }))
     .filter(
-      (item): item is { position: number; percentage: number } =>
-        typeof item === 'object' &&
-        item !== null &&
-        typeof item.position === 'number' &&
-        typeof item.percentage === 'number'
-    )
-    .map((item) => ({
-      position: item.position,
-      percentage: item.percentage,
-    }));
+      ({ position, percentage }) =>
+        Number.isInteger(position) && position > 0 && Number.isFinite(percentage) && percentage > 0
+    );
 }
 
 /**

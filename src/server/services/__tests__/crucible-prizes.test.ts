@@ -1,597 +1,240 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { CrucibleStatus } from '~/shared/utils/prisma/enums';
+import type * as BuzzService from '~/server/services/buzz.service';
+import type * as NotificationService from '~/server/services/notification.service';
+import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
+import type * as EloService from '~/server/services/crucible-elo.service';
+import { dbMock } from '~/__tests__/mocks';
+
+// `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
+// and reset per test file — see docs/testing/shared-module-mocks.md.
+const findUnique = dbMock.dbRead.crucible.findUnique;
+const findMany = dbMock.dbRead.crucibleEntry.findMany;
+const update = dbMock.dbWrite.crucible.update;
+const executeRaw = dbMock.dbWrite.$executeRaw;
+const createBuzzTransactionMany = vi.fn();
+const createNotification = vi.fn();
+const getAllEntryElos = vi.fn();
+const getAllVoteCounts = vi.fn();
+const setTTL = vi.fn();
+
+vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzService>()),
+  createBuzzTransactionMany,
+}));
+
+vi.mock('~/server/services/notification.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationService>()),
+  createNotification,
+}));
+
+vi.mock('~/server/redis/crucible-elo.redis', async (importOriginal) => ({
+  ...(await importOriginal<typeof CrucibleEloRedis>()),
+  crucibleEloRedis: { getAllVoteCounts, setTTL },
+}));
+
+vi.mock('~/server/services/crucible-elo.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof EloService>()),
+  getAllEntryElos,
+}));
+
+const { finalizeCrucible } = await import('~/server/services/crucible.service');
+
+const dbEntry = (id: number, userId: number, createdAtMs: number) => ({
+  id,
+  userId,
+  score: 1500,
+  createdAt: new Date(createdAtMs),
+});
+
 /**
- * Unit tests for prize distribution logic in crucible.service.ts
- *
- * These tests verify the prize calculation and distribution logic.
- * Run with: npx tsx src/server/services/__tests__/crucible-prizes.test.ts
- *
- * Note: These tests inline the pure function implementations to avoid importing
- * the service file which has database/Redis dependencies requiring environment variables.
- * The implementations MUST match those in crucible.service.ts exactly.
- *
- * @file crucible-prizes.test.ts
+ * `finalizeCrucible` pages entries with `while (true)` until a batch comes back empty. The fake
+ * must terminate on its own — an endless fake would spin the microtask queue and vitest's
+ * setTimeout-based timeout would never fire, hanging CI with nothing to read.
  */
+const pageEntries = (entries: ReturnType<typeof dbEntry>[]) => {
+  let served = false;
+  findMany.mockImplementation(async () => {
+    if (served) return [];
+    served = true;
+    return entries;
+  });
+};
 
-// Wrap in IIFE to scope variables (avoids conflicts with other test files during typecheck)
-(function runPrizeTests() {
-  // ============================================================
-  // TYPES (must match crucible.service.ts)
-  // ============================================================
+const setupCrucible = ({
+  entryFee = 100,
+  prizePositions = { '1': 50, '2': 30, '3': 20 } as unknown,
+  entries = [dbEntry(1, 10, 1_000), dbEntry(2, 11, 2_000), dbEntry(3, 12, 3_000)],
+  elos = { 1: 1600, 2: 1550, 3: 1400 } as Record<number, number>,
+} = {}) => {
+  findUnique.mockResolvedValue({
+    id: 1,
+    name: 'Test Crucible',
+    userId: 4,
+    status: CrucibleStatus.Active,
+    entryFee,
+    prizePositions,
+    endAt: new Date(Date.now() - 1000),
+    _count: { entries: entries.length },
+  });
+  pageEntries(entries);
+  getAllEntryElos.mockResolvedValue(elos);
+};
 
-  /**
-   * Prize position type from database JSON
-   */
-  type PrizePosition = {
-    position: number;
-    percentage: number;
-  };
+beforeEach(() => {
+  vi.clearAllMocks();
+  getAllVoteCounts.mockResolvedValue({});
+  setTTL.mockResolvedValue(undefined);
+  update.mockResolvedValue({});
+  executeRaw.mockResolvedValue(1);
+  createBuzzTransactionMany.mockImplementation(async (transactions: unknown[]) => ({
+    transactions,
+  }));
+  createNotification.mockResolvedValue(undefined);
+  setupCrucible();
+});
 
-  /**
-   * Entry with final score and position after finalization
-   */
-  type FinalizedEntry = {
-    entryId: number;
-    userId: number;
-    finalScore: number;
-    voteCount: number;
-    position: number;
-    prizeAmount: number;
-  };
+describe('prize pool', () => {
+  it('is the entry fee times the number of entries', async () => {
+    setupCrucible({ entryFee: 250 });
 
-  // ============================================================
-  // PURE FUNCTIONS UNDER TEST (must match crucible.service.ts)
-  // ============================================================
+    const result = await finalizeCrucible(1);
 
-  /**
-   * Parse prize positions JSON from database
-   */
-  function parsePrizePositions(prizePositionsJson: unknown): PrizePosition[] {
-    if (!prizePositionsJson || !Array.isArray(prizePositionsJson)) {
-      return [];
-    }
+    expect(result.totalPrizePool).toBe(750);
+  });
 
-    return prizePositionsJson
-      .filter(
-        (item): item is { position: number; percentage: number } =>
-          typeof item === 'object' &&
-          item !== null &&
-          typeof item.position === 'number' &&
-          typeof item.percentage === 'number'
-      )
-      .map((item) => ({
-        position: item.position,
-        percentage: item.percentage,
-      }));
-  }
+  it('is zero for a free crucible', async () => {
+    setupCrucible({ entryFee: 0 });
 
-  /**
-   * Calculate prize distribution based on prize positions config and total pool
-   * This replicates the logic from finalizeCrucible
-   */
-  function calculatePrizeDistribution(
-    prizePositions: PrizePosition[],
-    totalPrizePool: number,
-    numEntries: number
-  ): { position: number; prizeAmount: number }[] {
-    // Sort prize positions by position number
-    const sortedPrizePositions = [...prizePositions].sort((a, b) => a.position - b.position);
+    const result = await finalizeCrucible(1);
 
-    // Calculate prize amount for each position
-    const results: { position: number; prizeAmount: number }[] = [];
+    expect(result.totalPrizePool).toBe(0);
+    expect(result.totalPrizesDistributed).toBe(0);
+  });
+});
 
-    for (let position = 1; position <= numEntries; position++) {
-      const prizeConfig = sortedPrizePositions.find((p) => p.position === position);
-      const prizeAmount = prizeConfig
-        ? Math.floor((prizeConfig.percentage / 100) * totalPrizePool)
-        : 0;
+describe('prize distribution', () => {
+  it('pays each position its configured percentage of the pool', async () => {
+    // The stored shape is the `z.record` the create schema validates — `{"1": 50, ...}`, an
+    // object. Reading it as an array alone returned [] here, so every entry got prizeAmount 0
+    // while the pool was still collected. That is the regression this asserts against.
+    setupCrucible({ entryFee: 100, prizePositions: { '1': 50, '2': 30, '3': 20 } });
 
-      results.push({ position, prizeAmount });
-    }
+    const result = await finalizeCrucible(1);
 
-    return results;
-  }
+    expect(result.totalPrizePool).toBe(300);
+    expect(result.finalEntries.map((e) => e.prizeAmount)).toEqual([150, 90, 60]);
+    expect(result.totalPrizesDistributed).toBe(300);
+  });
 
-  /**
-   * Calculate total prizes distributed
-   */
-  function calculateTotalPrizesDistributed(prizeDistribution: { prizeAmount: number }[]): number {
-    return prizeDistribution.reduce((sum, entry) => sum + entry.prizeAmount, 0);
-  }
-
-  // ============================================================
-  // Simple test utilities
-  // ============================================================
-
-  let testsPassed = 0;
-  let testsFailed = 0;
-
-  function describe(name: string, fn: () => void) {
-    console.log(`\n${'='.repeat(60)}`);
-    console.log(`SUITE: ${name}`);
-    console.log('='.repeat(60));
-    fn();
-  }
-
-  function test(name: string, fn: () => void) {
-    try {
-      fn();
-      testsPassed++;
-      console.log(`  \u2713 ${name}`);
-    } catch (error) {
-      testsFailed++;
-      console.log(`  \u2717 ${name}`);
-      console.log(`    Error: ${(error as Error).message}`);
-    }
-  }
-
-  function expect<T>(actual: T) {
-    return {
-      toBe(expected: T) {
-        if (actual !== expected) {
-          throw new Error(`Expected ${expected} but got ${actual}`);
-        }
-      },
-      toEqual(expected: T) {
-        const actualStr = JSON.stringify(actual);
-        const expectedStr = JSON.stringify(expected);
-        if (actualStr !== expectedStr) {
-          throw new Error(`Expected ${expectedStr} but got ${actualStr}`);
-        }
-      },
-      toBeLessThan(expected: number) {
-        if (typeof actual !== 'number')
-          throw new Error(`Expected a number but got ${typeof actual}`);
-        if (actual >= expected) {
-          throw new Error(`Expected ${actual} to be less than ${expected}`);
-        }
-      },
-      toBeLessThanOrEqual(expected: number) {
-        if (typeof actual !== 'number')
-          throw new Error(`Expected a number but got ${typeof actual}`);
-        if (actual > expected) {
-          throw new Error(`Expected ${actual} to be less than or equal to ${expected}`);
-        }
-      },
-      toHaveLength(expected: number) {
-        if (!Array.isArray(actual)) throw new Error(`Expected an array but got ${typeof actual}`);
-        if (actual.length !== expected) {
-          throw new Error(`Expected length ${expected} but got ${actual.length}`);
-        }
-      },
-    };
-  }
-
-  // ============================================================
-  // TEST SUITE
-  // ============================================================
-
-  describe('parsePrizePositions', () => {
-    test('parses valid prize positions array', () => {
-      const input = [
+  it('still reads the legacy array shape', async () => {
+    setupCrucible({
+      entryFee: 100,
+      prizePositions: [
         { position: 1, percentage: 50 },
         { position: 2, percentage: 30 },
         { position: 3, percentage: 20 },
-      ];
-
-      const result = parsePrizePositions(input);
-
-      expect(result).toHaveLength(3);
-      expect(result[0]).toEqual({ position: 1, percentage: 50 });
-      expect(result[1]).toEqual({ position: 2, percentage: 30 });
-      expect(result[2]).toEqual({ position: 3, percentage: 20 });
+      ],
     });
 
-    test('returns empty array for null input', () => {
-      const result = parsePrizePositions(null);
-      expect(result).toHaveLength(0);
-    });
+    const result = await finalizeCrucible(1);
 
-    test('returns empty array for undefined input', () => {
-      const result = parsePrizePositions(undefined);
-      expect(result).toHaveLength(0);
-    });
-
-    test('returns empty array for non-array input', () => {
-      const result = parsePrizePositions({ position: 1, percentage: 100 });
-      expect(result).toHaveLength(0);
-    });
-
-    test('filters out invalid items', () => {
-      const input = [
-        { position: 1, percentage: 50 },
-        { position: 'invalid', percentage: 30 }, // invalid position
-        { position: 3, percentage: 'invalid' }, // invalid percentage
-        null, // null item
-        { position: 4 }, // missing percentage
-        { percentage: 10 }, // missing position
-        { position: 5, percentage: 10 },
-      ];
-
-      const result = parsePrizePositions(input);
-
-      expect(result).toHaveLength(2);
-      expect(result[0]).toEqual({ position: 1, percentage: 50 });
-      expect(result[1]).toEqual({ position: 5, percentage: 10 });
-    });
+    expect(result.finalEntries.map((e) => e.prizeAmount)).toEqual([150, 90, 60]);
   });
 
-  describe('calculatePrizeDistribution - standard 50/30/20 split', () => {
-    const standardPrizePositions: PrizePosition[] = [
-      { position: 1, percentage: 50 },
-      { position: 2, percentage: 30 },
-      { position: 3, percentage: 20 },
-    ];
+  it('pays nothing to positions with no configured percentage', async () => {
+    setupCrucible({ entryFee: 100, prizePositions: { '1': 100 } });
 
-    test('distributes prizes with even pool (10000 Buzz)', () => {
-      const totalPool = 10000;
-      const numEntries = 10;
+    const result = await finalizeCrucible(1);
 
-      const distribution = calculatePrizeDistribution(
-        standardPrizePositions,
-        totalPool,
-        numEntries
-      );
-
-      expect(distribution[0].prizeAmount).toBe(5000); // 50% of 10000
-      expect(distribution[1].prizeAmount).toBe(3000); // 30% of 10000
-      expect(distribution[2].prizeAmount).toBe(2000); // 20% of 10000
-      expect(distribution[3].prizeAmount).toBe(0); // 4th place gets nothing
-    });
-
-    test('distributes prizes with 100 Buzz pool', () => {
-      const totalPool = 100;
-      const numEntries = 5;
-
-      const distribution = calculatePrizeDistribution(
-        standardPrizePositions,
-        totalPool,
-        numEntries
-      );
-
-      expect(distribution[0].prizeAmount).toBe(50); // 50% of 100
-      expect(distribution[1].prizeAmount).toBe(30); // 30% of 100
-      expect(distribution[2].prizeAmount).toBe(20); // 20% of 100
-    });
-
-    test('total distributed equals total pool when evenly divisible', () => {
-      const totalPool = 10000;
-      const numEntries = 5;
-
-      const distribution = calculatePrizeDistribution(
-        standardPrizePositions,
-        totalPool,
-        numEntries
-      );
-      const totalDistributed = calculateTotalPrizesDistributed(distribution);
-
-      expect(totalDistributed).toBe(10000);
-    });
+    expect(result.finalEntries.map((e) => e.prizeAmount)).toEqual([300, 0, 0]);
   });
 
-  describe('calculatePrizeDistribution - rounding behavior', () => {
-    const standardPrizePositions: PrizePosition[] = [
-      { position: 1, percentage: 50 },
-      { position: 2, percentage: 30 },
-      { position: 3, percentage: 20 },
-    ];
+  it('rounds down, so the pool can never be overspent', async () => {
+    // 3 entries x 100 = 300; 33% of 300 is 99 exactly, 34% is 102 — use a pool that does not divide
+    setupCrucible({ entryFee: 33, prizePositions: { '1': 50, '2': 50 } });
 
-    test('rounds down individual prizes (Math.floor)', () => {
-      // 333 Buzz pool:
-      // 50% of 333 = 166.5 -> floors to 166
-      // 30% of 333 = 99.9 -> floors to 99
-      // 20% of 333 = 66.6 -> floors to 66
-      const totalPool = 333;
-      const numEntries = 3;
+    const result = await finalizeCrucible(1);
 
-      const distribution = calculatePrizeDistribution(
-        standardPrizePositions,
-        totalPool,
-        numEntries
-      );
-
-      expect(distribution[0].prizeAmount).toBe(166); // Math.floor(333 * 0.5)
-      expect(distribution[1].prizeAmount).toBe(99); // Math.floor(333 * 0.3)
-      expect(distribution[2].prizeAmount).toBe(66); // Math.floor(333 * 0.2)
-    });
-
-    test('remainder is lost due to rounding down', () => {
-      const totalPool = 333;
-      const numEntries = 3;
-
-      const distribution = calculatePrizeDistribution(
-        standardPrizePositions,
-        totalPool,
-        numEntries
-      );
-      const totalDistributed = calculateTotalPrizesDistributed(distribution);
-
-      // 166 + 99 + 66 = 331, so 2 Buzz lost to rounding
-      expect(totalDistributed).toBe(331);
-      expect(totalDistributed).toBeLessThan(totalPool);
-    });
-
-    test('handles pool that does not divide evenly', () => {
-      // 1000 Buzz pool with 50/30/20 split:
-      // All should divide evenly: 500 + 300 + 200 = 1000
-      const totalPool = 1000;
-      const numEntries = 5;
-
-      const distribution = calculatePrizeDistribution(
-        standardPrizePositions,
-        totalPool,
-        numEntries
-      );
-      const totalDistributed = calculateTotalPrizesDistributed(distribution);
-
-      expect(totalDistributed).toBe(1000);
-    });
-
-    test('handles small pool with rounding losses', () => {
-      // 7 Buzz pool:
-      // 50% of 7 = 3.5 -> floors to 3
-      // 30% of 7 = 2.1 -> floors to 2
-      // 20% of 7 = 1.4 -> floors to 1
-      // Total = 6 (1 Buzz lost)
-      const totalPool = 7;
-      const numEntries = 3;
-
-      const distribution = calculatePrizeDistribution(
-        standardPrizePositions,
-        totalPool,
-        numEntries
-      );
-      const totalDistributed = calculateTotalPrizesDistributed(distribution);
-
-      expect(distribution[0].prizeAmount).toBe(3);
-      expect(distribution[1].prizeAmount).toBe(2);
-      expect(distribution[2].prizeAmount).toBe(1);
-      expect(totalDistributed).toBe(6);
-      expect(totalDistributed).toBeLessThan(totalPool);
-    });
+    expect(result.totalPrizePool).toBe(99);
+    expect(result.totalPrizesDistributed).toBeLessThanOrEqual(99);
+    expect(result.finalEntries.map((e) => e.prizeAmount)).toEqual([49, 49, 0]);
   });
 
-  describe('calculatePrizeDistribution - single winner (100% to first)', () => {
-    const singleWinnerPrize: PrizePosition[] = [{ position: 1, percentage: 100 }];
+  it('transfers the pool from the central bank to each winner', async () => {
+    setupCrucible({ entryFee: 100, prizePositions: { '1': 60, '2': 40 } });
 
-    test('gives entire pool to first place', () => {
-      const totalPool = 5000;
-      const numEntries = 10;
+    await finalizeCrucible(1);
 
-      const distribution = calculatePrizeDistribution(singleWinnerPrize, totalPool, numEntries);
-
-      expect(distribution[0].prizeAmount).toBe(5000);
-      expect(distribution[1].prizeAmount).toBe(0);
-      expect(distribution[2].prizeAmount).toBe(0);
-    });
-
-    test('second and third place get nothing', () => {
-      const totalPool = 10000;
-      const numEntries = 5;
-
-      const distribution = calculatePrizeDistribution(singleWinnerPrize, totalPool, numEntries);
-
-      expect(distribution[0].prizeAmount).toBe(10000);
-
-      for (let i = 1; i < numEntries; i++) {
-        expect(distribution[i].prizeAmount).toBe(0);
-      }
-    });
-
-    test('total distributed equals pool', () => {
-      const totalPool = 12345;
-      const numEntries = 3;
-
-      const distribution = calculatePrizeDistribution(singleWinnerPrize, totalPool, numEntries);
-      const totalDistributed = calculateTotalPrizesDistributed(distribution);
-
-      expect(totalDistributed).toBe(12345);
-    });
+    expect(createBuzzTransactionMany).toHaveBeenCalledTimes(1);
+    const [transactions] = createBuzzTransactionMany.mock.calls[0];
+    expect(transactions).toHaveLength(2);
+    expect(transactions.map((t: { toAccountId: number; amount: number }) => [t.toAccountId, t.amount])).toEqual([
+      [10, 180],
+      [11, 120],
+    ]);
+    expect(transactions.every((t: { fromAccountId: number }) => t.fromAccountId === 0)).toBe(true);
   });
 
-  describe('calculatePrizeDistribution - more positions than entries', () => {
-    const fourPositionsPrize: PrizePosition[] = [
-      { position: 1, percentage: 40 },
-      { position: 2, percentage: 30 },
-      { position: 3, percentage: 20 },
-      { position: 4, percentage: 10 },
-    ];
+  it('issues no Buzz transaction when nothing is owed', async () => {
+    setupCrucible({ entryFee: 0 });
 
-    test('only distributes to existing entries (2 entries, 4 positions defined)', () => {
-      const totalPool = 1000;
-      const numEntries = 2;
+    await finalizeCrucible(1);
 
-      const distribution = calculatePrizeDistribution(fourPositionsPrize, totalPool, numEntries);
-
-      expect(distribution).toHaveLength(2);
-      expect(distribution[0].prizeAmount).toBe(400); // 40% to 1st
-      expect(distribution[1].prizeAmount).toBe(300); // 30% to 2nd
-      // Positions 3 and 4 not calculated (no entries)
-    });
-
-    test('positions 3 and 4 prizes are not distributed when only 2 entries', () => {
-      const totalPool = 1000;
-      const numEntries = 2;
-
-      const distribution = calculatePrizeDistribution(fourPositionsPrize, totalPool, numEntries);
-      const totalDistributed = calculateTotalPrizesDistributed(distribution);
-
-      // Only 40% + 30% = 70% distributed
-      expect(totalDistributed).toBe(700);
-      expect(totalDistributed).toBeLessThan(totalPool);
-    });
-
-    test('with 1 entry, only first place gets prize', () => {
-      const totalPool = 1000;
-      const numEntries = 1;
-
-      const distribution = calculatePrizeDistribution(fourPositionsPrize, totalPool, numEntries);
-      const totalDistributed = calculateTotalPrizesDistributed(distribution);
-
-      expect(distribution).toHaveLength(1);
-      expect(distribution[0].prizeAmount).toBe(400); // 40% to 1st
-      expect(totalDistributed).toBe(400);
-    });
+    expect(createBuzzTransactionMany).not.toHaveBeenCalled();
   });
 
-  describe('calculatePrizeDistribution - zero entries', () => {
-    const standardPrizePositions: PrizePosition[] = [
-      { position: 1, percentage: 50 },
-      { position: 2, percentage: 30 },
-      { position: 3, percentage: 20 },
-    ];
-
-    test('returns empty distribution with 0 entries', () => {
-      const totalPool = 10000;
-      const numEntries = 0;
-
-      const distribution = calculatePrizeDistribution(
-        standardPrizePositions,
-        totalPool,
-        numEntries
-      );
-
-      expect(distribution).toHaveLength(0);
+  it('ignores prize positions beyond the number of entries', async () => {
+    setupCrucible({
+      entryFee: 100,
+      prizePositions: { '1': 40, '2': 30, '3': 20, '4': 10 },
     });
 
-    test('total distributed is 0 with 0 entries', () => {
-      const totalPool = 10000;
-      const numEntries = 0;
+    const result = await finalizeCrucible(1);
 
-      const distribution = calculatePrizeDistribution(
-        standardPrizePositions,
-        totalPool,
-        numEntries
-      );
-      const totalDistributed = calculateTotalPrizesDistributed(distribution);
-
-      expect(totalDistributed).toBe(0);
-    });
+    // Only 3 entries exist, so position 4's 10% is simply not paid.
+    expect(result.finalEntries).toHaveLength(3);
+    expect(result.totalPrizesDistributed).toBe(120 + 90 + 60);
   });
 
-  describe('calculatePrizeDistribution - zero prize pool', () => {
-    const standardPrizePositions: PrizePosition[] = [
-      { position: 1, percentage: 50 },
-      { position: 2, percentage: 30 },
-      { position: 3, percentage: 20 },
-    ];
-
-    test('distributes 0 to all positions with 0 pool', () => {
-      const totalPool = 0;
-      const numEntries = 5;
-
-      const distribution = calculatePrizeDistribution(
-        standardPrizePositions,
-        totalPool,
-        numEntries
-      );
-
-      expect(distribution[0].prizeAmount).toBe(0);
-      expect(distribution[1].prizeAmount).toBe(0);
-      expect(distribution[2].prizeAmount).toBe(0);
+  it('ignores malformed position keys rather than paying NaN', async () => {
+    setupCrucible({
+      entryFee: 100,
+      prizePositions: { '1': 50, banana: 30, '-2': 10, '0': 10 },
     });
+
+    const result = await finalizeCrucible(1);
+
+    expect(result.finalEntries.map((e) => e.prizeAmount)).toEqual([150, 0, 0]);
+    expect(Number.isNaN(result.totalPrizesDistributed)).toBe(false);
+  });
+});
+
+describe('prize notifications', () => {
+  it('tells each winner what they placed and won', async () => {
+    setupCrucible({ entryFee: 100, prizePositions: { '1': 100 } });
+
+    await finalizeCrucible(1);
+
+    const won = createNotification.mock.calls
+      .map(([arg]) => arg)
+      .filter((arg) => arg.type === 'crucible-won');
+
+    expect(won.length).toBeGreaterThan(0);
+    const winner = won.find((arg) => arg.userId === 10);
+    expect(winner?.details).toMatchObject({ position: 1, prizeAmount: 300 });
   });
 
-  describe('calculatePrizeDistribution - custom percentages', () => {
-    test('handles 60/25/15 split', () => {
-      const customPrizes: PrizePosition[] = [
-        { position: 1, percentage: 60 },
-        { position: 2, percentage: 25 },
-        { position: 3, percentage: 15 },
-      ];
-      const totalPool = 10000;
-      const numEntries = 5;
+  it('notifies a non-winning participant with a zero prize rather than staying silent', async () => {
+    setupCrucible({ entryFee: 100, prizePositions: { '1': 100 } });
 
-      const distribution = calculatePrizeDistribution(customPrizes, totalPool, numEntries);
+    await finalizeCrucible(1);
 
-      expect(distribution[0].prizeAmount).toBe(6000);
-      expect(distribution[1].prizeAmount).toBe(2500);
-      expect(distribution[2].prizeAmount).toBe(1500);
-    });
+    const won = createNotification.mock.calls
+      .map(([arg]) => arg)
+      .filter((arg) => arg.type === 'crucible-won');
+    const loser = won.find((arg) => arg.userId === 12);
 
-    test('handles top 5 prizes', () => {
-      const top5Prizes: PrizePosition[] = [
-        { position: 1, percentage: 35 },
-        { position: 2, percentage: 25 },
-        { position: 3, percentage: 20 },
-        { position: 4, percentage: 12 },
-        { position: 5, percentage: 8 },
-      ];
-      const totalPool = 10000;
-      const numEntries = 10;
-
-      const distribution = calculatePrizeDistribution(top5Prizes, totalPool, numEntries);
-
-      expect(distribution[0].prizeAmount).toBe(3500);
-      expect(distribution[1].prizeAmount).toBe(2500);
-      expect(distribution[2].prizeAmount).toBe(2000);
-      expect(distribution[3].prizeAmount).toBe(1200);
-      expect(distribution[4].prizeAmount).toBe(800);
-      expect(distribution[5].prizeAmount).toBe(0); // 6th place gets nothing
-    });
-
-    test('handles unsorted prize positions', () => {
-      // Prize positions not in order - should still work
-      const unsortedPrizes: PrizePosition[] = [
-        { position: 3, percentage: 20 },
-        { position: 1, percentage: 50 },
-        { position: 2, percentage: 30 },
-      ];
-      const totalPool = 1000;
-      const numEntries = 5;
-
-      const distribution = calculatePrizeDistribution(unsortedPrizes, totalPool, numEntries);
-
-      // Should be sorted by position in result
-      expect(distribution[0].prizeAmount).toBe(500); // 1st place: 50%
-      expect(distribution[1].prizeAmount).toBe(300); // 2nd place: 30%
-      expect(distribution[2].prizeAmount).toBe(200); // 3rd place: 20%
-    });
+    expect(loser?.details).toMatchObject({ position: 3, prizeAmount: 0 });
   });
-
-  describe('calculateTotalPrizesDistributed', () => {
-    test('sums prize amounts correctly', () => {
-      const distribution = [
-        { prizeAmount: 5000 },
-        { prizeAmount: 3000 },
-        { prizeAmount: 2000 },
-        { prizeAmount: 0 },
-        { prizeAmount: 0 },
-      ];
-
-      const total = calculateTotalPrizesDistributed(distribution);
-
-      expect(total).toBe(10000);
-    });
-
-    test('returns 0 for empty array', () => {
-      const total = calculateTotalPrizesDistributed([]);
-      expect(total).toBe(0);
-    });
-
-    test('returns 0 when all prizes are 0', () => {
-      const distribution = [{ prizeAmount: 0 }, { prizeAmount: 0 }, { prizeAmount: 0 }];
-
-      const total = calculateTotalPrizesDistributed(distribution);
-
-      expect(total).toBe(0);
-    });
-  });
-
-  // ============================================================
-  // RUN TESTS & REPORT
-  // ============================================================
-
-  console.log('\n' + '='.repeat(60));
-  console.log('TEST SUMMARY');
-  console.log('='.repeat(60));
-  console.log(`Passed: ${testsPassed}`);
-  console.log(`Failed: ${testsFailed}`);
-  console.log(`Total: ${testsPassed + testsFailed}`);
-
-  if (testsFailed > 0) {
-    console.log('\nSome tests FAILED');
-    process.exit(1);
-  } else {
-    console.log('\nAll tests PASSED');
-    process.exit(0);
-  }
-})();
+});
