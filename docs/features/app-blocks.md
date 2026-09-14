@@ -451,6 +451,19 @@ reviewed by a moderator at approve like every other field in your manifest, and
 the run host reads it from the approved snapshot. **No pull request to the
 civitai repository is involved, and there is no per-app exemption list any more.**
 
+⚠️ **The tooling has not caught up yet, and it will stop you before the server
+does.** The manifest schema exists in three places — the canonical
+`public/schemas/app-block/v1.json` here, a copy in `civitai/cli`, and a third
+vendored by `@civitai/app-sdk` and exposed as a public export subpath — and only
+the canonical one carries `fullBleed` today. All three declare `page` as
+`additionalProperties: false`, so the released CLI refuses the key outright:
+`civitai app validate` exits 1 with `page: additional properties 'fullBleed' not
+allowed`, and `civitai app submit` runs that same check ahead of packaging, so it
+never reaches the network. The server-side validator here already accepts the
+field; the gate is entirely in the two mirrors. Until they move, declaring it
+means `civitai app submit --skip-validate`. If `civitai app validate` on a
+manifest declaring `fullBleed` exits 0 for you, this note is stale — delete it.
+
 It lives under `page` rather than `iframe` because the cap exists on the
 full-page run surface only — the model-page slot surfaces impose no width cap, so
 there is nothing there to opt out of.
@@ -485,9 +498,31 @@ viewer's monitor is, and an unbounded line length — or one form stretched acro
 they can answer by opening your app, and it is the reason the decision moved into
 manifest review rather than staying a CSS list maintained by platform engineers.
 
-**You can check it before you submit.** The dev tunnel (`/apps/dev/<blockId>`)
-reads `page.fullBleed` from your pending manifest and renders the width the run
-page will, so the surface you verify on is the surface a user gets.
+**Whether you can preview it before you submit depends on whether your app has
+ever been approved — and for the apps this field was written for, the answer is
+no.** The dev tunnel (`/apps/dev/<blockId>`) resolves through
+`BlockRegistry.resolveDevPageBlockForAuthor`, which prefers the `app_blocks` row
+you own and reads `page.fullBleed` out of **that row's stored manifest**. That
+column is written in exactly one place — `approveRequest` in
+`publish-request.service.ts` — so it holds your **last approved** manifest, never
+the one in your working tree and not the one awaiting review either. Add
+`fullBleed` to an app that already has an approved version, open the tunnel, and
+you will still see the capped column, because the host is reading the manifest
+from before you declared it.
+
+The tunnel falls through to a pre-submit resolution — which *does* read
+`page.fullBleed` off your own pending publish request — only when you own **no**
+`app_blocks` row at all, i.e. the app has never been approved. So the preview is
+honest for a brand-new app you have submitted and are waiting on, and not for a
+new version of an app already live. (A brand-new app you have not submitted yet
+has no server-side manifest for the host to read, so it renders capped as well.)
+Both paths are pinned by `(fb1)`–`(fb4)` in
+`src/server/services/__tests__/block-registry.resolve-dev.test.ts`.
+
+What you *can* settle at any time, on any app, is the question that actually
+decides whether declaring the field changes anything: whether your own layout
+imposes a width that binds before the platform cap does. That is answered in your
+CSS, not on the tunnel.
 
 **If you want a narrower frame rather than no frame,** this field is not it —
 `fullBleed` is a boolean. Ask a maintainer; the honest fix would be to widen the
