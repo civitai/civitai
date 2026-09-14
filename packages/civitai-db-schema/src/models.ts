@@ -5491,6 +5491,7 @@ export interface Crucible {
   nsfwLevel: number;
   contentType: MediaType;
   entryFee: number;
+  seededPrizePool: number;
   entryLimit: number;
   maxTotalEntries: number | null;
   prizePositions: JsonValue;
@@ -5502,6 +5503,7 @@ export interface Crucible {
   createdAt: Date;
   updatedAt: Date;
   buzzTransactionId: string | null;
+  seedTransactionId: string | null;
   entries?: CrucibleEntry[];
 }
 

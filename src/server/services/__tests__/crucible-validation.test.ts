@@ -17,6 +17,7 @@ import {
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_MAX_ENTRIES,
   CRUCIBLE_MAX_ENTRY_FEE,
+  CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
 } from '~/shared/constants/crucible.constants';
 
@@ -156,6 +157,37 @@ describe('createCrucibleInputSchema', () => {
         prizePositions: { '1': 40, '2': 20 },
       }).success
     ).toBe(true);
+  });
+
+  it('defaults seededPrizePool to 0, so an omitted seed is not undefined downstream', () => {
+    expect(createCrucibleInputSchema.parse(validCreateInput).seededPrizePool).toBe(0);
+  });
+
+  it('rejects a negative seeded prize pool', () => {
+    expect(
+      createCrucibleInputSchema.safeParse({ ...validCreateInput, seededPrizePool: -1 }).success
+    ).toBe(false);
+  });
+
+  it('rejects a fractional seeded prize pool, which Buzz cannot represent', () => {
+    expect(
+      createCrucibleInputSchema.safeParse({ ...validCreateInput, seededPrizePool: 10.5 }).success
+    ).toBe(false);
+  });
+
+  it('accepts a seeded prize pool at the cap and rejects one above it', () => {
+    expect(
+      createCrucibleInputSchema.safeParse({
+        ...validCreateInput,
+        seededPrizePool: CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
+      }).success
+    ).toBe(true);
+    expect(
+      createCrucibleInputSchema.safeParse({
+        ...validCreateInput,
+        seededPrizePool: CRUCIBLE_MAX_SEEDED_PRIZE_POOL + 1,
+      }).success
+    ).toBe(false);
   });
 
   it('defaults prizeCustomized to false', () => {

@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS "Crucible" (
     "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
     "contentType" "MediaType" NOT NULL DEFAULT 'image',
     "entryFee" INTEGER NOT NULL DEFAULT 0,
+    "seededPrizePool" INTEGER NOT NULL DEFAULT 0,
     "entryLimit" INTEGER NOT NULL DEFAULT 1,
     "maxTotalEntries" INTEGER,
     "prizePositions" JSONB NOT NULL DEFAULT '[]',
@@ -20,6 +21,7 @@ CREATE TABLE IF NOT EXISTS "Crucible" (
     "endAt" TIMESTAMP(3),
     "status" "CrucibleStatus" NOT NULL DEFAULT 'Pending',
     "buzzTransactionId" TEXT,
+    "seedTransactionId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 

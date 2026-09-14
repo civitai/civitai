@@ -9,7 +9,11 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { Currency, CrucibleStatus } from '~/shared/utils/prisma/enums';
-import { getStatusDotColor, getStatusText } from '~/utils/crucible-helpers';
+import {
+  getCrucibleTotalPrizePool,
+  getStatusDotColor,
+  getStatusText,
+} from '~/utils/crucible-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
 
@@ -19,6 +23,7 @@ type CrucibleCardData = {
   status: CrucibleStatus;
   endAt: Date | null;
   entryFee: number;
+  seededPrizePool: number;
   user: {
     id: number;
     username: string | null;
@@ -41,11 +46,9 @@ type CrucibleCardData = {
 };
 
 export function CrucibleCard({ data }: { data: CrucibleCardData }) {
-  const { id, name, status, endAt, entryFee, user, image, _count } = data;
+  const { id, name, status, endAt, entryFee, seededPrizePool, user, image, _count } = data;
   const entryCount = _count.entries ?? 0;
-
-  // Calculate total prize pool (entryFee * entryCount)
-  const prizePool = entryFee * entryCount;
+  const prizePool = getCrucibleTotalPrizePool({ entryFee, entryCount, seededPrizePool });
 
   // Memoize current date to avoid creating new Date objects on each helper call
   // This is stable for the render cycle and avoids unnecessary recalculations

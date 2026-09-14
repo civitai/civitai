@@ -7,6 +7,7 @@ import { CrucibleTimer } from '~/components/Crucible/CrucibleTimer';
 import { Currency, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { getCrucibleTotalPrizePool } from '~/utils/crucible-helpers';
 import { getInitials } from '~/utils/string-helpers';
 
 export type CrucibleHeaderData = {
@@ -16,6 +17,7 @@ export type CrucibleHeaderData = {
   status: CrucibleStatus;
   nsfwLevel: number;
   entryFee: number;
+  seededPrizePool: number;
   endAt: Date | null;
   user: {
     id: number;
@@ -53,10 +55,21 @@ type CrucibleHeaderProps = {
  * - NSFW level badge if applicable
  */
 export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
-  const { id, name, description, status, nsfwLevel, entryFee, endAt, user, image, _count } =
-    crucible;
+  const {
+    id,
+    name,
+    description,
+    status,
+    nsfwLevel,
+    entryFee,
+    seededPrizePool,
+    endAt,
+    user,
+    image,
+    _count,
+  } = crucible;
   const entryCount = _count.entries ?? 0;
-  const prizePool = entryFee * entryCount;
+  const prizePool = getCrucibleTotalPrizePool({ entryFee, entryCount, seededPrizePool });
 
   const hasEnded = status === CrucibleStatus.Completed || status === CrucibleStatus.Cancelled;
 

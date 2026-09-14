@@ -46,3 +46,10 @@ export const crucibleRankingsAreFinal = (status: CrucibleStatus) =>
  */
 export const CRUCIBLE_CONTENT_TYPES = [MediaType.image, MediaType.video] as const;
 export type CrucibleContentType = (typeof CRUCIBLE_CONTENT_TYPES)[number];
+
+/**
+ * Maximum Buzz a creator can seed into a crucible's prize pool at setup.
+ * Matches CHALLENGE_MAX_INITIAL_PRIZE so the two seeded-pool features share one ceiling, and sits
+ * two orders below int4 so `seededPrizePool + entryFee * entryCount` cannot overflow the column.
+ */
+export const CRUCIBLE_MAX_SEEDED_PRIZE_POOL = 10_000_000;
