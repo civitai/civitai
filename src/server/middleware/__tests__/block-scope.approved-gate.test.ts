@@ -300,6 +300,57 @@ describe('withBlockScope — the gate on the real request path', () => {
   });
 
   /**
+   * 🔴 SERVING IS NOT BYPASSING. `v1/models/[id]` is a SCOPED serve route — it declares
+   * `requiredScope: 'models:read:self'` AND `onApprovalLookupFailure: 'serve'` — so this
+   * combination is live in the tree, not hypothetical, and it is the one a reader is most
+   * likely to misread as "the opt-out lets the request through".
+   *
+   * It does not. The opt-out decides ONE branch of the approval gate; everything after it
+   * still runs, including the per-scope authorization check and `enforceContextBinding`. A
+   * token missing the scope is still 403 even while the approval status is unknown.
+   */
+  it('🔴 a SCOPED serve route still enforces its scope while serving a lookup_failed', async () => {
+    findUniqueMock.mockRejectedValue(new Error('replica unreachable'));
+    const handler = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
+      res.status(200).json({ via: 'handler' });
+    });
+    // The live `v1/models/[id]` shape, but demanding a scope the minted token lacks.
+    const route = withBlockScope(handler as never, {
+      endpoint: 'model_detail',
+      requiredScope: 'models:read:self',
+      onApprovalLookupFailure: 'serve',
+    });
+    const res = makeRes();
+    await route(makeReq(await mint()) as never, res as never);
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toEqual({ error: 'missing required scope: models:read:self' });
+  });
+
+  /**
+   * …and the paired positive: the SAME route with the scope PRESENT does serve. Without
+   * this, the case above passes if the opt-out stopped working altogether.
+   */
+  it('…and the same scoped serve route DOES serve once the token carries the scope', async () => {
+    findUniqueMock.mockRejectedValue(new Error('replica unreachable'));
+    const handler = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
+      res.status(200).json({ via: 'handler' });
+    });
+    // SCOPE is the scope the local `mint()` helper signs, so this token carries it.
+    const route = withBlockScope(handler as never, {
+      endpoint: 'model_detail',
+      requiredScope: SCOPE,
+      onApprovalLookupFailure: 'serve',
+    });
+    const res = makeRes();
+    await route(makeReq(await mint()) as never, res as never);
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(200);
+  });
+
+  /**
    * 🔴 THE OPT-OUT IS SCOPED TO `lookup_failed` AND NOTHING ELSE. This is the mutation that
    * would be catastrophic and is easy to write by accident — hoisting the check one branch
    * too far up, or testing `opts.onApprovalLookupFailure` before the verdict. A suspended
