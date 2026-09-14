@@ -104,6 +104,46 @@ const REST_ROUTE_RATIONALE: Record<string, string> = {
 };
 
 /**
+ * 🔴 ROUTES THAT OPT OUT OF FAILING CLOSED ON `lookup_failed`, i.e. that serve the request
+ * when the approved-status READ ITSELF FAILED (`onApprovalLookupFailure: 'serve'`).
+ *
+ * WHY THE OPT-OUT EXISTS. The approved-status read is NEW on this surface — before the
+ * gate, the catalog routes made no DB read at all. So failing every wrapped route closed
+ * does not restore a previous posture, it INTRODUCES a coupling from all 13 to one replica:
+ * a blip becomes a fleet-wide, simultaneous 503 for every block at once. On a route where
+ * refusing removes no exposure, that is all cost and no benefit — the same argument the
+ * `not_found` branch already won, applied to the other verdict that is not a takedown.
+ * `not_approved`, which carries 100% of the gate's protective value, is NOT opt-outable.
+ *
+ * 🔴 WHY THIS IS A DECLARED LEDGER AND NOT DERIVED FROM `requiredScope`. That proxy was
+ * tried first and it is WRONG on the most important entry: `src/pages/api/v1/models/[id].ts`
+ * DECLARES `requiredScope: 'models:read:self'` and is nevertheless the clearest no-exposure
+ * route in the table — it is dual-auth, so an anonymous caller already receives the same
+ * body. Meanwhile the four unscoped catalog routes are a WEAKER version of the argument
+ * (public, but maturity-clamped per token). "Does this route declare a scope" and "does
+ * this route disclose anything a suspended app could not otherwise get" are different
+ * questions that merely correlate, so the answer is written down per route rather than
+ * inferred from a proxy that inverts on the case that matters most.
+ *
+ * The set is asserted in BOTH directions below, so a route cannot join or leave it
+ * silently, and each entry is CROSS-CHECKED against `REST_ROUTE_RATIONALE` — see
+ * `every serve-on-lookup-failure route is a READ in the exposure ledger`, which is what
+ * mechanically keeps a SPEND or WRITE route out.
+ */
+const LOOKUP_FAILURE_SERVE_RATIONALE: Record<string, string> = {
+  'src/pages/api/v1/blocks/generation-resources.ts':
+    'Public, maturity-clamped resource data; no requiredScope, nothing viewer-scoped, nothing written. The clamp rides the token’s own signed claim, not the approval row.',
+  'src/pages/api/v1/blocks/images.ts':
+    'Public, maturity-clamped image catalog; no requiredScope, nothing viewer-scoped, nothing written.',
+  'src/pages/api/v1/blocks/models.ts':
+    'Public, maturity-clamped model catalog; no requiredScope, nothing viewer-scoped, nothing written.',
+  'src/pages/api/v1/blocks/tools.ts':
+    'GET is a static in-process registry; POST is a catalog search on the same clamped path models.ts serves. No requiredScope, nothing viewer-scoped, nothing written.',
+  'src/pages/api/v1/models/[id].ts':
+    'Dual-auth: the block-JWT branch differs from the anonymous one only in skipping the origin cache — same builder, same arguments, same body. An unauthenticated caller already gets this at 200, so refusing it on a replica blip removes NO exposure and costs a 503.',
+};
+
+/**
  * 🔴 ROUTES THAT NAME THE WRAPPER IN PROSE ONLY, i.e. that DECIDED NOT TO USE IT. This
  * ledger exists because the first version of this file had no such concept and flagged
  * `src/pages/api/v1/me.ts` as an unwrapped route — a false positive off a substring
@@ -143,9 +183,31 @@ const MENTIONS_RE = /\bwithBlockScope\b/;
 const DEFAULT_EXPORT_WRAPPED_RE = /export\s+default\s+withBlockScope\s*\(/;
 /** A CALL, not a type position — `ReturnType<typeof verifyBlockToken>` must not count. */
 const DIRECT_VERIFY_RE = /\bverifyBlockToken\s*\(/;
+/**
+ * The opt-out DECLARATION, as written at a `withBlockScope` call site. Matched on CODE
+ * lines only (see `servesOnApprovalLookupFailure`), so the option's own docblock in the
+ * middleware — and the prose in this file — cannot enter the derived population.
+ */
+const LOOKUP_FAILURE_SERVE_RE = /\bonApprovalLookupFailure\s*:\s*'serve'/;
 
 function read(rel: string): string {
   return fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
+}
+
+/**
+ * Strip comment lines before a spelling check, so a DOCBLOCK that merely names the thing
+ * cannot satisfy an assertion about the CODE. Deliberately duplicated from the bridge
+ * sibling (`no-unguarded-block-bridge-token.test.ts`) rather than shared: these two files
+ * are standalone structural guards with no common helper module, and the four measured
+ * instances of the failure this prevents are recorded in full on that copy. Line-wise, not
+ * a parser — a trailing `// comment` on a code line survives, which is the fail-open
+ * direction for a presence check.
+ */
+function codeLinesOnly(source: string): string {
+  return source
+    .split('\n')
+    .filter((line) => !/^\s*(?:\/\/|\*|\/\*)/.test(line))
+    .join('\n');
 }
 
 /** True when `source` names `withBlockScope` on at least one line that is not a comment. */
@@ -153,6 +215,18 @@ function namesWrapperInCode(source: string): boolean {
   return source
     .split('\n')
     .some((line) => MENTIONS_RE.test(line) && !/^\s*(?:\/\/|\*|\/\*)/.test(line));
+}
+
+/** True when `source` DECLARES the lookup-failure opt-out on a line that is not a comment. */
+function servesOnApprovalLookupFailure(source: string): boolean {
+  return LOOKUP_FAILURE_SERVE_RE.test(codeLinesOnly(source));
+}
+
+/** Routes under `src/pages/api` that declare `onApprovalLookupFailure: 'serve'`. */
+function lookupFailureServeRoutes(): string[] {
+  return walk(API_DIR)
+    .filter((rel) => servesOnApprovalLookupFailure(read(rel)))
+    .sort();
 }
 
 /** Routes under `src/pages/api` that USE the wrapper in code — the population. */
@@ -215,6 +289,36 @@ describe('the REST route scan can actually see what it claims to', () => {
     expect(DEFAULT_EXPORT_WRAPPED_RE.test(bare)).toBe(false);
   });
 
+  it('POSITIVE CONTROL — the lookup-failure opt-out regex reads code and ignores prose', () => {
+    // A derivation that silently matches nothing ledgers an EMPTY set and passes forever,
+    // which would make the both-directions assertion vacuous in the dangerous direction.
+    expect(
+      servesOnApprovalLookupFailure(
+        ['export default withBlockScope(h, {', "  onApprovalLookupFailure: 'serve',", '});'].join(
+          '\n'
+        )
+      )
+    ).toBe(true);
+    // A route that does NOT declare it (the fail-closed default) must stay out.
+    expect(
+      servesOnApprovalLookupFailure("export default withBlockScope(h, { endpoint: 'tip' });")
+    ).toBe(false);
+    // 🔴 And the case that would quietly inflate the population: the option NAMED in a
+    // comment. The middleware's own docblock and this file's prose both do exactly that.
+    expect(
+      servesOnApprovalLookupFailure(
+        ["// onApprovalLookupFailure: 'serve' — described, not declared", 'export default h;'].join(
+          '\n'
+        )
+      )
+    ).toBe(false);
+    expect(
+      servesOnApprovalLookupFailure(
+        [" * Set `onApprovalLookupFailure: 'serve'` to opt out.", 'export default h;'].join('\n')
+      )
+    ).toBe(false);
+  });
+
   it('POSITIVE CONTROL — a prose-only mention is NOT in the wrapped population', () => {
     // The `/api/v1/me.ts` shape: the wrapper is named only to explain why it is absent.
     // A population keyed on the raw substring scored this as an unwrapped block route.
@@ -273,7 +377,11 @@ describe('no unguarded block-REST token verification', () => {
   });
 
   it('every rationale says something — an empty string is not a decision', () => {
-    const thin = Object.entries({ ...REST_ROUTE_RATIONALE, ...DELIBERATELY_UNWRAPPED })
+    const thin = Object.entries({
+      ...REST_ROUTE_RATIONALE,
+      ...DELIBERATELY_UNWRAPPED,
+      ...LOOKUP_FAILURE_SERVE_RATIONALE,
+    })
       .filter(([, why]) => why.trim().length < 40)
       .map(([route]) => route);
     expect(
@@ -281,6 +389,67 @@ describe('no unguarded block-REST token verification', () => {
       'These ledger entries carry no usable rationale. Say what the route reaches — a ' +
         'read, a write, a spend — not that it is "fine".'
     ).toEqual([]);
+  });
+
+  it('ledgers every route that opts OUT of failing closed on lookup_failed', () => {
+    expect(
+      lookupFailureServeRoutes(),
+      "A route declares `onApprovalLookupFailure: 'serve'` without a ledger entry, or an " +
+        'entry names a route that no longer declares it. This option decides what happens ' +
+        'when we CANNOT ESTABLISH that an app is allowed to run, so it is not a default a ' +
+        'route may acquire quietly: state what a suspended app would obtain through this ' +
+        'route that it could not obtain anyway. Failing CLOSED (503) is the default — omit ' +
+        'the option entirely unless refusing removes no exposure.'
+    ).toEqual(Object.keys(LOOKUP_FAILURE_SERVE_RATIONALE).sort());
+  });
+
+  /**
+   * 🔴 THE CROSS-LEDGER CHECK, and the reason the opt-out is not just a second hand-list.
+   * It ties the new declaration to the EXPOSURE ledger that already exists: every route
+   * allowed to serve on an unestablished approval status must be one whose
+   * `REST_ROUTE_RATIONALE` entry classifies it as a READ.
+   *
+   * That is what mechanically keeps the dangerous entries out. `tip.ts` is `SPEND — …`,
+   * `collections/[id]/follow.ts` and `shared-storage/increment.ts` are `WRITE — …`, so
+   * adding the option to any of them fails HERE, on a rationale someone already wrote,
+   * rather than depending on a reviewer noticing a new key in a list.
+   *
+   * ⚠️ It is a necessary condition, not a sufficient one — `tip-allowance.ts` is a READ and
+   * still must NOT opt out, because what it reads is the viewer's live money counter. The
+   * set assertion above is what holds that; this one removes a whole class beneath it.
+   */
+  it('every serve-on-lookup-failure route is a READ in the exposure ledger', () => {
+    const notReads = lookupFailureServeRoutes().filter(
+      (rel) => !REST_ROUTE_RATIONALE[rel]?.startsWith('READ —')
+    );
+    expect(
+      notReads,
+      'These routes serve on an unestablished approval status but are not classified as ' +
+        'READs in REST_ROUTE_RATIONALE. A route that SPENDS, WRITES, or discloses ' +
+        'viewer-scoped state must fail CLOSED on lookup_failed — drop the option. If the ' +
+        'exposure ledger is what is wrong, fix that sentence first and say why.'
+    ).toEqual([]);
+  });
+
+  it('every serve-on-lookup-failure route is actually a wrapped route', () => {
+    // The option only does anything inside `withBlockScope`. A file declaring it that the
+    // wrapper never sees is a misunderstanding worth catching at the point it is written.
+    const strays = lookupFailureServeRoutes().filter((rel) => !blockScopedRoutes().includes(rel));
+    expect(strays).toEqual([]);
+  });
+
+  it('the money and write routes fail CLOSED — the option is absent from all of them', () => {
+    // Stated in the direction a reader will look for it, and independent of the derivation
+    // above: these are the entries whose refusal is the point of the gate.
+    for (const rel of [
+      'src/pages/api/v1/blocks/tip.ts',
+      'src/pages/api/v1/blocks/tip-allowance.ts',
+      'src/pages/api/v1/blocks/collections/[id]/follow.ts',
+      'src/pages/api/v1/blocks/shared-storage/increment.ts',
+      'src/pages/api/v1/blocks/me.ts',
+    ]) {
+      expect(servesOnApprovalLookupFailure(read(rel)), `${rel} must fail closed`).toBe(false);
+    }
   });
 
   it('THE RELATIONSHIP — every ledgered route WRAPS its default export', () => {
@@ -479,7 +648,15 @@ describe('the approval predicate is not open-coded a second time', () => {
    * call that has to be there.
    */
   it('the tRPC bridge guard delegates to the predicate instead of re-reading the row', () => {
-    const guard = read('src/server/services/blocks/block-bridge-auth.service.ts');
+    // 🔴 CODE LINES ONLY. A whole-file `toMatch` is satisfiable by a DOCBLOCK that merely
+    // NAMES the call — and the guard's docblock does name it (`block-bridge-auth.service`
+    // line ~138, describing the shared lookup). This assertion was non-vacuous only by
+    // luck of punctuation: that mention is followed by a backtick, which `\s*` cannot
+    // bridge to a `(`. One future sentence writing `resolveAppBlockApprovalVerdict(claims)`
+    // in prose would have re-inerted it silently, and a spelling check its own prose
+    // satisfies reads as coverage while providing none. The same shape was found and fixed
+    // three other times in this family — see `codeLinesOnly` in the bridge sibling.
+    const guard = codeLinesOnly(read('src/server/services/blocks/block-bridge-auth.service.ts'));
     expect(guard).toMatch(/\bresolveAppBlockApprovalVerdict\s*\(/);
     expect(BACKING_ROW_LOOKUP_LEDGER).not.toHaveProperty(
       'src/server/services/blocks/block-bridge-auth.service.ts'

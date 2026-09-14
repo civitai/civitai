@@ -277,4 +277,10 @@ async function fetchModelResponseCached(
 export default withBlockScope(baseHandler, {
   endpoint: 'model_detail',
   requiredScope: 'models:read:self',
+  // DUAL-AUTH: with no block JWT this is a plain PublicEndpoint, and the block-JWT branch
+  // differs only in skipping the origin cache — same builder, same arguments, same body.
+  // So the body a block receives here is byte-for-byte what an anonymous caller already
+  // gets at 200, and refusing on an unreachable replica would turn that into a 503 while
+  // removing no exposure at all. The clearest no-exposure entry in the ledger.
+  onApprovalLookupFailure: 'serve',
 });

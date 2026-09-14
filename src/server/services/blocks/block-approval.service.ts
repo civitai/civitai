@@ -3,14 +3,35 @@ import type { BlockTokenClaims } from '~/server/middleware/block-scope.middlewar
 
 /**
  * WHY THIS IS ITS OWN MODULE rather than a private function inside
- * `block-scope.middleware.ts`. The middleware is imported by test harnesses and by
- * tooling that only want its pure routing helpers (`normalizeEndpoint`,
- * `enforceContextBinding`, `verifyBlockToken`), and a top-level `dbRead` import there
- * would make a working Prisma client a load-time prerequisite for all of them. The
- * middleware's own `loadAllowedOrigins` dodges that with a dynamic `await import`; a
- * separate module does the same job AND gives the five existing `withBlockScope` suites
- * a single one-line `vi.mock` seam — the same seam they already use for
- * `block-revocation.service`, which is the sibling check this one sits next to.
+ * `block-scope.middleware.ts`: the TEST SEAM. It gives the existing `withBlockScope`
+ * suites a single one-line `vi.mock` of this specifier — the same seam they already use
+ * for `block-revocation.service`, which is the sibling check this one sits next to —
+ * instead of reaching into the middleware's own module graph to stub a private function.
+ *
+ * 🔴 IT DOES **NOT** BUY LOAD-TIME ISOLATION FROM PRISMA, and an earlier version of this
+ * docblock claimed it did. The claim was that a top-level `dbRead` import inside the
+ * middleware would make a working Prisma client a load-time prerequisite for its pure
+ * routing helpers (`normalizeEndpoint`, `enforceContextBinding`, `verifyBlockToken`),
+ * the way `loadAllowedOrigins` avoids with a dynamic `await import`. That is false as
+ * written, because `block-scope.middleware.ts` imports THIS module **statically**, and
+ * this module imports `dbRead` statically one line above. MEASURED by walking the static
+ * import graph (`import type` and `await import(` excluded, which are erased/deferred and
+ * create no load-time edge): at HEAD there is a path
+ *
+ *     block-scope.middleware.ts → block-approval.service.ts → src/server/db/client.ts
+ *
+ * and with that one import line stripped from the middleware there is NO path at all
+ * (37 files reached). So the edge this paragraph used to say the split avoided is the
+ * edge the split INTRODUCED. The runtime impact is low — the middleware is server-only
+ * and every real request path already has Prisma — but the sentence was a JUSTIFICATION,
+ * and left standing it tells the next author that inlining the predicate would cost
+ * something it would not.
+ *
+ * WHAT THAT MEANS IF YOU ARE CONSIDERING INLINING IT: the load-time argument is not a
+ * reason to keep the split, and never was. The test seam is, and it is a real one — but
+ * it is the whole case. If you want the middleware's pure helpers importable without
+ * Prisma, moving this predicate back would not achieve it; the import in the middleware
+ * would have to become dynamic, like `loadAllowedOrigins`'.
  */
 
 /**
@@ -181,12 +202,61 @@ export async function resolveRestApprovalVerdict(
   try {
     return await resolveAppBlockApprovalVerdict(claims);
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[block-scope] approved-status lookup failed; refusing: ${
-        err instanceof Error ? err.message : String(err)
-      }`
-    );
+    warnLookupFailed(err);
     return 'lookup_failed';
   }
+}
+
+/**
+ * 🔴 THROTTLED, BECAUSE THE FAILURE THIS LOGS IS FLEET-WIDE AND SIMULTANEOUS. An
+ * unreachable read replica does not fail one request — it fails EVERY block REST request
+ * on every pod at once, for as long as the incident lasts. An unthrottled `console.warn`
+ * here is therefore not "a log line per error", it is a log line per REST request at full
+ * rate, i.e. the incident's own second-order cost: the logging pipeline gets the load
+ * spike at exactly the moment someone needs to read it.
+ *
+ * TIME-BASED, NOT SAMPLED, and the difference matters for an incident log. Sampling at
+ * 1-in-N drops the FIRST occurrence with probability (N-1)/N, so the thing you most want —
+ * when did this start — is the thing sampling is worst at. This logs the first failure
+ * IMMEDIATELY (`lastLoggedAt === 0`), then at most one line per window, and every line
+ * carries `droppedSinceLastLog` so the rate is recoverable from the log itself rather than
+ * being silently discarded. Same shape, and the same field name, as the per-pod limiter in
+ * `~/server/logging/trpc-serialize-log`.
+ *
+ * ⚠️ PER POD, per process, in memory — like that limiter. With many replicas the fleet-wide
+ * line rate is this rate times the pod count, which is the intended bound (a per-pod signal
+ * is what tells you whether the incident is partial or total), not an oversight.
+ *
+ * 🔴 THE COUNT IS NOT THE ALERTING SIGNAL. `civitai_app_block_rest_approval_verdicts_total{reason="lookup_failed"}`
+ * is, and it is UNTHROTTLED — every failure increments it. This throttle only bounds the
+ * prose. Do not add a metric here and do not read a suppressed log as a suppressed verdict.
+ */
+const LOOKUP_FAILURE_LOG_WINDOW_MS = 60_000;
+let lookupFailureLastLoggedAt = 0;
+let lookupFailureDroppedSinceLastLog = 0;
+
+function warnLookupFailed(err: unknown): void {
+  const now = Date.now();
+  if (
+    lookupFailureLastLoggedAt !== 0 &&
+    now - lookupFailureLastLoggedAt < LOOKUP_FAILURE_LOG_WINDOW_MS
+  ) {
+    lookupFailureDroppedSinceLastLog++;
+    return;
+  }
+  const droppedSinceLastLog = lookupFailureDroppedSinceLastLog;
+  lookupFailureDroppedSinceLastLog = 0;
+  lookupFailureLastLoggedAt = now;
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[block-scope] approved-status lookup failed: ${
+      err instanceof Error ? err.message : String(err)
+    } droppedSinceLastLog=${droppedSinceLastLog} windowMs=${LOOKUP_FAILURE_LOG_WINDOW_MS}`
+  );
+}
+
+/** TEST-ONLY: reset the per-pod log-throttle window so tests don't share state. */
+export function __resetApprovalLookupFailureLogThrottleForTests(): void {
+  lookupFailureLastLoggedAt = 0;
+  lookupFailureDroppedSinceLastLog = 0;
 }

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Setup-order import: installs the ~/env/server mock with the real test RSA keypair
 // BEFORE block-token.service evaluates env at module load (same posture as the sibling
 // real-JWT suites).
@@ -37,7 +37,10 @@ vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => 
 
 import { dbMock } from '~/__tests__/mocks';
 import { withBlockScope } from '../block-scope.middleware';
-import { resolveRestApprovalVerdict } from '~/server/services/blocks/block-approval.service';
+import {
+  __resetApprovalLookupFailureLogThrottleForTests,
+  resolveRestApprovalVerdict,
+} from '~/server/services/blocks/block-approval.service';
 import { BlockTokenService } from '~/server/services/block-token.service';
 
 /**
@@ -269,6 +272,58 @@ describe('withBlockScope — the gate on the real request path', () => {
   });
 
   /**
+   * 🔴 THE OPT-OUT, BOTH ARMS. `lookup_failed` is the one verdict whose response depends on
+   * the ROUTE, so a test of either arm alone certifies nothing: the fail-closed case above
+   * passes if the option is ignored entirely, and the serve case below passes if the gate
+   * stopped refusing on `lookup_failed` everywhere. Only the pair pins that the option is
+   * READ and that it changes exactly one thing.
+   *
+   * The declared set and its rationales live in `no-unguarded-block-rest-token.test.ts`;
+   * this file is about what the middleware DOES with the declaration.
+   */
+  it('LOOKUP FAILURE + `onApprovalLookupFailure: serve`: the request is SERVED', async () => {
+    findUniqueMock.mockRejectedValue(new Error('replica unreachable'));
+    const handler = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
+      res.status(200).json({ via: 'handler' });
+    });
+    // The catalog shape, with the opt-out the four catalog routes now declare.
+    const route = withBlockScope(handler as never, {
+      endpoint: 'models',
+      onApprovalLookupFailure: 'serve',
+    });
+    const res = makeRes();
+    await route(makeReq(await mint()) as never, res as never);
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ via: 'handler' });
+  });
+
+  /**
+   * 🔴 THE OPT-OUT IS SCOPED TO `lookup_failed` AND NOTHING ELSE. This is the mutation that
+   * would be catastrophic and is easy to write by accident — hoisting the check one branch
+   * too far up, or testing `opts.onApprovalLookupFailure` before the verdict. A suspended
+   * app on a catalog route must STILL be refused: `not_approved` carries 100% of the gate's
+   * protective value and is not opt-outable.
+   */
+  it('🔴 the opt-out does NOT weaken not_approved — a SUSPENDED app is still 403 on that route', async () => {
+    findUniqueMock.mockResolvedValue({ status: 'suspended' });
+    const handler = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
+      res.status(200).json({ via: 'handler' });
+    });
+    const route = withBlockScope(handler as never, {
+      endpoint: 'models',
+      onApprovalLookupFailure: 'serve',
+    });
+    const res = makeRes();
+    await route(makeReq(await mint()) as never, res as never);
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toEqual({ error: 'app block is not approved' });
+  });
+
+  /**
    * The posture COMPARISON, narrowed to what this file can actually witness.
    *
    * 🔴 The first version of this test mocked `isRevoked` to REJECT and asserted the
@@ -387,6 +442,29 @@ describe('the verdict counter is emitted, once, with the right reason', () => {
     expect(recordVerdictMock.mock.calls).toEqual([['lookup_failed']]);
   });
 
+  /**
+   * 🔴 COUNTED EVEN WHEN SERVED, and this is the half that keeps the opt-out honest. The
+   * whole availability argument for serving is "the verdict is still OBSERVED" — if the
+   * counter only fired on the routes that REFUSE, then opting a route out would also opt it
+   * out of the alerting signal, and a replica incident would look smaller than it is
+   * exactly in proportion to how many routes chose to ride it out.
+   */
+  it('🔴 a lookup failure on a SERVE route is STILL counted — the signal is not opt-outable', async () => {
+    findUniqueMock.mockRejectedValue(new Error('replica unreachable'));
+    const handler = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
+      res.status(200).json({ via: 'handler' });
+    });
+    const route = withBlockScope(handler as never, {
+      endpoint: 'models',
+      onApprovalLookupFailure: 'serve',
+    });
+    const res = makeRes();
+    await route(makeReq(await mint()) as never, res as never);
+
+    expect(recordVerdictMock.mock.calls).toEqual([['lookup_failed']]);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
   it('NEGATIVE CONTROL — an APPROVED app emits nothing', async () => {
     findUniqueMock.mockResolvedValue({ status: 'approved' });
     await drive(await mint());
@@ -401,5 +479,194 @@ describe('the verdict counter is emitted, once, with the right reason', () => {
     findUniqueMock.mockResolvedValue({ status: 'suspended' });
     await drive(await mint());
     expect(recordVerdictMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 🔴 THE `not_found` LOG LINE IS THE WHOLE ATTRIBUTION MECHANISM FOR THE ONE BRANCH THIS
+ * GATE DELIBERATELY SERVES, which is why it gets tests of its own rather than being taken
+ * on trust.
+ *
+ * The counter carries NO `app_block_id` on purpose — a label that fires once per such
+ * request with nothing rate-limiting it would be retained in the Node heap forever, per
+ * pod — so the ids live in this log line instead. If the line cannot name the app, the
+ * block and the endpoint, then `not_found` is a number with no way to chase it, and the
+ * "it is OBSERVED instead of refused" argument loses its second half.
+ *
+ * `endpoint` is the field that can go wrong silently: `opts.endpoint` is
+ * `AppBlockEndpoint | ((req) => AppBlockEndpoint)`, and template-interpolating the union
+ * raw stringifies the FUNCTION on the one call site that passes a resolver
+ * (`src/pages/api/v1/blocks/tools.ts`). That is not a cosmetic defect — `tools` is one of
+ * the four no-`requiredScope` catalog routes, i.e. the thinnest-gated half of the set.
+ */
+describe('the not_found log line names the app, the block and the RESOLVED endpoint', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  /** Drive one request through a route whose endpoint is FUNCTION-valued, like tools.ts. */
+  async function driveWithResolver(method: 'GET' | 'POST') {
+    const handler = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
+      res.status(200).json({ via: 'handler' });
+    });
+    // Byte-for-byte the shape `src/pages/api/v1/blocks/tools.ts` passes today.
+    const route = withBlockScope(handler as never, {
+      endpoint: (req: NextApiRequest) => (req.method === 'POST' ? 'tools_call' : 'tools'),
+    });
+    const req = { ...makeReq(await mint()), method } as NextApiRequest;
+    const res = makeRes();
+    await route(req as never, res as never);
+    return { handler, res };
+  }
+
+  function lastWarn(): string {
+    const call = warnSpy.mock.calls.at(-1);
+    return String(call?.[0] ?? '');
+  }
+
+  it('a STRING endpoint is logged as itself', async () => {
+    findUniqueMock.mockResolvedValue(null);
+    await drive(await mint());
+    expect(lastWarn()).toContain('endpoint=me');
+    expect(lastWarn()).toContain(`appId=${APP_ID}`);
+    expect(lastWarn()).toContain(`blockId=${BLOCK_ID}`);
+  });
+
+  /**
+   * 🔴 THE REGRESSION THIS FILE EXISTS FOR. Before the fix this line read
+   * `endpoint=(req) => (req.method === 'POST' ? 'tools_call' : 'tools')` — the function's
+   * SOURCE TEXT, on every `not_found` on the tools route.
+   *
+   * Asserted in BOTH directions, because the positive alone is walkable: a line that
+   * contains the resolved value can still also contain the stringified function (a naive
+   * "log both" fix), and the arrow text is the half an operator's grep would trip over.
+   */
+  it('a FUNCTION endpoint is RESOLVED against the request, not stringified (POST)', async () => {
+    findUniqueMock.mockResolvedValue(null);
+    const { handler, res } = await driveWithResolver('POST');
+    expect(lastWarn()).toContain('endpoint=tools_call');
+    expect(lastWarn()).not.toContain('=>');
+    expect(lastWarn()).not.toContain('req.method');
+    // The branch is still SERVED — the log fix must not have moved the policy.
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(200);
+  });
+
+  /**
+   * The OTHER arm of the same resolver. A fix that resolved the function but ignored the
+   * request (e.g. calling it with no argument, or hardcoding one branch) passes the POST
+   * case above and fails here — `tools_call` and `tools` are the two values that one call
+   * site can produce, and the whole reason it is a function is that they differ.
+   */
+  it('the SAME resolver logs the OTHER value on a GET — it is resolved PER REQUEST', async () => {
+    findUniqueMock.mockResolvedValue(null);
+    await driveWithResolver('GET');
+    expect(lastWarn()).toContain('endpoint=tools');
+    expect(lastWarn()).not.toContain('endpoint=tools_call');
+  });
+
+  it('NEGATIVE CONTROL — an approved app logs nothing at all', async () => {
+    findUniqueMock.mockResolvedValue({ status: 'approved' });
+    await drive(await mint());
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 🔴 THE `lookup_failed` LOG IS THROTTLED, BECAUSE THE FAILURE IT REPORTS IS FLEET-WIDE.
+ * An unreachable read replica fails EVERY block REST request on EVERY pod simultaneously,
+ * so an unthrottled line here is a log-volume event at full REST rate — the incident's own
+ * second-order cost, landing exactly when someone needs to read the logs.
+ *
+ * Three properties, and the first two are the ones a naive sampler gets wrong:
+ *   1. The FIRST failure logs immediately (a 1-in-N sampler drops it (N-1)/N of the time,
+ *      and "when did this start" is the question the log is for).
+ *   2. The suppressed COUNT is carried on the next line, so the rate stays recoverable
+ *      from the log rather than being silently discarded.
+ *   3. The COUNTER is untouched by any of this — see the counting suite above.
+ */
+describe('the lookup_failed log is throttled per pod', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    __resetApprovalLookupFailureLogThrottleForTests();
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    findUniqueMock.mockRejectedValue(new Error('replica unreachable'));
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+    vi.useRealTimers();
+    __resetApprovalLookupFailureLogThrottleForTests();
+  });
+
+  const claims = {
+    appId: APP_ID,
+    blockId: BLOCK_ID,
+  } as Parameters<typeof resolveRestApprovalVerdict>[0];
+
+  it('logs the FIRST failure immediately', async () => {
+    expect(await resolveRestApprovalVerdict(claims)).toBe('lookup_failed');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(String(warnSpy.mock.calls[0][0])).toContain('replica unreachable');
+    expect(String(warnSpy.mock.calls[0][0])).toContain('droppedSinceLastLog=0');
+  });
+
+  it('🔴 collapses a burst to ONE line while every verdict is still returned', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+
+    for (let i = 0; i < 500; i++) {
+      expect(await resolveRestApprovalVerdict(claims)).toBe('lookup_failed');
+    }
+    // 500 failures, 1 line. Without the throttle this is 500 lines, per pod.
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔴 the next line after a burst carries the SUPPRESSED COUNT', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+
+    for (let i = 0; i < 500; i++) await resolveRestApprovalVerdict(claims);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+
+    // Past the window: the next failure logs again, and reports the 499 it swallowed.
+    vi.setSystemTime(new Date('2026-01-01T00:01:01Z'));
+    await resolveRestApprovalVerdict(claims);
+
+    expect(warnSpy).toHaveBeenCalledTimes(2);
+    expect(String(warnSpy.mock.calls[1][0])).toContain('droppedSinceLastLog=499');
+  });
+
+  it('the suppressed counter RESETS after it is reported', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    for (let i = 0; i < 10; i++) await resolveRestApprovalVerdict(claims);
+
+    vi.setSystemTime(new Date('2026-01-01T00:01:01Z'));
+    await resolveRestApprovalVerdict(claims);
+    expect(String(warnSpy.mock.calls[1][0])).toContain('droppedSinceLastLog=9');
+
+    // A second window with a single failure must report 0, not carry 9 forward.
+    vi.setSystemTime(new Date('2026-01-01T00:02:02Z'));
+    await resolveRestApprovalVerdict(claims);
+    expect(String(warnSpy.mock.calls[2][0])).toContain('droppedSinceLastLog=0');
+  });
+
+  it('NEGATIVE CONTROL — a SUCCESSFUL lookup logs nothing and consumes no window', async () => {
+    findUniqueMock.mockResolvedValue({ status: 'approved' });
+    for (let i = 0; i < 50; i++) await resolveRestApprovalVerdict(claims);
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    // …and the throttle is still unarmed, so a real failure right after still logs at once.
+    findUniqueMock.mockRejectedValue(new Error('replica unreachable'));
+    await resolveRestApprovalVerdict(claims);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
   });
 });

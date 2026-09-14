@@ -211,6 +211,44 @@ function read(rel: string): string {
 }
 
 /**
+ * 🔴 STRIP COMMENT LINES BEFORE ANY SPELLING CHECK. A `toMatch` over a WHOLE FILE asks
+ * "does this identifier appear anywhere", and a docblock is anywhere — so the assertion
+ * becomes satisfiable by the prose that DESCRIBES the check rather than by the check.
+ * Once that happens the test is not weak, it is INERT: it reads as coverage, which stops
+ * anyone looking, while the thing it names can be deleted outright.
+ *
+ * This is not hypothetical and it is not a one-off. It has now been found FOUR times in
+ * this family of guards:
+ *   1. `status === 'approved'` — the predicate module's docblock quotes that exact
+ *      expression while describing the mint endpoint. MEASURED: weakening the real
+ *      comparison to `!== 'suspended'` left the whole-file form GREEN.
+ *   2. `appBlock.findUnique` — same file, same shape, fixed alongside it.
+ *   3. `resolveAppBlockApprovalVerdict\s*\(` in this file. It happened to be
+ *      NON-vacuous only by luck of punctuation: the guard docblock's one occurrence is
+ *      followed by a backtick and a newline, which `\s*` cannot bridge to a `(`. Any
+ *      future docblock line writing the name with a paren after it silently re-inerts it.
+ *   4. The same regex over the same file in the REST sibling,
+ *      `no-unguarded-block-rest-token.test.ts`, on the identical luck.
+ *
+ * (3) and (4) are the argument for fixing this as a SHAPE rather than per-instance: both
+ * were one ordinary sentence away from proving nothing, and nothing would have announced
+ * it. `BlockRevocation.isRevoked(claims.blockInstanceId)` is filtered here for the same
+ * reason even though its docblock mention carries no argument list today.
+ *
+ * LIMIT, stated because it is real: this is a line-wise filter, not a parser. A trailing
+ * `// comment` on a code line survives, and so does a block comment opened on one line and
+ * continued without a leading `*`. Both are the fail-OPEN direction for a presence check.
+ * It exists to stop PROSE satisfying a code assertion, which is the failure that has
+ * actually occurred, four times.
+ */
+function codeLinesOnly(source: string): string {
+  return source
+    .split('\n')
+    .filter((line) => !/^\s*(?:\/\/|\*|\/\*)/.test(line))
+    .join('\n');
+}
+
+/**
  * Cached, because the schema walk below asks the same few files for the same identifiers
  * hundreds of times (every word inside every `.input(z.object({…}))` is a candidate). The
  * caches are pure memoisation of file content and of what was parsed out of it — measured
@@ -1013,7 +1051,11 @@ describe('no unguarded block-bridge token verification', () => {
     // What actually pins the behaviour is `blocks.router.bridgeTokenGuard.test.ts` (a
     // different vitest project, which is why this cheap presence check exists at all). If
     // you are tempted to read this test as coverage, read that file instead.
-    expect(guard).toMatch(/BlockRevocation\.isRevoked\(\s*claims\.blockInstanceId\s*\)/);
+    // 🔴 CODE LINES ONLY, on EVERY assertion in this test — see `codeLinesOnly`. These
+    // used to read the WHOLE file, which is satisfiable by prose: this very file's
+    // docblocks name both `BlockRevocation.isRevoked` and `resolveAppBlockApprovalVerdict`.
+    const guardCode = codeLinesOnly(guard);
+    expect(guardCode).toMatch(/BlockRevocation\.isRevoked\(\s*claims\.blockInstanceId\s*\)/);
     // 🔴 THE APPROVAL CHECK IS NO LONGER SPELLED IN THIS FILE. The row lookup and the
     // `approved` comparison moved to the shared predicate `resolveAppBlockApprovalVerdict`
     // (`block-approval.service.ts`), which the REST gate resolves through as well, so
@@ -1022,16 +1064,13 @@ describe('no unguarded block-bridge token verification', () => {
     // the predicate module must still spell is the lookup itself. Both halves are asserted,
     // because either one alone passes while the check is gone: the delegation without the
     // predicate is a call to nothing, and the predicate without the delegation is dead code.
-    expect(guard).toMatch(/\bresolveAppBlockApprovalVerdict\s*\(/);
-    // 🔴 CODE LINES ONLY, and this is not fussiness — a whole-file `toMatch` for
+    expect(guardCode).toMatch(/\bresolveAppBlockApprovalVerdict\s*\(/);
+    // 🔴 The same filter, for the reason it was FIRST written: a whole-file `toMatch` for
     // `status === 'approved'` PASSES on the predicate module's own docblock, which quotes
     // that exact expression while describing the mint endpoint. Measured: weakening the
     // real comparison to `!== 'suspended'` left the whole-file form GREEN. A spelling
     // check that its own prose satisfies is not weak, it is inert.
-    const predicateCode = read(APPROVAL_PREDICATE)
-      .split('\n')
-      .filter((line) => !/^\s*(?:\/\/|\*|\/\*)/.test(line))
-      .join('\n');
+    const predicateCode = codeLinesOnly(read(APPROVAL_PREDICATE));
     expect(predicateCode).toMatch(/appBlock\.findUnique/);
     expect(predicateCode).toMatch(/status === 'approved'/);
   });
