@@ -120,9 +120,10 @@ export type BlockScopeManifestInput = { scopes?: unknown } | null | undefined;
  *         → `src/components/Apps/BlockScopeList.tsx`, which renders one `<Group key={scope}>`
  *         per element — i.e. two siblings with the SAME React key.
  *     Two consumers would have absorbed the duplicate anyway — `grantScopes` puts the result in
- *     a `new Set` ceiling (`src/server/routers/blocks.router.ts:2787-2789`) and
- *     `recordScopeGrant` de-dups its own input
- *     (`src/server/services/blocks/scope-grant.service.ts:222-224`) — but the RENDER path had no
+ *     a `new Set` ceiling (the `const ceiling = new Set(effectiveBlockScopes(...))` that
+ *     `grantScopes` filters `input.scopes` against, in `src/server/routers/blocks.router.ts`) and
+ *     `recordScopeGrant` de-dups its own input (its `const incoming = Array.from(new Set(...))`
+ *     normalization in `src/server/services/blocks/scope-grant.service.ts`) — but the RENDER path had no
  *     such absorber, which is what makes de-duplicating here load-bearing rather than cosmetic.
  *
  * Both arguments are treated as untrusted JSON/DB values: a non-array on either side yields
