@@ -487,7 +487,8 @@ export const constants = {
         .replace(/^https?:\/\//, '')
         .replace(/\./g, '\\.')}|civitai\\.com)`
     ),
-    externalRegex: /^(?:https?:\/\/)?(?:www\.)?(github\.com|twitter\.com|x\.com)/,
+    externalRegex:
+      /^(?:https?:\/\/)?(?:www\.)?(github\.com|twitter\.com|x\.com|civitai\.red(?=[/:?#]|$))/,
   },
   entityCollaborators: {
     maxCollaborators: 15,
