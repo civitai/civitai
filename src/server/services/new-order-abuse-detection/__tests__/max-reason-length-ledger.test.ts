@@ -68,11 +68,13 @@ const KNOWN_PRODUCERS = [
  *
  * It is NOT comment-aware, and that is deliberate. A previous version stripped comments first with
  * `/\/\*[\s\S]*?\*\//g`, which is blind to string literals: a producer whose `report.ts` contained
- * `/*` inside any string — a URL, a glob — opened a phantom comment that ran to the next block-
- * comment terminator and deleted the real declaration before this regex ever saw it, so the producer
- * passed green. That is
- * a SILENT PASS in the exact direction this file exists to prevent, bought for nothing, since the
- * anchor above already handles every motive the stripper cited.
+ * `/*` inside any string — a URL, a route glob — opened a phantom comment that ran to the next
+ * block-comment terminator and deleted the real declaration before this regex ever saw it, so the
+ * producer passed green. That is a SILENT PASS in the exact direction this file exists to prevent,
+ * bought for nothing, since the anchor above already handles every motive the stripper cited.
+ * (Note for anyone rebuilding the case: a recursive-directory glob does NOT reproduce it — there the
+ * opening pair is immediately followed by a terminator, so the phantom comment closes inside the
+ * string. The opening pair has to be the LAST thing in the string, as in a trailing route wildcard.)
  *
  * The residual risk runs the other way and is the safe one: an unprefixed `const MAX_REASON_LENGTH`
  * inside a block comment now matches, so the ledger GROWS and the assertion fails loudly. A guard
