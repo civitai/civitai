@@ -1,0 +1,44 @@
+-- ============================================================
+-- App Blocks → Post attribution: an index on Post.metadata->>'blockPublishedAppId'
+-- ============================================================
+-- `blocks.createPostFromApp` stamps the publishing app's OauthClient id into
+-- `Post.metadata` under the key `blockPublishedAppId` — the SAME key and the SAME
+-- value semantics the `Image` rows already carry, so ONE moderation sweep can read
+-- both. The marker is server-authoritative by construction: no post input schema
+-- has a `metadata` field, so no client can set or forge it, and the server writes
+-- it unconditionally so a block cannot suppress it either.
+--
+-- WHY AN INDEX SHIPS WITH THE FEATURE RATHER THAN AFTER AN INCIDENT.
+-- The marker's whole job is containment: when an app turns out to be abusive, the
+-- retroactive action is "find every post this app created and review it". `Post`'s
+-- existing indexes are (modelVersionId), (model3dId), (publishedAt) — none of them
+-- helps, so without this the sweep is a full sequential scan of a very large table
+-- at exactly the moment someone needs an answer quickly. The `Image` side of the
+-- same marker is UNINDEXED today and gets away with it only because its one reader
+-- is id-driven; this side's only reader is the sweep.
+--
+-- PARTIAL, on purpose. The predicate `metadata ? 'blockPublishedAppId'` matches
+-- only rows an app created — a vanishingly small fraction of `Post` — so the index
+-- stays tiny and its maintenance cost falls only on inserts that actually carry the
+-- key. A full expression index over every post's metadata would be orders of
+-- magnitude larger for no additional query it can answer.
+--
+-- 🔴 CONCURRENTLY, AND THEREFORE NOT INSIDE A TRANSACTION. `Post` is a large, hot
+-- table; a plain CREATE INDEX takes an ACCESS EXCLUSIVE lock and blocks every write
+-- to it for the duration. This migration is written to be APPLIED BY HAND (this
+-- repo does not auto-apply Prisma migrations to the production database; migration
+-- files are committed for history and a human applies them per environment), which
+-- is exactly the context CONCURRENTLY needs.
+--
+-- IF IT FAILS: a failed CONCURRENTLY build leaves an INVALID index behind that is
+-- never used and never cleaned up on its own. Check for it before retrying:
+--   SELECT indexrelid::regclass, indisvalid FROM pg_index
+--    WHERE indexrelid = 'Post_blockPublishedAppId_idx'::regclass;
+-- and DROP INDEX CONCURRENTLY IF EXISTS "Post_blockPublishedAppId_idx"; first.
+--
+-- The query it serves:
+--   SELECT id, "userId", "publishedAt" FROM "Post"
+--    WHERE metadata->>'blockPublishedAppId' = $1;
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "Post_blockPublishedAppId_idx"
+  ON "Post" ((metadata ->> 'blockPublishedAppId'))
+  WHERE metadata ? 'blockPublishedAppId';

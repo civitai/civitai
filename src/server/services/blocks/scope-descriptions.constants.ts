@@ -30,6 +30,8 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   'collections:read:self': 'Browse and read public Civitai collections, and your own public collections',
   'collections:write:self': 'Bookmark (follow) collections on your behalf',
   'collections:read:private': 'Read your private collections',
+  'posts:write:self':
+    "Publish posts to your profile from this app's own results — you approve each one",
 };
 
 export const SLOT_DESCRIPTIONS: Record<string, string> = {

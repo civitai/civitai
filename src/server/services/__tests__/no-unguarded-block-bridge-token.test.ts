@@ -94,6 +94,14 @@ const GUARD = 'src/server/services/blocks/block-bridge-auth.service.ts';
  */
 const GUARD_CALL_SITE_LEDGER = [
   'authorizeBlockBuzzRead',
+  // The router's own post-bridge preamble helper: `previewPostFromApp` and
+  // `createPostFromApp` BOTH reach the guard through it (and through nothing
+  // else), which is why they appear in the population ledger below but not here
+  // — the same shape as `authorizeBlockBuzzRead`. It is a router-local
+  // `async function` on purpose: reachability is computed textually INSIDE
+  // `blocks.router.ts`, so a preamble living in an imported service would read as
+  // UNGUARDED.
+  'authorizeBlockPostRequest',
   'cancelAppWorkflow',
   'cancelWorkflow',
   'estimateWorkflow',
@@ -130,6 +138,13 @@ const BRIDGE_INPUT_LEDGER = [
   'getMyViewer',
   'listMyWorkflows',
   'pollWorkflow',
+  // The two halves of the CREATE_POST_FROM_APP bridge. Both take a `blockToken`
+  // and both reach the guard via `authorizeBlockPostRequest`, above. They are
+  // listed SEPARATELY rather than as a `*PostFromApp` shorthand for the reason
+  // the `getMyBuzz*` note gives: a wildcard is a claim about names, and names are
+  // not the population.
+  'createPostFromApp',
+  'previewPostFromApp',
   'publishGenerationOutputs',
   'queryAppWorkflows',
   'submitWorkflow',

@@ -45,10 +45,9 @@ import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import { logToAxiom } from '~/server/logging/client';
 import { isAppBlocksSharedStorageEnabled } from '~/server/services/app-blocks-flag';
+import { assertSharedWriteTrust } from '~/server/services/blocks/block-write-trust.service';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
-import { Flags } from '~/shared/utils/flags';
-import { OnboardingSteps } from '~/server/common/enums';
 import {
   assertSharedTextSafe,
   SharedContentBlockedError,
@@ -79,12 +78,16 @@ const SHARED_VALUE_BYTE_CAP = 64 * 1024;
 const SHARED_KV_PER_USER_ROW_CAP = 50;
 
 // ── Min-trust gate (design H3 / MIN-TRUST GATE) ───────────────────────────────
-// Account must be older than this to write/vote (anti-sybil). Starts at 7d.
-const MIN_ACCOUNT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-// Flag-toggleable STRONG anti-sybil lever (design H5): require a paid tier to
-// write/vote. OFF by default — flip to true (or wire to a flag) if sybil pressure
-// materializes. `free`/absent tier fails when on.
-const REQUIRE_PAID_TIER = false;
+// MOVED to `~/server/services/blocks/block-write-trust.service` — it now has a
+// SECOND caller (`blocks.createPostFromApp`), and a trust predicate open-coded at
+// two sites is one that will be wrong at one of them. The rule, its signals and
+// its exact deny messages are unchanged.
+//
+// NOT re-exported from here. The importers of this module were enumerated when
+// the predicate moved, and none of them took `assertSharedWriteTrust`,
+// `MIN_ACCOUNT_AGE_MS` or `REQUIRE_PAID_TIER` from it — they take
+// `appsSharedRouter`/`appsModRouter`, `sanitizeDiscordText`, and the counter
+// helpers. Import the predicate from the service that owns it.
 
 type SharedOp =
   | 'list'
@@ -107,53 +110,6 @@ const READ_OPS: ReadonlySet<SharedOp> = new Set<SharedOp>(['list', 'get', 'getCo
 
 const SHARED_READ_SCOPE = 'apps:storage:shared:read';
 const SHARED_WRITE_SCOPE = 'apps:storage:shared:write';
-
-/**
- * The min-trust gate (design H3). Reuses EXISTING civitai trust signals hydrated
- * from `SessionUser` — no new trust score. FAIL-CLOSED: a vanished subject (null),
- * banned, muted, onboarding-incomplete, unverified-AND-no-OAuth, or too-new account
- * is DENIED. `asserts` narrows `user` to non-null for the caller.
- *
- * "Verified email" is satisfied by `emailVerified` OR a linked OAuth account
- * (`hasLinkedOAuth`, a row in the `Account` table). Rationale: civitai's
- * `emailVerified` is only ever set by the email-CHANGE flow — OAuth sign-in
- * (GitHub/Google/Discord, ~69% of active users) never sets it, so the raw check
- * locked out most legitimate users. A linked OAuth account is a provider-verified
- * identity and a STRONGER anti-sybil signal than an unverified civitai email
- * (minting N GitHub/Google accounts is harder than N unverified civitai accounts).
- * A user with NEITHER a verified email NOR an OAuth link genuinely still needs to
- * verify, so that case keeps the original deny.
- *
- * Signals (all AND-ed):
- *   sub!=anon (caller passes non-null) · !bannedAt · !muted ·
- *   onboarding-complete (Flags.hasFlag(onboarding, Buzz)) ·
- *   (emailVerified present OR hasLinkedOAuth) ·
- *   account age ≥ MIN_ACCOUNT_AGE_MS · [optional] paid tier.
- */
-export function assertSharedWriteTrust(
-  user: SessionUser | null,
-  hasLinkedOAuth: boolean
-): asserts user is SessionUser {
-  const deny = (message: string): never => {
-    throw new TRPCError({ code: 'FORBIDDEN', message });
-  };
-  if (!user) return deny('Your account is not eligible for this action');
-  if (user.bannedAt) return deny('Your account is not eligible for this action');
-  if (user.muted) return deny('Your account has been restricted');
-  if (!Flags.hasFlag(user.onboarding ?? 0, OnboardingSteps.Buzz)) {
-    return deny('Complete onboarding before contributing');
-  }
-  if (!user.emailVerified && !hasLinkedOAuth) {
-    return deny('Verify your email before contributing');
-  }
-  const createdAt = user.createdAt ? new Date(user.createdAt).getTime() : NaN;
-  if (!Number.isFinite(createdAt) || Date.now() - createdAt < MIN_ACCOUNT_AGE_MS) {
-    return deny('Your account is too new to contribute');
-  }
-  if (REQUIRE_PAID_TIER && (!user.tier || user.tier === 'free')) {
-    return deny('A membership is required to contribute');
-  }
-}
 
 interface SharedContext {
   userId: number | null;

@@ -99,6 +99,27 @@ export const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   // `collections:read:private` — forbidding a dev from READING their own balance
   // while permitting SPENDING it is incoherent.
   'buzz:read:self',
+  // posts:write:self — INCLUDED in BOTH dev allowlists (this bearer path and the
+  // tunnel path below), DELIBERATELY EXCLUDED from both review allowlists.
+  //
+  // WHY INCLUDED HERE: a dev token is SELF-BOUND to the author's OWN account, so
+  // the only profile an app-under-development can post to is the author's, and
+  // the author can delete the post. Omitting it would mean a developer building
+  // a posting app iterates against a PERMANENTLY 403-ing endpoint with no way to
+  // fix it — consent cannot help, because these allowlists strip the scope
+  // BEFORE the token is signed (`resolveUngrantableConsentNotice`). Consistent
+  // with these allowlists already granting `ai:write:budgeted` (real Buzz spend).
+  //
+  // 🔴 IT IS STILL A REAL PUBLIC POST. Unlike `apps:storage:*`, there is no
+  // sandbox namespace — a dev-token post is indistinguishable from a production
+  // one on the site. That is accepted for the AUTHOR'S OWN account and is the
+  // reason the mod-review allowlists below withhold it: a moderator previewing
+  // SOMEONE ELSE'S unapproved app must never be made to publish public content
+  // under the MOD'S name, not even behind the run-for-real consent gate. The
+  // full server-side gate (approval, revocation, write-trust, per-source
+  // ownership, the host confirm, the dedicated Flipt flag) still applies to
+  // every dev-token call.
+  'posts:write:self',
 ]);
 
 /**
@@ -128,6 +149,12 @@ export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<str
   // WITHHELD from the mod-review sandbox below (a mod previewing another author's
   // app must not leak the mod's own balance).
   'buzz:read:self',
+  // posts:write:self — INCLUDED here too (see the DEV_TOKEN_SCOPE_ALLOWLIST
+  // rationale): self-bound to the AUTHOR'S OWN profile in their own dev tunnel,
+  // and the only way a posting app is iterable pre-approval. Deliberately
+  // WITHHELD from BOTH mod-review allowlists below — a mod previewing another
+  // author's unapproved app must never publish under the MOD'S name.
+  'posts:write:self',
 ]);
 
 /**
@@ -150,6 +177,7 @@ export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<str
  *   - `collections:write:self`    a write surface
  *   - `social:tip:self`           real money OUT
  *   - `buzz:read:self`            private financial (balance / ledger / earnings)
+ *   - `posts:write:self`          PUBLIC content published under the MOD'S name
  *
  * These strings are verified against block-scope.constants.ts. Modelled on
  * TUNNEL_HOST_MINT_SCOPE_ALLOWLIST but WITHOUT `ai:write:budgeted`,
@@ -188,6 +216,16 @@ export const REVIEW_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>(
  *   - `apps:storage:shared:read|write` cross-user shared datastore — NEVER (invariant #2)
  *   - `collections:read:private`      third-party-reachable private data
  *   - `collections:write:self`        write surface not needed to evaluate a page app
+ *   - `posts:write:self`              PUBLIC, feed-visible, reward-earning content
+ *                                     published under the REVIEWING MOD'S name. The
+ *                                     run-for-real gate consents the mod to SPEND
+ *                                     their own Buzz; it does not consent them to
+ *                                     become the author of an unapproved app's
+ *                                     output on their public profile. A post also
+ *                                     has no disposable preview namespace (contrast
+ *                                     App Storage's `apprev_<pubreq>` schema) — it
+ *                                     is indistinguishable from a real one and
+ *                                     survives the approve/reject teardown.
  *
  * (*) App Storage WORKS under run-for-real via a dedicated preview namespace:
  * `resolveStorageContext` (apps.router), when the token carries the signed
