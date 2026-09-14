@@ -333,6 +333,12 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
             onChange={onChange}
             label="Aspect Ratio"
             options={meta?.options ?? []}
+            priorityOptions={
+              meta?.priorityOptions ??
+              (meta && meta.options.length > 5
+                ? meta.options.slice(1, 6).map((o) => o.value)
+                : undefined)
+            }
             maxVisible={5}
           />
         )}

@@ -318,9 +318,10 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         name="aspectRatio"
         render={({ value, meta, onChange }) => {
           const priorityOptions =
-            meta && meta.options.length > 5
+            meta?.priorityOptions ??
+            (meta && meta.options.length > 5
               ? meta.options.slice(1, 6).map((o) => o.value)
-              : undefined;
+              : undefined);
           return (
             <AspectRatioInput
               value={value}
