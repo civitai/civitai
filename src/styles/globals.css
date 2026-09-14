@@ -267,11 +267,33 @@
    step, on the assumption that a guard whose subject is the ledger dies with the
    ledger. Neither does — both die with the cap expression instead, i.e. THIS step.
 
-   THE SCOPE OF THE MEASUREMENT, stated so the numbers carry it: the `unit` project
-   over `pageBlockHostMaxWidth.test.ts` and every other node-tier file that reads
-   this stylesheet or the full-bleed projection — 10 files, 152 tests, green at the
-   baseline. NOT the whole node tier, and NOT the browser tier, whose ledger cases
-   inject the rule they render and so are not evidence about this file's contents.
+   THE SCOPE OF THE MEASUREMENT, stated so it carries its own limits: the `unit`
+   project over `pageBlockHostMaxWidth.test.ts` and every other node-tier file that
+   reads this stylesheet or the full-bleed projection, green at the baseline. NOT the
+   whole node tier.
+
+   ⚠️ NO DENOMINATOR IS GIVEN FOR THAT SET, AND THE ONE THAT USED TO BE HERE IS THE
+   REASON. It read "10 files, 152 tests". The set is described in prose rather than
+   enumerated, and re-deriving that description today selects 11 files and 165 tests —
+   so the sentence and the number no longer pick out the same thing, and nothing fails
+   when they diverge. The red sets below are named by TEST instead: that is the part a
+   reader has to act on, and the part that cannot rot into a wrong count.
+
+   🔴 AND THE BROWSER TIER IS **NOT** EXCLUDED — RUN IT TOO. An earlier version of
+   this paragraph excluded it wholesale, on the grounds that its ledger cases INJECT
+   the rule they render and so are not evidence about this file's contents. That is
+   true of exactly ONE of the two. 'an app can opt out of the cap with a CSS rule keyed
+   on `data-block-id`' does hand-write its own rule, and it stays GREEN with this
+   ledger deleted. 'LEDGER — every member is full-bleed at 2560x1080 while a non-member
+   stays capped' does not: it calls `ledgerFromGlobals()`, which imports THIS FILE as
+   `~/styles/globals.css?raw`, parses the real rules out of that text, and carries a
+   positive control that fails when the parse returns nothing. MEASURED, with exactly
+   the deletion described below: the `component` project over
+   `PageBlockHostMaxWidth.browser.test.tsx` goes from 12 passed to 1 failed / 11
+   passed, and the one failure is that LEDGER case. So the red set below is the NODE
+   half of the retirement only — run the node tier alone, fix its 5 and push, and you
+   have pushed a red browser tier. The checklist above already says this from the other
+   direction: it lists BOTH browser ledger cases among what the retirement deletes.
      · DELETING THE LEDGER (this comment block + both ENTRY comments + both rules)
        → 5 red of those 152, all of them named in the list above: 'the full-bleed
        opt-out ledger — membership is explicit…' and 'globals.css documents the
