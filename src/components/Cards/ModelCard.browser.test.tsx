@@ -285,18 +285,31 @@ describe('ModelCard paid-gate badge', () => {
     // absence of the text as well as the presence of the icon is what makes a revert to the word
     // visible here rather than only in a screenshot.
     expect(el.textContent).toBe('');
-    // `querySelector('svg')` alone is satisfied by ANY icon, under a title that names the glyph.
-    // Tabler stamps its own class, so this reddens on a swap to a different one — including back to
-    // the Buzz bolt, which is the specific regression this pins: the bolt already means "tip" on
-    // this same card, and two different meanings on one glyph is what the diamond replaced.
+    // Exactly one icon. `querySelector` takes the FIRST match, so every assertion below would read
+    // the diamond and stay green if a second glyph were added beside it — which is the two-meanings
+    // mess this change exists to end, reintroduced.
+    expect(el.querySelectorAll('svg'), 'the access badge renders more than one icon').toHaveLength(
+      1
+    );
     const icon = el.querySelector('svg');
     expect(icon, 'no icon rendered in the access badge').toBeTruthy();
-    const cls = icon!.getAttribute('class') ?? '';
-    expect(cls).toContain('diamond');
-    expect(cls).not.toContain('bolt');
+
+    // The FULL tabler name, not the substring `diamond`. Five diamond icons ship and all five class
+    // names contain it, so `toContain('diamond')` stays green for `IconDiamondOff` — a diamond with
+    // a slash through it, whose plain reading on a paid badge is "NOT paid".
+    expect(icon!.getAttribute('class') ?? '').toContain('tabler-icon-diamond-filled');
+
+    // Filled vs outline is not in the class alone: tabler emits `fill={color}`/`stroke="none"` for
+    // filled and `fill="none"` for outline. This separates them, and catches `color` being dropped —
+    // the chip's white comes from Mantine CSS the harness never loads, so nothing else would notice.
+    expect(icon!.getAttribute('fill')).toBe('white');
+
+    // Run the bolt prohibition over the whole badge rather than the first icon's class, where it
+    // could never fail: no tabler class contains both substrings.
+    expect(el.innerHTML).not.toContain('bolt');
   });
 
-  test('the diamond carries an accessible name, not merely an aria-label attribute', async () => {
+  test('the access badge carries an accessible name, not merely an aria-label attribute', async () => {
     renderWithProviders(
       <WithPalette>
         <ModelCard data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }} />
@@ -317,7 +330,7 @@ describe('ModelCard paid-gate badge', () => {
     await expect.element(page.getByRole('img', { name: 'Paid' })).toBeInTheDocument();
   });
 
-  test('the diamond is explained on hover — it is the only thing that names it for a sighted user', async () => {
+  test('the access badge is explained on hover — the only thing naming it for a sighted user', async () => {
     renderWithProviders(
       <WithPalette>
         <ModelCard data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }} />
