@@ -14,6 +14,7 @@
   import { LINK_CLASS, dateTime, shortAge } from '$lib/format';
   import { issuesUrl, userLookupUrl } from '$lib/entity-url';
   import { urlWith } from '$lib/url';
+  import { feedbackOpenHref } from '$lib/feedback-tabs';
   import {
     feedbackAttachmentCount,
     feedbackStatusBadgeClass,
@@ -26,7 +27,13 @@
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
-  const rowHref = (id: number) => urlWith(page.url, { open: data.open === id ? null : id });
+  /**
+   * 🔴 `feedbackOpenHref`, NOT a bare `urlWith({ open })` — it also DELETES `?tab=`, and that
+   * deletion is the whole reason the helper exists (its docstring carries the repro). Opening a row
+   * is the one navigation that changes WHICH report is on screen, so it is the one that must not
+   * inherit the tab chosen for the previous one.
+   */
+  const rowHref = (id: number) => feedbackOpenHref(page.url, data.open === id ? null : id);
 
   /**
    * 🔴 THE NO-JS SURFACE, and only that. Deleting it as dead code is the mistake to avoid.
@@ -39,7 +46,18 @@
    * re-runs `load` ONLY on success (`@sveltejs/kit@2.66.0`, `runtime/app/forms.js:99-107` — both
    * the reset and `invalidateAll()` sit inside `if (result.type === 'success')`), so a refusal
    * leaves `data` untouched, the row open, `openVisible` true, and the panel mounted to render its
-   * own message. The two surfaces cover disjoint paths; neither is redundant.
+   * own message — which since the tab strip landed is a single banner ABOVE that strip, in
+   * `FeedbackDetail.svelte`, rather than one inside each form's own section. The two surfaces still
+   * cover disjoint paths; neither is redundant.
+   *
+   * The other half of "unreachable", which that paragraph left implicit: a LATER navigation could
+   * flip `openVisible` to false while a refusal is still in `form`. It cannot, because SvelteKit
+   * nulls `form` on navigation and leaves it alone only on invalidation (`client.js:1380-1381`,
+   * `form: invalidating ? undefined : null`) — and invalidation here happens only after a SUCCESS,
+   * whose `form` carries no `error` key for the guard above to find.
+   *
+   * 🔴 The tab triggers are LINKS for this same reason (`FeedbackTabs.svelte`): a no-JS client must
+   * still be able to reach `?tab=triage`, or the form this message is about would be unreachable.
    */
   const pageError = $derived(
     !data.openVisible && form && 'error' in form && form.error ? String(form.error) : null
@@ -86,7 +104,21 @@
     </p>
   {/if}
 
-  <div class="rounded-xl border border-dark-4 bg-dark-6">
+  <!--
+    🔴 NARROW WIDTHS SCROLL, THEY DO NOT COLLAPSE — deliberate, and the operator's call. Nine columns
+    do not become a card list; they stay a table and the container scrolls.
+
+    `min-w-0` is the whole guard: this sits in a flex column, where a flex item's default
+    `min-width: auto` lets a wide child push the item — and therefore the PAGE — wider than the
+    viewport. `@civitai/ui`'s `Table` already wraps in `overflow-x-auto`, so the table scrolls inside
+    this box; without `min-w-0` the box itself could grow and the page body would scroll instead,
+    which is the one thing that must never happen.
+
+    No ultrawide cap is added HERE on purpose. `+layout.svelte` puts every page that does not ask for
+    `wide`/`fullBleed` inside `mx-auto w-full max-w-6xl`, and this page asks for neither — so the cap
+    already exists one level up. A second one would be a number in two places that can disagree.
+  -->
+  <div class="min-w-0 rounded-xl border border-dark-4 bg-dark-6">
     <Table>
       <TableHeader>
         <TableRow>
@@ -118,7 +150,11 @@
                 <span class="text-dark-2">#{row.userId}</span>
               {/if}
             </TableCell>
-            <TableCell class="max-w-md">
+            <!-- The only column with a free-text value, so it is the only one whose width drives the
+                 table's own. Bounded per breakpoint rather than at a flat `max-w-md`: 28rem of
+                 message on a 24rem viewport is most of the horizontal scroll the operator has to do
+                 to reach the Status and Open columns. -->
+            <TableCell class="max-w-[10rem] sm:max-w-xs lg:max-w-md">
               <span class="line-clamp-1 text-sm text-dark-2" title={row.message}>{row.message}</span>
             </TableCell>
             <TableCell class="text-right tabular-nums text-dark-2">{attachments || ''}</TableCell>
@@ -150,7 +186,10 @@
           </TableRow>
           {#if open}
             <TableRow>
-              <TableCell colspan={9} class="bg-dark-7/40 p-0">
+              <!-- `whitespace-normal` undoes `TableCell`'s default `whitespace-nowrap`: the panel
+                   holds prose and a JSON dump, and inheriting nowrap would make every long line
+                   widen the table rather than wrap inside the panel. -->
+              <TableCell colspan={9} class="bg-dark-7/40 p-0 whitespace-normal">
                 <FeedbackDetail
                   {row}
                   {context}
