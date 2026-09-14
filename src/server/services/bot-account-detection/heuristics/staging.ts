@@ -165,11 +165,19 @@ export function stagedImageFacts(
  * 🔴 THE DECOMPOSITION IS THE POINT, AND `fired` CANNOT PROVIDE IT — the same argument
  * `contentTemplatingSourceScore` makes one heuristic over. With two measures behind one id,
  * `heuristic:asset-staging:fired` cannot say WHICH of them is earning its place, and the shadow
- * phase grades a signal on its own or not at all. The concrete question these answer is whether the
- * burst half is doing any work the volume half was not already doing.
+ * phase grades a signal on its own or not at all.
+ *
+ * 🔴 AND FOR THE BURST HALF THIS IS NOW THE ONLY PLACE IT EXISTS AT ALL. Its question — "is
+ * same-second concentration doing work the volume half was not already doing" — used to be partly
+ * answerable from the SCORE, because the burst boundaries were tighter. They are not any more, so
+ * `max` is identically `volume` (see `BURST_ONE_AT`) and the score carries no information about
+ * this half whatsoever. The counters `run.ts` builds from these two values are therefore the whole
+ * of the evidence that will decide whether the arm gets re-tightened or deleted. Read carefully:
+ * `burst > 0` here does NOT mean the burst half contributed anything to the account's sub-score.
  *
  * They may BOTH be non-zero on one account, deliberately: they are two questions about the same
- * uploads, not a partition of them.
+ * uploads, not a partition of them. The reverse — `burst > 0` while `volume` is 0 — cannot occur
+ * for any index the evidence layer can build, since a same-second group is a subset of the rows.
  */
 export function assetStagingHalfScores(
   userId: number,
