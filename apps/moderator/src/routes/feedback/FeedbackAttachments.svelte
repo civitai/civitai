@@ -29,7 +29,14 @@
          alongside the others. If this page ever reaches a non-moderator, add `blur={40}` and a click
          to clear. -->
     <div class="flex flex-wrap gap-3">
-      {#each items as item, i (item.id)}
+      <!-- 🔴 KEYED BY INDEX, NOT BY `item.id`, AND THAT IS NOT LAZINESS. `splitContext` deduplicates
+           `images` among THEMSELVES, but nothing compares `screenshotId` against them — so a row
+           where the reporter attached the same file the page capture produced holds the id twice,
+           and `{#each … (item.id)}` THROWS on a duplicate key in production as well as in dev,
+           making that report permanently unopenable. That is the exact failure the dedup in
+           `splitContext` exists to prevent, reintroduced one layer up.
+           Index is safe here: this list is derived from immutable row data and never reorders. -->
+      {#each items as item, i (i)}
         <figure class="flex flex-col gap-1">
           <!-- A real <button>: the large view is opened by keyboard as well as by pointer, and it is
                this element that focus returns to when the lightbox closes. -->

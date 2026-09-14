@@ -458,6 +458,26 @@ describe('🔴 splitContext filters hostile image ids on BOTH fields', () => {
   });
 
   /**
+   * 🔴 TWO FRAMES CAN SHARE AN ID, SO NOTHING MAY KEY AN `{#each}` ON `item.id`. `splitContext`
+   * deduplicates `images` among THEMSELVES and nothing compares `screenshotId` against them — the
+   * reporter attaching the same file the page capture produced is an ordinary row, not a hostile
+   * one. Svelte THROWS on a duplicate `{#each … (key)}` in production as well as in dev, which would
+   * make that report permanently unopenable; `FeedbackAttachments.svelte` keys by index because of
+   * this case. Both frames are kept rather than collapsed: they are two different claims about the
+   * same file, and the captions are what say so.
+   */
+  it('keeps both frames when the capture repeats an attached id — ids here are NOT unique', () => {
+    const items = feedbackAttachmentItems(splitContext({ images: [UUID], screenshotId: UUID }));
+
+    expect(items).toHaveLength(2);
+    expect(items.map((i) => i.id)).toEqual([UUID, UUID]);
+    expect(items.map((i) => i.caption)).toEqual([
+      FEEDBACK_ATTACHMENT_CAPTIONS.image,
+      FEEDBACK_ATTACHMENT_CAPTIONS.screenshot,
+    ]);
+  });
+
+  /**
    * 🔴 THE TWO CAPTIONS ARE NOT INTERCHANGEABLE. A file the reporter attached is theirs; the opt-in
    * capture is a picture of their screen, which can hold another user's content. The lightbox carries
    * the caption into the large view for exactly that reason, so which frame gets which is pinned,
