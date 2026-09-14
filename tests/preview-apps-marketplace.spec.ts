@@ -104,20 +104,50 @@ test.describe('App Blocks marketplace discovery + detail render (mod)', () => {
     page,
   }) => {
     // The marketplace index renders for an appBlocks-enabled viewer (the mod) and
-    // 404s for everyone else. Asserting it loads (status < 400) + shows the
-    // marketplace's "Marketplace" sub-nav tab proves the mod cleared the
-    // `features.appBlocks` SSR gate and the page rendered (NOT the 404 a
-    // non-appBlocks user gets). The page no longer renders a "Civitai App Blocks"
-    // heading — the app-blocks nav refactor (#2749/#2758) made AppsPageLayout omit
-    // the title on the marketplace surface — so we assert the always-on
-    // "Marketplace" tab, which uniquely identifies the apps surface.
+    // 404s for everyone else. Asserting it loads (status < 400) + shows the apps
+    // navigation proves the mod cleared the `features.appBlocks` SSR gate and the page
+    // rendered (NOT the 404 a non-appBlocks user gets). The page renders no "Civitai App
+    // Blocks" heading — the app-blocks nav refactor (#2749/#2758) made AppsPageLayout omit
+    // the title on the marketplace surface — so the nav is what uniquely identifies the
+    // apps surface.
+    //
+    // 🔴 THE NAV IS A LEFT RAIL OF LINKS, NOT A TAB STRIP, AND IT IS VIEWPORT-GATED.
+    // This assertion read `getByRole('tab', { name: 'Marketplace' })` until the rail
+    // landed; there are no `role="tab"` elements on `/apps` any more. Two things had to
+    // change together, and the second is the one that bites:
+    //   • the role is `link` — the rail is a `<nav aria-label="App sections">` of real
+    //     anchors;
+    //   • the rail is `display: none` below `APPS_RAIL_MIN_VIEWPORT` (1300px), where a
+    //     "App sections" drawer trigger stands in for it — and this config's
+    //     `devices['Desktop Chrome']` viewport is **1280×720**, i.e. BELOW that line. So
+    //     the default preview viewport renders the DRAWER form and a bare
+    //     `getByRole('link', …)` would fail on a perfectly healthy page.
+    // Both forms are asserted below rather than one, because both are real surfaces a
+    // user gets and the smoke suite is the only tier that sees this page deployed.
     // domcontentloaded ONLY — never networkidle.
     const resp = await page.goto('/apps', { waitUntil: 'domcontentloaded' });
     expect(resp?.status(), 'GET /apps status for the appBlocks-enabled mod').toBeLessThan(400);
+
+    // (a) THE DEFAULT (1280) FORM — the drawer trigger is the only nav affordance here.
     await expect(
-      page.getByRole('tab', { name: 'Marketplace' }),
-      '/apps should render the AppsSubNav "Marketplace" tab for an appBlocks-enabled mod (not a 404)'
+      page.getByRole('button', { name: 'App sections' }),
+      '/apps at 1280 should render the "App sections" drawer trigger for an ' +
+        'appBlocks-enabled mod (not a 404). Below 1300px the rail is display:none.'
     ).toBeVisible();
+
+    // (b) THE RAIL FORM — widen past the threshold and the landmark + entries appear.
+    // This is the half that proves the nav actually has destinations rather than just a
+    // button, and it is the shape the overwhelming majority of desktop viewers get.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(
+      page.getByRole('navigation', { name: 'App sections' }),
+      '/apps at 1440 should expose the "App sections" navigation landmark'
+    ).toBeVisible();
+    await expect(
+      page.getByRole('link', { name: 'Marketplace' }),
+      '/apps should render the rail\'s "Marketplace" entry for an appBlocks-enabled mod'
+    ).toBeVisible();
+    await page.setViewportSize({ width: 1280, height: 720 });
 
     // DISCOVER an appBlockId at runtime from the public listing. Never hardcode
     // one — the weekly dev clone's approved set varies. `{}` input is valid (all
