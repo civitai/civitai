@@ -31,7 +31,12 @@ import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { videoHub } from '~/shared/form-graph/generation/video/hub.graph';
 import { wanVersionDefs, wanVersionOptions } from '~/shared/form-graph/generation/video/wan.graph';
 
-import { ControllerLabel, VersionGroupSelector, useWildcardHandlers } from './form-helpers';
+import {
+  ControllerLabel,
+  PromptLabel,
+  VersionGroupSelector,
+  useWildcardHandlers,
+} from './form-helpers';
 import { GateRuleWarnings } from './GateRuleWarnings';
 import { CheckpointRow } from './inputs/CheckpointRow';
 import { openCheckpointPicker, readResources } from './inputs/openCheckpointPicker';
@@ -286,7 +291,9 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
         render={({ value, meta, onChange, error }) => (
           <PromptEditorShell
             label={
-              <ControllerLabel
+              <PromptLabel
+                store={store}
+                prompt={value}
                 label="Prompt"
                 info="Type out what you'd like to generate."
                 required={meta?.required}

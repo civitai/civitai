@@ -11,10 +11,11 @@ import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControl
 import { audioHub } from '~/shared/form-graph/generation/audio/hub.graph';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 
-import { ControllerLabel, VersionGroupSelector } from './form-helpers';
+import { ControllerLabel, PromptLabel, VersionGroupSelector } from './form-helpers';
 import { GateRuleWarnings } from './GateRuleWarnings';
 import { CheckpointRow } from './inputs/CheckpointRow';
 import { openCheckpointPicker } from './inputs/openCheckpointPicker';
+import type { GenerationStore } from './store';
 
 /**
  * The AUDIO generation form — one `<Controller graph={audioHub}>` per field.
@@ -23,7 +24,7 @@ import { openCheckpointPicker } from './inputs/openCheckpointPicker';
  * but has no control, matching v1.
  */
 
-export function AudioGenerationForm() {
+export function AudioGenerationForm({ store }: { store: GenerationStore }) {
   return (
     <Stack gap="sm">
       <Controller
@@ -127,7 +128,9 @@ export function AudioGenerationForm() {
         render={({ value, meta, onChange, error }) => (
           <PromptEditorShell
             label={
-              <ControllerLabel
+              <PromptLabel
+                store={store}
+                prompt={value}
                 label="Prompt"
                 info="Describe the song concept in plain English — a chat model drafts the lyrics, music description, BPM, and key from it."
                 required={meta?.required}
