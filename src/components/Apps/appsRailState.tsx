@@ -70,17 +70,29 @@ export function AppsRailProvider({
   value,
   children,
 }: {
-  value: AppsRailState;
+  /**
+   * The rail cookie as the server parsed it — or `undefined` when the request carried
+   * NO rail cookie.
+   *
+   * 🔴 `undefined` IS LOAD-BEARING AND MUST NOT BE DEFAULTED AWAY BY THE CALLER. It is the
+   * only signal that lets {@link useAppsRail} fall back to `localStorage`; collapse it to
+   * `'open'` and that whole half of the feature becomes write-only. See the note on
+   * `appsRail` in `~/shared/utils/cookies` for how that shipped once and what caught it.
+   */
+  value: AppsRailState | undefined;
   children: React.ReactNode;
 }) {
-  const [state, setState] = useState<AppsRailState>(value);
+  const [state, setState] = useState<AppsRailState>(value ?? APPS_RAIL_DEFAULT_STATE);
   // 🔴 A FRESH OBJECT PER STATE CHANGE, NOT A `useRef` MUTATED IN PLACE. A stable
   // container whose fields are reassigned keeps the CONTEXT VALUE'S IDENTITY constant,
   // so React skips every consumer and the toggle renders nothing — the classic
   // silent-no-op shape for a context store.
   const store = React.useMemo<AppsRailStore>(() => ({ state, setState }), [state]);
+  // `?? null` — the context's own "no seed" value. `undefined` would be indistinguishable
+  // from an absent Provider once it reaches `useContext`, which is the same collapse one
+  // level down.
   return (
-    <AppsRailSeedContext.Provider value={value}>
+    <AppsRailSeedContext.Provider value={value ?? null}>
       <AppsRailStoreContext.Provider value={store}>{children}</AppsRailStoreContext.Provider>
     </AppsRailSeedContext.Provider>
   );

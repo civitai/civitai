@@ -123,6 +123,53 @@ describe('🔴 the SSR cookie seed decides the FIRST render', () => {
     expect(railWidth()).toBe(APPS_RAIL_WIDTH);
   });
 
+  /**
+   * 🔴 THE ADOPTION PATH, REACHED THE WAY `_app` REACHES IT — and the test whose absence
+   * let a dead feature ship.
+   *
+   * `useAppsRail` only consults `localStorage` when NO seed arrived, and the only test
+   * that exercised that branch did it by omitting the Provider entirely — a shape `_app`
+   * never produces. Meanwhile the cookie schema was `.catch('open').default('open')`, so
+   * the real Provider ALWAYS received a seed and the branch was unreachable in
+   * production. The suite was green, three docstrings described a working fallback, and
+   * the fallback did not exist.
+   *
+   * This renders the Provider the way `_app` does — `value={cookies.appsRail}` — with the
+   * value the schema now yields for a request carrying no rail cookie: `undefined`.
+   */
+  test('🔴 a cookie-less request ADOPTS localStorage after mount (the real _app shape)', async () => {
+    window.localStorage.setItem(APPS_RAIL_STORAGE_KEY, 'collapsed');
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <AppsRailProvider value={undefined}>
+        <Page testid="body" />
+      </AppsRailProvider>
+    );
+    await expect.element(page.getByTestId('body')).toBeInTheDocument();
+
+    // The FIRST paint is still the default — it has to be, or the server HTML and the
+    // first client render would differ and that is the hydration mismatch the cookie
+    // exists to prevent. The adoption happens in an EFFECT, after hydration has matched.
+    await vi.waitFor(() => {
+      expect(railWidth()).toBe(APPS_RAIL_COLLAPSED_WIDTH);
+    });
+  });
+
+  test('🔴 DISCRIMINATING CONTROL: the same cookie-less render with EMPTY storage stays open', async () => {
+    // Without this arm, "it collapsed" would also be satisfied by a rail that collapses
+    // whenever the seed is undefined — i.e. by the storage read being ignored in the
+    // other direction.
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <AppsRailProvider value={undefined}>
+        <Page testid="body" />
+      </AppsRailProvider>
+    );
+    await expect.element(page.getByTestId('body')).toBeInTheDocument();
+    await new Promise((res) => setTimeout(res, 50));
+    expect(railWidth()).toBe(APPS_RAIL_WIDTH);
+  });
+
   test('with NO provider at all the rail is OPEN — the default fails visible', async () => {
     // The provider-less fallback (a surface rendered outside `_app`). An unknown or
     // missing seed must never HIDE the navigation.

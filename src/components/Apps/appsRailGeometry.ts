@@ -119,19 +119,19 @@ export function parseAppsRailState(value: string | undefined | null): AppsRailSt
 }
 
 /**
- * Read the rail cookie out of a raw `Cookie:` header.
+ * 🔴 THERE IS DELIBERATELY NO `readAppsRailCookie` HERE, AND ITS ABSENCE IS THE POINT.
  *
- * `~/shared/utils/cookies` goes through `cookies-next`, which needs a request context;
- * this takes the header string so the SSR seed can be unit-tested with no Next.js
- * machinery at all.
+ * This module carried one: a hand-rolled `Cookie:`-header split, with eight assertions
+ * covering multi-cookie headers, odd spacing and the `not-apps-rail=` substring trap. It
+ * had ZERO production callers. The parser the server actually runs is the zod
+ * `cookiesSchema` in `~/shared/utils/cookies`, reached from `_app`'s `getInitialProps`
+ * via `cookies-next`'s `getCookies` — so the tests were exercising a second
+ * implementation of a rule that already had one, and reading as coverage of the SSR seed
+ * while covering none of it.
+ *
+ * That is the "one rule, one place" failure in its most flattering disguise: the dead
+ * parser was more thoroughly tested than the live one. Deleted, and the cookie
+ * assertions moved onto `parseCookies` itself in `__tests__/appsRailGeometry.test.ts`.
+ * Do not reintroduce a second parser to make the seed testable — `parseCookies` is a
+ * plain function and is node-importable.
  */
-export function readAppsRailCookie(cookieHeader: string | undefined): AppsRailState {
-  if (!cookieHeader) return APPS_RAIL_DEFAULT_STATE;
-  for (const part of cookieHeader.split(';')) {
-    const eq = part.indexOf('=');
-    if (eq < 0) continue;
-    if (part.slice(0, eq).trim() !== APPS_RAIL_COOKIE) continue;
-    return parseAppsRailState(decodeURIComponent(part.slice(eq + 1).trim()));
-  }
-  return APPS_RAIL_DEFAULT_STATE;
-}

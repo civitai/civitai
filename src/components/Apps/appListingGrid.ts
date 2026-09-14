@@ -36,6 +36,32 @@ import { APPS_RESERVED_SCROLLBAR, appsRailChromeWidth } from '~/components/Apps/
  * ⚠️ A NARROWER RAIL DOES NOT AVOID THIS — measured, not assumed. A 200px rail keeps
  * four columns at 1440 but at 283.5px each, which is worse than either option here.
  *
+ * 🔴 THE COST BAND IS WIDER THAN "1600–2240 OF VIEWPORT, RAIL OPEN", AND THE HONEST
+ * STATEMENT IS IN **GRID** WIDTH: everything from **1168 to 2839** loses a column (4→3
+ * below 2242, 5→4 above 2364), except the sliver 2242–2363. This ladder is a GLOBAL
+ * constant keyed on grid width, while the rail is a CONDITIONAL, per-viewer cost — so
+ * three populations pay the density drop and receive no rail at all:
+ *
+ *   1. the `< 2 sections` cohort, which `apps-sections.ts` and `AppsPageLayout` both
+ *      name as LIVE (a store-visible non-author with no installs and no
+ *      `appBlocksGetStarted`). `/apps` is their only page, `hasRail` is false, and at a
+ *      1920 viewport they go from 4 × 457.5px to 3 × 615.3px;
+ *   2. every viewport 1210–1299, where `AppsPageLayout.module.scss` sets
+ *      `.rail { display: none }` — grid 1168–1257, so 4 → 3 with no rail rendered;
+ *   3. anyone who COLLAPSES the rail. `submissionsTable.ts` offers that as the sanctioned
+ *      remedy for the accepted `/apps/build` scroll; it restores the table's width, but
+ *      it restores the store's fourth column only in the viewport band 2356–2559 — at
+ *      1920 collapsed the grid is 1806 and still three columns.
+ *
+ * None of that is an arithmetic error in the numbers above (they reproduce), and none of
+ * it is a reason to hold the change. It is what a designer has to be shown: the rung is
+ * applied UNCONDITIONALLY, so "the rail buys you a wider card" is not the whole trade for
+ * every viewer. The open question, recorded rather than silently decided: should the
+ * four-column rung be RAIL-STATE-AWARE (the grid is already inside a container query, so
+ * the ladder legitimately could differ by rail state), or is a flat rung the intent?
+ * Raised by an adversarial round-0 audit; deliberately NOT resolved in code here, because
+ * it is the product call the sign-off exists to make.
+ *
  * `base` / `sm` / `md` are UNCHANGED (12 → 1 col, 6 → 2, 4 → 3): no viewport that
  * narrow renders the rail at all, so nothing below `lg` has a reason to move.
  *
@@ -351,8 +377,10 @@ const WIDE_COLUMN_STEPS: readonly ListingGridColumnStep[] = [
  *
  * The resulting table (grid width → columns) and its equality with the `@container`
  * rules in `AppListingsMarketplaceBody.module.scss` are both pinned in
- * `__tests__/appListingGrid.test.ts` — which also pins 4 columns at 1376 / 1887 / 1888
- * and mutation-checks the independence above. The RENDERED column counts are measured
+ * `__tests__/appListingGrid.test.ts` — which also pins THREE columns at 1376 / 1888 /
+ * 2100 and mutation-checks the independence above. (⚠️ That sentence read "4 columns at
+ * 1376 / 1887 / 1888" until the rail re-tune moved the ladder under it; the test asserts
+ * three at all of them now, so the old wording named the defect rather than the guard.) The RENDERED column counts are measured
  * in `AppListingsMarketplaceBody.columns.browser.test.tsx`.
  */
 export const LISTING_GRID_COLUMN_STEPS: readonly ListingGridColumnStep[] = (() => {
@@ -363,7 +391,12 @@ export const LISTING_GRID_COLUMN_STEPS: readonly ListingGridColumnStep[] = (() =
     // Container's own gutter. `base` is 0 and stays 0 rather than going negative.
     const viewport = MANTINE_BREAKPOINT_PX[breakpoint as keyof typeof MANTINE_BREAKPOINT_PX];
     const minContentWidth = Math.max(0, viewport - APPS_CONTAINER_GUTTER);
-    // `lg` and `xl` are the same column count — one rung, not two.
+    // Dedup: a breakpoint whose column count equals the previous one places NO rung.
+    // 🔴 SINCE THE RE-TUNE THIS FIRES TWICE, NOT ONCE — `md`, `lg` and `xl` are all three
+    // columns, so `lg` and `xl` BOTH collapse into `md`'s 960 rung and the narrow half is
+    // decided entirely by `base` / `sm` / `md`. The comment here used to read "`lg` and
+    // `xl` are the same column count — one rung, not two", which understated it and left
+    // a reader expecting `lg` to own a rung it no longer has.
     if (steps.length > 0 && steps[steps.length - 1].columns === columns) continue;
     steps.push({ minContentWidth, columns });
   }

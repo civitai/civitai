@@ -11,9 +11,14 @@ import {
   APPS_RESERVED_SCROLLBAR,
   appsRailChromeWidth,
   parseAppsRailState,
-  readAppsRailCookie,
 } from '~/components/Apps/appsRailGeometry';
 import { SUBNAV_STICKY_GAP } from '~/hooks/useSubnavBottom';
+// 🔴 THE PARSER PRODUCTION ACTUALLY RUNS. `_app`'s `getInitialProps` calls
+// `parseCookies(getCookies(ctx))`, so this zod schema — not any helper in the rail's own
+// module — is what decides the SSR seed. An earlier revision of this file tested a
+// second, hand-rolled header parser that had zero production callers; see the note where
+// it used to live in `appsRailGeometry.ts`.
+import { parseCookies } from '~/shared/utils/cookies';
 
 /**
  * `/apps/*` LEFT RAIL — geometry constants, the CSS seam, and the cookie parser.
@@ -163,20 +168,41 @@ describe('the persisted state fails OPEN, always', () => {
     expect(APPS_RAIL_COOKIE).toBe('apps-rail');
   });
 
-  test('🔴 the SSR cookie reader finds the rail cookie among others, and fails open', () => {
-    expect(readAppsRailCookie(undefined)).toBe('open');
-    expect(readAppsRailCookie('')).toBe('open');
-    expect(readAppsRailCookie('apps-rail=collapsed')).toBe('collapsed');
-    // Realistic header: several cookies, arbitrary spacing, the rail one in the middle.
-    expect(readAppsRailCookie('civitai-consent=accepted; apps-rail=collapsed; mode=All')).toBe(
-      'collapsed'
-    );
-    expect(readAppsRailCookie('mode=All;apps-rail=collapsed')).toBe('collapsed');
-    // A cookie whose NAME merely contains the rail's must not be read as it — the
-    // substring trap a naive `includes` would walk into.
-    expect(readAppsRailCookie('not-apps-rail=collapsed')).toBe('open');
-    expect(readAppsRailCookie('apps-rail-other=collapsed')).toBe('open');
-    // …and an absent rail cookie among present others is OPEN, not a crash.
-    expect(readAppsRailCookie('mode=All; civitai-consent=accepted')).toBe('open');
+  test('🔴 the LIVE parser: a present cookie seeds, an ABSENT one stays undefined', () => {
+    // 🔴 THE `undefined` HALF IS THE WHOLE TEST, AND IT IS THE BUG THIS FILE SHIPPED.
+    // `appsRail` was `.catch('open').default('open')`, which can never return undefined —
+    // so `_app` always handed `AppsRailProvider` a real seed, `useAppsRail`'s
+    // `seed !== null` short-circuit fired on every render, and the `localStorage` fallback
+    // three docstrings describe was DEAD CODE in production. Nothing caught it: the only
+    // test reaching the adoption branch went through the provider-less path, which `_app`
+    // never takes. It is now `.optional().catch('open')`, and this asserts the
+    // discriminator survives.
+    expect(parseCookies({ 'apps-rail': 'collapsed' }).appsRail).toBe('collapsed');
+    expect(parseCookies({ 'apps-rail': 'open' }).appsRail).toBe('open');
+    // …and the ABSENT case, which is what licenses the localStorage fallback.
+    expect(parseCookies({}).appsRail).toBeUndefined();
+    expect(parseCookies({ mode: 'All' }).appsRail).toBeUndefined();
+  });
+
+  test('🔴 the LIVE parser still fails OPEN on garbage, rather than to undefined', () => {
+    // The other direction, and it is not the same claim: a PRESENT-but-unparseable value
+    // must not be read as "no cookie", or a corrupted cookie would silently hand control
+    // to `localStorage` instead of failing open. `.catch('open')` is what keeps those two
+    // apart; dropping it in favour of a bare `.optional()` passes the test above and
+    // breaks this one.
+    for (const value of ['COLLAPSED', 'true', '1', 'x', '']) {
+      expect(parseCookies({ 'apps-rail': value }).appsRail, `"${value}"`).toBe('open');
+    }
+  });
+
+  test('the cookie NAME the live parser reads is the one the rail writes', () => {
+    // The seam the deleted hand-rolled parser used to stand in for: `persistAppsRailState`
+    // writes `APPS_RAIL_COOKIE`, and `parseCookiesObj` must read that same key. Two
+    // literals here would be exactly the drift this asserts against.
+    expect(APPS_RAIL_COOKIE).toBe('apps-rail');
+    expect(parseCookies({ [APPS_RAIL_COOKIE]: 'collapsed' }).appsRail).toBe('collapsed');
+    // A cookie whose name merely CONTAINS the rail's is a different cookie — the
+    // substring trap a `includes`-based parser walks into.
+    expect(parseCookies({ 'not-apps-rail': 'collapsed' }).appsRail).toBeUndefined();
   });
 });

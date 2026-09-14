@@ -42,8 +42,24 @@ const cookiesSchema = z.object({
    *
    * `.catch('open')` and the closed enum together mean an unknown or truncated value can
    * only ever fail OPEN — a visible navigation — never hidden.
+   *
+   * 🔴 `.optional()` AND NOT `.default('open')`, AND THE DIFFERENCE IS A WHOLE FEATURE.
+   * `undefined` here means "this request carried no rail cookie", which is the ONLY signal
+   * that lets the client fall back to `localStorage`. A `.default('open')` collapses that
+   * case into an indistinguishable `'open'`, so `AppsRailProvider` always receives a real
+   * seed, `useAppsRail`'s `seed !== null` short-circuit fires on every render, and
+   * `readAppsRailStorage()` NEVER EXECUTES IN PRODUCTION — the `localStorage` half becomes
+   * write-only while three docstrings go on describing it as a working fallback. That is
+   * exactly how it shipped in the first draft of this change, and nothing caught it: the
+   * only test exercising the adoption branch reaches it through the provider-less path,
+   * which `_app` never takes. Found by an adversarial round-0 audit, not by a test.
+   *
+   * The cohort it is for is real and not rare: a viewer whose cookies are cleared (privacy
+   * tooling, a 1-year expiry, a browser "clear cookies but keep site data" setting) while
+   * `localStorage` survives. With the discriminator intact they keep their collapsed rail
+   * after one post-mount adoption; without it they silently get the default back.
    */
-  appsRail: z.enum(['open', 'collapsed']).catch('open').default('open'),
+  appsRail: z.enum(['open', 'collapsed']).optional().catch('open'),
 });
 
 function parseCookiesObj(cookies: TmpCookiesObj) {
