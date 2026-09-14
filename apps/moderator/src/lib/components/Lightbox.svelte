@@ -76,8 +76,24 @@
   }
 </script>
 
-<!-- Escape is bits-ui's default `escapeKeydownBehavior: 'close'`; it arrives here as `onOpenChange`. -->
-<Dialog.Root {open} onOpenChange={(next) => !next && close()}>
+<!--
+  Escape is bits-ui's default `escapeKeydownBehavior: 'close'`, and it arrives here as a write to
+  `open` — same path as a click on the overlay or the close button.
+
+  🔴 A FUNCTION BINDING, NOT A PLAIN `open={…}` PROP, for the reason `FeedbackFilters.svelte` already
+  records about this primitive family: bits-ui declares `open` as `$bindable` and WRITES to it on
+  interaction (`bits-ui@2.18.1`, `dialog/components/dialog.svelte`). Handed a plain prop, that write
+  lands in a child-local override which Svelte only discards when the parent yields a DIFFERENT
+  value — so any close the parent does not observe leaves `openIndex` set against a dialog that is
+  already closed, and re-clicking the SAME thumbnail then does nothing. The getter makes the parent
+  the only source of truth; the setter is the one place a close is turned into state.
+-->
+<Dialog.Root
+  bind:open={() => open,
+  (next) => {
+    if (!next) close();
+  }}
+>
   <Dialog.Content
     class="max-h-[90vh] w-[min(92vw,72rem)] max-w-[92vw] overflow-auto sm:max-w-[92vw]"
     onCloseAutoFocus={(event) => {
