@@ -336,8 +336,8 @@ describe('smitePlayer — onSmiteCreated is the durable-write signal', () => {
   });
 
   it('🔴 contains a throw value that cannot be STRINGIFIED — `Object.create(null)`', async () => {
-    // A different mechanism from `throw null` above, one line earlier: there the logger could not
-    // deref the value, here the NORMALISATION cannot convert it. `String(e)` on a null-prototype
+    // A different mechanism from `throw null` above, and it strikes first: there the logger could
+    // not deref the value, here the NORMALISATION cannot convert it. `String(e)` on a null-prototype
     // object throws `TypeError: Cannot convert object to primitive value`, and it runs inside the
     // `catch` that exists to contain the hook — so the tail is skipped and `smitePlayer` rejects
     // with the row already committed, the same half-applied smite. An object with a throwing
