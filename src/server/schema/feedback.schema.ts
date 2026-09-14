@@ -1,9 +1,14 @@
 import * as z from 'zod';
 import {
   FEEDBACK_AREAS,
+  FEEDBACK_CONSOLE_ERROR_MAX_COUNT,
+  FEEDBACK_CONSOLE_ERROR_MAX_LENGTH,
   FEEDBACK_FILTER_VALUE_MAX_LENGTH,
   FEEDBACK_IMAGE_MAX_COUNT,
   FEEDBACK_MESSAGE_MAX_LENGTH,
+  FEEDBACK_NETWORK_ERROR_MAX_COUNT,
+  FEEDBACK_NETWORK_INITIATOR_MAX_LENGTH,
+  FEEDBACK_NETWORK_URL_MAX_LENGTH,
   FEEDBACK_PATH_MAX_LENGTH,
   FEEDBACK_SESSION_ID_MAX_LENGTH,
 } from '~/shared/constants/feedback.constants';
@@ -22,6 +27,16 @@ export const feedbackAreaSchema = z.enum(FEEDBACK_AREAS);
 // (dev, test, preview, an ad-blocked or opted-out session) — absence is the
 // ordinary case, not an error. Every one of them is bounded because a JSONB
 // column will store exactly what it is handed.
+//
+// 🔴 `consoleErrors` / `networkErrors` ARE A DATA-COLLECTION SURFACE, not two more
+// debug fields, and they are why the prompt now carries a disclosure line (see
+// `FEEDBACK_TELEMETRY_DISCLOSURE` in `FeedbackAttachments.tsx`). Unlike `path` or
+// `filters` they are not a restatement of something the reporter typed or navigated
+// to — they are a slice of their session that nothing else on this platform retains,
+// kept indefinitely, readable by moderators. Their bounds are a proportionality
+// judgement rather than a storage one: read the note on
+// `FEEDBACK_CONSOLE_ERROR_MAX_COUNT` before widening either, and re-read the
+// disclosure line in the same change.
 const feedbackContextSchema = z.object({
   path: z.string().max(FEEDBACK_PATH_MAX_LENGTH).optional(),
   reportedSource: z.string().max(50).optional(),
@@ -99,6 +114,61 @@ const feedbackContextSchema = z.object({
   screenshotId: z.uuid().optional(),
   /** Grafana Faro session id, to join a report to that session's RUM signals. */
   sessionId: z.string().trim().min(1).max(FEEDBACK_SESSION_ID_MAX_LENGTH).optional(),
+  /**
+   * The last few console errors the reporter's browser recorded before they pressed Send.
+   *
+   * 🔴 DECLARING THE KEY IS THE WHOLE FEATURE, NOT PAPERWORK. `feedbackContextSchema` is a
+   * `z.object`, and a `z.object` STRIPS what it does not declare — silently, with no error and no
+   * log. A capture shipped against an undeclared key is a feature that looks built, submits
+   * cleanly, and stores nothing. `feedback.schema.test.ts` asserts these keys are present in the
+   * PARSED OUTPUT, with a genuinely-unknown key alongside as the negative control, because
+   * "parsing succeeded" is exactly the observable that cannot tell those two apart.
+   *
+   * ⚠ Do not read the "other" bucket note in `apps/moderator/src/lib/feedback.ts` — "the schema
+   * already accepts keys no current producer emits" — as saying arbitrary keys survive. It refers
+   * to DECLARED-but-unrendered optionals (`reportedSource`, `reportedPageSources`, `pagesLoaded`).
+   * Undeclared keys do not reach the column at all.
+   *
+   * WHAT IS IN A STRING. The message only: `console.error`'s formatted arguments, or an uncaught
+   * error's / rejection's `message`. Never a stack trace, and never a request or response body —
+   * see the capture module for why. The producer has already run it through the Faro PII scrub
+   * (`redactText`) and clipped it, so an over-long value here means the producer drifted from
+   * the bound, which is a bug worth a rejection rather than a silent truncation.
+   */
+  consoleErrors: z
+    .array(z.string().max(FEEDBACK_CONSOLE_ERROR_MAX_LENGTH))
+    .max(FEEDBACK_CONSOLE_ERROR_MAX_COUNT)
+    .optional(),
+  /**
+   * Requests that came back 4xx/5xx while the reporter was on the page.
+   *
+   * `status` is bounded `400..599` rather than `100..599` ON PURPOSE: the field is named
+   * `networkErrors`, a success has no business in it, and the bound is the only thing that says so
+   * to a future producer. The cost is named rather than hidden — a client that ever wants to
+   * report a status-0 network failure (offline, DNS, CORS) must widen this deliberately, and
+   * today's producer cannot observe those at all (see the capture module's mechanism note).
+   *
+   * 🔴 `url` ARRIVES WITH ITS QUERY STRING ALREADY STRIPPED, and that is a producer-side guarantee
+   * this schema cannot check — a bare `max()` accepts `?token=…` just as happily. It is asserted
+   * where it is enforced (`sanitizeNetworkUrl`), not here. Do not add a "no `?`" refinement and
+   * call the class closed at this end: a rejection here fails the whole submission on the surface
+   * that exists to collect reports, which is a worse outcome than the producer's own clipping.
+   *
+   * No request or response BODY, no headers, no timings. The reason is the same one that keeps
+   * Faro's Console and Performance instrumentations switched off in `FaroProvider`: a body on this
+   * platform can hold a payment payload, a prompt, or another user's content, and none of that is
+   * proportionate to triaging a bug report.
+   */
+  networkErrors: z
+    .array(
+      z.object({
+        url: z.string().max(FEEDBACK_NETWORK_URL_MAX_LENGTH),
+        status: z.number().int().min(400).max(599),
+        initiatorType: z.string().max(FEEDBACK_NETWORK_INITIATOR_MAX_LENGTH),
+      })
+    )
+    .max(FEEDBACK_NETWORK_ERROR_MAX_COUNT)
+    .optional(),
 });
 
 export type CreateFeedbackInput = z.infer<typeof createFeedbackSchema>;

@@ -16,6 +16,29 @@ import { FEEDBACK_IMAGE_MAX_COUNT } from '~/shared/constants/feedback.constants'
 type FeedbackAttachmentsProps = { feedback: FeedbackSubmission } & StackProps;
 
 /**
+ * What rides along with a report whether or not the reporter does anything.
+ *
+ * 🔴 THIS EXISTS BECAUSE THE SILENT PAYLOAD GREW. Before the browser-error snapshot, `context`
+ * already carried the page path, the `/apps` filters INCLUDING the typed search term, and the Faro
+ * session id — none of it disclosed anywhere, while the screenshot (the one thing a reporter would
+ * expect to be asked about) was the only opt-in. Adding console and network capture to that same
+ * silent payload without saying so is the change that makes the existing gap indefensible, so the
+ * line ships in the same commit as the capture rather than as a follow-up.
+ *
+ * It is a CONSTANT, and it is rendered from the one component both surfaces mount, so the inline
+ * prompt and the drawer cannot disclose different things. `FeedbackPrompt` previously disclosed
+ * nothing at all and the drawer's own copy claimed console errors were already being collected
+ * when they were not — two surfaces, two different wrong answers, which is what one value fixes.
+ *
+ * Keep it a description of the MECHANISM, not a reassurance about it. If the capture widens, this
+ * sentence is part of the diff.
+ */
+export const FEEDBACK_TELEMETRY_DISCLOSURE =
+  'Sent with your report: the page you were on, any filters or search you had set, your browser ' +
+  'session id, and the last few errors and failed requests your browser recorded. Web addresses ' +
+  'are stored without their query strings. Images are only sent if you attach them above.';
+
+/**
  * The attach / capture controls, shared by every feedback surface so the consent
  * copy and the screenshot preview cannot differ between them. Spacing is left to
  * the caller (`StackProps`), which is the only thing the two surfaces disagree on.
@@ -136,6 +159,12 @@ export function FeedbackAttachments({ feedback, ...stackProps }: FeedbackAttachm
           </div>
         </Stack>
       )}
+      {/* 🔴 NOT conditional on anything. A disclosure a reporter only sees once they have already
+          opened the attachment controls, or only on one of the two surfaces, is not a disclosure.
+          See FEEDBACK_TELEMETRY_DISCLOSURE for why it is a shared constant. */}
+      <Text size="xs" c="dimmed">
+        {FEEDBACK_TELEMETRY_DISCLOSURE}
+      </Text>
     </Stack>
   );
 }

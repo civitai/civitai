@@ -30,6 +30,7 @@ import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessi
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
 import { ErrorBoundary } from '~/components/ErrorBoundary/ErrorBoundary';
+import { BrowserErrorRecorder } from '~/components/Feedback/BrowserErrorRecorder';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 // import { RecaptchaWidgetProvider } from '~/components/Recaptcha/RecaptchaWidget';
@@ -235,6 +236,9 @@ function MyApp(props: CustomAppProps) {
           >
             <UpdateRequiredWatcher>
               <IsClientProvider>
+                {/* Bounded console/network snapshot a bug report can attach. Mounted here, not in
+                    the prompt, because the errors worth reporting happen before anyone opens it. */}
+                <BrowserErrorRecorder />
                 <ClientHistoryStore />
                 <RegisterCatchNavigation />
                 <RouterTransition />

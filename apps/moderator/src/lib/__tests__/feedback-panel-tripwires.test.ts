@@ -89,6 +89,7 @@ describe('the instrument itself', () => {
       'FeedbackDetail.svelte',
       'FeedbackPromote.svelte',
       'FeedbackAttachments.svelte',
+      'FeedbackContextPanel.svelte',
       '+page.svelte',
     ]) {
       expect(source(file).length).toBeGreaterThan(500);
@@ -361,6 +362,81 @@ describe('opening a row goes through the one choke point', () => {
       'no `searchParams.*(open)` write found anywhere in the panel'
     ).toBeGreaterThan(0);
     expect(sets).toEqual([]);
+  });
+});
+
+/**
+ * The browser-error snapshot's renderer.
+ *
+ * The SHAPE routing is tested for real in `feedback.test.ts` (`splitContext`). What can only be
+ * pinned as text is the property that makes carrying hostile strings safe in the first place:
+ * the panel renders them as TEXT and never as a URL.
+ */
+describe('the browser-error snapshot renders as text, never as a request', () => {
+  /**
+   * 🔴 THE LEDGER, AND IT IS THE LOAD-BEARING ONE IN THIS BLOCK. `networkErrors[].url` is a
+   * client-supplied string that LOOKS like it wants to be a link, sitting in the same panel whose
+   * sibling field already needed `IMAGE_KEY` because `getEdgeUrl` returns an `http`-prefixed
+   * argument verbatim into a moderator's `<img src>` — an outbound request that hands the reporter
+   * a read receipt naming who opened their report and when.
+   *
+   * It counts request-making attributes over the WHOLE file rather than matching a spelling near
+   * the new fields, because a spelled guard is walkable: `{@const u = entry.url}` followed by
+   * `href={u}` defeats any pattern keyed on the identifier, and defeats nothing keyed on the
+   * COUNT. Two `href`s exist today — the reconstructed page link and the Grafana link, both built
+   * from values that are not reporter free text — so a THIRD fails here whatever it is named, and
+   * whoever adds it has to come and say why.
+   *
+   * `EdgeImage` is pinned at zero rather than omitted: it is the component that wraps `getEdgeUrl`,
+   * it USED to be imported by this file, and re-adding it is the specific mistake this guards.
+   * Note the stripped-vs-raw pair below — `EdgeImage` appears once in the panel's own prose, which
+   * is exactly the comment-satisfies-a-pin trap this file's `stripComments` exists to close, and
+   * it is asserted here as a live witness that stripping is working on THIS file.
+   */
+  it('adds no href, src or EdgeImage to the panel', () => {
+    const panel = source('FeedbackContextPanel.svelte');
+
+    // Positive control: the scan CAN match. A zero from a broken read is indistinguishable from a
+    // zero from clean code, and every assertion below is a zero or a small number.
+    expect(panel.length).toBeGreaterThan(500);
+    expect(count(panel, 'href=')).toBeGreaterThan(0);
+
+    expect(count(panel, 'href=')).toBe(2);
+    expect(count(panel, 'src=')).toBe(0);
+    expect(count(panel, 'EdgeImage')).toBe(0);
+
+    // 🔴 THE STRIPPER, WITNESSED ON THIS FILE. `EdgeImage` is named once in the panel's own 🔴
+    // comment explaining why it must not come back. If the raw count ever equals the stripped one,
+    // that witness is gone and the `toBe(0)` above has quietly become a claim about prose.
+    expect(
+      count(rawSource('FeedbackContextPanel.svelte'), 'EdgeImage'),
+      'no prose witness for EdgeImage left — this control can no longer observe stripping'
+    ).toBeGreaterThan(count(panel, 'EdgeImage'));
+  });
+
+  /**
+   * Both lists are keyed by INDEX, for the reason `FeedbackAttachments.svelte` is: `{#each … (k)}`
+   * THROWS on a duplicate key in production as well as in dev, and both arrays are client-supplied
+   * with no uniqueness constraint. The same console line twice in a row is the ORDINARY case, so a
+   * value key would make a looping report permanently unopenable — the exact defect that already
+   * shipped once on the attachment list.
+   */
+  it('keys both snapshot lists by index', () => {
+    const panel = source('FeedbackContextPanel.svelte');
+    expect(panel).toContain('{#each context.consoleErrors as line, i (i)}');
+    expect(panel).toContain('{#each context.networkErrors as entry, i (i)}');
+  });
+
+  /**
+   * Each section is gated on its own `.length`, so a row with neither renders neither heading.
+   * `splitContext` yields `[]` for absent AND for empty, so "no section" is the correct output for
+   * both — an empty "Console errors" heading would read as "we looked and there were none", which
+   * is a different and unsupported claim.
+   */
+  it('renders each section only when it has entries', () => {
+    const panel = source('FeedbackContextPanel.svelte');
+    expect(panel).toContain('{#if context.consoleErrors.length}');
+    expect(panel).toContain('{#if context.networkErrors.length}');
   });
 });
 

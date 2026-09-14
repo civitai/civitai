@@ -123,6 +123,60 @@
   </div>
 </section>
 
+<!-- 🔴 EVERYTHING BELOW IS REPORTER-SUPPLIED TEXT AND IS RENDERED AS TEXT, FULL STOP. No `href`,
+     no `<img src>`, no `EdgeImage`, nothing that turns a stored string into a request. The
+     precedent is live and in this directory: `$lib/feedback.ts`'s `IMAGE_KEY` exists because
+     `getEdgeUrl` returns any `http`-prefixed argument VERBATIM, so an unfiltered id becomes an
+     outbound request from a moderator's browser and hands the reporter a read receipt naming who
+     opened their report and when. `networkErrors[].url` is exactly that shape of value — a
+     client-supplied string that LOOKS like it wants to be a link. It must not become one.
+     Svelte escapes interpolated text, so the same strings are inert as content.
+     Pinned by `feedback-panel-tripwires.test.ts`. -->
+{#if context.consoleErrors.length}
+  <section class="flex min-w-0 flex-col gap-2">
+    <h3 class="text-xs tracking-wide text-dark-2 uppercase">
+      Console errors
+      <span class="ml-2 font-normal normal-case">
+        last {context.consoleErrors.length}, oldest first
+      </span>
+    </h3>
+    <ol class="flex min-w-0 flex-col gap-1">
+      {#each context.consoleErrors as line, i (i)}
+        <!-- Keyed by INDEX, for the reason `FeedbackAttachments.svelte` is: the array is
+             client-supplied with no uniqueness constraint, and `{#each … (line)}` THROWS on a
+             duplicate key in production as well as in dev. The same error twice in a row is the
+             ORDINARY case for a console, so a value key would make a loop-erroring report
+             permanently unopenable. -->
+        <li class="rounded border border-dark-4 bg-dark-7 p-2 font-mono text-xs wrap-anywhere">
+          {line}
+        </li>
+      {/each}
+    </ol>
+  </section>
+{/if}
+
+{#if context.networkErrors.length}
+  <section class="flex min-w-0 flex-col gap-2">
+    <h3 class="text-xs tracking-wide text-dark-2 uppercase">
+      Failed requests
+      <span class="ml-2 font-normal normal-case">
+        last {context.networkErrors.length}, oldest first
+      </span>
+    </h3>
+    <ul class="flex min-w-0 flex-col gap-1">
+      {#each context.networkErrors as entry, i (i)}
+        <li class="flex min-w-0 items-baseline gap-2 font-mono text-xs">
+          <span class="shrink-0 text-red-400">{entry.status}</span>
+          <span class="shrink-0 text-dark-2">{entry.initiatorType}</span>
+          <!-- Query strings are stripped by the producer before storage, so this is a bare
+               origin + path. It is still text, not a link — see the block comment above. -->
+          <span class="min-w-0 wrap-anywhere">{entry.url}</span>
+        </li>
+      {/each}
+    </ul>
+  </section>
+{/if}
+
 {#if context.other}
   <section class="flex min-w-0 flex-col gap-2">
     <!-- 🔴 Dumped verbatim. `feedbackContextSchema` already accepts keys no current producer emits,
