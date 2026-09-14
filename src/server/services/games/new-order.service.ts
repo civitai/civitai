@@ -216,15 +216,20 @@ export async function smitePlayer({
    *
    * Keep it to recording a fact. Both failure shapes are contained at the call site and logged under
    * `new-order:smite-hook-failed`: a synchronous throw by the `try`, and a rejected promise by a
-   * `.catch` on the result. The return type admits `Promise<void>` explicitly because TypeScript's
-   * void-return rule accepts an `async` function at a `=> void` position anyway — spelling it out is
-   * what stops that being a silent unhandled rejection rather than a documented case.
+   * `.catch` on the result. The `.catch` is what stops a rejection going unhandled; the return type
+   * documents the async case but cannot contain it.
+   *
+   * The return type is `unknown` because the value is discarded. A narrower `void | Promise<void>`
+   * is not more permissive but LESS — TypeScript's void-return exemption applies only to a target of
+   * exactly `void`, and a union does not get it, so it rejects an expression-bodied arrow whose body
+   * returns a value. Measured with tsc 5.9.2: that rejects `(s) => smitedUserIds.add(s.id)`, because
+   * `Set.add` returns the Set.
    *
    * ⚠️ TWO LIMITS. The tail does NOT await an async hook, so its write may land after this function
    * returns and it cannot be depended on for ordering. And a hook that fails still records nothing —
    * the log is the only trace, so the caller is back to not knowing.
    */
-  onSmiteCreated?: (smite: { id: number }) => void | Promise<void>;
+  onSmiteCreated?: (smite: { id: number }) => unknown;
 }) {
   const smite = await dbWrite.newOrderSmite.create({
     data: {
@@ -242,9 +247,9 @@ export async function smitePlayer({
   // 🔴 BOTH SHAPES, AND THE ORDER MATTERS. `Promise.resolve(onSmiteCreated?.(smite))` cannot catch a
   // SYNCHRONOUS throw on its own: the hook is evaluated as the argument, so it throws before
   // `Promise.resolve` is ever called and before any `.catch` is attached. The `try` covers that one;
-  // the `.catch` covers a rejected promise, which a `=> void` position silently accepts from an
-  // `async` hook and which would otherwise be an unhandled rejection — there is no global
-  // `unhandledRejection` handler in this repo to fall back on.
+  // the `.catch` covers a rejected promise, which an `async` hook produces and which would otherwise
+  // be an unhandled rejection — there is no global `unhandledRejection` handler in this process to
+  // fall back on.
   //
   // Logged, not swallowed. A stable, opaque key in this file's established style, so an alert can
   // match it; the id goes in the details rather than the name, which would make every failure its
@@ -252,8 +257,14 @@ export async function smitePlayer({
   // report" — cannot hold: a hook that threw has by construction not reported. Before this seam
   // existed the throw reached the job's own `handleLogError`; without a log here it now reaches
   // nothing at all.
+  // Normalised, not cast. `handleLogError` reads `e.message` with no guard, so a non-`Error` throw
+  // value — `throw null`, a rejected non-`Error` payload — makes the LOGGER throw a TypeError: out
+  // of the `catch` below on the sync path, taking the tail with it, and out of the `.catch` on the
+  // async path as an unhandled rejection. Both are the failures this block exists to prevent.
   const reportHookFailure = (e: unknown) =>
-    handleLogError(e as Error, 'new-order:smite-hook-failed', { smiteId: smite.id });
+    handleLogError(e instanceof Error ? e : new Error(String(e)), 'new-order:smite-hook-failed', {
+      smiteId: smite.id,
+    });
   try {
     void Promise.resolve(onSmiteCreated?.(smite)).catch(reportHookFailure);
   } catch (e) {

@@ -44,7 +44,13 @@ const {
     mockCreateNotification: vi.fn(),
     mockSignalSend: vi.fn(),
     mockFetchThroughCache: vi.fn(),
-    mockHandleLogError: vi.fn(),
+    // 🔴 FAITHFUL TO THE REAL `handleLogError`, WHICH DEREFS `e.message` WITH NO GUARD
+    // (`src/server/utils/errorHandling.ts`). A bare `vi.fn()` accepts `null` without complaint, so
+    // the two non-`Error` cases below would pass against code that throws a TypeError in
+    // production — the fake would encode a safety the real function does not have.
+    mockHandleLogError: vi.fn((e: Error) => {
+      void new Error(e.message ?? 'Unexpected error occurred', { cause: e });
+    }),
   };
 });
 
@@ -119,9 +125,9 @@ const SMITE_ROW = {
   remaining: 50,
 };
 
-// Mirrors the parameter's own type, `void | Promise<void>`, so the async-hook case below is a real
-// call rather than one smuggled past a narrower local alias.
-const call = (onSmiteCreated?: (smite: { id: number }) => void | Promise<void>) =>
+// Mirrors the parameter's own type, `unknown`, so the async and non-`Error` cases below are real
+// calls rather than ones smuggled past a narrower local alias.
+const call = (onSmiteCreated?: (smite: { id: number }) => unknown) =>
   smitePlayer({ playerId: 7, modId: 1, reason: 'r', size: 50, onSmiteCreated });
 
 beforeEach(() => {
@@ -257,13 +263,12 @@ describe('smitePlayer — onSmiteCreated is the durable-write signal', () => {
     );
   });
 
-  it('🔴 a hook that REJECTS is contained too — the shape a `=> void` position silently admits', async () => {
-    // TypeScript's void-return rule accepts an `async` function wherever a `() => void` is expected,
-    // so this is the shape a future caller is most likely to write — and it is NOT covered by the
-    // `try` alone. `Promise.resolve(onSmiteCreated?.(smite))` cannot catch it either way round: a
+  it('🔴 a hook that REJECTS is contained too — the shape the `try` alone cannot reach', async () => {
+    // An `async` hook is the shape a future caller is most likely to write, and it is NOT covered by
+    // the `try` alone. `Promise.resolve(onSmiteCreated?.(smite))` cannot catch it either way round: a
     // sync throw happens during argument evaluation, before `Promise.resolve` runs, while a
     // rejection happens after the `try` block has already exited. Only the `.catch` on the result
-    // reaches it, and without that it is a genuine unhandled rejection — this repo installs no
+    // reaches it, and without that it is a genuine unhandled rejection — this process installs no
     // global `unhandledRejection` handler to fall back on.
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => unhandled.push(reason);
@@ -288,6 +293,67 @@ describe('smitePlayer — onSmiteCreated is the durable-write signal', () => {
       // A macrotask turn, so a rejection left without a handler has actually been reported by the
       // time this is read. Asserting it directly is what makes this a test of the defect rather than
       // of the log line: the log could be produced and the rejection still escape.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('🔴 contains a SYNCHRONOUS non-`Error` throw — `throw null`, which the logger cannot deref', async () => {
+    // `handleLogError` builds `new Error(e.message ?? …)` with no guard, so handing it `null`
+    // throws a TypeError from INSIDE the `catch` block — past the only handler there is. The tail
+    // is then skipped entirely and `smitePlayer` rejects, which is the half-applied smite the
+    // containment is there to prevent: the row is committed, the counter, signal and notification
+    // are not. `throw null` is not exotic — it is what a rethrown API payload or a bare
+    // `Promise.reject(err)` value looks like once it has been through a serialiser.
+    await expect(
+      call(() => {
+        throw null;
+      })
+    ).resolves.not.toThrow();
+
+    // The tail really ran. This is the assertion the faithful `handleLogError` mock exists for —
+    // against a bare `vi.fn()` it would pass without the fix.
+    expect(smitesCounterStub.increment).toHaveBeenCalledTimes(1);
+    expect(mockSignalSend).toHaveBeenCalledTimes(1);
+
+    // …and the failure was still reported, as an `Error` the logger can actually consume. Pinning
+    // `expect.any(Error)` is the structural half: it fails on the raw `null` regardless of whether
+    // the mock happens to deref it.
+    expect(mockHandleLogError).toHaveBeenCalledWith(
+      expect.any(Error),
+      'new-order:smite-hook-failed',
+      { smiteId: SMITE_ROW.id }
+    );
+  });
+
+  it('🔴 contains an ASYNC non-`Error` rejection — the same value, arriving down the `.catch`', async () => {
+    // Same unguarded deref, reached the other way: the TypeError is thrown inside the `.catch`
+    // handler, so the derived promise rejects with nothing left to catch it. The `void` in front
+    // means it is never awaited, so this surfaces as an unhandled rejection rather than a failed
+    // call — the tail completes and the defect is invisible from the call site.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      await expect(
+        call(async () => {
+          throw null;
+        })
+      ).resolves.not.toThrow();
+
+      expect(smitesCounterStub.increment).toHaveBeenCalledTimes(1);
+      expect(mockSignalSend).toHaveBeenCalledTimes(1);
+
+      expect(mockHandleLogError).toHaveBeenCalledWith(
+        expect.any(Error),
+        'new-order:smite-hook-failed',
+        { smiteId: SMITE_ROW.id }
+      );
+
+      // A macrotask turn, so a rejection left without a handler has been reported by the time this
+      // is read. Without it the assertion would run before the report and pass either way.
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(unhandled).toEqual([]);
     } finally {
