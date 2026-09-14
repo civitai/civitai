@@ -198,37 +198,29 @@ beforeEach(() => {
 /**
  * The measurement points.
  *
- * 🔴 NONE OF THEM SITS ON A THRESHOLD. The rungs are at 736 / 960 / 2242 / 2840; a
- * fixture placed exactly on one would be the case where a one-pixel mutation of that
+ * 🔴 NONE OF THEM SITS ON A THRESHOLD. The rungs are at 736 / 960 / 1168 / 2364 / 2840;
+ * a fixture placed exactly on one would be the case where a one-pixel mutation of that
  * threshold does not change the outcome, so it would survive a fully green suite for the
  * wrong reason. Every width below overshoots into the middle of its band.
  *
- * 🔴 RE-DERIVED FOR THE RAIL RE-TUNE, AND THE WIDTHS ARE KEPT WHILE THE COUNTS MOVED.
- * `lg`/`xl` now mean THREE columns and four starts at 2242 of grid, so 1376 and 1888 both
- * render three where they used to render four, and 2450 / 2528 / 2560 render four where
- * they used to render five. Keeping the widths puts this table on the same measurement
- * points the ultrawide and covers passes used, which is what makes the MOVE legible here
- * rather than a fresh set of numbers with no history.
+ * 🔴 1376 AND 1888 ARE THE COLLISION GUARDS, RENDERED. The card-width floor is 460 and
+ * `4 × 460 + 3 × 16 = 1888`, so a ladder whose narrow half was governed by the floor
+ * would still render four columns at 1888 and would drop 1376 — the `xl` low end — to
+ * three. 1888 is the reassuring one; 1376 is the one that catches it. The arithmetic
+ * half of this lives in `__tests__/appListingGrid.test.ts`; this is the pixels.
  *
- * 🔴 1376 AND 1888 ARE STILL THE COLLISION GUARDS, RENDERED — the collision just moved
- * with the ladder. The card-width floor is 460 and `3 × 460 + 2 × 16 = 1412`, so a ladder
- * whose narrow half was governed by the floor would drop the whole 960–1411 band to two
- * columns while still rendering three at 1888. 1888 is the reassuring one; the
- * three-column band below 1412 is what catches it, which is why 1000 is no longer merely
- * "the unchanged narrow case" and 1376 sits above the floor-derived rung on purpose. The
- * arithmetic half lives in `__tests__/appListingGrid.test.ts`; this is the pixels.
- *
- * 2450 and 2560 are the four-column band: 2450 is mid-band (deliberately not 2242, the
- * rung itself) and 2560 is what a wide monitor reaches. 2528 is what `/apps` actually
- * gets at a 2560 container with NO rail, so it is measured too rather than inferred.
+ * 2450 and 2560 are the new five-column band: 2450 is mid-band (deliberately not 2364,
+ * the rung itself) and 2560 is what the change is nominally about. 2528 is what `/apps`
+ * actually reaches at a 2560 container, so it is measured too rather than inferred.
+ * 1000 is the unchanged narrow case.
  */
 const CASES = [
-  { containerWidth: 1000, columns: 3, why: 'the md band, below the floor-derived 1412' },
-  { containerWidth: 1376, columns: 3, why: '🔴 COLLISION GUARD — the old xl low end (1408 − 32)' },
-  { containerWidth: 1888, columns: 3, why: '🔴 COLLISION GUARD — the retired 1920 container' },
-  { containerWidth: 2450, columns: 4, why: 'mid-band in the four-column rung' },
-  { containerWidth: 2528, columns: 4, why: 'what /apps reaches at a 2560 container, no rail' },
-  { containerWidth: 2560, columns: 4, why: 'a 2560-wide grid — four, not five' },
+  { containerWidth: 1000, columns: 3, why: 'unchanged narrow case — the md band' },
+  { containerWidth: 1376, columns: 4, why: '🔴 COLLISION GUARD — the xl low end (1408 − 32)' },
+  { containerWidth: 1888, columns: 4, why: '🔴 COLLISION GUARD — exactly 4 × 460 + 3 × 16' },
+  { containerWidth: 2450, columns: 5, why: 'mid-band in the new five-column rung' },
+  { containerWidth: 2528, columns: 5, why: 'what /apps reaches at a 2560 container' },
+  { containerWidth: 2560, columns: 5, why: 'a 2560-wide grid — five, not six' },
 ] as const;
 
 describe('the store grid renders the column ladder it declares', () => {
@@ -271,46 +263,40 @@ describe('the store grid renders the column ladder it declares', () => {
   });
 
   test('🔴 widening the page makes cards BIGGER than the 1920 container did, measured', async () => {
-    // The direction, not just the threshold. The old 1920 container rendered 1888 of grid
-    // at four columns = 460px per card. Every width the store can reach today must beat
-    // that, or a layout pass has partially reversed the larger-covers one at exactly the
-    // viewports it exists to help.
-    //
-    // ⚠️ BOTH ARMS MOVED WITH THE RAIL RE-TUNE, AND THE 1888 ARM IS NOW THE INTERESTING
-    // ONE. It renders THREE columns at 618.67px, i.e. the retired container's own width
-    // got BIGGER cards rather than smaller ones — which is the re-tune's central claim,
-    // measured at the width the covers pass was argued over.
+    // The direction, not just the threshold. `/apps` at a 2560 container renders 2528 of
+    // grid; the old 1920 container rendered 1888 at four columns = 460px. The new layout
+    // must beat that, or the ultrawide pass has partially reversed the larger-covers one
+    // at exactly the viewports it exists to help.
     const old1920 = await renderAtContainerWidth(1888);
     expect(old1920.cascadeLoaded).toBe(true);
-    expect(old1920.columns).toBe(3);
-    expect(old1920.cellWidth).toBeCloseTo(618.67, 1);
-    expect(old1920.cellWidth).toBeGreaterThan(460);
+    expect(old1920.columns).toBe(4);
+    expect(old1920.cellWidth).toBe(460);
 
     const now2560 = await renderAtContainerWidth(2528);
     expect(now2560.cascadeLoaded).toBe(true);
-    expect(now2560.columns).toBe(4);
-    expect(now2560.cellWidth).toBe(620);
-    expect(now2560.cellWidth).toBeGreaterThan(460);
+    expect(now2560.columns).toBe(5);
+    expect(now2560.cellWidth).toBe(492.8);
+    expect(now2560.cellWidth).toBeGreaterThan(old1920.cellWidth);
   });
 
-  test('🔴 FIVE columns is unreachable at the container cap, measured', async () => {
+  test('🔴 SIX columns is unreachable at the container cap, measured', async () => {
     // The rung is declared at 2840 and the container tops out at 2528. Rendering AT the
-    // cap must give four; rendering past the rung must give five — which proves the rung
-    // is real rather than decorative, and that the reachable ladder tops out at four by
-    // ARITHMETIC rather than because five was deleted.
+    // cap must give five; rendering past the rung must give six — which proves the rung
+    // is real rather than decorative, and that the ladder is 4/5 today by ARITHMETIC
+    // rather than because six was deleted.
     const atCap = await renderAtContainerWidth(2528);
     expect(atCap.cascadeLoaded).toBe(true);
-    expect(atCap.columns).toBe(4);
+    expect(atCap.columns).toBe(5);
 
     const pastRung = await renderAtContainerWidth(2900);
     expect(pastRung.cascadeLoaded).toBe(true);
-    expect(pastRung.columns).toBe(5);
+    expect(pastRung.columns).toBe(6);
   });
 
   test('🔴 it is a CONTAINER query, not a media query (a narrow grid on a wide screen)', async () => {
     // THE DISCRIMINATING CASE, and the reason the viewport is held constant at 2880 for
     // every test in this file. A media-query implementation would read the VIEWPORT —
-    // 2880, the top of the ladder — and render five columns into a 900px box, at 164px per
+    // 2880, the top of the ladder — and render six columns into a 900px box, at 135px per
     // card. A container query reads the GRID and renders the two columns 900px earns
     // (900 sits in the sm band, 736–959).
     const m = await renderAtContainerWidth(900);
@@ -319,10 +305,10 @@ describe('the store grid renders the column ladder it declares', () => {
     expect(window.innerWidth, 'the viewport must be far wider than the grid here').toBe(
       VIEWPORT.width
     );
-    expect(m.columns, 'five columns here would mean the ladder is reading the viewport').toBe(2);
+    expect(m.columns, 'six columns here would mean the ladder is reading the viewport').toBe(2);
     expect(m.columns).toBe(listingGridColumnsAt(900));
     // Stated as the counterfactual too, so the test says what it is ruling out.
-    expect(listingGridColumnsAt(VIEWPORT.width)).toBe(5);
+    expect(listingGridColumnsAt(VIEWPORT.width)).toBe(6);
   });
 
   test('🔴 the harness really re-renders — two widths in one test give two answers', async () => {
@@ -343,29 +329,17 @@ describe('the store grid renders the column ladder it declares', () => {
     // a ladder bug at all.
     const widths = CASES.map((c) => c.containerWidth);
     expect(new Set(widths).size).toBe(widths.length);
-    expect(new Set(CASES.map((c) => c.columns))).toEqual(new Set([3, 4]));
+    expect(new Set(CASES.map((c) => c.columns))).toEqual(new Set([3, 4, 5]));
     // And no fixture sits ON a rung — see the note above the table.
     for (const w of widths) {
-      for (const rung of [736, 960, 2242, 2840]) {
+      for (const rung of [736, 960, 1168, 2364, 2840]) {
         expect(w, `fixture ${w} sits exactly on the ${rung} rung`).not.toBe(rung);
       }
     }
-    // 🔴 THE COLLISION GUARDS MUST BOTH BE PRESENT. 1376 is the half that discriminates;
-    // 1888 is kept for band coverage, not as a witness.
-    //
-    // ⚠️ This note used to read "1888 alone is the reassuring half — a floor-governed
-    // narrow half renders four there too". That was TRUE at `origin/main`, where the
-    // four-column rung was floor-derived at `minContentWidthForColumns(4) = 1888`, and it
-    // was STALED by this PR's own ladder re-tune, which moved that rung to the
-    // chrome-derived 2242. Under the mutation today 1888 renders THREE, i.e. it does not
-    // move at all and cannot witness anything. Nothing pinned the claim, so a green suite
-    // stayed silent about it.
-    //
-    // This file's own `CASES` header already states the corrected version — "1888 is the
-    // reassuring one; the three-column band below 1412 is what catches it" — so the two
-    // now agree. Note the browser tier is NOT blind here: `CASES` carries 1000 and 1376,
-    // and both go red under a floor-governed narrow half.
-    expect(widths, 'the old xl-low-end collision guard was dropped').toContain(1376);
-    expect(widths, 'the retired-1920-container collision guard was dropped').toContain(1888);
+    // 🔴 THE COLLISION GUARDS MUST BOTH BE PRESENT. 1888 alone is the reassuring half —
+    // a floor-governed narrow half renders four there too — so a table that kept only
+    // 1888 would read as covering this and would not.
+    expect(widths, 'the xl-low-end collision guard was dropped').toContain(1376);
+    expect(widths, 'the 4 × 460 + 3 × 16 collision guard was dropped').toContain(1888);
   });
 });

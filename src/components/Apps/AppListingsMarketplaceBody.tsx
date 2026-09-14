@@ -568,33 +568,32 @@ export function AppListingsMarketplaceBody() {
           {/* THE COLUMN LADDER — a CSS grid driven by a CONTAINER query, not a
               Mantine `<Grid>`/`<Grid.Col span={…}>`.
 
-              WHAT IT DOES: 1 / 2 / 3 columns exactly where the retired
-              `LISTING_GRID_SPAN` media queries put them (736 / 960px of grid — those
-              breakpoints minus the apps Container's 32px gutter), then FOUR from 2242.
-              The store container is `LISTING_STORE_CONTAINER_SIZE` =
-              `APPS_PAGE_CONTAINER_WIDTH` = 2560, which yields 2528 of grid with no rail
-              — or 2242 with the `/apps` LEFT RAIL open, which is where the four-column
-              rung is derived from (2560 − 10 thin scrollbar − 32 gutter − 276 rail).
-              `/apps` therefore renders FOUR columns at 548.5px with the rail OPEN,
-              599.5px COLLAPSED, and 617.5px with NO RAIL — all three wider than the
-              460px four-up the 1920 container shipped,
-              which is the point: the `LISTING_CARD_MIN_WIDTH` floor is 460, so a column
-              is only added where every card ends up at least as big as it is today.
-              ⚠️ THERE ARE THREE RAIL STATES AND AN EARLIER REVISION QUOTED TWO OF THEM AS
-              ONE — it read &quot;548.5px with the rail open, or 620px collapsed&quot;, but 620 is
-              the NO-RAIL figure and collapsed is 599.5. All three are stated above,
-              derived the same way the four-column rung is (`2560 − 10 scrollbar − 32
-              gutter − chrome`), where chrome is 276 open / 72 collapsed / 0 none. The
-              620/2528 pairing found elsewhere omits the 10px scrollbar the rung itself
-              deducts; it is the same quantity measured by a different convention. A
-              FIFTH column would need 2840 of grid and is unreachable at this cap in
-              every rail state; the rung is declared anyway so a future cap raise
-              engages it.
+              WHAT IT DOES: 1 / 2 / 3 / 4 columns exactly where the retired
+              `LISTING_GRID_SPAN` media queries put them (736 / 960 / 1168px of grid —
+              those breakpoints minus the apps Container's 32px gutter), then FIVE from
+              2364 and SIX from 2840, both straight out of the 460px card-width floor
+              (`n × 460 + (n − 1) × 16`).
 
-              ⚠️ THE LADDER WAS RE-TUNED WHEN THE NAV BECAME THAT RAIL, AND THE
-              1600–2240 BAND DROPPED FROM FOUR COLUMNS TO THREE. That is a deliberate
-              density decision, not a side effect — `LISTING_GRID_SPAN` carries the
-              measured before/after and the reason a narrower rail does not avoid it.
+              The store container is `LISTING_STORE_CONTAINER_SIZE` =
+              `APPS_PAGE_CONTAINER_WIDTH` = 2560. At that container, net of a 10px
+              scrollbar and the 32px gutter, the three rail states land as:
+
+                rail OPEN       2242 of grid   FOUR columns at 548.5px
+                COLLAPSED       2446 of grid   FIVE columns at 476.4px
+                NO RAIL         2518 of grid   FIVE columns at 490.8px
+
+              All three clear the 460px floor, which is the point: a column is only ever
+              added where every card ends up at least as big as it is today.
+
+              ⚠️ A LEFT-RAIL RE-TUNE BRIEFLY MOVED THIS AND IS REVERTED. It replaced the
+              1168 and 2364 rungs with a chrome-derived pair (four from 2242, five from
+              2840) so an OPEN rail still reached four columns — but the ladder keys on
+              GRID WIDTH and cannot tell WHY the grid is narrow, so viewers with no rail,
+              with it hidden below 1300px, or with it collapsed paid a column they had the
+              width for. Under it, this paragraph read &quot;FOUR columns at 548.5px open,
+              599.5 collapsed, 617.5 no rail&quot;; collapsed and no-rail are FIVE columns
+              again. See `WIDE_COLUMN_COUNTS` in `appListingGrid.ts` for why a rail-aware
+              rung is not buildable at this layer.
 
               WHY IT MOVED OFF `<Grid>`: `Grid.Col span` can only read a theme
               BREAKPOINT, and `xl` (88em / 1408px) is the top of Mantine's default

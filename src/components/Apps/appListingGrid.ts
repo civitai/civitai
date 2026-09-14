@@ -1,5 +1,4 @@
 import { APPS_CONTAINER_GUTTER, APPS_PAGE_CONTAINER_WIDTH } from '~/components/Apps/appsPageWidths';
-import { APPS_RESERVED_SCROLLBAR, appsRailChromeWidth } from '~/components/Apps/appsRailGeometry';
 
 /**
  * App Store Listings (W13) — the `/apps` store's GEOMETRY constants, split out of
@@ -69,10 +68,11 @@ import { APPS_RESERVED_SCROLLBAR, appsRailChromeWidth } from '~/components/Apps/
  * viewports: the interesting widths are the ones adjacent to a retired rung, and no
  * round number lands near 2406.
  *
- * ⚠️ AND THE COST IS NOT ONLY PAID BY VIEWERS WHO SEE A RAIL. The rung is a GLOBAL
- * constant on GRID width; the rail is a CONDITIONAL per-viewer cost — see the note on
- * {@link LISTING_FOUR_COLUMN_MIN_WIDTH} for the three populations that pay it with no
- * rail rendered.
+ * ⚠️ THAT COST FELL ON VIEWERS WHO NEVER SAW A RAIL, AND IT IS WHY THE RE-TUNE WAS
+ * REVERTED. The rung is a GLOBAL constant on GRID width while the rail is a CONDITIONAL
+ * per-viewer cost, so no-rail, below-1300 and collapsed viewers paid a column they had
+ * the width for. See {@link WIDE_COLUMN_COUNTS} for the measurements and why a
+ * rail-aware rung is not buildable at this layer.
  *
  * ⚠️ A NARROWER RAIL DOES NOT AVOID THIS — measured, not assumed. A 200px rail keeps
  * four columns at 1440 but at 283.5px each, which is worse than either option here.
@@ -137,8 +137,8 @@ export const LISTING_GRID_SPAN = {
   base: 12,
   sm: 6,
   md: 4,
-  lg: 4,
-  xl: 4,
+  lg: 3,
+  xl: 3,
 } as const;
 
 /**
@@ -197,14 +197,10 @@ export const LISTING_GRID_GUTTER = 16;
 /**
  * 🔴 THE MINIMUM CARD WIDTH A WIDE RUNG OF THE LADDER MUST HOLD, px.
  *
- * ⚠️ IT IS NO LONGER THE THING THE WIDE THRESHOLDS ARE DERIVED FROM, AND THAT DEMOTION
- * IS THE RAIL RE-TUNE'S ONE REAL LOSS OF RIGOUR — stated here rather than left to be
- * discovered. The four-column rung is now set by the page's own chrome
- * ({@link LISTING_FOUR_COLUMN_MIN_WIDTH}); this constant has become the FLOOR that rung
- * must clear rather than the rule that places it, and that direction is asserted in
- * `__tests__/appListingGrid.test.ts` instead of falling out of the arithmetic. A rung
- * can therefore now be moved without moving this — which is exactly why the assertion
- * exists.
+ * It IS what the wide thresholds are derived from, through
+ * {@link minContentWidthForColumns}. ⚠️ A reverted rail re-tune briefly demoted it to a
+ * floor that a chrome-derived rung merely had to CLEAR; that rung is gone and the
+ * derivation is restored, so moving this constant moves the wide rungs again.
  *
  * ── WHY 460, AND WHY IT IS NOT "THE NARROWEST CARD WE EVER SHIPPED" ─────────────────
  * 460 is the card width the store renders TODAY at its widest: four columns in the
@@ -286,101 +282,38 @@ export function minContentWidthForColumns(columns: number): number {
  * unreachability explicitly, so raising the cap past 2840 fails loudly and the density
  * decision gets made deliberately rather than inherited.
  *
- * ⚠️ THE PARAGRAPHS ABOVE DESCRIBE THE PRE-RAIL LADDER AND ARE KEPT ONLY AS PROVENANCE.
- * They are superseded by {@link WIDE_COLUMN_STEPS} below, which the rail re-tune
- * replaced this list with. Do not restore `[5, 6]` from them.
+ * ⚠️ A rail re-tune briefly replaced this list with hand-written rungs keyed to the
+ * rail's width. That is REVERTED — `[5, 6]` is live again, and the paragraphs above
+ * describe the ladder that actually ships.
  */
 
 /** One rung of the ladder: at `minContentWidth` px of grid and up, render `columns`. */
 export type ListingGridColumnStep = { minContentWidth: number; columns: number };
 
 /**
- * THE FOUR-COLUMN RUNG, px of grid — and the one threshold in this file that is derived
- * from the PAGE'S OWN CHROME rather than from a card-width floor.
+ * The wide half of the ladder, as COLUMN COUNTS derived from the card-width floor via
+ * {@link minContentWidthForColumns} — NOT from the page chrome.
  *
- * `2560 − 10 − 32 − 276 = 2242`: the widest common desktop, minus a reserved thin
- * scrollbar, minus the apps `Container`'s gutter, minus the open rail plus its gap. So
- * the fourth column arrives exactly at the point where a 2560 monitor with the rail
- * OPEN can hold it, and nowhere narrower — which is what makes 2560 render four cards
- * at 548.5px instead of three at 750.
+ * ⚠️ THE LEFT-RAIL RE-TUNE THAT USED TO LIVE HERE IS REVERTED. It replaced these counts
+ * with hand-written rungs keyed to the rail's own width (a four-column rung at
+ * `2560 − 10 − 32 − 276 = 2242`) so that an OPEN rail still reached four columns. The
+ * cost was that the ladder is keyed on GRID WIDTH, which cannot tell WHY the grid is
+ * narrow — so viewers with no rail at all, with the rail hidden below 1300px, or with it
+ * collapsed paid the same lost column despite having the width. Measured: 1440 with no
+ * rail went 4 × 338 → 3 × 455, and 2560 with no rail went 5 × 491 → 4 × 618, both well
+ * past the 460px floor these rungs derive from.
  *
- * 🔴 IT IS PLACED FOR THE SCROLLBAR-RESERVING PLATFORM, WHICH IS THE TIGHTER OF THE
- * TWO. macOS overlay scrollbars and touch reserve nothing, so those yield 2252 of grid
- * — 10px MORE — and clear this rung comfortably. Placing it at 2252 instead would have
- * left every Windows and Linux 2560 monitor 10px short of its own four-column layout,
- * which is the silent-off-by-a-scrollbar defect the container-query note below already
- * records once.
+ * Making the rung rail-aware was considered and rejected as unbuildable at this layer:
+ * it needs the rail STATE in the CSS selector, not just the width, because a wider grid
+ * must sometimes render FEWER columns (rail-open at 1920 yields 1602px of grid and wants
+ * three, while no-rail at 1440 yields 1398px and wants four). No single width-ordered
+ * rung set can satisfy both. That would mean three scoped rule sets plus a rewrite of
+ * the SCSS↔TS seam parser, on a density surface that must then stay in sync three ways.
  *
- * 🔴 IT HAS **ZERO PIXELS OF MARGIN** AT THE ONE VIEWPORT IT EXISTS FOR, AND THAT IS THE
- * SHARPEST THING ABOUT IT. The grid at a 2560 viewport is `2252 − S`, where `S` is the
- * reserved scrollbar; the rung is 2242, so four columns arrive **iff `S ≤ 10`**. Measured:
- * `S=10 → 2242 → 4 cols`, `S=11 → 2241 → 3 cols` at **736.3px** each — precisely the
- * "silent off-by-a-scrollbar" failure the container-query note below records as a lesson
- * already learned once.
- *
- * ⚠️ THE MECHANISM IS A WIDER SCROLLBAR, AND ONLY THAT. An earlier draft offered "an 11px
- * thin gutter, 125% OS scaling, or any browser zoom", and the last two are NOT mechanisms
- * for `S > 10`: scaling and zoom change the CSS VIEWPORT (a 2560 panel at 125% reports
- * 2048 CSS px), so they never produce "a 2560 viewport with S=11" — they land on three
- * columns for an unrelated reason and at a different card width. The same draft said
- * 750px, which is `2252/3` with the two 16px gutters forgotten. Right conclusion, two
- * wrong causes and a wrong number. The retired five-column rung had 154px of
- * slack here; this one has none, and the slack was spent buying the four-column outcome
- * at exactly 2560.
- *
- * 🔴 NO TEST ON THIS REPO CAN OBSERVE THE PLATFORM THIS WAS PLACED FOR. Measured in the
- * pinned `chrome-headless-shell`: `scrollbar-width: thin`, `auto` and `none` ALL report a
- * 0px gutter, with and without `--disable-features=OverlayScrollbar`. The browser tier is
- * structurally blind to a reserving platform, so `S` is only ever exercised at 0 —
- * `__tests__/appsRailGeometry.test.ts` pins the margin arithmetic explicitly instead,
- * because the alternative (`expect(APPS_RESERVED_SCROLLBAR).toBe(10)`) asserts a literal
- * against itself and cannot fail for the reason that matters.
- *
- * ⚠️ IT IS NOT DERIVED FROM {@link LISTING_CARD_MIN_WIDTH}, and the check that keeps it
- * honest runs the other direction: `__tests__/appListingGrid.test.ts` asserts the card
- * width AT this rung (548.5px) still clears that floor. A threshold chosen from the
- * chrome is only acceptable while it lands above the floor; if a future rail width
- * pushes it below, that test goes red rather than the store quietly shipping small
- * cards.
+ * Reverting confines the whole cost to viewers who OPENED the rail, and leaves every
+ * other cohort on exactly the behaviour `main` ships.
  */
-export const LISTING_FOUR_COLUMN_MIN_WIDTH =
-  APPS_PAGE_CONTAINER_WIDTH -
-  APPS_RESERVED_SCROLLBAR -
-  APPS_CONTAINER_GUTTER -
-  appsRailChromeWidth(false);
-
-/**
- * The rungs added ABOVE the legacy Mantine ladder.
- *
- * 🔴 AN EXPLICIT TABLE, NOT A COUNT LIST RUN THROUGH ONE FLOOR — AND THE CHANGE IS
- * DELIBERATE RATHER THAN A LOSS OF RIGOUR. Before the rail these were `[5, 6]` fed to
- * {@link minContentWidthForColumns}, i.e. both derived from the single 460px card
- * floor. They no longer share one derivation: the four-column rung is set by the PAGE
- * CHROME (see {@link LISTING_FOUR_COLUMN_MIN_WIDTH}) and the five-column rung is still
- * a card-width figure. Pretending one floor produced both would mean inventing a floor
- * that produces neither number, so each rung carries its own reason instead — and the
- * invariant that used to fall out of the shared derivation ("a column is never added
- * below the floor") is asserted directly in the test rather than assumed.
- *
- * 🔴 FIVE IS DECLARED BUT UNREACHABLE AT TODAY'S CONTAINER CAP, ON PURPOSE — and it is
- * unreachable in ALL THREE rail states, which is a stronger claim than the old
- * six-column rung's and worth stating because that note only had one state to consider.
- * Max grid is 2528 with no rail, 2456 collapsed, 2252 open; 2840 clears none of them.
- * The rung is kept rather than deleted so a future container-cap raise engages it
- * automatically; `__tests__/appListingGrid.test.ts` asserts the unreachability
- * explicitly, so raising the cap past 2840 fails loudly and the density decision gets
- * made deliberately rather than inherited.
- *
- * 2840 is carried over unchanged from what used to be the SIX-column rung
- * (`6 × 460 + 5 × 16`). Re-used rather than re-derived: it is a real card-floor figure,
- * five columns at 2840 gives 555.2px cards — comfortably over the 460 floor and slightly
- * over what four columns get at their own rung — and inventing a new number for a rung
- * nobody can reach would be arithmetic for its own sake.
- */
-const WIDE_COLUMN_STEPS: readonly ListingGridColumnStep[] = [
-  { minContentWidth: LISTING_FOUR_COLUMN_MIN_WIDTH, columns: 4 },
-  { minContentWidth: 2840, columns: 5 },
-];
+const WIDE_COLUMN_COUNTS = [5, 6] as const;
 
 /**
  * 🔴 THE COLUMN LADDER — the store grid's column count as a function of the GRID's own
@@ -438,10 +371,9 @@ const WIDE_COLUMN_STEPS: readonly ListingGridColumnStep[] = [
  * why the behaviour is kept and the claim was retired instead. Both halves are driven
  * end-to-end in `AppListingsMarketplaceBody.stretch.geometry.test.tsx`.
  *
- * The WIDE rungs (4 / 5) come from {@link WIDE_COLUMN_STEPS}, which carries a separate
- * recorded derivation PER RUNG — the four-column one from the page chrome, the
- * five-column one from the card-width floor. See that table for why they no longer share
- * one.
+ * The WIDE rungs come from {@link WIDE_COLUMN_COUNTS} through
+ * {@link minContentWidthForColumns}, i.e. straight out of the card-width floor — one
+ * derivation for both, which is what the reverted rail re-tune had split in two.
  *
  * 🔴 THE LOOP BELOW NEVER READS {@link LISTING_CARD_MIN_WIDTH} FOR A NARROW RUNG, AND
  * THAT SEPARATION IS LOAD-BEARING RATHER THAN TIDY. At the current 460 floor,
@@ -475,7 +407,9 @@ export const LISTING_GRID_COLUMN_STEPS: readonly ListingGridColumnStep[] = (() =
     if (steps.length > 0 && steps[steps.length - 1].columns === columns) continue;
     steps.push({ minContentWidth, columns });
   }
-  for (const step of WIDE_COLUMN_STEPS) steps.push({ ...step });
+  for (const columns of WIDE_COLUMN_COUNTS) {
+    steps.push({ minContentWidth: minContentWidthForColumns(columns), columns });
+  }
   return steps;
 })();
 

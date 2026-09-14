@@ -110,17 +110,20 @@ export default function AppsPage() {
             the store's column arithmetic true.
             The store spends that width as an explicit column ladder driven by a
             container query (`LISTING_GRID_COLUMN_STEPS`): 1/2/3/4 exactly where the
-            retired Mantine breakpoints put them, then 4 from 2242px of grid — so this
-            page renders FOUR columns on a 2560 monitor in every rail state, at 548.5px
-            with the `/apps` left rail OPEN, 599.5px COLLAPSED, and 617.5px with NO RAIL.
-            ⚠️ An earlier revision read &quot;four at 620px if the rail is collapsed away&quot;,
-            conflating two of the three states: 620 is the no-rail figure (and omits the
-            10px scrollbar the four-column rung itself deducts), while collapsed is
-            599.5. ⚠️ THE LADDER WAS
-            RE-TUNED WITH THAT RAIL: `lg`/`xl` mean three columns now and the 1600–2240
-            band renders three, deliberately — see `LISTING_GRID_SPAN` for the measured
-            before/after and why a narrower rail does not avoid it. A fifth column is
-            declared at 2840 and is unreachable at this cap in every rail state. Container
+            retired Mantine breakpoints put them (736 / 960 / 1168px of grid), then 5
+            from 2364 and 6 from 2840, both from the 460px card-width floor. On a 2560
+            monitor, net of a 10px scrollbar and the 32px gutter, the three rail states
+            land as FOUR columns at 548.5px with the left rail OPEN, FIVE at 476.4px
+            COLLAPSED, and FIVE at 490.8px with NO RAIL. The sixth column is declared and
+            unreachable at this cap in every rail state.
+
+            ⚠️ A LEFT-RAIL RE-TUNE BRIEFLY CHANGED THIS AND IS REVERTED. It made `lg`/`xl`
+            mean three columns and moved four to 2242 of grid, so that an OPEN rail still
+            reached four — but the ladder keys on grid WIDTH and cannot tell WHY the grid
+            is narrow, so no-rail, below-1300 and collapsed viewers paid a column they had
+            the width for. Two earlier revisions of this paragraph described that ladder
+            (one of them also conflating the no-rail 620px figure with the collapsed
+            state); both are superseded by the numbers above. Container
             and ladder are pinned together in `appListingGrid.ts` and its test so neither
             can drift alone. */}
         <AppListingsMarketplaceBody />

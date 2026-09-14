@@ -164,7 +164,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
         }),
       },
     },
-    // `AppsPageLayout` -> `useAppsNavSections` reads this; the real-chain fixture below renders
+    // `AppsPageLayout` -> `AppsSubNav` reads this; the real-chain fixture below renders
     // the layout, so the factory has to carry it or that render throws.
     blocks: { getNavSummary: { useQuery: () => ({ data: undefined }) } },
   },
@@ -205,24 +205,19 @@ const VIEWPORT = { width: 2880, height: 900 } as const;
 /**
  * TWO column counts, both NAMED in every assertion.
  *
- * 1376 is mid-band in the THREE-column rung; 2450 is mid-band in the FOUR-column rung.
- * Neither sits on a ladder threshold — 2242 itself is deliberately avoided, since a
- * fixture on its own boundary cannot detect an off-by-one. At 1376 the first row holds
- * three of the five cards, at 2450 four; both prefixes contain at least one tall card and
- * one short one.
- *
- * ⚠️ THE GRID WIDTHS ARE UNCHANGED; THE COUNTS MOVED with the rail re-tune (`lg`/`xl` now
- * mean three columns and four starts at 2242). Both fixtures are still comfortably
- * mid-band under the new ladder, so re-deriving the COUNTS rather than inventing two new
- * WIDTHS keeps the mid-band property this file depends on.
+ * 1376 is the four-column band (the `xl` low end, and the collision guard the ladder
+ * suite pins); 2450 is mid-band in the five-column rung. Neither sits on a ladder
+ * threshold — 2364 itself is deliberately avoided, since a fixture on its own boundary
+ * cannot detect an off-by-one. At 1376 the first row holds four of the five cards, at
+ * 2450 all five; both prefixes contain at least one tall card and one short one.
  */
 const WIDTHS = [
-  { gridWidth: 1376, columns: 3 },
-  { gridWidth: 2450, columns: 4 },
+  { gridWidth: 1376, columns: 4 },
+  { gridWidth: 2450, columns: 5 },
 ] as const;
 
 /** The ladder's rungs, so a fixture can be checked against them. */
-const RUNGS = [736, 960, 2242, 2840];
+const RUNGS = [736, 960, 1168, 2364, 2840];
 
 /** 2dp, so sub-pixel layout is visible but float noise is not. */
 const q = (n: number) => Math.round(n * 100) / 100;
@@ -444,7 +439,7 @@ async function renderRealChain(
  * are unaffected by a scrollbar. A container query measures the real box. So on platforms
  * that reserve a scrollbar every rung now fires ~10px of viewport later than it used to:
  *
- *   viewport 992 -> grid 950 -> TWO columns, where the media query said three.
+ *   viewport 1200 -> grid 1158 -> THREE columns, where the media query said four.
  *
  * That is the more correct answer — the content never had those 10px — which is why the
  * behaviour is kept and the "byte-equivalent below 1888" claim was retired instead. The
@@ -458,13 +453,13 @@ async function renderRealChain(
  * without changing the browser launch args for both browser projects — out of scope for
  * this PR, and a change that would move every existing geometry number.
  *
- * The tests below split that honestly. All but one drive the real chain end-to-end — one at
- * a narrow viewport, three at wider ones so every rung of the ladder is covered — and
+ * The tests below split that honestly. Three of the four drive the real chain end-to-end —
+ * one at a narrow viewport, two at wide ones so BOTH halves of the ladder are covered — and
  * assert the relationship that holds on every platform (the grid is derived from the scroll
- * box, through the real `MainContent`). 🔴 NONE of those can tell a container query from a
- * media query, because at reserve 0 the box and the viewport are the same number;
- * measured, they stay green under the `@container` → `@media` mutant. ALL of the
- * box-vs-viewport discrimination lives in the LAST, which reproduces the production case
+ * box, through the real `MainContent`). 🔴 NONE of those three can tell a container query
+ * from a media query, because at reserve 0 the box and the viewport are the same number;
+ * measured, all three stay green under the `@container` → `@media` mutant. ALL of the
+ * box-vs-viewport discrimination lives in the FOURTH, which reproduces the production case
  * by narrowing the box by `THIN_SCROLLBAR_PX` and is deterministic in any harness. The
  * `expect(reserve).toBe(0)` in the first is a config tripwire, not a guard.
  */
@@ -514,24 +509,13 @@ describe('🔴 the grid width comes from the SCROLL BOX, not from the viewport',
   /**
    * 🔴 THE WIDE RUNGS, THROUGH THE SAME REAL CHAIN. Without this, `renderRealChain` was
    * called twice and both times at 1200x800 — so the viewport→grid step was exercised only
-   * around the narrow rungs, and the wide ones were reached exclusively through
+   * around rungs 3 and 4, and the wide rungs (2364 / 2840) were reached exclusively through
    * `renderAtGridWidth`, which sets a width on a wrapper: the exact shape this file's own
    * header calls "blind to the step in front of it". The claim that both halves of the
    * ladder are driven end-to-end is only true with this test present.
    *
-   * Both viewports are mid-band, not on a rung: 2200 → 2168 of grid (the three-column band
-   * runs 960–2241) and 2400 → 2368 (four-column, 2242–2839).
-   *
-   * 🔴 THE FIVE-COLUMN RUNG CANNOT BE DRIVEN THROUGH A REAL VIEWPORT AT ALL, AND THAT IS
-   * A FACT ABOUT THE LADDER RATHER THAN A GAP IN THIS FILE. `APPS_PAGE_CONTAINER_WIDTH`
-   * caps the Container at 2560, so the grid tops out at 2528 of content no matter how wide
-   * the screen is — measured here: a 3000px viewport still yields 2528. The rail re-tune
-   * moved that rung from 2364 to 2840, i.e. PAST the cap, which is precisely what
-   * `__tests__/appListingGrid.test.ts` asserts under "FIVE columns is declared but
-   * UNREACHABLE in EVERY rail state". So the widest rung a real viewport can reach is
-   * FOUR, and that is what the second row exercises. A third row at 3000 was written and
-   * removed after it failed with `expected 2528 to be 2968` — recorded so nobody adds it
-   * back expecting the container to grow.
+   * Both viewports are mid-band, not on a rung: 2300 → 2268 of grid (the four-column band
+   * runs 1168–2363) and 2500 → 2468 (five-column, 2364–2839).
    *
    * ⚠️ LIKE TEST 1, THESE DO NOT DISCRIMINATE BOX FROM VIEWPORT. With the harness reserve
    * at 0 the two numbers coincide, so a media-query implementation passes them — measured:
@@ -541,8 +525,8 @@ describe('🔴 the grid width comes from the SCROLL BOX, not from the viewport',
    * in the reserved-scrollbar test below, and nowhere else.
    */
   test.each([
-    { viewportWidth: 2200, gridWidth: 2168, columns: 3 },
-    { viewportWidth: 2400, gridWidth: 2368, columns: 4 },
+    { viewportWidth: 2300, gridWidth: 2268, columns: 4 },
+    { viewportWidth: 2500, gridWidth: 2468, columns: 5 },
   ])(
     'the real chain at viewport $viewportWidth gives $gridWidth of grid and $columns columns',
     async ({ viewportWidth, gridWidth, columns }) => {
@@ -555,36 +539,28 @@ describe('🔴 the grid width comes from the SCROLL BOX, not from the viewport',
     }
   );
 
-  test('🔴 with a thin scrollbar reserved, viewport 992 gives TWO columns, not three', async () => {
+  test('🔴 with a thin scrollbar reserved, viewport 1200 gives THREE columns, not four', async () => {
     // THE PRODUCTION-SHAPED CASE, and the one the retired media queries got wrong. At a
-    // 992px viewport the `md` breakpoint fires and `Grid.Col span` gave THREE columns
-    // regardless of the scrollbar. The grid actually has 992 − 10 − 32 = 950px, which is
-    // ten pixels short of the three-column rung (960), so two is the honest answer.
-    //
-    // ⚠️ RE-POINTED FROM `lg`/1200 TO `md`/992 BY THE RAIL RE-TUNE, AND THE RE-POINT IS
-    // WHAT KEEPS THIS TEST ALIVE RATHER THAN VACUOUS. It used to straddle the 1168
-    // four-column rung at viewport 1200. That rung is GONE — `md`, `lg` and `xl` all mean
-    // three columns now — so at 1200 the box-and-viewport answers are BOTH three and the
-    // test would pass while discriminating nothing, which is the one thing this file says
-    // it is here for. `md` is the lowest rung a Mantine breakpoint still owns, and 992 is
-    // the only viewport at which a reserved scrollbar changes its answer.
-    const VIEWPORT = { width: 992, height: 800 };
+    // 1200px viewport the `lg` breakpoint fires and `Grid.Col span` gave FOUR columns
+    // regardless of the scrollbar. The grid actually has 1200 − 10 − 32 = 1158px, which is
+    // one pixel short of the four-column rung (1168), so three is the honest answer.
+    const VIEWPORT = { width: 1200, height: 800 };
     const m = await renderRealChain(VIEWPORT, VIEWPORT.width - THIN_SCROLLBAR_PX);
 
     expect(m.availableInBox).toBe(VIEWPORT.width - THIN_SCROLLBAR_PX);
-    expect(m.gridWidth).toBe(950);
+    expect(m.gridWidth).toBe(1158);
     expect(
       m.columns,
-      'the ladder is tracking the viewport rather than the box it is in — three columns ' +
+      'the ladder is tracking the viewport rather than the box it is in — four columns ' +
         'here is the retired media-query answer, and it truncates every card by the ' +
         'width the scrollbar took'
-    ).toBe(2);
+    ).toBe(3);
 
-    // Stated as the counterfactual, so the test says what it rules out: the `md` rung
-    // fires at viewport 992 but needs 960 of GRID, which this box does not have.
-    expect(MANTINE_BREAKPOINT_PX.md).toBe(VIEWPORT.width);
-    expect(listingGridColumnsAt(VIEWPORT.width - APPS_CONTAINER_GUTTER)).toBe(3);
-    expect(listingGridColumnsAt(m.gridWidth)).toBe(2);
+    // Stated as the counterfactual, so the test says what it rules out: the `lg` rung
+    // fires at viewport 1200 but needs 1168 of GRID, which this box does not have.
+    expect(MANTINE_BREAKPOINT_PX.lg).toBe(VIEWPORT.width);
+    expect(listingGridColumnsAt(VIEWPORT.width - APPS_CONTAINER_GUTTER)).toBe(4);
+    expect(listingGridColumnsAt(m.gridWidth)).toBe(3);
   });
 });
 

@@ -7,16 +7,10 @@ import {
   APPS_RAIL_DEFAULT_STATE,
   APPS_RAIL_GAP,
   APPS_RAIL_MIN_VIEWPORT,
-  APPS_RESERVED_SCROLLBAR,
   appsRailChromeWidth,
   parseAppsRailState,
 } from '~/components/Apps/appsRailGeometry';
 import { SUBNAV_STICKY_GAP } from '~/hooks/useSubnavBottom';
-import {
-  LISTING_FOUR_COLUMN_MIN_WIDTH,
-  listingCardWidthAt,
-  listingGridColumnsAt,
-} from '~/components/Apps/appListingGrid';
 // 🔴 THE PARSER PRODUCTION ACTUALLY RUNS. `_app`'s `getInitialProps` calls
 // `parseCookies(getCookies(ctx))`, so this zod schema — not any helper in the rail's own
 // module — is what decides the SSR seed. An earlier revision of this file tested a
@@ -73,55 +67,20 @@ describe('the rail costs what the ladder and the layout think it costs', () => {
     expect(APPS_RAIL_GAP).toBe(16);
   });
 
-  test('🔴 the four-column store rung has ZERO margin, and this is where that is stated', () => {
-    // ⚠️ `expect(APPS_RESERVED_SCROLLBAR).toBe(10)` WAS THE WHOLE TEST HERE, AND IT
-    // ASSERTED A LITERAL AGAINST ITSELF — it cannot fail for the reason that matters, which
-    // is what the allowance BUYS. An audit priced it: the grid at a 2560 viewport is
-    // `2252 − S`, against a four-column rung of 2242, so four columns arrive **iff S ≤ 10**.
-    // There is no slack at all at the one viewport the rung was derived for.
-    // 🔴 AND THE FIRST REPLACEMENT FOR IT WAS JUST AS INERT — recorded because the second
-    // attempt is only credible with the first one's failure written down. It defined
-    // `gridAt2560(S) = CONTAINER − S − GUTTER − railChrome(false)`, which is
-    // CHARACTER-FOR-CHARACTER the definition of `LISTING_FOUR_COLUMN_MIN_WIDTH`, and then
-    // asserted the two were equal. That is `X === X` for ANY values of the four inputs.
-    // Mutation-proven by a delta audit: widening `APPS_RAIL_WIDTH` 260 → 300 (which
-    // silently moves the rung to 2202 and makes "zero margin at 2560" a claim about a
-    // different number) left it GREEN; so did `APPS_PAGE_CONTAINER_WIDTH` 2560 → 2600.
-    //
-    // So the rung is pinned as an INDEPENDENTLY WRITTEN LITERAL. 2242 is typed out here
-    // and derived there; that is the only arrangement in which moving any input can fail.
-    expect(
-      LISTING_FOUR_COLUMN_MIN_WIDTH,
-      'the four-column rung moved. It is derived from the container, the scrollbar ' +
-        'allowance, the gutter and the RAIL WIDTH — so a rail-width change silently ' +
-        'retunes the store ladder. Re-read the cost table on LISTING_GRID_SPAN before ' +
-        're-baselining this number.'
-    ).toBe(2242);
-    expect(APPS_RESERVED_SCROLLBAR).toBe(10);
-
-    // THE MARGIN, NAMED: exactly zero — the widest grid a 2560 viewport can yield with
-    // the rail open, minus the rung, against literals on both sides.
-    expect(2560 - 10 - 32 - 276).toBe(2242);
-    expect(2560 - 10 - 32 - 276 - 2242).toBe(0);
-
-    // …and the cliff is one pixel away, in the one direction a real platform can move it.
-    expect(listingGridColumnsAt(2242), 'S=10 — the allowance this repo assumes').toBe(4);
-    expect(
-      listingGridColumnsAt(2241),
-      'S=11 — an 11px thin gutter and a 2560 monitor renders THREE 736.3px cards instead ' +
-        'of four 548.5px ones. (A WIDER SCROLLBAR is the only mechanism: OS scaling and ' +
-        'browser zoom change the CSS viewport, not S.)'
-    ).toBe(3);
-    expect(listingCardWidthAt(2241, 3)).toBeCloseTo(736.33, 2);
-
-    // 🔴 AND WHY THIS LIVES IN THE NODE TIER RATHER THAN THE BROWSER ONE. Measured in the
-    // pinned `chrome-headless-shell`: `scrollbar-width: thin`, `auto` and `none` ALL report
-    // a 0px gutter, with and without `--disable-features=OverlayScrollbar`. Every browser
-    // test therefore runs at S=0, so the reserving platform — the one this rung was placed
-    // for — is structurally invisible to that tier. Arithmetic is the only instrument this
-    // repo has for it, so the arithmetic is asserted rather than assumed.
-    expect(listingGridColumnsAt(2252), 'S=0 — every browser test on this repo').toBe(4);
-  });
+  /**
+   * ⚠️ THE ZERO-MARGIN TEST THAT LIVED HERE IS DELETED WITH THE RUNG IT PINNED.
+   *
+   * It asserted `LISTING_FOUR_COLUMN_MIN_WIDTH === 2242` — the four-column store rung the
+   * left-rail re-tune derived from the page chrome (`2560 − 10 scrollbar − 32 gutter −
+   * 276 rail`), and the fact that this left EXACTLY ZERO margin at a 2560 viewport, so
+   * four columns arrived iff the scrollbar allowance held at 10px.
+   *
+   * That re-tune is reverted — the wide rungs come from the card-width floor again — so
+   * there is no chrome-derived rung to pin and no zero-margin to defend. What survives
+   * above is the rail's own COST arithmetic (276 open / 72 collapsed, and the side gap
+   * equalling the top gap), which is about chrome width and is unaffected by which
+   * column ladder ships.
+   */
 });
 
 describe('🔴 SEAM — the stylesheet switches at exactly APPS_RAIL_MIN_VIEWPORT', () => {

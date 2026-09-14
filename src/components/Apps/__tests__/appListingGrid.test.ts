@@ -3,7 +3,6 @@ import path from 'path';
 import { describe, expect, test } from 'vitest';
 import {
   LISTING_CARD_MIN_WIDTH,
-  LISTING_FOUR_COLUMN_MIN_WIDTH,
   LISTING_GRID_COLUMN_STEPS,
   LISTING_GRID_GUTTER,
   LISTING_GRID_SPAN,
@@ -14,7 +13,6 @@ import {
   minContentWidthForColumns,
 } from '~/components/Apps/appListingGrid';
 import { APPS_CONTAINER_GUTTER, APPS_PAGE_CONTAINER_WIDTH } from '~/components/Apps/appsPageWidths';
-import { APPS_RESERVED_SCROLLBAR, appsRailChromeWidth } from '~/components/Apps/appsRailGeometry';
 
 /**
  * `/apps` store GEOMETRY pins (blocking `unit` project).
@@ -30,47 +28,20 @@ import { APPS_RESERVED_SCROLLBAR, appsRailChromeWidth } from '~/components/Apps/
  */
 
 describe('LISTING_GRID_SPAN — the legacy breakpoint spans the narrow ladder is derived from', () => {
-  /**
-   * 🔴 THE RAIL RE-TUNE'S HEADLINE ASSERTION, AND THE ONE A DESIGNER IS SIGNING OFF.
-   *
-   * `lg`/`xl` moved 3 → 4 (four columns → THREE), so the legacy breakpoint half tops out
-   * at three and the 1600–2240 band renders three store columns where it rendered four.
-   * The reason is the 276px left rail: against the OLD ladder the rail kept four columns
-   * at 1600 and 1920 and shrank each card by 69px (377.5 → 308.5 and 457.5 → 388.5),
-   * partially undoing the 2026-07 "larger covers" pass at the two commonest desktop
-   * widths. Dropping a column spends the loss on wider cards instead, which is the
-   * direction both prior passes chose.
-   *
-   * RED AT `origin/main` BY CONSTRUCTION: this file's previous revision asserted
-   * `LISTING_GRID_SPAN.xl === 3`, i.e. exactly the opposite value.
-   */
-  test('🔴 lg and xl yield THREE columns (span 4 of 12) — the rail re-tune', () => {
-    expect(LISTING_GRID_SPAN.lg).toBe(4);
-    expect(LISTING_GRID_SPAN.xl).toBe(4);
-    expect(12 / LISTING_GRID_SPAN.xl).toBe(3);
-    expect(12 / LISTING_GRID_SPAN.lg).toBe(3);
+  test('xl yields FOUR columns (span 3 of 12) — the larger-cover change', () => {
+    expect(LISTING_GRID_SPAN.xl).toBe(3);
+    expect(12 / LISTING_GRID_SPAN.xl).toBe(4);
   });
 
-  test('base / sm / md are UNCHANGED (1 / 2 / 3 columns)', () => {
-    // ⚠️ These spans are NOT rail-gated, and an earlier revision of this comment said
-    // they were ("nothing below `lg` renders the rail, so nothing below `lg` had a
-    // reason to move"). `LISTING_GRID_SPAN` is keyed on MANTINE VIEWPORT BREAKPOINTS and
-    // applies to every viewer; it is `LISTING_GRID_COLUMN_STEPS`, derived from it, that
-    // is keyed on grid width. Either way the rail is only one of the things that can
-    // consume width, and a viewer below 1300px has no rail while still being governed by
-    // these spans. The refuting evidence is the cost table in the MODULE —
-    // `src/components/Apps/appListingGrid.ts` — whose 1210 / 1280 / 1299 rows are marked
-    // "NO rail" and still move 4 → 3. (An earlier revision of this note cited "this
-    // file's own cost table below"; the table below is at viewports 1300+, i.e. all
-    // rail-open, so it cannot refute a rail-gating claim.) These spans are unchanged here
-    // because the re-tune deliberately scoped itself to `lg`/`xl`, not because anything
-    // structurally exempts the narrow breakpoints.
+  test('base / sm / md / lg are UNCHANGED (1 / 2 / 3 / 4 columns)', () => {
     expect(LISTING_GRID_SPAN.base).toBe(12);
     expect(LISTING_GRID_SPAN.sm).toBe(6);
     expect(LISTING_GRID_SPAN.md).toBe(4);
+    expect(LISTING_GRID_SPAN.lg).toBe(3);
     expect(12 / LISTING_GRID_SPAN.base).toBe(1);
     expect(12 / LISTING_GRID_SPAN.sm).toBe(2);
     expect(12 / LISTING_GRID_SPAN.md).toBe(3);
+    expect(12 / LISTING_GRID_SPAN.lg).toBe(4);
   });
 
   test('every breakpoint is a whole-column span (no fractional 2.4-style spans)', () => {
@@ -112,33 +83,14 @@ describe('🔴 the column LADDER — grid width → column count', () => {
    * threshold, on it, and comfortably inside the band. A fixture that sits exactly on a
    * threshold cannot see an off-by-one in the wrong direction.
    *
-   * 🔴 SEVEN ROWS CARRY THE DISCRIMINATING POWER — 736 / 850 / 960 / 1100 / 1167 / 1168 /
-   * 1376. Those are exactly the rows that change if the narrow half of the ladder were
-   * ever floor-governed rather than breakpoint-governed, and they are the ones to prune
-   * LAST. Measured, not reasoned: the mutation was applied (rung placement replaced with
-   * `minContentWidthForColumns(columns)`) and those seven went red.
-   *
-   * ⚠️ An earlier revision of this header named only 960 / 1100 / 1167 / 1168 / 1376 —
-   * the five rows the THREE-column rung governs — and so pointed a pruner at 736 and 850
-   * as safe band-filler. They are not: under floor governance the TWO-column rung moves
-   * 736 → 936, so both drop `2 → 1`. They are this table's only witnesses to that rung
-   * moving. (The revision before THAT named 1888 and 2100, which cannot fail at all; both
-   * errors are the same shape, in opposite directions.)
-   *
-   * ⚠️ 1888 and 2100 read THREE COLUMNS EITHER WAY and are therefore NOT the load-
-   * bearing rows — an earlier revision of this header named them alongside 1376 as "the
-   * most important in this table", which pointed a pruner at the two rows that cannot
-   * fail. They are kept for band coverage, not as witnesses. The COLLISION describe
-   * below agrees on the part that is true: 1412 itself would read three, and the browser
-   * fixtures at 1888 / 2450 / 2528 would all stay green under that mutation. ⚠️ It also
-   * used to add that the defect "would be invisible everywhere except here" — that half
-   * is false and is corrected there; the mutation reds 16 tests in this file, the
-   * stylesheet seam test among them.
-   *
-   * The collision is still worth recording, because it is why 1888 looks significant
-   * and is not: `4 × 460 + 3 × 16 = 1888`, so a floor-governed four-column rung would
-   * land on exactly the retired 1920 container's content width. That coincidence makes
-   * the row a natural place to assume coverage exists. It does not.
+   * 🔴 THE 1376 / 1887 / 1888 ROWS ARE THE MOST IMPORTANT IN THIS TABLE, and they exist
+   * because of an arithmetic COLLISION rather than because anything is near a rung:
+   * `4 × 460 + 3 × 16 = 1888`, so at today's floor the four-column rung would land on
+   * exactly the retired 1920 container's content width IF the floor governed the narrow
+   * half. It does not — but that is a claim about a derivation, and this is the width
+   * band where being wrong about it is invisible. 1376 is the `xl` low end: the safe
+   * middle of the desktop range, and the first thing a floor-governed narrow half would
+   * silently break. See the dedicated describe below.
    */
   const LADDER: { contentWidth: number; columns: number; why: string }[] = [
     { contentWidth: 0, columns: 1, why: 'degenerate — a zero-width grid is still one column' },
@@ -149,33 +101,29 @@ describe('🔴 the column LADDER — grid width → column count', () => {
     { contentWidth: 959, columns: 2, why: 'one px below the md rung' },
     { contentWidth: 960, columns: 3, why: 'md — viewport 992 minus the gutter' },
     { contentWidth: 1100, columns: 3, why: 'inside the md band' },
-    { contentWidth: 1167, columns: 3, why: 'inside the md band — there is no lg rung any more' },
-    { contentWidth: 1168, columns: 3, why: 'THE RE-TUNE GUARD — the RETIRED lg rung; still three' },
-    { contentWidth: 1376, columns: 3, why: 'THE RE-TUNE GUARD — the old xl low end (1408 − 32)' },
-    { contentWidth: 1568, columns: 3, why: 'a 1600 viewport with NO rail — the band that dropped' },
-    { contentWidth: 1888, columns: 3, why: 'the retired 1920 container content width' },
-    { contentWidth: 2100, columns: 3, why: 'still three — the fourth column is not free' },
-    { contentWidth: 2241, columns: 3, why: 'one px below the four-column rung' },
-    {
-      contentWidth: 2242,
-      columns: 4,
-      why: '2560 − scrollbar − gutter − open rail: the widest desktop, rail open',
-    },
-    { contentWidth: 2450, columns: 4, why: 'inside the four-column band' },
+    { contentWidth: 1167, columns: 3, why: 'one px below the lg rung' },
+    { contentWidth: 1168, columns: 4, why: 'lg — viewport 1200 minus the gutter' },
+    { contentWidth: 1376, columns: 4, why: 'THE COLLISION GUARD — the xl low end (1408 − 32)' },
+    { contentWidth: 1887, columns: 4, why: 'THE COLLISION GUARD — one px below 4 × 460 + 3 × 16' },
+    { contentWidth: 1888, columns: 4, why: 'THE COLLISION GUARD — exactly 4 × 460 + 3 × 16' },
+    { contentWidth: 2100, columns: 4, why: 'still four — the fifth column is not free' },
+    { contentWidth: 2363, columns: 4, why: 'one px below the five-column rung' },
+    { contentWidth: 2364, columns: 5, why: '5 × 460 + 4 × 16 — five cards at exactly the floor' },
+    { contentWidth: 2450, columns: 5, why: 'inside the five-column band' },
     {
       contentWidth: 2528,
-      columns: 4,
-      why: 'a 2560 CONTAINER with NO rail yields this much grid',
+      columns: 5,
+      why: 'a 2560 CONTAINER yields this much grid — 492.8px cards',
     },
-    { contentWidth: 2839, columns: 4, why: 'one px below the (unreachable) five-column rung' },
+    { contentWidth: 2839, columns: 5, why: 'one px below the (unreachable) six-column rung' },
     {
       contentWidth: 2840,
-      columns: 5,
-      why: 'declared, but past the container cap in every rail state',
+      columns: 6,
+      why: '6 × 460 + 5 × 16 — declared, but past the container cap',
     },
     {
       contentWidth: 4000,
-      columns: 5,
+      columns: 6,
       why: 'past the top rung — the ladder stops, it does not wrap',
     },
   ];
@@ -201,35 +149,25 @@ describe('🔴 the column LADDER — grid width → column count', () => {
       );
     }
     // …and it exercises every column count the ladder can produce.
-    expect(new Set(LADDER.map((r) => r.columns))).toEqual(new Set([1, 2, 3, 4, 5]));
+    expect(new Set(LADDER.map((r) => r.columns))).toEqual(new Set([1, 2, 3, 4, 5, 6]));
   });
 
-  test('🔴 the ladder is exactly these five rungs, in ascending order', () => {
+  test('the ladder is exactly these six rungs, in ascending order', () => {
     // A ledger, not a floor: the loops above iterate it, so a ladder that silently
-    // grew a rung (or lost one) would still satisfy them.
-    //
-    // 🔴 RED AT `origin/main`: this literal read six rungs ending `{1168,4} {2364,5}
-    // {2840,6}`. The rail re-tune retired the 1168 rung (md/lg/xl all mean three columns
-    // now), moved four columns to 2242 (derived from the page chrome — see
-    // `LISTING_FOUR_COLUMN_MIN_WIDTH`) and re-assigned 2840 from six columns to five.
+    // grew a seventh rung (or lost one) would still satisfy them.
     expect(LISTING_GRID_COLUMN_STEPS).toEqual([
       { minContentWidth: 0, columns: 1 },
       { minContentWidth: 736, columns: 2 },
       { minContentWidth: 960, columns: 3 },
-      { minContentWidth: 2242, columns: 4 },
-      { minContentWidth: 2840, columns: 5 },
+      { minContentWidth: 1168, columns: 4 },
+      { minContentWidth: 2364, columns: 5 },
+      { minContentWidth: 2840, columns: 6 },
     ]);
     const widths = LISTING_GRID_COLUMN_STEPS.map((s) => s.minContentWidth);
     expect([...widths].sort((a, b) => a - b)).toEqual(widths);
     const columns = LISTING_GRID_COLUMN_STEPS.map((s) => s.columns);
     expect([...columns].sort((a, b) => a - b)).toEqual(columns);
-    // No redundant rung. 🔴 SINCE THE RE-TUNE THE DEDUP FIRES TWICE, NOT ONCE: `md`, `lg`
-    // and `xl` are ALL three columns (span 4 of 12), so `lg` and `xl` BOTH collapse into
-    // `md`'s 960 rung and the narrow half is decided entirely by `base` / `sm` / `md`.
-    // Saying only that "`lg` and `xl` collapse to a single rung" understates it and
-    // leaves a reader expecting `lg` to own a rung it no longer has — the module records
-    // the same correction at `src/components/Apps/appListingGrid.ts`. (This said "four columns"
-    // until the re-tune landed; it was correct at `origin/main` and stale after.)
+    // No redundant rung — `lg` and `xl` are both four columns and must collapse to one.
     expect(new Set(columns).size).toBe(columns.length);
   });
 });
@@ -239,82 +177,57 @@ describe('🔴 THE COLLISION — the card-width floor must NOT govern the narrow
    * 🔴 WHY THIS DESCRIBE EXISTS, AND WHY IT DID NOT NEED TO AT THE OLD FLOOR.
    *
    * `LISTING_CARD_MIN_WIDTH` is 460, and `4 × 460 + 3 × 16 = 1888` — EXACTLY the content
-   * width of the retired 1920 container. So a floor-derived rung and one of the
-   * most-quoted widths in this change are the same number, and the two halves of the
-   * ladder are one refactor away from being confused for each other.
+   * width of the retired 1920 container. So the four-column rung's floor-derived value
+   * and one of the most-quoted widths in this change are now the same number, and the
+   * two halves of the ladder are one refactor away from being confused for each other.
    *
-   * ⚠️ THE CONCRETE FORM MOVED WITH THE RAIL RE-TUNE, AND THIS PARAGRAPH IS CORRECTED
-   * RATHER THAN DELETED because the trap it names is unchanged. It used to read: a
-   * floor-governed narrow half would start four columns at 1888 and drop the whole
-   * 1168–1887 band to three. There is no 1168 rung any more and no five-column rung at
-   * 2364, so that sentence describes a ladder this file no longer tests. The live form:
-   * the lowest narrow rung is `md` at 960, its floor-derived counterpart is
-   * `3 × 460 + 2 × 16 = 1412`, and a floor-governed narrow half would drop the ENTIRE
-   * 960–1411 band to two columns.
-   *
-   * ⚠️ THIS PARAGRAPH USED TO CLAIM THE DEFECT "WOULD BE INVISIBLE EVERYWHERE EXCEPT
-   * HERE", AND THAT IS MEASURABLY FALSE — it was written when the ladder had a 1168 rung
-   * and a five-column rung at 2364, and it was never re-run after the re-tune. Applying
-   * the mutation at HEAD reds **16 tests in this file, 12 of them OUTSIDE this describe**:
-   * the seven LADDER rows, `guard-the-guard`, the five-rung ledger, `each retired
-   * breakpoint maps to its rung`, the rail-open card-width table, and — directly against
-   * the old wording — THE STYLESHEET SEAM TEST ITSELF (`the @container rules EQUAL the
-   * derived ladder`). In the browser tier it reds 1000, 1376 and the container-query
-   * test. What IS true is the narrow half of it: 1412 reads three either way, and the
-   * browser fixtures at 1888 / 2450 / 2528 stay green.
-   *
-   * The correction matters because the false version licensed DELETING the ladder table,
-   * the seam test and the browser fixtures as redundant — while this file's own header
-   * says those same seven rows are the witnesses and must be pruned last. Two
-   * contradictory pruning instructions in one file; this is the one that was wrong.
+   * If the floor ever governed the narrow half, four columns would start at 1888 and the
+   * ENTIRE 1168–1887 band would drop to three — including 1376, the `xl` low end, which
+   * is the middle of the ordinary desktop range and the last width anyone would think to
+   * re-check. Every other assertion in this file would still pass: 1888 itself would
+   * still read four (the floor's own rung), 2364 would still read five, the stylesheet
+   * seam would still agree, and the browser fixtures at 1888 / 2450 / 2528 would all be
+   * green. The defect would be invisible everywhere except here.
    *
    * At the old 383 floor `4 × 383 + 3 × 16 = 1580`, comfortably away from every number in
    * play, and a floor-governed narrow half would have broken loudly. It is the NEW value
    * that makes the failure quiet, so these assertions are a consequence of the product
    * decision rather than general hygiene — do not delete them as redundant with the table.
    */
-  test('🔴 THREE columns at 960 — the `md` rung, the width a floor-governed ladder breaks', () => {
-    // ⚠️ RE-DERIVED FOR THE RAIL RE-TUNE. This used to assert FOUR columns at 1376 (the
-    // `xl` low end), because `lg`/`xl` meant four and the 1168 rung was the thing a
-    // floor-governed narrow half would have destroyed. There is no 1168 rung now — md/lg/xl
-    // all mean three — so 1376 legitimately renders three and asserting four here would be
-    // asserting the defect. The CLAIM is unchanged and so is its shape: the lowest narrow
-    // rung a floor-governed ladder would move is `md`, and it must not move.
-    const MD_RUNG = MANTINE_BREAKPOINT_PX.md - APPS_CONTAINER_GUTTER;
-    expect(MD_RUNG).toBe(960);
+  test('🔴 four columns at 1376 — the `xl` low end, the width a floor-governed ladder breaks', () => {
+    const XL_LOW_END = MANTINE_BREAKPOINT_PX.xl - APPS_CONTAINER_GUTTER;
+    expect(XL_LOW_END).toBe(1376);
     expect(
-      listingGridColumnsAt(MD_RUNG),
-      'the md rung fell below three columns. The most likely cause is that the narrow ' +
+      listingGridColumnsAt(XL_LOW_END),
+      'the xl low end fell below four columns. The most likely cause is that the narrow ' +
         'half of LISTING_GRID_COLUMN_STEPS started deriving from LISTING_CARD_MIN_WIDTH: ' +
-        `minContentWidthForColumns(3) is ${minContentWidthForColumns(3)}, so three columns ` +
-        'would not begin until then and this whole band would render two.'
-    ).toBe(3);
-    // …and the whole band above it holds three, which is where a floor-governed ladder
-    // would show up as a silent drop.
-    for (const w of [1168, 1376, 1888, 2100]) expect(listingGridColumnsAt(w)).toBe(3);
+        `minContentWidthForColumns(4) is ${minContentWidthForColumns(4)}, so four columns ` +
+        'would not begin until then and this whole band would render three.'
+    ).toBe(4);
   });
 
-  test('🔴 three columns at 1411 AND at 1412 — one below the collision point and on it', () => {
-    const COLLISION = minContentWidthForColumns(3);
+  test('🔴 four columns at 1887 AND at 1888 — one below the collision point and on it', () => {
+    const COLLISION = minContentWidthForColumns(4);
     // The collision is real, not hypothetical: state it, so the reader can see why the
     // two assertions below are interesting rather than arbitrary.
-    expect(COLLISION).toBe(1412);
-    expect(listingGridColumnsAt(COLLISION - 1), 'one px below the collision point').toBe(3);
-    expect(listingGridColumnsAt(COLLISION), 'exactly at the collision point').toBe(3);
-    // 🔴 AND THE POINT: 1412 reads three for the RIGHT reason. It must be three because
-    // the md rung (960) has been in force for 452px, NOT because the floor happens to
-    // place a three-column rung there. Those two produce the same answer at 1412 and
-    // different answers everywhere below it — which is exactly what makes 960 the
-    // load-bearing assertion and 1412 the one that would have reassured you.
-    expect(listingGridColumnsAt(960)).toBe(3);
+    expect(COLLISION).toBe(1888);
+    expect(COLLISION).toBe(1920 - APPS_CONTAINER_GUTTER);
+    expect(listingGridColumnsAt(COLLISION - 1), 'one px below the collision point').toBe(4);
+    expect(listingGridColumnsAt(COLLISION), 'exactly at the collision point').toBe(4);
+    // 🔴 AND THE POINT: 1888 reads four for the RIGHT reason. It must be four because the
+    // lg rung (1168) has been in force for 720px, NOT because the floor happens to place
+    // a four-column rung there. Those two produce the same answer at 1888 and different
+    // answers everywhere below it — which is exactly what makes 1376 the load-bearing
+    // assertion and 1888 the one that would have reassured you.
+    expect(listingGridColumnsAt(1168)).toBe(4);
   });
 
   test('🔴 no narrow rung equals its own floor-derived value (the derivations are separate)', () => {
-    // The structural half of the claim. Each of 1/2/3 must come from a Mantine breakpoint
-    // minus the gutter and NOT from `minContentWidthForColumns`, so the two sets must
-    // disagree at every narrow column count.
-    const narrow = LISTING_GRID_COLUMN_STEPS.filter((s) => s.columns <= 3);
-    expect(narrow.map((s) => s.minContentWidth)).toEqual([0, 736, 960]);
+    // The structural half of the claim. Each of 1/2/3/4 must come from a Mantine
+    // breakpoint minus the gutter and NOT from `minContentWidthForColumns`, so the two
+    // sets must disagree at every narrow column count.
+    const narrow = LISTING_GRID_COLUMN_STEPS.filter((s) => s.columns <= 4);
+    expect(narrow.map((s) => s.minContentWidth)).toEqual([0, 736, 960, 1168]);
     for (const step of narrow) {
       if (step.columns === 1) continue; // one column starts at 0 under either rule
       expect(
@@ -326,7 +239,7 @@ describe('🔴 THE COLLISION — the card-width floor must NOT govern the narrow
     }
     // Guard-the-guard: the loop must actually have compared something, and the numbers it
     // compared must be the ones this test is about.
-    expect(narrow.filter((s) => s.columns > 1)).toHaveLength(2);
+    expect(narrow.filter((s) => s.columns > 1)).toHaveLength(3);
     expect(minContentWidthForColumns(2)).toBe(936);
     expect(minContentWidthForColumns(3)).toBe(1412);
     expect(minContentWidthForColumns(4)).toBe(1888);
@@ -335,13 +248,13 @@ describe('🔴 THE COLLISION — the card-width floor must NOT govern the narrow
   test('the narrow rungs are BELOW every floor-derived rung of the same column count', () => {
     // Stated as a direction, not just inequality: a narrow rung must fire EARLIER than
     // the floor would allow, because the narrow half deliberately ships cards under the
-    // floor (three columns at 960 is a ~309px card). That asymmetry is the design — the
+    // floor (four columns at 1376 is a 332px card). That asymmetry is the design — the
     // floor governs only where a column is ADDED beyond what Mantine's scale reached.
-    for (const step of LISTING_GRID_COLUMN_STEPS.filter((s) => s.columns > 1 && s.columns <= 3)) {
+    for (const step of LISTING_GRID_COLUMN_STEPS.filter((s) => s.columns > 1 && s.columns <= 4)) {
       expect(step.minContentWidth).toBeLessThan(minContentWidthForColumns(step.columns));
     }
-    expect(listingCardWidthAt(960, 3)).toBeCloseTo(309.33, 2);
-    expect(listingCardWidthAt(960, 3)).toBeLessThan(LISTING_CARD_MIN_WIDTH);
+    expect(listingCardWidthAt(1376, 4)).toBe(332);
+    expect(332).toBeLessThan(LISTING_CARD_MIN_WIDTH);
   });
 });
 
@@ -368,17 +281,14 @@ describe('🔴 the NARROW rungs are unchanged as functions of GRID width', () =>
    * So everything below is stated in GRID width, which is what it was always measuring.
    */
   test('each retired breakpoint maps to its rung by exactly one subtraction', () => {
-    // 🔴 `lg` AND `xl` ARE BOTH THREE SINCE THE RAIL RE-TUNE, so they no longer have rungs
-    // of their own: they collapse into `md`'s. The `firesEarlier` column says whether this
-    // breakpoint OWNS a rung — only an owner can "fire one px early".
-    const cases: [keyof typeof LISTING_GRID_SPAN, number, boolean][] = [
-      ['base', 1, false],
-      ['sm', 2, true],
-      ['md', 3, true],
-      ['lg', 3, false],
-      ['xl', 3, false],
+    const cases: [keyof typeof LISTING_GRID_SPAN, number][] = [
+      ['base', 1],
+      ['sm', 2],
+      ['md', 3],
+      ['lg', 4],
+      ['xl', 4],
     ];
-    for (const [breakpoint, columns, ownsRung] of cases) {
+    for (const [breakpoint, columns] of cases) {
       expect(12 / LISTING_GRID_SPAN[breakpoint], `${breakpoint} span`).toBe(columns);
       const gridWidth = Math.max(0, MANTINE_BREAKPOINT_PX[breakpoint] - APPS_CONTAINER_GUTTER);
       expect(
@@ -387,9 +297,11 @@ describe('🔴 the NARROW rungs are unchanged as functions of GRID width', () =>
           `grid ${gridWidth}) the ladder must give what span ${LISTING_GRID_SPAN[breakpoint]} gave`
       ).toBe(columns);
       // …and NOT one px earlier, which is what an off-by-one conversion looks like.
-      expect(listingGridColumnsAt(gridWidth - 1), `${breakpoint} fires one px early`).toBe(
-        ownsRung ? columns - 1 : columns
-      );
+      if (gridWidth > 0) {
+        expect(listingGridColumnsAt(gridWidth - 1), `${breakpoint} fires one px early`).toBe(
+          columns - (breakpoint === 'xl' ? 0 : 1)
+        );
+      }
     }
   });
 
@@ -438,115 +350,49 @@ describe('🔴 the WIDE half holds the card-width floor', () => {
     expect(minContentWidthForColumns(7)).toBe(3316); // 7 × 460 + 6 × 16
   });
 
-  /**
-   * 🔴 THE RAIL RE-TUNE'S CENTRAL CLAIM, AS A TABLE. Every viewport gets a card WIDER than
-   * it does today — that is the justification for dropping a column in the 1600–2240 band,
-   * and it is the thing a designer is being asked to accept.
-   *
-   * Each row is `[viewport, today's (cols × width) with NO rail, the new (cols × width)
-   * with the rail OPEN]`. Grid = `min(viewport − scrollbar, 2560) − gutter − rail`, with
-   * the 10px reserved scrollbar the store's own container-query note records.
-   *
-   * RED AT `origin/main`: at 1600 and 1920 the old ladder held four columns against the
-   * open rail, at 308.5px and 388.5px — 69px NARROWER than today, which is the regression
-   * the re-tune exists to remove.
-   */
-  test('🔴 with the rail OPEN, every viewport renders a WIDER card than it does today', () => {
-    const grid = (viewport: number, rail: number) =>
-      Math.min(viewport - APPS_RESERVED_SCROLLBAR, APPS_PAGE_CONTAINER_WIDTH) -
-      APPS_CONTAINER_GUTTER -
-      rail;
-
-    const OPEN = appsRailChromeWidth(false);
-    expect(OPEN, 'the open rail costs 260 + 16').toBe(276);
-
-    const table: Array<[number, number, number, number, number]> = [
-      // viewport, todayCols, todayWidth, railCols, railWidth
-      [1300, 4, 302.5, 3, 316.67],
-      [1440, 4, 337.5, 3, 363.33],
-      [1600, 4, 377.5, 3, 416.67],
-      [1920, 4, 457.5, 3, 523.33],
-      [2560, 5, 490.8, 4, 548.5],
-      [3440, 5, 492.8, 4, 551.0],
-    ];
-
-    for (const [viewport, todayCols, todayWidth, railCols, railWidth] of table) {
-      const withRail = grid(viewport, OPEN);
-      expect(listingGridColumnsAt(withRail), `@${viewport} rail-open columns`).toBe(railCols);
-      expect(listingCardWidthAt(withRail, railCols), `@${viewport} rail-open card`).toBeCloseTo(
-        railWidth,
-        1
-      );
-      // …and the card is WIDER than today's, which is the claim. `todayCols`/`todayWidth`
-      // are LITERALS of the pre-change behaviour rather than a second call to the current
-      // ladder — the current ladder cannot be its own witness for what it replaced.
-      expect(railWidth, `@${viewport}: the rail made the card NARROWER`).toBeGreaterThan(
-        todayWidth
-      );
-      expect(railCols).toBeLessThanOrEqual(todayCols);
-    }
+  test('🔴 the widest REACHABLE rung makes cards BIGGER than the 1920 container did', () => {
+    // The product decision this floor encodes, stated as the outcome rather than as the
+    // input. A floor at the covers pass's own narrowest (380) would have put SIX columns
+    // in this container at 408px — i.e. widening the page would have SHRUNK the cards.
+    const grid = APPS_PAGE_CONTAINER_WIDTH - APPS_CONTAINER_GUTTER;
+    const columns = listingGridColumnsAt(grid);
+    expect(columns).toBe(5);
+    expect(listingCardWidthAt(grid, columns)).toBe(492.8);
+    // …strictly wider than today's four-up, which is the whole claim.
+    expect(listingCardWidthAt(grid, columns)).toBeGreaterThan(460);
+    // And the counterfactual, so the test says what it is ruling out: at a 380 floor the
+    // same container would have taken six columns at 408px — narrower than today.
+    const sixAt380 = 6 * 380 + 5 * LISTING_GRID_GUTTER;
+    expect(sixAt380).toBeLessThan(grid);
+    expect(listingCardWidthAt(grid, 6)).toBe(408);
+    expect(listingCardWidthAt(grid, 6)).toBeLessThan(460);
   });
 
-  test('🔴 the four-column rung is derived from the PAGE CHROME, not from the card floor', () => {
-    // The one threshold in the module that does not come from `minContentWidthForColumns`.
-    // Asserted as the arithmetic rather than as the number, so a rail-width change moves it
-    // here too instead of leaving a stale literal.
-    expect(LISTING_FOUR_COLUMN_MIN_WIDTH).toBe(2242);
-    expect(LISTING_FOUR_COLUMN_MIN_WIDTH).toBe(
-      APPS_PAGE_CONTAINER_WIDTH -
-        APPS_RESERVED_SCROLLBAR -
-        APPS_CONTAINER_GUTTER -
-        appsRailChromeWidth(false)
-    );
-    // …and it is NOT the floor-derived value, which is the separation this test names.
-    expect(LISTING_FOUR_COLUMN_MIN_WIDTH).not.toBe(minContentWidthForColumns(4));
-    expect(minContentWidthForColumns(4)).toBe(1888);
-  });
-
-  test('🔴 FIVE columns is declared but UNREACHABLE in EVERY rail state', () => {
-    // Why the ladder a viewer can reach is 1/2/3/4 even though the module declares five.
+  test('🔴 SIX columns is declared but UNREACHABLE at the current container cap', () => {
+    // Why the ladder a viewer can reach is 1/2/3/4/5 even though the module declares six.
     // 🔴 THIS IS THE ASSERTION THAT FIRES IF SOMEONE RAISES THE CONTAINER CAP. It is not
-    // a statement that five is wrong — it is a statement that engaging it is a DENSITY
+    // a statement that six is wrong — it is a statement that engaging six is a DENSITY
     // decision, and it must be made deliberately rather than inherited from a width bump.
-    //
-    // 🔴 THREE STATES, NOT ONE — which is strictly more than the six-column version of
-    // this test had to consider, because before the rail there was only ever one grid
-    // width per container.
-    const noRail = APPS_PAGE_CONTAINER_WIDTH - APPS_CONTAINER_GUTTER;
-    const collapsed = noRail - appsRailChromeWidth(true);
-    const open = noRail - appsRailChromeWidth(false);
-    expect([noRail, collapsed, open]).toEqual([2528, 2456, 2252]);
-
-    const fiveRung = LISTING_GRID_COLUMN_STEPS.find((s) => s.columns === 5);
-    expect(fiveRung, 'the five-column rung was deleted rather than left unreachable').toBeDefined();
-    for (const [name, grid] of [
-      ['no rail', noRail],
-      ['collapsed', collapsed],
-      ['open', open],
-    ] as const) {
-      expect(
-        fiveRung!.minContentWidth,
-        `five columns is now REACHABLE with the rail ${name} — raising the container cap ` +
-          'past the five-column rung shrinks every card. Decide the density on purpose.'
-      ).toBeGreaterThan(grid);
-      expect(listingGridColumnsAt(grid), `${name} tops out at four`).toBe(4);
-    }
+    const maxGrid = APPS_PAGE_CONTAINER_WIDTH - APPS_CONTAINER_GUTTER;
+    expect(maxGrid).toBe(2528);
+    const sixRung = LISTING_GRID_COLUMN_STEPS.find((s) => s.columns === 6);
+    expect(sixRung, 'the six-column rung was deleted rather than left unreachable').toBeDefined();
+    expect(
+      sixRung!.minContentWidth,
+      'six columns is now REACHABLE — raising the container cap past the six-column rung ' +
+        'shrinks every card below LISTING_CARD_MIN_WIDTH-at-five. Decide the density on ' +
+        'purpose: either accept six, or raise the floor so the rung moves out again.'
+    ).toBeGreaterThan(maxGrid);
+    expect(listingGridColumnsAt(maxGrid)).toBe(5);
     // The rung is still REAL, not decorative — it engages the moment the grid is wide
     // enough, which is what makes keeping it (rather than deleting it) the right call.
-    expect(listingGridColumnsAt(fiveRung!.minContentWidth)).toBe(5);
+    expect(listingGridColumnsAt(sixRung!.minContentWidth)).toBe(6);
   });
 
-  test('every WIDE rung gives cards at least the floor wide, at its threshold', () => {
-    // 🔴 THIS IS THE PIN THAT STOPS A NEW COLUMN GOING UNDER THE FLOOR. It reads the
+  test('every FLOOR-DERIVED rung gives cards at least the floor wide, at its threshold', () => {
+    // 🔴 THIS IS THE PIN THAT STOPS A SEVENTH COLUMN GOING UNDER THE FLOOR. It reads the
     // ladder, not the derivation, so a rung added with a hand-picked threshold fails here.
-    //
-    // ⚠️ THE "…AND THE THRESHOLD IS MINIMAL" HALF IS GONE, AND ITS ABSENCE IS THE RE-TUNE'S
-    // ONE REAL LOSS OF RIGOUR — stated rather than quietly dropped. It could be asserted
-    // while BOTH wide rungs came from one card floor; the four-column rung is now placed by
-    // the page chrome, so it is deliberately NOT minimal (one px narrower still clears 460
-    // comfortably). What survives is the direction that actually protects the store: a
-    // column is never added where a card would fall under the floor.
-    const wide = LISTING_GRID_COLUMN_STEPS.filter((s) => s.columns >= 4);
+    const wide = LISTING_GRID_COLUMN_STEPS.filter((s) => s.columns >= 5);
     expect(wide.length, 'no wide rungs to check — the loop would pass vacuously').toBe(2);
     for (const step of wide) {
       const cardWidth = listingCardWidthAt(step.minContentWidth, step.columns);
@@ -554,17 +400,19 @@ describe('🔴 the WIDE half holds the card-width floor', () => {
         cardWidth,
         `${step.columns} columns at ${step.minContentWidth}px of grid gives ${cardWidth}px cards`
       ).toBeGreaterThanOrEqual(LISTING_CARD_MIN_WIDTH);
+      // …and the threshold is MINIMAL: one px narrower and it would not.
+      expect(
+        listingCardWidthAt(step.minContentWidth - 1, step.columns),
+        `${step.columns} columns is placed later than it needs to be`
+      ).toBeLessThan(LISTING_CARD_MIN_WIDTH);
     }
-    // The two live values, as literals, so the loop above cannot pass on a floor that moved.
-    expect(listingCardWidthAt(2242, 4)).toBe(548.5);
-    expect(listingCardWidthAt(2840, 5)).toBe(555.2);
   });
 
   test('adding a column never makes a card narrower than the one below it did at ITS threshold', () => {
     // The ladder's whole promise, stated as a relationship rather than per-rung numbers:
     // a column is added only where each card is still at least the floor, so the sequence
     // of card widths AT THE THRESHOLDS is flat at the floor rather than decreasing.
-    for (const step of LISTING_GRID_COLUMN_STEPS.filter((s) => s.columns >= 4)) {
+    for (const step of LISTING_GRID_COLUMN_STEPS.filter((s) => s.columns >= 5)) {
       const here = listingCardWidthAt(step.minContentWidth, step.columns);
       const ifWeHadNotAdded = listingCardWidthAt(step.minContentWidth, step.columns - 1);
       expect(here).toBeLessThan(ifWeHadNotAdded);
@@ -575,32 +423,27 @@ describe('🔴 the WIDE half holds the card-width floor', () => {
   test('🔴 an intrinsic auto-fill grid CANNOT express this ladder (the derivation, checked)', () => {
     // The reason `repeat(auto-fill, minmax(X, 1fr))` was rejected, as arithmetic rather
     // than as prose. `auto-fill` fits `floor((W + gap) / (X + gap))` columns.
-    //
-    // ⚠️ RE-DERIVED FOR THE RE-TUNE. The old pair was "four at 1376 vs four at 1888"; the
-    // ladder no longer puts four columns at either. The argument is identical in shape at
-    // the rungs that DO exist: keeping THREE at the `md` rung and keeping three (not four)
-    // at the top of the three-column band need floors with no overlap.
     const autoFillColumns = (gridWidth: number, floor: number) =>
       Math.max(1, Math.floor((gridWidth + LISTING_GRID_GUTTER) / (floor + LISTING_GRID_GUTTER)));
 
-    const MD_RUNG = MANTINE_BREAKPOINT_PX.md - APPS_CONTAINER_GUTTER; // 960
-    const TOP_OF_THREE = LISTING_FOUR_COLUMN_MIN_WIDTH - 1; // 2241
-    expect(MD_RUNG).toBe(960);
-    expect(TOP_OF_THREE).toBe(2241);
+    const XL_LOW_END = MANTINE_BREAKPOINT_PX.xl - APPS_CONTAINER_GUTTER; // 1376
+    const OLD_CONTAINER_CONTENT = 1920 - APPS_CONTAINER_GUTTER; // 1888
+    expect(XL_LOW_END).toBe(1376);
+    expect(OLD_CONTAINER_CONTENT).toBe(1888);
 
-    // Keeping THREE at 960 needs a floor of at most 309…
-    expect(autoFillColumns(MD_RUNG, 309)).toBe(3);
-    expect(autoFillColumns(MD_RUNG, 310)).toBe(2);
-    // …and any floor that low gives SIX at 2241, at ~360px per card — far under the 460
-    // this grid holds, and under the ~380 the covers pass moved TO.
-    expect(autoFillColumns(TOP_OF_THREE, 309)).toBe(6);
-    expect(listingCardWidthAt(TOP_OF_THREE, 6)).toBeCloseTo(360.17, 2);
-    expect(listingCardWidthAt(TOP_OF_THREE, 6)).toBeLessThan(LISTING_CARD_MIN_WIDTH);
-    // Holding three at 2241 needs a floor above 548 — which then gives ONE at 960.
-    expect(autoFillColumns(TOP_OF_THREE, 549)).toBe(3);
-    expect(autoFillColumns(MD_RUNG, 549)).toBe(1);
+    // Keeping FOUR at 1376 needs a floor of at most 332…
+    expect(autoFillColumns(XL_LOW_END, 332)).toBe(4);
+    expect(autoFillColumns(XL_LOW_END, 333)).toBe(3);
+    // …and any floor that low gives FIVE at 1888, at 364.8px per card — narrower than
+    // the ~380px the covers pass moved TO when it went five columns → four.
+    expect(autoFillColumns(OLD_CONTAINER_CONTENT, 332)).toBe(5);
+    expect(listingCardWidthAt(OLD_CONTAINER_CONTENT, 5)).toBeCloseTo(364.8, 5);
+    expect(364.8).toBeLessThan(LISTING_CARD_MIN_WIDTH);
+    // Holding four at 1888 needs a floor above 364.8 — which then gives THREE at 1376.
+    expect(autoFillColumns(OLD_CONTAINER_CONTENT, 365)).toBe(4);
+    expect(autoFillColumns(XL_LOW_END, 365)).toBe(3);
     // The two requirements have no overlap. That is the whole argument.
-    expect(309).toBeLessThan(549);
+    expect(332).toBeLessThan(365);
   });
 });
 
@@ -643,12 +486,11 @@ describe('🔴 SEAM — the store page size fits the ladder AND the server cap',
   });
 
   test('…which is at least eight rows at the widest REACHABLE column count, and twelve at four', () => {
-    // Written against what a viewer can actually reach (FOUR columns since the rail
-    // re-tune, at the 2528 of grid this container yields with no rail), not against the
-    // declared-but-unreachable fifth rung — and as a `>=` so it stays true if a future cap
-    // raise engages that rung (48 / 5 = 9.6 → 9).
+    // Written against what a viewer can actually reach (five columns at the 2528 of grid
+    // this container yields), not against the declared-but-unreachable sixth rung — and
+    // as a `>=` so it stays true if a future cap raise engages that rung (48 / 6 = 8).
     const widestReachable = listingGridColumnsAt(APPS_PAGE_CONTAINER_WIDTH - APPS_CONTAINER_GUTTER);
-    expect(widestReachable).toBe(4);
+    expect(widestReachable).toBe(5);
     expect(Math.floor(requestedLimit() / widestReachable)).toBeGreaterThanOrEqual(8);
     expect(requestedLimit() / 4).toBe(12);
     // The `>=` is not a loophole: 48 is the largest multiple-of-12 page the server cap
@@ -736,20 +578,16 @@ describe('🔴 SEAM — the stylesheet implements exactly the ladder, and nothin
     const code = strip(source);
     const rules = parsedRules();
     expect(rules.length, 'no @container rules parsed out of the stylesheet').toBeGreaterThan(0);
-    // And the strip really removed the prose. `548.5` is the rendered CARD width at the
+    // And the strip really removed the prose. `492.8` is the rendered CARD width at the
     // top of the reachable ladder — a figure that appears only in the docstrings and can
     // never be a threshold, so it cannot stop being a valid witness by becoming a rule.
-    // (It was `492.8` before the rail re-tune moved the top of the ladder.)
-    expect(source, 'the comment-strip control lost its witness').toContain('548.5');
-    expect(code).not.toContain('548.5');
+    expect(source, 'the comment-strip control lost its witness').toContain('492.8');
+    expect(code).not.toContain('492.8');
     // 🔴 AND THE ONE THE STRIP EXISTS FOR: both live thresholds are named verbatim in the
     // prose, so a scan that did not strip comments would find them with every real rule
     // deleted. They must survive in the source and vanish from the stripped code's PROSE
     // while remaining in its rules — which is what `parsedRules()` above proves.
-    // ⚠️ THESE TWO MOVED WITH THE LADDER. The pair used to be 2364 / 2840; the stylesheet
-    // no longer contains 2364 anywhere, so asserting it would fail for the right reason
-    // but under a misleading name.
-    expect(source).toContain('2242');
+    expect(source).toContain('2364');
     expect(source).toContain('2840');
   });
 
