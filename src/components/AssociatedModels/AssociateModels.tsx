@@ -44,14 +44,32 @@ export function AssociateModels({
   const [changed, setChanged] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
-  const { data = [], isLoading } = trpc.model.getAssociatedResourcesSimple.useQuery({
+  const {
+    data: savedAssociations,
+    isLoading,
+    isStale,
+    isError,
+    dataUpdatedAt,
+  } = trpc.model.getAssociatedResourcesSimple.useQuery({
     fromId,
     type,
     browsingLevel: allBrowsingLevelsFlag,
   });
+  const data = savedAssociations ?? [];
   const [associatedResources, setAssociatedResources] = useState<State>(data);
   const [linkBack, setLinkBack] = useState<number[]>([]);
   const [searchMode, setSearchMode] = useState<'me' | 'all'>('all');
+
+  // The one question every edit affordance asks: is the list on screen the saved list?
+  // `isStale` is set by `invalidate` and cleared only by a SUCCESSFUL fetch, so it stays true
+  // while a correction is in flight, has failed, or is paused offline. `!isFetching` is NOT
+  // enough: a failed background refetch goes back to idle while `data` is still the last
+  // successful, pre-correction payload.
+  // Save and Reset sit outside this flag and are safe only because `staleTime: Infinity` plus
+  // this component's own save being the key's ONLY invalidator means the sole stale window is
+  // one where `isSaving` already disables them. Add a second invalidator, a `refetchInterval`,
+  // or drop the `await` in `onSuccess`, and they need the flag too.
+  const canEdit = !!savedAssociations && !isStale;
 
   const { mutate, isPending: isSaving } = trpc.model.setAssociatedResources.useMutation({
     onSuccess: async (result) => {
@@ -81,7 +99,7 @@ export function AssociateModels({
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
-    if (!over) return;
+    if (!canEdit || !over) return;
     if (active.id !== over.id) {
       const resources = [...associatedResources];
       const ids: UniqueIdentifier[] = resources.map(({ item }) => item.id);
@@ -94,6 +112,7 @@ export function AssociateModels({
   };
 
   const handleSelect: QuickSearchDropdownProps['onItemSelected'] = (item, data) => {
+    if (!canEdit) return;
     setChanged(true);
     setAssociatedResources((resources) => {
       if (item.entityType === 'Model') {
@@ -111,6 +130,7 @@ export function AssociateModels({
   };
 
   const handleRemove = (id: number) => {
+    if (!canEdit) return;
     const models = [...associatedResources.filter(({ item }) => item.id !== id)];
     setAssociatedResources(models);
     // Drop the tick too: re-adding the row in the same edit would otherwise arrive
@@ -140,12 +160,17 @@ export function AssociateModels({
 
   const toggleSearchMode = () => setSearchMode((current) => (current === 'me' ? 'all' : 'me'));
 
+  // Gated on `changed`, not on the local list being empty: a list seeded from a stale cache is
+  // non-empty, so only-when-empty refuses the correction and the next set-replace deletes
+  // whatever the stale copy never knew about.
+  // Keyed on `dataUpdatedAt` rather than on the array, which is only reference-stable by grace of
+  // React Query's structural sharing — add a `select` or `placeholderData` to this query and an
+  // array dependency becomes an unbounded setState loop, which a test runner reports as a hang
+  // rather than a failure. A fetch timestamp cannot churn that way.
   useEffect(() => {
-    if (!associatedResources.length && data.length) {
-      setAssociatedResources(data);
-    }
+    if (!changed && savedAssociations) setAssociatedResources(savedAssociations);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  }, [dataUpdatedAt, changed]);
 
   const onlyMe = searchMode === 'me';
 
@@ -173,6 +198,7 @@ export function AssociateModels({
       .map(({ item }) => item.id)
   );
   const toggleLinkBack = (modelId: number) => {
+    if (!canEdit) return;
     setChanged(true);
     setLinkBack((current) =>
       current.includes(modelId) ? current.filter((id) => id !== modelId) : [...current, modelId]
@@ -181,7 +207,11 @@ export function AssociateModels({
 
   return (
     <Stack>
-      {associatedResources.length < limit && (
+      {/* Disabled rather than unmounted while the list cannot be edited: the InstantSearch tree
+          and its Meili round trip are rebuilt on every remount, and a box that vanishes tells the
+          user nothing. `handleSelect` re-reads `canEdit` for the same reason the other handlers
+          do — the disabled input is the affordance, the check is the guard. */}
+      {savedAssociations && associatedResources.length < limit && (
         <QuickSearchDropdown
           supportedIndexes={['models', 'articles']}
           onItemSelected={handleSelect}
@@ -196,16 +226,32 @@ export function AssociateModels({
           }
           dropdownItemLimit={25}
           clearable={false}
+          disabled={!canEdit}
         />
+      )}
+
+      {/* Outside the branches below: a model with no saved resources renders the empty state, and
+          that branch needs the reason for a dead search box just as much as the list does. */}
+      {savedAssociations && !canEdit && (
+        <Text c="dimmed" size="xs">
+          {isError
+            ? `Couldn't check whether this list is up to date, so editing is paused. Close this and reopen to try again.`
+            : `Checking this list for changes — editing is paused while we check.`}
+        </Text>
       )}
 
       {isLoading ? (
         <Center p="xl">
           <Loader />
         </Center>
+      ) : !savedAssociations ? (
+        <Text align="center" c="dimmed" size="sm" py="lg">
+          Couldn&apos;t load this model&apos;s {type.toLowerCase()} resources. Close this and try
+          again — nothing has been changed.
+        </Text>
       ) : !associatedResources.length ? (
         <Text align="center" c="dimmed" size="sm" py="lg">
-          No {type.toLowerCase()} resources yet — search above to add one
+          No {type.toLowerCase()} resources yet{canEdit ? ' — search above to add one' : ''}
         </Text>
       ) : (
         <Stack gap="xs">
@@ -232,7 +278,12 @@ export function AssociateModels({
             >
               <Stack gap={4}>
                 {associatedResources.map((association) => (
-                  <SortableItem key={association.item.id} id={association.item.id} cursor="grab">
+                  <SortableItem
+                    key={association.item.id}
+                    id={association.item.id}
+                    cursor="grab"
+                    disabled={!canEdit}
+                  >
                     <Card
                       withBorder
                       pl={4}
@@ -280,6 +331,7 @@ export function AssociateModels({
                                 <Chip
                                   size="xs"
                                   checked={linkBack.includes(association.item.id)}
+                                  disabled={!canEdit}
                                   onChange={() => toggleLinkBack(association.item.id)}
                                   classNames={{ label: 'uppercase font-bold tracking-[0.25px]' }}
                                 >
@@ -293,6 +345,7 @@ export function AssociateModels({
                           variant="subtle"
                           color="red"
                           aria-label="Remove resource"
+                          disabled={!canEdit}
                           onClick={() => handleRemove(association.item.id)}
                         >
                           <IconTrash size={20} />
@@ -310,7 +363,11 @@ export function AssociateModels({
         <Button variant="default" onClick={handleReset} disabled={!changed || isSaving}>
           Reset
         </Button>
-        <Button onClick={handleSave} loading={isSaving} disabled={!changed}>
+        {/* `!canEdit` as well as `!changed`: a save is the destructive commit, and the four edit
+            affordances going inert while the button that writes them stays live is the same gap
+            one level up. Unreachable today only because this component's own save is the key's
+            only invalidator. */}
+        <Button onClick={handleSave} loading={isSaving} disabled={!changed || !canEdit}>
           Save Changes
         </Button>
       </Group>
