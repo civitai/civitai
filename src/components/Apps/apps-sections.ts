@@ -200,8 +200,21 @@ export type AppsSection = {
  * TAB STRIP BECAME THIS RAIL — not re-derived, not simplified, not "cleaned up". A
  * layout change is exactly the occasion on which a predicate gets rewritten for tidiness
  * and quietly widens, which is the #3899/#4668 class arriving a third time.
- * `__tests__/appsSectionsPredicates.test.ts` pins each one against the full cohort
- * matrix and fails if any is edited.
+ * WHAT PINS THEM NOW, AND WHAT DOES NOT. The migration guard that carried a frozen
+ * transcription of `SUB_NAV_LINKS` was deleted with #4821 — `AppsSubNav.tsx` no longer
+ * exists, so it had no source left to be a transcription of. In its place:
+ *   • `__tests__/appsSectionRowsMatchPageGates.test.ts` (node tier, blocking) extracts
+ *     each row's `visible` expression from THIS file and evaluates it — Marketplace
+ *     against `resolveAppsPageAccess`, Build against `resolveBuildPageAccess`, Activity
+ *     against `resolveActivityPageAccess` / `canAccessAppsActivity` — and fails if ANY
+ *     row in the table becomes unconditionally visible.
+ *   • `__tests__/appsBuildAccess.test.ts` and `__tests__/appsBuildGateCallSites.test.ts`
+ *     cover the Build row behaviourally and structurally.
+ * ⚠️ Invites, Revenue and Review are in NEITHER node-tier set. Their only per-row
+ * behavioural pin is `AppsRailNav.browser.test.tsx`, which runs in the report-only
+ * browser tier — so editing one of those three predicates is not blocked by anything.
+ * If one gains a flag term, add it to `appsSectionRowsMatchPageGates.test.ts` rather
+ * than relying on review.
  *
  * "Build" is the strongest form of the fix available: its predicate is not restated
  * here at all, it is the SHARED `canAccessAppsBuild`, which the page's
