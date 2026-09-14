@@ -64,6 +64,17 @@ describe('the New/Updated rule has exactly one definition', () => {
     expect(CUTOFF_ALLOWLIST).toHaveLength(2);
   });
 
+  it('the walk actually found the corpus it is about to search', () => {
+    // Every assertion below is `offenders === []`. A zero from an empty corpus reads identically to a
+    // zero from a clean one, and the filters at the top are regexes over paths: widen either, or
+    // restructure `src/`, and all three prohibitions go green having searched nothing.
+    expect(sourceFiles.length).toBeGreaterThan(500);
+    expect(
+      sourceFiles.map((f) => f.rel),
+      'the walk cannot see the file the rule is allowed to live in'
+    ).toContain(HELPER_MODULE);
+  });
+
   it('no other module derives the updated-model window', () => {
     // `timeCutOffs.updatedModel` is the half of the rule a fourth copy cannot express without naming,
     // which makes it the marker that survives renaming `isNew` or reshaping the comparison.
@@ -104,7 +115,7 @@ describe('the New/Updated rule has exactly one definition', () => {
   });
 });
 
-describe('the New badge is not in the same slot as the money badge', () => {
+describe('the recency badge is gated and rendered independently of the money badge', () => {
   // The bug itself, pinned where it happened. This is textual and therefore weak on its own — the
   // assertion that a new+paid card renders BOTH badges lives in ModelCard.browser.test.tsx, which is
   // the one that can actually see a render. This catches the cheaper regression: someone folding the
@@ -116,10 +127,25 @@ describe('the New badge is not in the same slot as the money badge', () => {
     expect(modelCard).toContain('data-status-badge="access"');
   });
 
-  it('the recency badge does not consult the paid or early-access state', () => {
+  it('the recency badge is gated on recency alone', () => {
     const condition = modelCard.match(/\{\(isNew \|\| isUpdated(?<rest>[^)]*)\)/);
-    expect(condition, 'the recency badge is no longer gated on (isNew || isUpdated)').toBeTruthy();
+    expect(
+      condition,
+      'the recency badge is no longer gated on `(isNew || isUpdated)` — a reorder or rename breaks ' +
+        'this match too, so check which before treating it as a regression'
+    ).toBeTruthy();
     expect(condition?.groups?.rest ?? '').toBe('');
+  });
+
+  it('the recency badge renders only a recency word', () => {
+    // Gating alone is not the property. The original bug can be put back INSIDE the badge —
+    // `{isEarlyAccess ? 'Early Access' : isPaidAccess ? 'Paid' : isUpdated ? 'Updated' : 'New'}` —
+    // leaving the condition untouched, and the test above stays green through it.
+    const body = modelCard.match(/data-status-badge="recency"[\s\S]{0,400}?<\/Badge>/);
+    expect(body, 'no recency badge found to read').toBeTruthy();
+    expect(body![0]).toContain("{isUpdated ? 'Updated' : 'New'}");
+    expect(body![0]).not.toContain('isPaidAccess');
+    expect(body![0]).not.toContain('isEarlyAccess');
   });
 });
 
@@ -165,6 +191,19 @@ describe('the helper answers correctly', () => {
         cutoff
       ).isUpdated
     ).toBe(false);
+  });
+
+  it('is not Updated when the new version itself predates the cutoff', () => {
+    // The clause every other fixture here leaves unpinned, because they all put `lastVersionAt`
+    // comfortably past the cutoff. Delete `lastVersionAt > cutoff` from the helper and only this
+    // case reddens — and without it, every model that ever shipped a second version more than the
+    // window after publishing reads "Updated" forever, which is the badge ceasing to mean anything.
+    expect(
+      getModelRecency(
+        { publishedAt: before(5 * 60 * 60 * 1000), lastVersionAt: before(60 * 60 * 1000) },
+        cutoff
+      )
+    ).toEqual({ isNew: false, isUpdated: false });
   });
 
   it('New and Updated are independent answers, not a chain', () => {

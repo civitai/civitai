@@ -29,6 +29,7 @@ import { ModelCardContextMenu } from '~/components/Cards/ModelCardContextMenu';
 import { getCardBaseModels, getModelRecency } from '~/components/Cards/model-card.utils';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useElementInView } from '~/components/IntersectionObserver/ElementInView';
 import { AnimatedCount, Metrics } from '~/components/Metrics';
 import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
@@ -39,7 +40,7 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
-import { Availability, ModelModifier } from '~/shared/utils/prisma/enums';
+import { Availability, Currency, ModelModifier } from '~/shared/utils/prisma/enums';
 import { getModelUrl } from '~/utils/string-helpers';
 
 function ModFlagBadge({ labels }: { labels: string[] }) {
@@ -85,9 +86,9 @@ function ModelCardContent({ data }: Props) {
     if (isNSFW) modFlagLabels.push('NSFW');
   }
 
-  // Guarded rather than unconditional: `theme.colors.success` is an app-level scale, and reading it
-  // on every render makes the card throw under any theme that lacks one. The single badge this
-  // replaced short-circuited past it the same way.
+  // Ungated cards never touch `theme.colors.success`, which is an app-level scale a bare
+  // MantineProvider does not carry. Gated ones still do, so this narrows the blast radius rather
+  // than removing it.
   const accessBadgeStyle = useMemo(
     () =>
       isEarlyAccess || isPaidAccess ? { backgroundColor: theme.colors.success[5] } : undefined,
@@ -198,26 +199,37 @@ function ModelCardContent({ data }: Props) {
                 </Text>
               </Badge>
             )}
-            {(isEarlyAccess || isPaidAccess) && (
-              <Tooltip label={isEarlyAccess ? 'Early Access' : 'Paid access'} withinPortal>
+            {isEarlyAccess ? (
+              <Badge
+                className={cardClasses.chip}
+                variant="filled"
+                radius="xl"
+                data-status-badge="access"
+                style={accessBadgeStyle}
+              >
+                <Text c="white" size="xs" tt="capitalize">
+                  Early Access
+                </Text>
+              </Badge>
+            ) : isPaidAccess ? (
+              // `role` is load-bearing, not decoration: Mantine's Badge root is a bare `div`, and ARIA
+              // drops an accessible name from a role-less generic, so without this the bolt reaches a
+              // screen reader as nothing at all. The Tooltip is hover-only — Badge renders no
+              // tabIndex — so it cannot serve as the name either.
+              <Tooltip label="Paid">
                 <Badge
                   className={cardClasses.chip}
                   variant="filled"
                   radius="xl"
                   data-status-badge="access"
-                  aria-label={isEarlyAccess ? 'Early Access' : 'Paid'}
+                  role="img"
+                  aria-label="Paid"
                   style={accessBadgeStyle}
                 >
-                  {isEarlyAccess ? (
-                    <Text c="white" size="xs" tt="capitalize">
-                      Early Access
-                    </Text>
-                  ) : (
-                    <IconBolt size={16} color="white" fill="white" />
-                  )}
+                  <CurrencyIcon currency={Currency.BUZZ} size={16} color="white" fill="white" />
                 </Badge>
               </Tooltip>
-            )}
+            ) : null}
             {isArchived && (
               <Badge
                 className={clsx(cardClasses.infoChip, cardClasses.chip)}
