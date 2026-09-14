@@ -50,7 +50,7 @@ import { getWorkflow, submitWorkflow } from '@civitai/client';
 import pLimit from 'p-limit';
 import * as z from 'zod';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { handleEndpointError, WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const DEFAULT_MODEL =
   'urn:air:qwen3:repository:huggingface:gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090@main.tar';
@@ -201,7 +201,9 @@ function tryParse(content: string): unknown | undefined {
   return undefined;
 }
 
-function buildStep(input: Omit<ScanInput, 'action'> & { text: string }): ChatCompletionStepTemplate {
+function buildStep(
+  input: Omit<ScanInput, 'action'> & { text: string }
+): ChatCompletionStepTemplate {
   const definitions = input.labelDefinitions
     ? `\n\nLabel definitions:\n${input.labels
         .map((l) => `- ${l}: ${input.labelDefinitions?.[l] ?? '(no definition supplied)'}`)
@@ -409,7 +411,6 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       results,
     });
   } catch (e) {
-    const error = e as Error;
-    return res.status(500).json({ error: error.message, stack: error.stack });
+    return handleEndpointError(res, e);
   }
 });
