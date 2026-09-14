@@ -83,11 +83,11 @@ vi.mock('~/server/services/block-revocation.service', () => ({
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: (...a: unknown[]) => mockLogToAxiom(...a),
 }));
-// NOTE: `report` no longer has any outbound side effect. The mod-Discord webhook it
-// used to fire was replaced by the `shared-storage-report-sweep` job, which reads the
-// `shared_kv_reports` rows this op writes and files them on the moderator abuse board;
-// the reporter-free-text hardening that used to live here (`sanitizeDiscordText`) moved
-// with it, to `~/server/services/shared-storage-report-sweep/report.ts`. What this op
+// NOTE: `report` no longer fires a mod-Discord webhook — it was redundant with the
+// Axiom emit below, so it and its reporter-free-text hardening (`sanitizeDiscordText`)
+// are gone. Nothing else renders the reporter's `reason`: it is stored raw in the
+// `shared_kv_reports` row and logged raw as a structured Axiom field, and its length is
+// bounded by the input schema (`z.string().max(500)`), not by that helper. What this op
 // still owes is the row plus the Axiom emit, and both are asserted below.
 
 import { appsSharedRouter, appsModRouter } from '../apps-shared.router';

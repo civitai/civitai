@@ -810,12 +810,10 @@ export const appsSharedRouter = router({
       const uid = userId as number;
 
       // F1 (pre-GA): `report` is now block-reachable (PageBlockHost / IframeHost),
-      // and each report files a row that the `shared-storage-report-sweep` job puts in
-      // front of a moderator. Every OTHER shared write op is rate-limited; this one was
-      // not — so a trusted user could loop it into report-table growth and, through the
-      // sweep, into flooding the moderator abuse board. Bound the per-(user, app) report
-      // velocity on its own daily bucket (fail-open, like the other buckets — the
-      // containment is defence-in-depth, not the auth boundary).
+      // and each report files a row. Every OTHER shared write op is rate-limited; this
+      // one was not — so a trusted user could loop it into report-table growth. Bound
+      // the per-(user, app) report velocity on its own daily bucket (fail-open, like the
+      // other buckets — the containment is defence-in-depth, not the auth boundary).
       const rl = await checkSharedReportRateLimit(uid, appBlockId);
       if (!rl.allowed) {
         throw new TRPCError({
@@ -832,10 +830,10 @@ export const appsSharedRouter = router({
       const reason = input.reason ?? 'user-report';
 
       // F1 dedup: a repeat report of the SAME row by the SAME reporter is a no-op —
-      // no 2nd row, no 2nd alert, and nothing extra for the sweep to file. `filed` is
-      // false when this (reporter, key) pair already has a report row, and the
-      // observability emit below is skipped entirely. Only a genuinely-new report fires
-      // it (distinct keys / distinct reporters are unaffected).
+      // no 2nd row, no 2nd alert. `filed` is false when this (reporter, key) pair
+      // already has a report row, and the observability emit below is skipped entirely.
+      // Only a genuinely-new report fires it (distinct keys / distinct reporters are
+      // unaffected).
       const filed = await insertUserSharedReportDeduped(schema, {
         key: input.key,
         reporterUserId: uid,
@@ -851,13 +849,12 @@ export const appsSharedRouter = router({
       // reported content itself. Fire-and-forget (`.catch`) so a logging outage can
       // never fail a legitimate report.
       //
-      // 🔴 THIS IS OBSERVABILITY, NOT THE MOD SURFACE, AND THE TWO ARE NOT
-      // INTERCHANGEABLE. An Axiom event is queryable by whoever goes looking; it is
-      // not a queue a moderator can triage, rank or rule on. The row filed just above
-      // is read by the `shared-storage-report-sweep` job, which files it on the
-      // moderator abuse board at `/abuse` — that is what makes a user report ACTIONABLE
-      // and it is the replacement for the mod-Discord webhook this path used to fire.
-      // Deleting that job without a replacement re-opens the hole described above.
+      // This emit is now the ONLY outbound side effect of a report. The mod-Discord
+      // webhook this path used to fire alongside it has been removed as redundant: it
+      // carried the same metadata this event already carries, to a surface that cannot
+      // be triaged, ranked or ruled on and that scrolls away. The durable record is the
+      // `shared_kv_reports` row filed just above; a moderator acts on a reported row via
+      // `apps.mod.purgeSharedRow`.
       logToAxiom(
         {
           name: 'app-blocks-shared-storage-report',
@@ -1191,7 +1188,7 @@ async function insertSharedReport(
  * conditional INSERT that no-ops when this reporter already has a report row for
  * this key. Returns true iff a NEW row was filed — the caller then emits the
  * abuse alert; false on a duplicate (skip it, so a re-report can't grow the table
- * or re-raise the same row on the moderator abuse board the sweep writes to).
+ * or re-emit the same alert).
  *
  * `reporter_user_id` and `key` are both non-null on the user-report path (the
  * subject uid + a validated key), so `WHERE NOT EXISTS` is exact. It is scoped to

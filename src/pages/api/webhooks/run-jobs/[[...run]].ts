@@ -7,7 +7,6 @@ import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
 import { botAccountDetection } from '~/server/jobs/bot-account-detection';
 import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
-import { sharedStorageReportSweep } from '~/server/jobs/shared-storage-report-sweep';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
@@ -198,7 +197,6 @@ export const jobs: Job[] = [
   confirmMutes,
   botAccountDetection,
   reactionWithdrawalDetection,
-  sharedStorageReportSweep,
   confirmPendingBlockAttributions,
   bulkPayoutBlockAttributions,
   reapDevTunnelsJob,
