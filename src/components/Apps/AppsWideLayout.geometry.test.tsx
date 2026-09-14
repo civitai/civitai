@@ -102,10 +102,16 @@ import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constan
  * constant it comes from.
  *
  * ⚠️ WHAT THAT LEAVES UNMEASURED, STATED RATHER THAN LEFT TO BE DISCOVERED: no test in
- * this file reads these tables at the content width a 1440 viewer with an OPEN rail
- * actually gets (1132). The `RAIL-OPEN` describe at the end of this file is the deliberate
- * partial answer — it records the two degradations that width causes, as measured facts
- * rather than as assumptions — but it is two arms, not the file's full battery.
+ * this file reads these TABLES at the content width a 1440 viewer with an OPEN rail
+ * actually gets (1132). The `RAIL-OPEN` describe at the end of this file is a deliberate
+ * PARTIAL answer and nothing more: it pins a PRECONDITION (the body really is 276px
+ * narrower) and one NON-degradation (the card list still steps to two columns at the new
+ * `APPS_CARD_LIST_MIN_COLUMN`). ⚠️ AN EARLIER DRAFT OF THIS SENTENCE CLAIMED IT "records
+ * the two degradations that width causes". It records none — there is no degradation
+ * asserted anywhere in this file at 1132, and saying otherwise turned an admitted gap
+ * into a false claim of coverage, which is worse than the gap. The one degradation this
+ * change does cause at a narrowed width is the `/apps/build` table scrolling a viewport
+ * step earlier, and it is recorded at `SUBMISSIONS_TABLE_MIN_WIDTH`, not here.
  */
 /**
  * The section list the layout sees, as a MUTABLE holder rather than a fixed `[]`. Vitest's

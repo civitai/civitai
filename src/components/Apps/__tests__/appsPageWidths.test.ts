@@ -643,15 +643,31 @@ describe('🔴 the card-list column ladder steps exactly where the surplus appea
       expect(columnsAt(grid), `@${viewport} rail open`).toBe(1);
     }
 
-    // 🔴 AND THE LOOSEST-VALUE CLAIM, MEASURED RATHER THAN ASSERTED. 1100 is the largest
-    // min-column that restores the second column at 2242; 1120 already fails. Without
-    // this, any smaller value would satisfy the assertions above while stepping to two
-    // columns somewhere narrower that nothing asked to change.
+    // 🔴 THE BOUND IS SOLVED, NOT SAMPLED — and this is the correction an audit forced.
+    // The previous version asserted 1100 / 1120 / 1200 and the COMMENT generalised that
+    // three-point sample into "1100 is the LOOSEST value that restores it". It is not:
+    // two columns need `2n + 16 <= 2242`, so the largest admissible value is **1113**, and
+    // the sample simply had no point between 1100 and 1120. A sampled inequality cannot
+    // establish a maximum; scanning for the first failure can, so it does.
     const columnsAtMin = (w: number, min: number) =>
       Math.max(1, Math.floor((w + APPS_CARD_LIST_GAP) / (min + APPS_CARD_LIST_GAP)));
+    let bound = 0;
+    for (let n = 1000; n <= 1400; n += 1) {
+      if (columnsAtMin(railOpenGrid, n) >= 2) bound = n;
+      else break;
+    }
+    expect(bound, 'the largest min-column that still yields two columns at 2242').toBe(1113);
+    expect(columnsAtMin(railOpenGrid, bound)).toBe(2);
+    expect(columnsAtMin(railOpenGrid, bound + 1)).toBe(1);
+
+    // …and the SHIPPED value is under that bound with deliberate margin, not on it. A
+    // value at the bound is maximally loose and maximally fragile — one pixel of rail,
+    // gutter or scrollbar change and the rung disappears.
     expect(APPS_CARD_LIST_MIN_COLUMN).toBe(1100);
-    expect(columnsAtMin(railOpenGrid, 1100)).toBe(2);
-    expect(columnsAtMin(railOpenGrid, 1120)).toBe(1);
+    expect(APPS_CARD_LIST_MIN_COLUMN).toBeLessThan(bound);
+    expect(columnsAtMin(railOpenGrid, APPS_CARD_LIST_MIN_COLUMN)).toBe(2);
+    // The old sample points, kept as the regression they were: 1200 (the retired value)
+    // still fails, which is the defect this constant change repairs.
     expect(columnsAtMin(railOpenGrid, 1200)).toBe(1);
   });
 });

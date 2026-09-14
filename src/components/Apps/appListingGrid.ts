@@ -30,8 +30,49 @@ import { APPS_RESERVED_SCROLLBAR, appsRailChromeWidth } from '~/components/Apps/
  * have partially undone the 2026-07 "make app cover images larger" pass at exactly the
  * two most common desktop widths. Dropping a column instead spends the loss on FEWER,
  * WIDER cards, which is the direction both prior passes chose deliberately: every
- * viewport now renders a card WIDER than it does today (1600: 377.5 → 416.7, 1920:
- * 457.5 → 523.3, 2560: 490.8 → 548.5).
+ * viewport now renders a card WIDER than it does today.
+ *
+ * ── 🔴 THE COMPLETE COST TABLE, BY VIEWPORT — read this, not the summary sentence ─────
+ * Every row is `grid = min(viewport − 10 scrollbar, 2560) − 32 gutter − rail`, where
+ * `rail` is 276 at ≥1300 and 0 below it (the stylesheet hides it). "today" is the OLD
+ * ladder with NO rail, which is what ships on `main`.
+ *
+ *   viewport   today          after          rail?   column change
+ *   1210       4 × 280.0      3 × 378.7      NO      4 → 3
+ *   1280       4 × 297.5      3 × 402.0      NO      4 → 3
+ *   1299       4 × 302.3      3 × 408.3      NO      4 → 3
+ *   1300       4 × 302.5      3 × 316.7      yes     4 → 3
+ *   1440       4 × 337.5      3 × 363.3      yes     4 → 3
+ *   1600       4 × 377.5      3 × 416.7      yes     4 → 3
+ *   1920       4 × 457.5      3 × 523.3      yes     4 → 3
+ *   2100       4 × 502.5      3 × 583.3      yes     4 → 3
+ *   2405       4 × 578.8      3 × 685.0      yes     4 → 3
+ *   2406       5 × 460.0      3 × 685.3      yes     5 → 3  ← TWO rungs
+ *   2500       5 × 478.8      3 × 716.7      yes     5 → 3  ← TWO rungs
+ *   2559       5 × 490.6      3 × 736.3      yes     5 → 3  ← TWO rungs
+ *   2560       5 × 490.8      4 × 548.5      yes     5 → 4
+ *   3440       5 × 492.8      4 × 551.0      yes     5 → 4
+ *
+ * 🔴 TWO ROWS OF THAT TABLE ARE NOT WHAT THE HEADLINE SENTENCE SAYS, AND BOTH WERE
+ * INVISIBLE IN THE FIRST DRAFT OF THIS COMMENT, WHICH SAMPLED 1300/1440/1600/1920/2560
+ * AND SKIPPED EVERYTHING BETWEEN THE LAST TWO:
+ *   • **2406–2559 loses TWO rungs, 5 → 3.** At 2500 that is five 478.8px cards becoming
+ *     three 716.7px ones. The band exists because the OLD five-column rung (2364 of grid)
+ *     was reachable without a rail from viewport 2406 up, while the NEW four-column rung
+ *     (2242) is not reachable WITH one until 2560. Nothing in the summary sentence covers
+ *     it.
+ *   • **1210–1299 loses a rung with NO RAIL ON SCREEN** — the stylesheet's
+ *     `@media (min-width: 1300px)` has not fired, so these viewers pay the density and
+ *     receive no chrome. 1280×800 laptops sit squarely in it.
+ * Both found by an adversarial audit re-deriving the two ladders rather than reading the
+ * table. If you are re-deriving this, enumerate the BAND, never a handful of round
+ * viewports: the interesting widths are the ones adjacent to a retired rung, and no
+ * round number lands near 2406.
+ *
+ * ⚠️ AND THE COST IS NOT ONLY PAID BY VIEWERS WHO SEE A RAIL. The rung is a GLOBAL
+ * constant on GRID width; the rail is a CONDITIONAL per-viewer cost — see the note on
+ * {@link LISTING_FOUR_COLUMN_MIN_WIDTH} for the three populations that pay it with no
+ * rail rendered.
  *
  * ⚠️ A NARROWER RAIL DOES NOT AVOID THIS — measured, not assumed. A 200px rail keeps
  * four columns at 1440 but at 283.5px each, which is worse than either option here.
@@ -261,6 +302,24 @@ export type ListingGridColumnStep = { minContentWidth: number; columns: number }
  * which is the silent-off-by-a-scrollbar defect the container-query note below already
  * records once.
  *
+ * 🔴 IT HAS **ZERO PIXELS OF MARGIN** AT THE ONE VIEWPORT IT EXISTS FOR, AND THAT IS THE
+ * SHARPEST THING ABOUT IT. The grid at a 2560 viewport is `2252 − S`, where `S` is the
+ * reserved scrollbar; the rung is 2242, so four columns arrive **iff `S ≤ 10`**. Measured:
+ * `S=10 → 2242 → 4 cols`, `S=11 → 2241 → 3 cols`. So an 11px thin gutter, 125% OS
+ * scaling, or any browser zoom drops a 2560 monitor to three 750px cards — which is
+ * precisely the "silent off-by-a-scrollbar" failure the container-query note below
+ * records as a lesson already learned once. The retired five-column rung had 154px of
+ * slack here; this one has none, and the slack was spent buying the four-column outcome
+ * at exactly 2560.
+ *
+ * 🔴 NO TEST ON THIS REPO CAN OBSERVE THE PLATFORM THIS WAS PLACED FOR. Measured in the
+ * pinned `chrome-headless-shell`: `scrollbar-width: thin`, `auto` and `none` ALL report a
+ * 0px gutter, with and without `--disable-features=OverlayScrollbar`. The browser tier is
+ * structurally blind to a reserving platform, so `S` is only ever exercised at 0 —
+ * `__tests__/appsRailGeometry.test.ts` pins the margin arithmetic explicitly instead,
+ * because the alternative (`expect(APPS_RESERVED_SCROLLBAR).toBe(10)`) asserts a literal
+ * against itself and cannot fail for the reason that matters.
+ *
  * ⚠️ IT IS NOT DERIVED FROM {@link LISTING_CARD_MIN_WIDTH}, and the check that keeps it
  * honest runs the other direction: `__tests__/appListingGrid.test.ts` asserts the card
  * width AT this rung (548.5px) still clears that floor. A threshold chosen from the
@@ -437,6 +496,14 @@ export function listingGridColumnsAt(contentWidth: number): number {
  * grid's own container query), so a named constant read by the tests is the only place
  * the coupling can be STATED and checked. Deleting it would not remove any behaviour; it
  * would remove the only thing that fails when someone moves one half of the pair.
+ *
+ * ⚠️ THE PARAGRAPH BELOW DESCRIBES THE PRE-RAIL LADDER AND EVERY LADDER CLAUSE IN IT IS
+ * NOW FALSE — "five from 2364px of grid", "492.8px cards", "Six would need 2840 and is
+ * therefore unreachable". It is kept as PROVENANCE for the two CONTAINER decisions
+ * (1600 → 1920 → 2560), which are unchanged and are what this constant is about; the
+ * ladder it quotes has moved to 1/2/3/4/5 at 0/736/960/2242/2840. Two neighbouring stale
+ * blocks in this file were given this marker and this one was missed — caught by audit,
+ * recorded rather than silently rewritten so the container history stays readable.
  *
  * The full-width pass moved it 1600 → 1920 and the ultrawide pass moved it 1920 → 2560.
  * The 1920 step DELIBERATELY left the column count at four: at 1920 that yields 460px

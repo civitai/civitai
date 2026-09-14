@@ -163,10 +163,22 @@ export function appsMeasureCss(measure: AppsMeasure): number | string {
  *   rail OPEN at a 2560 viewport → 2242 of grid: `floor((2242 + 16) / (1200 + 16))` = 1
  *
  * — i.e. the 640px content-to-control gap this constant exists to close reopened on
- * exactly the monitors it was written for. Measured across 1050 / 1100 / 1120 / 1150 /
- * 1200 by executing this module: **1100 is the LOOSEST value that restores it**, and 1120
- * already fails. Loosest on purpose — a lower floor would step to two columns somewhere
- * narrower and change a layout nothing asked to change.
+ * exactly the monitors it was written for.
+ *
+ * ⚠️ THE TRUE UPPER BOUND IS **1113**, NOT 1100, AND THIS COMMENT SAID 1100 UNTIL AN AUDIT
+ * SOLVED IT RATHER THAN SAMPLING IT. Two columns need `2n + 16 ≤ 2242`, so the largest
+ * admissible `n` is 1113 — verified by scanning every integer: `floor((2242+16)/(1113+16))`
+ * is 2 and 1114 is the first value that fails. The original claim ("1100 is the LOOSEST
+ * value that restores it, and 1120 already fails") generalised a five-point sample
+ * (1050/1100/1120/1150/1200) into a global property, and the sample simply had no point
+ * between 1100 and 1120. That is the sentence someone would have quoted the next time they
+ * needed this bound.
+ *
+ * 1100 IS STILL THE SHIPPED VALUE, deliberately: it sits 13px under the bound, so the
+ * second column survives a small change in the rail width, the gutter or the scrollbar
+ * allowance without the rung silently vanishing — which is the margin the four-column
+ * store rung conspicuously does NOT have (see `LISTING_FOUR_COLUMN_MIN_WIDTH`). A value
+ * AT the bound would be maximally loose and maximally fragile.
  *
  * The rungs, recomputed for the rail-open widths (`n` columns need
  * `n × 1100 + (n − 1) × 16` of grid, so two need **2216**):

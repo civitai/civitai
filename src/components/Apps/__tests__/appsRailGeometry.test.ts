@@ -13,6 +13,11 @@ import {
   parseAppsRailState,
 } from '~/components/Apps/appsRailGeometry';
 import { SUBNAV_STICKY_GAP } from '~/hooks/useSubnavBottom';
+import {
+  LISTING_FOUR_COLUMN_MIN_WIDTH,
+  listingGridColumnsAt,
+} from '~/components/Apps/appListingGrid';
+import { APPS_CONTAINER_GUTTER, APPS_PAGE_CONTAINER_WIDTH } from '~/components/Apps/appsPageWidths';
 // 🔴 THE PARSER PRODUCTION ACTUALLY RUNS. `_app`'s `getInitialProps` calls
 // `parseCookies(getCookies(ctx))`, so this zod schema — not any helper in the rail's own
 // module — is what decides the SSR seed. An earlier revision of this file tested a
@@ -50,8 +55,36 @@ describe('the rail costs what the ladder and the layout think it costs', () => {
     expect(APPS_RAIL_GAP).toBe(16);
   });
 
-  test('the reserved-scrollbar allowance is the one the store ladder derives from', () => {
+  test('🔴 the four-column store rung has ZERO margin, and this is where that is stated', () => {
+    // ⚠️ `expect(APPS_RESERVED_SCROLLBAR).toBe(10)` WAS THE WHOLE TEST HERE, AND IT
+    // ASSERTED A LITERAL AGAINST ITSELF — it cannot fail for the reason that matters, which
+    // is what the allowance BUYS. An audit priced it: the grid at a 2560 viewport is
+    // `2252 − S`, against a four-column rung of 2242, so four columns arrive **iff S ≤ 10**.
+    // There is no slack at all at the one viewport the rung was derived for.
+    const gridAt2560 = (scrollbar: number) =>
+      APPS_PAGE_CONTAINER_WIDTH - scrollbar - APPS_CONTAINER_GUTTER - appsRailChromeWidth(false);
+
     expect(APPS_RESERVED_SCROLLBAR).toBe(10);
+    expect(gridAt2560(APPS_RESERVED_SCROLLBAR)).toBe(LISTING_FOUR_COLUMN_MIN_WIDTH);
+    // THE MARGIN, NAMED: exactly zero. Stated as a subtraction so it moves if any of the
+    // four inputs moves, rather than as a number nobody re-derives.
+    expect(gridAt2560(APPS_RESERVED_SCROLLBAR) - LISTING_FOUR_COLUMN_MIN_WIDTH).toBe(0);
+
+    // …and the cliff is one pixel away, in the direction a real platform can move.
+    expect(listingGridColumnsAt(gridAt2560(10)), 'S=10 — the allowance this repo assumes').toBe(4);
+    expect(
+      listingGridColumnsAt(gridAt2560(11)),
+      'S=11 — an 11px thin gutter, 125% OS scaling or any browser zoom, and a 2560 ' +
+        'monitor renders THREE 750px cards instead of four 548.5px ones'
+    ).toBe(3);
+
+    // 🔴 AND WHY THIS LIVES IN THE NODE TIER RATHER THAN THE BROWSER ONE. Measured in the
+    // pinned `chrome-headless-shell`: `scrollbar-width: thin`, `auto` and `none` ALL report
+    // a 0px gutter, with and without `--disable-features=OverlayScrollbar`. Every browser
+    // test therefore runs at S=0, so the reserving platform — the one this rung was placed
+    // for — is structurally invisible to that tier. Arithmetic is the only instrument this
+    // repo has for it, so the arithmetic is asserted rather than assumed.
+    expect(listingGridColumnsAt(gridAt2560(0)), 'S=0 — every browser test on this repo').toBe(4);
   });
 });
 
@@ -144,10 +177,22 @@ describe('🔴 SEAM — the stylesheet switches at exactly APPS_RAIL_MIN_VIEWPOR
     expect(layout).toContain('classes.rail');
     expect(layout).toContain('classes.railDrawerTrigger');
     expect(layout).toContain('classes.railRow');
-    // 🔴 AND NO MEDIA-QUERY HOOK, which is the thing the stylesheet exists instead of.
-    // `useMediaQuery` has no server answer, so a hook-driven swap is the hydration
-    // mismatch this surface has already paid for once.
+    // 🔴 AND NO MEDIA-QUERY HOOK DECIDES WHAT RENDERS, which is the thing the stylesheet
+    // exists instead of. `useMediaQuery` has no server answer, so a hook-driven swap is
+    // the hydration mismatch this surface has already paid for once.
     expect(layout).not.toMatch(/useMediaQuery|useIsMobile|useContainerQuery/);
+
+    // ⚠️ THE LAYOUT DOES READ `matchMedia` — ONCE, IN AN EFFECT, AND ONLY TO CLOSE THE
+    // DRAWER. That is deliberate and is NOT the banned shape: the rail/drawer swap is a
+    // CSS media query, so React never learns the breakpoint was crossed and an OPEN drawer
+    // survives a resize past 1300 — leaving two `App sections` landmarks and a focus trap
+    // over a usable rail. An effect that can only CLOSE something cannot decide a render,
+    // so it cannot reintroduce an SSR/first-paint divergence. Pinned as BOTH halves, so
+    // neither the ban above nor this carve-out can be widened into the other: the call
+    // must live inside a `useEffect`, and it must not appear in the returned JSX.
+    expect(layout).toMatch(/useEffect\(\(\) => \{[\s\S]*?window\.matchMedia\(/);
+    const jsx = layout.slice(layout.indexOf('return ('));
+    expect(jsx, 'a media query reached the rendered tree').not.toMatch(/matchMedia/);
   });
 });
 

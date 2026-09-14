@@ -522,3 +522,86 @@ describe('the rail — hides entirely below two tabs', () => {
     expect(renderedSections()).toEqual(['Marketplace', 'Build']);
   });
 });
+
+/**
+ * 🔴 THE 1 → 2 TRANSITION — the post-hydration RELAYOUT the deferral buys, pinned as the
+ * measured fact it is rather than left for someone to discover on a real page.
+ *
+ * The tests above cover both END STATES with `isClient` fixed, and never the transition
+ * between them. That gap hid a real consequence, found by an adversarial audit: for a
+ * store-visible NON-AUTHOR WITH INSTALLS — anyone who has ever installed an app, i.e. the
+ * ordinary `/apps` user — the SSR and first-paint section set is `[Marketplace]` ALONE.
+ * One section is below `APPS_NAV_MIN_SECTIONS`, so `AppsPageLayout` renders NO RAIL and
+ * the body takes the full container. After mount `getNavSummary` resolves, `Activity`
+ * appears, the count reaches two, and the rail mounts — moving the page body 276px to the
+ * right and re-laddering the container-queried store grid underneath it.
+ *
+ * 🔴 THIS IS NOT A HYDRATION MISMATCH AND THE DEFERRAL IS NOT THE BUG. Server and first
+ * client paint agree exactly, which is the whole point of `useIsClient` and is what the
+ * suite above proves. What changed is the COST of the reveal: as a tab strip it added one
+ * ROW of vertical chrome; as a rail it is a full-width horizontal relayout on the most
+ * common cohort. The trade is real either way —
+ *
+ *   • reserve the rail from the first paint for any logged-in store viewer whose summary
+ *     query will run (all SSR-safe inputs), and the genuinely-one-section cohort gets
+ *     276px of permanent chrome showing a single link — the exact waste the `< 2` collapse
+ *     exists to prevent;
+ *   • defer, as now, and that cohort pays nothing while the common one pays a one-time
+ *     shift.
+ *
+ * — so it is a PRODUCT decision, deliberately not taken in code here. What this block does
+ * is make the current behaviour a checked fact, so the choice is visible in a diff rather
+ * than inherited by accident.
+ */
+describe('🔴 the rail MOUNTS on the 1 → 2 transition (a 276px post-hydration shift)', () => {
+  // Local, because the sibling describe's `EMPTY_SUMMARY` is scoped to that block.
+  const NO_ROWS = {
+    hasInstalls: false,
+    hasActivity: false,
+    hasSubmissions: false,
+    hasApprovedApps: false,
+    isReviewer: false,
+    hasEditableApps: false,
+    hasPendingInvites: false,
+  };
+
+  const INSTALLED_NON_AUTHOR = () => {
+    mocks.flags = { appBlocks: true, appBlocksAuthor: false };
+    mocks.user = { id: 7, username: 'tester', isModerator: false };
+    mocks.navSummary = { ...NO_ROWS, hasInstalls: true };
+  };
+
+  test('pre-mount this viewer gets ONE section, so NO rail and a full-width body', async () => {
+    INSTALLED_NON_AUTHOR();
+    mocks.isClient = false; // server + first client paint
+    await renderRail();
+    // One qualifying section ⇒ the `< 2` collapse ⇒ no chrome at all.
+    expect(renderedSections()).toEqual([]);
+    expect(document.querySelector('[data-apps-chrome="rail"]')).toBeNull();
+  });
+
+  test('🔴 post-mount the SAME viewer gets TWO, so the rail mounts and the body narrows', async () => {
+    INSTALLED_NON_AUTHOR();
+    mocks.isClient = true; // after mount, the summary has resolved
+    await renderRail();
+    await expect
+      .element(page.getByRole('navigation', { name: 'App sections' }))
+      .toBeInTheDocument();
+    expect(renderedSections()).toEqual(['Marketplace', 'Activity']);
+    const rail = document.querySelector('[data-apps-chrome="rail"]') as HTMLElement | null;
+    expect(rail, 'the rail did not mount for a viewer who reached two sections').not.toBeNull();
+  });
+
+  test('🔴 NEGATIVE CONTROL: a viewer who stays at ONE section never mounts it', async () => {
+    // Without this, "the rail appears once isClient is true" would also be satisfied by a
+    // rail that appears for everyone post-mount — which would make the pair above a
+    // statement about `isClient` rather than about the SECTION COUNT crossing the floor.
+    mocks.flags = { appBlocks: true, appBlocksAuthor: false };
+    mocks.user = { id: 7, username: 'tester', isModerator: false };
+    mocks.navSummary = { ...NO_ROWS }; // no installs, no activity, nothing
+    mocks.isClient = true;
+    await renderRail();
+    expect(renderedSections()).toEqual([]);
+    expect(document.querySelector('[data-apps-chrome="rail"]')).toBeNull();
+  });
+});

@@ -191,8 +191,8 @@ export default function AppListingEditPage() {
         with no author requirement, while the `/apps` rail (`useAppsNavSections`) hides itself below TWO
         qualifying tabs. NOTHING is unconditional — "Marketplace" is store-gated too, so every entry needs an
         author capability, an install, an approved app, a pending invite, reviewer status,
-        or the `appBlocksGetStarted` flag ("Build apps" is gated on it, mirroring
-        `resolveGetStartedAccess`). So a viewer granted `app-blocks-enabled` in Flipt who
+        or `canAccessAppsBuild` (the consolidated "Build" entry; the old "Build apps"
+        row and its `resolveGetStartedAccess` gate are both retired). So a viewer granted `app-blocks-enabled` in Flipt who
         is not a moderator, not an author, and holds none of those — a seated collaborator
         on someone else's listing is the realistic shape — reaches this page, qualifies for
         one tab, and gets an EMPTY chrome band: the `Stack gap="xl"` above the body and

@@ -6,13 +6,14 @@ import {
   IconMenu2,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { APPS_NAV_MIN_SECTIONS } from '~/components/Apps/apps-sections';
 import { AppsRailNavView } from '~/components/Apps/AppsRailNav';
 import classes from '~/components/Apps/AppsPageLayout.module.scss';
 import {
   APPS_RAIL_COLLAPSED_WIDTH,
+  APPS_RAIL_MIN_VIEWPORT,
   APPS_RAIL_WIDTH,
   useAppsRail,
 } from '~/components/Apps/appsRailState';
@@ -118,6 +119,34 @@ export function AppsPageLayout({
   const [drawerOpened, drawer] = useDisclosure(false);
 
   /**
+   * 🔴 CLOSE THE DRAWER WHEN THE RAIL TAKES OVER. The rail/drawer swap is a CSS media
+   * query (see the stylesheet), so React never learns the breakpoint was crossed —
+   * meaning an OPEN drawer stays open when the viewport widens past
+   * `APPS_RAIL_MIN_VIEWPORT`. The result is both `<nav aria-label="App sections">`
+   * landmarks exposed at once, with the drawer's focus trap and overlay sitting over a
+   * fully usable rail. Reachable by rotating a tablet or dragging a window wider.
+   *
+   * 🔴 THIS IS THE ONE PLACE A MEDIA QUERY IS READ IN JS, AND IT IS NOT THE SWAP. It runs
+   * only in an EFFECT and only ever CLOSES something — it can never decide what to
+   * render, so it cannot reintroduce the SSR/first-paint divergence the stylesheet exists
+   * to avoid. `matchMedia` is absent during SSR and the effect does not run there; a
+   * browser without `addEventListener` on the list falls through harmlessly.
+   */
+  useEffect(() => {
+    if (!drawerOpened || typeof window === 'undefined' || !window.matchMedia) return;
+    const mql = window.matchMedia(`(min-width: ${APPS_RAIL_MIN_VIEWPORT}px)`);
+    if (mql.matches) {
+      drawer.close();
+      return;
+    }
+    const onChange = (event: MediaQueryListEvent) => {
+      if (event.matches) drawer.close();
+    };
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, [drawerOpened, drawer]);
+
+  /**
    * 🔴 THE `< 2 SECTIONS ⇒ NO NAV` COLLAPSE, CARRIED OVER FROM THE TAB STRIP AND
    * RESTATED FOR A RAIL: no rail, and the body takes the FULL container.
    *
@@ -126,6 +155,28 @@ export function AppsPageLayout({
    * width, which is strictly worse. It still fires for the same live cohort: a
    * store-visible non-author with no installs and no `appBlocksGetStarted` qualifies for
    * Marketplace alone.
+   *
+   * 🔴 IT IS ALSO A POST-HYDRATION RELAYOUT, AND THAT COST IS NEW WITH THE RAIL. The
+   * summary-driven sections are deferred behind `useIsClient()` (see `useAppsNavSections`
+   * for the incident that requires it), so a store-visible NON-AUTHOR WITH INSTALLS —
+   * anyone who has ever installed an app — renders `[Marketplace]` alone on the server and
+   * the first client paint, falls BELOW this floor, and gets no rail. After mount
+   * `Activity` appears, the count reaches two, and the rail mounts: the body moves 276px
+   * right and the container-queried store grid beneath it re-ladders.
+   *
+   * Server and first paint still agree exactly — this is not a hydration mismatch, and the
+   * deferral is not the defect. What changed is the PRICE of the reveal: as a tab strip it
+   * cost one ROW of vertical chrome; as a rail it is a full-width horizontal relayout on
+   * the commonest cohort.
+   *
+   * 🔴 THE ALTERNATIVE IS NOT FREE, WHICH IS WHY THIS IS LEFT AS IT IS AND FLAGGED RATHER
+   * THAN QUIETLY CHANGED. Reserving the rail from the first paint for any logged-in store
+   * viewer whose summary query will run uses only SSR-safe inputs and would remove the
+   * shift — but it hands the genuinely-one-section cohort 276px of permanent chrome around
+   * a single link, which is the exact waste this floor exists to prevent. Deferring, as
+   * now, charges that cohort nothing and charges the common one a one-time shift.
+   * A product call, not an engineering one; raised on the PR. The current behaviour is
+   * pinned in `AppsRailNav.hydration.browser.test.tsx` so the choice is visible in a diff.
    */
   const hasRail = sections.length >= APPS_NAV_MIN_SECTIONS;
   const hasHeader = Boolean(title || subtitle || actions);

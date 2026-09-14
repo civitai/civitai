@@ -311,3 +311,90 @@ describe('the toggle writes BOTH stores', () => {
     await expect.element(page.getByRole('button', { name: 'Expand navigation' })).toBeVisible();
   });
 });
+
+/**
+ * 🔴 THE COLLAPSED RAIL'S ACCESSIBILITY CONTRACT — three claims `AppsRailNav.tsx` states
+ * loudly and, until an audit said so, NOTHING asserted.
+ *
+ * No test in this repo rendered the rail with `collapsed` true: the main browser suite
+ * never uses the word, and the arms above read only the rail's WIDTH and the toggle
+ * button's own name. So "THE ACCESSIBLE NAME SURVIVES THE COLLAPSE" and "the heading is
+ * HIDDEN when collapsed, NOT REMOVED from the tree" were prose. A 56px rail whose links
+ * are named by an icon — i.e. by nothing — is a real a11y regression and it would have
+ * shipped silently.
+ *
+ * ⚠️ `sr-only` IS A TAILWIND UTILITY AND THIS TIER LOADS NO TAILWIND, so the heading's
+ * VISUAL clipping cannot be measured here. That is why the assertions below are about the
+ * ACCESSIBILITY TREE (which is what the claims are actually about) and about the class
+ * being applied — not about computed geometry, which would silently measure nothing.
+ */
+describe('🔴 the collapsed rail keeps its accessible names', () => {
+  async function renderCollapsed() {
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <AppsRailProvider value="collapsed">
+        <Page testid="body" />
+      </AppsRailProvider>
+    );
+    await expect.element(page.getByTestId('body')).toBeInTheDocument();
+    expect(railWidth(), 'the rail did not collapse — the rest of this is meaningless').toBe(
+      APPS_RAIL_COLLAPSED_WIDTH
+    );
+  }
+
+  test('every entry is still reachable BY NAME with the labels visually gone', async () => {
+    await renderCollapsed();
+    // The registry slice this file stubs is [Marketplace, Activity]. Both must resolve by
+    // accessible name even though neither renders its label as text.
+    for (const name of ['Marketplace', 'Activity']) {
+      const el = page.getByRole('link', { name }).element() as HTMLElement;
+      expect(el.tagName.toLowerCase()).toBe('a');
+      // The NAME comes from `aria-label`, because the visible <span> is not rendered when
+      // collapsed — that is the mechanism, and asserting it is what stops someone
+      // "simplifying" the aria-label away on the grounds that the label is right there.
+      expect(el.getAttribute('aria-label')).toBe(name);
+      expect(el.textContent ?? '').not.toContain(name);
+    }
+  });
+
+  test('🔴 DISCRIMINATING CONTROL: expanded, the name comes from TEXT and there is no aria-label', async () => {
+    // Without this arm, "collapsed links have an aria-label" would also be satisfied by a
+    // rail that carries one unconditionally — which is a different (and worse) component,
+    // because a redundant aria-label overrides the visible text for a screen reader.
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <AppsRailProvider value="open">
+        <Page testid="body" />
+      </AppsRailProvider>
+    );
+    await expect.element(page.getByTestId('body')).toBeInTheDocument();
+    expect(railWidth()).toBe(APPS_RAIL_WIDTH);
+    const el = page.getByRole('link', { name: 'Marketplace' }).element() as HTMLElement;
+    expect(el.getAttribute('aria-label')).toBeNull();
+    expect(el.textContent).toContain('Marketplace');
+  });
+
+  test('the group heading is CLIPPED, not removed from the accessibility tree', async () => {
+    await renderCollapsed();
+    const nav = document.querySelector('nav[aria-label="App sections"]') as HTMLElement;
+    const headings = Array.from(nav.children).filter((el) => el.tagName.toLowerCase() !== 'a');
+    // Still present and still carrying its text — `hidden`/`aria-hidden` would drop it from
+    // the tree, which is what the component's comment says it must not do.
+    expect(headings.length).toBeGreaterThan(0);
+    expect(headings.map((el) => (el.textContent ?? '').trim())).toContain('Discover');
+    for (const el of headings) {
+      expect(el.getAttribute('aria-hidden')).toBeNull();
+      expect(el.hasAttribute('hidden')).toBe(false);
+      // …and it IS the visual-clipping mechanism rather than plain visible text.
+      expect(el.className).toContain('sr-only');
+    }
+  });
+
+  test('the rail still exposes exactly ONE navigation landmark when collapsed', async () => {
+    await renderCollapsed();
+    expect(document.querySelectorAll('nav[aria-label="App sections"]')).toHaveLength(1);
+    await expect
+      .element(page.getByRole('navigation', { name: 'App sections' }))
+      .toBeInTheDocument();
+  });
+});

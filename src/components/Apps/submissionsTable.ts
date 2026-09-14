@@ -64,7 +64,7 @@
  */
 export const SUBMISSIONS_TABLE_MIN_WIDTH = 1424;
 
-/**
+/*
  * 🔴 THE LEFT RAIL WIDENS THE BAND THAT SCROLLS, AND THAT COST WAS ACCEPTED RATHER THAN
  * EXEMPTED. Recorded here, at the constant, because "why does `/apps/build` scroll
  * sideways on my laptop" is a question asked of this number.
@@ -93,6 +93,12 @@ export const SUBMISSIONS_TABLE_MIN_WIDTH = 1424;
  * around a layout change — the exact shape of the `/apps/review` cap that had to be
  * deleted later (see `APPS_PAGE_CONTAINER_WIDTH`). A viewer who wants the width back has
  * a one-click, persisted answer: collapse the rail, which restores 1600.
+ *
+ * (A plain block comment, deliberately — NOT a JSDoc. It documents the constant ABOVE
+ * it, and a doc comment in this position binds to the declaration BELOW, which is a
+ * different constant. An earlier revision made it a JSDoc and left it dangling between
+ * SUBMISSIONS_TABLE_MIN_WIDTH's own doc comment and the declaration that comment was
+ * written for.)
  */
 
 /**

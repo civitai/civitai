@@ -693,6 +693,9 @@ describe('🔴 SEAM — the stylesheet implements exactly the ladder, and nothin
     // prose, so a scan that did not strip comments would find them with every real rule
     // deleted. They must survive in the source and vanish from the stripped code's PROSE
     // while remaining in its rules — which is what `parsedRules()` above proves.
+    // ⚠️ THESE TWO MOVED WITH THE LADDER. The pair used to be 2364 / 2840; the stylesheet
+    // no longer contains 2364 anywhere, so asserting it would fail for the right reason
+    // but under a misleading name.
     expect(source).toContain('2242');
     expect(source).toContain('2840');
   });
