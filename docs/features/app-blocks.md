@@ -502,13 +502,29 @@ manifest review rather than staying a CSS list maintained by platform engineers.
 ever been approved — and for the apps this field was written for, the answer is
 no.** The dev tunnel (`/apps/dev/<blockId>`) resolves through
 `BlockRegistry.resolveDevPageBlockForAuthor`, which prefers the `app_blocks` row
-you own and reads `page.fullBleed` out of **that row's stored manifest**. That
-column is written in exactly one place — `approveRequest` in
-`publish-request.service.ts` — so it holds your **last approved** manifest, never
-the one in your working tree and not the one awaiting review either. Add
+you own and reads `page.fullBleed` out of **that row's stored manifest**. On the
+approval path — `approveRequest` in `publish-request.service.ts` — that row holds
+your **last approved** manifest, never the one in your working tree. Add
 `fullBleed` to an app that already has an approved version, open the tunnel, and
 you will still see the capped column, because the host is reading the manifest
 from before you declared it.
+
+⚠️ **`approveRequest` is not the only writer of that column, and an earlier version
+of this paragraph said it was** ("written in exactly one place").
+`POST /api/v1/developer/block-manifests` upserts `manifest` and sets
+`status: 'pending'` — the publisher-push path already documented as a real writer in
+`src/shared/constants/block-effective-scopes.ts`,
+`src/server/services/blocks/user-app-surface.service.ts`, and
+`src/server/services/blocks/app-listing.service.ts`, which carries a retraction of
+this same "the approve paths are the only writer" mistake about this same endpoint.
+A row written that way holds the manifest **awaiting review**, and
+`resolveDevPageBlockForAuthor` scopes its lookup by ownership only — never by
+`status` — so on that path the tunnel *would* show you `page.fullBleed` before
+approval, the opposite of what the paragraph above leads you to expect. It is narrow
+in practice: that endpoint is gated on the `JOB_TOKEN` internal shared secret, so an
+external app author cannot reach it and cannot use it as a preview route. The point
+is not that you have a way in — it is that "the stored manifest is always the
+approved one" is not a property of the column.
 
 The tunnel falls through to a pre-submit resolution — which *does* read
 `page.fullBleed` off your own pending publish request — only when you own **no**
