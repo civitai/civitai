@@ -417,13 +417,13 @@
 {#snippet triggerTags(tags: string[], limit: number)}
   <div class="flex flex-wrap gap-1">
     {#if triggerText && !tagsHaveTrigger(trigger, tags)}
-      <span class="rounded border border-buzz/30 bg-buzz/10 px-1.5 py-0.5 font-mono text-[10px] text-buzz">
+      <span class="rounded border border-buzz/30 bg-buzz/10 px-1.5 py-0.5 font-mono text-xs text-buzz">
         {triggerText}
       </span>
     {/if}
     {#each tags.slice(0, limit) as t (t)}
       <span
-        class="rounded border px-1.5 py-0.5 font-mono text-[10px] {isTriggerTag(trigger, t)
+        class="rounded border px-1.5 py-0.5 font-mono text-xs {isTriggerTag(trigger, t)
           ? 'border-buzz/30 bg-buzz/10 text-buzz'
           : 'border-dark-4 bg-dark-7 text-dark-2'}"
       >
@@ -436,7 +436,7 @@
         tagsHaveTrigger(trigger, tags) &&
         !tags.slice(0, limit).some((t) => isTriggerTag(trigger, t))}
       <span
-        class="rounded px-1.5 py-0.5 font-mono text-[10px] {triggerHidden
+        class="rounded px-1.5 py-0.5 font-mono text-xs {triggerHidden
           ? 'border border-buzz/30 bg-buzz/10 text-buzz'
           : 'text-dark-2'}"
         title={triggerHidden ? `includes the trigger word "${triggerText}"` : undefined}
@@ -449,7 +449,7 @@
 
 {#snippet triggerCaption(caption: string)}
   {@const hit = captionTriggerHit(trigger, caption)}
-  <div class="line-clamp-3 text-[11px] leading-snug text-dark-2">
+  <div class="line-clamp-3 text-xs leading-snug text-dark-2">
     {#if hit}{hit.before}<span class="font-semibold text-buzz">{hit.match}</span>{hit.after}{:else}{#if triggerText}<span
           class="font-semibold text-buzz">{triggerText}</span
         >, {/if}{caption}{/if}
@@ -467,11 +467,11 @@
     </div>
     {#if estTotal != null}
       <div class="shrink-0 rounded-xl border border-dark-4 bg-dark-6 px-4 py-2 text-right">
-        <div class="font-mono text-[10px] uppercase tracking-wider text-dark-2">Estimated price</div>
+        <div class="font-mono text-xs uppercase tracking-wider text-dark-2">Estimated price</div>
         <div class="font-mono text-lg font-bold leading-tight text-buzz">
           <IconBoltFilled size={15} stroke={2} class="mb-0.5 inline" />{estTotal.toLocaleString()}
         </div>
-        <div class="mt-0.5 font-mono text-[10px] text-dark-2">
+        <div class="mt-0.5 font-mono text-xs text-dark-2">
           {uploadedCount} image{uploadedCount === 1 ? '' : 's'} · ~{estSteps.toLocaleString()} steps · adjust
           at Review
         </div>
@@ -556,7 +556,7 @@
           </span>
           <div class="min-w-0">
             <div class="text-sm font-bold text-dark-0">Auto-labeled as {noun} · free</div>
-            <div class="font-mono text-[11px] text-dark-2">
+            <div class="font-mono text-xs text-dark-2">
               {labelMode === 'tag'
                 ? `${primaryCard.name} trains on booru-style tags`
                 : `${primaryCard.name} learns from natural-language captions`}{canChooseLabel
@@ -653,7 +653,7 @@
 
         {#if shownImages.length === 0}
           <div
-            class="rounded-xl border border-dashed border-dark-4 bg-dark-6 p-8 text-center font-mono text-[11px] text-dark-2"
+            class="rounded-xl border border-dashed border-dark-4 bg-dark-6 p-8 text-center font-mono text-xs text-dark-2"
           >
             {filter === 'unlabeled'
               ? 'No unlabeled images — every image has a label.'
@@ -675,7 +675,7 @@
                 {:else}
                   <div class="flex h-full flex-col items-center justify-center gap-2 p-2.5 text-center">
                     <IconMusic size={20} stroke={2} class="text-dark-2" />
-                    <span class="line-clamp-2 break-all font-mono text-[10px] leading-tight text-dark-2">
+                    <span class="line-clamp-2 break-all font-mono text-xs leading-tight text-dark-2">
                       {img.name}
                     </span>
                     <audio src={img.previewUrl} controls preload="metadata" class="h-8 w-full"></audio>
@@ -684,7 +684,7 @@
 
                 {#if img.status === 'uploading'}
                   <div class="absolute inset-0 grid place-items-center bg-black/50">
-                    <span class="flex items-center gap-1 font-mono text-[11px] text-white">
+                    <span class="flex items-center gap-1 font-mono text-xs text-white">
                       <IconUpload size={12} stroke={2} />{Math.round(img.progress * 100)}%
                     </span>
                   </div>
@@ -692,11 +692,11 @@
                 {:else if img.status === 'blocked'}
                   <div class="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-red-950/70 p-2 text-center">
                     <IconAlertTriangle size={18} stroke={2} class="text-red-200" />
-                    <span class="font-mono text-[10px] leading-tight text-red-200">{img.message}</span>
+                    <span class="font-mono text-xs leading-tight text-red-200">{img.message}</span>
                   </div>
                 {:else if img.status === 'error'}
                   <div class="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/70 p-2 text-center">
-                    <span class="font-mono text-[10px] leading-tight text-buzz">{img.message}</span>
+                    <span class="font-mono text-xs leading-tight text-buzz">{img.message}</span>
                     <Button variant="outline" size="xs" onclick={() => retry(img.id)}>
                       <IconRefresh size={12} stroke={2} class="mr-1 inline" />Retry
                     </Button>
@@ -733,18 +733,18 @@
 
               <div class="min-h-[44px] p-2.5">
                 {#if img.status !== 'uploaded'}
-                  <div class="font-mono text-[11px] text-dark-2">
+                  <div class="font-mono text-xs text-dark-2">
                     {img.status === 'uploading' ? 'uploading…' : img.status === 'blocked' ? 'blocked' : 'failed'}
                   </div>
                 {:else if img.labeling}
-                  <div class="flex items-center justify-center gap-1 font-mono text-[11px] text-primary">
+                  <div class="flex items-center justify-center gap-1 font-mono text-xs text-primary">
                     <IconSparkles size={12} stroke={2} /> labeling…
                   </div>
                 {:else if img.tags.length === 0 && !img.caption}
                   <button
                     type="button"
                     onclick={() => openEditor(img.id)}
-                    class="inline-flex items-center gap-1 font-mono text-[11px] text-dark-2 hover:text-primary"
+                    class="inline-flex items-center gap-1 font-mono text-xs text-dark-2 hover:text-primary"
                   >
                     <IconPlus size={12} stroke={2} />add label
                   </button>
@@ -765,7 +765,7 @@
           <Tooltip.Provider>
             <Tooltip.Root>
               <Tooltip.Trigger
-                class="grid h-4 w-4 place-items-center rounded-full border border-dark-4 font-mono text-[10px] text-dark-2"
+                class="grid h-4 w-4 place-items-center rounded-full border border-dark-4 font-mono text-xs text-dark-2"
               >
                 ?
               </Tooltip.Trigger>

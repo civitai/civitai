@@ -43,7 +43,7 @@
     </span>
     <div class="font-semibold leading-tight text-white">
       Training Studio
-      <span class="block font-mono text-[10px] uppercase tracking-widest text-dark-2">Beta</span>
+      <span class="block font-mono text-xs uppercase tracking-widest text-dark-2">Beta</span>
     </div>
   </a>
 
@@ -62,9 +62,9 @@
         >
           <IconBoltFilled size={15} stroke={2} />
           {primaryBalance.toLocaleString()}
-          <span class="text-[10px] font-normal capitalize opacity-70">{buzzMode.value}</span>
+          <span class="text-xs font-normal capitalize opacity-70">{buzzMode.value}</span>
           <span
-            class="ml-1 inline-flex items-center border-l border-dark-4 pl-1.5 text-[11px] font-normal text-blue-400"
+            class="ml-1 inline-flex items-center border-l border-dark-4 pl-1.5 text-xs font-normal text-blue-400"
           >
             <IconBoltFilled size={11} stroke={2} />{buzz.blue.toLocaleString()}
           </span>
@@ -73,7 +73,7 @@
         <div
           class="absolute right-0 z-20 mt-2 min-w-[240px] rounded-md border border-dark-4 bg-dark-6 p-1 shadow-lg"
         >
-          <div class="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider text-dark-2">
+          <div class="px-3 py-1.5 text-xs font-mono uppercase tracking-wider text-dark-2">
             Buzz to spend
           </div>
           {#each [{ mode: 'yellow', label: 'Yellow', balance: buzz.yellow }, { mode: 'green', label: 'Green', balance: buzz.green }] as const as opt (opt.mode)}
@@ -94,7 +94,7 @@
               {/if}
             </button>
           {/each}
-          <p class="px-3 pb-1.5 pt-1 text-[11px] leading-snug text-dark-2">
+          <p class="px-3 pb-1.5 pt-1 text-xs leading-snug text-dark-2">
             <span class="text-emerald-400">Green</span> (membership) Buzz can't be used to train NSFW
             content. <span class="text-blue-400">Blue</span> (free) always spends first; your pick
             covers the rest.
