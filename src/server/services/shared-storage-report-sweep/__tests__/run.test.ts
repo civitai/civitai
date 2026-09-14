@@ -98,7 +98,9 @@ describe('the sweep files ONE well-formed run per window', () => {
     // The contract's `superRefine` REJECTS `actioned: false` with a non-null `action`, and rejects
     // the whole batch when it does. `actioned: true` would separately tell a moderator this row had
     // already been dealt with by a job that holds no write client at all.
-    const { sent, run } = sweep(readerReturning([reportRow(), reportRow({ key: 'k2', id: 'skr_2' })]));
+    const { sent, run } = sweep(
+      readerReturning([reportRow(), reportRow({ key: 'k2', id: 'skr_2' })])
+    );
     await run;
     for (const finding of sent[0].findings) {
       expect(finding.actioned).toBe(false);
@@ -275,6 +277,47 @@ describe('several reports of one row are ONE decision', () => {
 
     expect(dup.sent[0].findings[0].confidence).toBe(single.sent[0].findings[0].confidence);
     expect(dup.sent[0].findings[0].reason).toContain('1 user report(s)');
+  });
+
+  it('🔴 renders the SPAN, so a brigade is distinguishable from agreement', async () => {
+    // The count alone cannot tell a moderator whether five reporters coordinated against the row's
+    // AUTHOR or independently agreed about the row — and those want opposite actions.
+    const at = (iso: string) => new Date(iso);
+    const burst = sweep(
+      readerReturning([
+        reportRow({ id: 'a', reporterUserId: 1, createdAt: at('2026-09-13T22:00:00Z') }),
+        reportRow({ id: 'b', reporterUserId: 2, createdAt: at('2026-09-13T22:04:00Z') }),
+      ])
+    );
+    await burst.run;
+    expect(burst.sent[0].findings[0].reason).toContain('over 4 minute(s)');
+
+    const organic = sweep(
+      readerReturning([
+        reportRow({ id: 'a', reporterUserId: 1, createdAt: at('2026-09-13T02:00:00Z') }),
+        reportRow({ id: 'b', reporterUserId: 2, createdAt: at('2026-09-13T22:00:00Z') }),
+      ])
+    );
+    await organic.run;
+    expect(organic.sent[0].findings[0].reason).toContain('over 20 hour(s)');
+
+    // Out-of-order rows must not produce a negative span — `groupReports` tracks min and max, not
+    // first-seen and last-seen, and a reader is only promised to return rows, not sorted rows.
+    const reversed = sweep(
+      readerReturning([
+        reportRow({ id: 'b', reporterUserId: 2, createdAt: at('2026-09-13T22:04:00Z') }),
+        reportRow({ id: 'a', reporterUserId: 1, createdAt: at('2026-09-13T22:00:00Z') }),
+      ])
+    );
+    await reversed.run;
+    expect(reversed.sent[0].findings[0].reason).toContain('over 4 minute(s)');
+    expect(reversed.sent[0].findings[0].reason).toContain('first at 2026-09-13T22:00:00.000Z');
+
+    // A single report has no span to state, and "over 0 second(s)" would read as a claim.
+    const one = sweep(readerReturning([reportRow()]));
+    await one.run;
+    expect(one.sent[0].findings[0].reason).not.toContain('over');
+    expect(one.sent[0].findings[0].reason).toContain('Reported at');
   });
 
   it('keeps two apps that happen to share a row key apart', async () => {

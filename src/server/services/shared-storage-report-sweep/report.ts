@@ -73,15 +73,32 @@ export type ReportedRow = {
  * above for why each of those three is here.
  */
 export function sanitizeReportReason(input: string): string {
-  return input
-    .replace(/[`[\]()*_~|>]/g, ' ') // markdown / masked-link structural chars
-    // 🔴 `\s` is NOT a superset of "control character" — it misses U+0000-U+0008, U+000E-U+001F
-    // and U+007F, every one of which is legal in a `text` column and renders as nothing or a box.
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u001f\u007f]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, MAX_REPORTER_TEXT);
+  return (
+    input
+      .replace(/[`[\]()*_~|>]/g, ' ') // markdown / masked-link structural chars
+      // 🔴 `\s` is NOT a superset of "control character" — it misses U+0000-U+0008, U+000E-U+001F
+      // and U+007F, every one of which is legal in a `text` column and renders as nothing or a box.
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u001f\u007f]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, MAX_REPORTER_TEXT)
+  );
+}
+
+/**
+ * How long a row's reports took to arrive, at the coarsest unit that is still honest.
+ *
+ * Rendered rather than left as two timestamps for the reader to subtract: the whole point is the
+ * comparison, and a moderator scanning a queue will not do the arithmetic. Floored, never rounded up
+ * — "4 minutes" has to be safe to take literally when the decision it feeds is "was this
+ * coordinated".
+ */
+export function renderSpan(first: Date, last: Date): string {
+  const seconds = Math.max(0, Math.floor((last.getTime() - first.getTime()) / 1_000));
+  if (seconds < 60) return `${seconds} second(s)`;
+  if (seconds < 3_600) return `${Math.floor(seconds / 60)} minute(s)`;
+  return `${Math.floor(seconds / 3_600)} hour(s)`;
 }
 
 /** 🔴 A reason over the contract's limit does not lose the finding, it 400s the REPORT and loses
@@ -121,6 +138,17 @@ export function renderReason(row: ReportedRow): string {
     quotes.length
       ? `Stated reason(s): ${quotes.map((q) => `"${q}"`).join(' | ')}.`
       : 'No reason text was supplied.',
+    // 🔴 THE SPAN, NOT JUST THE COUNT — and only when there is more than one report, because a span
+    // of zero says nothing. Five reporters inside four minutes is a coordinated brigade against the
+    // ROW's author and may be the abuse; five spread over twenty hours is five people independently
+    // agreeing. The count alone cannot tell a moderator which of those they are looking at, and the
+    // two want opposite actions.
+    reporters.length > 1
+      ? `Reports arrived over ${renderSpan(
+          row.firstReportedAt,
+          row.lastReportedAt
+        )}, first at ${row.firstReportedAt.toISOString()}.`
+      : `Reported at ${row.firstReportedAt.toISOString()}.`,
     row.hidden
       ? 'The reported row is ALREADY HIDDEN by a moderator — this may need no further action.'
       : 'The reported row is still visible in the app.',
@@ -213,7 +241,8 @@ export type BuildReportsArgs = {
 export function buildReports(args: BuildReportsArgs): AbuseReportInput[] {
   const size = args.maxFindingsPerReport ?? MAX_FINDINGS_PER_REPORT;
   const batches: Finding[][] = [];
-  for (let i = 0; i < args.findings.length; i += size) batches.push(args.findings.slice(i, i + size));
+  for (let i = 0; i < args.findings.length; i += size)
+    batches.push(args.findings.slice(i, i + size));
   if (!batches.length) batches.push([]);
 
   return batches.map((batch, index) => {
@@ -225,7 +254,9 @@ export function buildReports(args: BuildReportsArgs): AbuseReportInput[] {
       finishedAt: finishedAt.toISOString(),
       summary:
         batches.length > 1
-          ? `${args.summary} Batch ${index + 1} of ${batches.length}; ${batch.length} finding(s) in this report, ${args.findings.length} in the run.`
+          ? `${args.summary} Batch ${index + 1} of ${batches.length}; ${
+              batch.length
+            } finding(s) in this report, ${args.findings.length} in the run.`
           : args.summary,
       counters:
         batches.length > 1
