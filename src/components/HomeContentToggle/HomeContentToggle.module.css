@@ -65,9 +65,17 @@
 }
 
 .moreButton {
-  padding: 8px 10px 8px 16px;
-  font-size: 16px;
-  font-weight: 500;
+  /* Padding is MIRRORED from the pills' `pl-3 pr-4`, not copied: their icon leads and their label
+     trails, this one's label leads and the caret trails. Height lives on the element as `h-8`,
+     beside the pills' own. */
+  padding: 0 10px 0 16px;
+  /* 14px/600 is what the PILLS render, measured 2026-09-15 — not what their classes say. The span
+     carries `text-base font-medium` (16px/500), but `globals.css`'s unlayered
+     `.mantine-Button-label * { font-size: inherit; font-weight: inherit }` sits after
+     `@tailwind utilities` and wins, so the span inherits Mantine's `size="sm"` Button. Two
+     reviewers have read the classes and called this wrong; the browser is the tie-breaker. */
+  font-size: 14px;
+  font-weight: 600;
 
   &[data-active="true"] {
     background: light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-4));
