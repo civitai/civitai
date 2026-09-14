@@ -38,6 +38,7 @@ type GeneratorMessage = {
   ecosystems: string[];
   workflows: string[];
   modelVersionIds: number[];      // all three empty = every generation
+  createdAt?: number;             // epoch ms, set on first save; the only order
 };
 ```
 
@@ -51,8 +52,8 @@ wording preference.
 `getGenerationConfig`, so copy aimed at one tier never ships in another tier's
 payload.
 
-Several messages matching one selection render in the order the moderator
-arranged them — reorderable by hand, which a severity ranking is not.
+Several messages matching one selection render oldest first (`createdAt`, set on
+first save) — deliberately not by severity.
 
 ## Dismissal
 
@@ -68,8 +69,11 @@ to stay enumerable.
 
 ## Storage
 
-Redis hash field `generation:messages` (the gate rules are a separate field), read
-by `getGeneratorMessages` and written by `setGeneratorMessages`. Entries are
-parsed one at a time and unreadable ones are dropped, so a single bad entry
-cannot silence the rest — and a build that predates this feature simply never
-reads the field.
+sysRedis hash `generation:messages:by-id`, one field per message, read by
+`getGeneratorMessages` and written one message at a time by `saveGeneratorMessage`
+/ `deleteGeneratorMessage`. Entries are parsed one at a time and unreadable ones
+are dropped, so a single bad entry cannot silence the rest.
+
+Messages first shipped as one JSON array in the `system:features` hash field
+`generation:messages`, and are copied into the hash on first use exactly as gate
+rules are; see [generation-gating-rules-model.md](./generation-gating-rules-model.md).

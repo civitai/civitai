@@ -47,6 +47,8 @@ export const generatorMessageSchema = z.object({
   ecosystems: z.array(z.string()).default([]),
   workflows: z.array(z.string()).default([]),
   modelVersionIds: z.array(z.number().int().positive()).default([]),
+  /** Epoch ms, set on first save; the only ordering messages have. */
+  createdAt: z.number().int().optional(),
 });
 export type GeneratorMessage = z.infer<typeof generatorMessageSchema>;
 
@@ -96,7 +98,7 @@ export function messageMatchesSelection(
   return (selection.versionIds ?? []).some((id) => modelVersionIds.includes(id));
 }
 
-/** Matches, in the moderator's authored order — deliberately not severity-sorted. */
+/** Matches, in the order given — deliberately not severity-sorted. */
 export function messagesForSelection(
   messages: GeneratorMessage[],
   selection: MessageSelection
