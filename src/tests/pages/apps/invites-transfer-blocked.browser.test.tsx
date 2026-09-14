@@ -96,10 +96,12 @@ vi.mock('~/components/Meta/Meta', () => ({
   Meta: () => null,
 }));
 
-// Page chrome. `AppsSubNav` runs its own `blocks.getNavSummary` query, a session read and
-// the IsClient provider — none of which this suite is about.
-vi.mock('~/components/Apps/AppsSubNav', () => ({
-  AppsSubNav: () => <div data-testid="stub-subnav" />,
+// Page chrome. `useAppsNavSections` runs its own `blocks.getNavSummary` query, a session
+// read and the IsClient provider — none of which this suite is about. An empty list also
+// means `AppsPageLayout` renders no rail (the `< 2 sections` collapse), which keeps this
+// suite's tree to the invites body it is actually about.
+vi.mock('~/components/Apps/useAppsNavSections', () => ({
+  useAppsNavSections: () => [],
 }));
 
 // `UserAvatar` self-fetches over tRPC. Stubbed to a plain span so the offerer slot renders

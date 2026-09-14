@@ -4,7 +4,7 @@ import { TRPCError } from '@trpc/server';
 
 /**
  * `getNavSummary` — the lightweight booleans that drive the conditional tabs in
- * the apps sub-nav (`AppsSubNav`). This test asserts the ROUTER wiring:
+ * the apps nav (`useAppsNavSections`). This test asserts the ROUTER wiring:
  *   - protectedProcedure + enforceAppBlocksFlag gate (anon rejected; flag-off
  *     returns the all-false shape and runs NO query);
  *   - each existence check is a `findFirst` scoped to `ctx.user.id` (no

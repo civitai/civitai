@@ -3239,9 +3239,9 @@ export const blocksRouter = router({
 
   /**
    * Lightweight booleans that drive the conditional links in the apps
-   * sub-nav (`AppsSubNav`). One round-trip instead of fanning out to
+   * nav (`useAppsNavSections`). One round-trip instead of fanning out to
    * `listMySubscriptions` + `listMyPublishRequests` + `getMyApps` (the
-   * heavyweight per-page queries) just to decide which tabs to show.
+   * heavyweight per-page queries) just to decide which rail entries to show.
    *
    * Booleans ONLY — no rows, no manifests, no per-app data. Each check is a
    * `findFirst({ select: { id } })` so Prisma pushes `LIMIT 1` into SQL and

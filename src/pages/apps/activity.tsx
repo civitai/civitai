@@ -813,7 +813,7 @@ export default function AppActivityPage() {
           }}
           variant="outline"
         >
-          {/* 🔴 A `< 2` COLLAPSE, MIRRORING `AppsSubNav`'s `links.length < 2` — and it is
+          {/* 🔴 A `< 2` COLLAPSE, MIRRORING the `/apps` rail's `APPS_NAV_MIN_SECTIONS` — and it is
               REACHABLE, which is why it exists. A viewer without the slot flag sees only
               `Recent activity`, and a one-tab bar is chrome offering no choice. (The
               earlier state of this file argued the floor was 2 and declined to build a

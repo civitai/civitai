@@ -53,9 +53,10 @@ import { resolveBuildPageAccess } from '~/components/Apps/resolveBuildPageAccess
  * rather than an invariant guard — the rest of this PR's new tests cover new modules and
  * are new-feature coverage, and are labelled as such.
  *
- * 🔴 WHY A SOURCE SCAN AND AN `eval`, RATHER THAN A RENDER. `SUB_NAV_LINKS` is
- * module-private and `AppsSubNav.tsx` pulls React, Mantine and tRPC, so importing it into
- * the node `unit` project — the tier that actually blocks — is not possible. The browser
+ * 🔴 WHY A SOURCE SCAN AND AN `eval`, RATHER THAN A RENDER. `appsSections` is exported, but
+ * it pulls `@tabler/icons-react` and the rail that renders it pulls React, Mantine and
+ * tRPC, so importing either into the node `unit` project — the tier that actually blocks
+ * — is not what this guard should depend on. The browser
  * tier that could mount it is report-only. `appsMenuEntry.test.ts` solves the identical
  * problem the identical way, for the same reason.
  *
@@ -65,7 +66,16 @@ import { resolveBuildPageAccess } from '~/components/Apps/resolveBuildPageAccess
  * `c.canSeeStore` would be satisfied by the text and blind to `c.canSeeStore || true`.
  */
 
-const SUBNAV = path.resolve(__dirname, '../AppsSubNav.tsx');
+/**
+ * 🔴 RE-POINTED, NOT DELETED, WHEN THE TAB STRIP BECAME A LEFT RAIL. `SUB_NAV_LINKS` in
+ * `AppsSubNav.tsx` is now `appsSections` in `apps-sections.ts`, and the rows carry a
+ * `path:` SEGMENT rather than a literal `href:` (the `account-sections` shape the
+ * registry is modelled on). Every claim in this file is about the PREDICATES, which were
+ * carried across verbatim — so the guard follows the table rather than dying with the
+ * component, which is the whole point of a guard that has caught this defect class three
+ * times.
+ */
+const SUBNAV = path.resolve(__dirname, '../apps-sections.ts');
 
 function read(file: string): string {
   // Prove the path before trusting any "no match" below: a scan of an absent file finds
@@ -82,30 +92,37 @@ function code(src: string): string {
 type Row = { href: string; label: string; visible: string };
 
 /**
- * The `SUB_NAV_LINKS` rows as `{href, label, visible}`, `visible` kept as SOURCE TEXT.
+ * The `appsSections` rows as `{href, label, visible}`, `visible` kept as SOURCE TEXT.
  *
- * Split on `href:` rather than on braces, for the reason `chromeNavAlignsWithSubNav`
- * records: the rows mix one-liners with multi-line objects carrying nested arrow
- * functions, so brace-counting needs a real parser and a wrong one drops rows silently.
- * The `visible` initializer runs to the end of its chunk's line-or-object, so it is taken
- * up to the trailing `,\n` that closes the property.
+ * Split on `id:` rather than on braces, for the reason `chromeNavAlignsWithSubNav`
+ * records: the rows are multi-line objects carrying nested arrow functions, so
+ * brace-counting needs a real parser and a wrong one drops rows silently. The `visible`
+ * initializer runs to the end of its chunk's line-or-object, so it is taken up to the
+ * trailing `,\n` that closes the property.
+ *
+ * `href` is DERIVED from `path`, mirroring `getAppsSectionHref`: the empty segment is the
+ * marketplace index (`/apps`), anything else is `/apps/<path>`. Duplicated here rather
+ * than imported because this is a node-tier SOURCE scan and the registry pulls
+ * `@tabler/icons-react`; the POSITIVE CONTROL below is the fixture that keeps the two
+ * spellings honest.
  */
 function parseRows(src: string): Row[] {
-  const start = src.indexOf('SUB_NAV_LINKS');
-  expect(start, '`SUB_NAV_LINKS` was not found in AppsSubNav.tsx').toBeGreaterThan(-1);
+  const start = src.indexOf('export const appsSections');
+  expect(start, '`appsSections` was not found in apps-sections.ts').toBeGreaterThan(-1);
   const body = src.slice(start);
   const end = body.indexOf('\n];');
   const table = end === -1 ? body : body.slice(0, end);
 
   return table
-    .split(/\bhref:\s*/)
+    .split(/\bid:\s*/)
     .slice(1)
     .map((chunk) => {
-      const href = /^'([^']+)'/.exec(chunk)?.[1];
+      const segment = /\bpath:\s*'([^']*)'/.exec(chunk)?.[1];
       const label = /\blabel:\s*'([^']+)'/.exec(chunk)?.[1];
       // Everything after `visible:` up to the line's end, minus a trailing comma or `},`.
       const visible = /\bvisible:\s*([^\n]+?),?\s*$/m.exec(chunk)?.[1]?.replace(/\s*\},?$/, '');
-      return href && label && visible ? { href, label, visible } : null;
+      if (segment === undefined || !label || !visible) return null;
+      return { href: segment ? `/apps/${segment}` : '/apps', label, visible };
     })
     .filter((r): r is Row => r !== null);
 }
@@ -165,12 +182,21 @@ describe('the extractor (validate the instrument before reading its verdict)', (
   it('🔴 POSITIVE CONTROL: it parses a table shaped like the real one', () => {
     const rows = parseRows(
       code(`
-      const SUB_NAV_LINKS: SubNavLink[] = [
-        { href: '/apps', label: 'Marketplace', icon: IconBuildingStore, visible: () => true },
+      export const appsSections: AppsSection[] = [
         {
-          href: '/apps/review',
+          id: 'marketplace',
+          path: '',
+          label: 'Marketplace',
+          icon: IconBuildingStore,
+          group: 'discover',
+          visible: () => true,
+        },
+        {
+          id: 'review',
+          path: 'review',
           label: 'Review',
           icon: IconGavel,
+          group: 'moderate',
           visible: (s, c) => c.isAuthor && s.isReviewer,
         },
       ];
@@ -243,7 +269,7 @@ describe('🔴 no sub-nav row offers a page its own gate would refuse', () => {
    */
   it('Marketplace is visible exactly when /apps admits the viewer', () => {
     const row = rows.find((r) => r.href === '/apps');
-    expect(row, 'the Marketplace row is missing from SUB_NAV_LINKS').toBeDefined();
+    expect(row, 'the Marketplace row is missing from appsSections').toBeDefined();
 
     for (const summary of [NO_SUMMARY, ALL_SUMMARY])
       for (const store of [false, true])
@@ -294,7 +320,7 @@ describe('🔴 no sub-nav row offers a page its own gate would refuse', () => {
    */
   it('Build is visible exactly when /apps/build admits the viewer', () => {
     const row = rows.find((r) => r.href === '/apps/build');
-    expect(row, 'the Build row is missing from SUB_NAV_LINKS').toBeDefined();
+    expect(row, 'the Build row is missing from appsSections').toBeDefined();
 
     for (const summary of [NO_SUMMARY, ALL_SUMMARY])
       for (const store of [false, true])
@@ -370,7 +396,7 @@ describe('🔴 no sub-nav row offers a page its own gate would refuse', () => {
    */
   it('Activity is visible exactly when the viewer has installs OR activity', () => {
     const row = rows.find((r) => r.href === '/apps/activity');
-    expect(row, 'the Activity row is missing from SUB_NAV_LINKS').toBeDefined();
+    expect(row, 'the Activity row is missing from appsSections').toBeDefined();
 
     const OTHERS_TRUE: Summary = { ...ALL_SUMMARY, hasInstalls: false, hasActivity: false };
 
@@ -411,7 +437,7 @@ describe('🔴 no sub-nav row offers a page its own gate would refuse', () => {
    */
   it('🔴 the page ADMITS the cohort whose only possible signal is hasActivity', () => {
     const row = rows.find((r) => r.href === '/apps/activity');
-    expect(row, 'the Activity row is missing from SUB_NAV_LINKS').toBeDefined();
+    expect(row, 'the Activity row is missing from appsSections').toBeDefined();
 
     const admits = (features: Record<string, boolean>) =>
       'props' in

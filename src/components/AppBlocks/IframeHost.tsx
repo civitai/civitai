@@ -558,8 +558,8 @@ export function AppBlockChrome({
     <>
       <ChromeSurfaceLabel>Civitai Apps</ChromeSurfaceLabel>
       {/* 🔴 THE ICONS AND THE "Marketplace" LABEL ARE MIRRORED FROM THE STORE
-          SUBNAV, WHICH IS THE SOURCE OF TRUTH — `SUB_NAV_LINKS` in
-          `~/components/Apps/AppsSubNav`. This section and that tab bar are two
+          STORE NAV, WHICH IS THE SOURCE OF TRUTH — `appsSections` in
+          `~/components/Apps/apps-sections`. This section and that nav are two
           renderings of ONE platform navigation: a user who opens an app from the
           store and then reaches for this menu is looking for the same four
           destinations they just left, and until now every shared concept was drawn
@@ -567,7 +567,7 @@ export function AppBlockChrome({
           apps, shield vs gavel) — four out of four, so the disagreement was the
           rule rather than an oversight.
 
-          When you add or re-icon an entry here, change `SUB_NAV_LINKS` first (or
+          When you add or re-icon an entry here, change `appsSections` first (or
           confirm it already says what you are about to write) and follow it. The
           alignment is pinned by `__tests__/chromeNavAlignsWithSubNav.test.ts`,
           which reads BOTH tables and fails when they drift — including when the
@@ -682,7 +682,7 @@ export function AppBlockChrome({
           below `sm` they are literally rows of ONE sheet — a user who sees a plug in
           one and a grid in the other has to work out whether they lead to the same
           place. The glyph comes from the store subnav's row for this route
-          (`SUB_NAV_LINKS`), exactly as the platform nav's does — the labels stay
+          (`appsSections`), exactly as the platform nav's does — the labels stay
           different on purpose ("Manage apps" is the action from inside a running app;
           "App activity" is the destination), because the rule is about the ROUTE,
           not the copy.
@@ -1084,7 +1084,7 @@ function ChromeDesktopLeadingGroup({
               data-clickable="true"
             >
               {/* Reads "Marketplace", not "Apps" — the destination `/apps` is what the
-                  store's own subnav calls its first tab (`SUB_NAV_LINKS[0].label`), and a
+                  store's own nav calls its first entry (`appsSections[0].label`), and a
                   crumb that names the page differently from the page's own tab makes the
                   trail look like it leads somewhere else. The testid deliberately keeps
                   its `-apps` spelling: it addresses the crumb by its ROUTE, which has not

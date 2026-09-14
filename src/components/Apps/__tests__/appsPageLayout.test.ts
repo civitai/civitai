@@ -3,33 +3,37 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * The DOUBLE RULE under the `/apps` sub-nav — source guards (blocking `unit`
- * project).
+ * `AppsPageLayout` — source guards (blocking `unit` project).
  *
- * `AppsPageLayout` wrapped its header band in a `borderBottom` hairline while
- * Mantine's `Tabs.List` (inside `AppsSubNav`) already draws its own bottom
- * border, so every `/apps` page rendered two parallel lines ~8px apart under the
- * tabs. The band's rule is gone.
+ * 🔴 THE DOUBLE RULE THIS FILE WAS WRITTEN FOR IS GONE TWICE OVER, AND THE HISTORY IS
+ * KEPT BECAUSE IT EXPLAINS WHAT THE SURVIVING GUARDS PROTECT. The layout used to wrap
+ * its header band in a `borderBottom` hairline while Mantine's `Tabs.List` (inside the
+ * old `AppsSubNav`) drew its own bottom border, so every `/apps` page rendered two
+ * parallel lines ~8px apart under the tabs. The band's rule was removed first; then the
+ * TAB STRIP ITSELF was replaced by a vertical left rail, so there is no second rule left
+ * to duplicate and no `Tabs.List` to assert about.
  *
- * 🔴 WHY A SOURCE GUARD AND NOT A RENDERED ONE. The claim has two halves: the
- * band draws no rule, AND the tabs still draw the one that remains. The first
- * half is asserted on the rendered DOM in `AppsPageLayout.browser.test.tsx`
- * (the removed border was an inline style, so it is observable). The second
- * half is NOT observable there: the component harness does not load
- * `@mantine/core/styles.css`, so `Tabs.List`'s border — which comes from a
- * stylesheet rule, not an inline style — computes to 0 whether or not it
- * exists, and an assertion on it would pass with the tabs deleted. Rather than
- * ship a green assertion that measures nothing, the second half is pinned
- * structurally here: the sub-nav still renders a default-variant `Tabs.List`,
- * which is the thing that owns the remaining rule.
+ * ⚠️ THREE GUARDS DIED WITH THE TAB STRIP AND ARE DELETED RATHER THAN RE-POINTED,
+ * because their subject no longer exists — stated so the deletions read as decisions:
+ *   • `AppsSubNav renders a default-variant Tabs.List (the border owner)` — there is no
+ *     Tabs.List, and the rail draws no rule at all.
+ *   • `the tab padding override exists and is block-axis` and `the tab override can
+ *     NEVER touch the inline (horizontal) axis` — both pinned a `styles={{tab:
+ *     {paddingBlock}}}` prop on a `<Tabs>` that has been removed. A rail entry's padding
+ *     is a Tailwind class on an anchor, with no shorthand-clobbers-the-inline-axis trap
+ *     to guard against.
+ * What REPLACED them is the rail's own geometry seam (`__tests__/appsRailGeometry.test.ts`)
+ * and the rendered rail in `AppsRailNav.browser.test.tsx`.
  *
- * Also runs in CI, which the browser project does not.
+ * The band's own claims — no rule, no vertical padding, the 16/32 proximity pair, and the
+ * container never taking a per-page width — are unchanged and are what remains here.
+ * This tier also runs in CI, which the browser project does not.
  */
 
 const LAYOUT = path.resolve(__dirname, '../AppsPageLayout.tsx');
-const SUBNAV = path.resolve(__dirname, '../AppsSubNav.tsx');
+const RAIL = path.resolve(__dirname, '../AppsRailNav.tsx');
 const layoutSrc = () => readFileSync(LAYOUT, 'utf8');
-const subNavSrc = () => readFileSync(SUBNAV, 'utf8');
+const railSrc = () => readFileSync(RAIL, 'utf8');
 
 describe('AppsPageLayout draws no rule of its own', () => {
   it('the file mentions no border at all', () => {
@@ -59,7 +63,7 @@ describe('AppsPageLayout draws no rule of its own', () => {
     // the title equidistant, which is exactly the float the removed rule left
     // behind. `py` would reintroduce it, so both are still banned.
     const src = layoutSrc();
-    expect(src).toMatch(/<Stack\s+gap="md">/);
+    expect(src).toMatch(/<Stack\s+gap="md"[\s>]/);
     // Scoped to a `<Stack …>` TAG, not the whole file — the prose above mentions
     // the reverted forms, and a whole-file regex would match its own explanation.
     expect(src).not.toMatch(/<Stack[^>]*\bpy=/s);
@@ -75,10 +79,10 @@ describe('AppsPageLayout draws no rule of its own', () => {
     // comment in AppsPageLayout) enforceable rather than advisory.
     const src = layoutSrc();
     // Band-internal gap: tabs -> title.
-    expect(src).toMatch(/<Stack\s+gap="md">/);
+    expect(src).toMatch(/<Stack\s+gap="md"[\s>]/);
     // Parent gap: band -> page body. Was `lg` once; 20-vs-16 grouped nothing.
-    expect(src).toMatch(/<Stack\s+gap="xl">/);
-    expect(src).not.toMatch(/<Stack\s+gap="lg">/);
+    expect(src).toMatch(/<Stack\s+gap="xl"[\s>]/);
+    expect(src).not.toMatch(/<Stack\s+gap="lg"[\s>]/);
   });
 
   it('the layout Container drops its TOP pad but keeps a bottom one', () => {
@@ -141,12 +145,36 @@ describe('AppsPageLayout takes NO per-page container width', () => {
     // The regression is re-adding a caller-controlled width. Banned in every
     // spelling a caller could reach: the destructured param, the prop type, and
     // any `size={…}` on the Container.
+    //
+    // 🔴 SCOPED TO THE COMPONENT'S OWN SIGNATURE SINCE THE RAIL LANDED, AND THAT IS A
+    // CORRECTION RATHER THAN A LOOSENING. The previous version banned `/^\s*size\s*=/m`
+    // ANYWHERE in the file, which is a check on a SPELLING, not on the prop: the mobile
+    // `<Drawer size="xs">` the rail added is an ordinary Mantine size on an unrelated
+    // element and tripped it. A whole-file regex on a four-letter word cannot tell the
+    // layout's own width prop from any other component's, so the destructuring and the
+    // prop type are sliced out and checked directly.
     const src = layoutSrc();
-    expect(src).not.toMatch(/^\s*size[?]?:/m);
+
+    const sigStart = src.indexOf('export function AppsPageLayout({');
+    expect(sigStart, 'the component signature was not found — re-point this guard').toBeGreaterThan(
+      -1
+    );
+    const typeStart = src.indexOf('}: {', sigStart);
+    const bodyStart = src.indexOf('}) {', typeStart);
+    expect(typeStart, 'the prop-type block was not found').toBeGreaterThan(sigStart);
+    expect(bodyStart, 'the component body was not found').toBeGreaterThan(typeStart);
+
+    // The DESTRUCTURED PARAMETER LIST — `size` here (with or without a default) is the
+    // exact shape that shipped the defect.
+    const destructured = src.slice(sigStart, typeStart);
+    expect(destructured).not.toMatch(/\bsize\b/);
+
+    // The PROP TYPE — a declared `size?: …` a caller could pass.
+    const propType = src.slice(typeStart, bodyStart);
+    expect(propType).not.toMatch(/^\s*size[?]?:/m);
+
+    // …and the Container never reads one.
     expect(src).not.toMatch(/<Container[^>]*size=\{size\}/s);
-    // A default-valued `size = 'xl'` in the destructuring is the exact shape that
-    // shipped the defect.
-    expect(src).not.toMatch(/^\s*size\s*=/m);
   });
 
   it('the measure never reaches the CONTAINER or the root stack', () => {
@@ -183,36 +211,37 @@ describe('AppsPageLayout takes NO per-page container width', () => {
   });
 });
 
-describe('the sub-nav still supplies the ONE remaining rule', () => {
-  it('AppsSubNav renders a default-variant Tabs.List (the border owner)', () => {
-    const src = subNavSrc();
-    expect(src).toMatch(/<Tabs\b[^>]*variant="default"/s);
-    expect(src).toMatch(/<Tabs\.List\b/);
+describe('🔴 the rail draws NO rule of its own either', () => {
+  // The replacement for the deleted `Tabs.List (the border owner)` guard, inverted. The
+  // tab strip's bottom border was the ONE separator the band was allowed to rely on; a
+  // vertical rail has no equivalent, so it must contribute none. A `border-right` on the
+  // rail would be the natural way to re-introduce exactly the visual noise the double-rule
+  // pass removed, one axis over.
+  it('the rail file mentions no border at all', () => {
+    const src = railSrc();
+    expect(src).not.toMatch(/borderRight\s*:/);
+    expect(src).not.toMatch(/border-right\s*:/);
+    expect(src).not.toMatch(/borderInlineEnd\s*:/);
+    expect(src).not.toMatch(/\bborder\s*:/);
+    // …and it does not reach for the Tailwind spelling either, which an inline-style scan
+    // cannot see.
+    expect(src).not.toMatch(/className=[^\n]*\bborder-r\b/);
   });
-});
 
-describe('the sub-nav tab row is tightened on the BLOCK axis only', () => {
-  it('the tab padding override exists and is block-axis', () => {
-    // Regression coverage for the vertical-padding pass: FAILS on pre-change
-    // source, which had no `styles` prop on `<Tabs>` at all (the row ran at
-    // Mantine's default 10px block padding = a 37px row; it is 29px now).
-    const src = subNavSrc();
-    expect(src).toMatch(/styles=\{\{\s*tab:\s*\{\s*paddingBlock:/);
+  it('the guard is reading a real file (not a silently-empty read)', () => {
+    // A missing/renamed file would make every `not.toMatch` above pass vacuously.
+    const src = railSrc();
+    expect(src.length).toBeGreaterThan(500);
+    expect(src).toMatch(/export function AppsRailNavView/);
   });
 
-  it('🔴 the tab override can NEVER touch the inline (horizontal) axis', () => {
-    // The load-bearing half. `paddingBlock` overrides only the block axis, so the
-    // 16px inline padding from Mantine's `padding: xs md` shorthand survives and
-    // the tabs keep their horizontal hit area. Swapping it for a `padding`
-    // shorthand — the single most natural "cleanup" edit here — would silently
-    // reset that inline padding to whatever the shorthand says and shrink every
-    // tab's click target. Measured: tab width 133.27px before AND after.
-    //
-    // Scoped to the `styles={{ tab: … }}` block so the surrounding prose (which
-    // names the shorthand it is warning about) can't satisfy or trip the check.
-    const styleBlock = subNavSrc().match(/styles=\{\{\s*tab:\s*\{([^}]*)\}/)?.[1];
-    expect(styleBlock).toBeTruthy();
-    expect(styleBlock).not.toMatch(/\bpadding\s*:/);
-    expect(styleBlock).not.toMatch(/paddingInline|paddingLeft|paddingRight/);
+  it('🔴 the rail is a `nav` LANDMARK carrying real anchors, not a tablist', () => {
+    // Carried over from the tab strip, where the landmark had to be re-added by hand after
+    // a Tabs conversion dropped it. The rail form makes it structural, and this is what
+    // stops a future "make it a Tabs again" edit taking the landmark with it.
+    const src = railSrc();
+    expect(src).toMatch(/<nav\b[^>]*aria-label="App sections"/s);
+    expect(src).not.toMatch(/<Tabs\b/);
+    expect(src).toMatch(/<NextLink\b/);
   });
 });

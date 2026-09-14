@@ -8,10 +8,10 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
 
 /**
  * Regression: `/apps` STORE HYDRATION SAFETY — the sibling of
- * `AppsSubNav.hydration.browser.test.tsx`, for the change that put the store's
+ * `AppsRailNav.hydration.browser.test.tsx`, for the change that put the store's
  * filters in the URL.
  *
- * THE INCIDENT THIS GUARDS (see the long comment in `AppsSubNav.tsx`): a value
+ * THE INCIDENT THIS GUARDS (see the long comment in `useAppsNavSections.ts`): a value
  * that differed between the SERVER render and the FIRST CLIENT render bailed
  * React hydration (#418/#425) at the `/apps` page ROOT, leaving EVERY `/apps`
  * page un-hydrated and inert — dead buttons, queries that never fired. It was

@@ -35,7 +35,7 @@ vi.mock('~/server/utils/server-side-helpers', () => ({
 }));
 
 // 🔴 `appBlocksAuthor` IS LOAD-BEARING NOW, not decoration. This page moved onto the
-// shared `AppsPageLayout`, which mounts `AppsSubNav` — and that bar hides itself below
+// shared `AppsPageLayout`, which mounts the rail — and that rail hides itself below
 // TWO qualifying tabs. Without the author capability the viewer qualifies for
 // Marketplace alone, the bar renders nothing, and the chrome assertion below would
 // pass or fail for a reason that has nothing to do with this page.
@@ -70,7 +70,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       getMyAppManifest: {
         useQuery: () => mocks.manifestQuery,
       },
-      // Mounted by `AppsSubNav` via the shared page layout this page now uses.
+      // Mounted by the rail via the shared page layout this page now uses.
       // Undefined data ⇒ the deterministic always-on tab set.
       getNavSummary: { useQuery: () => ({ data: undefined }) },
     },
@@ -129,12 +129,26 @@ describe('AppEditPage (/apps/[appBlockId]/edit)', () => {
     await expect.element(page.getByTestId('mock-notfound')).toBeInTheDocument();
   });
 
+  /**
+   * 🔴 A DESKTOP VIEWPORT IS REQUIRED SINCE THE SUB-NAV BECAME A LEFT RAIL.
+   * `AppsPageLayout.module.scss` hides the rail with `display: none` below
+   * `APPS_RAIL_MIN_VIEWPORT` (1300) and shows a drawer trigger instead — a CSS media
+   * query, so the server and the first client paint agree. A browser-mode iframe defaults
+   * NARROWER than that, and a hidden rail is absent from the accessibility tree: the
+   * landmark lookup resolves nothing and the failure reads as "this page lost the shared
+   * chrome" when the chrome rendered correctly for the width it was given.
+   */
+  async function renderOnDesktop() {
+    await page.viewport(1440, 900);
+    renderWithProviders(<AppEditPage />);
+  }
+
   test('🔴 the page is on the SHARED apps chrome, not its own bare Container', async () => {
     // Regression coverage for the adoption: this page rendered a standalone
     // `<Container>` and showed NO sub-nav at all, so `/apps/<id>/edit` was one of
     // four `/apps/*` routes where the navigation simply vanished. The landmark is
     // what `AppsPageLayout` contributes, so its presence is the adoption.
-    renderWithProviders(<AppEditPage />);
+    await renderOnDesktop();
     await expect
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
@@ -143,7 +157,7 @@ describe('AppEditPage (/apps/[appBlockId]/edit)', () => {
   test('…and the chrome does not displace the page body', async () => {
     // Guard-the-guard for the test above: a landmark that rendered INSTEAD of the
     // page would satisfy it. Both must be present in the same render.
-    renderWithProviders(<AppEditPage />);
+    await renderOnDesktop();
     await expect
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();

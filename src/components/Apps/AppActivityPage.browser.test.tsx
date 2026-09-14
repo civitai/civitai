@@ -34,13 +34,13 @@ import type * as TrpcMod from '~/utils/trpc';
  * to read. They do not: `ScopeGrantsPanel`'s only read is `blocks.listMyScopeGrants`,
  * whose `enforceAppBlocksFlag` middleware evaluates the `app-blocks-enabled` Flipt key —
  * exactly `features.appBlocks` — and returns `[]` without it, so the tab showed that
- * cohort an empty state, always. `AppsSubNav.tsx` had already retracted the same premise
+ * cohort an empty state, always. `apps-sections.ts` had already retracted the same premise
  * for the same cohort (they cannot run a full-page app: `/apps/run/[slug]/[[...path]]`
  * requires BOTH flags). Gating it displays nothing that was ever displayed.
  *
  * ── CONSEQUENCE: THE BAR NOW COLLAPSES ────────────────────────────────────────
  * With three of four tabs gated, a slotless viewer is left with `Recent activity` alone,
- * so the page hides its `Tabs.List` below two visible tabs (mirroring `AppsSubNav`'s
+ * so the page hides its `Tabs.List` below two visible tabs (mirroring the `/apps` rail's
  * `links.length < 2`). Every slotless arm below therefore waits on a PANEL, not a tab —
  * there is no `role="tab"` to wait for, and a `getByRole('tab')` there would hang to
  * timeout and read as a broken page.
@@ -511,8 +511,8 @@ describe('🔴 the INSTALL-ONLY tabs are gated on the SLOT flag', () => {
     expect(selectedPageTab()?.textContent?.trim()).toBe('Hidden');
   });
 
-  test('🔴 the bar COLLAPSES at one visible tab, mirroring `AppsSubNav`', async () => {
-    // `AppsSubNav` hides its bar below two rows (`links.length < 2`). This bar now does
+  test('🔴 the bar COLLAPSES at one visible tab, mirroring the /apps rail', async () => {
+    // The `/apps` rail hides itself below two sections (`APPS_NAV_MIN_SECTIONS`). This bar now does
     // the same, and the branch is REACHABLE: with `permissions` gated on the slot flag,
     // the slotless viewer is left with `activity` alone, and a one-tab bar is chrome
     // offering no choice. `appsActivityTabs.test.ts` holds the unit-tier tripwire that

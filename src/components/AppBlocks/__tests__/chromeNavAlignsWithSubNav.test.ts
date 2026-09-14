@@ -21,23 +21,38 @@ import { describe, expect, it } from 'vitest';
  * each was drawn from scratch.
  *
  * 🔴 THIS PINS A RELATIONSHIP BETWEEN TWO FILES, NOT A LIST OF ICON NAMES. It reads
- * the icon out of `SUB_NAV_LINKS` at run time and requires the chrome to match
+ * the icon out of `appsSections` at run time and requires the chrome to match
  * whatever it finds. So it fails in BOTH directions: re-icon the chrome and it
  * fails, and — the case a hardcoded list would sail past — re-icon the SUBNAV and
  * it fails there too, which is the drift that actually happens. The subnav is the
  * source of truth; when this goes red, change the chrome.
  *
- * 🔴 WHY A SOURCE SCAN RATHER THAN AN IMPORT. `SUB_NAV_LINKS` is module-private,
- * and both modules are `.tsx` that pull React, Mantine and tRPC — importing either
- * into the node project to read a table would drag a browser-shaped dependency
- * graph in for no gain. The cost of scanning text is that the scanner can silently
+ * 🔴 WHY A SOURCE SCAN RATHER THAN AN IMPORT. `appsSections` is exported, but the
+ * chrome half is a `.tsx` that pulls React, Mantine and tRPC and the registry itself
+ * pulls `@tabler/icons-react` — importing either into the node project to read a table
+ * would drag a browser-shaped dependency graph in for no gain. The cost of scanning text is that the scanner can silently
  * match nothing, so every extraction step below is fed a fixture it MUST parse
  * before any count it returns from the real files is believed.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const CHROME = path.join(REPO_ROOT, 'src/components/AppBlocks/IframeHost.tsx');
-const SUBNAV = path.join(REPO_ROOT, 'src/components/Apps/AppsSubNav.tsx');
+/**
+ * 🔴 RE-POINTED: THE STORE'S NAV TABLE MOVED FILE AND SHAPE, AND THE GUARD FOLLOWED IT
+ * RATHER THAN BEING DELETED — which is what its own failure message instructs.
+ * `SUB_NAV_LINKS` in `Apps/AppsSubNav.tsx` became `appsSections` in
+ * `Apps/apps-sections.ts` when the horizontal tab strip became a left rail. The rule is
+ * unchanged in force: the chrome and the store draw a shared route with a shared glyph.
+ *
+ * ⚠️ ONE PARSE DETAIL CHANGED WITH IT. The old table carried a literal `href:`; the
+ * registry carries a `path:` SEGMENT (empty string for the marketplace index), because
+ * that is the `account-sections` shape it is modelled on. So the extractor below derives
+ * the href the way `getAppsSectionHref` does. That derivation is duplicated here on
+ * purpose — this is a node-tier SOURCE scan and importing the module would drag in
+ * `@tabler/icons-react`; the fixture in the positive control is what keeps the two
+ * spellings honest.
+ */
+const SUBNAV = path.join(REPO_ROOT, 'src/components/Apps/apps-sections.ts');
 
 function read(file: string): string {
   // Prove the path before trusting any "no match" below: a scan of an absent file
@@ -67,32 +82,35 @@ function code(src: string): string {
 type NavEntry = { href: string; label: string; icon: string };
 
 /**
- * The `SUB_NAV_LINKS` table as `{href, label, icon}` rows.
+ * The `appsSections` registry as `{href, label, icon}` rows.
  *
- * Entries are split on `href:` rather than on braces: the table's rows are a mix of
- * one-liners and multi-line objects, and several carry nested arrow functions
- * (`visible: (s, c) => ...`), so brace-counting would need a real parser to be
- * correct and a wrong one would silently drop rows.
+ * Entries are split on `id:` rather than on braces: the table's rows are multi-line
+ * objects carrying nested arrow functions (`visible: (s, c) => ...`), so brace-counting
+ * would need a real parser to be correct and a wrong one would silently drop rows.
+ *
+ * `href` is DERIVED from `path`, mirroring `getAppsSectionHref`: the empty segment is
+ * the marketplace index (`/apps`), anything else is `/apps/<path>`.
  */
 function parseSubNav(src: string): NavEntry[] {
-  const start = src.indexOf('SUB_NAV_LINKS');
+  const start = src.indexOf('export const appsSections');
   expect(
     start,
-    '`SUB_NAV_LINKS` was not found in AppsSubNav.tsx — if the table moved or was renamed, ' +
-      're-point this guard rather than deleting it: it is the only BLOCKING check that the ' +
-      'app-block chrome and the store subnav agree on their shared destinations.'
+    '`appsSections` was not found in apps-sections.ts — if the registry moved or was ' +
+      'renamed, re-point this guard rather than deleting it: it is the only BLOCKING check ' +
+      'that the app-block chrome and the store nav agree on their shared destinations.'
   ).toBeGreaterThan(-1);
   const body = src.slice(start);
   const end = body.indexOf('\n];');
   const table = end === -1 ? body : body.slice(0, end);
 
-  const chunks = table.split(/\bhref:\s*/).slice(1);
+  const chunks = table.split(/\bid:\s*/).slice(1);
   return chunks
     .map((chunk) => {
-      const href = /^'([^']+)'/.exec(chunk)?.[1];
+      const segment = /\bpath:\s*'([^']*)'/.exec(chunk)?.[1];
       const label = /\blabel:\s*'([^']+)'/.exec(chunk)?.[1];
       const icon = /\bicon:\s*(Icon\w+)/.exec(chunk)?.[1];
-      return href && label && icon ? { href, label, icon } : null;
+      if (segment === undefined || !label || !icon) return null;
+      return { href: segment ? `/apps/${segment}` : '/apps', label, icon };
     })
     .filter((e): e is NavEntry => e !== null);
 }
@@ -315,12 +333,21 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // shapes that broke naive versions of them: a multi-line row with a nested
     // arrow function, and a `leftSection` whose JSX contains a `>` of its own.
     const subnav = parseSubNav(`
-      const SUB_NAV_LINKS: SubNavLink[] = [
-        { href: '/apps', label: 'Marketplace', icon: IconBuildingStore, visible: () => true },
+      export const appsSections: AppsSection[] = [
         {
-          href: '/apps/review',
+          id: 'marketplace',
+          path: '',
+          label: 'Marketplace',
+          icon: IconBuildingStore,
+          group: 'discover',
+          visible: () => true,
+        },
+        {
+          id: 'review',
+          path: 'review',
           label: 'Review',
           icon: IconGavel,
+          group: 'moderate',
           visible: (s, c) => c.isAuthor && s.isReviewer,
         },
       ];
@@ -373,7 +400,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // from the rule below, reporting a parse problem for what is really a nav change.
     // The exact chrome set is owned by the `expected glyphs` test; the exact excluded
     // set by the ledger.
-    expect(subnav.length, 'parsed no rows out of SUB_NAV_LINKS').toBeGreaterThanOrEqual(1);
+    expect(subnav.length, 'parsed no rows out of appsSections').toBeGreaterThanOrEqual(1);
     expect(nav.length, 'parsed no items out of the chrome platform nav').toBeGreaterThanOrEqual(1);
 
     const bySubNavHref = new Map(subnav.map((e) => [e.href, e]));
@@ -383,7 +410,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
       expect(
         store,
         `the chrome platform nav offers \`${item.href}\`, which the store subnav does not list. ` +
-          'Either the destination belongs in `SUB_NAV_LINKS` too, or this menu is inventing a ' +
+          'Either the destination belongs in `appsSections` too, or this menu is inventing a ' +
           'route the store has no tab for — decide deliberately.'
       ).toBeDefined();
       expect(
@@ -400,7 +427,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
    * The rule above is ONE-DIRECTIONAL: every chrome destination must exist in the
    * subnav, never the reverse. That is correct — the chrome is deliberately a strict
    * SUBSET (Invites / Revenue have always been subnav-only) — but it means a new
-   * `SUB_NAV_LINKS` row is scored identically whether its absence from the chrome was a
+   * `appsSections` row is scored identically whether its absence from the chrome was a
    * decision or an oversight. Both readings pass, silently, which is the exact shape of
    * an unpinned decision.
    *
@@ -443,7 +470,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // leaving the ledger's SHRINK direction unproven. A zero on either side would make
     // the difference below trivially "everything" or "nothing", and that is all these
     // two are here to rule out; the SET is the `toEqual`'s to own, in both directions.
-    expect(subnav.length, 'parsed no rows out of SUB_NAV_LINKS').toBeGreaterThanOrEqual(1);
+    expect(subnav.length, 'parsed no rows out of appsSections').toBeGreaterThanOrEqual(1);
     expect(inChrome.size, 'parsed no items out of the chrome platform nav').toBeGreaterThanOrEqual(
       1
     );
@@ -460,7 +487,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
       // 🔴 `/apps/invites` AND `/apps/submit` LEFT THIS LIST BY BEING DELETED FROM THE
       // SUBNAV, NOT BY BEING ADDED TO THE CHROME. Both routes were consolidated into
       // `/apps/build`, which the chrome DOES carry (repointed from `/apps/mine`) — so the
-      // set shrank from four to two because `SUB_NAV_LINKS` shrank, which is exactly the
+      // set shrank from four to two because the registry shrank, which is exactly the
       // direction this ledger is meant to make visible.
       '/apps/invites',
       '/apps/revenue',
@@ -535,7 +562,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
       expect(
         bySubNavHref.get(link.href),
         `the chrome links to \`${link.href}\` ("${link.label}"), which the store subnav does ` +
-          'not list. Either it belongs in `SUB_NAV_LINKS`, or the chrome is inventing a ' +
+          'not list. Either it belongs in `appsSections`, or the chrome is inventing a ' +
           'destination the store has no tab for — decide deliberately.'
       ).toBeDefined();
     }
@@ -571,7 +598,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     //
     // (a) and (b) are PER-LINK, so they catch an addition only when the added link is
     // itself wrong — an invented route, or the store's route under the wrong glyph. A new
-    // item pointing at a route `SUB_NAV_LINKS` already carries, wearing that row's own
+    // item pointing at a route `appsSections` already carries, wearing that row's own
     // glyph, satisfies both and is invisible to them. Nor does anything else here close
     // the gap — the `expected glyphs` test enumerates the PLATFORM-NAV slice only, and (c)
     // enumerates the two `/apps/activity` LABELS only. So an item added to the ⋮ overflow

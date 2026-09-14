@@ -152,7 +152,7 @@ describe('fails CLOSED', () => {
  * ⚠️ SCOPE, STATED HONESTLY: this pins the tab's PREDICATE against the page's RESOLVER.
  * It cannot see that `SUB_NAV_LINKS`'s Build row actually calls `c.canBuild` — that is a
  * source fact, owned by `appsBuildGateCallSites.test.ts`, and a behavioural fact, owned
- * by `AppsSubNav.storeGate.browser.test.tsx`. Three checks, three different failure
+ * by `AppsRailNav.storeGate.browser.test.tsx`. Three checks, three different failure
  * modes; do not read this file as covering all of it.
  */
 describe('🔴 the Build tab predicate and the /apps/build page gate cannot disagree', () => {
