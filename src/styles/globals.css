@@ -243,11 +243,43 @@
        described here rather than quoted: a verbatim copy of that expression in this
        comment is a second thing to keep in step, and its `var()` spelling is picked
        up by the single-declaration guard above.)
+     · ⚠️ same file → "pins the content wrapper's box model — a dropped `flex: 1`
+       collapses the app with every suite green" pins `app-page-content`'s WHOLE style
+       block as one exact string, and that string CONTAINS the same `var()` expression.
+       Easy to miss, because the test's stated subject is `flex: 1` and not the cap —
+       an earlier version of this checklist filed it under the LEDGER step above,
+       which is the wrong list. The expected string moves with the inlining commit.
+     · ⚠️ same file → 'the cap sits on `app-page-content`, and that box is a real
+       DESCENDANT of the frame' locates the capped box by asserting its style block
+       contains `--app-page-max-width`. RE-POINT IT, DO NOT DELETE IT: the containment
+       relationship it pins is still true and still load-bearing after the inlining;
+       only its way of spelling "the capped box" mentions the property.
      · the browser case 'the cap is read from `--app-page-max-width` — overriding it
        moves the rendered width', which exists to prove the property is the source.
      · the `🔴 THIS IS THE `var()` FALLBACK, NOT THE SOURCE` paragraph on
        `APP_PAGE_MAX_WIDTH_PX` in `PageBlockHost.tsx`, which would then describe a
        property that no longer exists.
+
+   🔴 WHICH STEP TURNS WHAT RED — MEASURED, NOT REASONED. Each edit was performed in
+   turn against a scratch copy of the tree, `pageBlockHostMaxWidth.test.ts` (10 tests)
+   plus the other node-tier files that read this stylesheet were run, and the edit was
+   reverted. Recorded because reasoning about it produced the wrong answer once: the
+   two ⚠️ entries added above were first filed under the LEDGER step, on the
+   assumption that a guard whose subject is the ledger dies with the ledger. Neither
+   does — both die with the cap expression instead, which is THIS step.
+     · DELETING THE LEDGER (this comment block + both ENTRY comments + both rules)
+       → 5 red, all of them named in the list above: 'the full-bleed opt-out ledger —
+       membership is explicit…' and 'globals.css documents the opt-out against the
+       attributes the host actually stamps' in `pageBlockHostMaxWidth.test.ts`, plus
+       all three cases in `ledgerSelectorSurvivesProdStrip.test.ts`. Nothing else in
+       the node tier moves — in particular 'stamps BOTH ledger attributes on the host
+       root…' stays GREEN, because it reads `PageBlockHost.tsx` and not this file. It
+       is a DELETION item in that list, not a red one, and the distinction matters:
+       a reader chasing red tests will never be led to it.
+     · INLINING THE CAP (drop `--app-page-max-width` from `:root`, rewrite the host's
+       `maxWidth` to read the constant directly) → 4 red, ALL in
+       `pageBlockHostMaxWidth.test.ts`, and they are exactly the four ⚠️ entries in
+       THIS list. No ledger guard notices.
 
    🔴 AND THE ONE THING THAT MUST NOT GO EARLY: the INVARIANT case in
    `pageBlockHostMaxWidth.test.ts` — 'the cap is never written as an inline custom
