@@ -655,7 +655,6 @@ export default function CrucibleCreate() {
       </Input.Wrapper>
     );
 
-
     // Display Mode - Default view with "Customize" button
     if (!prizeEditMode) {
       return (

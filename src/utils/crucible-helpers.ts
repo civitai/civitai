@@ -16,11 +16,7 @@ export function isEndingSoon(endAt: Date, now: Date = new Date()): boolean {
  * @param endAt - The crucible end date (optional)
  * @param now - Optional current date for testing/memoization (defaults to new Date())
  */
-export function getStatusDotColor(
-  status: CrucibleStatus,
-  endAt: Date | null,
-  now?: Date
-): string {
+export function getStatusDotColor(status: CrucibleStatus, endAt: Date | null, now?: Date): string {
   if (status === CrucibleStatus.Active && endAt && isEndingSoon(endAt, now)) {
     return 'bg-yellow-5';
   }
@@ -44,11 +40,7 @@ export function getStatusDotColor(
  * @param endAt - The crucible end date (optional)
  * @param now - Optional current date for testing/memoization (defaults to new Date())
  */
-export function getStatusText(
-  status: CrucibleStatus,
-  endAt: Date | null,
-  now?: Date
-): string {
+export function getStatusText(status: CrucibleStatus, endAt: Date | null, now?: Date): string {
   switch (status) {
     case CrucibleStatus.Active:
       if (endAt && isEndingSoon(endAt, now)) {

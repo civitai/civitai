@@ -137,8 +137,7 @@ describe('crucible flag — Flipt answering', () => {
 });
 
 describe('crucible surfaces are all gated', () => {
-  const read = (rel: string) =>
-    readFileSync(path.join(__dirname, '../../../..', rel), 'utf8');
+  const read = (rel: string) => readFileSync(path.join(__dirname, '../../../..', rel), 'utf8');
 
   it.each([
     'src/pages/crucibles/index.tsx',
@@ -172,7 +171,8 @@ describe('crucible surfaces are all gated', () => {
 
   it('gates every procedure on the crucible router', () => {
     const source = read('src/server/routers/crucible.router.ts');
-    const procedures = source.match(/^\s{2}\w+: (public|guarded|protected|moderator)Procedure/gm) ?? [];
+    const procedures =
+      source.match(/^\s{2}\w+: (public|guarded|protected|moderator)Procedure/gm) ?? [];
     const guards = source.match(/isFlagProtected\('crucible'\)/g) ?? [];
 
     // An ungated procedure is a hole in the gate that no page check can cover, so the counts

@@ -247,7 +247,6 @@ export const createCrucible = async ({
   }
 };
 
-
 export type CrucibleDetailEntry = Omit<CrucibleDetailRowEntry, 'score' | 'position'> & {
   score: number | null;
   position: number | null;
@@ -2470,7 +2469,7 @@ export const getFeaturedCrucible = async (): Promise<{
     FROM "Crucible" c
     LEFT JOIN "Image" i ON c."imageId" = i.id
     LEFT JOIN "CrucibleEntry" ce ON c.id = ce."crucibleId"
-    WHERE c.status = ${CrucibleStatus.Active}
+    WHERE c.status = ${CrucibleStatus.Active}::"CrucibleStatus"
     GROUP BY c.id, c.name, c.description, c."entryFee", c."seededPrizePool", c."endAt", i.url
     ORDER BY "prizePool" DESC, "entriesCount" DESC
     LIMIT 1

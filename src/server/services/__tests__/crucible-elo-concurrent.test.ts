@@ -37,9 +37,7 @@ beforeEach(() => {
 
 describe('concurrent votes', () => {
   it('issues exactly one atomic call per vote', async () => {
-    await Promise.all(
-      Array.from({ length: 20 }, (_, i) => processVote(1, 100 + i, 200 + i, 0, 0))
-    );
+    await Promise.all(Array.from({ length: 20 }, (_, i) => processVote(1, 100 + i, 200 + i, 0, 0)));
 
     expect(processVoteAtomic).toHaveBeenCalledTimes(20);
   });
@@ -129,10 +127,7 @@ describe('the Lua script itself', () => {
   // The script is a template literal inside the Redis client and never executes in this suite, so
   // the two properties the atomicity argument rests on are pinned textually. Both were regressions
   // once already (US001/US006 on the original branch).
-  const source = readFileSync(
-    path.join(__dirname, '../../redis/crucible-elo.redis.ts'),
-    'utf8'
-  );
+  const source = readFileSync(path.join(__dirname, '../../redis/crucible-elo.redis.ts'), 'utf8');
 
   it('computes the loser change as the negation of the winner change, so votes are zero-sum', () => {
     expect(source).toContain('local loserChange = -winnerChange');

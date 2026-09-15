@@ -118,9 +118,9 @@ describe('createCrucibleInputSchema', () => {
   });
 
   it('requires an entry limit of at least one, capped at CRUCIBLE_MAX_ENTRIES', () => {
-    expect(createCrucibleInputSchema.safeParse({ ...validCreateInput, entryLimit: 0 }).success).toBe(
-      false
-    );
+    expect(
+      createCrucibleInputSchema.safeParse({ ...validCreateInput, entryLimit: 0 }).success
+    ).toBe(false);
     expect(
       createCrucibleInputSchema.safeParse({
         ...validCreateInput,
@@ -268,12 +268,12 @@ describe('getJudgingPairSchema', () => {
 
   it('caps the exclude list at 50 entries', () => {
     const ids = (n: number) => Array.from({ length: n }, (_, i) => i);
-    expect(getJudgingPairSchema.safeParse({ crucibleId: 1, excludeEntryIds: ids(50) }).success).toBe(
-      true
-    );
-    expect(getJudgingPairSchema.safeParse({ crucibleId: 1, excludeEntryIds: ids(51) }).success).toBe(
-      false
-    );
+    expect(
+      getJudgingPairSchema.safeParse({ crucibleId: 1, excludeEntryIds: ids(50) }).success
+    ).toBe(true);
+    expect(
+      getJudgingPairSchema.safeParse({ crucibleId: 1, excludeEntryIds: ids(51) }).success
+    ).toBe(false);
   });
 });
 

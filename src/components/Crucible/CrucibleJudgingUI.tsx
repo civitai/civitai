@@ -161,11 +161,6 @@ export function CrucibleJudgingUI({
               alignItems: 'center',
               justifyContent: 'center',
             },
-            section: {
-              '&[data-position="right"]': {
-                marginLeft: 'auto',
-              },
-            },
           }}
           leftSection={<IconPlayerSkipForward size={18} />}
           rightSection={<Kbd>Space</Kbd>}

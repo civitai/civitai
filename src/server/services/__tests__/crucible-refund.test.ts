@@ -126,9 +126,7 @@ describe('cancelCrucible — entry refunds', () => {
 
     expect(result.refundedEntries).toBe(1);
     expect(result.totalRefunded).toBe(100);
-    expect(result.failedRefunds).toEqual([
-      { entryId: 1, userId: 10, error: 'buzz unavailable' },
-    ]);
+    expect(result.failedRefunds).toEqual([{ entryId: 1, userId: 10, error: 'buzz unavailable' }]);
   });
 
   it('still cancels the crucible when every entry refund fails', async () => {
