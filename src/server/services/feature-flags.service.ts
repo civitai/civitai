@@ -191,15 +191,17 @@ const featureFlags = createFeatureFlags({
   // with `enabled: false` and no rollout hides the bar for everyone, moderators included.
   // Until that flag exists, evaluation returns null and static evaluation keeps it on.
   feedTagBar: { availability: ['public'], fliptKey: 'feed-tag-bar' },
-  // Serve post-detail and model-page showcase images a `srcSet` carrying a 2x variant, and
-  // force the optimized format there whatever the user's `imageFormat` preference. Without
+  // Serve post-detail and model-page showcase images a `srcSet` carrying a 2x variant. Without
   // it those surfaces request a width in CSS pixels and every DPR>=2 display upscales:
   // measured 1.82x on post detail at DPR 2, 1.38x on an iPhone (ClickUp 868m36wyd).
   //
-  // `['public']` and NOT `[]`: the 2x variant is also the OPTIMIZED one, so for a user on
-  // the default `imageFormat: 'metadata'` it is FEWER bytes than the unoptimized JPEG shipped
-  // today (measured 305kB vs 421kB), and the Flipt-down fallback should be the cheaper,
-  // sharper path. So DO NOT create `hi-dpi-previews` in flipt-state to ship this: while it
+  // It no longer decides the FORMAT — `mediaQualityDefault` below took that over, so a paying
+  // member on lossless keeps lossless at 2x.
+  //
+  // `['public']` and NOT `[]`: with compressed the default, the 2x variant is FEWER bytes than
+  // the unoptimized JPEG that shipped before it (measured 305kB vs 421kB), and the Flipt-down
+  // fallback should be the cheaper, sharper path. So DO NOT create `hi-dpi-previews` in
+  // flipt-state to ship this: while it
   // does not exist, evaluation returns null and static evaluation keeps it on. Creating it as
   // a boolean with `enabled: false` and no rollout IS the kill switch — Flipt's answer
   // overrides static evaluation in both directions.
@@ -209,6 +211,19 @@ const featureFlags = createFeatureFlags({
   // 221kB) on an infinitely scrolling surface, for a box that only renders ~318 CSS px. Wants a
   // ~900 rung in civitai-image-cacher's `CommonSizes` before it can be turned on there.
   hiDpiPreviews: { availability: ['public'], fliptKey: 'hi-dpi-previews' },
+  // Compressed becomes the default for every viewer at every width, and lossless becomes a paid
+  // member's choice. Replaces a rule where every term forced compression ON and none could force
+  // it off, so a user who picked "Unoptimized" still got webp across every card feed.
+  //
+  // `availability: []` — the OPPOSITE of `hiDpiPreviews` above, deliberately. There, failing open
+  // is failing to the cheaper, sharper path. Here, failing open would ship a global default change
+  // the first time Flipt is unreachable. The pre-change behaviour is the status quo, not a
+  // regression, so dark-by-default is the safe fallback and the flag is the whole rollback.
+  //
+  // Raise it in steps: measured on prod 2026-09-15, 99.25% of accounts have never set the
+  // preference, so most compressed derivations have never been requested and the first hit for
+  // each is a cold origin miss in civitai-image-cacher. See docs/plans/compressed-vs-lossless.md.
+  mediaQualityDefault: { availability: [], fliptKey: 'media-quality-default' },
   // `availability: []` is the Flipt-down fallback, and off is the right one here: the search
   // refinement is useless until the gated documents carry `hasActivePaidAccess`, which is a backfill
   // and an index-settings change, not a deploy.

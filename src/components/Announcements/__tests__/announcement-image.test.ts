@@ -10,18 +10,25 @@ vi.mock('~/env/client', () => ({
 }));
 
 // `useEdgeUrl` is the REAL render path and the thing the monitor must agree with. It is
-// a hook only in the sense that it calls `useCurrentUser()`; with that stubbed it is a
-// pure function, so it can be exercised directly from the node suite. Stub it to a
-// signed-out viewer — the default, and the one whose `filePreferences` cannot mask a
-// threshold change by forcing `optimized` on independently.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+// a hook only in the sense that it reads the viewer and the flags; with both stubbed it is a
+// pure function, so it can be exercised directly from the node suite.
+//
+// The viewer is mutable so one test can make itself a paying member on lossless — the case the
+// banner's explicit `optimized` exists to survive. It defaults to signed out, which is the
+// viewer whose `filePreferences` cannot mask a rule change by opting into compression anyway.
+const viewer = vi.hoisted(() => ({ current: null as null | Record<string, unknown> }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => viewer.current }));
 vi.mock('~/providers/BrowserSettingsProvider', () => ({ useBrowsingSettings: () => false }));
+// `useEdgeUrl` reads the media-quality flag through a context. Pin it ON: that is the rule the
+// banner ships under, and an unmocked `useContext` outside a render would throw here anyway.
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useOptionalFeatureFlags: () => ({ mediaQualityDefault: true }),
+}));
 
 // Imported under a non-`use` alias on purpose: it is a hook only by naming convention
 // (its single hook call, `useCurrentUser`, is stubbed above), and the rules-of-hooks
 // lint would otherwise reject calling it inside the width-ladder loop below.
 import { getEdgeUrl, useEdgeUrl as resolveRenderedUrl } from '~/client-utils/cf-images-utils';
-import { OPTIMIZED_WIDTH_THRESHOLD, shouldForceOptimized } from '~/client-utils/edge-url';
 import {
   ANNOUNCEMENT_IMAGE_WIDTH,
   announcementImageFormSchema,
@@ -34,7 +41,7 @@ const KEY = '7171bdc6-8007-492c-84ad-f607e4dbd320';
 
 describe('getAnnouncementImageUrl', () => {
   it('reproduces the variant the banner actually renders', () => {
-    // 200 snaps up the common-size ladder to 320, and widths <= 450 force optimized.
+    // 200 snaps up the common-size ladder to 320; `optimized` comes from the call site.
     expect(getAnnouncementImageUrl(KEY)).toBe(
       `https://image.test/${KEY}/width=320,optimized=true/${KEY}.jpeg`
     );
@@ -59,12 +66,28 @@ describe('getAnnouncementImageUrl', () => {
     expect(getAnnouncementImageUrl(KEY)).not.toBe(getEdgeUrl(KEY, { original: true }));
   });
 
-  it('keeps the render width inside the range that forces optimized', () => {
-    // The helper derives `optimized` from the same predicate the render path uses, so a
-    // threshold change can no longer desync them — but a width above the threshold would
-    // still change which variant users load, so pin the relationship explicitly.
-    expect(ANNOUNCEMENT_IMAGE_WIDTH).toBeLessThanOrEqual(OPTIMIZED_WIDTH_THRESHOLD);
-    expect(shouldForceOptimized(ANNOUNCEMENT_IMAGE_WIDTH)).toBe(true);
+  it('is compressed for a viewer entitled to lossless, because the banner asks explicitly', () => {
+    // 🔴 The reason `AnnouncementCard` passes `optimized` at all. Media quality is the viewer's
+    // now, so without an explicit flag a paying member on lossless would load a DIFFERENT
+    // variant than the one `announcement-media-check` probes — and the monitor would report a
+    // healthy banner while theirs 404s.
+    viewer.current = { isPaidMember: true, filePreferences: { imageFormat: 'metadata' } };
+    try {
+      // Control: the same viewer on any other 200px image DOES get lossless, so the assertion
+      // below is about the explicit flag and not about the stub failing to take effect.
+      expect(resolveRenderedUrl(KEY, { width: ANNOUNCEMENT_IMAGE_WIDTH }).url).not.toContain(
+        'optimized'
+      );
+
+      const rendered = resolveRenderedUrl(KEY, {
+        width: ANNOUNCEMENT_IMAGE_WIDTH,
+        optimized: true,
+      });
+      expect(rendered.url).toContain('optimized=true');
+      expect(getAnnouncementImageUrl(KEY)).toBe(rendered.url);
+    } finally {
+      viewer.current = null;
+    }
   });
 
   it('equals the URL the render path actually produces, not a hand-rolled mirror', () => {
@@ -76,28 +99,31 @@ describe('getAnnouncementImageUrl', () => {
     // 1800 cap, the type/extension inference or the param order ever change under it —
     // any of which would make the monitor probe a variant nobody loads and then emit a
     // false `announcement-image-render-failed` on a healthy banner.
-    const rendered = resolveRenderedUrl(KEY, { width: ANNOUNCEMENT_IMAGE_WIDTH });
+    const rendered = resolveRenderedUrl(KEY, {
+      width: ANNOUNCEMENT_IMAGE_WIDTH,
+      optimized: true,
+    });
     expect(getAnnouncementImageUrl(KEY)).toBe(rendered.url);
   });
 
   it('tracks the render path across the whole width ladder, not just the current width', () => {
     // Generalises the binding: for any width the banner could plausibly be given, the
     // helper's construction and the render path agree. Guards a future edit to
-    // ANNOUNCEMENT_IMAGE_WIDTH as well as to the ladder/threshold.
+    // ANNOUNCEMENT_IMAGE_WIDTH as well as to the ladder.
     for (const width of [96, 200, 320, 450, 451, 512, 800, 2400]) {
-      const expected = resolveRenderedUrl(KEY, { width }).url;
-      const actual = getEdgeUrl(KEY, {
-        width,
-        optimized: shouldForceOptimized(width) ? true : undefined,
-      });
+      const expected = resolveRenderedUrl(KEY, { width, optimized: true }).url;
+      const actual = getEdgeUrl(KEY, { width, optimized: true });
       expect(actual, `width=${width}`).toBe(expected);
     }
   });
 
-  it('drops the optimized flag entirely above the threshold (never optimized=false)', () => {
-    const wide = OPTIMIZED_WIDTH_THRESHOLD + 1;
-    expect(shouldForceOptimized(wide)).toBe(false);
-    expect(resolveRenderedUrl(KEY, { width: wide }).url).not.toContain('optimized');
+  it('drops the flag entirely for a lossless viewer (never optimized=false)', () => {
+    viewer.current = { isPaidMember: true, filePreferences: { imageFormat: 'metadata' } };
+    try {
+      expect(resolveRenderedUrl(KEY, { width: 512 }).url).not.toContain('optimized');
+    } finally {
+      viewer.current = null;
+    }
   });
 });
 

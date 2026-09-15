@@ -16,7 +16,9 @@ import {
   getEdgeUrl,
   getEdgeUrlSrcSet,
   resolveOptimized,
+  resolveOptimizedLegacy,
   snapWidthToCommonSize,
+  toMediaQuality,
 } from '~/client-utils/cf-images-utils';
 
 describe('snapWidthToCommonSize', () => {
@@ -155,22 +157,85 @@ describe('getEdgeUrlSrcSet', () => {
   });
 });
 
+describe('toMediaQuality', () => {
+  it('reads an unset preference as compressed — the default flip, with nothing written', () => {
+    expect(toMediaQuality({})).toBe('compressed');
+    expect(toMediaQuality({ canUseLossless: true })).toBe('compressed');
+  });
+
+  it('gives lossless only to a viewer who both chose it and is entitled to it', () => {
+    expect(toMediaQuality({ imageFormat: 'metadata', canUseLossless: true })).toBe('lossless');
+    expect(toMediaQuality({ imageFormat: 'metadata', canUseLossless: false })).toBe('compressed');
+  });
+
+  it('reads an explicit compressed choice as compressed even for a member', () => {
+    expect(toMediaQuality({ imageFormat: 'optimized', canUseLossless: true })).toBe('compressed');
+  });
+});
+
 describe('resolveOptimized', () => {
+  const lossless = { quality: 'lossless' } as const;
+  const compressed = { quality: 'compressed' } as const;
+
+  it('compresses a non-member in card feeds AND at preview width', () => {
+    // The reported bug, from the other side: the two widths used to disagree.
+    expect(resolveOptimized({ width: 450, ...compressed })).toBe(true);
+    expect(resolveOptimized({ width: 800, ...compressed })).toBe(true);
+  });
+
+  it('honours lossless at EVERY width, card feeds included', () => {
+    // 🔴 The regression this PR exists to fix. Before, `width <= 450` forced compression on
+    // regardless of the preference, so every card feed ignored the choice.
+    expect(resolveOptimized({ width: 450, ...lossless })).toBe(false);
+    expect(resolveOptimized({ width: 96, ...lossless })).toBe(false);
+    expect(resolveOptimized({ width: 800, ...lossless })).toBe(false);
+  });
+
+  it('compresses when quality is unknown', () => {
+    // A viewer resolved before the session lands must not flash the expensive variant.
+    expect(resolveOptimized({ width: 800 })).toBe(true);
+  });
+
+  it('lets an explicit call-site optimized win over lossless', () => {
+    // Site chrome — stickers, avatars, shop tiles, the announcement banner — has one variant
+    // for everyone, which is what lets `announcement-media-check` name the URL it probes.
+    expect(resolveOptimized({ width: 96, optimized: true, ...lossless })).toBe(true);
+  });
+
+  it('never flags an original request, for anybody', () => {
+    // Downloads and the lightbox. The cacher ignores `optimized` on an original, but emitting
+    // it would still change the URL and split the CDN cache key.
+    expect(resolveOptimized({ original: true, ...compressed })).toBe(false);
+    expect(resolveOptimized({ original: true, ...lossless })).toBe(false);
+    // `getEdgeUrl` infers `original` from the absence of both dimensions — mirrored here, or
+    // every width-less call would start carrying the flag.
+    expect(resolveOptimized({ ...compressed })).toBe(false);
+    expect(resolveOptimized({ height: 400, ...compressed })).toBe(true);
+  });
+
+  it('leaves hi-DPI to the viewer, so a paying member keeps lossless at 2x', () => {
+    // Decision 3.1(b): hiDpi decides whether a srcSet is emitted, no longer what format it is.
+    expect(resolveOptimized({ width: 1600, ...lossless })).toBe(false);
+  });
+});
+
+describe('resolveOptimizedLegacy', () => {
+  // The flag-off path. These are the pre-change assertions verbatim: if they drift, a rollback
+  // no longer restores the URLs it claims to.
   it('forces the optimized format for a hi-DPI request whatever the preference', () => {
-    expect(resolveOptimized({ width: 800, hiDpi: true, imageFormat: 'metadata' })).toBe(true);
+    expect(resolveOptimizedLegacy({ width: 800, hiDpi: true, imageFormat: 'metadata' })).toBe(true);
   });
 
   it('leaves a plain wide request on the user preference', () => {
-    expect(resolveOptimized({ width: 800, imageFormat: 'metadata' })).toBe(false);
-    expect(resolveOptimized({ width: 800, imageFormat: 'optimized' })).toBe(true);
+    expect(resolveOptimizedLegacy({ width: 800, imageFormat: 'metadata' })).toBe(false);
+    expect(resolveOptimizedLegacy({ width: 800, imageFormat: 'optimized' })).toBe(true);
   });
 
   it('still forces it below the small-preview threshold', () => {
-    expect(resolveOptimized({ width: 450, imageFormat: 'metadata' })).toBe(true);
+    expect(resolveOptimizedLegacy({ width: 450, imageFormat: 'metadata' })).toBe(true);
   });
 
   it('leaves an original request on the user preference', () => {
-    // hiDpi never reaches an original request, so the lightbox and downloads keep honouring it.
-    expect(resolveOptimized({ imageFormat: 'metadata' })).toBe(false);
+    expect(resolveOptimizedLegacy({ imageFormat: 'metadata' })).toBe(false);
   });
 });

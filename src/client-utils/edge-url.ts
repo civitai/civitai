@@ -52,33 +52,74 @@ const typeExtensions: Record<MediaType, string> = {
 // server-side snap remains the source of truth.
 export const COMMON_IMAGE_WIDTHS = [96, 320, 450, 512, 800, 1200, 1600, 2200] as const;
 
-/**
- * Below (and at) this requested width the render path forces `optimized=true`.
- *
- * 🔴 Load-bearing and deliberately shared: `useEdgeUrl` decides the `optimized` flag
- * from this number, so anything that has to reproduce a URL the browser actually
- * requests (e.g. `~/components/Announcements/announcement-image`, whose health monitor
- * would otherwise probe a variant nobody loads and report a false failure) must read
- * this constant rather than hardcoding the threshold.
- */
-export const OPTIMIZED_WIDTH_THRESHOLD = 450;
+/** What a viewer is served while browsing. Persisted as `'optimized' | 'metadata'`. */
+export type MediaQuality = 'compressed' | 'lossless';
 
-/** Whether the render path forces `optimized=true` for a given requested width. */
-export function shouldForceOptimized(width?: number | null) {
-  return !!width && width <= OPTIMIZED_WIDTH_THRESHOLD;
+/**
+ * The viewer's effective quality.
+ *
+ * Compressed unless the viewer both chose lossless and is entitled to it, so an unset
+ * preference — 99% of accounts — reads as compressed without anything being written. A
+ * non-member's stored `'metadata'` is deliberately NOT overwritten: it comes back if they
+ * subscribe.
+ */
+export function toMediaQuality({
+  imageFormat,
+  canUseLossless,
+}: {
+  imageFormat?: string | null;
+  canUseLossless?: boolean;
+}): MediaQuality {
+  return canUseLossless && imageFormat === 'metadata' ? 'lossless' : 'compressed';
+}
+
+/**
+ * Whether these options resolve to the stored original rather than a derived variant.
+ *
+ * Mirrors the inference `getEdgeUrl` makes on its own arguments. Split out because
+ * `resolveOptimized` has to reach the same answer BEFORE `getEdgeUrl` runs: the cacher ignores
+ * `optimized` on an original request, but emitting it still changes the URL, and therefore the
+ * CDN cache key, for every download.
+ */
+export function resolvesToOriginal({
+  width,
+  height,
+  original,
+}: Pick<EdgeUrlProps, 'width' | 'height' | 'original'>) {
+  return original ?? (!width && !height);
 }
 
 /**
  * The `optimized` flag the render path emits.
  *
- * `hiDpi` forces it because the 2x variant is where the format choice stops being free:
- * unoptimized, a 1600px variant of a detailed image measures ~1MB against ~305kB optimized.
- * Nothing a user picked is lost — a resized variant is re-encoded, so the generation
- * parameters carried in the source PNG's `tEXt` chunk are absent from it in either format.
- * `original` requests never reach here with `hiDpi`, so the preference still governs the
- * lightbox and downloads.
+ * An explicit `optimized` from the call site wins, which is what keeps site chrome — stickers,
+ * avatars, shop tiles, OG images, the announcement banner — compressed for everyone regardless
+ * of who is looking. Otherwise the viewer's quality decides, at every width.
  */
 export function resolveOptimized({
+  optimized,
+  width,
+  height,
+  original,
+  quality,
+}: Pick<EdgeUrlProps, 'optimized' | 'width' | 'height' | 'original'> & {
+  quality?: MediaQuality;
+}) {
+  if (optimized) return true;
+  if (resolvesToOriginal({ width, height, original })) return false;
+  return quality !== 'lossless';
+}
+
+/**
+ * The rule that shipped before `mediaQualityDefault`: compressed only when the call site asked,
+ * when the request was small enough that webp was assumed free (`3b672008b4`, no recorded
+ * rationale), when a 2x variant was being served, or when the user opted in. Every term forces
+ * compression ON and none can force it off, which is why the preference was ignored across card
+ * feeds.
+ *
+ * Kept so the flag rolls back to byte-identical URLs. Delete it with the flag.
+ */
+export function resolveOptimizedLegacy({
   optimized,
   width,
   hiDpi,
@@ -89,7 +130,7 @@ export function resolveOptimized({
   hiDpi?: boolean;
   imageFormat?: string | null;
 }) {
-  return !!(optimized || shouldForceOptimized(width) || hiDpi || imageFormat === 'optimized');
+  return !!(optimized || (!!width && width <= 450) || hiDpi || imageFormat === 'optimized');
 }
 
 /**
