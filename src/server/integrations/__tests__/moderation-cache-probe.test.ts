@@ -132,9 +132,10 @@ describe('cache probe — the flag is the arming switch', () => {
     // version of this test set the flag off, called once, slept 20 ms and asserted zero — and a
     // mutation run with the flag guard DELETED still passed it. The probe's first invocation has to
     // resolve a lazy `import()`, which takes longer than 20 ms, so the sleep was proving that the
-    // probe is slow rather than that it is off. Warming the import inside the test and reusing the
-    // same budget makes the absence load-bearing: the flag-on leg demonstrates that observations
-    // DO land in this window, so the flag-off leg finding none is evidence.
+    // probe is slow rather than that it is off. What makes the absence load-bearing is the WARM
+    // import, not the size of the window: once the flag-on leg has paid that cost, an observation
+    // lands well inside the 200 ms below, so the flag-off leg finding none is evidence. (The two
+    // legs do not share a budget — the flag-on leg polls, this one sleeps a fixed 200 ms.)
     installRedisFake();
     stubFetchOk();
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
