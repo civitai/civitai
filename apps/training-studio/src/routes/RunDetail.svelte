@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { backend, browser, hrefFor, navigate } from '$lib/host';
+  import { backend, browser, generateUrl, hrefFor, navigate } from '$lib/host';
+  import { loraBlobAir } from '$lib/train-core';
   import { locationHref } from '$lib/actions/locationHref';
   import JSZip from 'jszip';
   import { onSignal } from '$lib/signals';
@@ -17,6 +18,7 @@
     IconRepeat,
     IconArrowLeft,
     IconBoltFilled,
+    IconSparkles,
   } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
@@ -290,6 +292,22 @@
   // Reuse this run's already-scanned dataset blobs as-is (no re-upload) to seed a new training.
   async function reuseDataset() {
     handoffReuse(await toReuseItems(d.dataset, d.workflowId));
+  }
+
+  // "Generate with this epoch": the host's /generate deep-link URL for a checkpoint's weights blob.
+  // Null hides the affordance — no generateUrl from the host, no ecosystem to scope the AIR by, or
+  // no downloadable weights yet. `external` implements the seam contract (host.ts): only a
+  // host-relative URL is a same-tab in-host navigation; anything else (including protocol-relative)
+  // opens the generator's origin in a new tab.
+  function epochGenerateLink(epoch: TrainingDetailEpoch): { href: string; external: boolean } | null {
+    const toUrl = generateUrl();
+    if (!toUrl || !d.ecosystem || !epoch.modelKey) return null;
+    const href = toUrl({
+      air: loraBlobAir(d.ecosystem, epoch.modelKey),
+      workflowId: d.workflowId,
+      name: `${d.name} · epoch ${epoch.number}`,
+    });
+    return { href, external: !(href.startsWith('/') && !href.startsWith('//')) };
   }
 
   let furtherEpochs = $state(5);
@@ -724,13 +742,26 @@
             {/if}
           </div>
           {#if featured.modelUrl}
-            <a
-              href={featured.modelUrl}
-              download
-              class="ml-auto inline-flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
-            >
+            {@const gen = epochGenerateLink(featured)}
+            <div class="ml-auto flex flex-wrap items-center gap-2">
+              {#if gen}
+                <a
+                  href={gen.href}
+                  target={gen.external ? '_blank' : undefined}
+                  rel={gen.external ? 'noreferrer' : undefined}
+                  class="inline-flex items-center gap-1.5 rounded border border-primary/40 px-3 py-1.5 text-[13px] font-semibold text-primary transition-colors hover:bg-primary/10"
+                >
+<IconSparkles size={14} stroke={2} class="mr-1 inline" />Generate
+                </a>
+              {/if}
+              <a
+                href={featured.modelUrl}
+                download
+                class="inline-flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+              >
 <IconDownload size={14} stroke={2} class="mr-1 inline" />Download weights
-            </a>
+              </a>
+            </div>
           {:else}
             <span
               class="ml-auto rounded border border-dark-4 px-3 py-1.5 font-mono text-xs text-dark-2"
@@ -775,35 +806,53 @@
           <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {#each newestFirst as epoch (epoch.id)}
               {@const isSelected = epoch === featured}
-              <button
-                type="button"
-                onclick={() => (selectedId = epoch.id)}
-                aria-pressed={isSelected}
-                class="rounded-md border p-3 text-left transition-colors {isSelected
-                  ? 'border-primary bg-primary/5 ring-1 ring-primary/40'
-                  : 'border-dark-4 bg-dark-7 hover:border-dark-3'}"
-              >
-                <div class="mb-2.5 flex items-center gap-2">
-                  <span class="text-sm font-bold text-dark-0">Epoch {epoch.number}</span>
-                  {#if epoch === recommended}
-                    <IconStarFilled size={12} class="text-buzz" />
+              {@const gen = epochGenerateLink(epoch)}
+              <!-- The whole card is the select button, so the per-epoch Generate link can't nest
+                   inside it — it overlays the header's right slot from a relative wrapper. -->
+              <div class="relative">
+                <button
+                  type="button"
+                  onclick={() => (selectedId = epoch.id)}
+                  aria-pressed={isSelected}
+                  class="h-full w-full rounded-md border p-3 text-left transition-colors {isSelected
+                    ? 'border-primary bg-primary/5 ring-1 ring-primary/40'
+                    : 'border-dark-4 bg-dark-7 hover:border-dark-3'}"
+                >
+                  <div class="mb-2.5 flex items-center gap-2">
+                    <span class="text-sm font-bold text-dark-0">Epoch {epoch.number}</span>
+                    {#if epoch === recommended}
+                      <IconStarFilled size={12} class="text-buzz" />
 
-                  {/if}
-                  <span class="ml-auto font-mono text-xs text-dark-2">
-                    {epoch.modelUrl ? 'weights ready' : 'no weights'}
-                  </span>
-                </div>
-                <div class="grid grid-cols-3 gap-1.5">
-                  {#each promptLabels as _, si (si)}
-                    <SampleImage
-                      isVideo={d.isVideo} isAudio={d.media === 'audio'}
-                      url={epoch.samples[si] ?? null}
-                      pending={samplesPending}
-                      alt="Epoch {epoch.number} preview {si + 1}"
-                    />
-                  {/each}
-                </div>
-              </button>
+                    {/if}
+                    {#if !gen}
+                      <span class="ml-auto font-mono text-xs text-dark-2">
+                        {epoch.modelUrl ? 'weights ready' : 'no weights'}
+                      </span>
+                    {/if}
+                  </div>
+                  <div class="grid grid-cols-3 gap-1.5">
+                    {#each promptLabels as _, si (si)}
+                      <SampleImage
+                        isVideo={d.isVideo} isAudio={d.media === 'audio'}
+                        url={epoch.samples[si] ?? null}
+                        pending={samplesPending}
+                        alt="Epoch {epoch.number} preview {si + 1}"
+                      />
+                    {/each}
+                  </div>
+                </button>
+                {#if gen}
+                  <a
+                    href={gen.href}
+                    target={gen.external ? '_blank' : undefined}
+                    rel={gen.external ? 'noreferrer' : undefined}
+                    title="Generate with epoch {epoch.number}"
+                    class="absolute right-2 top-2 inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  >
+                    <IconSparkles size={12} stroke={2} />Generate
+                  </a>
+                {/if}
+              </div>
             {/each}
           </div>
         </div>

@@ -54,6 +54,11 @@ interface TrainingStudioHost {
    *  everywhere (e.g. Buzz was just spent). Already implemented — see `src/lib/host.ts`. */
   hrefFor(loc: StudioLocation): string;
   navigate(loc: StudioLocation, opts?: { refreshAll?: boolean }): Promise<void>;
+
+  /** URL for the main app's `/generate` deep link primed with an epoch's trained weights
+   *  (`?air=<blob AIR>&workflowId=…&name=…`). Optional — omit to hide the per-epoch Generate
+   *  affordance. The component navigates same-tab for a relative URL, new-tab for an absolute one. */
+  generateUrl?(req: { air: string; workflowId: string; name: string }): string;
 }
 
 type StudioLocation = { view: 'home' } | { view: 'new' } | { view: 'run'; workflowId: string };

@@ -3,7 +3,7 @@
 // to the orchestrator with the client-safe cores — no server routes involved.
 import { createCivitaiClient } from '@civitai/client';
 import type { StudioBackend } from '$lib/backend';
-import type { StudioLocation } from '$lib/host';
+import type { GenerateRequest, StudioLocation } from '$lib/host';
 import { UploadError } from '$lib/upload';
 import { computeFromPrices } from '$lib/pricing-core';
 import * as label from '$lib/autolabel-core';
@@ -27,6 +27,9 @@ export interface StudioElementHost {
   };
   hrefFor(loc: StudioLocation): string;
   navigate(loc: StudioLocation, opts?: { refreshAll?: boolean }): Promise<void>;
+  /** URL for the main app's `/generate` deep link primed with an epoch's weights; omit to hide the
+   *  per-epoch Generate affordance (e.g. the viewing user can't use the generator hand-off). */
+  generateUrl?(req: GenerateRequest): string;
 }
 
 class UnauthorizedError extends Error {}

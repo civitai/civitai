@@ -57,6 +57,7 @@
       },
       hrefFor: (loc) => h.hrefFor(loc),
       navigate: (loc, opts) => h.navigate(loc, opts),
+      generateUrl: h.generateUrl?.bind(h),
       refresh: async () => {
         reloadTick += 1;
       },

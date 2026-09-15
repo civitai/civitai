@@ -16,6 +16,14 @@ export type StudioLocation =
   | { view: 'new' }
   | { view: 'run'; workflowId: string };
 
+/** What "generate with this epoch" hands the main app's generator: the epoch's LoRA blob AIR, the
+ *  training run the server verifies ownership against, and a display label for the resource. */
+export interface GenerateRequest {
+  air: string;
+  workflowId: string;
+  name: string;
+}
+
 export interface HostContext {
   /** Every read/write the flow performs — the shell's /api fetches or the element's direct SDK calls. */
   backend: StudioBackend;
@@ -32,6 +40,10 @@ export interface HostContext {
   navigate: (loc: StudioLocation, opts?: { refreshAll?: boolean }) => Promise<void>;
   /** Re-run the host's data load for a dependency key (Kit `invalidate` in the shell). */
   refresh: (key: string) => Promise<void>;
+  /** The host's URL for the main app's `/generate` deep link, primed with an epoch's weights.
+   *  Absent when the host has no generator to hand off to — the affordance hides. A relative URL
+   *  is an in-host navigation; an absolute one opens the generator's origin in a new tab. */
+  generateUrl?: (req: GenerateRequest) => string;
   /** Where portalled UI (dialogs, select/tooltip content) should land. The element supplies its
    *  body-level portal root (an ancestor `container-type` on the embedding page makes it the
    *  containing block for `position: fixed`, so un-portalled overlays center against the wrong box,
@@ -62,6 +74,7 @@ export const hrefFor = (loc: StudioLocation) => host().hrefFor(loc);
 export const navigate = (loc: StudioLocation, opts?: { refreshAll?: boolean }) =>
   host().navigate(loc, opts);
 export const refresh = (key: string) => host().refresh(key);
+export const generateUrl = () => host().generateUrl;
 export function portalProps(): { to?: Element; disabled?: boolean } {
   const target = host().portalTarget?.();
   return target ? { to: target } : {};
