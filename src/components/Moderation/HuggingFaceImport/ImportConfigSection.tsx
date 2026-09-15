@@ -24,8 +24,9 @@ export function ImportConfigSection() {
     workBudgetSeconds: number;
   } | null>(null);
 
-  // Seeds the form once the server answers, and re-seeds if someone else changes it. `$derived`-style
-  // ownership isn't available here, so the guard is that a null draft means "not yet loaded".
+  // Seeds ONCE, deliberately: re-seeding on every `config` change would discard edits in progress
+  // the moment a background refetch landed. The cost is that a change made elsewhere is not picked
+  // up until reload — acceptable for a panel one moderator opens at a time.
   useEffect(() => {
     if (config && !draft) setDraft({ ...config });
   }, [config, draft]);
@@ -40,7 +41,19 @@ export function ImportConfigSection() {
       showErrorNotification({ title: 'Could not save', error: new Error(error.message) }),
   });
 
-  if (!draft) return null;
+  // Rendering nothing while the query is in flight left a silent gap where the panel belongs, which
+  // reads as "this page has no settings" rather than "not loaded yet".
+  if (!draft)
+    return (
+      <Card withBorder padding="lg">
+        <Stack gap="xs">
+          <Title order={4}>Transfer settings</Title>
+          <Text c="dimmed" size="sm">
+            Loading…
+          </Text>
+        </Stack>
+      </Card>
+    );
 
   const residentBytes =
     draft.filesInParallel * draft.partsInFlight * PART_SIZE * RESIDENT_MULTIPLIER;
