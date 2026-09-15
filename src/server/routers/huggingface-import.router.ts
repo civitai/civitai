@@ -5,14 +5,17 @@ import {
   renameHuggingFaceGroupSchema,
   setHuggingFaceImportConfigSchema,
   enqueueHuggingFaceImportSchema,
+  getHuggingFaceImportCountsSchema,
   getHuggingFaceImportsSchema,
   lookupHuggingFaceRepoSchema,
 } from '~/server/schema/huggingface-import.schema';
 import {
   buildAttachInput,
   cancelImport,
+  deleteImport,
   detachImport,
   enqueueImports,
+  getImportCounts,
   getImports,
   linkImportToFile,
   renameGroup,
@@ -93,6 +96,18 @@ export const huggingFaceImportRouter = router({
         );
       return { modelFileId: file.id, modelVersionId: input.modelVersionId };
     }),
+
+  getCounts: moderatorProcedure
+    .input(getHuggingFaceImportCountsSchema)
+    .query(({ input, ctx }) =>
+      getImportCounts({ ...input, userId: ctx.user.id, isModerator: !!ctx.user.isModerator })
+    ),
+
+  delete: moderatorProcedure
+    .input(getByIdSchema)
+    .mutation(({ input, ctx }) =>
+      deleteImport({ id: input.id, userId: ctx.user.id, isModerator: !!ctx.user.isModerator })
+    ),
 
   getConfig: moderatorProcedure.query(() => getHuggingFaceImportConfig()),
 

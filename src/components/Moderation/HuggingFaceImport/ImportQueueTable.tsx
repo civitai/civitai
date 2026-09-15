@@ -8,14 +8,17 @@ import {
   Group,
   Progress,
   Stack,
+  SegmentedControl,
   Table,
   Text,
   TextInput,
   Title,
   Tooltip,
 } from '@mantine/core';
-import { IconPlayerStop, IconRefresh } from '@tabler/icons-react';
+import { IconPlayerStop, IconRefresh, IconTrash, IconUnlink } from '@tabler/icons-react';
+import { openConfirmModal } from '@mantine/modals';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
+import { UnattachedSection } from '~/components/Moderation/HuggingFaceImport/UnattachedSection';
 import { AttachControl } from '~/components/Moderation/HuggingFaceImport/AttachControl';
 import { formatBytes } from '~/utils/number-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -33,10 +36,17 @@ const ACTIVE = new Set(['Queued', 'Transferring']);
 
 export function ImportQueueTable() {
   const queryUtils = trpc.useUtils();
+  const [tab, setTab] = useState<'all' | 'unattached'>('all');
   const [groupFilter, setGroupFilter] = useState('');
   // Debounced so a keystroke is not a query; the filter is server-side because a client-side one
   // over a capped page silently stops finding older groups.
   const [debouncedFilter] = useDebouncedValue(groupFilter, 300);
+  // Counts come from their own query: a page of rows cannot say how many exist outside it, which
+  // is what the client-side filter got wrong. Filtered the same way the rows are, so a tab label
+  // never counts a population the list beneath it is not showing.
+  const { data: counts } = trpc.huggingFaceImport.getCounts.useQuery({
+    groupName: debouncedFilter.trim() || undefined,
+  });
   const { data = [], isLoading: isPending } = trpc.huggingFaceImport.getAll.useQuery(
     { limit: 100, groupName: debouncedFilter.trim() || undefined },
     {
@@ -58,9 +68,24 @@ export function ImportQueueTable() {
         title: `Could not ${action}`,
         error: new Error('The import is no longer in a state where that applies. Refreshed.'),
       });
-    return queryUtils.huggingFaceImport.getAll.invalidate();
+    return Promise.all([
+      queryUtils.huggingFaceImport.getAll.invalidate(),
+      queryUtils.huggingFaceImport.getCounts.invalidate(),
+    ]);
   };
 
+  // Wires the path `buildAttachInput`'s refusal recommends. Until this existed, "detach or delete
+  // that file first" named something no moderator could do.
+  const detach = trpc.huggingFaceImport.detach.useMutation({
+    onError,
+    onSuccess: (result) => onSettled(result, 'detach'),
+  });
+  // A Failed row can still hold an uploadId, and its parts are billed until something aborts them.
+  // Retry was the only exit, so abandoning a transfer meant paying for it indefinitely.
+  const remove = trpc.huggingFaceImport.delete.useMutation({
+    onError,
+    onSuccess: (result) => onSettled(result, 'delete'),
+  });
   const retry = trpc.huggingFaceImport.retry.useMutation({
     onError,
     onSuccess: (result) => onSettled(result, 'retry'),
@@ -74,7 +99,21 @@ export function ImportQueueTable() {
     <Card withBorder padding="lg">
       <Stack gap="md">
         <Group justify="space-between" align="center" wrap="nowrap">
-          <Title order={4}>Imports</Title>
+          <Group gap="lg" wrap="nowrap">
+            <Title order={4}>Imports</Title>
+            <SegmentedControl
+              size="xs"
+              value={tab}
+              onChange={(value) => setTab(value as 'all' | 'unattached')}
+              data={[
+                { value: 'all', label: `All${counts ? ` (${counts.total})` : ''}` },
+                {
+                  value: 'unattached',
+                  label: `Unattached${counts ? ` (${counts.unattached})` : ''}`,
+                },
+              ]}
+            />
+          </Group>
           <TextInput
             size="xs"
             w={260}
@@ -84,7 +123,9 @@ export function ImportQueueTable() {
           />
         </Group>
 
-        {!data.length ? (
+        {tab === 'unattached' && <UnattachedSection filter={debouncedFilter} />}
+
+        {tab === 'unattached' ? null : !data.length ? (
           <Text c="dimmed" size="sm">
             {isPending
               ? 'Loading…'
@@ -179,13 +220,27 @@ export function ImportQueueTable() {
                       </Table.Td>
                       <Table.Td>
                         {row.status === 'Completed' ? (
-                          <AttachControl
-                            importId={row.id}
-                            filename={row.filename}
-                            suggestedType={row.suggestedType}
-                            modelFileId={row.modelFileId}
-                            modelVersionId={row.modelVersionId}
-                          />
+                          <Group gap={4} wrap="nowrap">
+                            <AttachControl
+                              importId={row.id}
+                              filename={row.filename}
+                              suggestedType={row.suggestedType}
+                              modelFileId={row.modelFileId}
+                              modelVersionId={row.modelVersionId}
+                            />
+                            {row.modelFileId && (
+                              <Tooltip label="Detach — leaves the model file in place">
+                                <ActionIcon
+                                  variant="subtle"
+                                  size="sm"
+                                  loading={detach.isPending && detach.variables?.id === row.id}
+                                  onClick={() => detach.mutate({ id: row.id })}
+                                >
+                                  <IconUnlink size={14} />
+                                </ActionIcon>
+                              </Tooltip>
+                            )}
+                          </Group>
                         ) : (
                           <Text size="xs" c="dimmed">
                             —
@@ -208,16 +263,47 @@ export function ImportQueueTable() {
                             </Tooltip>
                           )}
                           {(row.status === 'Failed' || row.status === 'Canceled') && (
-                            <Tooltip label="Retry from the start">
-                              <ActionIcon
-                                variant="subtle"
-                                size="sm"
-                                loading={retry.isPending && retry.variables?.id === row.id}
-                                onClick={() => retry.mutate({ id: row.id })}
-                              >
-                                <IconRefresh size={14} />
-                              </ActionIcon>
-                            </Tooltip>
+                            <>
+                              <Tooltip label="Retry from the start">
+                                <ActionIcon
+                                  variant="subtle"
+                                  size="sm"
+                                  loading={retry.isPending && retry.variables?.id === row.id}
+                                  onClick={() => retry.mutate({ id: row.id })}
+                                >
+                                  <IconRefresh size={14} />
+                                </ActionIcon>
+                              </Tooltip>
+                              <Tooltip label="Delete — frees any parts already uploaded">
+                                <ActionIcon
+                                  variant="subtle"
+                                  color="red"
+                                  size="sm"
+                                  loading={remove.isPending && remove.variables?.id === row.id}
+                                  onClick={() =>
+                                    openConfirmModal({
+                                      title: 'Delete this import?',
+                                      centered: true,
+                                      labels: { confirm: 'Delete', cancel: 'Cancel' },
+                                      confirmProps: { color: 'red' },
+                                      children: (
+                                        <Text size="sm">
+                                          Aborts the upload of{' '}
+                                          <Text span ff="monospace" size="sm">
+                                            {row.filename}
+                                          </Text>{' '}
+                                          and removes anything already stored for it. Re-importing
+                                          means transferring it again from {row.repo}.
+                                        </Text>
+                                      ),
+                                      onConfirm: () => remove.mutate({ id: row.id }),
+                                    })
+                                  }
+                                >
+                                  <IconTrash size={14} />
+                                </ActionIcon>
+                              </Tooltip>
+                            </>
                           )}
                         </Group>
                       </Table.Td>

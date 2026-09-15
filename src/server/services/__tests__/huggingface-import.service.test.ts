@@ -11,6 +11,8 @@ const {
   mockCreateMultipart,
   mockComplete,
   mockAbort,
+  mockDeleteObject,
+  mockUrlsSafeToDelete,
 } = vi.hoisted(() => ({
   mockReadRange: vi.fn(),
   mockHeadFile: vi.fn(),
@@ -18,6 +20,8 @@ const {
   mockCreateMultipart: vi.fn(),
   mockComplete: vi.fn(),
   mockAbort: vi.fn(),
+  mockDeleteObject: vi.fn(),
+  mockUrlsSafeToDelete: vi.fn(),
 }));
 
 vi.mock('~/server/services/huggingface.service', async (importOriginal) => ({
@@ -41,6 +45,8 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   uploadPart: mockUploadPart,
   completeMultipartUpload: mockComplete,
   abortMultipartUpload: mockAbort,
+  deleteObject: mockDeleteObject,
+  urlsSafeToDelete: mockUrlsSafeToDelete,
 }));
 
 import { parseHuggingFaceRepo, suggestFileType } from '~/server/services/huggingface.service';
@@ -50,6 +56,8 @@ import {
   setHuggingFaceImportConfig,
 } from '~/server/services/huggingface-import-config.service';
 import {
+  deleteImport,
+  getImportCounts,
   getImports,
   PART_SIZE_BYTES,
   processImportQueue,
@@ -209,6 +217,9 @@ describe('processImportQueue', () => {
       .find((data: Record<string, unknown>) => data.status === 'Completed');
     expect(completed?.url).toMatch(/^https:\/\/s3\.example\/model-bucket\/model\/7\/model\./);
     expect(completed?.url).not.toContain('?');
+    // Spent. A retained uploadId makes every later abort attempt fail against a finished upload,
+    // which buries the one abort failure that means parts are still billed.
+    expect(completed?.uploadId).toBeNull();
 
     // The pre-complete re-read is one guard against a late cancel; this predicate is the other, and
     // it covers the window between that read and this write. Dropping it is invisible to the cancel
@@ -623,5 +634,191 @@ describe('import config', () => {
   it('refuses to write a value outside the bounds', async () => {
     await expect(setHuggingFaceImportConfig({ filesInParallel: 99 })).rejects.toThrow();
     expect(sysRedisMock.packed.set).not.toHaveBeenCalled();
+  });
+});
+
+describe('unattached and delete', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbRead.huggingFaceImport.findMany.mockResolvedValue([]);
+  });
+
+  it('defines unattached as completed with no model file', async () => {
+    await getImports({ userId: 7, isModerator: true, unattached: true });
+    expect(dbRead.huggingFaceImport.findMany.mock.calls[0][0].where).toMatchObject({
+      status: 'Completed',
+      modelFileId: null,
+    });
+  });
+
+  it('counts the unattached tab with the same predicate the tab lists', async () => {
+    dbRead.huggingFaceImport.count.mockResolvedValue(0);
+    await getImportCounts({ userId: 7, isModerator: true, groupName: 'krea' });
+
+    const [unattachedWhere, totalWhere] = dbRead.huggingFaceImport.count.mock.calls.map(
+      (call: [{ where: Record<string, unknown> }]) => call[0].where
+    );
+    // A label that counts a population the list is not showing is the bug this query exists to fix.
+    expect(unattachedWhere).toMatchObject({
+      status: 'Completed',
+      modelFileId: null,
+      groupName: { contains: 'krea', mode: 'insensitive' },
+    });
+    expect(totalWhere).toMatchObject({ groupName: { contains: 'krea', mode: 'insensitive' } });
+    expect(totalWhere).not.toHaveProperty('modelFileId');
+  });
+
+  it('scopes the lookup to the owner when the caller is not a moderator', async () => {
+    dbRead.huggingFaceImport.findFirst.mockResolvedValue(null);
+    await expect(deleteImport({ id: 1, userId: 7, isModerator: false })).rejects.toThrow();
+    expect(dbRead.huggingFaceImport.findFirst.mock.calls[0][0].where).toMatchObject({
+      id: 1,
+      userId: 7,
+    });
+  });
+
+  it('refuses to delete an import that is still attached', async () => {
+    // Deleting here would leave a model version pointing at bytes that no longer exist.
+    dbRead.huggingFaceImport.findFirst.mockResolvedValue({
+      id: 1,
+      status: 'Completed',
+      bucket: 'b',
+      key: 'k',
+      url: 'https://s3.example/b/k',
+      uploadId: null,
+      modelFileId: 99,
+    });
+    await expect(deleteImport({ id: 1, userId: 7, isModerator: true })).rejects.toThrow();
+    expect(mockDeleteObject).not.toHaveBeenCalled();
+    expect(dbWrite.huggingFaceImport.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses to delete a DETACHED import a model file still points at', async () => {
+    // The two-click data-loss path: detach leaves the ModelFile alive, so the row lands in the
+    // unattached list while a published version is still serving those exact bytes. `modelFileId`
+    // is a local pointer; the refcount over `ModelFile.url` is the global one.
+    dbRead.huggingFaceImport.findFirst.mockResolvedValue({
+      id: 1,
+      status: 'Completed',
+      bucket: 'b2-transfer-bucket',
+      key: 'model/7/x.safetensors',
+      url: 'https://s3.example/b2-transfer-bucket/model/7/x.safetensors',
+      uploadId: null,
+      modelFileId: null,
+    });
+    mockUrlsSafeToDelete.mockResolvedValue({ safe: [], skipped: 1 });
+
+    await expect(deleteImport({ id: 1, userId: 7, isModerator: true })).rejects.toThrow(
+      /model file still points at/i
+    );
+    expect(mockDeleteObject).not.toHaveBeenCalled();
+    expect(dbWrite.huggingFaceImport.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses to delete a transfer that is still running', async () => {
+    dbRead.huggingFaceImport.findFirst.mockResolvedValue({
+      id: 1,
+      status: 'Transferring',
+      bucket: 'b',
+      key: 'k',
+      url: null,
+      uploadId: 'u',
+      modelFileId: null,
+    });
+    await expect(deleteImport({ id: 1, userId: 7, isModerator: true })).rejects.toThrow();
+    expect(mockDeleteObject).not.toHaveBeenCalled();
+  });
+
+  it('frees the object before removing the row', async () => {
+    dbRead.huggingFaceImport.findFirst.mockResolvedValue({
+      id: 1,
+      status: 'Completed',
+      // Deliberately NOT what the env resolves to: these bytes are in the bucket the transfer used.
+      bucket: 'b2-transfer-bucket',
+      key: 'model/7/x.safetensors',
+      url: 'https://s3.example/b2-transfer-bucket/model/7/x.safetensors',
+      uploadId: null,
+      modelFileId: null,
+    });
+    mockUrlsSafeToDelete.mockResolvedValue({ safe: ['https://s3.example/x'], skipped: 0 });
+    mockDeleteObject.mockResolvedValue(undefined);
+    dbWrite.huggingFaceImport.deleteMany.mockResolvedValue({ count: 1 });
+
+    await deleteImport({ id: 1, userId: 7, isModerator: true });
+
+    expect(mockDeleteObject).toHaveBeenCalledTimes(1);
+    expect(mockDeleteObject).toHaveBeenCalledWith(
+      'b2-transfer-bucket',
+      'model/7/x.safetensors',
+      expect.anything()
+    );
+    // The predicate rides into the write, because the read was against the replica.
+    expect(dbWrite.huggingFaceImport.deleteMany).toHaveBeenCalledWith({
+      where: { id: 1, modelFileId: null },
+    });
+    // Named for the ordering, so it asserts the ordering rather than leaning on the sibling test.
+    expect(mockDeleteObject.mock.invocationCallOrder[0]).toBeLessThan(
+      dbWrite.huggingFaceImport.deleteMany.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('aborts a live multipart before forgetting the row', async () => {
+    // A Failed row can still hold an uploadId, and the row is the only handle that can free the
+    // parts already uploaded — which are billed until something aborts them.
+    dbRead.huggingFaceImport.findFirst.mockResolvedValue({
+      id: 1,
+      status: 'Failed',
+      bucket: 'b2-transfer-bucket',
+      key: 'model/7/x.safetensors',
+      url: null,
+      uploadId: 'upload-1',
+      modelFileId: null,
+    });
+    mockAbort.mockResolvedValue(undefined);
+    mockDeleteObject.mockResolvedValue(undefined);
+    dbWrite.huggingFaceImport.deleteMany.mockResolvedValue({ count: 1 });
+
+    await deleteImport({ id: 1, userId: 7, isModerator: true });
+
+    expect(mockAbort).toHaveBeenCalledWith(
+      'b2-transfer-bucket',
+      'model/7/x.safetensors',
+      'upload-1',
+      expect.anything()
+    );
+  });
+
+  it('keeps the row when the multipart abort fails', async () => {
+    dbRead.huggingFaceImport.findFirst.mockResolvedValue({
+      id: 1,
+      status: 'Failed',
+      bucket: 'b2-transfer-bucket',
+      key: 'model/7/x.safetensors',
+      url: null,
+      uploadId: 'upload-1',
+      modelFileId: null,
+    });
+    mockAbort.mockRejectedValue(new Error('B2 unavailable'));
+
+    await expect(deleteImport({ id: 1, userId: 7, isModerator: true })).rejects.toThrow();
+    expect(dbWrite.huggingFaceImport.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('keeps the row when the object could not be deleted', async () => {
+    // Otherwise the bytes stay in the bucket with nothing left pointing at them.
+    dbRead.huggingFaceImport.findFirst.mockResolvedValue({
+      id: 1,
+      status: 'Completed',
+      bucket: 'b2-transfer-bucket',
+      key: 'model/7/x.safetensors',
+      url: 'https://s3.example/b2-transfer-bucket/model/7/x.safetensors',
+      uploadId: null,
+      modelFileId: null,
+    });
+    mockUrlsSafeToDelete.mockResolvedValue({ safe: ['https://s3.example/x'], skipped: 0 });
+    mockDeleteObject.mockRejectedValue(new Error('B2 unavailable'));
+
+    await expect(deleteImport({ id: 1, userId: 7, isModerator: true })).rejects.toThrow();
+    expect(dbWrite.huggingFaceImport.deleteMany).not.toHaveBeenCalled();
   });
 });

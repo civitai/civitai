@@ -16,9 +16,11 @@ import {
   abortMultipartUpload,
   completeMultipartUpload,
   createMultipartUpload,
-  getBucket,
   getGetUrlByKey,
+  deleteObject,
+  getBucket,
   getS3Client,
+  urlsSafeToDelete,
   getUploadBucket,
   objectExists,
   getUploadS3Client,
@@ -109,6 +111,34 @@ function toView(row: Prisma.HuggingFaceImportGetPayload<{ select: typeof importS
 }
 
 /**
+ * Transferred bytes no version has claimed. The only two ways off this list are attaching and
+ * deleting — there is deliberately no dismissed-but-stored state, because a hidden row still costs
+ * storage and would let the count understate what we hold.
+ *
+ * Shared so a tab's label and the rows under it cannot disagree about what unattached means.
+ */
+const UNATTACHED_WHERE = { status: 'Completed' as const, modelFileId: null };
+
+/** The filters every list and count in this feature takes, including who may see a row. */
+function scopeWhere({
+  userId,
+  isModerator,
+  groupName,
+  repo,
+}: {
+  userId: number;
+  isModerator: boolean;
+  groupName?: string;
+  repo?: string;
+}) {
+  return {
+    ...(isModerator ? {} : { userId }),
+    ...(repo ? { repo } : {}),
+    ...(groupName ? { groupName: { contains: groupName, mode: 'insensitive' as const } } : {}),
+  };
+}
+
+/**
  * 🔴 Filtering happens HERE, not in the caller. Both surfaces take `limit` rows and used to filter
  * them client-side, so once the table passed that limit an older group returned nothing — and "no
  * results" is indistinguishable from "never imported". The skill's docs even attributed that empty
@@ -125,24 +155,44 @@ export async function getImports({
   limit = 100,
   groupName,
   repo,
+  unattached,
 }: {
   userId: number;
   isModerator: boolean;
   limit?: number;
   groupName?: string;
   repo?: string;
+  unattached?: boolean;
 }) {
   const rows = await dbRead.huggingFaceImport.findMany({
     where: {
-      ...(isModerator ? {} : { userId }),
-      ...(repo ? { repo } : {}),
-      ...(groupName ? { groupName: { contains: groupName, mode: 'insensitive' as const } } : {}),
+      ...scopeWhere({ userId, isModerator, groupName, repo }),
+      ...(unattached ? UNATTACHED_WHERE : {}),
     },
     select: importSelect,
     orderBy: { createdAt: 'desc' },
     take: limit,
   });
   return rows.map(toView);
+}
+
+/**
+ * Counts for the queue's tabs. Separate from `getImports` because a page of rows cannot report how
+ * many exist outside it — which is the mistake the client-side filter made. Takes the same filters
+ * the rows do, or a label counts a population the list beneath it is not showing.
+ */
+export async function getImportCounts(input: {
+  userId: number;
+  isModerator: boolean;
+  groupName?: string;
+  repo?: string;
+}) {
+  const scope = scopeWhere(input);
+  const [unattached, total] = await Promise.all([
+    dbRead.huggingFaceImport.count({ where: { ...scope, ...UNATTACHED_WHERE } }),
+    dbRead.huggingFaceImport.count({ where: scope }),
+  ]);
+  return { unattached, total };
 }
 
 /**
@@ -235,7 +285,15 @@ async function ownedImport({
 }) {
   const row = await dbRead.huggingFaceImport.findFirst({
     where: { id, userId: isModerator ? undefined : userId },
-    select: { id: true, status: true, bucket: true, key: true, uploadId: true },
+    select: {
+      id: true,
+      status: true,
+      bucket: true,
+      key: true,
+      url: true,
+      uploadId: true,
+      modelFileId: true,
+    },
   });
   if (!row) throw throwNotFoundError('Import not found');
   return row;
@@ -291,8 +349,8 @@ export async function buildAttachInput({
   //
   // `objectExists` is deliberately tri-state: `null` means the bucket could not be consulted, and a
   // guard that cannot ask must not block a legitimate attach.
-  const { s3 } = await uploadTarget();
-  const present = await objectExists(row.bucket ?? (await getBucket()), row.key, s3);
+  const { s3, bucket } = await uploadTarget();
+  const present = await objectExists(row.bucket ?? bucket, row.key, s3);
   if (present === false)
     throw throwBadRequestError(
       'The stored object for that import is gone. Re-import it before attaching.'
@@ -391,6 +449,72 @@ export async function renameGroup({
   });
   if (!count) throw throwNotFoundError('No queued files found for that group.');
   return { renamed: count, groupName: name };
+}
+
+/**
+ * Removes an unattached import: the stored object first, then the row.
+ *
+ * 🔴 The row is hard-deleted rather than tombstoned. `(repo, revision, filename)` is unique, so a
+ * tombstone would block ever re-importing that exact file — and a deliberate deletion is precisely
+ * the case where you might want it back later. The cost is losing the record that we once held those
+ * bytes, which is the cheaper of the two.
+ *
+ * Refuses while any `ModelFile` points at the object, which would leave a model version serving
+ * nothing.
+ */
+export async function deleteImport(input: { id: number; userId: number; isModerator: boolean }) {
+  const row = await ownedImport(input);
+  if (row.modelFileId)
+    throw throwBadRequestError(
+      `That import is attached as file ${row.modelFileId}. Detach it first.`
+    );
+  if (row.status === 'Queued' || row.status === 'Transferring')
+    throw throwBadRequestError('Cancel the transfer before deleting it.');
+
+  // 🔴 `modelFileId` is NOT a reference count — detach clears it and leaves the `ModelFile` alive,
+  // so the check above passes on a row a published version is still serving. `ModelFile.url` is the
+  // authoritative reference. Called directly rather than through `deleteModelFileObject`, which
+  // skips silently when unsafe and would leave the row deleted while the bytes stayed.
+  if (row.url) {
+    const { safe } = await urlsSafeToDelete([row.url]);
+    if (!safe.length)
+      throw throwBadRequestError(
+        'A model file still points at that object. Delete the model file first.'
+      );
+  }
+
+  // An in-flight multipart and a finished object are freed differently, and a row can carry either.
+  // The row is the only handle that can free already-uploaded parts, so a failed abort must keep it.
+  if (!(await abortIfInFlight(row)))
+    throw throwBadRequestError(
+      'Could not abort the in-flight upload, so its parts cannot be freed yet. Nothing was removed.'
+    );
+
+  if (row.key) {
+    // Bucket and client from one resolution: a row with no bucket falling back to `getBucket()`
+    // would address the main bucket with the B2 client, and a delete against the wrong endpoint
+    // returns 204 with the bytes still there.
+    const { s3, bucket: fallbackBucket } = await uploadTarget();
+    const bucket = row.bucket ?? fallbackBucket;
+    await deleteObject(bucket, row.key, s3).catch((error) => {
+      logToAxiom({
+        type: 'error',
+        name: 'huggingface-import',
+        message: 'object delete failed; the row is kept so the bytes stay reachable',
+        key: row.key,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw throwBadRequestError('Could not delete the stored object. Nothing was removed.');
+    });
+  }
+
+  // The predicate rides into the write: `ownedImport` read the REPLICA, so an attach that committed
+  // during the lag would otherwise have its brand-new model file left pointing at deleted bytes.
+  const { count } = await dbWrite.huggingFaceImport.deleteMany({
+    where: { id: row.id, modelFileId: null },
+  });
+  if (!count) throw throwBadRequestError('That import was attached while you were deleting it.');
+  return { ok: true as const };
 }
 
 export async function retryImport(input: { id: number; userId: number; isModerator: boolean }) {
@@ -695,6 +819,9 @@ async function advanceImport(
       completedAt: new Date(),
       error: null,
       attempts: 0,
+      // Spent. A retained id makes every later abort fail against a finished upload, burying the
+      // one abort failure that means parts are still billed.
+      uploadId: null,
     },
   });
   return movedBytes;

@@ -22,6 +22,14 @@ export const getHuggingFaceImportsSchema = z.object({
   groupName: z.string().trim().min(1).max(120).optional(),
   /** Exact `owner/name`, as Hugging Face reports it. What the skill filters by. */
   repo: z.string().trim().min(1).optional(),
+  /** Completed transfers no model version has claimed. */
+  unattached: z.boolean().optional(),
+});
+
+export type GetHuggingFaceImportCountsInput = z.infer<typeof getHuggingFaceImportCountsSchema>;
+export const getHuggingFaceImportCountsSchema = getHuggingFaceImportsSchema.pick({
+  groupName: true,
+  repo: true,
 });
 
 export type AttachHuggingFaceImportInput = z.infer<typeof attachHuggingFaceImportSchema>;
