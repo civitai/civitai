@@ -170,10 +170,7 @@ function ModelCardContent({ data }: Props) {
       onSite={!!data.version.trainingStatus}
       isRemix={!!image?.remixOfId}
       header={
-        // The image link paints over this row, so its chips take no pointer events until the row
-        // has its own stacking context above it. That is why the hover card never opened — the
-        // trigger was never reached, wherever the overlay itself was told to render.
-        <div className="relative z-20 flex w-full items-start justify-between">
+        <div className="flex w-full items-start justify-between">
           <div className="flex flex-wrap gap-1">
             {modFlagLabels.length > 0 && <ModFlagBadge labels={modFlagLabels} />}
             {isPrivate && (
@@ -214,6 +211,10 @@ function ModelCardContent({ data }: Props) {
               </Badge>
             )}
             {isEarlyAccess ? (
+              // `pointer-events-auto` is what makes the hover trigger reachable at all: the card
+              // header sets `pointer-events: none` so the image link stays clickable through it,
+              // and `Cards.module.css`'s `.chip` — unlike the one in the card template — never
+              // turns it back on.
               <HoverCard
                 position="bottom-start"
                 withinPortal
@@ -224,7 +225,7 @@ function ModelCardContent({ data }: Props) {
               >
                 <HoverCard.Target>
                   <Badge
-                    className={cardClasses.chip}
+                    className={clsx(cardClasses.chip, 'pointer-events-auto')}
                     variant="filled"
                     radius="xl"
                     data-status-badge="access"
@@ -252,9 +253,6 @@ function ModelCardContent({ data }: Props) {
               // Mantine's default is hover only (`focus: false, touch: false`). The badge is the
               // sole explanation of an abstract glyph, so it should also answer a tap and a
               // keyboard focus, not just a mouse.
-              // HoverCard, not Tooltip: the Tooltip never became visible on this card at any
-              // position, while the HoverCard in BountyCard and the Popover in ModelTypeBadge both
-              // do. Matching what demonstrably works here rather than debugging what does not.
               <HoverCard
                 position="bottom-start"
                 withinPortal
@@ -265,7 +263,7 @@ function ModelCardContent({ data }: Props) {
               >
                 <HoverCard.Target>
                   <Badge
-                    className={cardClasses.chip}
+                    className={clsx(cardClasses.chip, 'pointer-events-auto')}
                     variant="filled"
                     radius="xl"
                     data-status-badge="access"
