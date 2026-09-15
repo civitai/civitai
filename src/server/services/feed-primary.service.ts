@@ -49,14 +49,14 @@ export function feedHydrateQuery<
     entry?: number;
     limit?: number;
     period?: unknown;
-    periodMode?: unknown;
   }
 >(
   input: T,
   ids: number[]
-): Omit<T, 'cursor' | 'skip' | 'offset' | 'entry' | 'period' | 'periodMode'> & {
+): Omit<T, 'cursor' | 'skip' | 'offset' | 'entry' | 'period'> & {
   ids: number[];
   limit: number;
+  period: 'AllTime';
 } {
   const {
     cursor: _cursor,
@@ -64,10 +64,9 @@ export function feedHydrateQuery<
     offset: _offset,
     entry: _entry,
     period: _period,
-    periodMode: _periodMode,
     ...rest
   } = input;
-  return { ...rest, ids, limit: ids.length };
+  return { ...rest, ids, limit: ids.length, period: 'AllTime' };
 }
 
 /** Truthful subset of the request-path Flipt context (feature-flags.service.ts) built

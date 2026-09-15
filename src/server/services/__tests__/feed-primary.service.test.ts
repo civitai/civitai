@@ -81,9 +81,15 @@ describe('feedHydrateQuery', () => {
       { ...base, tags: [7], cursor: 'feed:1:2', skip: 40, offset: 400, entry: 99, limit: 40 },
       [9, 5, 2]
     );
-    expect(q).toEqual({ sort: base.sort, browsingLevel: 31, tags: [7], ids: [9, 5, 2], limit: 3 });
-    for (const k of ['cursor', 'skip', 'offset', 'entry', 'period', 'periodMode'])
-      expect(k in q).toBe(false);
+    expect(q).toEqual({
+      sort: base.sort,
+      period: 'AllTime',
+      browsingLevel: 31,
+      tags: [7],
+      ids: [9, 5, 2],
+      limit: 3,
+    });
+    for (const k of ['cursor', 'skip', 'offset', 'entry']) expect(k in q).toBe(false);
   });
 });
 
