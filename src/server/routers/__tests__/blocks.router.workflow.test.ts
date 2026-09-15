@@ -587,6 +587,13 @@ const mockLogToAxiom = loggingMock.logToAxiom;
 // `blocks.pollWorkflow`/`cancelWorkflow` assert it. These fixtures are about other properties, so
 // they carry the default claims' tag; the scoping guard itself is exercised in
 // blocks.router.workflowScope.test.ts.
+//
+// 🔴 AND THIS FILE IS STRUCTURALLY BLIND TO THE OTHER HALF OF THAT SCOPING. It never sets
+// `ORCHESTRATOR_MODE`, so it runs under the schema default `'dev'` — the one mode in which the
+// VIEWER assertion short-circuits. That is why ids like `wf_1` below are fine here and would be
+// refused in prod. If you clone a `pollWorkflow`/`cancelWorkflow` case out of this file, it
+// inherits that blindness while looking like coverage: set the mode explicitly, as
+// blocks.router.workflowScope.test.ts does.
 const BLOCK_APP_TAG = 'app-block:app_test';
 
 function validClaims(over: Record<string, unknown> = {}) {

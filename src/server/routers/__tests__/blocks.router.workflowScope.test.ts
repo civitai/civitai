@@ -23,12 +23,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * module boundary, so the router runs in-process.
  *
  * RED/GREEN MATRIX, measured rather than asserted — at `a89b6e36a0` (this branch's base) this file
- * is 12 failed / 5 passed; at HEAD it is 17 passed. The twelve are the regression coverage. The
- * five that pass BOTH WAYS are marked `INVARIANT GUARD` below and are NOT regression coverage:
- * they pin properties the base happened to satisfy for the trivial reason that it scoped nothing
- * at all, and exist to stop a LATER change from breaking them. Counting them as proof of this
- * change would be wrong. Re-run both halves if the base moves again — the numbers are pinned to
- * that sha, not to "main".
+ * is 13 failed / 7 passed; at HEAD it is 20 passed. The thirteen are the regression coverage. The
+ * seven that pass BOTH WAYS are marked `INVARIANT GUARD` below and are NOT regression coverage:
+ * five pin properties the base happened to satisfy for the trivial reason that it scoped nothing at
+ * all, and two cover `publishGenerationOutputs`, whose guard already existed (open-coded) and had
+ * no behavioural test anywhere. Counting any of the seven as proof of this change would be wrong.
+ * Re-run both halves if the base moves again — the numbers are pinned to that sha, not to "main".
  */
 
 const {
@@ -42,6 +42,7 @@ const {
   mockGetUserById,
   mockGetSessionUser,
   mockCheckBlockCatalogRateLimit,
+  mockCheckBlockPublishRateLimit,
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
   mockUpdateBlockWorkflowStatus,
@@ -58,6 +59,7 @@ const {
   mockGetUserById: vi.fn(),
   mockGetSessionUser: vi.fn(),
   mockCheckBlockCatalogRateLimit: vi.fn(async () => ({ allowed: true })),
+  mockCheckBlockPublishRateLimit: vi.fn(async () => ({ allowed: true })),
   mockIsAppBlocksEnabled: vi.fn(async () => true),
   mockIsAppBlocksAuthorEnabled: vi.fn(async () => true),
   mockUpdateBlockWorkflowStatus: vi.fn(async () => undefined),
@@ -101,6 +103,8 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 }));
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: (...a: unknown[]) => mockCheckBlockCatalogRateLimit(...(a as [])),
+  // `publishGenerationOutputs` charges its OWN (image-weighted) bucket, not the catalog one.
+  checkBlockPublishRateLimit: (...a: unknown[]) => mockCheckBlockPublishRateLimit(...(a as [])),
 }));
 vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');
@@ -137,6 +141,11 @@ const STRANGERS_ID = `${STRANGER}-20260915120000000`;
 // The two non-`<positive int>-` shapes the orchestrator really does mint.
 const SYSTEM_ID = '0-0195f1a2b3c44d5e6f708192a3b4c5d6';
 const NEGATIVE_IDENTITY_ID = '-100-20260915120000000';
+// 🔴 A PREFIX NEAR-MISS — user 420's workflow, which `${VIEWER}` is a prefix of. It is the ONLY
+// input under which an equality check and a `startsWith` check disagree, so without it the viewer
+// binding can be "simplified" from one to the other with this whole file still green. The app-scope
+// half has had its near-miss (`${APP_TAG}X`) from the start; this is the same idea on the other half.
+const PREFIX_NEAR_MISS_ID = `${VIEWER}0-20260915120000000`;
 
 /**
  * 🔴 PAIRWISE-DISTINCT FIXTURE FIELDS. The `cost` of each differs, so an assertion that a
@@ -200,6 +209,7 @@ beforeEach(() => {
     mockGetUserById,
     mockGetSessionUser,
     mockCheckBlockCatalogRateLimit,
+    mockCheckBlockPublishRateLimit,
     mockIsAppBlocksEnabled,
     mockIsAppBlocksAuthorEnabled,
     mockUpdateBlockWorkflowStatus,
@@ -218,6 +228,7 @@ beforeEach(() => {
   mockParseSubjectUserId.mockImplementation((sub: string) => (sub === 'anon' ? null : VIEWER));
   mockGetOrchestratorToken.mockResolvedValue('orch_token');
   mockCheckBlockCatalogRateLimit.mockResolvedValue({ allowed: true });
+  mockCheckBlockPublishRateLimit.mockResolvedValue({ allowed: true });
   mockVerifyBlockToken.mockResolvedValue(validClaims());
   mockUpdateBlockWorkflowStatus.mockResolvedValue(undefined);
   mockBlockWorkflowOwnedByAppUser.mockResolvedValue(true);
@@ -240,6 +251,11 @@ describe('blocks.pollWorkflow — viewer scope', () => {
     await expect(
       caller().pollWorkflow({ blockToken: 'tok', workflowId: STRANGERS_ID })
     ).rejects.toThrow('workflow does not belong to this viewer');
+    // The CODE as well as the message: a refusal downgraded to INTERNAL_SERVER_ERROR reaches the
+    // block as a retryable 500 rather than a deny, and a message-only assertion cannot see it.
+    await expect(
+      caller().pollWorkflow({ blockToken: 'tok', workflowId: STRANGERS_ID })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(mockGetWorkflow).not.toHaveBeenCalled();
     expect(mockGetOrchestratorToken).not.toHaveBeenCalled();
   });
@@ -259,7 +275,13 @@ describe('blocks.pollWorkflow — viewer scope', () => {
   });
 
   it('refuses every id that does not name this viewer — FAIL-CLOSED, unlike the submit-path guard', async () => {
-    for (const id of ['wf_1', 'not-a-workflow', SYSTEM_ID, NEGATIVE_IDENTITY_ID]) {
+    for (const id of [
+      'wf_1',
+      'not-a-workflow',
+      SYSTEM_ID,
+      NEGATIVE_IDENTITY_ID,
+      PREFIX_NEAR_MISS_ID,
+    ]) {
       await expect(caller().pollWorkflow({ blockToken: 'tok', workflowId: id })).rejects.toThrow(
         'workflow does not belong to this viewer'
       );
@@ -290,6 +312,19 @@ describe('blocks.pollWorkflow — viewer scope', () => {
     expect(result.snapshot.cost).toEqual({ total: 55 });
   });
 
+  it('🔴 EXEMPTS ONLY THE LITERAL `dev` — any other mode still enforces', async () => {
+    // `server-schema.ts` declares ORCHESTRATOR_MODE as a bare `z.string()`, not an enum, so a third
+    // spelling is reachable — and this file would otherwise exercise exactly two values, which
+    // cannot tell `=== 'dev'` from `!== 'prod'`. Under that weakening a half-configured
+    // `'staging'` would route to the REAL orchestrator with per-user credentials while the viewer
+    // check sat disabled.
+    setEnv({ ORCHESTRATOR_MODE: 'staging' });
+
+    await expect(
+      caller().pollWorkflow({ blockToken: 'tok', workflowId: STRANGERS_ID })
+    ).rejects.toThrow('workflow does not belong to this viewer');
+  });
+
   it('🔴 EXEMPTS ONLY THE VIEWER CHECK — the app scope still holds under dev', async () => {
     // WITHOUT THIS CASE THE EXEMPTION'S WIDTH IS UNPINNED, which is the loosening this file exists
     // to catch: every app-scope case runs under `'prod'`, and the dev case above uses a
@@ -308,11 +343,17 @@ describe('blocks.pollWorkflow — viewer scope', () => {
 
   it('a dev:live token polls its own workflow normally — it is NOT ORCHESTRATOR_MODE=dev', async () => {
     // INVARIANT GUARD (passes at base too, where nothing was scoped at all).
-    // TRIPWIRE ON THE MINTING SIDE. `dev:live` survives the app scope only because a dev token's
-    // `appId` is deterministic (`block.appId` / `pending-<id>` / `local-<slug>`), so the tag a
-    // submit stamps is the tag a later poll reads. Nothing in the procedure branches on
-    // `claims.dev`, so this case is thin by construction — its job is to go red if dev mints ever
-    // become per-session unique.
+    //
+    // WHAT THIS PINS: a `claims.dev === true` token is scoped like any other — it gets no viewer
+    // exemption (that one is keyed on the server's ORCHESTRATOR_MODE, not on the token) and its
+    // synthetic `local-<slug>` appId goes through the ordinary app-tag comparison.
+    //
+    // 🔴 WHAT IT DOES NOT PIN, stated because an earlier revision of this comment claimed it did:
+    // it is NOT a tripwire on dev-token minting. `dev:live` survives the app scope only because a
+    // dev token's appId is deterministic, and that determinism lives in `LOCAL_APP_ID_PREFIX`, a
+    // module-private const in `src/pages/api/v1/blocks/dev-token.ts`. Both sides of the comparison
+    // below are literals this file wrote, so making dev mints per-session unique leaves it green —
+    // measured. Closing that would mean exporting the prefix and deriving both sides from it.
     mockVerifyBlockToken.mockResolvedValue(validClaims({ dev: true, appId: 'local-myapp' }));
     mockGetWorkflow.mockResolvedValue(
       workflowFixture({ tags: ['civitai', 'app-block:local-myapp'], cost: { total: 61 } })
@@ -376,9 +417,15 @@ describe('blocks.cancelWorkflow — viewer scope', () => {
     await expect(
       caller().cancelWorkflow({ blockToken: 'tok', workflowId: STRANGERS_ID })
     ).rejects.toThrow('workflow does not belong to this viewer');
+    await expect(
+      caller().cancelWorkflow({ blockToken: 'tok', workflowId: STRANGERS_ID })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     // The property that matters on this path is not the throw but the absent side effect.
     expect(mockCancelWorkflow).not.toHaveBeenCalled();
     expect(mockGetWorkflow).not.toHaveBeenCalled();
+    // Symmetry with the poll case: the refusal must also precede the token mint, or the check has
+    // merely moved rather than being first.
+    expect(mockGetOrchestratorToken).not.toHaveBeenCalled();
   });
 
   it('allows the viewer’s OWN workflow and returns the terminal snapshot', async () => {
@@ -440,5 +487,56 @@ describe('blocks.cancelWorkflow — app scope', () => {
       caller().cancelWorkflow({ blockToken: 'tok', workflowId: OWN_ID })
     ).rejects.toThrow('workflow is not tagged for this app');
     expect(mockCancelWorkflow).not.toHaveBeenCalled();
+  });
+});
+
+describe('blocks.publishGenerationOutputs — app scope', () => {
+  // 🔴 THE FIFTH CALL SITE OF `assertBlockWorkflowTaggedForApp`, AND THE ONLY ONE THAT HAD NO
+  // BEHAVIOURAL TEST ANYWHERE. Measured on this branch before this case existed: deleting the
+  // assertion from `publishGenerationOutputs` left 717 files / 12,180 tests green. That matters
+  // more here than at the other four — this is the procedure that fetches orchestrator blobs
+  // server-side and persists them as public `Image` rows — and consolidating the predicate onto one
+  // helper made the deletion a ONE-line edit rather than a five-line one.
+  //
+  // It stops at the guard: the refusal is ahead of the projection and of every fetch/upload below
+  // it, so nothing in the heavy path needs mocking for this to be a real exercise of the call site.
+  it('refuses a workflow the calling app did not produce, and publishes nothing', async () => {
+    // INVARIANT GUARD (passes at base too — the guard existed there, open-coded and untested).
+    // Guard (a), the read-model row, says owned — so the ONLY thing that can refuse here is the
+    // app-tag assertion, and a pass would mean that line is absent or mis-wired.
+    mockBlockWorkflowOwnedByAppUser.mockResolvedValue(true);
+    mockGetWorkflow.mockResolvedValue(
+      workflowFixture({
+        status: 'succeeded',
+        tags: ['civitai', `app-block:${OTHER_APP_ID}`],
+        cost: { total: 71 },
+      })
+    );
+
+    await expect(
+      caller().publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'workflow is not tagged for this app' });
+  });
+
+  it('a correctly-tagged workflow gets PAST the app-scope guard', async () => {
+    // INVARIANT GUARD (passes at base too). Non-vacuous: verified to fail when the assertion is
+    // mutated to refuse everything.
+    // The positive control for the case above. Without it, a guard that refused EVERYTHING would
+    // satisfy the refusal test — so this asserts the guard was reached and passed, by requiring the
+    // procedure to get further than it (the orchestrator record was read, and the failure that
+    // follows is no longer the tag one).
+    mockBlockWorkflowOwnedByAppUser.mockResolvedValue(true);
+    mockGetWorkflow.mockResolvedValue(
+      workflowFixture({ status: 'succeeded', cost: { total: 73 } })
+    );
+
+    await caller()
+      .publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
+      .catch((e: { message?: string }) => {
+        expect(e.message).not.toBe('workflow is not tagged for this app');
+      });
+    expect(mockGetWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({ path: { workflowId: OWN_ID } })
+    );
   });
 });
