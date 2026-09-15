@@ -138,10 +138,31 @@ const mockDbRead = dbMock.dbRead;
 // 🔴 PAIRWISE-DISTINCT FIXTURE FIELDS. Every workflow below differs in id,
 // status AND cost, so a wiring bug that returns the wrong workflow — or a stub
 // that returns a constant — cannot pass by coincidence.
-const RUNNING = { id: 'wf_running', status: 'processing', cost: { total: 11 }, steps: [] };
-const SUCCEEDED = { id: 'wf_succeeded', status: 'succeeded', cost: { total: 22 }, steps: [] };
-const FAILED = { id: 'wf_failed', status: 'failed', cost: { total: 33 }, steps: [] };
-const CANCELED = { id: 'wf_canceled', status: 'canceled', cost: { total: 44 }, steps: [] };
+// The producing app's provenance tag — `pollWorkflow`/`cancelWorkflow` scope on it, and these
+// fixtures are about the long poll rather than about scoping.
+const TAGS = ['app-block:oac_01JQ8XG7YV2K4M6P8R0T2W4Y6B'];
+const RUNNING = {
+  id: 'wf_running',
+  status: 'processing',
+  cost: { total: 11 },
+  steps: [],
+  tags: TAGS,
+};
+const SUCCEEDED = {
+  id: 'wf_succeeded',
+  status: 'succeeded',
+  cost: { total: 22 },
+  steps: [],
+  tags: TAGS,
+};
+const FAILED = { id: 'wf_failed', status: 'failed', cost: { total: 33 }, steps: [], tags: TAGS };
+const CANCELED = {
+  id: 'wf_canceled',
+  status: 'canceled',
+  cost: { total: 44 },
+  steps: [],
+  tags: TAGS,
+};
 
 /** The `query` argument of the Nth `getWorkflow` call (undefined if none). */
 function queryArg(n = 0): { wait?: number } | undefined {

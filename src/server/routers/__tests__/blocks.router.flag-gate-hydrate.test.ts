@@ -114,6 +114,12 @@ redisMock.sysRedis.decrBy.mockImplementation(async () => 0);
 redisMock.sysRedis.expire.mockImplementation(async () => true);
 redisMock.sysRedis.ttl.mockImplementation(async () => -1);
 
+// Every workflow a block can legitimately name carries its producing app's provenance tag, and
+// `blocks.pollWorkflow`/`cancelWorkflow` assert it. These fixtures are about other properties, so
+// they carry the default claims' tag; the scoping guard itself is exercised in
+// blocks.router.workflowScope.test.ts.
+const BLOCK_APP_TAG = 'app-block:app_test';
+
 function validClaims(over: Record<string, unknown> = {}) {
   return {
     iss: 'civitai',
@@ -164,6 +170,7 @@ beforeEach(() => {
   mockParseSubjectUserId.mockImplementation((sub: string) => (sub === 'anon' ? null : 42));
   mockGetOrchestratorToken.mockResolvedValue('orch_token');
   mockGetWorkflow.mockResolvedValue({
+    tags: [BLOCK_APP_TAG],
     id: 'wf_1',
     status: 'succeeded',
     cost: { total: 0 },

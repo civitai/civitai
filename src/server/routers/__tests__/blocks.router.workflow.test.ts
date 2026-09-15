@@ -583,6 +583,12 @@ function withConsentBudget(buzzBudgetPerDay: number | null) {
 }
 const mockLogToAxiom = loggingMock.logToAxiom;
 
+// Every workflow a block can legitimately name carries its producing app's provenance tag, and
+// `blocks.pollWorkflow`/`cancelWorkflow` assert it. These fixtures are about other properties, so
+// they carry the default claims' tag; the scoping guard itself is exercised in
+// blocks.router.workflowScope.test.ts.
+const BLOCK_APP_TAG = 'app-block:app_test';
+
 function validClaims(over: Record<string, unknown> = {}) {
   return {
     iss: 'civitai',
@@ -868,6 +874,7 @@ describe('blocks.pollWorkflow', () => {
   it('returns a snapshot for a valid token + workflowId', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims());
     mockGetWorkflow.mockResolvedValue({
+      tags: [BLOCK_APP_TAG],
       id: 'wf_1',
       status: 'succeeded',
       cost: { total: 10 },
@@ -927,6 +934,7 @@ describe('blocks.pollWorkflow', () => {
     function pollTerminal(status: 'succeeded' | 'failed' | 'expired' | 'canceled') {
       mockVerifyBlockToken.mockResolvedValue(validClaims());
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_1',
         status, // orchestrator terminal status → same block-contract status
         cost: { total: 10 },
@@ -959,6 +967,7 @@ describe('blocks.pollWorkflow', () => {
     it('does NOT flip on a non-terminal (processing) poll — no DB write on intermediate polls', async () => {
       mockVerifyBlockToken.mockResolvedValue(validClaims());
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_1',
         status: 'processing',
         cost: { total: 10 },
@@ -973,6 +982,7 @@ describe('blocks.pollWorkflow', () => {
     it('does NOT flip on a still-queued (unassigned → pending) poll', async () => {
       mockVerifyBlockToken.mockResolvedValue(validClaims());
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_1',
         status: 'unassigned', // maps to the non-terminal block-contract `pending`
         cost: { total: 10 },
@@ -1007,6 +1017,7 @@ describe('blocks.cancelWorkflow', () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims());
     mockCancelWorkflow.mockResolvedValue(undefined);
     mockGetWorkflow.mockResolvedValue({
+      tags: [BLOCK_APP_TAG],
       id: 'wf_1',
       status: 'canceled',
       cost: { total: 0 },
@@ -2585,6 +2596,7 @@ describe('blocks.submitWorkflow', () => {
       mockGetUserById.mockResolvedValue({ id: 42, isModerator: true });
       mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: true, tier: 'free' });
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_1',
         status: 'succeeded',
         cost: { total: 0 },
@@ -3532,6 +3544,7 @@ describe('runtime procedures no longer require the AUTHORING capability', () => 
     mockVerifyBlockToken.mockResolvedValue(validClaims());
     nonAuthorViewer();
     mockGetWorkflow.mockResolvedValue({
+      tags: [BLOCK_APP_TAG],
       id: 'wf_1',
       status: 'succeeded',
       cost: { total: 0 },
@@ -3550,6 +3563,7 @@ describe('runtime procedures no longer require the AUTHORING capability', () => 
     nonAuthorViewer();
     mockCancelWorkflow.mockResolvedValue(undefined);
     mockGetWorkflow.mockResolvedValue({
+      tags: [BLOCK_APP_TAG],
       id: 'wf_1',
       status: 'canceled',
       cost: { total: 0 },
@@ -6797,6 +6811,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
     it('poll to a terminal status settles the workflow to its REAL accrued cost', async () => {
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_cc_1',
         status: 'succeeded',
         cost: { total: 30 },
@@ -6812,6 +6827,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
     it('does NOT settle on a non-terminal (processing) poll', async () => {
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_cc_1',
         status: 'processing',
         cost: { total: 10 },
@@ -6825,6 +6841,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
       mockCancelWorkflow.mockResolvedValue(undefined);
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_cc_1',
         status: 'canceled',
         cost: { total: 12 }, // accrued-so-far billed by the orchestrator on cancel
@@ -9134,6 +9151,7 @@ describe('blocks — #3520 model substitution observability', () => {
       // it was gone by the time the block had images to display beside it.
       mockVerifyBlockToken.mockResolvedValue(validClaims());
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_1',
         status: 'succeeded',
         cost: { total: 10 },
@@ -9160,6 +9178,7 @@ describe('blocks — #3520 model substitution observability', () => {
     it('pollWorkflow OMITS the field for a workflow that substituted nothing', async () => {
       mockVerifyBlockToken.mockResolvedValue(validClaims());
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_1',
         status: 'succeeded',
         cost: { total: 10 },
@@ -9175,6 +9194,7 @@ describe('blocks — #3520 model substitution observability', () => {
       mockVerifyBlockToken.mockResolvedValue(validClaims());
       mockCancelWorkflow.mockResolvedValue(undefined);
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_1',
         status: 'canceled',
         cost: { total: 3 },
@@ -9467,6 +9487,7 @@ describe('blocks — #3520 model substitution observability', () => {
     it('the subsequent POLL of that step workflow carries no record either', async () => {
       mockVerifyBlockToken.mockResolvedValue(stepClaims());
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_step_1',
         status: 'succeeded',
         cost: { total: 1 },
@@ -9487,6 +9508,7 @@ describe('blocks — #3520 model substitution observability', () => {
       // reader that is blind on a registered `$type`.
       mockVerifyBlockToken.mockResolvedValue(stepClaims());
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_step_1',
         status: 'succeeded',
         cost: { total: 1 },
@@ -9514,6 +9536,7 @@ describe('blocks — #3520 model substitution observability', () => {
       async (_label, order) => {
         mockVerifyBlockToken.mockResolvedValue(stepClaims());
         mockGetWorkflow.mockResolvedValue({
+          tags: [BLOCK_APP_TAG],
           id: 'wf_mixed',
           status: 'succeeded',
           cost: { total: 26 },
