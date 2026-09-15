@@ -164,14 +164,21 @@ label must go** in this PR, because it is currently false.
 
 ## 4. Work breakdown
 
-Two PRs, both branched off `main`. Nothing stacked.
+**One PR**, `feat/media-quality-compressed-lossless`, two commits. The resolver change, the default
+flip and the membership gate cannot be separated — deleting the `<=450` force is already visible to
+the 12,717 non-member accounts on explicit `metadata` (§2) — and the rename is meaningless without
+the gate, so the whole thing ships behind one flag.
 
-The resolver change, the default flip and the membership gate are **one PR, not three**: deleting
-the `<=450` force is already visible to the 12,717 non-member accounts on explicit `metadata`
-(§2) — they would start getting lossless in feeds — so there is no ordering of these three that
-leaves an intermediate commit behaviour-neutral. Ship them together behind one flag.
+Where the flag is read is not a detail. `useEdgeUrl` runs on every image, so anything it imports
+lands in nearly every suite's import graph, and the flag provider cannot go there: a wholesale
+`vi.mock` of `~/providers/FeatureFlagsProvider` naming only `useFeatureFlags` — 52 files, the
+repo's prevailing style — leaves the second hook unbound, and the importing file then fails to
+**collect**, reporting zero tests rather than a failure. So the quality is resolved once in
+`MediaQualityProvider`, and the context it writes lives in its own module importing nothing but
+React and a type. (`src/components/AppBlocks/__tests__/featureFlagsMockCompleteness.test.ts`
+documents the same incident from the other direction.)
 
-### PR 1 — Resolver, default and gate (flag-gated)
+### Commit 1 — Resolver, default and gate (flag-gated)
 
 - `src/client-utils/edge-url.ts`
   - Replace `resolveOptimized`'s all-force-on shape (`edge-url.ts:81`) with an explicit
@@ -218,7 +225,7 @@ put back, not pass quietly.
 
 Run: `pnpm exec vitest run --project 'unit*' src/client-utils/__tests__/cf-images-utils.test.ts`
 
-### PR 2 — Copy and UI
+### Commit 2 — Copy and UI
 
 - `src/components/Account/SettingsCard.tsx:78` and `:410` (`ImageFormatSelect`, also used by
   `PreferencesPane.tsx:57`) — two copies of the same select; keep them in step.
@@ -230,8 +237,9 @@ Run: `pnpm exec vitest run --project 'unit*' src/client-utils/__tests__/cf-image
   on-site browsing only; downloads always give the original on any plan; videos are always
   streamed compressed.
 
-Safe to ship after PR 1 and independently of the flag: it renames labels over the same stored
-values, and the gate it renders is the one PR 1 already enforces.
+The select follows the same flag, so the labels and the URLs can never disagree: gating the copy
+but not the URLs would put "Compressed" in front of a user still being served the uncompressed
+variant at every width above 450.
 
 ---
 
