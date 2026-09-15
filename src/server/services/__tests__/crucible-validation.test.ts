@@ -15,8 +15,10 @@ import { dbMock } from '~/__tests__/mocks';
 import type * as NotificationService from '~/server/services/notification.service';
 import {
   CRUCIBLE_DURATION_COSTS,
+  CRUCIBLE_MAX_CLIP_SECONDS,
   CRUCIBLE_MAX_ENTRIES,
   CRUCIBLE_MAX_ENTRY_FEE,
+  CRUCIBLE_MAX_MIN_VIEW_SECONDS,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
 } from '~/shared/constants/crucible.constants';
@@ -304,7 +306,7 @@ describe('getCruciblesInfiniteSchema', () => {
   });
 });
 
-const crucibleRow = (contentType: MediaType) => ({
+const crucibleRow = (contentType: MediaType, maxClipSeconds: number | null = null) => ({
   id: 1,
   name: 'Test Crucible',
   userId: 99,
@@ -314,12 +316,20 @@ const crucibleRow = (contentType: MediaType) => ({
   entryFee: 0,
   entryLimit: 1,
   maxTotalEntries: null,
+  minViewSeconds: null,
+  maxClipSeconds,
   allowedResources: null,
   endAt: new Date(Date.now() + 60_000),
   _count: { entries: 0 },
 });
 
-const imageRow = (type: MediaType) => ({ id: 7, userId: 42, type, nsfwLevel: 1 });
+const imageRow = (type: MediaType, metadata: Record<string, unknown> | null = null) => ({
+  id: 7,
+  userId: 42,
+  type,
+  nsfwLevel: 1,
+  metadata,
+});
 
 const submit = () => submitEntry({ crucibleId: 1, imageId: 7, userId: 42 });
 
@@ -362,5 +372,114 @@ describe('submitEntry — content type', () => {
 
     await expect(submit()).rejects.toThrow(/only accepts video entries/);
     expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('createCrucibleInputSchema — video settings', () => {
+  const videoInput = { ...validCreateInput, contentType: MediaType.video };
+
+  it('accepts a video crucible carrying both settings', () => {
+    const result = createCrucibleInputSchema.safeParse({
+      ...videoInput,
+      minViewSeconds: 6,
+      maxClipSeconds: 120,
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a video crucible carrying neither', () => {
+    expect(createCrucibleInputSchema.safeParse(videoInput).success).toBe(true);
+  });
+
+  it.each([
+    ['a minimum view time', { minViewSeconds: 6 }],
+    ['a maximum clip length', { maxClipSeconds: 120 }],
+  ])('rejects an image crucible carrying %s', (_label, settings) => {
+    // The DB says the same thing via Crucible_video_settings_require_video; this is the half that
+    // produces a message rather than a constraint violation.
+    const result = createCrucibleInputSchema.safeParse({ ...validCreateInput, ...settings });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toMatch(/video crucibles only/);
+  });
+
+  it('rejects a minimum longer than the maximum, which nothing could satisfy', () => {
+    const result = createCrucibleInputSchema.safeParse({
+      ...videoInput,
+      minViewSeconds: 30,
+      maxClipSeconds: 10,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toMatch(/cannot exceed the maximum clip length/);
+  });
+
+  it('accepts a minimum exactly equal to the maximum', () => {
+    const result = createCrucibleInputSchema.safeParse({
+      ...videoInput,
+      minViewSeconds: 10,
+      maxClipSeconds: 10,
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it.each([
+    ['a zero minimum — absent is how "no rule" is spelled', { minViewSeconds: 0 }],
+    ['a zero maximum, which would forbid every entry', { maxClipSeconds: 0 }],
+    ['a fractional minimum', { minViewSeconds: 6.5 }],
+    ['a minimum past the ceiling', { minViewSeconds: CRUCIBLE_MAX_MIN_VIEW_SECONDS + 1 }],
+    ['a maximum past the ceiling', { maxClipSeconds: CRUCIBLE_MAX_CLIP_SECONDS + 1 }],
+  ])('rejects %s', (_label, settings) => {
+    expect(createCrucibleInputSchema.safeParse({ ...videoInput, ...settings }).success).toBe(false);
+  });
+});
+
+describe('submitEntry — maximum clip length', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createNotification.mockResolvedValue(undefined);
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow(MediaType.video, 120));
+    dbMock.dbRead.crucibleEntry.count.mockResolvedValue(0);
+    dbMock.dbRead.crucibleEntry.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.image.findUnique.mockResolvedValue(
+      imageRow(MediaType.video, { duration: 6.592 })
+    );
+    dbMock.dbWrite.crucibleEntry.create.mockResolvedValue({ id: 5, user: { username: 'tester' } });
+  });
+
+  it('accepts a clip under the maximum', async () => {
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
+  it('accepts a clip exactly at the maximum', async () => {
+    dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.video, { duration: 120 }));
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
+  it('rejects a clip over the maximum', async () => {
+    dbMock.dbRead.image.findUnique.mockResolvedValue(
+      imageRow(MediaType.video, { duration: 120.01 })
+    );
+
+    await expect(submit()).rejects.toThrow(/2:00/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it('accepts any length when the crucible sets no maximum', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow(MediaType.video, null));
+    dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.video, { duration: 9999 }));
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
+  it('accepts a video whose duration was never recorded', async () => {
+    // Metadata is written by the uploader and is not guaranteed. Blocking on a missing field
+    // would reject entries for a reason the entrant cannot see or fix.
+    dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.video, {}));
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
   });
 });

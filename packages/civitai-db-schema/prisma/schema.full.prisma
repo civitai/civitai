@@ -8334,6 +8334,8 @@ model Crucible {
   seededPrizePool   Int            @default(0)
   entryLimit        Int            @default(1)
   maxTotalEntries   Int?
+  minViewSeconds    Int?
+  maxClipSeconds    Int?
   prizePositions    Json           @default("[]")
   allowedResources  Json?
   duration          Int            @default(480)

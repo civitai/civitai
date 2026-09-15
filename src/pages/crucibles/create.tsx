@@ -6,6 +6,7 @@ import {
   Group,
   Input,
   Loader,
+  NumberInput,
   Paper,
   Progress,
   SimpleGrid,
@@ -48,6 +49,8 @@ import { useStepper } from '~/hooks/useStepper';
 import { Form, InputNumber, InputSelect, InputText, InputTextArea, useForm } from '~/libs/form';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
+  CRUCIBLE_MAX_CLIP_SECONDS,
+  CRUCIBLE_MAX_MIN_VIEW_SECONDS,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
   type CrucibleContentType,
 } from '~/shared/constants/crucible.constants';
@@ -127,6 +130,8 @@ type FormData = {
   entryFee: number;
   entryLimit: number;
   maxTotalEntries?: number;
+  minViewSeconds?: number;
+  maxClipSeconds?: number;
 
   // Step 3: Prizes
   seededPrizePool: number;
@@ -147,6 +152,8 @@ const formSchema: FormData = {
   entryFee: 100,
   entryLimit: 1,
   maxTotalEntries: undefined,
+  minViewSeconds: undefined,
+  maxClipSeconds: undefined,
 
   // Step 3: Prizes
   seededPrizePool: 0,
@@ -223,8 +230,17 @@ export default function CrucibleCreate() {
     );
   };
 
+  // Mirrors the server's cross-field refine. Both set and inverted means nothing can clear the
+  // bar, so the crucible would have nothing votable in it.
+  const videoSettingsError =
+    formData.minViewSeconds != null &&
+    formData.maxClipSeconds != null &&
+    formData.minViewSeconds > formData.maxClipSeconds
+      ? 'Minimum view time cannot exceed the maximum clip length'
+      : null;
+
   const isStep2Valid = () => {
-    return formData.entryLimit >= 1 && formData.entryLimit <= 10;
+    return formData.entryLimit >= 1 && formData.entryLimit <= 10 && !videoSettingsError;
   };
 
   const isStep3Valid = () => {
@@ -328,6 +344,8 @@ export default function CrucibleCreate() {
       seededPrizePool: formData.seededPrizePool,
       prizeCustomized, // Pass whether prize distribution was customized
       duration: parseInt(formData.duration),
+      minViewSeconds: formData.minViewSeconds,
+      maxClipSeconds: formData.maxClipSeconds,
     });
   };
 
@@ -497,7 +515,13 @@ export default function CrucibleCreate() {
                   ? 'border-blue-500 bg-blue-500/20'
                   : 'border-dark-4 hover:border-blue-500'
               }`}
-              onClick={() => updateFormData({ contentType: value })}
+              onClick={() =>
+                updateFormData(
+                  value === MediaType.video
+                    ? { contentType: value }
+                    : { contentType: value, minViewSeconds: undefined, maxClipSeconds: undefined }
+                )
+              }
             >
               <Group gap={6} justify="center">
                 <Icon size={16} />
@@ -583,6 +607,67 @@ export default function CrucibleCreate() {
           }
         />
       </Input.Wrapper>
+
+      {formData.contentType === MediaType.video && (
+        <Input.Wrapper
+          label="Advanced Video Options"
+          description="Optional. Leave either blank for no rule."
+        >
+          <Stack gap="md" mt={8}>
+            <Input.Wrapper
+              label="Minimum view time"
+              description="Judges must watch this much of BOTH clips before either vote unlocks"
+            >
+              <Group gap={8} mt={8}>
+                <NumberInput
+                  value={formData.minViewSeconds ?? ''}
+                  onChange={(value) =>
+                    updateFormData({
+                      minViewSeconds: typeof value === 'number' ? value : undefined,
+                    })
+                  }
+                  min={1}
+                  max={CRUCIBLE_MAX_MIN_VIEW_SECONDS}
+                  placeholder="No minimum"
+                  style={{ flex: 1 }}
+                />
+                <Text size="sm" c="dimmed">
+                  seconds
+                </Text>
+              </Group>
+            </Input.Wrapper>
+
+            <Input.Wrapper
+              label="Maximum clip length"
+              description="Entries longer than this are rejected on submission"
+            >
+              <Group gap={8} mt={8}>
+                <NumberInput
+                  value={formData.maxClipSeconds ?? ''}
+                  onChange={(value) =>
+                    updateFormData({
+                      maxClipSeconds: typeof value === 'number' ? value : undefined,
+                    })
+                  }
+                  min={1}
+                  max={CRUCIBLE_MAX_CLIP_SECONDS}
+                  placeholder="No maximum"
+                  style={{ flex: 1 }}
+                />
+                <Text size="sm" c="dimmed">
+                  seconds
+                </Text>
+              </Group>
+            </Input.Wrapper>
+
+            {videoSettingsError && (
+              <Text size="xs" c="red">
+                {videoSettingsError}
+              </Text>
+            )}
+          </Stack>
+        </Input.Wrapper>
+      )}
 
       {/* Resource Requirements - Coming Soon */}
       <Tooltip label="Coming Soon - Premium feature" withArrow>
@@ -955,6 +1040,22 @@ export default function CrucibleCreate() {
               <Text c="dimmed">Max Total Entries</Text>
               <Text fw={500}>{formData.maxTotalEntries || 'Unlimited'}</Text>
             </Group>
+            {formData.contentType === MediaType.video && (
+              <>
+                <Group justify="space-between">
+                  <Text c="dimmed">Minimum View Time</Text>
+                  <Text fw={500}>
+                    {formData.minViewSeconds ? `${formData.minViewSeconds}s` : 'None'}
+                  </Text>
+                </Group>
+                <Group justify="space-between">
+                  <Text c="dimmed">Maximum Clip Length</Text>
+                  <Text fw={500}>
+                    {formData.maxClipSeconds ? `${formData.maxClipSeconds}s` : 'Unlimited'}
+                  </Text>
+                </Group>
+              </>
+            )}
           </Stack>
         </Paper>
 
