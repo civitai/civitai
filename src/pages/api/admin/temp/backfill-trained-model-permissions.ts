@@ -73,11 +73,11 @@ import { booleanString } from '~/utils/zod-helpers';
  *   &limit=<n>               (optional; bound a first run to prove the shape)
  *   &afterId=<modelId>       (optional; resume after this id)
  *
- * Side effects when dryRun=false:
  * ⚠️ This endpoint WRITES 'SellMerge'. It must not run before that value is added to the
  * enum, nor during a rolling deploy — pods on the previous build throw reading a row carrying a
  * label they do not know.
  *
+ * Side effects when dryRun=false:
  *   - repair:  UPDATE Model.allowCommercialUse to [Image, RentCivit, Rent, Sell, SellMerge] for
  *              matched rows,
  *              and queue modelsSearchIndex updates for them.
@@ -106,13 +106,20 @@ import { booleanString } from '~/utils/zod-helpers';
  * against `Model."createdAt"`, which is `timestamp(3)` without a zone, so the effective boundary
  * also moves with the connection's TimeZone; a day of slack absorbs that too.
  */
-// The defaulted value is `{Sell}` before the sell/merge split's backfill and `{Sell,SellMerge}`
-// after it, so both shapes match and this reads the same either side of it. Stated once
-// because the scan and the UPDATE must agree: widen one and the scan reports a row count the
-// UPDATE then declines to touch, which reads as a successful partial run.
-const defaultedTrainedPermissions = Prisma.sql`(
-  m."allowCommercialUse" = ARRAY['Sell']::"CommercialUse"[]
-  OR m."allowCommercialUse" = ARRAY['Sell', 'SellMerge']::"CommercialUse"[]
+// The defaulted value is `{Sell}` before the sell/merge split's backfill and carries `SellMerge`
+// too after it. Matching only `{Sell}` would make this a silent no-op once the backfill lands --
+// that second shape is the whole reason this is not a single equality, and nothing matches it
+// yet, so it reads as dead code until then.
+//
+// Containment rather than equality because `=` on a Postgres array is order-sensitive: it would
+// pin this to the exact order the backfill happens to write, and that backfill is not yet
+// written. The pair below matches {Sell} and {Sell,SellMerge} in any order and nothing wider.
+//
+// Stated once because the scan and the UPDATE must agree: widen one and the scan reports a row
+// count the UPDATE then declines to touch, which reads as a successful partial run.
+const defaultedCommercialUseShapes = Prisma.sql`(
+  m."allowCommercialUse" @> ARRAY['Sell']::"CommercialUse"[]
+  AND m."allowCommercialUse" <@ ARRAY['Sell', 'SellMerge']::"CommercialUse"[]
 )`;
 
 const CASCADE_SHIPPED_BY = new Date('2024-06-12T00:00:00Z');
@@ -180,7 +187,7 @@ export default WebhookEndpoint(async (req, res) => {
           SELECT m.id
           FROM "Model" m
           WHERE m."uploadType" = 'Trained'
-            AND ${defaultedTrainedPermissions}
+            AND ${defaultedCommercialUseShapes}
             AND m."createdAt" >= ${CASCADE_SHIPPED_BY}
             AND m.id > ${params.afterId}
           ORDER BY m.id
@@ -237,7 +244,7 @@ export default WebhookEndpoint(async (req, res) => {
             SET "allowCommercialUse" = ARRAY['Image', 'RentCivit', 'Rent', 'Sell', 'SellMerge']::"CommercialUse"[],
                 "updatedAt" = CASE WHEN m.status = 'Published' THEN NOW() ELSE m."updatedAt" END
             WHERE m.id = ANY(${batch}::int[])
-              AND ${defaultedTrainedPermissions}
+              AND ${defaultedCommercialUseShapes}
             RETURNING m.id
           `
         : batch.map((id) => ({ id }));

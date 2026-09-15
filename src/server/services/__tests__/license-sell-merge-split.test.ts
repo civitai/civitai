@@ -34,7 +34,21 @@ const EXPANDS_CONDITIONALLY =
   'A restriction below that references the Model applies to the Model and Derivatives of the Model, except to the extent that restriction expressly states otherwise.';
 const CARVE_OUT_GRANTS_NOTHING =
   'A statement that a restriction does not apply to something limits only that restriction and does not permit that thing.';
-const MERGE_CARRIES_ITS_LINEAGE = 'a Merge will be understood to include Derivatives of a Merge';
+const MERGE_LINEAGE_SENTENCE =
+  'A Derivative of the Model will be understood to include Merges, and a Merge will be understood to include Derivatives of a Merge.';
+const MERGE_DEFINED =
+  '“Merge” means, with respect to the Model, combining the Model or a Derivative of the Model with one or more other models to produce a single model.';
+const PERMISSION_LIST_OPENS =
+  'You agree to the following with respect to the Model (each a “Permission”):';
+const SHARING_CLAUSE = 'Do not Share or make available a Merge';
+
+/** One clause body, so an assertion about scope cannot be satisfied from a different clause. */
+const clauseBody = (license: string, heading: string) => {
+  const start = license.indexOf(heading);
+  if (start === -1) return '';
+  const end = license.indexOf('</b>', start);
+  return license.slice(start, end === -1 ? undefined : end);
+};
 
 /** The Sale of the Model clause body alone, so an assertion cannot be satisfied from elsewhere. */
 const saleOfModelClause = (license: string) => {
@@ -62,9 +76,13 @@ describe('sell / sell-merge split in the generated licence', () => {
   it('grants both: neither restriction appears', () => {
     const license = buildLicense([...OTHERS, CommercialUse.Sell, CommercialUse.SellMerge]);
 
-    expect(license).toContain('Attachment B');
+    // The preamble is appended before any flag is read, so it cannot control this case's
+    // negatives. Nothing IS emitted here by construction, so the honest control is the sentence
+    // the carve-out has to disapply -- the loop's own output is controlled in the cases below.
+    expect(license).toContain(PERMISSION_LIST_OPENS);
     expect(license).not.toContain(MODEL_CLAUSE);
     expect(license).not.toContain(MERGE_CLAUSE);
+    expect(license).not.toContain(SHARING_CLAUSE);
   });
 
   it('grants Sell, withholds SellMerge: only the merge restriction appears', () => {
@@ -83,6 +101,21 @@ describe('sell / sell-merge split in the generated licence', () => {
   });
 
   /**
+   * The merge-sharing restriction is the only OTHER clause naming a Merge, and it comes from a
+   * different flag, so the two never render together anywhere else. The assertion that matters
+   * is the NEGATIVE one: co-occurrence proves nothing, and a carve-out copied into the sharing
+   * clause would say "do not share a Merge, except this does not apply to a Merge" -- which is
+   * self-nullifying and which presence checks cannot see.
+   */
+  it('withholding derivatives does not let the sale carve-out reach the sharing clause', () => {
+    const license = buildLicense(OTHERS, false);
+
+    expect(license).toContain(SHARING_CLAUSE);
+    expect(saleOfModelClause(license)).toContain(DISAPPLIES_TO_MERGES);
+    expect(clauseBody(license, SHARING_CLAUSE)).not.toContain(DISAPPLIES_TO_MERGES);
+  });
+
+  /**
    * The carve-out in Sale of the Model only works because the preamble expands a restriction
    * to Derivatives ONLY where the restriction references the Model, and yields where it states
    * its own scope. Restore the old flat sentence -- "The below restrictions apply to the Model
@@ -91,20 +124,6 @@ describe('sell / sell-merge split in the generated licence', () => {
    * gets a green tick over a licence that forbids the sale. The clause cannot defend itself here;
    * this is the assertion that does.
    */
-  /**
-   * The merge-sharing restriction is the only OTHER clause in the document that names a Merge,
-   * and it is emitted from a different flag. Every other case here renders with derivatives
-   * allowed, so the two merge-naming clauses never appear together -- which is exactly where a
-   * carve-out written for one of them can reach the other.
-   */
-  it('withholding derivatives leaves the sale carve-out scoped to its own clause', () => {
-    const license = buildLicense(OTHERS, false);
-
-    expect(license).toContain('Do not Share or make available a Merge');
-    expect(saleOfModelClause(license)).toContain(DISAPPLIES_TO_MERGES);
-    expect(license).toContain(CARVE_OUT_GRANTS_NOTHING);
-  });
-
   it('the preamble expands a restriction conditionally, and yields to a stated scope', () => {
     const license = buildLicense(OTHERS);
 
@@ -112,7 +131,8 @@ describe('sell / sell-merge split in the generated licence', () => {
     // and the conjunction are both free to change, and rewriting the middle stops every
     // restriction in the document reaching any Derivative while this still passes.
     expect(license).toContain(EXPANDS_CONDITIONALLY);
-    expect(license).toContain(MERGE_CARRIES_ITS_LINEAGE);
+    expect(license).toContain(MERGE_LINEAGE_SENTENCE);
+    expect(license).toContain(MERGE_DEFINED);
     expect(license).not.toContain('even though only the Model is referenced');
   });
 

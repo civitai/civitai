@@ -27,7 +27,8 @@
 -- as its own change, after this deploy has fully rolled out.
 --
 -- Run this statement alone. Postgres 12+ permits ADD VALUE inside a transaction block, but the
--- value cannot be USED in the same transaction -- and two `psql -c` flags are one implicit
--- transaction, which is how this bites in practice.
+-- value cannot be USED in the same transaction -- and a single `psql -c` string containing
+-- several statements is one implicit transaction, which is how this bites in practice.
+-- Separate `-c` flags each get their own transaction, so that spelling is the safe one.
 
 ALTER TYPE "CommercialUse" ADD VALUE IF NOT EXISTS 'SellMerge';
