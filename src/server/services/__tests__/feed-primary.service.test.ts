@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { feedFliptContext, serveFromFeed } from '../feed-primary.service';
+import { feedFliptContext, feedHydrateQuery, serveFromFeed } from '../feed-primary.service';
 import type { FeedAnswer } from '../feed-shadow.service';
 
 const base = { sort: 'Most Reactions', period: 'Week', browsingLevel: 31, limit: 100 };
@@ -72,5 +72,33 @@ describe('feedFliptContext', () => {
       isModerator: 'true',
       isLoggedIn: 'true',
     });
+  });
+});
+
+describe('feedHydrateQuery', () => {
+  it('keeps the request filters and drops paging and period in favour of the ids', () => {
+    const q = feedHydrateQuery(
+      { ...base, tags: [7], cursor: 'feed:1:2', skip: 40, offset: 400, entry: 99, limit: 40 },
+      [9, 5, 2]
+    );
+    expect(q).toEqual({
+      sort: base.sort,
+      period: 'AllTime',
+      browsingLevel: 31,
+      tags: [7],
+      ids: [9, 5, 2],
+      limit: 3,
+    });
+    for (const k of ['cursor', 'skip', 'offset', 'entry']) expect(k in q).toBe(false);
+  });
+});
+
+describe('serveFromFeed hydration outcomes', () => {
+  it('treats a page of ids that hydrates to nothing as a failed hydration, not an empty feed', async () => {
+    const r = await serveFromFeed(base, {
+      fetchFeed: async () => answer([4, 8]),
+      hydrate: async () => [],
+    });
+    expect(r).toEqual({ ok: false, reason: 'hydrate:empty' });
   });
 });
