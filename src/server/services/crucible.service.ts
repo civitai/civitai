@@ -70,6 +70,7 @@ export const createCrucible = async ({
   description,
   coverImage,
   nsfwLevel,
+  contentType,
   entryFee,
   entryLimit,
   maxTotalEntries,
@@ -153,6 +154,7 @@ export const createCrucible = async ({
           description: description ?? null,
           imageId: image.id,
           nsfwLevel,
+          contentType,
           entryFee,
           entryLimit,
           maxTotalEntries: maxTotalEntries ?? null,
@@ -395,6 +397,7 @@ export const submitEntry = async ({
         userId: true, // Crucible creator for notification
         status: true,
         nsfwLevel: true,
+        contentType: true,
         entryFee: true,
         entryLimit: true,
         maxTotalEntries: true,
@@ -447,6 +450,7 @@ export const submitEntry = async ({
       select: {
         id: true,
         userId: true,
+        type: true,
         nsfwLevel: true,
       },
     });
@@ -458,6 +462,12 @@ export const submitEntry = async ({
     // Validate user owns the image
     if (image.userId !== userId) {
       return throwBadRequestError('You can only submit your own images');
+    }
+
+    if (image.type !== crucible.contentType) {
+      return throwBadRequestError(
+        `This crucible only accepts ${crucible.contentType} entries; this one is ${image.type}.`
+      );
     }
 
     // Validate image NSFW level is compatible with crucible
@@ -814,6 +824,7 @@ type EntryForJudging = {
   image: {
     id: number;
     url: string;
+    type: MediaType;
     width: number | null;
     height: number | null;
     nsfwLevel: number;
@@ -867,6 +878,7 @@ type RawEntrySample = {
   score: number;
   image_id: number;
   image_url: string;
+  image_type: MediaType;
   image_width: number | null;
   image_height: number | null;
   image_nsfwLevel: number;
@@ -901,6 +913,7 @@ async function fetchEntrySample(
           ce.score,
           i.id as image_id,
           i.url as image_url,
+          i.type as image_type,
           i.width as image_width,
           i.height as image_height,
           i."nsfwLevel" as "image_nsfwLevel",
@@ -925,6 +938,7 @@ async function fetchEntrySample(
           ce.score,
           i.id as image_id,
           i.url as image_url,
+          i.type as image_type,
           i.width as image_width,
           i.height as image_height,
           i."nsfwLevel" as "image_nsfwLevel",
@@ -950,6 +964,7 @@ async function fetchEntrySample(
     image: {
       id: raw.image_id,
       url: raw.image_url,
+      type: raw.image_type,
       width: raw.image_width,
       height: raw.image_height,
       nsfwLevel: raw.image_nsfwLevel,

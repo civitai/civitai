@@ -5572,6 +5572,7 @@ export interface Crucible {
   imageId: number | null;
   image?: Image | null;
   nsfwLevel: number;
+  contentType: MediaType;
   entryFee: number;
   entryLimit: number;
   maxTotalEntries: number | null;
