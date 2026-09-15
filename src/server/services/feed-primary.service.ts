@@ -1,5 +1,5 @@
 import { env } from '~/env/server';
-import { registerCounterWithLabels } from '~/server/prom/client';
+import { registerCounterWithLabels, registerHistogram } from '~/server/prom/client';
 import type { CapturableSearchInput } from '~/server/services/feed-request-capture.service';
 import {
   encodeFeedCursor,
@@ -16,6 +16,15 @@ const requestCounter = registerCounterWithLabels({
   labelNames: ['outcome'] as const,
 });
 
+const hydrateDuration = registerHistogram({
+  name: 'feed_primary_hydrate_duration_seconds',
+  help: 'Time to hydrate a feed-served page, by where the rows came from',
+  labelNames: ['source'] as const,
+  buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
+});
+
+export type FeedHydrateSource = 'meili' | 'db';
+
 export type FeedPrimaryPage<T> = {
   data: T[];
   nextCursor: string | undefined;
@@ -30,8 +39,20 @@ export type FeedPrimaryDeps<T extends { id: number }> = {
   fetchFeed: (query: string, timeoutMs: number) => Promise<FeedAnswer>;
   /** Loads the page's records in any order; the feed's order is restored here. */
   hydrate: (ids: number[]) => Promise<T[]>;
+  hydrateSource?: FeedHydrateSource;
   timeoutMs?: number;
 };
+
+/** The image query for hydrating exactly `ids`: the request's filters without its paging. */
+export function feedHydrateQuery<
+  T extends { cursor?: unknown; skip?: number; offset?: number; entry?: number; limit?: number }
+>(
+  input: T,
+  ids: number[]
+): Omit<T, 'cursor' | 'skip' | 'offset' | 'entry'> & { ids: number[]; limit: number } {
+  const { cursor: _cursor, skip: _skip, offset: _offset, entry: _entry, ...rest } = input;
+  return { ...rest, ids, limit: ids.length };
+}
 
 /** Truthful subset of the request-path Flipt context (feature-flags.service.ts) built
  *  from what the search input carries, so segments on userId/isModerator can match. */
@@ -75,11 +96,14 @@ export async function serveFromFeed<T extends { id: number }>(
     return { ok: true, page: { data: [], nextCursor, feedMs: answer.ms, route: answer.route } };
   }
   let rows: T[];
+  const endHydrate = hydrateDuration.startTimer({ source: deps.hydrateSource ?? 'meili' });
   try {
     rows = await deps.hydrate(answer.ids);
   } catch {
     requestCounter.inc({ outcome: 'error' });
     return { ok: false, reason: 'hydrate:error' };
+  } finally {
+    endHydrate();
   }
   const byId = new Map(rows.map((r) => [r.id, r]));
   const data = answer.ids.flatMap((id) => {

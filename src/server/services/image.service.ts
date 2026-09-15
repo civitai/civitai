@@ -22,6 +22,7 @@ import { feedRequestCapture } from '~/server/services/feed-request-capture.servi
 import { feedShadow } from '~/server/services/feed-shadow.service';
 import {
   feedFliptContext,
+  feedHydrateQuery,
   feedPrimaryAvailable,
   fetchFeedPrimary,
   serveFromFeed,
@@ -2886,6 +2887,40 @@ export const getAllImagesIndex = async (
 
   const currentUserId = user?.id;
 
+  const searchInput = { ...input, currentUserId, isModerator: user?.isModerator, offset, entry };
+  let feedTried = false;
+  if (feedPrimaryAvailable()) {
+    const entityId = currentUserId?.toString() || 'anonymous';
+    const flipt = feedFliptContext(searchInput);
+    const [feedPrimary, hydrateFromDb] = await withSpan('image:flipt:hydrate', () =>
+      Promise.all([
+        getFliptBoolean(FLIPT_FEATURE_FLAGS.FEED_SERVICE_PRIMARY, entityId, flipt),
+        getFliptBoolean(FLIPT_FEATURE_FLAGS.FEED_SERVICE_HYDRATE_DB, entityId, flipt),
+      ])
+    );
+    if (feedPrimary && hydrateFromDb) {
+      feedTried = true;
+      const started = Date.now();
+      const served = await withSpan('image:feedPrimary:db', () =>
+        serveFromFeed(searchInput, {
+          fetchFeed: fetchFeedPrimary,
+          hydrateSource: 'db',
+          hydrate: async (ids) => (await getAllImagesUncaptured(feedHydrateQuery(input, ids))).items,
+        })
+      );
+      if (served.ok) {
+        void feedRequestCapture().record(searchInput, {
+          source: 'getImagesFromSearch',
+          filterMode: 'feed',
+          elapsedMs: Date.now() - started,
+          resultIds: served.page.data.map((i) => i.id),
+          nextCursor: served.page.nextCursor,
+        });
+        return { items: served.page.data, nextCursor: served.page.nextCursor, source: 'feed' };
+      }
+    }
+  }
+
   let searchResults: Awaited<ReturnType<typeof getImagesFromSearch>>['data'];
   let searchNextCursor: Awaited<ReturnType<typeof getImagesFromSearch>>['nextCursor'];
   let searchSource: Awaited<ReturnType<typeof getImagesFromSearch>>['source'];
@@ -2895,13 +2930,7 @@ export const getAllImagesIndex = async (
       nextCursor: searchNextCursor,
       source: searchSource,
     } = await withSpan('image:getAllImagesIndex:search', () =>
-      getImagesFromSearch({
-        ...input,
-        currentUserId,
-        isModerator: user?.isModerator,
-        offset,
-        entry,
-      })
+      getImagesFromSearch({ ...searchInput, skipFeedPrimary: feedTried })
     ));
   } catch (err) {
     // Meilisearch saturation / timeout on the tRPC hot path (image.getInfinite).
@@ -3196,6 +3225,8 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   actor?: string;
   /** Hydrate exactly these ids: a page the feed service already selected and ordered. */
   feedIds?: number[];
+  /** getAllImagesIndex already asked the feed service for this request; do not ask again. */
+  skipFeedPrimary?: boolean;
   // Unhandled
   //prioritizedUserIds?: number[];
   //userIds?: number | number[];
@@ -3289,7 +3320,7 @@ async function searchImages(input: ImageSearchInput) {
     const entityId = input.currentUserId?.toString() || 'anonymous';
     const [postFilter, feedPrimary] = await Promise.all([
       getFliptBoolean(FLIPT_FEATURE_FLAGS.FEED_POST_FILTER, entityId),
-      feedPrimaryAvailable()
+      feedPrimaryAvailable() && !input.skipFeedPrimary
         ? getFliptBoolean(
             FLIPT_FEATURE_FLAGS.FEED_SERVICE_PRIMARY,
             entityId,

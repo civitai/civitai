@@ -12,6 +12,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // Answers getImagesFromSearch from the PostgreSQL feed service instead of Meilisearch
   // for matching users; everyone else keeps Meilisearch with the feed service in shadow.
   FEED_SERVICE_PRIMARY = 'feed-service-primary',
+  // With FEED_SERVICE_PRIMARY: hydrate the feed's page from Postgres (getAllImages ids mode)
+  // instead of a Meilisearch `id IN` query, so a served page never touches Meilisearch.
+  FEED_SERVICE_HYDRATE_DB = 'feed-service-hydrate-db',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',

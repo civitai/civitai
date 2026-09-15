@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { feedFliptContext, serveFromFeed } from '../feed-primary.service';
+import { feedFliptContext, feedHydrateQuery, serveFromFeed } from '../feed-primary.service';
 import type { FeedAnswer } from '../feed-shadow.service';
 
 const base = { sort: 'Most Reactions', period: 'Week', browsingLevel: 31, limit: 100 };
@@ -72,5 +72,16 @@ describe('feedFliptContext', () => {
       isModerator: 'true',
       isLoggedIn: 'true',
     });
+  });
+});
+
+describe('feedHydrateQuery', () => {
+  it('keeps the request filters and drops every paging field in favour of the ids', () => {
+    const q = feedHydrateQuery(
+      { ...base, tags: [7], cursor: 'feed:1:2', skip: 40, offset: 400, entry: 99, limit: 40 },
+      [9, 5, 2]
+    );
+    expect(q).toEqual({ ...base, tags: [7], ids: [9, 5, 2], limit: 3 });
+    expect('cursor' in q || 'skip' in q || 'offset' in q || 'entry' in q).toBe(false);
   });
 });
