@@ -145,7 +145,7 @@ const MIN_FILES_PER_EXTENSION: Record<string, number> = {
   '.mjs': 80, // 100
   '.json': 70, // 88
   '.css': 30, // 43
-  '.yml': 10, // 14
+  '.yml': 10, // 13
   '.js': 10, // 14
   '.html': 10, // 13
   '.cjs': 5, // 7

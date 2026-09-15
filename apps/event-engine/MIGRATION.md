@@ -37,8 +37,30 @@ root changes were needed.
 - Removed `.gitmodules` (submodule retired → vendored) and `package-lock.json` (npm → the monorepo is pnpm).
 - `Dockerfile` rewritten to the monorepo pnpm-deploy pattern — **DRAFT, unverified**. (This bullet said
   "see below"; no section describing that pattern was ever written. Read the `Dockerfile` itself.)
-- `.github/` is kept **as legacy reference only** (the old CI) and is inert here — GitHub reads workflows
-  only from the repo-root `.github/workflows/`, so this nested copy is never scheduled.
+- `.github/` **was** kept as legacy reference only and has since been **DELETED** (2026-09-15), together
+  with `scripts/release.mjs` — the standalone repo's release machinery, both members. The reason the
+  workflow was safe to delete is worth keeping: GitHub reads workflows only from the repo-root
+  `.github/workflows/`, so a nested copy is **structurally never scheduled** — verified against the
+  Actions API, which listed **zero** workflows under `apps/`. (Quote that zero, not a count of root
+  entries: the registry carries rows that do not correspond to the default branch's tree at all —
+  both for workflow files since deleted **and** for files that only ever existed on a branch — so the
+  root number it returns is larger than the tree's, and a re-verifier will not reproduce it. Measured
+  2026-09-15: 6 root rows against 4 tracked root workflow files.)
+  🔴 `scripts/release.mjs` was the dangerous half and was **not** inert: 437 lines, wired to no
+  `package.json` script and referenced by nothing, but executable. Run as
+  `node scripts/release.mjs` **from `apps/event-engine`** it would check out `release`, rebase it onto
+  `main`, bump this app's version, tag a bare `v<version>` and **push `release`** — an unreviewed
+  production deploy of whatever `main` held, plus a tag in the root release namespace. This app's real
+  release path is `pnpm release:event-engine:*` → `scripts/release-app.mjs`, which tags
+  `event-engine-v*`.
+  ⚠ The cwd qualifier is load-bearing and an earlier draft of this bullet omitted it: `:264` ran
+  `git add package.json` **relative to the process cwd** while the version write resolved the app's
+  own manifest, so invoked from the repo root it staged the untouched root manifest and the commit
+  exited non-zero. It stopped **there** — after an `ensureOnMain()` checkout and a version write to
+  the app's manifest, but before the switch to `release` — so it left a dirty, version-bumped
+  manifest behind and reached no tag and no push. The blob was also `100644`, so `./…` would not run
+  it. Deleting it was right either way; the overstatement is corrected here rather than left
+  for the next reader to re-derive and disbelieve.
 - `docker-compose.yml` is **NOT legacy and NOT inert**: it is the live local-dev Kafka/Debezium harness,
   driven by `README.md`, `scripts/produce-comic-event.ts` and `scripts/setup-digitalocean.ts`. Do not
   delete it as legacy.
@@ -51,8 +73,21 @@ root changes were needed.
   this kind must match **both** path separators — a `k8s/` grep alone returns a confident zero.
 - `docs/reference/release-script-example.js` and `docs/reference/service-deploy-workflow.yml` were
   referenced only by that deleted task prompt and are now orphaned. **Kept deliberately** as
-  examples of the pre-monorepo release shape; they are not wired to anything and should not be
-  read as live.
+  examples of the pre-monorepo release shape; they should not be read as live.
+  🔴 **"Not wired to anything" is NOT why the first one is safe — the `.github/`+`release.mjs` bullet
+  earlier in this list says in terms that unwired-but-executable is exactly the dangerous shape, and
+  this file is a 446-line near-copy of the `scripts/release.mjs` just deleted, sharing its branch
+  constants and its `createGitTag`/`pushRelease` path.** What actually stops it is narrower and worth
+  stating, because nothing else records it: `getCurrentVersion()` resolves `<its dir>/../package.json`
+  — a `docs/` parent, which holds none — so it throws `ENOENT` in the version **read**, before any
+  write. That read sits *after* an `ensureOnMain()` checkout but **before** the release branch is
+  touched, so it cannot reach a tag or a push. Two consequences for whoever reads this next: do not
+  cite "unreferenced" as the reason it is retained, and do not conclude from the bullet above that
+  the runnable-release-script class was cleared from this app — one copy remains, deliberately, and
+  its safety rests on a path that does not exist.
+  ⚠ Retaining it is **an open question, not a settled decision**: the same criterion in the
+  `.github/`+`release.mjs` bullet
+  deleted a near-identical file. Either delete this one too, or keep it and this paragraph is why.
 
 ## Outbox reconciliation poller (ported in on top of the lift-and-shift)
 A background **OutboxPoller** was ported in — a backstop that drains Outbox rows the live CDC path never
