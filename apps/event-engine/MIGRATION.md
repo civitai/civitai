@@ -53,9 +53,11 @@ root changes were needed.
   `event-engine-v*`.
   ⚠ The cwd qualifier is load-bearing and an earlier draft of this bullet omitted it: `:264` ran
   `git add package.json` **relative to the process cwd** while the version write resolved the app's
-  own manifest, so invoked from the repo root it staged the untouched root manifest, the commit
-  exited non-zero, and it never reached the branch switch. The blob was also `100644`, so `./…` would
-  not run it. Deleting it was right either way; the overstatement is corrected here rather than left
+  own manifest, so invoked from the repo root it staged the untouched root manifest and the commit
+  exited non-zero. It stopped **there** — after an `ensureOnMain()` checkout and a version write to
+  the app's manifest, but before the switch to `release` — so it left a dirty, version-bumped
+  manifest behind and reached no tag and no push. The blob was also `100644`, so `./…` would not run
+  it. Deleting it was right either way; the overstatement is corrected here rather than left
   for the next reader to re-derive and disbelieve.
 - `docker-compose.yml` is **NOT legacy and NOT inert**: it is the live local-dev Kafka/Debezium harness,
   driven by `README.md`, `scripts/produce-comic-event.ts` and `scripts/setup-digitalocean.ts`. Do not
