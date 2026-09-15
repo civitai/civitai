@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { CommercialUse } from '~/shared/utils/prisma/enums';
 
 /**
@@ -8,8 +8,9 @@ import { CommercialUse } from '~/shared/utils/prisma/enums';
  * document a buyer reads. These assert on the returned document.
  *
  * The disapplying sentence in "Sale of the Model" is what makes the split real. Attachment B's
- * preamble extends every restriction to "the Model and Derivatives of the Model" and defines
- * Derivatives to include Merges — TWO arms. So the sentence has to disapply the Permission, not
+ * preamble extends a restriction that references the Model to "the Model and Derivatives of the
+ * Model" except where that restriction states otherwise, and defines Derivatives to include
+ * Merges — TWO arms. So the sentence has to disapply the Permission, not
  * narrow what "the Model" means: narrowing the noun leaves the Derivatives arm still catching
  * merges, and the creator gets a green tick over a licence that forbids the thing. Delete or
  * reword that sentence and `withholds Sell, grants SellMerge` must fail — if you are removing it
@@ -20,10 +21,6 @@ import { CommercialUse } from '~/shared/utils/prisma/enums';
  * because moving it into the preamble would disapply it from every other clause and a
  * document-wide `toContain` would stay green through that.
  */
-
-// model-version.service reaches the orchestrator through training.service, which throws on a
-// missing token at import. Nothing on this path calls it.
-vi.mock('~/server/services/training.service', () => ({}));
 
 const { addAdditionalLicensePermissions } = await import('~/server/services/model-version.service');
 
@@ -47,7 +44,7 @@ const IMAGE_SALES_CLAUSE = '<b>Image Sales:';
 const RENT_CLAUSE = '<b>Generation Services:';
 const RENT_CIVIT_CLAUSE = '<b>Civitai Generation Services:';
 const CHANGING_PERMISSIONS =
-  'Changing Permissions: modify or eliminate any of the applicable Permissions';
+  'Changing Permissions: modify or eliminate any of the applicable Permissions when sharing or making available a Derivative of the Model.';
 const CREATOR_CREDIT_CLAUSE = '<b>Creator Credit:';
 const FORBIDS_MODEL_SALE = 'Do not sell or license the Model';
 const FORBIDS_MERGE_SALE = 'Do not sell or license a Merge';
@@ -57,9 +54,8 @@ const FORBIDS_RENT_CIVIT = 'Do not run the Model on the Civitai platform for gen
 
 /**
  * Everything before the Permission list, so a preamble sentence cannot be satisfied from a clause.
- * Throws on a missing anchor for the same reason clauseBody does, but the failure it prevents is
- * quieter: `slice(0, -1)` is the whole document minus one character, so every positional assertion
- * below would silently widen into a document-wide toContain and keep passing.
+ * Throws rather than slicing on -1: `slice(0, -1)` is the whole document minus one character, which
+ * silently widens every positional assertion below into a document-wide toContain.
  */
 const preamble = (license: string) => {
   const end = license.indexOf(PERMISSION_LIST_OPENS);
@@ -69,14 +65,16 @@ const preamble = (license: string) => {
 
 /**
  * One clause body, so an assertion about scope cannot be satisfied from a different clause.
- * Throws rather than returning '' on a missing heading: the negative assertions below would
- * otherwise pass for free against ''.
+ * Ends at the next clause, NOT at the closing `</b>`: a suffix appended outside the tag -- which is
+ * where an "every clause says this" refactor puts it -- lands between the two and escapes every
+ * negative assertion below while reaching the buyer.
+ * Throws rather than returning '' on a missing heading, or those negatives pass for free.
  */
 const clauseBody = (license: string, anchor: string) => {
   const start = license.indexOf(anchor);
   if (start === -1) throw new Error(`clause not found: ${anchor}`);
-  const end = license.indexOf('</b>', start);
-  return license.slice(start, end === -1 ? undefined : end);
+  const next = license.indexOf('\n<b>', start + 1);
+  return license.slice(start, next === -1 ? undefined : next);
 };
 
 const buildLicense = (
@@ -125,8 +123,8 @@ describe('sell / sell-merge split in the generated licence', () => {
   });
 
   /**
-   * The merge-sharing restriction is the only OTHER clause naming a Merge, and it comes from a
-   * different flag, so the two never render together anywhere else. The assertion that matters
+   * The merge-sharing restriction comes from a different flag (allowDerivatives), so it and the
+   * carve-out never render together anywhere else. The assertion that matters
    * is the NEGATIVE one: co-occurrence proves nothing, and a carve-out copied into the sharing
    * clause would say "do not share a Merge, except this does not apply to a Merge" -- which is
    * self-nullifying and which presence checks cannot see.
@@ -170,7 +168,7 @@ describe('sell / sell-merge split in the generated licence', () => {
 
     // The carve-out belongs to the sale clause alone. Lifting it into a shared suffix -- the shape
     // an "every clause says this" refactor takes -- would disapply these three to any Merge, which
-    // is a commercial grant the creator withheld. Nothing above sees that: they are all positive.
+    // is a commercial grant the creator withheld, which the three positive assertions cannot see.
     expect(clauseBody(license, IMAGE_SALES_CLAUSE)).not.toContain(DISAPPLIES_TO_MERGES);
     expect(clauseBody(license, RENT_CLAUSE)).not.toContain(DISAPPLIES_TO_MERGES);
     expect(clauseBody(license, RENT_CIVIT_CLAUSE)).not.toContain(DISAPPLIES_TO_MERGES);
@@ -202,24 +200,28 @@ describe('sell / sell-merge split in the generated licence', () => {
   });
 
   /**
-   * The last clause in the document nothing asserted anything about. Emitted by presence like
-   * Changing Permissions, so the same gate flip applies -- and the two URLs are separately pinned
-   * because swapping them leaves every `toContain` on the names passing while the credit link
-   * points at the wrong page.
+   * Gated on allowNoCredit being false, so the same gate flip applies as to Changing Permissions.
+   * All three links are pinned through their markdown TARGET, not just the display text: swapping
+   * only the hrefs leaves every assertion on the names passing while the attribution every
+   * downstream user is obliged to reproduce points at the wrong page.
    */
   it('Creator Credit renders for the creator who required it, crediting the right URLs', () => {
     const clause = clauseBody(buildLicense(OTHERS, true, false, false), CREATOR_CREDIT_CLAUSE);
 
-    expect(clause).toMatch(/- Model: Test Model \[[^\]]*\/models\/1\?modelVersionId=2\]/);
-    expect(clause).toMatch(/- Creator: tester \[[^\]]*\/user\/tester\]/);
+    expect(clause).toMatch(
+      /- Model: Test Model \[[^\]]*\/models\/1\?modelVersionId=2\]\([^)]*\/models\/1\?modelVersionId=2\)/
+    );
+    expect(clause).toMatch(/- Creator: tester \[[^\]]*\/user\/tester\]\([^)]*\/user\/tester\)/);
+    expect(clause).toMatch(
+      /- License: \[[^\]]*\/models\/license\/2\]\([^)]*\/models\/license\/2\)/
+    );
 
     expect(buildLicense(OTHERS, true, false, true)).not.toContain(CREATOR_CREDIT_CLAUSE);
   });
 
   /**
-   * The slicers must fail rather than narrow. `clauseBody` returning '' and `preamble` returning
-   * `slice(0, -1)` both leave every negative assertion above passing for free -- and a slicer that
-   * cannot prove it found its anchor argues against anyone checking these again.
+   * The slicers must fail rather than narrow: `clauseBody` returning '' and `preamble` returning
+   * `slice(0, -1)` both leave every negative assertion above passing for free.
    */
   it('the slicers refuse a document they cannot find their anchor in', () => {
     expect(() => clauseBody('nothing here', MODEL_CLAUSE)).toThrow(/clause not found/);
