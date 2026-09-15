@@ -9,7 +9,7 @@ import {
   resolveOptimizedLegacy,
   type EdgeUrlProps,
 } from '~/client-utils/edge-url';
-import { useMediaQuality } from '~/hooks/useMediaQuality';
+import { useMediaQuality } from '~/providers/media-quality-context';
 
 // The pure URL builder now lives in `~/client-utils/edge-url` (React-free, so server
 // modules can resolve a delivery URL without pulling hooks/providers into their import

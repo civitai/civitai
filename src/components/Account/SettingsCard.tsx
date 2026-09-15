@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Badge,
   Card,
   Divider,
@@ -15,6 +16,7 @@ import { useCurrentUserSettings, useMutateUserSettings } from '~/components/User
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useModelFileOptions } from '~/hooks/useModelFileOptions';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { useMediaQuality } from '~/providers/media-quality-context';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 // import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
@@ -74,28 +76,7 @@ export function SettingsCard() {
         <Divider label="Image Preferences" mb={-12} />
         <Group wrap="nowrap" grow>
           <AutoplayGifsToggle />
-          <Select
-            label="Preferred Format"
-            name="imageFormat"
-            data={[
-              {
-                value: 'optimized',
-                label: 'Optimized (avif, webp)',
-              },
-              {
-                value: 'metadata',
-                label: 'Unoptimized (jpeg, png)',
-              },
-            ]}
-            value={user.filePreferences?.imageFormat ?? 'metadata'}
-            onChange={(value: string | null) =>
-              mutate({
-                id: user.id,
-                filePreferences: { ...user.filePreferences, imageFormat: value as ImageFormat },
-              })
-            }
-            disabled={isLoading}
-          />
+          <ImageFormatSelect withLabel />
         </Group>
         <SwipeGalleryCardsToggle />
         <StickerMotionToggle />
@@ -407,17 +388,51 @@ function useFilePreferenceUpdate() {
   return { user, update, isPending };
 }
 
-export function ImageFormatSelect() {
+/**
+ * @param withLabel render the control's own label, for the card layout. The settings panes put
+ * the label on the surrounding `SettingRow` instead.
+ */
+export function ImageFormatSelect({ withLabel }: { withLabel?: boolean } = {}) {
   const { user, update, isPending } = useFilePreferenceUpdate();
+  const { enabled, canUseLossless, quality } = useMediaQuality();
   if (!user) return null;
+
+  if (!enabled)
+    return (
+      <Select
+        aria-label="Preferred image format"
+        label={withLabel ? 'Preferred Format' : undefined}
+        data={[
+          { value: 'optimized', label: 'Optimized (avif, webp)' },
+          { value: 'metadata', label: 'Unoptimized (jpeg, png)' },
+        ]}
+        value={user.filePreferences?.imageFormat ?? 'metadata'}
+        onChange={(value: string | null) => update({ imageFormat: value })}
+        disabled={isPending}
+      />
+    );
+
   return (
     <Select
-      aria-label="Preferred image format"
+      aria-label="Media quality"
+      label={withLabel ? 'Media Quality' : undefined}
+      // Shows what the viewer is actually served, so a non-member who picked lossless before the
+      // gate reads as Compressed. Their stored choice is left alone and comes back if they join.
+      value={quality === 'lossless' ? 'metadata' : 'optimized'}
       data={[
-        { value: 'optimized', label: 'Optimized (avif, webp)' },
-        { value: 'metadata', label: 'Unoptimized (jpeg, png)' },
+        { value: 'optimized', label: 'Compressed' },
+        { value: 'metadata', label: 'Lossless', disabled: !canUseLossless },
       ]}
-      value={user.filePreferences?.imageFormat ?? 'metadata'}
+      description={
+        !canUseLossless ? (
+          <>
+            Lossless is included with <Anchor href="/pricing">membership</Anchor>. Downloads give
+            you the original either way.
+          </>
+        ) : (
+          'Applies while you browse. Downloads always give you the original.'
+        )
+      }
       onChange={(value: string | null) => update({ imageFormat: value })}
       disabled={isPending}
     />

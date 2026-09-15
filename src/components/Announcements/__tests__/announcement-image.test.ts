@@ -19,10 +19,20 @@ vi.mock('~/env/client', () => ({
 const viewer = vi.hoisted(() => ({ current: null as null | Record<string, unknown> }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => viewer.current }));
 vi.mock('~/providers/BrowserSettingsProvider', () => ({ useBrowsingSettings: () => false }));
-// `useEdgeUrl` reads the media-quality flag through a context. Pin it ON: that is the rule the
-// banner ships under, and an unmocked `useContext` outside a render would throw here anyway.
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
-  useOptionalFeatureFlags: () => ({ mediaQualityDefault: true }),
+// `useEdgeUrl` reads the viewer's quality from a context. Pin it ON — that is the rule the banner
+// ships under — and stub it rather than letting `useContext` run outside a render.
+vi.mock('~/providers/media-quality-context', () => ({
+  useMediaQuality: () => ({
+    enabled: true,
+    canUseLossless: !!viewer.current?.isPaidMember,
+    quality:
+      viewer.current?.isPaidMember &&
+      (viewer.current?.filePreferences as { imageFormat?: string } | undefined)?.imageFormat ===
+        'metadata'
+        ? 'lossless'
+        : 'compressed',
+    heldAtCompressed: false,
+  }),
 }));
 
 // Imported under a non-`use` alias on purpose: it is a hook only by naming convention

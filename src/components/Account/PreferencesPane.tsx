@@ -50,10 +50,21 @@ export function PreferencesPane() {
         </SettingRow>
       </SettingsSection>
 
-      <SettingsSection title="File preferences" description="Defaults for the download button.">
+      <SettingsSection
+        title="File preferences"
+        description={
+          flags.mediaQualityDefault
+            ? 'How media is served while you browse, and what the download button defaults to.'
+            : 'Defaults for the download button.'
+        }
+      >
         <SettingRow
-          label="Preferred image format"
-          description="Used on site and for downloads."
+          label={flags.mediaQualityDefault ? 'Media quality' : 'Preferred image format'}
+          description={
+            flags.mediaQualityDefault
+              ? 'Compressed is faster to load. Lossless is a member perk.'
+              : 'Used on site and for downloads.'
+          }
           control={<ImageFormatSelect />}
         />
         <SettingRow label="Preferred model format" control={<ModelFileFormatSelect />} />
