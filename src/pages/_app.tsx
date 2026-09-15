@@ -46,7 +46,6 @@ import { AppProvider } from '~/providers/AppProvider';
 import { BrowserSettingsProvider } from '~/providers/BrowserSettingsProvider';
 // import { ImageProcessingProvider } from '~/components/ImageProcessing';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
-import { MediaQualityProvider } from '~/providers/MediaQualityProvider';
 import { FiltersProvider } from '~/providers/FiltersProvider';
 import { ThirdPartyConsentProvider } from '~/components/Consent/ThirdPartyConsentProvider';
 import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
@@ -259,51 +258,45 @@ function MyApp(props: CustomAppProps) {
                     <GoogleAnalytics />
                     <AccountProvider>
                       <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
-                        <MediaQualityProvider>
-                          <ErrorBoundary>
-                            <BrowserSettingsProvider>
-                              <BrowsingLevelProvider>
-                                <BrowsingSettingsAddonsProvider
-                                  initialData={browsingSettingsAddons}
-                                >
-                                  <SignalsProviderStack>
-                                    <ActivityReportingProvider>
-                                      <ReferralsProvider {...cookies.referrals}>
-                                        <FiltersProvider>
-                                          <AdsProvider gated={adsGated}>
-                                            <HiddenPreferencesProvider>
-                                              <CivitaiLinkProvider>
-                                                <BrowserRouterProvider>
-                                                  <IntersectionObserverProvider>
-                                                    <ToursProvider>
-                                                      <AuctionContextProvider>
-                                                        <BaseLayout>
-                                                          {isProd && <TrackPageView />}
-                                                          <CustomModalsProvider>
-                                                            {getLayout(
-                                                              <Component {...pageProps} />
-                                                            )}
-                                                            {/* <StripeSetupSuccessProvider /> */}
-                                                            <DialogProvider />
-                                                            <RoutedDialogProvider />
-                                                          </CustomModalsProvider>
-                                                        </BaseLayout>
-                                                      </AuctionContextProvider>
-                                                    </ToursProvider>
-                                                  </IntersectionObserverProvider>
-                                                </BrowserRouterProvider>
-                                              </CivitaiLinkProvider>
-                                            </HiddenPreferencesProvider>
-                                          </AdsProvider>
-                                        </FiltersProvider>
-                                      </ReferralsProvider>
-                                    </ActivityReportingProvider>
-                                  </SignalsProviderStack>
-                                </BrowsingSettingsAddonsProvider>
-                              </BrowsingLevelProvider>
-                            </BrowserSettingsProvider>
-                          </ErrorBoundary>
-                        </MediaQualityProvider>
+                        <ErrorBoundary>
+                          <BrowserSettingsProvider>
+                            <BrowsingLevelProvider>
+                              <BrowsingSettingsAddonsProvider initialData={browsingSettingsAddons}>
+                                <SignalsProviderStack>
+                                  <ActivityReportingProvider>
+                                    <ReferralsProvider {...cookies.referrals}>
+                                      <FiltersProvider>
+                                        <AdsProvider gated={adsGated}>
+                                          <HiddenPreferencesProvider>
+                                            <CivitaiLinkProvider>
+                                              <BrowserRouterProvider>
+                                                <IntersectionObserverProvider>
+                                                  <ToursProvider>
+                                                    <AuctionContextProvider>
+                                                      <BaseLayout>
+                                                        {isProd && <TrackPageView />}
+                                                        <CustomModalsProvider>
+                                                          {getLayout(<Component {...pageProps} />)}
+                                                          {/* <StripeSetupSuccessProvider /> */}
+                                                          <DialogProvider />
+                                                          <RoutedDialogProvider />
+                                                        </CustomModalsProvider>
+                                                      </BaseLayout>
+                                                    </AuctionContextProvider>
+                                                  </ToursProvider>
+                                                </IntersectionObserverProvider>
+                                              </BrowserRouterProvider>
+                                            </CivitaiLinkProvider>
+                                          </HiddenPreferencesProvider>
+                                        </AdsProvider>
+                                      </FiltersProvider>
+                                    </ReferralsProvider>
+                                  </ActivityReportingProvider>
+                                </SignalsProviderStack>
+                              </BrowsingSettingsAddonsProvider>
+                            </BrowsingLevelProvider>
+                          </BrowserSettingsProvider>
+                        </ErrorBoundary>
                       </CivitaiSessionProvider>
                     </AccountProvider>
                   </FeatureFlagsProvider>

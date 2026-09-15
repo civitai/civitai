@@ -1,5 +1,4 @@
 import {
-  Anchor,
   Badge,
   Card,
   Divider,
@@ -12,12 +11,13 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { IconDiamond } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
 import produce from 'immer';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useModelFileOptions } from '~/hooks/useModelFileOptions';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import { useMediaQuality } from '~/providers/media-quality-context';
+import { useMediaQuality } from '~/hooks/useMediaQuality';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 // import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
@@ -396,11 +396,9 @@ function useFilePreferenceUpdate() {
 export function ImageFormatSelect({ withLabel }: { withLabel?: boolean } = {}) {
   const { user, update, isPending } = useFilePreferenceUpdate();
   const { canUseLossless, quality } = useMediaQuality();
+  const router = useRouter();
   if (!user) return null;
 
-  // Deliberately NOT gated on `mediaQualityDefault`. The labels and the gate describe a member
-  // perk, which is true whatever the rollout flag says; gating them would leave non-members
-  // clicking an option that silently does nothing.
   return (
     <Select
       aria-label="Media quality"
@@ -408,35 +406,34 @@ export function ImageFormatSelect({ withLabel }: { withLabel?: boolean } = {}) {
       // Shows what the viewer is actually served, so a non-member who picked lossless before the
       // gate reads as Compressed. Their stored choice is left alone and comes back if they join.
       value={quality === 'lossless' ? 'metadata' : 'optimized'}
+      // Lossless stays SELECTABLE for a non-member on purpose: a disabled row is a dead end, and
+      // the click is the upsell. `onChange` routes them instead of saving.
       data={[
         { value: 'optimized', label: 'Compressed' },
-        { value: 'metadata', label: 'Lossless', disabled: !canUseLossless },
+        { value: 'metadata', label: 'Lossless' },
       ]}
       renderOption={({ option }) => (
         <Group gap="xs" justify="space-between" wrap="nowrap" w="100%">
           <Text size="sm">{option.label}</Text>
           {option.value === 'metadata' && !canUseLossless && (
-            <Badge size="xs" variant="filled" color="blue" leftSection={<IconDiamond size={10} />}>
+            <Badge
+              size="xs"
+              variant="gradient"
+              gradient={{ from: 'violet', to: 'indigo', deg: 135 }}
+              leftSection={<IconDiamond size={10} />}
+            >
               Pro
             </Badge>
           )}
         </Group>
       )}
-      description={
-        !canUseLossless ? (
-          <>
-            Lossless is a <Anchor href="/pricing?utm_campaign=media_quality_lossless">Pro</Anchor>{' '}
-            perk. Downloads give you the original either way.
-          </>
-        ) : (
-          'Applies while you browse. Downloads always give you the original.'
-        )
-      }
       onChange={(value: string | null) => {
-        // The option is already disabled, so this cannot normally fire — but `update` is what
-        // raises the "preferences saved" toast, and a non-member reaching it would be told their
-        // choice was saved when nothing about what they are served changed.
-        if (value === 'metadata' && !canUseLossless) return;
+        if (value === 'metadata' && !canUseLossless) {
+          // Never reaches `update`, which is what raises the "preferences saved" toast — telling
+          // a non-member their choice was saved when nothing they are served changed.
+          router.push('/pricing?utm_campaign=media_quality_lossless');
+          return;
+        }
         update({ imageFormat: value });
       }}
       disabled={isPending}

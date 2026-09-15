@@ -164,21 +164,20 @@ label must go** in this PR, because it is currently false.
 
 ## 4. Work breakdown
 
-**One PR**, `feat/media-quality-compressed-lossless`, two commits. The resolver change, the default
-flip and the membership gate cannot be separated — deleting the `<=450` force is already visible to
-the 12,717 non-member accounts on explicit `metadata` (§2) — and the rename is meaningless without
-the gate, so the whole thing ships behind one flag.
+**One PR**, `feat/media-quality-compressed-lossless`. The resolver change, the default flip and the
+membership gate cannot be separated — deleting the `<=450` force is already visible to the 12,717
+non-member accounts on explicit `metadata` (§2) — and the rename is meaningless without the gate.
 
-Where the flag is read is not a detail. `useEdgeUrl` runs on every image, so anything it imports
-lands in nearly every suite's import graph, and the flag provider cannot go there: a wholesale
-`vi.mock` of `~/providers/FeatureFlagsProvider` naming only `useFeatureFlags` — 52 files, the
-repo's prevailing style — leaves the second hook unbound, and the importing file then fails to
-**collect**, reporting zero tests rather than a failure. So the quality is resolved once in
-`MediaQualityProvider`, and the context it writes lives in its own module importing nothing but
-React and a type. (`src/components/AppBlocks/__tests__/featureFlagsMockCompleteness.test.ts`
-documents the same incident from the other direction.)
+`useMediaQuality` reads **only** `useCurrentUser`, which `useEdgeUrl` already depends on, and that
+constraint is load-bearing rather than incidental. `useEdgeUrl` runs on every image, so anything it
+imports lands in nearly every suite's import graph. An earlier cut read the feature flag there, and
+a wholesale `vi.mock` of `~/providers/FeatureFlagsProvider` naming only `useFeatureFlags` — 52
+files, the repo's prevailing style — left the second hook unbound, so the importing file failed to
+**collect** and reported zero tests rather than a failure.
+(`src/components/AppBlocks/__tests__/featureFlagsMockCompleteness.test.ts` documents the same
+incident from the other direction.) Dropping the flag removed the edge; keep it dropped.
 
-### Commit 1 — Resolver, default and gate (flag-gated)
+### Resolver, default and gate
 
 - `src/client-utils/edge-url.ts`
   - Replace `resolveOptimized`'s all-force-on shape (`edge-url.ts:81`) with an explicit
@@ -218,56 +217,55 @@ documents the same incident from the other direction.)
 - Explicit `optimized: true` still wins for a lossless member (chrome surfaces).
 - `original: true` never emits `optimized`, for anybody.
 - `hiDpi` + lossless member behaves per decision 3.1(b).
-- Flag off -> today's URLs, byte for byte.
 
 Check the revert, per CLAUDE.md: each must fail with a readable assertion when the old resolver is
 put back, not pass quietly.
 
 Run: `pnpm exec vitest run --project 'unit*' src/client-utils/__tests__/cf-images-utils.test.ts`
 
-### Commit 2 — Copy and UI
+### Copy and UI
 
 - `src/components/Account/SettingsCard.tsx:78` and `:410` (`ImageFormatSelect`, also used by
   `PreferencesPane.tsx:57`) — two copies of the same select; keep them in step.
   - "Preferred Format" -> **"Media Quality"**
   - "Optimized (avif, webp)" -> **"Compressed"**
   - "Unoptimized (jpeg, png)" -> **"Lossless"**
-- Lossless disabled for non-members, with an upsell affordance to `/pricing`.
+- Lossless is clickable for non-members and routes to `/pricing`; a `Pro` badge on the option
+  carries the same violet->indigo gradient as the header's support button.
+- `Lossless image quality while browsing` added to the membership benefit list.
 - Helper text covering the three things people will otherwise file tickets about: it affects
   on-site browsing only; downloads always give the original on any plan; videos are always
   streamed compressed.
 
-The select follows the same flag, so the labels and the URLs can never disagree: gating the copy
-but not the URLs would put "Compressed" in front of a user still being served the uncompressed
-variant at every width above 450.
+Lossless stays SELECTABLE for a non-member: a disabled row is a dead end, and the click is the
+upsell — `onChange` routes them to `/pricing` instead of saving, so the "preferences saved" toast
+can never fire for a choice that changed nothing. A member sees no badge and the selection sticks.
 
 ---
 
-## 5. Rollout
+## 5. Rollout — no flag
 
-Flag `mediaQualityDefault` / `media-quality-default`, **`availability: []`**.
+Shipped unflagged, deliberately. A flag was written and then removed: the only argument for one
+was cache warming, and it does not survive contact with the numbers.
 
-Note this is the *opposite* shape from `hiDpiPreviews`, and deliberately: `['public']` means
-fail-open, which for this flag would mean an unannounced global default change the first time
-Flipt is unreachable. Dark-by-default is the safe fallback here because the pre-change behaviour
-is the status quo, not a regression.
+- **Nothing is written.** The change is a fallback for an unset preference, so rollback is a
+  revert, not a migration.
+- **The cold-miss concern is real but self-limiting.** ~99% of accounts have never requested a
+  compressed variant, so most derivations have to be generated once. That is a one-time cost per
+  image *at the derivation the feed already requests*, and the compressed variant is SMALLER than
+  the uncompressed one it replaces — 48kB against 117kB at 450, 154kB against 353kB at 800. Steady
+  state is cheaper egress, not dearer.
+- **A percentage rollout would have made the warming worse, not better.** Splitting viewers across
+  two formats means both variants stay warm for the whole ramp; going straight to 100% warms one
+  and lets the other age out.
 
-Flipt is GitOps-only (v2 OSS returns 501 on writes) — the flag has to be created by a push to
-flipt-state, and a 100% threshold rollout overrides `enabled: false`, so read `rollouts[]` and
-not the `Status:` line when checking it.
+`hiDpiPreviews` / `hi-dpi-previews` still exists and now gates the card srcSet too. As of
+2026-09-15 it is present in Flipt, `enabled: true`, no rollouts — so it is on for everyone and the
+card variants ship live. It remains the kill switch if the extra bytes turn out to matter.
 
-1. Preview environment — eyeball quality on post detail, the showcase carousel and a card feed
-   at DPR 1 and DPR 2.
-2. 10% → watch Cloudflare egress and image-cacher origin fetches. **This is the real risk**:
-   §2 says ~99% of accounts have never requested an optimized variant, so a large share of the
-   compressed derivations have never been generated and the first request for each is a cold
-   origin miss. Ask Koen for the cacher's current hit rate on `optimized=true` before raising.
-3. 25% → 50% → 100%, waiting for the cache to warm between steps.
-4. Lossless-for-members ships un-flagged with PR 2/3 — it only *widens* what 5,644 accounts can
-   ask for, and it is the fix for the reported bug, so gating it delays the thing users complained
-   about.
-
-**Rollback** is the flag alone. No data is written, so nothing needs undoing.
+⚠️ That flag's Flipt **description** still says "post detail and the model-page showcase and review
+carousels". It covers card feeds now. Flipt is GitOps-only (v2 OSS returns 501 on writes), so
+correcting it is a push to flipt-state, not something this PR can do.
 
 ---
 

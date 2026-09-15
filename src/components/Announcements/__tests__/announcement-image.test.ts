@@ -10,8 +10,8 @@ vi.mock('~/env/client', () => ({
 }));
 
 // `useEdgeUrl` is the REAL render path and the thing the monitor must agree with. It is
-// a hook only in the sense that it reads the viewer and the flags; with both stubbed it is a
-// pure function, so it can be exercised directly from the node suite.
+// a hook only in the sense that it reads the current user; with that stubbed it is a pure
+// function, so it can be exercised directly from the node suite.
 //
 // The viewer is mutable so one test can make itself a paying member on lossless — the case the
 // banner's explicit `optimized` exists to survive. It defaults to signed out, which is the
@@ -19,22 +19,6 @@ vi.mock('~/env/client', () => ({
 const viewer = vi.hoisted(() => ({ current: null as null | Record<string, unknown> }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => viewer.current }));
 vi.mock('~/providers/BrowserSettingsProvider', () => ({ useBrowsingSettings: () => false }));
-// `useEdgeUrl` reads the viewer's quality from a context. Pin it ON — that is the rule the banner
-// ships under — and stub it rather than letting `useContext` run outside a render.
-vi.mock('~/providers/media-quality-context', () => ({
-  useMediaQuality: () => ({
-    enabled: true,
-    canUseLossless: !!viewer.current?.isPaidMember,
-    quality:
-      viewer.current?.isPaidMember &&
-      (viewer.current?.filePreferences as { imageFormat?: string } | undefined)?.imageFormat ===
-        'metadata'
-        ? 'lossless'
-        : 'compressed',
-    heldAtCompressed: false,
-  }),
-}));
-
 // Imported under a non-`use` alias on purpose: it is a hook only by naming convention
 // (its single hook call, `useCurrentUser`, is stubbed above), and the rules-of-hooks
 // lint would otherwise reject calling it inside the width-ladder loop below.

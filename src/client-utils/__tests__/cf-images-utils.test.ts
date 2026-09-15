@@ -16,7 +16,6 @@ import {
   getEdgeUrl,
   getEdgeUrlSrcSet,
   resolveOptimized,
-  resolveOptimizedLegacy,
   snapWidthToCommonSize,
   toMediaQuality,
 } from '~/client-utils/cf-images-utils';
@@ -267,23 +266,3 @@ describe('resolveOptimized', () => {
   });
 });
 
-describe('resolveOptimizedLegacy', () => {
-  // The flag-off path. These are the pre-change assertions verbatim: if they drift, a rollback
-  // no longer restores the URLs it claims to.
-  it('forces the optimized format for a hi-DPI request whatever the preference', () => {
-    expect(resolveOptimizedLegacy({ width: 800, hiDpi: true, imageFormat: 'metadata' })).toBe(true);
-  });
-
-  it('leaves a plain wide request on the user preference', () => {
-    expect(resolveOptimizedLegacy({ width: 800, imageFormat: 'metadata' })).toBe(false);
-    expect(resolveOptimizedLegacy({ width: 800, imageFormat: 'optimized' })).toBe(true);
-  });
-
-  it('still forces it below the small-preview threshold', () => {
-    expect(resolveOptimizedLegacy({ width: 450, imageFormat: 'metadata' })).toBe(true);
-  });
-
-  it('leaves an original request on the user preference', () => {
-    expect(resolveOptimizedLegacy({ imageFormat: 'metadata' })).toBe(false);
-  });
-});

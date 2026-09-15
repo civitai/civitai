@@ -111,29 +111,6 @@ export function resolveOptimized({
 }
 
 /**
- * The rule that shipped before `mediaQualityDefault`: compressed only when the call site asked,
- * when the request was small enough that webp was assumed free (`3b672008b4`, no recorded
- * rationale), when a 2x variant was being served, or when the user opted in. Every term forces
- * compression ON and none can force it off, which is why the preference was ignored across card
- * feeds.
- *
- * Kept so the flag rolls back to byte-identical URLs. Delete it with the flag.
- */
-export function resolveOptimizedLegacy({
-  optimized,
-  width,
-  hiDpi,
-  imageFormat,
-}: {
-  optimized?: boolean;
-  width?: number | null;
-  hiDpi?: boolean;
-  imageFormat?: string | null;
-}) {
-  return !!(optimized || (!!width && width <= 450) || hiDpi || imageFormat === 'optimized');
-}
-
-/**
  * Snap a requested width up to the next value in `COMMON_IMAGE_WIDTHS`.
  *
  * Behavior matches `ServeImageMiddleware.cs` in civitai-image-cacher:

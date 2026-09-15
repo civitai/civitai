@@ -6,10 +6,9 @@ import {
   getEdgeUrlSrcSet,
   getInferredMediaType,
   resolveOptimized,
-  resolveOptimizedLegacy,
   type EdgeUrlProps,
 } from '~/client-utils/edge-url';
-import { useMediaQuality } from '~/providers/media-quality-context';
+import { useMediaQuality } from '~/hooks/useMediaQuality';
 
 // The pure URL builder now lives in `~/client-utils/edge-url` (React-free, so server
 // modules can resolve a delivery URL without pulling hooks/providers into their import
@@ -21,7 +20,6 @@ export {
   getEdgeUrlSrcSet,
   getInferredMediaType,
   resolveOptimized,
-  resolveOptimizedLegacy,
   resolvesToOriginal,
   snapWidthToCommonSize,
   toMediaQuality,
@@ -35,7 +33,7 @@ export function useEdgeUrl(
   hiDpi?: boolean
 ) {
   const currentUser = useCurrentUser();
-  const { enabled: mediaQualityEnabled, quality } = useMediaQuality();
+  const { quality } = useMediaQuality();
   const inferredType = getInferredMediaType(src, options);
   let type = options?.type ?? inferredType;
 
@@ -55,23 +53,16 @@ export function useEdgeUrl(
   if (!anim) type = 'image';
   // Decided in `edge-url` so anything that has to reproduce this outside React (the
   // announcement banner health monitor) cannot drift from it.
-  const optimized = mediaQualityEnabled
-    ? resolveOptimized({
-        optimized: options?.optimized,
-        width: options?.width,
-        height: options?.height,
-        original: options?.original,
-        // Video is transcoded to an MP4/WebM for everyone, so lossless has nothing to buy here —
-        // keyed off the SOURCE media, which also covers the still poster frame a video renders
-        // through `type: 'image'`. Letting it through would only fork the cache key.
-        quality: inferredType === 'video' ? 'compressed' : quality,
-      })
-    : resolveOptimizedLegacy({
-        optimized: options?.optimized,
-        width: options?.width,
-        hiDpi,
-        imageFormat: currentUser?.filePreferences?.imageFormat,
-      });
+  const optimized = resolveOptimized({
+    optimized: options?.optimized,
+    width: options?.width,
+    height: options?.height,
+    original: options?.original,
+    // Video is transcoded to an MP4/WebM for everyone, so lossless has nothing to buy here —
+    // keyed off the SOURCE media, which also covers the still poster frame a video renders
+    // through `type: 'image'`. Letting it through would only fork the cache key.
+    quality: inferredType === 'video' ? 'compressed' : quality,
+  });
 
   const resolved = {
     ...options,
