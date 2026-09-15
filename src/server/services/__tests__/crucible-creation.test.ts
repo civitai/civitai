@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import type * as BuzzService from '~/server/services/buzz.service';
 import { dbMock } from '~/__tests__/mocks';
 
@@ -137,5 +138,48 @@ describe('createCrucible — a charge or write fails after money moved', () => {
     refundMultiAccountTransaction.mockRejectedValue(new Error('refund down'));
 
     await expect(createCrucible(input({ seededPrizePool: 5_000 }))).rejects.toThrow('db down');
+  });
+});
+
+describe('createCrucible — video settings', () => {
+  const videoInput = (overrides: Record<string, unknown> = {}) =>
+    input({ contentType: MediaType.video, ...overrides });
+
+  it('stores both settings on a video crucible', async () => {
+    await createCrucible(videoInput({ minViewSeconds: 6, maxClipSeconds: 120 }));
+
+    const [{ data }] = crucibleCreate.mock.calls[0];
+    // Asserted separately rather than as one object, so a swap of the two fails on the value
+    // rather than passing an "each is a number" shape check.
+    expect(data.minViewSeconds).toBe(6);
+    expect(data.maxClipSeconds).toBe(120);
+  });
+
+  it('stores null for a setting the creator left blank', async () => {
+    await createCrucible(videoInput({ minViewSeconds: 6 }));
+
+    const [{ data }] = crucibleCreate.mock.calls[0];
+    expect(data.minViewSeconds).toBe(6);
+    expect(data.maxClipSeconds).toBeNull();
+  });
+
+  it('writes null on an IMAGE crucible even when the client sends values', async () => {
+    // Crucible_video_settings_require_video rejects anything else, so passing these through would
+    // turn a stale client payload into a constraint violation at insert time.
+    await createCrucible(input({ minViewSeconds: 6, maxClipSeconds: 120 }));
+
+    const [{ data }] = crucibleCreate.mock.calls[0];
+    expect(data.minViewSeconds).toBeNull();
+    expect(data.maxClipSeconds).toBeNull();
+  });
+
+  it('writes null, never undefined, when nothing was set', async () => {
+    // `undefined` would leave Prisma to apply a column default; these columns have none, and the
+    // distinction is invisible in a mock that only checks falsiness.
+    await createCrucible(videoInput());
+
+    const [{ data }] = crucibleCreate.mock.calls[0];
+    expect(data.minViewSeconds).toBeNull();
+    expect(data.maxClipSeconds).toBeNull();
   });
 });

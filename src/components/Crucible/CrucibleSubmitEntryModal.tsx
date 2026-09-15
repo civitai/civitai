@@ -32,6 +32,9 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
+import { clipLengthAllowed } from '~/shared/constants/crucible.constants';
+import type { VideoMetadata } from '~/server/schema/media.schema';
+import { formatDuration } from '~/utils/number-helpers';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { getMimeTypesFromMediaTypes } from '~/shared/constants/mime-types';
 import { trpc } from '~/utils/trpc';
@@ -50,6 +53,8 @@ export interface CrucibleSubmitEntryModalProps {
   nsfwLevel: number;
   contentType: MediaType;
   currentEntryCount: number;
+  /** Longest clip this crucible accepts, in seconds. Null or absent means no limit. */
+  maxClipSeconds?: number | null;
   /** Optional array of allowed resource names to display in requirements */
   allowedResourceNames?: string[];
   onSuccess?: () => void;
@@ -268,6 +273,7 @@ export default function CrucibleSubmitEntryModal({
   nsfwLevel,
   contentType,
   currentEntryCount,
+  maxClipSeconds,
   allowedResourceNames,
   onSuccess,
 }: CrucibleSubmitEntryModalProps) {
@@ -366,6 +372,8 @@ export default function CrucibleSubmitEntryModal({
     const isCompatibleNsfw = isNsfwLevelCompatible(image.nsfwLevel ?? 1, nsfwLevel);
     const matchesContentType = image.type === contentType;
     const isAlreadySubmitted = submittedImageIds.has(image.id);
+    const clipSeconds = (image.metadata as VideoMetadata | null)?.duration ?? null;
+    const isShortEnough = clipLengthAllowed(clipSeconds, maxClipSeconds ?? null);
     const imageNsfwLabel = getNsfwLabel(image.nsfwLevel ?? 1);
     const requiredNsfwLabel = getNsfwLabel(nsfwLevel);
 
@@ -397,10 +405,22 @@ export default function CrucibleSubmitEntryModal({
         passText: `${imageNsfwLabel} content`,
         failReason: `${imageNsfwLabel} content (requires ${requiredNsfwLabel})`,
       },
+      ...(maxClipSeconds
+        ? [
+            {
+              label: 'Clip length',
+              passes: isShortEnough,
+              passText: clipSeconds ? formatDuration(clipSeconds) : 'Within the limit',
+              failReason: `${formatDuration(Math.ceil(clipSeconds ?? 0))} (max ${formatDuration(
+                maxClipSeconds
+              )})`,
+            },
+          ]
+        : []),
     ];
 
     return {
-      isValid: isCompatibleNsfw && matchesContentType && !isAlreadySubmitted,
+      isValid: isCompatibleNsfw && matchesContentType && isShortEnough && !isAlreadySubmitted,
       isAlreadySubmitted,
       criteria,
       message: isAlreadySubmitted
@@ -409,6 +429,11 @@ export default function CrucibleSubmitEntryModal({
         ? `This crucible only accepts ${nounPlural}`
         : !isCompatibleNsfw
         ? `Content level mismatch (${imageNsfwLabel} ${noun}, requires ${requiredNsfwLabel})`
+        : !isShortEnough
+        ? // Ceiling, so a 120.01s clip against a 120s limit does not render both as "2:00".
+          `Too long (${formatDuration(Math.ceil(clipSeconds ?? 0))}, max ${formatDuration(
+            maxClipSeconds as number
+          )})`
         : undefined,
     };
   };

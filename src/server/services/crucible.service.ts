@@ -28,7 +28,13 @@ import type {
   CancelCrucibleSchema,
 } from '../schema/crucible.schema';
 import { calculateCrucibleSetupCost } from '../schema/crucible.schema';
-import { crucibleRankingsAreFinal } from '~/shared/constants/crucible.constants';
+import {
+  clipLengthAllowed,
+  crucibleRankingsAreFinal,
+  crucibleSupportsVideoSettings,
+} from '~/shared/constants/crucible.constants';
+import type { VideoMetadata } from '~/server/schema/media.schema';
+import { formatDuration } from '~/utils/number-helpers';
 import {
   crucibleDetailSelect,
   type CrucibleDetailRow,
@@ -88,10 +94,13 @@ export const createCrucible = async ({
   allowedResources,
   duration,
   seededPrizePool,
+  minViewSeconds,
+  maxClipSeconds,
 }: CreateCrucibleInputSchema & { userId: number }) => {
   const now = new Date();
   const startAt = now;
   const endAt = dayjs(now).add(duration, 'hours').toDate();
+  const isVideoCrucible = crucibleSupportsVideoSettings(contentType);
 
   // Calculate setup cost based on duration and prize customization
   const setupCost = calculateCrucibleSetupCost(duration, prizeCustomized ?? false);
@@ -223,6 +232,10 @@ export const createCrucible = async ({
           seededPrizePool: seedAmount,
           entryLimit,
           maxTotalEntries: maxTotalEntries ?? null,
+          // Coerced to null rather than passed through: the schema lets these be undefined, and
+          // Crucible_video_settings_require_video rejects anything but NULL on an image crucible.
+          minViewSeconds: isVideoCrucible ? minViewSeconds ?? null : null,
+          maxClipSeconds: isVideoCrucible ? maxClipSeconds ?? null : null,
           prizePositions: prizePositions as Prisma.JsonObject,
           allowedResources: allowedResources
             ? (allowedResources as Prisma.JsonArray)
@@ -444,6 +457,7 @@ export const submitEntry = async ({
         entryFee: true,
         entryLimit: true,
         maxTotalEntries: true,
+        maxClipSeconds: true,
         allowedResources: true,
         endAt: true,
         _count: {
@@ -495,6 +509,7 @@ export const submitEntry = async ({
         userId: true,
         type: true,
         nsfwLevel: true,
+        metadata: true,
       },
     });
 
@@ -510,6 +525,18 @@ export const submitEntry = async ({
     if (image.type !== crucible.contentType) {
       return throwBadRequestError(
         `This crucible only accepts ${crucible.contentType} entries; this one is ${image.type}.`
+      );
+    }
+
+    const clipSeconds = (image.metadata as VideoMetadata | null)?.duration ?? null;
+    if (!clipLengthAllowed(clipSeconds, crucible.maxClipSeconds)) {
+      // Ceiling on the actual duration: durations are fractional and `formatDuration` rounds, so a
+      // 120.01s clip against a 120s limit rendered both halves as "2:00" — the entrant was told the
+      // entry was too long and shown two identical numbers.
+      return throwBadRequestError(
+        `Entries in this crucible can be at most ${formatDuration(
+          crucible.maxClipSeconds as number
+        )}; this one is ${formatDuration(Math.ceil(clipSeconds as number))}.`
       );
     }
 
@@ -1282,6 +1309,8 @@ export const submitVote = async ({
   crucibleId,
   winnerEntryId,
   loserEntryId,
+  winnerWatchedMs,
+  loserWatchedMs,
   userId,
 }: SubmitVoteSchema & { userId: number }): Promise<SubmitVoteResult> => {
   log(
@@ -1295,6 +1324,7 @@ export const submitVote = async ({
       id: true,
       status: true,
       endAt: true,
+      minViewSeconds: true,
     },
   });
 
@@ -1308,6 +1338,21 @@ export const submitVote = async ({
 
   if (crucible.endAt && new Date() > crucible.endAt) {
     throw throwBadRequestError('This crucible has ended');
+  }
+
+  // Runs before the pair is marked voted below: rejecting afterwards would spend the judge's one
+  // shot at this pair and leave them unable to vote on it once they had watched properly.
+  //
+  // The browser reports these, so a determined caller can lie. What it buys is the accidental and
+  // the casual case — and failing closed on an absent field, rather than treating it as zero
+  // watched or as consent, is what stops "omit the field" being the bypass.
+  if (crucible.minViewSeconds) {
+    const requiredMs = crucible.minViewSeconds * 1000;
+    if ((winnerWatchedMs ?? 0) < requiredMs || (loserWatchedMs ?? 0) < requiredMs) {
+      throw throwBadRequestError(
+        `Watch at least ${crucible.minViewSeconds}s of both clips before voting.`
+      );
+    }
   }
 
   // Validate entries exist and belong to this crucible

@@ -8,6 +8,8 @@ import {
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_MAX_ENTRIES,
   CRUCIBLE_MAX_ENTRY_FEE,
+  CRUCIBLE_MAX_CLIP_SECONDS,
+  CRUCIBLE_MAX_MIN_VIEW_SECONDS,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
 } from '~/shared/constants/crucible.constants';
@@ -65,7 +67,7 @@ export function calculateCrucibleSetupCost(duration: number, prizeCustomized: bo
 
 // Schema for creating a new crucible
 export type CreateCrucibleInputSchema = z.infer<typeof createCrucibleInputSchema>;
-export const createCrucibleInputSchema = z.object({
+const createCrucibleInputBaseSchema = z.object({
   name: z.string().trim().nonempty(),
   description: z.string().nonempty(),
   coverImage: crucibleImageSchema,
@@ -85,7 +87,28 @@ export const createCrucibleInputSchema = z.object({
   prizeCustomized: z.boolean().default(false), // Whether prize distribution was customized from default
   allowedResources: z.array(z.number()).optional(),
   duration: z.number().min(1), // duration in hours
+  minViewSeconds: z.number().int().min(1).max(CRUCIBLE_MAX_MIN_VIEW_SECONDS).nullish(),
+  maxClipSeconds: z.number().int().min(1).max(CRUCIBLE_MAX_CLIP_SECONDS).nullish(),
 });
+
+export const createCrucibleInputSchema = createCrucibleInputBaseSchema
+  .refine(
+    ({ contentType, minViewSeconds, maxClipSeconds }) =>
+      contentType === MediaType.video || (minViewSeconds == null && maxClipSeconds == null),
+    {
+      message: 'Minimum view time and maximum clip length apply to video crucibles only',
+      path: ['contentType'],
+    }
+  )
+  .refine(
+    ({ minViewSeconds, maxClipSeconds }) =>
+      minViewSeconds == null || maxClipSeconds == null || minViewSeconds <= maxClipSeconds,
+    {
+      // Otherwise no entry can clear the bar and the crucible has nothing votable in it.
+      message: 'Minimum view time cannot exceed the maximum clip length',
+      path: ['minViewSeconds'],
+    }
+  );
 
 // Schema for submitting an entry to a crucible
 export type SubmitEntrySchema = z.infer<typeof submitEntrySchema>;
@@ -100,6 +123,15 @@ export const submitVoteSchema = z.object({
   crucibleId: z.number(),
   winnerEntryId: z.number(),
   loserEntryId: z.number(),
+  // Playback actually watched on each side. Optional because only a crucible that sets
+  // `minViewSeconds` needs them — an image crucible has nothing to watch, and the server
+  // requires them only where the rule applies.
+  //
+  // NOT `.int()`. These are accumulated from `video.currentTime` deltas, so the real client sends
+  // fractions (10894.686999999998); an int-only schema rejected every genuine vote while every
+  // test that passed a round number passed.
+  winnerWatchedMs: z.number().min(0).finite().optional(),
+  loserWatchedMs: z.number().min(0).finite().optional(),
 });
 
 // Schema for getting a judging pair
