@@ -29,7 +29,7 @@ const { addAdditionalLicensePermissions } = await import('~/server/services/mode
 
 const MODEL_CLAUSE = 'Sale of the Model:';
 const MERGE_CLAUSE = 'Sale of Merges:';
-const DISAPPLIES_TO_MERGES = 'This Permission does not apply to a Merge.';
+const DISAPPLIES_TO_MERGES = 'This restriction does not apply to a Merge.';
 
 /** The Sale of the Model clause body alone, so an assertion cannot be satisfied from elsewhere. */
 const saleOfModelClause = (license: string) => {
@@ -74,6 +74,23 @@ describe('sell / sell-merge split in the generated licence', () => {
     expect(license).toContain(MODEL_CLAUSE);
     expect(saleOfModelClause(license)).toContain(DISAPPLIES_TO_MERGES);
     expect(license).not.toContain(MERGE_CLAUSE);
+  });
+
+  /**
+   * The carve-out in Sale of the Model only works because the preamble expands a restriction
+   * to Derivatives ONLY where the restriction references the Model, and yields where it states
+   * its own scope. Restore the old flat sentence -- "The below restrictions apply to the Model
+   * and Derivatives of the Model, even though only the Model is referenced" -- and the carve-out
+   * stops working: a Merge is a Derivative, so the restriction reaches it again and the creator
+   * gets a green tick over a licence that forbids the sale. The clause cannot defend itself here;
+   * this is the assertion that does.
+   */
+  it('the preamble expands a restriction conditionally, and yields to a stated scope', () => {
+    const license = buildLicense(OTHERS);
+
+    expect(license).toContain('A restriction below that references the Model applies to');
+    expect(license).toContain('except to the extent that restriction expressly states otherwise');
+    expect(license).not.toContain('even though only the Model is referenced');
   });
 
   it('withholds both: both restrictions appear', () => {

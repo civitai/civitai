@@ -2218,7 +2218,7 @@ const commercialUsePermissionContent = {
 <b>Civitai Generation Services: Do not run the Model on the Civitai platform for generation (available at [${env.NEXTAUTH_URL}/generate](/generate)).</b>
 `,
   [CommercialUse.Sell]: `
-<b>Sale of the Model: Do not sell or license the Model in exchange for a for a fee or something else of value. This Permission does not apply to a Merge.</b>
+<b>Sale of the Model: Do not sell or license the Model in exchange for a for a fee or something else of value. This restriction does not apply to a Merge.</b>
 `,
   [CommercialUse.SellMerge]: `
 <b>Sale of Merges: Do not sell or license a Merge in exchange for a fee or something else of value.</b>
@@ -2243,7 +2243,7 @@ export function addAdditionalLicensePermissions(
 
 Additional Restrictions
 
-This Attachment B supplements the license to which it is attached (“License”). In addition to any restrictions set forth in the License, the following additional terms apply.  The below restrictions apply to the Model and Derivatives of the Model, even though only the Model is referenced.  “Merge” means, with respect to the Model, combining the Model or a Derivative of the Model with one or more other models to produce a single model. A Derivative of the Model will be understood to include Merges.
+This Attachment B supplements the license to which it is attached (“License”). In addition to any restrictions set forth in the License, the following additional terms apply.  A restriction below that references the Model applies to the Model and Derivatives of the Model, except to the extent that restriction expressly states otherwise.  A statement that a restriction does not apply to something limits only that restriction and does not permit that thing.  “Merge” means, with respect to the Model, combining the Model or a Derivative of the Model with one or more other models to produce a single model. A Derivative of the Model will be understood to include Merges, and a Merge will be understood to include Derivatives of a Merge.
 
 You agree to the following with respect to the Model (each a “Permission”):
 </b>
