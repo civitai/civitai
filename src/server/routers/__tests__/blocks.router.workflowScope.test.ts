@@ -23,11 +23,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * module boundary, so the router runs in-process.
  *
  * RED/GREEN MATRIX, measured rather than asserted — at `7def68db71` (this branch's base) this file
- * is 14 failed / 9 passed; at HEAD it is 23 passed. The fourteen are the regression coverage. The
- * nine that pass BOTH WAYS are marked `INVARIANT GUARD` below and are NOT regression coverage:
+ * is 17 failed / 10 passed; at HEAD it is 27 passed. The seventeen are the regression coverage.
+ * The ten that pass BOTH WAYS are marked `INVARIANT GUARD` below and are NOT regression coverage:
  * six pin properties the base happened to satisfy for the trivial reason that it scoped nothing at
- * all, and three cover `publishGenerationOutputs`, whose two guards already existed there and had
- * no behavioural test anywhere. Counting any of the nine as proof of this change would be wrong.
+ * all, and four cover `publishGenerationOutputs`, whose two guards already existed there and had
+ * no behavioural test anywhere. Counting any of the ten as proof of this change would be wrong.
  * Re-run both halves if the base moves again — the numbers are pinned to that sha, not to "main".
  */
 
@@ -342,6 +342,18 @@ describe('blocks.pollWorkflow — viewer scope', () => {
     }
   });
 
+  it('🔴 a dev:live token gets NO viewer exemption — poll', async () => {
+    // The poll twin of the cancel case; see it for why `claims.dev` must not gate this. Site-local
+    // weakenings are why both paths need their own: keying the POLL site on `if (!claims.dev)`
+    // leaves the cancel case green and vice versa.
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ dev: true, appId: 'local-myapp' }));
+
+    await expect(
+      caller().pollWorkflow({ blockToken: 'tok', workflowId: STRANGERS_ID })
+    ).rejects.toThrow('workflow does not belong to this viewer');
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
+  });
+
   it('🔴 EXEMPTS ONLY THE VIEWER CHECK — the app scope still holds under dev', async () => {
     // WITHOUT THIS CASE THE EXEMPTION'S WIDTH IS UNPINNED, which is the loosening this file exists
     // to catch: every app-scope case runs under `'prod'`, and the dev case above uses a
@@ -361,9 +373,11 @@ describe('blocks.pollWorkflow — viewer scope', () => {
   it('a dev:live token polls its own workflow normally — it is NOT ORCHESTRATOR_MODE=dev', async () => {
     // INVARIANT GUARD (passes at base too, where nothing was scoped at all).
     //
-    // WHAT THIS PINS: a `claims.dev === true` token is scoped like any other — it gets no viewer
-    // exemption (that one is keyed on the server's ORCHESTRATOR_MODE, not on the token) and its
-    // synthetic `local-<slug>` appId goes through the ordinary app-tag comparison.
+    // WHAT THIS PINS: a `claims.dev === true` token's synthetic `local-<slug>` appId goes through
+    // the ordinary app-tag comparison. 🔴 It does NOT pin that the token gets no VIEWER exemption —
+    // an earlier revision of this comment claimed it did, and it cannot: this case drives the
+    // viewer's OWN id, so "not exempted" and "exempted" produce the same pass. That property has
+    // its own cases below (`a dev:live token gets NO viewer exemption …`), on both paths.
     //
     // 🔴 WHAT IT DOES NOT PIN, stated because an earlier revision of this comment claimed it did:
     // it is NOT a tripwire on dev-token minting. `dev:live` survives the app scope only because a
@@ -480,17 +494,36 @@ describe('blocks.cancelWorkflow — viewer scope', () => {
     expect(mockCancelWorkflow).not.toHaveBeenCalled();
   });
 
+  it('🔴 a dev:live token gets NO viewer exemption — cancel', async () => {
+    // 🔴 `claims.dev` IS NOT `ORCHESTRATOR_MODE=dev`, and this is the case that pins the
+    // difference. Both docblocks spend a paragraph on the distinction, and nothing tested it:
+    // keying the call site on `if (!claims.dev)` left the whole set green. It matters because
+    // `/api/v1/blocks/dev-token` mints self-bound `dev: true` tokens to an ordinary developer
+    // against the REAL orchestrator, so a `claims.dev`-keyed exemption is a live cross-user stop.
+    // Server mode stays at the `beforeEach` default 'prod' — only the TOKEN is dev.
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ dev: true, appId: 'local-myapp' }));
+
+    await expect(
+      caller().cancelWorkflow({ blockToken: 'tok', workflowId: STRANGERS_ID })
+    ).rejects.toThrow('workflow does not belong to this viewer');
+    expect(mockCancelWorkflow).not.toHaveBeenCalled();
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
+  });
+
   it('EXEMPTS ORCHESTRATOR_MODE=dev on the cancel path too', async () => {
     // INVARIANT GUARD (passes at base too, where nothing was scoped at all).
     setEnv({ ORCHESTRATOR_MODE: 'dev' });
     mockGetWorkflow.mockResolvedValue(workflowFixture({ id: STRANGERS_ID, cost: { total: 58 } }));
 
-    await caller().cancelWorkflow({ blockToken: 'tok', workflowId: STRANGERS_ID });
+    const result = await caller().cancelWorkflow({ blockToken: 'tok', workflowId: STRANGERS_ID });
 
     expect(mockCancelWorkflow).toHaveBeenCalledWith({
       workflowId: STRANGERS_ID,
       token: 'orch_token',
     });
+    // Read the fixture's distinct cost, as the poll twin does — an override nothing asserts reads
+    // as if the returned snapshot were pinned here when only the cancel call is.
+    expect(result.snapshot.cost).toEqual({ total: 58 });
   });
 
   it('🔴 EXEMPTS ONLY THE LITERAL `dev` — the cancel path still enforces in any other mode', async () => {
@@ -536,6 +569,24 @@ describe('blocks.cancelWorkflow — app scope', () => {
 
   it('refuses a workflow carrying no provenance tag at all', async () => {
     mockGetWorkflow.mockResolvedValue(workflowFixture({ tags: [] }));
+
+    await expect(
+      caller().cancelWorkflow({ blockToken: 'tok', workflowId: OWN_ID })
+    ).rejects.toThrow('workflow is not tagged for this app');
+    expect(mockCancelWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('🔴 the app scope holds under ORCHESTRATOR_MODE=dev on the cancel path too', async () => {
+    // The poll path has this case; the cancel path did not, and the gap was SITE-LOCAL rather than
+    // helper-local — the helper's own docblock says the dev exemption is the viewer assertion's
+    // alone, and a widening inside the helper does go red, but wrapping THIS CALL SITE in
+    // `if (env.ORCHESTRATOR_MODE !== 'dev')` left the whole set green. Under that, in dev any block
+    // could stop any other app's workflow. Same threat model the viewer mode-loop above names,
+    // applied to the other half, on the path with the irreversible side effect.
+    setEnv({ ORCHESTRATOR_MODE: 'dev' });
+    mockGetWorkflow.mockResolvedValue(
+      workflowFixture({ tags: ['civitai', `app-block:${OTHER_APP_ID}`], cost: { total: 63 } })
+    );
 
     await expect(
       caller().cancelWorkflow({ blockToken: 'tok', workflowId: OWN_ID })
@@ -607,6 +658,25 @@ describe('blocks.publishGenerationOutputs — app scope', () => {
     // `claims.appId` fallback query — before OR after the correct one — left this case green, so
     // without this line the comment above claims coverage the assertion does not provide.
     expect(mockBlockWorkflowOwnedByAppUser).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔴 the app scope holds under ORCHESTRATOR_MODE=dev on the publish path too', async () => {
+    // INVARIANT GUARD (passes at base too — that guard already existed there, open-coded).
+    // Third site, same site-local gap as the cancel one. This is the procedure that persists
+    // public `Image` rows, so an app-scope bypass here publishes another app's outputs.
+    setEnv({ ORCHESTRATOR_MODE: 'dev' });
+    mockBlockWorkflowOwnedByAppUser.mockResolvedValue(true);
+    mockGetWorkflow.mockResolvedValue(
+      workflowFixture({
+        status: 'succeeded',
+        tags: ['civitai', `app-block:${OTHER_APP_ID}`],
+        cost: { total: 83 },
+      })
+    );
+
+    await expect(
+      caller().publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'workflow is not tagged for this app' });
   });
 
   it('a correctly-tagged workflow gets PAST the app-scope guard', async () => {
