@@ -13,6 +13,7 @@ const findMany = dbMock.dbRead.crucibleEntry.findMany;
 const update = dbMock.dbWrite.crucible.update;
 const executeRaw = dbMock.dbWrite.$executeRaw;
 const createBuzzTransactionMany = vi.fn();
+const refundMultiAccountTransaction = vi.fn();
 const createNotification = vi.fn();
 const getAllEntryElos = vi.fn();
 const getAllVoteCounts = vi.fn();
@@ -21,6 +22,7 @@ const setTTL = vi.fn();
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
   createBuzzTransactionMany,
+  refundMultiAccountTransaction,
 }));
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
@@ -63,6 +65,8 @@ const pageEntries = (entries: ReturnType<typeof dbEntry>[]) => {
 
 const setupCrucible = ({
   entryFee = 100,
+  seededPrizePool = 0,
+  seedTransactionId = null as string | null,
   prizePositions = { '1': 50, '2': 30, '3': 20 } as unknown,
   entries = [dbEntry(1, 10, 1_000), dbEntry(2, 11, 2_000), dbEntry(3, 12, 3_000)],
   elos = { 1: 1600, 2: 1550, 3: 1400 } as Record<number, number>,
@@ -73,6 +77,8 @@ const setupCrucible = ({
     userId: 4,
     status: CrucibleStatus.Active,
     entryFee,
+    seededPrizePool,
+    seedTransactionId,
     prizePositions,
     endAt: new Date(Date.now() - 1000),
     _count: { entries: entries.length },
@@ -91,6 +97,7 @@ beforeEach(() => {
     transactions,
   }));
   createNotification.mockResolvedValue(undefined);
+  refundMultiAccountTransaction.mockResolvedValue(undefined);
   setupCrucible();
 });
 
@@ -236,5 +243,153 @@ describe('prize notifications', () => {
     const loser = won.find((arg) => arg.userId === 12);
 
     expect(loser?.details).toMatchObject({ position: 3, prizeAmount: 0 });
+  });
+});
+
+describe('seeded prize pool', () => {
+  it('adds the creator seed on top of the entry fees', async () => {
+    setupCrucible({ entryFee: 250, seededPrizePool: 1_000 });
+
+    const result = await finalizeCrucible(1);
+
+    // 3 entries x 250 = 750, plus the 1,000 seed
+    expect(result.totalPrizePool).toBe(1_750);
+  });
+
+  it('is the whole pool when entry is free, and still pays out', async () => {
+    setupCrucible({ entryFee: 0, seededPrizePool: 900, prizePositions: { '1': 50, '2': 30, '3': 20 } });
+
+    const result = await finalizeCrucible(1);
+
+    expect(result.totalPrizePool).toBe(900);
+    expect(result.finalEntries.map((e) => e.prizeAmount)).toEqual([450, 270, 180]);
+    expect(result.totalPrizesDistributed).toBe(900);
+  });
+
+  it('keeps rounding down against the seeded pool, so it cannot be overspent', async () => {
+    // 3 x 33 = 99 plus a 2 seed = 101; 50% of 101 is 50.5
+    setupCrucible({ entryFee: 33, seededPrizePool: 2, prizePositions: { '1': 50, '2': 50 } });
+
+    const result = await finalizeCrucible(1);
+
+    expect(result.totalPrizePool).toBe(101);
+    expect(result.finalEntries.map((e) => e.prizeAmount)).toEqual([50, 50, 0]);
+    expect(result.totalPrizesDistributed).toBeLessThanOrEqual(101);
+  });
+
+  it('pays the seed to the winners, not just the entry fees', async () => {
+    setupCrucible({ entryFee: 100, seededPrizePool: 600, prizePositions: { '1': 100 } });
+
+    await finalizeCrucible(1);
+
+    const [transactions] = createBuzzTransactionMany.mock.calls[0];
+    // 300 of entry fees + 600 seed, all to first place
+    expect(transactions.map((t: { toAccountId: number; amount: number }) => [t.toAccountId, t.amount])).toEqual([
+      [10, 900],
+    ]);
+  });
+});
+
+describe('seeded prize pool — entries but no prize awarded', () => {
+  it('returns the seed when every floored share rounds to zero', async () => {
+    // 1 Buzz seed, no entry fee, split three ways: floor() takes every share to 0, so the pool is
+    // charged and nothing is paid out.
+    setupCrucible({
+      entryFee: 0,
+      seededPrizePool: 1,
+      seedTransactionId: 'crucible-seed-4-xyz',
+      prizePositions: { '1': 50, '2': 30, '3': 20 },
+    });
+
+    const result = await finalizeCrucible(1);
+
+    expect(result.totalPrizesDistributed).toBe(0);
+    expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ externalTransactionIdPrefix: 'crucible-seed-4-xyz' })
+    );
+  });
+
+  it('returns the seed when prizePositions awards nothing', async () => {
+    setupCrucible({
+      entryFee: 0,
+      seededPrizePool: 5_000,
+      seedTransactionId: 'crucible-seed-4-xyz',
+      prizePositions: {},
+    });
+
+    await finalizeCrucible(1);
+
+    expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ externalTransactionIdPrefix: 'crucible-seed-4-xyz' })
+    );
+  });
+
+  it('does not refund when prizes actually went out', async () => {
+    setupCrucible({
+      entryFee: 0,
+      seededPrizePool: 900,
+      seedTransactionId: 'crucible-seed-4-xyz',
+      prizePositions: { '1': 50, '2': 30, '3': 20 },
+    });
+
+    await finalizeCrucible(1);
+
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('seeded prize pool — nobody entered', () => {
+  const setupUnentered = (overrides: Record<string, unknown> = {}) => {
+    findUnique.mockResolvedValue({
+      id: 1,
+      name: 'Test Crucible',
+      userId: 4,
+      status: CrucibleStatus.Active,
+      entryFee: 100,
+      seededPrizePool: 5_000,
+      seedTransactionId: 'crucible-seed-4-abc',
+      prizePositions: { '1': 100 },
+      endAt: new Date(Date.now() - 1000),
+      _count: { entries: 0 },
+      ...overrides,
+    });
+  };
+
+  it('reports the seed as the pool rather than zero', async () => {
+    setupUnentered();
+
+    const result = await finalizeCrucible(1);
+
+    expect(result.totalPrizePool).toBe(5_000);
+    expect(result.totalPrizesDistributed).toBe(0);
+  });
+
+  it('returns the seed to the creator instead of stranding it in the bank', async () => {
+    setupUnentered();
+
+    await finalizeCrucible(1);
+
+    expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ externalTransactionIdPrefix: 'crucible-seed-4-abc' })
+    );
+  });
+
+  it('refunds nothing when there was no seed', async () => {
+    setupUnentered({ seededPrizePool: 0, seedTransactionId: null });
+
+    await finalizeCrucible(1);
+
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+
+  it('still completes the crucible when the seed refund fails', async () => {
+    setupUnentered();
+    refundMultiAccountTransaction.mockRejectedValue(new Error('buzz down'));
+
+    await expect(finalizeCrucible(1)).resolves.toMatchObject({ totalPrizesDistributed: 0 });
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 1 },
+      data: { status: CrucibleStatus.Completed },
+    });
   });
 });

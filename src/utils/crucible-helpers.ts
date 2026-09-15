@@ -65,3 +65,23 @@ export function getStatusText(
       return '';
   }
 }
+
+/**
+ * The single derivation of a crucible's prize pool: the creator's seed plus every entry fee
+ * collected. Server and client both read it from here — `getFeaturedCrucible` restates it in raw
+ * SQL because it sorts on the value, and that copy has to move with this one.
+ *
+ * Every field is required so a select that forgets `seededPrizePool` fails typecheck instead of
+ * quietly under-reporting the pool.
+ */
+export function getCrucibleTotalPrizePool({
+  entryFee,
+  entryCount,
+  seededPrizePool,
+}: {
+  entryFee: number;
+  entryCount: number;
+  seededPrizePool: number;
+}): number {
+  return seededPrizePool + entryFee * entryCount;
+}

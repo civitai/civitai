@@ -47,7 +47,10 @@ import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useStepper } from '~/hooks/useStepper';
 import { Form, InputNumber, InputSelect, InputText, InputTextArea, useForm } from '~/libs/form';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import type { CrucibleContentType } from '~/shared/constants/crucible.constants';
+import {
+  CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
+  type CrucibleContentType,
+} from '~/shared/constants/crucible.constants';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import { Currency, MediaType } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -126,6 +129,7 @@ type FormData = {
   maxTotalEntries?: number;
 
   // Step 3: Prizes
+  seededPrizePool: number;
   prizePositions: Record<string, number>;
 };
 
@@ -145,6 +149,7 @@ const formSchema: FormData = {
   maxTotalEntries: undefined,
 
   // Step 3: Prizes
+  seededPrizePool: 0,
   prizePositions: { ...defaultPrizePositions },
 };
 
@@ -241,7 +246,7 @@ export default function CrucibleCreate() {
   };
 
   const getTotalCost = () => {
-    return getDurationCost() + getPrizeCustomizationCost();
+    return getDurationCost() + getPrizeCustomizationCost() + formData.seededPrizePool;
   };
 
   // Add a new prize position
@@ -320,6 +325,7 @@ export default function CrucibleCreate() {
       entryLimit: formData.entryLimit,
       maxTotalEntries: formData.maxTotalEntries,
       prizePositions: formData.prizePositions,
+      seededPrizePool: formData.seededPrizePool,
       prizeCustomized, // Pass whether prize distribution was customized
       duration: parseInt(formData.duration),
     });
@@ -527,7 +533,9 @@ export default function CrucibleCreate() {
         <Text size="xs" c="dimmed" mt={4}>
           {formData.entryFee === 0 ? (
             <Text span c="green">
-              Free Entry (No Prize Pool)
+              {formData.seededPrizePool > 0
+                ? 'Free Entry (prize pool comes from your seed)'
+                : 'Free Entry (No Prize Pool)'}
             </Text>
           ) : (
             `${formData.entryFee} Buzz entry fee`
@@ -613,10 +621,47 @@ export default function CrucibleCreate() {
       { bg: 'from-yellow-500 to-yellow-600', text: 'text-yellow-4' },
     ];
 
+    const seededPoolInput = (
+      <Input.Wrapper
+        label="Seed the Prize Pool"
+        description="Add your own Buzz on top of what entry fees collect. Charged when you create the crucible."
+      >
+        <Group gap={8} mt={8}>
+          <Input
+            type="number"
+            min={0}
+            max={CRUCIBLE_MAX_SEEDED_PRIZE_POOL}
+            value={formData.seededPrizePool}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              updateFormData({
+                seededPrizePool: Math.min(
+                  CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
+                  Math.max(0, parseInt(e.target.value) || 0)
+                ),
+              })
+            }
+            style={{ flex: 1 }}
+            leftSection={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
+          />
+          <Text fw={600} c="yellow">
+            Buzz
+          </Text>
+        </Group>
+        <Text size="xs" c="dimmed" mt={4}>
+          {formData.seededPrizePool > 0
+            ? `${formData.seededPrizePool.toLocaleString()} Buzz added to the pool before any entries`
+            : 'No seed — the pool is entry fees only'}
+        </Text>
+      </Input.Wrapper>
+    );
+
+
     // Display Mode - Default view with "Customize" button
     if (!prizeEditMode) {
       return (
         <Stack gap="lg">
+          {seededPoolInput}
+
           {/* Visual Progress Bar */}
           <div>
             <Text size="xs" c="dimmed" fw={600} mb={8}>
@@ -696,6 +741,8 @@ export default function CrucibleCreate() {
     // Edit Mode - Sliders and add/remove functionality
     return (
       <Stack gap="lg">
+        {seededPoolInput}
+
         {/* Editing Header */}
         <Group gap="xs">
           <IconPencil size={16} className="text-blue-5" />
@@ -919,6 +966,14 @@ export default function CrucibleCreate() {
             <Text fw={600}>Prize Distribution</Text>
           </Group>
           <Stack gap="sm">
+            <Group justify="space-between">
+              <Text c="dimmed">Seeded Prize Pool</Text>
+              {formData.seededPrizePool > 0 ? (
+                <CurrencyBadge unitAmount={formData.seededPrizePool} currency={Currency.BUZZ} />
+              ) : (
+                <Text fw={500}>None</Text>
+              )}
+            </Group>
             {Object.entries(formData.prizePositions)
               .sort(([a], [b]) => parseInt(a) - parseInt(b))
               .map(([position, percentage]) => (
@@ -1150,6 +1205,16 @@ export default function CrucibleCreate() {
                     {getPrizeCustomizationCost() === 0
                       ? 'Free'
                       : `+${getPrizeCustomizationCost().toLocaleString()} Buzz`}
+                  </Text>
+                </Group>
+                <Group justify="space-between">
+                  <Text size="sm" c="dimmed">
+                    Seeded Prize Pool
+                  </Text>
+                  <Text size="sm" c="yellow" fw={600}>
+                    {formData.seededPrizePool === 0
+                      ? 'None'
+                      : `+${formData.seededPrizePool.toLocaleString()} Buzz`}
                   </Text>
                 </Group>
                 <div className="mt-2 border-t border-dark-4 pt-3">
