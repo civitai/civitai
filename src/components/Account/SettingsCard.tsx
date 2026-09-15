@@ -11,6 +11,7 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
+import { IconDiamond } from '@tabler/icons-react';
 import produce from 'immer';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -394,28 +395,16 @@ function useFilePreferenceUpdate() {
  */
 export function ImageFormatSelect({ withLabel }: { withLabel?: boolean } = {}) {
   const { user, update, isPending } = useFilePreferenceUpdate();
-  const { enabled, canUseLossless, quality } = useMediaQuality();
+  const { canUseLossless, quality } = useMediaQuality();
   if (!user) return null;
 
-  if (!enabled)
-    return (
-      <Select
-        aria-label="Preferred image format"
-        label={withLabel ? 'Preferred Format' : undefined}
-        data={[
-          { value: 'optimized', label: 'Optimized (avif, webp)' },
-          { value: 'metadata', label: 'Unoptimized (jpeg, png)' },
-        ]}
-        value={user.filePreferences?.imageFormat ?? 'metadata'}
-        onChange={(value: string | null) => update({ imageFormat: value })}
-        disabled={isPending}
-      />
-    );
-
+  // Deliberately NOT gated on `mediaQualityDefault`. The labels and the gate describe a member
+  // perk, which is true whatever the rollout flag says; gating them would leave non-members
+  // clicking an option that silently does nothing.
   return (
     <Select
       aria-label="Media quality"
-      label={withLabel ? 'Media Quality' : undefined}
+      label={withLabel ? 'Media quality' : undefined}
       // Shows what the viewer is actually served, so a non-member who picked lossless before the
       // gate reads as Compressed. Their stored choice is left alone and comes back if they join.
       value={quality === 'lossless' ? 'metadata' : 'optimized'}
@@ -423,17 +412,33 @@ export function ImageFormatSelect({ withLabel }: { withLabel?: boolean } = {}) {
         { value: 'optimized', label: 'Compressed' },
         { value: 'metadata', label: 'Lossless', disabled: !canUseLossless },
       ]}
+      renderOption={({ option }) => (
+        <Group gap="xs" justify="space-between" wrap="nowrap" w="100%">
+          <Text size="sm">{option.label}</Text>
+          {option.value === 'metadata' && !canUseLossless && (
+            <Badge size="xs" variant="filled" color="blue" leftSection={<IconDiamond size={10} />}>
+              Pro
+            </Badge>
+          )}
+        </Group>
+      )}
       description={
         !canUseLossless ? (
           <>
-            Lossless is included with <Anchor href="/pricing">membership</Anchor>. Downloads give
-            you the original either way.
+            Lossless is a <Anchor href="/pricing?utm_campaign=media_quality_lossless">Pro</Anchor>{' '}
+            perk. Downloads give you the original either way.
           </>
         ) : (
           'Applies while you browse. Downloads always give you the original.'
         )
       }
-      onChange={(value: string | null) => update({ imageFormat: value })}
+      onChange={(value: string | null) => {
+        // The option is already disabled, so this cannot normally fire — but `update` is what
+        // raises the "preferences saved" toast, and a non-member reaching it would be told their
+        // choice was saved when nothing about what they are served changed.
+        if (value === 'metadata' && !canUseLossless) return;
+        update({ imageFormat: value });
+      }}
       disabled={isPending}
     />
   );

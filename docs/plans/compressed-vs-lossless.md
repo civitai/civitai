@@ -271,13 +271,42 @@ not the `Status:` line when checking it.
 
 ---
 
-## 6. Out of scope
+## 6. The 900 rung — blocked on civitai-image-cacher
+
+Enabling `hiDpi` on card feeds needs a 900 rung, because 450 x 2 = 900 and the ladder's next value
+is 1200. **The cacher does not have one, and adding 900 to `COMMON_IMAGE_WIDTHS` on this side alone
+makes things worse, not neutral.**
+
+Measured 2026-09-15 on the live CDN, same image, decoded pixel dimensions read from the container:
+
+| Requested | Content-Type | Bytes | Actual pixels |
+|---|---|---|---|
+| `width=450,optimized=true` | webp | 48,144 | 450 x 658 |
+| `width=800,optimized=true` | webp | 153,776 | 800 x 1169 |
+| **`width=900,optimized=true`** | webp | **239,932** | **1200 x 1754** |
+| `width=1000,optimized=true` | webp | 239,932 | 1200 x 1754 |
+| `width=1200,optimized=true` | webp | 239,932 | 1200 x 1754 |
+
+`width=900` is byte-identical to `width=1200`: the cacher snaps server-side to its own next rung.
+So a client-side 900 would emit a *new URL* that returns the *same 1200px object* — a second cache
+entry for identical bytes, and 5x the bytes of the 450 variant for a box that renders ~318 CSS px.
+
+**The ask is one line in civitai-image-cacher's `ImageCacherOptions.CommonSizes` (Koen): add 900.**
+Confirm it landed by re-running the table above and checking that `width=900` reports 900 actual
+pixels rather than 1200. Once it does, this side is two changes:
+
+1. add `900` to `COMMON_IMAGE_WIDTHS` in `src/client-utils/edge-url.ts`;
+2. pass `hiDpi` on the card components (`ImagesCard`, `ImageCard`, the model-page gallery).
+
+Until then, card feeds stay 1x on purpose.
+
+---
+
+## 7. Out of scope
 
 - **AVIF** — 868m47x1g / 868m47y1r. Koen: the cacher supports it, no endpoint exposes it, "that's
   just a one liner". Justin's caveat stands: the honest case is page snappiness, not our bandwidth
   bill, since we still serve unoptimized to some people and it all goes through Cloudflare.
-- **A ~900 rung in the cacher's `CommonSizes`**, which is what card feeds need before `hiDpi` can
-  be turned on there (450 × 2 = 900 currently snaps to 1200).
 - **Crop behaviour** on `ImagePreview` — the other half of 868m36wyd, untouched by #4752.
 - **The video download button doing nothing**, noticed live on the call at [9:49]. Unrelated bug,
   needs its own ticket.

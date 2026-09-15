@@ -213,6 +213,20 @@ describe('resolveOptimized', () => {
     expect(resolveOptimized({ height: 400, ...compressed })).toBe(true);
   });
 
+  it('leaves the download shape on the original, for both qualities', () => {
+    // 🔴 Product requirement, not an implementation detail: the download button renders
+    // `DownloadImage`, which calls `useEdgeUrl` with neither width nor height. That has to come
+    // out as the stored original for everyone — lossless is about BROWSING, and a non-member must
+    // not have their downloads quietly compressed by the default flip.
+    const download = { type: 'image' as const, name: 'a.png' };
+    for (const quality of ['compressed', 'lossless'] as const) {
+      expect(resolveOptimized({ ...download, quality })).toBe(false);
+    }
+    const url = getEdgeUrl('KEY', download);
+    expect(url).toContain('original=true');
+    expect(url).not.toContain('optimized');
+  });
+
   it('leaves hi-DPI to the viewer, so a paying member keeps lossless at 2x', () => {
     // Decision 3.1(b): hiDpi decides whether a srcSet is emitted, no longer what format it is.
     expect(resolveOptimized({ width: 1600, ...lossless })).toBe(false);
