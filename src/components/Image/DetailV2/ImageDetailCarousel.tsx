@@ -1,7 +1,6 @@
 import { useLocalStorage } from '@mantine/hooks';
 import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { MAX_EDGE_WIDTH, snapWidthDownToCommonSize } from '~/client-utils/cf-images-utils';
 import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import { ImageStickerOverlay } from '~/components/Sticker/ImageStickerOverlay';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
@@ -263,16 +262,6 @@ function ImageContent({
   });
 
   const isVideo = image?.type === 'video';
-  // The SOURCE's own width, snapped DOWN and capped. Not the fit box above: `width` there is the
-  // on-screen box, and asking the cacher for more pixels than the original has only upscales.
-  //
-  // 🔴 `image.width` and NOT `imageWidth`, whose `?? 1200` fallback would be a GUESS. Plenty of
-  // rows have a null width, and guessing 1200 for an 832px file requests an upscale — measured,
-  // that returns a real 1200x1754 against an 832x1216 source. With no width we fall through to
-  // `original`, which is what this surface served before and cannot upscale.
-  const lightboxWidth = image?.width
-    ? snapWidthDownToCommonSize(Math.min(image.width, MAX_EDGE_WIDTH))
-    : undefined;
 
   // dragstart carries no pointerType, and android chrome fires it for a long-press
   // drag — leaving that one to embla keeps the touch swipe as `watchTouchDrag` has it
@@ -318,11 +307,6 @@ function ImageContent({
               type={image.type}
               imageId={image.id}
               className={`max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`}
-              // 🔴 EdgeImage turns a `width` prop into an inline `maxWidth`, which beats the
-              // `max-w-full` class above and would pin the lightbox to the REQUEST width instead
-              // of letting it fill the viewport. The width here is a CDN parameter, not a layout
-              // instruction, so the inline value has to be overridden.
-              style={{ maxWidth: '100%' }}
               wrapperProps={{
                 className: `flex items-center justify-center max-h-full w-auto max-w-full ${
                   !safe ? 'invisible' : ''
@@ -331,11 +315,13 @@ function ImageContent({
                   aspectRatio: (image?.width ?? 0) / (image?.height ?? 0),
                 },
               }}
-              // Browsing follows the viewer's media quality here like anywhere else; the download
-              // button is what still hands over the stored file. Width is the SOURCE's own size
-              // snapped DOWN, because the cacher upscales — asking for more than the original has
-              // buys interpolated pixels at several times the bytes.
-              width={isVideo ? undefined : lightboxWidth}
+              // width={!isVideo ? undefined : 450} // Leave as undefined to get original size
+              //
+              // 🔴 Tried serving a resized variant here and reverted it twice. EdgeImage turns a
+              // `width` into an inline `maxWidth` that beats `max-w-full`, and the aspect-ratio
+              // wrapper then clips the image's height. The bandwidth was real — 2.5MB against
+              // ~154kB — but it does not survive contact with this layout, and a null
+              // `Image.width` (common) makes the request width a guess anyway.
               // `anim` and `original` feed the CDN URL — an inactive slide has to
               // request the same URL the active one will, or it warms nothing
               anim

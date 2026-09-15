@@ -22,7 +22,6 @@ export {
   getInferredMediaType,
   resolveOptimized,
   resolvesToOriginal,
-  snapWidthDownToCommonSize,
   snapWidthToCommonSize,
   toMediaQuality,
 } from '~/client-utils/edge-url';

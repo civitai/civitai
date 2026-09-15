@@ -133,24 +133,6 @@ export function snapWidthToCommonSize(width: number): number {
   return width;
 }
 
-/**
- * Snap a requested width DOWN to the nearest ladder value, never up.
- *
- * `snapWidthToCommonSize` rounds up, which is right for a layout box — you want at least as many
- * pixels as the box. It is wrong when the width is the SOURCE's own size, because the cacher
- * upscales: measured on an 832x1216 original, `width=1600` returns a real 1600x2338 JPEG of
- * 1,017,924 bytes, interpolated pixels carrying no detail the source did not have. Rounding down
- * to 800 asks for 153,776 bytes (optimized) at 4% less linear resolution than the source.
- */
-export function snapWidthDownToCommonSize(width: number): number {
-  let best: number = COMMON_IMAGE_WIDTHS[0];
-  for (const size of COMMON_IMAGE_WIDTHS) {
-    if (size === width) return width;
-    if (size < width) best = size;
-  }
-  return Math.min(best, width);
-}
-
 /** Ceiling `getEdgeUrl` applies to a requested width, after the ladder snap. */
 export const MAX_EDGE_WIDTH = 1800;
 
