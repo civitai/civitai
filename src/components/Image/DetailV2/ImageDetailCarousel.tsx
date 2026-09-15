@@ -315,13 +315,8 @@ function ImageContent({
                   aspectRatio: (image?.width ?? 0) / (image?.height ?? 0),
                 },
               }}
-              // width={!isVideo ? undefined : 450} // Leave as undefined to get original size
-              //
-              // 🔴 Tried serving a resized variant here and reverted it twice. EdgeImage turns a
-              // `width` into an inline `maxWidth` that beats `max-w-full`, and the aspect-ratio
-              // wrapper then clips the image's height. The bandwidth was real — 2.5MB against
-              // ~154kB — but it does not survive contact with this layout, and a null
-              // `Image.width` (common) makes the request width a guess anyway.
+              // No `width`: EdgeImage turns one into an inline `maxWidth` that beats `max-w-full`,
+              // and the aspect-ratio wrapper then clips the image's height.
               // `anim` and `original` feed the CDN URL — an inactive slide has to
               // request the same URL the active one will, or it warms nothing
               anim

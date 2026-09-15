@@ -1220,12 +1220,12 @@ function PostImage() {
       >
         <EdgeMedia
           src={url}
-          // `width` is ignored for the request once `original` is set (getEdgeUrl clears it) but
-          // still drives the img's maxWidth, so the layout is unchanged.
+          // Dead for the request (`original` clears it in `getEdgeUrl`) but still sets the img's
+          // inline maxWidth.
           width={metadata?.width ?? DEFAULT_EDGE_IMAGE_WIDTH}
           type={type}
-          // The editor is where a creator judges what they just uploaded, so it shows the stored
-          // file rather than a re-encoded variant — whatever their media quality is set to.
+          // The creator is judging what they just uploaded, so the editor shows the stored file
+          // whatever their media quality is.
           original
           className={showPreview ? 'rounded-none' : 'rounded-lg'}
           anim={type === 'video'}

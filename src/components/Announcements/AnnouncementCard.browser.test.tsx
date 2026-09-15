@@ -1,4 +1,4 @@
-import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as IsClientProvider from '~/providers/IsClientProvider';
@@ -6,6 +6,12 @@ import type * as CurrentUser from '~/hooks/useCurrentUser';
 import type * as FeatureFlagsProvider from '~/providers/FeatureFlagsProvider';
 
 const mocks = vi.hoisted(() => ({ openExternalLinkWarning: vi.fn() }));
+// Mutable so the banner-image tests can be a paying member on lossless — the only viewer for whom
+// the card's explicit `optimized` changes the URL at all.
+const viewer = vi.hoisted(() => ({
+  current: { id: 1, isModerator: false } as Record<string, unknown>,
+}));
+const SIGNED_OUT_DEFAULT = { id: 1, isModerator: false };
 
 vi.mock('~/components/ExternalLinkWarning/openExternalLinkWarning', () => ({
   openExternalLinkWarning: mocks.openExternalLinkWarning,
@@ -21,7 +27,7 @@ vi.mock('~/providers/IsClientProvider', async (importOriginal) => ({
 
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   ...(await importOriginal<typeof CurrentUser>()),
-  useCurrentUser: () => ({ id: 1, isModerator: false }),
+  useCurrentUser: () => viewer.current,
 }));
 
 // `useTrackImpression` calls `useFeatureFlags()` unconditionally, even with no
@@ -150,5 +156,41 @@ describe('CustomMarkdown without warnOnExternalLinks', () => {
     } finally {
       document.removeEventListener('click', swallowNavigation, true);
     }
+  });
+});
+
+describe('AnnouncementCard banner image', () => {
+  // A lossless member is the only viewer for whom the card's explicit `optimized` changes anything
+  // — everyone else is compressed by default, so a test run as them passes with or without it.
+  beforeEach(() => {
+    viewer.current = {
+      id: 1,
+      isModerator: false,
+      isPaidMember: true,
+      filePreferences: { imageFormat: 'metadata' },
+    };
+  });
+  afterEach(() => {
+    viewer.current = SIGNED_OUT_DEFAULT;
+  });
+
+  // 🔴 The half a node test cannot see. `announcement-media-check` probes
+  // `getAnnouncementImageUrl`, and that URL is only the one users load while THIS component keeps
+  // passing `optimized`. Drop it from the markup and a lossless member loads a variant the monitor
+  // never checks — the monitor then calls a 404ing banner healthy.
+  test('renders the exact variant the media-check job probes, even for a lossless member', async () => {
+    const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
+    const { getAnnouncementImageUrl } = await import(
+      '~/components/Announcements/announcement-image'
+    );
+    const key = '7171bdc6-8007-492c-84ad-f607e4dbd320';
+
+    renderWithProviders(<AnnouncementCard {...base} cover={{ kind: 'key', src: key }} />);
+
+    const img = page.getByAltText('Announcement banner image');
+    await expect.element(img).toHaveAttribute('src', getAnnouncementImageUrl(key));
+    // Named separately: the assertion above compares the card against the helper, so both moving
+    // together would keep it green. This is the property they must both have.
+    await expect.element(img).toHaveAttribute('src', expect.stringContaining('optimized=true'));
   });
 });

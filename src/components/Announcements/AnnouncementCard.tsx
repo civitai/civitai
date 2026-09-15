@@ -122,10 +122,8 @@ export function AnnouncementCard({
           {cover.kind === 'key' ? (
             <EdgeMedia
               src={cover.src}
-              // Both shared with `announcement-media-check` so the monitored variant stays the
-              // variant users actually load. `optimized` has to be explicit now that the
-              // viewer's media quality decides it otherwise — a lossless member would
-              // otherwise load a variant the monitor never checks. See announcement-image.ts.
+              // Shared with `announcement-media-check`: the explicit `optimized` keeps the banner
+              // on ONE variant, so the monitor can name the URL users load. See announcement-image.ts.
               width={ANNOUNCEMENT_IMAGE_WIDTH}
               optimized
               alt="Announcement banner image"

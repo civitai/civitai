@@ -426,7 +426,6 @@ function ActionButtons({ close }: { close: () => void }) {
 function CustomUserAvatar({ data }: { data: CivitaiAccount }) {
   const colorScheme = useComputedColorScheme('dark');
   const { avatarUrl, email, username } = data;
-  // Chrome, not content: an avatar is compressed for everyone regardless of media quality.
   const imageUrl = useGetEdgeUrl(avatarUrl, { width: 96, optimized: true });
   const avatarBgColor = colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 

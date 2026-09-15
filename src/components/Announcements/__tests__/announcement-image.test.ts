@@ -9,18 +9,16 @@ vi.mock('~/env/client', () => ({
   },
 }));
 
-// `useEdgeUrl` is the REAL render path and the thing the monitor must agree with. It is
-// a hook only in the sense that it reads the current user; with that stubbed it is a pure
-// function, so it can be exercised directly from the node suite.
+// `useEdgeUrl` is the REAL render path and the thing the monitor must agree with. With
+// `useCurrentUser` stubbed it is a pure function, exercisable from the node suite.
 //
-// The viewer is mutable so one test can make itself a paying member on lossless — the case the
-// banner's explicit `optimized` exists to survive. It defaults to signed out, which is the
-// viewer whose `filePreferences` cannot mask a rule change by opting into compression anyway.
+// The viewer is mutable so one test can be a paying member on lossless — the case the banner's
+// explicit `optimized` exists to survive. Defaults to signed out.
 const viewer = vi.hoisted(() => ({ current: null as null | Record<string, unknown> }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => viewer.current }));
 vi.mock('~/providers/BrowserSettingsProvider', () => ({ useBrowsingSettings: () => false }));
 // Imported under a non-`use` alias on purpose: it is a hook only by naming convention
-// (its single hook call, `useCurrentUser`, is stubbed above), and the rules-of-hooks
+// (its only hook calls resolve through `useCurrentUser`, stubbed above), and the rules-of-hooks
 // lint would otherwise reject calling it inside the width-ladder loop below.
 import { getEdgeUrl, useEdgeUrl as resolveRenderedUrl } from '~/client-utils/cf-images-utils';
 import {
@@ -61,14 +59,11 @@ describe('getAnnouncementImageUrl', () => {
   });
 
   it('is compressed for a viewer entitled to lossless, because the banner asks explicitly', () => {
-    // 🔴 The reason `AnnouncementCard` passes `optimized` at all. Media quality is the viewer's
-    // now, so without an explicit flag a paying member on lossless would load a DIFFERENT
-    // variant than the one `announcement-media-check` probes — and the monitor would report a
-    // healthy banner while theirs 404s.
+    // Without the explicit flag a lossless member would load a DIFFERENT variant than
+    // `announcement-media-check` probes, and the monitor would call a 404ing banner healthy.
     viewer.current = { isPaidMember: true, filePreferences: { imageFormat: 'metadata' } };
     try {
-      // Control: the same viewer on any other 200px image DOES get lossless, so the assertion
-      // below is about the explicit flag and not about the stub failing to take effect.
+      // Control: the same viewer DOES get lossless without the flag, so the stub is taking effect.
       expect(resolveRenderedUrl(KEY, { width: ANNOUNCEMENT_IMAGE_WIDTH }).url).not.toContain(
         'optimized'
       );
@@ -85,14 +80,9 @@ describe('getAnnouncementImageUrl', () => {
   });
 
   it('equals the URL the render path actually produces, not a hand-rolled mirror', () => {
-    // 🔴 The binding test. `Announcement.tsx` renders
-    // `<EdgeMedia src={key} width={ANNOUNCEMENT_IMAGE_WIDTH} />`, and EdgeMedia resolves
-    // its src through `useEdgeUrl`. Compare against that function's real output rather
-    // than against `getEdgeUrl(..., { optimized: true })`, which would re-assert the
-    // helper's own assumption. Fails if the optimized threshold, the width ladder, the
-    // 1800 cap, the type/extension inference or the param order ever change under it —
-    // any of which would make the monitor probe a variant nobody loads and then emit a
-    // false `announcement-image-render-failed` on a healthy banner.
+    // Pins the helper against `useEdgeUrl`'s real output: the width ladder, the 1800 cap, the
+    // type/extension inference and the param order. That the CARD passes `optimized` is a separate
+    // fact a node test cannot see — `AnnouncementCard.browser.test.tsx` covers that half.
     const rendered = resolveRenderedUrl(KEY, {
       width: ANNOUNCEMENT_IMAGE_WIDTH,
       optimized: true,
@@ -101,9 +91,8 @@ describe('getAnnouncementImageUrl', () => {
   });
 
   it('tracks the render path across the whole width ladder, not just the current width', () => {
-    // Generalises the binding: for any width the banner could plausibly be given, the
-    // helper's construction and the render path agree. Guards a future edit to
-    // ANNOUNCEMENT_IMAGE_WIDTH as well as to the ladder.
+    // Generalises the binding across the ladder, so an edit to ANNOUNCEMENT_IMAGE_WIDTH is covered
+    // too.
     for (const width of [96, 200, 320, 450, 451, 512, 800, 2400]) {
       const expected = resolveRenderedUrl(KEY, { width, optimized: true }).url;
       const actual = getEdgeUrl(KEY, { width, optimized: true });

@@ -191,27 +191,22 @@ const featureFlags = createFeatureFlags({
   // with `enabled: false` and no rollout hides the bar for everyone, moderators included.
   // Until that flag exists, evaluation returns null and static evaluation keeps it on.
   feedTagBar: { availability: ['public'], fliptKey: 'feed-tag-bar' },
-  // Serve post-detail and model-page showcase images a `srcSet` carrying a 2x variant. Without
-  // it those surfaces request a width in CSS pixels and every DPR>=2 display upscales:
-  // measured 1.82x on post detail at DPR 2, 1.38x on an iPhone (ClickUp 868m36wyd).
+  // Gates the hi-DPI `srcSet` on every surface that renders content: post detail, the model
+  // showcase and review carousels, the model gallery and the feed cards. Without it those surfaces
+  // request a width in CSS pixels and every DPR>=2 display upscales — measured 1.82x on post detail
+  // at DPR 2, 1.38x on an iPhone (ClickUp 868m36wyd). It does NOT decide the format: the viewer's
+  // media quality does, so a paying member on lossless keeps lossless at 2x. How the candidate is
+  // chosen, and why it is bounded by the source width, is in `hiDpiCandidateWidth`.
   //
-  // It no longer decides the FORMAT — the viewer's media quality does, so a paying member on
-  // lossless keeps lossless at 2x.
+  // `['public']` and NOT `[]` so that a Flipt outage does not visibly change the site: the flag is
+  // live and enabled, and failing open matches it. It is NOT the cheaper path — with compressed the
+  // default, flag-off is an 800px webp and flag-on a 1600px one, so failing open costs ~2.2x the
+  // bytes. That was the opposite way round before compressed became the default.
   //
-  // `['public']` and NOT `[]`: with compressed the default, the 2x variant is FEWER bytes than
-  // the unoptimized JPEG that shipped before it (measured 305kB vs 421kB), and the Flipt-down
-  // fallback should be the cheaper, sharper path. So DO NOT create `hi-dpi-previews` in
-  // flipt-state to ship this: while it
-  // does not exist, evaluation returns null and static evaluation keeps it on. Creating it as
-  // a boolean with `enabled: false` and no rollout IS the kill switch — Flipt's answer
-  // overrides static evaluation in both directions.
-  //
-  // Card feeds are included now. They were excluded while the 2x candidate came from rounding the
-  // doubled width UP: 450 doubles to 900, and the rung above 900 is 1200 — which the CDN serves as
-  // a 1200px object identical to `width=1200`, 5x the bytes of the 450 variant for a box that only
-  // renders ~318 CSS px. `hiDpiCandidateWidth` takes the rung BELOW the 2x target instead, so a
-  // card gets 800 (154kB against 48kB) at a true 1.77x, which still covers a DPR-2 card outright.
-  // No change to the surfaces already on a srcSet: 800 -> 1600 is exactly 2x either way.
+  // 🔴 DO NOT create `hi-dpi-previews` in flipt-state to ship this. While it does not exist,
+  // evaluation returns null and static evaluation keeps it on; creating it as a boolean with
+  // `enabled: false` and no rollout IS the kill switch — Flipt's answer overrides static
+  // evaluation in both directions.
   hiDpiPreviews: { availability: ['public'], fliptKey: 'hi-dpi-previews' },
   // `availability: []` is the Flipt-down fallback, and off is the right one here: the search
   // refinement is useless until the gated documents carry `hasActivePaidAccess`, which is a backfill

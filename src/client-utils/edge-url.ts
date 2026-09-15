@@ -33,10 +33,7 @@ export type EdgeUrlProps = {
   type?: MediaType;
   original?: boolean;
   skip?: number;
-  /**
-   * The stored image's own width. Only used to bound the hi-DPI `srcSet` candidate — never emitted
-   * into the URL. Without it a 2x candidate can ask for more pixels than the source has.
-   */
+  /** The stored image's own width. Bounds the hi-DPI `srcSet` candidate; never emitted into the URL. */
   sourceWidth?: number | null;
 };
 
@@ -61,11 +58,7 @@ export const COMMON_IMAGE_WIDTHS = [96, 320, 450, 512, 800, 1200, 1600, 2200] as
 export type MediaQuality = 'compressed' | 'lossless';
 
 /**
- * The viewer's effective quality.
- *
- * Compressed unless the viewer both chose lossless and is entitled to it, so an unset
- * preference — 99% of accounts — reads as compressed without anything being written. A
- * non-member's stored `'metadata'` is deliberately NOT overwritten: it comes back if they
+ * A non-member's stored `'metadata'` is deliberately NOT normalised away — it comes back if they
  * subscribe.
  */
 export function toMediaQuality({
@@ -79,12 +72,9 @@ export function toMediaQuality({
 }
 
 /**
- * Whether these options resolve to the stored original rather than a derived variant.
- *
- * Mirrors the inference `getEdgeUrl` makes on its own arguments. Split out because
- * `resolveOptimized` has to reach the same answer BEFORE `getEdgeUrl` runs: the cacher ignores
- * `optimized` on an original request, but emitting it still changes the URL, and therefore the
- * CDN cache key, for every download.
+ * `resolveOptimized` has to reach this answer BEFORE `getEdgeUrl` infers it: the cacher ignores
+ * `optimized` on an original request, but emitting it still changes the URL — and therefore the
+ * CDN cache key — for every download.
  */
 export function resolvesToOriginal({
   width,
@@ -95,11 +85,8 @@ export function resolvesToOriginal({
 }
 
 /**
- * The `optimized` flag the render path emits.
- *
- * An explicit `optimized` from the call site wins, which is what keeps site chrome — stickers,
- * avatars, shop tiles, OG images, the announcement banner — compressed for everyone regardless
- * of who is looking. Otherwise the viewer's quality decides, at every width.
+ * An explicit `optimized` from the call site wins, which is what keeps site chrome — avatars,
+ * badges, stickers, shop tiles, the announcement banner — on one variant for every viewer.
  */
 export function resolveOptimized({
   optimized,
@@ -157,8 +144,9 @@ export const SRCSET_DPR = 2;
  * mismatch, and a second download of whichever variant lost. The browser resolves a
  * descriptor list itself, before React runs.
  *
- * Returns undefined when the 2x variant would land on the same rung as the 1x one, so the
- * attribute is omitted rather than listing one URL twice.
+ * Returns undefined when no ladder rung fits between the 1x variant and the lower of
+ * `SRCSET_DPR * base` and the source's own width — so the attribute is omitted rather than
+ * listing one URL twice or promising pixels the source has not got.
  */
 export function getEdgeUrlSrcSet(src: string, options: Omit<EdgeUrlProps, 'src'> = {}) {
   const { width, original, sourceWidth } = options;
@@ -180,24 +168,16 @@ export function getEdgeUrlSrcSet(src: string, options: Omit<EdgeUrlProps, 'src'>
 }
 
 /**
- * The widest ladder rung that is larger than `base` without exceeding `SRCSET_DPR` times it.
+ * The widest ladder rung above `base` that exceeds neither `SRCSET_DPR * base` nor the source.
  *
- * Deliberately NOT `snapWidthToCommonSize(base * SRCSET_DPR)`, which rounds the doubled width UP
- * to the next rung and so OVERSHOOTS whenever 2x lands between rungs. A 450px card doubles to 900,
- * and the rung above 900 is 1200 — measured on the live CDN, `width=900` is byte-identical to
- * `width=1200` (239,932 bytes, 1200x1754 actual pixels) because the cacher snaps server-side too.
- * That is 5x the bytes of the 450 variant for a box that renders ~318 CSS px, which is why card
- * feeds could not take a srcSet at all.
+ * NOT `snapWidthToCommonSize(base * SRCSET_DPR)`: that rounds UP when 2x lands between rungs, so a
+ * 450 card asks for 1200 — which the cacher serves identically to `width=1200`, ~5x the bytes of
+ * the 450 rung for a box rendering ~318 CSS px.
  *
- * Taking the rung BELOW the 2x target instead gives cards 800 (153,776 bytes) at a true 1.77x,
- * which still covers a DPR-2 card outright.
- *
- * 🔴 Also bounded by the SOURCE's width, because the cacher upscales rather than refusing. Measured
- * on an 832x1216 original, post detail's 2x candidate of 1600 comes back as a real 1600x2338 WebP
- * of 335,598 bytes against 153,776 at 800 — 2.2x the bytes for pixels that are interpolated, not
- * captured. Most generated images are well under 1600 wide, so without this bound the 2x candidate
- * on a detail page is an upscale for the majority of them. No candidate is better than a fake one:
- * when nothing fits, the attribute is omitted and the browser keeps the 1x variant.
+ * 🔴 The source bound is separate and equally load-bearing: the cacher UPSCALES rather than
+ * refusing, so an unbounded 2x candidate bills real bytes for interpolated pixels on any image
+ * narrower than the candidate — which most generated images are. When no rung fits, the attribute
+ * is omitted and the browser keeps the 1x variant.
  */
 export function hiDpiCandidateWidth(base: number, sourceWidth?: number | null) {
   const ceiling = Math.min(base * SRCSET_DPR, sourceWidth || Infinity);

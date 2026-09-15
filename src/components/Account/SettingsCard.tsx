@@ -390,21 +390,17 @@ function useFilePreferenceUpdate() {
   return { user, update, isPending };
 }
 
-/**
- * @param withLabel render the control's own label, for the card layout. The settings panes put
- * the label on the surrounding `SettingRow` instead.
- */
+/** @param withLabel render the control's own label; the settings panes label the `SettingRow` instead. */
 export function ImageFormatSelect({ withLabel }: { withLabel?: boolean } = {}) {
   const { user, update, isPending } = useFilePreferenceUpdate();
   const { canUseLossless, quality } = useMediaQuality();
   const router = useRouter();
-  // Shows what the viewer is actually served, so a non-member who picked lossless before the gate
-  // reads as Compressed. Their stored choice is left alone and comes back if they join.
+  // Their stored choice is left alone: a non-member who picked lossless before the gate reads as
+  // Compressed, and gets it back if they subscribe.
   const served = quality === 'lossless' ? 'metadata' : 'optimized';
-  // The save lands in the DB immediately but `quality` comes off the SESSION, which only changes
-  // once `user.refresh()` round-trips the auth hub. Without this the select snaps back to the old
-  // value for the whole of that window and the save reads as having failed. Measured in dev: the
-  // right value only appeared after a reload.
+  // `quality` comes off the SESSION, which only updates once `user.refresh()` round-trips the auth
+  // hub. Without this local override the select snaps back for that whole window and the save reads
+  // as having failed.
   const [chosen, setChosen] = useState<string | null>(null);
   useEffect(() => setChosen(null), [served]);
   if (!user) return null;
@@ -418,8 +414,8 @@ export function ImageFormatSelect({ withLabel }: { withLabel?: boolean } = {}) {
       // write, while the local override below kept showing the value that never saved.
       allowDeselect={false}
       value={chosen ?? served}
-      // Lossless stays SELECTABLE for a non-member on purpose: a disabled row is a dead end, and
-      // the click is the upsell. `onChange` routes them instead of saving.
+      // Lossless stays selectable for a non-member on purpose — the click is the upsell, and
+      // `onChange` routes them instead of saving.
       data={[
         { value: 'optimized', label: 'Compressed' },
         { value: 'metadata', label: 'Lossless' },
@@ -442,8 +438,8 @@ export function ImageFormatSelect({ withLabel }: { withLabel?: boolean } = {}) {
       onChange={(value: string | null) => {
         if (!value) return;
         if (value === 'metadata' && !canUseLossless) {
-          // Never reaches `update`, which is what raises the "preferences saved" toast — telling
-          // a non-member their choice was saved when nothing they are served changed.
+          // Deliberately skips `update`, which raises the "preferences saved" toast — nothing they
+          // are served would have changed.
           router.push({
             pathname: '/pricing',
             query: { returnUrl: router.asPath, utm_campaign: 'media_quality_lossless' },
