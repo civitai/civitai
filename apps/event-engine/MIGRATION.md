@@ -37,8 +37,17 @@ root changes were needed.
 - Removed `.gitmodules` (submodule retired → vendored) and `package-lock.json` (npm → the monorepo is pnpm).
 - `Dockerfile` rewritten to the monorepo pnpm-deploy pattern — **DRAFT, unverified**. (This bullet said
   "see below"; no section describing that pattern was ever written. Read the `Dockerfile` itself.)
-- `.github/` is kept **as legacy reference only** (the old CI) and is inert here — GitHub reads workflows
-  only from the repo-root `.github/workflows/`, so this nested copy is never scheduled.
+- `.github/` **was** kept as legacy reference only and has since been **DELETED** (2026-09-15), together
+  with `scripts/release.mjs` — the standalone repo's release machinery, both members. The reason the
+  workflow was safe to delete is worth keeping: GitHub reads workflows only from the repo-root
+  `.github/workflows/`, so a nested copy is **structurally never scheduled** — verified against the
+  Actions API, which listed zero workflows under `apps/` while listing all four root paths.
+  🔴 `scripts/release.mjs` was the dangerous half and was **not** inert: 437 lines, wired to no
+  `package.json` script and referenced by nothing, but executable as-is. Run once in a monorepo
+  checkout it would check out `release`, rebase it onto `main`, bump this app's version, tag a bare
+  `v<version>` and **push `release`** — i.e. an unreviewed production deploy of whatever `main` held,
+  plus a tag in the root release namespace. This app's real release path is
+  `pnpm release:event-engine:*` → `scripts/release-app.mjs`, which tags `event-engine-v*`.
 - `docker-compose.yml` is **NOT legacy and NOT inert**: it is the live local-dev Kafka/Debezium harness,
   driven by `README.md`, `scripts/produce-comic-event.ts` and `scripts/setup-digitalocean.ts`. Do not
   delete it as legacy.
