@@ -29,6 +29,15 @@ export const ltxVersionIds = {
   sulphur2Dev: 2921800,
 } as const;
 
+export const minimaxVersionIds = {
+  /**
+   * The comfy variant, not the hosted API one — it is the version the model page
+   * publishes and the only one that takes LoRAs, and it matches the
+   * `MiniMaxH3` ecosystem default in `basemodel.constants.ts`.
+   */
+  h3Comfy: 3216500,
+} as const;
+
 export const qwenVersionIds = {
   imageEdit2511: 2558804,
 } as const;

@@ -5,7 +5,7 @@
  */
 
 import {
-  ltxVersionIds,
+  minimaxVersionIds,
   nanoBananaVersionIds,
   qwenVersionIds,
 } from '~/shared/data-graph/generation/version-ids';
@@ -52,19 +52,24 @@ export const REMIX_ENGINES: Record<RemixKind, Record<RemixTier, RemixEngine>> = 
       modelVersionId: qwenVersionIds.imageEdit2511,
     },
   },
+  /**
+   * Both tiers are H3, and the tier split is kept rather than collapsed: the
+   * MiniMax Order Form commits H3 as the platform's default video engine for the
+   * Service Term, and the two tiers must stay separately addressable so a future
+   * mature-only reroute does not have to reintroduce the structure. H3 runs on
+   * our own orchestrator, so unlike the edit tiers there is no external provider
+   * policy to refuse a mature request.
+   */
   video: {
     safe: {
       workflow: 'img2vid',
-      ecosystemKey: 'LTXV23',
-      modelVersionId: ltxVersionIds.v23Dev,
+      ecosystemKey: 'MiniMaxH3',
+      modelVersionId: minimaxVersionIds.h3Comfy,
     },
-    // Sulphur 2 is a fine-tune that runs through the same LTXV23 ecosystem (with
-    // a diffusionModel AIR override), so the ecosystem key stays LTXV23 and only
-    // the pinned version differs.
     mature: {
       workflow: 'img2vid',
-      ecosystemKey: 'LTXV23',
-      modelVersionId: ltxVersionIds.sulphur2Dev,
+      ecosystemKey: 'MiniMaxH3',
+      modelVersionId: minimaxVersionIds.h3Comfy,
     },
   },
 };

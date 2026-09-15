@@ -6,7 +6,7 @@ import {
   workflowConfigByKey,
 } from '~/shared/data-graph/generation/config/workflows';
 import {
-  ltxVersionIds,
+  minimaxVersionIds,
   nanoBananaVersionIds,
   qwenVersionIds,
 } from '~/shared/data-graph/generation/version-ids';
@@ -52,19 +52,16 @@ describe('REMIX_ENGINES', () => {
     expect(REMIX_ENGINES.edit.safe.modelVersionId).not.toBe(nanoBananaVersionIds.standard);
   });
 
-  it('video resolves to LTX 2.3 when safe and Sulphur 2 when mature', () => {
-    expect(REMIX_ENGINES.video.safe.modelVersionId).toBe(ltxVersionIds.v23Dev);
-    expect(REMIX_ENGINES.video.mature.modelVersionId).toBe(ltxVersionIds.sulphur2Dev);
-  });
-
-  // Sulphur 2 runs through the LTXV23 ecosystem, so unlike the edit tiers the
-  // ecosystem key is deliberately the SAME on both — only the version differs.
-  // Asserting that keeps someone from "fixing" it to a nonexistent ecosystem.
-  it('keeps both video tiers on the LTXV23 ecosystem', () => {
-    expect(REMIX_ENGINES.video.mature.ecosystemKey).toBe(REMIX_ENGINES.video.safe.ecosystemKey);
-    expect(REMIX_ENGINES.video.mature.modelVersionId).not.toBe(
-      REMIX_ENGINES.video.safe.modelVersionId
-    );
+  // If you are here to point Animate at a newer or cheaper video engine: the
+  // MiniMax Order Form commits H3 as the platform's default video engine for the
+  // Service Term, and Animate is one of the two surfaces that decides what
+  // "default" means in practice. Changing it is a contract decision, not an
+  // engineering one — get the commitment released first, then delete this.
+  it('routes Animate to MiniMax H3 on both tiers, as the committed default video engine', () => {
+    expect(REMIX_ENGINES.video.safe.ecosystemKey).toBe('MiniMaxH3');
+    expect(REMIX_ENGINES.video.mature.ecosystemKey).toBe('MiniMaxH3');
+    expect(REMIX_ENGINES.video.safe.modelVersionId).toBe(minimaxVersionIds.h3Comfy);
+    expect(REMIX_ENGINES.video.mature.modelVersionId).toBe(minimaxVersionIds.h3Comfy);
   });
 
   // The whole point of the tier split: a mature image must not be routed to an
