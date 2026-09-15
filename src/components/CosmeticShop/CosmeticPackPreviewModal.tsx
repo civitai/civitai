@@ -108,7 +108,7 @@ export const CosmeticPackPreviewModal = ({
             </Group>
             <Center my="auto" h={250}>
               {pack?.meta.coverUrl ? (
-                <EdgeMedia src={pack.meta.coverUrl} width={450} alt={pack.title} />
+                <EdgeMedia src={pack.meta.coverUrl} width={450} alt={pack.title} optimized />
               ) : (
                 <PackCoverTiles tiles={pack?.meta.coverTiles ?? []} size={230} fallbackIcon />
               )}

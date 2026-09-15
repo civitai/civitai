@@ -214,7 +214,7 @@ export const ShopItem = ({
                 {cosmetic ? (
                   <CosmeticSample cosmetic={cosmetic} size="lg" lazy />
                 ) : itemMeta.coverUrl ? (
-                  <EdgeMedia src={itemMeta.coverUrl} width={450} alt={item.title} loading="lazy" />
+                  <EdgeMedia src={itemMeta.coverUrl} width={450} alt={item.title} loading="lazy" optimized />
                 ) : (
                   <PackCoverTiles tiles={itemMeta.coverTiles ?? []} size={220} fallbackIcon lazy />
                 )}

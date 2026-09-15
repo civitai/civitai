@@ -312,7 +312,46 @@ is not worth asking for on its own.
 
 ---
 
-## 7. Out of scope
+## 7. Which surfaces respect the preference
+
+Three policies, audited across every client render site.
+
+**Always compressed — chrome, not content.** `UserAvatarSimple` (decoration + badge),
+`UserAvatarProfilePicture`, the nine sticker sites, the announcement banner, video posters, and —
+added here — `UserAvatar`, `AppHeader/UserMenu`, `ShopItem`, `CosmeticSample`, `CosmeticPreview`,
+`CosmeticPackPreviewModal`.
+
+**Always original — the post editor.** `PostImageCards/AddedImage` shows the stored file, because
+the editor is where a creator judges what they just uploaded.
+
+⚠️ Deliberately NOT extended to `PostReorderImages` or `Thumbnail/PostImageThumbnailSelect`. Those
+are a drag-to-reorder grid and a poster picker rendering many tiles at ~450px; `original` there
+would pull the full stored file per tile (~2.5MB each, so ~50MB on a twenty-image post) to render
+each one at thumbnail size. They are navigation aids, not the place quality is judged.
+
+**Respect the viewer's choice — everything else.** Post detail, the model showcase and resource
+review carousels, `/images` + `/videos`, the model gallery, every feed card (article, bounty,
+challenge, comic, model, post, 3D — all one template, `AspectRatioImageCard`), bounty entries, the
+article cover and collection cards.
+
+`getEdgeUrl(url, { width: 1200 })` in `articles/[id]`, `models/[id]`, `Meta.tsx` and
+`challenge.service` is server-side OG/social-card generation. No viewer, so no preference — those
+are correctly explicit and are not gaps.
+
+### hiDpi is NOT a membership perk
+
+Considered and rejected: gating the 2x variant on lossless so compressed gets one rendition.
+
+It inverts the cost. At card width the 2x compressed variant is **154kB against a 353kB lossless
+1x** — the expensive axis is the FORMAT, not the resolution, so gating resolution would withhold
+the cheap thing and give away the dear one. It also re-creates the complaint that opened 868m36wyd:
+users reporting low-resolution images. DPR-correct pixels are a correctness fix, not an upgrade —
+a viewer cannot see "2x" in a settings menu, and on a DPR-3 phone its absence reads as a broken
+site rather than as a perk withheld. Lossless is the nameable thing; sell that.
+
+---
+
+## 8. Out of scope
 
 - **AVIF** — 868m47x1g / 868m47y1r. Koen: the cacher supports it, no endpoint exposes it, "that's
   just a one liner". Justin's caveat stands: the honest case is page snappiness, not our bandwidth

@@ -1220,9 +1220,13 @@ function PostImage() {
       >
         <EdgeMedia
           src={url}
+          // `width` is ignored for the request once `original` is set (getEdgeUrl clears it) but
+          // still drives the img's maxWidth, so the layout is unchanged.
           width={metadata?.width ?? DEFAULT_EDGE_IMAGE_WIDTH}
           type={type}
-          original={type === 'video' ? true : undefined}
+          // The editor is where a creator judges what they just uploaded, so it shows the stored
+          // file rather than a re-encoded variant — whatever their media quality is set to.
+          original
           className={showPreview ? 'rounded-none' : 'rounded-lg'}
           anim={type === 'video'}
           html5Controls

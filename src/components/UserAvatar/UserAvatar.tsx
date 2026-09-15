@@ -123,6 +123,8 @@ export function UserAvatar({
   const avatarUser = user ?? { ...fallbackUser, cosmetics: [] };
   const imageUrl = useGetEdgeUrl(avatarUser?.image, {
     width: typeof avatarSize === 'number' ? avatarSize : 96,
+    // Chrome, not content: an avatar is compressed for everyone regardless of media quality.
+    optimized: true,
   });
 
   // If using a userId, show loading
