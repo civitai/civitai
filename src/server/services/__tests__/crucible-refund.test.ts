@@ -21,8 +21,13 @@ vi.mock('~/server/redis/crucible-elo.redis', async (importOriginal) => ({
   crucibleEloRedis: { setTTL },
 }));
 
-const { cancelCrucible, getCrucibleSetupTransactionPrefix, getCrucibleEntryTransactionPrefix, isCrucibleEntryTransactionPrefix } =
-  await import('~/server/services/crucible.service');
+const {
+  cancelCrucible,
+  getCrucibleSetupTransactionPrefix,
+  getCrucibleSeedTransactionPrefix,
+  getCrucibleEntryTransactionPrefix,
+  isCrucibleEntryTransactionPrefix,
+} = await import('~/server/services/crucible.service');
 
 const entry = (id: number, userId: number, buzzTransactionId: string | null) => ({
   id,
@@ -35,6 +40,8 @@ const crucible = (overrides: Record<string, unknown> = {}) => ({
   status: CrucibleStatus.Active,
   entryFee: 100,
   buzzTransactionId: 'crucible-setup-4-abc',
+  seededPrizePool: 0,
+  seedTransactionId: null,
   entries: [entry(1, 10, 'entry-1-10'), entry(2, 11, 'entry-2-11')],
   ...overrides,
 });
@@ -183,6 +190,60 @@ describe('cancelCrucible — creator setup fee', () => {
   });
 });
 
+describe('cancelCrucible — seeded prize pool', () => {
+  const seeded = (overrides: Record<string, unknown> = {}) =>
+    crucible({ seededPrizePool: 5_000, seedTransactionId: 'crucible-seed-4-xyz', ...overrides });
+
+  it('returns the seed to the creator using the stored prefix', async () => {
+    findUnique.mockResolvedValue(seeded());
+
+    const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
+
+    const prefixes = refundMultiAccountTransaction.mock.calls.map(
+      ([arg]) => arg.externalTransactionIdPrefix
+    );
+    expect(prefixes).toContain('crucible-seed-4-xyz');
+    expect(result.refundedSeed).toBe(5_000);
+  });
+
+  it('keeps the seed out of totalRefunded, which is the entrants money', async () => {
+    findUnique.mockResolvedValue(seeded());
+
+    const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
+
+    expect(result.totalRefunded).toBe(200); // 2 entries x 100, seed excluded
+  });
+
+  it('makes no refund call at all for an unseeded crucible', async () => {
+    // A prefix matching zero transactions makes the refund 404, so an unseeded crucible must not
+    // reach the refund at all rather than relying on the error being swallowed.
+    const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
+
+    const prefixes = refundMultiAccountTransaction.mock.calls.map(
+      ([arg]) => arg.externalTransactionIdPrefix
+    );
+    expect(prefixes).toEqual(['entry-1-10', 'entry-2-11', 'crucible-setup-4-abc']);
+    expect(result.refundedSeed).toBe(0);
+  });
+
+  it('completes the cancellation, reporting no seed refunded, when the seed refund fails', async () => {
+    findUnique.mockResolvedValue(seeded());
+    refundMultiAccountTransaction.mockImplementation(({ externalTransactionIdPrefix }) => {
+      if (externalTransactionIdPrefix === 'crucible-seed-4-xyz') throw new Error('buzz down');
+      return Promise.resolve(undefined);
+    });
+
+    const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
+
+    expect(result.refundedSeed).toBe(0);
+    expect(result.failedRefunds).toEqual([]);
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 1 },
+      data: { status: CrucibleStatus.Cancelled },
+    });
+  });
+});
+
 describe('cancelCrucible — cleanup', () => {
   it('expires the Redis ELO data rather than leaving it forever', async () => {
     await cancelCrucible({ id: 1, userId: 4, isModerator: true });
@@ -204,6 +265,16 @@ describe('transaction prefixes', () => {
   it('recognises its own entry prefixes and not the setup ones', () => {
     expect(isCrucibleEntryTransactionPrefix(getCrucibleEntryTransactionPrefix(7, 42))).toBe(true);
     expect(isCrucibleEntryTransactionPrefix(getCrucibleSetupTransactionPrefix(42))).toBe(false);
+    expect(isCrucibleEntryTransactionPrefix(getCrucibleSeedTransactionPrefix(42))).toBe(false);
     expect(isCrucibleEntryTransactionPrefix('something-else')).toBe(false);
+  });
+
+  it('keeps the seed prefix from prefix-matching the setup one, so refunds stay separable', () => {
+    const setup = getCrucibleSetupTransactionPrefix(42);
+    const seed = getCrucibleSeedTransactionPrefix(42);
+
+    expect(seed).not.toBe(setup);
+    expect(seed.startsWith(setup)).toBe(false);
+    expect(setup.startsWith(seed)).toBe(false);
   });
 });

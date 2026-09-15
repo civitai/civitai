@@ -8331,6 +8331,7 @@ model Crucible {
   nsfwLevel         Int            @default(0)
   contentType       MediaType      @default(image)
   entryFee          Int            @default(0)
+  seededPrizePool   Int            @default(0)
   entryLimit        Int            @default(1)
   maxTotalEntries   Int?
   prizePositions    Json           @default("[]")
@@ -8342,6 +8343,7 @@ model Crucible {
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
   buzzTransactionId String?
+  seedTransactionId String?
 
   entries CrucibleEntry[]
 

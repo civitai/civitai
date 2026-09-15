@@ -2173,6 +2173,7 @@ export type Crucible = {
   nsfwLevel: Generated<number>;
   contentType: Generated<MediaType>;
   entryFee: Generated<number>;
+  seededPrizePool: Generated<number>;
   entryLimit: Generated<number>;
   maxTotalEntries: number | null;
   prizePositions: Generated<unknown>;
@@ -2184,6 +2185,7 @@ export type Crucible = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
   buzzTransactionId: string | null;
+  seedTransactionId: string | null;
 };
 export type CrucibleEntry = {
   id: Generated<number>;

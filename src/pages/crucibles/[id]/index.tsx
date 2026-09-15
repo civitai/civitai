@@ -16,6 +16,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { getCrucibleTotalPrizePool } from '~/utils/crucible-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client';
@@ -78,7 +79,11 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
         title: 'Crucible Cancelled',
         message: `Successfully cancelled. ${
           result.refundedEntries
-        } entries refunded (${result.totalRefunded.toLocaleString()} Buzz total).`,
+        } entries refunded (${result.totalRefunded.toLocaleString()} Buzz total).${
+          result.refundedSeed > 0
+            ? ` Seeded prize pool of ${result.refundedSeed.toLocaleString()} Buzz returned to the creator.`
+            : ''
+        }`,
       });
       // Invalidate the query to refetch the crucible data
       queryUtils.crucible.getById.invalidate({ id });
@@ -98,7 +103,12 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   const prizePositions = parsePrizePositions(crucible.prizePositions);
   const entryCount = crucible._count?.entries ?? 0;
-  const totalPrizePool = crucible.entryFee * entryCount;
+  const entryFeePool = crucible.entryFee * entryCount;
+  const totalPrizePool = getCrucibleTotalPrizePool({
+    entryFee: crucible.entryFee,
+    entryCount,
+    seededPrizePool: crucible.seededPrizePool,
+  });
   const isActive = crucible.status === CrucibleStatus.Active;
   const isPending = crucible.status === CrucibleStatus.Pending;
   const canSubmitEntries = isActive || isPending;
@@ -134,8 +144,14 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
           </Text>
           <Text size="sm" c="dimmed">
             All entry fees ({entryCount} entries × {crucible.entryFee.toLocaleString()} Buzz ={' '}
-            {totalPrizePool.toLocaleString()} Buzz total) will be refunded to participants.
+            {entryFeePool.toLocaleString()} Buzz total) will be refunded to participants.
           </Text>
+          {crucible.seededPrizePool > 0 && (
+            <Text size="sm" c="dimmed">
+              The seeded prize pool ({crucible.seededPrizePool.toLocaleString()} Buzz) will be
+              returned to the creator.
+            </Text>
+          )}
         </Stack>
       ),
       centered: true,
@@ -174,6 +190,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
             status: crucible.status,
             nsfwLevel: crucible.nsfwLevel,
             entryFee: crucible.entryFee,
+            seededPrizePool: crucible.seededPrizePool,
             endAt: crucible.endAt,
             user: crucible.user,
             image: crucible.image,

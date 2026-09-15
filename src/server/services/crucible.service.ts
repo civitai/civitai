@@ -50,6 +50,7 @@ import { createLogger } from '~/utils/logging';
 import { createNotification } from '~/server/services/notification.service';
 import { NotificationCategory } from '~/server/common/enums';
 import { imageResourcesCache } from '~/server/redis/caches';
+import { getCrucibleTotalPrizePool } from '~/utils/crucible-helpers';
 
 const log = createLogger('crucible-service', 'cyan');
 
@@ -59,6 +60,14 @@ const log = createLogger('crucible-service', 'cyan');
  */
 export const getCrucibleSetupTransactionPrefix = (userId: number): string => {
   return `crucible-setup-${userId}-${Date.now()}`;
+};
+
+/**
+ * Prefix for the creator's seeded prize pool. Kept apart from the setup-fee prefix so the seed can
+ * be returned on its own: the setup fee is revenue, the seed is prize money the crucible owes.
+ */
+export const getCrucibleSeedTransactionPrefix = (userId: number): string => {
+  return `crucible-seed-${userId}-${Date.now()}`;
 };
 
 /**
@@ -78,6 +87,7 @@ export const createCrucible = async ({
   prizeCustomized,
   allowedResources,
   duration,
+  seededPrizePool,
 }: CreateCrucibleInputSchema & { userId: number }) => {
   const now = new Date();
   const startAt = now;
@@ -85,25 +95,51 @@ export const createCrucible = async ({
 
   // Calculate setup cost based on duration and prize customization
   const setupCost = calculateCrucibleSetupCost(duration, prizeCustomized ?? false);
+  const seedAmount = seededPrizePool ?? 0;
+  const totalDebit = setupCost + seedAmount;
 
-  // If there's a setup cost, validate user has sufficient Buzz and charge them
   let buzzTransactionId: string | null = null;
+  let seedTransactionId: string | null = null;
+  const chargedPrefixes: string[] = [];
 
-  if (setupCost > 0) {
-    // Check if user has sufficient Buzz
+  const refundCreatorCharges = async (reason: string) => {
+    for (const prefix of chargedPrefixes) {
+      try {
+        await refundMultiAccountTransaction({
+          externalTransactionIdPrefix: prefix,
+          description: `Crucible creation refund - ${reason}`,
+          details: {
+            entityType: 'Crucible',
+            duration,
+            prizeCustomized: prizeCustomized ?? false,
+          },
+        });
+        log(`Refunded ${prefix} for user ${userId} (${reason})`);
+      } catch (refundError) {
+        const refundErrorMsg = refundError instanceof Error ? refundError.message : 'Unknown error';
+        log(`CRITICAL: Failed to refund ${prefix} for user ${userId}: ${refundErrorMsg}`);
+      }
+    }
+  };
+
+  // Both legs are checked against one balance read: charging the fee and then discovering the seed
+  // is unaffordable would leave a debit to unwind for a crucible that was never created.
+  if (totalDebit > 0) {
     const userAccount = await getUserBuzzAccount({
       accountId: userId,
       accountTypes: ['yellow', 'green'],
     });
     const totalBalance = userAccount.reduce((sum, acc) => sum + acc.balance, 0);
 
-    if (totalBalance < setupCost) {
-      const shortage = setupCost - totalBalance;
+    if (totalBalance < totalDebit) {
+      const shortage = totalDebit - totalBalance;
       throwInsufficientFundsError(
-        `You need ${setupCost.toLocaleString()} Buzz to create this crucible. You currently have ${totalBalance.toLocaleString()} Buzz (${shortage.toLocaleString()} Buzz short).`
+        `You need ${totalDebit.toLocaleString()} Buzz to create this crucible. You currently have ${totalBalance.toLocaleString()} Buzz (${shortage.toLocaleString()} Buzz short).`
       );
     }
+  }
 
+  if (setupCost > 0) {
     // Generate transaction prefix for potential refunds
     const transactionPrefix = getCrucibleSetupTransactionPrefix(userId);
 
@@ -124,13 +160,41 @@ export const createCrucible = async ({
     });
 
     buzzTransactionId = transactionPrefix;
+    chargedPrefixes.push(transactionPrefix);
     log(
       `Charged ${setupCost} Buzz setup fee for user ${userId} (transaction: ${transactionPrefix})`
     );
   }
 
-  // Create the crucible with cover image in a transaction
-  // Wrap in try/catch to refund setup fee if database write fails
+  if (seedAmount > 0) {
+    const transactionPrefix = getCrucibleSeedTransactionPrefix(userId);
+
+    try {
+      await createMultiAccountBuzzTransaction({
+        fromAccountId: userId,
+        fromAccountTypes: ['yellow', 'green'],
+        toAccountId: 0, // Central bank holds the pool until finalization pays it out
+        amount: seedAmount,
+        type: TransactionType.Purchase,
+        externalTransactionIdPrefix: transactionPrefix,
+        description: 'Crucible seeded prize pool',
+        details: {
+          entityType: 'Crucible',
+          seededPrizePool: seedAmount,
+        },
+      });
+    } catch (error) {
+      await refundCreatorCharges('seeded prize pool charge failed');
+      throw error;
+    }
+
+    seedTransactionId = transactionPrefix;
+    chargedPrefixes.push(transactionPrefix);
+    log(
+      `Charged ${seedAmount} Buzz seeded prize pool for user ${userId} (transaction: ${transactionPrefix})`
+    );
+  }
+
   try {
     const crucible = await dbWrite.$transaction(async (tx) => {
       // First, create the Image record from the CF upload data
@@ -156,6 +220,7 @@ export const createCrucible = async ({
           nsfwLevel,
           contentType,
           entryFee,
+          seededPrizePool: seedAmount,
           entryLimit,
           maxTotalEntries: maxTotalEntries ?? null,
           prizePositions: prizePositions as Prisma.JsonObject,
@@ -167,6 +232,7 @@ export const createCrucible = async ({
           endAt,
           status: CrucibleStatus.Active,
           buzzTransactionId, // Store the setup fee transaction ID for potential refunds
+          seedTransactionId,
         },
       });
 
@@ -175,30 +241,8 @@ export const createCrucible = async ({
 
     return crucible;
   } catch (error) {
-    // Database write failed - refund setup fee if it was charged
-    if (buzzTransactionId) {
-      try {
-        await refundMultiAccountTransaction({
-          externalTransactionIdPrefix: buzzTransactionId,
-          description: 'Crucible creation fee refund - database write failed',
-          details: {
-            entityType: 'Crucible',
-            duration,
-            prizeCustomized: prizeCustomized ?? false,
-          },
-        });
-        log(
-          `Refunded setup fee for user ${userId} after database failure (transaction: ${buzzTransactionId})`
-        );
-      } catch (refundError) {
-        const refundErrorMsg = refundError instanceof Error ? refundError.message : 'Unknown error';
-        log(
-          `CRITICAL: Failed to refund setup fee for user ${userId} after database failure: ${refundErrorMsg}`
-        );
-        // Re-throw original error even if refund fails so user is aware of the failure
-      }
-    }
-    // Re-throw the original error
+    await refundCreatorCharges('database write failed');
+    // Rethrown even when the refund failed, so the caller still sees the real failure.
     throw error;
   }
 };
@@ -1473,6 +1517,8 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       userId: true, // Crucible creator for notification
       status: true,
       entryFee: true,
+      seededPrizePool: true,
+      seedTransactionId: true,
       prizePositions: true,
       endAt: true,
       _count: {
@@ -1497,8 +1543,11 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
   // Get entry count from aggregation (no memory impact)
   const entryCount = crucible._count.entries;
 
-  // Calculate total prize pool
-  const totalPrizePool = crucible.entryFee * entryCount;
+  const totalPrizePool = getCrucibleTotalPrizePool({
+    entryFee: crucible.entryFee,
+    entryCount,
+    seededPrizePool: crucible.seededPrizePool,
+  });
 
   // Parse prize positions from JSON
   const prizePositions = parsePrizePositions(crucible.prizePositions);
@@ -1511,6 +1560,26 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
   // ============================================================================
   if (entryCount === 0) {
     log(`Edge case: Crucible ${crucibleId} has 0 entries - finalizing without prizes`);
+
+    // Nobody entered, so the seed has no winner to go to. Hand it back rather than stranding it in
+    // the bank; fail-soft, because a stuck refund must not block the crucible from completing.
+    if (crucible.seedTransactionId) {
+      try {
+        await refundMultiAccountTransaction({
+          externalTransactionIdPrefix: crucible.seedTransactionId,
+          description: 'Crucible seeded prize pool refund - no entries',
+          details: {
+            entityId: crucibleId,
+            entityType: 'Crucible',
+            reason: 'no-entries',
+          },
+        });
+        log(`Refunded seeded prize pool for crucible ${crucibleId} (no entries)`);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        log(`Failed to refund seeded prize pool for crucible ${crucibleId}: ${errorMessage}`);
+      }
+    }
 
     // Update crucible status to completed
     await dbWrite.crucible.update({
@@ -1533,7 +1602,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
         crucibleId,
         crucibleName: crucible.name,
         totalEntries: 0,
-        prizePool: 0,
+        prizePool: totalPrizePool,
       },
     }).catch((err) => {
       log(
@@ -1545,7 +1614,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
 
     return {
       crucibleId,
-      totalPrizePool: 0,
+      totalPrizePool,
       finalEntries: [],
       totalPrizesDistributed: 0,
     };
@@ -1756,6 +1825,26 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     }
   } else {
     log(`No prizes to distribute for crucible ${crucibleId} (no winners or 0 prize pool)`);
+
+    // Entries exist but nothing was paid out — an empty prizePositions map, or a seed small enough
+    // that every floored share is 0. Same stranding as the 0-entry case above, so same remedy.
+    if (crucible.seedTransactionId) {
+      try {
+        await refundMultiAccountTransaction({
+          externalTransactionIdPrefix: crucible.seedTransactionId,
+          description: 'Crucible seeded prize pool refund - no prizes awarded',
+          details: {
+            entityId: crucibleId,
+            entityType: 'Crucible',
+            reason: 'no-prizes-awarded',
+          },
+        });
+        log(`Refunded seeded prize pool for crucible ${crucibleId} (no prizes awarded)`);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        log(`Failed to refund seeded prize pool for crucible ${crucibleId}: ${errorMessage}`);
+      }
+    }
   }
 
   // Set TTL on Redis ELO hash for cleanup (7 days)
@@ -1864,7 +1953,9 @@ export const getCruciblesForFinalization = async (): Promise<number[]> => {
 export type CancelCrucibleResult = {
   crucibleId: number;
   refundedEntries: number;
+  /** Entrants' money only — the creator's seed is reported separately as `refundedSeed`. */
   totalRefunded: number;
+  refundedSeed: number;
   failedRefunds: Array<{ entryId: number; userId: number; error: string }>;
 };
 
@@ -1903,6 +1994,8 @@ export const cancelCrucible = async ({
       status: true,
       entryFee: true,
       buzzTransactionId: true, // Creator setup fee transaction
+      seededPrizePool: true,
+      seedTransactionId: true,
       entries: {
         select: {
           id: true,
@@ -2013,6 +2106,29 @@ export const cancelCrucible = async ({
     log(`No creator setup fee to refund for crucible ${id} (free crucible or legacy)`);
   }
 
+  // Return the creator's seeded prize pool. Guarded on the stored prefix rather than the amount:
+  // a prefix matching no transaction makes the refund 404, and an unseeded crucible has no prefix.
+  let refundedSeed = 0;
+  if (crucible.seedTransactionId) {
+    try {
+      await refundMultiAccountTransaction({
+        externalTransactionIdPrefix: crucible.seedTransactionId,
+        description: 'Crucible seeded prize pool refund - crucible cancelled',
+        details: {
+          entityId: crucible.id,
+          entityType: 'Crucible',
+          reason: 'cancellation',
+        },
+      });
+
+      refundedSeed = crucible.seededPrizePool;
+      log(`Refunded seeded prize pool of ${refundedSeed} Buzz for crucible ${id}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      log(`Failed to refund seeded prize pool for crucible ${id}: ${errorMessage}`);
+    }
+  }
+
   // Update crucible status to cancelled
   await dbWrite.crucible.update({
     where: { id },
@@ -2032,6 +2148,7 @@ export const cancelCrucible = async ({
     crucibleId: id,
     refundedEntries,
     totalRefunded,
+    refundedSeed,
     failedRefunds,
   };
 };
@@ -2220,6 +2337,7 @@ export const getUserActiveCrucibles = async ({
           id: true,
           name: true,
           entryFee: true,
+          seededPrizePool: true,
           endAt: true,
           image: {
             select: {
@@ -2275,7 +2393,11 @@ export const getUserActiveCrucibles = async ({
 
     // Only add/update if not already in map or we have a better position
     if (!existing || newBestPosition !== currentBestPosition) {
-      const prizePool = entry.crucible.entryFee * entry.crucible._count.entries;
+      const prizePool = getCrucibleTotalPrizePool({
+        entryFee: entry.crucible.entryFee,
+        entryCount: entry.crucible._count.entries,
+        seededPrizePool: entry.crucible.seededPrizePool,
+      });
       const timeRemaining = entry.crucible.endAt
         ? formatTimeRemaining(entry.crucible.endAt)
         : 'No end date';
@@ -2328,6 +2450,7 @@ export const getFeaturedCrucible = async (): Promise<{
       name: string;
       description: string | null;
       entryFee: number;
+      seededPrizePool: number;
       endAt: Date | null;
       imageUrl: string | null;
       entriesCount: bigint;
@@ -2339,15 +2462,16 @@ export const getFeaturedCrucible = async (): Promise<{
       c.name,
       c.description,
       c."entryFee",
+      c."seededPrizePool",
       c."endAt",
       i.url as "imageUrl",
       COUNT(ce.id) as "entriesCount",
-      c."entryFee" * COUNT(ce.id) as "prizePool"
+      c."seededPrizePool" + c."entryFee" * COUNT(ce.id) as "prizePool"
     FROM "Crucible" c
     LEFT JOIN "Image" i ON c."imageId" = i.id
     LEFT JOIN "CrucibleEntry" ce ON c.id = ce."crucibleId"
     WHERE c.status = ${CrucibleStatus.Active}
-    GROUP BY c.id, c.name, c.description, c."entryFee", c."endAt", i.url
+    GROUP BY c.id, c.name, c.description, c."entryFee", c."seededPrizePool", c."endAt", i.url
     ORDER BY "prizePool" DESC, "entriesCount" DESC
     LIMIT 1
   `;

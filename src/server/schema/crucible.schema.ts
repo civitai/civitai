@@ -8,6 +8,7 @@ import {
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_MAX_ENTRIES,
   CRUCIBLE_MAX_ENTRY_FEE,
+  CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
 } from '~/shared/constants/crucible.constants';
 
@@ -46,6 +47,7 @@ export type CrucibleImageSchema = z.infer<typeof crucibleImageSchema>;
 export {
   CRUCIBLE_CONTENT_TYPES,
   CRUCIBLE_DURATION_COSTS,
+  CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
 } from '~/shared/constants/crucible.constants';
 
@@ -70,6 +72,7 @@ export const createCrucibleInputSchema = z.object({
   nsfwLevel: z.number(),
   contentType: z.enum(CRUCIBLE_CONTENT_TYPES).default(MediaType.image),
   entryFee: z.number().min(0).max(CRUCIBLE_MAX_ENTRY_FEE),
+  seededPrizePool: z.number().int().min(0).max(CRUCIBLE_MAX_SEEDED_PRIZE_POOL).default(0),
   entryLimit: z.number().min(1).max(CRUCIBLE_MAX_ENTRIES),
   maxTotalEntries: z.number().min(1).optional(),
   prizePositions: z.record(z.string(), z.number()).refine(

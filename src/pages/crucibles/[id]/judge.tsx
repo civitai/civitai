@@ -41,6 +41,7 @@ import {
 } from '~/components/Crucible/CrucibleJudgingUI';
 import type { JudgingPairData } from '~/components/Crucible/CrucibleJudgingUI';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { getCrucibleTotalPrizePool } from '~/utils/crucible-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -302,7 +303,11 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
       </Container>
     );
   }
-  const totalPrizePool = crucible.entryFee * entryCount;
+  const totalPrizePool = getCrucibleTotalPrizePool({
+    entryFee: crucible.entryFee,
+    entryCount,
+    seededPrizePool: crucible.seededPrizePool,
+  });
 
   // Use client-side state for time remaining to avoid hydration mismatch
   // (new Date() returns different values on server vs client)
@@ -545,6 +550,7 @@ function EndCrucibleState({ crucibleId, crucibleName, sessionVotes }: EndCrucibl
                 id={c.id}
                 name={c.name}
                 entryFee={c.entryFee}
+                seededPrizePool={c.seededPrizePool}
                 entryCount={c._count?.entries ?? 0}
               />
             ))}
@@ -565,11 +571,18 @@ type SuggestedCrucibleCardProps = {
   id: number;
   name: string;
   entryFee: number;
+  seededPrizePool: number;
   entryCount: number;
 };
 
-function SuggestedCrucibleCard({ id, name, entryFee, entryCount }: SuggestedCrucibleCardProps) {
-  const totalPrizePool = entryFee * entryCount;
+function SuggestedCrucibleCard({
+  id,
+  name,
+  entryFee,
+  seededPrizePool,
+  entryCount,
+}: SuggestedCrucibleCardProps) {
+  const totalPrizePool = getCrucibleTotalPrizePool({ entryFee, entryCount, seededPrizePool });
   const pairsToJudge = Math.max(0, Math.floor((entryCount * (entryCount - 1)) / 2));
 
   return (
