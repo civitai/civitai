@@ -238,6 +238,22 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     }
   }, [currentUser, isLoadingPair, pairData]);
 
+  // Held in state rather than derived during render: `new Date()` differs between the server and
+  // the client, so deriving it inline is a hydration mismatch.
+  const [timeRemaining, setTimeRemaining] = useState<string | null>(null);
+
+  const endAt = crucible?.endAt;
+  useEffect(() => {
+    if (!endAt) return;
+
+    setTimeRemaining(getTimeRemaining(endAt));
+    const interval = setInterval(() => {
+      setTimeRemaining(getTimeRemaining(endAt));
+    }, 60000);
+
+    return () => clearInterval(interval);
+  }, [endAt]);
+
   // Loading state
   if (isLoadingCrucible) return <PageLoader />;
   if (!crucible) return <NotFound />;
@@ -303,31 +319,6 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
       </Container>
     );
   }
-  const totalPrizePool = getCrucibleTotalPrizePool({
-    entryFee: crucible.entryFee,
-    entryCount,
-    seededPrizePool: crucible.seededPrizePool,
-  });
-
-  // Use client-side state for time remaining to avoid hydration mismatch
-  // (new Date() returns different values on server vs client)
-  const [timeRemaining, setTimeRemaining] = useState<string | null>(null);
-
-  useEffect(() => {
-    const endAt = crucible.endAt;
-    if (!endAt) return;
-
-    // Calculate immediately on client hydration
-    setTimeRemaining(getTimeRemaining(endAt));
-
-    // Update every minute
-    const interval = setInterval(() => {
-      setTimeRemaining(getTimeRemaining(endAt));
-    }, 60000);
-
-    return () => clearInterval(interval);
-  }, [crucible.endAt]);
-
   return (
     <>
       <Meta
@@ -519,7 +510,7 @@ function EndCrucibleState({ crucibleId, crucibleName, sessionVotes }: EndCrucibl
         <IconTrophy className="mx-auto size-16 text-green-400" />
       </div>
       <Title order={2} className="mb-2 text-white">
-        You've rated all available pairs!
+        You&apos;ve rated all available pairs!
       </Title>
       <Text c="dimmed" mb="xl">
         {sessionVotes > 0
