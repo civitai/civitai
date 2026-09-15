@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS "Crucible" (
     "description" TEXT,
     "imageId" INTEGER,
     "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
+    "contentType" "MediaType" NOT NULL DEFAULT 'image',
     "entryFee" INTEGER NOT NULL DEFAULT 0,
     "entryLimit" INTEGER NOT NULL DEFAULT 1,
     "maxTotalEntries" INTEGER,

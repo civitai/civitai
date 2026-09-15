@@ -1,11 +1,13 @@
 import { Box, Button, Paper, Text, Title, SimpleGrid, Skeleton, Badge } from '@mantine/core';
 import { IconPhoto, IconTrophy, IconChartLine, IconUsers, IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import Link from 'next/link';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 
 export type CrucibleEntryData = {
   id: number;
@@ -24,6 +26,8 @@ export type CrucibleEntryData = {
     id: number;
     name: string | null;
     url: string;
+    type: MediaType;
+    metadata?: MixedObject | null;
     nsfwLevel: number;
     width: number | null;
     height: number | null;
@@ -165,11 +169,15 @@ function EntryCard({ entry, rank, isUserEntry, onClick }: EntryCardProps) {
       {/* Image container with 4:5 aspect ratio */}
       <div className="relative" style={{ aspectRatio: '4 / 5' }}>
         <div className="absolute inset-0 bg-[#373a40]">
-          <EdgeMedia
+          <EdgeMedia2
             src={entry.image.url}
             name={entry.image.name}
-            type="image"
-            className="size-full object-cover transition-transform duration-300 group-hover:scale-105"
+            type={entry.image.type}
+            metadata={entry.image.metadata}
+            skip={getSkipValue({ type: entry.image.type, metadata: entry.image.metadata })}
+            className="transition-transform duration-300 group-hover:scale-105"
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            wrapperProps={{ className: 'size-full' }}
             width={320}
           />
         </div>

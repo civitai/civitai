@@ -1,4 +1,4 @@
-import { CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 
 /**
  * Crucible feature constants
@@ -40,3 +40,9 @@ export const CRUCIBLE_PRIZE_CUSTOMIZATION_COST = 1000;
  */
 export const crucibleRankingsAreFinal = (status: CrucibleStatus) =>
   status === CrucibleStatus.Completed || status === CrucibleStatus.Cancelled;
+
+/**
+ * Media types entries may be. Audio is excluded: judging is a side-by-side visual comparison.
+ */
+export const CRUCIBLE_CONTENT_TYPES = [MediaType.image, MediaType.video] as const;
+export type CrucibleContentType = (typeof CRUCIBLE_CONTENT_TYPES)[number];

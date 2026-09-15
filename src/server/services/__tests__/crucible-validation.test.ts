@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   calculateCrucibleSetupCost,
   cancelCrucibleSchema,
@@ -10,12 +10,26 @@ import {
   submitVoteSchema,
 } from '~/server/schema/crucible.schema';
 import { CrucibleSort } from '~/server/common/enums';
+import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
+import { dbMock } from '~/__tests__/mocks';
+import type * as NotificationService from '~/server/services/notification.service';
 import {
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_MAX_ENTRIES,
   CRUCIBLE_MAX_ENTRY_FEE,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
 } from '~/shared/constants/crucible.constants';
+
+const createNotification = vi.fn();
+
+vi.mock('~/server/services/notification.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationService>()),
+  createNotification,
+}));
+
+// `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
+// and reset per test file — see docs/testing/shared-module-mocks.md.
+const { submitEntry } = await import('~/server/services/crucible.service');
 
 const validCoverImage = {
   url: '6a1c3f3d-29e5-49c1-816f-bfc0f7c5c900',
@@ -154,6 +168,24 @@ describe('createCrucibleInputSchema', () => {
       false
     );
   });
+
+  it('defaults contentType to image, so existing crucibles behave unchanged', () => {
+    expect(createCrucibleInputSchema.parse(validCreateInput).contentType).toBe(MediaType.image);
+  });
+
+  it('accepts video as a content type', () => {
+    expect(
+      createCrucibleInputSchema.parse({ ...validCreateInput, contentType: MediaType.video })
+        .contentType
+    ).toBe(MediaType.video);
+  });
+
+  it('rejects audio as a content type — entries are judged by looking at them', () => {
+    expect(
+      createCrucibleInputSchema.safeParse({ ...validCreateInput, contentType: MediaType.audio })
+        .success
+    ).toBe(false);
+  });
 });
 
 describe('calculateCrucibleSetupCost', () => {
@@ -237,5 +269,66 @@ describe('getCruciblesInfiniteSchema', () => {
 
   it('rejects an unknown sort', () => {
     expect(getCruciblesInfiniteSchema.safeParse({ sort: 'Whatever' }).success).toBe(false);
+  });
+});
+
+const crucibleRow = (contentType: MediaType) => ({
+  id: 1,
+  name: 'Test Crucible',
+  userId: 99,
+  status: CrucibleStatus.Active,
+  nsfwLevel: 1,
+  contentType,
+  entryFee: 0,
+  entryLimit: 1,
+  maxTotalEntries: null,
+  allowedResources: null,
+  endAt: new Date(Date.now() + 60_000),
+  _count: { entries: 0 },
+});
+
+const imageRow = (type: MediaType) => ({ id: 7, userId: 42, type, nsfwLevel: 1 });
+
+const submit = () => submitEntry({ crucibleId: 1, imageId: 7, userId: 42 });
+
+describe('submitEntry — content type', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createNotification.mockResolvedValue(undefined);
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow(MediaType.image));
+    dbMock.dbRead.crucibleEntry.count.mockResolvedValue(0);
+    dbMock.dbRead.crucibleEntry.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.image));
+    dbMock.dbWrite.crucibleEntry.create.mockResolvedValue({
+      id: 5,
+      user: { username: 'tester' },
+    });
+  });
+
+  it('accepts an image in an image crucible — the pre-video behaviour', async () => {
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+    expect(dbMock.dbWrite.crucibleEntry.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a video in an image crucible', async () => {
+    dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.video));
+
+    await expect(submit()).rejects.toThrow(/only accepts image entries/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it('accepts a video in a video crucible', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow(MediaType.video));
+    dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.video));
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+    expect(dbMock.dbWrite.crucibleEntry.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an image in a video crucible', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow(MediaType.video));
+
+    await expect(submit()).rejects.toThrow(/only accepts video entries/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
   });
 });

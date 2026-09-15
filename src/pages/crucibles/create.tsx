@@ -29,6 +29,7 @@ import {
   IconTicket,
   IconTrash,
   IconTrophy,
+  IconVideo,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
@@ -46,8 +47,9 @@ import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useStepper } from '~/hooks/useStepper';
 import { Form, InputNumber, InputSelect, InputText, InputTextArea, useForm } from '~/libs/form';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import type { CrucibleContentType } from '~/shared/constants/crucible.constants';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
-import { Currency } from '~/shared/utils/prisma/enums';
+import { Currency, MediaType } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -94,6 +96,13 @@ const durationOptions = [
   { value: '168', label: '7 days', cost: 2000, isFree: false, disabled: true },
 ];
 
+type ContentTypeOption = { value: CrucibleContentType; label: string; Icon: typeof IconPhoto };
+
+const contentTypeOptions: ContentTypeOption[] = [
+  { value: MediaType.image, label: 'Images', Icon: IconPhoto },
+  { value: MediaType.video, label: 'Videos', Icon: IconVideo },
+];
+
 // Default prize distribution
 const defaultPrizePositions: Record<string, number> = {
   '1': 50,
@@ -111,6 +120,7 @@ type FormData = {
   nsfwLevel: number;
 
   // Step 2: Entry Rules
+  contentType: CrucibleContentType;
   entryFee: number;
   entryLimit: number;
   maxTotalEntries?: number;
@@ -129,6 +139,7 @@ const formSchema: FormData = {
   nsfwLevel: 1, // Default to PG
 
   // Step 2: Entry Rules
+  contentType: MediaType.image,
   entryFee: 100,
   entryLimit: 1,
   maxTotalEntries: undefined,
@@ -304,6 +315,7 @@ export default function CrucibleCreate() {
         hash: imageFile.hash,
       },
       nsfwLevel: formData.nsfwLevel,
+      contentType: formData.contentType,
       entryFee: formData.entryFee,
       entryLimit: formData.entryLimit,
       maxTotalEntries: formData.maxTotalEntries,
@@ -465,6 +477,33 @@ export default function CrucibleCreate() {
 
   const renderStep2 = () => (
     <Stack gap="xl">
+      <Input.Wrapper
+        label="Content Type"
+        description="What entrants submit and judges compare"
+        withAsterisk
+      >
+        <SimpleGrid cols={2} mt={8}>
+          {contentTypeOptions.map(({ value, label, Icon }) => (
+            <Paper
+              key={value}
+              className={`cursor-pointer border p-3 transition-all ${
+                formData.contentType === value
+                  ? 'border-blue-500 bg-blue-500/20'
+                  : 'border-dark-4 hover:border-blue-500'
+              }`}
+              onClick={() => updateFormData({ contentType: value })}
+            >
+              <Group gap={6} justify="center">
+                <Icon size={16} />
+                <Text size="sm" fw={500}>
+                  {label}
+                </Text>
+              </Group>
+            </Paper>
+          ))}
+        </SimpleGrid>
+      </Input.Wrapper>
+
       {/* Entry Fee */}
       <Input.Wrapper
         label="Entry Fee per User"
@@ -852,6 +891,12 @@ export default function CrucibleCreate() {
             <Text fw={600}>Entry Settings</Text>
           </Group>
           <Stack gap="sm">
+            <Group justify="space-between">
+              <Text c="dimmed">Content Type</Text>
+              <Text fw={500}>
+                {contentTypeOptions.find((o) => o.value === formData.contentType)?.label}
+              </Text>
+            </Group>
             <Group justify="space-between">
               <Text c="dimmed">Entry Fee</Text>
               <CurrencyBadge unitAmount={formData.entryFee} currency={Currency.BUZZ} />

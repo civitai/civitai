@@ -29,7 +29,7 @@ import {
   parsePrizePositions,
 } from '~/components/Crucible/CruciblePrizeBreakdown';
 import { crucibleRankingsAreFinal } from '~/shared/constants/crucible.constants';
-import { CrucibleStatus, Currency } from '~/shared/utils/prisma/enums';
+import { CrucibleStatus, Currency, MediaType } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Gated } from '~/components/Gated/Gated';
@@ -228,6 +228,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
               <CrucibleEntryGrid
                 entries={crucible.entries.map((e) => ({
                   ...e,
+                  image: { ...e.image, metadata: (e.image.metadata as MixedObject) ?? null },
                   user: {
                     ...e.user,
                     deletedAt: null,
@@ -280,6 +281,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                         entryFee: crucible.entryFee,
                         entryLimit: maxUserEntries,
                         nsfwLevel: crucible.nsfwLevel,
+                        contentType: crucible.contentType,
                         currentEntryCount: userEntryCount,
                       });
                     }}
@@ -354,6 +356,13 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                 </Title>
 
                 <div className="flex flex-col gap-3">
+                  <RuleItem
+                    label="Accepted Entries"
+                    content={
+                      crucible.contentType === MediaType.video ? 'Videos only' : 'Images only'
+                    }
+                  />
+
                   {/* NSFW Level */}
                   <RuleItem
                     label="Content Levels"

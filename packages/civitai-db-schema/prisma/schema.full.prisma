@@ -8329,6 +8329,7 @@ model Crucible {
   imageId           Int?
   image             Image?         @relation(fields: [imageId], references: [id], onDelete: SetNull)
   nsfwLevel         Int            @default(0)
+  contentType       MediaType      @default(image)
   entryFee          Int            @default(0)
   entryLimit        Int            @default(1)
   maxTotalEntries   Int?
