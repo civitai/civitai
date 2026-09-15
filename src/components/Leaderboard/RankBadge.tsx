@@ -40,6 +40,7 @@ export const RankBadge = ({
               src={rank.leaderboardCosmetic}
               alt={`${rank.leaderboardTitle} position #${rank.leaderboardRank}`}
               width={32}
+              optimized
             />
           </Box>
         ) : null}

@@ -7,6 +7,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useOptimizedFlag } from '~/hooks/useMediaQuality';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { generationFormStore } from '~/store/generation-form.store';
 import { generationGraphPanel } from '~/store/generation-graph.store';
@@ -89,6 +90,7 @@ function ChallengeInvitation2({ onClose, ...props }: ChallengeDetails & { onClos
     onClose();
   }
   const date = startOfDay(props.date);
+  const optimized = useOptimizedFlag();
 
   // Use challengeId for navigation to challenge detail page
   const detailUrl = `/challenges/${props.challengeId}`;
@@ -100,6 +102,7 @@ function ChallengeInvitation2({ onClose, ...props }: ChallengeDetails & { onClos
         style={{
           backgroundImage: `url(${getEdgeUrl(props.coverUrl, {
             width: DEFAULT_EDGE_IMAGE_WIDTH * 2.5,
+            optimized,
           })})`,
           backgroundSize: 'cover',
           backgroundPosition: 'center',

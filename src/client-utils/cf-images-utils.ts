@@ -1,5 +1,4 @@
 import { useMemo } from 'react';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import {
   getEdgeUrl,
@@ -8,30 +7,32 @@ import {
   resolveOptimized,
   type EdgeUrlProps,
 } from '~/client-utils/edge-url';
+import { useMediaQuality } from '~/hooks/useMediaQuality';
 
 // The pure URL builder now lives in `~/client-utils/edge-url` (React-free, so server
 // modules can resolve a delivery URL without pulling hooks/providers into their import
 // graph). Re-exported here so every existing consumer of this module is unaffected.
 export {
   COMMON_IMAGE_WIDTHS,
-  OPTIMIZED_WIDTH_THRESHOLD,
+  MAX_EDGE_WIDTH,
   SRCSET_DPR,
   getEdgeUrl,
   getEdgeUrlSrcSet,
   getInferredMediaType,
   resolveOptimized,
-  shouldForceOptimized,
+  resolvesToOriginal,
   snapWidthToCommonSize,
+  toMediaQuality,
 } from '~/client-utils/edge-url';
-export type { EdgeUrlProps } from '~/client-utils/edge-url';
+export type { EdgeUrlProps, MediaQuality } from '~/client-utils/edge-url';
 
-/** @param hiDpi emit a 2x `srcSet` variant, and force the optimized format — see `resolveOptimized`. */
+/** @param hiDpi also emit a variant sized for a 2x display. The format is the viewer's. */
 export function useEdgeUrl(
   src: string,
   options: Omit<EdgeUrlProps, 'src'> | undefined,
   hiDpi?: boolean
 ) {
-  const currentUser = useCurrentUser();
+  const { quality } = useMediaQuality();
   const inferredType = getInferredMediaType(src, options);
   let type = options?.type ?? inferredType;
 
@@ -54,8 +55,12 @@ export function useEdgeUrl(
   const optimized = resolveOptimized({
     optimized: options?.optimized,
     width: options?.width,
-    hiDpi,
-    imageFormat: currentUser?.filePreferences?.imageFormat,
+    height: options?.height,
+    original: options?.original,
+    // Video transcodes to MP4/WebM for everyone, so lossless buys nothing. Keyed off the SOURCE
+    // media, so a poster built from a separate `thumbnailUrl` (an image uuid) does NOT reach this
+    // — `EdgeVideo` passes `optimized` itself there.
+    quality: inferredType === 'video' ? 'compressed' : quality,
   });
 
   const resolved = {

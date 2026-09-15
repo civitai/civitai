@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { getEdgeUrl, shouldForceOptimized } from '~/client-utils/edge-url';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 
 /**
  * Shared, isomorphic helpers for the announcement banner image.
@@ -18,7 +18,7 @@ import { getEdgeUrl, shouldForceOptimized } from '~/client-utils/edge-url';
  */
 
 /**
- * The width `Announcement.tsx` renders the banner at. Load-bearing: the edge URL
+ * The width `AnnouncementCard.tsx` renders the banner at. Load-bearing: the edge URL
  * that users actually request is derived from this number, so the monitor must use
  * the same value.
  */
@@ -28,14 +28,10 @@ export const ANNOUNCEMENT_IMAGE_WIDTH = 200;
  * The exact variant URL a browser requests for an announcement banner.
  *
  * Mirrors what `useEdgeUrl` computes for `<EdgeMedia src={key} width={ANNOUNCEMENT_IMAGE_WIDTH} />`:
- *  - the render path forces `optimized=true` at or below `OPTIMIZED_WIDTH_THRESHOLD`,
- *    read here through the SAME `shouldForceOptimized` predicate `useEdgeUrl` uses
- *    (hardcoding `optimized: true` would let a threshold change silently make the
- *    monitor probe a variant nobody loads, and then alert on a healthy banner); and
+ *  - `AnnouncementCard.tsx` passes `optimized` explicitly, which `resolveOptimized` honours ahead
+ *    of the viewer's media quality, so the banner has ONE variant the monitor can name. A renderer
+ *    that stopped passing it would leave the monitor probing a variant nobody loads; and
  *  - `getEdgeUrl` snaps the width up the common-size ladder (200 -> 320).
- *
- * `useEdgeUrl` emits `optimized: undefined` rather than `false` when it does not
- * apply, so the flag is dropped from the URL entirely — matched here.
  *
  * Do NOT substitute `{ original: true }` here. The original object and the derived
  * variant are different cache/derivation paths — the original can serve 200 while
@@ -43,10 +39,7 @@ export const ANNOUNCEMENT_IMAGE_WIDTH = 200;
  * went unnoticed.
  */
 export function getAnnouncementImageUrl(key: string) {
-  return getEdgeUrl(key, {
-    width: ANNOUNCEMENT_IMAGE_WIDTH,
-    optimized: shouldForceOptimized(ANNOUNCEMENT_IMAGE_WIDTH) ? true : undefined,
-  });
+  return getEdgeUrl(key, { width: ANNOUNCEMENT_IMAGE_WIDTH, optimized: true });
 }
 
 /**

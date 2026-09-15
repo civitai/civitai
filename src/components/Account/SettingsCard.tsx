@@ -10,11 +10,15 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
+import { IconDiamond } from '@tabler/icons-react';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/router';
 import produce from 'immer';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useModelFileOptions } from '~/hooks/useModelFileOptions';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { useMediaQuality } from '~/hooks/useMediaQuality';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 // import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
@@ -74,28 +78,7 @@ export function SettingsCard() {
         <Divider label="Image Preferences" mb={-12} />
         <Group wrap="nowrap" grow>
           <AutoplayGifsToggle />
-          <Select
-            label="Preferred Format"
-            name="imageFormat"
-            data={[
-              {
-                value: 'optimized',
-                label: 'Optimized (avif, webp)',
-              },
-              {
-                value: 'metadata',
-                label: 'Unoptimized (jpeg, png)',
-              },
-            ]}
-            value={user.filePreferences?.imageFormat ?? 'metadata'}
-            onChange={(value: string | null) =>
-              mutate({
-                id: user.id,
-                filePreferences: { ...user.filePreferences, imageFormat: value as ImageFormat },
-              })
-            }
-            disabled={isLoading}
-          />
+          <ImageFormatSelect withLabel />
         </Group>
         <SwipeGalleryCardsToggle />
         <StickerMotionToggle />
@@ -388,7 +371,7 @@ export function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }
  * control rather than two copies that can drift while the `accountSettingsV2` flag is alive.
  * They carry no label of their own — the pane's `SettingRow` supplies it.
  */
-function useFilePreferenceUpdate() {
+function useFilePreferenceUpdate({ onError }: { onError?: () => void } = {}) {
   const user = useCurrentUser();
   const queryUtils = trpc.useUtils();
   const { mutate, isPending } = trpc.user.update.useMutation({
@@ -396,6 +379,15 @@ function useFilePreferenceUpdate() {
       await queryUtils.model.getAll.invalidate();
       await user?.refresh();
       showSuccessNotification({ message: 'User profile updated' });
+    },
+    // Nothing handles a rejected mutation globally, so without this a failed save is silent and any
+    // control holding an optimistic value keeps showing a preference that was never persisted.
+    onError() {
+      showErrorNotification({
+        title: 'Failed to update preferences',
+        error: new Error('Something went wrong, please try again later.'),
+      });
+      onError?.();
     },
   });
 
@@ -407,18 +399,71 @@ function useFilePreferenceUpdate() {
   return { user, update, isPending };
 }
 
-export function ImageFormatSelect() {
-  const { user, update, isPending } = useFilePreferenceUpdate();
+/** @param withLabel render the control's own label; the settings panes label the `SettingRow` instead. */
+export function ImageFormatSelect({ withLabel }: { withLabel?: boolean } = {}) {
+  // `quality` comes off the SESSION, which only updates once `user.refresh()` round-trips the auth
+  // hub. Without this local override the select snaps back for that whole window and the save reads
+  // as having failed.
+  const [chosen, setChosen] = useState<string | null>(null);
+  const { user, update, isPending } = useFilePreferenceUpdate({
+    onError: () => setChosen(null),
+  });
+  const { canUseLossless, quality } = useMediaQuality();
+  const router = useRouter();
+  // Their stored choice is left alone: a non-member who picked lossless before the gate reads as
+  // Compressed, and gets it back if they subscribe.
+  const served = quality === 'lossless' ? 'metadata' : 'optimized';
+  useEffect(() => setChosen(null), [served]);
   if (!user) return null;
+
   return (
     <Select
-      aria-label="Preferred image format"
+      aria-label="Media quality"
+      label={withLabel ? 'Media quality' : undefined}
+      // Mantine deselects on re-clicking the current option, which would call onChange(null) ->
+      // `update({ imageFormat: null })` -> rejected by the zod `z.string()` with no toast and no
+      // write, while the local override below kept showing the value that never saved.
+      allowDeselect={false}
+      value={chosen ?? served}
+      // Uncompressed stays selectable for a non-member on purpose — the click is the upsell, and
+      // `onChange` routes them instead of saving.
+      //
+      // Named for the step it skips, not for fidelity: this path still resizes to the requested
+      // width, so it is not bit-exact and must not be sold as lossless. Only `original=true` — the
+      // download shape — is the stored file.
       data={[
-        { value: 'optimized', label: 'Optimized (avif, webp)' },
-        { value: 'metadata', label: 'Unoptimized (jpeg, png)' },
+        { value: 'optimized', label: 'Compressed' },
+        { value: 'metadata', label: 'Uncompressed' },
       ]}
-      value={user.filePreferences?.imageFormat ?? 'metadata'}
-      onChange={(value: string | null) => update({ imageFormat: value })}
+      renderOption={({ option }) => (
+        <Group gap="xs" justify="space-between" wrap="nowrap" w="100%">
+          <Text size="sm">{option.label}</Text>
+          {option.value === 'metadata' && !canUseLossless && (
+            <Badge
+              size="xs"
+              variant="gradient"
+              gradient={{ from: 'violet', to: 'indigo', deg: 135 }}
+              leftSection={<IconDiamond size={10} />}
+            >
+              Pro
+            </Badge>
+          )}
+        </Group>
+      )}
+      onChange={(value: string | null) => {
+        if (!value) return;
+        if (value === 'metadata' && !canUseLossless) {
+          // Deliberately skips `update`, which raises the "preferences saved" toast — nothing they
+          // are served would have changed.
+          router.push({
+            pathname: '/pricing',
+            query: { returnUrl: router.asPath, utm_campaign: 'media_quality_lossless' },
+          });
+          return;
+        }
+        setChosen(value);
+        update({ imageFormat: value });
+      }}
       disabled={isPending}
     />
   );

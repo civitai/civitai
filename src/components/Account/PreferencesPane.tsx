@@ -27,7 +27,12 @@ export function PreferencesPane() {
 
   return (
     <SettingsStack>
-      <SettingsSection title="Media playback">
+      <SettingsSection title="Media quality & playback">
+        <SettingRow
+          label="Media quality"
+          description="Quality of images while you browse. Uncompressed skips our extra compression; images are still resized to fit. Downloads always give you the original file."
+          control={<ImageFormatSelect />}
+        />
         <SettingRow block>
           <AutoplayGifsToggle />
         </SettingRow>
@@ -51,11 +56,6 @@ export function PreferencesPane() {
       </SettingsSection>
 
       <SettingsSection title="File preferences" description="Defaults for the download button.">
-        <SettingRow
-          label="Preferred image format"
-          description="Used on site and for downloads."
-          control={<ImageFormatSelect />}
-        />
         <SettingRow label="Preferred model format" control={<ModelFileFormatSelect />} />
         <SettingRow
           label="Preferred precision"

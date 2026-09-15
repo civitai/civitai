@@ -15,6 +15,7 @@ import clsx from 'clsx';
 import { useState } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { useOptimizedFlag } from '~/hooks/useMediaQuality';
 import type { IterationEntry, SourceImage } from './iterative-editor.types';
 import styles from './IterativeImageEditor.module.scss';
 
@@ -53,23 +54,20 @@ export function IterationMessage({
   isImageBlurred,
   unlockOnRedUrl,
 }: IterationMessageProps) {
+  const optimized = useOptimizedFlag();
   const hasMultipleImages = iteration.resultImages.length > 1;
   const selectedUrl = iteration.resultImage?.url;
 
   const imageUrl = iteration.resultImage
-    ? getEdgeUrl(iteration.resultImage.previewUrl, { width: 400 }) ??
+    ? getEdgeUrl(iteration.resultImage.previewUrl, { width: 400, optimized }) ??
       iteration.resultImage.previewUrl
     : null;
 
-  const selectedBlurred =
-    !!iteration.resultImage && !!isImageBlurred?.(iteration.resultImage);
+  const selectedBlurred = !!iteration.resultImage && !!isImageBlurred?.(iteration.resultImage);
 
   return (
     <div
-      className={clsx(
-        styles.iterationMessage,
-        isCurrentSource && styles.currentSourceHighlight
-      )}
+      className={clsx(styles.iterationMessage, isCurrentSource && styles.currentSourceHighlight)}
     >
       {/* Prompt text */}
       <div className={styles.iterationPrompt}>{iteration.prompt || '(no prompt)'}</div>
@@ -129,8 +127,8 @@ export function IterationMessage({
             Mature Content
           </Text>
           <Text size="xs" c="dimmed" ta="center">
-            This image was rated mature and cannot be viewed on this site. Your Buzz still
-            paid for it — open it on civitai.red to add it to your panel.
+            This image was rated mature and cannot be viewed on this site. Your Buzz still paid for
+            it — open it on civitai.red to add it to your panel.
           </Text>
           {unlockOnRedUrl && (
             <Button
@@ -153,7 +151,7 @@ export function IterationMessage({
         <div className={styles.multiImageGrid}>
           {iteration.resultImages.map((img, idx) => {
             const thumbUrl =
-              getEdgeUrl(img.previewUrl, { width: 200 }) ?? img.previewUrl;
+              getEdgeUrl(img.previewUrl, { width: 200, optimized }) ?? img.previewUrl;
             const isSelected = img.url === selectedUrl;
             const blurred = !!isImageBlurred?.(img);
             return (
@@ -179,10 +177,7 @@ export function IterationMessage({
                   // button styling stays consistent with everything else; the
                   // anchor stops propagation to avoid double-firing the
                   // parent's `onSelectImage`.
-                  <div
-                    className={styles.unlockOverlay}
-                    onClick={(e) => e.stopPropagation()}
-                  >
+                  <div className={styles.unlockOverlay} onClick={(e) => e.stopPropagation()}>
                     <IconLock size={16} />
                     <Text size="xs" fw={600}>
                       Mature
@@ -218,7 +213,9 @@ export function IterationMessage({
                     className={styles.zoomButton}
                     onClick={(e) => {
                       e.stopPropagation();
-                      onZoomImage(getEdgeUrl(img.previewUrl, { width: 1200 }) ?? img.previewUrl);
+                      onZoomImage(
+                        getEdgeUrl(img.previewUrl, { width: 1200, optimized }) ?? img.previewUrl
+                      );
                     }}
                   >
                     <IconZoomIn size={12} />
@@ -238,7 +235,7 @@ export function IterationMessage({
               !selectedBlurred && onZoomImage
                 ? () =>
                     onZoomImage(
-                      getEdgeUrl(iteration.resultImage!.previewUrl, { width: 1200 }) ??
+                      getEdgeUrl(iteration.resultImage!.previewUrl, { width: 1200, optimized }) ??
                         iteration.resultImage!.previewUrl
                     )
                 : undefined
@@ -251,7 +248,8 @@ export function IterationMessage({
                 Mature content
               </Text>
               <Text size="xs" ta="center" px="xs">
-                The resulting image was rated mature and cannot be viewed on this site. Open it on civitai.red to view it
+                The resulting image was rated mature and cannot be viewed on this site. Open it on
+                civitai.red to view it
               </Text>
               {unlockOnRedUrl ? (
                 <Button
@@ -298,8 +296,10 @@ export function IterationMessage({
           </span>
         )}
         <div className="flex-1" />
-        {iteration.status === 'ready' && iteration.resultImage && !isCurrentSource && (
-          selectedBlurred ? (
+        {iteration.status === 'ready' &&
+          iteration.resultImage &&
+          !isCurrentSource &&
+          (selectedBlurred ? (
             <Tooltip
               label="Mature image — unlock on civitai.red to use it as source"
               withArrow
@@ -322,8 +322,7 @@ export function IterationMessage({
             <Button size="compact-xs" variant="light" color="yellow" onClick={onUseAsSource}>
               Use as source
             </Button>
-          )
-        )}
+          ))}
       </div>
     </div>
   );

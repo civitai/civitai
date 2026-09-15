@@ -74,6 +74,7 @@ export function EdgeMedia({
   optimized,
   imageId,
   hiDpi,
+  sourceWidth,
   ...imgProps
 }: EdgeMediaProps) {
   const imgRef = useRef<HTMLImageElement>(null);
@@ -89,6 +90,7 @@ export function EdgeMedia({
   const options = {
     name,
     width,
+    sourceWidth,
     height,
     fit,
     blur,

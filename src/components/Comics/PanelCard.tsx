@@ -16,6 +16,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { useSortable } from '@dnd-kit/sortable';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { useOptimizedFlag } from '~/hooks/useMediaQuality';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
@@ -124,6 +125,7 @@ export function PanelCard({
   onRatingChange,
 }: PanelCardProps) {
   const { imageUrl, prompt, status, errorMessage } = panel;
+  const optimized = useOptimizedFlag();
   const utils = trpc.useUtils();
   const features = useFeatureFlags();
 
@@ -537,7 +539,7 @@ export function PanelCard({
           ) : imageUrl ? (
             <>
               <img
-                src={getEdgeUrl(imageUrl, { width: 450 })}
+                src={getEdgeUrl(imageUrl, { width: 450, optimized })}
                 alt={prompt}
                 className={styles.panelImage}
               />

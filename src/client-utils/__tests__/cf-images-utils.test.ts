@@ -17,6 +17,7 @@ import {
   getEdgeUrlSrcSet,
   resolveOptimized,
   snapWidthToCommonSize,
+  toMediaQuality,
 } from '~/client-utils/cf-images-utils';
 
 describe('snapWidthToCommonSize', () => {
@@ -102,11 +103,77 @@ describe('getEdgeUrlSrcSet', () => {
   });
 
   it('snaps both descriptors onto the ladder', () => {
-    // 451 -> 512; 902 -> 1200. Neither number appears verbatim.
+    // 451 -> 512 for the 1x; the 2x target of 1024 has no rung, so the candidate is the widest
+    // rung under it, 800. Neither number appears verbatim.
     expect(descriptors(getEdgeUrlSrcSet(SRC, { width: 451 }))).toEqual([
       { width: 512, descriptor: '1x' },
-      { width: 1200, descriptor: `${SRCSET_DPR}x` },
+      { width: 800, descriptor: '1.56x' },
     ]);
+  });
+
+  it('gives a card the 800 rung at a true 1.77x, NOT the 1200 one at a claimed 2x', () => {
+    // Rounding 900 UP lands on 1200, which the CDN serves identically to `width=1200`.
+    expect(descriptors(getEdgeUrlSrcSet(SRC, { width: 450 }))).toEqual([
+      { width: 450, descriptor: '1x' },
+      { width: 800, descriptor: '1.77x' },
+    ]);
+  });
+
+  it('never claims a density the candidate does not have, nor exceeds SRCSET_DPR', () => {
+    // A descriptor is a promise about pixels: 800/450 rounded up to 1.78x would overstate it.
+    let checked = 0;
+    for (const width of COMMON_IMAGE_WIDTHS) {
+      const srcSet = getEdgeUrlSrcSet(SRC, { width });
+      if (!srcSet) continue;
+      const [base, scaled] = descriptors(srcSet);
+      const ratio = (scaled.width as number) / (base.width as number);
+      expect(Number(scaled.descriptor.replace('x', '')), `width=${width}`).toBeLessThanOrEqual(
+        ratio
+      );
+      expect(ratio, `width=${width}`).toBeLessThanOrEqual(SRCSET_DPR);
+      expect(ratio, `width=${width}`).toBeGreaterThan(1);
+      checked++;
+    }
+    // Guards the loop: a rung that stops emitting a candidate would otherwise be absorbed silently.
+    expect(checked).toBeGreaterThanOrEqual(5);
+  });
+
+  it('never offers a 2x candidate wider than the SOURCE', () => {
+    // The cacher UPSCALES rather than refusing, so an unbounded candidate bills real bytes for
+    // interpolated pixels — and most generated images are under 1600 wide.
+    expect(getEdgeUrlSrcSet(SRC, { width: 800, sourceWidth: 832 })).toBeUndefined();
+    expect(descriptors(getEdgeUrlSrcSet(SRC, { width: 800, sourceWidth: 4096 }))).toEqual([
+      { width: 800, descriptor: '1x' },
+      { width: 1600, descriptor: '2x' },
+    ]);
+  });
+
+  it('drops to a smaller rung the source CAN back, rather than omitting outright', () => {
+    expect(descriptors(getEdgeUrlSrcSet(SRC, { width: 450, sourceWidth: 900 }))).toEqual([
+      { width: 450, descriptor: '1x' },
+      { width: 800, descriptor: '1.77x' },
+    ]);
+    // A 512px source cannot back 800, but it CAN back 512 — so the candidate drops a rung rather
+    // than disappearing. 13% more pixels is still more pixels, and they are real ones.
+    expect(descriptors(getEdgeUrlSrcSet(SRC, { width: 450, sourceWidth: 512 }))).toEqual([
+      { width: 450, descriptor: '1x' },
+      { width: 512, descriptor: '1.13x' },
+    ]);
+    expect(getEdgeUrlSrcSet(SRC, { width: 450, sourceWidth: 460 })).toBeUndefined();
+  });
+
+  it('keeps emitting a candidate when the source width is unknown', () => {
+    expect(descriptors(getEdgeUrlSrcSet(SRC, { width: 450 }))).toEqual([
+      { width: 450, descriptor: '1x' },
+      { width: 800, descriptor: '1.77x' },
+    ]);
+  });
+
+  it('never emits sourceWidth into the URL', () => {
+    expect(getEdgeUrl(SRC, { width: 800, sourceWidth: 4096 })).not.toContain('sourceWidth');
+    for (const c of (getEdgeUrlSrcSet(SRC, { width: 800, sourceWidth: 4096 }) ?? '').split(', ')) {
+      expect(c).not.toContain('sourceWidth');
+    }
   });
 
   it('carries every other option onto BOTH variants', () => {
@@ -130,7 +197,7 @@ describe('getEdgeUrlSrcSet', () => {
     for (const candidate of (srcSet ?? '').split(', ')) {
       const [url, descriptor, ...extra] = candidate.split(' ');
       expect(extra).toEqual([]);
-      expect(descriptor).toMatch(/^\dx$/);
+      expect(descriptor).toMatch(/^\d+(\.\d+)?x$/);
       expect(url).toContain('%20');
     }
     expect(descriptors(srcSet)).toEqual([
@@ -155,22 +222,81 @@ describe('getEdgeUrlSrcSet', () => {
   });
 });
 
+describe('toMediaQuality', () => {
+  it('reads an unset preference as compressed — the default flip, with nothing written', () => {
+    expect(toMediaQuality({})).toBe('compressed');
+    expect(toMediaQuality({ canUseLossless: true })).toBe('compressed');
+  });
+
+  it('gives lossless only to a viewer who both chose it and is entitled to it', () => {
+    expect(toMediaQuality({ imageFormat: 'metadata', canUseLossless: true })).toBe('lossless');
+    expect(toMediaQuality({ imageFormat: 'metadata', canUseLossless: false })).toBe('compressed');
+  });
+
+  it('reads an explicit compressed choice as compressed even for a member', () => {
+    expect(toMediaQuality({ imageFormat: 'optimized', canUseLossless: true })).toBe('compressed');
+  });
+});
+
 describe('resolveOptimized', () => {
-  it('forces the optimized format for a hi-DPI request whatever the preference', () => {
-    expect(resolveOptimized({ width: 800, hiDpi: true, imageFormat: 'metadata' })).toBe(true);
+  const lossless = { quality: 'lossless' } as const;
+  const compressed = { quality: 'compressed' } as const;
+
+  it('compresses a non-member in card feeds AND at preview width', () => {
+    expect(resolveOptimized({ width: 450, ...compressed })).toBe(true);
+    expect(resolveOptimized({ width: 800, ...compressed })).toBe(true);
   });
 
-  it('leaves a plain wide request on the user preference', () => {
-    expect(resolveOptimized({ width: 800, imageFormat: 'metadata' })).toBe(false);
-    expect(resolveOptimized({ width: 800, imageFormat: 'optimized' })).toBe(true);
+  it('honours lossless at EVERY width, card feeds included', () => {
+    expect(resolveOptimized({ width: 450, ...lossless })).toBe(false);
+    expect(resolveOptimized({ width: 96, ...lossless })).toBe(false);
+    expect(resolveOptimized({ width: 800, ...lossless })).toBe(false);
   });
 
-  it('still forces it below the small-preview threshold', () => {
-    expect(resolveOptimized({ width: 450, imageFormat: 'metadata' })).toBe(true);
+  it('compresses when quality is unknown', () => {
+    // A viewer resolved before the session lands must not flash the expensive variant.
+    expect(resolveOptimized({ width: 800 })).toBe(true);
   });
 
-  it('leaves an original request on the user preference', () => {
-    // hiDpi never reaches an original request, so the lightbox and downloads keep honouring it.
-    expect(resolveOptimized({ imageFormat: 'metadata' })).toBe(false);
+  it('lets an explicit call-site optimized win over lossless', () => {
+    // One variant for every viewer is what lets `announcement-media-check` name the URL it probes.
+    expect(resolveOptimized({ width: 96, optimized: true, ...lossless })).toBe(true);
+  });
+
+  it('never flags an original request, for anybody', () => {
+    expect(resolveOptimized({ original: true, ...compressed })).toBe(false);
+    expect(resolveOptimized({ original: true, ...lossless })).toBe(false);
+    // `getEdgeUrl` infers `original` from the absence of both dimensions; `resolveOptimized` has to
+    // mirror that or every width-less call starts carrying the flag.
+    expect(resolveOptimized({ ...compressed })).toBe(false);
+    expect(resolveOptimized({ height: 400, ...compressed })).toBe(true);
+  });
+
+  it('drops an explicit optimized on an original request rather than splitting the cache key', () => {
+    // `EdgeVideo` passes `optimized: true` for the poster and a width it may not have, so the pair
+    // arrives together. The cacher ignores the flag on an original, but emitting it still forks the
+    // URL — a second CDN key for bytes that already exist under the first.
+    expect(resolveOptimized({ original: true, optimized: true, ...compressed })).toBe(false);
+    expect(resolveOptimized({ optimized: true, ...lossless })).toBe(false);
+    // `getEdgeUrl` serialises whatever it is handed, so the resolver is the only thing keeping
+    // the flag off the URL.
+    expect(getEdgeUrl('KEY', { optimized: true })).toContain('optimized=true');
+  });
+
+  it('leaves the download shape on the original, for both qualities', () => {
+    // The download button renders `DownloadImage`, which calls `useEdgeUrl` with neither width nor
+    // height. Lossless is about BROWSING — a non-member's downloads must not be quietly compressed
+    // by the default flip.
+    const download = { type: 'image' as const, name: 'a.png' };
+    for (const quality of ['compressed', 'lossless'] as const) {
+      expect(resolveOptimized({ ...download, quality })).toBe(false);
+    }
+    const url = getEdgeUrl('KEY', download);
+    expect(url).toContain('original=true');
+    expect(url).not.toContain('optimized');
+  });
+
+  it('leaves hi-DPI to the viewer, so a paying member keeps lossless at 2x', () => {
+    expect(resolveOptimized({ width: 1600, ...lossless })).toBe(false);
   });
 });

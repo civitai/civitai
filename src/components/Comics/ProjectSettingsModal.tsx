@@ -18,6 +18,7 @@ import type { ComicProjectMeta } from '~/server/schema/comics.schema';
 import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { useOptimizedFlag } from '~/hooks/useMediaQuality';
 import { genreOptions } from '~/components/Comics/comic-project-constants';
 import { HeroPositionPicker } from '~/components/Comics/HeroPositionPicker';
 import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
@@ -67,6 +68,7 @@ export function ProjectSettingsModal({
   onDeleteProject,
   isSaving,
 }: ProjectSettingsModalProps) {
+  const optimized = useOptimizedFlag();
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [editCoverUrl, setEditCoverUrl] = useState<string | null>(null);
@@ -244,7 +246,7 @@ export function ProjectSettingsModal({
                 style={{ width: 120, height: 160, background: '#2C2E33' }}
               >
                 <img
-                  src={getEdgeUrl(editCoverUrl, { width: 240 })}
+                  src={getEdgeUrl(editCoverUrl, { width: 240, optimized })}
                   alt="Cover"
                   className="w-full h-full object-cover"
                 />

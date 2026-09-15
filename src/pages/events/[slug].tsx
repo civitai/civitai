@@ -64,6 +64,7 @@ import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 import classes from './[slug].module.scss';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
+import { useOptimizedFlag } from '~/hooks/useMediaQuality';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -129,6 +130,7 @@ export default function EventPageDetails({
   const userTeam = (eventCosmetic?.cosmetic?.data as { type: string; color: string })?.color;
   const totalTeamScores = teamScores.reduce((acc, teamScore) => acc + teamScore.score, 0);
   const cosmeticData = eventCosmetic?.data as { lights: number; upgradedLights: number };
+  const optimized = useOptimizedFlag();
 
   const datasets = useMemo(() => {
     const allDates = teamScoresHistory
@@ -179,7 +181,7 @@ export default function EventPageDetails({
             className="flex aspect-square flex-col justify-end overflow-hidden @sm:aspect-[3]"
             style={{
               backgroundImage: eventData.coverImage
-                ? `url(${getEdgeUrl(eventData.coverImage, { width: 1600 })})`
+                ? `url(${getEdgeUrl(eventData.coverImage, { width: 1600, optimized })})`
                 : undefined,
               backgroundRepeat: 'no-repeat',
               backgroundPosition: 'bottom left',
