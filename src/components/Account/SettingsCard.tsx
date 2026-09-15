@@ -11,6 +11,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { IconDiamond } from '@tabler/icons-react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import produce from 'immer';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
@@ -397,15 +398,22 @@ export function ImageFormatSelect({ withLabel }: { withLabel?: boolean } = {}) {
   const { user, update, isPending } = useFilePreferenceUpdate();
   const { canUseLossless, quality } = useMediaQuality();
   const router = useRouter();
+  // Shows what the viewer is actually served, so a non-member who picked lossless before the gate
+  // reads as Compressed. Their stored choice is left alone and comes back if they join.
+  const served = quality === 'lossless' ? 'metadata' : 'optimized';
+  // The save lands in the DB immediately but `quality` comes off the SESSION, which only changes
+  // once `user.refresh()` round-trips the auth hub. Without this the select snaps back to the old
+  // value for the whole of that window and the save reads as having failed. Measured in dev: the
+  // right value only appeared after a reload.
+  const [chosen, setChosen] = useState<string | null>(null);
+  useEffect(() => setChosen(null), [served]);
   if (!user) return null;
 
   return (
     <Select
       aria-label="Media quality"
       label={withLabel ? 'Media quality' : undefined}
-      // Shows what the viewer is actually served, so a non-member who picked lossless before the
-      // gate reads as Compressed. Their stored choice is left alone and comes back if they join.
-      value={quality === 'lossless' ? 'metadata' : 'optimized'}
+      value={chosen ?? served}
       // Lossless stays SELECTABLE for a non-member on purpose: a disabled row is a dead end, and
       // the click is the upsell. `onChange` routes them instead of saving.
       data={[
@@ -434,6 +442,7 @@ export function ImageFormatSelect({ withLabel }: { withLabel?: boolean } = {}) {
           router.push('/pricing?utm_campaign=media_quality_lossless');
           return;
         }
+        setChosen(value);
         update({ imageFormat: value });
       }}
       disabled={isPending}

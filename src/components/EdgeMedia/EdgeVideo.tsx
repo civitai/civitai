@@ -255,7 +255,11 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     const { url: videoUrl } = useEdgeUrl(src, { ...options, anim: true });
     const { url: coverUrl } = useEdgeUrl(thumbnailUrl ?? src, {
       width: options?.width,
-      optimized: options?.optimized,
+      // A video's poster is compressed for everyone, like the video it belongs to. `useEdgeUrl`
+      // pins video by its SOURCE media, which does not reach a poster built from a separate
+      // `thumbnailUrl` — that is an image uuid, so a lossless member would otherwise pull a
+      // jpeg poster for every card in an infinitely scrolling video feed.
+      optimized: true,
       skip: thumbnailUrl ? undefined : options?.skip,
       anim: thumbnailUrl ? undefined : false,
       transcode: thumbnailUrl ? undefined : true,

@@ -58,9 +58,10 @@ export function useEdgeUrl(
     width: options?.width,
     height: options?.height,
     original: options?.original,
-    // Video is transcoded to an MP4/WebM for everyone, so lossless has nothing to buy here —
-    // keyed off the SOURCE media, which also covers the still poster frame a video renders
-    // through `type: 'image'`. Letting it through would only fork the cache key.
+    // Video is transcoded to an MP4/WebM for everyone, so lossless has nothing to buy here.
+    // Keyed off the SOURCE media, which covers a poster derived from the video itself; a poster
+    // built from a separate `thumbnailUrl` is an image uuid and does NOT reach this, so
+    // `EdgeVideo` asks for `optimized` explicitly there.
     quality: inferredType === 'video' ? 'compressed' : quality,
   });
 
