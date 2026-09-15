@@ -18,6 +18,7 @@ import {
   IconMessageCircle2,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import Link from 'next/link';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
@@ -66,28 +67,34 @@ export const ModelCard = memo(function ModelCard({ data }: Props) {
 const accessChipStyles = { label: { display: 'flex', alignItems: 'center', gap: 4 } } as const;
 
 /**
- * An abstract glyph is the badge's whole content, so the name has to come from ARIA: Mantine's
- * `Badge` root is a role-less `div`, and ARIA drops an accessible name from a generic element.
+ * A link, not a labelled `div`: the card header is `pointer-events: none` so its chips fall through
+ * to the image link, and making this one hit-testable — which it must be, or the tooltip's trigger
+ * is never reached — took that away. An anchor gives the click back, and carries the keyboard
+ * affordance natively rather than through a `tabIndex` on something with no behaviour.
  *
- * `Tooltip` rather than `HoverCard` because only `Tooltip` takes `events` — the badge is the sole
- * explanation of the glyph, so it has to answer a tap and a keyboard focus, not just a mouse. That
- * needs `tabIndex` too: `focus: true` can only fire on something focusable.
- *
- * `pointer-events-auto` is what makes the trigger reachable at all. The card header sets
- * `pointer-events: none` so the image link stays clickable through it, and `Cards.module.css`'s
- * `.chip` — unlike the one in the card template — never turns it back on.
+ * The name comes from ARIA because the content is an abstract glyph, and a merged discount has to
+ * ride in the name too: `aria-label` overrides the subtree, so the drawn "20% off" reaches no
+ * screen reader on its own.
  */
 function AccessChip({
   label,
   icon,
-  style,
+  href,
   sale,
 }: {
   label: string;
   icon: React.ReactNode;
-  style?: React.CSSProperties;
+  href: string;
   sale?: Parameters<typeof SaleDiscountLabel>[0]['sale'];
 }) {
+  const theme = useMantineTheme();
+  // The shape and the colour live beside the `circle` prop they have to agree with. Split across
+  // two places, a threshold moved in one gives a `circle` badge with pill padding.
+  const style = {
+    backgroundColor: theme.colors.green[7],
+    ...(sale ? { paddingInline: 8 } : { width: 26, height: 26, padding: 0 }),
+  };
+
   return (
     <Tooltip
       label={label}
@@ -95,18 +102,17 @@ function AccessChip({
       withinPortal
       withArrow
       openDelay={0}
+      zIndex={10000}
       events={{ hover: true, focus: true, touch: true }}
     >
       <Badge
+        component={Link}
+        href={href}
         className={clsx(cardClasses.chip, 'pointer-events-auto')}
         variant="filled"
         radius="xl"
         data-status-badge="access"
-        role="img"
-        // `role="img"` makes the subtree presentational, so a merged discount reaches a screen
-        // reader only if the name carries it.
         aria-label={sale ? `${label}, ${saleDiscountText(sale)}` : label}
-        tabIndex={0}
         {...(sale ? {} : { circle: true })}
         styles={accessChipStyles}
         style={style}
@@ -167,22 +173,6 @@ function ModelCardContent({ data }: Props) {
   const ownSale = useModelSaleBadge(data.id, !!hasSaleProvider);
   const sale = salesByModelId?.[data.id] ?? ownSale;
 
-  // A circle only works while the chip is icon-only. Carrying a discount makes it a pill again.
-  const roundChip = useMemo(
-    () =>
-      sale ? ({ paddingInline: 8 } as const) : ({ width: 26, height: 26, padding: 0 } as const),
-    [sale]
-  );
-  // Green rather than the `success` teal, which sits a few degrees from the recency chip's blue-teal
-  // and reads as the same colour at chip size.
-  const paidBadgeStyle = useMemo(
-    () => (isPaidAccess ? { backgroundColor: theme.colors.green[7], ...roundChip } : undefined),
-    [isPaidAccess, theme, roundChip]
-  );
-  const earlyAccessBadgeStyle = useMemo(
-    () => (isEarlyAccess ? { backgroundColor: theme.colors.green[7], ...roundChip } : undefined),
-    [isEarlyAccess, theme, roundChip]
-  );
   const cardBaseModels = getCardBaseModels(
     data as Parameters<typeof getCardBaseModels>[0],
     activeBaseModels
@@ -273,14 +263,14 @@ function ModelCardContent({ data }: Props) {
               <AccessChip
                 label="Early Access"
                 icon={<IconClockDollar size={16} color="white" />}
-                style={earlyAccessBadgeStyle}
+                href={href}
                 sale={sale}
               />
             ) : isPaidAccess ? (
               <AccessChip
                 label="Paid"
                 icon={<IconLockDollar size={16} color="white" />}
-                style={paidBadgeStyle}
+                href={href}
                 sale={sale}
               />
             ) : null}

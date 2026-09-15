@@ -88,18 +88,23 @@ vi.mock('~/components/Metrics', () => ({
 // running the real hooks would reach an undefined namespace. Stubbing them keeps
 // the spread from ever touching it. `undefined` is "no sale", the default state,
 // and the sale badge is shadowed here rather than under test — except where a test
-// sets `saleFixture`, which is the only way the merged-discount branch renders at
+// sets `saleState.sale`, which is the only way the merged-discount branch renders at
 // all. Read inside the factory rather than captured, so each test's value is the
 // one the card sees.
-let saleFixture: { discountType: 'Fixed' | 'Percent'; discountAmount: number } | undefined;
-const salesForFixture = () => (saleFixture ? { 123: saleFixture } : undefined);
+const saleState = vi.hoisted(
+  () =>
+    ({ sale: undefined } as {
+      sale: { discountType: 'Fixed' | 'Percent'; discountAmount: number } | undefined;
+    })
+);
+const salesForFixture = () => (saleState.sale ? { 123: saleState.sale } : undefined);
 vi.mock('~/components/Cards/ModelCardContext', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelCardContext>()),
   useModelCardContext: () => ({
     useModelVersionRedirect: false,
     activeBaseModels: undefined,
     salesByModelId: salesForFixture(),
-    hasSaleProvider: !!saleFixture,
+    hasSaleProvider: !!saleState.sale,
   }),
   useModelSaleBadge: () => undefined,
   useModelSaleBadges: () => undefined,
@@ -334,16 +339,16 @@ describe('ModelCard paid-gate badge', () => {
     await awaitBadge('access');
     // Resolved BY ROLE AND NAME rather than by reading two attributes: `getAttribute('aria-label')`
     // passes with no role at all, and ARIA drops an accessible name from a role-less generic, which
-    // is exactly what Mantine's Badge root is. This query is the accessibility tree's own answer.
+    // is exactly what Mantine's Badge root is on its own. This query is the tree's own answer.
     // Fast structural check FIRST, so a revert fails in milliseconds with a named cause. The role
     // query below is the one that actually proves the name resolves, but it is a polling locator:
     // on a missing role it can only fail by exhausting the 15s budget, which is a slow, mute way to
     // learn something this line says immediately.
     expect(
-      document.querySelector('[data-status-badge="access"]')!.getAttribute('role'),
-      'the access badge lost its role, so its aria-label reaches no screen reader'
-    ).toBe('img');
-    await expect.element(page.getByRole('img', { name: 'Paid' })).toBeInTheDocument();
+      document.querySelector('[data-status-badge="access"]')!.tagName,
+      'the access badge is no longer a link, so it has neither a role nor a click'
+    ).toBe('A');
+    await expect.element(page.getByRole('link', { name: 'Paid' })).toBeInTheDocument();
   });
 
   test('the access badge is explained on hover — the only thing naming it for a sighted user', async () => {
@@ -362,7 +367,7 @@ describe('ModelCard paid-gate badge', () => {
   });
 
   test('a discount merged into the gate chip is spoken, not only drawn', async () => {
-    saleFixture = { discountType: 'Percent', discountAmount: 20 };
+    saleState.sale = { discountType: 'Percent', discountAmount: 20 };
     try {
       renderWithProviders(
         <WithPalette>
@@ -372,14 +377,36 @@ describe('ModelCard paid-gate badge', () => {
         </WithPalette>
       );
       const el = await awaitBadge('access');
-      // The discount is drawn INSIDE `role="img"`, which makes the subtree presentational — so the
+      // `aria-label` overrides the subtree, so the drawn percentage reaches no screen reader — the
       // rendered text reaches no screen reader and the accessible name is the only carrier. The
       // standalone sale chip is suppressed on a gated card, so without this the percentage is
       // nowhere in the accessibility tree at all.
       expect(el.textContent).toContain('20% off');
       expect(el.getAttribute('aria-label')).toBe('Paid, 20% off');
     } finally {
-      saleFixture = undefined;
+      saleState.sale = undefined;
+    }
+  });
+
+  test('a FIXED discount is spoken with its unit, not as a percentage', async () => {
+    saleState.sale = { discountType: 'Fixed', discountAmount: 5000 };
+    try {
+      renderWithProviders(
+        <WithPalette>
+          <ModelCard
+            data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }}
+          />
+        </WithPalette>
+      );
+      const el = await awaitBadge('access');
+      // The `Percent` arm alone cannot test this: there the drawn and spoken forms are the same
+      // string, so a name built by reusing the rendered text passes. Here they must differ — the
+      // drawn form puts a Buzz icon beside the number, and a name that says "5000% off" on a
+      // fixed-price sale is a false price on a money surface.
+      expect(el.textContent).toContain('5,000 off');
+      expect(el.getAttribute('aria-label')).toBe('Paid, 5,000 Buzz off');
+    } finally {
+      saleState.sale = undefined;
     }
   });
 
@@ -392,14 +419,38 @@ describe('ModelCard paid-gate badge', () => {
     const el = (await awaitBadge('access')) as HTMLElement;
     // A glyph with no text has one explanation, and a pointer-only one leaves keyboard and touch
     // users with nothing. `Tooltip` takes `events`; `HoverCard`, which this replaced, has no such
-    // option at all — so a swap back to it fails here rather than silently shipping a chip only a
-    // mouse can read. `focus: true` also needs something focusable, hence the tabIndex assertion.
+    // option at all. `focus: true` also needs something focusable — the anchor supplies that
+    // natively, where a `tabIndex` on a `div` would have bought a tab stop that does nothing.
     expect(
-      el.getAttribute('tabindex'),
-      'the access badge is not focusable, so `focus: true` can never fire'
-    ).toBe('0');
+      el.tagName,
+      'the access badge is not an anchor, so nothing focuses it and `focus: true` cannot fire'
+    ).toBe('A');
+    // The pointer is parked over this badge by the hover test above — same element, same position,
+    // and the virtual mouse does not reset between tests. Left there, the tooltip is already open
+    // via `hover`, and this test passes with `events` deleted.
+    await userEvent.unhover(el);
     el.focus();
-    await expect.element(page.getByText('Paid', { exact: true })).toBeVisible();
+    // Resolved as the TOOLTIP ELEMENT, not as page text. `getByText('Paid')` and
+    // `document.body.textContent` both match something else already on the page — measured: the
+    // text is present before the badge is ever focused — so either would pass with `events`
+    // deleted, which is the one mutation this test exists to catch.
+    // Polled, not read synchronously: Mantine opens on focus a tick later, so a synchronous read
+    // is a coin flip — it failed on a rerun of the unmutated code. `expect.poll`'s 1s budget keeps
+    // the `events`-deleted failure fast rather than letting it run out a 15s matcher naming nothing.
+    await expect
+      .poll(
+        () => {
+          // Resolved THROUGH THE BADGE's own `aria-describedby`, which Mantine's `useRole` sets
+          // only while the tooltip is open. A document-wide `[class*="Tooltip-tooltip"]` query
+          // matched some other tooltip on the card and passed with `events` deleted; so did
+          // `getByText('Paid')` and `document.body.textContent`, both of which match text that is
+          // on the page before the badge is ever focused.
+          const id = el.getAttribute('aria-describedby');
+          return id ? document.getElementById(id)?.textContent : undefined;
+        },
+        { message: 'focusing the badge opened no tooltip — `events.focus` is off' }
+      )
+      .toBe('Paid');
   });
 
   test('the icon-only access chip is a circle, not a narrow oval', async () => {
@@ -412,6 +463,9 @@ describe('ModelCard paid-gate badge', () => {
     // `.chip` fixes the height at 26px while Mantine's `circle` sizes the WIDTH from the badge
     // size, so the pair alone gives an oval. Both axes are pinned inline, which is why this is
     // readable in a harness that loads no stylesheet.
+    // The `circle` prop itself, not only its consequences: deleting it left width/height/padding
+    // untouched, because those come from the inline style, so the claim above had no assertion.
+    expect(el.getAttribute('data-circle')).toBe('true');
     expect(el.style.width).toBe('26px');
     expect(el.style.height).toBe('26px');
     expect(el.style.padding).toBe('0px');
@@ -433,8 +487,8 @@ describe('ModelCard paid-gate badge', () => {
     );
     // Same accessible-name contract as the paid chip: an abstract glyph names itself or it names
     // nothing, and `getAttribute('aria-label')` alone would pass with no role at all.
-    expect(el.getAttribute('role')).toBe('img');
-    await expect.element(page.getByRole('img', { name: 'Early Access' })).toBeInTheDocument();
+    expect(el.tagName).toBe('A');
+    await expect.element(page.getByRole('link', { name: 'Early Access' })).toBeInTheDocument();
   });
 
   test('a model carrying BOTH gates reads Early Access — the window is the fact with a clock on it', async () => {
@@ -539,8 +593,9 @@ describe('ModelCard New badge coexists with the money badge', () => {
     expect((await awaitBadge('recency')).textContent).toBe('New');
     const access = await awaitBadge('access');
     expect(access.getAttribute('aria-label')).toBe('Early Access');
-    // Both arms are icon-only now, so both must carry the role that exposes the name.
-    expect(access.getAttribute('role')).toBe('img');
+    // Both arms are icon-only, so both need the element that exposes the name AND restores the
+    // click the header's `pointer-events: none` used to give them for free.
+    expect(access.tagName).toBe('A');
   });
 
   test('a new UNGATED model renders the New badge and no money badge', async () => {

@@ -70,14 +70,15 @@ describe('the hover zoom carries the sticker overlay with it', () => {
     // the link, so finding it proves nothing about which. Hanging it off the link
     // is the bug: the header is a SIBLING of the link, so a header chip that takes
     // pointer events drops the link's hover and the picture falls back mid-hover.
-    expect(source().slice(0, source().indexOf('&:hover'))).toMatch(
-      /:global\(\[data-card-hover\]\)\s*\{\s*$/
-    );
+    // Anchored at column 0: reading only the text before `&:hover` accepts the block being NESTED
+    // inside something else (`.linkOrClick { :global([data-card-hover]) { … } }`), which selects
+    // nothing at all, because the attribute is on the card root — an ancestor of the link.
+    expect(source()).toMatch(/^:global\(\[data-card-hover\]\)\s*\{/m);
 
-    // A descendant, never a sibling. Under the card body the overlay is nested
-    // inside, so the `~` form selects nothing at all and every placed sticker
-    // drifts — which is what a revert of this file produces.
-    expect(block).not.toMatch(/~\s*:global\(\[data-sticker-overlay\]\)/);
+    // A descendant, asserted POSITIVELY. Prohibiting `~` pins one spelling: `+` and `>` are the
+    // same defect and walk straight through a negative check. Under the card body the overlay is
+    // nested inside, so any combinator at all selects nothing and every placed sticker drifts.
+    expect(block).toMatch(/[\r\n]\s*:global\(\[data-sticker-overlay\]\)\s*\{/);
 
     const transforms = transformsIn(block ?? '');
 
@@ -99,7 +100,11 @@ describe('the hover zoom carries the sticker overlay with it', () => {
     // A source scan, not a render: this pins that the two spellings match. It cannot see the
     // attribute landing on the wrong element — a render test of AspectRatioCard would, and is the
     // stronger version of this if one is ever written.
-    expect(template).toMatch(/data-card-hover/);
+    // Tied to the opening tag, not to the file: a bare substring matches the name in a comment, or
+    // on the WRONG element, or `data-card-hoverable`. Pinned to the tag carrying `styles.content`
+    // because relocating it to the header div kills the zoom app-wide, and both a substring check
+    // and a bare `<div data-card-hover` stay green through that.
+    expect(template).toMatch(/<div\s+data-card-hover[^>]*styles\.content/);
     expect(source()).toContain('[data-card-hover]');
   });
 
