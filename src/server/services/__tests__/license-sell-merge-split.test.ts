@@ -43,6 +43,7 @@ const SHARING_CLAUSE = 'Do not Share or make available a Merge';
 const IMAGE_SALES_CLAUSE = '<b>Image Sales:';
 const RENT_CLAUSE = '<b>Generation Services:';
 const RENT_CIVIT_CLAUSE = '<b>Civitai Generation Services:';
+const CHANGING_PERMISSIONS_CLAUSE = '<b>Changing Permissions:';
 const CHANGING_PERMISSIONS =
   'Changing Permissions: modify or eliminate any of the applicable Permissions when sharing or making available a Derivative of the Model.';
 const CREATOR_CREDIT_CLAUSE = '<b>Creator Credit:';
@@ -65,17 +66,40 @@ const preamble = (license: string) => {
 
 /**
  * One clause body, so an assertion about scope cannot be satisfied from a different clause.
- * Ends at the next clause, NOT at the closing `</b>`: a suffix appended outside the tag -- which is
- * where an "every clause says this" refactor puts it -- lands between the two and escapes every
- * negative assertion below while reaching the buyer.
- * Throws rather than returning '' on a missing heading, or those negatives pass for free.
+ * Ends at the next `\n<b>` rather than at the closing `</b>`, so a suffix appended after the tag --
+ * where an "every clause says this" refactor lands -- stays inside the region instead of falling
+ * between two clauses where no negative could see it.
+ *
+ * The region then has to prove its own size, because both ends are literals a clause is free to
+ * contain. Exactly one `</b>` means it did not truncate early -- a bolded line inside the clause
+ * would end the slice there and make every negative below vacuous. Nothing but whitespace after
+ * that `</b>` means it did not swallow loose text: the last clause's region runs to the end of the
+ * document, so without this a positive could be satisfied by a sentence sitting outside every
+ * Permission the buyer agreed to. The window is not self-evident; it has to be measured.
+ *
+ * It still cannot see a sentence emitted ONCE for the whole document rather than per clause --
+ * nothing between the Permission list opening and the first clause is in any region. That shape is
+ * pinned by occurrence count instead; see `countOf`.
  */
 const clauseBody = (license: string, anchor: string) => {
   const start = license.indexOf(anchor);
   if (start === -1) throw new Error(`clause not found: ${anchor}`);
   const next = license.indexOf('\n<b>', start + 1);
-  return license.slice(start, next === -1 ? undefined : next);
+  const region = license.slice(start, next === -1 ? undefined : next);
+  const closes = region.split('</b>').length - 1;
+  if (closes !== 1) throw new Error(`clause region for ${anchor} holds ${closes} closing tags`);
+  const trailing = region.slice(region.indexOf('</b>') + '</b>'.length);
+  if (trailing.trim() !== '')
+    throw new Error(`text after the close of ${anchor}, in no clause: ${JSON.stringify(trailing)}`);
+  return region;
 };
+
+/**
+ * Whole-document occurrence count. The region assertions say a sentence is in the right clause;
+ * this says it is nowhere else -- which is the only form that survives a refactor moving it
+ * somewhere no region covers.
+ */
+const countOf = (license: string, needle: string) => license.split(needle).length - 1;
 
 const buildLicense = (
   allowCommercialUse: CommercialUse[],
@@ -105,6 +129,7 @@ describe('sell / sell-merge split in the generated licence', () => {
     expect(license).not.toContain(MODEL_CLAUSE);
     expect(license).not.toContain(MERGE_CLAUSE);
     expect(license).not.toContain(SHARING_CLAUSE);
+    expect(countOf(license, DISAPPLIES_TO_MERGES)).toBe(0);
   });
 
   it('grants Sell, withholds SellMerge: only the merge restriction appears', () => {
@@ -112,6 +137,8 @@ describe('sell / sell-merge split in the generated licence', () => {
 
     expect(clauseBody(license, MERGE_CLAUSE)).toContain(FORBIDS_MERGE_SALE);
     expect(license).not.toContain(MODEL_CLAUSE);
+    // The clause that picks merges back up must carry no carve-out, here or anywhere.
+    expect(countOf(license, DISAPPLIES_TO_MERGES)).toBe(0);
   });
 
   it('withholds Sell, grants SellMerge: the model restriction appears AND excludes merges', () => {
@@ -120,6 +147,10 @@ describe('sell / sell-merge split in the generated licence', () => {
     expect(clauseBody(license, MODEL_CLAUSE)).toContain(FORBIDS_MODEL_SALE);
     expect(clauseBody(license, MODEL_CLAUSE)).toContain(DISAPPLIES_TO_MERGES);
     expect(license).not.toContain(MERGE_CLAUSE);
+    // ONCE, and inside that clause. Hoisted to document level -- the other way to write "every
+    // clause says this" -- it lands between the Permission list and the first clause, which no
+    // region covers, and disapplies every commercial restriction to any Merge.
+    expect(countOf(license, DISAPPLIES_TO_MERGES)).toBe(1);
   });
 
   /**
@@ -134,7 +165,13 @@ describe('sell / sell-merge split in the generated licence', () => {
 
     expect(license).toContain(SHARING_CLAUSE);
     expect(clauseBody(license, MODEL_CLAUSE)).toContain(DISAPPLIES_TO_MERGES);
+    // Positive control on the sliced region: without it the negative below cannot distinguish the
+    // sharing clause from whatever region an earlier occurrence of the anchor would land in.
+    expect(clauseBody(license, SHARING_CLAUSE)).toContain(
+      'Making a Merge available for deployment by another person'
+    );
     expect(clauseBody(license, SHARING_CLAUSE)).not.toContain(DISAPPLIES_TO_MERGES);
+    expect(countOf(license, DISAPPLIES_TO_MERGES)).toBe(1);
   });
 
   /**
@@ -172,6 +209,8 @@ describe('sell / sell-merge split in the generated licence', () => {
     expect(clauseBody(license, IMAGE_SALES_CLAUSE)).not.toContain(DISAPPLIES_TO_MERGES);
     expect(clauseBody(license, RENT_CLAUSE)).not.toContain(DISAPPLIES_TO_MERGES);
     expect(clauseBody(license, RENT_CIVIT_CLAUSE)).not.toContain(DISAPPLIES_TO_MERGES);
+    // Three negatives over three regions still cannot see a fourth placement. The count can.
+    expect(countOf(license, DISAPPLIES_TO_MERGES)).toBe(1);
   });
 
   it('withholds both: both restrictions appear', () => {
@@ -181,10 +220,11 @@ describe('sell / sell-merge split in the generated licence', () => {
     expect(clauseBody(license, MERGE_CLAUSE)).toContain(FORBIDS_MERGE_SALE);
     // The carve-out must not reach the clause that picks merges back up, or the pair cancels.
     expect(clauseBody(license, MERGE_CLAUSE)).not.toContain(DISAPPLIES_TO_MERGES);
-    // Swap the two map entries and every other assertion here still holds.
+    // Swap the two clause bodies under their headings and every other assertion here still holds.
     expect(clauseBody(license, MODEL_CLAUSE)).not.toContain(FORBIDS_MERGE_SALE);
     expect(clauseBody(license, MERGE_CLAUSE)).not.toContain(FORBIDS_MODEL_SALE);
     expect(preamble(license)).toContain(CARVE_OUT_GRANTS_NOTHING);
+    expect(countOf(license, DISAPPLIES_TO_MERGES)).toBe(1);
   });
 
   /**
@@ -195,7 +235,11 @@ describe('sell / sell-merge split in the generated licence', () => {
    * can be stripped from a Derivative.
    */
   it('Changing Permissions renders for the creator who granted it, and only them', () => {
-    expect(buildLicense(OTHERS, true, true)).toContain(CHANGING_PERMISSIONS);
+    // Sliced, not document-wide: relocated into the preamble it would still satisfy a toContain
+    // while becoming a general statement instead of a Permission gated on the creator's choice.
+    expect(clauseBody(buildLicense(OTHERS, true, true), CHANGING_PERMISSIONS_CLAUSE)).toContain(
+      CHANGING_PERMISSIONS
+    );
     expect(buildLicense(OTHERS, true, false)).not.toContain(CHANGING_PERMISSIONS);
   });
 
@@ -208,13 +252,13 @@ describe('sell / sell-merge split in the generated licence', () => {
   it('Creator Credit renders for the creator who required it, crediting the right URLs', () => {
     const clause = clauseBody(buildLicense(OTHERS, true, false, false), CREATOR_CREDIT_CLAUSE);
 
+    // The host is back-referenced, not matched twice independently: label and target are free to
+    // name different origins otherwise, and the obligation is to reproduce the link as given.
     expect(clause).toMatch(
-      /- Model: Test Model \[[^\]]*\/models\/1\?modelVersionId=2\]\([^)]*\/models\/1\?modelVersionId=2\)/
+      /- Model: Test Model \[([^\]]*)\/models\/1\?modelVersionId=2\]\(\1\/models\/1\?modelVersionId=2\)/
     );
-    expect(clause).toMatch(/- Creator: tester \[[^\]]*\/user\/tester\]\([^)]*\/user\/tester\)/);
-    expect(clause).toMatch(
-      /- License: \[[^\]]*\/models\/license\/2\]\([^)]*\/models\/license\/2\)/
-    );
+    expect(clause).toMatch(/- Creator: tester \[([^\]]*)\/user\/tester\]\(\1\/user\/tester\)/);
+    expect(clause).toMatch(/- License: \[([^\]]*)\/models\/license\/2\]\(\1\/models\/license\/2\)/);
 
     expect(buildLicense(OTHERS, true, false, true)).not.toContain(CREATOR_CREDIT_CLAUSE);
   });
