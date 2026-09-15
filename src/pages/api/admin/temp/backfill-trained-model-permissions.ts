@@ -106,17 +106,11 @@ import { booleanString } from '~/utils/zod-helpers';
  * against `Model."createdAt"`, which is `timestamp(3)` without a zone, so the effective boundary
  * also moves with the connection's TimeZone; a day of slack absorbs that too.
  */
-// The defaulted value is `{Sell}` before the sell/merge split's backfill and carries `SellMerge`
-// too after it. Matching only `{Sell}` would make this a silent no-op once the backfill lands --
-// that second shape is the whole reason this is not a single equality, and nothing matches it
-// yet, so it reads as dead code until then.
-//
-// Containment rather than equality because `=` on a Postgres array is order-sensitive: it would
-// pin this to the exact order the backfill happens to write, and that backfill is not yet
-// written. The pair below matches {Sell} and {Sell,SellMerge} in any order and nothing wider.
-//
-// Stated once because the scan and the UPDATE must agree: widen one and the scan reports a row
-// count the UPDATE then declines to touch, which reads as a successful partial run.
+// Containment, not equality: `=` on a Postgres array is order-sensitive, and the sell/merge
+// backfill will turn `{Sell}` into `{Sell,SellMerge}` in an order this cannot predict.
+// Matches those two shapes and nothing wider.
+// Measured on the prod replica 2026-09-15: the repair predicate matches 0 rows -- this repair
+// has already been run, so `totalChanged: 0` means "already done", not "something failed".
 const defaultedCommercialUseShapes = Prisma.sql`(
   m."allowCommercialUse" @> ARRAY['Sell']::"CommercialUse"[]
   AND m."allowCommercialUse" <@ ARRAY['Sell', 'SellMerge']::"CommercialUse"[]

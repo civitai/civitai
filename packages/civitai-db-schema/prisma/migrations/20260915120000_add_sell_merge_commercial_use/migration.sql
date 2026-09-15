@@ -1,34 +1,18 @@
--- Apply this BEFORE the deploy that ships it. Read the note before reordering it.
+-- Apply BEFORE the deploy, not after. The usual deploy-first rule assumes nothing writes the new
+-- label until the deploy lands; here the deploy writes it immediately -- the upload form defaults
+-- to every permission, and Prisma applies the schema @default client-side on any model.create
+-- that omits the field -- so without this the insert is rejected and model creation fails.
 --
--- The usual rule for an additive Prisma enum is deploy-first, because Prisma throws on READ for
--- a row carrying a label the running client does not know. That rule assumes nothing writes the
--- new value until the deploy lands. Here the deploy itself writes it, two ways: the upload form
--- defaults `allowCommercialUse` to every permission, and Prisma applies the schema @default
--- client-side on any `model.create` that omits the field. So the first model created after the
--- deploy carries 'SellMerge', and if the type lacks it the insert is rejected and model creation
--- fails for everyone until this runs.
+-- A rolling deploy still has previous-build pods reading rows new pods wrote; Prisma deserializes
+-- the enum for a whole result set, so list queries fail intermittently until it completes.
 --
--- Running it first is safe in the other direction: no build writes 'SellMerge' before the deploy,
--- so no row can carry it, so no running client can read one.
---
--- ⚠️ That argument covers before and after the deploy, NOT the middle of it. A rolling deploy has
--- new pods writing 'SellMerge' while previous-build pods still serve. Prisma deserializes the enum
--- for a whole result set, so the failure is not confined to the new row: any LIST query whose page
--- happens to include one fails entirely, which is why it presents as intermittent rather than
--- total. Raw-SQL paths are unaffected. Applying this migration first does not close that; only
--- shipping an enum-aware build with no writer, ahead of the build that writes, does.
---
--- ⚠️ src/pages/api/admin/temp/backfill-trained-model-permissions.ts also writes 'SellMerge'. Do not
+-- src/pages/api/admin/temp/backfill-trained-model-permissions.ts also writes this label. Do not
 -- run it before this migration, or during a rolling deploy.
 --
--- The backfill that gives existing models the new permission is deliberately NOT in this commit.
--- It writes the new label onto ~425k rows, so applying it while the old build is still serving is
--- a site-wide outage — and the ordinary way pending SQL gets applied is to run all of it. It ships
--- as its own change, after this deploy has fully rolled out.
+-- The backfill that gives existing models the new permission is deliberately not in this commit
+-- and must not be applied with it: it would write the label while the old build is still serving.
 --
--- Run this statement alone. Postgres 12+ permits ADD VALUE inside a transaction block, but the
--- value cannot be USED in the same transaction -- and a single `psql -c` string containing
--- several statements is one implicit transaction, which is how this bites in practice.
--- Separate `-c` flags each get their own transaction, so that spelling is the safe one.
+-- Run alone: ADD VALUE is transactional, but the value is unusable in the same transaction, and a
+-- multi-statement psql -c is one implicit transaction. Separate -c flags are safe.
 
 ALTER TYPE "CommercialUse" ADD VALUE IF NOT EXISTS 'SellMerge';

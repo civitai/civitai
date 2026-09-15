@@ -937,15 +937,10 @@ export function getEffectiveDifferentLicense(
   return requiresSameLicenseBaseModel(baseModel) ? false : allowDifferentLicense;
 }
 
-// Whether a model's own terms add anything to the base license, which is what decides if
-// Attachment B is offered.
-//
-// It currently returns true for every input: every element of a CommercialUse[] is in
-// CommercialUse, so the `.some` is `length > 0` and the `!length` arm covers the rest. The
-// literal list this replaced was equally unconditional, so the behaviour is unchanged and the
-// gate has never gated — including `throwBadRequestError('No additional permissions')`, which
-// cannot fire. Fixing that changes which models are served Attachment B, so it is a licensing
-// decision rather than a tidy-up, and is deliberately not made here.
+// Whether a model's own terms add anything to the base license, which decides if Attachment B
+// is offered. Returns true for every input: the `.some` is `length > 0` and the `!length` arm
+// covers the rest, so `throwBadRequestError('No additional permissions')` cannot fire.
+// Narrowing it changes which models are served Attachment B -- a licensing decision.
 export function hasAdditionalLicensePermissions(permissions: {
   allowCommercialUse: CommercialUse[];
   allowNoCredit: boolean;
