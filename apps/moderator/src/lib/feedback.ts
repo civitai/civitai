@@ -9,6 +9,16 @@ export const isFeedbackStatus = (value: string): value is FeedbackStatus =>
 
 export const DEFAULT_FEEDBACK_STATUSES: FeedbackStatus[] = ['new'];
 
+/**
+ * How many rows one keyset page of the triage queue serves.
+ *
+ * 🔴 IT LIVES HERE, NOT IN `$lib/server/`, BECAUSE BOTH TIERS NEED IT. The selection bar's row bound
+ * is this number — selection is cleared on every list change, so one page is the most that can be
+ * selected — and a browser module cannot import the service. It was duplicated as a hand-pinned
+ * constant with a test holding the two together; deriving it is what makes the pin unnecessary.
+ */
+export const FEEDBACK_PAGE_SIZE = 50;
+
 const FEEDBACK_STATUS_BADGE: Record<FeedbackStatus, string> = {
   new: 'bg-blue-500/20 text-blue-300',
   reviewed: 'bg-amber-500/20 text-amber-300',

@@ -1,0 +1,185 @@
+import {
+  FEEDBACK_PAGE_SIZE,
+  FEEDBACK_STATUSES,
+  isFeedbackStatus,
+  type FeedbackStatus,
+} from './feedback';
+
+/**
+ * The bulk half of the triage queue: what the selection bar posts, and how it is read back.
+ *
+ * 🔴 EVERY PAIR CARRIES THE STATUS THE OPERATOR WAS LOOKING AT, not just an id. The single-row
+ * action is scoped on `expectedStatus` so two moderators reaching opposite verdicts cannot produce
+ * one silent overwrite (`triageFeedback`), and a bulk action that posted bare ids would be a hole
+ * straight through that guard — the larger the selection, the more likely one row moved under it.
+ * A selection spans rows at DIFFERENT statuses, so the expectation is per row and cannot be one
+ * field on the form.
+ */
+
+/**
+ * The most rows one submission may carry.
+ *
+ * 🔴 DERIVED, NOT PINNED. Selection is cleared whenever `data.items` changes and the queue serves
+ * one keyset page at a time, so one page IS the ceiling — there is no way to select past it. This
+ * was a hand-written `50` held against the page size by a test; a derivation cannot drift, so the
+ * test and the `$lib/server/db` mock it needed are both gone.
+ */
+export const FEEDBACK_BULK_MAX = FEEDBACK_PAGE_SIZE;
+
+/**
+ * The tag the bulk action stamps on its refusals, read by the page to decide where they render.
+ *
+ * 🔴 A CONSTANT BECAUSE NOTHING CAN TEST THE SPELLING. The server writes it and the client branches
+ * on it, and this app has no browser tier — so a typo on either side silently disables BOTH the
+ * double-render guard and the orphaned-failure fallback, with every server-side test still passing
+ * against its own literal.
+ */
+export const FEEDBACK_BULK_SCOPE = 'bulk';
+
+export type FeedbackBulkRow = { id: number; expectedStatus: FeedbackStatus };
+
+/** The wire form of one pair. Read by `parseFeedbackBulkRows`, which is the only consumer. */
+const encodeRow = (row: FeedbackBulkRow) => `${row.id}:${row.expectedStatus}`;
+
+export const encodeFeedbackBulkRows = (rows: readonly FeedbackBulkRow[]): string =>
+  rows.map(encodeRow).join(',');
+
+/** `Feedback.id` is a Postgres `integer`: a larger value ERRORS the comparison rather than missing. */
+const MAX_INT4 = 2147483647;
+const INTEGER = /^\d+$/;
+
+/**
+ * The hidden input, back into pairs — or a sentence explaining the refusal.
+ *
+ * 🔴 IT REFUSES, IT NEVER DROPS. `parseIdList` filters malformed entries out and truncates past its
+ * limit, which on a destructive action means the screen reports a count it did not act on — the
+ * defect `parseIdListStrict` exists to avoid. Here it is worse than a wrong count: a dropped pair is
+ * a report the operator selected, watched the bar count, and which silently kept its old status. So
+ * anything this cannot read in full is a refusal for the whole submission.
+ *
+ * A duplicate id is refused for the same reason rather than deduplicated: two pairs naming one row
+ * carry two DIFFERENT expectations, and there is no basis for picking one. It cannot arise from the
+ * selection bar — `SelectionSet` is a set — so it means the payload was edited.
+ */
+export function parseFeedbackBulkRows(
+  raw: string,
+  max: number = FEEDBACK_BULK_MAX
+): FeedbackBulkRow[] | string {
+  const trimmed = raw.trim();
+  if (!trimmed) return 'Select at least one report.';
+
+  const parts = trimmed.split(',');
+  if (parts.length > max)
+    return `${parts.length} reports exceeds the limit of ${max} per action. Select fewer.`;
+
+  const rows: FeedbackBulkRow[] = [];
+  const seen = new Set<number>();
+  for (const part of parts) {
+    // Split on the FIRST colon only in spirit — a status never contains one, so an extra colon is
+    // malformed input rather than a value to salvage.
+    const [rawId, rawStatus, ...rest] = part.split(':');
+    if (rest.length) return 'That selection could not be read. Reload and try again.';
+    if (!rawId || !INTEGER.test(rawId))
+      return 'That selection could not be read. Reload and try again.';
+
+    const id = Number(rawId);
+    if (id <= 0 || id > MAX_INT4) return 'That selection could not be read. Reload and try again.';
+    if (!rawStatus || !isFeedbackStatus(rawStatus))
+      return 'That selection could not be read. Reload and try again.';
+    if (seen.has(id)) return 'That selection named one report twice. Reload and try again.';
+
+    seen.add(id);
+    rows.push({ id, expectedStatus: rawStatus });
+  }
+  return rows;
+}
+
+/**
+ * The four bulk verdicts, in the order the bar shows them.
+ *
+ * 🔴 DERIVED FROM `FEEDBACK_STATUSES`, never a second hand-written list — a status added to the
+ * CHECK constraint and to that constant but not here is a verdict the queue can hold and the bar
+ * cannot set, which is invisible until someone looks for the missing button. The labels are the
+ * only thing spelled out, because a button reading "new" is an instruction to nobody.
+ */
+const BULK_ACTION_LABELS: Record<FeedbackStatus, string> = {
+  new: 'Reopen',
+  reviewed: 'Mark reviewed',
+  actioned: 'Mark actioned',
+  dismissed: 'Dismiss',
+};
+
+export const FEEDBACK_BULK_ACTIONS: ReadonlyArray<{ status: FeedbackStatus; label: string }> =
+  FEEDBACK_STATUSES.map((status) => ({ status, label: BULK_ACTION_LABELS[status] }));
+
+const reports = (n: number) => `${n} report${n === 1 ? '' : 's'}`;
+
+/**
+ * 🔴 ENTER IN THE NOTE BOX MUST NOT SUBMIT, AND THIS IS NOT A NICETY.
+ *
+ * A bulk action has NO DEFAULT VERDICT — the bar carries four submit buttons and the operator picks
+ * one. HTML implicit submission does not know that: a text input in a form activates the FIRST
+ * submit button in tree order, which here is `FEEDBACK_BULK_ACTIONS[0]`, i.e. `FEEDBACK_STATUSES[0]`
+ * = `new` = **Reopen**. So typing a note and pressing Enter — the universal "commit this text"
+ * gesture — would reopen every selected row, null its handler, AND overwrite its `triageNote` with
+ * the text just typed, then report success. That is the exact column the `note === null` guard in
+ * `bulkTriageFeedback` exists to protect.
+ *
+ * The single-row triage form is immune only by accident: its note control is a `Textarea`, where
+ * Enter inserts a newline.
+ *
+ * Extracted rather than inlined so it can be tested — these apps have no browser test tier, so a
+ * handler left in the template is verified by reading it and nothing else.
+ */
+export function blockImplicitBulkSubmit(event: { key: string; preventDefault: () => void }): void {
+  if (event.key === 'Enter') event.preventDefault();
+}
+
+/**
+ * What the operator is told after a bulk run that changed SOMETHING.
+ *
+ * 🔴 PARTIAL IS THE ORDINARY OUTCOME AND IT MUST BE SAID OUT LOUD, IN THREE PARTS THAT MEAN
+ * DIFFERENT THINGS:
+ *   - `changed`   — rows this action moved.
+ *   - `actionable − changed` — rows whose UPDATE matched nothing. 🔴 THE CAUSE IS NOT KNOWN AND MUST
+ *     NOT BE ASSERTED: `bulkTriageFeedback` deliberately does not spend a read per refusal, so a row
+ *     someone else triaged and a row that was DELETED are indistinguishable here. An earlier version
+ *     of this sentence said "already triaged by someone else", which sends the operator looking for
+ *     a colleague's verdict on a report that no longer exists.
+ *   - `skipped`   — rows already AT the target. Not a refusal at all, and silently dropping them is
+ *     how "I selected 10" becomes "Updated 6" with nothing on screen accounting for the other four.
+ *
+ * 🔴 THE VERDICT IS NAMED. The bar's buttons are the only other thing that says which verdict was
+ * applied, and the bar unmounts the moment a successful run clears the selection — so a message that
+ * omitted it would leave nothing on screen saying what just happened to fifty rows.
+ *
+ * No "reload to see the current verdicts": the bar's `FormState` runs with `reload: true`, so `load`
+ * has already re-run by the time this renders. Telling the operator the screen is stale when it is
+ * current trains them to distrust it.
+ *
+ * Zero changed with something actionable never reaches here — that is a refusal, raised as a
+ * `fail()` by the action.
+ */
+export function feedbackBulkOutcome(input: {
+  status: FeedbackStatus;
+  changed: number;
+  actionable: number;
+  skipped: number;
+}): string {
+  const parts = [`Set ${reports(input.changed)} to ${input.status}.`];
+
+  const refused = input.actionable - input.changed;
+  if (refused > 0) {
+    parts.push(
+      `${reports(refused)} did not change — triaged elsewhere, or no longer in the queue.`
+    );
+  }
+  if (input.skipped > 0) {
+    // The verb agrees with THIS count, not with `changed` — a hardcoded `were` renders
+    // "1 report were already reviewed" on the single-row case, which is the common one.
+    parts.push(
+      `${reports(input.skipped)} ${input.skipped === 1 ? 'was' : 'were'} already ${input.status}.`
+    );
+  }
+  return parts.join(' ');
+}

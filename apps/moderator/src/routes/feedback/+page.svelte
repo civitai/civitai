@@ -4,10 +4,14 @@
     Table,
     TableBody,
     TableCell,
+    TableHead,
     TableHeader,
     TableRow,
   } from '@civitai/ui/components/ui/table/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
+  import { SelectionCheckbox } from '@civitai/ui/components/selection/index.js';
+  import { SelectionSet } from '@civitai/ui/hooks/selection-set.svelte.js';
   import CursorPager from '$lib/components/CursorPager.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { LINK_CLASS, dateTime, shortAge } from '$lib/format';
@@ -18,14 +22,103 @@
     feedbackAttachmentCount,
     feedbackStatusBadgeClass,
     handledByLabel,
+    isFeedbackStatus,
     splitContext,
   } from '$lib/feedback';
+  import { FEEDBACK_BULK_SCOPE, type FeedbackBulkRow } from '$lib/feedback-bulk';
   import FeedbackFilters from './FeedbackFilters.svelte';
   import FeedbackDetail from './FeedbackDetail.svelte';
+  import FeedbackBulkBar from './FeedbackBulkBar.svelte';
   import FeedbackSortHeader, { type FeedbackColumn } from './FeedbackSortHeader.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+
+  /**
+   * One grant, ONE spelling. It gates the single-row triage form and the selection bar alike, and
+   * two `!!data.grants[...]` expressions on one page is how they drift apart.
+   */
+  const canSetStatus = $derived(!!data.grants['feedback.status.set']);
+
+  const selected = new SelectionSet<number>();
+
+  /**
+   * 🔴 THE SELECTION IS CLEARED WHENEVER THE LIST CHANGES, AND THAT IS A CORRECTNESS GUARD RATHER
+   * THAN TIDINESS. Every id in it is paired with the status that row was SHOWING, and the pair is
+   * what the server's per-row concurrency check compares against — so a selection surviving a page
+   * turn, a filter change or a post-triage reload would post expectations read off rows that are no
+   * longer on screen. Same shape as `images/to-ingest`.
+   *
+   * `$effect` and not `$derived`: this synchronises a local mirror with a prop, which is the case
+   * the standard leaves to `$effect` rather than the data-fetching one it forbids.
+   */
+  $effect(() => {
+    data.items;
+    selected.clear();
+  });
+
+  /**
+   * Only rows whose status this page can express a transition FROM.
+   *
+   * 🔴 `Feedback.status` IS A TEXT COLUMN behind a CHECK constraint, so a value outside
+   * `FEEDBACK_STATUSES` is representable — `feedbackStatusBadgeClass` already renders one unstyled
+   * rather than crashing. Such a row gets no checkbox: the bar would encode a pair the server's
+   * parser cannot read, and that parser refuses the WHOLE submission rather than dropping a pair, so
+   * one unknown row would silently block a fifty-row action.
+   */
+  const selectableIds = $derived(
+    data.items.filter((row) => isFeedbackStatus(row.status)).map((row) => row.id)
+  );
+
+  /** The selected rows as the queue currently shows them — id plus the on-screen status. */
+  // `flatMap` rather than `filter().map()`: the status guard is a type predicate, and it only
+  // narrows `row.status` inside the branch that tested it — across a `.filter()` boundary the
+  // element type is unchanged and `expectedStatus` would be a bare `string`.
+  const selectedRows = $derived(
+    data.items.flatMap((row): FeedbackBulkRow[] =>
+      selected.has(row.id) && isFeedbackStatus(row.status)
+        ? [{ id: row.id, expectedStatus: row.status }]
+        : []
+    )
+  );
+
+  const allSelected = $derived(
+    selectableIds.length > 0 && selectableIds.every((id) => selected.has(id))
+  );
+  const someSelected = $derived(selectedRows.length > 0 && !allSelected);
+
+  function toggleAll() {
+    if (allSelected) selected.clear();
+    else for (const id of selectableIds) selected.add(id);
+  }
+
+  /**
+   * Whether the last refusal belongs to the selection bar.
+   *
+   * 🔴 ONLY used to keep `pageError` from rendering it a SECOND time — the bar holds and renders its
+   * own refusal through `FormState`, which is what removes the routing question rather than
+   * answering it per panel. The server stamps the scope because three actions share one page-level
+   * `form` object.
+   */
+  const bulkFailure = $derived(
+    form && 'scope' in form && form.scope === FEEDBACK_BULK_SCOPE && 'error' in form && form.error
+      ? String(form.error)
+      : null
+  );
+
+  /**
+   * 🔴 THE BAR IS NOT ALWAYS THERE TO SHOW ITS OWN REFUSAL, AND WITHOUT THIS THE REFUSAL IS SILENT.
+   * `FeedbackBulkBar` renders only while something is selected, and its `FormState` — which holds
+   * the error — is destroyed with it. An operator who unticks the last row while a submit is in
+   * flight gets the failure back into a component that no longer exists. (Its own Clear button is
+   * disabled during submit; the checkboxes are not, and disabling the whole table mid-flight would
+   * be a worse trade than rendering the message here.)
+   */
+  const orphanedBulkFailure = $derived(selectedRows.length === 0 ? bulkFailure : null);
+
+  const bulkMessage = $derived(
+    form && 'bulkMessage' in form && form.bulkMessage ? String(form.bulkMessage) : null
+  );
 
   /**
    * 🔴 `feedbackOpenHref`, NOT a bare `urlWith({ open })` — it also DELETES `?tab=`, and that
@@ -59,8 +152,13 @@
    * 🔴 The tab triggers are LINKS for this same reason (`FeedbackTabs.svelte`): a no-JS client must
    * still be able to reach `?tab=triage`, or the form this message is about would be unreachable.
    */
+  // 🔴 `!bulkFailure` is part of the condition: the bulk action's refusal is rendered by the selection
+  // bar, which is `fixed` and therefore always in view. Without this clause a bulk refusal raised
+  // with no row open would render TWICE — once here and once in the bar.
   const pageError = $derived(
-    !data.openVisible && form && 'error' in form && form.error ? String(form.error) : null
+    !data.openVisible && !bulkFailure && form && 'error' in form && form.error
+      ? String(form.error)
+      : null
   );
 
   const nextPageHref = $derived(
@@ -71,7 +169,16 @@
 
   // 🔴 `COLUMNS.length` is what every `colspan` below reads — adding a row here without that is how
   // the detail panel and the empty state end up a cell short.
-  const COLUMNS: FeedbackColumn[] = [
+  //
+  // 🔴 IT IS `$derived` BECAUSE THE SELECT COLUMN IS CONDITIONAL, and that is precisely why the
+  // select column belongs IN this list rather than being rendered beside it. A checkbox cell emitted
+  // outside `COLUMNS` would make the real width `COLUMNS.length + 1` for anyone holding the grant,
+  // and the detail panel and empty-state rows would be one cell short for them and correct for
+  // everyone else — a defect only a moderator with the grant could see.
+  const COLUMNS: FeedbackColumn[] = $derived([
+    ...(canSetStatus
+      ? [{ id: 'select', label: '', sortable: null, class: 'w-px' } satisfies FeedbackColumn]
+      : []),
     { id: 'age', label: 'Age', sortable: 'age' },
     { id: 'area', label: 'Area', sortable: 'area' },
     { id: 'user', label: 'User', sortable: 'user' },
@@ -83,7 +190,7 @@
     { id: 'handled', label: 'Handled', sortable: 'handled' },
     { id: 'issue', label: 'Issue', sortable: 'issue' },
     { id: 'actions', label: '', sortable: null, class: 'w-px' },
-  ];
+  ]);
 </script>
 
 <header class="page-header">
@@ -147,7 +254,24 @@
       <TableHeader>
         <TableRow>
           {#each COLUMNS as column (column.id)}
-            <FeedbackSortHeader {column} sort={data.sort} />
+            {#if column.id === 'select'}
+              <TableHead class={column.class}>
+                <!-- 🔴 FUNCTION BINDINGS, NOT `checked=`. bits-ui writes `checked` on interaction,
+                     and a plain prop latches on that write — the tri-state case is the one that
+                     always latches, because `some → all` leaves `checked` false throughout
+                     (docs/svelte-app-standard.md). The `indeterminate` setter ignores its argument
+                     on purpose: a primitive resolves a click on an indeterminate box to `true`,
+                     which would select rather than toggle. -->
+                <Checkbox
+                  bind:checked={() => allSelected, toggleAll}
+                  bind:indeterminate={() => someSelected, () => {}}
+                  disabled={selectableIds.length === 0}
+                  aria-label={allSelected ? 'Clear selection' : 'Select every report on this page'}
+                />
+              </TableHead>
+            {:else}
+              <FeedbackSortHeader {column} sort={data.sort} />
+            {/if}
           {/each}
         </TableRow>
       </TableHeader>
@@ -157,6 +281,23 @@
           {@const attachments = feedbackAttachmentCount(context)}
           {@const open = data.open === row.id}
           <TableRow>
+            {#if canSetStatus}
+              <TableCell>
+                {#if isFeedbackStatus(row.status)}
+                  <!-- `order` is what a shift-click spans: the selectable ids in the order they are
+                       on screen, so a range cannot reach a row the operator cannot see. -->
+                  <SelectionCheckbox
+                    selection={selected}
+                    key={row.id}
+                    order={selectableIds}
+                    aria-label={`Select report #${row.id}`}
+                  />
+                {:else}
+                  <!-- A status this page cannot express a transition from; see `selectableIds`. -->
+                  <span class="sr-only">Report #{row.id} cannot be triaged in bulk</span>
+                {/if}
+              </TableCell>
+            {/if}
             <TableCell class="whitespace-nowrap tabular-nums" title={dateTime(row.createdAt)}>
               {shortAge(row.createdAt)}
             </TableCell>
@@ -212,9 +353,10 @@
                   {row}
                   {context}
                   siblings={data.siblings}
+                  knownIssues={data.knownIssues}
                   grafanaUrl={data.grafanaUrl}
                   civitaiUrl={data.civitaiUrl}
-                  canTriage={!!data.grants['feedback.status.set']}
+                  canTriage={canSetStatus}
                   canPromote={!!data.grants['feedback.bug.promote']}
                 />
               </TableCell>
@@ -232,4 +374,20 @@
   </div>
 
   <CursorPager href={nextPageHref} />
+
+  <!-- Above the bar rather than inside it: the bar unmounts the moment a successful run clears the
+       selection, which is exactly when this sentence has something to say. -->
+  {#if bulkMessage}
+    <!-- `role="status"`: a successful run unmounts the bar, so this line is the only report of what
+         happened — and it appears with no focus change to announce it. -->
+    <p role="status" class="mt-4 text-sm text-teal-400">{bulkMessage}</p>
+  {/if}
+
+  {#if orphanedBulkFailure}
+    <ErrorAlert message={orphanedBulkFailure} class="mt-4" />
+  {/if}
+
+  {#if canSetStatus && selectedRows.length > 0}
+    <FeedbackBulkBar rows={selectedRows} onclear={() => selected.clear()} />
+  {/if}
 {/if}

@@ -13,9 +13,17 @@ import {
 } from '$lib/feedback';
 import { FEEDBACK_CURSOR_VALUE_PARAM, parseFeedbackSort } from '$lib/feedback-sort';
 import {
+  FEEDBACK_BULK_MAX,
+  FEEDBACK_BULK_SCOPE,
+  feedbackBulkOutcome,
+  parseFeedbackBulkRows,
+} from '$lib/feedback-bulk';
+import {
   FEEDBACK_PAGE_SIZE,
+  bulkTriageFeedback,
   getFeedbackAreas,
   getFeedbackList,
+  getKnownIssues,
   getSiblingFeedback,
   isMissingTriageColumns,
   linkFeedbackToBug,
@@ -40,7 +48,7 @@ const querySchema = z.object({
   [FEEDBACK_CURSOR_VALUE_PARAM]: z.string().max(300).optional().catch(undefined),
 });
 
-export const load: PageServerLoad = async ({ url, request }) => {
+export const load: PageServerLoad = async ({ url, request, locals }) => {
   // `cursorValue` is destructured by its literal name on purpose: the schema key above is the
   // CONSTANT, so renaming the param breaks this line at compile time rather than silently reading a
   // field nothing writes.
@@ -119,6 +127,7 @@ export const load: PageServerLoad = async ({ url, request }) => {
       open: null,
       openVisible: false,
       siblings: [],
+      knownIssues: [],
       areaOptions: [],
       grafanaUrl: null,
       migrationPending: true as const,
@@ -131,6 +140,19 @@ export const load: PageServerLoad = async ({ url, request }) => {
   const siblings =
     openRow?.bugId != null
       ? await getSiblingFeedback({ bugId: openRow.bugId, excludeId: openRow.id })
+      : [];
+
+  /**
+   * The issue picker's options, on exactly the condition that renders the picker.
+   *
+   * Follows `siblings` above rather than loading with the list: an UNLINKED open row is the only
+   * state `FeedbackPromote`'s attach form exists in, so loading these for a queue view with nothing
+   * open is a query per page turn for a control nobody can see. The grant is part of the condition
+   * for the same reason — the form is not rendered without it.
+   */
+  const knownIssues =
+    openRow && openRow.bugId === null && locals.grants['feedback.bug.promote']
+      ? await getKnownIssues()
       : [];
 
   return {
@@ -146,6 +168,7 @@ export const load: PageServerLoad = async ({ url, request }) => {
     // rendering nothing, which is indistinguishable from no row being open at all.
     openVisible: !!openRow,
     siblings,
+    knownIssues,
     areaOptions: feedbackAreaOptions(areas),
     /**
      * 🔴 NULL when unset, and the panel renders no link at all in that case. A missing base would
@@ -164,6 +187,17 @@ const triageSchema = z.object({
   // The status the operator was LOOKING AT. Posted by the form, never re-read from the database —
   // re-reading it here would make the guard agree with itself.
   expectedStatus: statusEnum,
+  note: z.string().max(5000).optional(),
+});
+
+const bulkTriageSchema = z.object({
+  status: statusEnum,
+  /**
+   * The `id:status` pairs the selection bar posts. Bounded in LENGTH here and parsed for SHAPE by
+   * `parseFeedbackBulkRows`, which enforces the row count — the two bounds are not redundant: this
+   * one keeps an unbounded string off the parser at all, and 50 pairs cannot reach 4 KB.
+   */
+  rows: z.string().max(4000),
   note: z.string().max(5000).optional(),
 });
 
@@ -203,6 +237,61 @@ export const actions: Actions = {
       });
 
     return { success: true, triaged: input.id };
+  }),
+
+  /**
+   * The selection bar. Behind the SAME grant as the single-row triage, deliberately: it is the same
+   * verdict, and a separate permission would be a second answer to "may this person set a status"
+   * that nobody would remember to keep aligned. What it is NOT gated on is the row count — a
+   * moderator who may triage one report may triage fifty of them.
+   */
+  bulkTriage: requiresGrant('feedback.status.set', async ({ request, locals }) => {
+    const form = await request.formData();
+    const input = parseForm(bulkTriageSchema, form);
+    if (typeof input === 'string') return fail(400, { error: input, scope: FEEDBACK_BULK_SCOPE });
+
+    // Refuses the whole submission rather than dropping what it cannot read — see its docstring.
+    const rows = parseFeedbackBulkRows(input.rows, FEEDBACK_BULK_MAX);
+    if (typeof rows === 'string') return fail(400, { error: rows, scope: FEEDBACK_BULK_SCOPE });
+
+    const { changed, actionable } = await bulkTriageFeedback({
+      rows,
+      status: input.status,
+      // Absent means "leave every note alone", which is why this is `undefined`-vs-null rather than
+      // the single-row action's trim-to-null. An empty box there clears ONE note the operator is
+      // looking at; here it would clear every note in the selection.
+      note: input.note?.trim() ? input.note.trim() : null,
+      moderatorId: locals.user.id,
+    });
+
+    // 🔴 The two zero-change outcomes are different facts and get different words. Neither is a
+    // success: reporting one would write a verdict on screen that no row carries.
+    if (!actionable)
+      return fail(409, {
+        error: `Every selected report is already ${input.status}.`,
+        scope: FEEDBACK_BULK_SCOPE,
+      });
+    // 🔴 NO CAUSE IS ASSERTED. `bulkTriageFeedback` does not spend a read per refusal, so "someone
+    // else triaged it" and "the row is gone" are indistinguishable here — and naming the first sends
+    // the operator looking for a colleague's verdict on a report that no longer exists.
+    if (!changed.length)
+      return fail(409, {
+        error:
+          'None of the selected reports changed — they were triaged elsewhere, or are no longer in the queue.',
+        scope: FEEDBACK_BULK_SCOPE,
+      });
+
+    return {
+      success: true,
+      bulkMessage: feedbackBulkOutcome({
+        status: input.status,
+        changed: changed.length,
+        actionable,
+        // Rows the service declined to touch because they were ALREADY at the target. Counted here
+        // rather than returned, so the service keeps one definition of what it was asked to move.
+        skipped: rows.length - actionable,
+      }),
+    };
   }),
 
   promote: requiresGrant('feedback.bug.promote', async ({ request, locals }) => {
