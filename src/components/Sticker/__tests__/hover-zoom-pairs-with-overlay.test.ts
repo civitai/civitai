@@ -37,7 +37,12 @@ const source = () => readFileSync(STYLESHEET, 'utf-8');
 
 /** The card body's `&:hover { … }` block, braces balanced. */
 const hoverBlock = (css: string) => {
-  const start = css.indexOf('&:hover');
+  // Anchored on the card-body selector, not on the FIRST `&:hover` in the file. Any unrelated hover
+  // rule added above it would otherwise retarget every assertion here at the wrong block, and they
+  // would redden pointing at the sticker pairing.
+  const anchor = css.indexOf(':global([data-card-hover])');
+  if (anchor < 0) return null;
+  const start = css.indexOf('&:hover', anchor);
   if (start < 0) return null;
 
   let depth = 0;
@@ -73,9 +78,11 @@ describe('the hover zoom carries the sticker overlay with it', () => {
     // Anchored at column 0: reading only the text before `&:hover` accepts the block being NESTED
     // inside something else (`.linkOrClick { :global([data-card-hover]) { … } }`), which selects
     // nothing at all, because the attribute is on the card root — an ancestor of the link.
-    expect(source().slice(0, source().indexOf('&:hover'))).toMatch(
-      /^:global\(\[data-card-hover\]\)\s*\{\s*$/m
+    const anchored = source().slice(
+      0,
+      source().indexOf('&:hover', source().indexOf(':global([data-card-hover])'))
     );
+    expect(anchored).toMatch(/^:global\(\[data-card-hover\]\)\s*\{\s*$/m);
 
     // Under the card body the overlay is nested inside, so any combinator at all — `~`, `+`, `>`
     // — selects nothing and every placed sticker drifts.
