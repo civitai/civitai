@@ -122,8 +122,19 @@ const reports = (n: number) => `${n} report${n === 1 ? '' : 's'}`;
  * remaining predicates were no longer mutually exclusive. Neither was visible to any test — this app
  * has no browser tier, so a page-level condition is verified by reading it.
  *
- * Returning ONE value removes the question: two surfaces cannot both match a single answer. Each
- * caller renders if and only if this names it.
+ * Returning ONE value removes the AMBIGUITY, and it is worth being exact about what that does and
+ * does not buy. 🔴 THIS FUNCTION CANNOT ENFORCE THE EXCLUSION — that is the CALLERS' doing, and an
+ * earlier version of this paragraph claimed otherwise. Measured: changing one consumer's comparison
+ * from `=== 'page'` to `!== 'bar'` re-opens the exact double-render this exists to close, with the
+ * whole suite green, because no test crosses the function boundary into `+page.svelte`.
+ *
+ * What makes it structural is on the OTHER side: the two page-level consumers are branches of a
+ * single `{#if}` chain, so at most one renders however their conditions are spelled. This function
+ * supplies the answer; the chain is what stops two surfaces acting on it.
+ *
+ * ⚠️ `bar` has NO consumer. The bar renders its own refusal from its component-local `FormState`
+ * (`FeedbackBulkBar.svelte`), so that arm exists to DENY the page a refusal the bar is showing, not
+ * to tell anything to render. Deleting it as unused re-opens the 403 double-render.
  *
  *   `bar`    — the selection bar is mounted, so it owns its own failure whatever `fail()` site
  *              produced it. This is the clause the scope test got wrong.

@@ -158,7 +158,7 @@ describe('feedbackRefusalTarget', () => {
     expect(target({ barMounted: true, rowOpen: true })).toBe('bar');
   });
 
-  it('gives an orphaned BULK refusal to the page when the bar is gone', () => {
+  it('routes an orphaned BULK refusal to its own surface when the bar is gone', () => {
     // The regression round 2 caught: this state and `page` were both true at once.
     expect(target({ barMounted: false, isBulkFailure: true })).toBe('orphan');
     expect(target({ barMounted: false, isBulkFailure: true, rowOpen: true })).toBe('orphan');

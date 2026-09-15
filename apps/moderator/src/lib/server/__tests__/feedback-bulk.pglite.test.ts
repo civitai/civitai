@@ -119,7 +119,7 @@ describe('bulkTriageFeedback', () => {
 
   /**
    * 🔴 EXCLUDED FROM `actionable`, NOT COUNTED AS A CONFLICT — AND THE UPDATE *DOES* MATCH.
-   * Deleting the guard makes exactly this test red, because `RETURNING id` hands the
+   * Deleting the guard makes this test and the one below it red, because `RETURNING id` hands the
    * already-at-target row straight back: Postgres matches `SET status=X WHERE status=X` and writes
    * a new tuple. So the guard prevents a re-stamped handler, an inflated `changed`, and a spurious
    * `ModActivity` row — not a no-op. Leaving such a row in the denominator would also report it as

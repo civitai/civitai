@@ -109,10 +109,10 @@
   /**
    * Whether the last refusal belongs to the selection bar.
    *
-   * 🔴 ONLY used to keep `pageError` from rendering it a SECOND time — the bar holds and renders its
-   * own refusal through `FormState`, which is what removes the routing question rather than
-   * answering it per panel. The server stamps the scope because three actions share one page-level
-   * `form` object.
+   * Read by `feedbackRefusalTarget` as `isBulkFailure`, and rendered by `orphanedBulkFailure` when
+   * the bar is gone. The bar holds and renders its own refusal through `FormState`; the server
+   * stamps the scope because three actions share one page-level `form` object, and a bulk refusal
+   * has to be told apart from the two the detail panel owns.
    */
   const bulkFailure = $derived(
     form && 'scope' in form && form.scope === FEEDBACK_BULK_SCOPE && 'error' in form && form.error
@@ -247,11 +247,24 @@
     shown={data.items.length}
   />
 
+  <!--
+    🔴 ONE CHAIN, AND THAT IS WHAT MAKES THE EXCLUSION STRUCTURAL RATHER THAN MAINTAINED. Both
+    page-level refusals and the filter hint are branches of a single `{#if}`, so at most one can
+    render whatever literals the conditions above compare — which two independent `{#if}` blocks
+    could not promise, and did not: an orphaned bulk refusal used to render here AND below the
+    table, while this hint fired alongside it.
+
+    The hint is last for the reason it always was: "clear the filters" is the wrong advice when
+    there is a refusal to show, and `refusalTarget === 'none'` is what says there is not.
+  -->
   {#if pageError}
     <ErrorAlert message={pageError} class="mb-4" />
-  {:else if data.open !== null && !data.openVisible}
-    <!-- Only when there is no refusal to show: "clear the filters" is the wrong advice for a row
-         that was just deleted, and that is the case where both would otherwise render. -->
+  {:else if orphanedBulkFailure}
+    <!-- 🔴 ABOVE THE TABLE, not after the pager where this used to sit. It is the whole reason the
+         bar-gone gap is tolerable: a refusal nine columns of rows below the fold is not "visible,
+         not silent", it is silent for anyone who has scrolled to the rows they selected. -->
+    <ErrorAlert message={orphanedBulkFailure} class="mb-4" />
+  {:else if refusalTarget === 'none' && data.open !== null && !data.openVisible}
     <p class="mb-4 text-sm text-dark-2">
       Report #{data.open} is not in this view — clear the filters to open it.
     </p>
@@ -403,10 +416,6 @@
     <!-- `role="status"`: a successful run unmounts the bar, so this line is the only report of what
          happened — and it appears with no focus change to announce it. -->
     <p role="status" class="mt-4 text-sm text-teal-400">{bulkMessage}</p>
-  {/if}
-
-  {#if orphanedBulkFailure}
-    <ErrorAlert message={orphanedBulkFailure} class="mt-4" />
   {/if}
 
   {#if barMounted}
