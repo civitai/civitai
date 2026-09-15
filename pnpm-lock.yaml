@@ -62,8 +62,8 @@ importers:
         specifier: workspace:*
         version: link:packages/civitai-flipt
       '@civitai/generation-metadata':
-        specifier: ^0.2.0
-        version: 0.2.0
+        specifier: ^0.3.0
+        version: 0.3.0
       '@civitai/moderation':
         specifier: workspace:*
         version: link:packages/civitai-moderation
@@ -2215,8 +2215,8 @@ packages:
     resolution: {integrity: sha512-j+aIZy+d3mvPhE93lrx9d3k08PABFeH025DIYuR1T5LWqJ9xnAHTuFXdhLCeIDZESdOg95fNJcVqhOvAcCpddw==}
     engines: {node: '>=22.18.0', npm: '>=10', pnpm: '>=10'}
 
-  '@civitai/generation-metadata@0.2.0':
-    resolution: {integrity: sha512-QAevrDK/o4wU33zCsrGbF2zED01Pyg7z/E5nnBAV5nvEInlw6mzYqWZ3mU6rbz87ej4epe8Knj6WZj7USjvhDg==}
+  '@civitai/generation-metadata@0.3.0':
+    resolution: {integrity: sha512-+mnPE4cz+1qrIquvybz97mylvxXsBv/w1p3lR5lsLQwL5FgJHb0EkIl33fo8mEy0IzyJadol6fd2NmLayzIY+A==}
     engines: {node: '>=20'}
 
   '@civitai/next-axiom@0.17.0':
@@ -13440,7 +13440,7 @@ snapshots:
     dependencies:
       fast-xml-parser: 5.10.1
 
-  '@civitai/generation-metadata@0.2.0':
+  '@civitai/generation-metadata@0.3.0':
     dependencies:
       exifreader: 4.41.3
       zod: 4.4.3
