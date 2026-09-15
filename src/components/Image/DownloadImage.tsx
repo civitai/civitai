@@ -36,8 +36,10 @@ export function DownloadImage({
           if (xhr.readyState === 4 && xhr.status === 200) {
             resolve(xhr.response);
             // A completed non-200 must reject — otherwise the promise never settles
-            // and the spinner hangs forever (the silent failure behind 72545/72611/
-            // 72615/72684: CORS, auth and 5xx all read as "button does nothing").
+            // and the spinner hangs forever. (A CORS block is the OTHER arm: the
+            // request never completes, so it lands on the `error` listener below
+            // with status 0. Both read to the user as "the button does nothing",
+            // which is what 72545/72611/72615/72684 reported.)
           } else if (xhr.readyState === 4) {
             reject(new Error(`Download failed (HTTP ${xhr.status})`));
           }

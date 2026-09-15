@@ -12,7 +12,15 @@ import { DownloadImage } from '~/components/Image/DownloadImage';
  * same silent way to the user: a hung spinner (completed non-200 never settled the
  * promise) or a dead button with no message (network/CORS rejections were swallowed).
  * Four support tickets in four days (72545/72611/72615/72684), all "I click download,
- * spinner, then nothing" — during the blobs-b2 CORS outage and after it.
+ * spinner, then nothing".
+ *
+ * Those four had a single ROOT CAUSE, fixed separately at the storage layer and not
+ * here: `image.civitai.com` 301s to `blobs-b2.civitai.com`, a CROSS-ORIGIN redirect,
+ * so the browser sends `Origin: null` on the second hop, and B2's rules on that bucket
+ * matched any real https origin but not the literal `null` — no `Access-Control-Allow-
+ * Origin`, request blocked. This file does NOT test that; it tests that whatever the
+ * transport does, the user is told. The two are independent: the CORS fault is gone,
+ * and the next transport fault will still find this surface.
  *
  * These tests pin: a completed non-200 REJECTS and toasts (no infinite spinner), a
  * network error TOASTS instead of vanishing into the empty catch, and the success
@@ -34,7 +42,7 @@ vi.mock(
     ({
       ...(await importOriginal<Record<string, unknown>>()),
       showErrorNotification: mocks.showErrorNotification,
-    }) as Record<string, unknown>,
+    } as Record<string, unknown>)
 );
 
 vi.mock('~/client-utils/cf-images-utils', () => ({
@@ -86,7 +94,7 @@ function renderDownload() {
           {isLoading ? 'downloading' : 'download'}
         </button>
       )}
-    </DownloadImage>,
+    </DownloadImage>
   );
 }
 
