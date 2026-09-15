@@ -113,7 +113,7 @@ import {
   buildWorkflowPendingChange,
 } from '~/components/generation_v2/CompatibilityConfirmModal';
 import { workflowPreferences } from '~/store/workflow-preferences.store';
-import { useRemixOfId } from './hooks/useRemixOfId';
+import { resolveRemixOfId, type RemixClaimFormState } from '~/utils/remix-claim';
 import { remixStore } from '~/store/remix.store';
 import { useMetadataExtractionStore } from '~/store/metadata-extraction.store';
 import { useGeneratedItemWorkflows } from './hooks/useGeneratedItemWorkflows';
@@ -1078,7 +1078,6 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   const { creatorTip, civitaiTip } = useTipStore();
   const features = useFeatureFlags();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
-  const remixOfId = useRemixOfId();
   const { resources: resourceData } = useResourceDataContext();
   const invalidateWhatIf = useInvalidateWhatIf();
   const membershipUpsell = useMembershipUpsell();
@@ -1160,6 +1159,11 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     //   - validation passes + not rate-limited → emit { isValid: true } and proceed
     const result = graph.validate();
     const fromAction = useGenerationGraphStore.getState().lastEntryAction;
+
+    // Resolved against the form as it stands, not read from the store: this id
+    // is recorded against a blocked prompt and read back as evidence, so it has
+    // to describe THIS request. See `utils/remix-claim.ts`.
+    const remixOfId = resolveRemixOfId(graph.getSnapshot() as RemixClaimFormState);
 
     // Validation-fail branch. Pairs with the `isValid:true` emit below so the
     // data team has a complete attempt funnel. We deliberately do NOT also
