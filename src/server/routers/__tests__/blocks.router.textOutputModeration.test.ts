@@ -225,6 +225,8 @@ function chatWorkflow(content = GENERATED_TEXT) {
   return {
     id: 'wf_1',
     status: 'succeeded',
+    // The producing app's provenance tag — `pollWorkflow`/`cancelWorkflow` scope on it.
+    tags: [`app-block:${APP_ID}`],
     createdAt: '2026-01-01T00:00:00.000Z',
     cost: { total: 7 },
     steps: [
@@ -440,6 +442,7 @@ describe('blocks.pollWorkflow — textOutput moderation is WIRED', () => {
     mockGetWorkflow.mockResolvedValue({
       id: 'wf_1',
       status: 'succeeded',
+      tags: [`app-block:${APP_ID}`],
       cost: { total: 10 },
       steps: [
         {
