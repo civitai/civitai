@@ -39,14 +39,34 @@ export type FeedPrimaryDeps<T extends { id: number }> = {
   timeoutMs?: number;
 };
 
-/** The image query for hydrating exactly `ids`: the request's filters without its paging. */
+/** The image query for hydrating exactly `ids`: the request's filters without its paging or
+ *  period, both already applied by the feed (getAllImages would cut the period on createdAt). */
 export function feedHydrateQuery<
-  T extends { cursor?: unknown; skip?: number; offset?: number; entry?: number; limit?: number }
+  T extends {
+    cursor?: unknown;
+    skip?: number;
+    offset?: number;
+    entry?: number;
+    limit?: number;
+    period?: unknown;
+    periodMode?: unknown;
+  }
 >(
   input: T,
   ids: number[]
-): Omit<T, 'cursor' | 'skip' | 'offset' | 'entry'> & { ids: number[]; limit: number } {
-  const { cursor: _cursor, skip: _skip, offset: _offset, entry: _entry, ...rest } = input;
+): Omit<T, 'cursor' | 'skip' | 'offset' | 'entry' | 'period' | 'periodMode'> & {
+  ids: number[];
+  limit: number;
+} {
+  const {
+    cursor: _cursor,
+    skip: _skip,
+    offset: _offset,
+    entry: _entry,
+    period: _period,
+    periodMode: _periodMode,
+    ...rest
+  } = input;
   return { ...rest, ids, limit: ids.length };
 }
 
@@ -100,6 +120,12 @@ export async function serveFromFeed<T extends { id: number }>(
     return { ok: false, reason: 'hydrate:error' };
   } finally {
     endHydrate();
+  }
+  // getAllImages answers its own statement timeout with an empty page; ids that hydrate to
+  // nothing are that, not the end of the feed.
+  if (!rows.length) {
+    requestCounter.inc({ outcome: 'error' });
+    return { ok: false, reason: 'hydrate:empty' };
   }
   const byId = new Map(rows.map((r) => [r.id, r]));
   const data = answer.ids.flatMap((id) => {

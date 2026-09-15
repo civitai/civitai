@@ -83,6 +83,7 @@ const UNSUPPORTED_KEYS = [
   'generation',
   'reactions',
   'blockedFor',
+  'remixOfId',
 ] as const;
 const UNSUPPORTED_FLAGS = [
   'followed',
@@ -96,6 +97,8 @@ const UNSUPPORTED_FLAGS = [
   'hideChallenges',
   'pending',
   'publishedOnly',
+  'remixesOnly',
+  'nonRemixesOnly',
 ] as const;
 
 const present = (v: unknown) =>

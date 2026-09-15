@@ -81,6 +81,9 @@ describe('mapSearchInputToFeedQuery', () => {
     };
     expect(reason({ followed: true })).toBe('flag:followed');
     expect(reason({ postId: 4 })).toBe('input:postId');
+    expect(reason({ remixOfId: 4 })).toBe('input:remixOfId');
+    expect(reason({ remixesOnly: true })).toBe('flag:remixesOnly');
+    expect(reason({ nonRemixesOnly: true })).toBe('flag:nonRemixesOnly');
     expect(reason({ modelId: 4 })).toBe('modelId');
     expect(reason({ cursor: '30000|1788000000000' })).toBe('offset>20000');
     expect(reason({ sort: 'Random' })).toBe('sort:Random');
