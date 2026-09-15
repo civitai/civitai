@@ -15,12 +15,14 @@ import { useMediaQuality } from '~/hooks/useMediaQuality';
 // graph). Re-exported here so every existing consumer of this module is unaffected.
 export {
   COMMON_IMAGE_WIDTHS,
+  MAX_EDGE_WIDTH,
   SRCSET_DPR,
   getEdgeUrl,
   getEdgeUrlSrcSet,
   getInferredMediaType,
   resolveOptimized,
   resolvesToOriginal,
+  snapWidthDownToCommonSize,
   snapWidthToCommonSize,
   toMediaQuality,
 } from '~/client-utils/edge-url';

@@ -1,6 +1,7 @@
 import { useLocalStorage } from '@mantine/hooks';
 import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { MAX_EDGE_WIDTH, snapWidthDownToCommonSize } from '~/client-utils/cf-images-utils';
 import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import { ImageStickerOverlay } from '~/components/Sticker/ImageStickerOverlay';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
@@ -262,6 +263,9 @@ function ImageContent({
   });
 
   const isVideo = image?.type === 'video';
+  // The SOURCE's own width, snapped DOWN and capped. Not the fit box above: `width` there is the
+  // on-screen box, and asking the cacher for more pixels than the original has only upscales.
+  const lightboxWidth = snapWidthDownToCommonSize(Math.min(imageWidth, MAX_EDGE_WIDTH));
 
   // dragstart carries no pointerType, and android chrome fires it for a long-press
   // drag — leaving that one to embla keeps the touch swipe as `watchTouchDrag` has it
@@ -315,7 +319,11 @@ function ImageContent({
                   aspectRatio: (image?.width ?? 0) / (image?.height ?? 0),
                 },
               }}
-              // width={!isVideo ? undefined : 450} // Leave as undefined to get original size
+              // Browsing follows the viewer's media quality here like anywhere else; the download
+              // button is what still hands over the stored file. Width is the SOURCE's own size
+              // snapped DOWN, because the cacher upscales — asking for more than the original has
+              // buys interpolated pixels at several times the bytes.
+              width={isVideo ? undefined : lightboxWidth}
               // `anim` and `original` feed the CDN URL — an inactive slide has to
               // request the same URL the active one will, or it warms nothing
               anim

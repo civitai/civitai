@@ -78,6 +78,7 @@ import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProf
 import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { useMediaQuality } from '~/hooks/useMediaQuality';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { Flags } from '~/shared/utils/flags';
 import {
@@ -201,6 +202,9 @@ function ChapterListItem({
   showDownload?: boolean;
   onChangeNsfwLevel?: (level: number) => void;
 }) {
+  // Raw `getEdgeUrl` below, so the viewer's media quality is applied by hand.
+  const { quality } = useMediaQuality();
+  const compressed = quality !== 'lossless';
   const { canRead } = useChapterPermission({
     chapterId: ch.id,
     projectUserId: project.user.id,
@@ -228,7 +232,7 @@ function ChapterListItem({
         {thumbUrl ? (
           <>
             <img
-              src={getEdgeUrl(thumbUrl, { width: 120 })}
+              src={getEdgeUrl(thumbUrl, { width: 120, optimized: compressed })}
               alt={ch.name}
               className={isBlurred ? styles.chapterThumbBlurred : undefined}
             />
@@ -328,6 +332,10 @@ function ChapterListItem({
 
 function ComicOverview({ project }: { project: Project }) {
   const router = useRouter();
+  // Raw `getEdgeUrl` below, so the viewer's media quality is applied by hand.
+  const { quality } = useMediaQuality();
+  const compressed = quality !== 'lossless';
+
   const currentUser = useCurrentUser();
   const isOwner = currentUser?.id === project.user.id;
   const projectMeta = project.meta as ComicProjectMeta | null;
@@ -419,7 +427,7 @@ function ComicOverview({ project }: { project: Project }) {
                 safe ? (
                   <>
                     <img
-                      src={getEdgeUrl(heroUrl, { width: 1200 })}
+                      src={getEdgeUrl(heroUrl, { width: 1200, optimized: compressed })}
                       alt={project.name}
                       className={styles.overviewHeroImage}
                       style={{ objectPosition: `center ${project.heroImagePosition ?? 50}%` }}
@@ -430,7 +438,7 @@ function ComicOverview({ project }: { project: Project }) {
                   <>
                     <div className="absolute inset-0 overflow-hidden">
                       <img
-                        src={getEdgeUrl(heroUrl, { width: 1200 })}
+                        src={getEdgeUrl(heroUrl, { width: 1200, optimized: compressed })}
                         alt={project.name}
                         className={styles.overviewHeroImage}
                         style={{
@@ -806,6 +814,10 @@ type ReaderMode = 'scroll' | 'pages';
 
 function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbPos: number }) {
   const router = useRouter();
+  // Raw `getEdgeUrl` below, so the viewer's media quality is applied by hand.
+  const { quality } = useMediaQuality();
+  const compressed = quality !== 'lossless';
+
   const currentUser = useCurrentUser();
   const availableBuzzTypes = useAvailableBuzz();
   const chapters = project.chapters;
@@ -1015,7 +1027,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   // Render a single panel with ImageGuard2 support
   const renderPanel = (panel: (typeof panels)[number]) => {
     if (!panel.imageUrl) return null;
-    const panelSrc = getEdgeUrl(panel.imageUrl, { width: 1200 });
+    const panelSrc = getEdgeUrl(panel.imageUrl, { width: 1200, optimized: compressed });
 
     if (panel.image) {
       const image = panel.image;
