@@ -24,8 +24,11 @@ describe('the access chip stays hit-testable', () => {
 
     // The positive control: if the chip cannot be found at all — renamed, restructured, moved to
     // another file — that is a failure, not a pass.
-    const chip = source.slice(source.indexOf('function AccessChip'));
-    expect(chip, 'AccessChip is gone from ModelCard.tsx').not.toBe('');
+    // `slice(-1)` on a missing match yields the LAST CHARACTER, not '', so a `not.toBe('')` control
+    // here could never fire. Assert the index instead.
+    const start = source.indexOf('function AccessChip');
+    expect(start, 'AccessChip is gone from ModelCard.tsx').toBeGreaterThan(-1);
+    const chip = source.slice(start);
     expect(chip).toContain('data-status-badge="access"');
 
     expect(
@@ -35,8 +38,9 @@ describe('the access chip stays hit-testable', () => {
   });
 
   test('the `.chip` the card actually uses still does not re-enable pointer events', () => {
-    // If this ever fails, the call-site class above is redundant and should be deleted rather than
-    // left as cargo — the rule would then be in the stylesheet where it belongs.
+    // If this ever fails, read it as a regression to revert rather than a signal to drop the
+    // call-site class: ~20 decorative chips across ArticleCard, BountyCard and ChallengeCard wear
+    // this same `.chip` and WANT to fall through to the card link.
     const cardsCss = readFileSync(resolve(__dirname, '..', 'Cards.module.css'), 'utf-8');
     const chipRule = cardsCss.slice(cardsCss.indexOf('.chip {'));
     expect(chipRule.slice(0, chipRule.indexOf('}'))).not.toContain('pointer-events');
