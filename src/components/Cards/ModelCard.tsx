@@ -89,22 +89,6 @@ function ModelCardContent({ data }: Props) {
 
   // `.chip` fixes height at 26px; Mantine's `circle` only rounds the corners and sizes the width
   // from the badge size, so the two together give a narrow oval. Pin both axes to the chip height.
-  const roundChip = { width: 26, height: 26, padding: 0 } as const;
-  // Green rather than the `success` teal: that sits a few degrees from the Updated chip's old teal,
-  // and the two read as one colour at chip size.
-  const paidBadgeStyle = useMemo(
-    () => (isPaidAccess ? { backgroundColor: theme.colors.green[7], ...roundChip } : undefined),
-    [isPaidAccess, theme]
-  );
-  // Ungated cards never touch `theme.colors.success`, which is an app-level scale a bare
-  // MantineProvider does not carry. Gated ones still do, so this narrows the blast radius rather
-  // than removing it.
-  const earlyAccessBadgeStyle = useMemo(
-    () => (isEarlyAccess ? { backgroundColor: theme.colors.green[7], ...roundChip } : undefined),
-    [isEarlyAccess, theme]
-  );
-  // New and Updated share one blue. They are the same kind of fact — this model changed recently —
-  // and two colours for that read as two unrelated states, especially beside a third chip.
   const recencyBadgeStyle = useMemo(
     () => ({ backgroundColor: theme.colors.blue[getPrimaryShade(theme, colorScheme)] }),
     [theme, colorScheme]
@@ -120,6 +104,26 @@ function ModelCardContent({ data }: Props) {
   // by the time the flag flipped.
   const ownSale = useModelSaleBadge(data.id, !!hasSaleProvider);
   const sale = salesByModelId?.[data.id] ?? ownSale;
+
+  // A circle only works while the chip is icon-only. Carrying a discount makes it a pill again.
+  const roundChip = sale
+    ? ({ paddingInline: 8 } as const)
+    : ({ width: 26, height: 26, padding: 0 } as const);
+  // Green rather than the `success` teal: that sits a few degrees from the Updated chip's old teal,
+  // and the two read as one colour at chip size.
+  const paidBadgeStyle = useMemo(
+    () => (isPaidAccess ? { backgroundColor: theme.colors.green[7], ...roundChip } : undefined),
+    [isPaidAccess, theme]
+  );
+  // Ungated cards never touch `theme.colors.success`, which is an app-level scale a bare
+  // MantineProvider does not carry. Gated ones still do, so this narrows the blast radius rather
+  // than removing it.
+  const earlyAccessBadgeStyle = useMemo(
+    () => (isEarlyAccess ? { backgroundColor: theme.colors.green[7], ...roundChip } : undefined),
+    [isEarlyAccess, theme]
+  );
+  // New and Updated share one blue. They are the same kind of fact — this model changed recently —
+  // and two colours for that read as two unrelated states, especially beside a third chip.
   const cardBaseModels = getCardBaseModels(
     data as Parameters<typeof getCardBaseModels>[0],
     activeBaseModels
@@ -185,7 +189,7 @@ function ModelCardContent({ data }: Props) {
               baseModels={cardBaseModels}
             />
 
-            {sale && (
+            {sale && !isPaidAccess && !isEarlyAccess && (
               <Badge className={cardClasses.chip} variant="filled" radius="xl" color="green">
                 <Text c="white" size="xs" tt="capitalize">
                   <SaleDiscountLabel sale={sale} />
@@ -207,7 +211,14 @@ function ModelCardContent({ data }: Props) {
               </Badge>
             )}
             {isEarlyAccess ? (
-              <HoverCard position="bottom-start" withinPortal withArrow shadow="sm" openDelay={0}>
+              <HoverCard
+                position="bottom-start"
+                withinPortal
+                withArrow
+                shadow="sm"
+                openDelay={0}
+                zIndex={10000}
+              >
                 <HoverCard.Target>
                   <Badge
                     className={cardClasses.chip}
@@ -220,6 +231,11 @@ function ModelCardContent({ data }: Props) {
                     style={earlyAccessBadgeStyle}
                   >
                     <IconClockDollar size={16} color="white" />
+                    {sale && (
+                      <Text c="white" size="xs" tt="capitalize" ml={4}>
+                        <SaleDiscountLabel sale={sale} />
+                      </Text>
+                    )}
                   </Badge>
                 </HoverCard.Target>
                 <HoverCard.Dropdown px="xs" py={4}>
@@ -236,7 +252,14 @@ function ModelCardContent({ data }: Props) {
               // HoverCard, not Tooltip: the Tooltip never became visible on this card at any
               // position, while the HoverCard in BountyCard and the Popover in ModelTypeBadge both
               // do. Matching what demonstrably works here rather than debugging what does not.
-              <HoverCard position="bottom-start" withinPortal withArrow shadow="sm" openDelay={0}>
+              <HoverCard
+                position="bottom-start"
+                withinPortal
+                withArrow
+                shadow="sm"
+                openDelay={0}
+                zIndex={10000}
+              >
                 <HoverCard.Target>
                   <Badge
                     className={cardClasses.chip}
@@ -250,6 +273,11 @@ function ModelCardContent({ data }: Props) {
                     style={paidBadgeStyle}
                   >
                     <IconLockDollar size={16} color="white" />
+                    {sale && (
+                      <Text c="white" size="xs" tt="capitalize" ml={4}>
+                        <SaleDiscountLabel sale={sale} />
+                      </Text>
+                    )}
                   </Badge>
                 </HoverCard.Target>
                 <HoverCard.Dropdown px="xs" py={4}>
