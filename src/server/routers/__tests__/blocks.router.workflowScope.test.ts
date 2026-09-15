@@ -463,7 +463,16 @@ describe('blocks.cancelWorkflow — viewer scope', () => {
   });
 
   it('refuses every id that does not name this viewer, and issues no cancel', async () => {
-    for (const id of ['wf_1', SYSTEM_ID, NEGATIVE_IDENTITY_ID]) {
+    // The SAME id set the poll loop uses — including the coercion ids, which is the seam that
+    // matters most here: the cancel site is the one with the irreversible side effect, and a
+    // previous revision of this file pinned the seam only at the poll site.
+    for (const id of [
+      'wf_1',
+      SYSTEM_ID,
+      NEGATIVE_IDENTITY_ID,
+      PREFIX_NEAR_MISS_ID,
+      ...COERCION_IDS,
+    ]) {
       await expect(caller().cancelWorkflow({ blockToken: 'tok', workflowId: id })).rejects.toThrow(
         'workflow does not belong to this viewer'
       );
@@ -556,6 +565,15 @@ describe('blocks.publishGenerationOutputs — app scope', () => {
     });
     // Ahead of the orchestrator read, so a refused publish costs no upstream call.
     expect(mockGetWorkflow).not.toHaveBeenCalled();
+    // 🔴 WHICH viewer and WHICH app block — the title claims a BINDING, and toggling a mock's
+    // return value observes only that the call happened. Both operands must come from the verified
+    // token, so a site that asked about the wrong user, or passed `claims.appId` where
+    // `claims.appBlockId` belongs, would otherwise read as covered.
+    expect(mockBlockWorkflowOwnedByAppUser).toHaveBeenCalledWith({
+      userId: VIEWER,
+      appBlockId: validClaims().appBlockId,
+      workflowId: OWN_ID,
+    });
   });
 
   it('a correctly-tagged workflow gets PAST the app-scope guard', async () => {
@@ -570,17 +588,19 @@ describe('blocks.publishGenerationOutputs — app scope', () => {
       workflowFixture({ status: 'succeeded', cost: { total: 73 } })
     );
 
-    // `.then(onOk, onErr)` rather than `.catch(...)`: the assertion must run whether the procedure
-    // rejects or resolves. Under `.catch` it runs only on the reject path, so giving this fixture
-    // outputs — or anything below the guard starting to resolve — would silently degrade the case
-    // to the lone `mockGetWorkflow` check with no failure to read.
+    // 🔴 THE ASSERTION IS POSITIVE, NOT A NEGATION, and that is the whole point. An earlier
+    // revision asserted `.not.toBe('workflow is not tagged for this app')` and claimed switching
+    // `.catch` to `.then(onOk, onErr)` made it robust. It did not: on the resolve path `err` is
+    // null, so the negation passes vacuously — measured, by making the procedure return early
+    // below the guard, which left the whole set green. Naming the exact failure the procedure must
+    // reach INSTEAD pins that it got past the tag assertion AND no further than expected.
     const err = await caller()
       .publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
       .then(
         () => null,
         (e: { message?: string }) => e
       );
-    expect(err?.message).not.toBe('workflow is not tagged for this app');
+    expect(err?.message).toBe('workflow has no available outputs to publish');
     expect(mockGetWorkflow).toHaveBeenCalledWith(
       expect.objectContaining({ path: { workflowId: OWN_ID } })
     );
