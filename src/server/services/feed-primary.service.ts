@@ -18,12 +18,9 @@ const requestCounter = registerCounterWithLabels({
 
 const hydrateDuration = registerHistogram({
   name: 'feed_primary_hydrate_duration_seconds',
-  help: 'Time to hydrate a feed-served page, by where the rows came from',
-  labelNames: ['source'] as const,
+  help: 'Time to load the rows of a feed-served page from Postgres',
   buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
 });
-
-export type FeedHydrateSource = 'meili' | 'db';
 
 export type FeedPrimaryPage<T> = {
   data: T[];
@@ -39,7 +36,6 @@ export type FeedPrimaryDeps<T extends { id: number }> = {
   fetchFeed: (query: string, timeoutMs: number) => Promise<FeedAnswer>;
   /** Loads the page's records in any order; the feed's order is restored here. */
   hydrate: (ids: number[]) => Promise<T[]>;
-  hydrateSource?: FeedHydrateSource;
   timeoutMs?: number;
 };
 
@@ -96,7 +92,7 @@ export async function serveFromFeed<T extends { id: number }>(
     return { ok: true, page: { data: [], nextCursor, feedMs: answer.ms, route: answer.route } };
   }
   let rows: T[];
-  const endHydrate = hydrateDuration.startTimer({ source: deps.hydrateSource ?? 'meili' });
+  const endHydrate = hydrateDuration.startTimer();
   try {
     rows = await deps.hydrate(answer.ids);
   } catch {

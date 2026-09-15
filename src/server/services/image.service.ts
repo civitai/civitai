@@ -2820,7 +2820,7 @@ type GetAllImagesIndexResult = AsyncReturnType<typeof getAllImages>;
  * because the blocked-browsing early return and a search reporting none both omit it.
  */
 type GetAllImagesIndexSourcedResult = GetAllImagesIndexResult & {
-  source?: AsyncReturnType<typeof getImagesFromSearch>['source'];
+  source?: 'feed' | AsyncReturnType<typeof getImagesFromSearch>['source'];
 };
 export const getAllImagesIndex = async (
   input: GetAllImagesInput
@@ -2888,24 +2888,25 @@ export const getAllImagesIndex = async (
   const currentUserId = user?.id;
 
   const searchInput = { ...input, currentUserId, isModerator: user?.isModerator, offset, entry };
-  let feedTried = false;
+  // The feed service picks and orders the page and Postgres supplies the rows; Meilisearch is
+  // not consulted. What the feed cannot serve (unmapped shape, timeout, error) goes to Meilisearch.
   if (feedPrimaryAvailable()) {
-    const entityId = currentUserId?.toString() || 'anonymous';
-    const flipt = feedFliptContext(searchInput);
-    const [feedPrimary, hydrateFromDb] = await withSpan('image:flipt:hydrate', () =>
-      Promise.all([
-        getFliptBoolean(FLIPT_FEATURE_FLAGS.FEED_SERVICE_PRIMARY, entityId, flipt),
-        getFliptBoolean(FLIPT_FEATURE_FLAGS.FEED_SERVICE_HYDRATE_DB, entityId, flipt),
-      ])
+    const feedPrimary = await withSpan('image:flipt:feedPrimary', () =>
+      getFliptBoolean(
+        FLIPT_FEATURE_FLAGS.FEED_SERVICE_PRIMARY,
+        currentUserId?.toString() || 'anonymous',
+        feedFliptContext(searchInput)
+      )
     );
-    if (feedPrimary && hydrateFromDb) {
-      feedTried = true;
+    if (feedPrimary) {
       const started = Date.now();
-      const served = await withSpan('image:feedPrimary:db', () =>
+      const served = await withSpan('image:feedPrimary', () =>
         serveFromFeed(searchInput, {
           fetchFeed: fetchFeedPrimary,
-          hydrateSource: 'db',
-          hydrate: async (ids) => (await getAllImagesUncaptured(feedHydrateQuery(input, ids))).items,
+          hydrate: async (ids) =>
+            (
+              await getAllImagesUncaptured(feedHydrateQuery(input, ids))
+            ).items,
         })
       );
       if (served.ok) {
@@ -2929,9 +2930,7 @@ export const getAllImagesIndex = async (
       data: searchResults,
       nextCursor: searchNextCursor,
       source: searchSource,
-    } = await withSpan('image:getAllImagesIndex:search', () =>
-      getImagesFromSearch({ ...searchInput, skipFeedPrimary: feedTried })
-    ));
+    } = await withSpan('image:getAllImagesIndex:search', () => getImagesFromSearch(searchInput)));
   } catch (err) {
     // Meilisearch saturation / timeout on the tRPC hot path (image.getInfinite).
     // Surface as TRPCError SERVICE_UNAVAILABLE (HTTP 503) so the client gets a
@@ -3223,10 +3222,6 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   blockedFor?: string[];
   signal?: AbortSignal;
   actor?: string;
-  /** Hydrate exactly these ids: a page the feed service already selected and ordered. */
-  feedIds?: number[];
-  /** getAllImagesIndex already asked the feed service for this request; do not ask again. */
-  skipFeedPrimary?: boolean;
   // Unhandled
   //prioritizedUserIds?: number[];
   //userIds?: number | number[];
@@ -3279,13 +3274,13 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     const result = await searchImages(input);
     const outcome = {
       source: 'getImagesFromSearch' as const,
-      filterMode: result.source === 'feed' ? ('feed' as const) : result.filterMode,
+      filterMode: result.filterMode,
       elapsedMs: Date.now() - started,
       resultIds: result.data.map((i: { id: number }) => i.id),
       nextCursor: result.nextCursor,
     };
     void feedRequestCapture().record(input, outcome);
-    if (result.source !== 'feed') void feedShadow().compare(input, outcome);
+    void feedShadow().compare(input, outcome);
     return result;
   } catch (err) {
     void feedRequestCapture().record(input, {
@@ -3308,7 +3303,6 @@ async function searchImages(input: ImageSearchInput) {
     };
   let searchFn = getImagesFromSearchPreFilter;
   let filterMode: 'pre' | 'post' = 'pre';
-  let feedFirst = false;
   // Wrap Flipt feature-flag evaluation so the trace shows whether per-request
   // flag fetch is contributing to the parent span's latency. Routes through
   // getFliptBoolean instead of direct per-request wasm evaluateBoolean calls on
@@ -3318,46 +3312,13 @@ async function searchImages(input: ImageSearchInput) {
   // fallthrough (flags default off → pre-filter).
   input = await withSpan('image:flipt:eval', async () => {
     const entityId = input.currentUserId?.toString() || 'anonymous';
-    const [postFilter, feedPrimary] = await Promise.all([
-      getFliptBoolean(FLIPT_FEATURE_FLAGS.FEED_POST_FILTER, entityId),
-      feedPrimaryAvailable() && !input.skipFeedPrimary
-        ? getFliptBoolean(
-            FLIPT_FEATURE_FLAGS.FEED_SERVICE_PRIMARY,
-            entityId,
-            feedFliptContext(input)
-          )
-        : false,
-    ]);
+    const postFilter = await getFliptBoolean(FLIPT_FEATURE_FLAGS.FEED_POST_FILTER, entityId);
     if (postFilter) {
       searchFn = getImagesFromSearchPostFilter;
       filterMode = 'post';
     }
-    feedFirst = feedPrimary;
     return input;
   });
-
-  // The feed service selects and orders the page; Meilisearch only hydrates those ids
-  // through the same search function, so every post-filter still applies. Anything the
-  // feed cannot answer (unmapped shape, timeout, error) falls through to Meilisearch.
-  if (feedFirst) {
-    const served = await withSpan('image:feedPrimary', () =>
-      serveFromFeed(input, {
-        fetchFeed: fetchFeedPrimary,
-        hydrate: async (ids) =>
-          (
-            await searchFn({
-              ...input,
-              feedIds: ids,
-              limit: ids.length,
-              offset: 0,
-              entry: undefined,
-              cursor: undefined,
-            })
-          ).data,
-      })
-    );
-    if (served.ok) return { ...served.page, source: 'feed' as const, filterMode };
-  }
 
   const result = await searchFn(input);
 
@@ -4021,8 +3982,6 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     filters.push(makeMeiliImageSearchFilter('techniqueIds', `IN [${techniques.join(',')}]`));
   if (postIds?.length)
     filters.push(makeMeiliImageSearchFilter('postId', `IN [${postIds.join(',')}]`));
-  if (input.feedIds?.length)
-    filters.push(makeMeiliImageSearchFilter('id', `IN [${input.feedIds.join(',')}]`));
   if (baseModels?.length)
     filters.push(makeMeiliImageSearchFilter('baseModel', `IN [${strArray(baseModels)}]`));
 
@@ -4662,8 +4621,6 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     filters.push(makeMeiliImageSearchFilter('techniqueIds', `IN [${techniques.join(',')}]`));
   if (postIds?.length)
     filters.push(makeMeiliImageSearchFilter('postId', `IN [${postIds.join(',')}]`));
-  if (input.feedIds?.length)
-    filters.push(makeMeiliImageSearchFilter('id', `IN [${input.feedIds.join(',')}]`));
   if (baseModels?.length)
     filters.push(makeMeiliImageSearchFilter('baseModel', `IN [${strArray(baseModels)}]`));
 
