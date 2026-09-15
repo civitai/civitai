@@ -35,7 +35,8 @@ root changes were needed.
 - `package.json`: name → `@civitai/event-engine`, `"private": true`; dropped repo-level scripts
   (`sync:submodule`, `install:hooks`, `release*`). Deps/build/tsconfig kept as-is.
 - Removed `.gitmodules` (submodule retired → vendored) and `package-lock.json` (npm → the monorepo is pnpm).
-- `Dockerfile` rewritten to the monorepo pnpm-deploy pattern (see below) — **DRAFT, unverified**.
+- `Dockerfile` rewritten to the monorepo pnpm-deploy pattern — **DRAFT, unverified**. (This bullet said
+  "see below"; no section describing that pattern was ever written. Read the `Dockerfile` itself.)
 - `.github/` is kept **as legacy reference only** (the old CI) and is inert here — GitHub reads workflows
   only from the repo-root `.github/workflows/`, so this nested copy is never scheduled.
 - `docker-compose.yml` is **NOT legacy and NOT inert**: it is the live local-dev Kafka/Debezium harness,
