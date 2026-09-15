@@ -101,9 +101,12 @@ function stubFetchOk() {
  * The probe is fire-and-forget, so nothing in `moderatePrompt`'s own promise chain waits for it.
  * Poll the registry rather than sleeping a fixed amount — a fixed sleep is the classic flake, and
  * it also silently passes if the probe is slower than the sleep.
+ *
+ * The explicit budget is for the FIRST call in this file: it resolves the probe's lazy `import()`
+ * inside the poll, which can exceed `vi.waitFor`'s 1 s default on Windows.
  */
 async function untilProbeTotal(n: number) {
-  await vi.waitFor(async () => expect(await probeTotal()).toBe(n));
+  await vi.waitFor(async () => expect(await probeTotal()).toBe(n), { timeout: 5000 });
 }
 
 beforeEach(() => {
