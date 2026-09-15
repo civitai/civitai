@@ -937,6 +937,28 @@ export function getEffectiveDifferentLicense(
   return requiresSameLicenseBaseModel(baseModel) ? false : allowDifferentLicense;
 }
 
+// Whether a model's own terms add anything to the base license, which is what decides
+// if Attachment B is offered. Derived from the enum rather than a literal list so a new
+// CommercialUse value cannot silently fall out of it — it had drifted into two copies.
+export function hasAdditionalLicensePermissions(permissions: {
+  allowCommercialUse: CommercialUse[];
+  allowNoCredit: boolean;
+  allowDerivatives: boolean;
+  allowDifferentLicense: boolean;
+}): boolean {
+  const { allowCommercialUse, allowNoCredit, allowDerivatives, allowDifferentLicense } =
+    permissions;
+  return (
+    !allowCommercialUse.length ||
+    allowCommercialUse.some((permission) =>
+      (Object.values(CommercialUse) as string[]).includes(permission)
+    ) ||
+    !allowNoCredit ||
+    !allowDerivatives ||
+    allowDifferentLicense
+  );
+}
+
 export function isNsfwLevelRestrictedForBaseModel(
   baseModel: string,
   nsfwLevel: NsfwLevel

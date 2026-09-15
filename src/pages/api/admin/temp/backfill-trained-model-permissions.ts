@@ -73,7 +73,12 @@ import { booleanString } from '~/utils/zod-helpers';
  *   &afterId=<modelId>       (optional; resume after this id)
  *
  * Side effects when dryRun=false:
- *   - repair:  UPDATE Model.allowCommercialUse to [Image, RentCivit, Rent, Sell] for matched rows,
+ * The defaulted value this repairs is `{Sell}` before the sell/merge split's backfill and
+ * `{Sell,SellMerge}` after it, so both shapes match and the repair gives the same answer run
+ * either side of it. Matching only `{Sell}` would make this a silent no-op post-backfill.
+ *
+ *   - repair:  UPDATE Model.allowCommercialUse to [Image, RentCivit, Rent, Sell, SellMerge] for
+ *              matched rows,
  *              and queue modelsSearchIndex updates for them.
  *   - reindex: queue modelsSearchIndex updates only.
  *
@@ -165,7 +170,10 @@ export default WebhookEndpoint(async (req, res) => {
           SELECT m.id
           FROM "Model" m
           WHERE m."uploadType" = 'Trained'
-            AND m."allowCommercialUse" = ARRAY['Sell']::"CommercialUse"[]
+            AND (
+              m."allowCommercialUse" = ARRAY['Sell']::"CommercialUse"[]
+              OR m."allowCommercialUse" = ARRAY['Sell', 'SellMerge']::"CommercialUse"[]
+            )
             AND m."createdAt" >= ${CASCADE_SHIPPED_BY}
             AND m.id > ${params.afterId}
           ORDER BY m.id
@@ -219,10 +227,13 @@ export default WebhookEndpoint(async (req, res) => {
       params.action === 'repair'
         ? await dbWrite.$queryRaw<{ id: number }[]>`
             UPDATE "Model"
-            SET "allowCommercialUse" = ARRAY['Image', 'RentCivit', 'Rent', 'Sell']::"CommercialUse"[],
+            SET "allowCommercialUse" = ARRAY['Image', 'RentCivit', 'Rent', 'Sell', 'SellMerge']::"CommercialUse"[],
                 "updatedAt" = CASE WHEN status = 'Published' THEN NOW() ELSE "updatedAt" END
             WHERE id = ANY(${batch}::int[])
-              AND "allowCommercialUse" = ARRAY['Sell']::"CommercialUse"[]
+              AND (
+                "allowCommercialUse" = ARRAY['Sell']::"CommercialUse"[]
+                OR "allowCommercialUse" = ARRAY['Sell', 'SellMerge']::"CommercialUse"[]
+              )
             RETURNING id
           `
         : batch.map((id) => ({ id }));

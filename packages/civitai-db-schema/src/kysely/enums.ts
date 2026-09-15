@@ -172,6 +172,7 @@ export const CommercialUse = {
   RentCivit: 'RentCivit',
   Rent: 'Rent',
   Sell: 'Sell',
+  SellMerge: 'SellMerge',
 } as const;
 export type CommercialUse = (typeof CommercialUse)[keyof typeof CommercialUse];
 export const CheckpointType = {
