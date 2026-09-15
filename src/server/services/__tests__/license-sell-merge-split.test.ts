@@ -7,11 +7,18 @@ import { CommercialUse } from '~/shared/utils/prisma/enums';
  * imposes no restriction, and asserting the clause map has a key proves nothing about the
  * document a buyer reads. These assert on the returned document.
  *
- * The carve-out sentence in "Sale of the Model" is what makes the split real. Attachment B's
- * preamble says every restriction on the Model reaches Merges too, so without it a creator who
- * forbids selling the model but allows selling merges gets a green tick on the site and a
- * licence that still forbids it. Delete that sentence and `withholds Sell, grants SellMerge`
- * must fail — if you are removing it, that is the case telling you why it is there.
+ * The disapplying sentence in "Sale of the Model" is what makes the split real. Attachment B's
+ * preamble extends every restriction to "the Model and Derivatives of the Model" and defines
+ * Derivatives to include Merges — TWO arms. So the sentence has to disapply the Permission, not
+ * narrow what "the Model" means: narrowing the noun leaves the Derivatives arm still catching
+ * merges, and the creator gets a green tick over a licence that forbids the thing. Delete or
+ * reword that sentence and `withholds Sell, grants SellMerge` must fail — if you are removing it
+ * as redundant next to a clause already headed "Sale of the Model", that is the case telling you
+ * why it is not.
+ *
+ * It is asserted INSIDE the Sale of the Model clause rather than anywhere in the document,
+ * because moving it into the preamble would disapply it from every other clause and a
+ * document-wide `toContain` would stay green through that.
  */
 
 // model-version.service reaches the orchestrator through training.service, which throws on a
@@ -22,7 +29,15 @@ const { addAdditionalLicensePermissions } = await import('~/server/services/mode
 
 const MODEL_CLAUSE = 'Sale of the Model:';
 const MERGE_CLAUSE = 'Sale of Merges:';
-const CARVE_OUT = '“the Model” does not include a Merge';
+const DISAPPLIES_TO_MERGES = 'This Permission does not apply to a Merge.';
+
+/** The Sale of the Model clause body alone, so an assertion cannot be satisfied from elsewhere. */
+const saleOfModelClause = (license: string) => {
+  const start = license.indexOf(MODEL_CLAUSE);
+  if (start === -1) return '';
+  const end = license.indexOf('</b>', start);
+  return license.slice(start, end === -1 ? undefined : end);
+};
 
 const buildLicense = (allowCommercialUse: CommercialUse[]) =>
   addAdditionalLicensePermissions('', {
@@ -57,7 +72,7 @@ describe('sell / sell-merge split in the generated licence', () => {
     const license = buildLicense([...OTHERS, CommercialUse.SellMerge]);
 
     expect(license).toContain(MODEL_CLAUSE);
-    expect(license).toContain(CARVE_OUT);
+    expect(saleOfModelClause(license)).toContain(DISAPPLIES_TO_MERGES);
     expect(license).not.toContain(MERGE_CLAUSE);
   });
 
@@ -66,5 +81,6 @@ describe('sell / sell-merge split in the generated licence', () => {
 
     expect(license).toContain(MODEL_CLAUSE);
     expect(license).toContain(MERGE_CLAUSE);
+    expect(saleOfModelClause(license)).toContain(DISAPPLIES_TO_MERGES);
   });
 });

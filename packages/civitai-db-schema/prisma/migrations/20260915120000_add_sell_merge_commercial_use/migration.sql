@@ -1,14 +1,25 @@
--- STEP 1 of 3, and it goes BEFORE the deploy. Read the note below before reordering it.
+-- Apply this BEFORE the deploy that ships it. Read the note before reordering it.
 --
--- The usual rule for an additive Prisma enum is deploy-first, because Prisma throws on READ
--- for a row carrying a label the running client does not know. That rule assumes nothing
--- writes the new value until the deploy lands. Here the deploy itself writes it: the upload
--- form defaults `allowCommercialUse` to every permission, 'SellMerge' included, so the first
--- creator to submit a model after the deploy inserts the label. If the type does not have it
--- yet, that insert is rejected and model creation fails for everyone until this runs.
+-- The usual rule for an additive Prisma enum is deploy-first, because Prisma throws on READ for
+-- a row carrying a label the running client does not know. That rule assumes nothing writes the
+-- new value until the deploy lands. Here the deploy itself writes it, two ways: the upload form
+-- defaults `allowCommercialUse` to every permission, and Prisma applies the schema @default
+-- client-side on any `model.create` that omits the field. So the first model created after the
+-- deploy carries 'SellMerge', and if the type lacks it the insert is rejected and model creation
+-- fails for everyone until this runs.
 --
--- Running it first is safe in the other direction: no build writes 'SellMerge' until the
--- deploy, so no row can carry it, so no running client can read one.
+-- Running it first is safe in the other direction: no build writes 'SellMerge' before the deploy,
+-- so no row can carry it, so no running client can read one.
+--
+-- ⚠️ That argument covers before and after the deploy, NOT the middle of it. A rolling deploy has
+-- new pods writing 'SellMerge' while previous-build pods still serve, and those pods throw reading
+-- a model created in that window. Applying this migration first does not close that; only shipping
+-- an enum-aware build with no writer, ahead of the build that writes, does.
+--
+-- The backfill that gives existing models the new permission is deliberately NOT in this commit.
+-- It writes the new label onto ~425k rows, so applying it while the old build is still serving is
+-- a site-wide outage — and the ordinary way pending SQL gets applied is to run all of it. It ships
+-- as its own change, after this deploy has fully rolled out.
 --
 -- ALTER TYPE ... ADD VALUE cannot run inside a transaction block: run this statement alone.
 
