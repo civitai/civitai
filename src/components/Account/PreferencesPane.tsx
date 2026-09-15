@@ -30,7 +30,7 @@ export function PreferencesPane() {
       <SettingsSection title="Media quality & playback">
         <SettingRow
           label="Media quality"
-          description="Compressed loads faster. Lossless is a Pro perk, and applies while you browse — downloads always give you the original."
+          description="Quality of images while you browse the site. Downloads always give you the original."
           control={<ImageFormatSelect />}
         />
         <SettingRow block>
