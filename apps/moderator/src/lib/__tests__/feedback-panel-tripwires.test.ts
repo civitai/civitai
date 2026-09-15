@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { FEEDBACK_PROMOTE_DRAFT_FIELDS } from '$lib/feedback-drafts';
+import { FEEDBACK_SORT_COLUMNS } from '$lib/feedback-sort';
 
 /**
  * ⚠️⚠️ TRIPWIRES, NOT COVERAGE. READ THIS BEFORE TRUSTING ANYTHING BELOW.
@@ -64,6 +65,10 @@ const stripComments = (text: string): string =>
  */
 const source = (file: string): string =>
   stripComments(readFileSync(path.resolve(feedbackDir, file), 'utf-8')).replace(/\s+/g, ' ');
+
+/** This page's own `$lib` modules — the URL builders the panel calls rather than open-coding. */
+const libSource = (file: string): string =>
+  stripComments(readFileSync(path.resolve(dir, '..', file), 'utf-8')).replace(/\s+/g, ' ');
 
 const componentSource = (file: string): string =>
   stripComments(readFileSync(path.resolve(dir, '../components', file), 'utf-8')).replace(
@@ -321,17 +326,44 @@ describe('opening a row goes through the one choke point', () => {
    * It scans the whole directory rather than a hardcoded pair, which is what makes a FUTURE third
    * site fail here instead of shipping — round 2 flagged that nothing stopped one, and a two-file
    * list is exactly how the EXISTING third site (`FeedbackFilters.svelte`) went unscanned.
+   *
+   * 🔴 AND IT SCANS THIS PAGE'S `$lib` MODULES TOO, because a directory scan stops covering a site
+   * the moment that site is EXTRACTED. `feedbackNextPageHref` was moved out of `+page.svelte` into
+   * `$lib/feedback-sort.ts` to make it testable, and a scan of `.svelte` files alone would have
+   * silently stopped watching it — while also losing the `open:` witness the control below reads,
+   * which would have reddened this test through its own instrument rather than through `sets`.
+   *
+   * ENUMERATED, NOT LISTED, for the reason the paragraph above gives about the `.svelte` half: a
+   * hardcoded pair is how a third site goes unscanned. `feedback*.ts` in `$lib` is this page's whole
+   * module family.
+   *
+   * 🔴 THE OBJECT-KEY PATTERN MATCHES THE COMPUTED SPELLING TOO, AND WIDENING THE SCAN IS WHAT MADE
+   * THAT NECESSARY. `feedbackOpenHref` writes `{ [FEEDBACK_OPEN_PARAM]: id }`, which a bare
+   * `/\bopen:/` cannot see. While the scan was `.svelte`-only that was merely "not a false
+   * positive"; now that it covers `$lib/feedback*.ts`, the obvious way to add a SECOND `.ts` writer
+   * is to copy the line out of the choke point — and the copy would have passed. So both spellings
+   * are matched, and the choke point is excluded BY FILENAME rather than by being unmatchable,
+   * which is the difference between a guard that is scoped and a guard that is blind.
    */
+  const OPEN_CHOKE_POINT = 'feedback-tabs.ts';
+
   it('sets the open param to an id only through feedbackOpenHref', () => {
     const files = readdirSync(feedbackDir).filter((file) => file.endsWith('.svelte'));
     expect(files.length).toBeGreaterThan(4);
+    const libFiles = readdirSync(path.resolve(dir, '..')).filter((file) =>
+      /^feedback.*\.ts$/.test(file)
+    );
+    expect(libFiles.length).toBeGreaterThan(4);
+    // The exclusion is only sound while the file it names exists to be excluded.
+    expect(libFiles).toContain(OPEN_CHOKE_POINT);
 
     // Two spellings reach the param, and each needs its own witness — see the control below.
     const seen = { objectKey: [] as string[], searchParams: [] as string[] };
     const sets: string[] = [];
-    for (const file of files) {
-      const text = source(file);
-      for (const match of text.matchAll(/\bopen:\s*([^,}]+)/g)) {
+    for (const file of [...files, ...libFiles]) {
+      if (file === OPEN_CHOKE_POINT) continue;
+      const text = libFiles.includes(file) ? libSource(file) : source(file);
+      for (const match of text.matchAll(/(?:\bopen:|\[FEEDBACK_OPEN_PARAM\]:)\s*([^,}]+)/g)) {
         seen.objectKey.push(`${file} — ${match[0]}`);
         if (match[1].trim() !== 'null') sets.push(`${file} — ${match[0]}`);
       }
@@ -345,9 +377,10 @@ describe('opening a row goes through the one choke point', () => {
 
     // 🔴 POSITIVE CONTROL, PER PATTERN — because `sets` being empty is the reassuring zero this
     // whole file is warned about, and a regex that matched nothing produces it just as readily as
-    // clean code does. Both spellings have a live witness today (`+page.svelte`'s pager writes
-    // `open: null`, `FeedbackFilters.svelte` writes `searchParams.delete('open')`), so each half of
-    // the scan is proved able to match before the verdict is read.
+    // clean code does. Both spellings have a live witness today (`feedback-sort.ts`'s
+    // `feedbackNextPageHref` writes `open: null`, `FeedbackFilters.svelte` writes
+    // `searchParams.delete('open')`), so each half of the scan is proved able to match before the
+    // verdict is read.
     //
     // ⚠️ It counts WRITES, not CLEARS. An earlier draft of this control required two CLEARS, which
     // coupled it to how many sites happen to clear: turning one clear into a SET then reddened this
@@ -361,6 +394,108 @@ describe('opening a row goes through the one choke point', () => {
       'no `searchParams.*(open)` write found anywhere in the panel'
     ).toBeGreaterThan(0);
     expect(sets).toEqual([]);
+  });
+});
+
+describe('the queue is ordered by the server, never by the browser', () => {
+  /**
+   * The header row is data-driven; the two `colspan`s that have to match it are not, and a literal
+   * that disagrees leaves the detail panel and the empty-state row a cell short. Nothing can observe
+   * that — this app has no Svelte test tier — so the pin is on the SPELLING, which is the only thing
+   * a text scan can hold.
+   *
+   * ⚠️ READ THE TITLE NARROWLY: this does NOT verify that every colspan is derived, it verifies that
+   * `+page.svelte` contains exactly two `colspan={COLUMNS.length}` and no `colspan={<digits>}`. A
+   * `colspan="9"` string attribute — valid Svelte and idiomatic HTML — walks straight past it, and
+   * so does `colspan={ 9 }`. It also reddens on a CORRECTLY written third colspan, because the count
+   * is pinned. Both are accepted: a pin that has to be re-read when the table grows is the cost of
+   * having any pin at all here.
+   */
+  it('derives every colspan from COLUMNS rather than spelling a number', () => {
+    const page = source('+page.svelte');
+    const LITERAL_COLSPAN = /colspan=\{\d+\}/g;
+
+    // Positive control: the scan must be able to see a literal, in the exact shape one would take.
+    expect('<TableCell colspan={9} class="x">'.match(LITERAL_COLSPAN)).toHaveLength(1);
+
+    expect(page.match(/colspan=\{COLUMNS\.length\}/g) ?? []).toHaveLength(2);
+    expect(page.match(LITERAL_COLSPAN) ?? []).toEqual([]);
+  });
+
+  /**
+   * 🔴 THE THREE NAVIGATION MODIFIERS ARE WHAT MAKE A LINK BEHAVE LIKE AN IN-PLACE CONTROL, and
+   * dropping one costs nothing visible in review — the header still works, it just misbehaves.
+   * Without `noscroll` a sort click throws the operator back to the top of the queue, away from the
+   * row they have open; without `keepfocus` a keyboard operator is dropped to the top of the
+   * document, so cycling asc→desc→none means re-tabbing to the header three times; without
+   * `replacestate` those three clicks leave three history entries and Back stops leaving the page.
+   *
+   * `FeedbackTabs.svelte` is pinned alongside it because the two controls sit on the same page and
+   * the argument is one argument — a reader who deletes it from one should find the other going red.
+   */
+  it('keeps the navigation modifiers on both link-driven controls', () => {
+    for (const file of ['FeedbackSortHeader.svelte', 'FeedbackTabs.svelte']) {
+      const text = source(file);
+      for (const attribute of [
+        'data-sveltekit-noscroll',
+        'data-sveltekit-replacestate',
+        'data-sveltekit-keepfocus',
+      ])
+        expect(text, `${file} dropped ${attribute}`).toContain(attribute);
+    }
+  });
+
+  /**
+   * 🔴 A LEDGER OVER THE SEAM NOBODY OWNS: the column set exists in TWO shapes that nothing links.
+   * `FEEDBACK_SORT_COLUMNS` decides which `?sort=` values the server honours; `COLUMNS` in
+   * `+page.svelte` decides which headers an operator can click. `satisfies` ties the union to the
+   * SQL map in the service and says nothing about the table, so a seventh column is URL-sortable
+   * with no way to reach it — and a column REMOVED from the union leaves a header that produces a
+   * link the server ignores. Both are silent.
+   *
+   * Fails when the set GROWS or SHRINKS, which is why it is an equality over sorted lists rather
+   * than a containment check in either direction.
+   */
+  it('gives every server-sortable column a header, and no header a column the server refuses', () => {
+    const page = source('+page.svelte');
+    const declared = [...page.matchAll(/sortable: '([^']+)'/g)].map((m) => m[1]);
+
+    // Instrument: a regex that stopped matching would make the comparison a claim about nothing.
+    expect(declared.length, 'no `sortable:` column found in +page.svelte').toBeGreaterThan(0);
+    expect([...declared].sort()).toEqual([...FEEDBACK_SORT_COLUMNS].sort());
+  });
+
+  /**
+   * 🔴 A CLIENT-SIDE SORT IS THE SILENTLY-WRONG ANSWER HERE, AND IT IS THE OBVIOUS ONE. The list is
+   * keyset-paged at `FEEDBACK_PAGE_SIZE`, so `[...data.items].sort(…)` orders the 50 rows that
+   * happen to be loaded and presents them as an ordering of the queue: the arrow points the right
+   * way, the visible rows are in order, and it is wrong for every queue past its first page. With 26
+   * live rows it is not merely hard to spot — it is INDISTINGUISHABLE from the correct
+   * implementation on every query anyone can run today. The ordering lives in `getFeedbackList`, and
+   * `lib/server/__tests__/feedback-sort.pglite.test.ts` is where it is proved across a boundary.
+   *
+   * Scoped to `+page.svelte` because that is the only file with `data.items` in scope — the queue
+   * exists nowhere else. The directory-wide form is not narrower or wider, it is a DIFFERENT claim:
+   * no `.sort()` anywhere in the panel. That would be walkable into a false positive by a sibling
+   * ordering something of its own (attachments, siblings, context keys), and a guard that reddens
+   * for the wrong reason is one people learn to click through. ⚠️ No such call exists today, so
+   * this is a choice about what the pin MEANS, not a report of a witness.
+   */
+  it('renders data.items in the order the server returned them', () => {
+    const page = source('+page.svelte');
+
+    // The each-block is what renders the queue; pin that it reads `data.items` directly, so a
+    // reordered local copy would have to change this line to be used at all.
+    expect(page).toContain('{#each data.items as row (row.id)}');
+
+    // 🔴 POSITIVE CONTROL. `not.toContain` over an empty string passes, and so does a pattern that
+    // cannot match the spelling anyone would actually write. Feed the scan a planted sort — in the
+    // exact shape this component would use — and watch it match before reading the verdict.
+    const REORDERS = /\.(sort|toSorted|reverse|toReversed)\s*\(/g;
+    const planted = 'const rows = [...data.items].sort((a, b) => (a.area < b.area ? -1 : 1));';
+    expect(planted.match(REORDERS)).toHaveLength(1);
+
+    expect(page.match(REORDERS) ?? []).toEqual([]);
   });
 });
 

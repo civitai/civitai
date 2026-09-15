@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { feedbackNextPageHref } from '$lib/feedback-sort';
 
 /**
  * What only the action layer decides: that a service outcome is TRANSLATED rather than discarded,
@@ -12,7 +13,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const triageFeedback = vi.fn();
 const promoteFeedbackToBug = vi.fn();
 const linkFeedbackToBug = vi.fn();
-const getFeedbackList = vi.fn(async () => ({ items: [], nextCursor: null }));
+// The shape the real service returns, both halves of the keyset included. A fake that omits a field
+// the loader forwards is a fake the loader can be broken against and still pass.
+const getFeedbackList = vi.fn(async () => ({ items: [], nextCursor: null, nextCursorValue: null }));
 const getFeedbackAreas = vi.fn(async () => [] as string[]);
 const getSiblingFeedback = vi.fn(async () => []);
 
@@ -127,6 +130,61 @@ describe('load', () => {
   });
 
   /**
+   * 🔴 THE SEAM, WALKED END TO END: the link the pager RENDERS, fed to the loader that READS it.
+   *
+   * Every other test in this arc is scoped to one surface. `feedback-sort.test.ts` proves the href
+   * builder in isolation; the pglite tier proves the keyset in isolation, threading `cursorValue` as
+   * a VARIABLE and never as a URL; this file proves loader→service arguments. All three were green
+   * over a builder that shipped the PREVIOUS page's `?cursorValue=` whenever the new boundary's
+   * value was null — because no test ever handed one surface's output to the next. What linked them
+   * was a shared constant, which is a type-level link, not a behavioural one.
+   *
+   * So this asserts the RELATIONSHIP: whatever `feedbackNextPageHref` writes, `load` parses back to
+   * the same pair. The null case is first because it is the one that was broken.
+   */
+  it('parses back exactly what the pager wrote, both halves, in both value states', async () => {
+    const current = new URL('https://moderator.test/feedback?status=new&sort=handled&dir=asc');
+
+    for (const [value, expected] of [
+      // Entering the trailing null block: the previous page's value must not survive.
+      [null, null],
+      ['quinn', 'quinn'],
+      // An empty string is a VALUE, and must not collapse to the null spelling.
+      ['', ''],
+    ] as const) {
+      vi.clearAllMocks();
+      const href = feedbackNextPageHref(current, 77, value);
+      await loaded(new URL(href, current).search);
+
+      expect(getFeedbackList, `the pager wrote ${href}`).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cursor: 77,
+          cursorValue: expected,
+          sort: { column: 'handled', direction: 'asc' },
+        })
+      );
+    }
+  });
+
+  /**
+   * The same walk from a URL that ALREADY carries a value half — the state the bug needed. A builder
+   * that only ever SET the param leaves the old one in place, and the loader faithfully parses that
+   * stale value back, so the server reads a non-null boundary and re-serves the same page forever.
+   */
+  it('does not let a previous page value survive into a null boundary', async () => {
+    const carrying = new URL(
+      'https://moderator.test/feedback?status=new&sort=handled&dir=asc&cursor=91&cursorValue=mira'
+    );
+
+    const href = feedbackNextPageHref(carrying, 77, null);
+    await loaded(new URL(href, carrying).search);
+
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: 77, cursorValue: null })
+    );
+  });
+
+  /**
    * 🔴 Every migration here is applied BY HAND, and `moderator:admin` reaches this page through
    * `SUPER_ROLE` before anyone ticks a box on `/admin` — so the window where the page is live
    * against an unmigrated database is real, not theoretical.
@@ -149,6 +207,93 @@ describe('load', () => {
 
     await expect(Promise.resolve(load(loadEvent('?status=new')))).rejects.toThrow(
       'connection terminated'
+    );
+  });
+
+  /**
+   * 🔴 THE SORT REACHES THE QUERY, AND A HOSTILE ONE DOES NOT. `?sort=`/`?dir=` are typed by whoever
+   * is holding the keyboard and the column ends up naming a SQL identifier, so what `load` hands the
+   * service is the claim worth pinning here — the allowlist itself is tested in
+   * `lib/__tests__/feedback-sort.test.ts`, and the service refuses a second time on its own map.
+   */
+  it('passes a known sort through and degrades an unknown one to the default ordering', async () => {
+    await loaded('?status=new&sort=area&dir=desc');
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ sort: { column: 'area', direction: 'desc' } })
+    );
+
+    for (const hostile of ['attachments', 'createdAt', 'f.id', 'id%3B+drop+table', '']) {
+      vi.clearAllMocks();
+      await loaded(`?status=new&sort=${hostile}&dir=asc`);
+      expect(getFeedbackList, `"${hostile}" reached the service`).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: null })
+      );
+    }
+  });
+
+  /**
+   * 🔴 THE LOADER IS WHAT KEEPS A HAND-TYPED URL OFF THE ERROR BOUNDARY, now that the service THROWS
+   * on a sort state it does not have rather than degrading. `age` is a two-state column — `desc` is
+   * the ordering the page already had, so the header never links to it — but `?sort=age&dir=desc` is
+   * a spelling a stale bookmark carries and a `FeedbackSortDirection` the type system accepts. The
+   * parser has to normalise it to `age`'s one state before it reaches `getFeedbackList`.
+   *
+   * ⚠️ The assertion is that the state REACHING THE SERVICE is the normalised one. Asserting only
+   * "the load did not throw" would pass over a loader that dropped the sort entirely, which is a
+   * different and silent answer.
+   */
+  it('normalises a direction the sorted column does not offer, rather than passing it to a service that throws', async () => {
+    await loaded('?status=new&sort=age&dir=desc');
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ sort: { column: 'age', direction: 'asc' } })
+    );
+
+    // The control: a direction a TRI-STATE column does offer is passed through untouched, so the
+    // rewrite above is about `age` and not about `desc`.
+    vi.clearAllMocks();
+    await loaded('?status=new&sort=area&dir=desc');
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ sort: { column: 'area', direction: 'desc' } })
+    );
+  });
+
+  /**
+   * The value half of the compound cursor. Forwarded as TEXT — which column it belongs to, and
+   * therefore how it has to be coerced, is the service's to know (`FEEDBACK_SORT_KEYS`). `load`
+   * bounds its LENGTH only, because an unbounded parameter is free work for whoever edits the URL.
+   */
+  it('forwards the cursor value half', async () => {
+    await loaded('?status=new&sort=user&dir=asc&cursor=12&cursorValue=grace');
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: 12, cursorValue: 'grace' })
+    );
+  });
+
+  /**
+   * 🔴 A REJECTED VALUE HALF DROPS THE WHOLE CURSOR — because `.catch(undefined)` gives a rejected
+   * param the SAME value as an absent one, and those are opposite instructions here. The service
+   * reads an absent value half as "the boundary row's value IS null", a real position; so left
+   * as-is, an over-long `?cursorValue=` would not degrade to page one, it would silently relocate
+   * the operator into the trailing null block of whichever nullable column is sorted.
+   *
+   * ⚠️ The assertion is on `cursor`, not on `cursorValue`. An earlier version of this test was named
+   * "drops one past its length bound" and asserted only `cursorValue: null` — which is what a
+   * MISSING param produces too, so it pinned nothing about dropping and read as coverage of the
+   * behaviour it did not reach.
+   */
+  it('drops the WHOLE cursor when the value half is rejected, not just that half', async () => {
+    await loaded(`?status=new&sort=user&dir=asc&cursor=12&cursorValue=${'x'.repeat(301)}`);
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: null, cursorValue: null })
+    );
+
+    // The control: a genuinely ABSENT value half keeps the id half, because on a nullable column it
+    // names a position rather than a mistake. Without this the test above passes over a loader that
+    // drops every cursor.
+    vi.clearAllMocks();
+    await loaded('?status=new&sort=user&dir=asc&cursor=12');
+    expect(getFeedbackList).toHaveBeenCalledWith(
+      expect.objectContaining({ cursor: 12, cursorValue: null })
     );
   });
 
