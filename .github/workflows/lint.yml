@@ -791,7 +791,7 @@ jobs:
     # (`unit*`, `@civitai/*`, `app:*`), and its only CI home is the preview
     # pipeline's report-only `preview / component-tests`. Adding it here is a
     # much larger change than this harness and belongs in its own PR, on measured
-    # cost: locally, on a 16-core box, `geometry` is 2 files / 10 tests in 9.07s
+    # cost: locally, on a 16-core box, `geometry` is 6 files / 73 tests in 44.93s (2026-09-15)
     # while `component` is 212 files / 2,362 tests in 112.92s wall — and 334s of
     # that is test time spread across workers, so a 2-core runner (browser pool
     # `min(12, cpus - 1)` = 1 instance) does not divide it. That is a job an order
@@ -824,7 +824,8 @@ jobs:
     # remove `continue-on-error` and this paragraph together. What would make that
     # safe, concretely: no run red for a reason other than a real geometry
     # regression — in particular no Chromium launch failures and no timeouts on a
-    # 2-core runner. The tier is 10 tests and ~19s on a runner, so unlike `unit`
+    # 2-core runner. The tier is 73 tests; its runner wall time has not been
+    # re-measured since it was 10 tests / ~19s, so unlike `unit`
     # there is no import/transform phase to blame; if it goes red it is either the
     # code or the browser, and both are worth someone's attention.
     continue-on-error: ${{ github.event_name == 'pull_request' }}
@@ -881,8 +882,8 @@ jobs:
       # breaks this — only losing one does.
       #
       # 🔴 THE FILE COUNT COMES FROM `testResults.length`, NOT FROM
-      # `numTotalTestSuites`. Measured against a real report: this run is 2 files
-      # and `numTotalTestSuites` is 4, because that field counts `describe` blocks
+      # `numTotalTestSuites`. Measured against a real report when the tier was 2
+      # files, `numTotalTestSuites` read 4, because that field counts `describe`s
       # rather than files. A floor written against it would have been off by a
       # factor that changes whenever someone adds a `describe`.
       #
@@ -898,8 +899,12 @@ jobs:
         if: always()
         run: |
           node - <<'JS'
-          // Minimum ledger for the `geometry` tier.
-          const MIN_FILES = 2;
+          // Minimum ledger for the `geometry` tier. Measured 2026-09-15: 6 files / 73 tests.
+          // FILES ratchets at exactly current — files do not merge by accident, so a drop means a
+          // file stopped being collected, which is the thing this ledger exists to catch. TESTS
+          // stays conservative: a legitimate refactor merges cases, and a test-count ratchet at
+          // current would teach people to raise the floor rather than investigate the drop.
+          const MIN_FILES = 6;
           const MIN_TESTS = 10;
           const REPORT = 'geometry-report.json';
 

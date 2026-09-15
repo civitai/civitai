@@ -528,8 +528,11 @@ function AppPage(props: PageProps) {
  *      named two files. That was a SAMPLE generalised into an enumeration: it
  *      missed a third supporting case and all three counter-examples. Enumerate
  *      before claiming a convention.
- *   3. It is ~52px (h-8 pills + `py-1` + `mb-3`) of the vertical budget this
- *      route is tightest on; a 375×667 phone leaves the page ~386px total.
+ *   3. It costs ~52px of vertical budget (measured 2026-09-15: a 32px row plus
+ *      `SubNav2`'s `py-1` and `mb-3`; 4px more on routes whose feed filters are
+ *      `h-9`, such as `/comics`), on the route the site is tightest on.
+ *      `subNav: null` means the band never renders here, so that is a cost
+ *      avoided rather than one already counted against this page's height.
  *   4. Two chrome bars over a THIRD-PARTY app reads badly — the route already
  *      renders `AppBlockChrome` (the "Apps / <name>" breadcrumb).
  *
