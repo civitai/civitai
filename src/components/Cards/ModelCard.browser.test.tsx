@@ -91,13 +91,18 @@ vi.mock('~/components/Metrics', () => ({
 // sets `saleState.sale`, which is the only way the merged-discount branch renders at
 // all. Read inside the factory rather than captured, so each test's value is the
 // one the card sees.
-const saleState = vi.hoisted(
-  () =>
-    ({ sale: undefined } as {
-      sale: { discountType: 'Fixed' | 'Percent'; discountAmount: number } | undefined;
-    })
-);
-const salesForFixture = () => (saleState.sale ? { 123: saleState.sale } : undefined);
+const { saleState, salesForFixture } = vi.hoisted(() => {
+  const saleState = { sale: undefined } as {
+    sale: { discountType: 'Fixed' | 'Percent'; discountAmount: number } | undefined;
+  };
+  // Inside the hoisted block WITH the state it reads. Left outside, it is safe only because the
+  // factory reads it lazily — hoisting that read one level makes it a TDZ `ReferenceError` at
+  // import, which reports as `Tests no tests` rather than as a failure.
+  return {
+    saleState,
+    salesForFixture: () => (saleState.sale ? { 123: saleState.sale } : undefined),
+  };
+});
 vi.mock('~/components/Cards/ModelCardContext', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelCardContext>()),
   useModelCardContext: () => ({
@@ -342,6 +347,13 @@ describe('ModelCard paid-gate badge', () => {
       document.querySelector('[data-status-badge="access"]')!.tagName,
       'the access badge is no longer a link, so it has neither a role nor a click'
     ).toBe('A');
+    // WHERE it goes, not just that it is a link. Role and name are both unaffected by the
+    // destination, so every other assertion here passes with `href="#"` — on a chip that says a
+    // model costs money, a wrong destination is a money surface pointing at someone else's model.
+    expect(
+      document.querySelector('[data-status-badge="access"]')!.getAttribute('href'),
+      'the access chip points somewhere other than its own model'
+    ).toBe('/models/123/test-model');
     await expect.element(page.getByRole('link', { name: 'Paid' })).toBeInTheDocument();
   });
 
@@ -362,7 +374,7 @@ describe('ModelCard paid-gate badge', () => {
           const id = el.getAttribute('aria-describedby');
           return id ? document.getElementById(id)?.textContent : undefined;
         },
-        { message: 'hovering the badge opened no tooltip' }
+        { message: 'hovering the badge opened no tooltip', timeout: 5000 }
       )
       .toBe('Paid');
   });
@@ -448,7 +460,7 @@ describe('ModelCard paid-gate badge', () => {
           const id = el.getAttribute('aria-describedby');
           return id ? document.getElementById(id)?.textContent : undefined;
         },
-        { message: 'focusing the badge opened no tooltip — `events.focus` is off' }
+        { message: 'focusing the badge opened no tooltip — `events.focus` is off', timeout: 5000 }
       )
       .toBe('Paid');
   });

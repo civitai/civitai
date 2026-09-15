@@ -18,7 +18,6 @@ import {
   IconMessageCircle2,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import Link from 'next/link';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
@@ -31,6 +30,7 @@ import {
   SaleDiscountLabel,
   saleDiscountText,
 } from '~/components/Model/ModelVersions/ModelVersionSaleBadge';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { ModelCardContextMenu } from '~/components/Cards/ModelCardContextMenu';
 import { getCardBaseModels, getModelRecency } from '~/components/Cards/model-card.utils';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
@@ -71,6 +71,9 @@ const accessChipStyles = { label: { display: 'flex', alignItems: 'center', gap: 
  * to the image link, and making this one hit-testable — which it must be, or the tooltip's trigger
  * is never reached — took that away. An anchor gives the click back.
  *
+ * `pointer-events-auto` is load-bearing: the header is `pointer-events: none` and the `.chip` this
+ * card uses never turns it back on, so without it the chip takes neither the hover nor the click.
+ *
  * The name comes from ARIA because the content is an abstract glyph, and a merged discount has to
  * ride in the name too: `aria-label` overrides the subtree, so the drawn "20% off" reaches no
  * screen reader on its own.
@@ -89,6 +92,8 @@ function AccessChip({
   const theme = useMantineTheme();
   // `circle` sizes the width from the badge size while `.chip` pins height at 26px, so both axes
   // are set here.
+  // Green rather than the `success` teal, which sits close enough to the recency chip's blue at
+  // chip size to read as one colour.
   const style = {
     backgroundColor: theme.colors.green[7],
     ...(sale ? { paddingInline: 8 } : { width: 26, height: 26, padding: 0 }),
@@ -102,10 +107,12 @@ function AccessChip({
       withArrow
       openDelay={0}
       zIndex={10000}
-      events={{ hover: true, focus: true, touch: true }}
+      // No `touch`: the chip is a link, so a tap navigates before the label can be read. Hover and
+      // focus are the two that reach anyone.
+      events={{ hover: true, focus: true, touch: false }}
     >
       <Badge
-        component={Link}
+        component={NextLink}
         href={href}
         className={clsx(cardClasses.chip, 'pointer-events-auto')}
         variant="filled"
