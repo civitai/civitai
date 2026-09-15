@@ -103,7 +103,10 @@ const earliestAndLast = entry({ id: 1, userId: 101, score: 1200, position: 3, mi
 const ownedAndFirst = entry({ id: 2, userId: OWNER_ID, score: 1800, position: 1, minutes: 5 });
 const latestAndSecond = entry({ id: 3, userId: 103, score: 1500, position: 2, minutes: 10 });
 
-const crucibleRow = (status: CrucibleStatus, entries = [latestAndSecond, earliestAndLast, ownedAndFirst]) => ({
+const crucibleRow = (
+  status: CrucibleStatus,
+  entries = [latestAndSecond, earliestAndLast, ownedAndFirst]
+) => ({
   id: CRUCIBLE_ID,
   userId: 1,
   name: 'Test Crucible',

@@ -176,7 +176,9 @@ describe('prize distribution', () => {
     expect(createBuzzTransactionMany).toHaveBeenCalledTimes(1);
     const [transactions] = createBuzzTransactionMany.mock.calls[0];
     expect(transactions).toHaveLength(2);
-    expect(transactions.map((t: { toAccountId: number; amount: number }) => [t.toAccountId, t.amount])).toEqual([
+    expect(
+      transactions.map((t: { toAccountId: number; amount: number }) => [t.toAccountId, t.amount])
+    ).toEqual([
       [10, 180],
       [11, 120],
     ]);
@@ -257,7 +259,11 @@ describe('seeded prize pool', () => {
   });
 
   it('is the whole pool when entry is free, and still pays out', async () => {
-    setupCrucible({ entryFee: 0, seededPrizePool: 900, prizePositions: { '1': 50, '2': 30, '3': 20 } });
+    setupCrucible({
+      entryFee: 0,
+      seededPrizePool: 900,
+      prizePositions: { '1': 50, '2': 30, '3': 20 },
+    });
 
     const result = await finalizeCrucible(1);
 
@@ -284,9 +290,9 @@ describe('seeded prize pool', () => {
 
     const [transactions] = createBuzzTransactionMany.mock.calls[0];
     // 300 of entry fees + 600 seed, all to first place
-    expect(transactions.map((t: { toAccountId: number; amount: number }) => [t.toAccountId, t.amount])).toEqual([
-      [10, 900],
-    ]);
+    expect(
+      transactions.map((t: { toAccountId: number; amount: number }) => [t.toAccountId, t.amount])
+    ).toEqual([[10, 900]]);
   });
 });
 
