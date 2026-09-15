@@ -87,10 +87,20 @@ vi.mock('~/components/Metrics', () => ({
 // deliberately minimal spy that carries only `user.getEngagedModels` — so
 // running the real hooks would reach an undefined namespace. Stubbing them keeps
 // the spread from ever touching it. `undefined` is "no sale", the default state,
-// and the sale badge is shadowed here rather than under test.
+// and the sale badge is shadowed here rather than under test — except where a test
+// sets `saleFixture`, which is the only way the merged-discount branch renders at
+// all. Read inside the factory rather than captured, so each test's value is the
+// one the card sees.
+let saleFixture: { discountType: 'Fixed' | 'Percent'; discountAmount: number } | undefined;
+const salesForFixture = () => (saleFixture ? { 123: saleFixture } : undefined);
 vi.mock('~/components/Cards/ModelCardContext', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelCardContext>()),
-  useModelCardContext: () => ({ useModelVersionRedirect: false, activeBaseModels: undefined }),
+  useModelCardContext: () => ({
+    useModelVersionRedirect: false,
+    activeBaseModels: undefined,
+    salesByModelId: salesForFixture(),
+    hasSaleProvider: !!saleFixture,
+  }),
   useModelSaleBadge: () => undefined,
   useModelSaleBadges: () => undefined,
 }));
@@ -351,13 +361,35 @@ describe('ModelCard paid-gate badge', () => {
     await expect.element(dropdown).toBeVisible();
   });
 
+  test('a discount merged into the gate chip is spoken, not only drawn', async () => {
+    saleFixture = { discountType: 'Percent', discountAmount: 20 };
+    try {
+      renderWithProviders(
+        <WithPalette>
+          <ModelCard
+            data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }}
+          />
+        </WithPalette>
+      );
+      const el = await awaitBadge('access');
+      // The discount is drawn INSIDE `role="img"`, which makes the subtree presentational — so the
+      // rendered text reaches no screen reader and the accessible name is the only carrier. The
+      // standalone sale chip is suppressed on a gated card, so without this the percentage is
+      // nowhere in the accessibility tree at all.
+      expect(el.textContent).toContain('20% off');
+      expect(el.getAttribute('aria-label')).toBe('Paid, 20% off');
+    } finally {
+      saleFixture = undefined;
+    }
+  });
+
   test('the access badge explains itself to a keyboard, not only to a mouse', async () => {
     renderWithProviders(
       <WithPalette>
         <ModelCard data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }} />
       </WithPalette>
     );
-    const el = await awaitBadge('access');
+    const el = (await awaitBadge('access')) as HTMLElement;
     // A glyph with no text has one explanation, and a pointer-only one leaves keyboard and touch
     // users with nothing. `Tooltip` takes `events`; `HoverCard`, which this replaced, has no such
     // option at all — so a swap back to it fails here rather than silently shipping a chip only a

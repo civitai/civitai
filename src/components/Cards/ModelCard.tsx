@@ -26,7 +26,10 @@ import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RemixButton } from '~/components/Cards/components/RemixButton';
 import { useModelCardContext, useModelSaleBadge } from '~/components/Cards/ModelCardContext';
-import { SaleDiscountLabel } from '~/components/Model/ModelVersions/ModelVersionSaleBadge';
+import {
+  SaleDiscountLabel,
+  saleDiscountText,
+} from '~/components/Model/ModelVersions/ModelVersionSaleBadge';
 import { ModelCardContextMenu } from '~/components/Cards/ModelCardContextMenu';
 import { getCardBaseModels, getModelRecency } from '~/components/Cards/model-card.utils';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
@@ -100,7 +103,9 @@ function AccessChip({
         radius="xl"
         data-status-badge="access"
         role="img"
-        aria-label={label}
+        // `role="img"` makes the subtree presentational, so a merged discount reaches a screen
+        // reader only if the name carries it.
+        aria-label={sale ? `${label}, ${saleDiscountText(sale)}` : label}
         tabIndex={0}
         {...(sale ? {} : { circle: true })}
         styles={accessChipStyles}
