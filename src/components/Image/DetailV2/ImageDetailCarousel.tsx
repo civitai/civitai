@@ -325,7 +325,6 @@ function ImageContent({
               // `anim` and `original` feed the CDN URL — an inactive slide has to
               // request the same URL the active one will, or it warms nothing
               anim
-              quality={90}
               original={isVideo ? true : undefined}
               html5Controls={
                 active && (features.nativeVideoControls || shouldDisplayHtmlControls(image))
