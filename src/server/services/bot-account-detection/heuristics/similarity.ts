@@ -111,12 +111,13 @@ export const QUOTE_CHARS = 60;
  *
  * 🔴 WITH ONE NAMESPACE IN THE INDEX THE TWO WALKS CANNOT RETURN DIFFERENT RESULTS. Every key is
  * `file:`-prefixed (`fingerprint-keys.ts`, pinned in `evidence.test.ts`), so the filter rejects
- * nothing and a filtered walk is the unfiltered walk. The parameter is therefore inert today and
- * the one caller that passes it — `contentTemplatingSourceScore`, behind
+ * nothing and a filtered walk is the unfiltered walk. The parameter is therefore inert on any real
+ * signals, and its one PRODUCTION caller — `contentTemplatingSourceScore`, behind
  * `heuristic:content-templating:fired_filename` — measures nothing the unprefixed score does not
- * already say. See that counter's note in `run.ts` for why it is kept anyway and for the trigger
- * that makes it informative again; the short version is that the namespace, not this parameter, is
- * the thing a second source needs to exist in advance.
+ * already say. The cases that DO exercise it hand-build a second namespace and say so
+ * (`heuristics.test.ts`, labelled invariant guards). See that counter's note in `run.ts` for why it
+ * is kept anyway and for the trigger that makes it informative again; the short version is that the
+ * namespace, not this parameter, is the thing a second source needs to exist in advance.
  */
 export function largestContentCluster(
   userId: number,

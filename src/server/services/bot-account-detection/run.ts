@@ -313,12 +313,12 @@ export async function runBotAccountDetection(
   //
   // 🔴 WHY IT IS KEPT RATHER THAN DELETED UNTIL THEN, given it measures nothing today. The two
   // sentences above are the whole argument for the counter's PRESENT value and they concede it is
-  // nil; what removing it would cost is the module's own convention for a vanishing key, asserted
-  // four lines up and in `run.test.ts`: a key that stops appearing says THE SOURCE IS NO LONGER
-  // READ. `fired_text` stopping says something true. `fired_filename` stopping would say the
-  // filename source went dark, on a run where it is the only source there is — a false statement on
-  // the surface that renders these (`abuse_detection_run.counters`, listed key by key on the run
-  // page), and the opposite of what its absence would mean.
+  // nil; what removing it would cost is the module's own convention for a vanishing key, stated in
+  // the `fired_text` paragraph above and asserted in `run.test.ts`: a key that stops appearing says
+  // THE SOURCE IS NO LONGER READ. `fired_text` stopping says something true; `fired_filename`
+  // stopping would say the filename source went dark, on a run where it is the only source there
+  // is — a false statement on the surface that renders these (`abuse_detection_run.counters`,
+  // listed key by key on the run page), and the opposite of what its absence would mean.
   const firedFromSource = (prefix: string) =>
     cohort.members.filter((m) => contentTemplatingSourceScore(m.userId, signals, prefix) > 0)
       .length;
