@@ -16,7 +16,11 @@ import type { SessionUser } from '~/types/session';
 import type { BaseModelType } from '~/server/common/constants';
 import type { LicensingSourceRejection } from '~/server/schema/model-version.schema';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
-import { baseModelLicenses, constants } from '~/server/common/constants';
+import {
+  baseModelLicenses,
+  constants,
+  hasAdditionalLicensePermissions,
+} from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
 import { dataForModelsCache } from '~/server/redis/caches';
@@ -1146,14 +1150,7 @@ export async function getVersionLicenseHandler({ input }: { input: GetByIdInput 
     if (!constants.supportedBaseModelAddendums.includes(version.baseModel as 'SD 1.5' | 'SDXL 1.0'))
       return throwBadRequestError('License not available for this model');
 
-    const hasAdditionalPermissions =
-      !version.model.allowCommercialUse.length ||
-      version.model.allowCommercialUse.some((permission) =>
-        ['None', 'Image', 'RentCivit', 'Rent', 'Sell'].includes(permission)
-      ) ||
-      !version.model.allowNoCredit ||
-      !version.model.allowDerivatives ||
-      version.model.allowDifferentLicense;
+    const hasAdditionalPermissions = hasAdditionalLicensePermissions(version.model);
 
     if (!hasAdditionalPermissions) throw throwBadRequestError('No additional permissions');
 

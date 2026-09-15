@@ -1,0 +1,22 @@
+-- Apply BEFORE the deploy, not after. The usual deploy-first rule assumes nothing writes the new
+-- label until the deploy lands; here the deploy writes it immediately -- the upload form defaults
+-- to every permission, and Prisma applies the schema @default client-side on any model.create
+-- that omits the field -- so without this the insert is rejected and model creation fails.
+-- Inverting is safe because no build writes 'SellMerge' before the deploy, so no row can carry
+-- it and no running client can read one. CLAUDE.md's enum rule allows exactly that exception.
+--
+-- A rolling deploy still has previous-build pods reading rows new pods wrote; Prisma deserializes
+-- the enum for a whole result set, so list queries fail intermittently until it completes. Raw-SQL
+-- paths are unaffected. Applying this first does not close that window -- only an enum-aware
+-- build that writes nothing, shipped ahead of the build that writes, would.
+--
+-- src/pages/api/admin/temp/backfill-trained-model-permissions.ts also writes this label. Do not
+-- run it before this migration, or during a rolling deploy.
+--
+-- The backfill that gives existing models the new permission is deliberately not in this commit
+-- and must not be applied with it: it would write the label while the old build is still serving.
+--
+-- Run alone: ADD VALUE is allowed inside a transaction but the value is unusable in the same one,
+-- and a multi-statement psql -c is one implicit transaction. Separate -c flags are safe.
+
+ALTER TYPE "CommercialUse" ADD VALUE IF NOT EXISTS 'SellMerge';

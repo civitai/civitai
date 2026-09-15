@@ -894,6 +894,7 @@ enum CommercialUse {
   RentCivit
   Rent
   Sell
+  SellMerge
 }
 
 enum CheckpointType {
@@ -965,7 +966,7 @@ model Model {
   allowNoCredit         Boolean         @default(true)
   // Must stay equal to the column default in Postgres: Prisma supplies this itself on create, so a
   // narrower value here never reaches the database default and silently licenses the row instead.
-  allowCommercialUse    CommercialUse[] @default([Image, RentCivit, Rent, Sell])
+  allowCommercialUse    CommercialUse[] @default([Image, RentCivit, Rent, Sell, SellMerge])
   allowDerivatives      Boolean         @default(true)
   allowDifferentLicense Boolean         @default(true)
 

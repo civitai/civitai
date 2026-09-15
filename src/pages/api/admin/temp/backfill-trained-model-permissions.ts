@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import * as z from 'zod';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -72,8 +73,13 @@ import { booleanString } from '~/utils/zod-helpers';
  *   &limit=<n>               (optional; bound a first run to prove the shape)
  *   &afterId=<modelId>       (optional; resume after this id)
  *
+ * ⚠️ This endpoint WRITES 'SellMerge'. It must not run before that value is added to the
+ * enum, nor during a rolling deploy — pods on the previous build throw reading a row carrying a
+ * label they do not know.
+ *
  * Side effects when dryRun=false:
- *   - repair:  UPDATE Model.allowCommercialUse to [Image, RentCivit, Rent, Sell] for matched rows,
+ *   - repair:  UPDATE Model.allowCommercialUse to [Image, RentCivit, Rent, Sell, SellMerge] for
+ *              matched rows,
  *              and queue modelsSearchIndex updates for them.
  *   - reindex: queue modelsSearchIndex updates only.
  *
@@ -100,6 +106,19 @@ import { booleanString } from '~/utils/zod-helpers';
  * against `Model."createdAt"`, which is `timestamp(3)` without a zone, so the effective boundary
  * also moves with the connection's TimeZone; a day of slack absorbs that too.
  */
+// Containment, not equality: `=` on a Postgres array is order-sensitive, and the sell/merge
+// backfill will turn `{Sell}` into `{Sell,SellMerge}` in an order this cannot predict.
+// Matches those two shapes and nothing wider.
+// Measured on the prod replica 2026-09-15, against the pre-migration `{Sell}` shape because
+// 'SellMerge' does not exist in prod's enum yet: 0 of 346,139 Trained post-cutoff rows, and
+// 147,916 already carry the repair's own target shape. The repair has run; `totalChanged: 0`
+// means "already done". Note a run of any kind -- dry run included -- errors on the enum label
+// until the migration is applied. (The 146,503 above is the population it moved.)
+const defaultedCommercialUseShapes = Prisma.sql`(
+  m."allowCommercialUse" @> ARRAY['Sell']::"CommercialUse"[]
+  AND m."allowCommercialUse" <@ ARRAY['Sell', 'SellMerge']::"CommercialUse"[]
+)`;
+
 const CASCADE_SHIPPED_BY = new Date('2024-06-12T00:00:00Z');
 
 const schema = z.object({
@@ -113,7 +132,7 @@ const schema = z.object({
 export default WebhookEndpoint(async (req, res) => {
   const params = schema.parse(req.query);
 
-  // A live run rewrites six figures of licence rows, and a GET is retried by proxies and prefetched
+  // A live run could rewrite six figures of licence rows, and a GET is retried by proxies and prefetched
   // by browsers off a pasted URL. Dry runs stay readable from anywhere.
   if (!params.dryRun && req.method !== 'POST') {
     return res.status(405).json({ error: 'A live run must be POSTed' });
@@ -165,7 +184,7 @@ export default WebhookEndpoint(async (req, res) => {
           SELECT m.id
           FROM "Model" m
           WHERE m."uploadType" = 'Trained'
-            AND m."allowCommercialUse" = ARRAY['Sell']::"CommercialUse"[]
+            AND ${defaultedCommercialUseShapes}
             AND m."createdAt" >= ${CASCADE_SHIPPED_BY}
             AND m.id > ${params.afterId}
           ORDER BY m.id
@@ -218,12 +237,12 @@ export default WebhookEndpoint(async (req, res) => {
     const changed =
       params.action === 'repair'
         ? await dbWrite.$queryRaw<{ id: number }[]>`
-            UPDATE "Model"
-            SET "allowCommercialUse" = ARRAY['Image', 'RentCivit', 'Rent', 'Sell']::"CommercialUse"[],
-                "updatedAt" = CASE WHEN status = 'Published' THEN NOW() ELSE "updatedAt" END
-            WHERE id = ANY(${batch}::int[])
-              AND "allowCommercialUse" = ARRAY['Sell']::"CommercialUse"[]
-            RETURNING id
+            UPDATE "Model" m
+            SET "allowCommercialUse" = ARRAY['Image', 'RentCivit', 'Rent', 'Sell', 'SellMerge']::"CommercialUse"[],
+                "updatedAt" = CASE WHEN m.status = 'Published' THEN NOW() ELSE m."updatedAt" END
+            WHERE m.id = ANY(${batch}::int[])
+              AND ${defaultedCommercialUseShapes}
+            RETURNING m.id
           `
         : batch.map((id) => ({ id }));
 
