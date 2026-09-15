@@ -1,215 +1,93 @@
-import { router, publicProcedure, guardedProcedure, isFlagProtected } from '~/server/trpc';
 import {
-  getCruciblesInfiniteSchema,
-  getCrucibleByIdSchema,
-  createCrucibleInputSchema,
-  submitEntrySchema,
-  getJudgingPairSchema,
-  submitVoteSchema,
+  cancelCrucibleHandler,
+  createCrucibleHandler,
+  getCrucibleByIdHandler,
+  getFeaturedCrucibleHandler,
+  getInfiniteCruciblesHandler,
+  getJudgesCountHandler,
+  getJudgeStatsHandler,
+  getJudgingPairHandler,
+  getUserActiveCruciblesHandler,
+  getUserCrucibleStatsHandler,
+  submitEntryHandler,
+  submitVoteHandler,
+} from '~/server/controllers/crucible.controller';
+import { isModerator } from '~/server/routers/base.router';
+import {
   cancelCrucibleSchema,
-  getUserCrucibleStatsSchema,
-  getUserActiveCruciblesSchema,
+  createCrucibleInputSchema,
+  getCrucibleByIdSchema,
+  getCruciblesInfiniteSchema,
   getFeaturedCrucibleSchema,
   getJudgesCountSchema,
   getJudgeStatsSchema,
+  getJudgingPairSchema,
+  getUserActiveCruciblesSchema,
+  getUserCrucibleStatsSchema,
+  submitEntrySchema,
+  submitVoteSchema,
 } from '~/server/schema/crucible.schema';
-import {
-  createCrucible,
-  getCrucibleDetail,
-  getCrucibles,
-  submitEntry,
-  getJudgingPair,
-  submitVote,
-  cancelCrucible,
-  getUserCrucibleStats,
-  getUserActiveCrucibles,
-  getFeaturedCrucible,
-  getJudgesCount,
-  getJudgeStats,
-  withoutEntryScores,
-} from '~/server/services/crucible.service';
-import { isModerator } from '~/server/routers/base.router';
-import { Prisma } from '@prisma/client';
-
-// Select for infinite list - includes essential fields for cards
-const crucibleListSelect = Prisma.validator<Prisma.CrucibleSelect>()({
-  id: true,
-  userId: true,
-  name: true,
-  description: true,
-  imageId: true,
-  nsfwLevel: true,
-  entryFee: true,
-  entryLimit: true,
-  maxTotalEntries: true,
-  status: true,
-  startAt: true,
-  endAt: true,
-  createdAt: true,
-  user: {
-    select: {
-      id: true,
-      username: true,
-      image: true,
-      deletedAt: true,
-    },
-  },
-  image: {
-    select: {
-      id: true,
-      name: true,
-      url: true,
-      type: true,
-      metadata: true,
-      nsfwLevel: true,
-      width: true,
-      height: true,
-    },
-  },
-  _count: {
-    select: {
-      entries: true,
-    },
-  },
-});
+import { guardedProcedure, isFlagProtected, publicProcedure, router } from '~/server/trpc';
 
 export const crucibleRouter = router({
   getInfinite: publicProcedure
     .use(isFlagProtected('crucible'))
     .input(getCruciblesInfiniteSchema)
-    .query(async ({ input }) => {
-      const items = await getCrucibles({
-        input,
-        select: crucibleListSelect,
-      });
-
-      return {
-        items,
-        nextCursor: items.length > 0 ? items[items.length - 1].id : undefined,
-      };
-    }),
+    .query(getInfiniteCruciblesHandler),
 
   getById: publicProcedure
     .use(isFlagProtected('crucible'))
     .input(getCrucibleByIdSchema)
-    .query(async ({ ctx, input }) => {
-      const crucible = await getCrucibleDetail({
-        id: input.id,
-        userId: ctx.user?.id,
-      });
-
-      return crucible;
-    }),
+    .query(getCrucibleByIdHandler),
 
   create: guardedProcedure
     .use(isFlagProtected('crucible'))
     .input(createCrucibleInputSchema)
-    .mutation(async ({ ctx, input }) => {
-      const crucible = await createCrucible({
-        ...input,
-        userId: ctx.user.id,
-      });
-
-      return crucible;
-    }),
+    .mutation(createCrucibleHandler),
 
   submitEntry: guardedProcedure
     .use(isFlagProtected('crucible'))
     .input(submitEntrySchema)
-    .mutation(async ({ ctx, input }) => {
-      const entry = await submitEntry({
-        ...input,
-        userId: ctx.user.id,
-      });
-
-      return entry;
-    }),
+    .mutation(submitEntryHandler),
 
   getJudgingPair: guardedProcedure
     .use(isFlagProtected('crucible'))
     .input(getJudgingPairSchema)
-    .query(async ({ ctx, input }) => {
-      const pair = await getJudgingPair({
-        ...input,
-        userId: ctx.user.id,
-      });
-
-      return withoutEntryScores(pair);
-    }),
+    .query(getJudgingPairHandler),
 
   submitVote: guardedProcedure
     .use(isFlagProtected('crucible'))
     .input(submitVoteSchema)
-    .mutation(async ({ ctx, input }) => {
-      const result = await submitVote({
-        ...input,
-        userId: ctx.user.id,
-      });
-
-      return result;
-    }),
+    .mutation(submitVoteHandler),
 
   cancel: guardedProcedure
     .use(isFlagProtected('crucible'))
     .use(isModerator)
     .input(cancelCrucibleSchema)
-    .mutation(async ({ ctx, input }) => {
-      // After isModerator middleware, ctx.user.isModerator is guaranteed to be true
-      const result = await cancelCrucible({
-        ...input,
-        userId: ctx.user.id,
-        isModerator: true, // Guaranteed by isModerator middleware
-      });
-
-      return result;
-    }),
+    .mutation(cancelCrucibleHandler),
 
   getUserStats: guardedProcedure
     .use(isFlagProtected('crucible'))
     .input(getUserCrucibleStatsSchema)
-    .query(async ({ ctx }) => {
-      const stats = await getUserCrucibleStats({
-        userId: ctx.user.id,
-      });
-
-      return stats;
-    }),
+    .query(getUserCrucibleStatsHandler),
 
   getUserActiveCrucibles: guardedProcedure
     .use(isFlagProtected('crucible'))
     .input(getUserActiveCruciblesSchema)
-    .query(async ({ ctx }) => {
-      const crucibles = await getUserActiveCrucibles({
-        userId: ctx.user.id,
-      });
-
-      return crucibles;
-    }),
+    .query(getUserActiveCruciblesHandler),
 
   getFeatured: publicProcedure
     .use(isFlagProtected('crucible'))
     .input(getFeaturedCrucibleSchema)
-    .query(async () => {
-      const featured = await getFeaturedCrucible();
-      return featured;
-    }),
+    .query(getFeaturedCrucibleHandler),
 
   getJudgesCount: publicProcedure
     .use(isFlagProtected('crucible'))
     .input(getJudgesCountSchema)
-    .query(async ({ input }) => {
-      const count = await getJudgesCount(input.crucibleId);
-      return { count };
-    }),
+    .query(getJudgesCountHandler),
 
   getJudgeStats: guardedProcedure
     .use(isFlagProtected('crucible'))
     .input(getJudgeStatsSchema)
-    .query(async ({ ctx, input }) => {
-      const stats = await getJudgeStats({
-        userId: ctx.user.id,
-        crucibleId: input.crucibleId,
-      });
-      return stats;
-    }),
+    .query(getJudgeStatsHandler),
 });
