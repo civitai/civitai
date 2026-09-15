@@ -2,6 +2,7 @@ import type React from 'react';
 import { useState } from 'react';
 import type { EdgeUrlProps } from '~/client-utils/cf-images-utils';
 import { useEdgeUrl } from '~/client-utils/cf-images-utils';
+import { showErrorNotification } from '~/utils/notifications';
 
 export function DownloadImage({
   children,
@@ -32,7 +33,14 @@ export function DownloadImage({
           setProgress((loaded / total) * 100);
         });
         xhr.addEventListener('loadend', () => {
-          if (xhr.readyState === 4 && xhr.status === 200) resolve(xhr.response);
+          if (xhr.readyState === 4 && xhr.status === 200) {
+            resolve(xhr.response);
+            // A completed non-200 must reject — otherwise the promise never settles
+            // and the spinner hangs forever (the silent failure behind 72545/72611/
+            // 72615/72684: CORS, auth and 5xx all read as "button does nothing").
+          } else if (xhr.readyState === 4) {
+            reject(new Error(`Download failed (HTTP ${xhr.status})`));
+          }
         });
         xhr.addEventListener('error', reject);
         xhr.open('GET', url);
@@ -64,7 +72,11 @@ export function DownloadImage({
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(href);
-    } catch {}
+    } catch (error) {
+      // Surface transport faults (network, CORS, non-200) instead of swallowing them —
+      // the empty catch is what made every failure read as a dead button.
+      showErrorNotification({ error: error as Error, title: 'Download failed' });
+    }
     setTimeout(() => {
       setLoading(false);
       setProgress(0);
