@@ -3,6 +3,7 @@ import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   attachHuggingFaceImportSchema,
   renameHuggingFaceGroupSchema,
+  setHuggingFaceImportConfigSchema,
   enqueueHuggingFaceImportSchema,
   getHuggingFaceImportsSchema,
   lookupHuggingFaceRepoSchema,
@@ -19,6 +20,10 @@ import {
   retryImport,
 } from '~/server/services/huggingface-import.service';
 import { HuggingFaceError, parseHuggingFaceRepo } from '~/server/services/huggingface.service';
+import {
+  getHuggingFaceImportConfig,
+  setHuggingFaceImportConfig,
+} from '~/server/services/huggingface-import-config.service';
 import { moderatorProcedure, router } from '~/server/trpc';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 
@@ -88,6 +93,12 @@ export const huggingFaceImportRouter = router({
         );
       return { modelFileId: file.id, modelVersionId: input.modelVersionId };
     }),
+
+  getConfig: moderatorProcedure.query(() => getHuggingFaceImportConfig()),
+
+  setConfig: moderatorProcedure
+    .input(setHuggingFaceImportConfigSchema)
+    .mutation(({ input }) => setHuggingFaceImportConfig(input)),
 
   renameGroup: moderatorProcedure
     .input(renameHuggingFaceGroupSchema)

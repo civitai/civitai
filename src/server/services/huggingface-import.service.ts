@@ -44,17 +44,6 @@ const STALE_CLAIM_INTERVAL = Prisma.raw(`make_interval(mins => ${STALE_CLAIM_MIN
 const MAX_ATTEMPTS = 5;
 const RETRY_BACKOFF_MINUTES = 5;
 /**
- * Parts moved at once per file. Memory is the constraint, not the network.
- *
- * 🔴 Size pod headroom against ~200MB, not the 96MB the arithmetic suggests. `PARTS_IN_FLIGHT × file
- * concurrency × PART_SIZE_BYTES` is 3 × 2 × 16MB = 96MB RETAINED; measured RSS growth is ~200MB,
- * because `res.arrayBuffer()` leaves undici's concat buffer alive and the garbage is off-heap, where
- * it exerts almost no pressure on V8's major-GC trigger. It oscillates rather than leaks — but a
- * container limit is a hard limit.
- */
-export const PARTS_IN_FLIGHT = 3;
-
-/**
  * Fixed, and deliberately NOT `getUploadChunkSize`. That helper doubles the chunk to stay under
  * `MAX_UPLOAD_PARTS = 1000`, a bound that exists because the browser path presigns every part up
  * front — a cheap constraint there, and the wrong one to inherit here, where the part size IS the
@@ -569,7 +558,11 @@ async function failOrRetry(row: ClaimedRow, error: unknown) {
  * Moves one file as far as the deadline allows. Returns `true` when the file finished, `false` when
  * it yielded with work left — the caller reclaims either way.
  */
-async function advanceImport(row: ClaimedRow, deadline: number): Promise<boolean> {
+async function advanceImport(
+  row: ClaimedRow,
+  deadline: number,
+  partsInFlight: number
+): Promise<number> {
   const size = row.sizeBytes
     ? Number(row.sizeBytes)
     : (await headHuggingFaceFile(row.sourceUrl)) ?? 0;
@@ -620,6 +613,7 @@ async function advanceImport(row: ClaimedRow, deadline: number): Promise<boolean
 
   let stopped = false;
   let canceled = false;
+  let movedBytes = 0;
 
   const movePart = async (partNumber: number) => {
     const start = (partNumber - 1) * partSize;
@@ -634,6 +628,7 @@ async function advanceImport(row: ClaimedRow, deadline: number): Promise<boolean
     const etag = await uploadPart({ bucket, key, uploadId, partNumber, body, s3 });
     parts.push({ PartNumber: partNumber, ETag: etag });
     done.add(partNumber);
+    movedBytes += body.byteLength;
 
     // `heartbeatAt` is load-bearing, not telemetry: it is the only thing that stops another run
     // re-claiming this row once the stale window elapses, which would put two runs on one uploadId.
@@ -669,10 +664,9 @@ async function advanceImport(row: ClaimedRow, deadline: number): Promise<boolean
     }
   };
 
-  await Promise.all(Array.from({ length: Math.min(PARTS_IN_FLIGHT, pending.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(partsInFlight, pending.length) }, worker));
 
-  if (canceled) return true;
-  if (done.size < totalParts) return false;
+  if (canceled || done.size < totalParts) return movedBytes;
 
   // Re-read the status immediately before finalizing. The workers' probe happens BEFORE each takes
   // its part, so the last one never checks again — without this, a cancel arriving during the final
@@ -682,7 +676,7 @@ async function advanceImport(row: ClaimedRow, deadline: number): Promise<boolean
     select: { status: true, claimedBy: true },
   });
   if (beforeComplete?.status === 'Canceled' || beforeComplete?.claimedBy !== row.claimedBy)
-    return true;
+    return movedBytes;
 
   parts.sort((a, b) => a.PartNumber - b.PartNumber);
   await completeMultipartUpload(bucket, key, uploadId, parts, s3);
@@ -703,7 +697,7 @@ async function advanceImport(row: ClaimedRow, deadline: number): Promise<boolean
       attempts: 0,
     },
   });
-  return true;
+  return movedBytes;
 }
 
 /**
@@ -713,20 +707,23 @@ async function advanceImport(row: ClaimedRow, deadline: number): Promise<boolean
 export async function processImportQueue({
   deadline,
   worker,
-  concurrency = 2,
+  concurrency,
+  partsInFlight,
 }: {
   deadline: number;
   worker: string;
-  concurrency?: number;
+  concurrency: number;
+  partsInFlight: number;
 }) {
   let moved = 0;
+  let bytes = 0;
 
   const drain = async () => {
     while (Date.now() < deadline) {
       const row = await claimNext(worker);
       if (!row) return;
       try {
-        await advanceImport(row, deadline);
+        bytes += await advanceImport(row, deadline, partsInFlight);
         moved++;
       } catch (error) {
         await failOrRetry(row, error);
@@ -736,6 +733,24 @@ export async function processImportQueue({
     }
   };
 
+  const startedAt = Date.now();
   await Promise.all(Array.from({ length: concurrency }, drain));
-  return { moved };
+  const seconds = (Date.now() - startedAt) / 1000;
+
+  // Throughput is the number every question about this feature turns on — whether it is too slow,
+  // whether it is starving the pod, what any bandwidth limit should be set to — and nothing else
+  // records it. Emitted per run rather than per part so a quiet run is one line, not none.
+  if (bytes)
+    logToAxiom({
+      type: 'info',
+      name: 'huggingface-import-throughput',
+      bytes,
+      seconds: Math.round(seconds),
+      bytesPerSecond: Math.round(bytes / Math.max(seconds, 1)),
+      filesTouched: moved,
+      concurrency,
+      partsInFlight,
+    });
+
+  return { moved, bytes };
 }

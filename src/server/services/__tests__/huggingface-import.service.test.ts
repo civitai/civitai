@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as HuggingFaceService from '~/server/services/huggingface.service';
 import type * as S3Utils from '~/utils/s3-utils';
 
@@ -44,12 +45,21 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
 
 import { parseHuggingFaceRepo, suggestFileType } from '~/server/services/huggingface.service';
 import {
+  getHuggingFaceImportConfig,
+  HUGGING_FACE_IMPORT_DEFAULTS,
+  setHuggingFaceImportConfig,
+} from '~/server/services/huggingface-import-config.service';
+import {
   getImports,
   PART_SIZE_BYTES,
-  PARTS_IN_FLIGHT,
   processImportQueue,
 } from '~/server/services/huggingface-import.service';
 
+/** The width under test. Passed in rather than read from config, so these tests do not depend on
+ *  what an operator has set in Redis. */
+const TEST_PARTS_IN_FLIGHT = 3;
+
+const sysRedisMock = redisMock.sysRedis;
 const dbWrite = dbMock.dbWrite;
 const dbRead = dbMock.dbRead;
 
@@ -133,7 +143,12 @@ describe('processImportQueue', () => {
   it('splits the file into parts on exact byte boundaries and completes the upload', async () => {
     claimOnce(baseRow());
 
-    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+    await processImportQueue({
+      deadline: Date.now() + 60_000,
+      worker: 'test',
+      concurrency: 1,
+      partsInFlight: TEST_PARTS_IN_FLIGHT,
+    });
 
     const ranges = mockReadRange.mock.calls.map(([arg]) => [arg.start, arg.end]);
     expect(ranges).toEqual([
@@ -160,7 +175,12 @@ describe('processImportQueue', () => {
   it('heartbeats on every part so a live transfer is never re-claimed as stale', async () => {
     claimOnce(baseRow());
 
-    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+    await processImportQueue({
+      deadline: Date.now() + 60_000,
+      worker: 'test',
+      concurrency: 1,
+      partsInFlight: TEST_PARTS_IN_FLIGHT,
+    });
 
     // Two runs holding their own parts arrays against one uploadId is what the heartbeat prevents;
     // no other assertion in this file fails if the write is deleted.
@@ -177,7 +197,12 @@ describe('processImportQueue', () => {
   it('stores the object URL with the presigning query stripped', async () => {
     claimOnce(baseRow());
 
-    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+    await processImportQueue({
+      deadline: Date.now() + 60_000,
+      worker: 'test',
+      concurrency: 1,
+      partsInFlight: TEST_PARTS_IN_FLIGHT,
+    });
 
     const completed = dbWrite.huggingFaceImport.updateMany.mock.calls
       .map(([arg]) => arg.data)
@@ -211,7 +236,12 @@ describe('processImportQueue', () => {
       })
     );
 
-    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+    await processImportQueue({
+      deadline: Date.now() + 60_000,
+      worker: 'test',
+      concurrency: 1,
+      partsInFlight: TEST_PARTS_IN_FLIGHT,
+    });
 
     expect(mockCreateMultipart).not.toHaveBeenCalled();
     for (const [arg] of mockUploadPart.mock.calls) {
@@ -234,7 +264,12 @@ describe('processImportQueue', () => {
       return new Uint8Array(end - start + 1);
     });
 
-    await processImportQueue({ deadline, worker: 'test', concurrency: 1 });
+    await processImportQueue({
+      deadline,
+      worker: 'test',
+      concurrency: 1,
+      partsInFlight: TEST_PARTS_IN_FLIGHT,
+    });
 
     expect(mockComplete).not.toHaveBeenCalled();
     expect(mockUploadPart.mock.calls.length).toBeGreaterThan(0);
@@ -257,7 +292,12 @@ describe('processImportQueue', () => {
       })
     );
 
-    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+    await processImportQueue({
+      deadline: Date.now() + 60_000,
+      worker: 'test',
+      concurrency: 1,
+      partsInFlight: TEST_PARTS_IN_FLIGHT,
+    });
 
     expect(mockUploadPart.mock.calls.map(([arg]) => arg.partNumber)).toEqual([2]);
     // Completion demands ascending order regardless of the order they finished in.
@@ -266,7 +306,7 @@ describe('processImportQueue', () => {
     ]);
   });
 
-  it('moves exactly PARTS_IN_FLIGHT parts at a time', async () => {
+  it('moves exactly as many parts at a time as it is told to', async () => {
     claimOnce(baseRow({ sizeBytes: BigInt(PART_SIZE * 6) }));
 
     // The barrier releases at PARTS_IN_FLIGHT and the assertion demands PARTS_IN_FLIGHT. Asserting
@@ -287,13 +327,18 @@ describe('processImportQueue', () => {
     mockReadRange.mockImplementation(async ({ start, end }: { start: number; end: number }) => {
       inFlight++;
       peak = Math.max(peak, inFlight);
-      if (inFlight >= PARTS_IN_FLIGHT) release();
+      if (inFlight >= TEST_PARTS_IN_FLIGHT) release();
       await gate;
       inFlight--;
       return new Uint8Array(end - start + 1);
     });
 
-    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+    await processImportQueue({
+      deadline: Date.now() + 60_000,
+      worker: 'test',
+      concurrency: 1,
+      partsInFlight: TEST_PARTS_IN_FLIGHT,
+    });
     clearTimeout(escapeHatch);
 
     // `escaped` is what makes this non-vacuous: a serial implementation never reaches the barrier,
@@ -302,7 +347,7 @@ describe('processImportQueue', () => {
     // which is a sizing decision (see the memory note on PARTS_IN_FLIGHT), not a regression.
     expect(escaped).toBe(false);
     expect(peak).toBeGreaterThan(1);
-    expect(peak).toBe(PARTS_IN_FLIGHT);
+    expect(peak).toBe(TEST_PARTS_IN_FLIGHT);
     expect(mockComplete).toHaveBeenCalledTimes(1);
   });
 
@@ -310,7 +355,12 @@ describe('processImportQueue', () => {
     claimOnce(baseRow());
     mockReadRange.mockResolvedValue(new Uint8Array(10));
 
-    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+    await processImportQueue({
+      deadline: Date.now() + 60_000,
+      worker: 'test',
+      concurrency: 1,
+      partsInFlight: TEST_PARTS_IN_FLIGHT,
+    });
 
     expect(mockUploadPart).not.toHaveBeenCalled();
     const failure = dbWrite.huggingFaceImport.updateMany.mock.calls
@@ -329,7 +379,12 @@ describe('processImportQueue', () => {
       claimedBy: 'test-worker',
     });
 
-    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+    await processImportQueue({
+      deadline: Date.now() + 60_000,
+      worker: 'test',
+      concurrency: 1,
+      partsInFlight: TEST_PARTS_IN_FLIGHT,
+    });
 
     expect(mockComplete).not.toHaveBeenCalled();
     const completed = dbWrite.huggingFaceImport.updateMany.mock.calls
@@ -345,7 +400,12 @@ describe('processImportQueue', () => {
       claimedBy: 'a-different-worker',
     });
 
-    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+    await processImportQueue({
+      deadline: Date.now() + 60_000,
+      worker: 'test',
+      concurrency: 1,
+      partsInFlight: TEST_PARTS_IN_FLIGHT,
+    });
 
     expect(mockComplete).not.toHaveBeenCalled();
   });
@@ -354,7 +414,12 @@ describe('processImportQueue', () => {
     claimOnce(baseRow());
     dbRead.huggingFaceImport.findUnique.mockResolvedValue({ status: 'Canceled' });
 
-    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+    await processImportQueue({
+      deadline: Date.now() + 60_000,
+      worker: 'test',
+      concurrency: 1,
+      partsInFlight: TEST_PARTS_IN_FLIGHT,
+    });
 
     expect(mockUploadPart).not.toHaveBeenCalled();
     expect(mockComplete).not.toHaveBeenCalled();
@@ -398,7 +463,12 @@ describe('failOrRetry', () => {
     claimOnce(baseRow());
     failingRead();
 
-    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+    await processImportQueue({
+      deadline: Date.now() + 60_000,
+      worker: 'test',
+      concurrency: 1,
+      partsInFlight: TEST_PARTS_IN_FLIGHT,
+    });
 
     // Without this the failure path hands the row back without checking the claim is still ours,
     // and a superseded run can release a row a live run is still transferring — the two-runs-one-
@@ -416,7 +486,12 @@ describe('failOrRetry', () => {
     claimOnce(baseRow({ attempts: 0 }));
     failingRead();
 
-    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+    await processImportQueue({
+      deadline: Date.now() + 60_000,
+      worker: 'test',
+      concurrency: 1,
+      partsInFlight: TEST_PARTS_IN_FLIGHT,
+    });
 
     const failure = dbWrite.huggingFaceImport.updateMany.mock.calls
       .map(([arg]) => arg.data)
@@ -441,7 +516,12 @@ describe('failOrRetry', () => {
     failingRead();
     mockAbort.mockResolvedValue(undefined);
 
-    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+    await processImportQueue({
+      deadline: Date.now() + 60_000,
+      worker: 'test',
+      concurrency: 1,
+      partsInFlight: TEST_PARTS_IN_FLIGHT,
+    });
 
     // An upload abandoned without an abort keeps every part already written, billed, with nothing
     // left holding the id needed to free them.
@@ -466,7 +546,12 @@ describe('failOrRetry', () => {
     failingRead();
     mockAbort.mockRejectedValue(new Error('B2 unavailable'));
 
-    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+    await processImportQueue({
+      deadline: Date.now() + 60_000,
+      worker: 'test',
+      concurrency: 1,
+      partsInFlight: TEST_PARTS_IN_FLIGHT,
+    });
 
     // Clearing it here would be the one thing that makes the orphaned parts unreclaimable.
     const failure = dbWrite.huggingFaceImport.updateMany.mock.calls
@@ -506,5 +591,37 @@ describe('getImports filtering', () => {
   it('still scopes a non-moderator to their own rows while filtering', async () => {
     await getImports({ userId: 7, isModerator: false, groupName: 'FLUX' });
     expect(whereOf().userId).toBe(7);
+  });
+});
+
+describe('import config', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sysRedisMock.packed.get.mockResolvedValue(null);
+  });
+
+  it('falls open to the defaults when the store cannot be read', async () => {
+    sysRedisMock.packed.get.mockRejectedValue(new Error('redis down'));
+    // A config store that cannot be read must not stop transfers, and must never resolve
+    // concurrency to zero — both are worse than running at the shipped shape.
+    await expect(getHuggingFaceImportConfig()).resolves.toEqual(HUGGING_FACE_IMPORT_DEFAULTS);
+  });
+
+  it('merges a partial stored value over the defaults', async () => {
+    sysRedisMock.packed.get.mockResolvedValue({ partsInFlight: 1 });
+    const config = await getHuggingFaceImportConfig();
+    expect(config.partsInFlight).toBe(1);
+    expect(config.filesInParallel).toBe(HUGGING_FACE_IMPORT_DEFAULTS.filesInParallel);
+  });
+
+  it('ignores a stored value that is out of bounds rather than obeying it', async () => {
+    // The bounds are what stop a text box setting pod memory to gigabytes.
+    sysRedisMock.packed.get.mockResolvedValue({ partsInFlight: 500 });
+    await expect(getHuggingFaceImportConfig()).resolves.toEqual(HUGGING_FACE_IMPORT_DEFAULTS);
+  });
+
+  it('refuses to write a value outside the bounds', async () => {
+    await expect(setHuggingFaceImportConfig({ filesInParallel: 99 })).rejects.toThrow();
+    expect(sysRedisMock.packed.set).not.toHaveBeenCalled();
   });
 });

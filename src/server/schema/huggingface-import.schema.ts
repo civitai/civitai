@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { constants } from '~/server/common/constants';
+import { huggingFaceImportConfigSchema } from '~/server/services/huggingface-import-config.service';
 
 export type LookupHuggingFaceRepoInput = z.infer<typeof lookupHuggingFaceRepoSchema>;
 export const lookupHuggingFaceRepoSchema = z.object({
@@ -37,3 +38,6 @@ export const renameHuggingFaceGroupSchema = z.object({
   revision: z.string().trim().min(1),
   groupName: z.string().trim().min(1).max(120),
 });
+
+export type SetHuggingFaceImportConfigInput = z.infer<typeof setHuggingFaceImportConfigSchema>;
+export const setHuggingFaceImportConfigSchema = huggingFaceImportConfigSchema.partial();

@@ -2,6 +2,7 @@ import { Container, Stack, Text, Title } from '@mantine/core';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { ImportQueueTable } from '~/components/Moderation/HuggingFaceImport/ImportQueueTable';
+import { ImportConfigSection } from '~/components/Moderation/HuggingFaceImport/ImportConfigSection';
 import { RepoLookupSection } from '~/components/Moderation/HuggingFaceImport/RepoLookupSection';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
@@ -23,6 +24,7 @@ function HuggingFaceImportPage() {
 
           <RepoLookupSection />
           <ImportQueueTable />
+          <ImportConfigSection />
         </Stack>
       </Container>
     </>
