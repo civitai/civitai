@@ -30,6 +30,11 @@ const { addAdditionalLicensePermissions } = await import('~/server/services/mode
 const MODEL_CLAUSE = 'Sale of the Model:';
 const MERGE_CLAUSE = 'Sale of Merges:';
 const DISAPPLIES_TO_MERGES = 'This restriction does not apply to a Merge.';
+const EXPANDS_CONDITIONALLY =
+  'A restriction below that references the Model applies to the Model and Derivatives of the Model, except to the extent that restriction expressly states otherwise.';
+const CARVE_OUT_GRANTS_NOTHING =
+  'A statement that a restriction does not apply to something limits only that restriction and does not permit that thing.';
+const MERGE_CARRIES_ITS_LINEAGE = 'a Merge will be understood to include Derivatives of a Merge';
 
 /** The Sale of the Model clause body alone, so an assertion cannot be satisfied from elsewhere. */
 const saleOfModelClause = (license: string) => {
@@ -39,14 +44,14 @@ const saleOfModelClause = (license: string) => {
   return license.slice(start, end === -1 ? undefined : end);
 };
 
-const buildLicense = (allowCommercialUse: CommercialUse[]) =>
+const buildLicense = (allowCommercialUse: CommercialUse[], allowDerivatives = true) =>
   addAdditionalLicensePermissions('', {
     modelId: 1,
     modelName: 'Test Model',
     versionId: 2,
     username: 'tester',
     allowNoCredit: true,
-    allowDerivatives: true,
+    allowDerivatives,
     allowDifferentLicense: false,
     allowCommercialUse,
   });
@@ -57,6 +62,7 @@ describe('sell / sell-merge split in the generated licence', () => {
   it('grants both: neither restriction appears', () => {
     const license = buildLicense([...OTHERS, CommercialUse.Sell, CommercialUse.SellMerge]);
 
+    expect(license).toContain('Attachment B');
     expect(license).not.toContain(MODEL_CLAUSE);
     expect(license).not.toContain(MERGE_CLAUSE);
   });
@@ -85,11 +91,28 @@ describe('sell / sell-merge split in the generated licence', () => {
    * gets a green tick over a licence that forbids the sale. The clause cannot defend itself here;
    * this is the assertion that does.
    */
+  /**
+   * The merge-sharing restriction is the only OTHER clause in the document that names a Merge,
+   * and it is emitted from a different flag. Every other case here renders with derivatives
+   * allowed, so the two merge-naming clauses never appear together -- which is exactly where a
+   * carve-out written for one of them can reach the other.
+   */
+  it('withholding derivatives leaves the sale carve-out scoped to its own clause', () => {
+    const license = buildLicense(OTHERS, false);
+
+    expect(license).toContain('Do not Share or make available a Merge');
+    expect(saleOfModelClause(license)).toContain(DISAPPLIES_TO_MERGES);
+    expect(license).toContain(CARVE_OUT_GRANTS_NOTHING);
+  });
+
   it('the preamble expands a restriction conditionally, and yields to a stated scope', () => {
     const license = buildLicense(OTHERS);
 
-    expect(license).toContain('A restriction below that references the Model applies to');
-    expect(license).toContain('except to the extent that restriction expressly states otherwise');
+    // One contiguous literal on purpose: asserted as two fragments, the object of the sentence
+    // and the conjunction are both free to change, and rewriting the middle stops every
+    // restriction in the document reaching any Derivative while this still passes.
+    expect(license).toContain(EXPANDS_CONDITIONALLY);
+    expect(license).toContain(MERGE_CARRIES_ITS_LINEAGE);
     expect(license).not.toContain('even though only the Model is referenced');
   });
 
@@ -99,5 +122,8 @@ describe('sell / sell-merge split in the generated licence', () => {
     expect(license).toContain(MODEL_CLAUSE);
     expect(license).toContain(MERGE_CLAUSE);
     expect(saleOfModelClause(license)).toContain(DISAPPLIES_TO_MERGES);
+    // This state is the only one where the document both disapplies the sale restriction from
+    // merges and forbids selling them. The guard is what stops the carve-out reading as a grant.
+    expect(license).toContain(CARVE_OUT_GRANTS_NOTHING);
   });
 });

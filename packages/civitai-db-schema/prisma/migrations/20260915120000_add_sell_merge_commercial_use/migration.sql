@@ -12,15 +12,22 @@
 -- so no row can carry it, so no running client can read one.
 --
 -- ⚠️ That argument covers before and after the deploy, NOT the middle of it. A rolling deploy has
--- new pods writing 'SellMerge' while previous-build pods still serve, and those pods throw reading
--- a model created in that window. Applying this migration first does not close that; only shipping
--- an enum-aware build with no writer, ahead of the build that writes, does.
+-- new pods writing 'SellMerge' while previous-build pods still serve. Prisma deserializes the enum
+-- for a whole result set, so the failure is not confined to the new row: any LIST query whose page
+-- happens to include one fails entirely, which is why it presents as intermittent rather than
+-- total. Raw-SQL paths are unaffected. Applying this migration first does not close that; only
+-- shipping an enum-aware build with no writer, ahead of the build that writes, does.
+--
+-- ⚠️ src/pages/api/admin/temp/backfill-trained-model-permissions.ts also writes 'SellMerge'. Do not
+-- run it before this migration, or during a rolling deploy.
 --
 -- The backfill that gives existing models the new permission is deliberately NOT in this commit.
 -- It writes the new label onto ~425k rows, so applying it while the old build is still serving is
 -- a site-wide outage — and the ordinary way pending SQL gets applied is to run all of it. It ships
 -- as its own change, after this deploy has fully rolled out.
 --
--- ALTER TYPE ... ADD VALUE cannot run inside a transaction block: run this statement alone.
+-- Run this statement alone. Postgres 12+ permits ADD VALUE inside a transaction block, but the
+-- value cannot be USED in the same transaction -- and two `psql -c` flags are one implicit
+-- transaction, which is how this bites in practice.
 
 ALTER TYPE "CommercialUse" ADD VALUE IF NOT EXISTS 'SellMerge';
