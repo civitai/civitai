@@ -161,6 +161,7 @@ export const appRouter = router({
   scannerPolicies: lazy(() =>
     import('~/server/routers/scanner-policies.router').then((m) => m.scannerPoliciesRouter)
   ),
+  crucible: lazy(() => import('./crucible.router').then((m) => m.crucibleRouter)),
 });
 
 // export type definition of API

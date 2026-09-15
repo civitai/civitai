@@ -990,3 +990,10 @@ export const UserHubSourceType = {
   Tag: 'Tag',
 } as const;
 export type UserHubSourceType = (typeof UserHubSourceType)[keyof typeof UserHubSourceType];
+export const CrucibleStatus = {
+  Pending: 'Pending',
+  Active: 'Active',
+  Completed: 'Completed',
+  Cancelled: 'Cancelled',
+} as const;
+export type CrucibleStatus = (typeof CrucibleStatus)[keyof typeof CrucibleStatus];
