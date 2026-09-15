@@ -239,13 +239,10 @@ describe('ModelCard review indicator (batched membership)', () => {
 // label, that is why.
 // =============================================================================
 
-// The harness mounts a bare `MantineProvider`, whose default palette has no `success` scale — and
-// `statusBadgeStyle` indexes `theme.colors.success[5]`. No existing test in this file renders the
-// status badge, so the card threw "Cannot read properties of undefined (reading '5')" the first time
-// one did. Supplying the scale here keeps the fix local to the tests that need it; widening the
-// shared harness theme would change layout under every component test in the repo.
-// Distinct hexes on purpose: success and teal sharing one value would make a success->teal
-// regression in statusBadgeStyle invisible to the colour assertion below.
+// Bare `MantineProvider` carries no `success` scale, and supplying it here keeps the fix local —
+// widening the shared harness theme would change layout under every component test in the repo.
+// Distinct hexes per family on purpose: the colour assertions below read green (access) and blue
+// (recency), and a shared value would make a drift between them invisible.
 const scale = (hex: string) =>
   Array.from({ length: 10 }, () => hex) as unknown as MantineColorsTuple;
 function WithPalette({ children }: { children: React.ReactNode }) {
@@ -305,9 +302,8 @@ describe('ModelCard paid-gate badge', () => {
     // absence of the text as well as the presence of the icon is what makes a revert to the word
     // visible here rather than only in a screenshot.
     expect(el.textContent).toBe('');
-    // Exactly one icon. `querySelector` takes the FIRST match, so every assertion below would read
-    // the diamond and stay green if a second glyph were added beside it — which is the two-meanings
-    // mess this change exists to end, reintroduced.
+    // Exactly one icon: `querySelector` takes the FIRST match, so every assertion below would stay
+    // green if a second glyph were added beside it.
     expect(el.querySelectorAll('svg'), 'the access badge renders more than one icon').toHaveLength(
       1
     );
@@ -316,16 +312,14 @@ describe('ModelCard paid-gate badge', () => {
 
     // The FULL tabler name. A substring like `lock` matches IconLock, IconLockOff, IconLockOpen and
     // a dozen others — IconLockOff on a paid badge reads as "NOT paid", which is the mutation that
-    // matters. `diamond` had exactly this problem before it was tightened.
+    // matters.
     expect(icon!.getAttribute('class') ?? '').toContain('tabler-icon-lock-dollar');
 
-    // `IconLockDollar` is an OUTLINE icon, so tabler emits `stroke={color}` and `fill="none"` — the
-    // opposite of the filled diamond this replaced. Reading stroke catches `color` being dropped;
-    // the chip's white comes from Mantine CSS the harness never loads, so nothing else would.
+    // `IconLockDollar` is an OUTLINE icon, so tabler emits `stroke={color}` and `fill="none"`.
+    // Reading stroke catches `color` being dropped; the chip's white comes from Mantine CSS the
+    // harness never loads, so nothing else would.
     expect(icon!.getAttribute('stroke')).toBe('white');
 
-    // Run the bolt prohibition over the whole badge rather than the first icon's class, where it
-    // could never fail: no tabler class contains both substrings.
     expect(el.innerHTML).not.toContain('bolt');
     expect(el.innerHTML).not.toContain('diamond');
   });
@@ -358,12 +352,19 @@ describe('ModelCard paid-gate badge', () => {
       </WithPalette>
     );
     const el = await awaitBadge('access');
-    // Asserts the label BECOMES VISIBLE, not that some aria attribute was wired. The previous
-    // version read `aria-describedby`, which Mantine sets regardless of where the overlay lands —
-    // so it stayed green through a card where nothing ever appeared on screen.
     await userEvent.hover(el);
-    const dropdown = page.getByText('Paid', { exact: true });
-    await expect.element(dropdown).toBeVisible();
+    // Resolved through the badge's own `aria-describedby`, which Mantine sets only while the
+    // tooltip is open. `getByText('Paid')` matches text that is on the page before any hover, so
+    // it passed whether or not the tooltip ever opened.
+    await expect
+      .poll(
+        () => {
+          const id = el.getAttribute('aria-describedby');
+          return id ? document.getElementById(id)?.textContent : undefined;
+        },
+        { message: 'hovering the badge opened no tooltip' }
+      )
+      .toBe('Paid');
   });
 
   test('a discount merged into the gate chip is spoken, not only drawn', async () => {
@@ -418,8 +419,7 @@ describe('ModelCard paid-gate badge', () => {
     );
     const el = (await awaitBadge('access')) as HTMLElement;
     // A glyph with no text has one explanation, and a pointer-only one leaves keyboard and touch
-    // users with nothing. `Tooltip` takes `events`; `HoverCard`, which this replaced, has no such
-    // option at all. `focus: true` also needs something focusable — the anchor supplies that
+    // users with nothing. `Tooltip` takes `events`; `HoverCard` has no such option at all. `focus: true` also needs something focusable — the anchor supplies that
     // natively, where a `tabIndex` on a `div` would have bought a tab stop that does nothing.
     expect(
       el.tagName,
@@ -463,8 +463,6 @@ describe('ModelCard paid-gate badge', () => {
     // `.chip` fixes the height at 26px while Mantine's `circle` sizes the WIDTH from the badge
     // size, so the pair alone gives an oval. Both axes are pinned inline, which is why this is
     // readable in a harness that loads no stylesheet.
-    // The `circle` prop itself, not only its consequences: deleting it left width/height/padding
-    // untouched, because those come from the inline style, so the claim above had no assertion.
     expect(el.getAttribute('data-circle')).toBe('true');
     expect(el.style.width).toBe('26px');
     expect(el.style.height).toBe('26px');
@@ -525,9 +523,6 @@ describe('ModelCard paid-gate badge', () => {
       </WithPalette>
     );
     const el = (await awaitBadge('access')) as HTMLElement;
-    // One equality carries this. The two `not.toBe`s that used to sit here could not fail while
-    // this line passed — a string that equals one value cannot equal another — so they read as
-    // coverage of a drift back into teal without being any.
     expect(el.style.backgroundColor).toBe('rgb(55, 178, 77)');
   });
 
@@ -631,8 +626,8 @@ describe('ModelCard New badge coexists with the money badge', () => {
       </WithPalette>
     );
     const recency = (await awaitBadge('recency')) as HTMLElement;
-    // Distinct from success (#12b886) in the harness palette on purpose: if the two badges shared a
-    // colour, a card that rendered the money chip twice would satisfy every assertion above.
+    // Distinct from the access chip's green: sharing a colour would let a card that rendered the
+    // money chip twice satisfy every assertion above.
     expect(recency.style.backgroundColor).toBe('rgb(34, 139, 230)');
   });
 
@@ -653,8 +648,7 @@ describe('ModelCard New badge coexists with the money badge', () => {
     );
     const recency = (await awaitBadge('recency')) as HTMLElement;
     expect(recency.textContent).toBe('Updated');
-    // Updated wears the same blue as New — one colour for one kind of fact. The teal it used to
-    // have is still the Early Access chip's, which is why sharing it read as a third state.
+    // Updated wears the same blue as New — one colour for one kind of fact.
     expect(recency.style.backgroundColor).toBe('rgb(34, 139, 230)');
     expect((await awaitBadge('access')).getAttribute('aria-label')).toBe('Paid');
   });

@@ -75,9 +75,8 @@ describe('the hover zoom carries the sticker overlay with it', () => {
     // nothing at all, because the attribute is on the card root — an ancestor of the link.
     expect(source()).toMatch(/^:global\(\[data-card-hover\]\)\s*\{/m);
 
-    // A descendant, asserted POSITIVELY. Prohibiting `~` pins one spelling: `+` and `>` are the
-    // same defect and walk straight through a negative check. Under the card body the overlay is
-    // nested inside, so any combinator at all selects nothing and every placed sticker drifts.
+    // Under the card body the overlay is nested inside, so any combinator at all — `~`, `+`, `>`
+    // — selects nothing and every placed sticker drifts.
     expect(block).toMatch(/[\r\n]\s*:global\(\[data-sticker-overlay\]\)\s*\{/);
 
     const transforms = transformsIn(block ?? '');
@@ -97,9 +96,6 @@ describe('the hover zoom carries the sticker overlay with it', () => {
     // so deleting the attribute leaves a stylesheet that still reads correctly and a hover zoom
     // that is dead on every card in the app.
     //
-    // A source scan, not a render: this pins that the two spellings match. It cannot see the
-    // attribute landing on the wrong element — a render test of AspectRatioCard would, and is the
-    // stronger version of this if one is ever written.
     // Tied to the opening tag, not to the file: a bare substring matches the name in a comment, or
     // on the WRONG element, or `data-card-hoverable`. Pinned to the tag carrying `styles.content`
     // because relocating it to the header div kills the zoom app-wide, and both a substring check

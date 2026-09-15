@@ -16,14 +16,8 @@ export type SaleDisplay = {
 };
 
 /**
- * The discount as the creator set it, never derived on the client. A fixed discount is rendered as the
- * Buzz bolt plus the number rather than the word "Buzz", which is how currency reads everywhere else and
- * keeps the chip short enough to sit beside Early Access and New.
- */
-/**
- * The spoken form of `SaleDiscountLabel`, for somewhere a screen reader cannot reach the rendered
- * one — inside `role="img"`, whose subtree is presentational, the discount is dropped entirely.
- * The `Fixed` arm says "Buzz" because its rendered twin says it with an icon.
+ * Spoken form of `SaleDiscountLabel`, for a caller whose `aria-label` overrides the subtree. The
+ * `Fixed` arm says "Buzz" because its rendered twin says it with an icon.
  */
 export function saleDiscountText(sale: {
   discountType: 'Fixed' | 'Percent';
@@ -34,6 +28,11 @@ export function saleDiscountText(sale: {
     : `${sale.discountAmount.toLocaleString()} Buzz off`;
 }
 
+/**
+ * The discount as the creator set it, never derived on the client. A fixed discount is rendered as the
+ * Buzz bolt plus the number rather than the word "Buzz", which is how currency reads everywhere else and
+ * keeps the chip short enough to sit beside Early Access and New.
+ */
 export function SaleDiscountLabel({
   sale,
   size = 'xs',

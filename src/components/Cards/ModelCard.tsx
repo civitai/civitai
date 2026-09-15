@@ -69,8 +69,7 @@ const accessChipStyles = { label: { display: 'flex', alignItems: 'center', gap: 
 /**
  * A link, not a labelled `div`: the card header is `pointer-events: none` so its chips fall through
  * to the image link, and making this one hit-testable — which it must be, or the tooltip's trigger
- * is never reached — took that away. An anchor gives the click back, and carries the keyboard
- * affordance natively rather than through a `tabIndex` on something with no behaviour.
+ * is never reached — took that away. An anchor gives the click back.
  *
  * The name comes from ARIA because the content is an abstract glyph, and a merged discount has to
  * ride in the name too: `aria-label` overrides the subtree, so the drawn "20% off" reaches no
@@ -88,8 +87,8 @@ function AccessChip({
   sale?: Parameters<typeof SaleDiscountLabel>[0]['sale'];
 }) {
   const theme = useMantineTheme();
-  // The shape and the colour live beside the `circle` prop they have to agree with. Split across
-  // two places, a threshold moved in one gives a `circle` badge with pill padding.
+  // `circle` sizes the width from the badge size while `.chip` pins height at 26px, so both axes
+  // are set here.
   const style = {
     backgroundColor: theme.colors.green[7],
     ...(sale ? { paddingInline: 8 } : { width: 26, height: 26, padding: 0 }),
@@ -155,8 +154,6 @@ function ModelCardContent({ data }: Props) {
     if (isNSFW) modFlagLabels.push('NSFW');
   }
 
-  // `.chip` fixes height at 26px; Mantine's `circle` only rounds the corners and sizes the width
-  // from the badge size, so the two together give a narrow oval. Pin both axes to the chip height.
   const recencyBadgeStyle = useMemo(
     () => ({ backgroundColor: theme.colors.blue[getPrimaryShade(theme, colorScheme)] }),
     [theme, colorScheme]
