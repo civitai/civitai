@@ -2900,14 +2900,19 @@ export const getAllImagesIndex = async (
     );
     if (feedPrimary) {
       const started = Date.now();
+      const followedUserIds =
+        input.followed && currentUserId ? await getUserFollows(currentUserId) : undefined;
       const served = await withSpan('image:feedPrimary', () =>
-        serveFromFeed(searchInput, {
-          fetchFeed: fetchFeedPrimary,
-          hydrate: async (ids) =>
-            (
-              await getAllImagesUncaptured(feedHydrateQuery(input, ids))
-            ).items,
-        })
+        serveFromFeed(
+          { ...searchInput, followedUserIds },
+          {
+            fetchFeed: fetchFeedPrimary,
+            hydrate: async (ids) =>
+              (
+                await getAllImagesUncaptured(feedHydrateQuery(input, ids))
+              ).items,
+          }
+        )
       );
       if (served.ok) {
         void feedRequestCapture().record(searchInput, {

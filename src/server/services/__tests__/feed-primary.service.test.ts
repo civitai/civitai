@@ -64,6 +64,18 @@ describe('serveFromFeed', () => {
   });
 });
 
+describe('serveFromFeed follow feeds', () => {
+  it('serves an empty follow list as an empty page without asking the feed', async () => {
+    const fetchFeed = vi.fn(async () => answer([1]));
+    const r = await serveFromFeed(
+      { ...base, followed: true, followedUserIds: [] },
+      { fetchFeed, hydrate: async () => rows([1]) }
+    );
+    expect(r).toEqual({ ok: true, page: { data: [], nextCursor: undefined, feedMs: 0 } });
+    expect(fetchFeed).not.toHaveBeenCalled();
+  });
+});
+
 describe('feedFliptContext', () => {
   it('matches the shape of the request-path context for the fields the search input carries', () => {
     expect(feedFliptContext({})).toEqual({ isLoggedIn: 'false' });

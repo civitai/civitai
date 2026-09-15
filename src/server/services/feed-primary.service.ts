@@ -87,6 +87,11 @@ export async function serveFromFeed<T extends { id: number }>(
   input: CapturableSearchInput,
   deps: FeedPrimaryDeps<T>
 ): Promise<FeedPrimaryResult<T>> {
+  // Meilisearch answers a follow list with no creators as an empty feed, whatever else is set.
+  if (input.followed === true && input.followedUserIds?.length === 0) {
+    requestCounter.inc({ outcome: 'served' });
+    return { ok: true, page: { data: [], nextCursor: undefined, feedMs: 0 } };
+  }
   const mapping = mapSearchInputToFeedQuery(input, 'primary');
   if (!mapping.ok) {
     requestCounter.inc({ outcome: 'unmapped' });
