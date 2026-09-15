@@ -116,6 +116,13 @@ vi.mock('~/server/middleware.trpc', async () => {
 });
 
 import { blocksRouter } from '../blocks.router';
+// 🔴 STRUCTURALLY BLIND TO THE VIEWER HALF OF THE WORKFLOW SCOPE. This file never sets
+// `ORCHESTRATOR_MODE`, so it runs under the schema default `'dev'` — the one mode in which
+// `assertBlockWorkflowMintedForViewer` short-circuits. That is why ids like `wf_1` are fine here
+// and would be refused in prod. A `pollWorkflow`/`cancelWorkflow` case cloned out of this file
+// inherits that blindness while looking like coverage: set the mode explicitly, as
+// blocks.router.workflowScope.test.ts does.
+
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { MAX_BLOCK_POLL_WAIT_SECONDS } from '~/server/services/blocks/workflow.service';
