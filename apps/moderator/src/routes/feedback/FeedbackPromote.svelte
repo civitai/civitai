@@ -3,6 +3,10 @@
   import { page } from '$app/state';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import {
+    Combobox,
+    type ComboboxOption,
+  } from '@civitai/ui/components/ui/combobox/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import type { FormState } from '$lib/form-state.svelte';
@@ -11,11 +15,16 @@
   import { clearPaging } from '$lib/paging';
   import { feedbackOpenHref } from '$lib/feedback-tabs';
   import type { FeedbackPromoteDraft } from '$lib/feedback-drafts';
-  import type { FeedbackRow, FeedbackSibling } from '$lib/server/feedback.service';
+  import type {
+    FeedbackRow,
+    FeedbackSibling,
+    KnownIssueOption,
+  } from '$lib/server/feedback.service';
 
   let {
     row,
     siblings,
+    knownIssues,
     civitaiUrl,
     canPromote,
     form: promoteForm,
@@ -23,6 +32,9 @@
   }: {
     row: FeedbackRow;
     siblings: FeedbackSibling[];
+    /** Non-disabled issues, newest first — `getKnownIssues`. Empty when the picker cannot be shown
+     *  (no grant, or the row is already linked), in which case only the number box renders. */
+    knownIssues: KnownIssueOption[];
     civitaiUrl: string;
     canPromote: boolean;
     /**
@@ -73,6 +85,23 @@
      */
     draft: FeedbackPromoteDraft;
   } = $props();
+
+  /**
+   * 🔴 `keywords` CARRIES THE TITLE, AND WITHOUT IT THIS PICKER IS SEARCHABLE BY DIGITS ONLY.
+   * Command filters on an item's `value` — which has to be the id, since that is what gets posted —
+   * so typing a word from the issue's title would match nothing. The status rides along in the
+   * keywords too: a moderator looking for the open one can type "open".
+   */
+  const issueOptions = $derived(
+    knownIssues.map(
+      (issue): ComboboxOption => ({
+        value: String(issue.id),
+        // `closed` is the SERVICE's verdict, not a re-reading of the status string here.
+        label: `#${issue.id} — ${issue.title} (${issue.status}${issue.closed ? ', closed' : ''})`,
+        keywords: [issue.title, issue.status, issue.closed ? 'closed' : 'open'],
+      })
+    )
+  );
 
   /**
    * A sibling can sit on an earlier keyset page, where carrying this page's `?cursor=` lands the
@@ -133,7 +162,31 @@
            branch on the next tab click. -->
       {#if draft.attachMode}
         <div class="flex flex-col gap-1">
-          <Label for={`bug-${row.id}`} class="text-xs text-dark-2">Existing issue number</Label>
+          <Label for={`bug-${row.id}`} class="text-xs text-dark-2">Existing issue</Label>
+          <!--
+            🔴 THE PICKER AND THE NUMBER BOX WRITE ONE VALUE — `draft.bugId` — AND ONLY THE BOX IS
+            POSTED. The combobox is a `<button>`, so it submits nothing on its own; giving it a
+            `name` would post a SECOND `bugId` and `Object.fromEntries` keeps the last, which is
+            whichever the DOM happens to order later. One named input, and the picker writes into it.
+
+            🔴 THE NUMBER BOX IS NOT A FALLBACK FOR STYLE. `getKnownIssues` is bounded and excludes
+            disabled issues, so an issue that is old enough, or retired, is reachable by number and
+            by nothing else. Removing the box would make those unattachable.
+          -->
+          {#if issueOptions.length}
+            <!-- A function binding, not `value=`: `Combobox` declares `value` as `$bindable` and
+                 writes to it on select, so a plain prop would latch a child-local override the
+                 number box below could then disagree with. -->
+            <Combobox
+              options={issueOptions}
+              bind:value={() => draft.bugId, (v: string) => (draft.bugId = v)}
+              placeholder="Search issues…"
+              searchPlaceholder="Title or number…"
+              emptyText="No issue matches."
+              class="w-full max-w-md"
+              contentClass="w-[28rem]"
+            />
+          {/if}
           <Input
             id={`bug-${row.id}`}
             name="bugId"
@@ -141,6 +194,22 @@
             class="w-40"
             bind:value={draft.bugId}
           />
+          <!-- 🔴 BOTH BRANCHES SAY SOMETHING. An empty list here means "no non-disabled issues
+               exist" — `load` populates `knownIssues` on exactly the condition that renders this
+               form — and without the second branch the picker and its help line simply vanish,
+               leaving a bare number box that reads as a control that failed to load. `emptyText`
+               covers a search that matches nothing, which is a different state. -->
+          <p class="text-xs text-dark-2">
+            {#if issueOptions.length}
+              Pick one, or type the number — the box is what gets submitted.
+            {:else}
+              <!-- 🔴 NOT "no OPEN issues". `getKnownIssues` deliberately does not filter to open
+                   ones — its docstring carries the measurement and is the one place it lives. An
+                   empty list here means no non-disabled issues exist AT ALL, and the open-only
+                   wording is what someone would cite when re-adding the filter. -->
+              No issues to pick from yet — type the number of an existing one.
+            {/if}
+          </p>
         </div>
       {:else}
         <div class="flex flex-col gap-1">
