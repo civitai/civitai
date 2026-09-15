@@ -25,16 +25,26 @@ describe('isTrustedOrchestratorUrl', () => {
     expect(isTrustedOrchestratorUrl(`https://orchestration.civitai.com${BLOB}`)).toBe(true);
   });
 
-  // Every host observed in stored epoch urls, including the low-volume ones — a blocked host here
+  // Every host observed in stored epoch urls that STILL RESOLVES — a blocked host here
   // is a publish or download that fails for a run nobody can re-create.
-  it('accepts every host stored rows actually carry', () => {
+  it('accepts every resolving host stored rows actually carry', () => {
+    for (const host of ['orchestration-new.civitai.com', 'orchestration-next.civitai.com']) {
+      expect(isTrustedOrchestratorUrl(`https://${host}${BLOB}`), host).toBe(true);
+    }
+  });
+
+  // Regression guard for the 2026-09-15 removal. These three are NXDOMAIN (verified
+  // against the authoritative resolver and from inside the cluster), so pre-trusting
+  // them bought nothing and left a standing subdomain-takeover foothold in a zone we
+  // control. This asserts the SET, so it fails if any is reintroduced — which is the
+  // point: nothing else would notice, because a dead host produces no traffic to miss.
+  it('rejects the non-resolving hosts that were removed from the allowlist', () => {
     for (const host of [
-      'orchestration-new.civitai.com',
       'orchestration-stage.civitai.com',
       'orchestration-dev.civitai.com',
       'image-generation.civitai.com',
     ]) {
-      expect(isTrustedOrchestratorUrl(`https://${host}${BLOB}`), host).toBe(true);
+      expect(isTrustedOrchestratorUrl(`https://${host}${BLOB}`), host).toBe(false);
     }
   });
 

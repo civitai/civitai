@@ -13,10 +13,18 @@ const KNOWN_ORCHESTRATOR_HOSTS = [
   // The server-side endpoint those previews use is an internal address, so it can
   // never widen this list via the `configured` entry below — it has to be listed.
   'orchestration-next.civitai.com',
-  'orchestration-stage.civitai.com',
-  'orchestration-dev.civitai.com',
-  'image-generation.civitai.com',
 ];
+// Removed 2026-09-15: orchestration-stage, orchestration-dev and image-generation.
+// All three are NXDOMAIN — measured against the authoritative resolver (1.1.1.1) AND
+// from inside the cluster, where this predicate actually runs, with the two surviving
+// hosts as the positive control in the same command. A name that resolves nowhere
+// cannot serve a blob, so removing it cannot break a download that works today; it
+// only changes the failure from a connection error to `Invalid asset URL`.
+//
+// They were listed because stored epoch rows carry them, but pre-trusting a
+// non-existent name in a zone we control is a standing subdomain-takeover foothold:
+// anything that later points one of these at a third party inherits trust here
+// without review. The guard below pins their removal.
 
 function hostOf(value: string | undefined | null) {
   if (!value) return undefined;
