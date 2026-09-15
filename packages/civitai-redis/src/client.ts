@@ -2498,6 +2498,15 @@ const REDIS_KEYS_UNPREFIXED = {
     // most recent run, and the scored result each run produces. Every key carries a
     // TTL, so the whole namespace self-cleans and no table backs it.
     CONTEST_SCORE_RUN: 'packed:caches:contest-score-run',
+    // Per-user derived view of a TRAINING workflow for raw-AIR (epoch blob)
+    // generation: the workflow's epoch blob keys + the training step's completion
+    // date. Keyed `<userId>:<workflowId>` — the fetch behind it is scoped to the
+    // caller's orchestrator token, so the userId segment keeps one user's cached
+    // ownership proof from ever serving another's request. Short TTL, no bust:
+    // epochs only accumulate while training runs, and a stale-by-minutes view
+    // only delays a brand-new epoch becoming generatable. See
+    // `validateRawAirResources` in orchestration-new.service.
+    TRAINING_EPOCH_BLOBS: 'packed:caches:training-epoch-blobs',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',

@@ -1,5 +1,5 @@
 import { Air } from '@civitai/client';
-import { getRootEcosystem } from '~/shared/constants/basemodel.constants';
+import { ecosystems, getRootEcosystem } from '~/shared/constants/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
 type CivitaiAir = {
@@ -118,6 +118,62 @@ export function getAirEcosystem(baseModelOrKey: string) {
   // Upscaler models use 'Other' in AIR for backwards compatibility
   if (ecosystem === 'Upscaler') ecosystem = 'Other';
   return ecosystem.toLowerCase();
+}
+
+/**
+ * A raw orchestrator blob AIR — a training epoch's weights addressed directly
+ * (`urn:air:<ecosystem>:lora:orchestrator:blob@<blobKey>`), with no ModelVersion
+ * row behind it. Built by the Training Studio (see its `loraBlobAir`) for the
+ * "generate with this epoch" handoff. In generation form/graph data these travel
+ * as resources with a synthetic NEGATIVE id plus `air` + `workflowId`; the
+ * workflowId is required server-side to prove the caller owns the training run.
+ */
+export type RawAirResource = {
+  id: number;
+  air: string;
+  /** Training workflow the blob came from — the ownership proof. */
+  workflowId?: string;
+  strength?: number;
+  name?: string;
+};
+
+export function parseRawAirResourceUrn(identifier: string) {
+  const parsed = Air.parseSafe(identifier);
+  if (!parsed) return null;
+  if (parsed.source !== 'orchestrator' || parsed.type !== 'lora' || parsed.id !== 'blob')
+    return null;
+  const blobKey = String(parsed.version ?? '');
+  if (!blobKey) return null;
+  return { ecosystem: parsed.ecosystem, blobKey };
+}
+
+/**
+ * The ecosystem record whose key matches an AIR `<ecosystem>` segment
+ * (case-insensitive — AIR segments are lowercased keys, root or child).
+ */
+export function getEcosystemByAirSegment(segment: string) {
+  const lower = segment.toLowerCase();
+  return ecosystems.find((e) => e.key.toLowerCase() === lower);
+}
+
+export function isRawAirResource<T extends { id?: unknown; air?: unknown }>(
+  resource: T
+): resource is T & { id: number; air: string } {
+  return typeof resource.id === 'number' && resource.id < 0 && typeof resource.air === 'string';
+}
+
+/**
+ * Deterministic negative id for a raw AIR resource (FNV-1a over the urn).
+ * Negative so it can never collide with a ModelVersion id, and stable so the
+ * same epoch dedupes in the form and keys the server's AIR map consistently.
+ */
+export function rawAirResourceId(air: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < air.length; i++) {
+    hash ^= air.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return -((hash >>> 0) % 0x7fffffff || 1);
 }
 
 export function stringifyAIR({

@@ -14,11 +14,20 @@ import {
   ecosystemByKey,
   ecosystemById,
   getEcosystem,
+  getRootEcosystem,
   areResourcesCompatible,
   filterCompatibleResources,
   getBaseModelsByEcosystemId,
   MODEL3D_ECOSYSTEM_KEYS,
 } from '~/shared/constants/basemodel.constants';
+import {
+  getEcosystemByAirSegment,
+  parseRawAirResourceUrn,
+  rawAirResourceId,
+} from '~/shared/utils/air';
+import type { GenerationResource } from '~/shared/types/generation.types';
+import { ModelType } from '~/shared/utils/prisma/enums';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   workflowConfigByKey,
   isWorkflowAvailable,
@@ -94,6 +103,68 @@ export function useGenerationIngestion(store: GenerationStore) {
 
     generationGraphPanel.open({ type: 'modelVersion', id });
   }, []);
+
+  // `/generate?air=…&workflowId=…&name=…` deep link — the Training Studio's
+  // "generate with this epoch" handoff. The AIR is a raw orchestrator blob
+  // (a training epoch's weights, no ModelVersion row); the workflowId names
+  // the training run the server verifies ownership against. Same route guard
+  // and strip-before-apply shape as the modelVersionId effect above.
+  const features = useFeatureFlags();
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!window.location.pathname.startsWith('/generate')) return;
+
+    const url = new URL(window.location.href);
+    const air = url.searchParams.get('air');
+    if (!air) return;
+    const workflowId = url.searchParams.get('workflowId');
+    const name = url.searchParams.get('name');
+
+    url.searchParams.delete('air');
+    url.searchParams.delete('workflowId');
+    url.searchParams.delete('name');
+    window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+
+    if (!features.generationAirResources) return;
+    if (useGenerationGraphStore.getState().data) return;
+    if (!workflowId) return;
+
+    const parsed = parseRawAirResourceUrn(air);
+    if (!parsed) return;
+    const airEco = getEcosystemByAirSegment(parsed.ecosystem);
+    if (!airEco) return;
+
+    // Land on the AIR's own ecosystem when the graph generates with it
+    // directly; otherwise roll a child key (e.g. flux2klein) up to its root.
+    const formEco = isWorkflowAvailable('txt2img', airEco.id)
+      ? airEco
+      : getRootEcosystem(airEco.key);
+    const baseModel = getBaseModelsByEcosystemId(formEco.id)[0]?.name;
+    if (!baseModel) return;
+
+    const id = rawAirResourceId(air);
+    const label = name?.trim() || 'Training epoch';
+    const resource: GenerationResource & { workflowId: string } = {
+      id,
+      name: label,
+      trainedWords: [],
+      baseModel,
+      canGenerate: true,
+      hasAccess: true,
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      air,
+      workflowId,
+      model: { id, name: label, type: ModelType.LORA },
+    };
+
+    generationGraphStore.setData({
+      params: { ecosystem: formEco.key },
+      resources: [resource],
+      runType: 'run',
+    });
+  }, [features.generationAirResources]);
 
   // Sync generation graph store data into the form
   // - Remix/Replay: full override (reset + set)

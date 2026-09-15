@@ -79,8 +79,24 @@ import {
   submitWorkflow,
   updateWorkflow as clientUpdateWorkflow,
 } from '~/server/services/orchestrator/workflows';
-import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
+import {
+  assertWorkflowOwner,
+  workflowOwnerId,
+} from '~/server/services/orchestrator/assert-workflow-owner';
+import {
+  getAirEcosystem,
+  getEcosystemByAirSegment,
+  isRawAirResource,
+  parseRawAirResourceUrn,
+  type RawAirResource,
+} from '~/shared/utils/air';
 import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
+import { CacheTTL } from '~/server/common/constants';
+import { canGenerateWithEpoch } from '~/server/common/model-helpers';
+import {
+  isActiveTrainingStepStatus,
+  trainingWorkflowEpochBlobs,
+} from '~/server/services/orchestrator/training/training-epoch-blobs';
 import { mapDataToGraphInput } from './legacy-metadata-mapper';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -406,10 +422,14 @@ function collectResourceIds(data: GenerationGraphOutput): ResourceRef[] {
   }
   if ('resources' in data && data.resources) {
     refs.push(
-      ...data.resources.map((r) => ({
-        id: r.id,
-        epoch: 'epochDetails' in r ? r.epochDetails?.epochNumber : undefined,
-      }))
+      // Raw-AIR resources (negative synthetic ids) have no ModelVersion row —
+      // they're validated separately in validateRawAirResources.
+      ...data.resources
+        .filter((r) => !isRawAirResource(r))
+        .map((r) => ({
+          id: r.id,
+          epoch: 'epochDetails' in r ? r.epochDetails?.epochNumber : undefined,
+        }))
     );
   }
   if ('upscaler' in data && data.upscaler?.id) {
@@ -428,9 +448,129 @@ function collectResourceIds(data: GenerationGraphOutput): ResourceRef[] {
 /** Enriched resource with air string (always populated by getResourceData) */
 type EnrichedResource = GenerationResource & { air: string };
 
+/** Raw orchestrator-blob AIR resources present in the graph output (negative ids). */
+function collectRawAirResources(data: GenerationGraphOutput): RawAirResource[] {
+  if (!('resources' in data) || !data.resources) return [];
+  return data.resources.filter(isRawAirResource).map((r) => ({
+    id: r.id,
+    air: r.air,
+    workflowId: r.workflowId,
+    strength: r.strength,
+    name: r.name,
+  }));
+}
+
+/**
+ * Validates raw orchestrator-blob AIR resources — training epochs referenced
+ * directly by blob key, with no ModelVersion row.
+ *
+ * Ownership is the load-bearing check: the blob key is unguessable but that is
+ * NOT authorization, so each resource must name the training workflow it came
+ * from, that workflow is fetched with the CALLER'S orchestrator token (the
+ * orchestrator scopes reads to the token's consumer — a stranger's workflowId
+ * 404s), and the AIR's blob key must match one of the workflow's epoch blobs.
+ *
+ * NSFW/POI/canGenerate gates deliberately don't apply here: there is no model
+ * row to read flags from, and the content is the caller's own training output —
+ * the ownership + ecosystem checks replace the DB-side canGenerate derivation.
+ */
+async function validateRawAirResources({
+  resources,
+  user,
+  orchestratorToken,
+  requestEcosystem,
+}: {
+  resources: RawAirResource[];
+  user?: { id?: number; isModerator?: boolean };
+  orchestratorToken?: string;
+  requestEcosystem?: string;
+}): Promise<void> {
+  if (resources.length === 0) return;
+  if (!user?.id) throw throwBadRequestError('You must be logged in to use epoch resources.');
+  if (!orchestratorToken)
+    throw throwBadRequestError('Epoch resources are not supported on this generation path.');
+
+  const requestAirEcosystem = requestEcosystem ? getAirEcosystem(requestEcosystem) : undefined;
+  const byWorkflow = new Map<string, { blobKey: string; label: string }[]>();
+  for (const resource of resources) {
+    const label = resource.name ?? resource.air;
+    const parsed = parseRawAirResourceUrn(resource.air);
+    if (!parsed) throw throwBadRequestError(`Invalid epoch resource: ${label}`);
+    // The AIR segment can be a root OR child ecosystem key ('sdxl',
+    // 'flux2klein'); compare root-to-root against the request's ecosystem.
+    const airEco = getEcosystemByAirSegment(parsed.ecosystem);
+    if (!airEco) {
+      throw throwBadRequestError(
+        `Epoch resource "${label}" references an unknown ecosystem "${parsed.ecosystem}".`
+      );
+    }
+    if (requestAirEcosystem && getAirEcosystem(airEco.key) !== requestAirEcosystem) {
+      throw throwBadRequestError(
+        `Epoch resource "${label}" is not compatible with the selected ecosystem.`
+      );
+    }
+    if (!resource.workflowId) {
+      throw throwBadRequestError(
+        `Epoch resource "${label}" must reference the training workflow it came from.`
+      );
+    }
+    // Fast advisory check on the `<userId>-<timestamp>` id shape; an
+    // unparseable prefix falls through (null), so the authoritative guard is
+    // the token-scoped fetch below.
+    const claimedOwner = workflowOwnerId(resource.workflowId);
+    if (claimedOwner !== null && claimedOwner !== user.id) {
+      throw throwBadRequestError(`You do not have access to epoch resource "${label}".`);
+    }
+    const list = byWorkflow.get(resource.workflowId) ?? [];
+    list.push({ blobKey: parsed.blobKey, label });
+    byWorkflow.set(resource.workflowId, list);
+  }
+
+  const userId = user.id;
+  await Promise.all(
+    [...byWorkflow].map(async ([workflowId, entries]) => {
+      // The userId segment scopes the cached ownership proof to the user whose
+      // token fetched it. fetchThroughCache does not cache rejections, so a
+      // NOT_FOUND for a deleted or not-owned workflow (the orchestrator scopes
+      // the read to the caller's token) is re-checked every time.
+      const cacheKey = `${REDIS_KEYS.CACHES.TRAINING_EPOCH_BLOBS}:${userId}:${workflowId}` as const;
+      const { blobKeys, completedAt, stepStatus } = await fetchThroughCache(
+        cacheKey,
+        async () => {
+          const workflow = await getWorkflow({ token: orchestratorToken, path: { workflowId } });
+          return trainingWorkflowEpochBlobs(workflow);
+        },
+        { ttl: CacheTTL.xs * 5 }
+      );
+      const availableBlobKeys = new Set(blobKeys);
+      for (const entry of entries) {
+        if (!availableBlobKeys.has(entry.blobKey)) {
+          throw throwBadRequestError(
+            `Epoch resource "${entry.label}" does not belong to the referenced training workflow.`
+          );
+        }
+      }
+      // Same 15-day window as ModelVersion-backed epochs. A null completion
+      // date is trusted only while the step is still active (mid-training —
+      // window not started); a terminal step without one (a canceled/failed/
+      // expired run) is treated as expired, or canceling a run would keep its
+      // last epoch generatable forever.
+      const epochExpired = completedAt
+        ? !canGenerateWithEpoch(completedAt)
+        : !isActiveTrainingStepStatus(stepStatus);
+      if (epochExpired) {
+        throw throwBadRequestError(
+          'One of the epochs you are trying to generate with has expired. Make it a private model to continue using it.'
+        );
+      }
+    })
+  );
+}
+
 /** Result of resource validation */
 type ResourceValidationResult = {
   enrichedResources: EnrichedResource[];
+  rawAirResources: RawAirResource[];
   isPrivateGeneration: boolean;
   hasPoiResource: boolean;
 };
@@ -447,11 +587,18 @@ type ResourceValidationResult = {
  */
 async function validateAndEnrichResources(
   resourceRefs: ResourceRef[],
-  user?: { id?: number; isModerator?: boolean }
+  user?: { id?: number; isModerator?: boolean },
+  rawAir?: {
+    resources: RawAirResource[];
+    orchestratorToken?: string;
+    requestEcosystem?: string;
+  }
 ): Promise<ResourceValidationResult> {
-  if (resourceRefs.length === 0) {
+  const rawAirResources = rawAir?.resources ?? [];
+  if (resourceRefs.length === 0 && rawAirResources.length === 0) {
     return {
       enrichedResources: [],
+      rawAirResources: [],
       isPrivateGeneration: false,
       hasPoiResource: false,
     };
@@ -459,15 +606,31 @@ async function validateAndEnrichResources(
 
   // Span localizes the gen-path park: resource resolution is the heavy lookup
   // inside validateAndEnrichResources (delegates to getResourceData, which has
-  // its own finer-grained sub-spans).
-  const resources = await withSpan('gen:validateResources:getResourceData', () =>
-    getResourceData(resourceRefs, { user })
-  );
+  // its own finer-grained sub-spans). Raw-AIR validation is an independent
+  // orchestrator read, so the two run concurrently.
+  const [resources] = await Promise.all([
+    resourceRefs.length > 0
+      ? withSpan('gen:validateResources:getResourceData', () =>
+          getResourceData(resourceRefs, { user })
+        )
+      : Promise.resolve([] as Awaited<ReturnType<typeof getResourceData>>),
+    rawAirResources.length > 0
+      ? withSpan('gen:validateResources:rawAir', () =>
+          validateRawAirResources({
+            resources: rawAirResources,
+            user,
+            orchestratorToken: rawAir?.orchestratorToken,
+            requestEcosystem: rawAir?.requestEcosystem,
+          })
+        )
+      : Promise.resolve(),
+  ]);
 
-  // Check for private/epoch resources requiring subscription
-  const hasPrivateOrEpoch = resources.some(
-    (r) => r.availability === Availability.Private || !!r.epochDetails
-  );
+  // Check for private/epoch resources requiring subscription. Raw-AIR resources
+  // ARE epoch resources — same subscription gate as the ModelVersion-backed kind.
+  const hasPrivateOrEpoch =
+    rawAirResources.length > 0 ||
+    resources.some((r) => r.availability === Availability.Private || !!r.epochDetails);
 
   if (hasPrivateOrEpoch && user?.id && !user?.isModerator) {
     // Span localizes the gen-path park: subscription lookup for private/epoch use.
@@ -501,6 +664,7 @@ async function validateAndEnrichResources(
 
   return {
     enrichedResources,
+    rawAirResources,
     isPrivateGeneration: hasPrivateOrEpoch,
     hasPoiResource: resources.some((r) => r.model.poi),
   };
@@ -1049,6 +1213,7 @@ export async function createWorkflowStepsFromGraph({
   remixOfId,
   sourceImageIds,
   isGreen,
+  orchestratorToken,
 }: {
   data: GenerationGraphOutput;
   /**
@@ -1075,6 +1240,13 @@ export async function createWorkflowStepsFromGraph({
    * NSFW content to SFW users.
    */
   isGreen?: boolean;
+  /**
+   * The caller's orchestrator token. Required to accept raw-AIR (training
+   * epoch blob) resources — it is what the ownership check fetches the source
+   * training workflow with. Paths that don't thread it (e.g. the App Blocks
+   * bridge) reject raw-AIR resources.
+   */
+  orchestratorToken?: string;
 }): Promise<{
   steps: WorkflowStepTemplate[];
   workflowMetadata?: Record<string, unknown>;
@@ -1089,10 +1261,14 @@ export async function createWorkflowStepsFromGraph({
   // Validate and enrich resources
   const resourceIds = collectResourceIds(data);
   // Span localizes the gen-path park: resource validation/enrichment sub-step.
-  const { enrichedResources, isPrivateGeneration, hasPoiResource } = await withSpan(
-    'gen:createSteps:validateResources',
-    () => validateAndEnrichResources(resourceIds, user)
-  );
+  const { enrichedResources, rawAirResources, isPrivateGeneration, hasPoiResource } =
+    await withSpan('gen:createSteps:validateResources', () =>
+      validateAndEnrichResources(resourceIds, user, {
+        resources: collectRawAirResources(data),
+        orchestratorToken,
+        requestEcosystem: 'ecosystem' in data ? data.ecosystem : undefined,
+      })
+    );
 
   // Check for POI in prompt
   const prompt = 'prompt' in data ? (data.prompt as string) : undefined;
@@ -1115,8 +1291,11 @@ export async function createWorkflowStepsFromGraph({
     );
   }
 
-  // Build AIR map from enriched resources for handlers
+  // Build AIR map from enriched resources for handlers. Raw-AIR resources join
+  // it under their synthetic negative ids, so handlers' `airs.getOrThrow(r.id)`
+  // resolves them with no handler changes.
   const airs = new StrictAirMap(enrichedResources.map((r) => [r.id, r.air]));
+  for (const r of rawAirResources) airs.set(r.id, r.air);
   const handlerCtx: GenerationHandlerCtx = {
     airs,
     user: { id: user?.id ?? 0, isModerator: !!user?.isModerator },
@@ -1137,7 +1316,7 @@ export async function createWorkflowStepsFromGraph({
 
   // Calculate timeout: base (20 minutes, 40 for video steps) + 1 minute per
   // additional resource
-  const extraResourceMinutes = Math.max(0, enrichedResources.length - 1);
+  const extraResourceMinutes = Math.max(0, enrichedResources.length + rawAirResources.length - 1);
   const timeout = buildStepTimeout(DEFAULT_STEP_TIMEOUT_MINUTES + extraResourceMinutes);
   const videoTimeout = buildStepTimeout(VIDEO_STEP_TIMEOUT_MINUTES + extraResourceMinutes);
 
@@ -1676,6 +1855,7 @@ export async function generateFromGraph({
     remixOfId,
     sourceImageIds,
     isGreen,
+    orchestratorToken: token,
   });
 
   // Determine workflow tags
@@ -1822,6 +2002,7 @@ export async function whatIfFromGraph({
     computedKeys,
     isWhatIf: true,
     user: userId ? { id: userId, isModerator } : undefined,
+    orchestratorToken: token,
   });
 
   // Submit what-if request to orchestrator

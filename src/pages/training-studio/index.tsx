@@ -6,6 +6,7 @@ import { useRouter } from 'next/router';
 import { env } from '~/env/client';
 import { env as serverEnv } from '~/env/server';
 import { Page } from '~/components/AppLayout/Page';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 /**
@@ -74,6 +75,13 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
   const routerRef = useRef(router);
   routerRef.current = router;
 
+  // Providing generateUrl is the capability signal: without it the element hides its per-epoch
+  // Generate links. Only the form-graph lane ingests /generate?air= — the v2 lane leaves the
+  // params in the URL untouched and ignores them — so the link needs BOTH flags or it would
+  // point at a lane that silently does nothing with it.
+  const features = useFeatureFlags();
+  const canGenerate = features.generationAirResources && features.formGraphGenerator;
+
   const run = typeof router.query.run === 'string' ? router.query.run : null;
   const isNew = router.query.view === 'new';
   const studioLocation = useMemo<StudioLocation>(
@@ -128,6 +136,12 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
         navigate: async (loc: StudioLocation) => {
           await routerRef.current.push(hrefFor(loc), undefined, { shallow: true });
         },
+        // Relative on purpose: the element treats a relative URL as a normal same-tab navigation
+        // into this app's generator.
+        generateUrl: canGenerate
+          ? (req: { air: string; workflowId: string; name: string }) =>
+              `/generate?${new URLSearchParams(req)}`
+          : undefined,
       };
       el.location = locationRef.current;
       setElReady(true);
@@ -139,7 +153,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
       cancelled = true;
       link.remove();
     };
-  }, [orchestratorEndpoint, orchestratorMode]);
+  }, [orchestratorEndpoint, orchestratorMode, canGenerate]);
 
   // Browser navigation (and the element's own host.navigate round-trip) drives the view: the query
   // is the source of truth, pushed into the element as a property whenever it changes.
