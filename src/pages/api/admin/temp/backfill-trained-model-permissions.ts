@@ -109,8 +109,11 @@ import { booleanString } from '~/utils/zod-helpers';
 // Containment, not equality: `=` on a Postgres array is order-sensitive, and the sell/merge
 // backfill will turn `{Sell}` into `{Sell,SellMerge}` in an order this cannot predict.
 // Matches those two shapes and nothing wider.
-// Measured on the prod replica 2026-09-15: the repair predicate matches 0 rows -- this repair
-// has already been run, so `totalChanged: 0` means "already done", not "something failed".
+// Measured on the prod replica 2026-09-15, against the pre-migration `{Sell}` shape because
+// 'SellMerge' does not exist in prod's enum yet: 0 of 346,139 Trained post-cutoff rows, and
+// 147,916 already carry the repair's own target shape. The repair has run; `totalChanged: 0`
+// means "already done". Note a run of any kind -- dry run included -- errors on the enum label
+// until the migration is applied. (The 146,503 above is the population it moved.)
 const defaultedCommercialUseShapes = Prisma.sql`(
   m."allowCommercialUse" @> ARRAY['Sell']::"CommercialUse"[]
   AND m."allowCommercialUse" <@ ARRAY['Sell', 'SellMerge']::"CommercialUse"[]
