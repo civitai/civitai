@@ -457,6 +457,9 @@ export const serverSchema = z
     // Local-dev opt-in for /api/training-studio/host to hand the shared ORCHESTRATOR_ACCESS_TOKEN
     // (the ORCHESTRATOR_MODE=dev arm of getOrchestratorToken) to the browser. Never set in prod.
     ALLOW_DEV_ORCHESTRATOR_TOKEN_PASSTHROUGH: zc.booleanString.optional().default(false),
+    // Optional. Without it only public, ungated Hugging Face repos can be imported; with it, repos
+    // this token's account has accepted the terms for.
+    HUGGING_FACE_TOKEN: z.string().optional(),
     AXIOM_TOKEN: z.string().optional(),
     AXIOM_ORG_ID: z.string().optional(),
     AXIOM_DATASTREAM: z.string().optional(),
@@ -755,7 +758,6 @@ export const serverSchema = z
     FRESHDESK_DOMAIN: z.string().optional(),
     FRESHDESK_TOKEN: z.string().optional(),
     FRESHDESK_AGENT_ID: z.coerce.number().optional(),
-    UPLOAD_PROHIBITED_EXTENSIONS: commaDelimitedStringArray().optional(),
     // Enforce the post-completion object-existence check in /api/upload/complete.
     // 🔴 Defaults to FALSE = observe-only: the probe still runs and its verdict is
     // logged, but a missing object does NOT fail the request. That ordering is

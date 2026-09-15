@@ -1,0 +1,510 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as HuggingFaceService from '~/server/services/huggingface.service';
+import type * as S3Utils from '~/utils/s3-utils';
+
+const {
+  mockReadRange,
+  mockHeadFile,
+  mockUploadPart,
+  mockCreateMultipart,
+  mockComplete,
+  mockAbort,
+} = vi.hoisted(() => ({
+  mockReadRange: vi.fn(),
+  mockHeadFile: vi.fn(),
+  mockUploadPart: vi.fn(),
+  mockCreateMultipart: vi.fn(),
+  mockComplete: vi.fn(),
+  mockAbort: vi.fn(),
+}));
+
+vi.mock('~/server/services/huggingface.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof HuggingFaceService>()),
+  readHuggingFaceRange: mockReadRange,
+  headHuggingFaceFile: mockHeadFile,
+}));
+
+vi.mock('~/utils/s3-utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof S3Utils>()),
+  getS3Client: () => ({}),
+  getUploadS3Client: () => ({}),
+  getUploadBucket: () => 'model-bucket',
+  getBucket: async () => 'model-bucket',
+  getGetUrlByKey: async (key: string, opts: { bucket?: string }) => ({
+    key,
+    bucket: opts.bucket,
+    url: `https://s3.example/${opts.bucket}/${key}?X-Amz-Signature=abc`,
+  }),
+  createMultipartUpload: mockCreateMultipart,
+  uploadPart: mockUploadPart,
+  completeMultipartUpload: mockComplete,
+  abortMultipartUpload: mockAbort,
+}));
+
+import { parseHuggingFaceRepo, suggestFileType } from '~/server/services/huggingface.service';
+import {
+  getImports,
+  PART_SIZE_BYTES,
+  PARTS_IN_FLIGHT,
+  processImportQueue,
+} from '~/server/services/huggingface-import.service';
+
+const dbWrite = dbMock.dbWrite;
+const dbRead = dbMock.dbRead;
+
+// Tracks the real constant rather than restating it — a part-size change should not need a test edit.
+const PART_SIZE = PART_SIZE_BYTES;
+
+/** A claim that yields the given row once, then nothing — so the drain loop always terminates. */
+function claimOnce(row: Record<string, unknown>) {
+  let served = false;
+  dbWrite.$queryRaw.mockImplementation(async () => {
+    if (served) return [];
+    served = true;
+    return [row];
+  });
+}
+
+function baseRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 1,
+    repo: 'owner/name',
+    filename: 'model.safetensors',
+    sourceUrl: 'https://huggingface.co/owner/name/resolve/abc123/model.safetensors',
+    sizeBytes: BigInt(PART_SIZE * 2 + 100),
+    status: 'Transferring',
+    uploadId: null,
+    partSize: null,
+    parts: null,
+    bucket: null,
+    key: null,
+    attempts: 0,
+    userId: 7,
+    claimedBy: 'test-worker',
+    ...overrides,
+  };
+}
+
+describe('parseHuggingFaceRepo', () => {
+  it.each([
+    ['https://huggingface.co/owner/name', 'owner/name', undefined],
+    ['https://huggingface.co/owner/name/tree/abc123', 'owner/name', 'abc123'],
+    ['https://huggingface.co/owner/name/blob/abc123/model.safetensors', 'owner/name', 'abc123'],
+    ['https://huggingface.co/models/owner/name', 'owner/name', undefined],
+    ['owner/name', 'owner/name', undefined],
+  ])('reads %s', (input, repo, revision) => {
+    expect(parseHuggingFaceRepo(input)).toEqual(revision ? { repo, revision } : { repo });
+  });
+
+  it.each(['', 'https://huggingface.co/owner', 'not a url'])('rejects %s', (input) => {
+    expect(parseHuggingFaceRepo(input)).toBeNull();
+  });
+});
+
+describe('processImportQueue', () => {
+  // Restoring here, not at the end of the test that spies on Date.now: an assertion throwing above
+  // that line would leave the clock frozen for every later test in the file.
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCreateMultipart.mockResolvedValue('upload-1');
+    mockUploadPart.mockImplementation(
+      async ({ partNumber }: { partNumber: number }) => `etag-${partNumber}`
+    );
+    mockComplete.mockResolvedValue(undefined);
+    mockReadRange.mockImplementation(
+      async ({ start, end }: { start: number; end: number }) => new Uint8Array(end - start + 1)
+    );
+    dbRead.huggingFaceImport.findUnique.mockResolvedValue({ status: 'Transferring' });
+    // The pre-complete re-read goes to the PRIMARY: a cancel written there must be visible before
+    // the upload is finalized, and replica lag would make the check decorative.
+    dbWrite.huggingFaceImport.findUnique.mockResolvedValue({
+      status: 'Transferring',
+      claimedBy: 'test-worker',
+    });
+    dbWrite.huggingFaceImport.update.mockResolvedValue({});
+    dbWrite.huggingFaceImport.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('splits the file into parts on exact byte boundaries and completes the upload', async () => {
+    claimOnce(baseRow());
+
+    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+
+    const ranges = mockReadRange.mock.calls.map(([arg]) => [arg.start, arg.end]);
+    expect(ranges).toEqual([
+      [0, PART_SIZE - 1],
+      [PART_SIZE, PART_SIZE * 2 - 1],
+      // The tail part is short, and its end is the LAST byte — an off-by-one here silently truncates
+      // or over-reads every import.
+      [PART_SIZE * 2, PART_SIZE * 2 + 99],
+    ]);
+
+    expect(mockComplete).toHaveBeenCalledWith(
+      'model-bucket',
+      expect.stringMatching(/^model\/7\/model\./),
+      'upload-1',
+      [
+        { PartNumber: 1, ETag: 'etag-1' },
+        { PartNumber: 2, ETag: 'etag-2' },
+        { PartNumber: 3, ETag: 'etag-3' },
+      ],
+      expect.anything()
+    );
+  });
+
+  it('heartbeats on every part so a live transfer is never re-claimed as stale', async () => {
+    claimOnce(baseRow());
+
+    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+
+    // Two runs holding their own parts arrays against one uploadId is what the heartbeat prevents;
+    // no other assertion in this file fails if the write is deleted.
+    const partWrites = dbWrite.huggingFaceImport.updateMany.mock.calls
+      .map(([arg]) => arg)
+      .filter((arg: { data: Record<string, unknown> }) => 'parts' in arg.data);
+    expect(partWrites).toHaveLength(3);
+    for (const write of partWrites) {
+      expect(write.data.heartbeatAt).toBeInstanceOf(Date);
+      expect(write.where.claimedBy).toBe('test-worker');
+    }
+  });
+
+  it('stores the object URL with the presigning query stripped', async () => {
+    claimOnce(baseRow());
+
+    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+
+    const completed = dbWrite.huggingFaceImport.updateMany.mock.calls
+      .map(([arg]) => arg.data)
+      .find((data: Record<string, unknown>) => data.status === 'Completed');
+    expect(completed?.url).toMatch(/^https:\/\/s3\.example\/model-bucket\/model\/7\/model\./);
+    expect(completed?.url).not.toContain('?');
+
+    // The pre-complete re-read is one guard against a late cancel; this predicate is the other, and
+    // it covers the window between that read and this write. Dropping it is invisible to the cancel
+    // test, which the read alone already satisfies.
+    const completedWhere = dbWrite.huggingFaceImport.updateMany.mock.calls
+      .map(([arg]) => arg)
+      .find((arg: { data: Record<string, unknown> }) => arg.data.status === 'Completed')?.where;
+    expect(completedWhere).toMatchObject({
+      claimedBy: 'test-worker',
+      status: { not: 'Canceled' },
+    });
+  });
+
+  it('resumes an interrupted transfer at the next part instead of restarting the file', async () => {
+    // A bucket that is NOT what `uploadTarget()` resolves to: a resume must address the bucket the
+    // upload was created in, and with both mocked getters returning the same string this was
+    // unobservable — parts went to the current-config bucket while complete named the row's.
+    claimOnce(
+      baseRow({
+        uploadId: 'upload-1',
+        key: 'model/7/resume-me.safetensors',
+        bucket: 'other-bucket',
+        partSize: PART_SIZE,
+        parts: [{ PartNumber: 1, ETag: 'etag-1' }],
+      })
+    );
+
+    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+
+    expect(mockCreateMultipart).not.toHaveBeenCalled();
+    for (const [arg] of mockUploadPart.mock.calls) {
+      expect(arg.bucket).toBe('other-bucket');
+      expect(arg.key).toBe('model/7/resume-me.safetensors');
+    }
+    expect(mockComplete.mock.calls[0][0]).toBe('other-bucket');
+    expect(mockComplete.mock.calls[0][1]).toBe('model/7/resume-me.safetensors');
+    expect(mockReadRange.mock.calls.map(([arg]) => arg.start)).toEqual([PART_SIZE, PART_SIZE * 2]);
+    expect(mockComplete.mock.calls[0][3]).toHaveLength(3);
+  });
+
+  it('stops without completing when the deadline passes mid-file', async () => {
+    claimOnce(baseRow({ sizeBytes: BigInt(PART_SIZE * 6) }));
+    // The clock is moved past the deadline BY the first read rather than by a short real window: a
+    // 1ms budget is missed outright on a loaded box, and the test then reads as "moved nothing".
+    const deadline = Date.now() + 60_000;
+    mockReadRange.mockImplementation(async ({ start, end }: { start: number; end: number }) => {
+      vi.spyOn(Date, 'now').mockReturnValue(deadline + 1);
+      return new Uint8Array(end - start + 1);
+    });
+
+    await processImportQueue({ deadline, worker: 'test', concurrency: 1 });
+
+    expect(mockComplete).not.toHaveBeenCalled();
+    expect(mockUploadPart.mock.calls.length).toBeGreaterThan(0);
+    expect(mockUploadPart.mock.calls.length).toBeLessThan(6);
+  });
+
+  it('resumes across a HOLE in the completed parts, not from their count', async () => {
+    // Parts finish out of order, so part 2 can be missing while part 3 is done. Treating the array
+    // length as "next part" would re-upload 2 as part 3 and silently corrupt the object.
+    claimOnce(
+      baseRow({
+        uploadId: 'upload-1',
+        key: 'model/7/model.abcd1234.safetensors',
+        bucket: 'model-bucket',
+        partSize: PART_SIZE,
+        parts: [
+          { PartNumber: 1, ETag: 'etag-1' },
+          { PartNumber: 3, ETag: 'etag-3' },
+        ],
+      })
+    );
+
+    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+
+    expect(mockUploadPart.mock.calls.map(([arg]) => arg.partNumber)).toEqual([2]);
+    // Completion demands ascending order regardless of the order they finished in.
+    expect(mockComplete.mock.calls[0][3].map((p: { PartNumber: number }) => p.PartNumber)).toEqual([
+      1, 2, 3,
+    ]);
+  });
+
+  it('moves exactly PARTS_IN_FLIGHT parts at a time', async () => {
+    claimOnce(baseRow({ sizeBytes: BigInt(PART_SIZE * 6) }));
+
+    // The barrier releases at PARTS_IN_FLIGHT and the assertion demands PARTS_IN_FLIGHT. Asserting
+    // merely ">1" let a 3→2 change pass green: the hatch fired, everything unblocked, peak landed
+    // on 2, and the only evidence was the test taking 250ms instead of 1ms — which nothing reads.
+    let inFlight = 0;
+    let peak = 0;
+    let escaped = false;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const escapeHatch = setTimeout(() => {
+      escaped = true;
+      release();
+    }, 250);
+
+    mockReadRange.mockImplementation(async ({ start, end }: { start: number; end: number }) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      if (inFlight >= PARTS_IN_FLIGHT) release();
+      await gate;
+      inFlight--;
+      return new Uint8Array(end - start + 1);
+    });
+
+    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+    clearTimeout(escapeHatch);
+
+    // `escaped` is what makes this non-vacuous: a serial implementation never reaches the barrier,
+    // falls through the hatch, and fails here in ~250ms. `peak === PARTS_IN_FLIGHT` pins that the
+    // pool is as wide as configured — it cannot catch a deliberate change to the constant itself,
+    // which is a sizing decision (see the memory note on PARTS_IN_FLIGHT), not a regression.
+    expect(escaped).toBe(false);
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBe(PARTS_IN_FLIGHT);
+    expect(mockComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a short range read rather than writing a truncated part', async () => {
+    claimOnce(baseRow());
+    mockReadRange.mockResolvedValue(new Uint8Array(10));
+
+    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+
+    expect(mockUploadPart).not.toHaveBeenCalled();
+    const failure = dbWrite.huggingFaceImport.updateMany.mock.calls
+      .map(([arg]) => arg.data)
+      .find((data: Record<string, unknown>) => typeof data.error === 'string');
+    expect(failure?.error).toContain('returned 10 bytes');
+  });
+
+  it('refuses to complete an upload that was canceled during the final part', async () => {
+    claimOnce(baseRow());
+    // The workers' probe runs BEFORE each takes its part, so the last worker never checks again.
+    // Without the re-read here, a cancel landing in that window still finalized the object and
+    // stamped Completed with a URL on a row the moderator had stopped.
+    dbWrite.huggingFaceImport.findUnique.mockResolvedValue({
+      status: 'Canceled',
+      claimedBy: 'test-worker',
+    });
+
+    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+
+    expect(mockComplete).not.toHaveBeenCalled();
+    const completed = dbWrite.huggingFaceImport.updateMany.mock.calls
+      .map(([arg]) => arg.data)
+      .find((data: Record<string, unknown>) => data.status === 'Completed');
+    expect(completed).toBeUndefined();
+  });
+
+  it('refuses to complete when the claim has been taken by another run', async () => {
+    claimOnce(baseRow());
+    dbWrite.huggingFaceImport.findUnique.mockResolvedValue({
+      status: 'Transferring',
+      claimedBy: 'a-different-worker',
+    });
+
+    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+
+    expect(mockComplete).not.toHaveBeenCalled();
+  });
+
+  it('stops a canceled import at the next part boundary', async () => {
+    claimOnce(baseRow());
+    dbRead.huggingFaceImport.findUnique.mockResolvedValue({ status: 'Canceled' });
+
+    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+
+    expect(mockUploadPart).not.toHaveBeenCalled();
+    expect(mockComplete).not.toHaveBeenCalled();
+  });
+});
+
+describe('suggestFileType', () => {
+  it.each([
+    // The case that matters: a checkpoint that merely names its bundled VAE is still the checkpoint.
+    ['flux1-dev-vae-baked.safetensors', null],
+    ['Vaevictis-v1.safetensors', null],
+    ['flux1-dev-with-t5.safetensors', null],
+    ['ae.safetensors', 'VAE'],
+    ['vae/diffusion_pytorch_model.safetensors', 'VAE'],
+    ['text_encoder_2/model-00001-of-00002.safetensors', 'Text Encoder'],
+    ['t5xxl_fp16.safetensors', 'Text Encoder'],
+    ['clip_l.safetensors', 'Text Encoder'],
+    ['model_index.json', 'Config'],
+    ['flux1-dev.safetensors', null],
+  ])('%s -> %s', (path, expected) => {
+    expect(suggestFileType(path)).toBe(expected);
+  });
+});
+
+describe('failOrRetry', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCreateMultipart.mockResolvedValue('upload-1');
+    dbRead.huggingFaceImport.findUnique.mockResolvedValue({ status: 'Transferring' });
+    dbWrite.huggingFaceImport.findUnique.mockResolvedValue({
+      status: 'Transferring',
+      claimedBy: 'test-worker',
+    });
+    dbWrite.huggingFaceImport.update.mockResolvedValue({});
+    dbWrite.huggingFaceImport.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  const failingRead = () => mockReadRange.mockRejectedValue(new Error('HF said 503'));
+
+  it('fences the failure write by the claim, exactly as the success path does', async () => {
+    claimOnce(baseRow());
+    failingRead();
+
+    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+
+    // Without this the failure path hands the row back without checking the claim is still ours,
+    // and a superseded run can release a row a live run is still transferring — the two-runs-one-
+    // uploadId state the heartbeat guards against on the success path only.
+    const failure = dbWrite.huggingFaceImport.updateMany.mock.calls
+      .map(([arg]) => arg)
+      .find((arg: { data: Record<string, unknown> }) => typeof arg.data.error === 'string');
+    expect(failure?.where).toMatchObject({
+      claimedBy: 'test-worker',
+      status: { not: 'Canceled' },
+    });
+  });
+
+  it('backs off rather than giving up while attempts remain', async () => {
+    claimOnce(baseRow({ attempts: 0 }));
+    failingRead();
+
+    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+
+    const failure = dbWrite.huggingFaceImport.updateMany.mock.calls
+      .map(([arg]) => arg.data)
+      .find((data: Record<string, unknown>) => typeof data.error === 'string');
+    expect(failure?.status).toBe('Transferring');
+    expect(failure?.attempts).toBe(1);
+    expect(failure?.nextAttemptAt).toBeInstanceOf(Date);
+    expect((failure?.nextAttemptAt as Date).getTime()).toBeGreaterThan(Date.now());
+    expect(mockAbort).not.toHaveBeenCalled();
+  });
+
+  it('gives up on the last attempt and aborts the multipart upload', async () => {
+    claimOnce(
+      baseRow({
+        attempts: 4,
+        uploadId: 'upload-1',
+        key: 'model/7/x.safetensors',
+        bucket: 'model-bucket',
+        partSize: PART_SIZE,
+      })
+    );
+    failingRead();
+    mockAbort.mockResolvedValue(undefined);
+
+    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+
+    // An upload abandoned without an abort keeps every part already written, billed, with nothing
+    // left holding the id needed to free them.
+    expect(mockAbort).toHaveBeenCalledTimes(1);
+    const failure = dbWrite.huggingFaceImport.updateMany.mock.calls
+      .map(([arg]) => arg.data)
+      .find((data: Record<string, unknown>) => typeof data.error === 'string');
+    expect(failure?.status).toBe('Failed');
+    expect(failure?.nextAttemptAt).toBeNull();
+  });
+
+  it('keeps the uploadId when the abort itself failed', async () => {
+    claimOnce(
+      baseRow({
+        attempts: 4,
+        uploadId: 'upload-1',
+        key: 'model/7/x.safetensors',
+        bucket: 'model-bucket',
+        partSize: PART_SIZE,
+      })
+    );
+    failingRead();
+    mockAbort.mockRejectedValue(new Error('B2 unavailable'));
+
+    await processImportQueue({ deadline: Date.now() + 60_000, worker: 'test', concurrency: 1 });
+
+    // Clearing it here would be the one thing that makes the orphaned parts unreclaimable.
+    const failure = dbWrite.huggingFaceImport.updateMany.mock.calls
+      .map(([arg]) => arg.data)
+      .find((data: Record<string, unknown>) => typeof data.error === 'string');
+    expect(failure).not.toHaveProperty('uploadId');
+  });
+});
+
+describe('getImports filtering', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbRead.huggingFaceImport.findMany.mockResolvedValue([]);
+  });
+
+  const whereOf = () => dbRead.huggingFaceImport.findMany.mock.calls[0][0].where;
+
+  it('filters on the server, so results are not capped-then-filtered', async () => {
+    await getImports({ userId: 7, isModerator: true, groupName: 'FLUX' });
+    // The bug this replaces: both callers fetched `limit` rows and filtered in the client, so a
+    // group older than that window returned nothing and looked like it had never been imported.
+    expect(whereOf()).toMatchObject({
+      groupName: { contains: 'FLUX', mode: 'insensitive' },
+    });
+  });
+
+  it('matches a repo exactly rather than by substring', async () => {
+    await getImports({ userId: 7, isModerator: true, repo: 'owner/name' });
+    expect(whereOf().repo).toBe('owner/name');
+  });
+
+  it('adds no predicate when nothing is filtered', async () => {
+    await getImports({ userId: 7, isModerator: true });
+    expect(whereOf()).toEqual({});
+  });
+
+  it('still scopes a non-moderator to their own rows while filtering', async () => {
+    await getImports({ userId: 7, isModerator: false, groupName: 'FLUX' });
+    expect(whereOf().userId).toBe(7);
+  });
+});

@@ -79,6 +79,7 @@ import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
 import { csamJobs } from '~/server/jobs/process-csam';
 import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
 import { processImportsJob } from '~/server/jobs/process-imports';
+import { processHuggingFaceImportsJob } from '~/server/jobs/process-huggingface-imports';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
 import { processSubscriptionsRequiringRenewal } from '~/server/jobs/process-subscriptions-requiring-renewal';
@@ -130,6 +131,7 @@ import { booleanString } from '~/utils/zod-helpers';
 export const jobs: Job[] = [
   scanFilesFallbackJob,
   processImportsJob,
+  processHuggingFaceImportsJob,
   sendNotificationsJob,
   notificationCursorMonitor,
   sendWebhooksJob,

@@ -65,7 +65,7 @@ MiniMax H3 appears in both rows, one version each, so the base model alone doesn
 
 The deciding question is whether the provider publishes weights we run, or only an API. `official-model-admin evidence` collects these signals, and the user confirms the kind.
 
-The upload wizard (`/models/<modelId>/model-versions/<versionId>/wizard`) skips its files step for `ExternalGeneration`. For hosted weights, files go in at `?step=2`, or through the **Manage files** item in the version menu. This is the only step that has to be done in the browser.
+The upload wizard (`/models/<modelId>/model-versions/<versionId>/wizard`) skips its files step for `ExternalGeneration`. For hosted weights there are two routes: weights already on Hugging Face are queued at `/moderator/huggingface-import` and fetched server-side, then attached with `official-model-admin attach-import`; anything else is uploaded by hand at `?step=2`, or through the **Manage files** item in the version menu. Either way a human drives it — this is the one step no skill completes on its own.
 
 A hosted-weights version is ready to cover once it has a scanned file of a weight type, and a checkpoint also needs a SafeTensor file. That's the same rule `checkLoadable` in `src/server/services/resource-load.service.ts` applies. `official-model-admin files` checks it.
 

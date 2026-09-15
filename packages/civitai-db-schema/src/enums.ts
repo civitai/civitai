@@ -174,6 +174,17 @@ export const ImportStatus = {
 
 export type ImportStatus = (typeof ImportStatus)[keyof typeof ImportStatus];
 
+export const HuggingFaceImportStatus = {
+  Queued: 'Queued',
+  Transferring: 'Transferring',
+  Completed: 'Completed',
+  Failed: 'Failed',
+  Canceled: 'Canceled',
+} as const;
+
+export type HuggingFaceImportStatus =
+  (typeof HuggingFaceImportStatus)[keyof typeof HuggingFaceImportStatus];
+
 export const ModelStatus = {
   Draft: 'Draft',
   Training: 'Training',

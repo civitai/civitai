@@ -48,6 +48,7 @@ export const UPDATED_AT_TABLES = new Set<keyof DB>([
   'EntityModeration',
   'GenerationPreset',
   'HomeBlock',
+  'HuggingFaceImport',
   'Image',
   'ImageReaction',
   'LicensingRoot',
