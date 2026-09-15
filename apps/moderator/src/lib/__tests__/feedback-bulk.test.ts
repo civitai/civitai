@@ -5,6 +5,7 @@ import {
   FEEDBACK_BULK_MAX,
   encodeFeedbackBulkRows,
   feedbackBulkOutcome,
+  feedbackRefusalTarget,
   parseFeedbackBulkRows,
   type FeedbackBulkRow,
 } from '$lib/feedback-bulk';
@@ -124,6 +125,74 @@ describe('FEEDBACK_BULK_ACTIONS', () => {
 describe('the bulk limit against the queue page size', () => {
   it('can carry a full page of selected rows', () => {
     expect(FEEDBACK_BULK_MAX).toBeGreaterThanOrEqual(FEEDBACK_PAGE_SIZE);
+  });
+});
+
+/**
+ * 🔴 THE DEFECT CLASS IS DOUBLE-RENDERING, AND IT RECURRED ONCE ALREADY. A scope test let a bulk 403
+ * render in the bar and at page level at once; the position test that replaced it re-opened the same
+ * defect one state over. Both shipped green — a page-level condition is invisible to this app's
+ * tests. Routing through ONE answer is what makes the exclusion assertable at all, and these cases
+ * are the assertion.
+ */
+describe('feedbackRefusalTarget', () => {
+  const target = (over: Partial<Parameters<typeof feedbackRefusalTarget>[0]> = {}) =>
+    feedbackRefusalTarget({
+      hasError: true,
+      barMounted: false,
+      isBulkFailure: false,
+      rowOpen: false,
+      ...over,
+    });
+
+  it('names nobody when there is no error', () => {
+    expect(target({ hasError: false })).toBe('none');
+    // Every other input is irrelevant once there is nothing to show.
+    expect(target({ hasError: false, barMounted: true, isBulkFailure: true })).toBe('none');
+  });
+
+  it('gives it to the bar whenever the bar is mounted, whatever produced it', () => {
+    // 🔴 The 403 case the scope test got wrong: `requiresGrant` stamps `denied`, not `bulk`.
+    expect(target({ barMounted: true, isBulkFailure: false })).toBe('bar');
+    expect(target({ barMounted: true, isBulkFailure: true })).toBe('bar');
+    expect(target({ barMounted: true, rowOpen: true })).toBe('bar');
+  });
+
+  it('gives an orphaned BULK refusal to the page when the bar is gone', () => {
+    // The regression round 2 caught: this state and `page` were both true at once.
+    expect(target({ barMounted: false, isBulkFailure: true })).toBe('orphan');
+    expect(target({ barMounted: false, isBulkFailure: true, rowOpen: true })).toBe('orphan');
+  });
+
+  it('falls back to the page only for a non-bulk refusal with no row open', () => {
+    expect(target({})).toBe('page');
+    // With a row open the detail panel renders it from its own FormState.
+    expect(target({ rowOpen: true })).toBe('none');
+  });
+
+  /**
+   * 🔴 THE PROPERTY, NOT A CASE LIST. Every reachable combination resolves to exactly one surface —
+   * which is what a set of independent `$derived` conditions could not promise, and what both
+   * shipped defects violated.
+   */
+  it('never names two surfaces, over every input combination', () => {
+    const bools = [false, true];
+    const seen = new Set<string>();
+    for (const hasError of bools)
+      for (const barMounted of bools)
+        for (const isBulkFailure of bools)
+          for (const rowOpen of bools) {
+            const answer = feedbackRefusalTarget({
+              hasError,
+              barMounted,
+              isBulkFailure,
+              rowOpen,
+            });
+            expect(['bar', 'orphan', 'page', 'none']).toContain(answer);
+            seen.add(answer);
+          }
+    // A positive control: all four surfaces are reachable, so this is not passing vacuously.
+    expect([...seen].sort()).toEqual(['bar', 'none', 'orphan', 'page']);
   });
 });
 

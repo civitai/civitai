@@ -563,8 +563,8 @@ export async function bulkTriageFeedback(input: {
    * 🔴 ONE TRANSACTION ACROSS THE (AT MOST FOUR) STATEMENTS. They are issued sequentially, so a
    * throw on the second would otherwise leave the first group's rows MOVED with no audit row for
    * them — `recordModActivityBatch` runs after the loop. Rolling back is the only outcome that
-   * leaves the queue and the audit log agreeing. Same argument `promoteFeedbackToBug` makes one
-   * screen up.
+   * leaves the queue and the audit log agreeing. Same argument `promoteFeedbackToBug` makes
+   * further down this file.
    *
    * ⚠️ IT PROTECTS THE DATA AND NOTHING ELSE. Nothing here catches, so a throw still reaches the
    * error boundary and still takes an open detail panel's unsaved draft with it — the siblings

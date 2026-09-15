@@ -118,10 +118,13 @@ describe('bulkTriageFeedback', () => {
   });
 
   /**
-   * 🔴 EXCLUDED FROM `actionable`, NOT COUNTED AS A CONFLICT. Its UPDATE cannot match — the guard
-   * and the assignment name the same status — so leaving it in the denominator would report it to
-   * the operator as "already triaged by someone else", a conflict that did not happen over a row
-   * that is in exactly the state they asked for.
+   * 🔴 EXCLUDED FROM `actionable`, NOT COUNTED AS A CONFLICT — AND THE UPDATE *DOES* MATCH.
+   * Deleting the guard makes exactly this test red, because `RETURNING id` hands the
+   * already-at-target row straight back: Postgres matches `SET status=X WHERE status=X` and writes
+   * a new tuple. So the guard prevents a re-stamped handler, an inflated `changed`, and a spurious
+   * `ModActivity` row — not a no-op. Leaving such a row in the denominator would also report it as
+   * one that "did not change", a refusal that did not happen over a row already in the state the
+   * operator asked for.
    */
   it('skips a row already at the target status without calling it a conflict', async () => {
     const already = await seed('reviewed');

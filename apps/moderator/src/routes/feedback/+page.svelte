@@ -25,7 +25,11 @@
     isFeedbackStatus,
     splitContext,
   } from '$lib/feedback';
-  import { FEEDBACK_BULK_SCOPE, type FeedbackBulkRow } from '$lib/feedback-bulk';
+  import {
+    FEEDBACK_BULK_SCOPE,
+    feedbackRefusalTarget,
+    type FeedbackBulkRow,
+  } from '$lib/feedback-bulk';
   import FeedbackFilters from './FeedbackFilters.svelte';
   import FeedbackDetail from './FeedbackDetail.svelte';
   import FeedbackBulkBar from './FeedbackBulkBar.svelte';
@@ -89,7 +93,7 @@
     )
   );
 
-  /** The bar renders on exactly this condition; `barMounted` below is the same expression, named. */
+  /** The condition the bar renders on, named once so the refusal routing can read the same fact. */
   const barMounted = $derived(canSetStatus && selectedRows.length > 0);
 
   const allSelected = $derived(
@@ -117,23 +121,27 @@
   );
 
   /**
-   * 🔴 THE BAR IS NOT ALWAYS THERE TO SHOW ITS OWN REFUSAL, AND WITHOUT THIS THE REFUSAL IS SILENT.
-   * `FeedbackBulkBar` renders only while something is selected, and its `FormState` — which holds
-   * the error — is destroyed with it. An operator who unticks the last row while a submit is in
-   * flight gets the failure back into a component that no longer exists. (Its own Clear button is
-   * disabled during submit; the checkboxes are not, and disabling the whole table mid-flight would
-   * be a worse trade than rendering the message here.)
+   * 🔴 ONE ANSWER, SO TWO SURFACES CANNOT BOTH RENDER THE SAME REFUSAL. Read
+   * `feedbackRefusalTarget`'s docstring before changing either consumer below: this page has
+   * double-rendered a refusal twice, once from a scope test and once from the position test that
+   * replaced it, and neither was visible to any test because this app has no browser tier.
    */
-  const orphanedBulkFailure = $derived(barMounted ? null : bulkFailure);
+  const refusalTarget = $derived(
+    feedbackRefusalTarget({
+      hasError: !!(form && 'error' in form && form.error),
+      barMounted,
+      isBulkFailure: !!bulkFailure,
+      rowOpen: data.openVisible,
+    })
+  );
 
   /**
-   * 🔴 WHETHER THE SELECTION BAR IS ON SCREEN, WHICH IS WHAT DECIDES WHO RENDERS A REFUSAL — and it
-   * is deliberately NOT a scope test. `requiresGrant` stamps `scope: 'denied'`, not
-   * `FEEDBACK_BULK_SCOPE`, so a bulk action's own 403 carries a scope this page does not recognise:
-   * gating on the string let that one refusal render in the bar AND at page level at once, which is
-   * exactly what the suppression exists to prevent. Position is the honest test — while the bar is
-   * mounted it owns its own failure, whatever `fail()` site produced it.
+   * A BULK refusal with the bar gone — its `FormState` died with the component, so nothing else
+   * would show it. Reached when the selection clears mid-flight, or the operator unticks the last
+   * row. (The bar's own Clear button is disabled during submit; the checkboxes are not, and
+   * disabling the whole table mid-flight would be the worse trade.)
    */
+  const orphanedBulkFailure = $derived(refusalTarget === 'orphan' ? bulkFailure : null);
 
   const bulkMessage = $derived(
     form && 'bulkMessage' in form && form.bulkMessage ? String(form.bulkMessage) : null
@@ -171,18 +179,8 @@
    * 🔴 The tab triggers are LINKS for this same reason (`FeedbackTabs.svelte`): a no-JS client must
    * still be able to reach `?tab=triage`, or the form this message is about would be unreachable.
    */
-  // 🔴 `!barMounted` is part of the condition: while the selection bar is on screen it renders its
-  // own refusal, and it is `fixed` so it is always in view. Without this clause that refusal renders
-  // TWICE — once here and once in the bar.
-  //
-  // ⚠️ A NARROW GAP REMAINS, STATED RATHER THAN HIDDEN: a bulk refusal that arrives after the bar
-  // unmounted (the selection cleared mid-flight) AND with a row open is rendered by nothing — the
-  // detail panel shows its own forms' failures only. `orphanedBulkFailure` covers the no-row-open
-  // half; closing the rest needs the denial to carry a scope this page can attribute.
   const pageError = $derived(
-    !data.openVisible && !barMounted && form && 'error' in form && form.error
-      ? String(form.error)
-      : null
+    refusalTarget === 'page' && form && 'error' in form && form.error ? String(form.error) : null
   );
 
   const nextPageHref = $derived(

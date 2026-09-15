@@ -677,6 +677,11 @@ describe('bulkTriage action', () => {
     expect(status).toBe(409);
     expect(error).toMatch(/already showing reviewed/i);
     expect(error).not.toMatch(/triaged elsewhere/i);
+    // 🔴 THE SECOND SENTENCE IS THE POINT OF THE FIRST. `actionable` is derived from the POSTED
+    // expectations, so this refusal can be raised over rows whose database status is something
+    // else entirely — a stale page. Without the pointer the operator is told "already X" and has
+    // no reason to doubt it. Deleting the sentence used to survive the whole suite.
+    expect(error).toMatch(/reload/i);
   });
 
   it('refuses a status outside the enum', async () => {

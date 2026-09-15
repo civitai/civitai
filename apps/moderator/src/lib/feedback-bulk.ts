@@ -113,6 +113,44 @@ export const FEEDBACK_BULK_ACTIONS: ReadonlyArray<{ status: FeedbackStatus; labe
 const reports = (n: number) => `${n} report${n === 1 ? '' : 's'}`;
 
 /**
+ * WHICH surface renders an action failure — exactly one of them, by construction.
+ *
+ * 🔴 THIS IS A FUNCTION RATHER THAN THREE `$derived` CONDITIONS BECAUSE THE DEFECT CLASS IS
+ * DOUBLE-RENDERING, AND SEPARATE PREDICATES REGENERATED IT TWICE. First a scope test let a bulk 403
+ * render in the bar AND at page level (`requiresGrant` stamps `denied`, not `bulk`); the fix swapped
+ * that clause for a position test and re-opened the same defect one state over, because the two
+ * remaining predicates were no longer mutually exclusive. Neither was visible to any test — this app
+ * has no browser tier, so a page-level condition is verified by reading it.
+ *
+ * Returning ONE value removes the question: two surfaces cannot both match a single answer. Each
+ * caller renders if and only if this names it.
+ *
+ *   `bar`    — the selection bar is mounted, so it owns its own failure whatever `fail()` site
+ *              produced it. This is the clause the scope test got wrong.
+ *   `orphan` — a BULK refusal with the bar gone (the selection cleared mid-flight, or the operator
+ *              unticked the last row). Its `FormState` died with the component; nothing else would
+ *              show it.
+ *   `page`   — everything else with no row open: the no-JS single-row surface.
+ *   `none`   — no error, or a non-bulk refusal with a row open, which the detail panel renders from
+ *              its own `FormState`.
+ *
+ * ⚠️ ONE GAP REMAINS AND IS DELIBERATE: a bulk refusal with the bar gone AND a row open resolves to
+ * `orphan`, which the page renders above the table — not beside the panel the operator is looking
+ * at. Visible, not silent; closing it properly needs the denial to carry an attributable scope.
+ */
+export function feedbackRefusalTarget(input: {
+  hasError: boolean;
+  barMounted: boolean;
+  isBulkFailure: boolean;
+  rowOpen: boolean;
+}): 'bar' | 'orphan' | 'page' | 'none' {
+  if (!input.hasError) return 'none';
+  if (input.barMounted) return 'bar';
+  if (input.isBulkFailure) return 'orphan';
+  return input.rowOpen ? 'none' : 'page';
+}
+
+/**
  * What the operator is told after a bulk run that changed SOMETHING.
  *
  * 🔴 PARTIAL IS THE ORDINARY OUTCOME AND IT MUST BE SAID OUT LOUD, IN THREE PARTS THAT MEAN

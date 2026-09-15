@@ -204,9 +204,9 @@
               Pick one, or type the number — the box is what gets submitted.
             {:else}
               <!-- 🔴 NOT "no OPEN issues". `getKnownIssues` deliberately does not filter to open
-                   ones — measured, exactly 1 of 31 is Open, so an open-only picker is a one-item
-                   list. An empty list here means no non-disabled issues exist at all, and the
-                   open-only wording is what someone would cite when re-adding the filter. -->
+                   ones — its docstring carries the measurement and is the one place it lives. An
+                   empty list here means no non-disabled issues exist AT ALL, and the open-only
+                   wording is what someone would cite when re-adding the filter. -->
               No issues to pick from yet — type the number of an existing one.
             {/if}
           </p>
