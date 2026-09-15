@@ -1,3 +1,5 @@
+import { CrucibleStatus } from '~/shared/utils/prisma/enums';
+
 /**
  * Crucible feature constants
  * These constants define limits and configuration for the Crucible feature
@@ -31,3 +33,10 @@ export const CRUCIBLE_DURATION_COSTS: Record<number, number> = {
  * This fee is charged when the crucible creator changes the default prize percentages.
  */
 export const CRUCIBLE_PRIZE_CUSTOMIZATION_COST = 1000;
+
+/**
+ * A live ranking predisposes judges, so scores and positions stay hidden — from everyone but the
+ * entry's own owner — until the crucible is over.
+ */
+export const crucibleRankingsAreFinal = (status: CrucibleStatus) =>
+  status === CrucibleStatus.Completed || status === CrucibleStatus.Cancelled;

@@ -3,7 +3,14 @@ import { openConfirmModal, closeAllModals } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import * as z from 'zod';
-import { IconGavel, IconUpload, IconBook, IconPencil, IconX } from '@tabler/icons-react';
+import {
+  IconGavel,
+  IconUpload,
+  IconBook,
+  IconPencil,
+  IconX,
+  IconTrophy,
+} from '@tabler/icons-react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
@@ -17,13 +24,18 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
 import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
 import { CrucibleEntryGrid } from '~/components/Crucible/CrucibleEntryGrid';
-import { parsePrizePositions } from '~/components/Crucible/CruciblePrizeBreakdown';
+import {
+  CruciblePrizeBreakdown,
+  parsePrizePositions,
+} from '~/components/Crucible/CruciblePrizeBreakdown';
+import { crucibleRankingsAreFinal } from '~/shared/constants/crucible.constants';
 import { CrucibleStatus, Currency } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Gated } from '~/components/Gated/Gated';
 import { formatDate } from '~/utils/date-helpers';
 import type { Prisma } from '@prisma/client';
+import type { RouterOutput } from '~/types/router';
 import { openCrucibleSubmitEntryModal } from '~/components/Dialog/triggers/crucible-submit-entry';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 
@@ -91,12 +103,13 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const isPending = crucible.status === CrucibleStatus.Pending;
   const canSubmitEntries = isActive || isPending;
   const canJudge = isActive;
+  const rankingsVisible = crucibleRankingsAreFinal(crucible.status);
 
-  // User entries info
-  const userEntryCount =
+  const userEntries =
     currentUser && crucible.entries
-      ? crucible.entries.filter((e) => e.userId === currentUser.id).length
-      : 0;
+      ? crucible.entries.filter((e) => e.userId === currentUser.id)
+      : [];
+  const userEntryCount = userEntries.length;
   const maxUserEntries = crucible.entryLimit ?? 5;
   const userEntryProgress = (userEntryCount / maxUserEntries) * 100;
 
@@ -221,6 +234,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   },
                 }))}
                 title="All Entries"
+                showRanks={rankingsVisible}
                 showUserEntries={!!currentUser}
                 currentUserId={currentUser?.id}
                 maxUserEntries={maxUserEntries}
@@ -312,17 +326,22 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                 </Paper>
               )}
 
-              {/* Prize Pool & Leaderboard */}
-              <CrucibleLeaderboard
-                entries={crucible.entries.map((e) => ({
-                  ...e,
-                  user: {
-                    ...e.user,
-                  },
-                }))}
-                prizePositions={prizePositions}
-                totalPrizePool={totalPrizePool}
-              />
+              {/* Prize Pool & Standings */}
+              {rankingsVisible ? (
+                <CrucibleLeaderboard
+                  entries={crucible.entries.filter(hasScore)}
+                  prizePositions={prizePositions}
+                  totalPrizePool={totalPrizePool}
+                />
+              ) : (
+                <>
+                  <CruciblePrizeBreakdown
+                    prizePositions={prizePositions}
+                    totalPrizePool={totalPrizePool}
+                  />
+                  <YourStandingPanel entries={userEntries} hasAccount={!!currentUser} />
+                </>
+              )}
 
               {/* Rules & Requirements */}
               <Paper className="rounded-lg p-6" bg="dark.6">
@@ -403,7 +422,64 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   );
 }
 
+type CrucibleEntry = NonNullable<RouterOutput['crucible']['getById']>['entries'][number];
+
+const hasScore = (entry: CrucibleEntry): entry is CrucibleEntry & { score: number } =>
+  entry.score !== null;
+
 // Helper components
+
+function YourStandingPanel({
+  entries,
+  hasAccount,
+}: {
+  entries: CrucibleEntry[];
+  hasAccount: boolean;
+}) {
+  const scored = entries.filter(hasScore);
+  const bestScore = scored.length ? Math.max(...scored.map((e) => e.score)) : null;
+  const positions = entries.map((e) => e.position).filter((p): p is number => p !== null);
+  const bestPosition = positions.length ? Math.min(...positions) : null;
+
+  return (
+    <Paper className="rounded-lg p-6" bg="dark.6">
+      <Title order={5} className="mb-4 flex items-center gap-2 uppercase tracking-wider text-white">
+        <IconTrophy size={16} />
+        Your Standing
+      </Title>
+
+      {entries.length === 0 ? (
+        <Text size="sm" c="dimmed">
+          {hasAccount
+            ? 'Standings stay hidden while this crucible is running. Enter to see how yours is doing, and the full ranking is revealed when it ends.'
+            : 'Standings stay hidden while this crucible is running. The full ranking is revealed when it ends.'}
+        </Text>
+      ) : (
+        <Stack gap="sm">
+          <div>
+            <Text size="xs" c="dimmed" tt="uppercase" mb={4}>
+              Best Position
+            </Text>
+            <Text size="sm" fw={600} c="white">
+              {bestPosition !== null ? `#${bestPosition}` : 'Revealed when the crucible ends'}
+            </Text>
+          </div>
+          <div>
+            <Text size="xs" c="dimmed" tt="uppercase" mb={4}>
+              Best Score
+            </Text>
+            <Text size="sm" fw={600} c="white">
+              {bestScore !== null ? `${Math.round(bestScore)} pts` : '-'}
+            </Text>
+          </div>
+          <Text size="xs" c="dimmed">
+            Only you can see this. Everyone else&apos;s ranking is revealed when the crucible ends.
+          </Text>
+        </Stack>
+      )}
+    </Paper>
+  );
+}
 
 function StatBox({ value, label }: { value: string; label: string }) {
   return (

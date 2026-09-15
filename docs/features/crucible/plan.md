@@ -793,6 +793,12 @@ Discovery completed - see [Discovery Findings](#discovery-findings) below for de
 - [ ] Update leaderboard component to read from Redis
 - [ ] Sort entries by ELO for display
 
+> Superseded for RUNNING crucibles (ClickUp 868m52bvt): a visible ranking predisposes judges, so
+> while a crucible is Pending or Active `crucible.getById` returns no score and no position for an
+> entry the caller does not own, in entry-time order. `CrucibleLeaderboard` renders only once the
+> crucible is Completed or Cancelled; until then the sidebar shows the prize breakdown plus the
+> caller's own standing.
+
 #### 7.5 Verify ELO
 - [ ] Vote multiple times
 - [ ] Confirm ELO changes appropriately
