@@ -53,23 +53,28 @@ export const REMIX_ENGINES: Record<RemixKind, Record<RemixTier, RemixEngine>> = 
     },
   },
   /**
-   * Both tiers are H3, and the tier split is kept rather than collapsed: the
-   * MiniMax Order Form commits H3 as the platform's default video engine for the
-   * Service Term, and the two tiers must stay separately addressable so a future
-   * mature-only reroute does not have to reintroduce the structure. H3 runs on
-   * our own orchestrator, so unlike the edit tiers there is no external provider
-   * policy to refuse a mature request.
+   * `MiniMaxH3` spans two engines — our own weights (`comfy`) and MiniMax's
+   * hosted API — and the variant resolver falls back to the API on any version
+   * id it does not recognise. So the mature tier's safety rests on the pinned
+   * VERSION, not on the ecosystem key; `h3-ids-agree` pins it.
+   *
+   * Mature routes here with a known cost rather than an absent one: our own
+   * moderation can block an output after the job succeeds, and the Buzz is not
+   * refunded. That was weighed and accepted, not designed away.
+   *
+   * The tiers stay separately addressable though they are equal today, so a
+   * mature-only reroute does not have to reintroduce the structure.
    */
   video: {
     safe: {
       workflow: 'img2vid',
       ecosystemKey: 'MiniMaxH3',
-      modelVersionId: minimaxVersionIds.h3Comfy,
+      modelVersionId: minimaxVersionIds.comfy,
     },
     mature: {
       workflow: 'img2vid',
       ecosystemKey: 'MiniMaxH3',
-      modelVersionId: minimaxVersionIds.h3Comfy,
+      modelVersionId: minimaxVersionIds.comfy,
     },
   },
 };

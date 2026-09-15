@@ -30,12 +30,10 @@ export const ltxVersionIds = {
 } as const;
 
 export const minimaxVersionIds = {
-  /**
-   * The comfy variant, not the hosted API one — it is the version the model page
-   * publishes and the only one that takes LoRAs, and it matches the
-   * `MiniMaxH3` ecosystem default in `basemodel.constants.ts`.
-   */
-  h3Comfy: 3216500,
+  /** MiniMax's hosted API. */
+  'v1.0': 3183239,
+  /** Our own weights. The `MiniMaxH3` ecosystem default, and the only one taking LoRAs. */
+  comfy: 3216500,
 } as const;
 
 export const qwenVersionIds = {
