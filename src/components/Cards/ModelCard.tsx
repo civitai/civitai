@@ -170,7 +170,10 @@ function ModelCardContent({ data }: Props) {
       onSite={!!data.version.trainingStatus}
       isRemix={!!image?.remixOfId}
       header={
-        <div className="flex w-full items-start justify-between">
+        // The image link paints over this row, so its chips take no pointer events until the row
+        // has its own stacking context above it. That is why the hover card never opened — the
+        // trigger was never reached, wherever the overlay itself was told to render.
+        <div className="relative z-20 flex w-full items-start justify-between">
           <div className="flex flex-wrap gap-1">
             {modFlagLabels.length > 0 && <ModFlagBadge labels={modFlagLabels} />}
             {isPrivate && (
@@ -227,7 +230,7 @@ function ModelCardContent({ data }: Props) {
                     data-status-badge="access"
                     role="img"
                     aria-label="Early Access"
-                    circle
+                    {...(sale ? {} : { circle: true })}
                     style={earlyAccessBadgeStyle}
                   >
                     <IconClockDollar size={16} color="white" />
@@ -269,7 +272,7 @@ function ModelCardContent({ data }: Props) {
                     role="img"
                     aria-label="Paid"
                     // Icon-only, so a pill leaves dead space either side of a square glyph.
-                    circle
+                    {...(sale ? {} : { circle: true })}
                     style={paidBadgeStyle}
                   >
                     <IconLockDollar size={16} color="white" />
