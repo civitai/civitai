@@ -22,12 +22,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * Mock strategy mirrors `blocks.router.pollWorkflowLongPoll.test.ts`: every dependency at the
  * module boundary, so the router runs in-process.
  *
- * RED/GREEN MATRIX, measured rather than asserted — at `a89b6e36a0` (this branch's base) this file
- * is 13 failed / 8 passed; at HEAD it is 21 passed. The thirteen are the regression coverage. The
- * eight that pass BOTH WAYS are marked `INVARIANT GUARD` below and are NOT regression coverage:
- * five pin properties the base happened to satisfy for the trivial reason that it scoped nothing at
+ * RED/GREEN MATRIX, measured rather than asserted — at `7def68db71` (this branch's base) this file
+ * is 14 failed / 9 passed; at HEAD it is 23 passed. The fourteen are the regression coverage. The
+ * nine that pass BOTH WAYS are marked `INVARIANT GUARD` below and are NOT regression coverage:
+ * six pin properties the base happened to satisfy for the trivial reason that it scoped nothing at
  * all, and three cover `publishGenerationOutputs`, whose two guards already existed there and had
- * no behavioural test anywhere. Counting any of the eight as proof of this change would be wrong.
+ * no behavioural test anywhere. Counting any of the nine as proof of this change would be wrong.
  * Re-run both halves if the base moves again — the numbers are pinned to that sha, not to "main".
  */
 
@@ -480,6 +480,34 @@ describe('blocks.cancelWorkflow — viewer scope', () => {
     expect(mockCancelWorkflow).not.toHaveBeenCalled();
   });
 
+  it('EXEMPTS ORCHESTRATOR_MODE=dev on the cancel path too', async () => {
+    // INVARIANT GUARD (passes at base too, where nothing was scoped at all).
+    setEnv({ ORCHESTRATOR_MODE: 'dev' });
+    mockGetWorkflow.mockResolvedValue(workflowFixture({ id: STRANGERS_ID, cost: { total: 58 } }));
+
+    await caller().cancelWorkflow({ blockToken: 'tok', workflowId: STRANGERS_ID });
+
+    expect(mockCancelWorkflow).toHaveBeenCalledWith({
+      workflowId: STRANGERS_ID,
+      token: 'orch_token',
+    });
+  });
+
+  it('🔴 EXEMPTS ONLY THE LITERAL `dev` — the cancel path still enforces in any other mode', async () => {
+    // 🔴 THE MODE AXIS WAS STRUCTURALLY INVISIBLE ON THIS PATH. Every cancel case ran at the
+    // `beforeEach` default `'prod'`, so the cancel site could inline a WIDENED exemption ahead of
+    // the helper and the whole file stayed green — measured. That is the same loosening the poll
+    // side already pins, on the path that has the irreversible side effect rather than the read.
+    for (const mode of ['staging', 'development', 'dev:live', 'DEV', 'test']) {
+      setEnv({ ORCHESTRATOR_MODE: mode });
+
+      await expect(
+        caller().cancelWorkflow({ blockToken: 'tok', workflowId: STRANGERS_ID })
+      ).rejects.toThrow('workflow does not belong to this viewer');
+    }
+    expect(mockCancelWorkflow).not.toHaveBeenCalled();
+  });
+
   it('does NOT consult the block_workflows read-model, so a dev:live or lost-row submit still cancels', async () => {
     // INVARIANT GUARD (passes at base too): pins the DESIGN choice against a later tightening.
     mockBlockWorkflowOwnedByAppUser.mockResolvedValue(false);
@@ -574,6 +602,11 @@ describe('blocks.publishGenerationOutputs — app scope', () => {
       appBlockId: validClaims().appBlockId,
       workflowId: OWN_ID,
     });
+    // 🔴 AND EXACTLY ONCE. `toHaveBeenCalledWith` certifies that A correctly-bound query happened;
+    // it is blind to an ADDITIONAL one bound differently, in either order. Measured: adding a
+    // `claims.appId` fallback query — before OR after the correct one — left this case green, so
+    // without this line the comment above claims coverage the assertion does not provide.
+    expect(mockBlockWorkflowOwnedByAppUser).toHaveBeenCalledTimes(1);
   });
 
   it('a correctly-tagged workflow gets PAST the app-scope guard', async () => {
