@@ -39,7 +39,7 @@ import {
   CrucibleJudgingUI,
   CrucibleJudgingUISkeleton,
 } from '~/components/Crucible/CrucibleJudgingUI';
-import type { JudgingPairData } from '~/components/Crucible/CrucibleJudgingUI';
+import type { JudgingPairData, WatchedMs } from '~/components/Crucible/CrucibleJudgingUI';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { getCrucibleTotalPrizePool } from '~/utils/crucible-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -81,6 +81,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
   const [lastVoteAttempt, setLastVoteAttempt] = useState<{
     winnerId: number;
     loserId: number;
+    watched: WatchedMs;
   } | null>(null);
 
   // Track skipped entry IDs to prevent immediate return
@@ -172,18 +173,19 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
 
   // Handle vote
   const handleVote = useCallback(
-    async (winnerId: number, loserId: number) => {
+    async (winnerId: number, loserId: number, watched: WatchedMs) => {
       if (isVoting || !pair) return;
 
       setIsVoting(true);
       setVoteError(null);
-      setLastVoteAttempt({ winnerId, loserId });
+      setLastVoteAttempt({ winnerId, loserId, watched });
 
       try {
         await submitVoteMutation.mutateAsync({
           crucibleId: id,
           winnerEntryId: winnerId,
           loserEntryId: loserId,
+          ...watched,
         });
 
         setSessionVotes((prev) => prev + 1);
@@ -205,7 +207,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
   // Retry last vote attempt
   const handleRetryVote = useCallback(() => {
     if (lastVoteAttempt && !isVoting) {
-      handleVote(lastVoteAttempt.winnerId, lastVoteAttempt.loserId);
+      handleVote(lastVoteAttempt.winnerId, lastVoteAttempt.loserId, lastVoteAttempt.watched);
     }
   }, [lastVoteAttempt, isVoting, handleVote]);
 
@@ -447,6 +449,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
             pair={pair}
             isLoading={isLoadingPair || isVoting}
             disabled={isVoting || !!voteError}
+            minViewSeconds={crucible.minViewSeconds}
             onVote={handleVote}
             onSkip={handleSkip}
           />

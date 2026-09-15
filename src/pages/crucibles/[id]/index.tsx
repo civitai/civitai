@@ -300,6 +300,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                         nsfwLevel: crucible.nsfwLevel,
                         contentType: crucible.contentType,
                         currentEntryCount: userEntryCount,
+                        maxClipSeconds: crucible.maxClipSeconds,
                       });
                     }}
                     disabled={!currentUser}

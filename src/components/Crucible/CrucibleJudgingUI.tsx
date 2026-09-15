@@ -12,10 +12,11 @@ import {
 import { useHotkeys } from '@mantine/hooks';
 import { IconPlayerSkipForward, IconCheck } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { RouterOutput } from '~/types/router';
 import { MediaType } from '~/shared/utils/prisma/enums';
+import { accumulatePlaybackMs } from '~/shared/constants/crucible.constants';
 
 /**
  * Type inferred from tRPC router output - stays in sync with backend automatically
@@ -27,11 +28,15 @@ export type JudgingPairData = RouterOutput['crucible']['getJudgingPair'];
  */
 export type JudgingEntry = NonNullable<JudgingPairData>['left'];
 
+export type WatchedMs = { winnerWatchedMs: number; loserWatchedMs: number };
+
 export type CrucibleJudgingUIProps = {
   pair: JudgingPairData;
   isLoading?: boolean;
   disabled?: boolean;
-  onVote: (winnerId: number, loserId: number) => void;
+  /** Playback each clip needs before either vote unlocks. Null or absent means no rule. */
+  minViewSeconds?: number | null;
+  onVote: (winnerId: number, loserId: number, watched: WatchedMs) => void;
   onSkip: () => void;
   className?: string;
 };
@@ -51,16 +56,33 @@ export function CrucibleJudgingUI({
   pair,
   isLoading,
   disabled,
+  minViewSeconds,
   onVote,
   onSkip,
   className,
 }: CrucibleJudgingUIProps) {
   const [selectedSide, setSelectedSide] = useState<'left' | 'right' | null>(null);
+  const [watchedMs, setWatchedMs] = useState<{ left: number; right: number }>(emptyWatched);
   const isDisabled = disabled || isLoading || !pair;
+
+  const pairKey = pair ? `${pair.left.id}:${pair.right.id}` : null;
+  useEffect(() => {
+    setWatchedMs(emptyWatched);
+  }, [pairKey]);
+
+  const requiredMs = (minViewSeconds ?? 0) * 1000;
+  const remainingMs = requiredMs
+    ? Math.max(0, requiredMs - watchedMs.left) + Math.max(0, requiredMs - watchedMs.right)
+    : 0;
+  const watchGateOpen = remainingMs === 0;
+
+  const handleWatched = useCallback((side: 'left' | 'right', ms: number) => {
+    setWatchedMs((prev) => (ms > prev[side] ? { ...prev, [side]: ms } : prev));
+  }, []);
 
   const handleVote = useCallback(
     (side: 'left' | 'right') => {
-      if (isDisabled || !pair) return;
+      if (isDisabled || !pair || !watchGateOpen) return;
 
       setSelectedSide(side);
 
@@ -68,11 +90,14 @@ export function CrucibleJudgingUI({
       setTimeout(() => {
         const winnerId = side === 'left' ? pair.left.id : pair.right.id;
         const loserId = side === 'left' ? pair.right.id : pair.left.id;
-        onVote(winnerId, loserId);
+        onVote(winnerId, loserId, {
+          winnerWatchedMs: side === 'left' ? watchedMs.left : watchedMs.right,
+          loserWatchedMs: side === 'left' ? watchedMs.right : watchedMs.left,
+        });
         setSelectedSide(null);
       }, 200);
     },
-    [isDisabled, pair, onVote]
+    [isDisabled, pair, onVote, watchGateOpen, watchedMs]
   );
 
   const handleSkip = useCallback(() => {
@@ -83,8 +108,12 @@ export function CrucibleJudgingUI({
 
   // Keyboard shortcuts
   useHotkeys(
-    isDisabled
-      ? []
+    isDisabled || !watchGateOpen
+      ? [
+          // Skip stays live while the gate is closed: a judge who does not want to watch either
+          // clip through needs a way past the pair.
+          ['Space', handleSkip],
+        ]
       : [
           ['1', () => handleVote('left')],
           ['ArrowLeft', () => handleVote('left')],
@@ -118,7 +147,11 @@ export function CrucibleJudgingUI({
           position="left"
           isSelected={selectedSide === 'left'}
           isLoading={isLoading}
-          disabled={isDisabled}
+          disabled={isDisabled || !watchGateOpen}
+          pairKey={pairKey}
+          watchedMs={watchedMs.left}
+          requiredMs={requiredMs}
+          onWatched={(ms) => handleWatched('left', ms)}
           onVote={() => handleVote('left')}
           hotkeyLabel="1"
         />
@@ -129,7 +162,11 @@ export function CrucibleJudgingUI({
           position="right"
           isSelected={selectedSide === 'right'}
           isLoading={isLoading}
-          disabled={isDisabled}
+          disabled={isDisabled || !watchGateOpen}
+          pairKey={pairKey}
+          watchedMs={watchedMs.right}
+          requiredMs={requiredMs}
+          onWatched={(ms) => handleWatched('right', ms)}
           onVote={() => handleVote('right')}
           hotkeyLabel="2"
         />
@@ -178,12 +215,18 @@ export function CrucibleJudgingUI({
   );
 }
 
+const emptyWatched = { left: 0, right: 0 };
+
 type ImageCardProps = {
   entry: JudgingEntry | null;
   position: 'left' | 'right';
   isSelected: boolean;
   isLoading?: boolean;
   disabled: boolean;
+  pairKey: string | null;
+  watchedMs: number;
+  requiredMs: number;
+  onWatched: (ms: number) => void;
   onVote: () => void;
   hotkeyLabel: string;
 };
@@ -197,6 +240,10 @@ function ImageCard({
   isSelected,
   isLoading,
   disabled,
+  pairKey,
+  watchedMs,
+  requiredMs,
+  onWatched,
   onVote,
   hotkeyLabel,
 }: ImageCardProps) {
@@ -207,6 +254,31 @@ function ImageCard({
       onVote();
     }
   };
+
+  const lastTimeRef = useRef<number | null>(null);
+  const watchedRef = useRef(0);
+  // Keyed on the PAIR, not on this entry: pair selection is a random sample that excludes only
+  // skipped entries, so the same entry routinely carries over into the next pair. Keyed on the
+  // entry alone, that card kept its accumulated playback while the parent reset the gate to zero,
+  // and the first `timeupdate` handed the stale total straight back — unlocking a vote on the new
+  // pair without watching any of it.
+  useEffect(() => {
+    lastTimeRef.current = null;
+    watchedRef.current = 0;
+  }, [entry?.id, pairKey]);
+
+  const handleTimeUpdate = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+    const currentTime = e.currentTarget.currentTime;
+    watchedRef.current = accumulatePlaybackMs({
+      watchedMs: watchedRef.current,
+      previousTime: lastTimeRef.current,
+      currentTime,
+    });
+    lastTimeRef.current = currentTime;
+    onWatched(watchedRef.current);
+  };
+
+  const remainingSeconds = Math.ceil(Math.max(0, requiredMs - watchedMs) / 1000);
 
   if (!entry) {
     return <Skeleton radius="lg" style={{ aspectRatio: '4 / 5' }} />;
@@ -228,6 +300,7 @@ function ImageCard({
       tabIndex={disabled ? -1 : 0}
       aria-label={`Vote for ${position} ${isVideo ? 'video' : 'image'}`}
       aria-disabled={disabled}
+      data-watch-remaining={remainingSeconds || undefined}
       onClick={disabled ? undefined : onVote}
       onKeyDown={handleKeyDown}
     >
@@ -260,6 +333,7 @@ function ImageCard({
             width={600}
             style={{ width: '100%', height: '100%', objectFit: 'contain' }}
             wrapperProps={{ className: 'size-full' }}
+            videoProps={{ onTimeUpdate: handleTimeUpdate }}
           />
         )}
 
@@ -290,7 +364,7 @@ function ImageCard({
           disabled={disabled}
         >
           <div className="flex flex-col items-center gap-1">
-            <span>Vote</span>
+            <span>{remainingSeconds > 0 ? `Watch ${remainingSeconds}s more` : 'Vote'}</span>
             <div className="flex items-center gap-1 text-xs opacity-75">
               <Kbd size="xs">{hotkeyLabel}</Kbd>
             </div>

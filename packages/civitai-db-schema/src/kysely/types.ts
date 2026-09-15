@@ -2296,6 +2296,8 @@ export type Crucible = {
   seededPrizePool: Generated<number>;
   entryLimit: Generated<number>;
   maxTotalEntries: number | null;
+  minViewSeconds: number | null;
+  maxClipSeconds: number | null;
   prizePositions: Generated<unknown>;
   allowedResources: unknown | null;
   duration: Generated<number>;

@@ -5577,6 +5577,8 @@ export interface Crucible {
   seededPrizePool: number;
   entryLimit: number;
   maxTotalEntries: number | null;
+  minViewSeconds: number | null;
+  maxClipSeconds: number | null;
   prizePositions: JsonValue;
   allowedResources: JsonValue | null;
   duration: number;
