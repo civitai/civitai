@@ -536,7 +536,6 @@ describe('bulkTriage action', () => {
         { id: 6, expectedStatus: 'dismissed' },
       ],
       status: 'reviewed',
-      note: null,
       moderatorId: 7,
     });
     expect(result).toMatchObject({ success: true });
@@ -605,20 +604,6 @@ describe('bulkTriage action', () => {
     expect(status).toBe(409);
     expect(error).toMatch(/already reviewed/i);
     expect(error).not.toMatch(/triaged elsewhere/i);
-  });
-
-  it('sends an empty note as null so existing notes are left alone', async () => {
-    await actions.bulkTriage(event(form({ note: '   ' })));
-
-    expect(bulkTriageFeedback).toHaveBeenCalledWith(expect.objectContaining({ note: null }));
-  });
-
-  it('passes a written note through', async () => {
-    await actions.bulkTriage(event(form({ note: ' dupe of #1187 ' })));
-
-    expect(bulkTriageFeedback).toHaveBeenCalledWith(
-      expect.objectContaining({ note: 'dupe of #1187' })
-    );
   });
 
   it('refuses a status outside the enum', async () => {

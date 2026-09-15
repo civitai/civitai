@@ -60,11 +60,18 @@
   /**
    * Only rows whose status this page can express a transition FROM.
    *
-   * 🔴 `Feedback.status` IS A TEXT COLUMN behind a CHECK constraint, so a value outside
-   * `FEEDBACK_STATUSES` is representable — `feedbackStatusBadgeClass` already renders one unstyled
-   * rather than crashing. Such a row gets no checkbox: the bar would encode a pair the server's
-   * parser cannot read, and that parser refuses the WHOLE submission rather than dropping a pair, so
-   * one unknown row would silently block a fifty-row action.
+   * ⚠️ THE RUNTIME BRANCH IS UNREACHABLE TODAY, AND THE EARLIER VERSION OF THIS COMMENT WAS WRONG
+   * TO IMPLY OTHERWISE. It claimed a status outside `FEEDBACK_STATUSES` "is representable";
+   * measured against production 2026-09-15, `Feedback_status_check` is
+   * `CHECK (status = ANY (ARRAY['new','reviewed','actioned','dismissed']))` — exactly this
+   * constant — so Postgres already enforces the property and no such row can exist. Do not read the
+   * filter below as a live hazard.
+   *
+   * 🔴 IT STAYS FOR A DIFFERENT AND SMALLER REASON: `FeedbackRow.status` is typed `string`, so this
+   * predicate is the only thing that narrows it to `FeedbackStatus` for `expectedStatus`. The
+   * runtime effect is a second-order defence against the CHECK being widened without this constant
+   * following — in which case the bar simply omits the checkbox, rather than encoding a pair the
+   * server's parser refuses, which would block the whole submission over one row.
    */
   const selectableIds = $derived(
     data.items.filter((row) => isFeedbackStatus(row.status)).map((row) => row.id)

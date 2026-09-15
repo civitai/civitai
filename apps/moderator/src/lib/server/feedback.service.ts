@@ -543,7 +543,6 @@ export async function triageFeedback(input: {
 export async function bulkTriageFeedback(input: {
   rows: readonly { id: number; expectedStatus: FeedbackStatus }[];
   status: FeedbackStatus;
-  note: string | null;
   moderatorId: number;
 }): Promise<{ changed: number[]; actionable: number }> {
   const handled = input.status !== 'new';
@@ -583,10 +582,9 @@ export async function bulkTriageFeedback(input: {
         .updateTable('Feedback')
         .set({
           status: input.status,
-          // 🔴 The note is written to EVERY row in the batch, which is why the bar's box is optional
-          // and empty means "leave them alone" rather than "clear them". A blank box here would wipe
-          // every selected row's existing note, which is a destructive edit nobody asked for.
-          ...(input.note === null ? {} : { triageNote: input.note }),
+          // 🔴 `triageNote` UNTOUCHED. A bulk verdict says what happened to a batch; a note says
+          // something about ONE report, and writing one across a selection would overwrite whatever
+          // each row already had. The single-row form is where a note belongs.
           handledById: handled ? input.moderatorId : null,
           handledAt: handled ? new Date() : null,
           // 🔴 `bugId` UNTOUCHED, for the reason `triageFeedback` records at length — the link says

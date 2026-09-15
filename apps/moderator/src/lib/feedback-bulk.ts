@@ -19,10 +19,8 @@ import {
 /**
  * The most rows one submission may carry.
  *
- * 🔴 DERIVED, NOT PINNED. Selection is cleared whenever `data.items` changes and the queue serves
- * one keyset page at a time, so one page IS the ceiling — there is no way to select past it. This
- * was a hand-written `50` held against the page size by a test; a derivation cannot drift, so the
- * test and the `$lib/server/db` mock it needed are both gone.
+ * Selection is cleared whenever `data.items` changes and the queue serves one keyset page at a
+ * time, so one page IS the ceiling — there is no way to select past it.
  */
 export const FEEDBACK_BULK_MAX = FEEDBACK_PAGE_SIZE;
 
@@ -115,27 +113,6 @@ export const FEEDBACK_BULK_ACTIONS: ReadonlyArray<{ status: FeedbackStatus; labe
 const reports = (n: number) => `${n} report${n === 1 ? '' : 's'}`;
 
 /**
- * 🔴 ENTER IN THE NOTE BOX MUST NOT SUBMIT, AND THIS IS NOT A NICETY.
- *
- * A bulk action has NO DEFAULT VERDICT — the bar carries four submit buttons and the operator picks
- * one. HTML implicit submission does not know that: a text input in a form activates the FIRST
- * submit button in tree order, which here is `FEEDBACK_BULK_ACTIONS[0]`, i.e. `FEEDBACK_STATUSES[0]`
- * = `new` = **Reopen**. So typing a note and pressing Enter — the universal "commit this text"
- * gesture — would reopen every selected row, null its handler, AND overwrite its `triageNote` with
- * the text just typed, then report success. That is the exact column the `note === null` guard in
- * `bulkTriageFeedback` exists to protect.
- *
- * The single-row triage form is immune only by accident: its note control is a `Textarea`, where
- * Enter inserts a newline.
- *
- * Extracted rather than inlined so it can be tested — these apps have no browser test tier, so a
- * handler left in the template is verified by reading it and nothing else.
- */
-export function blockImplicitBulkSubmit(event: { key: string; preventDefault: () => void }): void {
-  if (event.key === 'Enter') event.preventDefault();
-}
-
-/**
  * What the operator is told after a bulk run that changed SOMETHING.
  *
  * 🔴 PARTIAL IS THE ORDINARY OUTCOME AND IT MUST BE SAID OUT LOUD, IN THREE PARTS THAT MEAN
@@ -143,9 +120,8 @@ export function blockImplicitBulkSubmit(event: { key: string; preventDefault: ()
  *   - `changed`   — rows this action moved.
  *   - `actionable − changed` — rows whose UPDATE matched nothing. 🔴 THE CAUSE IS NOT KNOWN AND MUST
  *     NOT BE ASSERTED: `bulkTriageFeedback` deliberately does not spend a read per refusal, so a row
- *     someone else triaged and a row that was DELETED are indistinguishable here. An earlier version
- *     of this sentence said "already triaged by someone else", which sends the operator looking for
- *     a colleague's verdict on a report that no longer exists.
+ *     someone else triaged and a row that was DELETED are indistinguishable here. Naming the first
+ *     sends the operator looking for a colleague's verdict on a report that no longer exists.
  *   - `skipped`   — rows already AT the target. Not a refusal at all, and silently dropping them is
  *     how "I selected 10" becomes "Updated 6" with nothing on screen accounting for the other four.
  *
@@ -154,8 +130,7 @@ export function blockImplicitBulkSubmit(event: { key: string; preventDefault: ()
  * omitted it would leave nothing on screen saying what just happened to fifty rows.
  *
  * No "reload to see the current verdicts": the bar's `FormState` runs with `reload: true`, so `load`
- * has already re-run by the time this renders. Telling the operator the screen is stale when it is
- * current trains them to distrust it.
+ * has already re-run by the time this renders.
  *
  * Zero changed with something actionable never reaches here — that is a refusal, raised as a
  * `fail()` by the action.
@@ -175,8 +150,7 @@ export function feedbackBulkOutcome(input: {
     );
   }
   if (input.skipped > 0) {
-    // The verb agrees with THIS count, not with `changed` — a hardcoded `were` renders
-    // "1 report were already reviewed" on the single-row case, which is the common one.
+    // The verb agrees with THIS count, not with `changed`.
     parts.push(
       `${reports(input.skipped)} ${input.skipped === 1 ? 'was' : 'were'} already ${input.status}.`
     );

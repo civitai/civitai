@@ -14,8 +14,7 @@ export const DEFAULT_FEEDBACK_STATUSES: FeedbackStatus[] = ['new'];
  *
  * 🔴 IT LIVES HERE, NOT IN `$lib/server/`, BECAUSE BOTH TIERS NEED IT. The selection bar's row bound
  * is this number — selection is cleared on every list change, so one page is the most that can be
- * selected — and a browser module cannot import the service. It was duplicated as a hand-pinned
- * constant with a test holding the two together; deriving it is what makes the pin unnecessary.
+ * selected — and a browser module cannot import the service.
  */
 export const FEEDBACK_PAGE_SIZE = 50;
 

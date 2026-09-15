@@ -3,7 +3,6 @@ import { FEEDBACK_PAGE_SIZE, FEEDBACK_STATUSES } from '$lib/feedback';
 import {
   FEEDBACK_BULK_ACTIONS,
   FEEDBACK_BULK_MAX,
-  blockImplicitBulkSubmit,
   encodeFeedbackBulkRows,
   feedbackBulkOutcome,
   parseFeedbackBulkRows,
@@ -109,8 +108,13 @@ describe('FEEDBACK_BULK_ACTIONS', () => {
  * `FEEDBACK_BULK_MAX` is written as `= FEEDBACK_PAGE_SIZE`, and a derivation genuinely cannot drift
  * — while it remains one. A later edit replacing it with a literal is the whole risk, and measured:
  * a mutant substituting `10` SURVIVED the entire suite once the earlier pin test was removed as
- * redundant. It is restored because it now costs nothing — `FEEDBACK_PAGE_SIZE` moved to
- * `$lib/feedback.ts`, so this no longer has to mock a database module to read one integer.
+ * redundant.
+ *
+ * ⚠️ IT CATCHES A SMALLER LITERAL ONLY. `= 100` passes this just as `= FEEDBACK_PAGE_SIZE` does, so
+ * read it as a floor and not as "the derivation is pinned" — nothing asserts the two are the SAME
+ * expression. It is kept because the floor is the half with a consequence and it now costs nothing:
+ * `FEEDBACK_PAGE_SIZE` moved to `$lib/feedback.ts`, so this no longer mocks a database module to
+ * read one integer.
  *
  * Consequence if it ever goes under: selection is cleared on every list change, so a full page is
  * exactly what an operator can select — and the bar would refuse work they are plainly looking at.
@@ -188,25 +192,3 @@ describe('feedbackBulkOutcome', () => {
   });
 });
 
-/**
- * 🔴 THE ONLY THING STANDING BETWEEN A TYPED NOTE AND AN ACCIDENTAL MASS REOPEN. A bulk action has
- * no default verdict, but HTML implicit submission picks the FIRST submit button anyway — Reopen —
- * which would also overwrite every selected row's `triageNote` with the text just typed.
- */
-describe('blockImplicitBulkSubmit', () => {
-  const press = (key: string) => {
-    let prevented = false;
-    blockImplicitBulkSubmit({ key, preventDefault: () => (prevented = true) });
-    return prevented;
-  };
-
-  it('swallows Enter', () => {
-    expect(press('Enter')).toBe(true);
-  });
-
-  it('leaves every other key alone', () => {
-    // The positive control for the assertion above: a guard that prevented everything would pass it
-    // while making the box untypeable.
-    for (const key of ['a', ' ', 'Tab', 'Escape', 'Backspace']) expect(press(key)).toBe(false);
-  });
-});

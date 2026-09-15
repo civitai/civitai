@@ -198,7 +198,6 @@ const bulkTriageSchema = z.object({
    * one keeps an unbounded string off the parser at all, and 50 pairs cannot reach 4 KB.
    */
   rows: z.string().max(4000),
-  note: z.string().max(5000).optional(),
 });
 
 const promoteSchema = z.object({
@@ -257,10 +256,6 @@ export const actions: Actions = {
     const { changed, actionable } = await bulkTriageFeedback({
       rows,
       status: input.status,
-      // Absent means "leave every note alone", which is why this is `undefined`-vs-null rather than
-      // the single-row action's trim-to-null. An empty box there clears ONE note the operator is
-      // looking at; here it would clear every note in the selection.
-      note: input.note?.trim() ? input.note.trim() : null,
       moderatorId: locals.user.id,
     });
 

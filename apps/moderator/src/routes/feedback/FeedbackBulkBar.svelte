@@ -1,12 +1,10 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { Input } from '@civitai/ui/components/ui/input/index.js';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { FormState } from '$lib/form-state.svelte';
   import {
     FEEDBACK_BULK_ACTIONS,
-    blockImplicitBulkSubmit,
     encodeFeedbackBulkRows,
     type FeedbackBulkRow,
   } from '$lib/feedback-bulk';
@@ -28,30 +26,26 @@
 
   const payload = $derived(encodeFeedbackBulkRows(rows));
 
-  let note = $state('');
-
   /**
    * 🔴 `reload: true` IS THE LOAD-BEARING OPTION, AND ITS ABSENCE IS SILENT. Without it this bar
    * reports "Updated 10 reports" over a table still showing every one of them at its old status —
    * the default view filters on `status=new`, so rows that should have left the queue stay in it.
-   * The operator's next click then posts the STALE expectation and is refused with "someone else
-   * already triaged this" over their own write. A hand-rolled callback calling only `applyAction`
-   * has exactly this defect: `applyAction` updates `form`, it does NOT invalidate (measured in
-   * `@sveltejs/kit@2.66.0`, `client.js:2566` — only `update()` calls `invalidateAll`).
+   * The operator's next click then posts the STALE expectation and is refused over their own write.
+   * `applyAction` alone does NOT invalidate — only `update()` does — so a hand-rolled callback that
+   * calls just `applyAction` carries exactly this defect.
    *
-   * 🔴 `reset: false` FOR THE REASON THE PROMOTE FORM RECORDS: `update()` calls
-   * `HTMLFormElement.reset()`, which restores each field's `defaultValue`, and Svelte writes
-   * `element.value` and never `defaultValue`. The hidden `rows` input is Svelte-written, so a reset
-   * would leave this form posting an EMPTY selection.
+   * 🔴 `reset: false`: `update()` calls `HTMLFormElement.reset()`, which restores each field's
+   * `defaultValue`, and Svelte writes `element.value` and never `defaultValue`. The hidden `rows`
+   * input is Svelte-written, so a reset would leave this form posting an EMPTY selection.
    *
-   * The note is cleared here instead, on success only: after a refusal the operator keeps both it
-   * and the selection, so a retry is not fifty checkboxes and a retyped sentence.
+   * The selection is cleared on success only: after a refusal the operator still has it, so a retry
+   * is not fifty checkboxes again.
    */
   const bulkForm = new FormState({
-    onSuccess: () => {
-      note = '';
-      onclear();
-    },
+    // 🔴 A CLOSURE, NOT `onSuccess: onclear`. `FormState` is constructed once, so passing the prop
+    // directly captures the value it had at construction — `state_referenced_locally`, which
+    // `svelte-check` reports as a WARNING and which nothing else in the toolchain sees.
+    onSuccess: () => onclear(),
     reload: true,
     reset: false,
   });
@@ -100,21 +94,10 @@
         <!-- 🔴 One hidden input carrying id AND expected status per row. A bare id list would post
              past the per-row concurrency guard the single-row action enforces. -->
         <input type="hidden" name="rows" value={payload} />
-        <!-- 🔴 `onkeydown` IS A GUARD, NOT AN ENHANCEMENT. A bulk action has no default verdict,
-             but HTML implicit submission picks one anyway — the FIRST submit button, which is
-             Reopen. See `blockImplicitBulkSubmit`. -->
-        <!-- 🔴 `aria-label`, not `placeholder` alone: a placeholder stops being the accessible name
-             the moment the operator types, and this is the field whose contents overwrite
-             `triageNote` on up to fifty rows. -->
-        <Input
-          name="note"
-          bind:value={note}
-          onkeydown={blockImplicitBulkSubmit}
-          aria-label="Triage note applied to every selected report"
-          placeholder="Triage note (optional)"
-          class="w-56"
-          maxlength={5000}
-        />
+        <!-- 🔴 NO TEXT FIELD IN THIS FORM, AND THAT IS LOAD-BEARING RATHER THAN INCIDENTAL. A bulk
+             action has no default verdict, but HTML implicit submission picks one anyway — the
+             FIRST submit button, which is `FEEDBACK_STATUSES[0]` = Reopen. A text input here would
+             make Enter reopen the whole selection. Adding one means guarding it. -->
         {#each FEEDBACK_BULK_ACTIONS as action (action.status)}
           <Button
             type="submit"
@@ -130,9 +113,8 @@
       </form>
     </div>
     <p class="text-xs text-dark-2">
-      An empty note leaves every selected report's existing note alone. Reports already at the status
-      you pick are skipped, and any a colleague has triaged since this page loaded are refused and
-      reported back.
+      Reports already at the status you pick are skipped, and any a colleague has triaged since this
+      page loaded are refused and reported back. Notes stay per report — use a report's own panel.
     </p>
   </div>
 </div>

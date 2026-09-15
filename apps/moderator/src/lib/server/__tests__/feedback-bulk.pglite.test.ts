@@ -83,7 +83,6 @@ describe('bulkTriageFeedback', () => {
     const result = await service.bulkTriageFeedback({
       rows: [fresh1, stale, fresh2].map((id) => ({ id, expectedStatus: 'new' as const })),
       status: 'reviewed',
-      note: null,
       moderatorId,
     });
 
@@ -111,7 +110,6 @@ describe('bulkTriageFeedback', () => {
         { id: c, expectedStatus: 'dismissed' },
       ],
       status: 'actioned',
-      note: null,
       moderatorId,
     });
 
@@ -135,7 +133,6 @@ describe('bulkTriageFeedback', () => {
         { id: moving, expectedStatus: 'new' },
       ],
       status: 'reviewed',
-      note: null,
       moderatorId,
     });
 
@@ -149,7 +146,6 @@ describe('bulkTriageFeedback', () => {
     const result = await service.bulkTriageFeedback({
       rows: [{ id: a, expectedStatus: 'dismissed' }],
       status: 'dismissed',
-      note: null,
       moderatorId,
     });
 
@@ -162,7 +158,6 @@ describe('bulkTriageFeedback', () => {
     await service.bulkTriageFeedback({
       rows: [{ id, expectedStatus: 'new' }],
       status: 'actioned',
-      note: null,
       moderatorId,
     });
     const handled = await readFeedback(db, id);
@@ -174,7 +169,6 @@ describe('bulkTriageFeedback', () => {
     await service.bulkTriageFeedback({
       rows: [{ id, expectedStatus: 'actioned' }],
       status: 'new',
-      note: null,
       moderatorId,
     });
     const reopened = await readFeedback(db, id);
@@ -194,7 +188,6 @@ describe('bulkTriageFeedback', () => {
     await service.bulkTriageFeedback({
       rows: [{ id, expectedStatus: 'actioned' }],
       status: 'new',
-      note: null,
       moderatorId,
     });
 
@@ -202,37 +195,26 @@ describe('bulkTriageFeedback', () => {
   });
 
   /**
-   * 🔴 A BLANK NOTE MUST NOT WIPE EVERY SELECTED ROW'S EXISTING ONE. The note is written to the
-   * whole batch, so `null` has to mean "leave them alone" rather than "clear them" — the opposite
-   * of the single-row action, where an empty box clears the one note the operator is looking at.
+   * 🔴 A BULK VERDICT NEVER TOUCHES `triageNote`, AND THIS IS THE GUARD ON THAT.
+   *
+   * A note says something about ONE report, so a batch verdict must leave every row's note exactly
+   * as it found it. 🔴 Adding a note box to the bar reintroduces two hazards at once: it overwrites
+   * whatever each selected row already had, and being a TEXT FIELD in a form whose first submit
+   * button is Reopen, it makes Enter reopen the entire selection.
    */
-  it('leaves existing notes untouched when no note is given', async () => {
-    const id = await seed('new');
-    await db.query('UPDATE "Feedback" SET "triageNote" = $1 WHERE "id" = $2', ['keep me', id]);
+  it('never writes a note, on any row it moves', async () => {
+    const withNote = await seed('new');
+    const withoutNote = await seed('new');
+    await db.query('UPDATE "Feedback" SET "triageNote" = $1 WHERE "id" = $2', ['keep me', withNote]);
 
     await service.bulkTriageFeedback({
-      rows: [{ id, expectedStatus: 'new' }],
+      rows: [withNote, withoutNote].map((id) => ({ id, expectedStatus: 'new' as const })),
       status: 'reviewed',
-      note: null,
       moderatorId,
     });
 
-    expect((await readFeedback(db, id)).triageNote).toBe('keep me');
-  });
-
-  it('writes a given note to every row that moved', async () => {
-    const a = await seed('new');
-    const b = await seed('new');
-
-    await service.bulkTriageFeedback({
-      rows: [a, b].map((id) => ({ id, expectedStatus: 'new' as const })),
-      status: 'reviewed',
-      note: 'dupe of #1187',
-      moderatorId,
-    });
-
-    expect((await readFeedback(db, a)).triageNote).toBe('dupe of #1187');
-    expect((await readFeedback(db, b)).triageNote).toBe('dupe of #1187');
+    expect((await readFeedback(db, withNote)).triageNote).toBe('keep me');
+    expect((await readFeedback(db, withoutNote)).triageNote).toBeNull();
   });
 
   /**
@@ -248,7 +230,6 @@ describe('bulkTriageFeedback', () => {
     await service.bulkTriageFeedback({
       rows: [moved, stale].map((id) => ({ id, expectedStatus: 'new' as const })),
       status: 'reviewed',
-      note: null,
       moderatorId,
     });
 
@@ -262,7 +243,6 @@ describe('bulkTriageFeedback', () => {
     await service.bulkTriageFeedback({
       rows: [{ id: stale, expectedStatus: 'new' }],
       status: 'reviewed',
-      note: null,
       moderatorId,
     });
 
@@ -282,7 +262,6 @@ describe('bulkTriageFeedback', () => {
         { id: live + 99_999, expectedStatus: 'new' },
       ],
       status: 'reviewed',
-      note: null,
       moderatorId,
     });
 
