@@ -5,8 +5,9 @@ import { reconcileSelectors } from '../reconcile';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 
 /**
- * MiniMax Order Form §5(a) commits H3 as the platform's default video engine
- * for the 12-month Service Term. Both graphs carry their own copy of the
+ * H3 is the platform's default video engine under a commercial commitment with a
+ * fixed term. Ask Justin before changing it — the reason to leave it alone is not
+ * visible anywhere in this codebase. Both graphs carry their own copy of the
  * per-output default, so both are pinned here.
  */
 
