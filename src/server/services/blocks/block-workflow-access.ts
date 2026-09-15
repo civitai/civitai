@@ -73,11 +73,12 @@ export function assertBlockWorkflowMintedForViewer(input: {
  * creates, and `appBlockTag` is the same helper on both ends, so the STAMP and this READ cannot
  * desync.
  *
- * THE ONLY SPELLING OF THIS PREDICATE. It was open-coded at three other sites before — two in
- * `blocks.router.ts` and one in `block-post.service.ts` — which is four copies of one security
- * decision, and a semantic change (a second admissible tag, a prefix rule, an exemption) would have
- * landed in one of them while the other three kept the old behaviour. All five call sites now come
- * through here. The message is the one those three already threw, so no live refusal changed.
+ * THE ONLY SPELLING OF THIS PREDICATE. It was open-coded at three sites — two in `blocks.router.ts`
+ * and one in `block-post.service.ts` — and this change adds two more call sites, so the
+ * un-consolidated count would have been five copies of one security decision. A semantic change (a
+ * second admissible tag, a prefix rule, an exemption) would have landed in one of them while the
+ * rest kept the old behaviour. All five call sites now come through here, and the message is the
+ * one those three already threw, so no live refusal changed.
  *
  * FAIL-CLOSED on absent tags. `Workflow.tags` is a required field on the orchestrator wire type, so
  * the `?? []` is a belt rather than a live branch — an empty array means the workflow genuinely
