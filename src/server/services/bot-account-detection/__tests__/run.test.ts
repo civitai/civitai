@@ -10,6 +10,7 @@ import { emptyCohortSignals } from '../evidence';
 import { BOT_ACCOUNT_DETECTOR } from '../report';
 import {
   BOT_ACCOUNT_HEURISTICS,
+  assetStagingHeuristic,
   contentTemplatingHeuristic,
   postingVelocityHeuristic,
   registrationClusterHeuristic,
@@ -368,6 +369,16 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     // apart, which is precisely how the deleted comment source survived every run looking fine
     // inside an aggregate.
     expect(result.counters['heuristic:content-templating:fired_filename']).toBeGreaterThan(0);
+
+    // 🔴 AND WITH ONE SOURCE LEFT IT IS EQUAL TO `fired`, WHICH IS THE HONEST THING TO PIN. An
+    // invariant tripwire, not regression coverage: `fired` counts the same members over every
+    // namespace and this counts them over `file:`, so while the index holds one namespace the two
+    // are the same number and charting both shows an operator nothing. The assertion above is the
+    // positive control that stops this one passing as `0 === 0`. The namespace count itself is
+    // pinned in `evidence.test.ts`; between them, the note in `run.ts` cannot go stale unobserved.
+    expect(result.counters['heuristic:content-templating:fired_filename']).toBe(
+      result.counters['heuristic:content-templating:fired']
+    );
 
     // 🔴 THE DELETED SOURCE'S KEYS ARE ABSENT, NOT ZERO. A key that stops appearing says "not
     // read any more"; a key reporting 0 would assert the source was read and found nothing. Asserted
@@ -1226,11 +1237,11 @@ describe('the counters that make the heuristics’ own blind spots measurable', 
   });
 
   it('🔴 counts the findings that rest on ONE heuristic and nothing else', async () => {
-    // The counter the content-templating false positive shows up in. A generation-parameter paste
-    // fires that heuristic and no other, so a run inflated by collisions moves
-    // `heuristic:content-templating:sole_signal` and leaves `fired` looking ordinary. Over the
-    // REPORTED members only: a sole signal below the threshold produced no finding and cost nobody
-    // anything.
+    // The counter the content-templating false positive shows up in. A generic filename several
+    // unrelated new accounts happen to upload under fires that heuristic and no other, so a run
+    // inflated by collisions moves `heuristic:content-templating:sole_signal` and leaves `fired`
+    // looking ordinary. Over the REPORTED members only: a sole signal below the threshold produced
+    // no finding and cost nobody anything.
     const { reader } = recordingReader([account(1), account(2)]);
     const out = sink();
     const result = await runBotAccountDetection(
@@ -1276,11 +1287,18 @@ describe('the counters that make the heuristics’ own blind spots measurable', 
   it('🔴 counts a finding a TRACE from another heuristic used to EXCLUDE', async () => {
     // 🔴 THE COLLISION'S ROUTINE SHAPE, AND THE OLD PREDICATE COULD NOT SEE IT. `sole_signal` was
     // `exactly one heuristic scored above zero`, which measured a strictly smaller population than
-    // the sentence it was documented with. A member 40 minutes old with 6 parameter-paste comments
-    // in a fingerprint cluster of 6 scores a TRACE on posting-velocity as well — and that trace
-    // excluded the whole finding from the count. An operator reading
+    // the sentence it was documented with. The colliding member scores a TRACE on posting-velocity
+    // as well — and that trace excluded the whole finding from the count. An operator reading
     // `content-templating:sole_signal = 0` concluded the known collision produced no reports, on
     // the one number the decision about that collision was deferred to.
+    //
+    // 🔴 THE FIXTURE THIS CASE USED TO CARRY IS RETRACTED — it was a member 40 minutes old with 6
+    // parameter-paste COMMENTS under a bare `'paste'` fingerprint, and that member cannot exist:
+    // comment text is no longer read, and what made two pastes collide was the deleted prose
+    // normaliser's digit masking, which `normalizeFilename` deliberately does not apply. The
+    // reachable collision is a generic FILENAME — an account that bulk-uploaded under one ordinary
+    // name shared with other accounts registered the same day — so the fixture is one of those, with
+    // a namespaced key, which is the only shape the index ever holds.
     //
     // The two scores below are EXECUTED against the shipped heuristics, not stipulated: if
     // `ZERO_AT_PER_HOUR` or `CLUSTER_ZERO_AT` moves, this case moves with it rather than pinning a
@@ -1288,17 +1306,17 @@ describe('the counters that make the heuristics’ own blind spots measurable', 
     const colliding: BotAccountCohortMember = {
       userId: 1,
       username: 'u1',
-      createdAt: new Date(STARTED.getTime() - 40 * 60_000),
+      createdAt: new Date(STARTED.getTime() - 60 * 60_000),
       posts: {
-        all: { comments: 6, models: 0, images: 0, total: 6 },
-        visible: { comments: 6, models: 0, images: 0, total: 6 },
+        all: { comments: 0, models: 0, images: 8, total: 8 },
+        visible: { comments: 0, models: 0, images: 8, total: 8 },
         excluded: { comments: 0, models: 0, images: 0, total: 0 },
       },
       emailDomain: null,
     };
     const signals = emptyCohortSignals();
-    signals.fingerprintsByUser.set(1, ['paste']);
-    signals.membersPerFingerprint.set('paste', 6);
+    signals.fingerprintsByUser.set(1, ['file:logo.jpg']);
+    signals.membersPerFingerprint.set('file:logo.jpg', 6);
 
     const velocity = postingVelocityHeuristic.score({ member: colliding, now: STARTED, signals });
     const templating = contentTemplatingHeuristic.score({
@@ -1306,17 +1324,17 @@ describe('the counters that make the heuristics’ own blind spots measurable', 
       now: STARTED,
       signals,
     });
-    // 6 items in 0.67h is 9/hour, just over the 4/hour floor — a trace, not a finding.
-    expect(velocity).toBeCloseTo(0.1389, 4);
+    // 8 items in 1.0h is 8/hour, just over the 4/hour floor — a trace, not a finding.
+    expect(velocity).toBeCloseTo(0.1111, 4);
     expect(templating).toBeCloseTo(0.5, 4);
     // The property that makes this the collision population rather than a corroborated finding. The
-    // bar is a function of how many heuristics this RUN registered — three, injected below — and not
-    // of the shipped registry's size. That distinction is the whole point of
-    // `soleSignalDominance`: at four entries the bar is 4 and this same member falls the other side
-    // of it (4 x 0.1389 = 0.5556 against a leader of 0.5), which is the derivation working rather
-    // than the case having stopped being a collision.
-    expect(templating).toBeGreaterThanOrEqual(soleSignalDominance(3) * velocity);
-    expect(templating).toBeLessThan(soleSignalDominance(4) * velocity);
+    // bar is a function of how many heuristics this RUN registered — four, injected below, matching
+    // the shipped registry's size — and not of a number written down anywhere. That is the whole
+    // point of `soleSignalDominance`: at FIVE entries the bar is 5 and this same member falls the
+    // other side of it (5 x 0.1111 = 0.5556 against a leader of 0.5), which is the derivation
+    // working rather than the case having stopped being a collision.
+    expect(templating).toBeGreaterThanOrEqual(soleSignalDominance(4) * velocity);
+    expect(templating).toBeLessThan(soleSignalDominance(5) * velocity);
 
     const { reader } = recordingReader([account(1)]);
     const out = sink();
@@ -1329,6 +1347,7 @@ describe('the counters that make the heuristics’ own blind spots measurable', 
           constantHeuristic(postingVelocityHeuristic.id, velocity),
           constantHeuristic(registrationClusterHeuristic.id, 0),
           constantHeuristic(contentTemplatingHeuristic.id, templating),
+          constantHeuristic(assetStagingHeuristic.id, 0),
         ],
       },
       { pageSize: 10, maxAccounts: 10 }
@@ -1345,6 +1364,7 @@ describe('the counters that make the heuristics’ own blind spots measurable', 
     // The trace itself carried nothing, and must not be counted as though it had.
     expect(result.counters[`heuristic:${postingVelocityHeuristic.id}:sole_signal`]).toBe(0);
     expect(result.counters[`heuristic:${registrationClusterHeuristic.id}:sole_signal`]).toBe(0);
+    expect(result.counters[`heuristic:${assetStagingHeuristic.id}:sole_signal`]).toBe(0);
   });
 
   it('🔴 is blind to REGISTRY ORDER, and counts nobody on a member nothing fired on', async () => {

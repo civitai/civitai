@@ -29,6 +29,7 @@ import {
   type RegistrationIpRow,
   type StagedImageRow,
 } from '../evidence';
+import * as fingerprintKeys from '../fingerprint-keys';
 import { FILENAME_FINGERPRINT_PREFIX, unprefixFingerprint } from '../fingerprint-keys';
 import { STAGED_ONE_AT } from '../heuristics/staging';
 
@@ -127,6 +128,29 @@ describe('unprefixFingerprint', () => {
     // through the comment-text source, which is gone; the naive implementation is still wrong, and
     // a filename may legitimately carry a colon.)
     expect(unprefixFingerprint('my: photo.png')).toBe('my: photo.png');
+  });
+});
+
+describe('the fingerprint NAMESPACE COUNT', () => {
+  it('🔴 is ONE — a tripwire on the claim that `fired_filename` cannot diverge from `fired`', () => {
+    // 🔴 THIS IS AN INVARIANT TRIPWIRE, NOT REGRESSION COVERAGE. No bug ever made this number two;
+    // it is here so that a prose claim expires mechanically instead of rotting.
+    //
+    // `run.ts` documents `heuristic:content-templating:fired_filename` as EQUAL BY CONSTRUCTION to
+    // `heuristic:content-templating:fired`, and that equality rests on exactly one fact: the index
+    // carries a single namespace, so the `file:` filter rejects nothing. `fingerprint-keys.ts` is
+    // where that contract is declared. The moment a second source is folded in and declares its own
+    // prefix there, the equality ends and those notes stop being true — so this fails then, and the
+    // failure is the instruction to go rewrite them.
+    //
+    // Counted off the module rather than asserted as a literal list, so a prefix added under any
+    // name is caught. A source that ships a namespace WITHOUT declaring it here would slip past;
+    // that is the known limit of this tripwire and the reason the notes name the module by name.
+    const prefixes = Object.keys(fingerprintKeys).filter((k) => k.endsWith('_FINGERPRINT_PREFIX'));
+    // Positive control first: the module was imported and its exports are visible, so the count
+    // below is a measurement rather than an empty namespace object reading as "one, minus one".
+    expect(Object.keys(fingerprintKeys).length).toBeGreaterThan(prefixes.length);
+    expect(prefixes).toEqual(['FILENAME_FINGERPRINT_PREFIX']);
   });
 });
 

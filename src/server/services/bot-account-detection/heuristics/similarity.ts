@@ -107,10 +107,16 @@ export const QUOTE_CHARS = 60;
  *
  * `prefix` restricts the search to one source. Omitted, it searches every source, which is what the
  * score itself uses: an account is as suspicious as the largest ring it belongs to, whichever
- * surface that ring shows up on. With one source registered the two are currently the same number —
- * kept because the index is namespaced (see `fingerprint-keys.ts`) and because
- * `heuristic:content-templating:fired_filename` is the per-source counter that made the deleted
- * comment source's silence visible in the first place.
+ * surface that ring shows up on.
+ *
+ * 🔴 WITH ONE NAMESPACE IN THE INDEX THE TWO WALKS CANNOT RETURN DIFFERENT RESULTS. Every key is
+ * `file:`-prefixed (`fingerprint-keys.ts`, pinned in `evidence.test.ts`), so the filter rejects
+ * nothing and a filtered walk is the unfiltered walk. The parameter is therefore inert today and
+ * the one caller that passes it — `contentTemplatingSourceScore`, behind
+ * `heuristic:content-templating:fired_filename` — measures nothing the unprefixed score does not
+ * already say. See that counter's note in `run.ts` for why it is kept anyway and for the trigger
+ * that makes it informative again; the short version is that the namespace, not this parameter, is
+ * the thing a second source needs to exist in advance.
  */
 export function largestContentCluster(
   userId: number,
@@ -132,19 +138,24 @@ export function largestContentCluster(
 /**
  * This account's score from ONE source alone.
  *
- * 🔴 THE DECOMPOSITION IS THE POINT, AND `fired` CANNOT PROVIDE IT. `heuristic:content-templating
- * :fired` does not say WHICH source fired — and the shadow phase's entire philosophy, stated in
- * `scoring.ts`'s header, is that a signal is graded on its own or not at all. Without this the
- * filename half and the comment half were permanently indistinguishable in the counters, which is
- * how the zero-firing comment half survived as long as it did. It is kept now that one source
- * remains precisely because that is the lesson: the next source folded in here arrives with its own
- * counter from the first run, rather than hiding inside an aggregate for five.
+ * 🔴 THE DECOMPOSITION IS THE POINT, AND `fired` CANNOT PROVIDE IT — BUT IT PROVIDES NOTHING TODAY
+ * EITHER, AND BOTH HALVES OF THAT BELONG IN THE SAME SENTENCE. `heuristic:content-templating:fired`
+ * does not say WHICH source fired, and the shadow phase's entire philosophy, stated in `scoring.ts`'s
+ * header, is that a signal is graded on its own or not at all; without this function the filename
+ * half and the comment half were permanently indistinguishable in the counters, which is how the
+ * zero-firing comment half survived as long as it did. With the comment source deleted there is one
+ * namespace left, so this function's only production caller returns exactly what the unprefixed
+ * score returns, for every account, on every run. It is kept for the lesson rather than for a
+ * measurement: the next source folded in here arrives with its own counter from its first run
+ * instead of hiding inside an aggregate. See the `fired_filename` note in `run.ts`, which states the
+ * equality and the trigger that ends it.
  *
- * 🔴 THE PER-SOURCE COUNTERS MAY SUM TO MORE THAN `fired`, DELIBERATELY. An account scoring from two
- * sources counts in both, because the alternative — attributing it to whichever source happened to
- * win a `>` comparison — invents a tie-break the data does not support and would report a real
- * double signal as a single one. They are independent questions ("did the filename half fire on this
- * account") rather than a partition of one.
+ * 🔴 THE PER-SOURCE COUNTERS MAY SUM TO MORE THAN `fired`, DELIBERATELY — A RULE FOR THE SECOND
+ * SOURCE, NOT A DESCRIPTION OF ANY RUN THAT HAS HAPPENED. An account scoring from two sources counts
+ * in both, because the alternative — attributing it to whichever source happened to win a `>`
+ * comparison — invents a tie-break the data does not support and would report a real double signal
+ * as a single one. They are independent questions ("did the filename half fire on this account")
+ * rather than a partition of one. At one source the sum cannot exceed `fired`; it equals it.
  */
 export function contentTemplatingSourceScore(
   userId: number,

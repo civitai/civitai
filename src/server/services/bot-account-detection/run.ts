@@ -293,9 +293,32 @@ export async function runBotAccountDetection(
   // comparing run series across this change sees a key stop rather than go to zero — which is the
   // honest shape, because a zero would assert the source was read and found nothing.
   //
-  // Counted over EVERY scored member, matching `fired`'s own population so the two are directly
-  // comparable. With one source registered they are currently equal; they need not stay so — see
-  // `contentTemplatingSourceScore`.
+  // 🔴 AND TODAY IT CANNOT DIVERGE FROM `fired`. THAT IS NOT A CAVEAT, IT IS THE READING
+  // INSTRUCTION. `fired` counts scored members whose `content-templating` sub-score is above zero
+  // across EVERY namespace in the index; this counts the same members across `file:` alone, over the
+  // same population (`scores` is `cohort.members` mapped one-to-one). With the comment source
+  // deleted the index carries exactly ONE namespace — `evidence.test.ts` pins every key in
+  // `membersPerFingerprint` and `fingerprintsByUser` as `file:`-prefixed — so the prefix filter
+  // rejects nothing and the two counters are EQUAL BY CONSTRUCTION on every run, not merely equal so
+  // far. An operator charting the pair gets two identical lines, and reading that agreement as the
+  // decomposition being exercised is the exact error this paragraph exists to stop: the lines agree
+  // by arithmetic, and they would agree just as perfectly if the decomposition were broken.
+  //
+  // WHAT MAKES IT INFORMATIVE AGAIN, stated as a trigger rather than as a hope: the first run whose
+  // index carries a SECOND namespace. From that run `fired` counts both sources and this one counts
+  // `file:`, and the gap between them is the new source's own contribution — with no change to this
+  // code. `evidence.test.ts` fails the moment a second `*_FINGERPRINT_PREFIX` is declared in
+  // `fingerprint-keys.ts`, which is where that contract lives, so this paragraph is made to expire
+  // rather than left to rot.
+  //
+  // 🔴 WHY IT IS KEPT RATHER THAN DELETED UNTIL THEN, given it measures nothing today. The two
+  // sentences above are the whole argument for the counter's PRESENT value and they concede it is
+  // nil; what removing it would cost is the module's own convention for a vanishing key, asserted
+  // four lines up and in `run.test.ts`: a key that stops appearing says THE SOURCE IS NO LONGER
+  // READ. `fired_text` stopping says something true. `fired_filename` stopping would say the
+  // filename source went dark, on a run where it is the only source there is — a false statement on
+  // the surface that renders these (`abuse_detection_run.counters`, listed key by key on the run
+  // page), and the opposite of what its absence would mean.
   const firedFromSource = (prefix: string) =>
     cohort.members.filter((m) => contentTemplatingSourceScore(m.userId, signals, prefix) > 0)
       .length;
@@ -443,8 +466,12 @@ export async function runBotAccountDetection(
     // Over EVERY scored member, not only the reported ones — see `confidenceBucketCounters`.
     ...confidenceBucketCounters(scores),
     // Over the REPORTED members only: which findings rest on ONE heuristic and nothing else. See
-    // `soleSignalCounters` — this is what a known collision (a generation-parameter paste matching
-    // itself under `content-templating`) shows up as, and it is not visible in `fired`.
+    // `soleSignalCounters` — this is what a known collision shows up as, and it is not visible in
+    // `fired`. 🔴 THE COLLISION THIS LINE USED TO NAME — a generation-parameter paste matching
+    // itself under `content-templating` — IS RETRACTED: it depended on the deleted comment source
+    // and on a digit masking the filename fingerprinter deliberately does not apply, so it cannot
+    // occur. The reachable one is a generic filename several unrelated new accounts happen to share;
+    // `soleSignalCounters` carries the worked arithmetic.
     ...soleSignalCounters(reported, heuristics),
   };
 

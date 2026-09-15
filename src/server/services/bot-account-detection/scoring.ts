@@ -229,33 +229,56 @@ export const soleSignalDominance = (registrySize: number): number => Math.max(1,
  * 🔴 THIS IS THE COUNTER THE FALSE-POSITIVE QUESTION IS ANSWERED WITH, and `fired` cannot answer it.
  * A heuristic that fires alongside the other two on the same account is corroborated; one that
  * carries a finding by itself is the population where a known collision turns into a report nobody
- * should have received. The worked example is `content-templating`: a generation-parameter paste —
- * `Steps: …, Sampler: …, CFG scale: …, Seed: …` — fingerprints identically to the same line with
- * different numbers, because the digit masking is doing the matching, so six accounts pasting their
- * settings under one model look like one ring.
+ * should have received.
+ *
+ * 🔴 THE WORKED EXAMPLE THIS DOCSTRING CARRIED IS RETRACTED, AND SAYING SO RATHER THAN QUIETLY
+ * SWAPPING IT IS THE POINT. It described a generation-parameter paste — `Steps: …, Sampler: …,
+ * CFG scale: …, Seed: …` — fingerprinting identically to the same line with different numbers, "so
+ * six accounts pasting their settings under one model look like one ring". That collision is
+ * UNREACHABLE. It was a property of the deleted comment-text source twice over: the strings were
+ * comments, which are no longer read at all, and what made two different pastes collide was the
+ * prose normaliser's DIGIT MASKING, which `evidence.ts#normalizeFilename` deliberately does not do —
+ * see the measurement there, where masking is rejected precisely because it would collapse every
+ * `<digits>.jpg` into one key. Two filenames differing in their digits are two cluster keys. Nothing
+ * on the surface that remains can produce the example, so anyone tuning against it would have been
+ * tuning against a population that cannot appear.
+ *
+ * 🔴 THE REACHABLE FALSE POSITIVE IS A GENERIC FILENAME, and the counter is justified by that one
+ * instead. There is no length floor and no stoplist of ordinary names here, deliberately — a
+ * stoplist would remove exactly the names a ring shares, because a ring's method is to look
+ * unremarkable (`normalizeFilename`, `heuristics/similarity.ts`). So a camera or export default that
+ * several unrelated people happen to upload under is the collision that survives. What defends
+ * against it is not this counter but `CLUSTER_ZERO_AT` plus the cohort: at least THREE DISTINCT
+ * members, every one an account less than a day old. This counter is how you find out whether that
+ * defence is enough, by isolating the findings that rest on the filename signal and nothing else.
  *
  * 🔴 "CARRIED IT" IS A DOMINANCE TEST, NOT AN EXCLUSIVITY TEST, AND THE DIFFERENCE IS THE WHOLE
  * POINT OF THE COUNTER. The predicate used to be `exactly one heuristic scored above zero`, and that
  * measured a strictly smaller population than the sentence above describes: the collision's own
- * routine shape is a member who ALSO scores a trace somewhere else, and a trace excluded it. A
- * member 40 minutes old with 6 parameter-paste comments and a fingerprint cluster of 6 scores
- * `posting-velocity` 0.1389 — six items in 0.67h is 9/hour, just over the 4/hour floor — and
- * `content-templating` 0.5. It clears `MIN_REPORTED_CONFIDENCE`, is REPORTED, and under the old
- * predicate incremented nothing. An operator reading `content-templating:sole_signal = 0` concluded
- * the collision produced no reports, on the one number the decision about that collision was
- * deferred to, and the error ran in the reassuring direction. The dominance form counts it, at a
- * three-heuristic registry: 0.5 ≥ 3 × 0.1389.
+ * routine shape is a member who ALSO scores a trace somewhere else, and a trace excluded it. Take an
+ * account an hour old that bulk-uploaded 8 images under one ordinary name, sharing that name with 5
+ * other accounts registered the same day. `content-templating` scores the cluster of 6 at 0.5
+ * (`rampScore(6, 2, 10)`) and `posting-velocity` scores 8 items in 1.0h — 8/hour, just over the
+ * 4/hour floor — at 0.1111 (`rampScore(8, 4, 40)`). `registration-cluster` and `asset-staging` score
+ * 0: the accounts share no address or domain, which is what makes this a collision rather than a
+ * ring, and uploads attached to posts are not staged. The blend is (0.5 + 0.1111) / 4 = 0.1528, over
+ * `MIN_REPORTED_CONFIDENCE`, so it is REPORTED — and under the old predicate it incremented nothing,
+ * because of the 0.1111. An operator reading `content-templating:sole_signal = 0` would have
+ * concluded the collision produced no reports, on the one number the decision about it is deferred
+ * to, and the error ran in the reassuring direction. The dominance form counts it: 0.5 ≥ 4 × 0.1111,
+ * which is 0.4444.
  *
- * 🔴 AND AT FOUR IT DOES NOT — 4 × 0.1389 is 0.5556, above the 0.5 that carried it. That is the
- * derivation working rather than failing: with a fourth heuristic registered there is one more place
+ * 🔴 AT FIVE IT WOULD NOT — 5 × 0.1111 is 0.5556, above the 0.5 that carried it. That is the
+ * derivation working rather than failing: with another heuristic registered there is one more place
  * for an unseen contribution to hide, so the bar for "outweighs everything else combined" is higher
  * and this member is no longer on the safe side of it. The consequence is real and worth knowing
  * before reading the counter: the SAME account, scored by a larger registry, moves out of the
- * sole-signal population and into the corroborated one, so a drop in this counter across the change
- * that added `asset-staging` is the bar moving and not the collision going away.
+ * sole-signal population and into the corroborated one. It already happened once — the registry went
+ * from three entries to four when `asset-staging` was added — so a drop in this counter across a
+ * change that grows the registry is the bar moving and not the collision going away.
  *
  * Two signals that genuinely agree still count for neither. At any multiple above 1 a tie fails the
- * test — `0.9 ≥ 3 × 0.9` is false — so corroboration is excluded by the arithmetic rather than by a
+ * test — `0.9 ≥ 4 × 0.9` is false — so corroboration is excluded by the arithmetic rather than by a
  * special case.
  *
  * Run over the REPORTED members rather than all scored ones: a sole signal below the threshold
