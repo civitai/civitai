@@ -1,8 +1,8 @@
 import {
   Badge,
   getPrimaryShade,
-  HoverCard,
   Text,
+  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
@@ -59,6 +59,63 @@ function ModFlagBadge({ labels }: { labels: string[] }) {
 export const ModelCard = memo(function ModelCard({ data }: Props) {
   return <ModelCardContent data={data} />;
 });
+
+const accessChipStyles = { label: { display: 'flex', alignItems: 'center', gap: 4 } } as const;
+
+/**
+ * An abstract glyph is the badge's whole content, so the name has to come from ARIA: Mantine's
+ * `Badge` root is a role-less `div`, and ARIA drops an accessible name from a generic element.
+ *
+ * `Tooltip` rather than `HoverCard` because only `Tooltip` takes `events` — the badge is the sole
+ * explanation of the glyph, so it has to answer a tap and a keyboard focus, not just a mouse. That
+ * needs `tabIndex` too: `focus: true` can only fire on something focusable.
+ *
+ * `pointer-events-auto` is what makes the trigger reachable at all. The card header sets
+ * `pointer-events: none` so the image link stays clickable through it, and `Cards.module.css`'s
+ * `.chip` — unlike the one in the card template — never turns it back on.
+ */
+function AccessChip({
+  label,
+  icon,
+  style,
+  sale,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  style?: React.CSSProperties;
+  sale?: Parameters<typeof SaleDiscountLabel>[0]['sale'];
+}) {
+  return (
+    <Tooltip
+      label={label}
+      position="right"
+      withinPortal
+      withArrow
+      openDelay={0}
+      events={{ hover: true, focus: true, touch: true }}
+    >
+      <Badge
+        className={clsx(cardClasses.chip, 'pointer-events-auto')}
+        variant="filled"
+        radius="xl"
+        data-status-badge="access"
+        role="img"
+        aria-label={label}
+        tabIndex={0}
+        {...(sale ? {} : { circle: true })}
+        styles={accessChipStyles}
+        style={style}
+      >
+        {icon}
+        {sale && (
+          <Text c="white" size="xs" tt="capitalize">
+            <SaleDiscountLabel sale={sale} />
+          </Text>
+        )}
+      </Badge>
+    </Tooltip>
+  );
+}
 
 function ModelCardContent({ data }: Props) {
   const theme = useMantineTheme();
@@ -208,82 +265,19 @@ function ModelCardContent({ data }: Props) {
               </Badge>
             )}
             {isEarlyAccess ? (
-              // `pointer-events-auto` is what makes the hover trigger reachable at all: the card
-              // header sets `pointer-events: none` so the image link stays clickable through it,
-              // and `Cards.module.css`'s `.chip` — unlike the one in the card template — never
-              // turns it back on.
-              <HoverCard
-                position="right"
-                withinPortal
-                withArrow
-                shadow="sm"
-                openDelay={0}
-                zIndex={10000}
-              >
-                <HoverCard.Target>
-                  <Badge
-                    className={clsx(cardClasses.chip, 'pointer-events-auto')}
-                    variant="filled"
-                    radius="xl"
-                    data-status-badge="access"
-                    role="img"
-                    aria-label="Early Access"
-                    {...(sale ? {} : { circle: true })}
-                    styles={{ label: { display: 'flex', alignItems: 'center', gap: 4 } }}
-                    style={earlyAccessBadgeStyle}
-                  >
-                    <IconClockDollar size={16} color="white" />
-                    {sale && (
-                      <Text c="white" size="xs" tt="capitalize">
-                        <SaleDiscountLabel sale={sale} />
-                      </Text>
-                    )}
-                  </Badge>
-                </HoverCard.Target>
-                <HoverCard.Dropdown px="xs" py={4}>
-                  <Text size="xs">Early Access</Text>
-                </HoverCard.Dropdown>
-              </HoverCard>
+              <AccessChip
+                label="Early Access"
+                icon={<IconClockDollar size={16} color="white" />}
+                style={earlyAccessBadgeStyle}
+                sale={sale}
+              />
             ) : isPaidAccess ? (
-              // `role` is load-bearing: Mantine's Badge root is a bare `div`, and ARIA drops an
-              // accessible name from a role-less generic, so without this the icon reaches a screen
-              // reader as nothing. The hover card cannot serve as the name — it is pointer-only.
-              // Mantine's default is hover only (`focus: false, touch: false`). The badge is the
-              // sole explanation of an abstract glyph, so it should also answer a tap and a
-              // keyboard focus, not just a mouse.
-              <HoverCard
-                position="right"
-                withinPortal
-                withArrow
-                shadow="sm"
-                openDelay={0}
-                zIndex={10000}
-              >
-                <HoverCard.Target>
-                  <Badge
-                    className={clsx(cardClasses.chip, 'pointer-events-auto')}
-                    variant="filled"
-                    radius="xl"
-                    data-status-badge="access"
-                    role="img"
-                    aria-label="Paid"
-                    // Icon-only, so a pill leaves dead space either side of a square glyph.
-                    {...(sale ? {} : { circle: true })}
-                    styles={{ label: { display: 'flex', alignItems: 'center', gap: 4 } }}
-                    style={paidBadgeStyle}
-                  >
-                    <IconLockDollar size={16} color="white" />
-                    {sale && (
-                      <Text c="white" size="xs" tt="capitalize">
-                        <SaleDiscountLabel sale={sale} />
-                      </Text>
-                    )}
-                  </Badge>
-                </HoverCard.Target>
-                <HoverCard.Dropdown px="xs" py={4}>
-                  <Text size="xs">Paid</Text>
-                </HoverCard.Dropdown>
-              </HoverCard>
+              <AccessChip
+                label="Paid"
+                icon={<IconLockDollar size={16} color="white" />}
+                style={paidBadgeStyle}
+                sale={sale}
+              />
             ) : null}
             {isArchived && (
               <Badge

@@ -66,6 +66,19 @@ describe('the hover zoom carries the sticker overlay with it', () => {
     expect(block).toContain('.image');
     expect(block).toContain('[data-sticker-overlay]');
 
+    // The block's own text is identical whether it hangs off the card body or off
+    // the link, so finding it proves nothing about which. Hanging it off the link
+    // is the bug: the header is a SIBLING of the link, so a header chip that takes
+    // pointer events drops the link's hover and the picture falls back mid-hover.
+    expect(source().slice(0, source().indexOf('&:hover'))).toMatch(
+      /:global\(\[data-card-hover\]\)\s*\{\s*$/
+    );
+
+    // A descendant, never a sibling. Under the card body the overlay is nested
+    // inside, so the `~` form selects nothing at all and every placed sticker
+    // drifts — which is what a revert of this file produces.
+    expect(block).not.toMatch(/~\s*:global\(\[data-sticker-overlay\]\)/);
+
     const transforms = transformsIn(block ?? '');
 
     // Two rules, one value. A retune that touches only the media leaves two
@@ -74,14 +87,32 @@ describe('the hover zoom carries the sticker overlay with it', () => {
     expect(new Set(transforms).size).toBe(1);
   });
 
+  test('the attribute the hover rule hangs off is actually stamped on the card', () => {
+    const template = readFileSync(
+      resolve(__dirname, '..', '..', 'CardTemplates', 'AspectRatioCard.tsx'),
+      'utf-8'
+    );
+    // The selector and the attribute live in two files and are coupled by nothing but this name,
+    // so deleting the attribute leaves a stylesheet that still reads correctly and a hover zoom
+    // that is dead on every card in the app.
+    //
+    // A source scan, not a render: this pins that the two spellings match. It cannot see the
+    // attribute landing on the wrong element — a render test of AspectRatioCard would, and is the
+    // stronger version of this if one is ever written.
+    expect(template).toMatch(/data-card-hover/);
+    expect(source()).toContain('[data-card-hover]');
+  });
+
   test('the media height is pinned, so the two keep a common centre', () => {
-    expect(source()).toMatch(/height:\s*100%\s*!important/);
+    expect(source()).toMatch(/\.image\s*\{[^}]*height:\s*100%\s*!important/);
   });
 
   test('the overlay transitions with the media rather than snapping', () => {
     const css = source();
 
-    const mediaTransition = /transition:\s*transform\s+400ms\s+ease/.test(css);
+    // Scoped to `.image`'s own block: unscoped, the overlay's rule below satisfies
+    // it, and the two booleans stop being independent.
+    const mediaTransition = /\.image\s*\{[^}]*transition:\s*transform\s+400ms\s+ease/.test(css);
     const overlayTransition =
       /:global\(\[data-sticker-overlay\]\)\s*\{[^}]*transition:\s*transform\s+400ms\s+ease/.test(
         css

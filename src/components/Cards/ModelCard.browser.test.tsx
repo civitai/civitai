@@ -351,6 +351,40 @@ describe('ModelCard paid-gate badge', () => {
     await expect.element(dropdown).toBeVisible();
   });
 
+  test('the access badge explains itself to a keyboard, not only to a mouse', async () => {
+    renderWithProviders(
+      <WithPalette>
+        <ModelCard data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }} />
+      </WithPalette>
+    );
+    const el = await awaitBadge('access');
+    // A glyph with no text has one explanation, and a pointer-only one leaves keyboard and touch
+    // users with nothing. `Tooltip` takes `events`; `HoverCard`, which this replaced, has no such
+    // option at all — so a swap back to it fails here rather than silently shipping a chip only a
+    // mouse can read. `focus: true` also needs something focusable, hence the tabIndex assertion.
+    expect(
+      el.getAttribute('tabindex'),
+      'the access badge is not focusable, so `focus: true` can never fire'
+    ).toBe('0');
+    el.focus();
+    await expect.element(page.getByText('Paid', { exact: true })).toBeVisible();
+  });
+
+  test('the icon-only access chip is a circle, not a narrow oval', async () => {
+    renderWithProviders(
+      <WithPalette>
+        <ModelCard data={{ ...makeData(), hasActivePaidAccess: true, earlyAccessDeadline: null }} />
+      </WithPalette>
+    );
+    const el = (await awaitBadge('access')) as HTMLElement;
+    // `.chip` fixes the height at 26px while Mantine's `circle` sizes the WIDTH from the badge
+    // size, so the pair alone gives an oval. Both axes are pinned inline, which is why this is
+    // readable in a harness that loads no stylesheet.
+    expect(el.style.width).toBe('26px');
+    expect(el.style.height).toBe('26px');
+    expect(el.style.padding).toBe('0px');
+  });
+
   test('renders a clock-dollar for an active timed window, not the words', async () => {
     const deadline = new Date(Date.now() + 60 * 60 * 1000);
     renderWithProviders(
@@ -398,19 +432,17 @@ describe('ModelCard paid-gate badge', () => {
     expect(recencyBadge()).toBeNull();
   });
 
-  test('the Paid badge is green — distinct from BOTH the Updated teal and the Early Access teal', async () => {
+  test('the Paid badge is green, not the teal it shared with Updated', async () => {
     renderWithProviders(
       <WithPalette>
         <ModelCard data={{ ...makeData(), earlyAccessDeadline: null, hasActivePaidAccess: true }} />
       </WithPalette>
     );
     const el = (await awaitBadge('access')) as HTMLElement;
-    // `success` (Early Access) and `teal` (Updated) sit a few degrees apart and read as one colour
-    // at chip size, which is why the paid chip left that family. Asserting the green AND both
-    // absences is what makes a drift back into either of them visible.
+    // One equality carries this. The two `not.toBe`s that used to sit here could not fail while
+    // this line passed — a string that equals one value cannot equal another — so they read as
+    // coverage of a drift back into teal without being any.
     expect(el.style.backgroundColor).toBe('rgb(55, 178, 77)');
-    expect(el.style.backgroundColor).not.toBe('rgb(18, 184, 134)');
-    expect(el.style.backgroundColor).not.toBe('rgb(12, 166, 120)');
   });
 
   test('an ungated model renders no status badge at all', async () => {
