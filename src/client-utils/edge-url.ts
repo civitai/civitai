@@ -33,6 +33,11 @@ export type EdgeUrlProps = {
   type?: MediaType;
   original?: boolean;
   skip?: number;
+  /**
+   * The stored image's own width. Only used to bound the hi-DPI `srcSet` candidate — never emitted
+   * into the URL. Without it a 2x candidate can ask for more pixels than the source has.
+   */
+  sourceWidth?: number | null;
 };
 
 const typeExtensions: Record<MediaType, string> = {
@@ -174,12 +179,12 @@ export const SRCSET_DPR = 2;
  * attribute is omitted rather than listing one URL twice.
  */
 export function getEdgeUrlSrcSet(src: string, options: Omit<EdgeUrlProps, 'src'> = {}) {
-  const { width, original } = options;
+  const { width, original, sourceWidth } = options;
   if (!src || src.startsWith('http') || src.startsWith('blob')) return undefined;
   if (!width || original) return undefined;
 
   const base = clampEdgeWidth(snapWidthToCommonSize(width));
-  const scaled = hiDpiCandidateWidth(base);
+  const scaled = hiDpiCandidateWidth(base, sourceWidth);
   if (!scaled) return undefined;
 
   // Floored, never rounded up: a descriptor that overstates a candidate's density tells the
@@ -203,11 +208,17 @@ export function getEdgeUrlSrcSet(src: string, options: Omit<EdgeUrlProps, 'src'>
  * feeds could not take a srcSet at all.
  *
  * Taking the rung BELOW the 2x target instead gives cards 800 (153,776 bytes) at a true 1.77x,
- * which still covers a DPR-2 card outright. Nothing changes for the surfaces already on a srcSet:
- * 800 -> 1600 is exactly 2x and stays exactly 2x.
+ * which still covers a DPR-2 card outright.
+ *
+ * 🔴 Also bounded by the SOURCE's width, because the cacher upscales rather than refusing. Measured
+ * on an 832x1216 original, post detail's 2x candidate of 1600 comes back as a real 1600x2338 WebP
+ * of 335,598 bytes against 153,776 at 800 — 2.2x the bytes for pixels that are interpolated, not
+ * captured. Most generated images are well under 1600 wide, so without this bound the 2x candidate
+ * on a detail page is an upscale for the majority of them. No candidate is better than a fake one:
+ * when nothing fits, the attribute is omitted and the browser keeps the 1x variant.
  */
-export function hiDpiCandidateWidth(base: number) {
-  const ceiling = base * SRCSET_DPR;
+export function hiDpiCandidateWidth(base: number, sourceWidth?: number | null) {
+  const ceiling = Math.min(base * SRCSET_DPR, sourceWidth || Infinity);
   for (let i = COMMON_IMAGE_WIDTHS.length - 1; i >= 0; i--) {
     const rung = clampEdgeWidth(COMMON_IMAGE_WIDTHS[i]);
     if (rung > base && rung <= ceiling) return rung;

@@ -317,6 +317,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
                   imageId={image.id}
                   width={450}
                   hiDpi={features.hiDpiPreviews}
+                  sourceWidth={image.width}
                   placeholder="empty"
                   wrapperProps={edgeMediaWrapperProps}
                   skip={getSkipValue(image)}
@@ -443,6 +444,7 @@ function PostCarouselSlide({
                   imageId={image.id}
                   width={450}
                   hiDpi={features.hiDpiPreviews}
+                  sourceWidth={image.width}
                   placeholder="empty"
                   wrapperProps={edgeMediaWrapperProps}
                   skip={getSkipValue(image)}

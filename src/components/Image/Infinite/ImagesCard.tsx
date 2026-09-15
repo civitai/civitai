@@ -127,6 +127,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                       wrapperProps={{ className: 'flex-1 h-full' }}
                       width={450}
                       hiDpi={features.hiDpiPreviews}
+                      sourceWidth={image.width}
                       placeholder="empty"
                       contain
                       loading="lazy"

@@ -211,6 +211,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                         wrapperProps={{ className: 'flex-1 h-full' }}
                         width={IMAGE_CARD_WIDTH}
                         hiDpi={features.hiDpiPreviews}
+                        sourceWidth={image.width}
                         contain
                       />
                     )
@@ -234,6 +235,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                           : IMAGE_CARD_WIDTH
                       }
                       hiDpi={features.hiDpiPreviews}
+                        sourceWidth={image.width}
                       skip={
                         image.type === 'video'
                           ? getSkipValue({

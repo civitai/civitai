@@ -144,6 +144,51 @@ describe('getEdgeUrlSrcSet', () => {
     expect(checked).toBeGreaterThanOrEqual(5);
   });
 
+  it('never offers a 2x candidate wider than the SOURCE', () => {
+    // 🔴 The cacher UPSCALES rather than refusing. Measured on an 832x1216 original, post detail's
+    // 1600 candidate comes back a real 1600x2338 WebP of 335,598 bytes against 153,776 at 800 —
+    // 2.2x the bytes for interpolated pixels. Most generated images are under 1600 wide, so
+    // unbounded this is an upscale for the majority of them on every detail page.
+    expect(getEdgeUrlSrcSet(SRC, { width: 800, sourceWidth: 832 })).toBeUndefined();
+    // A source that can actually back the candidate still gets one.
+    expect(descriptors(getEdgeUrlSrcSet(SRC, { width: 800, sourceWidth: 4096 }))).toEqual([
+      { width: 800, descriptor: '1x' },
+      { width: 1600, descriptor: '2x' },
+    ]);
+  });
+
+  it('drops to a smaller rung the source CAN back, rather than omitting outright', () => {
+    // 450 base with a 900px source: 800 fits under both the 2x ceiling and the source.
+    expect(descriptors(getEdgeUrlSrcSet(SRC, { width: 450, sourceWidth: 900 }))).toEqual([
+      { width: 450, descriptor: '1x' },
+      { width: 800, descriptor: '1.77x' },
+    ]);
+    // A 512px source cannot back 800, but it CAN back 512 — so the candidate drops a rung rather
+    // than disappearing. 13% more pixels is still more pixels, and they are real ones.
+    expect(descriptors(getEdgeUrlSrcSet(SRC, { width: 450, sourceWidth: 512 }))).toEqual([
+      { width: 450, descriptor: '1x' },
+      { width: 512, descriptor: '1.13x' },
+    ]);
+    // Only when NO rung fits between the base and the source is the attribute omitted.
+    expect(getEdgeUrlSrcSet(SRC, { width: 450, sourceWidth: 460 })).toBeUndefined();
+  });
+
+  it('keeps emitting a candidate when the source width is unknown', () => {
+    // Call sites that do not know the source must not silently lose their 2x variant.
+    expect(descriptors(getEdgeUrlSrcSet(SRC, { width: 450 }))).toEqual([
+      { width: 450, descriptor: '1x' },
+      { width: 800, descriptor: '1.77x' },
+    ]);
+  });
+
+  it('never emits sourceWidth into the URL', () => {
+    // It bounds the candidate; it is not a CDN parameter.
+    expect(getEdgeUrl(SRC, { width: 800, sourceWidth: 4096 })).not.toContain('sourceWidth');
+    for (const c of (getEdgeUrlSrcSet(SRC, { width: 800, sourceWidth: 4096 }) ?? '').split(', ')) {
+      expect(c).not.toContain('sourceWidth');
+    }
+  });
+
   it('carries every other option onto BOTH variants', () => {
     // The 2x URL losing `optimized` is the expensive failure: unoptimized, the 1600px
     // variant of a detailed image measures ~1MB against ~305kB.
