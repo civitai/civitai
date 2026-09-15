@@ -42,8 +42,10 @@ root changes were needed.
   workflow was safe to delete is worth keeping: GitHub reads workflows only from the repo-root
   `.github/workflows/`, so a nested copy is **structurally never scheduled** — verified against the
   Actions API, which listed **zero** workflows under `apps/`. (Quote that zero, not a count of root
-  entries: the registry retains rows for workflow files that have since been deleted, so the root
-  number it returns is larger than the tree's and a re-verifier will not reproduce it.)
+  entries: the registry carries rows that do not correspond to the default branch's tree at all —
+  both for workflow files since deleted **and** for files that only ever existed on a branch — so the
+  root number it returns is larger than the tree's, and a re-verifier will not reproduce it. Measured
+  2026-09-15: 6 root rows against 4 tracked root workflow files.)
   🔴 `scripts/release.mjs` was the dangerous half and was **not** inert: 437 lines, wired to no
   `package.json` script and referenced by nothing, but executable. Run as
   `node scripts/release.mjs` **from `apps/event-engine`** it would check out `release`, rebase it onto
@@ -72,17 +74,19 @@ root changes were needed.
 - `docs/reference/release-script-example.js` and `docs/reference/service-deploy-workflow.yml` were
   referenced only by that deleted task prompt and are now orphaned. **Kept deliberately** as
   examples of the pre-monorepo release shape; they should not be read as live.
-  🔴 **"Not wired to anything" is NOT why the first one is safe — the bullet above says in terms that
-  unwired-but-executable is exactly the dangerous shape, and this file is a 446-line near-copy of the
-  `scripts/release.mjs` just deleted, sharing its branch constants and its `createGitTag`/`pushRelease`
-  path.** What actually stops it is narrower and worth stating, because nothing else records it: its
-  helpers resolve `<dir>/../<name>/package.json` against a `docs/` parent, so it throws `ENOENT`
-  inside the version bump — *after* an `ensureOnMain()` checkout but **before** the release branch is
+  🔴 **"Not wired to anything" is NOT why the first one is safe — the `.github/`+`release.mjs` bullet
+  earlier in this list says in terms that unwired-but-executable is exactly the dangerous shape, and
+  this file is a 446-line near-copy of the `scripts/release.mjs` just deleted, sharing its branch
+  constants and its `createGitTag`/`pushRelease` path.** What actually stops it is narrower and worth
+  stating, because nothing else records it: `getCurrentVersion()` resolves `<its dir>/../package.json`
+  — a `docs/` parent, which holds none — so it throws `ENOENT` in the version **read**, before any
+  write. That read sits *after* an `ensureOnMain()` checkout but **before** the release branch is
   touched, so it cannot reach a tag or a push. Two consequences for whoever reads this next: do not
   cite "unreferenced" as the reason it is retained, and do not conclude from the bullet above that
   the runnable-release-script class was cleared from this app — one copy remains, deliberately, and
   its safety rests on a path that does not exist.
-  ⚠ Retaining it is **an open question, not a settled decision**: the same criterion four lines above
+  ⚠ Retaining it is **an open question, not a settled decision**: the same criterion in the
+  `.github/`+`release.mjs` bullet
   deleted a near-identical file. Either delete this one too, or keep it and this paragraph is why.
 
 ## Outbox reconciliation poller (ported in on top of the lift-and-shift)
