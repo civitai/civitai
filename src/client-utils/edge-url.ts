@@ -184,13 +184,40 @@ export function getEdgeUrlSrcSet(src: string, options: Omit<EdgeUrlProps, 'src'>
   if (!width || original) return undefined;
 
   const base = clampEdgeWidth(snapWidthToCommonSize(width));
-  const scaled = clampEdgeWidth(snapWidthToCommonSize(width * SRCSET_DPR));
-  if (scaled <= base) return undefined;
+  const scaled = hiDpiCandidateWidth(base);
+  if (!scaled) return undefined;
+
+  // Floored, never rounded up: a descriptor that overstates a candidate's density tells the
+  // browser it has pixels it does not have.
+  const density = Math.floor((scaled / base) * 100) / 100;
 
   return [
     `${srcSetSafe(getEdgeUrl(src, { ...options, width: base }))} 1x`,
-    `${srcSetSafe(getEdgeUrl(src, { ...options, width: scaled }))} ${SRCSET_DPR}x`,
+    `${srcSetSafe(getEdgeUrl(src, { ...options, width: scaled }))} ${density}x`,
   ].join(', ');
+}
+
+/**
+ * The widest ladder rung that is larger than `base` without exceeding `SRCSET_DPR` times it.
+ *
+ * Deliberately NOT `snapWidthToCommonSize(base * SRCSET_DPR)`, which rounds the doubled width UP
+ * to the next rung and so OVERSHOOTS whenever 2x lands between rungs. A 450px card doubles to 900,
+ * and the rung above 900 is 1200 — measured on the live CDN, `width=900` is byte-identical to
+ * `width=1200` (239,932 bytes, 1200x1754 actual pixels) because the cacher snaps server-side too.
+ * That is 5x the bytes of the 450 variant for a box that renders ~318 CSS px, which is why card
+ * feeds could not take a srcSet at all.
+ *
+ * Taking the rung BELOW the 2x target instead gives cards 800 (153,776 bytes) at a true 1.77x,
+ * which still covers a DPR-2 card outright. Nothing changes for the surfaces already on a srcSet:
+ * 800 -> 1600 is exactly 2x and stays exactly 2x.
+ */
+export function hiDpiCandidateWidth(base: number) {
+  const ceiling = base * SRCSET_DPR;
+  for (let i = COMMON_IMAGE_WIDTHS.length - 1; i >= 0; i--) {
+    const rung = clampEdgeWidth(COMMON_IMAGE_WIDTHS[i]);
+    if (rung > base && rung <= ceiling) return rung;
+  }
+  return undefined;
 }
 
 /**

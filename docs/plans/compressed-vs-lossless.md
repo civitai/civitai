@@ -271,34 +271,46 @@ not the `Status:` line when checking it.
 
 ---
 
-## 6. The 900 rung — blocked on civitai-image-cacher
+## 6. Card feeds get a 2x variant — without a cacher change
 
-Enabling `hiDpi` on card feeds needs a 900 rung, because 450 x 2 = 900 and the ladder's next value
-is 1200. **The cacher does not have one, and adding 900 to `COMMON_IMAGE_WIDTHS` on this side alone
-makes things worse, not neutral.**
-
-Measured 2026-09-15 on the live CDN, same image, decoded pixel dimensions read from the container:
+Card feeds were excluded from `hiDpi` because 450 x 2 = 900 and the ladder's next rung is 1200.
+**There is no 900 rung, and adding one to `COMMON_IMAGE_WIDTHS` alone would not have produced one.**
+Measured 2026-09-15 on the live CDN, pixel dimensions decoded from the container:
 
 | Requested | Content-Type | Bytes | Actual pixels |
 |---|---|---|---|
 | `width=450,optimized=true` | webp | 48,144 | 450 x 658 |
+| `width=512,optimized=true` | webp | 62,668 | 512 x 748 |
 | `width=800,optimized=true` | webp | 153,776 | 800 x 1169 |
 | **`width=900,optimized=true`** | webp | **239,932** | **1200 x 1754** |
-| `width=1000,optimized=true` | webp | 239,932 | 1200 x 1754 |
 | `width=1200,optimized=true` | webp | 239,932 | 1200 x 1754 |
 
-`width=900` is byte-identical to `width=1200`: the cacher snaps server-side to its own next rung.
-So a client-side 900 would emit a *new URL* that returns the *same 1200px object* — a second cache
-entry for identical bytes, and 5x the bytes of the 450 variant for a box that renders ~318 CSS px.
+`width=900` is byte-identical to `width=1200` — the cacher snaps server-side to its own next rung,
+so a client-side 900 would mint a second cache entry for the same 1200px object.
 
-**The ask is one line in civitai-image-cacher's `ImageCacherOptions.CommonSizes` (Koen): add 900.**
-Confirm it landed by re-running the table above and checking that `width=900` reports 900 actual
-pixels rather than 1200. Once it does, this side is two changes:
+**The fix needed no cacher change at all: stop rounding the 2x target UP.** `hiDpiCandidateWidth`
+takes the widest rung that is larger than the base without exceeding `SRCSET_DPR` times it, and the
+descriptor states that candidate's TRUE density rather than a hardcoded `2x`:
 
-1. add `900` to `COMMON_IMAGE_WIDTHS` in `src/client-utils/edge-url.ts`;
-2. pass `hiDpi` on the card components (`ImagesCard`, `ImageCard`, the model-page gallery).
+| Base | Candidate | Descriptor |
+|---|---|---|
+| 320 | 512 | 1.6x |
+| **450 (cards)** | **800** | **1.77x** |
+| 512 | 800 | 1.56x |
+| **800 (post detail, showcase)** | **1600** | **2x** — unchanged |
+| 1600 | 1800 | 1.12x |
+| 1800, 2200 | — | attribute omitted |
 
-Until then, card feeds stay 1x on purpose.
+A card renders ~318 CSS px, so a DPR-2 card needs ~636 device px and the 800 candidate covers it
+outright — 1.77x is a truthful descriptor, not a compromise. Cost is 48kB -> 154kB on DPR>=2
+displays only, against 240kB for the 1200 rung that made this a non-starter before.
+
+The descriptor is floored, never rounded up: claiming 1.78x for an 800/450 candidate would tell the
+browser it has pixels it does not have.
+
+Enabled on `ImagesCard` under the existing `hiDpiPreviews` flag. A 900 rung in the cacher would
+still be a small win (900 is a tighter fit than 800 for a 450 base) but is no longer blocking, and
+is not worth asking for on its own.
 
 ---
 

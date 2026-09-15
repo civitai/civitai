@@ -206,10 +206,12 @@ const featureFlags = createFeatureFlags({
   // a boolean with `enabled: false` and no rollout IS the kill switch — Flipt's answer
   // overrides static evaluation in both directions.
   //
-  // Deliberately NOT applied to card feeds (`/images`, the model-page gallery). Those request
-  // 450, whose 2x doubles to 900 and then snaps to the 1200 rung — ~3.7x the bytes (60kB ->
-  // 221kB) on an infinitely scrolling surface, for a box that only renders ~318 CSS px. Wants a
-  // ~900 rung in civitai-image-cacher's `CommonSizes` before it can be turned on there.
+  // Card feeds are included now. They were excluded while the 2x candidate came from rounding the
+  // doubled width UP: 450 doubles to 900, and the rung above 900 is 1200 — which the CDN serves as
+  // a 1200px object identical to `width=1200`, 5x the bytes of the 450 variant for a box that only
+  // renders ~318 CSS px. `hiDpiCandidateWidth` takes the rung BELOW the 2x target instead, so a
+  // card gets 800 (154kB against 48kB) at a true 1.77x, which still covers a DPR-2 card outright.
+  // No change to the surfaces already on a srcSet: 800 -> 1600 is exactly 2x either way.
   hiDpiPreviews: { availability: ['public'], fliptKey: 'hi-dpi-previews' },
   // Compressed becomes the default for every viewer at every width, and lossless becomes a paid
   // member's choice. Replaces a rule where every term forced compression ON and none could force

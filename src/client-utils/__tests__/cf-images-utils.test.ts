@@ -95,6 +95,7 @@ describe('getEdgeUrlSrcSet', () => {
       return { width: Number(url.match(/width=(\d+)/)?.[1]), descriptor };
     });
 
+
   it('pairs the requested width with a variant one ladder-snapped doubling up', () => {
     // Post detail renders an 800 CSS px box; a 2x display needs 1600 real pixels.
     expect(descriptors(getEdgeUrlSrcSet(SRC, { width: 800 }))).toEqual([
@@ -104,11 +105,44 @@ describe('getEdgeUrlSrcSet', () => {
   });
 
   it('snaps both descriptors onto the ladder', () => {
-    // 451 -> 512; 902 -> 1200. Neither number appears verbatim.
+    // 451 -> 512 for the 1x; the 2x target of 1024 has no rung, so the candidate is the widest
+    // rung under it, 800. Neither number appears verbatim.
     expect(descriptors(getEdgeUrlSrcSet(SRC, { width: 451 }))).toEqual([
       { width: 512, descriptor: '1x' },
-      { width: 1200, descriptor: `${SRCSET_DPR}x` },
+      { width: 800, descriptor: '1.56x' },
     ]);
+  });
+
+  it('gives a card the 800 rung at a true 1.77x, NOT the 1200 one at a claimed 2x', () => {
+    // 🔴 The reason card feeds can take a srcSet at all. 450 doubles to 900, and rounding that UP
+    // lands on 1200 — which the CDN serves as a 1200px object byte-identical to `width=1200`
+    // (239,932 bytes measured), 5x the bytes of the 450 variant for a box rendering ~318 CSS px.
+    expect(descriptors(getEdgeUrlSrcSet(SRC, { width: 450 }))).toEqual([
+      { width: 450, descriptor: '1x' },
+      { width: 800, descriptor: '1.77x' },
+    ]);
+  });
+
+  it('never claims a density the candidate does not have, nor exceeds SRCSET_DPR', () => {
+    // A descriptor is a promise about pixels: rounding 800/450 up to 1.78x would overstate it.
+    // The SRCSET_DPR ceiling is the other half — without it a card reaches for 1200, and the
+    // attribute becomes a bandwidth regression dressed as a sharpness win.
+    let checked = 0;
+    for (const width of COMMON_IMAGE_WIDTHS) {
+      const srcSet = getEdgeUrlSrcSet(SRC, { width });
+      if (!srcSet) continue;
+      const [base, scaled] = descriptors(srcSet);
+      const ratio = (scaled.width as number) / (base.width as number);
+      expect(Number(scaled.descriptor.replace('x', '')), `width=${width}`).toBeLessThanOrEqual(
+        ratio
+      );
+      expect(ratio, `width=${width}`).toBeLessThanOrEqual(SRCSET_DPR);
+      expect(ratio, `width=${width}`).toBeGreaterThan(1);
+      checked++;
+    }
+    // Guards the loop itself: a `descriptors` shape change that made every iteration `continue`
+    // would otherwise leave this passing while asserting nothing.
+    expect(checked).toBeGreaterThanOrEqual(5);
   });
 
   it('carries every other option onto BOTH variants', () => {
@@ -132,7 +166,7 @@ describe('getEdgeUrlSrcSet', () => {
     for (const candidate of (srcSet ?? '').split(', ')) {
       const [url, descriptor, ...extra] = candidate.split(' ');
       expect(extra).toEqual([]);
-      expect(descriptor).toMatch(/^\dx$/);
+      expect(descriptor).toMatch(/^\d+(\.\d+)?x$/);
       expect(url).toContain('%20');
     }
     expect(descriptors(srcSet)).toEqual([
