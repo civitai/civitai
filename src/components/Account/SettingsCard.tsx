@@ -425,11 +425,15 @@ export function ImageFormatSelect({ withLabel }: { withLabel?: boolean } = {}) {
       // write, while the local override below kept showing the value that never saved.
       allowDeselect={false}
       value={chosen ?? served}
-      // Lossless stays selectable for a non-member on purpose — the click is the upsell, and
+      // Uncompressed stays selectable for a non-member on purpose — the click is the upsell, and
       // `onChange` routes them instead of saving.
+      //
+      // Named for the step it skips, not for fidelity: this path still resizes to the requested
+      // width, so it is not bit-exact and must not be sold as lossless. Only `original=true` — the
+      // download shape — is the stored file.
       data={[
         { value: 'optimized', label: 'Compressed' },
-        { value: 'metadata', label: 'Lossless' },
+        { value: 'metadata', label: 'Uncompressed' },
       ]}
       renderOption={({ option }) => (
         <Group gap="xs" justify="space-between" wrap="nowrap" w="100%">

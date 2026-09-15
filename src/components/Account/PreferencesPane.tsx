@@ -30,7 +30,7 @@ export function PreferencesPane() {
       <SettingsSection title="Media quality & playback">
         <SettingRow
           label="Media quality"
-          description="Quality of images while you browse the site. Downloads always give you the original."
+          description="Quality of images while you browse. Uncompressed skips our extra compression; images are still resized to fit. Downloads always give you the original file."
           control={<ImageFormatSelect />}
         />
         <SettingRow block>
