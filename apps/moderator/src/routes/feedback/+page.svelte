@@ -89,6 +89,9 @@
     )
   );
 
+  /** The bar renders on exactly this condition; `barMounted` below is the same expression, named. */
+  const barMounted = $derived(canSetStatus && selectedRows.length > 0);
+
   const allSelected = $derived(
     selectableIds.length > 0 && selectableIds.every((id) => selected.has(id))
   );
@@ -121,7 +124,16 @@
    * disabled during submit; the checkboxes are not, and disabling the whole table mid-flight would
    * be a worse trade than rendering the message here.)
    */
-  const orphanedBulkFailure = $derived(selectedRows.length === 0 ? bulkFailure : null);
+  const orphanedBulkFailure = $derived(barMounted ? null : bulkFailure);
+
+  /**
+   * 🔴 WHETHER THE SELECTION BAR IS ON SCREEN, WHICH IS WHAT DECIDES WHO RENDERS A REFUSAL — and it
+   * is deliberately NOT a scope test. `requiresGrant` stamps `scope: 'denied'`, not
+   * `FEEDBACK_BULK_SCOPE`, so a bulk action's own 403 carries a scope this page does not recognise:
+   * gating on the string let that one refusal render in the bar AND at page level at once, which is
+   * exactly what the suppression exists to prevent. Position is the honest test — while the bar is
+   * mounted it owns its own failure, whatever `fail()` site produced it.
+   */
 
   const bulkMessage = $derived(
     form && 'bulkMessage' in form && form.bulkMessage ? String(form.bulkMessage) : null
@@ -159,11 +171,16 @@
    * 🔴 The tab triggers are LINKS for this same reason (`FeedbackTabs.svelte`): a no-JS client must
    * still be able to reach `?tab=triage`, or the form this message is about would be unreachable.
    */
-  // 🔴 `!bulkFailure` is part of the condition: the bulk action's refusal is rendered by the selection
-  // bar, which is `fixed` and therefore always in view. Without this clause a bulk refusal raised
-  // with no row open would render TWICE — once here and once in the bar.
+  // 🔴 `!barMounted` is part of the condition: while the selection bar is on screen it renders its
+  // own refusal, and it is `fixed` so it is always in view. Without this clause that refusal renders
+  // TWICE — once here and once in the bar.
+  //
+  // ⚠️ A NARROW GAP REMAINS, STATED RATHER THAN HIDDEN: a bulk refusal that arrives after the bar
+  // unmounted (the selection cleared mid-flight) AND with a row open is rendered by nothing — the
+  // detail panel shows its own forms' failures only. `orphanedBulkFailure` covers the no-row-open
+  // half; closing the rest needs the denial to carry a scope this page can attribute.
   const pageError = $derived(
-    !data.openVisible && !bulkFailure && form && 'error' in form && form.error
+    !data.openVisible && !barMounted && form && 'error' in form && form.error
       ? String(form.error)
       : null
   );
@@ -394,7 +411,7 @@
     <ErrorAlert message={orphanedBulkFailure} class="mt-4" />
   {/if}
 
-  {#if canSetStatus && selectedRows.length > 0}
+  {#if barMounted}
     <FeedbackBulkBar rows={selectedRows} onclear={() => selected.clear()} />
   {/if}
 {/if}

@@ -122,8 +122,11 @@ const reports = (n: number) => `${n} report${n === 1 ? '' : 's'}`;
  *     NOT BE ASSERTED: `bulkTriageFeedback` deliberately does not spend a read per refusal, so a row
  *     someone else triaged and a row that was DELETED are indistinguishable here. Naming the first
  *     sends the operator looking for a colleague's verdict on a report that no longer exists.
- *   - `skipped`   — rows already AT the target. Not a refusal at all, and silently dropping them is
- *     how "I selected 10" becomes "Updated 6" with nothing on screen accounting for the other four.
+ *   - `skipped`   — rows whose ON-SCREEN status already equalled the target. 🔴 A CLAIM ABOUT THE
+ *     SCREEN, NOT THE DATABASE: it is derived from the posted expectations and nothing reads the
+ *     rows back, so a stale page makes "already X" false of the database while staying true of what
+ *     the operator was looking at. Worded accordingly. Silently dropping them is how "I selected
+ *     10" becomes "Set 6" with nothing accounting for the other four.
  *
  * 🔴 THE VERDICT IS NAMED. The bar's buttons are the only other thing that says which verdict was
  * applied, and the bar unmounts the moment a successful run clears the selection — so a message that
@@ -152,7 +155,9 @@ export function feedbackBulkOutcome(input: {
   if (input.skipped > 0) {
     // The verb agrees with THIS count, not with `changed`.
     parts.push(
-      `${reports(input.skipped)} ${input.skipped === 1 ? 'was' : 'were'} already ${input.status}.`
+      `${reports(input.skipped)} ${input.skipped === 1 ? 'was' : 'were'} already showing ${
+        input.status
+      }.`
     );
   }
   return parts.join(' ');

@@ -19,7 +19,7 @@ import {
  */
 
 const rows = (...pairs: [number, string][]): FeedbackBulkRow[] =>
-  pairs.map(([id, expectedStatus]) => ({ id, expectedStatus }) as FeedbackBulkRow);
+  pairs.map(([id, expectedStatus]) => ({ id, expectedStatus } as FeedbackBulkRow));
 
 describe('parseFeedbackBulkRows', () => {
   it('round-trips what the bar encodes', () => {
@@ -47,7 +47,9 @@ describe('parseFeedbackBulkRows', () => {
 
   it('accepts the same submission once the unreadable pair is removed', () => {
     // The positive control for the table above: these inputs differ from it by the bad pair alone.
-    expect(parseFeedbackBulkRows('12:new,9:dismissed')).toEqual(rows([12, 'new'], [9, 'dismissed']));
+    expect(parseFeedbackBulkRows('12:new,9:dismissed')).toEqual(
+      rows([12, 'new'], [9, 'dismissed'])
+    );
   });
 
   it('refuses a duplicate id rather than deduplicating it', () => {
@@ -155,7 +157,7 @@ describe('feedbackBulkOutcome', () => {
     expect(outcome({ changed: 6, actionable: 9, skipped: 4 })).toBe(
       'Set 6 reports to reviewed. ' +
         '3 reports did not change — triaged elsewhere, or no longer in the queue. ' +
-        '4 reports were already reviewed.'
+        '4 reports were already showing reviewed.'
     );
   });
 
@@ -171,8 +173,10 @@ describe('feedbackBulkOutcome', () => {
 
   it('accounts for rows that were already at the target', () => {
     // Without this clause "I selected 10" silently becomes "Set 6" with nothing explaining the rest.
+    // 🔴 "already SHOWING" — the count comes from the posted expectations, so it is a claim about the
+    // operator's screen and not about the database, which this request never read back.
     expect(outcome({ changed: 6, actionable: 6, skipped: 4 })).toContain(
-      '4 reports were already reviewed'
+      '4 reports were already showing reviewed'
     );
   });
 
@@ -188,7 +192,6 @@ describe('feedbackBulkOutcome', () => {
     // 🔴 The refused clause had its own pluraliser bug: `1 were already…`. Each count carries its
     // own verb.
     expect(message).toContain('1 report did not change');
-    expect(message).toContain('1 report was already reviewed');
+    expect(message).toContain('1 report was already showing reviewed');
   });
 });
-

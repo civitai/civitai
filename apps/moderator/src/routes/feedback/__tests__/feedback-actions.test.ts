@@ -317,6 +317,80 @@ describe('load', () => {
   });
 });
 
+/**
+ * 🔴 THE THREE-WAY CONDITION IS THE WHOLE REASON THE PICKER'S OPTIONS ARE NOT LOADED WITH THE LIST.
+ * Widening it to "always" is a `Bug` query on every page turn for a control nobody can see, and it
+ * would ship green — nothing else asserts on it.
+ */
+describe("load: the issue picker's options", () => {
+  const ROW = {
+    id: 5,
+    area: 'apps-marketplace',
+    userId: 1,
+    username: 'reporter',
+    message: 'x',
+    context: {},
+    status: 'new',
+    createdAt: new Date(),
+    triageNote: null,
+    handledById: null,
+    handledByUsername: null,
+    handledAt: null,
+    bugId: null as number | null,
+    bugTitle: null,
+    bugStatus: null,
+  };
+  // `as never` on the payload: the shared `getFeedbackList` fake is declared returning an empty
+  // list, so its inferred item type is `never[]` and any real row is unassignable to it.
+  const withRow = (over: Partial<typeof ROW> = {}) => {
+    getFeedbackList.mockResolvedValue({
+      items: [{ ...ROW, ...over }],
+      nextCursor: null,
+      nextCursorValue: null,
+    } as never);
+  };
+  const loadWith = async (grants: Record<string, true>) =>
+    (await load({
+      url: new URL('https://moderator.test/feedback?status=new&open=5'),
+      request: { method: 'GET' },
+      locals: { user: MOD, grants },
+    } as never)) as { knownIssues: unknown[] };
+
+  it('loads them for an open, unlinked row when the grant is held', async () => {
+    withRow();
+    const result = await loadWith(ALL_GRANTS);
+
+    expect(getKnownIssues).toHaveBeenCalled();
+    expect(result.knownIssues).toEqual([]);
+  });
+
+  it('does NOT load them without the promote grant', async () => {
+    withRow();
+    await loadWith({ 'feedback.status.set': true });
+
+    expect(getKnownIssues).not.toHaveBeenCalled();
+  });
+
+  it('does NOT load them for a row already linked to an issue', async () => {
+    // The attach form does not render for a linked row, so its options are a query for nothing.
+    withRow({ bugId: 42 });
+    await loadWith(ALL_GRANTS);
+
+    expect(getKnownIssues).not.toHaveBeenCalled();
+  });
+
+  it('does NOT load them when no row is open', async () => {
+    withRow();
+    await load({
+      url: new URL('https://moderator.test/feedback?status=new'),
+      request: { method: 'GET' },
+      locals: { user: MOD, grants: ALL_GRANTS },
+    } as never);
+
+    expect(getKnownIssues).not.toHaveBeenCalled();
+  });
+});
+
 describe('triage action', () => {
   const form = (over: Record<string, string> = {}) => ({
     id: '5',
@@ -553,9 +627,8 @@ describe('bulkTriage action', () => {
   it('reports the refused rows rather than only the changed ones', async () => {
     bulkTriageFeedback.mockResolvedValue({ changed: [5], actionable: 2 });
 
-    const message = (
-      (await actions.bulkTriage(event(form()))) as { bulkMessage: string }
-    ).bulkMessage;
+    const message = ((await actions.bulkTriage(event(form()))) as { bulkMessage: string })
+      .bulkMessage;
 
     expect(message).toContain('Set 1 report to reviewed.');
     expect(message).toContain('1 report did not change');
@@ -578,7 +651,7 @@ describe('bulkTriage action', () => {
       }
     ).bulkMessage;
 
-    expect(message).toContain('1 report was already reviewed');
+    expect(message).toContain('1 report was already showing reviewed');
   });
 
   it('is a 409, not a success, when nothing moved', async () => {
@@ -602,7 +675,7 @@ describe('bulkTriage action', () => {
 
     const { status, error } = failure(await actions.bulkTriage(event(form())));
     expect(status).toBe(409);
-    expect(error).toMatch(/already reviewed/i);
+    expect(error).toMatch(/already showing reviewed/i);
     expect(error).not.toMatch(/triaged elsewhere/i);
   });
 

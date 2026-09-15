@@ -541,6 +541,12 @@ export async function triageFeedback(input: {
  * one query per refusal to produce words nobody can act on individually.
  */
 export async function bulkTriageFeedback(input: {
+  /**
+   * 🔴 IDS MUST BE UNIQUE, AND THIS FUNCTION DOES NOT ENFORCE IT. `parseFeedbackBulkRows` refuses a
+   * repeated id before this is reached — two pairs naming one row carry two different expectations —
+   * but this is exported and the test tier calls it directly. A duplicate would inflate `actionable`
+   * without `changed` following, i.e. report a refusal that never happened.
+   */
   rows: readonly { id: number; expectedStatus: FeedbackStatus }[];
   status: FeedbackStatus;
   moderatorId: number;
@@ -556,10 +562,14 @@ export async function bulkTriageFeedback(input: {
   /**
    * 🔴 ONE TRANSACTION ACROSS THE (AT MOST FOUR) STATEMENTS. They are issued sequentially, so a
    * throw on the second would otherwise leave the first group's rows MOVED with no audit row for
-   * them — `recordModActivityBatch` runs after the loop — and surface as an uncaught error out of
-   * the action, which renders the error boundary, unmounts the page and takes any open detail
-   * panel's unsaved draft with it. Rolling back is the only outcome that leaves the queue and the
-   * audit log agreeing. Same argument `promoteFeedbackToBug` makes one screen up.
+   * them — `recordModActivityBatch` runs after the loop. Rolling back is the only outcome that
+   * leaves the queue and the audit log agreeing. Same argument `promoteFeedbackToBug` makes one
+   * screen up.
+   *
+   * ⚠️ IT PROTECTS THE DATA AND NOTHING ELSE. Nothing here catches, so a throw still reaches the
+   * error boundary and still takes an open detail panel's unsaved draft with it — the siblings
+   * (`triage`, `promote`) behave the same way, and `CLAUDE.md` bans `throw error()` rather than
+   * uncaught throws. An earlier version of this comment claimed the transaction covered that too.
    */
   const { changed, actionable } = await dbWrite.transaction().execute(async (trx) => {
     const changed: number[] = [];
@@ -567,10 +577,19 @@ export async function bulkTriageFeedback(input: {
     for (const [expectedStatus, ids] of byExpected) {
       /**
        * 🔴 A ROW ALREADY AT THE TARGET STATUS IS SKIPPED AND EXCLUDED FROM `actionable`, AND BOTH
-       * HALVES MATTER. Its UPDATE could not match (`WHERE status = expected` and `SET status =` name
-       * the same value, so nothing moves), and a skipped row left inside the denominator would be
-       * reported to the operator as "already triaged by someone else" — a conflict that did not
-       * happen, over a row that is in exactly the state they asked for.
+       * HALVES MATTER.
+       *
+       * 🔴 DO NOT READ THIS AS A NO-OP — AN EARLIER VERSION OF THIS COMMENT SAID THE UPDATE "COULD
+       * NOT MATCH", WHICH IS MEASURABLY FALSE AND WOULD LICENSE DELETING THE GUARD.
+       * `UPDATE … SET status='reviewed' WHERE status='reviewed'` matches perfectly well and writes a
+       * new tuple: measured by removing this line, after which `RETURNING id` hands the
+       * already-at-target row back. Without the skip, such a row has its `handledById`/`handledAt`
+       * RE-STAMPED to whoever clicked, lands in `changed`, and earns a spurious `ModActivity` row
+       * asserting a triage that did not happen.
+       *
+       * The second half: a skipped row left inside the denominator would be reported to the operator
+       * as a row that "did not change" — a refusal that did not happen, over a row already in the
+       * state they asked for.
        *
        * The filter lives HERE rather than in the action so there is one definition of what this
        * function was asked to move. A caller filtering first, plus this, would be the same predicate

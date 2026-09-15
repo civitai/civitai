@@ -259,11 +259,21 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
 
-    // 🔴 The two zero-change outcomes are different facts and get different words. Neither is a
-    // success: reporting one would write a verdict on screen that no row carries.
+    /**
+     * 🔴 The two zero-change outcomes are different facts and get different words. Neither is a
+     * success: reporting one would write a verdict on screen that no row carries.
+     *
+     * 🔴 THIS ONE CLAIMS THE SCREEN, NOT THE DATABASE, AND THE DISTINCTION IS NOT PEDANTRY.
+     * `actionable` is derived entirely from the POSTED expectations — nothing is read back here — so
+     * "is already X" would be an assertion about rows this request never looked at. Measured: a row
+     * sitting at `new` in the database, posted as `reviewed` against a target of `reviewed`, returns
+     * `actionable: 0` and is not touched; telling the operator it "is already reviewed" is false AND
+     * is the sentence that stops them retrying. Saying what was on their screen is true by
+     * construction and points at the real cause.
+     */
     if (!actionable)
       return fail(409, {
-        error: `Every selected report is already ${input.status}.`,
+        error: `Every selected report was already showing ${input.status}. Reload if you expected a change — the queue may have moved under this page.`,
         scope: FEEDBACK_BULK_SCOPE,
       });
     // 🔴 NO CAUSE IS ASSERTED. `bulkTriageFeedback` does not spend a read per refusal, so "someone
