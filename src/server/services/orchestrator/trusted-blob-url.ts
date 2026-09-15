@@ -4,7 +4,11 @@ import { env } from '~/env/server';
  * The blob hosts stored epoch URLs actually use. Kept alongside `ORCHESTRATOR_ENDPOINT` rather than
  * derived from it: that variable may name an internal API host that never appears in a blob URL.
  */
-const KNOWN_ORCHESTRATOR_HOSTS = [
+// Exported so the test can pin it as an exact set — see the ledger in
+// __tests__/trusted-blob-url.test.ts, which fails when this list GROWS as well as when
+// it shrinks. That is the guard; a per-name assertion would only catch names someone
+// thought to enumerate.
+export const KNOWN_ORCHESTRATOR_HOSTS = [
   'orchestration.civitai.com',
   'orchestration-new.civitai.com',
   // The "next" orchestrator's public origin. A PR preview can be opted onto that
@@ -14,17 +18,12 @@ const KNOWN_ORCHESTRATOR_HOSTS = [
   // never widen this list via the `configured` entry below — it has to be listed.
   'orchestration-next.civitai.com',
 ];
-// Removed 2026-09-15: orchestration-stage, orchestration-dev and image-generation.
-// All three are NXDOMAIN — measured against the authoritative resolver (1.1.1.1) AND
-// from inside the cluster, where this predicate actually runs, with the two surviving
-// hosts as the positive control in the same command. A name that resolves nowhere
-// cannot serve a blob, so removing it cannot break a download that works today; it
-// only changes the failure from a connection error to `Invalid asset URL`.
-//
-// They were listed because stored epoch rows carry them, but pre-trusting a
-// non-existent name in a zone we control is a standing subdomain-takeover foothold:
-// anything that later points one of these at a third party inherits trust here
-// without review. The guard below pins their removal.
+// Entries are removed once they stop resolving: a name with no DNS record cannot serve a
+// blob, so trusting it buys nothing, and a record created later would inherit that trust
+// without review. ⚠ This list is NOT the only place that trust lives — the training-studio
+// trace proxy (apps/training-studio/src/routes/api/trace/+server.ts) accepts ANY
+// `.civitai.com` subdomain by wildcard, so keeping this list tight does not close the
+// class, only this consumer's half of it.
 
 function hostOf(value: string | undefined | null) {
   if (!value) return undefined;
