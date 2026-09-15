@@ -108,9 +108,7 @@ function ModelCardContent({ data }: Props) {
   // A circle only works while the chip is icon-only. Carrying a discount makes it a pill again.
   const roundChip = useMemo(
     () =>
-      sale
-        ? ({ paddingInline: 8, whiteSpace: 'nowrap', flexShrink: 0 } as const)
-        : ({ width: 26, height: 26, padding: 0 } as const),
+      sale ? ({ paddingInline: 8 } as const) : ({ width: 26, height: 26, padding: 0 } as const),
     [sale]
   );
   // Green rather than the `success` teal, which sits a few degrees from the recency chip's blue-teal
@@ -231,11 +229,12 @@ function ModelCardContent({ data }: Props) {
                     role="img"
                     aria-label="Early Access"
                     {...(sale ? {} : { circle: true })}
+                    styles={{ label: { display: 'flex', alignItems: 'center', gap: 4 } }}
                     style={earlyAccessBadgeStyle}
                   >
                     <IconClockDollar size={16} color="white" />
                     {sale && (
-                      <Text c="white" size="xs" tt="capitalize" ml={4}>
+                      <Text c="white" size="xs" tt="capitalize">
                         <SaleDiscountLabel sale={sale} />
                       </Text>
                     )}
@@ -270,11 +269,12 @@ function ModelCardContent({ data }: Props) {
                     aria-label="Paid"
                     // Icon-only, so a pill leaves dead space either side of a square glyph.
                     {...(sale ? {} : { circle: true })}
+                    styles={{ label: { display: 'flex', alignItems: 'center', gap: 4 } }}
                     style={paidBadgeStyle}
                   >
                     <IconLockDollar size={16} color="white" />
                     {sale && (
-                      <Text c="white" size="xs" tt="capitalize" ml={4}>
+                      <Text c="white" size="xs" tt="capitalize">
                         <SaleDiscountLabel sale={sale} />
                       </Text>
                     )}
