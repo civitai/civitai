@@ -15,6 +15,7 @@ import clsx from 'clsx';
 import { useCallback, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { RouterOutput } from '~/types/router';
+import { MediaType } from '~/shared/utils/prisma/enums';
 
 /**
  * Type inferred from tRPC router output - stays in sync with backend automatically
@@ -90,7 +91,11 @@ export function CrucibleJudgingUI({
           ['2', () => handleVote('right')],
           ['ArrowRight', () => handleVote('right')],
           ['Space', handleSkip],
-        ]
+        ],
+    // VIDEO on top of Mantine's defaults: a focused video player answers Space with play/pause and
+    // the arrows with seek, and every one of those is also bound here — so without it, pausing a
+    // clip skips the pair and seeking it casts a vote.
+    ['INPUT', 'TEXTAREA', 'SELECT', 'VIDEO']
   );
 
   // Loading state
@@ -212,6 +217,8 @@ function ImageCard({
     return <Skeleton radius="lg" style={{ aspectRatio: '4 / 5' }} />;
   }
 
+  const isVideo = entry.image.type === MediaType.video;
+
   return (
     <Paper
       className={clsx(
@@ -224,13 +231,20 @@ function ImageCard({
       bg="dark.7"
       role="button"
       tabIndex={disabled ? -1 : 0}
-      aria-label={`Vote for ${position} image`}
+      aria-label={`Vote for ${position} ${isVideo ? 'video' : 'image'}`}
       aria-disabled={disabled}
       onClick={disabled ? undefined : onVote}
       onKeyDown={handleKeyDown}
     >
-      {/* Image wrapper with 4:5 aspect ratio */}
-      <Box className="relative bg-[#1a1b1e]" style={{ aspectRatio: '4 / 5' }}>
+      <Box
+        className="relative bg-[#1a1b1e]"
+        style={{ aspectRatio: '4 / 5' }}
+        // A video owns its own clicks: scrubbing, play/pause and unmuting all land inside this
+        // box, and the card votes on click, so without this every control press is a misvote.
+        // Voting a video is therefore the Vote button or the hotkey. Images still vote on click.
+        onClick={isVideo ? (e: React.MouseEvent) => e.stopPropagation() : undefined}
+        onKeyDown={isVideo ? (e: React.KeyboardEvent) => e.stopPropagation() : undefined}
+      >
         {isLoading ? (
           <div className="flex size-full items-center justify-center">
             <Loader size="lg" />
@@ -242,6 +256,12 @@ function ImageCard({
             // Forces playback past the viewer's autoplay setting — a judge comparing two
             // clips must not have to start each one by hand.
             anim
+            // Stated rather than inherited from EdgeVideo's default: two clips autoplaying
+            // audio at a judge is the failure mode, and nothing else here would say so.
+            muted
+            // Native rather than EdgeVideo's own bar, which has no seek control — judging a clip
+            // means re-watching a moment, not just replaying it from the top.
+            html5Controls
             width={600}
             style={{ width: '100%', height: '100%', objectFit: 'contain' }}
             wrapperProps={{ className: 'size-full' }}
