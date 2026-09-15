@@ -1,8 +1,8 @@
 import {
   Badge,
   getPrimaryShade,
+  HoverCard,
   Text,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
@@ -100,7 +100,7 @@ function ModelCardContent({ data }: Props) {
   // MantineProvider does not carry. Gated ones still do, so this narrows the blast radius rather
   // than removing it.
   const earlyAccessBadgeStyle = useMemo(
-    () => (isEarlyAccess ? { backgroundColor: theme.colors.success[5], ...roundChip } : undefined),
+    () => (isEarlyAccess ? { backgroundColor: theme.colors.green[7], ...roundChip } : undefined),
     [isEarlyAccess, theme]
   );
   // New and Updated share one blue. They are the same kind of fact — this model changed recently —
@@ -207,53 +207,55 @@ function ModelCardContent({ data }: Props) {
               </Badge>
             )}
             {isEarlyAccess ? (
-              <Tooltip
-                label="Early Access"
-                position="bottom-start"
-                events={{ hover: true, focus: true, touch: true }}
-              >
-                <Badge
-                  className={cardClasses.chip}
-                  variant="filled"
-                  radius="xl"
-                  data-status-badge="access"
-                  role="img"
-                  aria-label="Early Access"
-                  circle
-                  style={earlyAccessBadgeStyle}
-                >
-                  <IconClockDollar size={16} color="white" />
-                </Badge>
-              </Tooltip>
+              <HoverCard position="bottom-start" withinPortal withArrow shadow="sm" openDelay={0}>
+                <HoverCard.Target>
+                  <Badge
+                    className={cardClasses.chip}
+                    variant="filled"
+                    radius="xl"
+                    data-status-badge="access"
+                    role="img"
+                    aria-label="Early Access"
+                    circle
+                    style={earlyAccessBadgeStyle}
+                  >
+                    <IconClockDollar size={16} color="white" />
+                  </Badge>
+                </HoverCard.Target>
+                <HoverCard.Dropdown px="xs" py={4}>
+                  <Text size="xs">Early Access</Text>
+                </HoverCard.Dropdown>
+              </HoverCard>
             ) : isPaidAccess ? (
-              // `role` is load-bearing, not decoration: Mantine's Badge root is a bare `div`, and ARIA
-              // drops an accessible name from a role-less generic, so without this the icon reaches a
-              // screen reader as nothing at all. The Tooltip is hover-only — Badge renders no
-              // tabIndex — so it cannot serve as the name either.
+              // `role` is load-bearing: Mantine's Badge root is a bare `div`, and ARIA drops an
+              // accessible name from a role-less generic, so without this the icon reaches a screen
+              // reader as nothing. The hover card cannot serve as the name — it is pointer-only.
               // Mantine's default is hover only (`focus: false, touch: false`). The badge is the
               // sole explanation of an abstract glyph, so it should also answer a tap and a
               // keyboard focus, not just a mouse.
-              // Below the badge, not above: these chips sit on the card's top edge, so a tooltip
-              // rendered above one lands off the top of a first-row card.
-              <Tooltip
-                label="Paid"
-                position="bottom-start"
-                events={{ hover: true, focus: true, touch: true }}
-              >
-                <Badge
-                  className={cardClasses.chip}
-                  variant="filled"
-                  radius="xl"
-                  data-status-badge="access"
-                  role="img"
-                  aria-label="Paid"
-                  // Icon-only, so a pill leaves dead space either side of a square glyph.
-                  circle
-                  style={paidBadgeStyle}
-                >
-                  <IconLockDollar size={16} color="white" />
-                </Badge>
-              </Tooltip>
+              // HoverCard, not Tooltip: the Tooltip never became visible on this card at any
+              // position, while the HoverCard in BountyCard and the Popover in ModelTypeBadge both
+              // do. Matching what demonstrably works here rather than debugging what does not.
+              <HoverCard position="bottom-start" withinPortal withArrow shadow="sm" openDelay={0}>
+                <HoverCard.Target>
+                  <Badge
+                    className={cardClasses.chip}
+                    variant="filled"
+                    radius="xl"
+                    data-status-badge="access"
+                    role="img"
+                    aria-label="Paid"
+                    // Icon-only, so a pill leaves dead space either side of a square glyph.
+                    circle
+                    style={paidBadgeStyle}
+                  >
+                    <IconLockDollar size={16} color="white" />
+                  </Badge>
+                </HoverCard.Target>
+                <HoverCard.Dropdown px="xs" py={4}>
+                  <Text size="xs">Paid</Text>
+                </HoverCard.Dropdown>
+              </HoverCard>
             ) : null}
             {isArchived && (
               <Badge

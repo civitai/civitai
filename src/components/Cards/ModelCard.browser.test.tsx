@@ -343,24 +343,12 @@ describe('ModelCard paid-gate badge', () => {
       </WithPalette>
     );
     const el = await awaitBadge('access');
-    // Deleting the Tooltip wrapper leaves every other assertion in this file green, which is why
-    // this exists. It has to hover: Mantine wires `aria-describedby` only once the tooltip opens.
-    // The label is the whole explanation of an abstract glyph — a diamond does not say "paid" on
-    // its own the way the word did.
-    // Awaiting an ARRIVING state, never a leaving one — the tooltip stays open while the pointer
-    // rests on the badge, so the matcher cannot lose a race against it.
+    // Asserts the label BECOMES VISIBLE, not that some aria attribute was wired. The previous
+    // version read `aria-describedby`, which Mantine sets regardless of where the overlay lands —
+    // so it stayed green through a card where nothing ever appeared on screen.
     await userEvent.hover(el);
-    let described: Element | null = null;
-    await vi.waitFor(() => {
-      const id = el.getAttribute('aria-describedby');
-      expect(id, 'no tooltip opened on the icon-only badge').toBeTruthy();
-      described = document.getElementById(id!);
-      expect(described, 'aria-describedby points at no element').toBeTruthy();
-    });
-    // Reading the element the badge actually points at, rather than scanning the document for the
-    // word: a match anywhere in `body` would also be satisfied by the word appearing in some other
-    // chip entirely.
-    expect((described as unknown as Element).textContent).toBe('Paid');
+    const dropdown = page.getByText('Paid', { exact: true });
+    await expect.element(dropdown).toBeVisible();
   });
 
   test('renders a clock-dollar for an active timed window, not the words', async () => {
