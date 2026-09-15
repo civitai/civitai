@@ -108,7 +108,9 @@ function ModelCardContent({ data }: Props) {
   // A circle only works while the chip is icon-only. Carrying a discount makes it a pill again.
   const roundChip = useMemo(
     () =>
-      sale ? ({ paddingInline: 8 } as const) : ({ width: 26, height: 26, padding: 0 } as const),
+      sale
+        ? ({ paddingInline: 8, whiteSpace: 'nowrap', flexShrink: 0 } as const)
+        : ({ width: 26, height: 26, padding: 0 } as const),
     [sale]
   );
   // Green rather than the `success` teal, which sits a few degrees from the recency chip's blue-teal
@@ -213,7 +215,7 @@ function ModelCardContent({ data }: Props) {
               // and `Cards.module.css`'s `.chip` — unlike the one in the card template — never
               // turns it back on.
               <HoverCard
-                position="bottom-start"
+                position="right"
                 withinPortal
                 withArrow
                 shadow="sm"
@@ -251,7 +253,7 @@ function ModelCardContent({ data }: Props) {
               // sole explanation of an abstract glyph, so it should also answer a tap and a
               // keyboard focus, not just a mouse.
               <HoverCard
-                position="bottom-start"
+                position="right"
                 withinPortal
                 withArrow
                 shadow="sm"

@@ -5,10 +5,10 @@ import { resolve } from 'node:path';
 /**
  * The card's hover zoom and the sticker overlay move together, or stickers drift.
  *
- * A placed sticker sits on an overlay that is a SIBLING of the card's link — it
- * has to paint above the media and must not join the click target — so it does
- * not inherit the transform the media gets on hover. The two are kept in step by
- * one rule listing both. Retune the media's zoom alone and every sticker slides
+ * A placed sticker sits on an overlay outside the media element — it has to paint
+ * above the media and must not join the link's click target — so it does not
+ * inherit the transform the media gets on hover. The two are kept in step by one
+ * rule listing both. Retune the media's zoom alone and every sticker slides
  * off its spot for as long as the pointer is on the card.
  *
  * 🔴 WHY THIS IS A SOURCE SCAN AND NOT A RENDER. `:hover` is not a state a
@@ -35,7 +35,7 @@ const STYLESHEET = resolve(
 
 const source = () => readFileSync(STYLESHEET, 'utf-8');
 
-/** The `&:hover { … }` block inside `.linkOrClick`, braces balanced. */
+/** The card body's `&:hover { … }` block, braces balanced. */
 const hoverBlock = (css: string) => {
   const start = css.indexOf('&:hover');
   if (start < 0) return null;
