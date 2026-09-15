@@ -331,13 +331,29 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
     orderBy.push({ createdAt: 'desc' });
   }
 
-  return dbRead.crucible.findMany({
-    take,
+  // Every column above is non-unique, and a cursor names one row — so without a unique
+  // tiebreaker last, the rows sharing an `endAt` have no defined order between them and paging
+  // across that boundary can skip or repeat them.
+  orderBy.push({ id: 'desc' });
+
+  // One row beyond the page is how "is there more?" gets answered. Asking for exactly `take`
+  // leaves the caller guessing, and the guess it made — a non-empty page always has more — meant
+  // the feed never ended.
+  const rows = await dbRead.crucible.findMany({
+    take: take + 1,
     cursor: cursor ? { id: cursor } : undefined,
     where,
     orderBy,
     select,
   });
+
+  // Prisma's cursor is INCLUSIVE, so the extra row's id is exactly the right cursor: the next
+  // page starts AT it, and it has not been served yet. Handing back the last SERVED row's id
+  // instead is what re-served it.
+  const nextCursor =
+    rows.length > take ? (rows.pop() as { id: number } & (typeof rows)[number]).id : undefined;
+
+  return { items: rows, nextCursor };
 };
 
 /**
