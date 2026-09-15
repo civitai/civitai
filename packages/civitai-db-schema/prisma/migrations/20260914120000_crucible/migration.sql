@@ -14,7 +14,6 @@ CREATE TABLE IF NOT EXISTS "Crucible" (
     "maxTotalEntries" INTEGER,
     "prizePositions" JSONB NOT NULL DEFAULT '[]',
     "allowedResources" JSONB,
-    "judgeRequirements" JSONB,
     "duration" INTEGER NOT NULL DEFAULT 480,
     "startAt" TIMESTAMP(3),
     "endAt" TIMESTAMP(3),

@@ -85,7 +85,6 @@ const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
   maxTotalEntries: true,
   prizePositions: true,
   allowedResources: true,
-  judgeRequirements: true,
   duration: true,
   status: true,
   startAt: true,

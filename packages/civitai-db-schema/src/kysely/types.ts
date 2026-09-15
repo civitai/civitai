@@ -2296,7 +2296,6 @@ export type Crucible = {
   maxTotalEntries: number | null;
   prizePositions: Generated<unknown>;
   allowedResources: unknown | null;
-  judgeRequirements: unknown | null;
   duration: Generated<number>;
   startAt: Timestamp | null;
   endAt: Timestamp | null;

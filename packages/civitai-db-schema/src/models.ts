@@ -5577,7 +5577,6 @@ export interface Crucible {
   maxTotalEntries: number | null;
   prizePositions: JsonValue;
   allowedResources: JsonValue | null;
-  judgeRequirements: JsonValue | null;
   duration: number;
   startAt: Date | null;
   endAt: Date | null;
