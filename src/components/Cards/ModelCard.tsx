@@ -106,24 +106,21 @@ function ModelCardContent({ data }: Props) {
   const sale = salesByModelId?.[data.id] ?? ownSale;
 
   // A circle only works while the chip is icon-only. Carrying a discount makes it a pill again.
-  const roundChip = sale
-    ? ({ paddingInline: 8 } as const)
-    : ({ width: 26, height: 26, padding: 0 } as const);
-  // Green rather than the `success` teal: that sits a few degrees from the Updated chip's old teal,
-  // and the two read as one colour at chip size.
+  const roundChip = useMemo(
+    () =>
+      sale ? ({ paddingInline: 8 } as const) : ({ width: 26, height: 26, padding: 0 } as const),
+    [sale]
+  );
+  // Green rather than the `success` teal, which sits a few degrees from the recency chip's blue-teal
+  // and reads as the same colour at chip size.
   const paidBadgeStyle = useMemo(
     () => (isPaidAccess ? { backgroundColor: theme.colors.green[7], ...roundChip } : undefined),
-    [isPaidAccess, theme]
+    [isPaidAccess, theme, roundChip]
   );
-  // Ungated cards never touch `theme.colors.success`, which is an app-level scale a bare
-  // MantineProvider does not carry. Gated ones still do, so this narrows the blast radius rather
-  // than removing it.
   const earlyAccessBadgeStyle = useMemo(
     () => (isEarlyAccess ? { backgroundColor: theme.colors.green[7], ...roundChip } : undefined),
-    [isEarlyAccess, theme]
+    [isEarlyAccess, theme, roundChip]
   );
-  // New and Updated share one blue. They are the same kind of fact — this model changed recently —
-  // and two colours for that read as two unrelated states, especially beside a third chip.
   const cardBaseModels = getCardBaseModels(
     data as Parameters<typeof getCardBaseModels>[0],
     activeBaseModels
