@@ -265,7 +265,14 @@ function ImageContent({
   const isVideo = image?.type === 'video';
   // The SOURCE's own width, snapped DOWN and capped. Not the fit box above: `width` there is the
   // on-screen box, and asking the cacher for more pixels than the original has only upscales.
-  const lightboxWidth = snapWidthDownToCommonSize(Math.min(imageWidth, MAX_EDGE_WIDTH));
+  //
+  // 🔴 `image.width` and NOT `imageWidth`, whose `?? 1200` fallback would be a GUESS. Plenty of
+  // rows have a null width, and guessing 1200 for an 832px file requests an upscale — measured,
+  // that returns a real 1200x1754 against an 832x1216 source. With no width we fall through to
+  // `original`, which is what this surface served before and cannot upscale.
+  const lightboxWidth = image?.width
+    ? snapWidthDownToCommonSize(Math.min(image.width, MAX_EDGE_WIDTH))
+    : undefined;
 
   // dragstart carries no pointerType, and android chrome fires it for a long-press
   // drag — leaving that one to embla keeps the touch swipe as `watchTouchDrag` has it
@@ -311,6 +318,11 @@ function ImageContent({
               type={image.type}
               imageId={image.id}
               className={`max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`}
+              // 🔴 EdgeImage turns a `width` prop into an inline `maxWidth`, which beats the
+              // `max-w-full` class above and would pin the lightbox to the REQUEST width instead
+              // of letting it fill the viewport. The width here is a CDN parameter, not a layout
+              // instruction, so the inline value has to be overridden.
+              style={{ maxWidth: '100%' }}
               wrapperProps={{
                 className: `flex items-center justify-center max-h-full w-auto max-w-full ${
                   !safe ? 'invisible' : ''
