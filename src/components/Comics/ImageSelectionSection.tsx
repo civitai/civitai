@@ -2,6 +2,7 @@ import { ActionIcon, Badge, Group, Stack, Text } from '@mantine/core';
 import { IconChevronDown, IconFilter, IconPhoto, IconX } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { useOptimizedFlag } from '~/hooks/useMediaQuality';
 import { refTypeBadge } from '~/components/Comics/comic-project-constants';
 
 export function ImageSelectionSection({
@@ -15,6 +16,7 @@ export function ImageSelectionSection({
   setSelectedImageIds: (ids: number[] | null) => void;
   refImageBudget: number;
 }) {
+  const optimized = useOptimizedFlag();
   const [collapsedRefs, setCollapsedRefs] = useState<Set<number>>(new Set());
 
   // Collect all image IDs from mentioned refs
@@ -175,7 +177,7 @@ export function ImageSelectionSection({
                         }}
                       >
                         <img
-                          src={getEdgeUrl(ri.image.url, { width: 100 }) ?? ri.image.url}
+                          src={getEdgeUrl(ri.image.url, { width: 100, optimized }) ?? ri.image.url}
                           alt=""
                           style={{
                             width: '100%',

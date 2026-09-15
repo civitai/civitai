@@ -164,7 +164,7 @@ function ClaimCosmeticPageInner({ id }: { id: number }) {
       <Meta
         title={`Claim ${cosmetic.name} | Civitai`}
         description={`Claim the ${cosmetic.name}. Awarded for ${cosmetic.description} while you can`}
-        imageUrl={getEdgeUrl(cosmeticImage, { width: 144 })}
+        imageUrl={getEdgeUrl(cosmeticImage, { width: 144, optimized: true })}
         deIndex
       />
       <Container size="xs" mb="lg">
