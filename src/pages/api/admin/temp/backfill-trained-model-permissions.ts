@@ -132,7 +132,7 @@ const schema = z.object({
 export default WebhookEndpoint(async (req, res) => {
   const params = schema.parse(req.query);
 
-  // A live run rewrites six figures of licence rows, and a GET is retried by proxies and prefetched
+  // A live run could rewrite six figures of licence rows, and a GET is retried by proxies and prefetched
   // by browsers off a pasted URL. Dry runs stay readable from anywhere.
   if (!params.dryRun && req.method !== 'POST') {
     return res.status(405).json({ error: 'A live run must be POSTed' });
