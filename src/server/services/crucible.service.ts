@@ -1825,6 +1825,26 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     }
   } else {
     log(`No prizes to distribute for crucible ${crucibleId} (no winners or 0 prize pool)`);
+
+    // Entries exist but nothing was paid out — an empty prizePositions map, or a seed small enough
+    // that every floored share is 0. Same stranding as the 0-entry case above, so same remedy.
+    if (crucible.seedTransactionId) {
+      try {
+        await refundMultiAccountTransaction({
+          externalTransactionIdPrefix: crucible.seedTransactionId,
+          description: 'Crucible seeded prize pool refund - no prizes awarded',
+          details: {
+            entityId: crucibleId,
+            entityType: 'Crucible',
+            reason: 'no-prizes-awarded',
+          },
+        });
+        log(`Refunded seeded prize pool for crucible ${crucibleId} (no prizes awarded)`);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        log(`Failed to refund seeded prize pool for crucible ${crucibleId}: ${errorMessage}`);
+      }
+    }
   }
 
   // Set TTL on Redis ELO hash for cleanup (7 days)

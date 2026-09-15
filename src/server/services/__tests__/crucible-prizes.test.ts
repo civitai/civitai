@@ -290,6 +290,54 @@ describe('seeded prize pool', () => {
   });
 });
 
+describe('seeded prize pool — entries but no prize awarded', () => {
+  it('returns the seed when every floored share rounds to zero', async () => {
+    // 1 Buzz seed, no entry fee, split three ways: floor() takes every share to 0, so the pool is
+    // charged and nothing is paid out.
+    setupCrucible({
+      entryFee: 0,
+      seededPrizePool: 1,
+      seedTransactionId: 'crucible-seed-4-xyz',
+      prizePositions: { '1': 50, '2': 30, '3': 20 },
+    });
+
+    const result = await finalizeCrucible(1);
+
+    expect(result.totalPrizesDistributed).toBe(0);
+    expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ externalTransactionIdPrefix: 'crucible-seed-4-xyz' })
+    );
+  });
+
+  it('returns the seed when prizePositions awards nothing', async () => {
+    setupCrucible({
+      entryFee: 0,
+      seededPrizePool: 5_000,
+      seedTransactionId: 'crucible-seed-4-xyz',
+      prizePositions: {},
+    });
+
+    await finalizeCrucible(1);
+
+    expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ externalTransactionIdPrefix: 'crucible-seed-4-xyz' })
+    );
+  });
+
+  it('does not refund when prizes actually went out', async () => {
+    setupCrucible({
+      entryFee: 0,
+      seededPrizePool: 900,
+      seedTransactionId: 'crucible-seed-4-xyz',
+      prizePositions: { '1': 50, '2': 30, '3': 20 },
+    });
+
+    await finalizeCrucible(1);
+
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+});
+
 describe('seeded prize pool — nobody entered', () => {
   const setupUnentered = (overrides: Record<string, unknown> = {}) => {
     findUnique.mockResolvedValue({
