@@ -120,7 +120,9 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
   { value: CommercialUse.RentCivit, label: 'Use on Civitai generation service' },
   { value: CommercialUse.Rent, label: 'Use on other generation services' },
   { value: CommercialUse.Sell, label: 'Sell this model' },
-  { value: CommercialUse.SellMerge, label: 'Sell merges using this model' },
+  // SellMerge is deliberately absent until every pod knows the label -- see the decision test in
+  // license-sell-merge-split.test.ts. An option a creator can tick writes the row a pod on the
+  // previous build cannot read, which is the passive default path with a person behind it.
 ];
 
 // 'tags' is deliberately absent: the field is named `tagsOnModels`, so the watch effect below
@@ -172,7 +174,6 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
       CommercialUse.RentCivit,
       CommercialUse.Rent,
       CommercialUse.Sell,
-      CommercialUse.SellMerge,
     ],
     allowDerivatives: model?.allowDerivatives ?? true,
     allowNoCredit: model?.allowNoCredit ?? true,

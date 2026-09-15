@@ -1,14 +1,15 @@
--- Apply BEFORE the deploy, not after. The usual deploy-first rule assumes nothing writes the new
--- label until the deploy lands; here the deploy writes it immediately -- the upload form defaults
--- to every permission, and Prisma applies the schema @default client-side on any model.create
--- that omits the field -- so without this the insert is rejected and model creation fails.
--- Inverting is safe because no build writes 'SellMerge' before the deploy, so no row can carry
--- it and no running client can read one. CLAUDE.md's enum rule allows exactly that exception.
+-- Apply BEFORE the deploy, not after, and it is safe in both directions: the build that ships with
+-- this migration KNOWS 'SellMerge' and WRITES none. The schema @default and the upload form's
+-- default set are deliberately still the four-value array, so no row can carry the label while
+-- pods are mixed, and no pod on either build can fail to read one.
 --
--- A rolling deploy still has previous-build pods reading rows new pods wrote; Prisma deserializes
--- the enum for a whole result set, so list queries fail intermittently until it completes. Raw-SQL
--- paths are unaffected. Applying this first does not close that window -- only an enum-aware
--- build that writes nothing, shipped ahead of the build that writes, would.
+-- That is the expand half of expand/contract, and it is why there is no rolling-deploy window here
+-- at all. Turning the write paths on is a separate PR, shipped once every pod knows the label;
+-- until it lands, a creator taking defaults gets the four-value set and the backfill has not run,
+-- so both are one state rather than two.
+--
+-- The order matters the other way round too: applying this first means the defaults-on PR needs no
+-- coordination with a migration.
 --
 -- src/pages/api/admin/temp/backfill-trained-model-permissions.ts also writes this label. Do not
 -- run it before this migration, or during a rolling deploy.

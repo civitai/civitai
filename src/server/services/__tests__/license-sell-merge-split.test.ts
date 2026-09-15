@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CommercialUse } from '~/shared/utils/prisma/enums';
 
@@ -267,6 +269,45 @@ describe('sell / sell-merge split in the generated licence', () => {
    * The slicers must fail rather than narrow: `clauseBody` returning '' and `preamble` returning
    * `slice(0, -1)` both leave every negative assertion above passing for free.
    */
+  /**
+   * DELIBERATE, AND NOT AN OVERSIGHT: the build that ships the SellMerge label writes none of it.
+   * Both default sets stay four-valued until every pod knows the label, which is what makes the
+   * migration safe to apply ahead of the deploy and leaves no rolling-deploy window -- a row
+   * carrying a label an old pod cannot decode throws on READ, for the whole result set.
+   *
+   * The PR that turns the write paths on inverts this case. If you are here because it looks like
+   * the feature was half-shipped: it was, on purpose, for one day.
+   */
+  it('ships the SellMerge label with no way to write it: defaults and the option list', () => {
+    const schema = readFileSync(
+      join(__dirname, '../../../../packages/civitai-db-schema/prisma/schema.full.prisma'),
+      'utf8'
+    );
+    const modelDefault = schema.match(
+      /allowCommercialUse\s+CommercialUse\[\]\s+@default\(\[(.*)\]\)/
+    );
+    expect(modelDefault?.[1]).toBe('Image, RentCivit, Rent, Sell');
+
+    const form = readFileSync(
+      join(__dirname, '../../../components/Resource/Forms/ModelUpsertForm.tsx'),
+      'utf8'
+    );
+    const formDefault = form.match(
+      /allowCommercialUse: model\?\.allowCommercialUse \?\? \[([^\]]*)\]/
+    );
+    expect(formDefault).not.toBeNull();
+    expect(formDefault?.[1]).not.toContain('SellMerge');
+    // Positive control: the array the match found is the real one, not an empty capture.
+    expect(formDefault?.[1]).toContain('CommercialUse.Sell');
+
+    // The default is the passive write path. The checkbox is the active one, and removing only the
+    // first leaves a creator able to write the row a previous-build pod cannot read.
+    const options = form.match(/const commercialUseOptions[^=]*= \[([\s\S]*?)\n\];/);
+    expect(options).not.toBeNull();
+    expect(options?.[1]).not.toContain('CommercialUse.SellMerge');
+    expect(options?.[1]).toContain('CommercialUse.Sell,');
+  });
+
   it('the slicers refuse a document they cannot find their anchor in', () => {
     expect(() => clauseBody('nothing here', MODEL_CLAUSE)).toThrow(/clause not found/);
     expect(() => preamble('nothing here')).toThrow(/preamble anchor not found/);
