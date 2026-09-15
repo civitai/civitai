@@ -11,7 +11,7 @@ export type CrucibleEntryData = {
   id: number;
   userId: number;
   imageId: number;
-  score: number;
+  score: number | null;
   position: number | null;
   createdAt: Date;
   user: {
@@ -33,6 +33,7 @@ export type CrucibleEntryData = {
 export type CrucibleEntryGridProps = {
   entries: CrucibleEntryData[];
   title?: string;
+  showRanks?: boolean;
   showUserEntries?: boolean;
   currentUserId?: number | null;
   maxUserEntries?: number;
@@ -41,12 +42,14 @@ export type CrucibleEntryGridProps = {
   onEntryClick?: (entry: CrucibleEntryData) => void;
 };
 
+const scoreOf = (entry: CrucibleEntryData) => entry.score ?? Number.NEGATIVE_INFINITY;
+
 /**
  * CrucibleEntryGrid - Displays crucible entries in a masonry-style grid
  *
  * Features:
  * - Entry thumbnails in a grid layout
- * - Score/position overlay on hover
+ * - Score/position overlay when ranks are visible
  * - Click to view full image
  * - Empty state handling
  * - Optional "Your Entries" section for current user's entries
@@ -54,6 +57,7 @@ export type CrucibleEntryGridProps = {
 export function CrucibleEntryGrid({
   entries,
   title,
+  showRanks = false,
   showUserEntries = false,
   currentUserId,
   maxUserEntries,
@@ -64,12 +68,11 @@ export function CrucibleEntryGrid({
   const currentUser = useCurrentUser();
   const userId = currentUserId ?? currentUser?.id;
 
-  // Sort entries by score to calculate ranks
-  const sortedEntries = [...entries].sort((a, b) => b.score - a.score);
-  const rankedEntries = sortedEntries.map((entry, index) => ({
-    ...entry,
-    rank: index + 1,
-  }));
+  const rankedEntries = showRanks
+    ? [...entries]
+        .sort((a, b) => scoreOf(b) - scoreOf(a))
+        .map((entry, index) => ({ ...entry, rank: index + 1 }))
+    : entries.map((entry) => ({ ...entry, rank: null }));
 
   // Filter user's entries if requested
   const userEntries =
@@ -144,8 +147,8 @@ export function CrucibleEntryGrid({
 }
 
 type EntryCardProps = {
-  entry: CrucibleEntryData & { rank: number };
-  rank: number;
+  entry: CrucibleEntryData;
+  rank: number | null;
   isUserEntry?: boolean;
   onClick?: () => void;
 };
@@ -154,8 +157,6 @@ type EntryCardProps = {
  * Individual entry card with image, overlay, and position badge
  */
 function EntryCard({ entry, rank, isUserEntry, onClick }: EntryCardProps) {
-  const isTopThree = rank <= 3;
-
   return (
     <Box
       className="group cursor-pointer overflow-hidden rounded-lg bg-[#25262b] transition-colors hover:bg-[#2c2e33]"
@@ -174,7 +175,7 @@ function EntryCard({ entry, rank, isUserEntry, onClick }: EntryCardProps) {
         </div>
 
         {/* Position badge */}
-        <PositionBadge rank={rank} isTopThree={isTopThree} />
+        {rank !== null && <PositionBadge rank={rank} />}
 
         {/* Gradient overlay */}
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent from-50% to-black/80" />
@@ -192,13 +193,15 @@ function EntryCard({ entry, rank, isUserEntry, onClick }: EntryCardProps) {
           </Text>
 
           {/* Stats */}
-          <div className="mt-2 flex gap-3 border-t border-white/10 pt-2 text-xs text-gray-400">
-            <div className="flex items-center gap-1">
-              <IconChartLine size={12} />
-              <span>{Math.round(entry.score)} pts</span>
+          {rank !== null && entry.score !== null && (
+            <div className="mt-2 flex gap-3 border-t border-white/10 pt-2 text-xs text-gray-400">
+              <div className="flex items-center gap-1">
+                <IconChartLine size={12} />
+                <span>{Math.round(entry.score)} pts</span>
+              </div>
+              <div className="flex items-center gap-1">#{rank}</div>
             </div>
-            <div className="flex items-center gap-1">#{rank}</div>
-          </div>
+          )}
         </div>
       </div>
     </Box>
@@ -207,14 +210,13 @@ function EntryCard({ entry, rank, isUserEntry, onClick }: EntryCardProps) {
 
 type PositionBadgeProps = {
   rank: number;
-  isTopThree: boolean;
 };
 
 /**
  * Position badge displayed in top-right corner of entry card
  */
-function PositionBadge({ rank, isTopThree }: PositionBadgeProps) {
-  if (isTopThree) {
+function PositionBadge({ rank }: PositionBadgeProps) {
+  if (rank <= 3) {
     return (
       <Badge
         className="absolute right-2 top-2 z-10 flex items-center gap-1"
