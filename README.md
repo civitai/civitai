@@ -260,3 +260,8 @@ Apache License 2.0 - Please have a look at the [LICENSE](/LICENSE) for more deta
 [discord-shield]: https://img.shields.io/discord/1037799583784370196?style=for-the-badge
 
 [discord-url]: https://discord.gg/UwX5wKwm6c
+
+<!-- Intentionally inert: this PR exists only to build a preview environment for a
+     one-off infrastructure acceptance check. It changes no code and no rendered
+     output, and will be closed without merging. -->
+
