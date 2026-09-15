@@ -411,7 +411,7 @@ export default function CrucibleSubmitEntryModal({
               label: 'Clip length',
               passes: isShortEnough,
               passText: clipSeconds ? formatDuration(clipSeconds) : 'Within the limit',
-              failReason: `${formatDuration(clipSeconds ?? 0)} (max ${formatDuration(
+              failReason: `${formatDuration(Math.ceil(clipSeconds ?? 0))} (max ${formatDuration(
                 maxClipSeconds
               )})`,
             },
@@ -430,7 +430,8 @@ export default function CrucibleSubmitEntryModal({
         : !isCompatibleNsfw
         ? `Content level mismatch (${imageNsfwLabel} ${noun}, requires ${requiredNsfwLabel})`
         : !isShortEnough
-        ? `Too long (${formatDuration(clipSeconds ?? 0)}, max ${formatDuration(
+        ? // Ceiling, so a 120.01s clip against a 120s limit does not render both as "2:00".
+          `Too long (${formatDuration(Math.ceil(clipSeconds ?? 0))}, max ${formatDuration(
             maxClipSeconds as number
           )})`
         : undefined,

@@ -148,6 +148,7 @@ export function CrucibleJudgingUI({
           isSelected={selectedSide === 'left'}
           isLoading={isLoading}
           disabled={isDisabled || !watchGateOpen}
+          pairKey={pairKey}
           watchedMs={watchedMs.left}
           requiredMs={requiredMs}
           onWatched={(ms) => handleWatched('left', ms)}
@@ -162,6 +163,7 @@ export function CrucibleJudgingUI({
           isSelected={selectedSide === 'right'}
           isLoading={isLoading}
           disabled={isDisabled || !watchGateOpen}
+          pairKey={pairKey}
           watchedMs={watchedMs.right}
           requiredMs={requiredMs}
           onWatched={(ms) => handleWatched('right', ms)}
@@ -221,6 +223,7 @@ type ImageCardProps = {
   isSelected: boolean;
   isLoading?: boolean;
   disabled: boolean;
+  pairKey: string | null;
   watchedMs: number;
   requiredMs: number;
   onWatched: (ms: number) => void;
@@ -237,6 +240,7 @@ function ImageCard({
   isSelected,
   isLoading,
   disabled,
+  pairKey,
   watchedMs,
   requiredMs,
   onWatched,
@@ -253,10 +257,15 @@ function ImageCard({
 
   const lastTimeRef = useRef<number | null>(null);
   const watchedRef = useRef(0);
+  // Keyed on the PAIR, not on this entry: pair selection is a random sample that excludes only
+  // skipped entries, so the same entry routinely carries over into the next pair. Keyed on the
+  // entry alone, that card kept its accumulated playback while the parent reset the gate to zero,
+  // and the first `timeupdate` handed the stale total straight back — unlocking a vote on the new
+  // pair without watching any of it.
   useEffect(() => {
     lastTimeRef.current = null;
     watchedRef.current = 0;
-  }, [entry?.id]);
+  }, [entry?.id, pairKey]);
 
   const handleTimeUpdate = (e: React.SyntheticEvent<HTMLVideoElement>) => {
     const currentTime = e.currentTarget.currentTime;
