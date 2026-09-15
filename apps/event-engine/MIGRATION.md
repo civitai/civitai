@@ -35,7 +35,11 @@ root changes were needed.
   (`sync:submodule`, `install:hooks`, `release*`). Deps/build/tsconfig kept as-is.
 - Removed `.gitmodules` (submodule retired → vendored) and `package-lock.json` (npm → the monorepo is pnpm).
 - `Dockerfile` rewritten to the monorepo pnpm-deploy pattern (see below) — **DRAFT, unverified**.
-- `.github/`, `docker-compose.yml` are kept **as legacy reference only** (the old CI). They are inert here.
+- `.github/` is kept **as legacy reference only** (the old CI) and is inert here — GitHub reads workflows
+  only from the repo-root `.github/workflows/`, so this nested copy is never scheduled.
+- `docker-compose.yml` is **NOT legacy and NOT inert**: it is the live local-dev Kafka/Debezium harness,
+  driven by `README.md`, `scripts/produce-comic-event.ts` and `scripts/setup-digitalocean.ts`. Do not
+  delete it as legacy.
 - `k8s/` **was** kept on the same terms and has since been **DELETED** (2026-09-14). The relocation this
   section called for has happened: the Kafka/Debezium manifests, the Kafka UI and the app's own
   Deployment all live in the ops repo now and are what actually deploys. The copies here deployed
