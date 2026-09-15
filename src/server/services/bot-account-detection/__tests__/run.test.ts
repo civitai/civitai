@@ -10,6 +10,7 @@ import { emptyCohortSignals } from '../evidence';
 import { BOT_ACCOUNT_DETECTOR } from '../report';
 import {
   BOT_ACCOUNT_HEURISTICS,
+  assetStagingHeuristic,
   contentTemplatingHeuristic,
   postingVelocityHeuristic,
   registrationClusterHeuristic,
@@ -257,13 +258,13 @@ function subScoresOf(finding: { reason: string }): Record<string, number> {
 
 describe('🔴 the seam between the evidence and the scoring', () => {
   /**
-   * A cohort of six accounts that share ONE registration IP and ONE templated comment, run end to
+   * A cohort of six accounts that share ONE registration IP and ONE uploaded filename, run end to
    * end through the PRODUCTION heuristic registry with a real `EvidenceReader` behind it.
    *
    * Six, not three: at the shipped boundaries six members on one address is where the IP ramp
    * reaches 0.5, and it overshoots `IP_ZERO_AT`/`CLUSTER_ZERO_AT` rather than sitting on them.
    */
-  const RING_TEXT = 'Grab your 100 free credits here: https://spam.example/ref1';
+  const RING_FILE = 'logo.jpg';
   const ringRun = (evidence: Parameters<typeof runBotAccountDetection>[0]['evidence']) => {
     const accounts = Array.from({ length: 6 }, (_, i) => account(i + 1));
     const { reader } = recordingReader(accounts);
@@ -281,10 +282,9 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     hasRegistrationIps: true,
     listRegistrationIps: async (ids: number[]) =>
       ids.map((userId) => ({ userId, ip: '203.0.113.9' })),
-    listContentSamples: async (ids: number[]) =>
-      ids.map((userId) => ({ userId, content: RING_TEXT })),
     listStagedImageSamples: async () => [],
-    listFilenameSamples: async () => [],
+    listFilenameSamples: async (ids: number[]) =>
+      ids.map((userId) => ({ userId, name: RING_FILE })),
   };
 
   it('🔴 the cohort-level evidence REACHES the scoring, and the finding proves it', async () => {
@@ -294,9 +294,9 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     // hand-built signals, `run.test.ts` covered the threshold — and NO test ever built the combined
     // state. Two of the three heuristics would have scored 0 for every account on every production
     // run while `evidence_registration_ips`, `evidence_distinct_registration_ips` and
-    // `evidence_distinct_content_fingerprints` all reported healthy values, because those read
-    // `signals` rather than what scoring saw. Two-thirds of the detector inert, every counter
-    // saying it was fine.
+    // `evidence_distinct_filename_fingerprints` all reported healthy values, because those read
+    // `signals` rather than what scoring saw. Half the detector inert, every counter saying it was
+    // fine.
     //
     // The assertion is on the EMITTED FINDING's own sub-scores. A score object, or a counter, is a
     // claim about an intermediate; the finding is what reaches the board.
@@ -329,20 +329,18 @@ describe('🔴 the seam between the evidence and the scoring', () => {
 
     // The reason a moderator reads names WHAT was seen, not only that something was.
     expect(finding?.reason).toContain('6 new posting accounts share its registration IP');
-    expect(finding?.reason).toContain('6 new accounts posted the same text');
+    expect(finding?.reason).toContain('6 new accounts uploaded a file with the same name');
   });
 
   it('🔴 A SHARED FILENAME ALONE REACHES THE BOARD, with no comments anywhere in the run', async () => {
-    // 🔴 THE END-TO-END CASE THE WHOLE CHANGE EXISTS FOR, and the one no component test can make.
-    // `evidence.test.ts` covers the index and `heuristics.test.ts` covers the scorer over
-    // hand-built signals; neither ever builds the combined state, which is how a heuristic that
-    // fired ZERO times across five production runs kept looking healthy. This run has NO content
-    // rows at all — the exact production shape, where three consecutive daily cohorts totalling
-    // ~25,000 accounts produced 65 comments between them — and the finding still lands.
+    // 🔴 THE END-TO-END CASE, and the one no component test can make. `evidence.test.ts` covers
+    // the index and `heuristics.test.ts` covers the scorer over hand-built signals; neither ever
+    // builds the combined state, which is how a source that fired ZERO times in every run it
+    // shipped in kept looking healthy inside an aggregate counter. This run has no registration-IP
+    // data either, so the finding rests on the filename cluster alone.
     const scenario = ringRun({
       hasRegistrationIps: false,
       listRegistrationIps: async () => [],
-      listContentSamples: async () => [],
       // Mixed case on purpose: these are ONE cluster, not two.
       listStagedImageSamples: async () => [],
       listFilenameSamples: async (ids: number[]) =>
@@ -360,22 +358,42 @@ describe('🔴 the seam between the evidence and the scoring', () => {
       'registration-cluster',
     ]);
 
-    // The templating heuristic fired on filenames ALONE — its text half had nothing to read.
+    // The templating heuristic fired, carrying the finding with every other source dark.
     expect(sub['content-templating']).toBeGreaterThan(0);
     // And the reason names it as a FILENAME and quotes the PLAIN name, not the namespaced key.
     expect(finding?.reason).toContain('uploaded a file with the same name');
     expect(finding?.reason).toContain('logo.jpg');
     expect(finding?.reason).not.toContain('file:logo.jpg');
 
-    // 🔴 THE DECOMPOSITION. Without these two counters the shadow phase cannot grade the halves
-    // apart, which is precisely how the comment-only version survived five runs looking fine.
+    // 🔴 THE DECOMPOSITION. Without a per-source counter the shadow phase cannot grade sources
+    // apart, which is precisely how the deleted comment source survived every run looking fine
+    // inside an aggregate.
     expect(result.counters['heuristic:content-templating:fired_filename']).toBeGreaterThan(0);
-    expect(result.counters['heuristic:content-templating:fired_text']).toBe(0);
 
-    // 🔴 THE EXISTING SERIES KEEPS ITS MEANING. `evidence_distinct_content_fingerprints` counts
-    // TEXT fingerprints only. Had it been left as `membersPerFingerprint.size` it would now include
-    // filenames, and the day this shipped would have read as an explosion of comment templating.
-    expect(result.counters.evidence_distinct_content_fingerprints).toBe(0);
+    // 🔴 AND WITH ONE SOURCE LEFT IT IS EQUAL TO `fired`, WHICH IS THE HONEST THING TO PIN. An
+    // invariant tripwire, not regression coverage: `fired` counts the same members over every
+    // namespace and this counts them over `file:`, so while the index holds one namespace the two
+    // are the same number and charting both shows an operator nothing. The assertion above is the
+    // positive control that stops this one passing as `0 === 0`. The namespace count itself is
+    // pinned in `evidence.test.ts`; between them, the note in `run.ts` cannot go stale unobserved.
+    expect(result.counters['heuristic:content-templating:fired_filename']).toBe(
+      result.counters['heuristic:content-templating:fired']
+    );
+
+    // 🔴 THE DELETED SOURCE'S KEYS ARE ABSENT, NOT ZERO. A key that stops appearing says "not
+    // read any more"; a key reporting 0 would assert the source was read and found nothing. Asserted
+    // as ABSENCE because the counters object is what a run series is built from, and a stale zero is
+    // the shape every reassuring-zero defect in this module has taken.
+    expect(Object.keys(result.counters)).not.toContain('heuristic:content-templating:fired_text');
+    expect(Object.keys(result.counters)).not.toContain('evidence_distinct_content_fingerprints');
+    expect(Object.keys(result.counters)).not.toContain('evidence_content_samples');
+    expect(Object.keys(result.counters)).not.toContain('evidence_content_read_failed');
+    expect(Object.keys(result.counters)).not.toContain('evidence_content_budget');
+    expect(Object.keys(result.counters)).not.toContain('evidence_content_budget_exhausted');
+    expect(Object.keys(result.counters)).not.toContain('evidence_members_sampled_for_content');
+    // The positive control on those seven: the counters object is populated, so `not.toContain` is
+    // not passing over an empty list.
+    expect(Object.keys(result.counters).length).toBeGreaterThan(20);
     expect(result.counters.evidence_distinct_filename_fingerprints).toBe(1);
     expect(result.counters.evidence_filename_samples).toBe(1);
   });
@@ -386,7 +404,6 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     const scenario = ringRun({
       hasRegistrationIps: false,
       listRegistrationIps: async () => [],
-      listContentSamples: async () => [],
       listStagedImageSamples: async () => [],
       listFilenameSamples: async () => {
         throw new Error('replica timeout');
@@ -411,7 +428,6 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     const failed = ringRun({
       hasRegistrationIps: false,
       listRegistrationIps: async () => [],
-      listContentSamples: async () => [],
       listStagedImageSamples: async () => [],
       listFilenameSamples: async () => {
         throw new Error('replica timeout');
@@ -423,7 +439,6 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     const quiet = ringRun({
       hasRegistrationIps: false,
       listRegistrationIps: async () => [],
-      listContentSamples: async () => [],
       listStagedImageSamples: async () => [],
       listFilenameSamples: async () => [],
     });
@@ -448,7 +463,7 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     // alerted on with a threshold — the absence reads as "no data", not as "nothing broke".
     expect(Object.keys(quietCounters)).toContain('evidence_source_read_failures');
     expect(Object.keys(quietCounters)).toContain('evidence_filename_read_failed');
-    expect(Object.keys(quietCounters)).toContain('evidence_content_read_failed');
+    expect(Object.keys(quietCounters)).toContain('evidence_staged_image_read_failed');
     expect(Object.keys(quietCounters)).toContain('evidence_registration_ips_read_failed');
 
     // ⚠️ TWO COUNTERS THIS ASSERTION FIRST OVERCLAIMED, CORRECTED BY WATCHING IT FAIL RATHER THAN
@@ -522,7 +537,6 @@ describe('🔴 the seam between the evidence and the scoring', () => {
   const stagedEvidence = (perMember: number, burst: boolean) => ({
     hasRegistrationIps: false,
     listRegistrationIps: async () => [],
-    listContentSamples: async () => [],
     listFilenameSamples: async () => [],
     listStagedImageSamples: async (ids: number[]) =>
       ids.flatMap((userId) =>
@@ -639,7 +653,6 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     const failed = stagingRun({
       hasRegistrationIps: false,
       listRegistrationIps: async () => [],
-      listContentSamples: async () => [],
       listFilenameSamples: async () => [],
       listStagedImageSamples: async () => {
         throw new Error('replica timeout');
@@ -650,7 +663,6 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     const quiet = stagingRun({
       hasRegistrationIps: false,
       listRegistrationIps: async () => [],
-      listContentSamples: async () => [],
       listFilenameSamples: async () => [],
       listStagedImageSamples: async () => [],
     });
@@ -701,7 +713,6 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     const none = stagingRun({
       hasRegistrationIps: false,
       listRegistrationIps: async () => [],
-      listContentSamples: async () => [],
       listFilenameSamples: async () => [],
       listStagedImageSamples: async () => [],
     });
@@ -715,15 +726,14 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     const scenario = ringRun({
       hasRegistrationIps: true,
       listRegistrationIps: async () => [],
-      listContentSamples: async () => [],
       listStagedImageSamples: async () => [],
       listFilenameSamples: async () => [],
     });
     const counters = (await scenario.result).counters;
     expect(counters.evidence_source_read_failures).toBe(0);
     expect(counters.evidence_registration_ips_read_failed).toBe(0);
-    expect(counters.evidence_content_read_failed).toBe(0);
     expect(counters.evidence_filename_read_failed).toBe(0);
+    expect(counters.evidence_staged_image_read_failed).toBe(0);
     expect(scenario.reports[0].summary).not.toContain('READ FAILED');
   });
 
@@ -735,16 +745,20 @@ describe('🔴 the seam between the evidence and the scoring', () => {
       listRegistrationIps: async () => {
         throw new Error('clickhouse down');
       },
-      listContentSamples: async () => {
+      listStagedImageSamples: async () => {
         throw new Error('replica timeout');
       },
-      listStagedImageSamples: async () => [],
       listFilenameSamples: async () => {
         throw new Error('replica timeout');
       },
     });
     const counters = (await scenario.result).counters;
     expect(counters.evidence_source_read_failures).toBe(3);
+    // Asserted per source as well as in aggregate, so a count of three cannot be reached by one
+    // source's failure being recorded three times.
+    expect(counters.evidence_registration_ips_read_failed).toBe(1);
+    expect(counters.evidence_filename_read_failed).toBe(1);
+    expect(counters.evidence_staged_image_read_failed).toBe(1);
   });
 
   it('the same cohort with NO evidence reader scores both ring heuristics 0 — the control', async () => {
@@ -763,15 +777,16 @@ describe('🔴 the seam between the evidence and the scoring', () => {
 
 describe('the evidence sources are reported, not assumed', () => {
   it('🔴 a run with NO evidence reader says the ring sources did not run', async () => {
-    // Two of the three heuristics score 0 when their source is missing, which is byte-identical to
+    // Three of the four heuristics score 0 when their source is missing, which is byte-identical to
     // scoring 0 because nothing was found. These counters are the only things that tell the two
     // apart — without them a grading pass averages blind runs in as evidence of no rings.
     const scenario = run([account(1)]);
     await scenario.result;
     const counters = scenario.reports[0].counters ?? {};
     expect(counters.evidence_registration_ips).toBe(0);
-    expect(counters.evidence_content_budget_exhausted).toBe(0);
-    expect(counters.evidence_members_sampled_for_content).toBe(0);
+    expect(counters.evidence_filename_samples).toBe(0);
+    expect(counters.evidence_filename_budget_exhausted).toBe(0);
+    expect(counters.evidence_members_sampled_for_filenames).toBe(0);
   });
 
   it('reports the sources as present when the reader answered', async () => {
@@ -786,7 +801,6 @@ describe('the evidence sources are reported, not assumed', () => {
             { userId: 1, ip: 'x' },
             { userId: 2, ip: 'x' },
           ],
-          listContentSamples: async () => [],
           listStagedImageSamples: async () => [],
           listFilenameSamples: async () => [],
         },
@@ -799,7 +813,8 @@ describe('the evidence sources are reported, not assumed', () => {
     const counters = out.reports[0].counters ?? {};
     expect(counters.evidence_registration_ips).toBe(1);
     expect(counters.evidence_distinct_registration_ips).toBe(1);
-    expect(counters.evidence_members_sampled_for_content).toBe(2);
+    expect(counters.evidence_filename_samples).toBe(1);
+    expect(counters.evidence_members_sampled_for_filenames).toBe(2);
   });
 
   it('warns in the summary when the IP source DID NOT RUN, and says which of the two it was', async () => {
@@ -840,7 +855,6 @@ describe('the evidence sources are reported, not assumed', () => {
           listRegistrationIps: async () => {
             throw new Error('clickhouse down');
           },
-          listContentSamples: async () => [],
           listStagedImageSamples: async () => [],
           listFilenameSamples: async () => [],
         },
@@ -877,7 +891,6 @@ describe('the evidence sources are reported, not assumed', () => {
         evidence: {
           hasRegistrationIps: true,
           listRegistrationIps: async () => [],
-          listContentSamples: async () => [],
           listStagedImageSamples: async () => [],
           listFilenameSamples: async () => [],
         },
@@ -908,7 +921,6 @@ describe('the evidence sources are reported, not assumed', () => {
         evidence: {
           hasRegistrationIps: true,
           listRegistrationIps: async () => [{ userId: 1, ip: '203.0.113.4' }],
-          listContentSamples: async () => [],
           listStagedImageSamples: async () => [],
           listFilenameSamples: async () => [],
         },
@@ -921,11 +933,11 @@ describe('the evidence sources are reported, not assumed', () => {
     expect(out.reports[0].summary).not.toContain('MATCHED NOTHING');
   });
 
-  it('🔴 a failing CONTENT read degrades the run: a report is still filed, and it SAYS so', async () => {
-    // 🔴 THE FAILURE THIS EXISTS TO PREVENT, END TO END. `listContentSamples` had no guard, so a
+  it('🔴 a failing FILENAME read degrades the run: a report is still filed, and it SAYS so', async () => {
+    // 🔴 THE FAILURE THIS EXISTS TO PREVENT, END TO END. Before the Postgres reads were guarded, a
     // replica timeout propagated out of the run and NO REPORT WAS FILED AT ALL — the velocity
     // heuristic's day lost with it, and the whole thing indistinguishable from a producer that
-    // stopped running. Under the pre-fix code this case does not fail an assertion, it REJECTS.
+    // stopped running. Under unguarded code this case does not fail an assertion, it REJECTS.
     const { reader } = recordingReader([account(1), account(2)]);
     const out = sink();
     const result = await runBotAccountDetection(
@@ -934,11 +946,10 @@ describe('the evidence sources are reported, not assumed', () => {
         evidence: {
           hasRegistrationIps: false,
           listRegistrationIps: async () => [],
-          listContentSamples: async () => {
+          listStagedImageSamples: async () => [],
+          listFilenameSamples: async () => {
             throw new Error('replica timeout');
           },
-          listStagedImageSamples: async () => [],
-          listFilenameSamples: async () => [],
         },
         sendReport: out.sendReport,
         now: clock(),
@@ -949,19 +960,19 @@ describe('the evidence sources are reported, not assumed', () => {
 
     expect(result.reportsSent).toBe(1);
     expect(result.cohortSize).toBe(2);
-    expect(out.reports[0].counters?.evidence_content_samples).toBe(0);
+    expect(out.reports[0].counters?.evidence_filename_samples).toBe(0);
     // 🔴 IT NAMES A FAILURE, NOT AN ABSENCE. The sentence used to read "the read either did not run
     // or failed", which is one sentence covering two situations with different remedies — an
     // unwired deployment and a broken read that needs fixing today.
-    expect(out.reports[0].summary).toContain('THE CONTENT SAMPLE READ FAILED');
-    expect(out.reports[0].counters?.evidence_content_read_failed).toBe(1);
+    expect(out.reports[0].summary).toContain('THE UPLOADED-FILENAME READ FAILED');
+    expect(out.reports[0].counters?.evidence_filename_read_failed).toBe(1);
     // Not reported as an exhausted budget: that would send a grading pass looking for a cohort too
     // large rather than for a broken replica.
-    expect(out.reports[0].counters?.evidence_content_budget_exhausted).toBe(0);
-    expect(out.reports[0].counters?.evidence_members_sampled_for_content).toBe(0);
+    expect(out.reports[0].counters?.evidence_filename_budget_exhausted).toBe(0);
+    expect(out.reports[0].counters?.evidence_members_sampled_for_filenames).toBe(0);
   });
 
-  it('publishes evidence_content_samples as a 1 when the read worked', async () => {
+  it('publishes evidence_filename_samples as a 1 when the read worked', async () => {
     // Emitted on both sides, so the counter is a state rather than a flag that only ever appears in
     // the bad case.
     const { reader } = recordingReader([account(1)]);
@@ -972,7 +983,6 @@ describe('the evidence sources are reported, not assumed', () => {
         evidence: {
           hasRegistrationIps: false,
           listRegistrationIps: async () => [],
-          listContentSamples: async () => [],
           listStagedImageSamples: async () => [],
           listFilenameSamples: async () => [],
         },
@@ -982,9 +992,9 @@ describe('the evidence sources are reported, not assumed', () => {
       },
       { pageSize: 10, maxAccounts: 10, minConfidence: 0 }
     );
-    expect(out.reports[0].counters?.evidence_content_samples).toBe(1);
-    expect(out.reports[0].summary).not.toContain('CONTENT SAMPLE DATA WAS UNAVAILABLE');
-    expect(out.reports[0].summary).not.toContain('THE CONTENT SAMPLE READ FAILED');
+    expect(out.reports[0].counters?.evidence_filename_samples).toBe(1);
+    expect(out.reports[0].summary).not.toContain('UPLOADED-FILENAME DATA WAS UNAVAILABLE');
+    expect(out.reports[0].summary).not.toContain('THE UPLOADED-FILENAME READ FAILED');
   });
 
   it('🔴 the DID-NOT-RUN half of both disclosures, pinned whole and pinned APART from the FAILED half', async () => {
@@ -1004,32 +1014,36 @@ describe('the evidence sources are reported, not assumed', () => {
 
     expect(summary).toContain(
       '🔴 UPLOADED-FILENAME DATA WAS UNAVAILABLE this run — the read did not run — so the ' +
-        'filename half of the content-templating heuristic scored 0 for every member for want of ' +
+        'content-templating heuristic scored 0 for every member for want of ' +
         'data. That is not evidence that no accounts uploaded files under the same name.'
     );
     expect(summary).toContain(
-      '🔴 CONTENT SAMPLE DATA WAS UNAVAILABLE this run — the read did not run — so the ' +
-        'content-templating heuristic scored 0 for every member for want of data. That is not ' +
-        'evidence that no accounts posted the same text. The rest of the run was scored normally.'
+      '🔴 STAGED-IMAGE DATA WAS UNAVAILABLE this run — the read did not run — so the ' +
+        'asset-staging heuristic scored 0 for every member for want of data. That is not evidence ' +
+        'that these accounts published what they uploaded.'
     );
 
     // 🔴 DISTINGUISHABLE FROM, NOT MERELY PRESENT. "The sentence is there" is true of the mutant
     // too — it is the wrong sentence being there that does the harm — so the claim has to be that
     // the FAILED text is ABSENT, and that the counters agree with the words.
     expect(summary).not.toContain('THE UPLOADED-FILENAME READ FAILED');
-    expect(summary).not.toContain('THE CONTENT SAMPLE READ FAILED');
+    expect(summary).not.toContain('THE STAGED-IMAGE READ FAILED');
     expect(summary).not.toContain('it is a broken read');
     expect(scenario.reports[0].counters?.evidence_source_read_failures).toBe(0);
-    expect(scenario.reports[0].counters?.evidence_content_read_failed).toBe(0);
+    expect(scenario.reports[0].counters?.evidence_staged_image_read_failed).toBe(0);
     expect(scenario.reports[0].counters?.evidence_filename_read_failed).toBe(0);
   });
 
   it('🔴 says the budget ran out, in the summary as well as the counters', async () => {
-    // 🔴 The whole budget-exhausted sentence was unasserted: mutating `(signals.sources
-    // .contentBudgetExhausted` to `(false` left the suite green, so half of what the PR body claims
-    // the summary warns about was never checked. The sentence is pinned in full, not by keyword —
-    // it names WHICH END went unsampled, and a reword that inverted that would pass a keyword test.
-    const { reader } = recordingReader([account(1), account(2), account(3), account(4)]);
+    // 🔴 The whole budget-exhausted sentence was unasserted for a long while: mutating the guard to
+    // a constant `false` left the suite green, so half of what the summary claims to warn about was
+    // never checked. The sentence is pinned in full, not by keyword — it names WHICH END went
+    // unsampled, and a reword that inverted that would pass a keyword test.
+    //
+    // Twelve members at `filenameBatchSize` 10 (the production default) against a budget of 2: the
+    // first batch of ten spends it and the walk stops before the second, leaving 2 of 12 unsampled.
+    const accounts = Array.from({ length: 12 }, (_, i) => account(i + 1));
+    const { reader } = recordingReader(accounts);
     const out = sink();
     await runBotAccountDetection(
       {
@@ -1037,25 +1051,22 @@ describe('the evidence sources are reported, not assumed', () => {
         evidence: {
           hasRegistrationIps: false,
           listRegistrationIps: async () => [],
-          // Two rows per chunk against a budget of 2: the first chunk spends it and the walk stops.
-          listContentSamples: async (ids) =>
-            ids.map((userId) => ({ userId, content: 'x'.repeat(30) })),
           listStagedImageSamples: async () => [],
-          listFilenameSamples: async () => [],
+          listFilenameSamples: async (ids) => ids.map((userId) => ({ userId, name: 'a.png' })),
         },
         sendReport: out.sendReport,
         now: clock(),
         heuristics: [],
       },
-      { pageSize: 2, maxAccounts: 10, minConfidence: 0, maxContentSamples: 2 }
+      { pageSize: 20, maxAccounts: 20, minConfidence: 0, maxFilenameSamples: 2 }
     );
 
-    expect(out.reports[0].counters?.evidence_content_budget_exhausted).toBe(1);
-    expect(out.reports[0].counters?.evidence_content_budget).toBe(2);
+    expect(out.reports[0].counters?.evidence_filename_budget_exhausted).toBe(1);
+    expect(out.reports[0].counters?.evidence_filename_budget).toBe(2);
     expect(out.reports[0].summary).toContain(
-      '🔴 THE CONTENT SAMPLE BUDGET (2 rows) WAS EXHAUSTED after 2 of 4 members. Members are ' +
-        'sampled newest-first, so the unsampled remainder is the OLDEST end of the window and ' +
-        'scored 0 on content templating for want of data.'
+      '🔴 THE FILENAME SAMPLE BUDGET (2 rows) WAS EXHAUSTED after 10 of 12 members. ' +
+        'Members are sampled newest-first, so the unsampled remainder is the OLDEST end of the ' +
+        'window and scored 0 on filename clustering for want of data.'
     );
   });
 });
@@ -1125,7 +1136,6 @@ describe('🔴 the signals log line carries the failure half, not just the avail
       listRegistrationIps: async () => {
         throw new Error('clickhouse down');
       },
-      listContentSamples: async () => [],
       listStagedImageSamples: async () => [],
       listFilenameSamples: async () => [],
     });
@@ -1135,7 +1145,6 @@ describe('🔴 the signals log line carries the failure half, not just the avail
     // flag is dropped from the shape, and when the wrong source is blamed.
     expect(scenario.signals().readFailures).toEqual({
       registrationIps: true,
-      contentSamples: false,
       filenameSamples: false,
       stagedImages: false,
     });
@@ -1151,14 +1160,12 @@ describe('🔴 the signals log line carries the failure half, not just the avail
     const scenario = logRun({
       hasRegistrationIps: true,
       listRegistrationIps: async () => [],
-      listContentSamples: async () => [],
       listStagedImageSamples: async () => [],
       listFilenameSamples: async () => [],
     });
     await scenario.result;
     expect(scenario.signals().readFailures).toEqual({
       registrationIps: false,
-      contentSamples: false,
       filenameSamples: false,
       stagedImages: false,
     });
@@ -1172,7 +1179,6 @@ describe('🔴 the signals log line carries the failure half, not just the avail
     const failed = logRun({
       hasRegistrationIps: false,
       listRegistrationIps: async () => [],
-      listContentSamples: async () => [],
       listStagedImageSamples: async () => [],
       listFilenameSamples: async () => {
         throw new Error('replica timeout');
@@ -1182,7 +1188,6 @@ describe('🔴 the signals log line carries the failure half, not just the avail
     const quiet = logRun({
       hasRegistrationIps: false,
       listRegistrationIps: async () => [],
-      listContentSamples: async () => [],
       listStagedImageSamples: async () => [],
       listFilenameSamples: async () => [],
     });
@@ -1232,11 +1237,11 @@ describe('the counters that make the heuristics’ own blind spots measurable', 
   });
 
   it('🔴 counts the findings that rest on ONE heuristic and nothing else', async () => {
-    // The counter the content-templating false positive shows up in. A generation-parameter paste
-    // fires that heuristic and no other, so a run inflated by collisions moves
-    // `heuristic:content-templating:sole_signal` and leaves `fired` looking ordinary. Over the
-    // REPORTED members only: a sole signal below the threshold produced no finding and cost nobody
-    // anything.
+    // The counter the content-templating false positive shows up in. A generic filename several
+    // unrelated new accounts happen to upload under fires that heuristic and no other, so a run
+    // inflated by collisions moves `heuristic:content-templating:sole_signal` and leaves `fired`
+    // looking ordinary. Over the REPORTED members only: a sole signal below the threshold produced
+    // no finding and cost nobody anything.
     const { reader } = recordingReader([account(1), account(2)]);
     const out = sink();
     const result = await runBotAccountDetection(
@@ -1282,11 +1287,18 @@ describe('the counters that make the heuristics’ own blind spots measurable', 
   it('🔴 counts a finding a TRACE from another heuristic used to EXCLUDE', async () => {
     // 🔴 THE COLLISION'S ROUTINE SHAPE, AND THE OLD PREDICATE COULD NOT SEE IT. `sole_signal` was
     // `exactly one heuristic scored above zero`, which measured a strictly smaller population than
-    // the sentence it was documented with. A member 40 minutes old with 6 parameter-paste comments
-    // in a fingerprint cluster of 6 scores a TRACE on posting-velocity as well — and that trace
-    // excluded the whole finding from the count. An operator reading
+    // the sentence it was documented with. The colliding member scores a TRACE on posting-velocity
+    // as well — and that trace excluded the whole finding from the count. An operator reading
     // `content-templating:sole_signal = 0` concluded the known collision produced no reports, on
     // the one number the decision about that collision was deferred to.
+    //
+    // 🔴 THE FIXTURE THIS CASE USED TO CARRY IS RETRACTED — it was a member 40 minutes old with 6
+    // parameter-paste COMMENTS under a bare `'paste'` fingerprint, and that member cannot exist:
+    // comment text is no longer read, and what made two pastes collide was the deleted prose
+    // normaliser's digit masking, which `normalizeFilename` deliberately does not apply. The
+    // reachable collision is a generic FILENAME — an account that bulk-uploaded under one ordinary
+    // name shared with other accounts registered the same day — so the fixture is one of those, with
+    // a namespaced key, which is the only shape the index ever holds.
     //
     // The two scores below are EXECUTED against the shipped heuristics, not stipulated: if
     // `ZERO_AT_PER_HOUR` or `CLUSTER_ZERO_AT` moves, this case moves with it rather than pinning a
@@ -1294,17 +1306,17 @@ describe('the counters that make the heuristics’ own blind spots measurable', 
     const colliding: BotAccountCohortMember = {
       userId: 1,
       username: 'u1',
-      createdAt: new Date(STARTED.getTime() - 40 * 60_000),
+      createdAt: new Date(STARTED.getTime() - 60 * 60_000),
       posts: {
-        all: { comments: 6, models: 0, images: 0, total: 6 },
-        visible: { comments: 6, models: 0, images: 0, total: 6 },
+        all: { comments: 0, models: 0, images: 8, total: 8 },
+        visible: { comments: 0, models: 0, images: 8, total: 8 },
         excluded: { comments: 0, models: 0, images: 0, total: 0 },
       },
       emailDomain: null,
     };
     const signals = emptyCohortSignals();
-    signals.fingerprintsByUser.set(1, ['paste']);
-    signals.membersPerFingerprint.set('paste', 6);
+    signals.fingerprintsByUser.set(1, ['file:logo.jpg']);
+    signals.membersPerFingerprint.set('file:logo.jpg', 6);
 
     const velocity = postingVelocityHeuristic.score({ member: colliding, now: STARTED, signals });
     const templating = contentTemplatingHeuristic.score({
@@ -1312,17 +1324,17 @@ describe('the counters that make the heuristics’ own blind spots measurable', 
       now: STARTED,
       signals,
     });
-    // 6 items in 0.67h is 9/hour, just over the 4/hour floor — a trace, not a finding.
-    expect(velocity).toBeCloseTo(0.1389, 4);
+    // 8 items in 1.0h is 8/hour, just over the 4/hour floor — a trace, not a finding.
+    expect(velocity).toBeCloseTo(0.1111, 4);
     expect(templating).toBeCloseTo(0.5, 4);
     // The property that makes this the collision population rather than a corroborated finding. The
-    // bar is a function of how many heuristics this RUN registered — three, injected below — and not
-    // of the shipped registry's size. That distinction is the whole point of
-    // `soleSignalDominance`: at four entries the bar is 4 and this same member falls the other side
-    // of it (4 x 0.1389 = 0.5556 against a leader of 0.5), which is the derivation working rather
-    // than the case having stopped being a collision.
-    expect(templating).toBeGreaterThanOrEqual(soleSignalDominance(3) * velocity);
-    expect(templating).toBeLessThan(soleSignalDominance(4) * velocity);
+    // bar is a function of how many heuristics this RUN registered — four, injected below, matching
+    // the shipped registry's size — and not of a number written down anywhere. That is the whole
+    // point of `soleSignalDominance`: at FIVE entries the bar is 5 and this same member falls the
+    // other side of it (5 x 0.1111 = 0.5556 against a leader of 0.5), which is the derivation
+    // working rather than the case having stopped being a collision.
+    expect(templating).toBeGreaterThanOrEqual(soleSignalDominance(4) * velocity);
+    expect(templating).toBeLessThan(soleSignalDominance(5) * velocity);
 
     const { reader } = recordingReader([account(1)]);
     const out = sink();
@@ -1335,6 +1347,7 @@ describe('the counters that make the heuristics’ own blind spots measurable', 
           constantHeuristic(postingVelocityHeuristic.id, velocity),
           constantHeuristic(registrationClusterHeuristic.id, 0),
           constantHeuristic(contentTemplatingHeuristic.id, templating),
+          constantHeuristic(assetStagingHeuristic.id, 0),
         ],
       },
       { pageSize: 10, maxAccounts: 10 }
@@ -1351,6 +1364,7 @@ describe('the counters that make the heuristics’ own blind spots measurable', 
     // The trace itself carried nothing, and must not be counted as though it had.
     expect(result.counters[`heuristic:${postingVelocityHeuristic.id}:sole_signal`]).toBe(0);
     expect(result.counters[`heuristic:${registrationClusterHeuristic.id}:sole_signal`]).toBe(0);
+    expect(result.counters[`heuristic:${assetStagingHeuristic.id}:sole_signal`]).toBe(0);
   });
 
   it('🔴 is blind to REGISTRY ORDER, and counts nobody on a member nothing fired on', async () => {
@@ -1848,7 +1862,6 @@ describe('🔴 the cluster key reaches the board', () => {
   const domainOnlyEvidence = {
     hasRegistrationIps: false,
     listRegistrationIps: async () => [],
-    listContentSamples: async () => [],
     listStagedImageSamples: async () => [],
     listFilenameSamples: async () => [],
   };

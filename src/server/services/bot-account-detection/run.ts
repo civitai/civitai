@@ -8,14 +8,13 @@ import {
   type CohortReader,
 } from './cohort';
 import {
-  MAX_CONTENT_SAMPLES,
   MAX_FILENAME_SAMPLES,
   MAX_STAGED_IMAGE_SAMPLES,
   collectCohortSignals,
   emptyCohortSignals,
   type EvidenceReader,
 } from './evidence';
-import { FILENAME_FINGERPRINT_PREFIX, TEXT_FINGERPRINT_PREFIX } from './fingerprint-keys';
+import { FILENAME_FINGERPRINT_PREFIX } from './fingerprint-keys';
 import {
   ASSET_STAGING_ID,
   BOT_ACCOUNT_HEURISTICS,
@@ -56,7 +55,7 @@ export type BotAccountReportSink = (report: AbuseReportInput) => Promise<unknown
 export type BotAccountDetectionDeps = {
   reader: CohortReader;
   /**
-   * The cohort-level sources — registration IPs and content samples.
+   * The cohort-level sources — registration IPs, uploaded filenames and staged images.
    *
    * Optional, and its absence is a REAL state rather than a test affordance: a run without it scores
    * the velocity heuristic normally and the two ring heuristics against an empty index. That is why
@@ -106,10 +105,8 @@ export type BotAccountDetectionOptions = {
    * default on a live board.
    */
   minConfidence?: number;
-  /** Ceiling on content rows read for the templating heuristic. Defaults to `MAX_CONTENT_SAMPLES`. */
-  maxContentSamples?: number;
-  /** Ceiling on image rows read for the templating heuristic's filename half. Defaults to
-   *  `MAX_FILENAME_SAMPLES`. Separate from the content budget — see that constant. */
+  /** Ceiling on image rows read for the templating heuristic. Defaults to `MAX_FILENAME_SAMPLES`.
+   *  Its own budget, not a share of any other — see that constant. */
   maxFilenameSamples?: number;
   /** Ceiling on image rows read for the `asset-staging` heuristic. Defaults to
    *  `MAX_STAGED_IMAGE_SAMPLES`. Its own budget, not a share of the filename one. */
@@ -174,7 +171,6 @@ export async function runBotAccountDetection(
   const maxAccounts = options.maxAccounts ?? MAX_COHORT_ACCOUNTS;
   const maxFindingsPerReport = options.maxFindingsPerReport ?? MAX_FINDINGS_PER_REPORT;
   const minConfidence = options.minConfidence ?? MIN_REPORTED_CONFIDENCE;
-  const maxContentSamples = options.maxContentSamples ?? MAX_CONTENT_SAMPLES;
   const maxFilenameSamples = options.maxFilenameSamples ?? MAX_FILENAME_SAMPLES;
   const maxStagedImageSamples = options.maxStagedImageSamples ?? MAX_STAGED_IMAGE_SAMPLES;
   const log = deps.log ?? (() => undefined);
@@ -204,7 +200,6 @@ export async function runBotAccountDetection(
   const signals = deps.evidence
     ? await collectCohortSignals(deps.evidence, cohort.members, {
         chunkSize: pageSize,
-        maxContentSamples,
         maxFilenameSamples,
         maxStagedImageSamples,
         // The run's own clock as the filename read's upper bound, so the sample is a snapshot of
@@ -220,9 +215,6 @@ export async function runBotAccountDetection(
     : emptyCohortSignals();
   log('bot-account-detection:signals', {
     registrationIps: signals.sources.registrationIps,
-    contentSamples: signals.sources.contentSamples,
-    contentBudgetExhausted: signals.sources.contentBudgetExhausted,
-    membersSampledForContent: signals.sources.membersSampledForContent,
     distinctIps: signals.membersPerIp.size,
     distinctDomains: signals.membersPerDomain.size,
     distinctFingerprints: signals.membersPerFingerprint.size,
@@ -290,14 +282,43 @@ export async function runBotAccountDetection(
     return n;
   };
 
-  // 🔴 WHICH HALF OF `content-templating` FIRED. The heuristic now has two fingerprint sources
-  // behind one id, so `heuristic:content-templating:fired` can no longer answer the only question
-  // the shadow phase asks of a signal — whether IT, specifically, is earning its place. The comment
-  // half fired zero times across five production runs while that was invisible inside a single
-  // counter; these are what make the same failure visible next time.
+  // 🔴 WHICH SOURCE OF `content-templating` FIRED. `heuristic:content-templating:fired` does not say
+  // WHICH fingerprint source produced a score, and the shadow phase's whole question of a signal is
+  // whether IT, specifically, is earning its place. The deleted comment source fired zero times
+  // across every run it shipped in while that was invisible inside a single counter; this is what
+  // makes the same failure visible for the next source folded in here.
   //
-  // Counted over EVERY scored member, matching `fired`'s own population so the three are directly
-  // comparable. They may sum to MORE than `fired` — see `contentTemplatingSourceScore`.
+  // 🔴 `fired_text` IS GONE, AND ITS ABSENCE IS THE INTENDED, VISIBLE SIGNAL. The comment source it
+  // counted has been deleted, so the key will never appear in another run's counters. A reader
+  // comparing run series across this change sees a key stop rather than go to zero — which is the
+  // honest shape, because a zero would assert the source was read and found nothing.
+  //
+  // 🔴 AND TODAY IT CANNOT DIVERGE FROM `fired`. THAT IS NOT A CAVEAT, IT IS THE READING
+  // INSTRUCTION. `fired` counts scored members whose `content-templating` sub-score is above zero
+  // across EVERY namespace in the index; this counts the same members across `file:` alone, over the
+  // same population (`scores` is `cohort.members` mapped one-to-one). With the comment source
+  // deleted the index carries exactly ONE namespace — `evidence.test.ts` pins every key in
+  // `membersPerFingerprint` and `fingerprintsByUser` as `file:`-prefixed — so the prefix filter
+  // rejects nothing and the two counters are EQUAL BY CONSTRUCTION on every run, not merely equal so
+  // far. An operator charting the pair gets two identical lines, and reading that agreement as the
+  // decomposition being exercised is the exact error this paragraph exists to stop: the lines agree
+  // by arithmetic, and they would agree just as perfectly if the decomposition were broken.
+  //
+  // WHAT MAKES IT INFORMATIVE AGAIN, stated as a trigger rather than as a hope: the first run whose
+  // index carries a SECOND namespace. From that run `fired` counts both sources and this one counts
+  // `file:`, and the gap between them is the new source's own contribution — with no change to this
+  // code. `evidence.test.ts` fails the moment a second `*_FINGERPRINT_PREFIX` is declared in
+  // `fingerprint-keys.ts`, which is where that contract lives, so this paragraph is made to expire
+  // rather than left to rot.
+  //
+  // 🔴 WHY IT IS KEPT RATHER THAN DELETED UNTIL THEN, given it measures nothing today. The two
+  // sentences above are the whole argument for the counter's PRESENT value and they concede it is
+  // nil; what removing it would cost is the module's own convention for a vanishing key, stated in
+  // the `fired_text` paragraph above and asserted in `run.test.ts`: a key that stops appearing says
+  // THE SOURCE IS NO LONGER READ. `fired_text` stopping says something true; `fired_filename`
+  // stopping would say the filename source went dark, on a run where it is the only source there
+  // is — a false statement on the surface that renders these (`abuse_detection_run.counters`,
+  // listed key by key on the run page), and the opposite of what its absence would mean.
   const firedFromSource = (prefix: string) =>
     cohort.members.filter((m) => contentTemplatingSourceScore(m.userId, signals, prefix) > 0)
       .length;
@@ -363,20 +384,16 @@ export async function runBotAccountDetection(
     // the only things that tell the two apart, so a grading pass can exclude the runs whose ring
     // heuristics were blind rather than averaging them in as evidence of no rings.
     evidence_registration_ips: signals.sources.registrationIps ? 1 : 0,
-    // The content read's own availability, on the same 0/1 terms and for the same reason: a
-    // templating score of 0 across the cohort means "nobody templated" only when this is 1.
-    evidence_content_samples: signals.sources.contentSamples ? 1 : 0,
-    evidence_content_budget_exhausted: signals.sources.contentBudgetExhausted ? 1 : 0,
-    evidence_members_sampled_for_content: signals.sources.membersSampledForContent,
-    evidence_content_budget: maxContentSamples,
     evidence_distinct_registration_ips: signals.membersPerIp.size,
     evidence_distinct_email_domains: signals.membersPerDomain.size,
-    // 🔴 COUNTED PER NAMESPACE, NOT AS `membersPerFingerprint.size`. That map now carries both
-    // sources, so the bare size would have silently redefined an existing series: a run whose
-    // `evidence_distinct_content_fingerprints` jumped from 3 to 4,000 would read as an explosion of
-    // comment templating on the day the filename source shipped. The two are separate questions and
-    // get separate keys.
-    evidence_distinct_content_fingerprints: distinctFingerprints(TEXT_FINGERPRINT_PREFIX),
+    // 🔴 COUNTED PER NAMESPACE, NOT AS `membersPerFingerprint.size`, even though one source makes
+    // the two equal today. The bare size silently redefines this series the moment a second source
+    // is folded in: a run whose count jumped from 3 to 4,000 would read as an explosion of filename
+    // sharing on the day the new source shipped. Separate questions get separate keys.
+    //
+    // 🔴 `evidence_distinct_content_fingerprints` IS GONE with the comment source it counted, for
+    // the reason `fired_text` is — a key that stops appearing says "not read any more"; a key
+    // reporting 0 would assert the source was read and found nothing.
     evidence_distinct_filename_fingerprints: distinctFingerprints(FILENAME_FINGERPRINT_PREFIX),
     evidence_filename_samples: signals.sources.filenameSamples ? 1 : 0,
     evidence_filename_budget_exhausted: signals.sources.filenameBudgetExhausted ? 1 : 0,
@@ -422,24 +439,25 @@ export async function runBotAccountDetection(
     //
     // 🔴 THE PER-SOURCE KEYS ARE FOR TRIAGE, NOT FOR DISAMBIGUATION. An earlier version of this
     // comment justified them by the total's reassuring default — a run that never got far enough
-    // reads as "nothing broke" — and that reasoning does not survive contact with these three, which
+    // reads as "nothing broke" — and that reasoning does not survive contact with them, since they
     // default to `0` for exactly the same reason and so say nothing the total does not. What they
-    // add is WHICH read broke: ClickHouse, the comment read, or the filename read. That is the
+    // add is WHICH read broke: ClickHouse, the filename read, or the staged-image read. That is the
     // difference between a fix aimed at the right source and a morning spent reading logs.
+    //
+    // 🔴 `evidence_content_read_failed` IS GONE, and the TOTAL now sums three terms rather than
+    // four. A run's total can therefore only fall as a result of this change, never rise — and it
+    // could only ever have counted the comment read, which no longer happens.
     evidence_source_read_failures:
       (signals.sources.readFailures.registrationIps ? 1 : 0) +
-      (signals.sources.readFailures.contentSamples ? 1 : 0) +
       (signals.sources.readFailures.filenameSamples ? 1 : 0) +
       (signals.sources.readFailures.stagedImages ? 1 : 0),
     evidence_registration_ips_read_failed: signals.sources.readFailures.registrationIps ? 1 : 0,
-    evidence_content_read_failed: signals.sources.readFailures.contentSamples ? 1 : 0,
     evidence_filename_read_failed: signals.sources.readFailures.filenameSamples ? 1 : 0,
     evidence_staged_image_read_failed: signals.sources.readFailures.stagedImages ? 1 : 0,
 
     domains_suppressed_common: domainsSuppressed,
 
     ...heuristicCounters(scores),
-    [`heuristic:${CONTENT_TEMPLATING_ID}:fired_text`]: firedFromSource(TEXT_FINGERPRINT_PREFIX),
     [`heuristic:${CONTENT_TEMPLATING_ID}:fired_filename`]: firedFromSource(
       FILENAME_FINGERPRINT_PREFIX
     ),
@@ -448,8 +466,12 @@ export async function runBotAccountDetection(
     // Over EVERY scored member, not only the reported ones — see `confidenceBucketCounters`.
     ...confidenceBucketCounters(scores),
     // Over the REPORTED members only: which findings rest on ONE heuristic and nothing else. See
-    // `soleSignalCounters` — this is what a known collision (a generation-parameter paste matching
-    // itself under `content-templating`) shows up as, and it is not visible in `fired`.
+    // `soleSignalCounters` — this is what a known collision shows up as, and it is not visible in
+    // `fired`. 🔴 THE COLLISION THIS LINE USED TO NAME — a generation-parameter paste matching
+    // itself under `content-templating` — IS RETRACTED: it depended on the deleted comment source
+    // and on a digit masking the filename fingerprinter deliberately does not apply, so it cannot
+    // occur. The reachable one is a generic filename several unrelated new accounts happen to share;
+    // `soleSignalCounters` carries the worked arithmetic.
     ...soleSignalCounters(reported, heuristics),
   };
 
@@ -500,25 +522,10 @@ export async function runBotAccountDetection(
         `wrong column, a moved table or an over-tight filter looks like — the two are not ` +
         `distinguishable from this run alone.`
       : '') +
-    (signals.sources.contentSamples
-      ? ''
-      : signals.sources.readFailures.contentSamples
-      ? ` 🔴 THE CONTENT SAMPLE READ FAILED this run and its partial result was discarded, so the ` +
-        `content-templating heuristic scored 0 for every member for want of data. That is not ` +
-        `evidence that no accounts posted the same text — it is a broken read, and it is counted ` +
-        `in evidence_source_read_failures. The rest of the run was scored normally.`
-      : ` 🔴 CONTENT SAMPLE DATA WAS UNAVAILABLE this run — the read did not run — so the ` +
-        `content-templating heuristic scored 0 for every member for want of data. That is not ` +
-        `evidence that no accounts posted the same text. The rest of the run was scored normally.`) +
-    (signals.sources.contentBudgetExhausted
-      ? ` 🔴 THE CONTENT SAMPLE BUDGET (${maxContentSamples} rows) WAS EXHAUSTED after ` +
-        `${signals.sources.membersSampledForContent} of ${cohort.members.length} members. Members ` +
-        `are sampled newest-first, so the unsampled remainder is the OLDEST end of the window and ` +
-        `scored 0 on content templating for want of data.`
-      : '') +
-    // The filename half of `content-templating` gets its own disclosures, for the same reason the
-    // comment half has them: a zero from a source that never ran is not a zero from a source that
-    // found nothing, and only these sentences tell a reader which one they are looking at.
+    // `content-templating`'s source gets its own disclosures: a zero from a source that never ran is
+    // not a zero from a source that found nothing, and only these sentences tell a reader which one
+    // they are looking at. (The comment-text source had a matching pair of sentences; they went with
+    // the source.)
     // 🔴 IT NAMES WHICH OF THE TWO HAPPENED. "did not run or failed" was one sentence covering two
     // situations that call for different actions — one is a deployment without the source wired up,
     // the other is a broken read that needs fixing today — and a reader could not tell them apart
@@ -527,11 +534,11 @@ export async function runBotAccountDetection(
       ? ''
       : signals.sources.readFailures.filenameSamples
       ? ` 🔴 THE UPLOADED-FILENAME READ FAILED this run and its partial result was discarded, so ` +
-        `the filename half of the content-templating heuristic scored 0 for every member for want ` +
+        `the content-templating heuristic scored 0 for every member for want ` +
         `of data. That is not evidence that no accounts uploaded files under the same name — it is ` +
         `a broken read, and it is counted in evidence_source_read_failures.`
       : ` 🔴 UPLOADED-FILENAME DATA WAS UNAVAILABLE this run — the read did not run — so the ` +
-        `filename half of the content-templating heuristic scored 0 for every member for want of ` +
+        `content-templating heuristic scored 0 for every member for want of ` +
         `data. That is not evidence that no accounts uploaded files under the same name.`) +
     (signals.sources.filenameBudgetExhausted
       ? ` 🔴 THE FILENAME SAMPLE BUDGET (${maxFilenameSamples} rows) WAS EXHAUSTED after ` +
