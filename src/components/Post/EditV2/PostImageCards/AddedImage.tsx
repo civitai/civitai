@@ -1227,6 +1227,11 @@ function PostImage() {
           // The creator is judging what they just uploaded, so the editor shows the stored file
           // whatever their media quality is.
           original
+          // 🔴 Load-bearing with `original`: PostImageCards renders every image in the post with no
+          // virtualisation, and EdgeImage sets no `loading`, so without this a 16-image post (p90)
+          // fetches 16 stored originals eagerly — measured at ~+1.2MB each over the derived
+          // variant, and PNG originals average ~3.9MB.
+          loading="lazy"
           className={showPreview ? 'rounded-none' : 'rounded-lg'}
           anim={type === 'video'}
           html5Controls
