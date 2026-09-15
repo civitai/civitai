@@ -88,6 +88,7 @@ import { applyNodeOverrides } from '~/utils/node-override';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion } from '~/server/utils/region-blocking';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
+import { getSiteSchema } from '~/components/Meta/site-schema';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
 
@@ -166,6 +167,8 @@ function MyApp(props: CustomAppProps) {
     },
   } = props;
 
+  const siteSchema = getSiteSchema({ domain, serverDomains });
+
   // // Standalone pages bypass all providers and render directly
   // if ('standalone' in Component && Component.standalone) {
   //   return <Component {...pageProps} />;
@@ -221,6 +224,13 @@ function MyApp(props: CustomAppProps) {
     >
       <Head>
         <title>Civitai | Share your models</title>
+        {siteSchema && (
+          <script
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{ __html: JSON.stringify(siteSchema) }}
+            key="site-schema"
+          />
+        )}
       </Head>
       <ThemeProvider colorScheme={colorScheme}>
         <ThirdPartyConsentProvider

@@ -55,6 +55,7 @@ import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Gated } from '~/components/Gated/Gated';
+import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
@@ -389,6 +390,10 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         canonical: `/articles/${article.id}/${slugit(article.title)}`,
         alternate: `/articles/${article.id}`,
         schema: articleSchema,
+        breadcrumb: buildBreadcrumbSchema(env.NEXT_PUBLIC_BASE_URL ?? '', [
+          { name: 'Articles', path: '/articles' },
+          { name: article.title },
+        ]),
         ogType: 'article' as const,
         deIndex: !article?.publishedAt || article?.availability === Availability.Unsearchable,
       }}
