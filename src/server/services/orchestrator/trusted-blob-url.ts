@@ -7,6 +7,12 @@ import { env } from '~/env/server';
 const KNOWN_ORCHESTRATOR_HOSTS = [
   'orchestration.civitai.com',
   'orchestration-new.civitai.com',
+  // The "next" orchestrator's public origin. A PR preview can be opted onto that
+  // orchestrator, and it mints asset URLs on this host; without it here, training
+  // epoch/asset downloads from such a preview are refused as `Invalid asset URL`.
+  // The server-side endpoint those previews use is an internal address, so it can
+  // never widen this list via the `configured` entry below — it has to be listed.
+  'orchestration-next.civitai.com',
   'orchestration-stage.civitai.com',
   'orchestration-dev.civitai.com',
   'image-generation.civitai.com',
