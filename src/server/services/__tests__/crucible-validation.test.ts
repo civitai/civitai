@@ -375,6 +375,34 @@ describe('submitEntry — content type', () => {
   });
 });
 
+describe('submitVoteSchema — watched playback', () => {
+  const base = { crucibleId: 1, winnerEntryId: 2, loserEntryId: 3 };
+
+  it('accepts the FRACTIONAL values a real client sends', () => {
+    // Accumulated from `video.currentTime` deltas, so the browser sends fractions. An `.int()`
+    // schema rejected every genuine vote, and every test that passed a round number passed.
+    const result = submitVoteSchema.safeParse({
+      ...base,
+      winnerWatchedMs: 10894.686999999998,
+      loserWatchedMs: 11194.383999999998,
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a vote with no watch times at all', () => {
+    expect(submitVoteSchema.safeParse(base).success).toBe(true);
+  });
+
+  it.each([
+    ['a negative duration', { winnerWatchedMs: -1 }],
+    ['a non-finite duration', { winnerWatchedMs: Number.POSITIVE_INFINITY }],
+    ['a string', { winnerWatchedMs: '6000' }],
+  ])('rejects %s', (_label, watched) => {
+    expect(submitVoteSchema.safeParse({ ...base, ...watched }).success).toBe(false);
+  });
+});
+
 describe('createCrucibleInputSchema — video settings', () => {
   const videoInput = { ...validCreateInput, contentType: MediaType.video };
 

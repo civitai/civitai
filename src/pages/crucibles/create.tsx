@@ -629,6 +629,8 @@ export default function CrucibleCreate() {
                   min={1}
                   max={CRUCIBLE_MAX_MIN_VIEW_SECONDS}
                   placeholder="No minimum"
+                  // The wrapper's label sits outside the Group, so it never associates with this input.
+                  aria-label="Minimum view time in seconds"
                   style={{ flex: 1 }}
                 />
                 <Text size="sm" c="dimmed">
@@ -652,6 +654,8 @@ export default function CrucibleCreate() {
                   min={1}
                   max={CRUCIBLE_MAX_CLIP_SECONDS}
                   placeholder="No maximum"
+                  // The wrapper's label sits outside the Group, so it never associates with this input.
+                  aria-label="Maximum clip length in seconds"
                   style={{ flex: 1 }}
                 />
                 <Text size="sm" c="dimmed">

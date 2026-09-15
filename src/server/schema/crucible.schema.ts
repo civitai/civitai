@@ -126,8 +126,12 @@ export const submitVoteSchema = z.object({
   // Playback actually watched on each side. Optional because only a crucible that sets
   // `minViewSeconds` needs them — an image crucible has nothing to watch, and the server
   // requires them only where the rule applies.
-  winnerWatchedMs: z.number().int().min(0).optional(),
-  loserWatchedMs: z.number().int().min(0).optional(),
+  //
+  // NOT `.int()`. These are accumulated from `video.currentTime` deltas, so the real client sends
+  // fractions (10894.686999999998); an int-only schema rejected every genuine vote while every
+  // test that passed a round number passed.
+  winnerWatchedMs: z.number().min(0).finite().optional(),
+  loserWatchedMs: z.number().min(0).finite().optional(),
 });
 
 // Schema for getting a judging pair
