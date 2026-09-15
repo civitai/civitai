@@ -248,11 +248,15 @@
   />
 
   <!--
-    🔴 ONE CHAIN, AND THAT IS WHAT MAKES THE EXCLUSION STRUCTURAL RATHER THAN MAINTAINED. Both
-    page-level refusals and the filter hint are branches of a single `{#if}`, so at most one can
-    render whatever literals the conditions above compare — which two independent `{#if}` blocks
-    could not promise, and did not: an orphaned bulk refusal used to render here AND below the
-    table, while this hint fired alongside it.
+    🔴 ONE CHAIN, SO THESE THREE ARE MUTUALLY EXCLUSIVE WHATEVER THEIR CONDITIONS COMPARE — and
+    that is ALL it buys. `FeedbackBulkBar` and `FeedbackDetail` render their own `FormState` errors
+    and are NOT in this chain, so exclusion against them still rests on `refusalTarget` being
+    compared against `'page'` and `'orphan'` exactly; `feedbackRefusalTarget`'s docstring carries
+    the measured loosening that re-opens the 403.
+
+    What two independent `{#if}` blocks could not promise, and did not: the filter hint used to
+    render above the table while an orphaned bulk refusal rendered below it — two DIFFERENT
+    messages at once, not one refusal twice.
 
     The hint is last for the reason it always was: "clear the filters" is the wrong advice when
     there is a refusal to show, and `refusalTarget === 'none'` is what says there is not.
@@ -260,9 +264,12 @@
   {#if pageError}
     <ErrorAlert message={pageError} class="mb-4" />
   {:else if orphanedBulkFailure}
-    <!-- 🔴 ABOVE THE TABLE, not after the pager where this used to sit. It is the whole reason the
-         bar-gone gap is tolerable: a refusal nine columns of rows below the fold is not "visible,
-         not silent", it is silent for anyone who has scrolled to the rows they selected. -->
+    <!-- Above the table, not after the pager where this used to sit — beside the other page-level
+         refusal rather than a screen away from it.
+         ⚠️ A LATERAL TRADE, NOT A FIX: an operator scrolled down to the rows they selected has the
+         top of the table off screen too, so this is better for a reader near the top and worse for
+         one near the bottom. Reaching them wherever they are needs scroll-into-view or a sticky
+         region — a design change, not a move. The bar-gone gap is narrowed, not closed. -->
     <ErrorAlert message={orphanedBulkFailure} class="mb-4" />
   {:else if refusalTarget === 'none' && data.open !== null && !data.openVisible}
     <p class="mb-4 text-sm text-dark-2">

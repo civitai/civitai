@@ -113,7 +113,8 @@ export const FEEDBACK_BULK_ACTIONS: ReadonlyArray<{ status: FeedbackStatus; labe
 const reports = (n: number) => `${n} report${n === 1 ? '' : 's'}`;
 
 /**
- * WHICH surface renders an action failure — exactly one of them, by construction.
+ * WHICH surface renders an action failure. It NAMES one; whether only one acts on the answer is
+ * the callers' business, and the paragraphs below are exact about how much of that is enforced.
  *
  * 🔴 THIS IS A FUNCTION RATHER THAN THREE `$derived` CONDITIONS BECAUSE THE DEFECT CLASS IS
  * DOUBLE-RENDERING, AND SEPARATE PREDICATES REGENERATED IT TWICE. First a scope test let a bulk 403
@@ -124,13 +125,23 @@ const reports = (n: number) => `${n} report${n === 1 ? '' : 's'}`;
  *
  * Returning ONE value removes the AMBIGUITY, and it is worth being exact about what that does and
  * does not buy. 🔴 THIS FUNCTION CANNOT ENFORCE THE EXCLUSION — that is the CALLERS' doing, and an
- * earlier version of this paragraph claimed otherwise. Measured: changing one consumer's comparison
- * from `=== 'page'` to `!== 'bar'` re-opens the exact double-render this exists to close, with the
- * whole suite green, because no test crosses the function boundary into `+page.svelte`.
+ * earlier version of this paragraph claimed otherwise. No test crosses the boundary into
+ * `+page.svelte`, so a loosened comparison there ships green.
  *
- * What makes it structural is on the OTHER side: the two page-level consumers are branches of a
- * single `{#if}` chain, so at most one renders however their conditions are spelled. This function
- * supplies the answer; the chain is what stops two surfaces acting on it.
+ * 🔴 WHAT IS STRUCTURAL IS NARROWER THAN IT SOUNDS, AND THE SCOPE IS THE WHOLE POINT. The three
+ * PAGE-LEVEL branches — `pageError`, the orphan alert, the filter hint — are arms of a single
+ * `{#if}` chain in `+page.svelte`, so at most one of THOSE renders however they are spelled.
+ *
+ * 🔴 THE TWO SURFACES IN BOTH HISTORICAL INSTANCES OF THIS DEFECT ARE NOT IN THAT CHAIN.
+ * `FeedbackBulkBar` and `FeedbackDetail` each render their own `FormState` error, so exclusion
+ * against them rests ENTIRELY on the page comparing this answer against `'page'` and `'orphan'`
+ * EXACTLY. Measured in the shipped tree: widening the orphan consumer to
+ * `!== 'page' && !== 'none'` re-opens the 403 double-render — the bar and the page showing one
+ * sentence twice — with the whole suite green and `svelte-check` clean. Keep both comparisons exact.
+ *
+ * ⚠️ An earlier draft of that example named `=== 'page'` → `!== 'bar'`, measured before the `{#if}`
+ * chain existed. The chain masks that one now, which is exactly why the example is restated against
+ * the current tree rather than carried forward.
  *
  * ⚠️ `bar` has NO consumer. The bar renders its own refusal from its component-local `FormState`
  * (`FeedbackBulkBar.svelte`), so that arm exists to DENY the page a refusal the bar is showing, not
