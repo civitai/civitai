@@ -85,8 +85,10 @@ export function resolvesToOriginal({
 }
 
 /**
- * An explicit `optimized` from the call site wins, which is what keeps site chrome — avatars,
- * badges, stickers, shop tiles, the announcement banner — on one variant for every viewer.
+ * An explicit `optimized` from the call site wins over the viewer's quality, which is what keeps
+ * site chrome — avatars, badges, stickers, shop tiles, the announcement banner — on one variant for
+ * every viewer. It does NOT win over an original request: the cacher ignores the flag there, so
+ * honouring it would only split the cache key.
  */
 export function resolveOptimized({
   optimized,
@@ -97,8 +99,8 @@ export function resolveOptimized({
 }: Pick<EdgeUrlProps, 'optimized' | 'width' | 'height' | 'original'> & {
   quality?: MediaQuality;
 }) {
-  if (optimized) return true;
   if (resolvesToOriginal({ width, height, original })) return false;
+  if (optimized) return true;
   return quality !== 'lossless';
 }
 

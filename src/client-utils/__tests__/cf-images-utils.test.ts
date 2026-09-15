@@ -272,6 +272,17 @@ describe('resolveOptimized', () => {
     expect(resolveOptimized({ height: 400, ...compressed })).toBe(true);
   });
 
+  it('drops an explicit optimized on an original request rather than splitting the cache key', () => {
+    // `EdgeVideo` passes `optimized: true` for the poster and a width it may not have, so the pair
+    // arrives together. The cacher ignores the flag on an original, but emitting it still forks the
+    // URL — a second CDN key for bytes that already exist under the first.
+    expect(resolveOptimized({ original: true, optimized: true, ...compressed })).toBe(false);
+    expect(resolveOptimized({ optimized: true, ...lossless })).toBe(false);
+    // `getEdgeUrl` serialises whatever it is handed, so the resolver is the only thing keeping
+    // the flag off the URL.
+    expect(getEdgeUrl('KEY', { optimized: true })).toContain('optimized=true');
+  });
+
   it('leaves the download shape on the original, for both qualities', () => {
     // The download button renders `DownloadImage`, which calls `useEdgeUrl` with neither width nor
     // height. Lossless is about BROWSING — a non-member's downloads must not be quietly compressed

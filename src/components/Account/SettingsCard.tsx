@@ -371,7 +371,7 @@ export function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }
  * control rather than two copies that can drift while the `accountSettingsV2` flag is alive.
  * They carry no label of their own — the pane's `SettingRow` supplies it.
  */
-function useFilePreferenceUpdate() {
+function useFilePreferenceUpdate({ onError }: { onError?: () => void } = {}) {
   const user = useCurrentUser();
   const queryUtils = trpc.useUtils();
   const { mutate, isPending } = trpc.user.update.useMutation({
@@ -379,6 +379,15 @@ function useFilePreferenceUpdate() {
       await queryUtils.model.getAll.invalidate();
       await user?.refresh();
       showSuccessNotification({ message: 'User profile updated' });
+    },
+    // Nothing handles a rejected mutation globally, so without this a failed save is silent and any
+    // control holding an optimistic value keeps showing a preference that was never persisted.
+    onError() {
+      showErrorNotification({
+        title: 'Failed to update preferences',
+        error: new Error('Something went wrong, please try again later.'),
+      });
+      onError?.();
     },
   });
 
@@ -392,16 +401,18 @@ function useFilePreferenceUpdate() {
 
 /** @param withLabel render the control's own label; the settings panes label the `SettingRow` instead. */
 export function ImageFormatSelect({ withLabel }: { withLabel?: boolean } = {}) {
-  const { user, update, isPending } = useFilePreferenceUpdate();
+  // `quality` comes off the SESSION, which only updates once `user.refresh()` round-trips the auth
+  // hub. Without this local override the select snaps back for that whole window and the save reads
+  // as having failed.
+  const [chosen, setChosen] = useState<string | null>(null);
+  const { user, update, isPending } = useFilePreferenceUpdate({
+    onError: () => setChosen(null),
+  });
   const { canUseLossless, quality } = useMediaQuality();
   const router = useRouter();
   // Their stored choice is left alone: a non-member who picked lossless before the gate reads as
   // Compressed, and gets it back if they subscribe.
   const served = quality === 'lossless' ? 'metadata' : 'optimized';
-  // `quality` comes off the SESSION, which only updates once `user.refresh()` round-trips the auth
-  // hub. Without this local override the select snaps back for that whole window and the save reads
-  // as having failed.
-  const [chosen, setChosen] = useState<string | null>(null);
   useEffect(() => setChosen(null), [served]);
   if (!user) return null;
 
