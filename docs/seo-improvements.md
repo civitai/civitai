@@ -1,191 +1,270 @@
 # SEO Improvements — What To Build
 
-A ranked list of work that would improve how civitai.com and civitai.red rank, and what
-should deliberately *not* be built. Companion to [seo-audit.md](seo-audit.md), which is the
-per-page posture reference; this doc is the backlog.
+A ranked list of work that would improve how civitai.com and civitai.red rank, and what should
+deliberately *not* be built. Companion to [seo-audit.md](seo-audit.md), which is the per-page
+posture reference; this doc is the backlog.
 
 Started 2026-09-15, from a Search Console video-indexing error that turned into a coverage review.
 
-> **This repo is public.** Search Console impression counts, indexed-page totals and traffic
-> trends are deliberately not reproduced here — they are business metrics a competitor cannot
-> otherwise observe. The findings below are all verifiable by fetching the live site. When an
-> item needs a number to justify it, pull the current GSC export rather than trusting a figure
+> **This repo is public.** Absolute Search Console figures — click and impression totals, indexed
+> page counts — are deliberately not reproduced here; they are business metrics a competitor cannot
+> otherwise observe. Ratios and structural findings are kept, because they are what the decisions
+> below rest on and they leak nothing useful. Pull a current export rather than trusting a figure
 > written down months ago.
 
 ---
 
-## The premise
+## The premise, corrected
 
-**Google ranks answers. We are a database.**
+The review opened by assuming three things were wrong. Measurement killed all three, and the
+record is kept here so they are not re-opened:
 
-The largest category of not-indexed pages is "Crawled — currently not indexed": Google fetched
-the page, evaluated it, and declined to keep it. At that volume it is a verdict on a page
-*class*, not on individual pages — and the classes in question are model, post and image detail
-pages, each of which states a *record* rather than answering a question.
+1. **"The sitemaps only list 1,000 URLs against 414k eligible models."** True, and irrelevant —
+   see [Explicitly not doing](#explicitly-not-doing).
+2. **"Impressions are down ~43% since June."** Also true, and also a non-event: over the same
+   window **clicks were flat (+1%), CTR rose ~87%, and average position improved.** We shed
+   impressions that never converted, which is what AI Overviews does to deep-position listings.
+3. **"Google rejects ~3M of our pages, so they must be thin."** They are not. Sampling the
+   `Crawled — currently not indexed` drilldown against the database, the rejected model pages are
+   **above our own site median** on both downloads and ratings; the rejected user profiles are not
+   empty either.
 
-"Discovered — currently not indexed" is, by contrast, negligible. There is no discovery
-backlog, which means **nothing in the sitemap or crawl-plumbing layer is worth building.** See
-[Explicitly not doing](#explicitly-not-doing).
+What is actually happening is ordinary for a UGC catalogue of this size: Google indexes a sample
+of a large set of structurally interchangeable, template-driven pages and drops the rest. There is
+no lever that makes 414,000 model pages individually distinctive, and the indexed set we have is
+carrying the traffic.
 
-So the work that pays is the work that turns records into answers, plus the structured-data
-floor that lets Google understand what it is looking at.
+**So there is no SEO emergency, and the question is where growth comes from rather than what is
+broken.** Two answers: fix the one genuinely self-inflicted bucket (tag pages, below), and build
+page types that answer questions rather than state records.
 
 ---
 
-## 1. Entity and structured-data foundation
+## 1. Tag pages are generating soft 404s — the one real defect
 
-**Status: built 2026-09-15, not yet verified against a deployed page.**
+**Priority. This is the only finding here that is both large and ours.**
 
-The site had no site-level entity definition at all — no `Organization`, no `sameAs`, no
-`WebSite`/`SearchAction`. A crawl of a detail page returned exactly two JSON-LD blocks
-(`VideoObject` and `Person`) for a property of well over a million indexed pages. Google had no
-structured statement of what Civitai is, who publishes it, or what it is authoritative about.
+The `Soft 404` drilldown is **88% `/tag/*`**. The cause is visible in the database:
 
-That matters more than it used to: AI Overview citation and knowledge-panel treatment both lean
-on entity confidence, and entity confidence is built from exactly these signals.
+| | Tags | Share |
+| --- | ---: | ---: |
+| Total tags | 578,091 | |
+| …with **zero** models | 309,592 | 53.6% |
+| …with 1–4 models | 233,055 | 40.3% |
+| …with 20+ models | 10,121 | 1.8% |
+| …whose name exceeds 40 characters | 14,779 | 2.6% |
+
+Tag volume is skewed hard: 94% have four models or fewer, and every tag is an indexable URL. But
+volume turned out **not** to be the cause — see below. `/tag/badik` returns `200` with a meta
+description reading *"Browse 4 … models tagged with badik,"* and a grid showing none of them.
+
+Whatever is done here must leave the head alone: `/tag/red`, `/tag/nsfw` and `/tag/lora` are
+all top-20 pages by clicks, and `/tag/red` converts at over 11% CTR — better than the site average
+and several times the ecosystem hub pages.
+
+### Why the pages are empty
+
+Not because the tags are thin — because of the **default filter**. `modelFilterSchema` defaults to
+`period: Month` with `periodMode: 'published'`, so the grid only shows models whose
+`lastVersionAt` falls inside a 30-day window. A tag whose models all shipped earlier renders
+nothing, while the meta description and `CollectionPage` schema on the same page advertise the
+full all-time count. Measured: **224,624 of the 243,469 tags that have published models — 92% —
+render an empty grid under the default**, and 22,931 of those have five models or more.
+
+🔴 **Do NOT fix this by deindexing thin tags.** An earlier draft of this doc proposed exactly that,
+before the cause was known. It would have deindexed 200,000+ pages that have perfectly good content
+sitting just outside a 30-day window.
+
+### Shipped: a stop-gap, and it is only a stop-gap
+
+`periodFallback` (opt-in, `/tag/:name` only) retries the **first page** at `AllTime` when a
+period-filtered query returns nothing. Empty pages now show their content.
+
+⚠️ **It fires on exactly zero results, and the bad experience does not start at zero.** A tag with
+255 models where 3 shipped last month shows 3 of 255 — the fallback does not fire, and the page is
+still wrong in the way that matters. This fixes what Search Console can see, not the whole problem.
+Do not read the existence of `periodFallback` as "tag page defaults are solved."
+
+### The real fix, not yet built
+
+**The default period should come from the tag's volume, decided server-side.** A tag page is a
+collection lookup — the visitor already said "show me things tagged X" — so a 30-day window is the
+wrong default for the surface, not merely an unlucky one. But a blanket `AllTime` is wrong too:
+recency genuinely helps the head tags (`/tag/red`, `/tag/nsfw`, `/tag/lora`), which are among
+the site's best-performing pages.
+
+`getTagPageSeoData` already returns the count and is already cached for a day, so the decision is
+free. Hold the resulting period as page-local state rather than writing it to the shared
+`model-filters` localStorage key — that key is global, and flipping it on a tag page would
+silently change the visitor's browse default everywhere else.
+
+Getting the threshold slightly wrong here is cheap: it changes a default sort window the user can
+see and override, not whether a page is indexed.
+
+When this lands, delete `periodFallback`, `periodFallbackApplied`, and the retry block in
+`getModelsInfiniteHandler`.
+
+**Closing condition:** the tag page derives its default period server-side from tag volume, the
+`periodFallback` machinery is deleted in the same PR, and a follow-up GSC export shows the
+soft-404 count falling without the head tags losing impressions.
+
+### Separately: junk tags exist upstream of any of this
+
+14,779 tags have names over 40 characters, the longest observed being 1,049 — whole prompts rendered
+as tag URLs. Whatever creates tags from prompt text is producing vocabulary no human will search
+for. Blocking it at the source is cheaper than handling the output forever.
+
+**Closing condition:** the tag-creation path rejects or truncates prompt-shaped input, and the count
+of tags over 40 characters stops growing.
+
+### A third source of truth for `period`
+
+Worth knowing before anyone touches this area. `period` is resolved three different ways:
+localStorage (`model-filters`, what the query actually uses), the URL (what
+`ModelFiltersDropdown` reads in `filterMode="query"`), and the schema default (what SSR renders,
+because `getInitialValues` returns `schema.parse({})` when `window` is undefined). Which one
+wins depends on a prop default inside the dropdown component.
+
+That split is also a live hydration hazard: a returning visitor whose stored period is not `Month`
+gets SSR markup for `Month` and then a client re-render.
+
+---
+
+## 2. Entity and structured-data foundation
+
+**Status: built 2026-09-15 (`4fa44ae5f8`), not yet verified against a deployed page.**
+
+The site had no site-level entity definition at all — no `Organization`, no `sameAs`, no `WebSite`.
+A crawl of a detail page returned exactly two JSON-LD blocks (`VideoObject` and `Person`), so
+Google had no structured statement of what Civitai is or what it is authoritative about, which is
+what AI Overview citation and knowledge-panel treatment lean on.
 
 | Item | State before | Now |
 | --- | --- | --- |
 | `Organization` + `sameAs` | Absent | Emitted site-wide on green, from `_app` |
-| `WebSite` node | Absent | Emitted on every domain, `publisher`-linked to the Organization on green |
+| `WebSite` node | Absent | Every domain; `publisher`-linked to the Organization on green |
 | `BreadcrumbList` on detail pages | `/ecosystems` only | Model, article and image/video detail pages |
 | `SearchAction` | Absent | **Deliberately still absent** — see below |
 | `HowTo` on instructional content | Absent | Still absent — needs an editorial call on which articles qualify |
 
-Implementation is `src/components/Meta/site-schema.ts`, emitted from `_app.tsx` for the
-site-wide nodes and passed per-page through a new `Meta` prop, `breadcrumb`. Breadcrumbs get
-their own `<script>` rather than joining the page's entity schema, because `Gated` augments
-`meta.schema` with paywall properties when serving a verified bot — merged into a `@graph` root
-those properties would land on the container instead of the entity.
+Implementation is `src/components/Meta/site-schema.ts`, emitted from `_app.tsx` for the site-wide
+nodes and passed per-page through a `Meta` prop, `breadcrumb`. Breadcrumbs get their own `<script>`
+rather than joining the page's entity schema, because `Gated` augments `meta.schema` with paywall
+properties when serving a verified bot — merged into a `@graph` root those would land on the
+container instead of the entity.
 
-`sameAs` uses the real profile URLs, not the `/discord`-style internal redirects the footer
-links through (targets are in `next.config.mjs`) — a redirect on our own host proves nothing
-about account ownership.
+`sameAs` uses the real profile URLs, not the `/discord`-style internal redirects the footer links
+through (targets are in `next.config.mjs`) — a redirect on our own host proves nothing about
+account ownership.
 
 **The `Organization` node is green-only, on purpose.** `sameAs` is what ties our social accounts
-into the entity graph, and pointing those accounts at the mature domain is a brand decision
-rather than a technical one. Red still gets its own `WebSite` node so the property is
-identified; it is simply not attributed to the Organization. Widening it is one line if that
-decision is ever made deliberately.
+into the entity graph, and pointing those at the mature domain is a brand decision rather than a
+technical one. Red still gets its own `WebSite` node so the property is identified; it is simply not
+attributed to the Organization.
 
 **No `SearchAction`.** robots.txt deliberately disallows `/search/*` and `*?query=` as thin
 duplicate content, so declaring a search target would contradict a rule worth keeping — for a
 feature Google has been winding down since 2024.
 
+⚠️ **Do not change the `aggregateRating` on model pages without checking this first.** Review
+snippets are by a wide margin the site's largest rich-result surface — more clicks than every other
+search-appearance type combined, several times over. That is the model-page `aggregateRating`
+earning its keep, and it is the one piece of structured data on the site with proven revenue.
+
 **Closing condition:** Google's Rich Results Test reports a valid `Organization` and
-`BreadcrumbList` on a deployed green model page, and a `WebSite` with no Organization on a red
-one. Not yet done — this needs a deploy.
+`BreadcrumbList` on a deployed green model page, and a `WebSite` with no Organization on a red one.
+Needs a deploy.
 
 ---
 
-## 2. Answer pages — scale the ecosystem pattern
+## 3. Answer pages — the ecosystem hubs work, per page
 
-**The ecosystem hub pages are the only part of the site built like modern SEO** — structured
-overview, comparison, prompt guidance and FAQ sections, backed by `FAQPage` and
-`BreadcrumbList` schema. The pattern is already tooled via the `ecosystem-seo-page` skill, and
-the configs live in `src/shared/constants/ecosystem-seo.constants.ts`.
+The ecosystem hub pages are the only part of the site built like modern SEO: structured overview,
+comparison, prompt guidance and FAQ sections, backed by `FAQPage` and `BreadcrumbList` schema.
+Configs live in `src/shared/constants/ecosystem-seo.constants.ts`; the pattern is tooled via the
+`ecosystem-seo-page` skill.
 
-The expansion axis is **not more ecosystems** — it is more *question shapes*:
+**Measured over three months, they earn about a quarter of a percent of site clicks — from 36
+pages, against 414,000 model pages.** Per page that is an enormous multiple: the best ecosystem
+page outearns all but a handful of individual models, and three of them rank at average position
+6–7. Only 7 of 36 cleared the top-1000-pages export floor, so the tail is marginal.
 
-- Comparison pages (`X vs Y`) — real query volume, and we hold the data to answer honestly
-- "Best `<thing>` for `<ecosystem>`" — a query people actually type
-- Recommended-settings pages — derived from generations that actually succeeded
+The weak spot is **click-through, not ranking**: the hub pages convert at 1.5–3.2% while
+`/tag/red` converts at over 11%. They are being seen and not clicked.
+
+So the order of work is:
+
+1. **Fix CTR on the pages that already rank** before authoring more. Titles and meta descriptions
+   are the cheapest lever, and two pages (`stable-diffusion` at avg position ~22, `sdxl` at ~14)
+   are ranking badly enough to be worth a separate look.
+2. **Then expand the axis — more question shapes, not more ecosystems.** Comparisons (`X vs Y`),
+   "best `<thing>` for `<ecosystem>`", recommended-settings pages.
 
 **The differentiator is that these can be computed from our own corpus.** A hand-written "best
-LoRAs" post is stale in six weeks; a page backed by live download and rating data refreshes
-itself, and nobody else can write it truthfully. That is also the structural answer to the
-thin-content verdict: an aggregation page is unique by construction, not by luck.
+LoRAs" post is stale in six weeks; a page backed by live download and rating data refreshes itself,
+and nobody else can write it truthfully. It is also the structural answer to the tail problem: an
+aggregation page is unique by construction, not by luck.
 
-**Closing condition:** a second page *shape* (not just a 37th ecosystem) ships with its data
-derived from a query rather than a hand-maintained config, and Briant confirms it renders
-correct numbers against a spot-check.
-
----
-
-## 3. Articles — measure before building
-
-There are tens of thousands of published articles: human-written tutorials, workflows and
-guides. That is the most citable content already on the site and the closest thing we have to
-answer pages, and nobody has looked at how it performs.
-
-Do the measurement before authoring or restructuring anything:
-
-- Are articles indexed at a better rate than model pages?
-- Do they earn impressions disproportionate to their share of indexed pages?
-
-If yes, the cheapest available growth is markup and internal linking on a corpus that already
-exists — not new content.
-
-**Closing condition:** a GSC Performance export filtered to `/articles/*` is compared against
-the site baseline, and the result is written into this doc as a go/no-go.
+**Closing condition:** a second page *shape* (not a 37th ecosystem) ships with its data derived
+from a query rather than a hand-maintained config, and Briant confirms the numbers against a
+spot-check.
 
 ---
 
-## 4. Diagnosed problems worth chasing
+## 4. Articles — measure before building
 
-Both are larger than the video issue that started this review, and both concern pages we
-actively want indexed.
+Tens of thousands of published articles: human-written tutorials, workflows and guides. That is the
+most citable content already on the site and the closest thing we have to answer pages.
 
-### Soft 404s
+There is already a signal worth chasing — the articles explaining the civitai.red migration are
+among the highest-click pages on the whole site, beating every model page except the very top few.
+Editorial content plainly works here; nobody has looked at whether that generalises.
 
-Google receives `200 OK` and judges the body to be an error or empty page. The profile fits the
-mature-content interstitial on green: real meta tags, but a body that says the content has
-moved to civitai.red. To a crawler that is a 200 with no content — the textbook soft 404, and
-exactly the content/meta mismatch predicted in
-[seo-audit.md § Crawler behavior at the domain boundary](seo-audit.md).
-
-If confirmed, the fix is the existing house pattern — `Gated` should be deindexing those URLs
-on green rather than serving a 200 shell.
-
-**Closing condition:** the GSC soft-404 drilldown is exported and the URL patterns are either
-confirmed as the interstitial (→ fix in `Gated`) or identified as something else (→ new entry
-here). This is a hypothesis, not a diagnosis, until that export exists.
-
-### Google overriding our canonical
-
-"Duplicate, Google chose different canonical than user" means we declared a canonical and
-Google picked a different URL anyway — it judged two of our pages to be the same page. Plausible
-at scale given slug / slug-less pairs, per-version URLs and tag permutations.
-
-It costs more than the count suggests: when Google picks, our chosen URL loses its ranking
-signals to whichever one Google preferred, and the page we want to rank may not be the one it
-kept. This is [seo-audit.md](seo-audit.md) open question #2 — canonical format consistency
-across entity types — still unanswered since April 2026.
-
-**Closing condition:** the drilldown is exported, the entity types involved are named, and a
-canonical convention is written down in `seo-audit.md` and applied.
+**Closing condition:** a GSC Performance export filtered to `/articles/*` is compared against the
+site baseline, and the result is written into this doc as a go/no-go.
 
 ---
 
-## 5. Video detail pages — decided, not scheduled
+## 5. Video detail pages — one confirmed bug, the rest declined
 
 The watch pages work. A Googlebot fetch of a safe-rated video page returns 200 with a
-server-rendered `<video>`, a self-canonical, no `noindex`, and a `VideoObject` whose
-`contentUrl` matches the file Search Console flagged. The CDN serves no `robots.txt`, so nothing
-blocks the media. The backlog of "Video isn't on a watch page" errors are stale verdicts
-recorded while every image page was still deindexed, before
-`b7a23ed785 feat(seo): index safe-rated video detail pages with VideoObject schema` (2026-06-29).
+server-rendered `<video>`, a self-canonical, no `noindex`, and a `VideoObject` whose `contentUrl`
+matches the file Search Console flagged. The CDN serves no `robots.txt`, so nothing blocks the
+media. The backlog of "Video isn't on a watch page" errors are stale verdicts recorded while every
+image page was still deindexed, before `b7a23ed785` (2026-06-29).
 
-Two real defects remain, both in `src/components/Image/DetailV2/ImageDetail2.tsx`:
+**Size of the prize, measured:** video rich results do reach us today, at roughly 250 clicks a
+month, an average position around 18, and ~1.3% CTR. Small and ranking badly.
 
-- One generated `title` string serves as the `<title>`, the `og:title`, **and** both
-  `VideoObject.name` and `.description`. Every video by a given user therefore carries an
-  identical title, and no meta `description` is emitted at all.
-- `duration` is absent, and is a recommended `VideoObject` property.
+### Confirmed bug: the deindex rule is domain-blind
 
-**These are not scheduled, deliberately.** The only genuinely per-page-unique field these pages
-hold is the prompt, and there is a standing decision not to surface prompt text in titles or
-SERP snippets — it is unmoderated user text on a Google-owned surface with no review step. That
-decision and "these pages will not be distinctive" are the same decision. A non-prompt
-alternative exists (titles built from the resources used, which are moderated text and better
-aligned with query intent than prompts), but resources are not currently in the SSR payload, so
-it is only worth doing if something else wants them there.
+`deIndex: !isVideo || nsfw` in `src/components/Image/DetailV2/ImageDetail2.tsx:364` has no domain
+term, so it deindexes mature video watch pages on **civitai.red** as well as green. The comment
+above it reasons entirely in green terms.
 
-Safe-rated video pages stay indexed for now — reverting `b7a23ed785` was considered and declined
-on 2026-09-15.
+Policy is now stated (2026-09-15): **mature content should be indexed on civitai.red, which has its
+own Search Console property.** That makes this a defect against policy rather than an open
+question. Only ~13% of video is safe-rated, so this gates an eighth of the corpus against all of it.
 
-**Closing condition:** none — this is a recorded decision, not a work item. Revisit only if the
-metadata policy changes or resources land in SSR for another reason.
+**Closing condition:** the rule takes the domain into account, and a Googlebot fetch of a mature
+video page on red returns no `noindex`.
+
+### Declined: making video pages distinctive
+
+One generated `title` string serves as the `<title>`, the `og:title`, and both `VideoObject.name`
+and `.description`, so every video by a given user carries an identical title, and no meta
+`description` is emitted at all. `duration` is also absent.
+
+**Not scheduled, deliberately.** The only genuinely per-page-unique field these pages hold is the
+prompt, and there is a standing decision not to surface prompt text in titles or SERP snippets — it
+is unmoderated user text on a Google-owned surface with no review step. That decision and "these
+pages will not be distinctive" are the same decision. A non-prompt alternative exists (titles built
+from the resources used, which are moderated text and better aligned with query intent than prompts
+ever were), but resources are not currently in the SSR payload, so it is only worth doing if
+something else wants them there.
+
+Safe-rated video pages stay indexed — reverting `b7a23ed785` was considered and declined on
+2026-09-15.
 
 ---
 
@@ -195,14 +274,22 @@ Recorded so the reasoning is not re-derived from scratch.
 
 ### Monthly sitemap partitioning
 
-`docs/seo-sitemap-migration.md` carries a complete design for time-partitioned sitemaps,
-motivated by the `LIMIT 1000` cap on the model and article sitemaps. **It should not be built on
-SEO grounds.** The GSC coverage export shows "Discovered — currently not indexed" in the low
-tens of pages: Google has crawled essentially every URL it knows about, so a larger sitemap
-hands it nothing it does not already have.
+`docs/seo-sitemap-migration.md` carries a complete design for time-partitioned sitemaps, motivated
+by the `LIMIT 1000` cap on the model and article sitemaps. **It should not be built on SEO
+grounds.** GSC reports `Discovered — currently not indexed` in the low *tens of pages*: Google has
+crawled essentially every URL it knows about, so a larger sitemap hands it nothing it does not
+already have. The cap is real and the design is sound; it solves a problem we do not have.
 
-The cap is real and the design is sound. It is simply solving a problem we do not have. Build it
-only if a future coverage export shows discovery actually backing up.
+Build it only if a future coverage export shows discovery actually backing up.
+
+### Chasing `Crawled — currently not indexed`
+
+The largest not-indexed bucket, spread roughly evenly across model, user, tag and post pages. The
+rejected pages sample **above** our site median on downloads and ratings, so this is not a quality
+filter that better pages would pass — it is Google sampling a large template-driven catalogue.
+Every UGC site at this scale has it.
+
+Revisit only if the *indexed* count starts falling, which it is not; it has been rising steadily.
 
 ### More detail pages of any kind
 
