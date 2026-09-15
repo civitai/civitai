@@ -121,10 +121,12 @@
   );
 
   /**
-   * 🔴 ONE ANSWER, SO TWO SURFACES CANNOT BOTH RENDER THE SAME REFUSAL. Read
-   * `feedbackRefusalTarget`'s docstring before changing either consumer below: this page has
-   * double-rendered a refusal twice, once from a scope test and once from the position test that
-   * replaced it, and neither was visible to any test because this app has no browser tier.
+   * 🔴 ONE ANSWER — WHICH REMOVES THE AMBIGUITY, NOT THE OBLIGATION. Two surfaces still can render
+   * the same refusal if either consumer below stops comparing against its exact literal; the
+   * `{#if}` chain only covers the three PAGE-LEVEL arms, and `FeedbackBulkBar`/`FeedbackDetail` are
+   * outside it. Read `feedbackRefusalTarget`'s docstring — it carries both measured loosenings —
+   * before changing either comparison. This page has double-rendered a refusal three times, and no
+   * instance was visible to any test, because this app has no browser tier.
    */
   const refusalTarget = $derived(
     feedbackRefusalTarget({

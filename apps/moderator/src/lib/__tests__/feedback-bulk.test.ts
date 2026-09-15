@@ -171,9 +171,11 @@ describe('feedbackRefusalTarget', () => {
   });
 
   /**
-   * 🔴 THE PROPERTY, NOT A CASE LIST. Every reachable combination resolves to exactly one surface —
-   * which is what a set of independent `$derived` conditions could not promise, and what both
-   * shipped defects violated.
+   * ⚠️ AN INVARIANT GUARD, NOT THE PROPERTY THE DEFECT CLASS IS ABOUT — labelled honestly because
+   * an earlier version of this docstring claimed the stronger thing. A single-valued function
+   * cannot return two answers, so the membership half cannot fail; what this actually earns is the
+   * REACHABILITY control below, which proves all four arms are live and caught two mutants.
+   * Whether two SURFACES render is decided in `+page.svelte`, which no test here reaches.
    */
   it('never names two surfaces, over every input combination', () => {
     const bools = [false, true];

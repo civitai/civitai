@@ -132,16 +132,28 @@ const reports = (n: number) => `${n} report${n === 1 ? '' : 's'}`;
  * PAGE-LEVEL branches — `pageError`, the orphan alert, the filter hint — are arms of a single
  * `{#if}` chain in `+page.svelte`, so at most one of THOSE renders however they are spelled.
  *
- * 🔴 THE TWO SURFACES IN BOTH HISTORICAL INSTANCES OF THIS DEFECT ARE NOT IN THAT CHAIN.
- * `FeedbackBulkBar` and `FeedbackDetail` each render their own `FormState` error, so exclusion
- * against them rests ENTIRELY on the page comparing this answer against `'page'` and `'orphan'`
- * EXACTLY. Measured in the shipped tree: widening the orphan consumer to
- * `!== 'page' && !== 'none'` re-opens the 403 double-render — the bar and the page showing one
- * sentence twice — with the whole suite green and `svelte-check` clean. Keep both comparisons exact.
+ * 🔴 WHAT THE CHAIN DOES AND DOES NOT COVER, COUNTED RATHER THAN ASSERTED. This PR produced three
+ * instances of the defect, and the chain fully covers TWO of them:
+ *   `884d17be` — `pageError` + `FeedbackBulkBar`: one arm inside the chain, one outside.
+ *   `f2c56ae5` — `pageError` + the orphan alert: BOTH inside.
+ *   `04812e62` — `pageError` + the filter hint: BOTH inside.
+ * (An earlier version of this paragraph said the surfaces in every instance were outside the chain,
+ * and named `FeedbackDetail` among them. `FeedbackDetail` was in NONE of the three — it entered this
+ * PR's history only in the commit that credited it. Correcting a too-strong claim by overshooting
+ * into a too-weak one is how that happened; the counts above are why this version carries them.)
  *
- * ⚠️ An earlier draft of that example named `=== 'page'` → `!== 'bar'`, measured before the `{#if}`
- * chain existed. The chain masks that one now, which is exactly why the example is restated against
- * the current tree rather than carried forward.
+ * 🔴 WHAT IS STILL MAINTAINED BY HAND: `FeedbackBulkBar` and `FeedbackDetail` render their own
+ * `FormState` error and are outside the chain, so exclusion against THEM rests entirely on the page
+ * comparing this answer against `'page'` and `'orphan'` EXACTLY. Two loosenings were measured in the
+ * shipped tree, each re-opening a double render with the suite green and `svelte-check` clean:
+ *   orphan consumer → `!== 'page' && !== 'none'`  ⇒ the orphan alert and the BAR, on a 403.
+ *   `pageError`     → `!== 'bar'`                 ⇒ `pageError` and `FeedbackDetail`'s own banner,
+ *       on an ordinary single-row refusal with a row open — the commonest refusal path on this page.
+ * Keep both comparisons exact.
+ *
+ * ⚠️ THAT SECOND LOOSENING WAS ONCE WRITTEN OFF AS "MASKED BY THE CHAIN". IT IS NOT — measured: it
+ * moves the double render off the orphan arm and onto `FeedbackDetail`, which the chain cannot
+ * reach. A hazard that changes which surface it hits is not a hazard that went away.
  *
  * ⚠️ `bar` has NO consumer. The bar renders its own refusal from its component-local `FormState`
  * (`FeedbackBulkBar.svelte`), so that arm exists to DENY the page a refusal the bar is showing, not
