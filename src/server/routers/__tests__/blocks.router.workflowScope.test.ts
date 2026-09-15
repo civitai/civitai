@@ -23,11 +23,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * module boundary, so the router runs in-process.
  *
  * RED/GREEN MATRIX, measured rather than asserted — at `a89b6e36a0` (this branch's base) this file
- * is 13 failed / 7 passed; at HEAD it is 20 passed. The thirteen are the regression coverage. The
- * seven that pass BOTH WAYS are marked `INVARIANT GUARD` below and are NOT regression coverage:
+ * is 13 failed / 8 passed; at HEAD it is 21 passed. The thirteen are the regression coverage. The
+ * eight that pass BOTH WAYS are marked `INVARIANT GUARD` below and are NOT regression coverage:
  * five pin properties the base happened to satisfy for the trivial reason that it scoped nothing at
- * all, and two cover `publishGenerationOutputs`, whose guard already existed (open-coded) and had
- * no behavioural test anywhere. Counting any of the seven as proof of this change would be wrong.
+ * all, and three cover `publishGenerationOutputs`, whose two guards already existed there and had
+ * no behavioural test anywhere. Counting any of the eight as proof of this change would be wrong.
  * Re-run both halves if the base moves again — the numbers are pinned to that sha, not to "main".
  */
 
@@ -146,6 +146,16 @@ const NEGATIVE_IDENTITY_ID = '-100-20260915120000000';
 // binding can be "simplified" from one to the other with this whole file still green. The app-scope
 // half has had its near-miss (`${APP_TAG}X`) from the start; this is the same idea on the other half.
 const PREFIX_NEAR_MISS_ID = `${VIEWER}0-20260915120000000`;
+// 🔴 THE SEAM FIXTURES. `workflowOwnerId`'s own suite pins that it rejects the forms `Number()`
+// would accept; nothing pinned that THIS gate routes through that parser rather than re-deriving
+// the owner inline. Each of these is refused by the parser and admitted as viewer `42` by a bare
+// `Number(id.split('-')[0]) == userId`, so they are what separates the two.
+const COERCION_IDS = [
+  `0x2a-20260915120000000`,
+  `+${VIEWER}-20260915120000000`,
+  `4.2e1-20260915120000000`,
+  ` ${VIEWER}-20260915120000000`,
+];
 
 /**
  * 🔴 PAIRWISE-DISTINCT FIXTURE FIELDS. The `cost` of each differs, so an assertion that a
@@ -281,6 +291,7 @@ describe('blocks.pollWorkflow — viewer scope', () => {
       SYSTEM_ID,
       NEGATIVE_IDENTITY_ID,
       PREFIX_NEAR_MISS_ID,
+      ...COERCION_IDS,
     ]) {
       await expect(caller().pollWorkflow({ blockToken: 'tok', workflowId: id })).rejects.toThrow(
         'workflow does not belong to this viewer'
@@ -318,11 +329,17 @@ describe('blocks.pollWorkflow — viewer scope', () => {
     // cannot tell `=== 'dev'` from `!== 'prod'`. Under that weakening a half-configured
     // `'staging'` would route to the REAL orchestrator with per-user credentials while the viewer
     // check sat disabled.
-    setEnv({ ORCHESTRATOR_MODE: 'staging' });
+    // 🔴 THE VALUES ARE `dev`-ADJACENT ON PURPOSE. A single extra value kills `!== 'prod'` and
+    // nothing else; `startsWith('dev')`, `includes('dev')` and `=== 'dev' || === 'test'` all
+    // survive against `prod`/`dev`/`staging` alone, because none of those three is dev-adjacent.
+    // A maintainer widening this to a dev-FAMILY mode reaches for exactly `startsWith('dev')`.
+    for (const mode of ['staging', 'development', 'dev:live', 'DEV', 'test']) {
+      setEnv({ ORCHESTRATOR_MODE: mode });
 
-    await expect(
-      caller().pollWorkflow({ blockToken: 'tok', workflowId: STRANGERS_ID })
-    ).rejects.toThrow('workflow does not belong to this viewer');
+      await expect(
+        caller().pollWorkflow({ blockToken: 'tok', workflowId: STRANGERS_ID })
+      ).rejects.toThrow('workflow does not belong to this viewer');
+    }
   });
 
   it('🔴 EXEMPTS ONLY THE VIEWER CHECK — the app scope still holds under dev', async () => {
@@ -498,9 +515,12 @@ describe('blocks.publishGenerationOutputs — app scope', () => {
   // server-side and persists them as public `Image` rows — and consolidating the predicate onto one
   // helper made the deletion a ONE-line edit rather than a five-line one.
   //
-  // It stops at the guard: the refusal is ahead of the projection and of every fetch/upload below
-  // it, so nothing in the heavy path needs mocking for this to be a real exercise of the call site.
-  it('refuses a workflow the calling app did not produce, and publishes nothing', async () => {
+  // 🔴 WHAT THESE DO NOT PIN, said plainly because the obvious wording overclaims: they assert the
+  // REFUSAL, not the absence of a publish. This fixture carries no outputs, so a mutant that moved
+  // the assertion below the no-outputs check still turns them red — but on `workflow has no
+  // available outputs to publish`, i.e. on the fixture rather than on the guard's position. Pinning
+  // the ordering would need a fixture with a real output and the whole fetch/upload path mocked.
+  it('refuses a workflow the calling app did not produce', async () => {
     // INVARIANT GUARD (passes at base too — the guard existed there, open-coded and untested).
     // Guard (a), the read-model row, says owned — so the ONLY thing that can refuse here is the
     // app-tag assertion, and a pass would mean that line is absent or mis-wired.
@@ -518,6 +538,26 @@ describe('blocks.publishGenerationOutputs — app scope', () => {
     ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'workflow is not tagged for this app' });
   });
 
+  it('refuses when the read-model row does not bind this viewer to this app block', async () => {
+    // INVARIANT GUARD (passes at base too). The case above takes guard (a) as a PREMISE — "the row
+    // says owned, so the only thing that can refuse is the tag" — and a premise a test states but
+    // does not exercise is how the guard it names gets deleted. Measured: before this case,
+    // removing guard (a) from `publishGenerationOutputs` left the whole set green.
+    mockBlockWorkflowOwnedByAppUser.mockResolvedValue(false);
+    mockGetWorkflow.mockResolvedValue(
+      workflowFixture({ status: 'succeeded', cost: { total: 79 } })
+    );
+
+    await expect(
+      caller().publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'workflow is not in this app subqueue',
+    });
+    // Ahead of the orchestrator read, so a refused publish costs no upstream call.
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
+  });
+
   it('a correctly-tagged workflow gets PAST the app-scope guard', async () => {
     // INVARIANT GUARD (passes at base too). Non-vacuous: verified to fail when the assertion is
     // mutated to refuse everything.
@@ -530,11 +570,17 @@ describe('blocks.publishGenerationOutputs — app scope', () => {
       workflowFixture({ status: 'succeeded', cost: { total: 73 } })
     );
 
-    await caller()
+    // `.then(onOk, onErr)` rather than `.catch(...)`: the assertion must run whether the procedure
+    // rejects or resolves. Under `.catch` it runs only on the reject path, so giving this fixture
+    // outputs — or anything below the guard starting to resolve — would silently degrade the case
+    // to the lone `mockGetWorkflow` check with no failure to read.
+    const err = await caller()
       .publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
-      .catch((e: { message?: string }) => {
-        expect(e.message).not.toBe('workflow is not tagged for this app');
-      });
+      .then(
+        () => null,
+        (e: { message?: string }) => e
+      );
+    expect(err?.message).not.toBe('workflow is not tagged for this app');
     expect(mockGetWorkflow).toHaveBeenCalledWith(
       expect.objectContaining({ path: { workflowId: OWN_ID } })
     );
