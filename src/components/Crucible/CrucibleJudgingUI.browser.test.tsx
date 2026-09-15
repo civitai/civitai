@@ -1,5 +1,4 @@
-import type React from 'react';
-import { useState } from 'react';
+import { useState, type ComponentProps } from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -183,7 +182,7 @@ describe('CrucibleJudgingUI — minimum view time', () => {
   });
 });
 
-type OnVote = React.ComponentProps<typeof CrucibleJudgingUI>['onVote'];
+type OnVote = ComponentProps<typeof CrucibleJudgingUI>['onVote'];
 
 function PairSwitchingHarness({ onVote }: { onVote: OnVote }) {
   const [right, setRight] = useState(2);
