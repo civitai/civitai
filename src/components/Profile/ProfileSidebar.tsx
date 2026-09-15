@@ -183,7 +183,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       >
         <Popover.Target>
           <Box style={style}>
-            <EdgeMedia src={url} alt={award.name} />
+            <EdgeMedia src={url} alt={award.name} optimized />
           </Box>
         </Popover.Target>
         <Popover.Dropdown>

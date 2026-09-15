@@ -18,7 +18,7 @@ import { getEdgeUrl } from '~/client-utils/edge-url';
  */
 
 /**
- * The width `Announcement.tsx` renders the banner at. Load-bearing: the edge URL
+ * The width `AnnouncementCard.tsx` renders the banner at. Load-bearing: the edge URL
  * that users actually request is derived from this number, so the monitor must use
  * the same value.
  */
@@ -28,10 +28,9 @@ export const ANNOUNCEMENT_IMAGE_WIDTH = 200;
  * The exact variant URL a browser requests for an announcement banner.
  *
  * Mirrors what `useEdgeUrl` computes for `<EdgeMedia src={key} width={ANNOUNCEMENT_IMAGE_WIDTH} />`:
- *  - `Announcement.tsx` passes `optimized` explicitly, which `resolveOptimized` honours ahead of
- *    the viewer's media quality — chrome is compressed for everyone, so the banner has ONE
- *    variant and the monitor can name it. Both sides must change together: a renderer that
- *    stopped passing it would leave the monitor probing a variant nobody loads; and
+ *  - `AnnouncementCard.tsx` passes `optimized` explicitly, which `resolveOptimized` honours ahead
+ *    of the viewer's media quality, so the banner has ONE variant the monitor can name. A renderer
+ *    that stopped passing it would leave the monitor probing a variant nobody loads; and
  *  - `getEdgeUrl` snaps the width up the common-size ladder (200 -> 320).
  *
  * Do NOT substitute `{ original: true }` here. The original object and the derived

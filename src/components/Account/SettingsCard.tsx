@@ -413,6 +413,10 @@ export function ImageFormatSelect({ withLabel }: { withLabel?: boolean } = {}) {
     <Select
       aria-label="Media quality"
       label={withLabel ? 'Media quality' : undefined}
+      // Mantine deselects on re-clicking the current option, which would call onChange(null) ->
+      // `update({ imageFormat: null })` -> rejected by the zod `z.string()` with no toast and no
+      // write, while the local override below kept showing the value that never saved.
+      allowDeselect={false}
       value={chosen ?? served}
       // Lossless stays SELECTABLE for a non-member on purpose: a disabled row is a dead end, and
       // the click is the upsell. `onChange` routes them instead of saving.
@@ -436,10 +440,14 @@ export function ImageFormatSelect({ withLabel }: { withLabel?: boolean } = {}) {
         </Group>
       )}
       onChange={(value: string | null) => {
+        if (!value) return;
         if (value === 'metadata' && !canUseLossless) {
           // Never reaches `update`, which is what raises the "preferences saved" toast — telling
           // a non-member their choice was saved when nothing they are served changed.
-          router.push('/pricing?utm_campaign=media_quality_lossless');
+          router.push({
+            pathname: '/pricing',
+            query: { returnUrl: router.asPath, utm_campaign: 'media_quality_lossless' },
+          });
           return;
         }
         setChosen(value);

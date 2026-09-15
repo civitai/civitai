@@ -5,8 +5,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 export type UseMediaQualityReturn = {
   canUseLossless: boolean;
   quality: MediaQuality;
-  /** The persisted value, unchanged by entitlement — the settings select still shows the choice. */
-  imageFormat?: string | null;
 };
 
 /**
@@ -18,8 +16,6 @@ export type UseMediaQualityReturn = {
  * That reports as zero tests, not as a failure. See
  * `src/components/AppBlocks/__tests__/featureFlagsMockCompleteness.test.ts`.
  *
- * A signed-out viewer resolves to compressed, which is what we want them served.
- *
  * Entitlement is `isPaidMember`, NOT `isMember` — the latter is `tier != null`, which is true for
  * tier `'free'` and would hand lossless to everyone carrying a subscription row.
  */
@@ -29,5 +25,15 @@ export function useMediaQuality(): UseMediaQualityReturn {
   const canUseLossless = !!currentUser?.isPaidMember;
   const imageFormat = currentUser?.filePreferences?.imageFormat;
 
-  return { canUseLossless, quality: toMediaQuality({ imageFormat, canUseLossless }), imageFormat };
+  return { canUseLossless, quality: toMediaQuality({ imageFormat, canUseLossless }) };
+}
+
+/**
+ * The `optimized` flag for a call site that builds its URL with raw `getEdgeUrl` rather than
+ * `useEdgeUrl`. Undefined rather than `false` for lossless: `getEdgeUrl` emits any value that is not
+ * undefined, and `optimized=false` is a URL shape no other surface produces — a second cache key for
+ * bytes that already exist under the first.
+ */
+export function useOptimizedFlag(): true | undefined {
+  return useMediaQuality().quality !== 'lossless' || undefined;
 }

@@ -205,6 +205,7 @@ export function UserAvatar({
                 width={imageSize * 2}
                 original={false}
                 style={{ ...decorationFrameStyle(decoration.data), zIndex: 1 }}
+                optimized
               />
             )}
             {hasValidProfilePicture && !blockedProfilePicture && !userDeleted ? (

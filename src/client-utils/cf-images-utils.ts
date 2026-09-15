@@ -1,5 +1,4 @@
 import { useMemo } from 'react';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import {
   getEdgeUrl,
@@ -33,7 +32,6 @@ export function useEdgeUrl(
   options: Omit<EdgeUrlProps, 'src'> | undefined,
   hiDpi?: boolean
 ) {
-  const currentUser = useCurrentUser();
   const { quality } = useMediaQuality();
   const inferredType = getInferredMediaType(src, options);
   let type = options?.type ?? inferredType;

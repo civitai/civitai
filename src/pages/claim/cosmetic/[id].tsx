@@ -184,6 +184,7 @@ function ClaimCosmeticPageInner({ id }: { id: number }) {
                 src={(cosmetic.data as MixedObject).url}
                 alt={cosmetic.name}
                 style={{ height: 144, width: 144 }}
+                optimized
               />
             )}
             {cosmetic.type === 'ContentDecoration' && (
