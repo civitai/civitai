@@ -63,8 +63,12 @@
 --      Saying otherwise told the operator not to look for the mitigation that
 --      exists. But do NOT plan around it either — an earlier draft of this
 --      header told you to "revoke the affected instances as a SEPARATE action",
---      and THAT INSTRUCTION IS NOT FOLLOWABLE. Four things decide whether it
---      helps you here, and three of them say it does not:
+--      and THAT INSTRUCTION IS NOT FOLLOWABLE. (A further draft claimed there
+--      was "no admin endpoint, no tRPC procedure and no script"; the second
+--      term was false and is retracted — see the bullets below.) What decides
+--      whether it helps you here — count the bullets rather than trusting a
+--      total, since a previous revision of this block said "four" over five of
+--      them:
 --        - NO ENDPOINT EXISTS WHOSE PURPOSE IS REVOCATION. `revokeInstance` has
 --          exactly two production call sites, both in
 --          `block-registry.service.ts`, and in both the marker is a SIDE EFFECT:

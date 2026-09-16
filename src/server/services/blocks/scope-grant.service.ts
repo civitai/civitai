@@ -140,8 +140,22 @@ export async function getGrantedScopes(opts: {
  *    So the useful statement is not "nobody can write one" but: **there is no
  *    endpoint that revokes a token without also uninstalling or disabling the
  *    install.** Every route to a marker has a separate, user-visible outcome.
- *    And the middleware's 403 branch is HOT either way, because ordinary users
- *    hit both paths routinely.
+ *
+ *    🔴 HOW OFTEN THE MIDDLEWARE'S 403 BRANCH IS ACTUALLY EXERCISED IS NOT
+ *    ESTABLISHED, AND THIS COMMENT NO LONGER GUESSES. Two successive drafts
+ *    asserted it was HOT, each for a reason the next round refuted — first
+ *    "a marker appears because a USER acted" (drawn from the false
+ *    no-tRPC-procedure claim), then "ordinary users hit both paths routinely"
+ *    (false: both mutations carry `enforceAppBlocksFlag`, and the live
+ *    `app-blocks-enabled` flag is base-`false` with a moderators-only segment,
+ *    so an ordinary user cannot reach either one). The conclusion outlived two
+ *    dead justifications because each round replaced the reason and kept the
+ *    claim.
+ *
+ *    🔴 DO NOT WRITE A THIRD. Nothing in this tree establishes the rate in
+ *    either direction — it depends on live Flipt state and on install
+ *    behaviour, neither of which is readable from source. If you need the
+ *    number, measure it; do not derive it here.
  *  - it is per-INSTANCE, not per-user and not per-scope;
  *  - it FAILS OPEN (`isRevoked` swallows a Redis error and returns false);
  *  - writing `revoked_at` in Postgres sets NO marker. The two mechanisms do not
