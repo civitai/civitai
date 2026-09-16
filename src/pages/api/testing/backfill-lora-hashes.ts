@@ -12,13 +12,19 @@
  * `meta.hashes` / `meta.resources`, and re-runs detection.
  *
  * GET /api/testing/backfill-lora-hashes?token=$WEBHOOK_TOKEN
+ *   from=          absolute start, e.g. from=2026-09-14. Takes precedence over days; use it
+ *                  when the window is anchored to an event rather than to "now", since a
+ *                  days-back window silently shifts every time you re-run it.
  *   days=14        how far back to scan (createdAt >= now() - days). Default 14.
  *   batchSize=100  images per batch, max 500.
  *   maxBatches=0   0 = keep going until the window is exhausted or maxMs runs out.
- *   maxMs=50000    stop cleanly before the platform's request timeout and hand back a
+ *   maxMs=240000   stop cleanly before the platform's request timeout and hand back a
  *                  cursor. Resume with after=<nextCursor> from the response.
  *   after=         resume point, `<iso createdAt>|<id>` from a previous response.
  *   apply=false    DRY RUN unless apply=true. Nothing is written without it.
+ *   concurrency=10 images repaired in parallel, max 25. Each repair is ~650ms of mostly
+ *                  waiting (update, delete, re-detect, cache bust), so serial apply runs
+ *                  at ~100 images/minute and the window takes hours.
  *   userId=<id>    optional: restrict to one uploader.
  *   verbose=false  include a per-image sample of what would change.
  *
@@ -33,6 +39,7 @@
  * point of the keyset is that it is paid once, not once per batch.
  */
 import type { NextApiRequest, NextApiResponse } from 'next';
+import pLimit from 'p-limit';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { refreshImageResources } from '~/server/services/image.service';
@@ -91,16 +98,19 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
   const days = Math.min(Number(req.query.days ?? 14) || 14, 120);
   const batchSize = Math.min(Number(req.query.batchSize ?? 100) || 100, MAX_BATCH);
   const maxBatches = Number(req.query.maxBatches ?? 0) || 0;
-  const maxMs = Math.min(Number(req.query.maxMs ?? 50_000) || 50_000, 280_000);
+  const maxMs = Math.min(Number(req.query.maxMs ?? 240_000) || 240_000, 280_000);
   const apply = req.query.apply === 'true';
   const userId = req.query.userId ? Number(req.query.userId) : undefined;
   const verbose = req.query.verbose === 'true';
+  const concurrency = Math.min(Math.max(Number(req.query.concurrency ?? 10) || 10, 1), 25);
 
   const startedAt = Date.now();
   // Computed here, not as make_interval(days => ${days}): Prisma binds a JS number as
   // int8 and make_interval takes int4, so the parameterised form fails at runtime while
   // the same SQL with a literal works. A Date binds as timestamptz and matches the column.
-  const since = new Date(startedAt - days * 24 * 60 * 60 * 1000);
+  const fromParam = typeof req.query.from === 'string' ? new Date(req.query.from) : null;
+  const validFrom = fromParam && !Number.isNaN(fromParam.getTime()) ? fromParam : null;
+  const since = validFrom ?? new Date(startedAt - days * 24 * 60 * 60 * 1000);
   const samples: unknown[] = [];
   let after = parseAfter(req.query.after);
   let batches = 0;
@@ -111,6 +121,11 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
   let exhausted = false;
   let stoppedOn: 'exhausted' | 'maxBatches' | 'maxMs' = 'exhausted';
   const failures: { id: number; error: string }[] = [];
+
+  // Reject rather than fall back: a typo'd from= would silently become a 14-day window,
+  // and the caller would read the resulting counts as coverage of a range never scanned.
+  if (typeof req.query.from === 'string' && !validFrom)
+    return res.status(400).json({ error: `from=${req.query.from} is not a date` });
 
   try {
     for (;;) {
@@ -146,62 +161,73 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
       const last = rows[rows.length - 1];
       after = { createdAt: last.createdAt, id: last.id };
 
-      for (const row of rows) {
-        scanned++;
-        const meta = (row.meta ?? {}) as Record<string, any>;
-        const hashes = (meta.hashes ?? {}) as Record<string, string>;
-        if (!Object.keys(hashes).some((k) => CHAR_SPLIT_KEY.test(k))) continue;
+      // The writes are ~650ms each and almost entirely waiting on the database, so the
+      // batch runs them concurrently. Serially this is ~100 images a minute, which turns
+      // the 13.6k-image window into hours and a hundred-odd hand-driven requests. The
+      // cursor still advances a whole batch at a time, so an interrupted request re-reads
+      // this batch rather than skipping it.
+      const limit = pLimit(concurrency);
+      await Promise.all(
+        rows.map((row) =>
+          limit(async () => {
+            scanned++;
+            const meta = (row.meta ?? {}) as Record<string, any>;
+            const hashes = (meta.hashes ?? {}) as Record<string, string>;
+            if (!Object.keys(hashes).some((k) => CHAR_SPLIT_KEY.test(k))) return;
 
-        const recovered = recoverLoraHashes(reassembleBlock(hashes));
-        if (!recovered) {
-          skippedUnrecoverable++;
-          continue;
-        }
+            const recovered = recoverLoraHashes(reassembleBlock(hashes));
+            if (!recovered) {
+              skippedUnrecoverable++;
+              return;
+            }
 
-        const cleanedHashes: Record<string, string> = {};
-        for (const [key, value] of Object.entries(hashes)) {
-          if (!CHAR_SPLIT_KEY.test(key)) cleanedHashes[key] = value;
-        }
-        const nextHashes = { ...cleanedHashes, ...recovered };
-        const nextResources = Array.isArray(meta.resources)
-          ? meta.resources.filter((r: unknown) => !isCharSplitResource(r))
-          : meta.resources;
+            const cleanedHashes: Record<string, string> = {};
+            for (const [key, value] of Object.entries(hashes)) {
+              if (!CHAR_SPLIT_KEY.test(key)) cleanedHashes[key] = value;
+            }
+            const nextHashes = { ...cleanedHashes, ...recovered };
+            const nextResources = Array.isArray(meta.resources)
+              ? meta.resources.filter((r: unknown) => !isCharSplitResource(r))
+              : meta.resources;
 
-        if (verbose && samples.length < 10) {
-          samples.push({
-            id: row.id,
-            charKeysRemoved: Object.keys(hashes).length - Object.keys(cleanedHashes).length,
-            recovered: Object.keys(recovered),
-          });
-        }
+            if (verbose && samples.length < 10) {
+              samples.push({
+                id: row.id,
+                charKeysRemoved: Object.keys(hashes).length - Object.keys(cleanedHashes).length,
+                recovered: Object.keys(recovered),
+              });
+            }
 
-        repaired++;
-        loraHashesRecovered += Object.keys(recovered).length;
-        if (!apply) continue;
+            repaired++;
+            loraHashesRecovered += Object.keys(recovered).length;
+            if (!apply) return;
 
-        try {
-          await dbWrite.image.update({
-            where: { id: row.id },
-            data: { meta: { ...meta, hashes: nextHashes, resources: nextResources } },
-          });
-          // Drops the stale detected rows (including the ones the garbage produced) and
-          // re-derives them from the repaired meta.
-          await refreshImageResources(row.id);
-        } catch (e) {
-          failures.push({ id: row.id, error: (e as Error).message });
-        }
-      }
+            try {
+              await dbWrite.image.update({
+                where: { id: row.id },
+                data: { meta: { ...meta, hashes: nextHashes, resources: nextResources } },
+              });
+              // Drops the stale detected rows (including the ones the garbage produced)
+              // and re-derives them from the repaired meta.
+              await refreshImageResources(row.id);
+            } catch (e) {
+              failures.push({ id: row.id, error: (e as Error).message });
+            }
+          })
+        )
+      );
     }
 
     return res.status(200).json({
       mode: apply ? 'APPLIED' : 'DRY RUN (pass apply=true to write)',
-      window: `${days} days`,
+      window: validFrom ? `from ${validFrom.toISOString()}` : `${days} days`,
       userId: userId ?? 'all',
       stoppedOn,
       exhausted,
       nextCursor: exhausted || !after ? null : `${after.createdAt.toISOString()}|${after.id}`,
       batches,
       batchSize,
+      concurrency,
       scanned,
       repaired,
       loraHashesRecovered,
