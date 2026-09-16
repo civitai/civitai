@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import type * as TrpcModule from '~/utils/trpc';
+import type * as NotificationUtils from '~/utils/notifications';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -19,8 +20,10 @@ import { renderWithProviders } from '../../../test/component-setup';
  * nobody.
  */
 
-const { mutate, spaces, sent, waiting } = vi.hoisted(() => ({
+const { mutate, spaces, sent, waiting, notificationSettings, toggleSetting } = vi.hoisted(() => ({
   mutate: vi.fn(),
+  notificationSettings: { value: [] as { type: string }[] },
+  toggleSetting: vi.fn(),
   spaces: { value: [] as Record<string, unknown>[] },
   sent: { value: [] as { status: string }[] },
   waiting: { value: 0 },
@@ -30,7 +33,15 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }))
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ stickerPlacement: true }),
 }));
-vi.mock('~/utils/notifications', () => ({ showErrorNotification: vi.fn() }));
+// Spread rather than hand-listed. Listing one export couples this file to the
+// component's ENTIRE transitive import graph: when the component grew an import
+// that reached `showSuccessNotification`, this module stopped providing it and
+// the whole file failed to COLLECT -- `Tests no tests`, which reads as a pass to
+// anything checking a summary, and no CI job runs the browser project.
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationUtils>()),
+  showErrorNotification: vi.fn(),
+}));
 // The received-queue count comes from the notification bell's query now, not
 // from this card's own paged fetch — one number instead of two, and no 50-row
 // request on a settings page that renders none of them. Mocked at the hook
@@ -67,9 +78,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     // Read for the auto-mode notification pointer. Present with no rows, which
     // is the ordinary case: these tests are about what a save sends, not about
     // notification polarity.
-    user: { getNotificationSettings: { useQuery: () => ({ data: [] }) } },
+    user: { getNotificationSettings: { useQuery: () => ({ data: notificationSettings.value }) } },
     notification: {
-      updateUserSettings: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+      updateUserSettings: { useMutation: () => ({ mutate: toggleSetting, isPending: false }) },
     },
   },
 }));
@@ -90,6 +101,7 @@ beforeEach(() => {
   spaces.value = [];
   sent.value = [];
   waiting.value = 0;
+  notificationSettings.value = [];
 });
 
 describe('PlacementSpaceSection — what a save sends for freeSlots', () => {
@@ -245,5 +257,63 @@ describe('PlacementSpaceSection — the received count', () => {
     const label = page.getByText('Review pending stickers');
     await expect.element(label).toBeInTheDocument();
     expect(label.element().closest('a')?.textContent?.trim()).toBe('Review pending stickers');
+  });
+});
+
+/**
+ * The auto-mode notification prompt.
+ *
+ * Opt-in inverts what a `UserNotificationSettings` row means for this type -- a
+ * row is SUBSCRIBED, where for 84 other types it means muted -- and the
+ * component encodes that inversion at a site no server test can see. Drop the
+ * leading `!` and the prompt is offered only to creators who already subscribed
+ * and never to the ones who need it: the feature does nothing for its whole
+ * audience, silently. That is the same shape as the Model3D incident the
+ * polarity guard was written for.
+ *
+ * The two tests are a pair. Without the second, the first passes for a component
+ * that renders the alert unconditionally.
+ */
+describe('PlacementSpaceSection — the auto-mode notification prompt', () => {
+  const AUTO_ACCEPTED_NOTIFICATION = 'sticker-placement-auto-accepted';
+
+  test('offers it to a creator with no row', async () => {
+    givenSpace(null);
+    renderWithProviders(<PlacementSpaceSection />);
+
+    await userEvent.click(page.getByText('Accept all'));
+
+    await expect.element(page.getByText('Notify me')).toBeVisible();
+  });
+
+  test('offers the way OUT to a creator who already has a row', async () => {
+    // The negative control for the test above, and a finding in its own right:
+    // subscribing in one click and then having to find a checkbox that is
+    // `disabled` for this exact population is the same dead end reversed.
+    notificationSettings.value = [{ type: AUTO_ACCEPTED_NOTIFICATION }];
+    givenSpace(null);
+    renderWithProviders(<PlacementSpaceSection />);
+
+    await userEvent.click(page.getByText('Accept all'));
+
+    await expect.element(page.getByText('Stop notifying me')).toBeVisible();
+  });
+
+  test('asks for the state it is NOT in, in both directions', async () => {
+    // `toggle` is the state being requested. Passing the current one through is
+    // a click that does nothing either way -- a real, documented bug on the
+    // other two callers of this mutation, which is why it is asserted rather
+    // than assumed.
+    notificationSettings.value = [{ type: AUTO_ACCEPTED_NOTIFICATION }];
+    givenSpace(null);
+    renderWithProviders(<PlacementSpaceSection />);
+
+    await userEvent.click(page.getByText('Accept all'));
+    await userEvent.click(page.getByText('Stop notifying me'));
+
+    expect(toggleSetting).toHaveBeenCalledWith({
+      toggle: false,
+      type: [AUTO_ACCEPTED_NOTIFICATION],
+    });
   });
 });

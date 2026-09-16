@@ -62,6 +62,12 @@ describe('sticker auto-accepted notification', () => {
     expect(query).toContain(
       `JOIN "UserNotificationSettings" uns ON uns."userId" = p."ownerId" AND uns.type = '${TYPE}'`
     );
+    // Not redundant with the line above, which was the mistake that deleted it:
+    // a LEFT JOIN line CONTAINS that substring, so `toContain` passes while the
+    // join restricts nobody and this goes to every creator on the site. The
+    // polarity guard's lookbehind catches it too, in another file; this one
+    // fails where a reader of this feature is already looking.
+    expect(query).not.toContain('LEFT JOIN "UserNotificationSettings"');
     // The opt-out clause would make one row mean subscribed AND muted at once,
     // which resolves as nobody ever receiving this.
     expect(query).not.toContain('NOT EXISTS (SELECT 1 FROM "UserNotificationSettings"');
@@ -149,6 +155,9 @@ describe('sticker auto-accepted notification', () => {
     const section = readFileSync('src/components/Account/PlacementSpaceSection.tsx', 'utf8');
 
     expect(section).toContain(`const AUTO_ACCEPTED_NOTIFICATION = '${TYPE}';`);
+    // The declaration alone passes on a constant that is declared and never
+    // read, which is a component whose prompt silently stopped rendering.
+    expect(section).toContain('setting.type === AUTO_ACCEPTED_NOTIFICATION');
     expect(optInNotificationTypes).toContain(TYPE);
     expect(notificationCategoryTypes[NotificationCategory.Creator].map((s) => s.type)).toContain(
       TYPE
