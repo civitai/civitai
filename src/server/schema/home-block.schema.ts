@@ -103,7 +103,6 @@ export const homeBlockMetaSchema = z
       browsingLevel: z.enum(['public', 'sfw']).optional(),
       // images only
       types: z.array(z.enum(MediaType)).optional(),
-      // models only
       baseModels: z.array(z.string()).optional(),
     }),
     announcements: z.object({

@@ -507,6 +507,7 @@ export const getHomeBlockData = async ({
           period: feed.period ?? MetricTimeframe.Week,
           newCreators: feed.newCreators,
           types: feed.types,
+          baseModels: feed.baseModels,
           user,
           headers: { src: 'getHomeBlockData:feed' },
         });
