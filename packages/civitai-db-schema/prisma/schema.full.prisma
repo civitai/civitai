@@ -894,6 +894,7 @@ enum CommercialUse {
   RentCivit
   Rent
   Sell
+  SellMerge
 }
 
 enum CheckpointType {
