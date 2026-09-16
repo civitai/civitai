@@ -259,6 +259,7 @@ describe('InteractiveTipBuzzButton', () => {
     await wait(PAST_CLAMP_DELAY);
     await userEvent.keyboard('{Enter}');
     expect(tipMutate).toHaveBeenCalledTimes(1);
+    expect(tipMutate.mock.calls[0][0]).toMatchObject({ amount: BALANCE });
   });
 
   // The send icon is the OTHER way to spend, and it was the hole: clicking it blurs the
@@ -319,21 +320,6 @@ describe('InteractiveTipBuzzButton', () => {
     expect(requireAmountField().textContent).toBe('50');
   });
 
-  // Autorepeat must not supply the confirming press. Holding Enter would otherwise clear the
-  // clamp and spend it from one key the user never released.
-  test('a held Enter does not confirm its own clamp', async () => {
-    const field = await openTipPopover();
-    field.focus();
-    field.textContent = String(BALANCE * 10);
-
-    await userEvent.keyboard('{Enter}');
-    field.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', repeat: true, bubbles: true, cancelable: true })
-    );
-
-    expect(tipMutate).not.toHaveBeenCalled();
-  });
-
   // Holding Enter on the FOCUSED SEND BUTTON autorepeats clicks, so the icon path had the
   // same hole `e.repeat` closes for the field. One rule covers both: a press cannot confirm
   // a figure that has not been on screen long enough to read.
@@ -357,7 +343,12 @@ describe('InteractiveTipBuzzButton', () => {
     field.textContent = String(BALANCE * 10);
 
     await userEvent.keyboard('{Enter}');
-    await userEvent.keyboard('{Enter}');
+    // Dispatched: the gap between two AWAITED presses is wall-clock, and this is the only
+    // witness for the field's freshness guard. A loaded box could push the second press
+    // outside the 500ms window, where sending is correct — a false red on a money guard.
+    field.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    );
 
     expect(tipMutate).not.toHaveBeenCalled();
   });
@@ -406,6 +397,39 @@ describe('InteractiveTipBuzzButton', () => {
     // preventDefault is what stops the browser turning the repeat into a click; the click
     // itself is synthesised by the engine and cannot be observed in this harness.
     expect(held.defaultPrevented).toBe(true);
+  });
+
+  // Pressing the icon is what blurs the field and causes the clamp, so blur-to-click elapsed
+  // is the length of the user's own hold. A single press held past CLAMP_CONFIRM_DELAY would
+  // otherwise confirm the figure it had just rewritten — the whole balance, on one gesture.
+  test('a press held past the confirm delay does not confirm the clamp it caused', async () => {
+    const field = await openTipPopover();
+    field.focus();
+    field.textContent = String(BALANCE * 10);
+
+    const button = sendButton();
+    button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    field.blur();
+    await wait(PAST_CLAMP_DELAY);
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    expect(tipMutate).not.toHaveBeenCalled();
+    expect(requireAmountField().textContent).toBe(String(BALANCE));
+  });
+
+  // Negative control for the button's repeat guard. Widen it to preventDefault on EVERY key
+  // and the icon becomes unreachable by keyboard entirely — a deliberate Enter would do
+  // nothing, on the confirm step of a money action.
+  test('a deliberate Enter on the focused send button still sends', async () => {
+    const field = await openTipPopover();
+    field.focus();
+    field.textContent = String(TYPED_AMOUNT);
+    sendButton().focus();
+
+    await userEvent.keyboard('{Enter}');
+
+    expect(tipMutate).toHaveBeenCalledTimes(1);
+    expect(tipMutate.mock.calls[0][0]).toMatchObject({ amount: TYPED_AMOUNT });
   });
 
   test('an IME composition commit does not send a tip', async () => {

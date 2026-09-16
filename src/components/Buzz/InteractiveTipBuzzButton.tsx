@@ -244,23 +244,37 @@ export function InteractiveTipBuzzButton({
   };
 
   const amountFieldRef = useRef<HTMLDivElement>(null);
-  const clampShownAtRef = useRef(0);
+  // -Infinity, not 0: performance.now() is milliseconds since navigation start, so a 0
+  // sentinel reads as "clamped at page load" and refuses every send for the first
+  // CLAMP_CONFIRM_DELAY of a document's life.
+  const clampShownAtRef = useRef(-Infinity);
+  const pressStartedAtRef = useRef(-Infinity);
 
   const clampIsTooFreshToConfirm = () =>
     performance.now() - clampShownAtRef.current < CLAMP_CONFIRM_DELAY;
+
+  // Ordering, which a duration cannot express. The press that confirms a clamp has to have
+  // BEGUN after it: pressing the icon is what blurs the field and causes the clamp, so the
+  // elapsed time at click is the length of the user's own hold. Hold the button past
+  // CLAMP_CONFIRM_DELAY and one uninterrupted press would otherwise confirm the figure it
+  // just rewrote — which on this path is the whole balance.
+  const pressPredatesClamp = () => pressStartedAtRef.current < clampShownAtRef.current;
 
   // Shared by blur and Enter. The comparison is on the STRING, not on Number(): a numeric
   // comparison passes '5e3' and '0x32' untouched, which sends an amount the field does not
   // read as. After a rewrite the field holds exactly amount.toString(), so this converges.
   const applyEnteredAmount = (el: HTMLElement | null) => {
-    const entered = el?.textContent ?? '1';
+    // No node means nothing is on screen to have been authorised. Refuse rather than fall
+    // back to a default and spend it.
+    if (!el) return { amount: 0, clamped: true };
+    const entered = el.textContent ?? '';
     const amount = processEnteredNumber(entered);
     const clamped = entered.trim() !== amount.toString();
     // Written directly because buzzCounter may already equal the clamp, and then no
     // re-render repaints dangerouslySetInnerHTML — the field would keep showing the
     // rejected entry and never become sendable.
     if (clamped) {
-      if (el) el.textContent = amount.toString();
+      el.textContent = amount.toString();
       clampShownAtRef.current = performance.now();
     }
     return { amount, clamped };
@@ -471,7 +485,7 @@ export function InteractiveTipBuzzButton({
                       // Where a blur DOES fire it has just clamped, and the freshness
                       // check is what refuses that press.
                       const { amount, clamped } = applyEnteredAmount(amountFieldRef.current);
-                      if (clamped || clampIsTooFreshToConfirm()) return;
+                      if (clamped || clampIsTooFreshToConfirm() || pressPredatesClamp()) return;
                       sendTip(amount);
                     }
                   : undefined
@@ -480,8 +494,11 @@ export function InteractiveTipBuzzButton({
               // CLAMP_CONFIRM_DELAY those clicks look like a deliberate confirmation. The
               // freshness rule bounds how soon a confirmation can arrive; only this bounds
               // one arriving from a key that was never released.
+              onPointerDown={() => {
+                pressStartedAtRef.current = performance.now();
+              }}
               onKeyDown={(e: React.KeyboardEvent) => {
-                if (e.repeat) e.preventDefault();
+                if (e.repeat && e.key === 'Enter') e.preventDefault();
               }}
               loading={tipUserMutation.isPending}
             >
