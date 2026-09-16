@@ -1653,7 +1653,6 @@ type GetAllImagesRaw = {
 };
 
 type GetAllImagesInput = GetInfiniteImagesOutput & {
-  useCombinedNsfwLevel?: boolean;
   user?: SessionUser;
   // Request color, used to pick which "new & upcoming" board backs `newCreators`.
   domain?: DomainColor;
@@ -1706,7 +1705,6 @@ function noteEmptyIdsPage(
     ids?: number[];
     sort?: unknown;
     browsingLevel?: number;
-    useCombinedNsfwLevel?: boolean;
     user?: { id?: number; isModerator?: boolean };
   },
   stage: string,
@@ -1726,7 +1724,6 @@ function noteEmptyIdsPage(
       firstIds: input.ids.slice(0, 5),
       sort: input.sort,
       browsingLevel: input.browsingLevel,
-      useCombinedNsfwLevel: input.useCombinedNsfwLevel,
       viewerId: input.user?.id,
       isModerator: input.user?.isModerator,
       ...details,
@@ -3288,7 +3285,6 @@ export const makeMeiliImageSearchSort = (
 };
 
 type ImageSearchInput = GetInfiniteImagesOutput & {
-  useCombinedNsfwLevel?: boolean;
   domain?: DomainColor;
   currentUserId?: number;
   isModerator?: boolean;
@@ -3506,9 +3502,6 @@ export async function getImagesFromFeedSearch(
         techniqueIds,
         // Flags object (not in ImagesInfiniteModel)
         flags,
-        // NSFW fields (different handling)
-        aiNsfwLevel,
-        combinedNsfwLevel,
         // Metric counts (stats object has these instead)
         reactionCount,
         commentCount,
@@ -3770,7 +3763,6 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     reviewId,
     modelId,
     prioritizedUserIds,
-    useCombinedNsfwLevel,
     remixOfId,
     remixesOnly,
     nonRemixesOnly,
@@ -3917,9 +3909,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
 
   if (isModerator && includesNsfwContent) browsingLevels.push(0);
 
-  const nsfwLevelField: MetricsImageFilterableAttribute = useCombinedNsfwLevel
-    ? 'combinedNsfwLevel'
-    : 'nsfwLevel';
+  const nsfwLevelField: MetricsImageFilterableAttribute = 'nsfwLevel';
   const nsfwFilters = [
     makeMeiliImageSearchFilter(nsfwLevelField, `IN [${browsingLevels.join(',')}]`) as string,
   ];
@@ -4424,7 +4414,6 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     reviewId,
     modelId,
     prioritizedUserIds,
-    useCombinedNsfwLevel,
     remixOfId,
     remixesOnly,
     nonRemixesOnly,
@@ -4556,9 +4545,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
 
   if (isModerator && includesNsfwContent) browsingLevels.push(0);
 
-  const nsfwLevelField: MetricsImageFilterableAttribute = useCombinedNsfwLevel
-    ? 'combinedNsfwLevel'
-    : 'nsfwLevel';
+  const nsfwLevelField: MetricsImageFilterableAttribute = 'nsfwLevel';
   const nsfwFilters = [
     makeMeiliImageSearchFilter(nsfwLevelField, `IN [${browsingLevels.join(',')}]`) as string,
   ];

@@ -46,7 +46,6 @@ import { DatePickerInput } from '@mantine/dates';
 import dayjs from '~/shared/utils/dayjs';
 import { TimeoutLoader } from './TimeoutLoader';
 import { useBrowsingLevelDebounced } from '../BrowsingLevel/BrowsingLevelProvider';
-import type { BrowsingLevelAttribute } from '~/components/Search/search-index-filters';
 import { BROWSING_LEVEL_ATTRIBUTE } from '~/components/Search/search-index-filters';
 import type { SearchIndexKey } from '~/components/Search/search.types';
 import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
@@ -265,16 +264,14 @@ export const ClearRefinements = ({ ...props }: ButtonProps) => {
 
 export const BrowsingLevelFilter = ({
   indexKey,
-  attributeOverride,
   filters: _filters,
   ...props
 }: {
   indexKey: SearchIndexKey;
-  attributeOverride?: BrowsingLevelAttribute;
   filters?: string[] | string;
 } & Omit<ConfigureProps, 'filters'>) => {
   const browsingLevel = useBrowsingLevelDebounced();
-  const attribute = attributeOverride ?? BROWSING_LEVEL_ATTRIBUTE[indexKey];
+  const attribute = BROWSING_LEVEL_ATTRIBUTE[indexKey];
 
   const filters = useMemo(
     () => buildBrowsingLevelFilters({ attribute, browsingLevel, filters: _filters }),

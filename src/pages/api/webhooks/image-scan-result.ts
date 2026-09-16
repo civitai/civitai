@@ -891,7 +891,6 @@ async function updateImageScanJobs({
   if (ingestion) setClauses.push(Prisma.sql`"ingestion" = ${ingestion}::"ImageIngestionStatus"`);
   if (nsfwLevel) setClauses.push(Prisma.sql`"nsfwLevel" = ${nsfwLevel}`);
   if (blockedFor) setClauses.push(Prisma.sql`"blockedFor" = ${blockedFor}`);
-  if (aiRating) setClauses.push(Prisma.sql`"aiNsfwLevel" = ${aiRating}`);
   if (aiModel) setClauses.push(Prisma.sql`"aiModel" = ${aiModel}`);
   setClauses.push(Prisma.sql`"scanJobs" = ${scanJobsSql}`);
 

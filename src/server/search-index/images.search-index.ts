@@ -117,7 +117,6 @@ type BaseImage = {
   width: number | null;
   metadata: Prisma.JsonValue;
   nsfwLevel: NsfwLevel;
-  aiNsfwLevel: NsfwLevel;
   nsfwLevelLocked: boolean;
   postId: number | null;
   needsReview: string | null;
@@ -199,9 +198,6 @@ const transformData = async ({
         ...imageRecord,
         id,
         nsfwLevel,
-        combinedNsfwLevel: nsfwLevelLocked
-          ? nsfwLevel
-          : Math.max(nsfwLevel, imageRecord.aiNsfwLevel),
         createdAtUnix: imageRecord.createdAt.getTime(),
         aspectRatio:
           !imageRecord.width || !imageRecord.height
@@ -319,7 +315,6 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         i."name",
         i."url",
         i."nsfwLevel",
-        i."aiNsfwLevel",
         i."nsfwLevelLocked",
         i."meta"->'prompt' as "prompt",
         i."hash",
