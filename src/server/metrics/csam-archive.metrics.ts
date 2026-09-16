@@ -3,30 +3,39 @@
 // 🔴 WHY THIS EXISTS: the archiver has had two code paths since #4771 — stage the
 // two large media zips on the container's `scratch` emptyDir, or stream them
 // straight to object storage — selected per report by the Flipt flag
-// `csam-archive-stream-upload`. Nothing recorded which one ran. Measured
-// 2026-09-16, after the flag went live: three reports archived cleanly and
-// answering "did the streaming path actually run?" was impossible. Loki held no
-// path-identifying line for the job (0 streams, against a 105-line positive
-// control on the same selector, in a namespace that IS collected), and every
+// `csam-archive-stream-upload`. Nothing recorded which one ran. After the flag
+// went live, archives completed and answering "did the streaming path actually
+// run?" was impossible: the job emitted no path-identifying log line, and every
 // existing `civitai_csam_*` series is monitor-level — pending / scanned /
 // oldest-age / last-success — so none of them says anything about HOW an archive
 // completed. The flag being on is not evidence the flagged branch executed.
 //
-// 🔴 `path` IS WHAT HAPPENED, NOT WHAT THE FLAG SAID. The flag is read once per
-// report, but it only governs `archiveImages` and `archiveGeneratedImages`. A
-// `TrainingData` report downloads a file it did not build, and an `ExternalLink`
-// report archives no media at all — for both, the flag is read and then has
-// nothing to select. Labelling those `stream` because the flag happened to be on
-// would make the series a record of the flag rather than of the code, which is
-// the exact confusion this counter was added to end. They get `none`.
+// 🔴 WHAT `path` MEANS, AND THE TWO ARMS DIFFER — read this before alerting on it.
+// On an `outcome="success"` row it is what RAN: `archiveAndUpload` branches on the
+// flag with no internal fallback, so reaching the success arm means that branch
+// executed. On an `outcome="error"` row it is only the path SELECTED for this
+// report. `archivePath` is resolved before any archiving begins, so a failure
+// upstream of the media archive — the base-bundle upload, an image count, a
+// scratch-volume write — records the selected path even though that branch never
+// executed. Concretely: `{path="stream", outcome="error"}` does NOT establish that
+// the streaming upload failed. Read it as "a report routed to streaming failed
+// somewhere", then use the log line's report id to find out where.
+//
+// 🔴 WHAT IS GENUINELY BETTER THAN READING THE FLAG: the `none` mapping. The flag
+// is read once per report but governs `archiveImages`/`archiveGeneratedImages`
+// only. A `TrainingData` report downloads a file it did not build, and an
+// `ExternalLink` report archives no media at all — for both, the flag is read and
+// then has nothing to select. Labelling those `stream` because the flag happened
+// to be on would make the series a record of the flag rather than of the code.
+// For `Image`/`GeneratedImage` — the only two types where `stream` and `disk` can
+// differ at all — an ERROR row's `path` is, in fact, exactly what the flag said.
 //
 // 🔴 ALERTING: use `max_over_time(...[window])`, NOT `rate()` / `increase()`.
 // Same hazard as `generation-model-substitution.metrics.ts`, and worse here: CSAM
-// archives are RARE (three in the eight days after the flag went live) spread
-// over a 3–10 pod jobs pool, so a pod that archives once creates its child at 1
-// and never touches it again. A `rate()` over that child is structurally 0, and
-// an alert keyed on it silently never fires — the counter would look healthiest
-// exactly when the thing it watches is happening.
+// archives are RARE, spread over a multi-pod jobs pool, so a pod that archives
+// once creates its child at 1 and never touches it again. A `rate()` over that
+// child is structurally 0, and an alert keyed on it silently never fires — the
+// counter would look healthiest exactly when the thing it watches is happening.
 //
 // 🔴 CARDINALITY: 12 series, total, and every one of them is REACHABLE — see
 // REACHABLE_SERIES below. The naive product is 3 x 4 x 2 = 24, but half of those
@@ -38,6 +47,8 @@
 // in the Node heap for the process lifetime, and the per-report detail belongs in
 // the log line the service already emits beside this.
 import client, { type Counter, type Registry } from 'prom-client';
+
+import type { CsamReportType } from '~/shared/utils/prisma/models';
 
 export const CSAM_ARCHIVE_PATHS = ['stream', 'disk', 'none'] as const;
 export type CsamArchivePath = (typeof CSAM_ARCHIVE_PATHS)[number];
@@ -52,6 +63,33 @@ export type CsamArchiveType = (typeof CSAM_ARCHIVE_TYPES)[number];
 
 export const CSAM_ARCHIVE_OUTCOMES = ['success', 'error'] as const;
 export type CsamArchiveOutcome = (typeof CSAM_ARCHIVE_OUTCOMES)[number];
+
+/**
+ * 🔴 COMPILE-TIME PIN AGAINST THE PRISMA ENUM — this is a GUARD, not documentation.
+ *
+ * `CSAM_ARCHIVE_TYPES` restates `CsamReportType` as a runtime array (a type alone
+ * cannot be iterated to seed series, and `isCsamArchiveType` needs values). A
+ * restatement drifts silently, and the drift is invisible at every other layer:
+ * a new report type would make `csamArchivePathFor` return `'none'` (no
+ * `FLAG_GOVERNED_TYPES` match), make the log line say "via the none path" for a
+ * type that may well build a media archive, and make `recordCsamArchive` DROP the
+ * call outright (`isCsamArchiveType` false) — so the new type would be absent from
+ * the counter with no error, no log and no failing test.
+ *
+ * This fails the BUILD in both directions instead. Adding a member to either union
+ * without the other is a type error here, at the one place that can see both.
+ */
+type AssertTrue<T extends true> = T;
+// Unused BY CONSTRUCTION — the assertion IS the check, and it fires at compile time. There is
+// nothing to reference it from; referencing it would not make it stronger.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+type _CsamArchiveTypesMatchPrisma = AssertTrue<
+  [CsamArchiveType] extends [CsamReportType]
+    ? [CsamReportType] extends [CsamArchiveType]
+      ? true
+      : false
+    : false
+>;
 
 /**
  * Report types whose media archive is built by this code, and are therefore
@@ -105,7 +143,7 @@ function isCsamArchiveOutcome(v: unknown): v is CsamArchiveOutcome {
  * 🔴 WHY THIS IS NOT COSMETIC, and why it matters more here than almost anywhere
  * else in this repo: prom-client materialises a child only on its first `inc()`,
  * and CSAM archives are rare. Without seeding, a pool that has not archived
- * anything for a week exposes NOTHING, and `civitai_csam_archive_total{path="stream"}`
+ * anything recently exposes NOTHING, and `civitai_csam_archive_total{path="stream"}`
  * returns `no data` — indistinguishable from "the instrument was never wired",
  * which is precisely the state this counter was added to escape. A real zero and
  * an absent series must be tellable apart, and on a rare event the honest reading
@@ -148,7 +186,9 @@ export function ensureRegisterCsamArchiveMetrics(reg: Registry = client.register
   const csamArchiveTotal = getOrCreateCounter(
     reg,
     'civitai_csam_archive_total',
-    'CSAM evidence-archive attempts that reached a terminal state, by the media-archive path actually taken. ' +
+    'CSAM evidence-archive attempts that reached the archive stage, by the media-archive path selected for them. ' +
+      'NOT every terminal state: a report with no reported user is stamped archived and returns BEFORE the flag is read, and a scratch-volume mkdir failure throws before the try block, so neither is counted here — the first is visible as details.archiveSkipped, the second only in the log line. ' +
+      'On outcome=success, path is what RAN. On outcome=error it is only the path SELECTED: the failure may be upstream of the media archive, so {path="stream",outcome="error"} does not establish that streaming failed. ' +
       'path (stream = the two large media zips were streamed straight to object storage, the #4771 path behind the csam-archive-stream-upload flag; ' +
       'disk = they were staged on the container scratch emptyDir first, the long-standing path and the flag-off rollback; ' +
       'none = this report type builds no large media archive here, so the flag selected nothing — TrainingData downloads a prebuilt file and ExternalLink archives only base user data). ' +
