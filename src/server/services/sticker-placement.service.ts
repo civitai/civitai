@@ -21,7 +21,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import type { PlacementStatus } from '~/shared/utils/placement';
+import type { PlacementSpaceMode, PlacementStatus } from '~/shared/utils/placement';
 import {
   PLACEMENT_QUEUE_PAGE_SIZE,
   PLACEMENT_SURFACES,
@@ -61,8 +61,15 @@ const TARGET_TYPE = 'image' as const;
  *
  * Both create paths call this. The free one is easy to miss and fails silently —
  * the notification simply never fires for free placements.
+ *
+ * The stamp records the SPACE, not the outcome. If the settle below throws, the
+ * row stays pending, reaches the owner's queue, and this notification fires when
+ * they approve it by hand, about a placement they did review. Left that way
+ * knowingly: telling the two apart needs a column the row does not carry, and
+ * the same is already true of a failed creation settling as `expired`. Do not
+ * "fix" it with a WHERE clause; it would need the settle to mark itself.
  */
-const autoSpaceStamp = (space: { mode: string }) =>
+const autoSpaceStamp = (space: { mode: PlacementSpaceMode }) =>
   space.mode === 'auto' ? { [STICKER_AUTO_SPACE_KEY]: true } : {};
 
 /**

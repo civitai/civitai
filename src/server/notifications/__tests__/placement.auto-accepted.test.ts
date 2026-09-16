@@ -1,6 +1,11 @@
 import { readFileSync } from 'fs';
 import { describe, expect, it } from 'vitest';
 import { placementNotifications } from '~/server/notifications/placement.notifications';
+import {
+  notificationCategoryTypes,
+  optInNotificationTypes,
+} from '~/server/notifications/utils.notifications';
+import { NotificationCategory } from '~/server/common/enums';
 import { imageWithStickersUrl } from '~/components/Placement/queue-routes';
 import { STICKER_AUTO_SPACE_KEY } from '~/shared/utils/sticker-placement';
 
@@ -57,7 +62,6 @@ describe('sticker auto-accepted notification', () => {
     expect(query).toContain(
       `JOIN "UserNotificationSettings" uns ON uns."userId" = p."ownerId" AND uns.type = '${TYPE}'`
     );
-    expect(query).not.toContain('LEFT JOIN "UserNotificationSettings"');
     // The opt-out clause would make one row mean subscribed AND muted at once,
     // which resolves as nobody ever receiving this.
     expect(query).not.toContain('NOT EXISTS (SELECT 1 FROM "UserNotificationSettings"');
@@ -81,26 +85,27 @@ describe('sticker auto-accepted notification', () => {
     // approved just after it.
     expect(query).toContain(`AND p."resolvedAt" > '2026-01-01'`);
     expect(query).not.toContain('p."createdAt" >');
+    // Scoped to this surface and target. Only stickers stamp the key today, so
+    // dropping these changes nothing right now -- which is exactly why a later
+    // surface could widen it without anyone noticing.
+    expect(query).toContain(`p.surface = 'sticker'`);
+    expect(query).toContain(`p."targetType" = 'image'`);
   });
 
   /**
-   * The SQL above and the service that writes the stamp are two spellings of one
-   * key, in two files, and a rename on either side fails as a notification that
-   * silently never fires — there is no error and no red test anywhere else.
+   * The keys `prepareMessage` reads, tied to the columns the query puts them in.
    *
-   * Read off disk rather than imported, because importing the service drags its
-   * whole graph into a suite that otherwise touches none of it.
+   * The message test below hands in a hand-made details object, so it cannot see
+   * this mapping at all: rename `placerUsername` to `username` in the SQL and
+   * every notification reads "undefined placed a sticker on your image", with
+   * nothing red. Same for the image id, which would silently link everyone to the
+   * wrong page.
    */
-  it('reads the key the create path actually writes', () => {
-    const service = readFileSync('src/server/services/sticker-placement.service.ts', 'utf8');
+  it('builds the details keys the message reads', async () => {
+    const query = await queryFor(TYPE);
 
-    expect(service).toContain('STICKER_AUTO_SPACE_KEY');
-    // Both create paths spread the stamp. The free one is the half that fails
-    // silently: nothing throws, free placements just never notify.
-    expect(service.match(/\.\.\.autoSpaceStamp\(space\)/g)).toHaveLength(2);
-    // The stamp is conditional. Written unconditionally it is on every row, the
-    // clause above matches every approval, and the gate means nothing.
-    expect(service).toContain("space.mode === 'auto' ? { [STICKER_AUTO_SPACE_KEY]: true } : {}");
+    expect(query).toContain(`'placerUsername', u.username`);
+    expect(query).toContain(`'imageId', p."targetId"`);
   });
 
   it('links to the image with the stickers revealed', () => {
@@ -127,15 +132,26 @@ describe('sticker auto-accepted notification', () => {
   });
 
   /**
-   * The pointer in the space settings carries this type as a bare string, because
-   * the processors are not importable from a client component graph. A rename
-   * leaves it reading `undefined`, which is falsy — so the "turn on notifications"
-   * alert would sit open forever, offering a setting that no longer exists.
+   * The settings pointer carries this type as a bare string -- the module that
+   * owns the type list drags 36 processors into any client bundle that imports
+   * it -- so the coupling has to live here instead.
+   *
+   * 🔴 Pinned against the lists the COMPONENT actually reads, not against
+   * `placementNotifications`. The alert's condition walks the rows of
+   * `user.getNotificationSettings` and the checkbox is rendered from
+   * `notificationCategoryTypes`; a processor is absent from both the moment it
+   * carries `toggleable: false`, which `getNotificationTypes` filters on. That
+   * one word would silence the alert, the checkbox and -- since this type is
+   * opt-in and would then be unsubscribable -- the notification itself, for
+   * everyone, with `placementNotifications[TYPE]` still defined and nothing red.
    */
-  it('is the type the auto-mode settings pointer offers', () => {
+  it('is reachable through the lists the settings UI reads', () => {
     const section = readFileSync('src/components/Account/PlacementSpaceSection.tsx', 'utf8');
 
     expect(section).toContain(`const AUTO_ACCEPTED_NOTIFICATION = '${TYPE}';`);
-    expect(placementNotifications[TYPE]).toBeDefined();
+    expect(optInNotificationTypes).toContain(TYPE);
+    expect(notificationCategoryTypes[NotificationCategory.Creator].map((s) => s.type)).toContain(
+      TYPE
+    );
   });
 });

@@ -26,7 +26,6 @@ import {
 } from '~/shared/utils/sticker-placement';
 import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
-import { useNotificationSettings } from '~/components/Notifications/useNotificationSettings';
 import {
   STICKER_QUEUE_RECEIVED_URL,
   STICKER_QUEUE_SENT_URL,
@@ -41,10 +40,14 @@ import { trpc } from '~/utils/trpc';
 const { defaultMode: DEFAULT_MODE, defaultPrice: DEFAULT_PRICE } = PLACEMENT_SURFACES.sticker;
 
 /**
- * The notification an `auto` space owner has to opt into. Spelled here and
- * pinned against `notificationProcessors` by a test: a rename would leave this
- * reading `undefined`, which is falsy, so the pointer below would sit open
- * forever offering a setting that no longer exists.
+ * The notification an `auto` space owner has to opt into.
+ *
+ * Spelled as a literal rather than imported: the module that owns these types
+ * pulls all 36 notification processors and their SQL into whatever imports it —
+ * 33 KB gzipped — and every other consumer sits behind a `dynamic()` boundary
+ * that this component, reachable from `/user/[username]/sticker-book`, does not
+ * have. A test pins the spelling against the lists that actually feed the
+ * setting, which is the coupling a literal gives up.
  */
 const AUTO_ACCEPTED_NOTIFICATION = 'sticker-placement-auto-accepted';
 
@@ -68,7 +71,6 @@ export function PlacementSpaceSection({
   footer,
 }: { flat?: boolean; footer?: ReactNode } = {}) {
   const { pendingPlacements } = useQueryNotificationsCount();
-  const { notificationSettings } = useNotificationSettings();
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const utils = trpc.useUtils();
@@ -88,6 +90,24 @@ export function PlacementSpaceSection({
   // read `.length` for a badge, on a settings page that never renders one of
   // them.
   const { data: sent } = trpc.placement.getMyStickerPlacements.useQuery({}, { enabled });
+  // Read directly rather than through `useNotificationSettings`, which imports the
+  // processor registry. One boolean is not worth that graph -- see the note on
+  // AUTO_ACCEPTED_NOTIFICATION.
+  const { data: notificationSettings } = trpc.user.getNotificationSettings.useQuery(undefined, {
+    enabled: enabled && !!currentUser,
+  });
+  // Subscribing from here, rather than sending the owner to the settings page.
+  // Opt-in types are excluded from the category aggregates by design, so a
+  // creator who has turned Creator notifications off is shown no checkbox for
+  // this type at all -- and `toggleAll(false)` puts them in that state. A link
+  // would have been a dead end for exactly the creator who chose "Accept all"
+  // to stop being pinged.
+  //
+  // `toggle: true` means "subscribe" for every type; the handler picks the write
+  // direction from the type's own polarity, so this carries no opinion about it.
+  const subscribe = trpc.notification.updateUserSettings.useMutation({
+    onSuccess: () => utils.user.getNotificationSettings.invalidate(),
+  });
 
   const stored = spaces?.[0];
   // Seeded from the surface defaults, not from `off`. With no row the cascade
@@ -157,12 +177,14 @@ export function PlacementSpaceSection({
   // are waiting on me" differently.
   const waiting = pendingPlacements;
 
-  // Only worth saying to someone who is not already subscribed. `false` and
-  // `undefined` are both falsy, and the difference matters: undefined means the
-  // type below no longer exists, which would pin this open forever — pinned
-  // against the real processor list in the tests rather than guessed at here.
+  // Gated on the ROW's absence, not on a falsy read: while the query is in
+  // flight there are no rows, and an opt-in type with no row is indistinguishable
+  // from one nobody subscribed to -- so reading it eagerly flashes "turn this on"
+  // at the creator who already did.
   const offerAutoNotification =
-    mode === 'auto' && notificationSettings[AUTO_ACCEPTED_NOTIFICATION] === false;
+    mode === 'auto' &&
+    !!notificationSettings &&
+    !notificationSettings.some((setting) => setting.type === AUTO_ACCEPTED_NOTIFICATION);
 
   const placedCount = pendingCount(sent ?? []);
   const caption = placementPriceCaption(
@@ -356,17 +378,24 @@ export function PlacementSpaceSection({
 
       {/* "Accept all" removes the review step, and with it the only thing that
           told this creator a sticker had landed. The notification that replaces
-          it is opt-in, so without a pointer from here the setting is a checkbox
-          nobody was ever prompted about. */}
+          it is opt-in, so without this the setting is a checkbox nobody was ever
+          prompted about. */}
       {offerAutoNotification && (
         <Alert color="blue" p="xs">
-          <Text size="xs">
-            Stickers are accepted without asking you, so nothing reaches your review queue.{' '}
-            <Anchor href="/user/account/notifications" inherit>
-              Turn on notifications
-            </Anchor>{' '}
-            to hear when someone places one.
-          </Text>
+          <Group justify="space-between" gap="xs" wrap="nowrap">
+            <Text size="xs">
+              Stickers are accepted without asking you, so nothing reaches your review queue. Get
+              notified when someone places one?
+            </Text>
+            <Button
+              size="compact-xs"
+              variant="light"
+              loading={subscribe.isPending}
+              onClick={() => subscribe.mutate({ toggle: true, type: [AUTO_ACCEPTED_NOTIFICATION] })}
+            >
+              Notify me
+            </Button>
+          </Group>
         </Alert>
       )}
 

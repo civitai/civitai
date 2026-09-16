@@ -41,7 +41,10 @@ vi.mock('~/components/Notifications/notifications.utils', () => ({
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
   trpc: {
-    useUtils: () => ({ placement: { invalidate: vi.fn() } }),
+    useUtils: () => ({
+      placement: { invalidate: vi.fn() },
+      user: { getNotificationSettings: { invalidate: vi.fn() } },
+    }),
     placement: {
       getPriceRange: {
         useQuery: () => ({ data: { min: 50, max: 500, freeSlotCap: 4, score: 0, tier: 'free' } }),
@@ -60,6 +63,13 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       // `sticker-placement.service.ts`.
       getMyStickerPlacements: { useQuery: () => ({ data: sent.value }) },
       setSpace: { useMutation: () => ({ mutate, isPending: false }) },
+    },
+    // Read for the auto-mode notification pointer. Present with no rows, which
+    // is the ordinary case: these tests are about what a save sends, not about
+    // notification polarity.
+    user: { getNotificationSettings: { useQuery: () => ({ data: [] }) } },
+    notification: {
+      updateUserSettings: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
     },
   },
 }));
