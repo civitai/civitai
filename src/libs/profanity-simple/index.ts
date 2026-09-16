@@ -1,9 +1,8 @@
 /**
- * Simple Profanity Filter - Focused implementation using obscenity + compromise
+ * Simple Profanity Filter - Focused implementation on top of obscenity
  *
  * This is a streamlined profanity detection system that:
  * - Uses obscenity package for core profanity detection (includes leetspeak handling)
- * - Uses compromise to generate word variations (plurals, conjugations)
  * - Extends word dictionary with metadata words
  * - Provides synchronous operations for React components
  */
@@ -44,7 +43,7 @@ export interface ProfanityFilterOptions {
    * the static list, so that case degrades to today's behaviour rather than to no whitelist.
    * An EMPTY ARRAY is different and is honoured as-is: it means a moderator deleted every
    * entry, which is the strongest possible "do not whitelist" intent, and quietly restoring
-   * ~450 shipped words over the top of it would be the opposite of what they asked for.
+   * 424 shipped words over the top of it would be the opposite of what they asked for.
    */
   moderatorWhitelist: string[] | null;
 }
@@ -114,6 +113,16 @@ function createWhitelistMappings(
   return mappings;
 }
 
+/**
+ * obscenity's `fuck` phrase carries `|fu|` and `|fk`, so bare `fu`/`fk` tokens match — which
+ * blocked legitimate Danbooru tags (`fu manchu mustache`, `fu xi`) in the trainer's tag audit
+ * (ClickUp 868m5agjq). Kept out of `whitelist-words.json` because `moderatorWhitelist` REPLACES
+ * that file: a list-only fix would miss the search gate, and a moderator emptying the row would
+ * re-break it. `analyze()` compares this set against the whole extracted word, so only the bare
+ * token is excused — `fuk`, `fkin` and `f*ck` still fire.
+ */
+export const LIBRARY_OVERMATCH_TOKENS = ['fu', 'fk'] as const;
+
 export class SimpleProfanityFilter {
   private matcher!: RegExpMatcher;
   private censor!: TextCensor;
@@ -149,7 +158,9 @@ export class SimpleProfanityFilter {
     // JSON file; this is the change that turns it into a text box.
     const profaneWords = new Set(this.nsfwWords.originalWords.map((word) => word.toLowerCase()));
     this.whitelistSet = new Set(
-      whitelist.map((word) => word.toLowerCase()).filter((word) => !profaneWords.has(word))
+      [...whitelist, ...LIBRARY_OVERMATCH_TOKENS]
+        .map((word) => word.toLowerCase())
+        .filter((word) => !profaneWords.has(word))
     );
 
     this.initializeMatcher();
