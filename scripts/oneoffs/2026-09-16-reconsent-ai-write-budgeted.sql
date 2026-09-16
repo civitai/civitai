@@ -107,26 +107,33 @@
 -- peak, and do not describe the window as closed the moment the UPDATE commits.
 --
 -- ============================================================================
--- 🔴 DECIDE THIS BEFORE YOU RUN ANYTHING — IT IS NOT A CODE QUESTION
+-- ✅ THE VIDEO QUESTION IS ANSWERED — AND THE ANSWER CHANGED THE COPY
 -- ============================================================================
--- The consent sentence users are about to re-agree to names IMAGES and LANGUAGE
--- MODELS. It does not name video or audio, because no enum-bounded arm produces
--- them. **One arm is not enum-bounded:** `customComfy` with `mode:'inline'`
--- forwards an arbitrary ComfyUI graph to the worker, and the read path does NOT
--- filter by media type — `workflow.service.ts` pushes every `available`
--- `output.blobs[].url` into `imageUrls` with no check.
+-- This block used to ask whether a stock-node inline `customComfy` graph could
+-- emit video, and told you to settle it before running anything. Operator,
+-- 2026-09-16: **YES, it can.**
 --
--- So: CAN a stock-node inline graph emit video or audio on the current comfy
--- worker image? That cannot be answered from this repo.
+-- That made the then-current sentence ("…generating images and running language
+-- models") UNDER-name a reachable capability — the worse direction for consent,
+-- because the user agrees to "images" while the app spends their Buzz on video.
 --
---   - If NO  → the sentence is correct; proceed.
---   - If YES → the sentence UNDER-names a reachable capability, which is the
---              worse direction for consent: the user agrees to "images" and the
---              app spends their Buzz on video. Fix the copy FIRST and ship it,
---              then come back here.
+-- 🔴 SO THE SENTENCE IS NOW GENERIC, AND THIS FILE DEPENDS ON THAT. The copy is
 --
--- Answer it now rather than after. Re-taking the grants is the expensive half,
--- and getting this wrong means doing it a third time.
+--     "Run AI generation services that spend the viewer's Buzz, with a
+--      per-call cap"
+--
+-- Enumerating modalities was tried three times and was wrong three times —
+-- twice over-promising (training, then video-as-unreachable), once
+-- under-naming. A generic term cannot be falsified by a capability arriving,
+-- which is the property that makes ONE re-consent sufficient instead of a
+-- fourth.
+--
+-- 🔴 PRECONDITION, AND IT IS NOT SATISFIED BY A MERGE TO `main`: the generic
+-- sentence must be LIVE IN PRODUCTION before this runs. civitai deploys from
+-- `release`, not `main`, so confirm the new text renders in the consent modal
+-- on civitai.com — not that a PR merged. Running this against the old sentence
+-- re-prompts every affected user with wording we have already retracted, and
+-- burns the one re-consent this whole exercise exists to spend well.
 --
 -- It does NOT build a user-facing withdraw affordance. That is a separate,
 -- still-open piece of work with its own design questions (JWT invalidation,

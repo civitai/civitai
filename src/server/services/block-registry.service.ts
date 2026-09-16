@@ -2385,8 +2385,9 @@ export class BlockRegistry {
       if (!row.blockInstanceId) continue;
       // Disable writes a revocation marker; re-enable MUST clear it.
       // Without the clear, every freshly-minted token for this install
-      // would be rejected by withBlockScope until the marker's 15-minute
-      // TTL elapsed.
+      // would be rejected by withBlockScope until the marker's TTL elapsed —
+      // MAX_BLOCK_TOKEN_LIFETIME_SECONDS, 14400s / 4h, not the 15 minutes this
+      // line claimed until 2026-09-16.
       if (enabled) {
         await BlockRevocation.clearInstance(row.blockInstanceId);
       } else {

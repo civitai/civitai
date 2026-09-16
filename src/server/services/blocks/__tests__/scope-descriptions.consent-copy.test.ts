@@ -23,64 +23,65 @@ import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.
  * a copy change is cosmetic.
  */
 describe('ai:write:budgeted consent copy', () => {
-  const CURRENT =
-    "Run AI work that spends the viewer's Buzz, with a per-call cap — including generating images and running language models";
+  const CURRENT = "Run AI generation services that spend the viewer's Buzz, with a per-call cap";
 
-  const SUPERSEDED_2026_09_16 = 'Submit generations with a per-call Buzz cap';
+  /**
+   * Every sentence this scope has carried, newest first. Kept as a list rather
+   * than a single `not.toBe` because the arc is the evidence: each was replaced
+   * for a DIFFERENT reason, and a reader reaching for "let's just enumerate the
+   * capabilities again" should see how that went.
+   */
+  const SUPERSEDED = [
+    // Too narrow once chatCompletion shipped — "generations" did not cover LLM
+    // inference.
+    'Submit generations with a per-call Buzz cap',
+    // Over-promised: training is denylist-ALLOWED but not reachable, because no
+    // implemented billing mode can carry a variable-cost step.
+    "Run AI work that spends the viewer's Buzz, with a per-call cap — including generating images and video, running language models, and training models",
+    // Still over-promised: "and video" was cut as unreachable — and that cut was
+    // itself WRONG. An inline customComfy graph can generate video
+    // (operator-confirmed). The enum reasoning covered every arm except the one
+    // bounded by no enum.
+    "Run AI work that spends the viewer's Buzz, with a per-call cap — including generating images and video, and running language models",
+    "Run AI work that spends the viewer's Buzz, with a per-call cap — including generating images and running language models",
+  ];
 
   it('is the exact agreed sentence', () => {
     expect(SCOPE_DESCRIPTIONS['ai:write:budgeted']).toBe(CURRENT);
   });
 
-  it('is NOT the superseded sentence, which described a narrower scope', () => {
-    expect(SCOPE_DESCRIPTIONS['ai:write:budgeted']).not.toBe(SUPERSEDED_2026_09_16);
+  it('is none of the superseded sentences', () => {
+    for (const old of SUPERSEDED) {
+      expect(SCOPE_DESCRIPTIONS['ai:write:budgeted']).not.toBe(old);
+    }
   });
 
   /**
-   * The capability the widening actually ADDED and that is reachable today.
-   * Asserted by meaning as well as by the exact string above, so a future reword
-   * that replaces both tests still has to delete this deliberately.
-   */
-  it('names the capability the widening added', () => {
-    const copy = SCOPE_DESCRIPTIONS['ai:write:budgeted']!.toLowerCase();
-    expect(copy).toContain('language model');
-  });
-
-  /**
-   * 🔴 A SPELLED GUARD, AND ITS NAME NOW SAYS SO — the previous version was
-   * titled "does NOT promise a capability that is not reachable yet" while
-   * checking exactly one word (`training`). That description claimed coverage of
-   * a CLASS and the body inspected a single member, and the gap it left was
-   * immediately occupied: the very next audit round found "and video" sitting in
-   * the sentence, unreachable for the same reason training was.
+   * 🔴 THE GUARD IS NOW "DO NOT ENUMERATE", WHICH IS THE ONE THING THAT ACTUALLY
+   * HELD. The previous version listed modalities believed unreachable and
+   * asserted the copy named none of them. That premise collapsed: `video` was on
+   * the list and video turns out to be REACHABLE via an inline customComfy
+   * graph, so the guard was asserting something false about the product.
    *
-   * So this list is defence-in-depth against the specific capabilities we have
-   * already caught ourselves pre-promising. It is NOT a reachability check and
-   * cannot be one — a reword ("clip generation", "moving images") walks straight
-   * past it.
+   * Enumerating capabilities in a consent sentence failed three times — twice by
+   * over-promising, once by under-naming — and each failure costs a re-consent
+   * of every live grant, because consent is per (user, app) and no lookup reads
+   * a version. A generic term cannot be falsified by a capability arriving.
    *
-   * 🔴 THE REAL CONTROL IS THE WHOLE-STRING PIN ABOVE plus a human enumerating
-   * `blockWorkflowBodySchema`'s members before changing the sentence. If you are
-   * adding a capability here, do that enumeration; do not just extend this list
-   * and assume it protected you.
+   * So what is pinned is the SHAPE: no modality nouns. This is still a SPELLED
+   * guard — "moving pictures" walks past it — and the real control remains the
+   * whole-string pin above plus a human deciding. Its value is narrow and
+   * specific: it makes re-adding a list a deliberate act with a red test and
+   * this comment attached, rather than a helpful-looking edit.
    */
-  const NOT_REACHABLE_TODAY = [
-    'training', // no implemented billing mode can carry a variable-cost step
-    'train ',
-    'video', // textToImage is bounded to BLOCK_IMAGE_WORKFLOW_TYPES
-    'audio',
-    'music',
-    'speech',
-    'voice',
-    '3d',
-  ];
+  const MODALITY_NOUNS = ['video', 'audio', 'music', 'speech', 'voice', '3d', 'image', 'training'];
 
-  it('does not name any capability we have previously caught ourselves pre-promising', () => {
+  it('does not enumerate modalities — the shape that failed three times', () => {
     const copy = SCOPE_DESCRIPTIONS['ai:write:budgeted']!.toLowerCase();
-    for (const term of NOT_REACHABLE_TODAY) {
+    for (const term of MODALITY_NOUNS) {
       expect(
         copy,
-        `consent copy must not promise "${term.trim()}" — it is not reachable`
+        `consent copy should not name "${term}" — enumerating modalities here has been wrong in both directions; keep it generic`
       ).not.toContain(term);
     }
   });

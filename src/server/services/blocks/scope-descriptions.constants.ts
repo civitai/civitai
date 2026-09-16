@@ -32,40 +32,41 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   // sense a reader of the old sentence would have understood. A user who agreed
   // to the old sentence did not agree to this one.
   //
-  // 🔴 THIS SENTENCE NAMES ONLY WHAT IS REACHABLE TODAY, AND THAT IS LOAD-BEARING.
-  // Promising a capability that has not shipped and re-consenting NOW would BANK
-  // the permission — and when it does ship, nothing re-prompts, because consent
-  // is stored per (user, app) and no lookup reads a version. That is precisely
-  // the "silent scope escalation" this table was created to prevent (see its
-  // migration header).
+  // 🔴 IT DELIBERATELY DOES NOT ENUMERATE CAPABILITIES ANY MORE, AND THAT IS THE
+  // WHOLE POINT OF THE CURRENT WORDING. Enumerating was tried and it failed
+  // three times in a row, each time discovered by a later audit round:
   //
-  // 🔴 TWO CAPABILITIES HAVE ALREADY BEEN CUT FROM THIS SENTENCE FOR THAT
-  // REASON, IN SUCCESSIVE AUDIT ROUNDS — which is why the rule is written out
-  // rather than left as a judgement:
-  //
-  //   - "training models". ALLOWED by the denylist, NOT reachable:
+  //   - "training models" — CUT. Allowed by the denylist but not reachable:
   //     `isBillingModeImplemented` accepts `'prepaidFixed'` ONLY, so a
   //     variable-cost training step cannot even be registered.
-  //   - "and video". Also not reachable: `blockWorkflowBodySchema` has three
-  //     members, `textToImage` is bounded to `BLOCK_IMAGE_WORKFLOW_TYPES`
-  //     (txt2img / img2img / img2img:edit), both registered recipes are image,
-  //     and both registered steps are `convertImage` / `chatCompletion`.
-  //     `workflow.schema.ts` says a non-image media class is "a later phase".
+  //   - "and video" — CUT as unreachable, on the reasoning that
+  //     `blockWorkflowBodySchema` has three members, `textToImage` is bounded to
+  //     `BLOCK_IMAGE_WORKFLOW_TYPES`, both recipes are image and both registered
+  //     steps are `convertImage` / `chatCompletion`.
+  //   - 🔴 AND THAT SECOND CUT WAS ITSELF WRONG. Operator-confirmed
+  //     2026-09-16: an inline `customComfy` graph CAN generate video. The enum
+  //     reasoning was sound for every arm it covered and simply did not cover
+  //     the one arm bounded by no enum — `customComfy` `mode:'inline'`, which
+  //     forwards an arbitrary graph, and whose read path applies no media-type
+  //     check (`workflow.service.ts` pushes every available blob url into
+  //     `imageUrls`).
   //
-  // 🔴 THE RULE, because "name only what is reachable" was applied TWICE and a
-  // second unreachable capability still shipped in the same sentence: reach for
-  // the WIRE, not for the denylist. A `$type` being allowed says nothing about
-  // whether any arm accepts it. Enumerate `blockWorkflowBodySchema`'s members,
-  // then what each one actually admits, and write down only that.
+  // So the enumeration was wrong in BOTH directions inside one short arc:
+  // over-promising twice, then under-naming a capability that was live all
+  // along. Under-naming is the worse error for consent — the user agrees to
+  // "images" while the app spends their Buzz on video.
   //
-  // When a capability named here becomes reachable, that is fine. When a
-  // capability NOT named here becomes reachable, this sentence must change AND
-  // the grants must be re-taken again. Do not pre-load it.
+  // 🔴 THE FIX IS STRUCTURAL, NOT A BETTER LIST. A generic term cannot be
+  // falsified by a capability arriving or turning out to be reachable, because
+  // it asserts no inventory. "AI generation services" covers image, video, LLM
+  // inference and whatever the inline arm grows next, and it stays true without
+  // anyone re-auditing the wire. Do NOT reintroduce a list of modalities here;
+  // the cost of getting one wrong is a re-consent of every live grant, and the
+  // benefit is specificity nobody asked for.
   //
-  // ⚠️ An inline `customComfy` graph is the one arm whose reach is not bounded
-  // by an enum in this repo. If it turns out a stock-node graph can produce
-  // video or audio, that is a capability this sentence does not name — decide
-  // and write it down rather than discovering it after the grants are re-taken.
+  // What DOES still require a new sentence and a fresh re-consent is a change of
+  // KIND rather than of modality — if this scope ever reaches something that is
+  // not "spend the viewer's Buzz on an AI generation job", say so explicitly.
   //
   // 🔴 CHANGING THIS STRING DOES NOT RE-ASK ANYBODY. Consent is stored per
   // (user, app) in `app_user_scope_grants` and the lookup does NOT read the
@@ -76,7 +77,7 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   // re-consent to the OLD sentence and the exercise is void while both halves
   // individually look done.
   'ai:write:budgeted':
-    "Run AI work that spends the viewer's Buzz, with a per-call cap — including generating images and running language models",
+    "Run AI generation services that spend the viewer's Buzz, with a per-call cap",
   'social:tip:self': 'Post tips on behalf of the viewer',
   'apps:storage:read': "Read this app's private per-install data store",
   'apps:storage:write': "Write to this app's private per-install data store",

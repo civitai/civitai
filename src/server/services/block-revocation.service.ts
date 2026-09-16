@@ -13,9 +13,14 @@ function revokedKey(blockInstanceId: string) {
 
 /**
  * Per-blockInstanceId token revocation, written when an install is
- * uninstalled, toggled off, or the publisher is banned. Tokens for the
- * revoked instance are rejected by the block-scope middleware until the
- * marker's TTL elapses.
+ * uninstalled or toggled off. Tokens for the revoked instance are rejected by
+ * the block-scope middleware until the marker's TTL elapses.
+ *
+ * 🔴 THIS LIST USED TO INCLUDE "or the publisher is banned", AND NO SUCH WRITER
+ * EXISTS. `revokeInstance` has exactly two production call sites, both in
+ * `block-registry.service.ts` — `uninstallFromModel` and `toggleEnabled(false)`.
+ * `block-scope.middleware.ts` marks publisher-ban "(Phase 2)"; this docblock
+ * described it as shipped. Do not reason about a ban path from here.
  *
  * This is a deliberately coarse-grained revocation primitive (per-instance,
  * not per-jti). A per-jti denylist is heavier infra and gains little for v1
