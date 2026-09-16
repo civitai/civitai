@@ -8,6 +8,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
 import {
+  STICKER_AUTO_SPACE_KEY,
   STICKER_PLACEMENT_QUEUE_LIMIT,
   STICKER_REMOVAL_LOCK_HOURS,
 } from '~/shared/utils/sticker-placement';
@@ -1697,6 +1698,65 @@ describe('the payload handed to the free claim', () => {
     });
 
     expect(claimData()).not.toHaveProperty('comment');
+  });
+});
+
+/**
+ * The stamp `sticker-placement-auto-accepted` reads to tell an auto approval
+ * from an owner approving in their queue.
+ *
+ * 🔴 **Do not delete this as redundant with the space mode.** It looks like a
+ * fact the row already carries and it is not: both paths reach
+ * `settlePlacement({ action: 'approve', actorId: ownerId })`, so `status`,
+ * `resolvedAt` and `resolvedById` come out identical, and `mode` is a
+ * three-level image/post/user cascade resolved only in `resolvePlacementSpace`.
+ * Reading the space from the notification's SQL instead would re-derive that
+ * cascade and would read the mode as of the job rather than as of the approval.
+ *
+ * Asserted on BOTH create paths. They build their payloads separately, and the
+ * free one is the easy half to miss — nothing throws, the notification simply
+ * never fires for free placements.
+ */
+describe('the auto-space stamp the owner notification reads', () => {
+  beforeEach(() => {
+    givenStickerAndBalance();
+  });
+
+  const paidData = () =>
+    (placementCreate.mock.calls[0][0] as { data: { data: Record<string, unknown> } }).data.data;
+  const freeData = () =>
+    (createFreePlacement.mock.calls[0][0] as { data: Record<string, unknown> }).data;
+
+  it('stamps a paid placement into an auto space', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE, mode: 'auto' });
+
+    await createStickerPlacement(placeInput);
+
+    expect(paidData()[STICKER_AUTO_SPACE_KEY]).toBe(true);
+  });
+
+  it('stamps a free placement into an auto space', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE, mode: 'auto' });
+
+    await createStickerPlacement({ ...placeInput, free: true });
+
+    expect(freeData()[STICKER_AUTO_SPACE_KEY]).toBe(true);
+  });
+
+  /**
+   * The other direction, and the one that decides whether the stamp means
+   * anything. A stamp written unconditionally is present on every row, so the
+   * notification's `data ->> 'autoSpace' = 'true'` matches every approval — and
+   * an owner who reviews each sticker by hand is told about the ones they just
+   * approved themselves.
+   */
+  it.each([
+    ['paid', false, paidData],
+    ['free', true, freeData],
+  ])('leaves a %s placement into a review space unstamped', async (_label, free, read) => {
+    await createStickerPlacement({ ...placeInput, free });
+
+    expect(read()).not.toHaveProperty(STICKER_AUTO_SPACE_KEY);
   });
 });
 
