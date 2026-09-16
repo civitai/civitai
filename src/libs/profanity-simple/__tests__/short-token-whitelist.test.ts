@@ -8,19 +8,20 @@ import blockedWords from '~/utils/metadata/lists/blocked-words.json';
 import whitelistWords from '~/utils/metadata/lists/whitelist-words.json';
 
 /**
- * obscenity's `fuck` phrase carries `|fu|` and `|fk`, so bare `fu`/`fk` matched and blocked
- * legitimate Danbooru tags in the trainer's audit (ClickUp 868m5agjq, Freshdesk 72556).
+ * obscenity's `fuck` phrase carries `|fu|`, so a bare `fu` token matched and blocked legitimate
+ * Danbooru tags in the trainer's audit — 143 `Tag` rows carry one, including `fu hua`, `fu xuan`
+ * and `fu manchu` (ClickUp 868m5agjq, Freshdesk 72556).
  */
 
 const analyze = (filter: SimpleProfanityFilter, text: string) => filter.analyze(text);
 
 describe('LIBRARY_OVERMATCH_TOKENS', () => {
-  it('is the two tokens obscenity over-matches', () => {
-    expect([...LIBRARY_OVERMATCH_TOKENS].sort()).toEqual(['fk', 'fu']);
+  it('is the one token obscenity over-matches', () => {
+    expect([...LIBRARY_OVERMATCH_TOKENS]).toEqual(['fu']);
   });
 
-  // `whitelistSet` drops any entry that is also one of our blocked words, so adding `fu`/`fk`
-  // to blocked-words.json would make these silently INERT rather than wrong.
+  // `whitelistSet` drops any entry that is also one of our blocked words, so adding `fu` to
+  // blocked-words.json would make this silently INERT rather than wrong.
   it('no floor token is also one of our blocked words', () => {
     const blocked = new Set(
       (blockedWords as string[]).map((w) => w.replace(/\|/g, '').trim().toLowerCase())
@@ -46,7 +47,6 @@ describe('the reported false positives are clean', () => {
     'fu dog',
     'fu xi',
     'FU MANCHU MUSTACHE',
-    'fk',
   ];
 
   it.each(cases)('%s', (text) => {
@@ -76,6 +76,7 @@ describe('detection of the actual word is unchanged', () => {
     'fuk',
     'fukin',
     'fuks',
+    'fk',
     'fkin',
     'fking',
     'fkn',
@@ -109,11 +110,13 @@ describe('detection of the actual word is unchanged', () => {
 });
 
 /**
- * Accepted cost: a bare `fu`/`fk` abbreviation now passes — and not only on green, since
- * `evaluateContent`'s auto-NSFW path has no domain gate (see the describe below).
+ * Accepted cost: a bare `fu` abbreviation now passes, as do the space-split evasions that
+ * `|fu|` used to catch incidentally (`fu c k`, `fu'ta` — both real `Tag` rows). Judged worth
+ * 143 legitimate tags, and profanity is a click-through anyway, so those were never stopped.
+ * Not only on green, since `evaluateContent`'s auto-NSFW path has no domain gate.
  */
 describe('accepted cost', () => {
-  it.each(['fu you', 'fk off'])('%s passes', (text) => {
+  it.each(['fu you', 'fu c k', "fu'ta"])('%s passes', (text) => {
     expect(analyze(createProfanityFilter(), text).isProfane).toBe(false);
   });
 });
@@ -126,7 +129,7 @@ describe('accepted cost', () => {
 describe('the other static-list consumers', () => {
   it('evaluateContent does not count the excused tokens', () => {
     const filter = createProfanityFilter();
-    const tags = 'fu, fu manchu, fu dog, fu xi, fk, fu manchu mustache';
+    const tags = 'fu, fu manchu, fu dog, fu xi, fu hua, fu manchu mustache';
     expect(filter.evaluateContent(tags)).toMatchObject({
       shouldMarkNSFW: false,
       metrics: { matchCount: 0 },

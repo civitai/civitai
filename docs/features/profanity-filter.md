@@ -68,10 +68,11 @@ Three sources feed the whitelist, and they do not combine the same way:
   is honoured as an empty whitelist. It reaches search, chat and `BlurText` via `useCheckProfanity`.
   `auditPromptEnriched` builds its filter with no moderator list, so the generation and trainer
   gates still see the JSON.
-- **`LIBRARY_OVERMATCH_TOKENS`** (`src/libs/profanity-simple/index.ts`) — a small set of tokens
-  obscenity's own dataset matches more broadly than the word they stand for. Always unioned in and
-  not moderator-editable, because it corrects an upstream pattern rather than curating a benign
-  word. The constant documents which tokens and why.
+- **`LIBRARY_OVERMATCH_TOKENS`** (`src/libs/profanity-simple/index.ts`) — tokens obscenity's own
+  dataset matches more broadly than the word they stand for. Always unioned in and not
+  moderator-editable, because it corrects an upstream pattern rather than curating a benign word.
+  Adding one is a measurement, not a guess: check how many `Tag` rows actually carry the token
+  before excusing it. The constant records which tokens, why, and what was rejected.
 
 **Integration**: JSON / moderator entries are mapped onto the profane substrings they contain at
 filter init (`createWhitelistMappings`); all three sources land in `whitelistSet`, which **only

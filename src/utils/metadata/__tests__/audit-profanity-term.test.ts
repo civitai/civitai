@@ -32,7 +32,7 @@ describe('the profanity block names the offending input word', () => {
 });
 
 describe('the reported tag audit case', () => {
-  it.each(['fu manchu mustache', '1girl, fu manchu mustache, solo', 'fu xi', 'fk'])(
+  it.each(['fu manchu mustache', '1girl, fu manchu mustache, solo', 'fu xi', 'fu dog'])(
     '%s passes on green',
     (prompt) => {
       expect(auditPromptEnriched(prompt, undefined, true)).toEqual({

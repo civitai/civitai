@@ -114,14 +114,19 @@ function createWhitelistMappings(
 }
 
 /**
- * obscenity's `fuck` phrase carries `|fu|` and `|fk`, so bare `fu`/`fk` tokens match — which
- * blocked legitimate Danbooru tags (`fu manchu mustache`, `fu xi`) in the trainer's tag audit
- * (ClickUp 868m5agjq). Kept out of `whitelist-words.json` because `moderatorWhitelist` REPLACES
- * that file: a list-only fix would miss the search gate, and a moderator emptying the row would
- * re-break it. `analyze()` compares this set against the whole extracted word, so only the bare
- * token is excused — `fuk`, `fkin` and `f*ck` still fire.
+ * obscenity's `fuck` phrase carries `|fu|`, so a bare `fu` token matches — which blocked
+ * legitimate Danbooru tags in the trainer's tag audit (ClickUp 868m5agjq). 143 `Tag` rows carry a
+ * standalone `fu`: `fu hua`, `fu xuan`, `fu'ri'na`, `fu manchu`, `fu dog`.
+ *
+ * Kept out of `whitelist-words.json` because `moderatorWhitelist` REPLACES that file: a list-only
+ * fix would miss the search gate, and a moderator emptying the row would re-break it. `analyze()`
+ * compares this set against the whole extracted word, so only the bare token is excused — `fuk`,
+ * `fkin` and `f*ck` still fire.
+ *
+ * `fk` was here and was removed: 3 `Tag` rows carry it, none used on any model, so it excused
+ * nothing real. Measure the corpus before adding a token.
  */
-export const LIBRARY_OVERMATCH_TOKENS = ['fu', 'fk'] as const;
+export const LIBRARY_OVERMATCH_TOKENS = ['fu'] as const;
 
 export class SimpleProfanityFilter {
   private matcher!: RegExpMatcher;
