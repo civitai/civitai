@@ -50,10 +50,24 @@
 -- WIDER BEFORE IT CLOSES. An earlier draft of this header claimed the revoke
 -- immediately "reaches no spend path". It does not:
 --
---   1. Block tokens are JWTs with NO revocation list and NO jti check
---      (`block-token.service.ts`). Default lifetime is 900s (300s for
---      settings-scoped, 4h for dev). So for up to ~15 MINUTES after this runs,
---      a token minted just before it still carries the scope.
+--   1. Block tokens are JWTs with no per-jti revocation. Default lifetime is
+--      900s (300s settings-scoped, 4h dev — `block-token-lifetimes.ts`). So for
+--      up to ~15 MINUTES after this runs, a token minted just before it still
+--      carries the scope.
+--
+--      🔴 BUT THERE **IS** A REVOCATION PRIMITIVE, AND AN EARLIER DRAFT OF THIS
+--      HEADER SAID THERE WAS NOT. `BlockRevocation` (`block-revocation.service.ts`)
+--      sets a Redis marker per `blockInstanceId`, TTL = the max token lifetime,
+--      and it IS checked on the block-scope path (`block-scope.middleware.ts`,
+--      `block-bridge-auth.service.ts`, `apps.router.ts`, `apps-shared.router.ts`).
+--      Saying otherwise told the operator not to look for the mitigation that
+--      exists. Three caveats that decide whether it helps you here:
+--        - it is PER-INSTANCE, not per-user and not per-scope;
+--        - THIS FILE DOES NOT TRIGGER IT. Writing `revoked_at` in Postgres sets
+--          no Redis marker. If you want the window cut to seconds rather than
+--          ~15 minutes, revoke the affected instances as a SEPARATE action;
+--        - it FAILS OPEN by construction (`isRevoked` swallows a Redis error and
+--          returns false), so it is a mitigation, never a guarantee.
 --   2. 🔴 WORSE, AND COUNTER-INTUITIVE: the revoke removes the user's OWN CAP
 --      FIRST. `getConsentBuzzBudget` returns null for a revoked row, and
 --      `reserveBlockBuzzSpendForClaims` treats a null budget as "no consent
@@ -65,9 +79,32 @@
 -- this at T. Between T and T+15min, A can spend U's Buzz against the platform
 -- allowance rather than 500, and nothing errors.
 --
--- This is bounded and small, and it is the accepted cost of having no revoke
--- path — but run this when spend is quiet rather than at peak, and do not
--- describe the window as closed the moment the UPDATE commits.
+-- This is bounded and small — but run it when spend is quiet rather than at
+-- peak, do not describe the window as closed the moment the UPDATE commits, and
+-- if it matters for a given app, revoke its instances via `BlockRevocation` as
+-- well.
+--
+-- ============================================================================
+-- 🔴 DECIDE THIS BEFORE YOU RUN ANYTHING — IT IS NOT A CODE QUESTION
+-- ============================================================================
+-- The consent sentence users are about to re-agree to names IMAGES and LANGUAGE
+-- MODELS. It does not name video or audio, because no enum-bounded arm produces
+-- them. **One arm is not enum-bounded:** `customComfy` with `mode:'inline'`
+-- forwards an arbitrary ComfyUI graph to the worker, and the read path does NOT
+-- filter by media type — `workflow.service.ts` pushes every `available`
+-- `output.blobs[].url` into `imageUrls` with no check.
+--
+-- So: CAN a stock-node inline graph emit video or audio on the current comfy
+-- worker image? That cannot be answered from this repo.
+--
+--   - If NO  → the sentence is correct; proceed.
+--   - If YES → the sentence UNDER-names a reachable capability, which is the
+--              worse direction for consent: the user agrees to "images" and the
+--              app spends their Buzz on video. Fix the copy FIRST and ship it,
+--              then come back here.
+--
+-- Answer it now rather than after. Re-taking the grants is the expensive half,
+-- and getting this wrong means doing it a third time.
 --
 -- It does NOT build a user-facing withdraw affordance. That is a separate,
 -- still-open piece of work with its own design questions (JWT invalidation,
@@ -154,14 +191,30 @@ SELECT
 FROM app_user_scope_grants
 WHERE 'ai:write:budgeted' = ANY (granted_scopes);
 
--- 🔴 DO NOT RUN THIS FILE WITH `psql -f`. It is written to be stepped through.
--- Under `-f` every statement executes and the COMMIT below lands BEFORE any
--- human has read STEP 3 — which makes the verification gate decorative.
+-- 🔴 DO NOT RUN THIS FILE WITH `psql -f`, AND NOTE WHAT ACTUALLY GOES WRONG —
+-- it is NOT what an earlier draft of this warning said. There is no longer a
+-- COMMIT to run away with you; the failure is quieter. Under `-f` the
+-- transaction stays open through EOF and the server rolls it back at
+-- disconnect, AFTER STEP 3 has already printed `still_live = 0` and
+-- `revoked_by_this_run = N`. You get a completely convincing success readout
+-- and zero rows changed. Safe direction, useless signal.
 --
--- Run it interactively: paste STEP 1, read the count; paste STEP 2; paste
--- STEP 3; and only then type COMMIT (or ROLLBACK) yourself. The COMMIT is left
--- here, commented, as documentation of the intended end state rather than as an
--- executable line.
+-- 🔴 RUN IT INTERACTIVELY, AND PASTE `BEGIN;` FIRST — it is step zero and it is
+-- load-bearing. Without it psql is in autocommit, so STEP 2 commits on its own
+-- (no ROLLBACK escape left for the gate to be worth reading), and worse, STEP 3
+-- then evaluates `now()` in a DIFFERENT transaction from STEP 2's — so
+-- `revoked_by_this_run` reads 0 and `revoked_before_this_run` reads N, the
+-- exact inverse of the documented pass condition, on a run that in fact
+-- succeeded.
+--
+--   BEGIN;      ← paste this first
+--   <STEP 1>    read the count, write it down
+--   <STEP 2>    the UPDATE
+--   <STEP 3>    read still_live and revoked_by_this_run
+--   COMMIT;     ← type by hand, only if STEP 3 reads still_live = 0
+--
+-- The COMMIT is left commented below as documentation of the intended end
+-- state, not as an executable line.
 --
 -- COMMIT;   -- ← type this by hand, only after STEP 3 reads still_live = 0
 

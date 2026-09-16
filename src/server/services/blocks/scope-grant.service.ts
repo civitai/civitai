@@ -100,20 +100,37 @@ export async function getGrantedScopes(opts: {
  * ceiling (`BLOCK_BUZZ_CAP_PER_DAY`) alone — the behaviour of every grant written
  * before the column existed.
  *
- * 🔴 A REVOKED GRANT RETURNS `null`, AND THAT IS NOT A LOOSENING. `getGrantedScopes`
- * already treats a revoked row as an empty grant, so a revoked user's token carries
- * no `ai:write:budgeted` and can reach no spend path at all — there is nothing left
- * for a budget to bound. Returning the stored number for a revoked row would be
- * enforcing a ceiling on spend that cannot happen.
+ * 🔴 A REVOKED GRANT RETURNS `null` — AND THAT **IS** A TRANSIENT LOOSENING. THIS
+ * PARAGRAPH PREVIOUSLY SAID THE OPPOSITE AND WAS WRONG; THE CORRECTION IS THE POINT.
  *
- * ⚠️ THE REVOKED BRANCH IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE, BECAUSE THE
- * STATE IS CURRENTLY UNREACHABLE. Nothing in this codebase ever SETS
- * `app_user_scope_grants.revoked_at` — grep it: every write is `revokedAt: null`
- * (re-granting un-revokes). A revoked row therefore only exists if an operator writes
- * one by hand. The `!row || row.revokedAt` tests here, in `getGrantedScopes`, and in
- * `listMyScopeGrants` are pinning an invariant against a future revoke path, and the
- * tests that exercise them by constructing a revoked row are testing that invariant —
- * they are NOT evidence that a bug was ever possible on this path.
+ * It used to read: *"a revoked user's token carries no `ai:write:budgeted` and can
+ * reach no spend path at all — there is nothing left for a budget to bound."* The
+ * first half is true only at the NEXT MINT. Block tokens are JWTs with no per-jti
+ * revocation and a 900s default lifetime (300s settings-scoped, 4h dev —
+ * `block-token-lifetimes.ts`), so an already-minted token keeps the scope for up to
+ * its remaining life.
+ *
+ * During that window this function returning `null` is what REMOVES the viewer's own
+ * cap: `reserveBlockBuzzSpendForClaims` treats a null budget as "no consent
+ * reservation" and falls back to the platform ceiling (`BLOCK_BUZZ_CAP_PER_DAY`)
+ * alone. So a user who set 500 Buzz/day on an app has that lifted, not enforced, for
+ * the remainder of their token's life. The ordering is counter-intuitive and worth
+ * stating plainly: **the revoke drops the user's own ceiling BEFORE it drops the
+ * scope.**
+ *
+ * `BlockRevocation` (`block-revocation.service.ts`) is the mitigation — a
+ * per-`blockInstanceId` Redis marker checked on the block-scope path — but it is
+ * operator-invoked, per-instance rather than per-user, and FAILS OPEN on a Redis
+ * error. It is not triggered by writing `revoked_at`.
+ *
+ * ⚠️ THE REVOKED BRANCH IS NO LONGER UNREACHABLE. This paragraph used to say nothing
+ * in the codebase ever SETS `app_user_scope_grants.revoked_at`, which was true of
+ * application code and is still true of it — every Prisma write here is
+ * `revokedAt: null`, and re-granting un-revokes. But
+ * `scripts/oneoffs/2026-09-16-reconsent-ai-write-budgeted.sql` is a committed,
+ * hand-applied writer built specifically to produce that state, so "only if an
+ * operator writes one by hand" is now a description of a PLANNED operation rather
+ * than a hypothetical. Read that file before reasoning about this branch.
  *
  * 🔴 READS THE PRIMARY BY DEFAULT. This runs on the spend path, immediately after a
  * consent write that may have just LOWERED the budget: served off the replica, a
