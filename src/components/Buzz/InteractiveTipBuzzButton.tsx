@@ -159,6 +159,13 @@ export function InteractiveTipBuzzButton({
 
   const selfView = toUserId === currentUser?.id;
 
+  const clearConfirmTimeout = () => {
+    if (confirmTimeoutRef.current) {
+      clearTimeout(confirmTimeoutRef.current);
+      confirmTimeoutRef.current = null;
+    }
+  };
+
   const cancelTip = () => {
     if (status !== 'confirming') return;
 
@@ -173,14 +180,10 @@ export function InteractiveTipBuzzButton({
   };
 
   const sendTip = (amount?: number) => {
-    if (status !== 'confirming') return;
+    if (status !== 'confirming' || tipUserMutation.isPending) return;
 
-    // Stop countdown
     setShowCountDown(false);
-    if (confirmTimeoutRef.current) {
-      clearTimeout(confirmTimeoutRef.current);
-      confirmTimeoutRef.current = null;
-    }
+    clearConfirmTimeout();
 
     amount ??= buzzCounter > 0 ? buzzCounter : CLICK_AMOUNT;
 
@@ -236,17 +239,11 @@ export function InteractiveTipBuzzButton({
   const reset = () => {
     setBuzzCounter(0);
     setShowCountDown(false);
-    if (confirmTimeoutRef.current) {
-      clearTimeout(confirmTimeoutRef.current);
-      confirmTimeoutRef.current = null;
-    }
+    clearConfirmTimeout();
   };
 
   const startConfirming = () => {
-    if (confirmTimeoutRef.current) {
-      clearTimeout(confirmTimeoutRef.current);
-      confirmTimeoutRef.current = null;
-    }
+    clearConfirmTimeout();
 
     setStatus('confirming');
     setShowCountDown(true);
@@ -272,8 +269,7 @@ export function InteractiveTipBuzzButton({
 
     if (confirmTimeoutRef.current) {
       setShowCountDown(false);
-      clearTimeout(confirmTimeoutRef.current);
-      confirmTimeoutRef.current = null;
+      clearConfirmTimeout();
     }
 
     startTimerTimeoutRef.current = setTimeout(() => {
@@ -402,14 +398,20 @@ export function InteractiveTipBuzzButton({
                 contentEditable={status === 'confirming'}
                 onBlur={(e) => {
                   processEnteredNumber(e.currentTarget.textContent ?? '1');
+                  if (status === 'confirming') startConfirming();
                 }}
                 onKeyDown={(e) => {
-                  if (e.ctrlKey && e.key === 'Enter') {
-                    const amount = processEnteredNumber(e.currentTarget.textContent ?? '1');
-                    sendTip(amount);
-                  }
+                  if (e.key !== 'Enter') return;
+                  // contentEditable would otherwise insert a newline, and Number() of a
+                  // two-line amount is NaN, which processEnteredNumber floors to 1 Buzz.
+                  e.preventDefault();
+                  const amount = processEnteredNumber(e.currentTarget.textContent ?? '1');
+                  sendTip(amount);
                 }}
-                onFocus={() => setShowCountDown(false)}
+                onFocus={() => {
+                  setShowCountDown(false);
+                  clearConfirmTimeout();
+                }}
                 className={classes.tipAmount}
                 dangerouslySetInnerHTML={{ __html: buzzCounter.toString() }}
               />
