@@ -156,8 +156,10 @@ export async function resolveSharedContext(
 
   // Per-instance revocation — the missing containment leg (audit M-1). The REST
   // `withBlockScope` path enforces this; the tRPC shared path must too, so an
-  // uninstalled / toggled-off / publisher-banned instance can't keep writing
-  // until token expiry. Mirrors block-scope.middleware's check.
+  // uninstalled / toggled-off instance can't keep writing until token expiry.
+  // Mirrors block-scope.middleware's check. (Was "/ publisher-banned": there is
+  // no publisher-ban marker writer — that is "(Phase 2)" per
+  // block-scope.middleware.ts. Do not reason about a ban path from here.)
   if (await BlockRevocation.isRevoked(claims.blockInstanceId)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'block instance revoked' });
   }

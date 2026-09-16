@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
  * through `authorizeBlockBridgeToken`, never through `verifyBlockToken` directly.
  *
  * `verifyBlockToken` answers one question — is this a token we signed, not yet expired.
- * It cannot see an uninstall, a toggle-off, a publisher ban or a suspended app. The
+ * It cannot see an uninstall, a toggle-off or a suspended app. The
  * bridge procs each called it directly and checked none of those, so a revoked install
  * kept driving the bridge — orchestrator polls, workflow cancels, and
  * `publishGenerationOutputs`, which persists public `Image` rows — until the token

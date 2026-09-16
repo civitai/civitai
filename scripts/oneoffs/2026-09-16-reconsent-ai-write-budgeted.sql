@@ -70,9 +70,27 @@
 -- immediately "reaches no spend path". It does not:
 --
 --   1. Block tokens are JWTs with no per-jti revocation. Default lifetime is
---      900s (300s settings-scoped, 4h dev — `block-token-lifetimes.ts`). So for
---      up to ~15 MINUTES after this runs, a token minted just before it still
+--      900s, 300s settings-scoped (`block-token-lifetimes.ts`). So for up to
+--      ~15 MINUTES after this runs, a token minted just before it still
 --      carries the scope.
+--
+--      🔴 THE ~15 MIN BOUND IS ABOUT CONSENT-DERIVED TOKENS, WHICH IS THE ONLY
+--      POPULATION THIS SCRIPT CAN REACH. Say it explicitly, because the same
+--      file names a 4h dev lifetime elsewhere and an audit round read the two
+--      together and concluded the window was 16× understated. It is not.
+--      DEV TOKENS ARE NOT AFFECTED BY THIS SCRIPT AT ALL — in either direction:
+--        - their SCOPES do not come from `app_user_scope_grants`.
+--          `dev-scoped-mint.service.ts` derives them from the manifest, clamped
+--          to `DEV_TOKEN_SCOPE_ALLOWLIST` and the app's OAuth ceiling, so
+--          revoking a consent row cannot narrow a dev token;
+--        - their SPEND never consults consent. `blocks.router.ts`'s
+--          `if (claims.dev === true) return { ...platform, consent: null }`
+--          returns before `getConsentBuzzBudget` is called, and a dev token
+--          carries its own `DEV_BUZZ_BUDGET_CAP`, so item 2's cap-lift does not
+--          compound onto it either.
+--      So a dev token keeps the scope until the mod stops using dev mode —
+--      before AND after this runs. That is not a window this script opens, and
+--      waiting 4h would not close it. Do not "fix" this number upward.
 --
 --      🔴 BUT THERE **IS** A REVOCATION PRIMITIVE, AND AN EARLIER DRAFT OF THIS
 --      HEADER SAID THERE WAS NOT. `BlockRevocation` (`block-revocation.service.ts`)
@@ -118,9 +136,10 @@
 --      (`BLOCK_BUZZ_CAP_PER_DAY`) alone. A user who had set, say, 500 Buzz/day
 --      on an app has that lifted for the remainder of their token's life.
 --
--- Concretely: user U holds a live token and a 500/day budget on app A. You run
--- this at T. Between T and T+15min, A can spend U's Buzz against the platform
--- allowance rather than 500, and nothing errors.
+-- Concretely: user U holds a live CONSENT-DERIVED token and a 500/day budget on
+-- app A. You run this at T. Between T and T+15min, A can spend U's Buzz against
+-- the platform allowance rather than 500, and nothing errors. (Dev tokens are
+-- outside this entirely — see the bound in item 1.)
 --
 -- This is bounded and small — but run it when spend is quiet rather than at
 -- peak, and do not describe the window as closed the moment the UPDATE commits.

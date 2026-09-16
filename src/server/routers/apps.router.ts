@@ -295,9 +295,14 @@ async function resolveStorageContext(blockToken: string, op: StorageOp): Promise
   }
 
   // Per-instance revocation. `verifyBlockToken` checks the signature and expiry
-  // and nothing else, so without this an uninstall, a mod toggling the instance
-  // off, or a publisher ban leaves every already-minted token reading and writing
-  // until natural expiry. The REST `withBlockScope` middleware and
+  // and nothing else, so without this an uninstall or a mod toggling the instance
+  // off leaves every already-minted token reading and writing
+  // until natural expiry. (This used to also say "or a publisher ban". NO BAN
+  // WRITER EXISTS: `revokeInstance` has exactly two production call sites,
+  // `uninstallFromModel` and `toggleEnabled(false)`, and publisher-ban is marked
+  // "(Phase 2)" in `block-scope.middleware.ts`. Banning a publisher does NOT
+  // revoke that publisher's live block tokens — they run to natural `exp`.)
+  // The REST `withBlockScope` middleware and
   // `resolveSharedContext` both enforce it; this path was the remaining gap.
   // Placed before the run-for-real branch so it binds EVERY storage op, not only
   // the approved-app ones.
