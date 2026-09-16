@@ -101,9 +101,9 @@ export const homeBlockMetaSchema = z
       // block defaults to PG only rather than the PG+PG13 the feeds themselves use.
       // Set 'sfw' to opt a block back up to PG-13.
       browsingLevel: z.enum(['public', 'sfw']).optional(),
+      baseModels: z.array(z.string()).optional(),
       // images only
       types: z.array(z.enum(MediaType)).optional(),
-      baseModels: z.array(z.string()).optional(),
     }),
     announcements: z.object({
       ids: z.array(z.number()).optional(),
