@@ -270,9 +270,9 @@ describe('sell / sell-merge split in the generated licence', () => {
    * `slice(0, -1)` both leave every negative assertion above passing for free.
    */
   /**
-   * DELIBERATE, AND NOT AN OVERSIGHT: no product path in this build writes the SellMerge label --
-   * both default sets stay four-valued and the form offers no option -- until every pod knows it.
-   * A hand-built API payload still can; the migration file carries that and the reason.
+   * DELIBERATE, AND NOT AN OVERSIGHT: nothing in this build writes the SellMerge label except the
+   * admin backfill endpoint, which needs a deliberate token POST. Both default sets stay
+   * four-valued, the form offers no option, and the upsert contract refuses the member.
    *
    * The PR that turns the write paths on inverts this case. If you are here because it looks like
    * the feature was half-shipped: it was, on purpose, for one day.

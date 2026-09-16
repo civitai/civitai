@@ -1,9 +1,9 @@
--- Apply BEFORE the deploy. The build that ships with this migration knows 'SellMerge' and no
--- PRODUCT path writes it: the schema @default and the upload form's default set are both back to
--- the four-value array, and the form offers no SellMerge option. What can still write it is a
--- hand-built upsertModel payload -- the zod enum accepts the member -- and the admin backfill
--- named below. Neither happens by accident during a deploy, and both require naming a value the
--- caller had to read the enum to know exists.
+-- Apply BEFORE the deploy. The build that ships with this migration knows 'SellMerge' and nothing
+-- writes it except the admin backfill named below, which is behind WebhookEndpoint and needs a
+-- deliberate token POST. Four paths are shut: the schema @default and the upload form's default
+-- set are both back to the four-value array, the form offers no SellMerge option, and
+-- licensingSchema refuses the member outright, so a hand-built upsertModel payload is rejected
+-- rather than persisted.
 --
 -- That is the expand half of expand/contract. It matters because Prisma deserializes the enum for
 -- a whole result set, so a row carrying a label a previous-build pod does not know throws on READ,
