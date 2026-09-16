@@ -16,7 +16,6 @@
 // pulled in here. It exists so `BLOCK_POST_TERMINAL_WORKFLOW_STATUSES` is checked
 // against the real wire contract instead of a hand-copied literal union.
 import type { AppWorkflow } from '~/server/services/blocks/workflow.service';
-import { parseAIRSafe } from '~/shared/utils/air';
 
 /** Hard ceiling on images in ONE app-created post. */
 export const BLOCK_POST_MAX_IMAGES = 20;
@@ -285,119 +284,6 @@ export const BLOCK_POST_TERMINAL_WORKFLOW_STATUSES = [
  */
 export function isTerminalBlockPostWorkflowStatus(status: string): boolean {
   return (BLOCK_POST_TERMINAL_WORKFLOW_STATUSES as readonly string[]).includes(status);
-}
-
-/**
- * Every `ModelVersion` id a workflow record says it ran against — checkpoint and
- * additional networks alike, de-duplicated, in no particular order.
- *
- * ## What this is for
- *
- * A post's gallery attach names a `modelVersionId`. Nothing about that id is
- * derived from the images: the attach and the images are two independent fields
- * of the same request. This function supplies the only server-side evidence that
- * relates them — what the workflow that produced the images actually used.
- *
- * ## 🔴 IT REPORTS WHAT IT CAN READ, AND AN EMPTY RESULT MEANS "NOTHING READABLE"
- *
- * It does NOT mean "this workflow used no resources", and no caller may treat it
- * as that. The orchestrator is an external system with several step shapes and the
- * resource record is written by the SUBMIT path, so a workflow can legitimately
- * arrive with none of the carriers below populated. An empty array is therefore
- * an ABSENCE OF EVIDENCE, and the guard that consumes it
- * (`assertGalleryTargetMatchesSources`) is built around exactly that distinction.
- *
- * ## The carriers, and why there are four of them
- *
- * Read in no particular order and unioned, because different submit shapes
- * populate different ones and a workflow may populate several:
- *
- *   1. `metadata.resources[]` — the civitai-authored record, numeric ids.
- *   2. `metadata.params.resources[]` — the same record nested one level, which is
- *      where the generation params carry it.
- *   3. the same two keys on each `steps[].metadata`, because a multi-step workflow
- *      records per step.
- *   4. AIR strings on `steps[].input` — `model` (the checkpoint), the KEYS of
- *      `additionalNetworks`, and the `resources[]` array a custom-graph step
- *      declares. These are the fallback for a shape that wrote no metadata at all.
- *
- * Each entry may spell its id as a numeric `id` or as an `air` URN; both are
- * accepted, and an AIR that is not a civitai AIR (an orchestrator-hosted asset,
- * a node pack) has no version id and is skipped rather than coerced.
- *
- * 🔴 EVERY READ IS DEFENSIVE AND NOTHING HERE THROWS. This runs on the post path
- * against a payload from another service; a malformed field must cost that field,
- * never the request.
- */
-export function readWorkflowResourceVersionIds(workflow: unknown): number[] {
-  const found = new Set<number>();
-
-  const asRecord = (value: unknown): Record<string, unknown> | null =>
-    typeof value === 'object' && value !== null && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : null;
-
-  const addVersionId = (value: unknown) => {
-    // Integer ids only. A float, a NaN, a numeric string or a non-positive value
-    // is not a `ModelVersion` id, and accepting one would put a value in this set
-    // that could never match a real target anyway — while making the set look
-    // populated to a caller that distinguishes empty from non-empty.
-    if (typeof value === 'number' && Number.isInteger(value) && value > 0) found.add(value);
-  };
-
-  const addAir = (value: unknown) => {
-    if (typeof value !== 'string' || value.length === 0) return;
-    const parsed = parseAIRSafe(value);
-    // `source !== 'civitai'` covers orchestrator-hosted assets and `comfy:nodepack`
-    // URNs, neither of which has a `ModelVersion` behind it.
-    if (parsed && parsed.source === 'civitai') addVersionId(parsed.version);
-  };
-
-  /** One `{ id? , air? }`-shaped resource entry, from any of the carriers. */
-  const addResourceEntry = (entry: unknown) => {
-    const record = asRecord(entry);
-    if (!record) return;
-    addVersionId(record.id);
-    addVersionId(record.modelVersionId);
-    addAir(record.air);
-  };
-
-  const addResourcesFromMetadata = (metadata: unknown) => {
-    const record = asRecord(metadata);
-    if (!record) return;
-    for (const list of [record.resources, asRecord(record.params)?.resources]) {
-      if (Array.isArray(list)) for (const entry of list) addResourceEntry(entry);
-    }
-  };
-
-  const root = asRecord(workflow);
-  if (!root) return [];
-
-  addResourcesFromMetadata(root.metadata);
-
-  const steps = Array.isArray(root.steps) ? root.steps : [];
-  for (const step of steps) {
-    const stepRecord = asRecord(step);
-    if (!stepRecord) continue;
-    addResourcesFromMetadata(stepRecord.metadata);
-
-    const input = asRecord(stepRecord.input);
-    if (!input) continue;
-    // The checkpoint, spelled either as an AIR string or as `{ id }`.
-    addAir(input.model);
-    addVersionId(asRecord(input.model)?.id);
-    // `additionalNetworks` is keyed BY AIR — the value carries only strength.
-    for (const air of Object.keys(asRecord(input.additionalNetworks) ?? {})) addAir(air);
-    // A custom-graph step declares everything it needs as an explicit AIR list.
-    if (Array.isArray(input.resources)) {
-      for (const entry of input.resources) {
-        addAir(entry);
-        addResourceEntry(entry);
-      }
-    }
-  }
-
-  return [...found];
 }
 
 /**

@@ -4629,7 +4629,6 @@ export const blocksRouter = router({
       }
 
       const {
-        assertGalleryTargetMatchesSources,
         resolveBlockPostSources,
         resolveExistingPostTags,
         resolveGalleryTarget,
@@ -4696,7 +4695,6 @@ export const blocksRouter = router({
                 modelVersionId: input.modelVersionId,
                 posterUserId: userId,
                 appId: claims.appId,
-                appBlockId: claims.appBlockId,
               })
             : null;
         auditModelVersionId = gallery?.modelVersionId ?? null;
@@ -4707,13 +4705,6 @@ export const blocksRouter = router({
           actor,
           getWorkflow: (workflowId) => getWorkflow({ token, path: { workflowId } }),
         });
-
-        // The one gallery check that needs the IMAGES rather than the target, so
-        // it cannot live inside `resolveGalleryTarget` — see its own docblock for
-        // what it does and, more importantly, what it deliberately does not do.
-        // Re-derived here rather than inherited from the preview, like every other
-        // gate in this procedure.
-        assertGalleryTargetMatchesSources({ gallery, images: resolved });
 
         // CONFIRM INTEGRITY — DEFENCE IN DEPTH; see `confirmedImageCountInput`.
         // The viewer agreed to a specific SET of thumbnails; publishing a

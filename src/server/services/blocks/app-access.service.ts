@@ -730,54 +730,6 @@ export async function listingIdForAppBlock(appBlockId: string): Promise<string |
   return row?.id ?? null;
 }
 
-/**
- * Does `userId` hold an ACCEPTED editor seat on the listing behind `appBlockId`?
- *
- * 🔴 THIS ANSWERS A QUESTION NO OTHER CALLER ASKS, WHICH IS WHY IT IS A SEPARATE
- * EXPORT RATHER THAN AN INLINE `resolveAppAccess(...) !== null`. Every other
- * consumer of {@link resolveAppAccess} asks *"may THE CALLER act on this app?"*.
- * This one asks *"is THIS OTHER PERSON a declared party to this app?"* — the
- * subject is a third party, not the caller, and the answer gates whether the app
- * may direct something at them. Reading it as an access check would be a
- * misreading with real consequences, so it has its own name and its own docblock.
- *
- * 🔴 `'editor'` AND NOT `role !== null`, DELIBERATELY. The OWNER is excluded on
- * purpose: callers that care about the publisher already test that relationship
- * directly and by a different route (`OauthClient.userId`), and folding the two
- * together would make a refusal impossible to attribute to either — each would
- * silently cover the other's failures. Disjoint questions, disjoint predicates.
- *
- * 🔴 `'accepted'` ONLY — inherited from {@link resolveAppAccess}, which is the one
- * home for that filter (see the seam guard in
- * `.../__tests__/app-access.call-site-ledger.test.ts`). Admitting a PENDING invite
- * would be a griefing lever rather than a control: a listing owner could
- * unilaterally invite someone and thereby change how the platform treats that
- * person, with no act on their part. Acceptance is the consent that makes the
- * affiliation real.
- *
- * ### Fail direction, stated because it is asymmetric on purpose
- *
- *   - **No listing / no seat / no such block → `false` (allow).** An AppBlock with
- *     no store listing is an ordinary state, and treating "there is nobody to be a
- *     party" as "everybody is a party" would refuse a whole class of legitimate
- *     requests to fix nothing.
- *   - **A database error → THROWS.** It is not caught here and must not be: a
- *     caller gating on this gets an exception, not a `false`, so an unavailable
- *     database cannot silently answer "not affiliated".
- *   - ⚠️ **The ONE exception, inherited and narrow:** `safeCollaboratorQuery`
- *     swallows a missing-`app_collaborators`-table error and reports no seat. That
- *     is deliberate for environments where the migration has not landed, and it
- *     means this function reports `false` there. Anything relying on it for a
- *     hard guarantee needs to know that.
- */
-export async function isAcceptedCollaboratorOnAppBlockListing(
-  appBlockId: string,
-  userId: number
-): Promise<boolean> {
-  const access = await resolveAppAccess(appBlockId, userId);
-  return access?.role === 'editor';
-}
-
 export type AccessibleListings = {
   /** `AppListing` ids the caller OWNS, resolved canonically (see below). */
   ownedIds: string[];

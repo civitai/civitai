@@ -131,14 +131,7 @@ const GATE_LEDGER: Record<string, string> = {
   'src/server/services/blocks/app-access.service.ts':
     'THE predicate itself — resolveAppAccess / resolveListingAccess / ' +
     'resolveAccessibleAppBlockIds — plus capabilitiesForKind, the derived per-KIND ' +
-    'capability table. Every other site delegates here. 🔴 One reader is NOT an ' +
-    'access gate and is deliberately absent from GATE_LEDGER: ' +
-    'isAcceptedCollaboratorOnAppBlockListing asks whether a THIRD PARTY is a ' +
-    'declared party to an app (block-post.service.ts uses it to refuse a gallery ' +
-    'attach aimed at a collaborator’s model), not whether the CALLER may act. It ' +
-    'adds no seat query of its own — it delegates to resolveAppAccess, so the ' +
-    'accepted-status filter stays in one home — and it reads role === editor rather ' +
-    'than role !== null, keeping it disjoint from the publisher check it sits behind. Seats are keyed to AppListing ' +
+    'capability table. Every other site delegates here. Seats are keyed to AppListing ' +
     'so an offsite listing can hold collaborators. 🔴 BOTH resolvers report the CANONICAL ' +
     'owner (`appBlock.app.userId ?? listing.userId`), never the denormalized ' +
     'AppListing.userId alone: a SHADOW REVISION clones that column and no ownership ' +
