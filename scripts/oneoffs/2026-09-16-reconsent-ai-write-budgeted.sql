@@ -61,13 +61,28 @@
 --      and it IS checked on the block-scope path (`block-scope.middleware.ts`,
 --      `block-bridge-auth.service.ts`, `apps.router.ts`, `apps-shared.router.ts`).
 --      Saying otherwise told the operator not to look for the mitigation that
---      exists. Three caveats that decide whether it helps you here:
---        - it is PER-INSTANCE, not per-user and not per-scope;
---        - THIS FILE DOES NOT TRIGGER IT. Writing `revoked_at` in Postgres sets
---          no Redis marker. If you want the window cut to seconds rather than
---          ~15 minutes, revoke the affected instances as a SEPARATE action;
---        - it FAILS OPEN by construction (`isRevoked` swallows a Redis error and
---          returns false), so it is a mitigation, never a guarantee.
+--      exists. But do NOT plan around it either — an earlier draft of this
+--      header told you to "revoke the affected instances as a SEPARATE action",
+--      and THAT INSTRUCTION IS NOT FOLLOWABLE. Four things decide whether it
+--      helps you here, and three of them say it does not:
+--        - it is NOT operator-invoked. `revokeInstance` has exactly two
+--          production call sites, both AUTOMATIC — uninstall and
+--          `toggleEnabled(false)` in `block-registry.service.ts`. There is no
+--          admin endpoint, no tRPC procedure and no script;
+--        - so the only ways to set a marker by hand are toggling every affected
+--          install OFF in the UI — which also DISABLES the install, a different
+--          and user-visible outcome — or writing
+--          `blocks:revoked-instance:<blockInstanceId>` into Redis yourself with
+--          an EX. Neither is a normal operation and neither is recommended here;
+--        - you cannot even ENUMERATE the instances from this file. It works on
+--          `app_user_scope_grants`, keyed (user_id, app_block_id);
+--          `block_instance_id` lives on `block_user_subscriptions`. Joining them
+--          is left undone deliberately rather than sketched untested;
+--        - it is PER-INSTANCE, not per-user or per-scope, and it FAILS OPEN
+--          (`isRevoked` swallows a Redis error and returns false).
+--
+--      🔴 SO: TREAT THE WINDOW AS SOMETHING TO TIME AROUND, NOT TO CLOSE. Run
+--      this when spend is quiet. That is the whole mitigation available to you.
 --   2. 🔴 WORSE, AND COUNTER-INTUITIVE: the revoke removes the user's OWN CAP
 --      FIRST. `getConsentBuzzBudget` returns null for a revoked row, and
 --      `reserveBlockBuzzSpendForClaims` treats a null budget as "no consent
@@ -80,9 +95,7 @@
 -- allowance rather than 500, and nothing errors.
 --
 -- This is bounded and small — but run it when spend is quiet rather than at
--- peak, do not describe the window as closed the moment the UPDATE commits, and
--- if it matters for a given app, revoke its instances via `BlockRevocation` as
--- well.
+-- peak, and do not describe the window as closed the moment the UPDATE commits.
 --
 -- ============================================================================
 -- 🔴 DECIDE THIS BEFORE YOU RUN ANYTHING — IT IS NOT A CODE QUESTION

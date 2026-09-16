@@ -10,8 +10,8 @@ import { assertStepInvariants, listRegisteredSteps } from '~/server/services/blo
 /**
  * 🔴 EVERY ASSERTION HERE NAMES `PlatformInternalStepTypeError` SPECIFICALLY.
  *
- * That is the whole design of this file. `assertStepInvariants` has a dozen
- * clauses that throw plain `Error`s, and the wire schema rejects unknown step
+ * That is the whole design of this file. `assertStepInvariants` has 20 labelled
+ * clauses, most of which throw plain `Error`s, and the wire schema rejects unknown step
  * ids on its own. A test that only asserted "it threw" would stay green after
  * the denylist clause was deleted, because a neighbouring guard would kill the
  * same input for a different reason — the classic mutation-dies-for-the-wrong-

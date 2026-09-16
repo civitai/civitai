@@ -118,10 +118,22 @@ export async function getGrantedScopes(opts: {
  * stating plainly: **the revoke drops the user's own ceiling BEFORE it drops the
  * scope.**
  *
- * `BlockRevocation` (`block-revocation.service.ts`) is the mitigation — a
- * per-`blockInstanceId` Redis marker checked on the block-scope path — but it is
- * operator-invoked, per-instance rather than per-user, and FAILS OPEN on a Redis
- * error. It is not triggered by writing `revoked_at`.
+ * `BlockRevocation` (`block-revocation.service.ts`) narrows that window — a
+ * per-`blockInstanceId` Redis marker checked on the block-scope path — but read
+ * what actually sets it before relying on it:
+ *
+ *  - 🔴 IT IS NOT OPERATOR-INVOKED, and an earlier version of this paragraph
+ *    said it was. `revokeInstance` has exactly two production call sites, both
+ *    AUTOMATIC and both in `block-registry.service.ts`: uninstall (:2358) and
+ *    `toggleEnabled(false)` (:2393). There is no admin router, no tRPC
+ *    procedure and no script — so a marker appears because a USER acted, not
+ *    because someone chose to write one. The practical consequence is the
+ *    opposite of what "operator-invoked" implies: the middleware's 403 branch
+ *    is HOT, not cold.
+ *  - it is per-INSTANCE, not per-user and not per-scope;
+ *  - it FAILS OPEN (`isRevoked` swallows a Redis error and returns false);
+ *  - writing `revoked_at` in Postgres sets NO marker. The two mechanisms do not
+ *    know about each other.
  *
  * ⚠️ THE REVOKED BRANCH IS NO LONGER UNREACHABLE. This paragraph used to say nothing
  * in the codebase ever SETS `app_user_scope_grants.revoked_at`, which was true of

@@ -1564,7 +1564,7 @@ export function assertStepInvariants(id: string, step: AnyBlockStep): void {
   //
   // 🔴 PLACED HERE BECAUSE IT WAS UNREACHABLE LOWER DOWN, and that is worth
   // recording rather than quietly fixing. It first sat after clause (9), where
-  // it never executed: `STEP_TYPE_ACCEPTABLE_POSTURES` (clause 7-ish) rejects a
+  // it never executed: `STEP_TYPE_ACCEPTABLE_POSTURES` (clause (1b), :1667) rejects a
   // posture/`$type` mismatch earlier, so an entry mutated to declare
   // `xGuardModeration` died with "the declared posture does not cover the
   // moderation surface this step actually produces" and the denylist never ran.
