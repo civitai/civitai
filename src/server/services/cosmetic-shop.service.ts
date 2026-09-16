@@ -115,6 +115,16 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
   }
   if (input.ids?.length) where.id = { in: input.ids };
   if (input.types && input.types.length) cosmeticWhere.type = { in: input.types };
+  if (input.archived === false) {
+    // Archiving stamps `archivedAt` without reliably moving `status`, so
+    // `archivedAt` is the load-bearing signal; the status guard is belt-and-
+    // suspenders. Placed before the resellable branch so its stricter
+    // `status = Published` still wins when both are set.
+    where.archivedAt = null;
+    where.status = { not: CosmeticShopItemStatus.Archived };
+  } else if (input.archived === true) {
+    where.archivedAt = { not: null };
+  }
   if (input.resellable) {
     where.status = CosmeticShopItemStatus.Published;
     cosmeticWhere.createdById = { not: null };
