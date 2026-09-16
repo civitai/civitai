@@ -122,6 +122,13 @@ const buildLicense = (
 
 const OTHERS = [CommercialUse.Image, CommercialUse.RentCivit, CommercialUse.Rent];
 
+/**
+ * Every member a creator can be granted, derived from the enum rather than listed so a new one is
+ * covered by the contract case without anyone remembering to add it here. `None` is excluded: it
+ * is the marker for granting nothing, not a permission.
+ */
+const GRANTABLE = Object.values(CommercialUse).filter((v) => v !== CommercialUse.None);
+
 describe('sell / sell-merge split in the generated licence', () => {
   it('grants both: neither restriction appears', () => {
     const license = buildLicense([...OTHERS, CommercialUse.Sell, CommercialUse.SellMerge]);
@@ -266,14 +273,15 @@ describe('sell / sell-merge split in the generated licence', () => {
   });
 
   /**
-   * DELIBERATE, AND NOT AN OVERSIGHT: nothing in this build writes the SellMerge label except the
-   * admin backfill endpoint, which needs a deliberate token POST. Both default sets stay
-   * four-valued, the form offers no option, and the upsert contract refuses the member.
+   * The invariant is that the three places agree, NOT that every member is granted by default.
+   * Shipping a new member withheld for a deploy is a legitimate and recently-used manoeuvre, and a
+   * test demanding every member appear in the defaults would forbid it.
    *
-   * The PR that turns the write paths on inverts this case. If you are here because it looks like
-   * the feature was half-shipped: it was, on purpose, for one day.
+   * What must never diverge: a member in the default sets but absent from the option list is
+   * granted to every new model and unrevokable through the product, and the two default sets
+   * disagreeing means the form shows a creator something the database will not give them.
    */
-  it('the two product write paths for SellMerge are off: the defaults and the option list', () => {
+  it('the two default sets and the option list agree on which members are granted', () => {
     const members = (capture: string) =>
       capture
         .replace(/\/\/[^\n]*/g, '')
@@ -294,9 +302,9 @@ describe('sell / sell-merge split in the generated licence', () => {
     const modelDefault = modelDefaults[0];
     // Set rather than exact string: `prisma format` may reorder or respace this line, and a guard
     // that reddens on formatting is one the third person to hit it deletes.
-    expect(members(modelDefault?.[1] ?? '').sort()).toEqual(
-      ['Image', 'Rent', 'RentCivit', 'Sell'].sort()
-    );
+    const schemaMembers = members(modelDefault?.[1] ?? '').sort();
+    // A floor, so the three-way comparison below cannot be satisfied by three empty sets.
+    expect(schemaMembers.length).toBeGreaterThanOrEqual(4);
 
     const form = readFileSync(
       join(__dirname, '../../../components/Resource/Forms/ModelUpsertForm.tsx'),
@@ -308,65 +316,62 @@ describe('sell / sell-merge split in the generated licence', () => {
       /allowCommercialUse: model\?\.allowCommercialUse \?\? \[([\s\S]*?)\],\n/
     );
     expect(formDefault).not.toBeNull();
-    // Asserted as a SET, so dropping members to hide one reddens too.
-    expect(members(formDefault?.[1] ?? '').sort()).toEqual(
-      ['Image', 'Rent', 'RentCivit', 'Sell'].sort()
-    );
+    expect(members(formDefault?.[1] ?? '').sort()).toEqual(schemaMembers);
 
-    // The default is the passive write path. The checkbox is the active one, and removing only the
-    // first leaves a creator able to write the row a previous-build pod cannot read.
+    // The default decides what a creator gets without choosing; the option list decides what they
+    // CAN choose. A member present in the default but absent here is grantable only by accident and
+    // unrevokable through the product.
     const options = form.match(/const commercialUseOptions[\s\S]*?=\s*\[([\s\S]*?)\n\];/);
     expect(options).not.toBeNull();
-    expect(options?.[1]).toMatch(/value:\s*CommercialUse\.Sell\b/);
+    const offered = [...(options?.[1] ?? '').matchAll(/value:\s*CommercialUse\.(\w+)/g)].map(
+      (m) => m[1]
+    );
+    expect(offered.sort()).toEqual(schemaMembers);
 
-    // The literal is not the only way to ship the option: a spread at the render site, an index
-    // assignment, or Object.assign all put it in front of a creator without touching the array.
-    // Pinning method names would pin spellings; this pins the property. Comments are stripped, so
-    // the note standing where the option used to be may name the member either way.
-    expect(form.replace(/\/\/[^\n]*/g, '')).not.toContain('CommercialUse.SellMerge');
+    // The literal is not what a creator sees. A `.filter()` at the render site, or the member named
+    // in the `disabled` predicate, removes the checkbox while the schema default still grants the
+    // permission -- so it is granted by accident and unrevokable through the product, which is the
+    // harm the comment above describes. Neither touches the array, so every assertion above stays
+    // green -- the array is not what a creator sees. This reaches one step further, to the render
+    // site, and pins only that it maps the list whole.
+    //
+    // 🔴 It does NOT cover the `disabled` predicate, which can render a checkbox nobody can use.
+    // A text guard cannot express that without naming members, and naming members reintroduces the
+    // policy this case exists to avoid. The honest instrument is a component test mounting the form
+    // and asserting one enabled checkbox per granted member; there is none today, for this form or
+    // any other. Filed rather than papered over.
+    const render = form.slice(form.indexOf('<Checkbox.Group'), form.indexOf('</Checkbox.Group>'));
+    expect(render).toContain('commercialUseOptions.map(');
+    expect(render).not.toMatch(/commercialUseOptions[\s\S]{0,40}?\.(filter|slice)\(/);
 
-    // The third door, and the only one that opened by itself: the upsert contract derived its
-    // member set from the enum, so extending the enum widened what a signed-in owner may POST.
-    // Removing the checkbox removed the affordance, not the endpoint.
+    // A name-pinned guard, not a behavioural one: the refine that withheld a member was called
+    // this. The behaviour is covered by the accept-loop in the next case.
     const schemaSrc = readFileSync(join(__dirname, '../../schema/model.schema.ts'), 'utf8');
-    const withheld = schemaSrc.match(/const WITHHELD_COMMERCIAL_USE[^=]*=\s*\[([\s\S]*?)\]/);
-    expect(withheld).not.toBeNull();
-    expect(members(withheld?.[1] ?? '')).toEqual(['SellMerge']);
-    // ...and the list must actually be applied, or it is decoration.
-    expect(schemaSrc).toMatch(/WITHHELD_COMMERCIAL_USE\.includes/);
+    expect(schemaSrc).not.toMatch(/WITHHELD_COMMERCIAL_USE/);
   });
 
   /**
    * The list above is a source-text assertion; this one runs the contract. A text guard cannot tell
-   * a rejection from a refine that was written and never wired in.
+   * a member being accepted from a field that stopped validating.
    */
-  it('the upsert contract rejects a withheld permission and accepts the rest', async () => {
+  it('the upsert contract accepts every grantable member, and still rejects a bogus one', async () => {
     const { modelUpsertSchema } = await import('~/server/schema/model.schema');
     const base = { name: 'x', type: 'Checkpoint', status: 'Draft', uploadType: 'Created' };
 
-    // A MINIMAL PAIR: one member either way, so the only difference is which member. Varying the
-    // length as well lets a predicate keyed on cardinality -- `values.length < 2` -- satisfy both
-    // assertions with the SellMerge gate gone, while rejecting ordinary two-permission payloads.
-    const withheld = modelUpsertSchema.safeParse({
-      ...base,
-      allowCommercialUse: [CommercialUse.SellMerge],
-    });
-    expect(withheld.success).toBe(false);
-    // ...and rejected for THIS reason. `success: false` alone names no field.
-    expect(JSON.stringify(withheld.error?.issues)).toContain('not available yet');
+    // A floor, not a list: an empty GRANTABLE makes the loop below assert nothing at all.
+    expect(GRANTABLE.length).toBeGreaterThanOrEqual(5);
+    for (const member of GRANTABLE) {
+      const parsed = modelUpsertSchema.safeParse({ ...base, allowCommercialUse: [member] });
+      expect(parsed.success, `${member} should be writable`).toBe(true);
+    }
+    expect(modelUpsertSchema.safeParse({ ...base, allowCommercialUse: GRANTABLE }).success).toBe(
+      true
+    );
 
-    const allowed = modelUpsertSchema.safeParse({
-      ...base,
-      allowCommercialUse: [CommercialUse.Sell],
-    });
-    expect(allowed.success).toBe(true);
-
-    // A second data point, not the attribution: the withheld member is refused alongside others.
+    // The negative half, and it is what stops the loop above passing because the field stopped
+    // validating at all. A member that is not in the enum must still be refused.
     expect(
-      modelUpsertSchema.safeParse({
-        ...base,
-        allowCommercialUse: [CommercialUse.Sell, CommercialUse.SellMerge],
-      }).success
+      modelUpsertSchema.safeParse({ ...base, allowCommercialUse: ['SellTheMoon'] }).success
     ).toBe(false);
   });
 
