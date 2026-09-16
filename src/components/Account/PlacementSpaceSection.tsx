@@ -254,6 +254,50 @@ export function PlacementSpaceSection({
         ]}
       />
 
+      {/* "Accept all" removes the review step, and with it the only thing that
+          told this creator a sticker had landed. Subscribing happens HERE rather
+          than behind a link: opt-in types are excluded from the category
+          aggregates by design, so a creator who has turned Creator notifications
+          off is shown no checkbox for this type at all, and `toggleAll(false)`
+          puts them in that state. A link would have been a dead end for exactly
+          the creator who chose "Accept all" to stop being pinged.
+
+          Both directions, for the same reason. Subscribing in one click and then
+          having to find a disabled checkbox to undo it is the same dead end
+          pointing the other way. */}
+      {autoNoticeReady && (
+        <Alert color="blue" p="xs">
+          <Group justify="space-between" gap="xs" wrap="nowrap">
+            <Text size="xs">
+              {subscribedToAuto
+                ? "We'll tell you when someone places a sticker on your images."
+                : 'Stickers are accepted without asking you, so nothing reaches your review queue. Get notified when someone places one?'}
+            </Text>
+            <Button
+              // Never squeezed by the sentence beside it. In a nowrap row the
+              // button is the flexible item by default, and "Notify me" rendered
+              // as "Notify m".
+              className="shrink-0"
+              size="compact-xs"
+              variant="light"
+              loading={toggleAutoNotification.isPending}
+              onClick={() =>
+                // The state being ASKED FOR, never the current one. Passing
+                // `subscribedToAuto` straight through is a click that does
+                // nothing in both directions, which is the bug the polarity
+                // guard pins for the other two callers of this mutation.
+                toggleAutoNotification.mutate({
+                  toggle: !subscribedToAuto,
+                  type: [AUTO_ACCEPTED_NOTIFICATION],
+                })
+              }
+            >
+              {subscribedToAuto ? 'Stop notifying me' : 'Notify me'}
+            </Button>
+          </Group>
+        </Alert>
+      )}
+
       <Stack gap={4}>
         <Group justify="space-between" gap="xs" wrap="nowrap">
           <Group gap={4} wrap="nowrap">
@@ -380,46 +424,6 @@ export function PlacementSpaceSection({
           Stickers you&apos;ve placed
         </Button>
       </Group>
-
-      {/* "Accept all" removes the review step, and with it the only thing that
-          told this creator a sticker had landed. Subscribing happens HERE rather
-          than behind a link: opt-in types are excluded from the category
-          aggregates by design, so a creator who has turned Creator notifications
-          off is shown no checkbox for this type at all, and `toggleAll(false)`
-          puts them in that state. A link would have been a dead end for exactly
-          the creator who chose "Accept all" to stop being pinged.
-
-          Both directions, for the same reason. Subscribing in one click and then
-          having to find a disabled checkbox to undo it is the same dead end
-          pointing the other way. */}
-      {autoNoticeReady && (
-        <Alert color="blue" p="xs">
-          <Group justify="space-between" gap="xs" wrap="nowrap">
-            <Text size="xs">
-              {subscribedToAuto
-                ? "We'll tell you when someone places a sticker on your images."
-                : 'Stickers are accepted without asking you, so nothing reaches your review queue. Get notified when someone places one?'}
-            </Text>
-            <Button
-              size="compact-xs"
-              variant="light"
-              loading={toggleAutoNotification.isPending}
-              onClick={() =>
-                // The state being ASKED FOR, never the current one. Passing
-                // `subscribedToAuto` straight through is a click that does
-                // nothing in both directions, which is the bug the polarity
-                // guard pins for the other two callers of this mutation.
-                toggleAutoNotification.mutate({
-                  toggle: !subscribedToAuto,
-                  type: [AUTO_ACCEPTED_NOTIFICATION],
-                })
-              }
-            >
-              {subscribedToAuto ? 'Stop notifying me' : 'Notify me'}
-            </Button>
-          </Group>
-        </Alert>
-      )}
 
       {/* Gated on there being no price rather than no row: a row with a null
           price is now the ordinary result of setting a mode without touching
