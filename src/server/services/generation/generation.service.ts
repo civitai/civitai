@@ -1659,6 +1659,29 @@ export function extractHashCandidates(
  *
  * Returns { resources, params } where params are ready for the generation graph.
  */
+type HashMatch = { versionPublished: boolean; versionDate: Date; fileId: number };
+
+/**
+ * Which of several files sharing one hash gets the credit. Mirrors
+ * get_image_resources.sql's `ORDER BY IIF(version_published,0,1), version_date, file_id`:
+ * published first, then OLDEST, then lowest file id.
+ *
+ * Oldest, not newest. A hash shared across owners is in practice a re-upload of someone
+ * else's weights, so the earliest published copy is the closest thing to the original
+ * uploader; preferring the most recent hands every duplicated model to whoever posted it
+ * last. This read `>` until 2026-09-15, which meant the image page credited the original
+ * and the generator credited the re-uploader for the same file — the two are the same
+ * rule in two languages, and nothing compares them.
+ */
+export function prefersHashMatch(candidate: HashMatch, existing: HashMatch | undefined): boolean {
+  if (!existing) return true;
+  if (existing.versionPublished !== candidate.versionPublished) return candidate.versionPublished;
+  const existingDate = existing.versionDate.valueOf();
+  const candidateDate = candidate.versionDate.valueOf();
+  if (existingDate !== candidateDate) return candidateDate < existingDate;
+  return candidate.fileId < existing.fileId;
+}
+
 export async function resolveImageMeta({
   input,
   user,
@@ -1706,22 +1729,10 @@ export async function resolveImageMeta({
     `;
 
     // Build a map of hash → best matching modelVersionId
-    // When multiple files match the same hash, prefer published > recent > lowest fileId
     const bestByHash = new Map<string, (typeof hashResults)[0]>();
     for (const row of hashResults) {
       if (row.excludeFromAutoDetection) continue;
-      const existing = bestByHash.get(row.hash);
-      if (
-        !existing ||
-        (!existing.versionPublished && row.versionPublished) ||
-        (existing.versionPublished === row.versionPublished &&
-          row.versionDate > existing.versionDate) ||
-        (existing.versionPublished === row.versionPublished &&
-          existing.versionDate === row.versionDate &&
-          row.fileId < existing.fileId)
-      ) {
-        bestByHash.set(row.hash, row);
-      }
+      if (prefersHashMatch(row, bestByHash.get(row.hash))) bestByHash.set(row.hash, row);
     }
 
     // Match hash candidates to resolved version IDs

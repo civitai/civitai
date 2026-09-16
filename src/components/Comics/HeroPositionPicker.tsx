@@ -73,7 +73,7 @@ export function HeroPositionPicker({
         onPointerCancel={handlePointerUp}
       >
         <img
-          src={getEdgeUrl(url, { width: 720 })}
+          src={getEdgeUrl(url, { width: 720, optimized: true })}
           alt="Hero"
           style={{
             width: '100%',

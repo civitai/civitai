@@ -93,6 +93,7 @@ import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionM
 import { AddToHubMenuItem } from '~/components/MenuItems/AddToHubMenuItem';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { Gated } from '~/components/Gated/Gated';
+import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
@@ -878,6 +879,13 @@ export default function ModelDetailsV2({
         canonical: `/models/${model.id}/${slugit(model.name)}`,
         alternate: `/models/${model.id}`,
         schema: metaSchema,
+        breadcrumb: buildBreadcrumbSchema(env.NEXT_PUBLIC_BASE_URL ?? '', [
+          { name: 'Models', path: '/models' },
+          ...(category
+            ? [{ name: category.name, path: `/tag/${encodeURIComponent(category.name)}` }]
+            : []),
+          { name: model.name },
+        ]),
         deIndex:
           model.status !== ModelStatus.Published ||
           model.availability === Availability.Unsearchable,

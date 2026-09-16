@@ -100,6 +100,13 @@ vi.mock('~/server/middleware.trpc', async () => {
 });
 
 import { blocksRouter } from '../blocks.router';
+// 🔴 STRUCTURALLY BLIND TO THE VIEWER HALF OF THE WORKFLOW SCOPE. This file never sets
+// `ORCHESTRATOR_MODE`, so it runs under the schema default `'dev'` — the one mode in which
+// `assertBlockWorkflowMintedForViewer` short-circuits. That is why ids like `wf_1` are fine here
+// and would be refused in prod. A `pollWorkflow`/`cancelWorkflow` case cloned out of this file
+// inherits that blindness while looking like coverage: set the mode explicitly, as
+// blocks.router.workflowScope.test.ts does.
+
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -113,6 +120,12 @@ redisMock.sysRedis.incrBy.mockImplementation(async () => 0);
 redisMock.sysRedis.decrBy.mockImplementation(async () => 0);
 redisMock.sysRedis.expire.mockImplementation(async () => true);
 redisMock.sysRedis.ttl.mockImplementation(async () => -1);
+
+// Every workflow a block can legitimately name carries its producing app's provenance tag, and
+// `blocks.pollWorkflow`/`cancelWorkflow` assert it. These fixtures are about other properties, so
+// they carry the default claims' tag; the scoping guard itself is exercised in
+// blocks.router.workflowScope.test.ts.
+const BLOCK_APP_TAG = 'app-block:app_test';
 
 function validClaims(over: Record<string, unknown> = {}) {
   return {
@@ -164,6 +177,7 @@ beforeEach(() => {
   mockParseSubjectUserId.mockImplementation((sub: string) => (sub === 'anon' ? null : 42));
   mockGetOrchestratorToken.mockResolvedValue('orch_token');
   mockGetWorkflow.mockResolvedValue({
+    tags: [BLOCK_APP_TAG],
     id: 'wf_1',
     status: 'succeeded',
     cost: { total: 0 },

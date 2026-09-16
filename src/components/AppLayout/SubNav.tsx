@@ -38,8 +38,17 @@ export function SubNav2() {
   const section = filterSections.find((x) => x.pathname === router.pathname);
 
   return (
+    // `items-start`, not `items-center`: `HomeTabs` is a horizontal scroller, and on platforms
+    // that draw classic (space-consuming) scrollbars it is taller than its pills by the scrollbar's
+    // height. Centring put the filters and the gear half a scrollbar below the tabs. Justin asked
+    // for them level with the tabs (2026-09-15), which is the top edge.
+    //
+    // The scrollbar itself is deliberately NOT hidden. It is the only thing telling anyone the row
+    // scrolls, and "it doesn't look like it scrolls" was the original report. `scrollbar-none` here
+    // would take the 4px back and re-break that — the sibling row in `HomeStyleSegmentedControl`
+    // styles its scrollbar rather than removing it, if a thinner one is ever wanted.
     <div
-      className={clsx('flex items-center justify-between gap-2 px-2 py-1', {
+      className={clsx('flex items-start justify-between gap-2 px-2 py-1', {
         ['flex-wrap']: router.pathname !== '/',
       })}
     >

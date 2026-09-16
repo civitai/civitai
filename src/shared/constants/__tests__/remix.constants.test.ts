@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
+import { ecosystemByKey, getEcosystemSetting } from '~/shared/constants/basemodel.constants';
 import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
 import {
   isWorkflowAvailable,
   workflowConfigByKey,
 } from '~/shared/data-graph/generation/config/workflows';
 import {
-  ltxVersionIds,
+  minimaxVersionIds,
   nanoBananaVersionIds,
   qwenVersionIds,
 } from '~/shared/data-graph/generation/version-ids';
@@ -52,19 +52,36 @@ describe('REMIX_ENGINES', () => {
     expect(REMIX_ENGINES.edit.safe.modelVersionId).not.toBe(nanoBananaVersionIds.standard);
   });
 
-  it('video resolves to LTX 2.3 when safe and Sulphur 2 when mature', () => {
-    expect(REMIX_ENGINES.video.safe.modelVersionId).toBe(ltxVersionIds.v23Dev);
-    expect(REMIX_ENGINES.video.mature.modelVersionId).toBe(ltxVersionIds.sulphur2Dev);
+  // If you are here to point Animate at a newer or cheaper video engine: H3 is
+  // the platform's default video engine under a commercial commitment with a
+  // fixed term, and Animate is one of the two surfaces that decides what
+  // "default" means in practice. Ask Justin before changing it — the reason to
+  // leave it alone is not visible anywhere in this codebase.
+  it('routes Animate to MiniMax H3 on both tiers', () => {
+    expect(REMIX_ENGINES.video.safe.ecosystemKey).toBe('MiniMaxH3');
+    expect(REMIX_ENGINES.video.mature.ecosystemKey).toBe('MiniMaxH3');
+    expect(REMIX_ENGINES.video.safe.modelVersionId).toBe(minimaxVersionIds.comfy);
+    expect(REMIX_ENGINES.video.mature.modelVersionId).toBe(minimaxVersionIds.comfy);
   });
 
-  // Sulphur 2 runs through the LTXV23 ecosystem, so unlike the edit tiers the
-  // ecosystem key is deliberately the SAME on both — only the version differs.
-  // Asserting that keeps someone from "fixing" it to a nonexistent ecosystem.
-  it('keeps both video tiers on the LTXV23 ecosystem', () => {
-    expect(REMIX_ENGINES.video.mature.ecosystemKey).toBe(REMIX_ENGINES.video.safe.ecosystemKey);
-    expect(REMIX_ENGINES.video.mature.modelVersionId).not.toBe(
-      REMIX_ENGINES.video.safe.modelVersionId
-    );
+  // `h3-ids-agree`, referenced from remix.constants.ts. The generator resolves
+  // H3's variant by version id and falls back to MiniMax's HOSTED API on any id
+  // it doesn't know, so a bump that moves the ecosystem default without moving
+  // `minimaxVersionIds.comfy` sends both tiers — mature included — off our own
+  // orchestrator with nothing red. The assertion above cannot see that: it
+  // compares the table against the same constant the table was built from.
+  it('h3-ids-agree: the pinned H3 version is still the ecosystem default', () => {
+    const h3 = ecosystemByKey.get('MiniMaxH3');
+    expect(h3, 'no MiniMaxH3 ecosystem registered').toBeDefined();
+    expect(getEcosystemSetting(h3!.id, 'model')?.id).toBe(minimaxVersionIds.comfy);
+  });
+
+  // The two video entries are equal today. They are still two OBJECTS, and
+  // remix.utils.test.ts's tier-routing test discriminates only by reference, so
+  // collapsing them to one shared value turns that test into an object compared
+  // against itself — passing, covering nothing. Keep them separate.
+  it('keeps the two video tiers separately addressable', () => {
+    expect(REMIX_ENGINES.video.mature).not.toBe(REMIX_ENGINES.video.safe);
   });
 
   // The whole point of the tier split: a mature image must not be routed to an

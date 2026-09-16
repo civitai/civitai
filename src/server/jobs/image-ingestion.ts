@@ -9,6 +9,7 @@ import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { getImageScanRetryLimit } from '~/server/services/image-scan-failure';
+import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { decreaseDate } from '~/utils/date-helpers';
 
 const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
@@ -474,7 +475,6 @@ export async function sendImagesForScanBulk(
   return { sent, failed };
 }
 
-const BLOCKED_IMAGE_RETENTION_DAYS = 7;
 // Ceiling on the CSAM hold below, measured from the REPORT, not from the block: the
 // send/archive pipeline has no retry limit and no dead-letter, so a report nobody finishes
 // would otherwise hold a user's blocked media forever. Clocking it from the block instead

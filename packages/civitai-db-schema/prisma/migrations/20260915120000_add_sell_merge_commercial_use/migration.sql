@@ -1,0 +1,25 @@
+-- Apply BEFORE the deploy. The build that ships with this migration knows 'SellMerge' and nothing
+-- writes it except the admin backfill named below, which is behind WebhookEndpoint and needs a
+-- deliberate token POST. Four paths are shut: the schema @default and the upload form's default
+-- set are both back to the four-value array, the form offers no SellMerge option, and
+-- licensingSchema refuses the member outright, so a hand-built upsertModel payload is rejected
+-- rather than persisted.
+--
+-- That is the expand half of expand/contract. It matters because Prisma deserializes the enum for
+-- a whole result set, so a row carrying a label a previous-build pod does not know throws on READ,
+-- not on the write. Turning the product paths on is a separate PR, shipped once every pod knows
+-- the label.
+--
+-- The order matters the other way round too: applying this first means the defaults-on PR needs no
+-- coordination with a migration.
+--
+-- src/pages/api/admin/temp/backfill-trained-model-permissions.ts also writes this label. Do not
+-- run it before this migration, or during a rolling deploy.
+--
+-- The backfill that gives existing models the new permission is deliberately not in this commit
+-- and must not be applied with it: it would write the label while the old build is still serving.
+--
+-- Run alone: ADD VALUE is allowed inside a transaction but the value is unusable in the same one,
+-- and a multi-statement psql -c is one implicit transaction. Separate -c flags are safe.
+
+ALTER TYPE "CommercialUse" ADD VALUE IF NOT EXISTS 'SellMerge';

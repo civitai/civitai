@@ -33,13 +33,33 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import type { ProfanityEvaluation } from '~/libs/profanity-simple';
 
+// Rejected at runtime rather than removed from the enum, so the inferred type stays CommercialUse[]
+// and no consumer has to change for one day. SellMerge is held back until every pod knows the
+// label: a row carrying it throws on READ for a whole result set on any pod still running the
+// previous build, and this endpoint is reachable by any signed-in owner, not only through the
+// upload form -- removing the checkbox removed the affordance, not the endpoint.
+// The PR that turns the write paths on deletes this refine alongside the two defaults and the
+// option. 🔴 ORDER: that deletion must ship in the same deploy as the backfill or before it. Once a
+// row carries the member, the edit form submits it back untouched, and the refine would reject the
+// whole save with a message naming a permission the creator has no control for.
+const WITHHELD_COMMERCIAL_USE: CommercialUse[] = [CommercialUse.SellMerge];
+
 const licensingSchema = z.object({
   allowNoCredit: z.boolean().optional(),
   allowCommercialUse: z
-    .preprocess((val) => {
-      if (!val) return undefined;
-      return Array.isArray(val) ? val : [val];
-    }, z.enum(CommercialUse).array().optional())
+    .preprocess(
+      (val) => {
+        if (!val) return undefined;
+        return Array.isArray(val) ? val : [val];
+      },
+      z
+        .enum(CommercialUse)
+        .array()
+        .refine((values) => !values.some((v) => WITHHELD_COMMERCIAL_USE.includes(v)), {
+          message: 'That commercial use permission is not available yet',
+        })
+        .optional()
+    )
     .optional(),
   allowDerivatives: z.boolean().optional(),
   allowDifferentLicense: z.boolean().optional(),
@@ -96,6 +116,10 @@ export const getAllModelsSchema = z.object({
   sort: z.enum(ModelSort).default(constants.modelFilterDefaults.sort),
   period: z.enum(MetricTimeframe).default(constants.modelFilterDefaults.period),
   periodMode: periodModeSchema,
+  // Opt-in: retry the first page at AllTime when `period` returns nothing. Off by
+  // default because an empty result is the correct answer on a browse feed — the
+  // caller has to be a surface where an empty page is a dead end, like /tag/:name.
+  periodFallback: z.boolean().optional(),
   rating: z
     .preprocess((val) => Number(val), z.number())
     .transform((val) => Math.floor(val))

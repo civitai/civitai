@@ -57,7 +57,7 @@ import { GeneratorMessageWarnings } from './GateRuleWarnings';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '~/components/generation_v2/utils';
-import { useRemixOfId } from '~/components/generation_v2/hooks/useRemixOfId';
+import { resolveRemixOfId, type RemixClaimFormState } from '~/utils/remix-claim';
 import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
 import {
   ecosystemByKey,
@@ -75,6 +75,8 @@ import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { outputResetPredicate } from '~/shared/form-graph/generation/reset';
 import { sourceMetadataStore, type SourceMetadata } from '~/store/source-metadata.store';
+import { remixProvenanceStore } from '~/store/remix-provenance.store';
+import { isDefined } from '~/utils/type-guards';
 import { remixStore } from '~/store/remix.store';
 import { useGenerationGraphStore } from '~/store/generation-graph.store';
 import { useTipStore } from '~/store/tip.store';
@@ -682,7 +684,6 @@ export function FormFooter({
   const { creatorTip, civitaiTip } = useTipStore();
   const features = useFeatureFlags();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
-  const remixOfId = useRemixOfId();
   const { resources: resourceData } = useResourceDataContext();
   const invalidateWhatIf = useInvalidateWhatIf();
   const membershipUpsell = useMembershipUpsell();
@@ -736,6 +737,9 @@ export function FormFooter({
     // (see generation_v2/FormFooter.tsx for the full ordering rationale)
     const result = store.validate();
     const fromAction = useGenerationGraphStore.getState().lastEntryAction;
+
+    // See generation_v2/FormFooter.tsx — resolved against the form, not the store.
+    const remixOfId = resolveRemixOfId(store.getSnapshot().state as RemixClaimFormState);
 
     if (!result.success) {
       try {
@@ -847,6 +851,12 @@ export function FormFooter({
       }
     }
 
+    // Collected by CURRENT url, outside the `needsSourceMetadata` gate — see
+    // generation_v2/FormFooter.tsx for why both of those matter.
+    const sourceProvenance = (snapshot.images ?? [])
+      .map((img) => remixProvenanceStore.getToken(img.url))
+      .filter(isDefined);
+
     const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;
     const civitaiTipRate = features.creatorComp ? civitaiTip : 0;
     const base = whatIfData?.cost?.base ?? 0;
@@ -868,6 +878,7 @@ export function FormFooter({
         buzzType: selectedBuzzType,
         ...(sourceMetadata ? { sourceMetadata } : {}),
         ...(sourceMetadataMap ? { sourceMetadataMap } : {}),
+        ...(sourceProvenance.length ? { sourceProvenance } : {}),
         externalId,
         acknowledgedSoftBlock,
       });

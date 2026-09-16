@@ -81,6 +81,7 @@ import { isDefined } from '~/utils/type-guards';
 import styles from '~/components/Search/SearchLayout.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 
 // const take = 20;
 
@@ -681,6 +682,7 @@ const ImageGridMedia = ({
         alt={`Imported Media - ${img.id}`}
         src={img.url}
         type={img.type}
+        width={DEFAULT_EDGE_IMAGE_WIDTH}
         className={`h-[250px] w-full object-cover`}
         anim={true}
       />

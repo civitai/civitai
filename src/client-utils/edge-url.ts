@@ -33,6 +33,8 @@ export type EdgeUrlProps = {
   type?: MediaType;
   original?: boolean;
   skip?: number;
+  /** The stored image's own width. Bounds the hi-DPI `srcSet` candidate; never emitted into the URL. */
+  sourceWidth?: number | null;
 };
 
 const typeExtensions: Record<MediaType, string> = {
@@ -53,43 +55,28 @@ const typeExtensions: Record<MediaType, string> = {
 export const COMMON_IMAGE_WIDTHS = [96, 320, 450, 512, 800, 1200, 1600, 2200] as const;
 
 /**
- * Below (and at) this requested width the render path forces `optimized=true`.
- *
- * 🔴 Load-bearing and deliberately shared: `useEdgeUrl` decides the `optimized` flag
- * from this number, so anything that has to reproduce a URL the browser actually
- * requests (e.g. `~/components/Announcements/announcement-image`, whose health monitor
- * would otherwise probe a variant nobody loads and report a false failure) must read
- * this constant rather than hardcoding the threshold.
+ * `resolveOptimized` has to reach this answer BEFORE `getEdgeUrl` infers it: the cacher ignores
+ * `optimized` on an original request, but emitting it still changes the URL — and therefore the
+ * CDN cache key — for every download.
  */
-export const OPTIMIZED_WIDTH_THRESHOLD = 450;
-
-/** Whether the render path forces `optimized=true` for a given requested width. */
-export function shouldForceOptimized(width?: number | null) {
-  return !!width && width <= OPTIMIZED_WIDTH_THRESHOLD;
+export function resolvesToOriginal({
+  width,
+  height,
+  original,
+}: Pick<EdgeUrlProps, 'width' | 'height' | 'original'>) {
+  return original ?? (!width && !height);
 }
 
 /**
- * The `optimized` flag the render path emits.
- *
- * `hiDpi` forces it because the 2x variant is where the format choice stops being free:
- * unoptimized, a 1600px variant of a detailed image measures ~1MB against ~305kB optimized.
- * Nothing a user picked is lost — a resized variant is re-encoded, so the generation
- * parameters carried in the source PNG's `tEXt` chunk are absent from it in either format.
- * `original` requests never reach here with `hiDpi`, so the preference still governs the
- * lightbox and downloads.
+ * Every derived variant is compressed. The only request that is not is an original, where the
+ * cacher ignores the flag anyway — emitting it there would just split the CDN key.
  */
 export function resolveOptimized({
-  optimized,
   width,
-  hiDpi,
-  imageFormat,
-}: {
-  optimized?: boolean;
-  width?: number | null;
-  hiDpi?: boolean;
-  imageFormat?: string | null;
-}) {
-  return !!(optimized || shouldForceOptimized(width) || hiDpi || imageFormat === 'optimized');
+  height,
+  original,
+}: Pick<EdgeUrlProps, 'width' | 'height' | 'original'>) {
+  return !resolvesToOriginal({ width, height, original });
 }
 
 /**
@@ -134,22 +121,48 @@ export const SRCSET_DPR = 2;
  * mismatch, and a second download of whichever variant lost. The browser resolves a
  * descriptor list itself, before React runs.
  *
- * Returns undefined when the 2x variant would land on the same rung as the 1x one, so the
- * attribute is omitted rather than listing one URL twice.
+ * Returns undefined when no ladder rung fits between the 1x variant and the lower of
+ * `SRCSET_DPR * base` and the source's own width — so the attribute is omitted rather than
+ * listing one URL twice or promising pixels the source has not got.
  */
 export function getEdgeUrlSrcSet(src: string, options: Omit<EdgeUrlProps, 'src'> = {}) {
-  const { width, original } = options;
+  const { width, original, sourceWidth } = options;
   if (!src || src.startsWith('http') || src.startsWith('blob')) return undefined;
   if (!width || original) return undefined;
 
   const base = clampEdgeWidth(snapWidthToCommonSize(width));
-  const scaled = clampEdgeWidth(snapWidthToCommonSize(width * SRCSET_DPR));
-  if (scaled <= base) return undefined;
+  const scaled = hiDpiCandidateWidth(base, sourceWidth);
+  if (!scaled) return undefined;
+
+  // Floored, never rounded up: a descriptor that overstates a candidate's density tells the
+  // browser it has pixels it does not have.
+  const density = Math.floor((scaled / base) * 100) / 100;
 
   return [
     `${srcSetSafe(getEdgeUrl(src, { ...options, width: base }))} 1x`,
-    `${srcSetSafe(getEdgeUrl(src, { ...options, width: scaled }))} ${SRCSET_DPR}x`,
+    `${srcSetSafe(getEdgeUrl(src, { ...options, width: scaled }))} ${density}x`,
   ].join(', ');
+}
+
+/**
+ * The widest ladder rung above `base` that exceeds neither `SRCSET_DPR * base` nor the source.
+ *
+ * NOT `snapWidthToCommonSize(base * SRCSET_DPR)`: that rounds UP when 2x lands between rungs, so a
+ * 450 card asks for 1200 — which the cacher serves identically to `width=1200`, ~5x the bytes of
+ * the 450 rung for a box rendering ~318 CSS px.
+ *
+ * 🔴 The source bound is separate and equally load-bearing: the cacher UPSCALES rather than
+ * refusing, so an unbounded 2x candidate bills real bytes for interpolated pixels on any image
+ * narrower than the candidate — which most generated images are. When no rung fits, the attribute
+ * is omitted and the browser keeps the 1x variant.
+ */
+export function hiDpiCandidateWidth(base: number, sourceWidth?: number | null) {
+  const ceiling = Math.min(base * SRCSET_DPR, sourceWidth || Infinity);
+  for (let i = COMMON_IMAGE_WIDTHS.length - 1; i >= 0; i--) {
+    const rung = clampEdgeWidth(COMMON_IMAGE_WIDTHS[i]);
+    if (rung > base && rung <= ceiling) return rung;
+  }
+  return undefined;
 }
 
 /**

@@ -120,6 +120,7 @@ export const CosmeticPreview = ({
                 alt={stickerData.slug ? `:${stickerData.slug}:` : cosmetic.name}
                 width={size}
                 anim={stickerData.animated}
+                optimized
                 style={{ width: size, height: size, objectFit: 'contain' }}
               />
             ))}
@@ -175,6 +176,7 @@ export const CosmeticPreview = ({
                     style={{ objectFit: 'cover', width: '100%', height: '100%' }}
                     src={image.url}
                     width={100}
+                    optimized
                   />
                 </UnstyledButton>
               );

@@ -13,8 +13,17 @@ export const FEED_PRIMARY_TIMEOUT_MS = 5_000;
 const requestCounter = registerCounterWithLabels({
   name: 'feed_primary_requests_total',
   help: 'Image-feed searches answered by the feed service instead of Meilisearch, by outcome',
-  labelNames: ['outcome'] as const,
+  labelNames: ['outcome', 'reason'] as const,
 });
+
+// These three mapping reasons carry request text; the rest are a fixed set.
+const UNBOUNDED_REASONS = ['sort', 'period', 'types'];
+export function reasonLabel(reason: string) {
+  const head = reason.split(':')[0] as string;
+  return UNBOUNDED_REASONS.includes(head) ? head : reason;
+}
+const count = (outcome: string, reason = '') =>
+  requestCounter.inc({ outcome, reason: reasonLabel(reason) });
 
 const hydrateDuration = registerHistogram({
   name: 'feed_primary_hydrate_duration_seconds',
@@ -87,9 +96,14 @@ export async function serveFromFeed<T extends { id: number }>(
   input: CapturableSearchInput,
   deps: FeedPrimaryDeps<T>
 ): Promise<FeedPrimaryResult<T>> {
+  // Meilisearch answers a follow list with no creators as an empty feed, whatever else is set.
+  if (input.followed === true && input.followedUserIds?.length === 0) {
+    count('served');
+    return { ok: true, page: { data: [], nextCursor: undefined, feedMs: 0 } };
+  }
   const mapping = mapSearchInputToFeedQuery(input, 'primary');
   if (!mapping.ok) {
-    requestCounter.inc({ outcome: 'unmapped' });
+    count('unmapped', mapping.reason);
     return { ok: false, reason: mapping.reason };
   }
   let answer: FeedAnswer;
@@ -98,16 +112,16 @@ export async function serveFromFeed<T extends { id: number }>(
   } catch (e) {
     const name = (e as Error)?.name;
     const reason = name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'error';
-    requestCounter.inc({ outcome: reason });
+    count(reason, reason === 'error' ? 'fetch' : '');
     return { ok: false, reason };
   }
   if (answer.status !== 200) {
-    requestCounter.inc({ outcome: 'error' });
+    count('error', `status:${answer.status}`);
     return { ok: false, reason: `status:${answer.status}` };
   }
   const nextCursor = answer.nextCursor ? encodeFeedCursor(answer.nextCursor) : undefined;
   if (!answer.ids.length) {
-    requestCounter.inc({ outcome: 'served' });
+    count('served');
     return { ok: true, page: { data: [], nextCursor, feedMs: answer.ms, route: answer.route } };
   }
   let rows: T[];
@@ -115,7 +129,7 @@ export async function serveFromFeed<T extends { id: number }>(
   try {
     rows = await deps.hydrate(answer.ids);
   } catch {
-    requestCounter.inc({ outcome: 'error' });
+    count('error', 'hydrate:error');
     return { ok: false, reason: 'hydrate:error' };
   } finally {
     endHydrate();
@@ -123,7 +137,7 @@ export async function serveFromFeed<T extends { id: number }>(
   // getAllImages answers its own statement timeout with an empty page; ids that hydrate to
   // nothing are that, not the end of the feed.
   if (!rows.length) {
-    requestCounter.inc({ outcome: 'error' });
+    count('error', 'hydrate:empty');
     return { ok: false, reason: 'hydrate:empty' };
   }
   const byId = new Map(rows.map((r) => [r.id, r]));
@@ -131,7 +145,7 @@ export async function serveFromFeed<T extends { id: number }>(
     const row = byId.get(id);
     return row ? [row] : [];
   });
-  requestCounter.inc({ outcome: 'served' });
+  count('served');
   return { ok: true, page: { data, nextCursor, feedMs: answer.ms, route: answer.route } };
 }
 

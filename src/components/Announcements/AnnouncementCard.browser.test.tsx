@@ -6,6 +6,9 @@ import type * as CurrentUser from '~/hooks/useCurrentUser';
 import type * as FeatureFlagsProvider from '~/providers/FeatureFlagsProvider';
 
 const mocks = vi.hoisted(() => ({ openExternalLinkWarning: vi.fn() }));
+const viewer = vi.hoisted(() => ({
+  current: { id: 1, isModerator: false } as Record<string, unknown>,
+}));
 
 vi.mock('~/components/ExternalLinkWarning/openExternalLinkWarning', () => ({
   openExternalLinkWarning: mocks.openExternalLinkWarning,
@@ -21,7 +24,7 @@ vi.mock('~/providers/IsClientProvider', async (importOriginal) => ({
 
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   ...(await importOriginal<typeof CurrentUser>()),
-  useCurrentUser: () => ({ id: 1, isModerator: false }),
+  useCurrentUser: () => viewer.current,
 }));
 
 // `useTrackImpression` calls `useFeatureFlags()` unconditionally, even with no
@@ -150,5 +153,26 @@ describe('CustomMarkdown without warnOnExternalLinks', () => {
     } finally {
       document.removeEventListener('click', swallowNavigation, true);
     }
+  });
+});
+
+describe('AnnouncementCard banner image', () => {
+  // 🔴 The half a node test cannot see. `announcement-media-check` probes
+  // `getAnnouncementImageUrl`, and that is only the URL users load while THIS component renders the
+  // same variant. Let the two drift and the monitor calls a 404ing banner healthy.
+  test('renders the exact variant the media-check job probes', async () => {
+    const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
+    const { getAnnouncementImageUrl } = await import(
+      '~/components/Announcements/announcement-image'
+    );
+    const key = '7171bdc6-8007-492c-84ad-f607e4dbd320';
+
+    renderWithProviders(<AnnouncementCard {...base} cover={{ kind: 'key', src: key }} />);
+
+    const img = page.getByAltText('Announcement banner image');
+    await expect.element(img).toHaveAttribute('src', getAnnouncementImageUrl(key));
+    // Named separately: the assertion above compares the card against the helper, so both moving
+    // together would keep it green. This is the property they must both have.
+    await expect.element(img).toHaveAttribute('src', expect.stringContaining('optimized=true'));
   });
 });

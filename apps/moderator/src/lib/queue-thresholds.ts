@@ -47,6 +47,10 @@ const THRESHOLDS: Record<string, readonly number[]> = {
   articleReviews: [30, 20, 10, 5, 0],
   // Ours, not Retool's: a healthy pipeline holds 0.
   stuckIngestion: [200, 50, 10, 1, 0],
+  // Overdue rows only — never queue DEPTH, which is large and healthy for the types that hold rows on
+  // purpose. A first cut, unlike the scales above: nothing has been observed stuck long enough to say
+  // where the steps belong, so treat these as provisional and move them once a real incident sizes one.
+  jobQueueOverdue: [1000, 200, 50, 1, 0],
 };
 
 /** Retool's five-step scale, worst first. Tailwind rather than its hex, so the palette stays ours. */
