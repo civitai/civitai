@@ -65,7 +65,7 @@ async function renderBell(creatorName?: string | null) {
   await expect.element(page.getByText('bell rendered')).toBeInTheDocument();
 }
 
-async function renderMenuItem(creatorName?: string | null) {
+async function renderMenuItem(creatorName?: string | null, muted = false) {
   const { AnnouncementMuteMenuItem } = await import(
     '~/components/Announcements/AnnouncementMuteToggle'
   );
@@ -74,7 +74,7 @@ async function renderMenuItem(creatorName?: string | null) {
       <span>menu rendered</span>
       <Menu opened>
         <Menu.Dropdown>
-          <AnnouncementMuteMenuItem creatorId={CREATOR} creatorName={creatorName} muted={false} />
+          <AnnouncementMuteMenuItem creatorId={CREATOR} creatorName={creatorName} muted={muted} />
         </Menu.Dropdown>
       </Menu>
     </>
@@ -108,7 +108,18 @@ describe('the mute control names the creator it is rendered for', () => {
     await renderBell('Kolors');
     await userEvent.click(page.getByRole('button', { name: 'Mute announcements' }));
 
+    // The count matters as much as the argument: a doubled handler still satisfies
+    // `toHaveBeenCalledWith`, and double-toggling lands back where it started.
+    expect(mocks.toggle).toHaveBeenCalledTimes(1);
     expect(mocks.toggle).toHaveBeenCalledWith(true);
+  });
+
+  test('the unmute label names the creator too', async () => {
+    await renderMenuItem('Kolors', true);
+
+    expect(page.getByRole('menuitem').element().textContent).toBe(
+      'Unmute announcements from Kolors'
+    );
   });
 
   // Paired with the positives above: without it, a component that hard-coded some name would
