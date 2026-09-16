@@ -2875,6 +2875,14 @@ type GetAllImagesIndexResult = AsyncReturnType<typeof getAllImages>;
 type GetAllImagesIndexSourcedResult = GetAllImagesIndexResult & {
   source?: 'feed' | AsyncReturnType<typeof getImagesFromSearch>['source'];
 };
+async function getUserIdByUsername(username: string) {
+  const user =
+    (await dbRead.user.findUnique({ where: { username }, select: { id: true } })) ??
+    (await dbWrite.user.findUnique({ where: { username }, select: { id: true } }));
+  if (!user) throw throwNotFoundError('User not found');
+  return user.id;
+}
+
 export const getAllImagesIndex = async (
   input: GetAllImagesInput
 ): Promise<GetAllImagesIndexSourcedResult> => {
@@ -2939,8 +2947,17 @@ export const getAllImagesIndex = async (
   const entry = isNumber(cursorParsed?.[1]) ? Number(cursorParsed?.[1]) : undefined;
 
   const currentUserId = user?.id;
+  const userId =
+    input.userId ?? (input.username ? await getUserIdByUsername(input.username) : undefined);
 
-  const searchInput = { ...input, currentUserId, isModerator: user?.isModerator, offset, entry };
+  const searchInput = {
+    ...input,
+    userId,
+    currentUserId,
+    isModerator: user?.isModerator,
+    offset,
+    entry,
+  };
   // The feed service picks and orders the page and Postgres supplies the rows; Meilisearch is
   // not consulted. What the feed cannot serve (unmapped shape, timeout, error) goes to Meilisearch.
   if (feedPrimaryAvailable()) {

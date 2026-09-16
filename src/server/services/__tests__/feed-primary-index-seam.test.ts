@@ -51,7 +51,7 @@ vi.mock('~/server/services/feed-primary.service', async (importOriginal) => {
 });
 
 import { getAllImagesIndex } from '../image.service';
-import '~/__tests__/mocks/db.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const request = () =>
   ({
@@ -89,5 +89,21 @@ describe('getAllImagesIndex with feed-service-primary', () => {
     const r = await getAllImagesIndex(request());
     expect(fetchFeedPrimary).toHaveBeenCalledTimes(1);
     expect(r.items).toEqual([]);
+  });
+
+  it('scopes the feed to the creator a profile page names by username', async () => {
+    primaryOn.mockReturnValue(true);
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 7 });
+    fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [], nextCursor: undefined });
+    await getAllImagesIndex({
+      ...request(),
+      sort: 'Newest',
+      period: 'AllTime',
+      username: 'someone',
+    });
+    expect(fetchFeedPrimary).toHaveBeenCalledWith(
+      expect.stringContaining('userIds=7'),
+      expect.anything()
+    );
   });
 });
