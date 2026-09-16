@@ -23,7 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * module boundary, so the router runs in-process.
  *
  * RED/GREEN MATRIX, measured rather than asserted — at `7def68db71` (this branch's base) this file
- * is 18 failed / 10 passed; at HEAD it is 28 passed. The eighteen are the regression coverage.
+ * is 19 failed / 10 passed; at HEAD it is 29 passed. The nineteen are the regression coverage.
  * The ten that pass BOTH WAYS are marked `INVARIANT GUARD` below and are NOT regression coverage:
  * six pin properties the base happened to satisfy for the trivial reason that it scoped nothing at
  * all, and four cover `publishGenerationOutputs`, whose two guards already existed there and had
@@ -402,8 +402,8 @@ describe('blocks.pollWorkflow — viewer scope', () => {
     // exemption: it drives the viewer's OWN id, so exempted and not-exempted produce the same
     // pass. And it cannot show the app-tag comparison RAN rather than being skipped for this
     // token: it drives a MATCHING tag, so those two also produce the same pass. Each converse has
-    // its own case — `a dev:live token gets NO viewer exemption` (both paths) and `a dev:live
-    // token gets NO app-scope exemption`.
+    // its own case — `a dev:live token gets NO viewer exemption` and `a dev:live token gets NO
+    // app-scope exemption`, both on both paths.
     //
     // 🔴 WHAT IT DOES NOT PIN, stated because an earlier revision of this comment claimed it did:
     // it is NOT a tripwire on dev-token minting. `dev:live` survives the app scope only because a
@@ -517,6 +517,26 @@ describe('blocks.cancelWorkflow — viewer scope', () => {
         'workflow does not belong to this viewer'
       );
     }
+    expect(mockCancelWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a dev:live token gets NO app-scope exemption — cancel', async () => {
+    // 🔴 THE TWIN OF THE POLL CASE, AND THE CELL THAT IS ACTUALLY REACHABLE. The same weakening at
+    // `cancelAppWorkflow` / `publishGenerationOutputs` / `resolveOwnedWorkflowOutputs` is inert for
+    // the tokens it would exempt: those three sit behind the `block_workflows` row check, and all
+    // three submit sites skip the row write when `claims.dev === true`, so guard (a) already
+    // refuses a dev token there. `cancelWorkflow` deliberately consults no row — there is an
+    // INVARIANT GUARD above pinning that — so its app-tag assertion is the SOLE app binding, and a
+    // `claims.dev` exemption here is live. It is also the larger consequence of the two cells that
+    // are: poll discloses, cancel discloses AND stops.
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ dev: true, appId: 'local-myapp' }));
+    mockGetWorkflow.mockResolvedValue(
+      workflowFixture({ tags: ['civitai', `app-block:${OTHER_APP_ID}`], cost: { total: 31 } })
+    );
+
+    await expect(
+      caller().cancelWorkflow({ blockToken: 'tok', workflowId: OWN_ID })
+    ).rejects.toThrow('workflow is not tagged for this app');
     expect(mockCancelWorkflow).not.toHaveBeenCalled();
   });
 
