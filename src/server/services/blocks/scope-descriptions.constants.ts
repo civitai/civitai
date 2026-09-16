@@ -21,7 +21,27 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   'user:read:self': "Read the viewer's username and account status",
   'models:read:self': 'Read the model on the page where the block is mounted',
   'buzz:read:self': "Read the viewer's Buzz balance",
-  'ai:write:budgeted': 'Submit generations with a per-call Buzz cap',
+  // 🔴 THIS SENTENCE IS A CONSENT PROMISE, NOT A LABEL — and it was rewritten
+  // because the scope's MEANING widened underneath it, not because the old
+  // wording was unclear.
+  //
+  // It previously read "Submit generations with a per-call Buzz cap". Under the
+  // no-allowlist direction the per-call cap half is still exactly true, but
+  // "generations" stopped being: the scope now reaches every orchestrator step
+  // type that is not platform-internal (`steps/orchestrator-denylist.ts`), which
+  // includes hosted LLM inference and model training. A user who agreed to the
+  // old sentence did not agree to this one.
+  //
+  // 🔴 CHANGING THIS STRING DOES NOT RE-ASK ANYBODY. Consent is stored per
+  // (user, app) in `app_user_scope_grants` and the lookup does NOT read the
+  // `version` column it stamps, so no app release re-prompts. Existing grants
+  // must be revoked for the new text to be seen — the raw SQL for that is in
+  // `scripts/oneoffs/2026-09-16-reconsent-ai-write-budgeted.sql`, and it is
+  // applied BY HAND, AFTER this copy is confirmed live. Applied before, users
+  // re-consent to the OLD sentence and the exercise is void while both halves
+  // individually look done.
+  'ai:write:budgeted':
+    "Run AI work that spends the viewer's Buzz, with a per-call cap — including generating images and video, running language models, and training models",
   'social:tip:self': 'Post tips on behalf of the viewer',
   'apps:storage:read': "Read this app's private per-install data store",
   'apps:storage:write': "Write to this app's private per-install data store",
