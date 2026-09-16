@@ -31,7 +31,7 @@ export class BlockRevocation {
     try {
       await redis.set(revokedKey(blockInstanceId), '1', { EX: REVOCATION_TTL_SECONDS });
     } catch {
-      // Fail open: an uninstall/toggle/ban write path must not block on a
+      // Fail open: an uninstall/toggle write path must not block on a
       // Redis incident. If the marker isn't written, tokens for this
       // instance remain valid until natural exp — exposure is bounded by the
       // token lifetime rather than by Redis-recovery time. Accepted tradeoff.
