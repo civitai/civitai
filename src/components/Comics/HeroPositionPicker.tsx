@@ -3,7 +3,6 @@ import { IconX } from '@tabler/icons-react';
 import { useCallback, useRef } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { useOptimizedFlag } from '~/hooks/useMediaQuality';
 
 /**
  * Lets the user drag a hero image vertically within a 16:9 frame
@@ -23,7 +22,6 @@ export function HeroPositionPicker({
   onRemove: () => void;
   className?: string;
 }) {
-  const optimized = useOptimizedFlag();
   const containerRef = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
   const startY = useRef(0);
@@ -75,7 +73,7 @@ export function HeroPositionPicker({
         onPointerCancel={handlePointerUp}
       >
         <img
-          src={getEdgeUrl(url, { width: 720, optimized })}
+          src={getEdgeUrl(url, { width: 720, optimized: true })}
           alt="Hero"
           style={{
             width: '100%',

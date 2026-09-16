@@ -15,7 +15,6 @@ import clsx from 'clsx';
 import { useState } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { useOptimizedFlag } from '~/hooks/useMediaQuality';
 import type { IterationEntry, SourceImage } from './iterative-editor.types';
 import styles from './IterativeImageEditor.module.scss';
 
@@ -54,12 +53,11 @@ export function IterationMessage({
   isImageBlurred,
   unlockOnRedUrl,
 }: IterationMessageProps) {
-  const optimized = useOptimizedFlag();
   const hasMultipleImages = iteration.resultImages.length > 1;
   const selectedUrl = iteration.resultImage?.url;
 
   const imageUrl = iteration.resultImage
-    ? getEdgeUrl(iteration.resultImage.previewUrl, { width: 400, optimized }) ??
+    ? getEdgeUrl(iteration.resultImage.previewUrl, { width: 400, optimized: true }) ??
       iteration.resultImage.previewUrl
     : null;
 
@@ -151,7 +149,7 @@ export function IterationMessage({
         <div className={styles.multiImageGrid}>
           {iteration.resultImages.map((img, idx) => {
             const thumbUrl =
-              getEdgeUrl(img.previewUrl, { width: 200, optimized }) ?? img.previewUrl;
+              getEdgeUrl(img.previewUrl, { width: 200, optimized: true }) ?? img.previewUrl;
             const isSelected = img.url === selectedUrl;
             const blurred = !!isImageBlurred?.(img);
             return (
@@ -214,7 +212,8 @@ export function IterationMessage({
                     onClick={(e) => {
                       e.stopPropagation();
                       onZoomImage(
-                        getEdgeUrl(img.previewUrl, { width: 1200, optimized }) ?? img.previewUrl
+                        getEdgeUrl(img.previewUrl, { width: 1200, optimized: true }) ??
+                          img.previewUrl
                       );
                     }}
                   >
@@ -235,8 +234,10 @@ export function IterationMessage({
               !selectedBlurred && onZoomImage
                 ? () =>
                     onZoomImage(
-                      getEdgeUrl(iteration.resultImage!.previewUrl, { width: 1200, optimized }) ??
-                        iteration.resultImage!.previewUrl
+                      getEdgeUrl(iteration.resultImage!.previewUrl, {
+                        width: 1200,
+                        optimized: true,
+                      }) ?? iteration.resultImage!.previewUrl
                     )
                 : undefined
             }

@@ -2,7 +2,6 @@ import { ActionIcon, Badge, Button, Group, Loader, Modal, Text, Tooltip } from '
 import { IconCheck, IconExternalLink, IconEye, IconZoomIn } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { useOptimizedFlag } from '~/hooks/useMediaQuality';
 import { Flags } from '~/shared/utils/flags';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
@@ -75,7 +74,6 @@ export function CandidateImageModal({
   blurMatureCandidates = false,
   isSelecting,
 }: CandidateImageModalProps) {
-  const optimized = useOptimizedFlag();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [zoomedKey, setZoomedKey] = useState<string | null>(null);
 
@@ -258,7 +256,7 @@ export function CandidateImageModal({
                   disabled={isSelecting}
                 >
                   <img
-                    src={getEdgeUrl(slot.key, { width: 400, optimized })}
+                    src={getEdgeUrl(slot.key, { width: 400, optimized: true })}
                     alt="Candidate"
                     style={{
                       width: '100%',
@@ -383,7 +381,7 @@ export function CandidateImageModal({
       >
         {zoomedKey && (
           <img
-            src={getEdgeUrl(zoomedKey, { width: 1024, optimized })}
+            src={getEdgeUrl(zoomedKey, { width: 1024, optimized: true })}
             alt="Zoomed candidate"
             style={{ width: '100%', borderRadius: 'var(--mantine-radius-md)' }}
           />

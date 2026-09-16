@@ -1,11 +1,6 @@
 import type { DefaultMantineColor, ThemeIconVariant } from '@mantine/core';
 import { Divider, List, Stack, Text, ThemeIcon } from '@mantine/core';
-import {
-  IconAdCircleOff,
-  IconCircleCheck,
-  IconCircleX,
-  IconPhotoStar,
-} from '@tabler/icons-react';
+import { IconAdCircleOff, IconCircleCheck, IconCircleX } from '@tabler/icons-react';
 import { finiteOrNull, monthlyPricingAllowance } from '@civitai/buzz';
 
 export const benefitIconSize = 18;
@@ -13,10 +8,6 @@ const themeIconSize = benefitIconSize + 6;
 
 const defaultBenefits = [
   { content: 'Ad free browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
-  {
-    content: 'Lossless image quality while browsing',
-    icon: <IconPhotoStar size={benefitIconSize} />,
-  },
   {
     content: (
       <Text>

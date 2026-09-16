@@ -7,7 +7,6 @@ import {
   resolveOptimized,
   type EdgeUrlProps,
 } from '~/client-utils/edge-url';
-import { useMediaQuality } from '~/hooks/useMediaQuality';
 
 // The pure URL builder now lives in `~/client-utils/edge-url` (React-free, so server
 // modules can resolve a delivery URL without pulling hooks/providers into their import
@@ -22,17 +21,15 @@ export {
   resolveOptimized,
   resolvesToOriginal,
   snapWidthToCommonSize,
-  toMediaQuality,
 } from '~/client-utils/edge-url';
-export type { EdgeUrlProps, MediaQuality } from '~/client-utils/edge-url';
+export type { EdgeUrlProps } from '~/client-utils/edge-url';
 
-/** @param hiDpi also emit a variant sized for a 2x display. The format is the viewer's. */
+/** @param hiDpi also emit a variant sized for a 2x display. */
 export function useEdgeUrl(
   src: string,
   options: Omit<EdgeUrlProps, 'src'> | undefined,
   hiDpi?: boolean
 ) {
-  const { quality } = useMediaQuality();
   const inferredType = getInferredMediaType(src, options);
   let type = options?.type ?? inferredType;
 
@@ -53,14 +50,9 @@ export function useEdgeUrl(
   // Decided in `edge-url` so anything that has to reproduce this outside React (the
   // announcement banner health monitor) cannot drift from it.
   const optimized = resolveOptimized({
-    optimized: options?.optimized,
     width: options?.width,
     height: options?.height,
     original: options?.original,
-    // Video transcodes to MP4/WebM for everyone, so lossless buys nothing. Keyed off the SOURCE
-    // media, so a poster built from a separate `thumbnailUrl` (an image uuid) does NOT reach this
-    // — `EdgeVideo` passes `optimized` itself there.
-    quality: inferredType === 'video' ? 'compressed' : quality,
   });
 
   const resolved = {

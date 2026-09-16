@@ -39,7 +39,6 @@ import { useRouter } from 'next/router';
 import { useState } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { useOptimizedFlag } from '~/hooks/useMediaQuality';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { Page } from '~/components/AppLayout/Page';
@@ -91,7 +90,6 @@ function SortableRefImage({ id, children }: { id: number; children: React.ReactN
 }
 
 function ReferenceUpload() {
-  const optimized = useOptimizedFlag();
   const router = useRouter();
   const { id } = router.query;
   const projectId = Number(id);
@@ -731,7 +729,7 @@ function ReferenceUpload() {
                                       uploadToCF
                                     );
                                     const previewUrl =
-                                      getEdgeUrl(cfId, { width: 200, optimized }) ?? img.url;
+                                      getEdgeUrl(cfId, { width: 200, optimized: true }) ?? img.url;
                                     setUploadedImages((prev) => [
                                       ...prev,
                                       { url: cfId, previewUrl, width, height },
@@ -890,7 +888,7 @@ function ReferenceUpload() {
                                   uploadImageToCF
                                 );
                                 const previewUrl =
-                                  getEdgeUrl(cfId, { width: 200, optimized }) ?? img.url;
+                                  getEdgeUrl(cfId, { width: 200, optimized: true }) ?? img.url;
                                 // Create a synthetic File-like blob for state consistency
                                 const blob = await fetch(previewUrl).then((r) => r.blob());
                                 const file = new File([blob], 'generator-image.jpg', {

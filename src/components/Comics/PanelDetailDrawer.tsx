@@ -17,7 +17,6 @@ import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { openConfirmModal } from '@mantine/modals';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { useOptimizedFlag } from '~/hooks/useMediaQuality';
 import { getNsfwLabel } from '~/components/Comics/PanelCard';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
@@ -82,7 +81,6 @@ export function PanelDetailDrawer({
   onDelete,
   onIterativeEdit,
 }: PanelDetailDrawerProps) {
-  const optimized = useOptimizedFlag();
   const utils = trpc.useUtils();
   const features = useFeatureFlags();
 
@@ -169,7 +167,7 @@ export function PanelDetailDrawer({
                   </div>
                 ) : detailPanel.imageUrl ? (
                   <img
-                    src={getEdgeUrl(detailPanel.imageUrl, { width: 800, optimized })}
+                    src={getEdgeUrl(detailPanel.imageUrl, { width: 800, optimized: true })}
                     alt="Panel"
                   />
                 ) : (

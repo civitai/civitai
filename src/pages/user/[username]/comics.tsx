@@ -17,7 +17,6 @@ import { getNsfwLabel } from '~/components/Comics/PanelCard';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useOptimizedFlag } from '~/hooks/useMediaQuality';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -206,7 +205,6 @@ type ProjectItem = RouterOutput['comics']['getMyProjects'][number];
 
 function ProjectCard({ project }: { project: ProjectItem }) {
   const features = useFeatureFlags();
-  const optimized = useOptimizedFlag();
   const imageUrl = project.coverImage?.url ?? project.thumbnailUrl;
   const hasNsfw =
     project.nsfwLevel !== 0 && Flags.intersects(project.nsfwLevel, nsfwBrowsingLevelsFlag);
@@ -233,7 +231,7 @@ function ProjectCard({ project }: { project: ProjectItem }) {
           </div>
         ) : imageUrl ? (
           <img
-            src={getEdgeUrl(imageUrl, { width: 450, optimized })}
+            src={getEdgeUrl(imageUrl, { width: 450, optimized: true })}
             alt={project.name}
             className="h-full w-full object-cover"
           />

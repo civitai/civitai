@@ -11,9 +11,6 @@ vi.mock('~/env/client', () => ({
 
 // `useEdgeUrl` is the REAL render path and the thing the monitor must agree with. With
 // `useCurrentUser` stubbed it is a pure function, exercisable from the node suite.
-//
-// The viewer is mutable so one test can be a paying member on lossless — the case the banner's
-// explicit `optimized` exists to survive. Defaults to signed out.
 const viewer = vi.hoisted(() => ({ current: null as null | Record<string, unknown> }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => viewer.current }));
 vi.mock('~/providers/BrowserSettingsProvider', () => ({ useBrowsingSettings: () => false }));
@@ -58,25 +55,15 @@ describe('getAnnouncementImageUrl', () => {
     expect(getAnnouncementImageUrl(KEY)).not.toBe(getEdgeUrl(KEY, { original: true }));
   });
 
-  it('is compressed for a viewer entitled to lossless, because the banner asks explicitly', () => {
-    // Without the explicit flag a lossless member would load a DIFFERENT variant than
-    // `announcement-media-check` probes, and the monitor would call a 404ing banner healthy.
-    viewer.current = { isPaidMember: true, filePreferences: { imageFormat: 'metadata' } };
-    try {
-      // Control: the same viewer DOES get lossless without the flag, so the stub is taking effect.
-      expect(resolveRenderedUrl(KEY, { width: ANNOUNCEMENT_IMAGE_WIDTH }).url).not.toContain(
-        'optimized'
-      );
-
-      const rendered = resolveRenderedUrl(KEY, {
-        width: ANNOUNCEMENT_IMAGE_WIDTH,
-        optimized: true,
-      });
-      expect(rendered.url).toContain('optimized=true');
-      expect(getAnnouncementImageUrl(KEY)).toBe(rendered.url);
-    } finally {
-      viewer.current = null;
-    }
+  it('matches the variant the render path produces, flag and all', () => {
+    // If the helper and the render path disagree, `announcement-media-check` probes a URL nobody
+    // loads and calls a 404ing banner healthy.
+    const rendered = resolveRenderedUrl(KEY, {
+      width: ANNOUNCEMENT_IMAGE_WIDTH,
+      optimized: true,
+    });
+    expect(rendered.url).toContain('optimized=true');
+    expect(getAnnouncementImageUrl(KEY)).toBe(rendered.url);
   });
 
   it('equals the URL the render path actually produces, not a hand-rolled mirror', () => {
@@ -97,15 +84,6 @@ describe('getAnnouncementImageUrl', () => {
       const expected = resolveRenderedUrl(KEY, { width, optimized: true }).url;
       const actual = getEdgeUrl(KEY, { width, optimized: true });
       expect(actual, `width=${width}`).toBe(expected);
-    }
-  });
-
-  it('drops the flag entirely for a lossless viewer (never optimized=false)', () => {
-    viewer.current = { isPaidMember: true, filePreferences: { imageFormat: 'metadata' } };
-    try {
-      expect(resolveRenderedUrl(KEY, { width: 512 }).url).not.toContain('optimized');
-    } finally {
-      viewer.current = null;
     }
   });
 });

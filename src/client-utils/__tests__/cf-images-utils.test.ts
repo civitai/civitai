@@ -17,7 +17,6 @@ import {
   getEdgeUrlSrcSet,
   resolveOptimized,
   snapWidthToCommonSize,
-  toMediaQuality,
 } from '~/client-utils/cf-images-utils';
 
 describe('snapWidthToCommonSize', () => {
@@ -222,81 +221,30 @@ describe('getEdgeUrlSrcSet', () => {
   });
 });
 
-describe('toMediaQuality', () => {
-  it('reads an unset preference as compressed — the default flip, with nothing written', () => {
-    expect(toMediaQuality({})).toBe('compressed');
-    expect(toMediaQuality({ canUseLossless: true })).toBe('compressed');
-  });
-
-  it('gives lossless only to a viewer who both chose it and is entitled to it', () => {
-    expect(toMediaQuality({ imageFormat: 'metadata', canUseLossless: true })).toBe('lossless');
-    expect(toMediaQuality({ imageFormat: 'metadata', canUseLossless: false })).toBe('compressed');
-  });
-
-  it('reads an explicit compressed choice as compressed even for a member', () => {
-    expect(toMediaQuality({ imageFormat: 'optimized', canUseLossless: true })).toBe('compressed');
-  });
-});
-
 describe('resolveOptimized', () => {
-  const lossless = { quality: 'lossless' } as const;
-  const compressed = { quality: 'compressed' } as const;
-
-  it('compresses a non-member in card feeds AND at preview width', () => {
-    expect(resolveOptimized({ width: 450, ...compressed })).toBe(true);
-    expect(resolveOptimized({ width: 800, ...compressed })).toBe(true);
-  });
-
-  it('honours lossless at EVERY width, card feeds included', () => {
-    expect(resolveOptimized({ width: 450, ...lossless })).toBe(false);
-    expect(resolveOptimized({ width: 96, ...lossless })).toBe(false);
-    expect(resolveOptimized({ width: 800, ...lossless })).toBe(false);
-  });
-
-  it('compresses when quality is unknown', () => {
-    // A viewer resolved before the session lands must not flash the expensive variant.
+  it('compresses every derived variant, at every width', () => {
+    expect(resolveOptimized({ width: 96 })).toBe(true);
+    expect(resolveOptimized({ width: 450 })).toBe(true);
     expect(resolveOptimized({ width: 800 })).toBe(true);
+    expect(resolveOptimized({ width: 1600 })).toBe(true);
+    expect(resolveOptimized({ height: 400 })).toBe(true);
   });
 
-  it('lets an explicit call-site optimized win over lossless', () => {
-    // One variant for every viewer is what lets `announcement-media-check` name the URL it probes.
-    expect(resolveOptimized({ width: 96, optimized: true, ...lossless })).toBe(true);
-  });
-
-  it('never flags an original request, for anybody', () => {
-    expect(resolveOptimized({ original: true, ...compressed })).toBe(false);
-    expect(resolveOptimized({ original: true, ...lossless })).toBe(false);
+  it('never flags an original request', () => {
+    expect(resolveOptimized({ original: true })).toBe(false);
     // `getEdgeUrl` infers `original` from the absence of both dimensions; `resolveOptimized` has to
     // mirror that or every width-less call starts carrying the flag.
-    expect(resolveOptimized({ ...compressed })).toBe(false);
-    expect(resolveOptimized({ height: 400, ...compressed })).toBe(true);
+    expect(resolveOptimized({})).toBe(false);
+    expect(resolveOptimized({ original: true, width: 450 })).toBe(false);
   });
 
-  it('drops an explicit optimized on an original request rather than splitting the cache key', () => {
-    // `EdgeVideo` passes `optimized: true` for the poster and a width it may not have, so the pair
-    // arrives together. The cacher ignores the flag on an original, but emitting it still forks the
-    // URL — a second CDN key for bytes that already exist under the first.
-    expect(resolveOptimized({ original: true, optimized: true, ...compressed })).toBe(false);
-    expect(resolveOptimized({ optimized: true, ...lossless })).toBe(false);
-    // `getEdgeUrl` serialises whatever it is handed, so the resolver is the only thing keeping
-    // the flag off the URL.
-    expect(getEdgeUrl('KEY', { optimized: true })).toContain('optimized=true');
-  });
-
-  it('leaves the download shape on the original, for both qualities', () => {
+  it('leaves the download shape on the original', () => {
     // The download button renders `DownloadImage`, which calls `useEdgeUrl` with neither width nor
-    // height. Lossless is about BROWSING — a non-member's downloads must not be quietly compressed
-    // by the default flip.
+    // height. Downloads must keep returning the stored file.
     const download = { type: 'image' as const, name: 'a.png' };
-    for (const quality of ['compressed', 'lossless'] as const) {
-      expect(resolveOptimized({ ...download, quality })).toBe(false);
-    }
+    expect(resolveOptimized(download)).toBe(false);
     const url = getEdgeUrl('KEY', download);
     expect(url).toContain('original=true');
     expect(url).not.toContain('optimized');
-  });
-
-  it('leaves hi-DPI to the viewer, so a paying member keeps lossless at 2x', () => {
-    expect(resolveOptimized({ width: 1600, ...lossless })).toBe(false);
   });
 });

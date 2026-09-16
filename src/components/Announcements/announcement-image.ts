@@ -28,9 +28,9 @@ export const ANNOUNCEMENT_IMAGE_WIDTH = 200;
  * The exact variant URL a browser requests for an announcement banner.
  *
  * Mirrors what `useEdgeUrl` computes for `<EdgeMedia src={key} width={ANNOUNCEMENT_IMAGE_WIDTH} />`:
- *  - `AnnouncementCard.tsx` passes `optimized` explicitly, which `resolveOptimized` honours ahead
- *    of the viewer's media quality, so the banner has ONE variant the monitor can name. A renderer
- *    that stopped passing it would leave the monitor probing a variant nobody loads; and
+ *  - every derived variant is compressed, and `AnnouncementCard.tsx` passes `optimized` to say so
+ *    explicitly, so the banner has ONE variant the monitor can name. A renderer that dropped the
+ *    width and fell back to the original would leave the monitor probing a variant nobody loads; and
  *  - `getEdgeUrl` snaps the width up the common-size ladder (200 -> 320).
  *
  * Do NOT substitute `{ original: true }` here. The original object and the derived

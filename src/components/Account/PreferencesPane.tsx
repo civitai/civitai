@@ -6,7 +6,6 @@ import {
   AutoplayGifsToggle,
   EarlyAdopterToggle,
   HideBlueBuzzToggle,
-  ImageFormatSelect,
   ModelFileFormatSelect,
   ModelPrecisionSelect,
   ModelQuantTypeSelect,
@@ -28,11 +27,6 @@ export function PreferencesPane() {
   return (
     <SettingsStack>
       <SettingsSection title="Media quality & playback">
-        <SettingRow
-          label="Media quality"
-          description="Quality of images while you browse the site. Downloads always give you the original."
-          control={<ImageFormatSelect />}
-        />
         <SettingRow block>
           <AutoplayGifsToggle />
         </SettingRow>

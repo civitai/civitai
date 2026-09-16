@@ -18,7 +18,6 @@ import type { WorkflowStepEvent } from '@civitai/client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { useOptimizedFlag } from '~/hooks/useMediaQuality';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { COMIC_MODEL_OPTIONS } from '~/components/Comics/comic-project-constants';
@@ -49,7 +48,6 @@ export function GenerateImageModal({
   label,
   onConfirm,
 }: GenerateImageModalProps) {
-  const optimized = useOptimizedFlag();
   const availableBuzzTypes = useAvailableBuzz(['blue']);
   const [prompt, setPrompt] = useState('');
   const [model, setModel] = useState('NanoBanana2');
@@ -236,7 +234,7 @@ export function GenerateImageModal({
           ...prev,
           {
             url: result.id,
-            previewUrl: getEdgeUrl(result.id, { width: 100, optimized }) ?? result.id,
+            previewUrl: getEdgeUrl(result.id, { width: 100, optimized: true }) ?? result.id,
             width: dims.width,
             height: dims.height,
           },
@@ -381,7 +379,7 @@ export function GenerateImageModal({
                 }}
               >
                 <img
-                  src={getEdgeUrl(resultImages[0].url, { width: 600, optimized })}
+                  src={getEdgeUrl(resultImages[0].url, { width: 600, optimized: true })}
                   alt="Generated result"
                   style={{ width: '100%', display: 'block' }}
                 />
@@ -398,7 +396,7 @@ export function GenerateImageModal({
                   }}
                 >
                   <img
-                    src={getEdgeUrl(selectedUrl!, { width: 600, optimized })}
+                    src={getEdgeUrl(selectedUrl!, { width: 600, optimized: true })}
                     alt="Selected result"
                     style={{ width: '100%', display: 'block' }}
                   />
@@ -426,7 +424,7 @@ export function GenerateImageModal({
                       }}
                     >
                       <img
-                        src={getEdgeUrl(img.url, { width: 100, optimized })}
+                        src={getEdgeUrl(img.url, { width: 100, optimized: true })}
                         alt={`Option ${idx + 1}`}
                         style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                       />

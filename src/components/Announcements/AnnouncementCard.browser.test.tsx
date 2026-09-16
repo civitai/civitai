@@ -1,4 +1,4 @@
-import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
+import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as IsClientProvider from '~/providers/IsClientProvider';
@@ -6,12 +6,9 @@ import type * as CurrentUser from '~/hooks/useCurrentUser';
 import type * as FeatureFlagsProvider from '~/providers/FeatureFlagsProvider';
 
 const mocks = vi.hoisted(() => ({ openExternalLinkWarning: vi.fn() }));
-// Mutable so the banner-image tests can be a paying member on lossless — the only viewer for whom
-// the card's explicit `optimized` changes the URL at all.
 const viewer = vi.hoisted(() => ({
   current: { id: 1, isModerator: false } as Record<string, unknown>,
 }));
-const SIGNED_OUT_DEFAULT = { id: 1, isModerator: false };
 
 vi.mock('~/components/ExternalLinkWarning/openExternalLinkWarning', () => ({
   openExternalLinkWarning: mocks.openExternalLinkWarning,
@@ -160,25 +157,10 @@ describe('CustomMarkdown without warnOnExternalLinks', () => {
 });
 
 describe('AnnouncementCard banner image', () => {
-  // A lossless member is the only viewer for whom the card's explicit `optimized` changes anything
-  // — everyone else is compressed by default, so a test run as them passes with or without it.
-  beforeEach(() => {
-    viewer.current = {
-      id: 1,
-      isModerator: false,
-      isPaidMember: true,
-      filePreferences: { imageFormat: 'metadata' },
-    };
-  });
-  afterEach(() => {
-    viewer.current = SIGNED_OUT_DEFAULT;
-  });
-
   // 🔴 The half a node test cannot see. `announcement-media-check` probes
-  // `getAnnouncementImageUrl`, and that URL is only the one users load while THIS component keeps
-  // passing `optimized`. Drop it from the markup and a lossless member loads a variant the monitor
-  // never checks — the monitor then calls a 404ing banner healthy.
-  test('renders the exact variant the media-check job probes, even for a lossless member', async () => {
+  // `getAnnouncementImageUrl`, and that is only the URL users load while THIS component renders the
+  // same variant. Let the two drift and the monitor calls a 404ing banner healthy.
+  test('renders the exact variant the media-check job probes', async () => {
     const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
     const { getAnnouncementImageUrl } = await import(
       '~/components/Announcements/announcement-image'

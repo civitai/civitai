@@ -54,23 +54,6 @@ const typeExtensions: Record<MediaType, string> = {
 // server-side snap remains the source of truth.
 export const COMMON_IMAGE_WIDTHS = [96, 320, 450, 512, 800, 1200, 1600, 2200] as const;
 
-/** What a viewer is served while browsing. Persisted as `'optimized' | 'metadata'`. */
-export type MediaQuality = 'compressed' | 'lossless';
-
-/**
- * A non-member's stored `'metadata'` is deliberately NOT normalised away — it comes back if they
- * subscribe.
- */
-export function toMediaQuality({
-  imageFormat,
-  canUseLossless,
-}: {
-  imageFormat?: string | null;
-  canUseLossless?: boolean;
-}): MediaQuality {
-  return canUseLossless && imageFormat === 'metadata' ? 'lossless' : 'compressed';
-}
-
 /**
  * `resolveOptimized` has to reach this answer BEFORE `getEdgeUrl` infers it: the cacher ignores
  * `optimized` on an original request, but emitting it still changes the URL — and therefore the
@@ -85,23 +68,15 @@ export function resolvesToOriginal({
 }
 
 /**
- * An explicit `optimized` from the call site wins over the viewer's quality, which is what keeps
- * site chrome — avatars, badges, stickers, shop tiles, the announcement banner — on one variant for
- * every viewer. It does NOT win over an original request: the cacher ignores the flag there, so
- * honouring it would only split the cache key.
+ * Every derived variant is compressed. The only request that is not is an original, where the
+ * cacher ignores the flag anyway — emitting it there would just split the CDN key.
  */
 export function resolveOptimized({
-  optimized,
   width,
   height,
   original,
-  quality,
-}: Pick<EdgeUrlProps, 'optimized' | 'width' | 'height' | 'original'> & {
-  quality?: MediaQuality;
-}) {
-  if (resolvesToOriginal({ width, height, original })) return false;
-  if (optimized) return true;
-  return quality !== 'lossless';
+}: Pick<EdgeUrlProps, 'width' | 'height' | 'original'>) {
+  return !resolvesToOriginal({ width, height, original });
 }
 
 /**

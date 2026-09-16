@@ -6,7 +6,6 @@ import { useRouter } from 'next/router';
 import { useCallback, useMemo, useState } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { useOptimizedFlag } from '~/hooks/useMediaQuality';
 import {
   COMIC_MODEL_MAX_IMAGES,
   COMIC_MODEL_OPTIONS,
@@ -49,7 +48,6 @@ export const getServerSideProps = createServerSideProps({
 const DEFAULT_MODEL = 'NanoBanana2';
 
 function ComicIteratePage() {
-  const optimized = useOptimizedFlag();
   const router = useRouter();
   const {
     id,
@@ -132,7 +130,7 @@ function ComicIteratePage() {
     const h = typeof height === 'string' ? parseInt(height, 10) : 1024;
     return {
       url: imageUrl,
-      previewUrl: getEdgeUrl(imageUrl, { width: 400, optimized }) ?? imageUrl,
+      previewUrl: getEdgeUrl(imageUrl, { width: 400, optimized: true }) ?? imageUrl,
       width: w,
       height: h,
     };

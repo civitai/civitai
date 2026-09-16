@@ -49,7 +49,6 @@ import type { DragEndEvent } from '@dnd-kit/core';
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext } from '@dnd-kit/sortable';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { useOptimizedFlag } from '~/hooks/useMediaQuality';
 
 import { ChapterSettingsModal } from '~/components/Comics/ChapterSettingsModal';
 import {
@@ -95,7 +94,6 @@ export const getServerSideProps = createServerSideProps({
 });
 
 function ProjectWorkspace() {
-  const optimized = useOptimizedFlag();
   const router = useRouter();
   const currentUser = useCurrentUser();
   const { id } = router.query;
@@ -1331,7 +1329,7 @@ function ProjectWorkspace() {
             {heroImage?.url ? (
               <>
                 <img
-                  src={getEdgeUrl(heroImage.url, { width: 1200, optimized })}
+                  src={getEdgeUrl(heroImage.url, { width: 1200, optimized: true })}
                   alt={`${project.name} hero banner`}
                   className={styles.heroBannerImg}
                   style={{ objectPosition: `center ${heroImagePosition}%` }}
@@ -1359,7 +1357,7 @@ function ProjectWorkspace() {
             <div className={styles.headerImage} onClick={() => openSettings()}>
               {project.coverImage?.url ? (
                 <img
-                  src={getEdgeUrl(project.coverImage.url, { width: 160, optimized })}
+                  src={getEdgeUrl(project.coverImage.url, { width: 160, optimized: true })}
                   alt={project.name}
                 />
               ) : (
