@@ -523,9 +523,12 @@ export function InteractiveTipBuzzButton({
                   e.preventDefault();
                   return;
                 }
-                // Keyboard and assistive-tech activation dispatch a click with NO pointer
-                // event. Without this the press ordering never advances, so after any clamp
-                // the icon is permanently dead for anyone without a pointer.
+                // Keyboard Enter dispatches a click with NO pointer event, so without this the
+                // press ordering never advances and the icon is dead after any clamp.
+                // NOT covered: Space (buttons activate on keyup) and an activation that emits
+                // neither a key nor a pointer event, e.g. AXPress or element.click() — those
+                // are still refused after a clamp. Enumerating input devices is the wrong
+                // shape; the fix is a latch the activation consumes. See 868m64p4q.
                 markPressStart();
               }}
               loading={tipUserMutation.isPending}

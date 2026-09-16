@@ -14,9 +14,9 @@ const CONFIRMATION_TIMEOUT = 5000;
 const WELL_BEFORE_CLOSE = CONFIRMATION_TIMEOUT - 1500;
 const PAST_CLOSE = CONFIRMATION_TIMEOUT + 400;
 
-// vi.hoisted, because the useBuzz mock factory below reads this and vi.mock is hoisted above
-// ordinary consts — a plain `const` is in TDZ if the factory runs early, which surfaces as
-// "There was an error when mocking a module" rather than as anything naming BALANCE.
+// vi.hoisted is the house pattern for a value a vi.mock factory reads (see
+// docs/testing/shared-module-mock-migration.md). A plain const also works here, because the
+// factory dereferences this at hook-call time rather than while the module body runs.
 const { BALANCE } = vi.hoisted(() => ({ BALANCE: 500 }));
 // CLAMP_CONFIRM_DELAY in the component. A confirming press sooner than this is refused.
 // Must exceed CLAMP_CONFIRM_DELAY, or `an Enter held past the confirm delay` goes quietly
@@ -435,6 +435,7 @@ describe('InteractiveTipBuzzButton', () => {
     field.focus();
     field.textContent = String(TYPED_AMOUNT);
     sendButton().focus();
+    expect(document.activeElement).toBe(sendButton());
 
     await userEvent.keyboard('{Enter}');
 
@@ -445,11 +446,29 @@ describe('InteractiveTipBuzzButton', () => {
   // Keyboard and AT activation dispatch a click with no pointer event. The ordering guard
   // has to advance from somewhere, or after ANY clamp the icon is permanently dead for a
   // user without a pointer — silently, with no state change to notice.
+  // The press BEGINS after the clamp (the focus shift is what clamped), so ordering allows it
+  // and only freshness can refuse. Tab to the icon and hit Enter and this is the real gesture.
+  test('an immediate keyboard press does not confirm the clamp the focus shift caused', async () => {
+    const field = await openTipPopover();
+    field.focus();
+    field.textContent = String(BALANCE * 10);
+    sendButton().focus();
+    expect(document.activeElement).toBe(sendButton());
+
+    await userEvent.keyboard('{Enter}');
+
+    expect(tipMutate).not.toHaveBeenCalled();
+  });
+
   test('the send icon still works from the keyboard after a clamp', async () => {
     const field = await openTipPopover();
     field.focus();
     field.textContent = String(BALANCE * 10);
     sendButton().focus();
+    // Pins the subject: without this, a future change that re-focused the field would send the
+    // Enter to the field handler — which has no ordering check — and this test would stay green
+    // while the keyboard-on-icon hole reopened.
+    expect(document.activeElement).toBe(sendButton());
     await wait(PAST_CLAMP_DELAY);
 
     await userEvent.keyboard('{Enter}');
