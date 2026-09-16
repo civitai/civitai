@@ -17,7 +17,7 @@ import { queryDb } from '../generation-coverage/coverage.mjs';
 const OFFICIAL_USER_ID = 12042163;
 const KINDS = { 'api-only': 'ExternalGeneration', 'hosted-weights': 'Download' };
 const ECOSYSTEMS_DIR = resolve(projectRoot, 'src/server/services/orchestrator/ecosystems');
-// Mirrors checkLoadable in src/server/services/resource-load.service.ts.
+// Mirrors LOADABLE_FILE_TYPES in src/utils/file-display-helpers.ts, which checkLoadable applies.
 const LOADABLE_FILE_TYPES = ['Model', 'Pruned Model', 'Diffusion Model', 'UNet', 'Negative', 'VAE'];
 // Closed models reachable only through their provider's API, plus fal, which hosts third-party models.
 const EXTERNAL_ENGINES = [
@@ -303,6 +303,69 @@ async function files() {
   console.log('\nREADY: the weight files are uploaded and scanned. Next: the coverage row.');
 }
 
+
+// The transfer itself is queued from /moderator/huggingface-import.
+
+const formatBytes = (bytes) => {
+  if (!bytes) return '—';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / 1024 ** i).toFixed(i ? 2 : 0)} ${units[i]}`;
+};
+
+async function hfImports() {
+  // Filtered server-side: a client-side filter over this page silently misses anything past the
+  // limit, and reports it as "no imports" — indistinguishable from never having imported it.
+  const input = { limit: 100 };
+  if (flags.repo) input.repo = flags.repo;
+  if (flags.group) input.groupName = flags.group;
+  const shown = await trpcCall('huggingFaceImport.getAll', input, 'GET');
+  if (!shown.length) {
+    const what = flags.repo ?? flags.group;
+    return console.log(what ? `No imports matching ${what}.` : 'No imports.');
+  }
+
+  for (const row of shown) {
+    const attached = row.modelFileId
+      ? `attached → file ${row.modelFileId} on version ${row.modelVersionId}`
+      : row.status === 'Completed'
+      ? 'ready to attach'
+      : '';
+    console.log(
+      [
+        String(row.id).padStart(5),
+        row.status.padEnd(12),
+        formatBytes(row.sizeBytes).padStart(10),
+        `${row.repo}/${row.filename}`,
+        `[${row.groupName}]`,
+        row.suggestedType ? `(suggests ${row.suggestedType})` : '',
+        attached,
+      ]
+        .filter(Boolean)
+        .join('  ')
+    );
+    if (row.error) console.log(`        ${row.error}`);
+  }
+  console.log(
+    `
+Attach with: attach-import --import <id> --version <id> --type <${LOADABLE_FILE_TYPES.join('|')}|Text Encoder|Config|...>`
+  );
+  console.log('The type decides whether the version can load — read the filename, do not guess.');
+}
+
+async function attachImport() {
+  const id = requiredInt('import');
+  const modelVersionId = requiredInt('version');
+  const type = required('type');
+  if (!writable) return dryRun('huggingFaceImport.attach', { id, modelVersionId, type });
+
+  const result = await trpcCall('huggingFaceImport.attach', { id, modelVersionId, type });
+  console.log(
+    `Attached import ${id} as model file ${result.modelFileId} on version ${result.modelVersionId}.`
+  );
+  console.log('Scanning and hashing start on their own. Check with: files --version ' + modelVersionId);
+}
+
 const HELP = `Usage: node .claude/skills/official-model-admin/model.mjs <command> [flags]
 
   whoami
@@ -313,6 +376,8 @@ const HELP = `Usage: node .claude/skills/official-model-admin/model.mjs <command
   create-version      --model-id <id> --name <n> --base-model <name> --kind <api-only|hosted-weights>
                       [--no-download] [--writable]
   files               --version <id>                                 are the uploaded files ready?
+  hf-imports          [--repo <owner/name>] [--group <name>]         Hugging Face transfers and their state
+  attach-import       --import <id> --version <id> --type <type> [--writable]
 
 Description writes need --approved <hash>, printed by the dry run of the same command.
 --kind api-only → ExternalGeneration (no files); hosted-weights → Download, or Generation with --no-download.
@@ -327,6 +392,8 @@ dispatch(
     evidence,
     'create-version': createVersion,
     files,
+    'hf-imports': hfImports,
+    'attach-import': attachImport,
   },
   HELP
 );

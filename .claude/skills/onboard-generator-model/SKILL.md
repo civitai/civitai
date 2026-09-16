@@ -30,7 +30,7 @@ Supporting skills: `deploy-status` (the deploy stops), `postgres-query` (used by
 
 Ask for the model name and a reference link, plus the Civitai model URL if the model already exists.
 
-First work out the **kind**: `api-only` (the provider runs it, no files) or `hosted-weights` (we run it from files the user uploads). Settle it with the "Versions: API-only or hosted weights" steps in `official-model-admin`: gather the evidence, then have the user confirm. Never guess it. Settle the kind before the case, because the kind decides the case.
+First work out the **kind**: `api-only` (the provider runs it, no files) or `hosted-weights` (we run it from files on the version). Settle it with the "Versions: API-only or hosted weights" steps in `official-model-admin`: gather the evidence, then have the user confirm. Never guess it. Settle the kind before the case, because the kind decides the case.
 
 Then work out the **case**:
 
@@ -52,7 +52,7 @@ Adding a base model or an ecosystem costs a second deploy and is hard to undo on
 
 Show the user which rule matched and the evidence for it: the kind, whether the line already has an ecosystem, and for hosted weights, why existing resources do or don't work on it. The user confirms the case. Never guess it, just as you never guess the kind.
 
-The kind also changes Phase 3. A hosted-weights version adds a stop while the user uploads its files.
+The kind also changes Phase 3. A hosted-weights version adds a stop for its files — a server-side Hugging Face import, or a browser upload by the user.
 
 Show the user the case, the kind, the phases and where the run will stop, for deploys and for uploads. Get their confirmation before continuing.
 
@@ -67,7 +67,7 @@ Show the user the case, the kind, the phases and where the run will stop, for de
 
 3. **Version and coverage.**
    1. `official-model-admin create-version --kind <kind>`, using the kind from Phase 0.
-   2. **Hosted weights only:** give the user the upload link `create-version` prints, and **stop until they say the upload is done**. Then run `official-model-admin files --version <id>` until it reports READY. If it reports NOT READY, pass its reason on to the user.
+   2. **Hosted weights only:** get the files onto the version. If the weights are on Hugging Face, ask the user to queue the repo at `/moderator/huggingface-import`, then attach each transferred file with `official-model-admin attach-import` — see "From Hugging Face" in that skill's step 4; you choose the file type, so read the filenames rather than guessing. Otherwise give the user the upload link `create-version` prints and **stop until they say the upload is done**. Either way, then run `official-model-admin files --version <id>` until it reports READY. If it reports NOT READY, pass its reason on to the user.
    3. `generation-coverage add`, labelled with the base model name.
 
 4. **Gate, before the deploy.** `generation-gate-rules add`:

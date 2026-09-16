@@ -39,6 +39,7 @@ import { isEqual, startCase } from 'lodash-es';
 import { useEffect, useState } from 'react';
 
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
+import { AddFromImportsButton } from '~/components/Moderation/HuggingFaceImport/AddFromImportsButton';
 import type { FileFromContextProps } from '~/components/Resource/FilesProvider';
 import { useFilesContext } from '~/components/Resource/FilesProvider';
 import type { ModelFileType, ZipModelFileType } from '~/server/common/constants';
@@ -50,13 +51,9 @@ import { useS3UploadStore } from '~/store/s3-upload.store';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes, formatKBytes, formatSeconds } from '~/utils/number-helpers';
-import { getDisplayName, getFileExtension, sanitizeDownloadFilename } from '~/utils/string-helpers';
+import { getFileExtension, sanitizeDownloadFilename } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import {
-  comfyFileTypeLabels,
-  filterFileTypeByExtension,
-  UNQUANTIZED_QUANT_TYPE,
-} from '~/utils/file-display-helpers';
+import { getModelFileTypeOptions, UNQUANTIZED_QUANT_TYPE } from '~/utils/file-display-helpers';
 import classes from './Files.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { isAndroidDevice } from '~/utils/device-helpers';
@@ -144,6 +141,7 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
     onDrop,
     dropzoneConfig,
     baseModel,
+    modelVersionId,
     addLinkedComponent,
     removeLinkedComponent,
   } = useFilesContext();
@@ -312,11 +310,14 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
           py="md"
           style={{ borderColor: 'rgba(34, 139, 230, 0.2)' }}
         >
-          <Group gap="xs">
-            <IconFile3d size={20} style={{ color: 'var(--mantine-color-blue-4)' }} />
-            <Text fw={600} c="white">
-              Model Files
-            </Text>
+          <Group gap="xs" justify="space-between" wrap="nowrap">
+            <Group gap="xs">
+              <IconFile3d size={20} style={{ color: 'var(--mantine-color-blue-4)' }} />
+              <Text fw={600} c="white">
+                Model Files
+              </Text>
+            </Group>
+            {modelVersionId && <AddFromImportsButton modelVersionId={modelVersionId} />}
           </Group>
           <Text size="sm" c="dimmed" mt={4}>
             The main model files users will download. We&apos;ll show the best match based on their
@@ -1034,11 +1035,6 @@ function FileEditForm({
     }
   };
 
-  // Keep the file's own type selectable even when it's no longer offered, so a
-  // legacy type doesn't render as a blank Select.
-  const filterByFileExtension = (value: ModelFileType) =>
-    value === versionFile.type || filterFileTypeByExtension(value, versionFile.name);
-
   const handleReset = () => {
     updateFile(versionFile.uuid, {
       type: initialFile.type,
@@ -1078,12 +1074,11 @@ function FileEditForm({
           w={160}
           placeholder="Type"
           error={error?.type?._errors[0]}
-          data={fileTypes.filter(filterByFileExtension).map((x) => ({
-            label:
-              comfyFileTypeLabels[x] ??
-              getDisplayName(x === 'Model' ? versionFile.modelType ?? x : x),
-            value: x,
-          }))}
+          data={getModelFileTypeOptions(versionFile.name, {
+            types: fileTypes,
+            currentType: versionFile.type,
+            modelType: versionFile.modelType,
+          })}
           value={versionFile.type ?? null}
           onChange={(value) => {
             const newType = value as ModelFileType | null;

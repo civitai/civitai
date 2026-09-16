@@ -2129,6 +2129,9 @@ export const REDIS_SYS_KEYS = {
   DAILY_CHALLENGE: {
     CONFIG: 'daily-challenge:config',
   },
+  HUGGING_FACE_IMPORT: {
+    CONFIG: 'hugging-face-import:config',
+  },
   COLLECTION: {
     RANDOM_SEED: 'collection:random-seed',
   },
