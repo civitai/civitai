@@ -37,10 +37,21 @@ import { ensureRegisterGenerationModelSubstitutionMetrics } from '~/server/metri
 // never rescued anyone here" would then be the same observation, which is precisely
 // the ambiguity that counter was added to remove.
 import { ensureRegisterImageUploadRelayMetrics } from '~/server/prom/image-upload-relay.metrics';
+// Same reason as the two neighbours above, and the case where it matters MOST: seeds all
+// 12 reachable (path, type, outcome) series of civitai_csam_archive_total at 0. CSAM
+// archives are RARE — three in the eight days after the streaming flag went live — so on
+// almost every pod, for almost all of its life, the honest reading of this counter is a
+// row of zeros. prom-client materialises a child only on its first inc(), so without this
+// `…{path="stream"}` returns `no data`, and "streaming has never run here" would be
+// indistinguishable from "the instrument is not wired" — which is the precise ambiguity
+// this counter was added to end, so leaving it unseeded would reproduce the defect one
+// level down.
+import { ensureRegisterCsamArchiveMetrics } from '~/server/metrics/csam-archive.metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 ensureRegisterGenerationModelSubstitutionMetrics();
 ensureRegisterImageUploadRelayMetrics();
+ensureRegisterCsamArchiveMetrics();
 
 const labels: Record<string, string> = {};
 if (process.env.PODNAME) {

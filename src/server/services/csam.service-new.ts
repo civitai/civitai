@@ -53,6 +53,11 @@ import type { JsonReplacer } from '~/server/utils/json-stream-helpers';
 import { writeJsonObject } from '~/server/utils/json-stream-helpers';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
 import { logToAxiom } from '~/server/logging/client';
+import {
+  csamArchivePathFor,
+  recordCsamArchive,
+  type CsamArchiveType,
+} from '~/server/metrics/csam-archive.metrics';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
 
 const cybertipClient = new Client({
@@ -1528,6 +1533,34 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
   const streamArchivesToStorage = await isFlipt(FLIPT_FEATURE_FLAGS.CSAM_ARCHIVE_STREAM_UPLOAD);
 
   /**
+   * The media-archive path this report will actually take.
+   *
+   * 🔴 NOT the same thing as the flag value, and that distinction is the whole point:
+   * the flag governs `archiveImages`/`archiveGeneratedImages` only, so a `TrainingData`
+   * or `ExternalLink` report resolves to `none` however the flag is set. Derived in one
+   * place so the log line below and the counter at the two terminal states below cannot
+   * disagree about what ran.
+   */
+  const archivePath = csamArchivePathFor(report.type as CsamArchiveType, streamArchivesToStorage);
+
+  /**
+   * 🔴 EMITTED AT THE DECISION, NOT AT COMPLETION — deliberately. An archive that dies
+   * partway (the eviction class this whole arc was about) never reaches either terminal
+   * state, so a completion-only record would be silent for exactly the failures worth
+   * investigating. This line is the one that survives a killed pod.
+   */
+  logToAxiom({
+    name: 'csam-report',
+    type: 'info',
+    subType: 'archive-path',
+    message: `archiving report ${report.id} (${report.type}) via the ${archivePath} path`,
+    reportId: report.id,
+    reportType: report.type,
+    archivePath,
+    streamArchivesToStorage,
+  });
+
+  /**
    * A fresh keyset-paged scan of every image the reported user owns.
    *
    * This replaces a single `dbRead.image.findMany({ where: { userId } })` whose result array was
@@ -1578,6 +1611,8 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       },
     });
 
+    recordCsamArchive(archivePath, report.type as CsamArchiveType, 'success');
+
     for (const dir of Object.values(reportDirs)) removeDir(dir);
   } catch (e) {
     console.log(e);
@@ -1592,6 +1627,15 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         });
       }
     }
+    // 🔴 `error` means THIS CALL THREW, which is not identical to "the report is
+    // unarchived": the `training data not found` branch above deliberately stamps
+    // `archivedAt` and then rethrows, so that one benign case lands here as
+    // {type="TrainingData", path="none", outcome="error"} while the row reads archived.
+    // Left as one outcome rather than three: it is confined to a type the flag does not
+    // govern, the `type` label makes it self-explanatory, and a third value would widen
+    // every series in the counter to describe one known-benign branch.
+    recordCsamArchive(archivePath, report.type as CsamArchiveType, 'error');
+
     for (const dir of Object.values(reportDirs)) removeDir(dir);
     throw e;
   }
