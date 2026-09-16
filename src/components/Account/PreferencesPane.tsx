@@ -26,7 +26,7 @@ export function PreferencesPane() {
 
   return (
     <SettingsStack>
-      <SettingsSection title="Media quality & playback">
+      <SettingsSection title="Media playback">
         <SettingRow block>
           <AutoplayGifsToggle />
         </SettingRow>
