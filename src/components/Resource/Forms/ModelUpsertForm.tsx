@@ -121,8 +121,8 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
   { value: CommercialUse.Rent, label: 'Use on other generation services' },
   { value: CommercialUse.Sell, label: 'Sell this model' },
   // SellMerge is deliberately absent until every pod knows the label -- see the decision test in
-  // license-sell-merge-split.test.ts. An option a creator can tick writes the row a pod on the
-  // previous build cannot read, which is the passive default path with a person behind it.
+  // license-sell-merge-split.test.ts. An option a creator can tick writes the same row the default
+  // used to write, with a creator behind it, and a previous-build pod cannot read it.
 ];
 
 // 'tags' is deliberately absent: the field is named `tagsOnModels`, so the watch effect below

@@ -270,15 +270,21 @@ describe('sell / sell-merge split in the generated licence', () => {
    * `slice(0, -1)` both leave every negative assertion above passing for free.
    */
   /**
-   * DELIBERATE, AND NOT AN OVERSIGHT: the build that ships the SellMerge label writes none of it.
-   * Both default sets stay four-valued until every pod knows the label, which is what makes the
-   * migration safe to apply ahead of the deploy and leaves no rolling-deploy window -- a row
-   * carrying a label an old pod cannot decode throws on READ, for the whole result set.
+   * DELIBERATE, AND NOT AN OVERSIGHT: no product path in this build writes the SellMerge label --
+   * both default sets stay four-valued and the form offers no option -- until every pod knows it.
+   * A hand-built API payload still can; the migration file carries that and the reason.
    *
    * The PR that turns the write paths on inverts this case. If you are here because it looks like
    * the feature was half-shipped: it was, on purpose, for one day.
    */
-  it('ships the SellMerge label with no way to write it: defaults and the option list', () => {
+  it('the two product write paths for SellMerge are off: the defaults and the option list', () => {
+    const members = (capture: string) =>
+      capture
+        .replace(/\/\/[^\n]*/g, '')
+        .split(',')
+        .map((s) => s.trim().replace(/^CommercialUse\./, ''))
+        .filter(Boolean);
+
     const schema = readFileSync(
       join(__dirname, '../../../../packages/civitai-db-schema/prisma/schema.full.prisma'),
       'utf8'
@@ -286,26 +292,72 @@ describe('sell / sell-merge split in the generated licence', () => {
     const modelDefault = schema.match(
       /allowCommercialUse\s+CommercialUse\[\]\s+@default\(\[(.*)\]\)/
     );
-    expect(modelDefault?.[1]).toBe('Image, RentCivit, Rent, Sell');
+    expect(modelDefault).not.toBeNull();
+    // Set rather than exact string: `prisma format` may reorder or respace this line, and a guard
+    // that reddens on formatting is one the third person to hit it deletes.
+    expect(members(modelDefault?.[1] ?? '').sort()).toEqual(
+      ['Image', 'Rent', 'RentCivit', 'Sell'].sort()
+    );
 
     const form = readFileSync(
       join(__dirname, '../../../components/Resource/Forms/ModelUpsertForm.tsx'),
       'utf8'
     );
+    // Anchored on the statement's end, not on the first `]`: a capture stopping at the bracket
+    // cannot see `?? [...].concat(SellMerge)`, which puts the value back with the literal intact.
     const formDefault = form.match(
-      /allowCommercialUse: model\?\.allowCommercialUse \?\? \[([^\]]*)\]/
+      /allowCommercialUse: model\?\.allowCommercialUse \?\? \[([\s\S]*?)\],\n/
     );
     expect(formDefault).not.toBeNull();
-    expect(formDefault?.[1]).not.toContain('SellMerge');
-    // Positive control: the array the match found is the real one, not an empty capture.
-    expect(formDefault?.[1]).toContain('CommercialUse.Sell');
+    // Asserted as a SET, so dropping members to hide one reddens too.
+    expect(members(formDefault?.[1] ?? '').sort()).toEqual(
+      ['Image', 'Rent', 'RentCivit', 'Sell'].sort()
+    );
 
     // The default is the passive write path. The checkbox is the active one, and removing only the
     // first leaves a creator able to write the row a previous-build pod cannot read.
-    const options = form.match(/const commercialUseOptions[^=]*= \[([\s\S]*?)\n\];/);
+    const options = form.match(/const commercialUseOptions[\s\S]*?=\s*\[([\s\S]*?)\n\];/);
     expect(options).not.toBeNull();
-    expect(options?.[1]).not.toContain('CommercialUse.SellMerge');
-    expect(options?.[1]).toContain('CommercialUse.Sell,');
+    // Value position, not a bare substring: the comment standing where the option used to be names
+    // SellMerge, and a reader writing it as `CommercialUse.SellMerge` there must not redden this.
+    expect(options?.[1]).not.toMatch(/value:\s*CommercialUse\.SellMerge/);
+    expect(options?.[1]).toMatch(/value:\s*CommercialUse\.Sell\b/);
+
+    // The option list is also reachable by mutation after its literal, which no capture above sees.
+    expect(form).not.toMatch(/commercialUseOptions\s*\.\s*(push|splice|concat|unshift)/);
+
+    // The third door, and the only one that opened by itself: the upsert contract derived its
+    // member set from the enum, so extending the enum widened what a signed-in owner may POST.
+    // Removing the checkbox removed the affordance, not the endpoint.
+    const schemaSrc = readFileSync(join(__dirname, '../../schema/model.schema.ts'), 'utf8');
+    const withheld = schemaSrc.match(/const WITHHELD_COMMERCIAL_USE[^=]*=\s*\[([\s\S]*?)\]/);
+    expect(withheld).not.toBeNull();
+    expect(members(withheld?.[1] ?? '')).toEqual(['SellMerge']);
+    // ...and the list must actually be applied, or it is decoration.
+    expect(schemaSrc).toMatch(/WITHHELD_COMMERCIAL_USE\.includes/);
+  });
+
+  /**
+   * The list above is a source-text assertion; this one runs the contract. A text guard cannot tell
+   * a rejection from a refine that was written and never wired in.
+   */
+  it('the upsert contract rejects a withheld permission and accepts the rest', async () => {
+    const { modelUpsertSchema } = await import('~/server/schema/model.schema');
+    const base = { name: 'x', type: 'Checkpoint', status: 'Draft', uploadType: 'Created' };
+
+    const withheld = modelUpsertSchema.safeParse({
+      ...base,
+      allowCommercialUse: [CommercialUse.Sell, CommercialUse.SellMerge],
+    });
+    expect(withheld.success).toBe(false);
+
+    // Positive control: the same payload without the withheld member must pass, or the rejection
+    // above proves nothing about SellMerge -- it could be any other field failing.
+    const allowed = modelUpsertSchema.safeParse({
+      ...base,
+      allowCommercialUse: [CommercialUse.Sell],
+    });
+    expect(allowed.success).toBe(true);
   });
 
   it('the slicers refuse a document they cannot find their anchor in', () => {

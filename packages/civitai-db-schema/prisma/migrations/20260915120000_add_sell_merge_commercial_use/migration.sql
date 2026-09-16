@@ -1,12 +1,14 @@
--- Apply BEFORE the deploy, not after, and it is safe in both directions: the build that ships with
--- this migration KNOWS 'SellMerge' and WRITES none. The schema @default and the upload form's
--- default set are deliberately still the four-value array, so no row can carry the label while
--- pods are mixed, and no pod on either build can fail to read one.
+-- Apply BEFORE the deploy. The build that ships with this migration knows 'SellMerge' and no
+-- PRODUCT path writes it: the schema @default and the upload form's default set are both back to
+-- the four-value array, and the form offers no SellMerge option. What can still write it is a
+-- hand-built upsertModel payload -- the zod enum accepts the member -- and the admin backfill
+-- named below. Neither happens by accident during a deploy, and both require naming a value the
+-- caller had to read the enum to know exists.
 --
--- That is the expand half of expand/contract, and it is why there is no rolling-deploy window here
--- at all. Turning the write paths on is a separate PR, shipped once every pod knows the label;
--- until it lands, a creator taking defaults gets the four-value set and the backfill has not run,
--- so both are one state rather than two.
+-- That is the expand half of expand/contract. It matters because Prisma deserializes the enum for
+-- a whole result set, so a row carrying a label a previous-build pod does not know throws on READ,
+-- not on the write. Turning the product paths on is a separate PR, shipped once every pod knows
+-- the label.
 --
 -- The order matters the other way round too: applying this first means the defaults-on PR needs no
 -- coordination with a migration.
