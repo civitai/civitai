@@ -38,7 +38,7 @@ export function AssociatedModels({
   });
 
   const handleManageClick = () => {
-    openAssociateModelsModal({ props: { fromId, type } });
+    openAssociateModelsModal({ props: { fromId, type, ownerId } });
   };
 
   if (!isOwnerOrModerator && !recommendedResources.length) return null;

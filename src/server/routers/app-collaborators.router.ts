@@ -64,6 +64,15 @@ import type { SessionUser } from '~/types/session';
  */
 
 const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
+  // Every attachment below is `protectedProcedure.use(...)`, so `isAuthed` has already
+  // run and `ctx.user` is non-null at runtime — but this is a bare `middleware`, whose
+  // ctx type does not carry that narrowing. `isAppBlocksAuthorEnabled` REQUIRES a
+  // subject (a capability has nothing to authorize without one), so the compiler makes
+  // this refusal mandatory rather than optional. Keep it: it is also what makes the
+  // middleware safe if it is ever attached to a `publicProcedure`.
+  if (!ctx.user) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps authoring is not enabled' });
+  }
   if (await isAppBlocksAuthorEnabled({ user: ctx.user })) return next();
   throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps authoring is not enabled' });
 });

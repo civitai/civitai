@@ -3,8 +3,8 @@ import { createFeedbackSchema, getFeedbackAreaSchema } from '~/server/schema/fee
 import {
   FEEDBACK_AREAS,
   FEEDBACK_FILTER_VALUE_MAX_LENGTH,
-  FEEDBACK_IMAGE_ID_MAX_LENGTH,
   FEEDBACK_IMAGE_MAX_COUNT,
+  FEEDBACK_PATH_MAX_LENGTH,
   FEEDBACK_SESSION_ID_MAX_LENGTH,
   feedbackAreaFlagKey,
 } from '~/shared/constants/feedback.constants';
@@ -28,48 +28,47 @@ describe('feedback schema — context bounds', () => {
   const base = { area: 'bitdex-image-feed' as const, message: 'something looked wrong' };
   const parse = (context: Record<string, unknown>) =>
     createFeedbackSchema.parse({ ...base, context });
+  /** Length-bounded fields only — image ids are bounded by SHAPE, not length. */
   const id = (length: number) => 'a'.repeat(length);
+
+  /**
+   * Synthetic v4 uuids, NOT keys copied out of the production `Feedback` table.
+   * `civitai/civitai` is public and a real id is a live object key in our store.
+   * Shape is what is under test, and these carry the same shape: version nibble 4,
+   * variant nibble 8/9/a/b, as `crypto.randomUUID()` emits.
+   */
+  const UUID_A = '11111111-2222-4333-8444-555555555555';
+  const UUID_B = 'aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee';
+  const UUID_C = '00000000-0000-4000-a000-000000000000';
+  /** An absolute URL of exactly a uuid's length — see the regression block below. */
+  const URL_36 = 'https://a.io/aaaaaaaaaaaaaaaaaaaaaaa';
 
   describe('the bounds themselves', () => {
     // Pins the numbers this whole file is written against. If one of these moves,
     // the intent below has to be re-read rather than silently re-derived.
-    it('is 3 images, 100-char ids, 64-char session ids', () => {
+    it('is 3 images and 64-char session ids', () => {
       expect(FEEDBACK_IMAGE_MAX_COUNT).toBe(3);
-      expect(FEEDBACK_IMAGE_ID_MAX_LENGTH).toBe(100);
       expect(FEEDBACK_SESSION_ID_MAX_LENGTH).toBe(64);
     });
   });
 
   describe('images', () => {
     it('carries the ids through instead of stripping them', () => {
-      const parsed = parse({ images: ['cf-image-1', 'cf-image-2'] });
-      expect(parsed.context?.images).toEqual(['cf-image-1', 'cf-image-2']);
+      const parsed = parse({ images: [UUID_A, UUID_B] });
+      expect(parsed.context?.images).toEqual([UUID_A, UUID_B]);
     });
 
     it('accepts exactly 3', () => {
-      const parsed = parse({ images: ['a', 'b', 'c'] });
+      const parsed = parse({ images: [UUID_A, UUID_B, UUID_C] });
       expect(parsed.context?.images).toHaveLength(3);
     });
 
     it('rejects 4', () => {
-      expect(() => parse({ images: ['a', 'b', 'c', 'd'] })).toThrow();
-    });
-
-    it('accepts an id of exactly 100 characters', () => {
-      const parsed = parse({ images: [id(100)] });
-      expect(parsed.context?.images?.[0]).toHaveLength(100);
-    });
-
-    it('rejects an id of 101 characters', () => {
-      expect(() => parse({ images: [id(101)] })).toThrow();
+      expect(() => parse({ images: [UUID_A, UUID_B, UUID_C, UUID_A] })).toThrow();
     });
 
     it('rejects an empty id', () => {
       expect(() => parse({ images: [''] })).toThrow();
-    });
-
-    it('rejects a whitespace-only id (it trims to empty)', () => {
-      expect(() => parse({ images: ['   '] })).toThrow();
     });
 
     it('rejects a non-string id', () => {
@@ -82,19 +81,103 @@ describe('feedback schema — context bounds', () => {
     });
   });
 
+  /**
+   * 🔴 THE SHAPE IS A SECURITY GUARD, NOT TIDINESS, AND THIS IS THE REGRESSION BLOCK.
+   *
+   * 🔴 WHY, IN ONE PLACE ONLY: the field note on `images` in
+   * `src/server/schema/feedback.schema.ts`. It is deliberately NOT restated here —
+   * the same argument previously existed in four files, and four copies of one claim
+   * drift apart silently. Read it there; this block only pins the cases.
+   *
+   * 🔴 ALL BUT ONE OF THE CASES BELOW PARSED at `origin/main` under the old
+   * length-only bound — those are regression tests. `a whitespace-only id` is the
+   * single exception and is labelled inline: it was rejected at base too, for a
+   * different reason, so it is an INVARIANT GUARD and must not be counted as
+   * regression coverage.
+   *
+   * 🔴 THE COUNT IS ASSERTED BELOW, NOT WRITTEN HERE — DELIBERATELY. Two successive
+   * rounds of this PR's own audit wrote a total into this header and had it go stale
+   * inside the very commit that added a case (`11 of 12` when the list held 13). A
+   * number kept beside the thing it counts drifts; `expect(notUuids).toHaveLength(N)`
+   * cannot. Do not "helpfully" restore a figure to this sentence.
+   *
+   * 🔴 `a 36-character absolute URL` is the one that makes this block pin the SHAPE
+   * rather than the old bound. Without it, replacing `z.uuid()` with a bare
+   * `z.string().length(36)` passes the entire suite — measured — because every other
+   * hostile fixture here happens to be the wrong length as well. That mutant is the
+   * attack still working, so the case that kills it is the one carrying the property.
+   */
+  describe('images — ids that are not uuids (regression)', () => {
+    const notUuids: Array<[string, string]> = [
+      ['an absolute https URL', 'https://attacker.example/x.png'],
+      ['an absolute http URL', 'http://attacker.example/x.png'],
+      // 🔴 EXACTLY 36 CHARACTERS — a uuid's length. This is the only case here that a
+      // bare `z.string().length(36)` does NOT also reject, so it is what separates
+      // "uuid-shaped" from "uuid-LENGTHED". Asserted below rather than counted by eye.
+      ['a 36-character absolute URL', URL_36],
+      ['a protocol-relative URL', '//attacker.example/x.png'],
+      ['a blob URL', 'blob:https://civitai.com/abcd'],
+      // No colon, so it takes `getEdgeUrl`'s verbatim branch as a SAME-ORIGIN
+      // relative src — a different, smaller hole than the ones above.
+      ['a bare string starting with http', 'httpsomething'],
+      ['a data URL', 'data:image/png;base64,AAAA'],
+      ['a traversal', '../../etc/passwd'],
+      ['a plausible-looking opaque key', 'cf-image-1'],
+      ['a uuid with its hyphens stripped', '11111111222243338444555555555555'],
+      // Previously rejected too, but for a DIFFERENT reason: `.trim()` reduced it to
+      // '' and `.min(1)` caught it. Kept so dropping `.trim()` cannot silently lose
+      // the case along with the test that named it.
+      ['a whitespace-only id', '   '],
+      ['a whitespace-padded uuid', ` ${UUID_A} `],
+      ['a uuid with trailing path', `${UUID_A}/../other`],
+    ];
+
+    // Asserted, not counted by eye: if this ever stops being a uuid's length the case
+    // above silently stops being the one that kills the `length(36)` mutant.
+    it('the 36-character case really is uuid-length, or it is testing nothing', () => {
+      expect(URL_36).toHaveLength(UUID_A.length);
+    });
+
+    // 🔴 THE HEADER'S COUNT, MECHANISED. This is the fix for a claim that went stale
+    // twice in this PR's own audit ladder — not decoration. Deleting a case from the
+    // list fails here, which is the whole job of the header sentence above.
+    it('carries every hostile shape — a deleted case fails here, not silently', () => {
+      expect(notUuids).toHaveLength(13);
+      // The labels, hand-typed. Reading them out of `notUuids` would make this follow
+      // any future edit instead of pinning the set.
+      expect(notUuids.map(([label]) => label)).toEqual([
+        'an absolute https URL',
+        'an absolute http URL',
+        'a 36-character absolute URL',
+        'a protocol-relative URL',
+        'a blob URL',
+        'a bare string starting with http',
+        'a data URL',
+        'a traversal',
+        'a plausible-looking opaque key',
+        'a uuid with its hyphens stripped',
+        'a whitespace-only id',
+        'a whitespace-padded uuid',
+        'a uuid with trailing path',
+      ]);
+    });
+
+    it.each(notUuids)('rejects %s', (_label, value) => {
+      expect(() => parse({ images: [value] })).toThrow();
+      expect(() => parse({ screenshotId: value })).toThrow();
+    });
+
+    // The positive control for the block above: the guard rejects those BECAUSE they
+    // are not uuids, not because the field rejects everything.
+    it('still accepts the shape every mint path actually emits', () => {
+      expect(parse({ images: [UUID_A], screenshotId: UUID_B }).context?.images).toEqual([UUID_A]);
+    });
+  });
+
   describe('screenshotId', () => {
     it('carries the id through instead of stripping it', () => {
-      const parsed = parse({ screenshotId: 'cf-screenshot-1' });
-      expect(parsed.context?.screenshotId).toBe('cf-screenshot-1');
-    });
-
-    it('accepts exactly 100 characters', () => {
-      const parsed = parse({ screenshotId: id(100) });
-      expect(parsed.context?.screenshotId).toHaveLength(100);
-    });
-
-    it('rejects 101 characters', () => {
-      expect(() => parse({ screenshotId: id(101) })).toThrow();
+      const parsed = parse({ screenshotId: UUID_A });
+      expect(parsed.context?.screenshotId).toBe(UUID_A);
     });
 
     it('rejects an empty id', () => {
@@ -104,9 +187,9 @@ describe('feedback schema — context bounds', () => {
     // Distinct fields, not one array: triage must be able to tell a rendered capture
     // of the reporter's own screen from a file they picked.
     it('is separate from images — both can travel on one submission', () => {
-      const parsed = parse({ images: ['attached-1'], screenshotId: 'captured-1' });
-      expect(parsed.context?.images).toEqual(['attached-1']);
-      expect(parsed.context?.screenshotId).toBe('captured-1');
+      const parsed = parse({ images: [UUID_A], screenshotId: UUID_B });
+      expect(parsed.context?.images).toEqual([UUID_A]);
+      expect(parsed.context?.screenshotId).toBe(UUID_B);
     });
   });
 
@@ -144,9 +227,9 @@ describe('feedback schema — context bounds', () => {
     // an undeclared key is DROPPED, not rejected, so "the field arrived" is only
     // ever provable by reading it back.
     it('are stripped silently rather than rejected', () => {
-      const parsed = parse({ images: ['a'], notAField: 'x' } as Record<string, unknown>);
+      const parsed = parse({ images: [UUID_A], notAField: 'x' } as Record<string, unknown>);
       expect(parsed.context).not.toHaveProperty('notAField');
-      expect(parsed.context?.images).toEqual(['a']);
+      expect(parsed.context?.images).toEqual([UUID_A]);
     });
   });
 
@@ -184,11 +267,11 @@ describe('feedback schema — context bounds', () => {
  * report bounced.
  */
 describe('feedback areas', () => {
-  const areas = ['bitdex-image-feed', 'apps-marketplace'];
+  const areas = ['bitdex-image-feed', 'apps-marketplace', 'site-bug-report'];
 
   // Both halves hand-typed. Reading the expectation out of FEEDBACK_AREAS would make
   // this test follow any future edit instead of pinning the set.
-  it('are exactly the two declared surfaces', () => {
+  it('are exactly the three declared surfaces', () => {
     expect([...FEEDBACK_AREAS]).toEqual(areas);
   });
 
@@ -217,6 +300,34 @@ describe('feedback areas', () => {
   it('derive their Flipt flag keys from the slug', () => {
     expect(feedbackAreaFlagKey('bitdex-image-feed')).toBe('feedback-area-bitdex-image-feed');
     expect(feedbackAreaFlagKey('apps-marketplace')).toBe('feedback-area-apps-marketplace');
+    expect(feedbackAreaFlagKey('site-bug-report')).toBe('feedback-area-site-bug-report');
+  });
+});
+
+/**
+ * `context.path` — the route a report came from, and the one context field a caller
+ * has to clip to by hand (`FeedbackDrawer`). The bound is exported for that reason:
+ * a `max()` REJECTS rather than truncating, so a drifted copy does not produce a
+ * shortened path, it 400s the whole submission on the surface that exists to collect
+ * reports. These two assertions are the contract between the clip and the schema.
+ */
+describe('context.path', () => {
+  const parsePath = (path: string) =>
+    createFeedbackSchema.parse({
+      area: 'site-bug-report' as const,
+      message: 'something broke',
+      context: { path },
+    });
+
+  it('is a 300-character ceiling', () => {
+    expect(FEEDBACK_PATH_MAX_LENGTH).toBe(300);
+  });
+
+  it('accepts a path of exactly the bound, and rejects one character more', () => {
+    expect(parsePath('/'.padEnd(FEEDBACK_PATH_MAX_LENGTH, 'a')).context?.path).toHaveLength(
+      FEEDBACK_PATH_MAX_LENGTH
+    );
+    expect(() => parsePath('/'.padEnd(FEEDBACK_PATH_MAX_LENGTH + 1, 'a'))).toThrow();
   });
 });
 

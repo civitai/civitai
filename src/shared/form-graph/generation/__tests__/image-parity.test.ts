@@ -155,6 +155,8 @@ const OPENAI_ONLY_SHAPES: AnyRecord[] = [
   { prompt: 'a cat', quality: 'medium' }, // default v2 -> gpt2
   { prompt: 'a cat', model: 3311434, quality: 'low' }, // 2.5 flare -> gpt2
   { prompt: 'a cat', model: 3311436 }, // 2.5 sunburst -> gpt2
+  { prompt: 'a cat', model: 2880272, aspectRatio: '16:9' }, // gpt2-only ratio
+  { prompt: 'a cat', model: 1733399, aspectRatio: '16:9' }, // gpt2-only ratio on gpt1
 ];
 const LENS_ONLY_SHAPES: AnyRecord[] = [
   { prompt: 'a cat', model: 2982241 }, // turbo ranges
@@ -261,6 +263,7 @@ const ECOSYSTEMS = [
   'MuseImage',
   'MAI',
   'Ernie',
+  'Ideogram',
   'Seedream',
   'Anima',
   'MageFlow',

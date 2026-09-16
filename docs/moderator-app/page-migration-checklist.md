@@ -37,7 +37,7 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
 - **[Tier 2 — Low priority](#tier-2--low-priority):** pages the head moderator doesn't use or doesn't know about. Real features, but defer until Tier 1 is done.
 - **[Excluded — will not migrate](#excluded--will-not-migrate):** Paddle (per decision: no Paddle pages in the moderator app) + dev/test scaffolds.
 
-> **Counts:** Tier 1 ≈ **31** pages · Tier 2 ≈ **30** pages · Excluded **6** (2 Paddle + 4 scaffolds).
+> **Counts:** Tier 1 ≈ **31** pages · Tier 2 ≈ **31** pages · Excluded **6** (2 Paddle + 4 scaffolds).
 
 ### Suggested order within Tier 1
 
@@ -221,11 +221,11 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
 - ~~**`/moderator/generation`**~~ — **removed**. The "Unavailable Resources" list was replaced by a
   per-version "Block generation" action on the model-version menu, backed by the
   `ModelVersionFlag.GenerationDisabled` bit on `ModelVersion.flags`. No page to migrate.
-- [ ] **`/moderator/generation-config`** — `generation-config.tsx` — flag: none
-  - Procedures: `getGateRules` (query); `setGateRules` (mutation)
-  - Services: `generation/generation.service.ts` (`getGateRules`, `setGateRules`)
-  - Schemas: `shared/data-graph/generation/gates.ts` (`gateRuleSchema`)
-  - Infra: **Redis (sysRedis `SYSTEM.FEATURES`) + Flipt** (`GENERATION_TESTING`)
+- [ ] **`/moderator/generation-config`** — `generation-config.tsx` + `components/Moderation/GenerationConfig/` (`GateRulesSection`, `GeneratorMessagesSection`, `target-inputs`) — flag: none
+  - Procedures: `getGateRules`, `getGeneratorMessages` (queries); `saveGateRule`, `deleteGateRule`, `saveGeneratorMessage`, `deleteGeneratorMessage` (mutations)
+  - Services: `generation/generation.service.ts` (the same names)
+  - Schemas: `shared/data-graph/generation/gates.ts` (`gateRuleSchema`), `shared/generation/messages.ts` (`generatorMessageSchema`)
+  - Infra: **Redis** — sysRedis hashes `GENERATION.GATE_RULES` / `GENERATION.MESSAGES` (one field per entry, migrated on first use from `SYSTEM.FEATURES`; the status cards still read `SYSTEM.FEATURES`) **+ Flipt** (`GENERATION_TESTING`)
 - [x] **`/moderator/generation-restrictions`** — **Migrated** to the spoke at
   **`/audit/generator-restrictions`** (label "Generator Restrictions").
   - Spoke: `user-restriction.service.ts` reads the queue with Kysely and writes suspicious matches to the
@@ -488,6 +488,13 @@ Real, working features the head moderator doesn't use or doesn't know about. Mig
   - Schemas: `research.schema.ts` (`raterUpdateSanityImagesSchema`)
   - Infra: **Postgres (raw SQL on `Image`) + Redis (sysRedis `RATINGS_SANITY_IDS` set)**
   - Notes: not on the head-mod list; commented out in nav + research-only — parked here pending confirmation (could be excluded).
+
+- [ ] **`/moderator/huggingface-import`** — `huggingface-import.tsx` + `components/Moderation/HuggingFaceImport/` — flag: none (`requireModerator`) — **added 2026-09-14, after this inventory was taken**
+  - Procedures: `huggingFaceImport.getAll`, `getCounts`, `getConfig` (queries); `lookup`, `enqueue`, `attach`, `detach`, `delete`, `renameGroup`, `retry`, `cancel`, `setConfig` (mutations)
+  - Services: `huggingface.service.ts` (HF API client), `huggingface-import.service.ts` (queue + resumable multipart transfer), `huggingface-import-config.service.ts` (transfer settings)
+  - Schemas: `huggingface-import.schema.ts`
+  - Infra: **Postgres (`HuggingFaceImport`) + S3/B2 multipart + Redis (sysRedis transfer config) + the `process-huggingface-imports` cron**
+  - Notes: a port moves the page, not the transfer — the cron and `createFileHandler` (scan + hash submission) stay in the main app, so this is delegate-shaped if it moves at all.
 
 ---
 

@@ -71,7 +71,7 @@ export type AppsBuildFeatureFlags =
  *
  * 🔒 THE SINGLE SOURCE OF TRUTH for "may this viewer reach the build surface", and it
  * is consumed by exactly TWO callers that MUST agree: the `Build` row in
- * `SUB_NAV_LINKS` (`~/components/Apps/AppsSubNav`) and the page's own SSR gate
+ * `appsSections` (`~/components/Apps/apps-sections`) and the page's own SSR gate
  * (`~/components/Apps/resolveBuildPageAccess`, called from `pages/apps/build.tsx`).
  *
  * ## Why one predicate, in one place
@@ -97,7 +97,7 @@ export type AppsBuildFeatureFlags =
  * `hasAppsStoreAccess(features) && (isAppDeveloper(user, …) || appBlocksGetStarted)`
  *
  * - The STORE term is a hard precondition. `/apps/build` is a surface INSIDE the apps
- *   store IA — it renders under the same `AppsSubNav` chrome, its workbench state links
+ *   store IA — it renders under the same `/apps` rail chrome, its workbench state links
  *   into `/apps/listing/<id>/edit`, and its Marketplace sibling tab is store-gated. A
  *   viewer with no store access has no `/apps` at all, so admitting them here would put
  *   them on a page whose every onward link 404s.
@@ -172,16 +172,18 @@ export type AppsStoreFeatureFlags =
  * (`appListings || appBlocks || appListingsPublicExternal`).
  *
  * 🔒 THE SINGLE SOURCE OF TRUTH for "may this viewer see the /apps store", for
- * seven surfaces: the `/apps` SSR resolver (`resolveAppsPageAccess`), the `/apps`
+ * eight surfaces: the `/apps` SSR resolver (`resolveAppsPageAccess`), the `/apps`
  * page body, the store-preview route, the marketplace grid query, the
  * related-listings rail, the `/apps/*` sub-nav — all six under `components/Apps`
- * / `pages/apps` — and, since #3907, the user-menu "Apps" → `/apps` entry
- * (`components/AppLayout/AppHeader/appsNavVisibility.ts`). All seven route
+ * / `pages/apps` — the user-menu "Apps" → `/apps` entry
+ * (`components/AppLayout/AppHeader/appsNavVisibility.ts`, since #3907), and the
+ * top-nav pill (`components/HomeContentToggle/nav-registry.ts`). All eight route
  * through THIS predicate.
  *
  * ⚠️ "Every store surface" would still be TOO STRONG, so it is not claimed —
- * only that these seven are pinned. The seventh was converted because it is the
- * ONLY in-product route to `/apps`, so while it read `appBlocks` alone a
+ * only that these eight are pinned. The seventh was converted because it was, until the
+ * top-nav pill shipped, the only in-product route to `/apps` — while it read
+ * `appBlocks` alone a
  * `{appListings, NOT appBlocks}` or external-only cohort got a store that
  * rendered but could not be found. Converting it widens DISCOVERY only: the
  * block-runtime surfaces listed below keep their own gates.
@@ -189,12 +191,13 @@ export type AppsStoreFeatureFlags =
  * Do NOT re-inline `features.appListings || features.appBlocks`; the
  * gates drifting apart is exactly what this function exists to prevent, and it
  * had already happened once: of the SIX store-visibility sites, five spelled the
- * OR out and the sixth — `AppsSubNav` — spelled only half of it (`appBlocks`
+ * OR out and the sixth — the `/apps` nav's own gate, now `useAppsNavSections` — spelled
+ * only half of it (`appBlocks`
  * alone), so an `app-listings`-only cohort would have loaded `/apps` with no
  * sub-navigation at all.
  *
  * ENFORCED, not merely requested: `components/Apps/__tests__/appsStoreAccessCallSites.test.ts`
- * pins the exact ledger of the seven sites and fails if one is added, reverted, or
+ * pins the exact ledger of the eight sites and fails if one is added, reverted, or
  * re-inlines the boolean. Adding a store surface means adding it to that ledger.
  *
  * ## Why an OR, and which flag is which

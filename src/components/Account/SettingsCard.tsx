@@ -10,6 +10,7 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
+import { IconDiamond } from '@tabler/icons-react';
 import produce from 'immer';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -19,7 +20,11 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 // import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { UserAssistantPersonality } from '~/server/schema/user.schema';
-import { type FeatureAccess, toggleableFeatures } from '~/server/services/feature-flags.service';
+import {
+  type FeatureAccess,
+  fliptGatedToggleableKeys,
+  toggleableFeatures,
+} from '~/server/services/feature-flags.service';
 import { UNQUANTIZED_QUANT_TYPE } from '~/utils/file-display-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -68,31 +73,7 @@ export function SettingsCard() {
         <Title order={2}>Browsing Settings</Title>
 
         <Divider label="Image Preferences" mb={-12} />
-        <Group wrap="nowrap" grow>
-          <AutoplayGifsToggle />
-          <Select
-            label="Preferred Format"
-            name="imageFormat"
-            data={[
-              {
-                value: 'optimized',
-                label: 'Optimized (avif, webp)',
-              },
-              {
-                value: 'metadata',
-                label: 'Unoptimized (jpeg, png)',
-              },
-            ]}
-            value={user.filePreferences?.imageFormat ?? 'metadata'}
-            onChange={(value: string | null) =>
-              mutate({
-                id: user.id,
-                filePreferences: { ...user.filePreferences, imageFormat: value as ImageFormat },
-              })
-            }
-            disabled={isLoading}
-          />
-        </Group>
+        <AutoplayGifsToggle />
         <SwipeGalleryCardsToggle />
         <StickerMotionToggle />
 
@@ -321,6 +302,16 @@ export function EarlyAdopterToggle() {
 export function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }) {
   const flags = useFeatureFlags();
   const queryUtils = trpc.useUtils();
+  // Flipt-gated toggles only exist for granted users: the overlay withholds the key for everyone
+  // else, so its absence distinguishes "not granted" (hide the row) from "toggled off" (show it).
+  const { data: userFeatures } = trpc.user.getFeatureFlags.useQuery(undefined, {
+    gcTime: Infinity,
+    staleTime: Infinity,
+  });
+  const visible = data.filter(
+    (feature) =>
+      !fliptGatedToggleableKeys.has(feature.key) || (userFeatures && feature.key in userFeatures)
+  );
   const toggleFeatureFlagMutation = trpc.user.toggleFeature.useMutation({
     async onMutate(payload) {
       await queryUtils.user.getFeatureFlags.cancel();
@@ -354,7 +345,7 @@ export function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }
 
   return (
     <>
-      {data.map((feature) => (
+      {visible.map((feature) => (
         <Switch
           name={feature.key}
           key={feature.key}
@@ -374,7 +365,7 @@ export function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }
  * control rather than two copies that can drift while the `accountSettingsV2` flag is alive.
  * They carry no label of their own — the pane's `SettingRow` supplies it.
  */
-function useFilePreferenceUpdate() {
+function useFilePreferenceUpdate({ onError }: { onError?: () => void } = {}) {
   const user = useCurrentUser();
   const queryUtils = trpc.useUtils();
   const { mutate, isPending } = trpc.user.update.useMutation({
@@ -382,6 +373,15 @@ function useFilePreferenceUpdate() {
       await queryUtils.model.getAll.invalidate();
       await user?.refresh();
       showSuccessNotification({ message: 'User profile updated' });
+    },
+    // Nothing handles a rejected mutation globally, so without this a failed save is silent and any
+    // control holding an optimistic value keeps showing a preference that was never persisted.
+    onError() {
+      showErrorNotification({
+        title: 'Failed to update preferences',
+        error: new Error('Something went wrong, please try again later.'),
+      });
+      onError?.();
     },
   });
 
@@ -391,23 +391,6 @@ function useFilePreferenceUpdate() {
   };
 
   return { user, update, isPending };
-}
-
-export function ImageFormatSelect() {
-  const { user, update, isPending } = useFilePreferenceUpdate();
-  if (!user) return null;
-  return (
-    <Select
-      aria-label="Preferred image format"
-      data={[
-        { value: 'optimized', label: 'Optimized (avif, webp)' },
-        { value: 'metadata', label: 'Unoptimized (jpeg, png)' },
-      ]}
-      value={user.filePreferences?.imageFormat ?? 'metadata'}
-      onChange={(value: string | null) => update({ imageFormat: value })}
-      disabled={isPending}
-    />
-  );
 }
 
 export function ModelFileFormatSelect() {

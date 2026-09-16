@@ -325,7 +325,8 @@ export function BaseModelListContent({
         ? ecosystemById.get(item.defaultEcosystemId)?.key ?? item.key
         : item.key;
     const gateState = disabledStateMap?.get(disabledCheckKey);
-    const isDisabled = !!gateState;
+    // `disabled` stays selectable — the form explains it and blocks generation.
+    const isDisabled = gateState?.state === 'memberOnly';
     const badge = gateState ? GATE_BADGE[gateState.state] : undefined;
     const button = (
       <UnstyledButton
@@ -600,11 +601,8 @@ function groupItemsByFamily(items: EcosystemDisplayItem[]): FamilyGroup[] {
  * Everything `BaseModelListContent` needs to render: the display items, their
  * family grouping, recents, tab state and the group→ecosystem resolution that
  * happens on select.
- *
- * Extracted so the form-graph checkpoint picker's ecosystem rail renders the
- * same list from the same source rather than a second copy of it.
  */
-export function useBaseModelPickerState({
+function useBaseModelPickerState({
   value,
   onChange,
   compatibleEcosystems,

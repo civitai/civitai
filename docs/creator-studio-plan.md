@@ -56,7 +56,7 @@ main app's React/Mantine components — these apps are **Svelte 5 / SvelteKit / 
 - [`docs/auth/spoke-integration-guide.md`](auth/spoke-integration-guide.md) + [`docs/auth/auth-hub-spoke-overview.md`](auth/auth-hub-spoke-overview.md)
   — the hub↔spoke auth contract (`civ-token`, `@civitai/auth`, `createSpokeGuard`).
 - [`packages/civitai-ui/README.md`](../packages/civitai-ui/README.md) — **`@civitai/ui`**, the shared shadcn-svelte
-  component package (24 primitives + dark-only theme, Tailwind v4). Consume it; add new *shared* components into it, not
+  component package (shadcn-svelte primitives + dark-only theme, Tailwind v4). Consume it; add new *shared* components into it, not
   into the app.
 
 **Scaffolding:** use the **`scaffold-civitai-app`** skill to stand up `apps/creator-studio`. It cherry-picks only the

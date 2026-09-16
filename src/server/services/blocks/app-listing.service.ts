@@ -8,6 +8,7 @@ import { toPublicBlockManifest } from '~/server/schema/blocks/subscription.schem
 import { isMatureContentRating } from '~/server/utils/server-domain';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
+import { tokenScopeMaskToList } from '~/shared/constants/token-scope.constants';
 import type {
   GetAppListingDetailInput,
   ListAllListingsForModerationInput,
@@ -233,6 +234,23 @@ export const listingHydrateSelect = {
   contentRating: true,
   externalUrl: true,
   connectClientId: true,
+  // 🔴 `connectRequestedScopes` IS DELIBERATELY *NOT* HERE — it is spread in at the two
+  // DETAIL call sites instead, the same pattern `status` and `revisionOfId` already use,
+  // so the public `/apps` GRID this select backs is untouched.
+  //
+  // ⚠ An earlier draft of this PR did put it here, justified as "beside `connectClientId`,
+  // which it shipped alongside in the same W13 block". That justification was FALSE and
+  // the placement inherited its risk: the two columns are in DIFFERENT manual-apply
+  // migrations sixteen days apart — `connect_client_id` in
+  // `20260701120000_w13_p0_app_listing/`, `connect_requested_scopes` in
+  // `20260717120000_w13_connect_scope_review/`, whose own header says "MANUAL APPLY … CI /
+  // deploy does NOT run it" and "If that code ships before the columns exist, those
+  // queries 500." Two migrations have two independent apply histories, so one column's
+  // presence is no evidence about the other's. Selecting it here would have put the whole
+  // public store grid behind a migration it never previously needed — the exact outcome
+  // `sourceRepoUrl` records having MEASURED on a preview env ("5 smoke specs 500'd here").
+  // The column IS applied in production (verified directly against `public.app_listings`);
+  // that is a fact about prod, not about every environment.
   appBlockId: true,
   icon: { select: { url: true } },
   cover: { select: { url: true } },
@@ -256,7 +274,12 @@ export const listingHydrateSelect = {
   // onsite listing whose backing block has never successfully deployed is
   // treated as unavailable). NULL ⇔ never-deployed; non-null ⇔ live (stays
   // available while a new version re-builds).
-  appBlock: { select: { manifest: true, currentVersionDeployedAt: true } },
+  // `approvedScopes` feeds the DETAIL DTO's pre-launch permission disclosure.
+  // Projected onto the DETAIL only (see `scopes` in `projectListingDetail`); the
+  // card deliberately does not carry it, for the same reason `sourceRepoUrl` is
+  // detail-only — a grid tile has no room for the context that makes a
+  // capability list readable.
+  appBlock: { select: { manifest: true, currentVersionDeployedAt: true, approvedScopes: true } },
   screenshots: {
     where: { imageId: { not: null } },
     // Stable order: `id` tiebreaks rows with a tied `order` (default 0), which
@@ -486,7 +509,10 @@ export async function getListingPreviewForReview(args: {
     // PARENT for a shadow. Spread here rather than added to `listingHydrateSelect`, so the
     // public grid and detail reads are untouched (same pattern as `status` on the public
     // detail read). It is an ordinary long-standing column, not a manual-apply one.
-    select: { ...listingHydrateSelect, revisionOfId: true },
+    // `connectRequestedScopes` is spread in here rather than living in
+    // `listingHydrateSelect`, so the public grid never depends on its manual-apply
+    // migration — see the note at that select. Same reason `revisionOfId` is spread.
+    select: { ...listingHydrateSelect, revisionOfId: true, connectRequestedScopes: true },
   });
   if (!row) return null;
   // Same manual-apply guard as the public read — a moderator previewing a shadow must
@@ -520,7 +546,7 @@ export async function getListingPreviewForReview(args: {
   ]);
   return {
     card: projectListingCard(row, beta),
-    detail: projectListingDetail(row, [], sourceRepo.value, beta),
+    detail: projectListingDetail(row, [], sourceRepo.value, beta, row.connectRequestedScopes),
   };
 }
 
@@ -556,7 +582,18 @@ export function projectListingDetail(
   row: HydratedListing,
   collaborators: Array<{ id: number; username: string | null; image: string | null }> = [],
   sourceRepoUrl: string | null = null,
-  beta: ListingBetaRead = BETA_NOT_SET
+  beta: ListingBetaRead = BETA_NOT_SET,
+  /**
+   * The raw `AppListing.connectRequestedScopes` bitmask, PASSED IN for the same reason
+   * `sourceRepoUrl` and `beta` are: its column is manual-apply and is deliberately not
+   * named in `listingHydrateSelect`, which the public `/apps` GRID shares. Each DETAIL
+   * caller spreads it into its own select and hands it here.
+   *
+   * Defaulting to `null` means a caller that forgets it discloses NOTHING rather than
+   * throwing — the safe direction for a permissions surface, and the same default shape
+   * as its two neighbours.
+   */
+  connectRequestedScopes: number | null = null
 ): ListingDetail {
   const recommend = recommendRollup(row.metric);
   return {
@@ -600,6 +637,118 @@ export function projectListingDetail(
     sourceRepoUrl: sourceRepoUrl ?? null,
     screenshots: galleryScreenshots(row),
     kindData: detailKindData(row),
+    // Pre-launch permission disclosure. IDENTICAL projection to the one
+    // `BlockRegistry.getAppDetail` already ships for the same purpose — the
+    // approved scope ids, string-filtered, `[]` when the column is NULL.
+    //
+    // 🔴 `approvedScopes`, NOT the manifest's self-declared `scopes`, AND THE REASON
+    // IS THAT THE TWO GENUINELY DIVERGE — do not "simplify" this to `manifest.scopes`.
+    //
+    // ⚠ An earlier version of this comment claimed they "can never disagree because
+    // the approve paths write them in the same update". That is FALSE, and it deleted
+    // the only reason this line reads the column it does.
+    // `src/pages/api/v1/developer/block-manifests.ts` updates `manifest` + `version`
+    // on an existing AppBlock WITHOUT touching `approvedScopes`, and sets
+    // `status: 'pending'` — deliberately, so a publisher cannot swap `iframe.src` or
+    // sandbox tokens post-approval without re-entering moderation. So a row can hold
+    // a v2 manifest declaring `['models:read:self','ai:write:budgeted']` alongside a
+    // v1 `approvedScopes` of `['models:read:self']`.
+    //
+    // Reading the manifest there would publish a scope NOBODY APPROVED on a public
+    // store page — the app's own claim about itself, rendered as if granted.
+    // `approvedScopes` is written only by the three approve paths
+    // (`publish-request.service.ts`), which take `manifest.scopes` verbatim at approve
+    // time; there is no per-scope narrowing mechanism, so the only skew is
+    // approve→deploy, where this over-discloses. That is the safe direction.
+    //
+    // 🔴 GATED ON `kind`, NEVER ON `appBlockId` NULLNESS — they are not the same
+    // predicate. `mapAppBlockToListing` mints `kind: 'offsite'` WITH a non-null
+    // `appBlockId` whenever the source AppBlock carries an `externalUrl`, reachable
+    // through the mod proc `blocks.backfillAppListings`; `schema.full.prisma` says in
+    // as many words to discriminate on `kind`.
+    //
+    // 🔴 THE CONSOLIDATION VEHICLE ALREADY EXISTS — `CAPABILITIES_BY_KIND` /
+    // `listingKindSupports` in `src/shared/constants/app-capabilities.constants.ts`.
+    // If this gate is ever consolidated, ADD A CAPABILITY CELL there; do NOT build a
+    // new helper.
+    //
+    // 🔴 DELIBERATELY NO COUNTS AND NO SITE LIST HERE — read
+    // `KIND_CAPABILITY_LEDGER` in
+    // `src/server/services/blocks/__tests__/app-access.call-site-ledger.test.ts`,
+    // which is growth-and-shrink gated and therefore cannot go stale the way a
+    // sentence can. THREE successive drafts of this comment quoted a number or a
+    // site list and all three were WRONG: "the third consumer" (undercount), then
+    // "five, open-coded by hand" (two already used the table), then "~14 absorbed"
+    // (that figure belongs to `app-access.service.ts`'s separate OWNERSHIP-gate
+    // consolidation, not to the capability table) alongside "two of five already
+    // route through it" (it is four of five). Each wrong draft was written while
+    // fixing the previous one. The form is the defect, not the arithmetic — so the
+    // number now lives only where a test asserts it.
+    //
+    // Without the gate, such a row renders the off-site disclosure — "This app runs
+    // entirely off-platform — no Civitai install, account access, or permissions" —
+    // directly above "This app can… ai:write:budgeted". Two contradictory SECURITY
+    // claims on a public store page. The population is 0 in production (measured
+    // 2026-08-11: offsite 5 rows, 0 with a block), so this is PREVENTION, not a
+    // live bug — and prevention is cheap here because it is one clause.
+    scopes:
+      row.kind === 'onsite' && Array.isArray(row.appBlock?.approvedScopes)
+        ? row.appBlock.approvedScopes.filter((s): s is string => typeof s === 'string')
+        : [],
+    // The OFF-SITE analog of `scopes` above: the account permissions an
+    // OAuth-connect listing will ASK the viewer to approve, decoded from the
+    // `connectRequestedScopes` bitmask into TokenScope enum-keys.
+    //
+    // 🔴 GATED ON `kind` **AND ON THE CONNECT CLIENT'S PRESENCE**, and the second
+    // half is not belt-and-braces — omitting it is a live public-page defect.
+    //
+    // `connectClient` is `onDelete: SetNull` (`schema.full.prisma:2899`) while
+    // `connectRequestedScopes` is an independent `Int?` the cascade never touches, and
+    // deleting an OAuth client is owner-callable with no check for referencing
+    // listings. `app-transfer.constants.ts` already records the resulting state in
+    // writing — "SetNull nulls the listing's connectClientId, STRANDING the
+    // connectRequestedScopes … an owner-initiated route out of this refusal EXISTS
+    // TODAY". The listing stays `approved` and keeps serving.
+    //
+    // Without this clause that stranded row publishes scopes while
+    // `shouldShowOffsiteDisclosure` — which is `… && !kindData.connectClientId` — turns
+    // TRUE, so one public page renders "no Civitai install, account access, or
+    // permissions" directly above "Permissions this app may request (2) / Sensitive
+    // permissions (2)". Two contradictory SECURITY claims, and the permissions half is
+    // the FALSE one: with no client, nothing can be asked for. `app-listing.service.test.ts`
+    // already refuses exactly this shape for `scopes`, in those words.
+    //
+    // ⚠ THIS IS NOT THE `appBlockId`-vs-`kind` RULE, AND AN EARLIER DRAFT CONFLATED
+    // THEM. That rule says do not infer an on-site KIND from `appBlockId` nullness —
+    // `mapAppBlockToListing` can mint `kind: 'offsite'` WITH a non-null `appBlockId`, so
+    // `kind` is the kind discriminator and stays one here. `connectClientId` is not
+    // being used as a kind discriminator: it answers a different question — is there a
+    // client that could request anything at all — and `kind === 'offsite'` does not
+    // imply there is one.
+    //
+    // 🔴 DECODED HERE, SERVER-SIDE, THROUGH THE SHARED TABLE. `tokenScopeMaskToList`
+    // is the same expansion the hub's OAuth consent screen uses; its own module
+    // says forking the bitmask/labels would be a latent security bug. Sending the
+    // raw Int instead would push that decode onto every consumer of a PUBLIC REST
+    // endpoint and couple them to bit positions.
+    //
+    // 🔴 NO STATUS CLAUSE, DELIBERATELY. `getListingDetail` already returns null
+    // for `status !== 'approved'` before reaching this projection, so a draft's
+    // intended scopes cannot ride the public read; adding the clause here would be
+    // unreachable on that path. On the OTHER caller it would be actively wrong —
+    // `getListingPreviewForReview` is deliberately not status-filtered so a
+    // moderator can preview a draft, and a status gate here would blank the
+    // enumeration they are reviewing. `appListingConnectScopes.test.ts` pins both
+    // halves so this reliance cannot rot into a sentence nobody rechecks.
+    // Truthiness on `connectClientId`, not `!= null` — `kindData` normalises `'' → null`
+    // (`row.connectClientId || null` above), so an empty string must read as "no client"
+    // on BOTH sides or the two surfaces disagree at exactly that value.
+    connectScopes:
+      row.kind === 'offsite' &&
+      Boolean(row.connectClientId) &&
+      typeof connectRequestedScopes === 'number'
+        ? tokenScopeMaskToList(connectRequestedScopes).map((s) => s.key)
+        : [],
   };
 }
 
@@ -1041,7 +1190,9 @@ export async function getListingDetail(
 
   const row = await dbRead.appListing.findFirst({
     where,
-    select: { ...listingHydrateSelect, status: true },
+    // `connectRequestedScopes` spread in for the DETAIL only — see the note at
+    // `listingHydrateSelect` for why it must not live in the grid-shared select.
+    select: { ...listingHydrateSelect, status: true, connectRequestedScopes: true },
   });
   // Status check in the app layer (like the AppBlock path) so a future caller
   // can't reuse this for a non-public path: a non-approved row returns null
@@ -1075,7 +1226,13 @@ export async function getListingDetail(
     readListingSourceRepoUrl(row.id, dbRead),
     readListingBetaForRender(row.id, dbRead),
   ]);
-  return projectListingDetail(row, collaborators, sourceRepo.value, beta);
+  return projectListingDetail(
+    row,
+    collaborators,
+    sourceRepo.value,
+    beta,
+    row.connectRequestedScopes
+  );
 }
 
 /**

@@ -137,6 +137,7 @@ describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
       'report-resolve',
       'report-dismiss',
       'message-owner',
+      'purge-user-storage',
     ]);
   });
 
@@ -156,6 +157,10 @@ describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
     'report-dismiss',
     // The listing's `userId` moves; its `status` does not.
     'claim',
+    // A moderator purged one USER's per-user App Storage rows. Nothing in
+    // `app_listings` is written at all — the rows live in a per-app schema in a
+    // different database; this taxonomy only records that it happened.
+    'purge-user-storage',
   ])(
     '%s leaves app_listings.status alone ⇒ state-neutral, and must NOT displace a removal',
     (action) => {

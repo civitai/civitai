@@ -643,7 +643,14 @@ const genModels = (num: number, userIds: number[]) => {
               weight: 1,
             },
           ]), // availability
-      rand(['{Sell}', '{Image,RentCivit,Rent,Sell}', '{Image,RentCivit}']), // allowCommercialUse
+      // The five-value shape is what the app writes today; the others are legacy shapes kept on
+      // purpose, so local data exercises both sides of the sell/merge split.
+      rand([
+        '{Image,RentCivit,Rent,Sell,SellMerge}',
+        '{Sell}',
+        '{Image,RentCivit,Rent,Sell}',
+        '{Image,RentCivit}',
+      ]), // allowCommercialUse
       randw([
         { value: 0, weight: 5 },
         { value: 1, weight: 4 },

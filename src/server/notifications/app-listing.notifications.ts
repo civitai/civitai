@@ -69,7 +69,7 @@ export type AppListingModerationNotificationDetails = {
  * DIFFERENT segment (`testers`), which is the live proof that these flags can and do diverge.
  *
  * The store term is required because `/apps/build` renders INSIDE the apps-store IA (the
- * `AppsSubNav` chrome, links into `/apps/listing/<id>/edit`), so a viewer with no store has a
+ * `/apps` rail chrome, links into `/apps/listing/<id>/edit`), so a viewer with no store has a
  * page whose every onward link 404s; the trade was taken knowingly. If that cohort ever
  * becomes real, the fix is to widen `canAccessAppsBuild`, in ONE place — not to fork this URL.
  *

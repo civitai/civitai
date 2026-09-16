@@ -683,6 +683,61 @@ export async function getMultipartPutUrl(
   return { urls, bucket, key, uploadId: UploadId, chunkSize };
 }
 
+/**
+ * Start a multipart upload WITHOUT presigning its parts, for a server-side transfer that uploads
+ * parts itself. {@link getMultipartPutUrl} presigns every part up front because the browser has no
+ * credentials; a transfer that spans several job runs cannot use those URLs — they expire, and the
+ * part count is only known once the source reports its size.
+ */
+export async function createMultipartUpload({
+  bucket,
+  key,
+  mimeType,
+  s3,
+}: {
+  bucket: string;
+  key: string;
+  mimeType?: string;
+  s3?: S3Client | null;
+}) {
+  if (!s3) s3 = getS3Client();
+  const { UploadId } = await s3.send(
+    new CreateMultipartUploadCommand({ Bucket: bucket, Key: key, ContentType: mimeType })
+  );
+  if (!UploadId) throw new Error(`S3 returned no UploadId for ${key}`);
+  return UploadId;
+}
+
+/** Upload one part of an in-flight multipart upload from the pod. Returns the part's ETag. */
+export async function uploadPart({
+  bucket,
+  key,
+  uploadId,
+  partNumber,
+  body,
+  s3,
+}: {
+  bucket: string;
+  key: string;
+  uploadId: string;
+  partNumber: number;
+  body: Uint8Array;
+  s3?: S3Client | null;
+}) {
+  if (!s3) s3 = getS3Client();
+  const { ETag } = await s3.send(
+    new UploadPartCommand({
+      Bucket: bucket,
+      Key: key,
+      UploadId: uploadId,
+      PartNumber: partNumber,
+      Body: body,
+    })
+  );
+  if (!ETag) throw new Error(`S3 returned no ETag for part ${partNumber} of ${key}`);
+  return ETag;
+}
+
 interface MultipartUploadPart {
   ETag: string;
   PartNumber: number;

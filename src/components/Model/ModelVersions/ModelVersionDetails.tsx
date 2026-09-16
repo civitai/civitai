@@ -132,6 +132,7 @@ import {
   getEffectiveCommercialUse,
   getEffectiveDifferentLicense,
   getRestrictedNsfwLevelsForBaseModel,
+  hasAdditionalLicensePermissions,
 } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getBaseModelGroup } from '~/shared/constants/basemodel.constants';
@@ -522,13 +523,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const onSite = !!version.trainingStatus;
   const showAddendumLicense =
     constants.supportedBaseModelAddendums.includes(version.baseModel as 'SD 1.5' | 'SDXL 1.0') &&
-    (!model.allowCommercialUse.length ||
-      model.allowCommercialUse.some((permission) =>
-        ['None', 'Image', 'RentCivit', 'Rent', 'Sell'].includes(permission)
-      ) ||
-      !model.allowNoCredit ||
-      !model.allowDerivatives ||
-      model.allowDifferentLicense);
+    hasAdditionalLicensePermissions(model);
 
   const { branch, showDownloadSection } = getModelVersionActionLayout({
     showRequestReview,

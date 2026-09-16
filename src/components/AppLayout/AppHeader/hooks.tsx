@@ -100,7 +100,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
 
   // Already in flight for the notification bell — one request per session,
   // `staleTime: Infinity`. Reading it here adds no round trip.
-  const { pendingPlacements } = useQueryNotificationsCount();
+  const { pendingPlacements, pendingCollectionReviews } = useQueryNotificationsCount();
 
   return [
     {
@@ -155,6 +155,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           icon: IconBookmark,
           color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'My Collections',
+          badge: pendingCollectionReviews,
         },
         {
           href: `/collections/${bookmarkedModelsCollection?.id}`,
@@ -394,7 +395,9 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Generate 3D Model',
     },
     {
-      href: '/models/train',
+      // The user-toggleable trainingStudioUi flag swaps the trainer entry for the new Training
+      // Studio; the old wizard stays reachable by toggling it back off.
+      href: features.trainingStudioUi ? '/training-studio' : '/models/train',
       visible: !isMuted && features.imageTraining,
       redirectReason: 'train-model',
       rel: 'nofollow',

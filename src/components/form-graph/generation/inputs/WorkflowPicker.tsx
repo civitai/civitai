@@ -163,6 +163,8 @@ function WorkflowRow({
     </div>
   );
 
+  // Rule-disabled stays SELECTABLE, badged and dimmed: picking it is how the
+  // form gets to explain why generation is blocked.
   if (gate?.state === 'disabled') {
     return (
       <Tooltip
@@ -171,7 +173,10 @@ function WorkflowRow({
         withArrow
         openDelay={300}
       >
-        <div className="flex w-full cursor-not-allowed gap-3 rounded-lg border border-gray-2 p-3 opacity-50 dark:border-dark-4">
+        <UnstyledButton
+          onClick={onSelect}
+          className="flex w-full gap-3 rounded-lg border border-gray-2 p-3 opacity-60 dark:border-dark-4"
+        >
           <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-gray-2 dark:bg-dark-5">
             <InputIcon size={15} />
           </div>
@@ -179,7 +184,7 @@ function WorkflowRow({
           <Badge size="xs" color="gray" variant="light">
             Disabled
           </Badge>
-        </div>
+        </UnstyledButton>
       </Tooltip>
     );
   }

@@ -1270,11 +1270,32 @@ const ownerModerationEventSelect = {
 } as const;
 
 /**
+ * Actions withheld from the OWNER-scoped history entirely — not merely projected
+ * down to fewer columns.
+ *
+ * 🔴 THE PROJECTION IS NOT ENOUGH FOR AN ACTION ABOUT A THIRD PARTY. Every other
+ * action in this taxonomy is an act against THIS LISTING, so an owner reading
+ * "Delisted — <reason>" is reading about their own app and the reason is theirs
+ * to see. `purge-user-storage` is not: it is an act against ANOTHER USER's stored
+ * data that merely happens to sit inside this app's schema. The owner-scoped
+ * select already drops `before`/`after` (where the target user id lives), but it
+ * KEEPS `reason` verbatim — and a moderator's rationale for a takedown against a
+ * user routinely names that user or their report. So the row is excluded here,
+ * rather than shown with a reason the owner should never have been handed.
+ *
+ * The MOD-facing per-listing history (`listModerationEvents`) is unaffected and
+ * still shows these events in place.
+ */
+const OWNER_HIDDEN_MODERATION_ACTIONS = ['purge-user-storage'] as const;
+
+/**
  * Per-listing moderation history, NEWEST-first, keyset-paginated. The cursor is the
  * event id (`alme_<ULID>`, time-sortable so it tracks the `createdAt desc` order);
  * the `id` tie-break makes same-millisecond ordering deterministic. `ownerScoped`
  * selects the privacy-minimal `ownerModerationEventSelect` (no mod identity / report/
- * detail) for the owner read; the mod read keeps the full `moderationEventSelect`.
+ * detail) for the owner read AND drops the rows in
+ * `OWNER_HIDDEN_MODERATION_ACTIONS` entirely; the mod read keeps the full
+ * `moderationEventSelect` and every row.
  */
 async function queryModerationEvents(opts: {
   appListingId: string;
@@ -1284,7 +1305,15 @@ async function queryModerationEvents(opts: {
 }) {
   const limit = Math.min(opts.limit ?? 25, 50);
   const rows = await dbRead.appListingModerationEvent.findMany({
-    where: { appListingId: opts.appListingId },
+    where: {
+      appListingId: opts.appListingId,
+      // See OWNER_HIDDEN_MODERATION_ACTIONS: an action about a THIRD PARTY's data
+      // is withheld from the owner's history outright, because the owner select
+      // keeps `reason` and the reason is about someone else.
+      ...(opts.ownerScoped
+        ? { action: { notIn: [...OWNER_HIDDEN_MODERATION_ACTIONS] } }
+        : {}),
+    },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),

@@ -96,6 +96,10 @@ export const getAllModelsSchema = z.object({
   sort: z.enum(ModelSort).default(constants.modelFilterDefaults.sort),
   period: z.enum(MetricTimeframe).default(constants.modelFilterDefaults.period),
   periodMode: periodModeSchema,
+  // Opt-in: retry the first page at AllTime when `period` returns nothing. Off by
+  // default because an empty result is the correct answer on a browse feed — the
+  // caller has to be a surface where an empty page is a dead end, like /tag/:name.
+  periodFallback: z.boolean().optional(),
   rating: z
     .preprocess((val) => Number(val), z.number())
     .transform((val) => Math.floor(val))
@@ -411,7 +415,12 @@ export const setAssociatedResourcesSchema = z.object({
       resourceId: z.number(),
       resourceType: z.enum(['model', 'article']),
     })
-    .array(),
+    .array()
+    .max(constants.modelAssociations.maxPerSave),
+  // Model ids the caller asked to link back. A request, not an instruction: the server keeps
+  // its own answer for which of them were added in this edit and which the owner owns, and
+  // narrows this list to that. Bounded by the same cap as the array above.
+  reciprocal: z.array(z.number()).max(constants.modelAssociations.maxPerSave).optional(),
 });
 // #endregion
 

@@ -4,11 +4,11 @@ import { Controller, MultiController } from 'form-graph/react';
 
 import { ActiveWildcards } from '~/components/Generate/Input/ActiveWildcards';
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
+import { PromptEditorShell } from '~/components/Generate/Input/PromptEditorShell';
 import { ResourceAlerts } from '~/components/generation_v2/ResourceAlerts';
 import { AspectRatioInput } from '~/components/generation_v2/inputs/AspectRatioInput';
 import { ControlNetsInput } from '~/components/generation_v2/inputs/ControlNetsInput';
 
-import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
 import { OutputFormatInput } from '~/components/generation_v2/inputs/OutputFormatInput';
 import { PriorityInput } from '~/components/generation_v2/inputs/PriorityInput';
 import { ResourceSelectInput } from '~/components/generation_v2/inputs/ResourceSelectInput';
@@ -29,9 +29,14 @@ import {
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { imageHub } from '~/shared/form-graph/generation/image/hub.graph';
 
-import { ControllerLabel, VersionGroupSelector, useWildcardHandlers } from './form-helpers';
-import { CheckpointRow } from './inputs/CheckpointRow';
-import { openCheckpointPicker, readResources } from './inputs/openCheckpointPicker';
+import {
+  ControllerLabel,
+  PromptLabel,
+  VersionGroupSelector,
+  useWildcardHandlers,
+} from './form-helpers';
+import { GateRuleWarnings } from './GateRuleWarnings';
+import { SourceImagesInput } from './inputs/SourceImagesInput';
 import type { GenerationStore } from './store';
 
 /**
@@ -49,59 +54,45 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
     <Stack gap="sm">
       <div className="flex flex-col gap-1">
         <Controller
-          graph={generationHub}
-          name="ecosystem"
-          render={({ value: ecosystem, meta: ecosystemMeta, onChange: onEcosystemChange }) => (
-            <Controller
-              graph={imageHub}
-              name="model"
-              render={({ value, meta, onChange }) => {
-                const defaultModelId = meta?.defaultModelId;
-                return (
-                  <>
-                    <CheckpointRow
-                      value={value}
-                      ecosystem={ecosystem}
-                      options={meta?.options}
-                      locked={meta?.modelLocked}
-                      onOpenPicker={() =>
-                        openCheckpointPicker({
-                          options: meta?.options,
-                          onSelect: onChange,
-                          onEcosystemChange,
-                          // Read at click time rather than subscribing: the
-                          // footer is the only consumer, and a subscription
-                          // would re-render this row on every strength drag.
-                          resources: readResources(store),
-                          ecosystem: {
-                            value: ecosystem,
-                            compatibleEcosystems: ecosystemMeta?.compatibleEcosystems,
-                            excludeEcosystems: ecosystemMeta?.hiddenEcosystems,
-                            ecosystemStates: ecosystemMeta?.ecosystemStates,
-                            outputType: ecosystemMeta?.mediaType,
-                          },
-                        })
-                      }
-                      onRevertToDefault={
-                        defaultModelId
-                          ? () => onChange({ id: defaultModelId, model: { type: 'Checkpoint' } })
-                          : undefined
-                      }
+          graph={imageHub}
+          name="model"
+          render={({ value, meta, onChange }) => {
+            const defaultModelId = meta?.defaultModelId;
+            return (
+              <>
+                <ResourceSelectInput
+                  value={value}
+                  onChange={onChange}
+                  label={
+                    <ControllerLabel
+                      label="Model"
+                      info="Models are the resources you're generating with. Using a different base model can drastically alter the style and composition of images, while adding additional resources can change the characters, concepts and objects."
                     />
-                    {meta?.versions ? (
-                      <VersionGroupSelector
-                        versions={meta.versions}
-                        modelId={value?.id}
-                        onChange={onChange}
-                      />
-                    ) : null}
-                  </>
-                );
-              }}
-            />
-          )}
+                  }
+                  buttonLabel="Select Model"
+                  modalTitle="Select Model"
+                  options={meta?.options}
+                  allowRemove={false}
+                  allowSwap={!meta?.modelLocked}
+                  onRevertToDefault={
+                    defaultModelId
+                      ? () => onChange({ id: defaultModelId, model: { type: 'Checkpoint' } })
+                      : undefined
+                  }
+                />
+                {meta?.versions ? (
+                  <VersionGroupSelector
+                    versions={meta.versions}
+                    modelId={value?.id}
+                    onChange={onChange}
+                  />
+                ) : null}
+              </>
+            );
+          }}
         />
       </div>
+      <GateRuleWarnings />
       <Controller
         graph={imageHub}
         name="resources"
@@ -169,14 +160,11 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         graph={imageHub}
         name="images"
         render={({ value, meta, onChange, error }) => (
-          <ImageUploadMultipleInput
-            label="Source images"
+          <SourceImagesInput
+            store={store}
             value={value}
             onChange={onChange}
-            max={meta?.max}
-            slots={meta?.slots}
-            warnOnMissingAiMetadata={meta?.warnOnMissingAiMetadata}
-            aspectRatios={meta?.aspectRatios as `${number}:${number}`[] | undefined}
+            meta={meta}
             error={error?.message}
           />
         )}
@@ -244,22 +232,30 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         graph={imageHub}
         name="prompt"
         render={({ value, meta, onChange, error }) => (
-          <GenerationTextEditor
-            value={value}
-            onChange={onChange}
-            snippets={meta?.snippets}
-            triggerWords={meta?.triggerWords}
-            attentionEdit
+          <PromptEditorShell
             label={
-              <ControllerLabel
+              <PromptLabel
+                store={store}
+                prompt={value}
                 label="Prompt"
                 info="Type out what you'd like to generate in the prompt, add aspects you'd like to avoid in the negative prompt."
                 required={meta?.required}
               />
             }
-            placeholder="Your prompt goes here..."
             error={error?.message}
-          />
+            triggerWords={meta?.triggerWords}
+          >
+            <GenerationTextEditor
+              value={value}
+              onChange={onChange}
+              snippets={meta?.snippets}
+              triggerWords={meta?.triggerWords}
+              attentionEdit
+              placeholder="Your prompt goes here..."
+              minRows={2}
+              className="!border-0 !bg-transparent"
+            />
+          </PromptEditorShell>
         )}
       />
       <Controller<boolean | undefined, undefined>
@@ -312,9 +308,10 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         name="aspectRatio"
         render={({ value, meta, onChange }) => {
           const priorityOptions =
-            meta && meta.options.length > 5
+            meta?.priorityOptions ??
+            (meta && meta.options.length > 5
               ? meta.options.slice(1, 6).map((o) => o.value)
-              : undefined;
+              : undefined);
           return (
             <AspectRatioInput
               value={value}

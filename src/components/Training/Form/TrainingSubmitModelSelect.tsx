@@ -62,7 +62,7 @@ import {
   getDefaultTrainingParams,
   trainingStore,
 } from '~/store/training.store';
-import { getAirModelLink, stringifyAIR } from '~/shared/utils/air';
+import { getCivitaiAirModelLink, stringifyAIR } from '~/shared/utils/air';
 import {
   type AudioSampleOverride,
   AI_TOOLKIT_EPOCHS,
@@ -415,6 +415,13 @@ export const ModelSelect = ({
 
   const formBaseModel = selectedRun.base;
   const isCustomModel = !!selectedRun.customModel;
+
+  const baseModelInfo = !isCustomModel
+    ? trainingModelInfo[formBaseModel as TrainingDetailsBaseModelList]
+    : undefined;
+  const baseModelCivitaiLink = baseModelInfo?.air
+    ? getCivitaiAirModelLink(baseModelInfo.air)
+    : null;
 
   const baseModel15 =
     !!formBaseModel &&
@@ -860,19 +867,11 @@ export const ModelSelect = ({
                     : trainingModelInfo[formBaseModel as TrainingDetailsBaseModelList]
                         ?.description ?? 'No description.'}
                 </Text>
-                {!isCustomModel &&
-                  trainingModelInfo[formBaseModel as TrainingDetailsBaseModelList]?.air && (
-                    <Anchor
-                      href={getAirModelLink(
-                        trainingModelInfo[formBaseModel as TrainingDetailsBaseModelList].air!
-                      )}
-                      target="_blank"
-                      rel="noreferrer"
-                      size="sm"
-                    >
-                      View base model on Civitai
-                    </Anchor>
-                  )}
+                {baseModelCivitaiLink && (
+                  <Anchor href={baseModelCivitaiLink} target="_blank" rel="noreferrer" size="sm">
+                    View base model on Civitai
+                  </Anchor>
+                )}
                 {blockedModels.includes(formBaseModel) ? (
                   <AlertWithIcon
                     icon={<IconExclamationCircle />}

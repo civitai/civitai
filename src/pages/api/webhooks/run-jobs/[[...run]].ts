@@ -67,6 +67,7 @@ import { handleAuctions } from '~/server/jobs/handle-auctions';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
 import type { Job } from '~/server/jobs/job';
+import { createDisconnectHandler } from '~/server/jobs/job';
 import { jobQueueJobs } from '~/server/jobs/job-queue';
 import { newOrderJobs } from '~/server/jobs/new-order-jobs';
 import { placementJobs } from '~/server/jobs/placement-jobs';
@@ -77,7 +78,7 @@ import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
 // import { processCreatorProgramImageGenerationRewards } from '~/server/jobs/process-creator-program-image-generation-rewards';
 import { csamJobs } from '~/server/jobs/process-csam';
 import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
-import { processImportsJob } from '~/server/jobs/process-imports';
+import { processHuggingFaceImportsJob } from '~/server/jobs/process-huggingface-imports';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
 import { processSubscriptionsRequiringRenewal } from '~/server/jobs/process-subscriptions-requiring-renewal';
@@ -128,7 +129,7 @@ import { booleanString } from '~/utils/zod-helpers';
 
 export const jobs: Job[] = [
   scanFilesFallbackJob,
-  processImportsJob,
+  processHuggingFaceImportsJob,
   sendNotificationsJob,
   notificationCursorMonitor,
   sendWebhooksJob,
@@ -277,10 +278,12 @@ export default WebhookEndpoint(async (req, res) => {
 
     const jobRunner = run({ req });
 
-    const cancelHandler = async () => {
-      await jobRunner.cancel();
-      await lock.release();
-    };
+    // Cancel the context, and release the lock UNLESS the job opted out of that release. See
+    // `createDisconnectHandler` and `JobOptions.keepLockOnDisconnect`: for a job that legitimately
+    // runs longer than the caller's client timeout, releasing here hands the freed lock straight
+    // to the caller's retry and produces two concurrent runs of the same work. Default is
+    // unchanged — cancel then release.
+    const cancelHandler = createDisconnectHandler(options, jobRunner, lock);
 
     res.on('close', cancelHandler);
     result = await jobRunner.result;

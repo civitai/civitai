@@ -47,6 +47,9 @@ type MetaBaseProps<TImage> = {
   title?: string;
   description?: string;
   schema?: object;
+  /** Emitted as its own JSON-LD block, so `Gated`'s paywall augmentation of
+   *  `schema` can't reach in and attach entity properties to the crumb list. */
+  breadcrumb?: object;
   images?: TImage | TImage[] | null;
   imageUrl?: string;
   ogEndpoint?: string;
@@ -64,6 +67,7 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
   title,
   description,
   schema,
+  breadcrumb,
   deIndex,
   canonical,
   alternate,
@@ -133,6 +137,13 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
           key="product-schema"
+        />
+      )}
+      {breadcrumb && (
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumb) }}
+          key="breadcrumb-schema"
         />
       )}
     </Head>

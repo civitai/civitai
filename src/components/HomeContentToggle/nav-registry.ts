@@ -1,3 +1,4 @@
+import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { NavKey } from '~/shared/constants/nav.constants';
 
@@ -96,6 +97,17 @@ export const navRegistry: NavRegistryEntry[] = [
     url: '/challenges',
     defaultGroup: 'bar',
     visible: (ctx) => ctx.features.challengePlatform,
+  },
+  {
+    key: 'apps',
+    url: '/apps',
+    defaultGroup: 'bar',
+    // The `/apps` page's own SSR gate restated as a viewer fact — a pill visible under
+    // different flags is a menu entry into the `notFound` `resolveAppsPageAccess` answers
+    // for an ineligible viewer (the #3907/#4668 defect class). Registered in the
+    // store-gate call-site ledger (`appsStoreAccessCallSites.test.ts`).
+    visible: (ctx) => hasAppsStoreAccess(ctx.features),
+    new: new Date('2026-10-01'),
   },
   { key: 'events', url: '/events', defaultGroup: 'bar', defaultHidden: true },
   { key: 'updates', url: '/changelog', defaultGroup: 'bar' },

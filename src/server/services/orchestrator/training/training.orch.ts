@@ -11,6 +11,10 @@ import type {
   Sd1AiToolkitTrainingInput,
   AnimaAiToolkitTrainingInput,
 } from '@civitai/client';
+import {
+  isSafeTensorFormat,
+  NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
+} from '@civitai/shared/training-custom-model';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
@@ -57,7 +61,7 @@ async function isSafeTensor(modelVersionId: number) {
     LIMIT 1
   `;
 
-  return data?.fmt === 'SafeTensor';
+  return isSafeTensorFormat(data?.fmt);
 }
 
 const checkCustomModel = async (
@@ -79,7 +83,7 @@ const checkCustomModel = async (
     if (!isST)
       return {
         ok: false,
-        message: 'Custom model does not have a SafeTensor file. Please choose another model.',
+        message: NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
       };
   }
 

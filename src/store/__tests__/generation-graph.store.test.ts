@@ -49,6 +49,7 @@ vi.mock('~/store/remix.store', () => ({
 
 // Imported after mocks are declared above (vitest hoists vi.mock calls).
 import { useGenerationGraphStore, withExternalFetch } from '~/store/generation-graph.store';
+import { remixStore } from '~/store/remix.store';
 
 function resetStore() {
   useGenerationGraphStore.setState({
@@ -59,6 +60,8 @@ function resetStore() {
     openSequence: 0,
   });
   fetchMock.mockReset();
+  vi.mocked(remixStore.setRemix).mockClear();
+  vi.mocked(remixStore.clearRemix).mockClear();
 }
 
 beforeEach(() => {
@@ -327,6 +330,36 @@ describe('useGenerationGraphStore — funnel attribution', () => {
 
     expect(useGenerationGraphStore.getState().loading).toBe(false);
   });
+
+  // ----------- REMIX-STORE LIFETIME (ClickUp 868m5acdq) -------------------
+
+  it('open({modelVersion}) ends the previous remix instead of leaving it to the next submit', async () => {
+    fetchMock.mockResolvedValueOnce({ resources: [], params: {}, remixOfId: undefined });
+    await useGenerationGraphStore.getState().open({ type: 'modelVersion', id: 42 } as any);
+    expect(remixStore.clearRemix).toHaveBeenCalled();
+    expect(remixStore.setRemix).not.toHaveBeenCalled();
+  });
+
+  it('open({image}) that resolves a remixOfId establishes it rather than clearing', async () => {
+    fetchMock.mockResolvedValueOnce({ resources: [], params: { prompt: 'a' }, remixOfId: 7 });
+    await useGenerationGraphStore.getState().open({ type: 'image', id: 7 } as any);
+    expect(remixStore.setRemix).toHaveBeenCalledWith(7, { prompt: 'a' });
+    expect(remixStore.clearRemix).not.toHaveBeenCalled();
+  });
+
+  it("setData({runType:'run'}) ends the previous remix", () => {
+    useGenerationGraphStore.getState().setData({ params: {}, resources: [], runType: 'run' });
+    expect(remixStore.clearRemix).toHaveBeenCalled();
+  });
+
+  it.each(['patch', 'append'] as const)(
+    "REGRESSION: setData({runType:'%s'}) leaves a live remix alone",
+    (runType) => {
+      useGenerationGraphStore.getState().setData({ params: {}, resources: [], runType });
+      expect(remixStore.clearRemix).not.toHaveBeenCalled();
+      expect(remixStore.setRemix).not.toHaveBeenCalled();
+    }
+  );
 
   // ----------- CLEARDATA + OPEN ATTRIBUTION (NAVBAR SCENARIO) -----------
 

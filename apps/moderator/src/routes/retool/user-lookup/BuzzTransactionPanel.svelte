@@ -5,6 +5,7 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import * as DropdownMenu from '@civitai/ui/components/ui/dropdown-menu/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
+  import { cn } from '@civitai/ui/utils.js';
   import { FormState } from '$lib/form-state.svelte';
   import {
     BUZZ_ACTIONS,
@@ -78,21 +79,41 @@
     if (!(reasons as readonly string[]).includes(reason)) reason = '';
   };
 
-  // EVERY field, not just amount and description — `entityId` would otherwise attach the next
-  // adjustment to the previous grant's entity. No `reload`: this panel's data comes from `/api/*`, so
-  // re-running the page load would re-run the reaction scan behind every write.
+  type Filed = { action: string; amount: number; buzzType: string; transactionType: string };
+
+  // What the server filed, not what the form asked for. The operator's only other evidence that a
+  // write landed is noticing a balance change in another panel.
+  let filed = $state<string | null>(null);
+  const describe = (f: Filed | undefined) =>
+    !f
+      ? 'Transaction filed.'
+      : `${f.action === 'deduct' ? 'Deducted' : 'Sent'} ${f.amount.toLocaleString()} ${
+          BUZZ_COLORS.find(([v]) => v === f.buzzType)?.[1] ?? f.buzzType
+        } — ${f.transactionType}`;
+
+  // The transaction clears; the MODE does not. Amount, description and entityId belong to this one
+  // adjustment — a kept amount is a double grant one stray click away, and a kept entityId attaches
+  // the next adjustment to the previous grant's entity. Action, reason and colour are the batch being
+  // worked, and neither files anything on its own while amount and description are required.
+  //
+  // `reset: false` because `update()`'s reset restores each input's `defaultValue`, which Svelte
+  // never writes — it would blank the kept fields on screen while their state still held the old
+  // value, and the next submit would post that stale value back. No `reload`: this panel's data comes
+  // from `/api/*`, so re-running the page load would re-run the reaction scan behind every write.
   const buzz = new FormState({
-    onSuccess: () => {
-      action = 'send';
-      reason = '';
-      color = 'yellow';
+    reset: false,
+    onSubmit: () => (filed = null),
+    onSuccess: (data) => {
       amount = '';
       description = '';
       entityType = '';
       entityId = '';
+      filed = describe(data?.filed as Filed | undefined);
       onSuccess();
     },
   });
+
+  const deducting = $derived(action === 'deduct');
 </script>
 
 <!-- One column, so the caller can stand this beside the balances and history rather than above them:
@@ -100,9 +121,27 @@
      within a screen of the Reason picker — which types lower the lifetime balance and which may go
      negative is the fact needed WHILE choosing one. -->
 <div class="space-y-4">
-  <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
+  <!-- Tinted by direction. The action picker and the submit label already name it, but both are one
+       line in a column of identical controls, and the mode now SURVIVES a submit — so the panel itself
+       carries which way the money is about to move. Only `deduct` is marked: a green or amber wash for
+       `send` would compete with the confirmation below it and with the Buzz colours in the form. -->
+  <section
+    class={cn(
+      'rounded-xl border p-5 transition-colors',
+      deducting ? 'border-red-500/40 bg-red-500/5' : 'border-dark-4 bg-dark-6'
+    )}
+  >
     {#if buzz.error}
       <ErrorAlert class="mb-3" message={buzz.error} />
+    {/if}
+
+    {#if filed}
+      <div
+        class="mb-3 rounded-md border border-green-500/30 bg-green-500/10 p-2 text-sm text-green-200"
+        role="status"
+      >
+        {filed}
+      </div>
     {/if}
 
     <form method="POST" action="?/sendBuzz" use:enhance={buzz.enhance} class="space-y-3">
@@ -191,8 +230,13 @@
         </div>
       </div>
 
-      <Button type="submit" class="w-full" disabled={buzz.submitting || !reason}>
-        {buzz.submitting ? 'Working…' : action === 'deduct' ? 'Deduct Buzz' : 'Send Buzz'}
+      <Button
+        type="submit"
+        variant={deducting ? 'destructive' : 'default'}
+        class="w-full"
+        disabled={buzz.submitting || !reason}
+      >
+        {buzz.submitting ? 'Working…' : deducting ? 'Deduct Buzz' : 'Send Buzz'}
       </Button>
     </form>
   </section>

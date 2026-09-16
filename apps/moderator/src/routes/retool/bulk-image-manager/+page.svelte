@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { enhance } from '$app/forms';
-  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+  import { SvelteMap } from 'svelte/reactivity';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
@@ -13,6 +13,7 @@
   import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import type { ActionData, PageData } from './$types';
   import { FormState } from '$lib/form-state.svelte';
+  import { SelectionSet } from '@civitai/ui/hooks/selection-set.svelte.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { imageLookupUrl, userLookupUrl } from '$lib/entity-url';
   import { urlWith } from '$lib/url';
@@ -40,7 +41,7 @@
     });
   });
 
-  const selected = new SvelteSet<string | number>();
+  const selected = new SelectionSet<string | number>();
 
   const batchSubject = $derived(batchKey(page.url));
 

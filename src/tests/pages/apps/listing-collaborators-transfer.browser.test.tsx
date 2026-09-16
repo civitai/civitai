@@ -88,17 +88,22 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => state.flags,
 }));
 
-// 🔴 THE SHARED SUB-NAV IS STUBBED, and that is a scoping decision rather than
-// convenience. `/apps/listing/[appListingId]/edit` moved onto `AppsPageLayout`, which
-// mounts `AppsSubNav` — a component with three context/data inputs of its own
+// 🔴 THE SHARED NAV'S DATA HOOK IS STUBBED, and that is a scoping decision rather than
+// convenience. `/apps/listing/[appListingId]/edit` renders `AppsPageLayout`, which calls
+// `useAppsNavSections` — a hook with three context/data inputs of its own
 // (`useIsClient`, `useCurrentUser`, `blocks.getNavSummary`). Wiring them here would
 // make this suite, which is about the listing editor, fail the next time the nav
 // gains an input. The ADOPTION is covered where it belongs: structurally in
 // `__tests__/appsPageWidths.test.ts` (every rendering /apps page mounts the layout),
 // as pixels in `AppsPageLayout.chromeAlignment.browser.test.tsx`, and end-to-end on
 // one page in `AppEditPage.browser.test.tsx`.
-vi.mock('~/components/Apps/AppsSubNav', () => ({
-  AppsSubNav: () => <div data-testid="stub-apps-subnav" />,
+//
+// ⚠️ AN EMPTY SECTION LIST MEANS NO RAIL AT ALL — the `< 2 sections` collapse — so this
+// stub also removes the 276px of rail chrome from the tree. That is the right scoping
+// for a suite about the editor's own body, and it is why the stub returns `[]` rather
+// than a placeholder element: the layout, not the nav, decides whether the rail exists.
+vi.mock('~/components/Apps/useAppsNavSections', () => ({
+  useAppsNavSections: () => [],
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({

@@ -100,20 +100,75 @@ export async function getGrantedScopes(opts: {
  * ceiling (`BLOCK_BUZZ_CAP_PER_DAY`) alone — the behaviour of every grant written
  * before the column existed.
  *
- * 🔴 A REVOKED GRANT RETURNS `null`, AND THAT IS NOT A LOOSENING. `getGrantedScopes`
- * already treats a revoked row as an empty grant, so a revoked user's token carries
- * no `ai:write:budgeted` and can reach no spend path at all — there is nothing left
- * for a budget to bound. Returning the stored number for a revoked row would be
- * enforcing a ceiling on spend that cannot happen.
+ * 🔴 A REVOKED GRANT RETURNS `null` — AND THAT **IS** A TRANSIENT LOOSENING. THIS
+ * PARAGRAPH PREVIOUSLY SAID THE OPPOSITE AND WAS WRONG; THE CORRECTION IS THE POINT.
  *
- * ⚠️ THE REVOKED BRANCH IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE, BECAUSE THE
- * STATE IS CURRENTLY UNREACHABLE. Nothing in this codebase ever SETS
- * `app_user_scope_grants.revoked_at` — grep it: every write is `revokedAt: null`
- * (re-granting un-revokes). A revoked row therefore only exists if an operator writes
- * one by hand. The `!row || row.revokedAt` tests here, in `getGrantedScopes`, and in
- * `listMyScopeGrants` are pinning an invariant against a future revoke path, and the
- * tests that exercise them by constructing a revoked row are testing that invariant —
- * they are NOT evidence that a bug was ever possible on this path.
+ * It used to read: *"a revoked user's token carries no `ai:write:budgeted` and can
+ * reach no spend path at all — there is nothing left for a budget to bound."* The
+ * first half is true only at the NEXT MINT. Block tokens are JWTs with no per-jti
+ * revocation and a 900s default lifetime (300s settings-scoped, 4h dev —
+ * `block-token-lifetimes.ts`), so an already-minted token keeps the scope for up to
+ * its remaining life.
+ *
+ * During that window this function returning `null` is what REMOVES the viewer's own
+ * cap: `reserveBlockBuzzSpendForClaims` treats a null budget as "no consent
+ * reservation" and falls back to the platform ceiling (`BLOCK_BUZZ_CAP_PER_DAY`)
+ * alone. So a user who set 500 Buzz/day on an app has that lifted, not enforced, for
+ * the remainder of their token's life. The ordering is counter-intuitive and worth
+ * stating plainly: **the revoke drops the user's own ceiling BEFORE it drops the
+ * scope.**
+ *
+ * `BlockRevocation` (`block-revocation.service.ts`) narrows that window — a
+ * per-`blockInstanceId` Redis marker checked on the block-scope path — but read
+ * what actually sets it before relying on it:
+ *
+ *  - 🔴 NO CALL SITE EXISTS WHOSE *PURPOSE* IS REVOCATION — which is a narrower
+ *    claim than either of the two this paragraph has already got wrong. It
+ *    first said `BlockRevocation` was "operator-invoked" (false), and the
+ *    correction then said "there is no admin router, no tRPC procedure and no
+ *    script" (ALSO false, on the middle term). What the tree actually shows:
+ *
+ *    `revokeInstance` has exactly two production call sites, both in
+ *    `block-registry.service.ts` — `uninstallFromModel` (:2358) and
+ *    `toggleEnabled(false)` (:2393) — and in both the marker is a SIDE EFFECT
+ *    of a different operation. But both are reachable over tRPC
+ *    (`blocks.router.ts:1848`, `:1810`, both `protectedProcedure`), and
+ *    `assertCanManageBlocks` early-returns for moderators (`:1521`), so a
+ *    moderator CAN cause a marker deliberately, against any user's install on
+ *    any model.
+ *
+ *    So the useful statement is not "nobody can write one" but: **there is no
+ *    endpoint that revokes a token without also uninstalling or disabling the
+ *    install.** Every route to a marker has a separate, user-visible outcome.
+ *
+ *    🔴 HOW OFTEN THE MIDDLEWARE'S 403 BRANCH IS ACTUALLY EXERCISED IS NOT
+ *    ESTABLISHED, AND THIS COMMENT NO LONGER GUESSES. Two successive drafts
+ *    asserted it was HOT, each for a reason the next round refuted — first
+ *    "a marker appears because a USER acted" (drawn from the false
+ *    no-tRPC-procedure claim), then "ordinary users hit both paths routinely"
+ *    (false: both mutations carry `enforceAppBlocksFlag`, and the live
+ *    `app-blocks-enabled` flag is base-`false` with a moderators-only segment,
+ *    so an ordinary user cannot reach either one). The conclusion outlived two
+ *    dead justifications because each round replaced the reason and kept the
+ *    claim.
+ *
+ *    🔴 DO NOT WRITE A THIRD. Nothing in this tree establishes the rate in
+ *    either direction — it depends on live Flipt state and on install
+ *    behaviour, neither of which is readable from source. If you need the
+ *    number, measure it; do not derive it here.
+ *  - it is per-INSTANCE, not per-user and not per-scope;
+ *  - it FAILS OPEN (`isRevoked` swallows a Redis error and returns false);
+ *  - writing `revoked_at` in Postgres sets NO marker. The two mechanisms do not
+ *    know about each other.
+ *
+ * ⚠️ THE REVOKED BRANCH IS NO LONGER UNREACHABLE. This paragraph used to say nothing
+ * in the codebase ever SETS `app_user_scope_grants.revoked_at`, which was true of
+ * application code and is still true of it — every Prisma write here is
+ * `revokedAt: null`, and re-granting un-revokes. But
+ * `scripts/oneoffs/2026-09-16-reconsent-ai-write-budgeted.sql` is a committed,
+ * hand-applied writer built specifically to produce that state, so "only if an
+ * operator writes one by hand" is now a description of a PLANNED operation rather
+ * than a hypothetical. Read that file before reasoning about this branch.
  *
  * 🔴 READS THE PRIMARY BY DEFAULT. This runs on the spend path, immediately after a
  * consent write that may have just LOWERED the budget: served off the replica, a
@@ -158,6 +213,28 @@ export async function getConsentBuzzBudget(opts: {
 }
 
 /**
+ * 🔴 THE WRITES BELOW MUST NEVER READ A COLUMN BACK. Prisma's DEFAULT selection is
+ * "every scalar", so a `create`/`update` with no `select` emits
+ * `RETURNING … buzz_budget_per_day` — which makes an ordinary install / subscribe /
+ * re-consent throw P2022 against a database that has not had the migration applied
+ * yet, i.e. a 500 on every grant write from a deploy that lands first. MEASURED on
+ * this PR's own preview environment before this select existed.
+ *
+ * `id` is picked because it is the primary key: it predates this feature, it can
+ * never be the column a future migration is racing, and no caller uses the return
+ * value (both writers return `void`). Do NOT widen this to include a column added by
+ * a pending migration — the whole point is that these writes read nothing new.
+ *
+ * 🔴 KEEP THIS CONST ABOVE `recordScopeGrant`'s DOCBLOCK, NOT BETWEEN THEM. It was
+ * introduced between that docblock and its function, which silently orphaned it:
+ * TypeScript attaches a leading comment to the next DECLARATION, so the whole
+ * `buzzBudgetPerDay` three-state contract stopped appearing on hover at every call
+ * site. A docblock separated from its function by another declaration documents
+ * that declaration instead.
+ */
+const WRITE_RETURN_SELECT = { id: true } as const;
+
+/**
  * Records (or extends) a user's consent for an app block. ADDITIVE — scopes
  * the user already granted persist; the supplied scopes are unioned in. Writing
  * a grant also clears any prior `revoked_at` (re-granting un-revokes), and
@@ -191,21 +268,6 @@ export async function getConsentBuzzBudget(opts: {
  * permission would silently wipe a spend limit the user had deliberately set —
  * a widening, performed by a dialog that said nothing about money.
  */
-/**
- * 🔴 THE WRITES BELOW MUST NEVER READ A COLUMN BACK. Prisma's DEFAULT selection is
- * "every scalar", so a `create`/`update` with no `select` emits
- * `RETURNING … buzz_budget_per_day` — which makes an ordinary install / subscribe /
- * re-consent throw P2022 against a database that has not had the migration applied
- * yet, i.e. a 500 on every grant write from a deploy that lands first. MEASURED on
- * this PR's own preview environment before this select existed.
- *
- * `id` is picked because it is the primary key: it predates this feature, it can
- * never be the column a future migration is racing, and no caller uses the return
- * value (both writers return `void`). Do NOT widen this to include a column added by
- * a pending migration — the whole point is that these writes read nothing new.
- */
-const WRITE_RETURN_SELECT = { id: true } as const;
-
 export async function recordScopeGrant(opts: {
   userId: number;
   appBlockId: string;
@@ -323,6 +385,23 @@ export async function recordScopeGrant(opts: {
  * gated branch — the host surfaces it as `needs_consent`, the user grants it, and
  * only then does a token carry it. (This is the deliberate contrast to the #3090
  * exemption above: read:self always mints; read:private mints only after consent.)
+ *
+ * `posts:write:self` (create a REAL Post on the viewer's profile from an app's
+ * own outputs) is likewise INTENTIONALLY ABSENT, for a strictly stronger version
+ * of the `collections:read:private` reason. It is the first block scope that
+ * writes PUBLIC, feed-visible, reward-earning content under the VIEWER'S name.
+ * No server-side visibility/ownership check can substitute for it, because the
+ * app IS acting on the subject's own account — ownership is satisfied by
+ * construction, which is exactly what makes it dangerous rather than safe. So it
+ * flows through the gated branch: the host surfaces it as `needs_consent`, the
+ * user grants it, and only then does a token carry it.
+ *
+ * ⚠️ THE GRANT IS NOT THE WHOLE CONSENT. A one-time grant cannot inform about
+ * content that differs on every call, so `blocks.createPostFromApp` is ALSO
+ * gated on a per-post host-chrome confirm rendering the HOST-RESOLVED title /
+ * detail / tags / image thumbnails / gallery target. Do NOT "simplify" that
+ * confirm away as redundant with this grant — they answer different questions
+ * ("may this app post as me at all" vs "may it post THIS").
  */
 const CONSENT_EXEMPT_SCOPES = new Set([
   // NOTE: block:settings:* is intentionally ABSENT — those scopes were removed

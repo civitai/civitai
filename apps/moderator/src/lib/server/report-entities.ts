@@ -84,6 +84,12 @@ const TABLES: Record<ReportEntity, Omit<ReportEntityMeta, 'type' | 'label'>> = {
     table: 'Model3DReview',
     ownerColumn: 'userId',
   },
+  announcement: {
+    reportTable: 'AnnouncementReport',
+    fk: 'announcementId',
+    table: 'Announcement',
+    ownerColumn: 'userId',
+  },
   // `ownerId` is who OPENED the conversation, which is not who was reported — see
   // `chatReportSubject`. Null keeps it out of the owner-column loop; both call sites add it back with
   // that predicate.

@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Training Studio - Upload Dataset - Civitai</title>
+
+  <!-- Mantine v7 CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/@mantine/core@7.17.4/styles.css">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Tabler Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.3.0/dist/tabler-icons.min.css">
+
+  <!-- Inter Font (Civitai standard) -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --mantine-color-scheme: dark;
+      --civitai-blue: #1971c2;
+      --civitai-yellow: #f5a623;
+      --civitai-dark-bg: #1a1b1e;
+      --civitai-card-bg: #25262b;
+      --civitai-elevated-bg: #2c2e33;
+      --civitai-text-primary: #ffffff;
+      --civitai-text-secondary: #c1c2c5;
+      --civitai-text-dimmed: #909296;
+    }
+
+    * {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    body {
+      background: var(--civitai-dark-bg);
+      color: var(--civitai-text-secondary);
+      margin: 0;
+      padding: 0;
+      overflow-x: hidden;
+    }
+
+    /* Main Layout */
+    .layout-container {
+      display: flex;
+      height: 100vh;
+      flex-direction: column;
+    }
+
+    .layout-header {
+      background: linear-gradient(180deg, var(--civitai-elevated-bg) 0%, var(--civitai-dark-bg) 100%);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 24px 32px;
+      position: sticky;
+      top: 0;
+      z-index: 40;
+    }
+
+    .header-content {
+      max-width: 100%;
+      margin: 0 auto;
+    }
+
+    .header-title {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--civitai-text-primary);
+      margin: 0 0 20px 0;
+      letter-spacing: -0.5px;
+    }
+
+    /* Progress rail – lightweight stepper */
+    .progress-rail {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      padding: 0;
+    }
+
+    .progress-step {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--civitai-text-dimmed);
+      position: relative;
+      padding-bottom: 4px;
+    }
+
+    .progress-step.active {
+      color: var(--civitai-yellow);
+    }
+
+    .progress-step.completed {
+      color: #40c057;
+    }
+
+    .progress-step-number {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.1);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .progress-step.active .progress-step-number {
+      background: var(--civitai-yellow);
+      color: #1a1b1e;
+    }
+
+    .progress-step.completed .progress-step-number {
+      background: #40c057;
+      color: #fff;
+    }
+
+    .progress-step-dot {
+      display: none;
+    }
+
+    .progress-step:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      left: 100%;
+      width: 24px;
+      height: 2px;
+      background: rgba(255, 255, 255, 0.1);
+      top: 50%;
+      transform: translateY(-50%);
+    }
+
+    .progress-step.active:not(:last-child)::after {
+      background: var(--civitai-yellow);
+    }
+
+    .progress-step.completed:not(:last-child)::after {
+      background: #40c057;
+    }
+
+    /* Main content area */
+    .layout-content {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+      gap: 0;
+    }
+
+    .content-main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      padding: 32px;
+      padding-bottom: 140px;
+    }
+
+    .content-main::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .content-main::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .content-main::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+    }
+
+    .content-main::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    /* Sidebar panel */
+    .content-sidebar {
+      width: 360px;
+      background: linear-gradient(180deg, var(--civitai-elevated-bg) 0%, var(--civitai-card-bg) 100%);
+      border-left: 1px solid rgba(255, 255, 255, 0.08);
+      overflow-y: auto;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sidebar-header {
+      padding: 24px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--civitai-text-dimmed);
+      letter-spacing: 0.8px;
+    }
+
+    .sidebar-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+    }
+
+    .sidebar-content::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .sidebar-content::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 3px;
+    }
+
+    .sidebar-section {
+      margin-bottom: 32px;
+    }
+
+    .sidebar-section-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--civitai-text-dimmed);
+      margin-bottom: 12px;
+      letter-spacing: 0.5px;
+    }
+
+    .sidebar-value {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--civitai-text-primary);
+      margin-bottom: 16px;
+      padding: 12px;
+      background: rgba(255, 255, 255, 0.04);
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    /* Dropzone */
+    .dropzone {
+      border: 2px dashed rgba(31, 194, 248, 0.3);
+      border-radius: 16px;
+      padding: 48px 32px;
+      text-align: center;
+      background: rgba(25, 113, 194, 0.04);
+      cursor: pointer;
+      transition: all 300ms ease;
+      margin-bottom: 32px;
+    }
+
+    .dropzone:hover {
+      border-color: rgba(31, 194, 248, 0.6);
+      background: rgba(25, 113, 194, 0.08);
+      transform: translateY(-2px);
+    }
+
+    .dropzone.dragover {
+      border-color: var(--civitai-yellow);
+      background: rgba(245, 166, 35, 0.12);
+    }
+
+    .dropzone-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+      color: var(--civitai-blue);
+      opacity: 0.8;
+    }
+
+    .dropzone-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--civitai-text-primary);
+      margin-bottom: 8px;
+    }
+
+    .dropzone-subtitle {
+      font-size: 14px;
+      color: var(--civitai-text-secondary);
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+
+    .dropzone-formats {
+      font-size: 12px;
+      color: var(--civitai-text-dimmed);
+      margin-bottom: 8px;
+    }
+
+    .dropzone-hint {
+      font-size: 12px;
+      color: var(--civitai-text-dimmed);
+      font-style: italic;
+    }
+
+    /* Hidden file input */
+    .file-input-hidden {
+      display: none;
+    }
+
+    /* Thumbnails Grid */
+    .thumbnails-container {
+      margin-bottom: 32px;
+    }
+
+    .thumbnails-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--civitai-text-primary);
+      margin-bottom: 16px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--civitai-text-dimmed);
+    }
+
+    .thumbnails-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    .thumbnail {
+      position: relative;
+      aspect-ratio: 1 / 1;
+      border-radius: 12px;
+      overflow: hidden;
+      background: var(--civitai-card-bg);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      cursor: pointer;
+      transition: all 200ms ease;
+      group: 1;
+    }
+
+    .thumbnail:hover {
+      border-color: rgba(255, 255, 255, 0.16);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      transform: translateY(-2px);
+    }
+
+    .thumbnail-image {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 300ms ease;
+    }
+
+    .thumbnail:hover .thumbnail-image {
+      transform: scale(1.08);
+    }
+
+    .thumbnail-overlay {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, transparent 40%, rgba(0, 0, 0, 0.6) 100%);
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      padding: 8px;
+      opacity: 0;
+      transition: opacity 200ms ease;
+    }
+
+    .thumbnail:hover .thumbnail-overlay {
+      opacity: 1;
+    }
+
+    .thumbnail-caption {
+      font-size: 11px;
+      font-weight: 600;
+      color: #fff;
+      background: rgba(25, 113, 194, 0.9);
+      border-radius: 4px;
+      padding: 4px 8px;
+      margin-bottom: 4px;
+      display: inline-block;
+      max-width: 100%;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .thumbnail-badge {
+      font-size: 9px;
+      font-weight: 700;
+      color: #40c057;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .thumbnail-badge::before {
+      content: '✓';
+      display: inline-block;
+    }
+
+    /* Labeling shimmer */
+    .thumbnail.labeling {
+      animation: labeling-pulse 2s ease-in-out infinite;
+    }
+
+    .thumbnail.labeling::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(255, 255, 255, 0.15),
+        transparent
+      );
+      animation: shimmer 2s ease-in-out infinite;
+    }
+
+    @keyframes labeling-pulse {
+      0%, 100% { border-color: rgba(255, 255, 255, 0.08); }
+      50% { border-color: rgba(245, 166, 35, 0.4); }
+    }
+
+    @keyframes shimmer {
+      0% { transform: translateX(-100%); }
+      50% { transform: translateX(100%); }
+      100% { transform: translateX(100%); }
+    }
+
+    /* Gradient placeholders */
+    .gradient-1 { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+    .gradient-2 { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+    .gradient-3 { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
+    .gradient-4 { background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); }
+    .gradient-5 { background: linear-gradient(135deg, #30cfd0 0%, #330867 100%); }
+    .gradient-6 { background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); }
+    .gradient-7 { background: linear-gradient(135deg, #ff9a56 0%, #ff6a88 100%); }
+    .gradient-8 { background: linear-gradient(135deg, #2e2e78 0%, #662d91 100%); }
+    .gradient-9 { background: linear-gradient(135deg, #0093E9 0%, #80D0C9 100%); }
+    .gradient-10 { background: linear-gradient(135deg, #FF6B35 0%, #F7931E 100%); }
+    .gradient-11 { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
+    .gradient-12 { background: linear-gradient(135deg, #ee0979 0%, #ff6a00 100%); }
+
+    /* Form inputs */
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    .form-label {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--civitai-text-dimmed);
+      margin-bottom: 8px;
+      display: block;
+      letter-spacing: 0.5px;
+    }
+
+    .form-input {
+      width: 100%;
+      padding: 12px 14px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      color: var(--civitai-text-primary);
+      font-size: 14px;
+      font-weight: 500;
+      transition: all 200ms ease;
+      font-family: inherit;
+    }
+
+    .form-input:focus {
+      outline: none;
+      border-color: var(--civitai-blue);
+      background: rgba(25, 113, 194, 0.08);
+      box-shadow: 0 0 0 3px rgba(25, 113, 194, 0.1);
+    }
+
+    .form-input::placeholder {
+      color: var(--civitai-text-dimmed);
+    }
+
+    /* LoRA Type Selector */
+    .lora-type-selector {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+    }
+
+    .lora-type-option {
+      padding: 12px;
+      border: 2px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.03);
+      cursor: pointer;
+      text-align: center;
+      transition: all 200ms ease;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--civitai-text-secondary);
+    }
+
+    .lora-type-option:hover {
+      border-color: rgba(255, 255, 255, 0.16);
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .lora-type-option.selected {
+      border-color: var(--civitai-yellow);
+      background: rgba(245, 166, 35, 0.15);
+      color: var(--civitai-yellow);
+      box-shadow: 0 0 0 3px rgba(245, 166, 35, 0.1);
+    }
+
+    .lora-type-icon {
+      font-size: 18px;
+      margin-bottom: 4px;
+      display: block;
+    }
+
+    /* Checkbox */
+    .checkbox-group {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 12px;
+      cursor: pointer;
+    }
+
+    .checkbox-input {
+      width: 18px;
+      height: 18px;
+      margin-top: 2px;
+      accent-color: var(--civitai-yellow);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .checkbox-label {
+      font-size: 13px;
+      color: var(--civitai-text-secondary);
+      line-height: 1.4;
+    }
+
+    .checkbox-label strong {
+      color: var(--civitai-text-primary);
+      font-weight: 600;
+    }
+
+    /* Bottom action bar */
+    .action-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 120px;
+      background: linear-gradient(180deg, transparent 0%, var(--civitai-dark-bg) 30%);
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      align-items: flex-end;
+      justify-content: flex-end;
+      padding: 20px 32px 24px;
+      gap: 12px;
+      z-index: 30;
+    }
+
+    .action-bar-hint {
+      position: absolute;
+      left: 32px;
+      bottom: 80px;
+      font-size: 12px;
+      color: var(--civitai-text-dimmed);
+      font-style: italic;
+    }
+
+    .button {
+      padding: 12px 24px;
+      border-radius: 8px;
+      border: none;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 200ms ease;
+      font-family: inherit;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+
+    .button-secondary {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--civitai-text-secondary);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .button-secondary:hover {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .button-primary {
+      background: var(--civitai-yellow);
+      color: #1a1b1e;
+      border: none;
+      font-weight: 700;
+    }
+
+    .button-primary:hover {
+      background: #f5a623;
+      box-shadow: 0 8px 24px rgba(245, 166, 35, 0.3);
+      transform: translateY(-2px);
+    }
+
+    .button-primary:active {
+      transform: translateY(0);
+    }
+
+    .button-icon {
+      font-size: 16px;
+    }
+
+    /* Responsive */
+    @media (max-width: 1200px) {
+      .content-sidebar {
+        width: 320px;
+      }
+
+      .thumbnails-grid {
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      }
+
+      .lora-type-selector {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .layout-content {
+        flex-direction: column;
+      }
+
+      .content-sidebar {
+        width: 100%;
+        border-left: none;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        height: auto;
+        position: static;
+        max-height: 40vh;
+      }
+
+      .content-main {
+        padding: 24px;
+        padding-bottom: 160px;
+      }
+
+      .layout-header {
+        padding: 16px 24px;
+      }
+
+      .header-title {
+        font-size: 20px;
+        margin-bottom: 16px;
+      }
+
+      .progress-rail {
+        gap: 16px;
+      }
+
+      .dropzone {
+        padding: 32px 24px;
+      }
+
+      .thumbnails-grid {
+        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+        gap: 8px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout-container">
+    <!-- Header -->
+    <div class="layout-header">
+      <div class="header-content">
+        <h1 class="header-title">Train a LoRA</h1>
+        <div class="progress-rail">
+          <div class="progress-step active">
+            <span class="progress-step-number">1</span>
+            <span>Data</span>
+          </div>
+          <div class="progress-step">
+            <span class="progress-step-number">2</span>
+            <span>Configure</span>
+          </div>
+          <div class="progress-step">
+            <span class="progress-step-number">3</span>
+            <span>Train</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="layout-content">
+      <!-- Main Section -->
+      <div class="content-main">
+        <!-- Dropzone -->
+        <div class="dropzone" id="dropzone">
+          <div class="dropzone-icon">⬆️</div>
+          <div class="dropzone-title">Drop your images, video, or audio here</div>
+          <div class="dropzone-subtitle">or click to browse from your computer</div>
+          <div class="dropzone-formats">JPG, PNG, MP4, MP3 — auto-detected and optimized</div>
+          <div class="dropzone-hint">We'll automatically caption and tag your content</div>
+          <input type="file" class="file-input-hidden" id="file-input" multiple accept="image/*,video/*,audio/*">
+        </div>
+
+        <!-- Thumbnails -->
+        <div class="thumbnails-container">
+          <div class="thumbnails-title">Uploaded Media (12)</div>
+          <div class="thumbnails-grid">
+            <!-- Thumbnail 1 -->
+            <div class="thumbnail">
+              <div class="gradient-1"></div>
+              <div class="thumbnail-overlay">
+                <div class="thumbnail-caption">character close-up</div>
+                <div class="thumbnail-badge">auto-labeled</div>
+              </div>
+            </div>
+
+            <!-- Thumbnail 2 -->
+            <div class="thumbnail">
+              <div class="gradient-2"></div>
+              <div class="thumbnail-overlay">
+                <div class="thumbnail-caption">pose variation</div>
+                <div class="thumbnail-badge">auto-labeled</div>
+              </div>
+            </div>
+
+            <!-- Thumbnail 3 -->
+            <div class="thumbnail">
+              <div class="gradient-3"></div>
+              <div class="thumbnail-overlay">
+                <div class="thumbnail-caption">lighting test</div>
+                <div class="thumbnail-badge">auto-labeled</div>
+              </div>
+            </div>
+
+            <!-- Thumbnail 4 -->
+            <div class="thumbnail">
+              <div class="gradient-4"></div>
+              <div class="thumbnail-overlay">
+                <div class="thumbnail-caption">outfit detail</div>
+                <div class="thumbnail-badge">auto-labeled</div>
+              </div>
+            </div>
+
+            <!-- Thumbnail 5 -->
+            <div class="thumbnail">
+              <div class="gradient-5"></div>
+              <div class="thumbnail-overlay">
+                <div class="thumbnail-caption">expression study</div>
+                <div class="thumbnail-badge">auto-labeled</div>
+              </div>
+            </div>
+
+            <!-- Thumbnail 6 -->
+            <div class="thumbnail">
+              <div class="gradient-6"></div>
+              <div class="thumbnail-overlay">
+                <div class="thumbnail-caption">background scene</div>
+                <div class="thumbnail-badge">auto-labeled</div>
+              </div>
+            </div>
+
+            <!-- Thumbnail 7 -->
+            <div class="thumbnail">
+              <div class="gradient-7"></div>
+              <div class="thumbnail-overlay">
+                <div class="thumbnail-caption">full body shot</div>
+                <div class="thumbnail-badge">auto-labeled</div>
+              </div>
+            </div>
+
+            <!-- Thumbnail 8 -->
+            <div class="thumbnail">
+              <div class="gradient-8"></div>
+              <div class="thumbnail-overlay">
+                <div class="thumbnail-caption">style reference</div>
+                <div class="thumbnail-badge">auto-labeled</div>
+              </div>
+            </div>
+
+            <!-- Thumbnail 9 -->
+            <div class="thumbnail">
+              <div class="gradient-9"></div>
+              <div class="thumbnail-overlay">
+                <div class="thumbnail-caption">action pose</div>
+                <div class="thumbnail-badge">auto-labeled</div>
+              </div>
+            </div>
+
+            <!-- Thumbnail 10 -->
+            <div class="thumbnail">
+              <div class="gradient-10"></div>
+              <div class="thumbnail-overlay">
+                <div class="thumbnail-caption">color palette</div>
+                <div class="thumbnail-badge">auto-labeled</div>
+              </div>
+            </div>
+
+            <!-- Thumbnail 11 -->
+            <div class="thumbnail">
+              <div class="gradient-11"></div>
+              <div class="thumbnail-overlay">
+                <div class="thumbnail-caption">detail shot</div>
+                <div class="thumbnail-badge">auto-labeled</div>
+              </div>
+            </div>
+
+            <!-- Thumbnail 12 - Labeling -->
+            <div class="thumbnail labeling">
+              <div class="gradient-12"></div>
+              <div class="thumbnail-overlay">
+                <div class="thumbnail-caption">processing...</div>
+                <div class="thumbnail-badge">labeling…</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sidebar -->
+      <div class="content-sidebar">
+        <div class="sidebar-header">Dataset Summary</div>
+        <div class="sidebar-content">
+          <!-- Media Type -->
+          <div class="sidebar-section">
+            <div class="sidebar-section-label">Media Type</div>
+            <div class="sidebar-value">Image (auto-detected)</div>
+          </div>
+
+          <!-- File Count -->
+          <div class="sidebar-section">
+            <div class="sidebar-section-label">File Count</div>
+            <div class="sidebar-value">12 files</div>
+          </div>
+
+          <!-- Trigger Word -->
+          <div class="sidebar-section">
+            <div class="sidebar-section-label">Trigger Word</div>
+            <div class="form-group">
+              <input type="text" class="form-input" value="my_character" placeholder="e.g., my_oc, style_name">
+            </div>
+            <div style="font-size: 11px; color: var(--civitai-text-dimmed); line-height: 1.4;">
+              Users will type this word to invoke your LoRA in prompts. Make it memorable and unique.
+            </div>
+          </div>
+
+          <!-- LoRA Type -->
+          <div class="sidebar-section">
+            <div class="sidebar-section-label">LoRA Type</div>
+            <div class="lora-type-selector">
+              <div class="lora-type-option selected">
+                <span class="lora-type-icon">👤</span>
+                <span>Character</span>
+              </div>
+              <div class="lora-type-option">
+                <span class="lora-type-icon">🎨</span>
+                <span>Style</span>
+              </div>
+              <div class="lora-type-option">
+                <span class="lora-type-icon">✨</span>
+                <span>Concept</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Rights & Attestation -->
+          <div class="sidebar-section">
+            <div class="sidebar-section-label">Rights & Attestation</div>
+            <div class="checkbox-group">
+              <input type="checkbox" class="checkbox-input" id="own-content">
+              <label for="own-content" class="checkbox-label">I created this content or own the rights to it</label>
+            </div>
+            <div class="checkbox-group">
+              <input type="checkbox" class="checkbox-input" id="no-licenses">
+              <label for="no-licenses" class="checkbox-label">Content does not include copyrighted material</label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Action Bar -->
+    <div class="action-bar">
+      <div class="action-bar-hint">Nothing is saved until you start training</div>
+      <button class="button button-secondary">💾 Save Draft</button>
+      <button class="button button-primary">
+        <span>Continue to Configure</span>
+        <span class="button-icon">→</span>
+      </button>
+    </div>
+  </div>
+
+  <script>
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('file-input');
+
+    // Dropzone interactions
+    dropzone.addEventListener('click', () => fileInput.click());
+
+    dropzone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropzone.classList.add('dragover');
+    });
+
+    dropzone.addEventListener('dragleave', () => {
+      dropzone.classList.remove('dragover');
+    });
+
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+    });
+
+    // LoRA Type Selection
+    document.querySelectorAll('.lora-type-option').forEach(option => {
+      option.addEventListener('click', () => {
+        document.querySelectorAll('.lora-type-option').forEach(o => o.classList.remove('selected'));
+        option.classList.add('selected');
+      });
+    });
+
+    // Checkbox interactions
+    document.querySelectorAll('.checkbox-group').forEach(group => {
+      group.addEventListener('click', (e) => {
+        if (e.target.tagName !== 'INPUT') {
+          group.querySelector('input').click();
+        }
+      });
+    });
+  </script>
+</body>
+</html>

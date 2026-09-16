@@ -19,6 +19,7 @@ import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
 import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
 import { applyWhatIfFingerprints } from '~/shared/data-graph/generation/whatif-fingerprints';
 import { defaultWorkflowCost } from '~/shared/orchestrator/workflow-data';
+import { useDisabledGates } from '~/components/generation_v2/gate-block';
 import { useResourceDataContext } from '../inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '../utils';
 import { useImagesUploadingOrVerifying } from '~/components/Generation/Input/SourceImageUploadMultiple';
@@ -105,6 +106,9 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
 
   const canEstimateCost = validationResult?.success ?? false;
 
+  // Don't estimate a selection the server will refuse.
+  const gateBlocked = useDisabledGates(snapshot).length > 0;
+
   // Build the query payload from validated data.
   // Note: buzz type is NOT included here — cost is the same regardless of which
   // buzz type the user selects. Buzz type only matters at submission time.
@@ -136,7 +140,13 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   const { queryResult, preBoost, setPreBoost, download } = usePreBoostWhatIf({
     revision,
     queryPayload,
-    enabled: enabled && !isNoSubmit && !!currentUser && !resourcesLoading && !imagesPending,
+    enabled:
+      enabled &&
+      !isNoSubmit &&
+      !gateBlocked &&
+      !!currentUser &&
+      !resourcesLoading &&
+      !imagesPending,
   });
 
   const data = useMemo(
@@ -159,6 +169,7 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
     data,
     isLoading: queryResult.isFetching || imagesPending,
     canEstimateCost,
+    gateBlocked,
     validationErrors,
     preBoost,
     setPreBoost,

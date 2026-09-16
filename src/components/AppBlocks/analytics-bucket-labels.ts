@@ -58,6 +58,9 @@ const ENDPOINT_LABELS = new Map<string, string>([
   ['storage:set', 'App-local storage writes'],
   ['storage:delete', 'App-local storage deletes'],
   ['user-settings:write', 'Block settings saves'],
+  // `blocks.createPostFromApp`. Bounded (no per-post tail): `endpoint` is the
+  // `topEndpoints` GROUP BY key, so the post id lives in `detail.entityId`.
+  ['post:create', 'Posts published to a profile'],
 ]);
 
 /** The bounded tokens that can carry a legacy per-id / per-key tail. */
@@ -136,6 +139,7 @@ const WRITE_SCOPE_LABELS = new Map<string, string>([
   // its test deliberately avoid, so the two halves of this module must not disagree.
   ['block:settings:write', 'Block settings saves (legacy scope)'],
   ['social:tip:self', 'Tips'],
+  ['posts:write:self', 'Posts published to a profile'],
   // Not a scope — the middleware's literal placeholder for a route that requires only a
   // valid block token and no particular scope (`opts.requiredScope ?? '(any-token)'`).
   // It appears verbatim in the data, so it needs a row label.

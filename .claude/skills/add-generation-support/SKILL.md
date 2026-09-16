@@ -260,10 +260,23 @@ Four edits:
      return create<Name>Input(normalizedData, handlerCtx);
    ```
 
+#### 5g. The form-graph lane
+
+The generator runs two lanes side by side, and every ecosystem needs both. Steps 5c–5f are the data-graph lane. This step is the form-graph lane. Ideogram 4 (`e680364460`) is a compact reference for the whole set.
+
+1. **Graph:** `src/shared/form-graph/generation/<image|video|audio|model3d>/<name>.graph.ts`. Build it with `defineGraph<FamilyExt>({ scope: familyScope })`. The field helpers come from `../shared` (`familyResources`, `perModelSlider`, `promptOnlyTextBlock`) and `../defs`. **Copy** the version-ID constants into it instead of importing them from the data-graph file, because that file is deleted along with the data-graph engine.
+2. **Register** the graph in that modality's `hub.graph.ts` as `[['<Name>'], <name>]`.
+3. **Handler:** `src/server/services/orchestrator/form-graph/<name>.handler.ts`, typed as `defineHandler<EcosystemData<'<Name>'>, [<StepTemplate>]>`. For LoRAs, use `resourcesToLoras` from `./types`.
+4. **`form-graph/index.ts`:** add the import, the re-export, and the `createStep` case.
+5. **Tests:** these lists are maintained by hand, so a missing entry isn't flagged anywhere.
+   - Add the key to `ECOSYSTEMS` in `image-parity.test.ts` or `video-parity.test.ts`. Audio and 3D ecosystems go in `AUDIO_ECOSYSTEMS` or `MODEL3D_ECOSYSTEMS` in `audio-model3d-parity.test.ts`.
+   - Add cases to `CASES` in `handlers.differential.test.ts`, covering at least the default request and one with each optional feature (LoRAs, images).
+
 ### 6. Typecheck
 
 ```bash
 pnpm run typecheck
+pnpm exec vitest run --project 'unit*' src/shared/form-graph/generation/__tests__/image-parity.test.ts src/server/services/orchestrator/form-graph/__tests__/handlers.differential.test.ts
 ```
 
 If there are errors, iterate until clean. Common failures:

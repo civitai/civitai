@@ -16,6 +16,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
   BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY,
   BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY,
+  BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
   isSensitiveBlockScope,
@@ -171,12 +172,14 @@ export default function BlockConsentModal({
               </Text>
             )}
             {/* A very low limit is storable (the floor is 1) and enforced exactly as
-                given, so say what it does at the moment it is chosen. */}
+                given, so say what it does at the moment it is chosen. 🔴 THE SENTENCE IS
+                SHARED — BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY — so this surface and the
+                editor on /apps/activity cannot drift. Its wording rules, and the five
+                wordings that shipped false, are in that constant's docblock. */}
             {limitEnabled && budgetValid && parsedBudget < BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY ? (
               <Text size="xs" c="orange" data-testid="block-consent-budget-low-warning">
-                {parsedBudget.toLocaleString()} Buzz/day is lower than most generations cost — this
-                app will refuse to generate until you raise it. You can change it later under Apps →
-                Permissions.
+                {parsedBudget.toLocaleString()} {BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY} You can
+                change it later under Apps → Permissions.
               </Text>
             ) : null}
           </Stack>

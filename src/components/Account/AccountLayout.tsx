@@ -3,7 +3,7 @@ import { Badge, CloseButton, Text, TextInput } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight, IconSearch } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 import { NextLink } from '~/components/NextLink/NextLink';
 import type { AccountSection } from '~/components/Account/account-sections';
@@ -18,7 +18,7 @@ import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { SUBNAV_STICKY_GAP, useSubnavBottom } from '~/hooks/useSubnavBottom';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
@@ -47,38 +47,6 @@ function useLegacyAnchorRedirect() {
   }, [router.isReady]);
 }
 
-const RAIL_STICKY_GAP = 16;
-
-/**
- * The subnav is `sticky top-0` inside the scroll area and hides by translating itself off screen,
- * so it keeps its layout box either way. A fixed sticky offset therefore leaves a gap the height of
- * the subnav once it retracts. Track where its bottom edge actually is instead.
- */
-function useSubnavBottom() {
-  const [bottom, setBottom] = useState(0);
-  const frame = useRef<number>();
-
-  const measure = useCallback((node: HTMLElement) => {
-    if (frame.current) cancelAnimationFrame(frame.current);
-    frame.current = requestAnimationFrame(() => {
-      const subnav = node.querySelector<HTMLElement>('[data-subnav]');
-      if (!subnav) return setBottom(0);
-      const offset = subnav.getBoundingClientRect().bottom - node.getBoundingClientRect().top;
-      setBottom(Math.max(0, Math.round(offset)));
-    });
-  }, []);
-
-  const ref = useScrollAreaRef({ onScroll: measure });
-
-  useEffect(() => {
-    if (ref?.current) measure(ref.current);
-    return () => {
-      if (frame.current) cancelAnimationFrame(frame.current);
-    };
-  }, [ref, measure]);
-
-  return bottom;
-}
 
 function SectionLink({ section, active }: { section: AccountSection; active: boolean }) {
   const Icon = section.icon;
@@ -300,7 +268,7 @@ export function AccountLayout({
   return (
     <div className="mx-auto flex w-full max-w-[1020px] gap-10 px-4 py-6 md:px-8">
       <aside className="w-[260px] shrink-0">
-        <div className="sticky" style={{ top: subnavBottom + RAIL_STICKY_GAP }}>
+        <div className="sticky" style={{ top: subnavBottom + SUBNAV_STICKY_GAP }}>
           <AccountNav activeId={section.id} />
         </div>
       </aside>

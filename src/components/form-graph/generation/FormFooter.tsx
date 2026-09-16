@@ -52,13 +52,14 @@ import {
   useInvalidateWhatIf,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { BuzzTypeSelector, useSelectedBuzzType } from '~/components/generation_v2/FormFooter';
-import { ExperimentalAlerts } from '~/components/generation_v2/Experimental';
 import { DownloadReadyAlert } from '~/components/generation_v2/ResourceAlerts';
 import { preBoostSubmitFields } from '~/components/generation_v2/hooks/usePreBoost';
+import { EcosystemBaseModelWarnings } from '~/components/generation_v2/BaseModelWarnings';
+import { GeneratorMessageWarnings } from './GateRuleWarnings';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '~/components/generation_v2/utils';
-import { useRemixOfId } from '~/components/generation_v2/hooks/useRemixOfId';
+import { resolveRemixOfId, type RemixClaimFormState } from '~/utils/remix-claim';
 import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
 import {
   ecosystemByKey,
@@ -76,6 +77,8 @@ import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { outputResetPredicate } from '~/shared/form-graph/generation/reset';
 import { sourceMetadataStore, type SourceMetadata } from '~/store/source-metadata.store';
+import { remixProvenanceStore } from '~/store/remix-provenance.store';
+import { isDefined } from '~/utils/type-guards';
 import { remixStore } from '~/store/remix.store';
 import { useGenerationGraphStore } from '~/store/generation-graph.store';
 import { useTipStore } from '~/store/tip.store';
@@ -293,7 +296,8 @@ function PriorityAlertSpace({
   return (
     <>
       <QueueSnackbar right={snackbarRight} />
-      <ExperimentalWarnings />
+      <GeneratorMessageWarnings />
+      <BaseModelWarnings />
       <DownloadWarning />
       {priorityAlert}
     </>
@@ -304,13 +308,12 @@ function DownloadWarning() {
   return <DownloadReadyAlert whatIf={useWhatIfContext()} />;
 }
 
-/** Several can show at once, so these stay out of the exclusive chain above. */
-function ExperimentalWarnings() {
+function BaseModelWarnings() {
   return (
-    <MultiController
+    <Controller
       graph={generationHub}
-      names={['ecosystem', 'workflow', 'model', 'resources', 'vae'] as const}
-      render={({ values }) => <ExperimentalAlerts selection={values} />}
+      name="ecosystem"
+      render={({ value: ecosystem }) => <EcosystemBaseModelWarnings ecosystem={ecosystem} />}
     />
   );
 }
@@ -332,7 +335,7 @@ function SubmitButton({
   const { selectedType } = useSelectedBuzzType();
   const { color } = useBuzzCurrencyConfig(selectedType);
 
-  const { isError, isLoading: isWhatIfLoading, canEstimateCost } = useWhatIfContext();
+  const { isError, isLoading: isWhatIfLoading, canEstimateCost, gateBlocked } = useWhatIfContext();
   const totalCost = useTotalGenerationCost(store);
 
   const {
@@ -345,6 +348,7 @@ function SubmitButton({
 
   const submitBlocked =
     !canGenerate ||
+    gateBlocked ||
     isWhatIfLoading ||
     isBuzzLoading ||
     isError ||
@@ -687,7 +691,6 @@ export function FormFooter({
   const { creatorTip, civitaiTip } = useTipStore();
   const features = useFeatureFlags();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
-  const remixOfId = useRemixOfId();
   const { resources: resourceData } = useResourceDataContext();
   const invalidateWhatIf = useInvalidateWhatIf();
   const membershipUpsell = useMembershipUpsell();
@@ -747,6 +750,9 @@ export function FormFooter({
     // (see generation_v2/FormFooter.tsx for the full ordering rationale)
     const result = store.validate();
     const fromAction = useGenerationGraphStore.getState().lastEntryAction;
+
+    // See generation_v2/FormFooter.tsx — resolved against the form, not the store.
+    const remixOfId = resolveRemixOfId(store.getSnapshot().state as RemixClaimFormState);
 
     if (!result.success) {
       try {
@@ -858,6 +864,12 @@ export function FormFooter({
       }
     }
 
+    // Collected by CURRENT url, outside the `needsSourceMetadata` gate — see
+    // generation_v2/FormFooter.tsx for why both of those matter.
+    const sourceProvenance = (snapshot.images ?? [])
+      .map((img) => remixProvenanceStore.getToken(img.url))
+      .filter(isDefined);
+
     const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;
     const civitaiTipRate = features.creatorComp ? civitaiTip : 0;
     const base = whatIfData?.cost?.base ?? 0;
@@ -879,6 +891,7 @@ export function FormFooter({
         buzzType: selectedBuzzType,
         ...(sourceMetadata ? { sourceMetadata } : {}),
         ...(sourceMetadataMap ? { sourceMetadataMap } : {}),
+        ...(sourceProvenance.length ? { sourceProvenance } : {}),
         externalId,
         acknowledgedSoftBlock,
         ...preBoostSubmitFields(preBoost),

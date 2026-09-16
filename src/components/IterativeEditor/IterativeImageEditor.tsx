@@ -425,7 +425,7 @@ export function IterativeImageEditor({
         // so the UI can blur mature outputs before ingestion catches up.
         const allImages: SourceImage[] = (result.images ?? []).map((img) => ({
           url: img.url,
-          previewUrl: getEdgeUrl(img.url, { width: 400 }) ?? img.url,
+          previewUrl: getEdgeUrl(img.url, { width: 400, optimized: true }) ?? img.url,
           width: w,
           height: h,
           nsfwLevel: img.nsfwLevel,
@@ -435,7 +435,8 @@ export function IterativeImageEditor({
         if (allImages.length === 0) {
           allImages.push({
             url: result.imageUrl,
-            previewUrl: getEdgeUrl(result.imageUrl, { width: 400 }) ?? result.imageUrl,
+            previewUrl:
+              getEdgeUrl(result.imageUrl, { width: 400, optimized: true }) ?? result.imageUrl,
             width: w,
             height: h,
           });
@@ -821,7 +822,7 @@ export function IterativeImageEditor({
             const result = await uploadToCF(file);
             const annotatedImage: SourceImage = {
               url: result.id,
-              previewUrl: getEdgeUrl(result.id, { width: 400 }) ?? result.id,
+              previewUrl: getEdgeUrl(result.id, { width: 400, optimized: true }) ?? result.id,
               width: imgWidth,
               height: imgHeight,
             };
@@ -931,7 +932,7 @@ export function IterativeImageEditor({
         URL.revokeObjectURL(objectUrl);
         addUserReference({
           url: result.id,
-          previewUrl: getEdgeUrl(result.id, { width: 100 }) ?? result.id,
+          previewUrl: getEdgeUrl(result.id, { width: 100, optimized: true }) ?? result.id,
           width: dims.width,
           height: dims.height,
         });
@@ -968,7 +969,7 @@ export function IterativeImageEditor({
       onLoadingChange: (loading) =>
         setUploadingCount((c) => (loading ? c + 1 : Math.max(0, c - 1))),
       onSuccess: async (cfId: string) => {
-        const edgeUrl = getEdgeUrl(cfId, { width: 100 }) ?? cfId;
+        const edgeUrl = getEdgeUrl(cfId, { width: 100, optimized: true }) ?? cfId;
         const fullUrl = getEdgeUrl(cfId, { original: true }) ?? cfId;
         try {
           const dims = await getImageDimensions(fullUrl);
@@ -1012,7 +1013,8 @@ export function IterativeImageEditor({
   const currentSourcePreviewUrl = currentSource
     ? currentSource.previewUrl.startsWith('http')
       ? currentSource.previewUrl
-      : getEdgeUrl(currentSource.previewUrl, { width: 400 }) ?? currentSource.previewUrl
+      : getEdgeUrl(currentSource.previewUrl, { width: 400, optimized: true }) ??
+        currentSource.previewUrl
     : null;
 
   // ── Close with confirmation ──
@@ -1279,7 +1281,8 @@ export function IterativeImageEditor({
                 onClick={() =>
                   setLightboxUrl(
                     currentSource
-                      ? getEdgeUrl(currentSource.url, { width: 1200 }) ?? currentSourcePreviewUrl
+                      ? getEdgeUrl(currentSource.url, { width: 1200, optimized: true }) ??
+                          currentSourcePreviewUrl
                       : currentSourcePreviewUrl
                   )
                 }
@@ -1428,7 +1431,10 @@ export function IterativeImageEditor({
                             }}
                           >
                             <img
-                              src={getEdgeUrl(ri.image.url, { width: 100 }) ?? ri.image.url}
+                              src={
+                                getEdgeUrl(ri.image.url, { width: 100, optimized: true }) ??
+                                ri.image.url
+                              }
                               alt={charRef.name}
                               style={{
                                 width: '100%',
@@ -1443,7 +1449,8 @@ export function IterativeImageEditor({
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setLightboxUrl(
-                                  getEdgeUrl(ri.image.url, { width: 1200 }) ?? ri.image.url
+                                  getEdgeUrl(ri.image.url, { width: 1200, optimized: true }) ??
+                                    ri.image.url
                                 );
                               }}
                             >
@@ -1515,7 +1522,8 @@ export function IterativeImageEditor({
                             onClick={(e) => {
                               e.stopPropagation();
                               setLightboxUrl(
-                                getEdgeUrl(ref.url, { width: 1200 }) ?? ref.previewUrl
+                                getEdgeUrl(ref.url, { width: 1200, optimized: true }) ??
+                                  ref.previewUrl
                               );
                             }}
                           >

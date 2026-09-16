@@ -847,6 +847,7 @@ function CreatorShopReviewPage() {
                           width={340}
                           alt={selected.title}
                           className="max-h-[300px] max-w-[85%] object-contain"
+                          optimized
                         />
                       ) : selectedMeta.coverUrl ? (
                         <EdgeMedia
@@ -854,6 +855,7 @@ function CreatorShopReviewPage() {
                           width={340}
                           alt={selected.title}
                           className="max-h-[300px] max-w-[85%] object-contain"
+                          optimized
                         />
                       ) : isPack ? (
                         <PackCoverTiles

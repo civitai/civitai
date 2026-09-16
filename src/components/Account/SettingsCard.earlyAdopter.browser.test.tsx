@@ -57,6 +57,15 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     }),
     user: {
       getSettings: { useQuery: () => ({ data: settings.value }) },
+      // `ToggleableFeatures` (SettingsCard.tsx) reads this during render, so its
+      // absence is not a missing assertion — it is a TypeError that fails the whole
+      // component tree and every test in this file with it. The `useUtils()` double
+      // below already defines `user.getFeatureFlags`, which is exactly what made the
+      // gap read as wired. `{}` mirrors that double's `getData: () => ({})`, and is
+      // safe for this file because the key under test (`earlyAdopter`) is not in
+      // `fliptGatedToggleableKeys` — that set needs `toggleable`, which it lacks — so
+      // an empty overlay does not filter the switch out of the list.
+      getFeatureFlags: { useQuery: () => ({ data: {} }) },
       setSettings: {
         useMutation: (options?: Record<string, unknown>) => {
           capturedMutationOptions.value = options;

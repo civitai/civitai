@@ -600,6 +600,49 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // ── Create a REAL Post from the app's own outputs (two-phase) ──────────────
+  // The strictly-more-consequential SIBLING of PUBLISH_GENERATION_OUTPUTS: that
+  // one makes a bare Image row (no post, no feed, no reward, no notification);
+  // this one makes PUBLIC, feed-visible, reward-earning content under the
+  // VIEWER'S byline, optionally attached to a model version's gallery.
+  //
+  // 🔴 IT IS A SIBLING, NOT A FLAG ON THAT MESSAGE, FOR TWO DECISIVE REASONS.
+  // (1) SHAPE: `PUBLISH_GENERATION_OUTPUTS.payload.workflowId` is a SINGLE
+  // REQUIRED STRING and cannot express a post built from several workflows plus
+  // previously-published images. (2) COPY: the publish confirm says the images
+  // "become visible to other viewers of this app", which is FALSE for a profile
+  // post — and that sentence is the security control, not decoration. One handler
+  // branching on payload shape means one of the two dialogs is always wrong.
+  //
+  // THE HANDLER IS TWO SERVER CALLS, NOT ONE. `blocks.previewPostFromApp`
+  // resolves the consent payload server-side (exact copy, the tag names that will
+  // ACTUALLY apply, host-fetched model/version names, real thumbnails), the
+  // viewer confirms, and only then does `blocks.createPostFromApp` write. The
+  // preview exists because the block is sandboxed: a confirm rendering
+  // block-supplied text or thumbnails could show one thing and publish another.
+  // The preview confers NOTHING — the write re-runs every guard.
+  //
+  // REQUEST-style ⇒ an unhandled one HANGS the block to its 10-minute human
+  // timeout. Ahead of the published SDK dist union (the SDK message pair +
+  // `usePostFromApp` hook are co-requisites landing in civitai-app-starters) —
+  // forward-looking coverage, allowed by the one-directional compile-time gate.
+  CREATE_POST_FROM_APP: {
+    request: true,
+    reply: 'CREATE_POST_RESULT',
+    // N/A, and for the SAME structural reason as PUBLISH_GENERATION_OUTPUTS /
+    // QUERY_APP_WORKFLOWS / CANCEL_APP_WORKFLOW above — not a smaller version of
+    // the same reason. Every image this message can post comes from the app
+    // SUBQUEUE (the app's own workflows) or from what the app previously
+    // published THROUGH that subqueue, and the subqueue is a page-only
+    // affordance: the model slot has no composition surface, so a model-slot
+    // block has no eligible images to post in the first place. Registering a
+    // handler here would add a consent dialog over an empty source set. If a slot
+    // app ever gains a subqueue, this entry becomes `required` in the same change.
+    IframeHost:
+      'every eligible image comes from the app subqueue, which is a page-only affordance; a model-slot block has no source images to post',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
 } satisfies Record<string, MessageSpec>;
 
 /**

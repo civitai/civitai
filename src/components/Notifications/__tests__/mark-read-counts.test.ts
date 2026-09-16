@@ -22,6 +22,7 @@ const counts = () => ({
   pendingPlacements: 12,
   pendingStickerPlacements: 9,
   pendingRemixSubmissions: 3,
+  pendingCollectionReviews: 5,
 });
 
 describe('mark all as read', () => {
@@ -44,6 +45,15 @@ describe('mark all as read', () => {
     expect(next.pendingPlacements).toBe(12);
     expect(next.pendingStickerPlacements).toBe(9);
     expect(next.pendingRemixSubmissions).toBe(3);
+  });
+
+  it('leaves the collection review count alone — it is not a notification', () => {
+    // Same class of bug as the placement one above, and the same cost: the query
+    // is `staleTime: Infinity`, so a wipe here removes the badge for the rest of
+    // the session and the owner has nothing pointing at their review queue.
+    const next = applyMarkReadToCounts(counts(), {});
+
+    expect(next.pendingCollectionReviews).toBe(5);
   });
 });
 
@@ -98,6 +108,7 @@ describe('the guard set', () => {
     expect(NON_CATEGORY_COUNT_KEYS.has('pendingPlacements')).toBe(true);
     expect(NON_CATEGORY_COUNT_KEYS.has('pendingStickerPlacements')).toBe(true);
     expect(NON_CATEGORY_COUNT_KEYS.has('pendingRemixSubmissions')).toBe(true);
+    expect(NON_CATEGORY_COUNT_KEYS.has('pendingCollectionReviews')).toBe(true);
     expect(NON_CATEGORY_COUNT_KEYS.has('comment')).toBe(false);
   });
 });

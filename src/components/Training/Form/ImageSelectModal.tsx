@@ -73,13 +73,15 @@ import { MediaType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import type { ImageGetMyInfinite, RecentTrainingData } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
-import { getAirModelLink, isAir, splitUppercase } from '~/utils/string-helpers';
+import { isAir, splitUppercase } from '~/utils/string-helpers';
+import { getAirModelLink } from '~/shared/utils/air';
 import { trainingModelInfo } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import styles from '~/components/Search/SearchLayout.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 
 // const take = 20;
 
@@ -680,6 +682,7 @@ const ImageGridMedia = ({
         alt={`Imported Media - ${img.id}`}
         src={img.url}
         type={img.type}
+        width={DEFAULT_EDGE_IMAGE_WIDTH}
         className={`h-[250px] w-full object-cover`}
         anim={true}
       />

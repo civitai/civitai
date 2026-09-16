@@ -49,14 +49,14 @@ export function isActivityTab(value: unknown): value is ActivityTab {
  *   · `permissions` reads `blocks.listMyScopeGrants` and NOTHING else — one `useQuery`
  *     with no `enabled:`. That procedure runs `enforceAppBlocksFlag`, which evaluates the
  *     `app-blocks-enabled` Flipt key (exactly `features.appBlocks`) and short-circuits to
- *     `[]` for anyone without it. So the panel rendered "No apps installed or subscribed
- *     yet." for every slotless viewer, ALWAYS — there was no cohort for whom the ungated
- *     tab showed anything. Gating it loses nothing that was ever displayed, and it closes
- *     the #3899 / #4668 class: a tab offered whose own gate refuses its content.
+ *     `[]` for anyone without it. So the panel rendered its installs empty state for every
+ *     slotless viewer, ALWAYS — there was no cohort for whom the ungated tab showed
+ *     anything. Gating it loses nothing that was ever displayed, and it closes the
+ *     #3899 / #4668 class: a tab offered whose own gate refuses its content.
  *
  * 🔴 `permissions` USED TO BE EXCLUDED ON THE PREMISE THAT A PAGE-FLAG-ONLY VIEWER HAS
  * GRANTS TO READ. That premise is false at the data layer (above), and it was ALREADY
- * retracted one file over: `AppsSubNav.tsx` records that such a viewer cannot run a
+ * retracted one file over: `apps-sections.ts` records that such a viewer cannot run a
  * full-page app at all (`/apps/run/[slug]/[[...path]].tsx` requires BOTH flags) and cannot
  * install, so they generate no scope invocations to have grants FROM. Do not reinstate it.
  */
@@ -85,8 +85,8 @@ export function isActivityTabVisible(tab: ActivityTab, opts: ActivityTabVisibili
  *
  * 🔴 THE MINIMUM IS 1, AND THE PAGE COLLAPSES ITS BAR THERE. `activity` is the only
  * ungated tab, so a viewer without the slot flag gets exactly `['activity']` — and
- * `activity.tsx` hides its `Tabs.List` below two visible tabs, mirroring `AppsSubNav`'s
- * `links.length < 2` behaviour. A one-tab bar is chrome that offers no choice.
+ * `activity.tsx` hides its `Tabs.List` below two visible tabs, mirroring the `/apps`
+ * rail's `APPS_NAV_MIN_SECTIONS` behaviour. A one-tab bar is chrome that offers no choice.
  *
  * 🔴 THIS IS THE PAGE'S ONLY SOURCE FOR WHICH TABS TO RENDER. `activity.tsx` maps over
  * this result instead of hand-spelling a `&&` per tab, so the ledger above cannot

@@ -19,6 +19,14 @@ import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import { toClickhouseInt64 } from '~/server/clickhouse/int64';
 import { feedRequestCapture } from '~/server/services/feed-request-capture.service';
+import { feedShadow } from '~/server/services/feed-shadow.service';
+import {
+  feedFliptContext,
+  feedHydrateQuery,
+  feedPrimaryAvailable,
+  fetchFeedPrimary,
+  serveFromFeed,
+} from '~/server/services/feed-primary.service';
 import { purgeCache } from '~/server/cloudflare/client';
 import {
   CacheTTL,
@@ -1684,6 +1692,49 @@ const imageFeedStatementTimeoutCounter = registerCounterWithLabels({
   labelNames: ['dbTarget'] as const,
 });
 
+// The feed service hydrates its pages by id, so an empty by-id page is a fallback to Meilisearch;
+// the stage names the branch that emptied it.
+const imagesByIdsEmptyCounter = registerCounterWithLabels({
+  name: 'images_by_ids_empty_total',
+  help: 'getAllImages pages requested by id that came back empty, by the branch that emptied them',
+  labelNames: ['stage'] as const,
+});
+const IDS_EMPTY_LOG_INTERVAL_MS = 10_000;
+let idsEmptyLoggedAt = 0;
+function noteEmptyIdsPage(
+  input: {
+    ids?: number[];
+    sort?: unknown;
+    browsingLevel?: number;
+    useCombinedNsfwLevel?: boolean;
+    user?: { id?: number; isModerator?: boolean };
+  },
+  stage: string,
+  details?: Record<string, unknown>
+) {
+  if (!input.ids?.length) return;
+  imagesByIdsEmptyCounter.inc({ stage });
+  const now = Date.now();
+  if (now - idsEmptyLoggedAt < IDS_EMPTY_LOG_INTERVAL_MS) return;
+  idsEmptyLoggedAt = now;
+  logToAxiom(
+    {
+      type: 'warning',
+      name: 'images-by-ids-empty',
+      stage,
+      ids: input.ids.length,
+      firstIds: input.ids.slice(0, 5),
+      sort: input.sort,
+      browsingLevel: input.browsingLevel,
+      useCombinedNsfwLevel: input.useCombinedNsfwLevel,
+      viewerId: input.user?.id,
+      isModerator: input.user?.isModerator,
+      ...details,
+    },
+    'civitai-prod'
+  ).catch(() => undefined);
+}
+
 // getImageMetricsObject soft-fallback rate: incremented whenever the ClickHouse
 // image-metrics read exceeds CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS and we serve
 // empty (TRANSIENT-zero) metrics. Makes the otherwise axiom-only fallback rate
@@ -1763,7 +1814,10 @@ const getAllImagesUncaptured = async (
     username: input.user?.username,
     isModerator: input.user?.isModerator,
   });
-  if (blockedEnforcement.emptyResult) return { nextCursor: undefined, items: [] };
+  if (blockedEnforcement.emptyResult) {
+    noteEmptyIdsPage(input, 'blocked-tags');
+    return { nextCursor: undefined, items: [] };
+  }
   applyHideChallengesExclusion(input);
 
   const {
@@ -1911,6 +1965,7 @@ const getAllImagesUncaptured = async (
       isPersonalized = true; // per-user hidden image set
       AND.push(Prisma.sql`i."id" IN (${Prisma.join(imageIds)})`);
     } else {
+      noteEmptyIdsPage(input, 'hidden');
       return { items: [], nextCursor: undefined };
     }
   }
@@ -1931,6 +1986,7 @@ const getAllImagesUncaptured = async (
     const cachedData = await imagesForModelVersionsCache.fetch([modelVersionId]);
     const versionData = cachedData[modelVersionId];
     if (!versionData || !versionData.images?.length) {
+      noteEmptyIdsPage(input, 'prioritized');
       return { items: [], nextCursor: undefined };
     }
 
@@ -2154,6 +2210,7 @@ const getAllImagesUncaptured = async (
   if (collectionId) {
     // Check if user has access to collection (prefetched)
     if (!prefetchedCollectionPermissions?.read) {
+      noteEmptyIdsPage(input, 'collection');
       return { nextCursor: undefined, items: [] };
     }
 
@@ -2543,10 +2600,12 @@ const getAllImagesUncaptured = async (
           baseModelCount: baseModels?.length,
         },
       }).catch(() => undefined);
+      noteEmptyIdsPage(input, 'statement-timeout', { dbTarget });
       return { items: [], nextCursor: undefined };
     }
     throw e;
   }
+  if (!rawImages.length) noteEmptyIdsPage(input, 'no-rows', { dbTarget });
   // const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>(query);
 
   const imageIds = rawImages.map((i) => i.id);
@@ -2653,6 +2712,8 @@ const getAllImagesUncaptured = async (
       // if (x.ingestion !== 'Scanned' && x.userId !== userId) return false;
       return true;
     });
+    if (rawImages.length && !filtered.length)
+      noteEmptyIdsPage(input, 'filtered', { rows: rawImages.length });
 
     const result: Array<
       Omit<ImageV2Model, 'nsfwLevel' | 'metadata'> & {
@@ -2812,7 +2873,7 @@ type GetAllImagesIndexResult = AsyncReturnType<typeof getAllImages>;
  * because the blocked-browsing early return and a search reporting none both omit it.
  */
 type GetAllImagesIndexSourcedResult = GetAllImagesIndexResult & {
-  source?: AsyncReturnType<typeof getImagesFromSearch>['source'];
+  source?: 'feed' | AsyncReturnType<typeof getImagesFromSearch>['source'];
 };
 export const getAllImagesIndex = async (
   input: GetAllImagesInput
@@ -2879,6 +2940,46 @@ export const getAllImagesIndex = async (
 
   const currentUserId = user?.id;
 
+  const searchInput = { ...input, currentUserId, isModerator: user?.isModerator, offset, entry };
+  // The feed service picks and orders the page and Postgres supplies the rows; Meilisearch is
+  // not consulted. What the feed cannot serve (unmapped shape, timeout, error) goes to Meilisearch.
+  if (feedPrimaryAvailable()) {
+    const feedPrimary = await withSpan('image:flipt:feedPrimary', () =>
+      getFliptBoolean(
+        FLIPT_FEATURE_FLAGS.FEED_SERVICE_PRIMARY,
+        currentUserId?.toString() || 'anonymous',
+        feedFliptContext(searchInput)
+      )
+    );
+    if (feedPrimary) {
+      const started = Date.now();
+      const followedUserIds =
+        input.followed && currentUserId ? await getUserFollows(currentUserId) : undefined;
+      const served = await withSpan('image:feedPrimary', () =>
+        serveFromFeed(
+          { ...searchInput, followedUserIds },
+          {
+            fetchFeed: fetchFeedPrimary,
+            hydrate: async (ids) =>
+              (
+                await getAllImagesUncaptured(feedHydrateQuery(input, ids))
+              ).items,
+          }
+        )
+      );
+      if (served.ok) {
+        void feedRequestCapture().record(searchInput, {
+          source: 'getImagesFromSearch',
+          filterMode: 'feed',
+          elapsedMs: Date.now() - started,
+          resultIds: served.page.data.map((i) => i.id),
+          nextCursor: served.page.nextCursor,
+        });
+        return { items: served.page.data, nextCursor: served.page.nextCursor, source: 'feed' };
+      }
+    }
+  }
+
   let searchResults: Awaited<ReturnType<typeof getImagesFromSearch>>['data'];
   let searchNextCursor: Awaited<ReturnType<typeof getImagesFromSearch>>['nextCursor'];
   let searchSource: Awaited<ReturnType<typeof getImagesFromSearch>>['source'];
@@ -2887,15 +2988,7 @@ export const getAllImagesIndex = async (
       data: searchResults,
       nextCursor: searchNextCursor,
       source: searchSource,
-    } = await withSpan('image:getAllImagesIndex:search', () =>
-      getImagesFromSearch({
-        ...input,
-        currentUserId,
-        isModerator: user?.isModerator,
-        offset,
-        entry,
-      })
-    ));
+    } = await withSpan('image:getAllImagesIndex:search', () => getImagesFromSearch(searchInput)));
   } catch (err) {
     // Meilisearch saturation / timeout on the tRPC hot path (image.getInfinite).
     // Surface as TRPCError SERVICE_UNAVAILABLE (HTTP 503) so the client gets a
@@ -3119,9 +3212,8 @@ export const getAllImagesIndex = async (
   }
 
   let nextCursor: string | undefined;
-  if (searchNextCursor) {
-    nextCursor = `${offset + input.limit}|${searchNextCursor}`;
-  }
+  if (typeof searchNextCursor === 'string') nextCursor = searchNextCursor;
+  else if (searchNextCursor) nextCursor = `${offset + input.limit}|${searchNextCursor}`;
 
   return {
     nextCursor,
@@ -3238,13 +3330,15 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   const started = Date.now();
   try {
     const result = await searchImages(input);
-    void feedRequestCapture().record(input, {
-      source: 'getImagesFromSearch',
+    const outcome = {
+      source: 'getImagesFromSearch' as const,
       filterMode: result.filterMode,
       elapsedMs: Date.now() - started,
       resultIds: result.data.map((i: { id: number }) => i.id),
       nextCursor: result.nextCursor,
-    });
+    };
+    void feedRequestCapture().record(input, outcome);
+    void feedShadow().compare(input, outcome);
     return result;
   } catch (err) {
     void feedRequestCapture().record(input, {

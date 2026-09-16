@@ -810,6 +810,19 @@ export const getPostEditImages = async ({ id, user }: GetByIdInput & { user: Ses
   return combinePostEditImageData(images, user);
 };
 
+export const getPostImageIds = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
+  const images = await dbRead.image.findMany({
+    where: {
+      postId: id,
+      post: user.isModerator
+        ? undefined
+        : { OR: [{ publishedAt: { not: null } }, { userId: user.id }] },
+    },
+    select: { id: true },
+  });
+  return images.map((image) => image.id);
+};
+
 export const createPost = async ({
   userId,
   tag,

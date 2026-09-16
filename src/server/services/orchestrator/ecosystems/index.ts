@@ -45,6 +45,7 @@ import { createNanoBananaInput } from './nano-banana.handler';
 import { createAnimaInput } from './anima.handler';
 import { createChromaInput } from './chroma.handler';
 import { createErnieInput } from './ernie.handler';
+import { createIdeogramInput } from './ideogram.handler';
 import { createLensInput } from './lens.handler';
 import { createKrea2Input } from './krea2.handler';
 import { createMAIInput } from './mai.handler';
@@ -166,6 +167,9 @@ export type PonyV7Ctx = EcosystemGraphOutput & { ecosystem: 'PonyV7' };
 /** Ernie context */
 export type ErnieCtx = EcosystemGraphOutput & { ecosystem: 'Ernie' };
 
+/** Ideogram context */
+export type IdeogramCtx = EcosystemGraphOutput & { ecosystem: 'Ideogram' };
+
 /** Lens context */
 export type LensCtx = EcosystemGraphOutput & { ecosystem: 'Lens' };
 
@@ -264,6 +268,7 @@ export { createHiDreamInput } from './hi-dream.handler';
 export { createHiDreamO1Input } from './hi-dream-o1.handler';
 export { createPonyV7Input } from './pony-v7.handler';
 export { createErnieInput } from './ernie.handler';
+export { createIdeogramInput } from './ideogram.handler';
 export { createLensInput } from './lens.handler';
 export { createKrea2Input } from './krea2.handler';
 export { createMAIInput } from './mai.handler';
@@ -447,6 +452,10 @@ async function createEcosystemStep(
     // Ernie
     case 'Ernie':
       return createErnieInput(normalizedData, handlerCtx);
+
+    // Ideogram 4 (comfy)
+    case 'Ideogram':
+      return createIdeogramInput(normalizedData, handlerCtx);
 
     // Lens (Civitai-internal, comfy)
     case 'Lens':

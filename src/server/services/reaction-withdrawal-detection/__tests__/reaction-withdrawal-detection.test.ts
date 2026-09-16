@@ -151,7 +151,9 @@ describe('the finding a moderator reads', () => {
   });
 
   it('truncates a reason rather than losing the whole report', () => {
-    // 🔴 One over-long reason 400s the REPORT, not the row — every finding in the batch is lost.
+    // 🔴 One over-long reason loses the whole REPORT, not just the row — every finding in the batch
+    // goes with it. It fails `abuseReportInput.parse` locally, inside `moderatorApp.abuseReport` and
+    // before the network call, so the symptom is a ZodError in this process, not a 4xx from the spoke.
     expect(truncateReason('x'.repeat(2_500))).toHaveLength(2_000);
     expect(truncateReason('short')).toBe('short');
   });

@@ -66,6 +66,13 @@ check at request time (`enforceContextBinding`).
 | `ai:write:budgeted`              | positive `buzzBudget`                             |                                                                                                                                                                         |
 | ~~`block:settings:read` / `:write`~~ | —                                             | **REMOVED** from the scope registry (no runtime capability ever verified them; the settings paths authorize on valid-token + app-developer + installer-resolution). A manifest declaring either is REJECTED |
 | `apps:storage:read` / `:write`   | scope present on `claims.scopes` per op           | per-app KV store (App Storage); no OAuth bit (`SKIP_OAUTH_CHECK`) — gated by the approved-scope snapshot + `resolveStorageContext`                                      |
+| `posts:write:self`               | non-anon `sub`                                    | **SENSITIVE + CONSENT-GATED.** Create a REAL, published Post on the viewer's own profile from the app's own outputs (`CREATE_POST_FROM_APP` → `blocks.createPostFromApp`), optionally attached to a model version's gallery. Maps to the REAL `MediaWrite` OAuth bit. Deliberately NOT consent-exempt, so a token carries it only after an explicit grant — AND the host opens a per-post confirm rendering the host-resolved content, because a blanket grant cannot inform about content that differs every time. Behind its own fail-closed flag (`app-blocks-post-creation`), independent of `app-blocks-enabled` |
+
+⚠️ **This table is NOT exhaustive and the constant is the authority.** Absent
+from it today: `apps:storage:shared:read` / `:write` (the cross-user shared
+datastore) and `collections:read:self` / `:write:self` / `:read:private`. Read
+`src/shared/constants/block-scope.constants.ts` for the live set rather than
+inferring absence from this list.
 
 Unknown scopes are rejected at runtime (deny-by-default in middleware).
 
@@ -460,13 +467,12 @@ your app's line with a one-line reason, or ask a maintainer to. A narrower value
 (`--app-page-max-width: 1100px`) is equally valid if your app wants a tighter
 frame than the default.
 
-**Currently opted out:** `playable-collections` — a collection player whose three
-open-collection view modes (slideshow, ticker, wall) are all uncapped by the app
-itself, so a centred column shrinks the player and truncates the grids. Its own
-960px well applies only to the browse list, which sits behind an early return and
-is unaffected either way. Every entry is expected to carry a reason like this
-one; the ledger's membership is asserted in a test, so a rule cannot be added or
-removed here without that being a deliberate, reviewed change.
+**Currently opted out** — read the ledger in `src/styles/globals.css`, which is the
+authority for both the membership and each entry's reason, and whose comment states
+the grounds on which an entry is admitted. Neither the list nor a count is
+mirrored here, because a copy on this page is a second claim that rots on the next
+entry without anything noticing. The ledger's membership is asserted in a test, so a
+rule cannot be added or removed without that being a deliberate, reviewed change.
 
 **What actually guards the snippet above.** The CSS block on this page is read by
 `src/components/AppBlocks/__tests__/ledgerSelectorSurvivesProdStrip.test.ts`,
@@ -568,13 +574,13 @@ that takedown tool is built, not a live bug today.
 ### Cache invalidation on `app_blocks.status` transitions (audit-10 H3)
 
 `BlockRegistry.listForModel` caches its per-`(model, slot)` result for 60s
-(`CACHE_TTL_SECONDS`, `block-registry.service.ts:39`) and the SQL only filters
+(`CACHE_TTL_SECONDS` in `block-registry.service.ts`) and the SQL only filters
 on `ab.status = 'approved'` at query time, not at cache-read time.
-`invalidateModelCache(modelId)` (`block-registry.service.ts:461`) is called only
-from the four per-model mutation paths — install, uninstall, toggleEnabled,
-updateSettings (lines 1950 / 2019 / 2055 / 2108). It is NOT called on any
-`app_blocks.status` transition, because a status change on a block doesn't know
-which models the block is installed on.
+`invalidateModelCache(modelId)` (same file) is called only from the four
+per-model mutation paths — `BlockRegistry.installOnModel`,
+`uninstallFromModel`, `toggleEnabled` and `updateSettings`, which are its only
+callers. It is NOT called on any `app_blocks.status` transition, because a
+status change on a block doesn't know which models the block is installed on.
 
 Two facts bound the actual risk today:
 
@@ -588,9 +594,10 @@ Two facts bound the actual risk today:
   late; it never keeps rendering after it should have stopped.
 - **The emergency kill list is applied fresh on every cache hit**, so it is NOT
   subject to the 60s cache. `getKillList()` has its own 5s in-process TTL
-  (`KILL_LIST_CACHE_TTL_MS`, `block-registry.service.ts:480`) and `listForModel`
-  filters the cached rows against it on every read (lines 657–664). "Stop this
-  block right now" (`sysRedis SET system:blocks:emergency-kill-list`) therefore
+  (`KILL_LIST_CACHE_TTL_MS` in `block-registry.service.ts`) and `listForModel`
+  filters the cached rows against it on every read (the `kill.has(r.blockId)`
+  filter on `listForModel`'s cache-hit branch). "Stop this block right now"
+  (`sysRedis SET system:blocks:emergency-kill-list`) therefore
   takes effect within ~5s regardless of the registry cache.
 
 So the real work item is: before shipping a moderator `suspend`/`deprecate`
@@ -647,6 +654,6 @@ documented above, so they're dropped from this list.
 - **DNS-rebinding gate at `assetBundleUrl` fetch time** (still lexical-only at
   submit — see the SSRF note in the threat model).
 - **Per-slot install-cap race hardening.** The cap is enforced at install time
-  (`MAX_BLOCKS_PER_SLOT`, `block-registry.service.ts:1849`) via a
+  (`MAX_BLOCKS_PER_SLOT`, checked in `BlockRegistry.installOnModel`) via a
   count-then-insert, not a row-locked transaction, so a rare concurrent double
   install can still exceed the cap; accepted for now.

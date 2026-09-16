@@ -9,6 +9,9 @@ export enum FLIPT_FEATURE_FLAGS {
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
+  // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from
+  // Postgres) for matching users; everyone else keeps Meilisearch with the feed in shadow.
+  FEED_SERVICE_PRIMARY = 'feed-service-primary',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
@@ -37,6 +40,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // Gates every non-legacy judging engine. Default-off, so a challenge whose `judgingEngine`
   // column points at the pairwise ladder still runs the legacy absolute path until this is on.
   CHALLENGE_PAIRWISE_JUDGING = 'challenge-pairwise-judging',
+  // Streams the two large evidence archives straight to object storage instead of staging them
+  // on the container's local scratch volume first. DEFAULT-OFF — `isFlipt` returns false for an
+  // unknown flag or an unreachable Flipt, which leaves the long-standing disk-staging path in
+  // charge. Evaluated ONCE per report, never per archive, so a mid-report flip cannot produce a
+  // bundle assembled two different ways. Flip OFF to roll back without a deploy; the disk path
+  // is kept intact and reachable for exactly that reason.
+  CSAM_ARCHIVE_STREAM_UPLOAD = 'csam-archive-stream-upload',
   COMIC_CREATOR = 'comic-creator',
   GENERATION_PRESETS = 'generation-presets',
   GENERATION_TESTING = 'generation-testing',

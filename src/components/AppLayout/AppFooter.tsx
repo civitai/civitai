@@ -5,10 +5,10 @@ import clsx from 'clsx';
 import { useRef, useState } from 'react';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
 import { ManageConsentFooterLink } from '~/components/Consent/ManageConsentFooterLink';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
+import { SupportMenu } from '~/components/Support/SupportMenu';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -64,13 +64,6 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     children: 'Known Issues',
     indicator: true,
     features: (features) => features.bugsPage,
-  },
-  {
-    key: 'education',
-    href: '/education',
-    target: '_blank',
-    rel: 'nofollow noreferrer',
-    children: 'Education',
   },
   {
     key: 'creator-program',
@@ -249,11 +242,7 @@ export function AppFooter() {
           <SocialLinks />
         </div>
         <div className="ml-auto flex items-center gap-1">
-          <RoutedDialogLink name="support" state={{}} passHref>
-            <Button component="a" pl={4} pr="xs" color="yellow" variant="light" size="xs">
-              🛟 Support
-            </Button>
-          </RoutedDialogLink>
+          <SupportMenu />
         </div>
       </div>
     </footer>

@@ -44,6 +44,7 @@ import {
   toPublicScreenshots,
 } from '~/server/schema/blocks/subscription.schema';
 import { isLaunchSlot, PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
+import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
 import { isMatureContentRating } from '~/server/utils/server-domain';
 
 const CACHE_TTL_SECONDS = 60;
@@ -2309,16 +2310,15 @@ export class BlockRegistry {
     approvedScopes: string[];
   }): Promise<void> {
     const { recordScopeGrant, consentGatedScopes } = await import('./blocks/scope-grant.service');
-    // The app's effective scope set = manifest.scopes ∩ approvedScopes (the
-    // moderator-approved snapshot is the ceiling). Grant only the consent-
-    // gated subset of that — exempt scopes never need a grant.
-    const manifestScopes = Array.isArray((opts.manifest as { scopes?: unknown }).scopes)
-      ? (opts.manifest as { scopes: unknown[] }).scopes.filter(
-          (s): s is string => typeof s === 'string'
-        )
-      : [];
-    const approved = new Set(opts.approvedScopes ?? []);
-    const effective = manifestScopes.filter((s) => approved.has(s));
+    // The app's effective scope set = manifest.scopes ∩ approvedScopes, via the SHARED
+    // `effectiveBlockScopes` helper — the same rule `blocks.router`'s `grantScopes` enforces as
+    // its consent ceiling and `getInstallConfig` discloses at install time, and the permissions
+    // tab (`listMyScopeGrants`) displays. Grant only the consent-gated subset of that — exempt
+    // scopes never need a grant.
+    const effective = effectiveBlockScopes(
+      opts.manifest as { scopes?: unknown },
+      opts.approvedScopes
+    );
     const toGrant = consentGatedScopes(effective);
     await recordScopeGrant({
       userId: opts.userId,

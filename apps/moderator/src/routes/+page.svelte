@@ -25,6 +25,8 @@
   import type { Jsonified } from '$lib/format';
   import type { MostReportedRow } from '$lib/server/reports.service';
   import type { BoardPayload } from './api/moderation-board/types';
+  import type { JobQueueHealthPayload } from './api/job-queue-health/types';
+  import JobQueueHealthPanel from './JobQueueHealthPanel.svelte';
   import { LINK_CLASS } from '$lib/format';
   import { SvelteMap } from 'svelte/reactivity';
   import NumberedPager from '$lib/components/NumberedPager.svelte';
@@ -118,11 +120,20 @@
     });
   });
 
+  const jobQueue = $derived(
+    browser
+      ? fetch('/api/job-queue-health').then((r): Promise<JobQueueHealthPayload> => {
+          if (!r.ok) throw new Error(`job-queue-health ${r.status}`);
+          return r.json();
+        })
+      : null
+  );
+
   onMount(loadMostReported);
 
   // `getReportItemUrl`, not `entityUrl`: a chat has no page on the site (its transcript is Chat Audit,
   // in this app) and a comment hangs off a parent, so neither is derivable from the entity id.
-  // 'other' is what `Report` looks like when it joins none of the fifteen report tables — the row it
+  // 'other' is what `Report` looks like when it joins none of the report tables — the row it
   // named is gone, or was never written. "unknown" read as a rendering bug rather than a fact about
   // the report, which is what the mod team asked about.
   const entityLabel = (row: Reported) =>
@@ -707,3 +718,17 @@
     Could not load the queue board. The counts above are unaffected.
   </p>
 {/await}
+
+<!-- Its own await, not folded into the board's: this reads a different table on a different cadence,
+     and the board's "Mark swept" refetch must not drop this panel back to a skeleton. -->
+<div class="mt-8">
+  {#await jobQueue}
+    <div class="h-32 animate-pulse rounded-xl border border-dark-4 bg-dark-6"></div>
+  {:then health}
+    {#if health}
+      <JobQueueHealthPanel {health} />
+    {/if}
+  {:catch}
+    <p class="text-sm text-red-300">Could not load background job health.</p>
+  {/await}
+</div>

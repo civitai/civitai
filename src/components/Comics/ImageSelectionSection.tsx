@@ -175,7 +175,10 @@ export function ImageSelectionSection({
                         }}
                       >
                         <img
-                          src={getEdgeUrl(ri.image.url, { width: 100 }) ?? ri.image.url}
+                          src={
+                            getEdgeUrl(ri.image.url, { width: 100, optimized: true }) ??
+                            ri.image.url
+                          }
                           alt=""
                           style={{
                             width: '100%',

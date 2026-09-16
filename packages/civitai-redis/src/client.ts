@@ -1999,10 +1999,21 @@ export const REDIS_SYS_KEYS = {
     ENGINES: 'generation:engines',
     /** @deprecated See REDIS_KEYS.GENERATION.TOKENS_OWNED — bearers moved to an owner-tagged key. */
     TOKENS: 'generation:tokens',
+    // The training-studio app's own per-user orchestrator-token cache (packed hash, field=userId).
+    // Distinct from TOKENS (the main app's raw-string hash) so its wrapper-packed writes can't corrupt
+    // the main app's raw reads of the same field.
+    ORCHESTRATOR_TOKENS: 'packed:generation:orchestrator-tokens',
     CUSTOM_CHALLENGE: 'generation:custom-challenge',
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
     REMIX_AUDIT_CHECKED: 'generation:remix-audit-checked',
     CLIENT: 'generation:client',
+    // One field per entry, keyed by id, so saving one rule or message never rewrites the rest.
+    GATE_RULES: 'generation:gate-rules:by-id',
+    // Never delete: the migration would rerun and restore every legacy rule deleted since.
+    GATE_RULES_MIGRATED: 'generation:gate-rules:migrated',
+    MESSAGES: 'generation:messages:by-id',
+    // Never delete: the migration would rerun and restore every legacy message deleted since.
+    MESSAGES_MIGRATED: 'generation:messages:migrated',
     /**
      * MEASUREMENT ONLY — a dark probe, not a cache. Holds `1` against a truncated SHA-256 of the
      * exact string sent to the external prompt classifier, so we can count how often that string
@@ -2037,6 +2048,9 @@ export const REDIS_SYS_KEYS = {
   },
   TRAINING: {
     STATUS: 'training:status',
+    // The training-studio app's cached per-model "from" price map (packed JSON), quoted from the
+    // orchestrator `whatif`. Shared across pods so the ~21 estimate calls run once per TTL, not per load.
+    STUDIO_FROM_PRICES: 'packed:training:studio-from-prices',
   },
   CLIENT: 'client',
   SYSTEM: {
@@ -2077,6 +2091,9 @@ export const REDIS_SYS_KEYS = {
     PENDING_IMAGE_RESTORES: 'system:pending-image-restores',
     // Hash { sampleRate: '0'..'1', until?: ISO-8601 | epoch ms }; missing or 0 = off.
     FEED_REQUEST_CAPTURE: 'system:feed-request-capture',
+    // Hash { sampleRate, until?, timeoutMs?, maxInflight? }: mirror a share of image-feed
+    // searches to the candidate feed service and record the comparison. Off when missing.
+    FEED_SHADOW: 'system:feed-shadow',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -2111,6 +2128,9 @@ export const REDIS_SYS_KEYS = {
   },
   DAILY_CHALLENGE: {
     CONFIG: 'daily-challenge:config',
+  },
+  HUGGING_FACE_IMPORT: {
+    CONFIG: 'hugging-face-import:config',
   },
   COLLECTION: {
     RANDOM_SEED: 'collection:random-seed',

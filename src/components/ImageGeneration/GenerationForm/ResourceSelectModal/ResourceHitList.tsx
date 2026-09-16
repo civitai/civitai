@@ -75,8 +75,7 @@ function FillingMasonryGrid({ children }: { children: React.ReactNode }) {
 }
 
 export function ResourceHitList({ query }: { query: string }) {
-  const { canGenerate, resources, selectSource, excludedIds, tab, optionsOverride } =
-    useResourceSelectContext();
+  const { canGenerate, resources, selectSource, excludedIds, tab } = useResourceSelectContext();
 
   const { data: featured } = trpc.model.getFeaturedModels.useQuery(undefined, {
     enabled: tab === 'featured',
@@ -90,7 +89,6 @@ export function ResourceHitList({ query }: { query: string }) {
     fetchNextPage,
     hasNextPage,
     isError,
-    isPlaceholderData,
     refetch,
   } = useResourceSelectInfinite({ query });
 
@@ -269,24 +267,9 @@ export function ResourceHitList({ query }: { query: string }) {
           .filter(isDefined)
       : [];
 
-  /**
-   * `keepPreviousData` holds the last catalog on screen while a new one loads.
-   * That is right when only the query changed, and wrong once a rail can re-aim
-   * the OPTIONS: the rows on screen then belong to a family the form is no
-   * longer pointed at, and clicking one commits a model the graph substitutes
-   * away. Inert for every consumer that never sets an override.
-   */
-  const showingOtherEcosystem = isPlaceholderData && !!optionsOverride;
-
   return (
     <ResidencyBatchProvider modelVersionIds={residencyIds}>
-      <div
-        className={clsx(
-          'flex flex-col gap-3 p-3',
-          showingOtherEcosystem && 'pointer-events-none opacity-50'
-        )}
-        aria-busy={showingOtherEcosystem}
-      >
+      <div className="flex flex-col gap-3 p-3">
         {hiddenCount > 0 && (
           <Text c="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
         )}

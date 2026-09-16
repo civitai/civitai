@@ -1192,7 +1192,8 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Mage-Flow - LORA training (AI Toolkit only)
   { ecosystemId: ECO.MageFlow, supportType: 'training', modelTypes: loraOnly },
 
-  // Ideogram 4 - LORA training (AI Toolkit only)
+  // Ideogram 4 - checkpoint and LORA; LORA training (AI Toolkit only)
+  { ecosystemId: ECO.Ideogram, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.Ideogram, supportType: 'training', modelTypes: loraOnly },
 
   // PonyV7 - checkpoint and LORA (based on AuraFlow)
@@ -1347,6 +1348,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Krea2,
     defaults: {
       model: { id: 3072329 },
+    },
+  },
+  {
+    ecosystemId: ECO.Ideogram,
+    defaults: {
+      model: { id: 3246186 },
+      modelLocked: true,
     },
   },
   {

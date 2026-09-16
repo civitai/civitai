@@ -239,8 +239,8 @@ export function AppListingsMarketplaceBody() {
       // the old four-column maximum; at the FIVE columns the grid now reaches on a
       // 2560 monitor it is under five, so a viewer on the widest screen the container
       // supports would meet the "Load more" button after the least content. 48 gives
-      // nine rows at five columns and twelve at four — and stays ≥ 8 rows even if a
-      // future cap raise engages the declared-but-unreachable sixth column.
+      // twelve rows at four columns and sixteen at three — and stays ≥ 8 rows even if a
+      // future cap raise engages the declared-but-unreachable fifth column.
       // 🔴 THE SERVER CAPS THIS AT 50, so 48 is deliberately just inside it.
       // `listAppListingsSchema` in
       // `src/server/schema/blocks/app-listing-read.schema.ts` declares
@@ -569,24 +569,36 @@ export function AppListingsMarketplaceBody() {
               Mantine `<Grid>`/`<Grid.Col span={…}>`.
 
               WHAT IT DOES: 1 / 2 / 3 / 4 columns exactly where the retired
-              `LISTING_GRID_SPAN` media queries put them (736 / 960 / 1168px of
-              grid — those breakpoints minus the apps Container's 32px gutter), then
-              FIVE from 2364. The store container is `LISTING_STORE_CONTAINER_SIZE` =
-              `APPS_PAGE_CONTAINER_WIDTH` = 2560, which yields 2528 of grid — or ~2518
-              from a 2560 VIEWPORT, since the page's `.scroll-area` reserves a thin
-              scrollbar on Windows/Linux Chrome/Firefox (macOS overlay scrollbars and
-              touch reserve none). Either way `/apps` renders FIVE columns, at 492.8px
-              or ~490.8px each — wider than the
-              460px four-up the 1920 container shipped, which is the point: the
-              `LISTING_CARD_MIN_WIDTH` floor is 460, so a column is only added where
-              every card ends up at least as big as it is today. A sixth column would
-              need 2840 of grid and is unreachable at this cap; the rung is declared
-              anyway so a future cap raise engages it.
+              `LISTING_GRID_SPAN` media queries put them (736 / 960 / 1168px of grid —
+              those breakpoints minus the apps Container's 32px gutter), then FIVE from
+              2364 and SIX from 2840, both straight out of the 460px card-width floor
+              (`n × 460 + (n − 1) × 16`).
+
+              The store container is `LISTING_STORE_CONTAINER_SIZE` =
+              `APPS_PAGE_CONTAINER_WIDTH` = 2560. At that container, net of a 10px
+              scrollbar and the 32px gutter, the three rail states land as:
+
+                rail OPEN       2242 of grid   FOUR columns at 548.5px
+                COLLAPSED       2446 of grid   FIVE columns at 476.4px
+                NO RAIL         2518 of grid   FIVE columns at 490.8px
+
+              All three clear the 460px floor, which is the point: a column is only ever
+              added where every card ends up at least as big as it is today.
+
+              ⚠️ A LEFT-RAIL RE-TUNE BRIEFLY MOVED THIS AND IS REVERTED. It replaced the
+              1168 and 2364 rungs with a chrome-derived pair (four from 2242, five from
+              2840) so an OPEN rail still reached four columns — but the ladder keys on
+              GRID WIDTH and cannot tell WHY the grid is narrow, so viewers with no rail,
+              with it hidden below 1300px, or with it collapsed paid a column they had the
+              width for. Under it, this paragraph read &quot;FOUR columns at 548.5px open,
+              599.5 collapsed, 617.5 no rail&quot;; collapsed and no-rail are FIVE columns
+              again. See `WIDE_COLUMN_COUNTS` in `appListingGrid.ts` for why a rail-aware
+              rung is not buildable at this layer.
 
               WHY IT MOVED OFF `<Grid>`: `Grid.Col span` can only read a theme
               BREAKPOINT, and `xl` (88em / 1408px) is the top of Mantine's default
               scale — `src/providers/ThemeProvider.tsx` declares no custom
-              breakpoints, so there was nowhere to hang a fifth column and adding a
+              breakpoints, so there was nowhere to hang a wide column and adding a
               breakpoint would be a site-wide theme change to fix one grid. A
               container query also reads the right quantity: card width is not
               monotonic in VIEWPORT width (a one-column 390px phone gets a ~356px

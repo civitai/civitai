@@ -45,10 +45,9 @@ import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import { logToAxiom } from '~/server/logging/client';
 import { isAppBlocksSharedStorageEnabled } from '~/server/services/app-blocks-flag';
+import { assertSharedWriteTrust } from '~/server/services/blocks/block-write-trust.service';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
-import { Flags } from '~/shared/utils/flags';
-import { OnboardingSteps } from '~/server/common/enums';
 import {
   assertSharedTextSafe,
   SharedContentBlockedError,
@@ -61,6 +60,7 @@ import {
   checkSharedReportRateLimit,
 } from '~/server/utils/shared-storage-rate-limit';
 import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
+import { appsModUserStorageRouter } from '~/server/routers/apps-mod-storage.router';
 
 // ── Limits (design M2/M3) ─────────────────────────────────────────────────────
 // The app quota row is SHARED with the per-user kv path; these mirror the
@@ -78,12 +78,16 @@ const SHARED_VALUE_BYTE_CAP = 64 * 1024;
 const SHARED_KV_PER_USER_ROW_CAP = 50;
 
 // ── Min-trust gate (design H3 / MIN-TRUST GATE) ───────────────────────────────
-// Account must be older than this to write/vote (anti-sybil). Starts at 7d.
-const MIN_ACCOUNT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-// Flag-toggleable STRONG anti-sybil lever (design H5): require a paid tier to
-// write/vote. OFF by default — flip to true (or wire to a flag) if sybil pressure
-// materializes. `free`/absent tier fails when on.
-const REQUIRE_PAID_TIER = false;
+// MOVED to `~/server/services/blocks/block-write-trust.service` — it now has a
+// SECOND caller (`blocks.createPostFromApp`), and a trust predicate open-coded at
+// two sites is one that will be wrong at one of them. The rule, its signals and
+// its exact deny messages are unchanged.
+//
+// NOT re-exported from here. The importers of this module were enumerated when
+// the predicate moved, and none of them took `assertSharedWriteTrust`,
+// `MIN_ACCOUNT_AGE_MS` or `REQUIRE_PAID_TIER` from it — they take
+// `appsSharedRouter`/`appsModRouter` and the counter helpers. Import the
+// predicate from the service that owns it.
 
 type SharedOp =
   | 'list'
@@ -107,53 +111,6 @@ const READ_OPS: ReadonlySet<SharedOp> = new Set<SharedOp>(['list', 'get', 'getCo
 const SHARED_READ_SCOPE = 'apps:storage:shared:read';
 const SHARED_WRITE_SCOPE = 'apps:storage:shared:write';
 
-/**
- * The min-trust gate (design H3). Reuses EXISTING civitai trust signals hydrated
- * from `SessionUser` — no new trust score. FAIL-CLOSED: a vanished subject (null),
- * banned, muted, onboarding-incomplete, unverified-AND-no-OAuth, or too-new account
- * is DENIED. `asserts` narrows `user` to non-null for the caller.
- *
- * "Verified email" is satisfied by `emailVerified` OR a linked OAuth account
- * (`hasLinkedOAuth`, a row in the `Account` table). Rationale: civitai's
- * `emailVerified` is only ever set by the email-CHANGE flow — OAuth sign-in
- * (GitHub/Google/Discord, ~69% of active users) never sets it, so the raw check
- * locked out most legitimate users. A linked OAuth account is a provider-verified
- * identity and a STRONGER anti-sybil signal than an unverified civitai email
- * (minting N GitHub/Google accounts is harder than N unverified civitai accounts).
- * A user with NEITHER a verified email NOR an OAuth link genuinely still needs to
- * verify, so that case keeps the original deny.
- *
- * Signals (all AND-ed):
- *   sub!=anon (caller passes non-null) · !bannedAt · !muted ·
- *   onboarding-complete (Flags.hasFlag(onboarding, Buzz)) ·
- *   (emailVerified present OR hasLinkedOAuth) ·
- *   account age ≥ MIN_ACCOUNT_AGE_MS · [optional] paid tier.
- */
-export function assertSharedWriteTrust(
-  user: SessionUser | null,
-  hasLinkedOAuth: boolean
-): asserts user is SessionUser {
-  const deny = (message: string): never => {
-    throw new TRPCError({ code: 'FORBIDDEN', message });
-  };
-  if (!user) return deny('Your account is not eligible for this action');
-  if (user.bannedAt) return deny('Your account is not eligible for this action');
-  if (user.muted) return deny('Your account has been restricted');
-  if (!Flags.hasFlag(user.onboarding ?? 0, OnboardingSteps.Buzz)) {
-    return deny('Complete onboarding before contributing');
-  }
-  if (!user.emailVerified && !hasLinkedOAuth) {
-    return deny('Verify your email before contributing');
-  }
-  const createdAt = user.createdAt ? new Date(user.createdAt).getTime() : NaN;
-  if (!Number.isFinite(createdAt) || Date.now() - createdAt < MIN_ACCOUNT_AGE_MS) {
-    return deny('Your account is too new to contribute');
-  }
-  if (REQUIRE_PAID_TIER && (!user.tier || user.tier === 'free')) {
-    return deny('A membership is required to contribute');
-  }
-}
-
 interface SharedContext {
   userId: number | null;
   subjectUser: SessionUser | null;
@@ -173,7 +130,10 @@ interface SharedContext {
  *   4. for WRITE ops: authenticated subject + the min-trust gate
  * Anon may READ list/counts; anon NEVER writes/votes.
  */
-export async function resolveSharedContext(blockToken: string, op: SharedOp): Promise<SharedContext> {
+export async function resolveSharedContext(
+  blockToken: string,
+  op: SharedOp
+): Promise<SharedContext> {
   const claims = await verifyBlockToken(blockToken);
   if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
 
@@ -220,15 +180,44 @@ export async function resolveSharedContext(blockToken: string, op: SharedOp): Pr
     throw new TRPCError({ code: 'FORBIDDEN', message: 'invalid token subject' });
   }
   // Hydrate the TOKEN SUBJECT (block-token path has no ctx.user) — needed for both
-  // the flag segment eval and the trust gate. Fail-closed on a vanished subject.
+  // the flag segment eval and the trust gate.
   const subjectUser =
     userId != null
       ? ((await sessionClient.getSessionUserById(userId)) as SessionUser | null)
       : null;
 
-  // Dedicated fail-closed kill-switch (evaluated with the subject's context so the
-  // flag's mod/cohort segments resolve identically to the client gate; anon read →
-  // global eval → fail-closed until a base-enabled GA flip).
+  // 🔴 A VANISHED SUBJECT IS NOT AN ANONYMOUS CALLER — refuse it here, before the
+  // flag. Both used to collapse into the single `subjectUser ?? undefined` below,
+  // and the comment claimed that was "fail-closed on a vanished subject". It was
+  // not: a no-user eval cannot match a segment, but its answer is the flag's own
+  // base `enabled` value, so a base-`enabled: true` GA flip of
+  // `app-blocks-shared-storage` would admit a token whose subject no longer exists.
+  // The WRITE path happened to catch it downstream (the `userId == null` check +
+  // the min-trust gate below); EVERY op in `READ_OPS` skips that block entirely and
+  // has no second belt, so the flag was the only thing standing in front of all of
+  // them. Do not re-enumerate that set here — it is four ops today and adding a
+  // fifth must not silently make this comment wrong. Mechanism + the measurement
+  // against the real wasm engine: GLOBAL-EVAL SEMANTICS in `app-blocks-flag.ts`.
+  //
+  // 🔴 WATCHLISTED as `shared-storage-subject-refusal` in
+  // `scripts/compiled-branch-watchlist.mjs`. Unlike a type-level guard, this is a pure
+  // runtime branch, so a bundler that drops it re-opens the exposure with the source
+  // still correct — which is precisely what shipped in release 5.1.18 (civitai#3983).
+  // MOVING this branch is fine — the gate resolves its anchor from source at run time,
+  // so line numbers do not matter, and the message text is free to change because the
+  // anchor here is the CONDITION on the next line, not the message. DELETING the branch,
+  // or rewriting that condition, fails the production Docker build at
+  // `assert-compiled-branches.mjs` — in the second case update the watchlist entry in the
+  // same commit.
+  if (userId != null && !subjectUser) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'token subject could not be resolved' });
+  }
+
+  // Dedicated kill-switch, evaluated with the subject's context so the flag's
+  // mod/cohort segments resolve identically to the client gate. An ANON token
+  // (`sub:'anon'`, `userId == null`) still reaches this with no user, which is
+  // deliberate: that is a global eval, i.e. the flag's BASE value, and anon shared
+  // access is exactly the GA widening a base-`enabled` flip is meant to perform.
   if (!(await isAppBlocksSharedStorageEnabled({ user: subjectUser ?? undefined }))) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'shared storage is not enabled' });
   }
@@ -314,9 +303,7 @@ export const appsSharedRouter = router({
       const { schema, userId } = await resolveSharedContext(input.blockToken, 'list');
       const pool = requireAppsDb();
 
-      const afterKey = input.cursor
-        ? Buffer.from(input.cursor, 'base64').toString('utf8')
-        : null;
+      const afterKey = input.cursor ? Buffer.from(input.cursor, 'base64').toString('utf8') : null;
       const escapedPrefix = (input.prefix ?? '').replace(/([\\%_])/g, '\\$1');
       const prefixPattern = `${escapedPrefix}%`;
 
@@ -708,10 +695,9 @@ export const appsSharedRouter = router({
       // Visibility/existence pre-check → NOT_FOUND for hidden OR missing (H2). The
       // FK on votes.key is the belt for a race between this and the insert.
       const exists = (
-        await pool.query(
-          `SELECT 1 FROM ${schema}.shared_kv WHERE key = $1 AND hidden_at IS NULL`,
-          [input.key]
-        )
+        await pool.query(`SELECT 1 FROM ${schema}.shared_kv WHERE key = $1 AND hidden_at IS NULL`, [
+          input.key,
+        ])
       ).rowCount;
       if (!exists) throw new TRPCError({ code: 'NOT_FOUND', message: 'request not found' });
 
@@ -815,9 +801,7 @@ export const appsSharedRouter = router({
    * spam). Does not hide the row — a moderator decides via `apps.mod.purgeSharedRow`.
    */
   report: publicProcedure
-    .input(
-      blockTokenInput.extend({ key: sharedKeyInput, reason: z.string().max(500).optional() })
-    )
+    .input(blockTokenInput.extend({ key: sharedKeyInput, reason: z.string().max(500).optional() }))
     .mutation(async ({ input }) => {
       const { userId, slug, schema, appBlockId } = await resolveSharedContext(
         input.blockToken,
@@ -826,10 +810,9 @@ export const appsSharedRouter = router({
       const uid = userId as number;
 
       // F1 (pre-GA): `report` is now block-reachable (PageBlockHost / IframeHost),
-      // and each report files a row AND fires a mod-channel Discord webhook. Every
-      // OTHER shared write op is rate-limited; this one was not — so a trusted user
-      // could loop it into report-table growth + mod-channel flooding. Bound the
-      // per-(user, app) report velocity on its own daily bucket (fail-open, like the
+      // and each report files a row. Every OTHER shared write op is rate-limited; this
+      // one was not — so a trusted user could loop it into report-table growth. Bound
+      // the per-(user, app) report velocity on its own daily bucket (fail-open, like the
       // other buckets — the containment is defence-in-depth, not the auth boundary).
       const rl = await checkSharedReportRateLimit(uid, appBlockId);
       if (!rl.allowed) {
@@ -847,10 +830,10 @@ export const appsSharedRouter = router({
       const reason = input.reason ?? 'user-report';
 
       // F1 dedup: a repeat report of the SAME row by the SAME reporter is a no-op —
-      // no 2nd row, no 2nd webhook, no 2nd alert. `filed` is false when this
-      // (reporter, key) pair already has a report row, and the observability +
-      // mod-notify side effects below are skipped entirely. Only a genuinely-new
-      // report fires them (distinct keys / distinct reporters are unaffected).
+      // no 2nd row, no 2nd alert. `filed` is false when this (reporter, key) pair
+      // already has a report row, and the observability emit below is skipped entirely.
+      // Only a genuinely-new report fires it (distinct keys / distinct reporters are
+      // unaffected).
       const filed = await insertUserSharedReportDeduped(schema, {
         key: input.key,
         reporterUserId: uid,
@@ -865,6 +848,13 @@ export const appsSharedRouter = router({
       // METADATA ONLY (userId / slug / appBlockId / reason / reported key), NEVER the
       // reported content itself. Fire-and-forget (`.catch`) so a logging outage can
       // never fail a legitimate report.
+      //
+      // This emit is now the ONLY outbound side effect of a report. The mod-Discord
+      // webhook this path used to fire alongside it has been removed as redundant: it
+      // carried the same metadata this event already carries, to a surface that cannot
+      // be triaged, ranked or ruled on and that scrolls away. The durable record is the
+      // `shared_kv_reports` row filed just above; a moderator acts on a reported row via
+      // `apps.mod.purgeSharedRow`.
       logToAxiom(
         {
           name: 'app-blocks-shared-storage-report',
@@ -877,16 +867,6 @@ export const appsSharedRouter = router({
         },
         'block-audit'
       ).catch(() => {});
-      // Also fire the mod-Discord notify if the webhook is wired (same pattern as
-      // the W1 publish-request flow). Self-contained + fire-and-forget: never awaited
-      // in a way that can block/fail the report, and swallows its own errors.
-      void notifyModsOfSharedReport({
-        slug,
-        appBlockId,
-        reportedKey: input.key,
-        reporterUserId: uid,
-        reason,
-      });
 
       return { ok: true as const };
     }),
@@ -1014,6 +994,16 @@ export function assertValidCounterKey(key: unknown): string {
  * from client input.
  */
 export const appsModRouter = router({
+  /**
+   * PER-USER storage moderation (`apps.mod.userStorage.*`) — preview + targeted
+   * purge + account-wide purge. A DIFFERENT surface from `purgeSharedRow` below:
+   * that one is row-scoped on `shared_kv` (app-global, cross-user readable, with
+   * votes cascading off it), this one is user-scoped on `kv` (the user's own
+   * self-scoped data) plus its `user_quota` accounting. Neither reaches the
+   * other's tables — see `user-storage-purge.service.ts` for why they stay apart.
+   */
+  userStorage: appsModUserStorageRouter,
+
   purgeSharedRow: moderatorProcedure
     .input(
       z.object({
@@ -1197,8 +1187,8 @@ async function insertSharedReport(
  * F1 — file a USER report row with per-(reporter, key) dedup. A single
  * conditional INSERT that no-ops when this reporter already has a report row for
  * this key. Returns true iff a NEW row was filed — the caller then emits the
- * abuse alert + fires the mod webhook; false on a duplicate (skip both, so a
- * re-report can't grow the table or re-ping the mod channel).
+ * abuse alert; false on a duplicate (skip it, so a re-report can't grow the table
+ * or re-emit the same alert).
  *
  * `reporter_user_id` and `key` are both non-null on the user-report path (the
  * subject uid + a validated key), so `WHERE NOT EXISTS` is exact. It is scoped to
@@ -1206,7 +1196,7 @@ async function insertSharedReport(
  * (`key IS NULL`) or another user's report of the same key. NOTE (honest bound):
  * under two TRULY-simultaneous identical reports READ COMMITTED can admit both —
  * the per-(user, app) report rate limit is the hard ceiling; this collapses the
- * common repeat-click / retry case, which is the actual webhook-spam vector.
+ * common repeat-click / retry case, which is the actual report-spam vector.
  */
 async function insertUserSharedReportDeduped(
   schema: string,
@@ -1223,81 +1213,6 @@ async function insertUserSharedReportDeduped(
     [`skr_${newUlid()}`, args.key, args.reporterUserId, args.reason]
   );
   return (res.rowCount ?? 0) > 0;
-}
-
-/**
- * Neutralize Discord markdown in reporter-supplied free text before it is embedded
- * in a mod-alerts message. A hostile reporter must NOT be able to plant a masked
- * link `[label](https://phish.example)` (phishing) or other markdown/formatting in
- * the mod channel. We strip the structural markdown characters — masked-link
- * brackets/parens `[ ] ( )`, backticks, and emphasis/strike/spoiler/quote markers
- * `* _ ~ | >` — then collapse whitespace. The caller ALSO wraps the result in an
- * inline code span (belt-and-suspenders: no markdown, no URL auto-link, and no
- * mention ping renders inside a code span). Returns a bounded, single-line string.
- * NOTE: the Axiom copy of `reason` is deliberately left RAW — it is a structured
- * log field, never rendered, so escaping there would only corrupt the record.
- */
-export function sanitizeDiscordText(input: string): string {
-  return input
-    .replace(/[`[\]()*_~|>]/g, ' ') // drop markdown / masked-link structural chars
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 500);
-}
-
-/**
- * FIX 1 — fire-and-forget mod-Discord notify on a USER report of a shared row.
- * Mirrors the W1 publish-request `notifyModsOfNewRequest` pattern: posts to
- * `DISCORD_WEBHOOK_MOD_ALERTS` if it is set, otherwise a no-op. NEVER throws (a
- * Discord outage must not affect the report), and the caller does not await it —
- * so the report op returns immediately. Carries METADATA ONLY: slug / app-block /
- * reported key / reporter id + the reporter's stated reason (bounded to 500 chars
- * by the input schema). It does NOT — and cannot — include the reported content
- * (the op only holds the row key).
- */
-async function notifyModsOfSharedReport(opts: {
-  slug: string;
-  appBlockId: string;
-  reportedKey: string;
-  reporterUserId: number;
-  reason: string;
-}): Promise<void> {
-  try {
-    const { env } = await import('~/env/server');
-    if (!env.DISCORD_WEBHOOK_MOD_ALERTS) return;
-    const baseUrl = (process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '');
-    const appUrl = baseUrl ? `${baseUrl}/${opts.slug}` : opts.slug;
-    const payload = {
-      embeds: [
-        {
-          title: `Shared-storage report: ${opts.slug}`,
-          url: appUrl,
-          color: 0xe03131,
-          fields: [
-            { name: 'App block', value: `\`${opts.appBlockId}\``, inline: true },
-            { name: 'Reported by', value: `user #${opts.reporterUserId}`, inline: true },
-            { name: 'Row key', value: `\`${opts.reportedKey}\`` },
-            // Reporter free text: markdown-neutralized + code-span-wrapped so a
-            // hostile reason can't plant a masked/phishing link in the mod channel
-            // (the other fields are already backtick-wrapped).
-            { name: 'Reason', value: `\`${sanitizeDiscordText(opts.reason) || 'user-report'}\`` },
-          ],
-          footer: { text: 'App Blocks shared storage' },
-          timestamp: new Date().toISOString(),
-        },
-      ],
-    };
-    await fetch(env.DISCORD_WEBHOOK_MOD_ALERTS, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(5_000),
-    }).catch(() => {
-      /* fire and forget */
-    });
-  } catch {
-    /* never let Discord break a report */
-  }
 }
 
 function isForeignKeyViolation(err: unknown): boolean {

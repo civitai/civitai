@@ -30,11 +30,13 @@ export type ModelType = "Checkpoint" | "TextualInversion" | "Hypernetwork" | "Ae
 
 export type ImportStatus = "Pending" | "Processing" | "Failed" | "Completed";
 
+export type HuggingFaceImportStatus = "Queued" | "Transferring" | "Completed" | "Failed" | "Canceled";
+
 export type ModelStatus = "Draft" | "Training" | "Published" | "Scheduled" | "Unpublished" | "UnpublishedViolation" | "GatherInterest" | "Deleted";
 
 export type TrainingStatus = "Pending" | "Submitted" | "Paused" | "Denied" | "Processing" | "InReview" | "Failed" | "Approved" | "Expired";
 
-export type CommercialUse = "None" | "Image" | "RentCivit" | "Rent" | "Sell";
+export type CommercialUse = "None" | "Image" | "RentCivit" | "Rent" | "Sell" | "SellMerge";
 
 export type CheckpointType = "Trained" | "Merge";
 
@@ -539,6 +541,7 @@ export interface User {
   metrics?: UserMetric[];
   reports?: Report[];
   feedback?: Feedback[];
+  feedbackHandled?: Feedback[];
   questions?: Question[];
   answers?: Answer[];
   commentsv2?: CommentV2[];
@@ -831,6 +834,38 @@ export interface Import {
   model?: Model | null;
   children?: Import[];
   importId: number | null;
+}
+
+export interface HuggingFaceImport {
+  id: number;
+  repo: string;
+  revision: string;
+  filename: string;
+  groupName: string;
+  sourceUrl: string;
+  sizeBytes: bigint | null;
+  sourceSha256: string | null;
+  status: HuggingFaceImportStatus;
+  bytesTransferred: bigint;
+  uploadId: string | null;
+  partSize: number | null;
+  parts: JsonValue | null;
+  bucket: string | null;
+  key: string | null;
+  url: string | null;
+  error: string | null;
+  attempts: number;
+  nextAttemptAt: Date | null;
+  userId: number | null;
+  modelVersionId: number | null;
+  modelFileId: number | null;
+  claimedBy: string | null;
+  claimedAt: Date | null;
+  heartbeatAt: Date | null;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface Model {
@@ -1228,6 +1263,7 @@ export interface Report {
   automated?: ReportAutomated | null;
   model3d?: Model3DReport | null;
   model3dReview?: Model3DReviewReport | null;
+  announcement?: AnnouncementReport | null;
 }
 
 export interface ResourceReviewReport {
@@ -1815,6 +1851,12 @@ export interface Feedback {
   context: JsonValue;
   status: string;
   createdAt: Date;
+  triageNote: string | null;
+  handledById: number | null;
+  handledBy?: User | null;
+  handledAt: Date | null;
+  bugId: number | null;
+  bug?: Bug | null;
 }
 
 export interface ApiKey {
@@ -2682,6 +2724,7 @@ export interface Announcement {
   profileOnly: boolean;
   targetUsers?: AnnouncementUser[];
   spends?: AnnouncementSpend[];
+  reports?: AnnouncementReport[];
 }
 
 export interface AnnouncementSpend {
@@ -3862,6 +3905,7 @@ export interface Bug {
   disabled: boolean;
   domain: DomainColor[];
   tags: string[];
+  feedback?: Feedback[];
 }
 
 export interface NewOrderPlayer {
@@ -4005,6 +4049,13 @@ export interface ChallengeEntryComparison {
 export interface ChallengeReport {
   challengeId: number;
   challenge?: Challenge;
+  reportId: number;
+  report?: Report;
+}
+
+export interface AnnouncementReport {
+  announcementId: number;
+  announcement?: Announcement;
   reportId: number;
   report?: Report;
 }

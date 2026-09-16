@@ -83,12 +83,14 @@ vi.mock('~/server/services/block-revocation.service', () => ({
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: (...a: unknown[]) => mockLogToAxiom(...a),
 }));
-// NOTE: the report op's Discord notify does a dynamic `import('~/env/server')`; we
-// deliberately do NOT mock env (mocking it clobbers env.LOGGING and breaks the trpc
-// import chain). In the test env DISCORD_WEBHOOK_MOD_ALERTS is unset, so the notify
-// short-circuits to a no-op before any fetch — exactly the fire-and-forget path.
+// NOTE: `report` no longer fires a mod-Discord webhook — it was redundant with the
+// Axiom emit below, so it and its reporter-free-text hardening (`sanitizeDiscordText`)
+// are gone. Nothing else renders the reporter's `reason`: it is stored raw in the
+// `shared_kv_reports` row and logged raw as a structured Axiom field, and its length is
+// bounded by the input schema (`z.string().max(500)`), not by that helper. What this op
+// still owes is the row plus the Axiom emit, and both are asserted below.
 
-import { appsSharedRouter, appsModRouter, sanitizeDiscordText } from '../apps-shared.router';
+import { appsSharedRouter, appsModRouter } from '../apps-shared.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 
@@ -269,6 +271,38 @@ describe('H3 min-trust gate (write + vote)', () => {
 
   it('anon may READ list/counts', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ sub: 'anon' }));
+    const out = await caller().list({ blockToken: 't' });
+    expect(out.items).toEqual([]);
+  });
+
+  it('🔴 a VANISHED subject is refused on a READ even with the flag base-`enabled: true`', async () => {
+    // The READ ops have no second belt: `append`/`vote` catch a vanished subject on
+    // the min-trust gate above, `list`/`get` never reach it, so the shared-storage
+    // flag was the only thing standing there — and its no-user branch is a GLOBAL
+    // eval, which returns the flag's BASE value rather than a guaranteed `false`.
+    // `mockIsSharedEnabled` is forced TRUE here to model the GA base flip; before the
+    // fix, `list` resolved and served shared rows to a token whose subject is gone.
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ sub: 'user:999' }));
+    mockGetSessionUser.mockResolvedValue(null);
+    mockIsSharedEnabled.mockResolvedValue(true);
+    await expect(caller().list({ blockToken: 't' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'token subject could not be resolved',
+    });
+    await expect(caller().get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'token subject could not be resolved',
+    });
+  });
+
+  it('POSITIVE CONTROL: an ANON token still READS under the same base-true flag', async () => {
+    // The anon path must NOT be swept up by the refusal above — `sub:'anon'` has no
+    // subject to vanish, and a global eval of a base-enabled flag is precisely the
+    // intended GA widening. Without this, the previous test is indistinguishable from
+    // a change that simply closed shared reads.
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ sub: 'anon' }));
+    mockGetSessionUser.mockResolvedValue(null);
+    mockIsSharedEnabled.mockResolvedValue(true);
     const out = await caller().list({ blockToken: 't' });
     expect(out.items).toEqual([]);
   });
@@ -709,44 +743,6 @@ describe('FIX 1 abuse observability (alert emits)', () => {
       code: 'NOT_FOUND',
     });
     expect(auditEmits('app-blocks-shared-storage-report')).toHaveLength(0);
-  });
-});
-
-// FIX 1 (Discord phishing vector): the reporter-supplied `reason` is embedded in
-// the mod-alerts Discord message. A hostile reporter must not be able to plant a
-// masked/phishing link or other markdown. `sanitizeDiscordText` neutralizes it and
-// the embed field wraps the result in an inline code span.
-describe('sanitizeDiscordText (mod-alert reason hardening)', () => {
-  it('neutralizes a masked link + backticks (no live markdown survives)', () => {
-    const hostile = 'click [here](https://phish.example) `rm -rf` **bold** ~~s~~ ||spoiler|| > q';
-    const out = sanitizeDiscordText(hostile);
-    // structural markdown / masked-link characters are gone
-    for (const ch of ['[', ']', '(', ')', '`', '*', '_', '~', '|', '>']) {
-      expect(out).not.toContain(ch);
-    }
-    expect(out).not.toMatch(/\]\(/); // the masked-link `](` sequence specifically
-    // the human-readable words survive as inert plain text
-    expect(out).toContain('here');
-    expect(out).toContain('https://phish.example');
-  });
-
-  it('the embed field value (code-span wrapped) contains no live masked link', () => {
-    // mirror the exact construction used in notifyModsOfSharedReport
-    const fieldValue = `\`${sanitizeDiscordText('[x](http://evil) `boom`') || 'user-report'}\``;
-    expect(fieldValue).not.toMatch(/\]\(/); // no masked link
-    // exactly two backticks (the wrapping span) — none survived from the input
-    expect((fieldValue.match(/`/g) ?? []).length).toBe(2);
-    expect(fieldValue.startsWith('`')).toBe(true);
-    expect(fieldValue.endsWith('`')).toBe(true);
-  });
-
-  it('an all-markdown reason collapses to empty → falls back to user-report', () => {
-    const fieldValue = `\`${sanitizeDiscordText('[]()``') || 'user-report'}\``;
-    expect(fieldValue).toBe('`user-report`');
-  });
-
-  it('caps the sanitized output at 500 chars', () => {
-    expect(sanitizeDiscordText('a'.repeat(1000)).length).toBe(500);
   });
 });
 

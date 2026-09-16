@@ -106,14 +106,15 @@ import {
   SDCPP_SUPPORTED_ECOSYSTEMS,
 } from '~/shared/constants/generation.constants';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { ExperimentalAlerts } from '~/components/generation_v2/Experimental';
+import { EcosystemBaseModelWarnings } from '~/components/generation_v2/BaseModelWarnings';
+import { GeneratorMessageWarnings } from '~/components/generation_v2/GateRuleWarnings';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import {
   openCompatibilityConfirmModal,
   buildWorkflowPendingChange,
 } from '~/components/generation_v2/CompatibilityConfirmModal';
 import { workflowPreferences } from '~/store/workflow-preferences.store';
-import { useRemixOfId } from './hooks/useRemixOfId';
+import { resolveRemixOfId, type RemixClaimFormState } from '~/utils/remix-claim';
 import { remixStore } from '~/store/remix.store';
 import { useMetadataExtractionStore } from '~/store/metadata-extraction.store';
 import { useGeneratedItemWorkflows } from './hooks/useGeneratedItemWorkflows';
@@ -365,11 +366,12 @@ export function useSelfHostedBlock() {
     resolution = pickStrongerGate(resolution, {
       state: selfHostedMode === 'memberOnly' ? 'memberOnly' : 'disabled',
     });
+  // Rule-`disabled` is deliberately absent: it must not take over the footer or
+  // hide the form controls. It reports itself in the form body instead, and
+  // blocks whatIf + submit through `useDisabledGates`.
   const ruleRes = rulesToStates(gateRules).ecosystems.get(selectedEcosystem);
-  if (ruleRes) resolution = pickStrongerGate(resolution, ruleRes);
+  if (ruleRes && ruleRes.state === 'memberOnly') resolution = pickStrongerGate(resolution, ruleRes);
 
-  // A selected ecosystem is never 'hidden' (filtered from the picker); fold any
-  // stray hidden into the disabled alert defensively.
   const state = resolution
     ? resolution.state === 'memberOnly'
       ? 'memberOnly'
@@ -652,16 +654,14 @@ function PriorityAlertSpace({
     );
   }
 
-  // Experimental warnings sit alongside the priority alert rather than inside the
-  // chain above, for the same reason QueueSnackbar does: the chain is exclusive
-  // and ordered by urgency of the moment, and its first branch (`missingFieldMessage`)
-  // fires whenever a required field is blank. Joining it would hide the warning
-  // for anyone who hasn't written a prompt yet — the moment it's most worth
-  // reading, since nothing has been invested in the selection yet.
+  // Alongside the priority alert, not inside the chain: the chain is exclusive and
+  // its first branch (`missingFieldMessage`) fires whenever a required field is
+  // blank, which would hide these for anyone who hasn't written a prompt yet.
   return (
     <>
       <QueueSnackbar right={snackbarRight} />
-      <ExperimentalWarnings />
+      <GeneratorMessageWarnings />
+      <BaseModelWarnings />
       {priorityAlert}
     </>
   );
@@ -682,7 +682,7 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
   const { color } = useBuzzCurrencyConfig(selectedType);
 
   // Get whatIf data from context (provided by WhatIfProvider)
-  const { isError, isLoading: isWhatIfLoading, canEstimateCost } = useWhatIfContext();
+  const { isError, isLoading: isWhatIfLoading, canEstimateCost, gateBlocked } = useWhatIfContext();
   const totalCost = useTotalGenerationCost();
 
   // Check if user has enough of the selected buzz type
@@ -696,6 +696,7 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
 
   const submitBlocked =
     !canGenerate ||
+    gateBlocked ||
     isWhatIfLoading ||
     isBuzzLoading ||
     isError ||
@@ -1014,26 +1015,16 @@ function BlueBuzzMatureReminder() {
 }
 
 // =============================================================================
-// Experimental Warnings
+// Base-Model Warnings
 // =============================================================================
 
-/**
- * The experimental warnings for the current selection, rendered in the footer's
- * alert region above the submit row — the last thing read before Buzz is
- * committed. Several can show at once (an ecosystem and a version can both be
- * experimental), which is the other reason these stay out of the priority chain:
- * it resolves to a single node.
- */
-function ExperimentalWarnings() {
+function BaseModelWarnings() {
   const graph = useGraph<GenerationGraphTypes>();
+  const { ecosystem } = useGraphSubscriptions(graph, ['ecosystem'] as const) as {
+    ecosystem?: string;
+  };
 
-  return (
-    <MultiController
-      graph={graph}
-      names={['ecosystem', 'workflow', 'model', 'resources', 'vae'] as const}
-      render={({ values }) => <ExperimentalAlerts selection={values} />}
-    />
-  );
+  return <EcosystemBaseModelWarnings ecosystem={ecosystem} />;
 }
 
 // =============================================================================
@@ -1088,7 +1079,6 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   const { creatorTip, civitaiTip } = useTipStore();
   const features = useFeatureFlags();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
-  const remixOfId = useRemixOfId();
   const { resources: resourceData } = useResourceDataContext();
   const invalidateWhatIf = useInvalidateWhatIf();
   const membershipUpsell = useMembershipUpsell();
@@ -1170,6 +1160,11 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     //   - validation passes + not rate-limited → emit { isValid: true } and proceed
     const result = graph.validate();
     const fromAction = useGenerationGraphStore.getState().lastEntryAction;
+
+    // Resolved against the form as it stands, not read from the store: this id
+    // is recorded against a blocked prompt and read back as evidence, so it has
+    // to describe THIS request. See `utils/remix-claim.ts`.
+    const remixOfId = resolveRemixOfId(graph.getSnapshot() as RemixClaimFormState);
 
     // Validation-fail branch. Pairs with the `isValid:true` emit below so the
     // data team has a complete attempt funnel. We deliberately do NOT also

@@ -14,6 +14,53 @@ import {
 const APP_BLOCKS_FLAG = 'app-blocks-enabled';
 
 /**
+ * 🔴 GLOBAL-EVAL SEMANTICS — read this before writing "fail-closed" anywhere in
+ * this file. Several docblocks below used to say, in one wording or another:
+ *
+ *     "no user → a global eval that can never match a segment → fail-closed"
+ *
+ * The premise is TRUE and the conclusion DOES NOT FOLLOW FROM IT. A no-user call
+ * reaches Flipt as entityId `'global'` with an empty context, and every identity
+ * / tier / cohort segment we have is a `STRING_COMPARISON_TYPE` constraint that
+ * reads the CONTEXT, so none of them can match — that much is right. But when no
+ * rollout matches, Flipt answers with the flag's own base `enabled` value. The
+ * denial therefore comes from the BASE BEING FALSE, not from the segment miss.
+ *
+ * MEASURED against the real `@flipt-io/flipt-client-js` wasm engine over a real
+ * evaluation snapshot (`app-blocks-flag.base-enabled-flip.test.ts`):
+ *
+ *   base `enabled: true`  + a non-matching SEGMENT_ROLLOUT, no entityId/context → **true**
+ *   base `enabled: false` + the same rollout,                no entityId/context → **false**
+ *   unknown flag key,                                        no entityId/context → **false**
+ *
+ * So the two claims that ARE unconditional, and the only ones worth calling
+ * fail-safe without a qualifier, are:
+ *   - an ABSENT flag evaluates `false` (the eval throws; `isEnabled` catches → `false`), and
+ *   - an UNREACHABLE Flipt evaluates `false` (`isEnabled` returns `false` on a null client).
+ * A "the segment can't match, so it's closed" claim is conditional on the base
+ * value and must say so. (`FLIPT_LOCAL_OVERRIDES` is a third route to `true` with
+ * no user, but it is hard-disabled when `NODE_ENV === 'production'`.)
+ *
+ * Practical consequence for every no-user branch in this file: it is a request to
+ * read the flag's BASE, nothing more. Where that is what the caller means (the
+ * machine/pipeline/runtime gates, the deliberate anonymous-public widening on
+ * `app-listings-public-external`) the branch is correct and load-bearing. Where
+ * the caller means "deny — there is no subject", the branch must say `false`
+ * itself; `isAppBlocksAuthorEnabled` is the one that does.
+ *
+ * ⚠️ SECOND, UNRELATED READING TRAP IN THIS FILE: most docblocks below carry a
+ * sentence of the form "the flag does NOT exist in Flipt at merge time / yet".
+ * Each was an AS-MERGED note written by the PR that added that flag, so each is a
+ * claim about the day it was written — and flags get created and widened after
+ * merge, which is the whole point of shipping dark. Those sentences are history,
+ * not live state, and the "so the as-merged posture is dark" conclusions they
+ * support expire with them. Never plan on one, and do not replace one with a
+ * fresher enumeration here — this file cannot hold live flag state without
+ * becoming the same trap. Read the definitions from `civitai/flipt-state`
+ * (`civitai-app/default/features.yaml`); the live answer is Flipt itself.
+ */
+
+/**
  * Dedicated App Store VISIBILITY flag (W13 — PR-W1a / D8).
  *
  * DECOUPLES the App Store *catalog visibility* from `app-blocks-enabled`, which
@@ -187,12 +234,36 @@ export const APP_BLOCKS_RUNTIME_FLAG = 'app-blocks-runtime-enabled';
  *   For all machine gates, do NOT fabricate user context (the no-arg overload
  *   below, and the pipeline helper, preserve the global-eval behaviour).
  *
+ *   🔴 The no-user branch here is a request for `app-blocks-enabled`'s BASE
+ *   value, not a guaranteed deny. It is KEPT — unlike `isAppBlocksAuthorEnabled`,
+ *   whose `user` parameter is REQUIRED — and the reason is SEMANTIC, not a head
+ *   count of callers. This flag is a KILL-SWITCH: it answers "is the feature on
+ *   at all", a question a subject-less machine path can legitimately ask, and the
+ *   flag's base value IS that answer. `app-blocks-author` is a CAPABILITY: it
+ *   answers "may THIS subject author", which is unanswerable without a subject,
+ *   so there the absence of one is a type error rather than a `false`.
+ *
+ *   (The only no-arg call site is `pages/api/v1/developer/block-manifests.ts` —
+ *   the JOB_TOKEN manifest registrar, which is DORMANT: nothing in this repo
+ *   outside tests and docs invokes that endpoint. Do not rest the asymmetry on
+ *   that caller existing; rest it on the kill-switch/capability distinction
+ *   above, which survives the endpoint being deleted.)
+ *
+ *   The consequence to hold on to: at a base-`enabled: true` GA flip every
+ *   no-user caller of THIS helper starts passing. That is the intended reading
+ *   for a kill-switch, and it is why the identity-shaped callers must not route a
+ *   missing subject through it — see GLOBAL-EVAL SEMANTICS at the top of this
+ *   file, and `blocks.router.ts::assertAppBlocksEnabledForTokenUser`, which
+ *   refuses an unhydratable subject before it gets here.
+ *
  * The FLAG_OVERRIDE/local-overrides env exists for unit tests + local dev that
  * need to flip the flag without standing up Flipt.
  */
 export async function isAppBlocksEnabled(opts?: { user?: SessionUser }): Promise<boolean> {
   // No user supplied → preserve the original global eval for the machine /
-  // anonymous gates (webhooks, JWKS). Their callers are unchanged.
+  // anonymous gates (webhooks, JWKS). Their callers are unchanged. This returns
+  // the flag's BASE value, so it opens at a base-`enabled` flip — deliberate for
+  // a kill-switch, NOT a deny. See GLOBAL-EVAL SEMANTICS at the top of this file.
   if (!opts?.user) {
     return isFlipt(APP_BLOCKS_FLAG);
   }
@@ -222,12 +293,15 @@ export async function isAppBlocksEnabled(opts?: { user?: SessionUser }): Promise
  * difference: if `app-listings` resolves `false`, this FALLS BACK to
  * `isAppBlocksEnabled(opts)`. That fallback is the whole point of the dark
  * decoupling:
- *   - The `app-listings` flag does NOT exist in Flipt at merge time (created
- *     AFTER, as a companion `flipt-state` PR). A bare eval of an absent flag
- *     resolves `false` for EVERYONE — which would REGRESS the currently-visible
- *     cohort (mods + the `app-dev-testers` segment of `app-blocks-enabled`) the
- *     instant this merges. The OR-fallback to `app-blocks-enabled` preserves
- *     their store access verbatim through the transition window.
+ *   - The `app-listings` flag did NOT exist in Flipt when this merged (it was
+ *     created AFTER, as a companion `flipt-state` PR). A bare eval of an absent
+ *     flag resolves `false` for EVERYONE — which would have REGRESSED the
+ *     then-visible cohort (mods + the `app-dev-testers` segment of
+ *     `app-blocks-enabled`) the instant this merged. The OR-fallback to
+ *     `app-blocks-enabled` preserved their store access verbatim through that
+ *     transition window. (Past tense on purpose: this is an as-merged note, not
+ *     live state — see the reading trap at the top of this file. The paragraph
+ *     below says what closes this TODAY.)
  *   - Because `app-blocks-enabled` already grants the mods + app-dev-testers
  *     cohort today, `isAppListingsEnabled` grants EXACTLY that same set until the
  *     `app-listings` flag is created and later widened — so the as-merged change
@@ -237,19 +311,24 @@ export async function isAppBlocksEnabled(opts?: { user?: SessionUser }): Promise
  * the `app-blocks-enabled` cohort (i.e. once `app-listings` is the sole, wider
  * source of truth); until then the fallback is what keeps existing viewers in.
  *
- * No user → preserve a global eval of `app-listings` that can never match a
- * segment, then fall through to the no-arg `isAppBlocksEnabled()` global eval —
- * fail-closed, identical to today's no-arg store-read behaviour.
+ * No user → a global eval of `app-listings`, then a fall-through to the no-arg
+ * `isAppBlocksEnabled()` global eval. That is byte-identical to the pre-existing
+ * no-arg store-read behaviour, which is why it is kept. It is NOT unconditionally
+ * fail-closed: both evals return their flag's BASE value, so a base-`enabled`
+ * flip of either key opens the anonymous store read. Both are base-`false` today
+ * with segment rollouts, which is the whole of what makes this dark. See
+ * GLOBAL-EVAL SEMANTICS at the top of this file.
  */
 export async function isAppListingsEnabled(opts?: { user?: SessionUser }): Promise<boolean> {
   const user = opts?.user;
   // Per-user eval of the dedicated visibility flag — same entityId + context
   // shape as isAppBlocksEnabled, so the `app-listings` segment resolves
-  // identically to the client/hasFeature gate. No user → global eval (never
-  // matches a segment).
+  // identically to the client/hasFeature gate.
   const listingsOn = user
     ? await isFlipt(APP_LISTINGS_FLAG, String(user.id), buildFliptContext(user))
-    : await isFlipt(APP_LISTINGS_FLAG);
+    : // No user → global eval, i.e. the flag's BASE value (not a guaranteed
+      // `false` — see GLOBAL-EVAL SEMANTICS at the top of this file).
+      await isFlipt(APP_LISTINGS_FLAG);
   if (listingsOn) return true;
   // OR-fallback: the `app-listings` flag doesn't exist yet (dark window) / hasn't
   // been widened, so defer to `app-blocks-enabled` to keep the existing
@@ -284,19 +363,51 @@ export async function isAppListingsEnabled(opts?: { user?: SessionUser }): Promi
  *     when Flipt returns null (flag absent / Flipt down). So SSR/`ctx.features`
  *     gates and this helper agree in the fail-closed direction: mods only.
  *
- * Fail-CLOSED: a non-mod with no `app-blocks-author` grant (flag absent, Flipt
- * down, or segment miss) → `isFlipt` false → denied. Only mods (floor) and the
- * flag-granted cohort pass. A vanished/undefined user → no floor + global eval
- * (can never match a segment) → denied.
+ * ## Fail-closed — and what actually makes it so
+ *
+ * A non-mod with no `app-blocks-author` grant is denied, and that holds under
+ * every flag state: an ABSENT flag and an unreachable Flipt both make `isFlipt`
+ * return `false` unconditionally — see `createFliptClient().isEnabled`, which
+ * returns `false` when the client is null and when the evaluation throws. That
+ * half is independent of how the flag is configured.
+ *
+ * 🔴 THERE IS NO NO-USER BRANCH, AND THE COMPILER IS WHAT GUARANTEES THAT.
+ * `user` is REQUIRED and non-nullable. That is the entire guard: a capability has
+ * nothing to authorize without a subject, so a caller holding a nullable one
+ * cannot reach this function until it has said, in code, what it wants to happen.
+ *
+ * This docblock used to say a vanished/undefined user was denied because of "no
+ * floor + global eval (can never match a segment) → denied". The premise is true
+ * — a no-user eval carries entityId `'global'` and an empty context, so no
+ * `STRING_COMPARISON_TYPE` segment (which is every identity / tier / cohort
+ * segment we have) can match it. The conclusion did NOT follow from it: it
+ * followed from the flag's BASE VALUE being `false`. When no rollout matches,
+ * Flipt answers with the flag's own base `enabled`, so under a base-`enabled:
+ * true` flip that branch resolved TRUE and admitted a caller with no resolvable
+ * subject through an AUTHZ gate. See GLOBAL-EVAL SEMANTICS at the top of this
+ * file for the measurement and for the production-Flipt precedent.
+ *
+ * Why a REQUIRED parameter rather than a `if (!user) return false` branch: the
+ * branch answers for the caller, silently, and every one of them wants to answer
+ * for itself (refuse a vanished token subject / refuse an unauthenticated
+ * request). A required parameter turns each of those into a compile error until
+ * the intent is written down, and it cannot be walked by rewording — unlike the
+ * branch, which reads as handled at every call site without any of them having
+ * decided anything. Making it required errored at exactly 2 of the 10 call sites,
+ * both bare `middleware(...)` whose `ctx.user` type is not narrowed by the
+ * `protectedProcedure` they are attached to; both now refuse explicitly.
+ *
+ * 🔴 What this does NOT stop: a deliberate `user!` or `as SessionUser` cast. At
+ * runtime such a call throws inside `buildFliptContext` / `String(user.id)`
+ * rather than returning `true`, so it still cannot open the gate — but it is a
+ * crash, not a refusal, and review is the only thing that catches the cast.
  */
-export async function isAppBlocksAuthorEnabled(opts?: { user?: SessionUser }): Promise<boolean> {
-  const user = opts?.user;
+export async function isAppBlocksAuthorEnabled(opts: { user: SessionUser }): Promise<boolean> {
+  const user = opts.user;
   // Moderator floor — the `availability: ['mod']` static fallback. Keeps mods'
   // existing author access intact while the Flipt flag is absent (dark window)
   // and regardless of how the flag's segments are later configured.
-  if (user?.isModerator) return true;
-  // No user → preserve a global eval that can never match a segment (fail-closed).
-  if (!user) return isFlipt(APP_BLOCKS_AUTHOR_FLAG);
+  if (user.isModerator) return true;
   // Per-user eval — same entityId + context shape as isAppBlocksEnabled, so the
   // author cohort segment resolves identically to the client/hasFeature gate.
   return isFlipt(APP_BLOCKS_AUTHOR_FLAG, String(user.id), buildFliptContext(user));
@@ -345,9 +456,13 @@ export async function isAppBlocksPipelineEnabled(): Promise<boolean> {
  *
  * OPERATOR NOTE: create `app-blocks-runtime-enabled` in Flipt as a PLAIN GLOBAL
  * BOOLEAN (base `enabled`, NO segment) — this helper evals globally
- * (`entityId='global'`, empty context), so a segment-targeted flag would never
- * match and resolve `false`, silently leaving runtime DARK (blocks mysteriously
- * fail to verify). Fail-safe direction, but a confusing misconfig.
+ * (`entityId='global'`, empty context), so no segment can ever match it and the
+ * answer is always the flag's BASE value. A base-`false` flag carrying a segment
+ * rollout therefore resolves `false` for everyone, silently leaving runtime DARK
+ * (blocks mysteriously fail to verify). ⚠️ The reverse misconfig is NOT
+ * fail-safe: base `true` PLUS a segment resolves `true` globally — the segment
+ * looks like a restriction and restricts nothing. Set the base, don't decorate
+ * it. See GLOBAL-EVAL SEMANTICS at the top of this file.
  *
  * Fail-safe: if `app-blocks-runtime-enabled` does not exist (it is created in
  * Flipt only AFTER this merges) or Flipt is unreachable, `isFlipt` returns
@@ -397,14 +512,18 @@ export const APP_BLOCKS_DEV_TUNNEL_FLAG = 'app-blocks-dev-tunnel';
  * Segment-gated gate for the APP DEV TUNNEL. Evaluated WITH the caller's context
  * (entityId = user id, context carries server-side `isModerator`) so the
  * `moderators` / `app-dev-testers` segments can match — identical eval shape to
- * `isAppBlocksReviewSandboxEnabled`. No user → preserves a global eval that can
- * never match a segment (fail-closed). See APP_BLOCKS_DEV_TUNNEL_FLAG.
+ * `isAppBlocksReviewSandboxEnabled`. No user → a global eval, which returns the
+ * flag's BASE value; that is `false` today (base OFF + segment rollout) and it is
+ * the base, not the segment miss, that closes it — see GLOBAL-EVAL SEMANTICS at
+ * the top of this file. An absent flag, and an unreachable Flipt, each evaluate
+ * `false` unconditionally — that half IS fail-closed, whatever the base value.
+ * See APP_BLOCKS_DEV_TUNNEL_FLAG.
  *
  * NOTE: unlike `isAppBlocksAuthorEnabled`, there is NO moderator static floor —
  * the flag is created as the rollout, so an absent flag resolves `false` for
  * EVERYONE (mods included). That is intentional and load-bearing: the dev tunnel
- * is a brand-new surface (no existing mod access to preserve), so fail-closed for
- * all until the flag exists is the safe posture.
+ * is a brand-new surface (no existing mod access to preserve), so denying
+ * everyone whenever the flag cannot be evaluated is the safe posture.
  */
 export async function isAppBlocksDevTunnelEnabled(opts?: { user?: SessionUser }): Promise<boolean> {
   if (!opts?.user) return isFlipt(APP_BLOCKS_DEV_TUNNEL_FLAG);
@@ -472,7 +591,11 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *
  * Evaluated globally (entityId='global', empty context), mirroring
  * `isAppBlocksPipelineEnabled` exactly — so it must be a PLAIN base-`enabled`
- * boolean in Flipt (NOT segmented), or it would never resolve true.
+ * boolean in Flipt. A segment can never match a global eval, so a segment is not
+ * a way to turn this on, and — the half that matters more — it is not a way to
+ * keep it off either: the global answer is the BASE value, so base `true` plus a
+ * segment arms the reader for everyone. See GLOBAL-EVAL SEMANTICS at the top of
+ * this file.
  *
  * Fail-safe: the flag does NOT exist in Flipt yet (it is created only AFTER
  * this merges, and only when leadership has signed off a rate), or Flipt is
@@ -528,8 +651,12 @@ export const APP_BLOCKS_REVIEW_SANDBOX_FLAG = 'app-blocks-review-sandbox-enabled
  * Mod-segmented gate for the MOD REVIEW SANDBOX (#2831). Evaluated WITH the
  * moderator's context (entityId = user id, context carries server-side
  * `isModerator`) so the `moderators` segment can match — identical eval shape to
- * `isAppBlocksEnabled({ user })`. No user → preserves a global eval that can
- * never match the segment (fail-closed). See APP_BLOCKS_REVIEW_SANDBOX_FLAG.
+ * `isAppBlocksEnabled({ user })`. No user → a global eval, which returns the
+ * flag's BASE value — `false` today because the flag is base OFF with a segment
+ * rollout, not because the segment cannot match. See GLOBAL-EVAL SEMANTICS at the
+ * top of this file, and APP_BLOCKS_REVIEW_SANDBOX_FLAG (whose "a plain-boolean
+ * global flag would also work" note is exactly the shape that would open this
+ * branch).
  */
 export async function isAppBlocksReviewSandboxEnabled(opts?: {
   user?: SessionUser;
@@ -569,9 +696,11 @@ export const APP_BLOCKS_AGENTIC_REVIEW_FLAG = 'app-blocks-agentic-review';
  * Mod-segmented gate for the AGENTIC MOD CODE-REVIEW (App Blocks P1). Evaluated
  * WITH the moderator's context (entityId = user id, context carries server-side
  * `isModerator`) so the `moderators` segment can match — identical eval shape to
- * `isAppBlocksReviewSandboxEnabled({ user })`. No user → preserves a global eval
- * that can never match the segment (fail-closed), and an absent flag also
- * evaluates false (fail-closed). See APP_BLOCKS_AGENTIC_REVIEW_FLAG.
+ * `isAppBlocksReviewSandboxEnabled({ user })`. An absent flag, and an unreachable
+ * Flipt, each evaluate `false` unconditionally — that half IS fail-closed. No user
+ * → a global eval, which returns the flag's BASE value; base OFF plus a segment
+ * rollout is what keeps that closed, not the segment miss. See GLOBAL-EVAL
+ * SEMANTICS at the top of this file, and APP_BLOCKS_AGENTIC_REVIEW_FLAG.
  */
 export async function isAppBlocksAgenticReviewEnabled(opts?: {
   user?: SessionUser;
@@ -594,15 +723,21 @@ export async function isAppBlocksAgenticReviewEnabled(opts?: {
  * Evaluated WITH the caller's context (entityId = user id, context carries
  * server-side `isModerator`) so the `moderators` / community segments can match.
  * On the block-token path the "caller" is the HYDRATED TOKEN SUBJECT
- * (`getSessionUserById`), not a session — anon reads pass no user → global eval
- * that can never match a segment → fail-closed (anon shared access is a GA-only
- * widening, safe to stay dark until a base-`enabled` flip).
+ * (`getSessionUserById`), not a session — anon reads pass no user → global eval,
+ * which returns the flag's BASE value. Closed today because the base is `false`;
+ * a base-`enabled` flip DOES open anon shared reads, and that is the intended
+ * GA widening rather than an accident — the qualifier this docblock already
+ * carried ("safe to stay dark until a base-`enabled` flip") is the accurate half,
+ * so do not read the word fail-closed into the segment miss. See GLOBAL-EVAL
+ * SEMANTICS at the top of this file.
  *
  * Create it in Flipt as base `enabled: false` with the `moderators` segment (+
  * any community-cohort segment) exactly like `app-blocks-dev-tunnel`. The flag
- * does NOT exist in Flipt at merge time — the companion `flipt-state` entry is a
- * SEPARATE follow-up PR — so the as-merged posture is fully dark and cannot
- * regress the gate open.
+ * did NOT exist in Flipt when this merged — the companion `flipt-state` entry was
+ * a SEPARATE follow-up PR — so the as-merged posture was fully dark and could not
+ * regress the gate open. (Past tense on purpose: this is an as-merged note, not
+ * live state — see the reading trap at the top of this file. The paragraph above
+ * says what closes this TODAY.)
  */
 export const APP_BLOCKS_SHARED_STORAGE_FLAG = 'app-blocks-shared-storage';
 
@@ -612,6 +747,46 @@ export async function isAppBlocksSharedStorageEnabled(opts?: {
   if (!opts?.user) return isFlipt(APP_BLOCKS_SHARED_STORAGE_FLAG);
   const user = opts.user;
   return isFlipt(APP_BLOCKS_SHARED_STORAGE_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
+ * Dedicated fail-closed flag for App Blocks POST CREATION — `posts:write:self` /
+ * `blocks.createPostFromApp` / `CREATE_POST_FROM_APP`, the first surface on which
+ * a third-party block produces PUBLIC, feed-visible, reward-earning content under
+ * the VIEWER'S own byline.
+ *
+ * 🔴 IT IS DELIBERATELY INDEPENDENT OF `app-blocks-enabled`, AND THAT IS THE
+ * POINT. `app-blocks-enabled` is the block-RUNTIME gate and is expected to widen
+ * toward GA. Post creation must not widen with it — a GA flip of the runtime flag
+ * would otherwise arm public post creation for every user on the same day, with
+ * no separate decision. This flag is the switch that keeps those two rollouts on
+ * separate clocks, and it is also the per-capability kill switch: flip it off and
+ * every create/preview call refuses immediately, independent of the runtime
+ * rollout and without disabling any other block capability.
+ *
+ * Mirrors `app-blocks-shared-storage` exactly: a brand-new surface with NO
+ * existing access to preserve, so there is deliberately NO moderator static floor
+ * — an ABSENT flag resolves `false` for EVERYONE, mods included. Evaluated WITH
+ * the TOKEN SUBJECT'S context (the hydrated `SessionUser`, never `ctx.user` and
+ * never a client value) so the `moderators` / cohort segments resolve identically
+ * to the client gate.
+ *
+ * 🔴 SHIPS OFF. The flag does NOT exist in Flipt when this merges — the
+ * `flipt-state` entry is a separate follow-up — so `isFlipt` returns `false` and
+ * the whole capability is dark as merged. Create it as base `enabled: false` with
+ * the `moderators` (+ any cohort) segment, exactly like
+ * `app-blocks-shared-storage`. There is no code path that can regress this open:
+ * the gate is a plain `if (!enabled) throw`, checked on BOTH the preview read and
+ * the create write.
+ */
+export const APP_BLOCKS_POST_CREATION_FLAG = 'app-blocks-post-creation';
+
+export async function isAppBlocksPostCreationEnabled(opts?: {
+  user?: SessionUser;
+}): Promise<boolean> {
+  if (!opts?.user) return isFlipt(APP_BLOCKS_POST_CREATION_FLAG);
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_POST_CREATION_FLAG, String(user.id), buildFliptContext(user));
 }
 
 /**

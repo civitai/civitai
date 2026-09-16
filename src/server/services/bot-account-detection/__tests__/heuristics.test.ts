@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BotAccountCohortMember, SurfaceCounts } from '../cohort';
-import { emptyCohortSignals, type CohortSignals } from '../evidence';
+import { emptyCohortSignals, type CohortSignals, type StagedImageFacts } from '../evidence';
 import { BOT_ACCOUNT_HEURISTICS } from '../heuristics';
 import {
   COMMON_EMAIL_DOMAINS,
@@ -8,9 +8,11 @@ import {
   DOMAIN_ZERO_AT,
   IP_ONE_AT,
   IP_ZERO_AT,
+  domainClusterIsNamedInReason,
   domainClusterSize,
   isCommonEmailDomain,
   largestIpCluster,
+  registrationClusterGroupKey,
   registrationClusterHeuristic,
 } from '../heuristics/clustering';
 import { rampScore } from '../heuristics/ramp';
@@ -18,8 +20,20 @@ import {
   CLUSTER_ONE_AT,
   CLUSTER_ZERO_AT,
   contentTemplatingHeuristic,
+  contentTemplatingSourceScore,
   largestContentCluster,
 } from '../heuristics/similarity';
+import {
+  BURST_ONE_AT,
+  BURST_ZERO_AT,
+  STAGED_ONE_AT,
+  STAGED_ZERO_AT,
+  assetStagingHalfScores,
+  assetStagingHeuristic,
+  stagedImageFacts,
+} from '../heuristics/staging';
+import { filenameFingerprint } from '../evidence';
+import { FILENAME_FINGERPRINT_PREFIX } from '../fingerprint-keys';
 import {
   MIN_AGE_HOURS,
   MIN_ITEMS,
@@ -29,7 +43,13 @@ import {
   itemsPerHour,
   postingVelocityHeuristic,
 } from '../heuristics/velocity';
-import { scoreAccount, type BotAccountEvidence } from '../scoring';
+import {
+  LONE_SIGNAL_CUT,
+  MIN_REPORTED_CONFIDENCE,
+  partitionByConfidence,
+  scoreAccount,
+  type BotAccountEvidence,
+} from '../scoring';
 
 const at = (iso: string) => new Date(iso);
 const NOW = at('2026-09-03T12:00:00.000Z');
@@ -71,9 +91,12 @@ function signalsWith(spec: {
   membersPerDomain?: Record<string, number>;
   fingerprints?: Record<number, string[]>;
   membersPerFingerprint?: Record<string, number>;
+  staged?: Record<number, StagedImageFacts>;
   sources?: Partial<CohortSignals['sources']>;
 }): CohortSignals {
   const s = emptyCohortSignals();
+  for (const [userId, facts] of Object.entries(spec.staged ?? {}))
+    s.stagedImagesByUser.set(Number(userId), facts);
   for (const [userId, ips] of Object.entries(spec.ips ?? {})) s.ipsByUser.set(Number(userId), ips);
   for (const [ip, n] of Object.entries(spec.membersPerIp ?? {})) s.membersPerIp.set(ip, n);
   for (const [d, n] of Object.entries(spec.membersPerDomain ?? {})) s.membersPerDomain.set(d, n);
@@ -84,6 +107,10 @@ function signalsWith(spec: {
   s.sources = { ...s.sources, ...spec.sources };
   return s;
 }
+
+/** One member's staged-upload facts, as the index carries them. */
+const stagedSignals = (userId: number, facts: StagedImageFacts) =>
+  signalsWith({ staged: { [userId]: facts } });
 
 // ---------------------------------------------------------------------------------------------
 // The shared ramp
@@ -481,17 +508,136 @@ describe('content-templating', () => {
     expect(score(member(), signalsWith({}))).toBe(0);
   });
 
-  it('🔴 quotes the shared text so a moderator can confirm or dismiss it', () => {
-    // The whole reason this is exact-match-after-masking rather than a distance measure: the
-    // finding has to be checkable at a glance. The QUOTED form is the normalised one — what was
-    // actually compared — so a reader is not shown a different string from the one that scored.
+  it('🔴 quotes the shared value so a moderator can confirm or dismiss it', () => {
+    // The whole reason this is exact-match-after-normalisation rather than a distance measure: the
+    // finding has to be checkable at a glance. The QUOTED form is what was actually compared, so a
+    // reader is not shown a different string from the one that scored.
+    //
+    // An UNPREFIXED key is used deliberately: `unprefixFingerprint` returns it unchanged, so this
+    // case exercises the quoting and the truncation rather than the namespace strip, which the
+    // filename cases below own.
     const s = signalsWith({
-      fingerprints: { 42: ['check out my page at linkmask for nummask free credits'] },
-      membersPerFingerprint: { 'check out my page at linkmask for nummask free credits': 6 },
+      fingerprints: { 42: ['some-long-shared-upload-name.png'] },
+      membersPerFingerprint: { 'some-long-shared-upload-name.png': 6 },
     });
     const note = contentTemplatingHeuristic.explain(evidence(member(), s), 0.5);
-    expect(note).toContain('6 new accounts posted the same text');
-    expect(note).toContain('check out my page at linkmask');
+    expect(note).toBe(
+      '6 new accounts uploaded a file with the same name — “some-long-shared-upload-name.png”'
+    );
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // The filename half
+  // -------------------------------------------------------------------------------------------
+
+  /** A signals index holding one filename cluster of `size`, owned by member 42. */
+  const filenameSignals = (name: string, size: number) => {
+    const key = filenameFingerprint(name) as string;
+    return signalsWith({ fingerprints: { 42: [key] }, membersPerFingerprint: { [key]: size } });
+  };
+
+  it('🔴 THE BOUNDARY, BOTH SIDES: two accounts sharing a filename score 0, three score', () => {
+    // 🔴 THREE DISTINCT MEMBERS IS THE SMALLEST SCORING GROUP, and — together with the fact that
+    // every member is an account under 24h old — it IS the innocent-collision defence. There is
+    // deliberately no stoplist of generic filenames: the measured rings share exactly the
+    // unremarkable names a stoplist would remove.
+    //
+    // LITERAL sizes and a LITERAL expected score, not expressions over the constants: a boundary
+    // case written in terms of `CLUSTER_ZERO_AT` is vacuous about its value.
+    expect(score(member(), filenameSignals('logo.jpg', 2))).toBe(0);
+    expect(score(member(), filenameSignals('logo.jpg', 3))).toBeCloseTo(0.125, 12);
+  });
+
+  it('a lone account is not a cluster', () => {
+    expect(score(member(), filenameSignals('logo.jpg', 1))).toBe(0);
+  });
+
+  it('saturates on a large filename ring', () => {
+    expect(score(member(), filenameSignals('logo.jpg', 26))).toBe(1);
+  });
+
+  it('🔴 REGRESSION: no length floor reaches filenames — both of these cluster', () => {
+    // 🔴 THE FILENAMES A CONFIRMED RING ACTUALLY SHARED. The deleted prose fingerprinter rejected
+    // both outright (`1900.jpg.jpeg` → "nummask jpg jpeg", 16 chars / 3 tokens; `logo.jpg` →
+    // "logo jpg", 8 / 2, against floors of 24 and 4 — measured by executing the shipped normaliser
+    // while it existed). Had this source reused the prose fingerprint, the entire signal would have
+    // been discarded before scoring.
+    expect(score(member(), filenameSignals('1900.jpg.jpeg', 3))).toBeGreaterThan(0);
+    expect(score(member(), filenameSignals('logo.jpg', 3))).toBeGreaterThan(0);
+  });
+
+  it('🔴 explain() quotes the PLAIN filename, never the namespaced key', () => {
+    // The prefix is an implementation detail of the shared index. A moderator shown “file:logo.jpg”
+    // would reasonably conclude the account uploaded a file by that literal name.
+    const note = contentTemplatingHeuristic.explain(
+      evidence(member(), filenameSignals('logo.jpg', 8)),
+      0.75
+    );
+    expect(note).toContain('8 new accounts uploaded a file with the same name');
+    expect(note).toContain('logo.jpg');
+    expect(note).not.toContain(FILENAME_FINGERPRINT_PREFIX);
+    // And it is named as a FILENAME rather than as posted text — a claim about an upload and a claim
+    // about a comment call for different moderator actions, and the wording is the only thing that
+    // distinguishes them. Pinned as a WHOLE STRING rather than as keywords, because a reword is
+    // exactly how a guard on words gets walked past.
+    expect(note).toBe('8 new accounts uploaded a file with the same name — “logo.jpg”');
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // Source isolation. One source is registered today; the mechanism is what the next one needs.
+  // -------------------------------------------------------------------------------------------
+
+  /**
+   * A namespace this module does not currently produce.
+   *
+   * The comment-text source that used to supply `text:` keys is deleted, so a second REAL namespace
+   * no longer exists — and the three cases below would be untestable if they were written in terms
+   * of one. They are INVARIANT GUARDS, labelled as such: none of them was red at any base, and none
+   * catches a bug that exists today. They exist because `largestContentCluster`'s prefix argument
+   * and `contentTemplatingSourceScore` are kept deliberately (see `similarity.ts`) so the next
+   * source folded in here arrives with its own counter from the first run, and an unexercised
+   * mechanism is one that has quietly stopped working by the time that happens.
+   */
+  const OTHER_PREFIX = 'other:';
+
+  it('scores on the LARGEST cluster across every source, whichever surface it is on', () => {
+    const otherK = `${OTHER_PREFIX}some other surface`;
+    const fileK = filenameFingerprint('logo.jpg') as string;
+    const s = signalsWith({
+      fingerprints: { 42: [otherK, fileK] },
+      membersPerFingerprint: { [otherK]: 3, [fileK]: 9 },
+    });
+    expect(largestContentCluster(42, s)).toEqual({ size: 9, fingerprint: fileK });
+  });
+
+  it('🔴 contentTemplatingSourceScore isolates ONE source (invariant guard)', () => {
+    // 🔴 WITHOUT THIS THE COUNTERS CANNOT SEE WHICH SOURCE FIRED — and an invisible zero-firing
+    // source is precisely how the deleted comment source survived every run it shipped in.
+    const otherK = `${OTHER_PREFIX}some other surface`;
+    const fileK = filenameFingerprint('logo.jpg') as string;
+    const s = signalsWith({
+      fingerprints: { 42: [otherK, fileK] },
+      // The other source's cluster is below the floor; the filename cluster is not.
+      membersPerFingerprint: { [otherK]: 2, [fileK]: 9 },
+    });
+    expect(contentTemplatingSourceScore(42, s, OTHER_PREFIX)).toBe(0);
+    expect(contentTemplatingSourceScore(42, s, FILENAME_FINGERPRINT_PREFIX)).toBeGreaterThan(0);
+    // The blended score is carried entirely by the filename source.
+    expect(score(member(), s)).toBe(
+      contentTemplatingSourceScore(42, s, FILENAME_FINGERPRINT_PREFIX)
+    );
+  });
+
+  it('🔴 a source score ignores the OTHER source entirely, even when it is larger', () => {
+    // The isolation has to hold in both directions, or the decomposition just re-reports the max.
+    const otherK = `${OTHER_PREFIX}some other surface`;
+    const fileK = filenameFingerprint('logo.jpg') as string;
+    const s = signalsWith({
+      fingerprints: { 42: [otherK, fileK] },
+      membersPerFingerprint: { [otherK]: 9, [fileK]: 3 },
+    });
+    expect(contentTemplatingSourceScore(42, s, FILENAME_FINGERPRINT_PREFIX)).toBeCloseTo(0.125, 12);
+    expect(contentTemplatingSourceScore(42, s, OTHER_PREFIX)).toBeCloseTo(0.875, 12);
   });
 
   it('bounds the quote, so one long text cannot truncate the whole finding', () => {
@@ -506,10 +652,288 @@ describe('content-templating', () => {
 });
 
 // ---------------------------------------------------------------------------------------------
+// Heuristic 4 — asset staging
+// ---------------------------------------------------------------------------------------------
+
+describe('asset-staging', () => {
+  const score = (m: BotAccountCohortMember, s: CohortSignals) =>
+    assetStagingHeuristic.score(evidence(m, s));
+
+  it('🔴 pins the boundary CONSTANTS separately from the behaviour', () => {
+    // Same reasoning as the three heuristics above: every behavioural case below uses LITERAL
+    // counts and LITERAL expected scores, so none of them says anything about these values. A
+    // boundary case written as `{ count: STAGED_ZERO_AT }` is vacuous about the constant under
+    // test — measured on this module: a mutant moving `CLUSTER_ZERO_AT` survived exactly that.
+    expect(STAGED_ZERO_AT).toBe(1);
+    expect(STAGED_ONE_AT).toBe(3);
+    expect(BURST_ZERO_AT).toBe(1);
+    expect(BURST_ONE_AT).toBe(3);
+    // 🔴 THE TWO PAIRS ARE NOW EQUAL, AND THAT IS A BLIND SPOT THIS CASE CANNOT COVER: a mutant
+    // that swaps the volume boundaries for the burst ones changes nothing observable. What covers
+    // the burst arm instead is the subset pin below — it is the case that goes red if the burst
+    // pair ever moves BELOW the volume pair, which is the only direction in which this arm can
+    // start affecting the score again.
+    expect([BURST_ZERO_AT, BURST_ONE_AT]).toEqual([STAGED_ZERO_AT, STAGED_ONE_AT]);
+  });
+
+  it('scores 0 for ONE staged upload and fires from two', () => {
+    // One unattached, metadata-free upload is the commonest shape on the site that matches this
+    // predicate at all — somebody started a post and did not finish. Scoring it would fire on a
+    // large share of every day's genuine signups.
+    //
+    // LITERAL counts and a LITERAL expected value. 2 staged is (2-1)/(3-1) = 0.5. That it IS a
+    // round half now is a consequence of where the derived boundary landed, not a convenience, so
+    // the mutants it separates are named rather than assumed: dropping the `- zeroAt` gives
+    // 2/(3-1) = 1; dividing by `oneAt` gives 1/3; `zeroAt` 1→0 gives 2/3; `oneAt` 3→4 gives 1/3;
+    // `oneAt` 3→2 saturates to 1. All five differ from 0.5, so none of them survives this case.
+    expect(score(member(), stagedSignals(42, { count: 1, largestSameSecondBurst: 1 }))).toBe(0);
+    expect(score(member(), stagedSignals(42, { count: 2, largestSameSecondBurst: 1 }))).toBeCloseTo(
+      0.5,
+      12
+    );
+  });
+
+  it('🔴 THE FIRING POINT: a LONE asset-staging signal is REPORTED at two staged uploads, not one', () => {
+    // 🔴 THE PROPERTY THE BOUNDARY WAS DERIVED TO PRODUCE, PINNED END-TO-END RATHER THAN AS
+    // ARITHMETIC. The constants above say what the ramp returns; they say nothing about whether the
+    // account reaches a moderator, which is the thing that was actually decided. That answer is a
+    // composition of four separate values — the ramp boundaries, the registry's SIZE, the blend's
+    // whole-registry denominator, and `MIN_REPORTED_CONFIDENCE` — living in three files, and any
+    // one of them moving silently breaks it. So this case runs the REAL registry through the REAL
+    // blend and the REAL partition, and asserts the reported/suppressed verdict itself.
+    //
+    // The derivation it pins: a lone sub-score `s` blends to `s / n` and is compared against
+    // `LONE_SIGNAL_CUT / n`, so the `n`s cancel and the account is reported exactly when
+    // `s >= LONE_SIGNAL_CUT`. With `zeroAt = 1`, `1 / (oneAt - 1) >= 0.45` forces `oneAt <= 3.22…`,
+    // i.e. 3. A pair scores 0.5 and clears; a single upload scores 0 and does not.
+    //
+    // The member is built so every OTHER heuristic scores 0 — a common mail provider, no shared
+    // address, no templated text, 7 images over 11 hours (0.64/hour, far under the velocity floor).
+    // The fixture numbers are pairwise distinct and distinct from every constant named below: 7
+    // images, 1 and 2 staged, against 0.5, 0.45 and 0.1125.
+    const loner = () =>
+      member({
+        all: { images: 7 },
+        createdAt: at('2026-09-03T01:00:00.000Z'),
+        emailDomain: 'gmail.com',
+      });
+    const verdict = (count: number) => {
+      const result = scoreAccount(
+        BOT_ACCOUNT_HEURISTICS,
+        evidence(loner(), stagedSignals(42, { count, largestSameSecondBurst: 1 }))
+      );
+      const staged = result.subScores.find((s) => s.id === 'asset-staging');
+      return {
+        staged: staged?.score,
+        others: result.subScores.filter((s) => s.id !== 'asset-staging').map((s) => s.score),
+        confidence: result.confidence,
+        reported: partitionByConfidence([result], MIN_REPORTED_CONFIDENCE).reported.length,
+      };
+    };
+
+    // ONE staged upload: the heuristic scores nothing, so nothing is reported.
+    expect(verdict(1)).toEqual({ staged: 0, others: [0, 0, 0], confidence: 0, reported: 0 });
+
+    // TWO: the sub-score clears the lone-signal cut on its own, and the account reaches the board.
+    //
+    // 🔴 THE VERDICT IS ASSERTED FIRST, DELIBERATELY. The sub-score and confidence numbers below
+    // are the mechanism; `reported` is the decision, and it is the one a reader of a failure
+    // message needs to see named. Against the pre-change boundaries this line reads
+    // `expected 0 to be 1` — the defect itself — rather than a ramp value that has to be translated
+    // back into what it meant for the account.
+    const pair = verdict(2);
+    expect(pair.reported).toBe(1);
+    expect(pair.others).toEqual([0, 0, 0]);
+    expect(pair.staged).toBeCloseTo(0.5, 12);
+    expect(pair.staged as number).toBeGreaterThanOrEqual(LONE_SIGNAL_CUT);
+    expect(pair.confidence).toBeCloseTo(0.125, 12);
+    expect(pair.confidence).toBeGreaterThanOrEqual(MIN_REPORTED_CONFIDENCE);
+  });
+
+  it('saturates at the volume boundary and stays there', () => {
+    // Lands exactly ON the boundary, then overshoots it — 3 and 11 against a boundary of 3.
+    expect(score(member(), stagedSignals(42, { count: 3, largestSameSecondBurst: 1 }))).toBe(1);
+    expect(score(member(), stagedSignals(42, { count: 11, largestSameSecondBurst: 1 }))).toBe(1);
+  });
+
+  it('🔴 the burst half NEVER exceeds the volume half at today’s boundaries', () => {
+    // 🔴 THE HONEST REPLACEMENT FOR A CASE THAT USED TO ASSERT THE OPPOSITE. Until the firing point
+    // moved to two, the burst boundaries sat tighter than the volume ones (4 against 8) and a
+    // same-second pair genuinely scored HIGHER than the same count spread out; a case here asserted
+    // exactly that. Both pairs are now (1, 3), and a same-second group is a SUBSET of the staged
+    // rows, so `largestSameSecondBurst <= count` always and a monotonic ramp over identical
+    // boundaries cannot turn the smaller input into the larger score. `max(volume, burst)` is
+    // therefore identically `volume`: the burst arm changes neither whether this heuristic fires
+    // nor how high it scores. Asserting a comparison it can no longer satisfy would be a guard
+    // describing behaviour the code does not have.
+    //
+    // This IS regression coverage for the boundary change and not only a forward-looking guard:
+    // measured red against the pre-change constants with `expected 0.3333… to be less than or
+    // equal to 0.1428…`, i.e. the (2, 2) row, where the old tighter burst pair genuinely produced
+    // the larger score. It doubles as the future guard — it goes red the moment `BURST_ONE_AT`
+    // drops below `STAGED_ONE_AT` again, which is the only edit that can revive this arm, and it is
+    // what keeps the `max` in `staging.ts` from being deleted as dead code without anyone noticing
+    // the arm went with it.
+    //
+    // Every pair respects `burst <= count`, because a pair that does not is a state the evidence
+    // layer cannot build and proves nothing about the shipped code.
+    const realistic: Array<[number, number]> = [
+      [2, 1],
+      [2, 2],
+      [5, 2],
+      [9, 4],
+      [11, 11],
+    ];
+    for (const [count, largestSameSecondBurst] of realistic) {
+      const s = stagedSignals(42, { count, largestSameSecondBurst });
+      const halves = assetStagingHalfScores(42, s);
+      expect(halves.burst).toBeLessThanOrEqual(halves.volume);
+      expect(score(member(), s)).toBe(halves.volume);
+    }
+    // And the two values are genuinely different somewhere in that table, so the loop is not
+    // asserting `x <= x` five times over.
+    const spread = assetStagingHalfScores(
+      42,
+      stagedSignals(42, { count: 5, largestSameSecondBurst: 2 })
+    );
+    expect(spread.volume).toBe(1);
+    expect(spread.burst).toBeCloseTo(0.5, 12);
+  });
+
+  it('scores a burst of ONE as nothing — every upload shares its own second', () => {
+    // 🔴 THE OFF-BY-ONE THAT WOULD MAKE THIS HALF FIRE ON EVERY MEMBER WITH ANY STAGED IMAGE. A
+    // lone upload trivially has a largest-same-second group of 1, so reading `zeroAt` as "the
+    // smallest value that fires" would give every staged upload a burst score and the half would
+    // stop distinguishing anything — which matters for the `fired_burst` counter and the moderator
+    // clause even now that the half cannot move the score.
+    //
+    // 🔴 ASSERTED ON THE HALF, NOT ON THE BLEND, BECAUSE THE BLEND CANNOT SEE THIS MUTANT — and
+    // that is now true by construction rather than by luck. `max` is identically `volume`, so NO
+    // mutation of a burst constant is visible through `score` at all. Reading the half directly is
+    // the only reachable assertion this arm has. (Measured before the boundaries met: moving
+    // `BURST_ZERO_AT` to 0 made a burst of one score 0.25 while the volume half at a count of 3 was
+    // already 0.2857, so the blended expectation passed at BOTH values of the constant.)
+    const facts = stagedSignals(42, { count: 2, largestSameSecondBurst: 1 });
+    expect(assetStagingHalfScores(42, facts).burst).toBe(0);
+    // And the blend is then the volume half's (2-1)/(3-1) and nothing else.
+    expect(score(member(), facts)).toBeCloseTo(0.5, 12);
+  });
+
+  it('saturates the burst half at its own boundary', () => {
+    // Asserted on the HALF for the reason above — the blend cannot express it. 4 in one second on
+    // an account with 9 staged, so the fixture respects `burst <= count`.
+    expect(
+      assetStagingHalfScores(42, stagedSignals(42, { count: 9, largestSameSecondBurst: 4 })).burst
+    ).toBe(1);
+  });
+
+  it('🔴 combines the two halves with max, NOT a sum', () => {
+    // A sum would double-count the same uploads — every burst member is also a count member — and
+    // would make the sub-score stop meaning "how far past ordinary these uploads are". Still worth
+    // pinning although `max` currently resolves to `volume`: the combination is what becomes wrong
+    // first if the boundaries ever diverge again.
+    //
+    // 2 staged in one second is 0.5 on BOTH halves, so max is 0.5 and a sum is 1.0 — a different
+    // number from the operands and from the max, and below the clamp, so the sum mutant is visible
+    // in this function's own return value rather than being flattened to 1 by `scoreAccount`.
+    const both = stagedSignals(42, { count: 2, largestSameSecondBurst: 2 });
+    expect(score(member(), both)).toBeCloseTo(0.5, 12);
+    expect(score(member(), both)).not.toBeCloseTo(1.0, 6);
+  });
+
+  it('scores an account with nothing staged 0, without throwing', () => {
+    expect(score(member(), signalsWith({}))).toBe(0);
+    expect(stagedImageFacts(42, signalsWith({}))).toEqual({
+      count: 0,
+      largestSameSecondBurst: 0,
+    });
+  });
+
+  it('reads only its OWN member’s facts', () => {
+    // The index is keyed by user, and a heuristic reading the wrong entry would score one account
+    // on another's uploads. The fixture gives member 7 a maximal shape and member 42 nothing, so a
+    // mutant reading "the first entry" or "any entry" scores 1 where this expects 0.
+    const s = signalsWith({ staged: { 7: { count: 40, largestSameSecondBurst: 40 } } });
+    expect(score(member({ userId: 42 }), s)).toBe(0);
+    expect(score(member({ userId: 7 }), s)).toBe(1);
+  });
+
+  it('🔴 assetStagingHalfScores reports the halves separately — and one direction is now impossible', () => {
+    // 🔴 WITHOUT THIS THE COUNTERS CANNOT SEE WHICH HALF FIRED, and a half that never fires on an
+    // account the other did not already carry is a boundary doing nothing while looking like
+    // evidence — the failure mode that kept a zero-firing comment source alive for five runs one
+    // heuristic over. `run.ts` publishes `fired_volume` and `fired_burst` off this function, and
+    // those two counters are now the ONLY product the burst arm has, so the decomposition matters
+    // more than it did when the arm could also move the score.
+    //
+    // 🔴 THE ASYMMETRY IS THE HONEST PART. "Volume without burst" is a real and common state. Its
+    // mirror — a burst half firing on an account whose volume half did not — was asserted here
+    // until the boundaries met, and it is now UNREACHABLE for any index the evidence layer can
+    // build: `burst <= count` and the two ramps are identical, so `burst > 0` implies
+    // `volume >= burst > 0`. Asserting the old direction would have required a fixture with more
+    // same-second rows than staged rows, which is not a state that exists. So the reachable claim
+    // is stated instead: the two halves are separately readable, one can be zero while the other is
+    // not, and the impossible direction is named rather than faked with an invalid fixture.
+    const volumeOnly = signalsWith({ staged: { 42: { count: 2, largestSameSecondBurst: 1 } } });
+    expect(assetStagingHalfScores(42, volumeOnly).volume).toBeCloseTo(0.5, 12);
+    expect(assetStagingHalfScores(42, volumeOnly).burst).toBe(0);
+
+    // Both halves non-zero, read independently and NOT as two names for the max: 9 staged saturates
+    // the volume half while a burst of 2 sits at the ramp's midpoint, so a mutant returning the max
+    // under both names gives 1 for `burst` and fails here.
+    const both = signalsWith({ staged: { 42: { count: 9, largestSameSecondBurst: 2 } } });
+    expect(assetStagingHalfScores(42, both).volume).toBe(1);
+    expect(assetStagingHalfScores(42, both).burst).toBeCloseTo(0.5, 12);
+  });
+
+  it('🔴 explains itself with the numbers it used, and states the account’s image total', () => {
+    // The ratio is what tells a moderator whether these uploads are ALL of the account's images or
+    // a corner of them — the heuristic deliberately does not require "all" (the per-member cap makes
+    // that test unreachable on exactly the busiest accounts), so the denominator is disclosed rather
+    // than folded into the score.
+    const m = member({ all: { images: 12 } });
+    const note = assetStagingHeuristic.explain(
+      evidence(m, stagedSignals(42, { count: 9, largestSameSecondBurst: 4 })),
+      1
+    );
+    expect(note).toContain('9 of this account');
+    expect(note).toContain('12 uploaded image(s)');
+    expect(note).toContain('no generation metadata');
+    expect(note).toContain('4 of them were created within the same second');
+  });
+
+  it('🔴 omits the same-second clause when the burst half did not fire', () => {
+    // The reason clause and the score read ONE predicate. A note claiming a burst on an account
+    // whose burst half scored nothing would send a moderator looking for a batch that is not there
+    // — the defect `domainClusterIsNamedInReason` exists one heuristic over to prevent.
+    const note = assetStagingHeuristic.explain(
+      evidence(member(), stagedSignals(42, { count: 4, largestSameSecondBurst: 1 })),
+      0.42
+    );
+    expect(note).toContain('4 of this account');
+    expect(note).not.toContain('same second');
+  });
+
+  it('says nothing at zero, rather than reciting a signal that did not fire', () => {
+    expect(assetStagingHeuristic.explain(evidence(member(), signalsWith({})), 0)).toBeNull();
+  });
+
+  it('🔴 needs no OTHER account to exist — the property no ring heuristic has', () => {
+    // Stated as a test because it is the reason this heuristic was added: the cohort-level indexes
+    // are entirely empty here (no IPs, no domains, no fingerprints), which is the state every ring
+    // heuristic scores 0 in, and this one still fires.
+    const alone = signalsWith({ staged: { 42: { count: 8, largestSameSecondBurst: 1 } } });
+    expect(alone.membersPerIp.size).toBe(0);
+    expect(alone.membersPerFingerprint.size).toBe(0);
+    expect(score(member(), alone)).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
 // The registry, blended
 // ---------------------------------------------------------------------------------------------
 
-describe('the three heuristics together', () => {
+describe('the four heuristics together', () => {
   it('score independently — one firing does not move the others', () => {
     // The operator chose shadow mode to grade each signal ON ITS OWN, so this is the property that
     // matters most: a wave-shaped account with no ring evidence must show velocity alone.
@@ -519,13 +943,16 @@ describe('the three heuristics together', () => {
       ['posting-velocity', 1],
       ['registration-cluster', 0],
       ['content-templating', 0],
+      ['asset-staging', 0],
     ]);
-    // One of three equally weighted heuristics fully convinced blends to a third — which is above
-    // the reporting threshold, and is the arithmetic that threshold was chosen against.
-    expect(result.confidence).toBeCloseTo(1 / 3, 12);
+    // One of FOUR equally weighted heuristics fully convinced blends to a quarter — which is above
+    // the reporting threshold, and is the arithmetic that threshold was chosen against. It was a
+    // third before `asset-staging` was registered; the same account, unchanged, now blends lower,
+    // which is the denominator effect the threshold was re-derived for.
+    expect(result.confidence).toBeCloseTo(1 / 4, 12);
   });
 
-  it('an ordinary new account scores 0 on all three', () => {
+  it('an ordinary new account scores 0 on all four', () => {
     // The population this detector must NOT report: a real newcomer, a common mail provider, no
     // shared IP, no templated text.
     const ordinary = member({
@@ -559,7 +986,139 @@ describe('the three heuristics together', () => {
       ['posting-velocity', 0],
       ['registration-cluster', 1],
       ['content-templating', 1],
+      ['asset-staging', 0],
     ]);
-    expect(result.confidence).toBeCloseTo(2 / 3, 12);
+    expect(result.confidence).toBeCloseTo(2 / 4, 12);
+  });
+
+  it('🔴 a LONE stager scores on asset-staging alone — the shape no ring heuristic can see', () => {
+    // 🔴 THE CASE THE REGISTRY HAD NO ANSWER TO BEFORE THIS HEURISTIC. Every other entry asks "how
+    // many OTHER new accounts share this", so one account working by itself is invisible to all
+    // three: nothing is shared, so nothing clusters. This member posts slowly, registered on a
+    // common provider, shares no address and templated nothing — and it has staged nine uploads
+    // with five of them inside one second.
+    const loner = member({
+      all: { images: 9 },
+      createdAt: at('2026-09-03T01:00:00.000Z'),
+      emailDomain: 'gmail.com',
+    });
+    const s = stagedSignals(42, { count: 9, largestSameSecondBurst: 5 });
+    const result = scoreAccount(BOT_ACCOUNT_HEURISTICS, evidence(loner, s));
+    expect(result.subScores.map((x) => [x.id, x.score])).toEqual([
+      ['posting-velocity', 0],
+      ['registration-cluster', 0],
+      ['content-templating', 0],
+      ['asset-staging', 1],
+    ]);
+    // One of four, fully convinced — above the reporting threshold on its own.
+    expect(result.confidence).toBeCloseTo(1 / 4, 12);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The cluster key the board rules on
+// ---------------------------------------------------------------------------------------------
+
+describe('registrationClusterGroupKey', () => {
+  const key = (m: BotAccountCohortMember, s: CohortSignals) => registrationClusterGroupKey(m, s);
+  const explain = (m: BotAccountCohortMember, s: CohortSignals) =>
+    registrationClusterHeuristic.explain?.(
+      evidence(m, s),
+      registrationClusterHeuristic.score(evidence(m, s))
+    ) ?? null;
+
+  it('names the shared domain once the cluster is big enough to be reported', () => {
+    // LITERAL size, so this is a statement about behaviour at four rather than about whatever
+    // `DOMAIN_ZERO_AT` happens to say — the constant is pinned separately above.
+    const s = signalsWith({ membersPerDomain: { 'ring.test': 4 } });
+    expect(key(member({ emailDomain: 'ring.test' }), s)).toBe('domain:ring.test');
+  });
+
+  it('returns nothing AT the boundary — a cluster of three is not reported, so it is not a key', () => {
+    // 🔴 THE OFF-BY-ONE. `DOMAIN_ZERO_AT` is the largest cluster still worth nothing, so three is
+    // silent and four speaks. A `>` → `>=` mutant groups every three-account coincidence into one
+    // ruling, and publishes a domain the reason never mentions.
+    const s = signalsWith({ membersPerDomain: { 'ring.test': 3 } });
+    expect(key(member({ emailDomain: 'ring.test' }), s)).toBeNull();
+  });
+
+  it.each([
+    ['an account whose domain nobody else shares', { 'ring.test': 1 }],
+    ['a domain absent from the index entirely', {}],
+  ])('returns nothing for %s', (_label, membersPerDomain) => {
+    expect(key(member({ emailDomain: 'ring.test' }), signalsWith({ membersPerDomain }))).toBeNull();
+  });
+
+  it('returns nothing for an account with no email domain at all', () => {
+    expect(key(member({ emailDomain: null }), signalsWith({ membersPerDomain: {} }))).toBeNull();
+  });
+
+  it('🔴 returns nothing for a COMMON provider, however large the cluster', () => {
+    // `gmail.com` is the largest cluster in every cohort, every day. Keying on it would collapse the
+    // day's most ordinary accounts into ONE ruling — a single click recording a verdict about
+    // hundreds of unrelated people.
+    const s = signalsWith({ membersPerDomain: { 'gmail.com': 250 } });
+    expect(key(member({ emailDomain: 'gmail.com' }), s)).toBeNull();
+  });
+
+  it('is IDENTICAL for every member of one cluster, and different across clusters', () => {
+    // Stability within a run is what makes one ruling cover the ring: two members deriving two
+    // strings would be two decisions wearing one name.
+    const s = signalsWith({ membersPerDomain: { 'ring.test': 9, 'other.test': 9 } });
+    const a = key(member({ userId: 1, emailDomain: 'ring.test' }), s);
+    const b = key(member({ userId: 2, emailDomain: 'ring.test' }), s);
+    const c = key(member({ userId: 3, emailDomain: 'other.test' }), s);
+    expect(a).toBe('domain:ring.test');
+    expect(b).toBe(a);
+    expect(c).not.toBe(a);
+  });
+
+  it('🔴 NEVER carries a domain the reason text does not already name — swept, both directions', () => {
+    // THE DISCLOSURE RULE. The board has a wider audience than the investigative tools, and a key is
+    // rendered. A key naming a domain the finding's own reason never mentions would be a disclosure
+    // the finding does not otherwise make — so the two must move together at EVERY size, not just at
+    // the one a single case happens to pick.
+    for (const size of [0, 1, 2, 3, 4, 5, 9, 15, 40]) {
+      const s = signalsWith({ membersPerDomain: { 'ring.test': size } });
+      const m = member({ emailDomain: 'ring.test' });
+      const named = (explain(m, s) ?? '').includes('ring.test');
+      expect(key(m, s) === null, `size ${size}: key present but domain unnamed in the reason`).toBe(
+        !named
+      );
+    }
+  });
+
+  it('the sweep above is not vacuous — the reason DOES name the domain at a reportable size', () => {
+    // 🔴 POSITIVE CONTROL. An `explain` that returned null at every size would satisfy the iff above
+    // by making both halves false forever, and it would read as coverage.
+    const s = signalsWith({ membersPerDomain: { 'ring.test': 9 } });
+    const m = member({ emailDomain: 'ring.test' });
+    expect(explain(m, s)).toContain('ring.test');
+    expect(key(m, s)).toBe('domain:ring.test');
+  });
+
+  it('🔴 never carries a registration IP, which the reason deliberately withholds', () => {
+    // The IP is the STRONGER signal and is left out of the reason on purpose — `explain` says so and
+    // points a moderator at the tool built for that lookup. Keying on it would publish, on the
+    // board, the one fact this heuristic goes out of its way not to publish.
+    const s = signalsWith({
+      ips: { 42: ['203.0.113.9'] },
+      membersPerIp: { '203.0.113.9': 40 },
+      membersPerDomain: {},
+      sources: { registrationIps: true },
+    });
+    const m = member({ emailDomain: null });
+    expect(registrationClusterHeuristic.score(evidence(m, s))).toBeGreaterThan(0);
+    expect(key(m, s)).toBeNull();
+  });
+});
+
+describe('domainClusterIsNamedInReason', () => {
+  it('is the one predicate both the reason clause and the key read', () => {
+    // Literal boundary, pinned here so a mutation to it fails with its own name attached rather than
+    // only as a knock-on somewhere else.
+    expect(domainClusterIsNamedInReason(3)).toBe(false);
+    expect(domainClusterIsNamedInReason(4)).toBe(true);
+    expect(domainClusterIsNamedInReason(0)).toBe(false);
   });
 });

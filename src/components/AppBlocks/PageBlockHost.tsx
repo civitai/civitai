@@ -40,6 +40,13 @@ import {
   resolveCollectionIdentity,
   type CollectionLookupBudget,
 } from './collectionFollowGate';
+import {
+  buildCreatePostConsentCopy,
+  createPostSettlement,
+  resolveCreatePostRequest,
+  type CreatePostPreview,
+} from './createPostFromAppGate';
+import { CreatePostConsentBody } from './CreatePostConsentBody';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
@@ -383,10 +390,15 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * width. The claim that matters — no app renders narrower than the page that launched it
  * — still holds at equality; the headroom it used to have does not. It also clears the
  * widest app-imposed well (1100) by ~45%, so the cap can never letterbox an app
- * that has already thought about its own width, while leaving a two-pane shell
- * like Notepad or Sensei a ~1350px content pane — the case the cap exists for.
- * Concretely it holds five columns of a `minmax(300px, 1fr)` grid (1288 holds
- * four, 2560 holds eight).
+ * that has already thought about its own width, while leaving a two-pane shell — a
+ * fixed sidebar beside an unbounded `flex: 1` pane — a ~1350px content pane. That
+ * SHAPE is the case the cap exists for: it is the one that had nothing of its own
+ * bounding it. ⚠️ NO PARTICULAR APP IS NAMED AS THAT CASE, and the census above is
+ * not a list of apps this cap governs — an individual app of that shape may be
+ * excused by the ledger, which is why the membership is not restated in this file
+ * (see the note on that below). This paragraph is about what the VALUE 1600 buys
+ * where it applies, not about where it applies. Concretely it holds five columns of
+ * a `minmax(300px, 1fr)` grid (1288 holds four, 2560 holds eight).
  *
  * 🔴 DO NOT RE-DERIVE THIS CAP FROM "THE WIDEST FIRST-PARTY SURFACE". That phrasing
  * used to appear here and it is a moving target: the apps container has taken three
@@ -417,10 +429,14 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * So an opt-out here is per-APP and would unbound all three modes, not tidy up
  * one. That may well be right — a ticker and a wall want width, and the player's
  * media is `object-fit: contain` so a centred column simply shrinks it — but it
- * is a bigger product call than "the app already governs this", and it is not
- * mine to make. NO LEDGER ENTRY IS WRITTEN TODAY, and the ledger's expected set
- * in `__tests__/pageBlockHostMaxWidth.test.ts` is `[]` so that the first one has
- * to be added deliberately.
+ * is a bigger product call than "the app already governs this", and it was not
+ * made in the commit that shipped the cap.
+ *
+ * ⚠️ AN APP THE CENSUS CALLS UNCAPPED IS NOT AUTOMATICALLY A LEDGER MEMBER, AND THE
+ * MEMBERSHIP IS DELIBERATELY NOT RESTATED HERE — a count or a list in this comment
+ * is a claim that rots on the next entry. The ledger lives in `globals.css` with
+ * each member's reasoning on its own rule, and its membership is ENUMERATED in
+ * `__tests__/pageBlockHostMaxWidth.test.ts`, which fails on growth AND shrink.
  *
  * 🔴 STATE THE COST HONESTLY: this binds on a maximised browser on a 1080p
  * monitor (~1905 CSS px of viewport), not only on ultrawides — that is a common
@@ -1921,6 +1937,10 @@ export function PageBlockHost({
   // same bearer-token-in-URL reason as the other block-token bridges.
   const publishGenerationOutputsMutation = trpc.blocks.publishGenerationOutputs.useMutation();
   const getImagesByIdsMutation = trpc.blocks.getImagesByIds.useMutation();
+  // CREATE_POST_FROM_APP is TWO calls: a read-only preview that resolves the
+  // consent payload server-side, then the write. Both are block-token-authed.
+  const previewPostFromAppMutation = trpc.blocks.previewPostFromApp.useMutation();
+  const createPostFromAppMutation = trpc.blocks.createPostFromApp.useMutation();
 
   // Wildcard-pack import (W13). SESSION-authed (protectedProcedure) — it does NOT
   // take a block token; the viewer's real cookie session authenticates, which is
@@ -3969,6 +3989,148 @@ export function PageBlockHost({
     trpcUtils,
     followCollectionMutation,
     unfollowCollectionMutation,
+  ]);
+
+  // ── CREATE_POST_FROM_APP → CREATE_POST_RESULT ──────────────────────────────
+  //
+  // A block asks the host to publish a REAL Post on the viewer's profile from the
+  // app's OWN outputs. The strictly-more-consequential sibling of
+  // PUBLISH_GENERATION_OUTPUTS: that one makes a bare Image row with no feed
+  // presence; this one makes public, feed-visible, reward-earning content under
+  // the VIEWER'S byline.
+  //
+  // 🔴 TWO SERVER CALLS, AND THE FIRST ONE IS WHAT MAKES THE DIALOG A CONSENT
+  // SCREEN. `previewPostFromApp` resolves — server-side, from ids the server
+  // verified — the exact copy, the tag names that will ACTUALLY be applied, the
+  // host-fetched model/version names, and real image thumbnails. Only then is the
+  // viewer asked. A dialog rendering the BLOCK'S strings and the BLOCK'S
+  // thumbnails would let a sandboxed iframe show one post and publish another,
+  // which is the failure `collectionFollowGate.ts` documents for the follow
+  // bridge — and it binds harder here, because this dialog names copy, tags,
+  // images AND a destination rather than one object.
+  //
+  // 🔴 THE PREVIEW IS NOT AUTHORIZATION. `createPostFromApp` re-runs every guard
+  // from scratch — scope, flags, write-trust, per-source ownership, the
+  // self-dealing guard, rate limits. A preview/commit divergence is a UX bug,
+  // never a hole; the client could skip the preview entirely and get the same
+  // refusals.
+  //
+  // REQUEST-style ⇒ every terminal path (refusal / preview failure / cancel /
+  // success / error) MUST reply exactly once or the block hangs for TEN MINUTES
+  // (the `human` timeout bucket). `createPostSettlement` owns that latch AND the
+  // consent latch that keeps `declined` meaning "NO POST WAS CREATED" — it is the
+  // FIXED shape from the follow gate, deliberately not the bare `settled` boolean
+  // the publish handler above still carries. Only a payload with no usable
+  // requestId is dropped: there is nothing to reply to.
+  useEffect(() => {
+    const off = onMessage<unknown>('CREATE_POST_FROM_APP', (raw) => {
+      const gate = resolveCreatePostRequest({
+        raw,
+        // `readGateStatus()` (not a closed-over `status`) — see its definition.
+        ready: readGateStatus() === 'ready',
+        signedIn: viewer != null,
+        reviewNack,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('CREATE_POST_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, sources, title, detail, tags, modelVersionId } = gate.request;
+      const settlement = createPostSettlement({
+        requestId,
+        emit: (payload) => send('CREATE_POST_RESULT', payload),
+      });
+      if (!token) {
+        settlement.reply({ error: 'no block token' });
+        return;
+      }
+      void (async () => {
+        // Resolve WHAT the viewer is being asked to publish, server-side, from
+        // the same payload we are about to act on. A failed preview refuses WITH
+        // a reply — never a hang, and never a dialog missing the content it
+        // promised to show.
+        let preview: CreatePostPreview;
+        try {
+          preview = (await previewPostFromAppMutation.mutateAsync({
+            blockToken: token,
+            sources: sources as never,
+            ...(title != null ? { title } : {}),
+            ...(detail != null ? { detail } : {}),
+            ...(tags ? { tags } : {}),
+            ...(modelVersionId != null ? { modelVersionId } : {}),
+          })) as CreatePostPreview;
+        } catch (err) {
+          // Scope / flag / trust / ownership / self-dealing refusals all surface
+          // here as a legible message rather than a wedged button. The server's
+          // refusals are deliberately uniform where they would otherwise be an
+          // existence oracle.
+          settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+          return;
+        }
+        if (preview.images.length === 0) {
+          settlement.reply({ error: 'no images to post' });
+          return;
+        }
+        const copy = buildCreatePostConsentCopy({ appName, preview });
+        dialogStore.trigger({
+          // Per-request id so two CREATE_POST_FROM_APP calls can't dedup against
+          // each other in the dialog store's silent `if (!exists)` drop — a
+          // dropped dialog would be a request that never replies, i.e. a hang.
+          id: `block-create-post-${requestId}`,
+          component: ConfirmDialog,
+          props: {
+            title: copy.title,
+            message: <CreatePostConsentBody copy={copy} preview={preview} />,
+            labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+            confirmProps: { color: 'blue' },
+            size: 'lg',
+            onConfirm: async () => {
+              // SYNCHRONOUS, before any await: from here on a dismissal must not
+              // be able to claim `declined` for a post that is being created.
+              settlement.markConsented();
+              try {
+                const result = await createPostFromAppMutation.mutateAsync({
+                  blockToken: token,
+                  sources: sources as never,
+                  ...(title != null ? { title } : {}),
+                  ...(detail != null ? { detail } : {}),
+                  ...(tags ? { tags } : {}),
+                  ...(modelVersionId != null ? { modelVersionId } : {}),
+                  // 🔴 THE COUNT THE VIEWER ACTUALLY SAW, echoed from the
+                  // SERVER'S OWN preview — never from the block. Preview and
+                  // write resolve `sources` independently, so a workflow that
+                  // gains an output between them would publish more images than
+                  // the dialog displayed. The server refuses on a mismatch. This
+                  // value is host chrome, not block input: the block never holds
+                  // the block token and cannot reach the procedure.
+                  confirmedImageCount: preview.images.length,
+                });
+                settlement.reply({ result });
+              } catch (err) {
+                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+              }
+            },
+            // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
+            // the block's promise explicitly rather than leaving it to time out —
+            // unless consent was already given, in which case this is a no-op and
+            // the confirm path settles it.
+            onCancel: settlement.decline,
+          },
+        });
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    token,
+    readGateStatus,
+    viewer,
+    reviewNack,
+    appName,
+    previewPostFromAppMutation,
+    createPostFromAppMutation,
   ]);
 
   // ONE sanitized label for the whole launch surface — the avatar initial, the

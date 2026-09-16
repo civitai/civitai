@@ -8,12 +8,22 @@ import {
   type CohortReader,
 } from './cohort';
 import {
-  MAX_CONTENT_SAMPLES,
+  MAX_FILENAME_SAMPLES,
+  MAX_STAGED_IMAGE_SAMPLES,
   collectCohortSignals,
   emptyCohortSignals,
   type EvidenceReader,
 } from './evidence';
-import { BOT_ACCOUNT_HEURISTICS, isCommonEmailDomain } from './heuristics';
+import { FILENAME_FINGERPRINT_PREFIX } from './fingerprint-keys';
+import {
+  ASSET_STAGING_ID,
+  BOT_ACCOUNT_HEURISTICS,
+  CONTENT_TEMPLATING_ID,
+  assetStagingHalfScores,
+  contentTemplatingSourceScore,
+  isCommonEmailDomain,
+  registrationClusterGroupKey,
+} from './heuristics';
 import { BOT_ACCOUNT_DETECTOR, buildFinding, buildReports } from './report';
 import {
   MIN_REPORTED_CONFIDENCE,
@@ -45,7 +55,7 @@ export type BotAccountReportSink = (report: AbuseReportInput) => Promise<unknown
 export type BotAccountDetectionDeps = {
   reader: CohortReader;
   /**
-   * The cohort-level sources — registration IPs and content samples.
+   * The cohort-level sources — registration IPs, uploaded filenames and staged images.
    *
    * Optional, and its absence is a REAL state rather than a test affordance: a run without it scores
    * the velocity heuristic normally and the two ring heuristics against an empty index. That is why
@@ -95,8 +105,12 @@ export type BotAccountDetectionOptions = {
    * default on a live board.
    */
   minConfidence?: number;
-  /** Ceiling on content rows read for the templating heuristic. Defaults to `MAX_CONTENT_SAMPLES`. */
-  maxContentSamples?: number;
+  /** Ceiling on image rows read for the templating heuristic. Defaults to `MAX_FILENAME_SAMPLES`.
+   *  Its own budget, not a share of any other — see that constant. */
+  maxFilenameSamples?: number;
+  /** Ceiling on image rows read for the `asset-staging` heuristic. Defaults to
+   *  `MAX_STAGED_IMAGE_SAMPLES`. Its own budget, not a share of the filename one. */
+  maxStagedImageSamples?: number;
 };
 
 export type BotAccountDetectionResult = {
@@ -157,7 +171,8 @@ export async function runBotAccountDetection(
   const maxAccounts = options.maxAccounts ?? MAX_COHORT_ACCOUNTS;
   const maxFindingsPerReport = options.maxFindingsPerReport ?? MAX_FINDINGS_PER_REPORT;
   const minConfidence = options.minConfidence ?? MIN_REPORTED_CONFIDENCE;
-  const maxContentSamples = options.maxContentSamples ?? MAX_CONTENT_SAMPLES;
+  const maxFilenameSamples = options.maxFilenameSamples ?? MAX_FILENAME_SAMPLES;
+  const maxStagedImageSamples = options.maxStagedImageSamples ?? MAX_STAGED_IMAGE_SAMPLES;
   const log = deps.log ?? (() => undefined);
   const checkCanceled = deps.checkCanceled ?? (() => undefined);
 
@@ -185,7 +200,11 @@ export async function runBotAccountDetection(
   const signals = deps.evidence
     ? await collectCohortSignals(deps.evidence, cohort.members, {
         chunkSize: pageSize,
-        maxContentSamples,
+        maxFilenameSamples,
+        maxStagedImageSamples,
+        // The run's own clock as the filename read's upper bound, so the sample is a snapshot of
+        // the window rather than drifting with whatever was uploaded while the run walked.
+        createdBefore: startedAt,
         // The window this run already computed, handed to the ClickHouse read as its `time` bound.
         // Every cohort account was created after it, so it prunes the scan without removing a row
         // the query wants.
@@ -196,12 +215,19 @@ export async function runBotAccountDetection(
     : emptyCohortSignals();
   log('bot-account-detection:signals', {
     registrationIps: signals.sources.registrationIps,
-    contentSamples: signals.sources.contentSamples,
-    contentBudgetExhausted: signals.sources.contentBudgetExhausted,
-    membersSampledForContent: signals.sources.membersSampledForContent,
     distinctIps: signals.membersPerIp.size,
     distinctDomains: signals.membersPerDomain.size,
     distinctFingerprints: signals.membersPerFingerprint.size,
+    filenameSamples: signals.sources.filenameSamples,
+    filenameBudgetExhausted: signals.sources.filenameBudgetExhausted,
+    membersSampledForFilenames: signals.sources.membersSampledForFilenames,
+    stagedImages: signals.sources.stagedImages,
+    stagedImageBudgetExhausted: signals.sources.stagedImageBudgetExhausted,
+    membersSampledForStagedImages: signals.sources.membersSampledForStagedImages,
+    membersWithStagedImages: signals.stagedImagesByUser.size,
+    // The failure half, beside the availability half. A reader of this line could previously see
+    // `filenameSamples: false` and not know whether a read had broken or a client was absent.
+    readFailures: signals.sources.readFailures,
   });
 
   const memberById = new Map(cohort.members.map((m) => [m.userId, m]));
@@ -214,11 +240,15 @@ export async function runBotAccountDetection(
   // below — a member nobody can see is a member nobody can grade, and grading is the entire purpose
   // of the shadow phase.
   const { reported, suppressed } = partitionByConfidence(scores, minConfidence);
-  const findings = reported.map((score) =>
+  const findings = reported.map((score) => {
     // Every score was built from a member, so the lookup cannot miss; the non-null assertion would
     // be the only place in this module where a missing key is silent, so it throws instead.
-    buildFinding(mustGet(memberById, score.userId), score, startedAt)
-  );
+    const member = mustGet(memberById, score.userId);
+    // 🔴 THE SAME `signals` THE SCORING SAW. A key derived from a different index — an empty one, or
+    // one rebuilt here — would group findings by something the reason text does not describe, which
+    // is the disclosure rule broken by accident rather than by design.
+    return buildFinding(member, score, startedAt, registrationClusterGroupKey(member, signals));
+  });
 
   const finishedAt = deps.now();
 
@@ -243,6 +273,84 @@ export async function runBotAccountDetection(
   const domainsSuppressed = cohort.members.filter(
     (m) => m.emailDomain !== null && isCommonEmailDomain(m.emailDomain)
   ).length;
+
+  /** Distinct cluster keys from ONE fingerprint source. See the counters below for why the two are
+   *  never summed into a single series. */
+  const distinctFingerprints = (prefix: string) => {
+    let n = 0;
+    for (const key of signals.membersPerFingerprint.keys()) if (key.startsWith(prefix)) n += 1;
+    return n;
+  };
+
+  // 🔴 WHICH SOURCE OF `content-templating` FIRED. `heuristic:content-templating:fired` does not say
+  // WHICH fingerprint source produced a score, and the shadow phase's whole question of a signal is
+  // whether IT, specifically, is earning its place. The deleted comment source fired zero times
+  // across every run it shipped in while that was invisible inside a single counter; this is what
+  // makes the same failure visible for the next source folded in here.
+  //
+  // 🔴 `fired_text` IS GONE, AND ITS ABSENCE IS THE INTENDED, VISIBLE SIGNAL. The comment source it
+  // counted has been deleted, so the key will never appear in another run's counters. A reader
+  // comparing run series across this change sees a key stop rather than go to zero — which is the
+  // honest shape, because a zero would assert the source was read and found nothing.
+  //
+  // 🔴 AND TODAY IT CANNOT DIVERGE FROM `fired`. THAT IS NOT A CAVEAT, IT IS THE READING
+  // INSTRUCTION. `fired` counts scored members whose `content-templating` sub-score is above zero
+  // across EVERY namespace in the index; this counts the same members across `file:` alone, over the
+  // same population (`scores` is `cohort.members` mapped one-to-one). With the comment source
+  // deleted the index carries exactly ONE namespace — `evidence.test.ts` pins every key in
+  // `membersPerFingerprint` and `fingerprintsByUser` as `file:`-prefixed — so the prefix filter
+  // rejects nothing and the two counters are EQUAL BY CONSTRUCTION on every run, not merely equal so
+  // far. An operator charting the pair gets two identical lines, and reading that agreement as the
+  // decomposition being exercised is the exact error this paragraph exists to stop: the lines agree
+  // by arithmetic, and they would agree just as perfectly if the decomposition were broken.
+  //
+  // WHAT MAKES IT INFORMATIVE AGAIN, stated as a trigger rather than as a hope: the first run whose
+  // index carries a SECOND namespace. From that run `fired` counts both sources and this one counts
+  // `file:`, and the gap between them is the new source's own contribution — with no change to this
+  // code. `evidence.test.ts` fails the moment a second `*_FINGERPRINT_PREFIX` is declared in
+  // `fingerprint-keys.ts`, which is where that contract lives, so this paragraph is made to expire
+  // rather than left to rot.
+  //
+  // 🔴 WHY IT IS KEPT RATHER THAN DELETED UNTIL THEN, given it measures nothing today. The two
+  // sentences above are the whole argument for the counter's PRESENT value and they concede it is
+  // nil; what removing it would cost is the module's own convention for a vanishing key, stated in
+  // the `fired_text` paragraph above and asserted in `run.test.ts`: a key that stops appearing says
+  // THE SOURCE IS NO LONGER READ. `fired_text` stopping says something true; `fired_filename`
+  // stopping would say the filename source went dark, on a run where it is the only source there
+  // is — a false statement on the surface that renders these (`abuse_detection_run.counters`,
+  // listed key by key on the run page), and the opposite of what its absence would mean.
+  const firedFromSource = (prefix: string) =>
+    cohort.members.filter((m) => contentTemplatingSourceScore(m.userId, signals, prefix) > 0)
+      .length;
+
+  // 🔴 WHICH HALF OF `asset-staging` FIRED — the same decomposition, for the same reason. That
+  // heuristic answers two questions about one source (how many staged uploads, and how concentrated
+  // in time), and `heuristic:asset-staging:fired` cannot say which of them is earning its place.
+  //
+  // 🔴 THIS COMMENT USED TO NAME A QUESTION THESE COUNTERS CAN NO LONGER ANSWER, AND THE CORRECTION
+  // MATTERS BECAUSE THE OLD SENTENCE READ AS COVERAGE. It said they were here to settle "whether the
+  // same-second half ever fires on an account the volume half did not already carry". Since the
+  // firing point moved to two that has a known answer — NEVER — and it is known by arithmetic
+  // rather than by measurement: a same-second group is a subset of the staged rows, so a burst of
+  // two implies a count of at least two, and both halves now share boundaries (see `BURST_ONE_AT`).
+  // `fired_burst > 0 && fired_volume == 0` is unreachable, so a run reporting it is a defect in the
+  // evidence fold, not a finding about accounts. Leaving the old sentence would have had someone
+  // watch a counter for a signal that cannot arrive and read its silence as an answer.
+  //
+  // WHAT THEY CAN STILL SETTLE, which is why they are kept: `fired_burst` is the population of
+  // accounts whose staged uploads arrived in one batch, and the question is whether THAT population
+  // is actioned at a different rate than the accounts carried by volume alone. That is a grading
+  // question over outcomes, answered by joining these counters to moderation results — not by
+  // either counter on its own. If the answer is "no different", the burst arm has no reason to
+  // exist and the honest edit is to delete it; if it separates, that is the evidence for giving it
+  // a tighter boundary than the volume half again, which is the only thing that would make it
+  // affect a score.
+  //
+  // Counted over EVERY scored member, matching `fired`'s own population. They may sum to MORE than
+  // `fired` — an account can be both, and attributing it to whichever won a `>` comparison would
+  // invent a tie-break the data does not support.
+  const stagedHalfFired = (half: 'volume' | 'burst') =>
+    cohort.members.filter((m) => assetStagingHalfScores(m.userId, signals)[half] > 0).length;
 
   const counters: Record<string, number> = {
     window_hours: windowHours,
@@ -276,23 +384,94 @@ export async function runBotAccountDetection(
     // the only things that tell the two apart, so a grading pass can exclude the runs whose ring
     // heuristics were blind rather than averaging them in as evidence of no rings.
     evidence_registration_ips: signals.sources.registrationIps ? 1 : 0,
-    // The content read's own availability, on the same 0/1 terms and for the same reason: a
-    // templating score of 0 across the cohort means "nobody templated" only when this is 1.
-    evidence_content_samples: signals.sources.contentSamples ? 1 : 0,
-    evidence_content_budget_exhausted: signals.sources.contentBudgetExhausted ? 1 : 0,
-    evidence_members_sampled_for_content: signals.sources.membersSampledForContent,
-    evidence_content_budget: maxContentSamples,
     evidence_distinct_registration_ips: signals.membersPerIp.size,
     evidence_distinct_email_domains: signals.membersPerDomain.size,
-    evidence_distinct_content_fingerprints: signals.membersPerFingerprint.size,
+    // 🔴 COUNTED PER NAMESPACE, NOT AS `membersPerFingerprint.size`, even though one source makes
+    // the two equal today. The bare size silently redefines this series the moment a second source
+    // is folded in: a run whose count jumped from 3 to 4,000 would read as an explosion of filename
+    // sharing on the day the new source shipped. Separate questions get separate keys.
+    //
+    // 🔴 `evidence_distinct_content_fingerprints` IS GONE with the comment source it counted, for
+    // the reason `fired_text` is — a key that stops appearing says "not read any more"; a key
+    // reporting 0 would assert the source was read and found nothing.
+    evidence_distinct_filename_fingerprints: distinctFingerprints(FILENAME_FINGERPRINT_PREFIX),
+    evidence_filename_samples: signals.sources.filenameSamples ? 1 : 0,
+    evidence_filename_budget_exhausted: signals.sources.filenameBudgetExhausted ? 1 : 0,
+    evidence_members_sampled_for_filenames: signals.sources.membersSampledForFilenames,
+    evidence_filename_budget: maxFilenameSamples,
+
+    // The staged-image source, on the same 0/1 terms as the two above and emitted on every run. For
+    // `asset-staging` the availability flag matters MORE than it does for the ring heuristics: a
+    // zero from this source that nobody read means "these accounts staged nothing", which is a claim
+    // about each account's own uploads rather than a weaker version of a claim about a ring.
+    evidence_staged_images: signals.sources.stagedImages ? 1 : 0,
+    evidence_staged_image_budget_exhausted: signals.sources.stagedImageBudgetExhausted ? 1 : 0,
+    evidence_members_sampled_for_staged_images: signals.sources.membersSampledForStagedImages,
+    evidence_staged_image_budget: maxStagedImageSamples,
+    // How many members had ANY staged upload — the denominator for the heuristic's own rate, and the
+    // number that says whether "nobody scored" means the signal is rare or the read is empty.
+    evidence_members_with_staged_images: signals.stagedImagesByUser.size,
+
+    // 🔴 THE SOURCE-FAILURE LEDGER. Every other evidence counter above answers "was this heuristic
+    // blind", and each of them reads `0` on a quiet day AND on a broken one. That is not a
+    // hypothetical: a run shipped whose filename read died on every attempt, and its counters —
+    // `evidence_filename_samples: 0`, `evidence_members_sampled_for_filenames: 0`,
+    // `evidence_distinct_filename_fingerprints: 0`, `evidence_filename_budget_exhausted: 0` — were
+    // number for number the counters of a day on which nobody uploaded anything. The run reported
+    // success, the report was filed, nothing alerted, and the only record of the failure was a log
+    // line.
+    //
+    // 🔴 NOTHING READS THIS COUNTER YET, AND CALLING IT "the counter to alert on" WAS THE SAME
+    // MISTAKE ONE LEVEL UP. These keys land in `abuse_detection_run.counters`; no consumer anywhere
+    // reads that column to alert on, and this change does not add one. What DOES close the loop
+    // today is the other two halves of it: the `bot-account-detection:signals` log line above now
+    // carries `readFailures` in a structured, queryable payload, and the report summary below now
+    // says FAILED rather than "did not run or failed" on a board a moderator already reads. The
+    // counter is emitted so a consumer has something to read when one exists. That is its whole
+    // present value, and it is written down rather than dressed up as something stronger.
+    //
+    // 🔴 WHY THE SHAPE IS RIGHT NOW RATHER THAN LATER: it is set ONLY inside a `catch` (see
+    // `CohortSignals.sources.readFailures`). No empty cohort, no empty result, no absent ClickHouse
+    // client and no exhausted budget can raise it above zero — so `> 0` means a read threw, full
+    // stop, and there is no quiet-day reading of a non-zero. Every key here is emitted on every run,
+    // zeros included, so an absent key means the producer did not run rather than that nothing
+    // broke.
+    //
+    // 🔴 THE PER-SOURCE KEYS ARE FOR TRIAGE, NOT FOR DISAMBIGUATION. An earlier version of this
+    // comment justified them by the total's reassuring default — a run that never got far enough
+    // reads as "nothing broke" — and that reasoning does not survive contact with them, since they
+    // default to `0` for exactly the same reason and so say nothing the total does not. What they
+    // add is WHICH read broke: ClickHouse, the filename read, or the staged-image read. That is the
+    // difference between a fix aimed at the right source and a morning spent reading logs.
+    //
+    // 🔴 `evidence_content_read_failed` IS GONE, and the TOTAL now sums three terms rather than
+    // four. A run's total can therefore only fall as a result of this change, never rise — and it
+    // could only ever have counted the comment read, which no longer happens.
+    evidence_source_read_failures:
+      (signals.sources.readFailures.registrationIps ? 1 : 0) +
+      (signals.sources.readFailures.filenameSamples ? 1 : 0) +
+      (signals.sources.readFailures.stagedImages ? 1 : 0),
+    evidence_registration_ips_read_failed: signals.sources.readFailures.registrationIps ? 1 : 0,
+    evidence_filename_read_failed: signals.sources.readFailures.filenameSamples ? 1 : 0,
+    evidence_staged_image_read_failed: signals.sources.readFailures.stagedImages ? 1 : 0,
+
     domains_suppressed_common: domainsSuppressed,
 
     ...heuristicCounters(scores),
+    [`heuristic:${CONTENT_TEMPLATING_ID}:fired_filename`]: firedFromSource(
+      FILENAME_FINGERPRINT_PREFIX
+    ),
+    [`heuristic:${ASSET_STAGING_ID}:fired_volume`]: stagedHalfFired('volume'),
+    [`heuristic:${ASSET_STAGING_ID}:fired_burst`]: stagedHalfFired('burst'),
     // Over EVERY scored member, not only the reported ones — see `confidenceBucketCounters`.
     ...confidenceBucketCounters(scores),
     // Over the REPORTED members only: which findings rest on ONE heuristic and nothing else. See
-    // `soleSignalCounters` — this is what a known collision (a generation-parameter paste matching
-    // itself under `content-templating`) shows up as, and it is not visible in `fired`.
+    // `soleSignalCounters` — this is what a known collision shows up as, and it is not visible in
+    // `fired`. 🔴 THE COLLISION THIS LINE USED TO NAME — a generation-parameter paste matching
+    // itself under `content-templating` — IS RETRACTED: it depended on the deleted comment source
+    // and on a digit masking the filename fingerprinter deliberately does not apply, so it cannot
+    // occur. The reachable one is a generic filename several unrelated new accounts happen to share;
+    // `soleSignalCounters` carries the worked arithmetic.
     ...soleSignalCounters(reported, heuristics),
   };
 
@@ -311,8 +490,13 @@ export async function runBotAccountDetection(
     // 🔴 THE SUPPRESSION SENTENCE. The counters carry this too, but the summary is what a human
     // reads first, and a finding count with no denominator beside it is the shape of every
     // reassuring zero this detector was built to avoid producing.
-    ` ${reported.length} scored at or above the ${minConfidence.toFixed(
-      2
+    // 🔴 THE CUT IS RENDERED EXACTLY, NOT TO TWO PLACES. `toFixed(2)` printed the default threshold
+    // as `0.11` once it was re-derived to 0.1125 for a four-heuristic registry — a summary stating a
+    // looser cut than the one it applied, in the sentence a human reads to know what they are
+    // looking at. Four places with the trailing zeros trimmed renders 0.15 as `0.15` and 0.1125 as
+    // `0.1125`, and keeps an operator-supplied `1/3` from spilling seventeen digits.
+    ` ${reported.length} scored at or above the ${String(
+      Number(minConfidence.toFixed(4))
     )} reporting threshold and ` +
     `appear below; ${suppressed.length} scored under it and are counted in the ` +
     `confidence_bucket_* counters but NOT reported as findings.` +
@@ -320,8 +504,12 @@ export async function runBotAccountDetection(
     // stops a reader treating a low-confidence run as evidence that no ring existed.
     (signals.sources.registrationIps
       ? ''
-      : ` 🔴 REGISTRATION-IP DATA WAS UNAVAILABLE this run, so the clustering heuristic scored on ` +
-        `email domain alone — a low score from it is not evidence that accounts share no IP.`) +
+      : ` 🔴 REGISTRATION-IP DATA WAS UNAVAILABLE this run` +
+        (signals.sources.readFailures.registrationIps
+          ? ` BECAUSE THE READ FAILED (counted in evidence_source_read_failures)`
+          : ``) +
+        `, so the clustering heuristic scored on email domain alone — a low score from it is not ` +
+        `evidence that accounts share no IP.`) +
     // 🔴 THE READ RAN AND MATCHED NOTHING — the case the availability flag alone cannot express.
     // `evidence_registration_ips: 1` with `evidence_distinct_registration_ips: 0` over a non-empty
     // cohort is the signature of a query that is wrong rather than of a day with no shared
@@ -334,17 +522,50 @@ export async function runBotAccountDetection(
         `wrong column, a moved table or an over-tight filter looks like — the two are not ` +
         `distinguishable from this run alone.`
       : '') +
-    (signals.sources.contentSamples
+    // `content-templating`'s source gets its own disclosures: a zero from a source that never ran is
+    // not a zero from a source that found nothing, and only these sentences tell a reader which one
+    // they are looking at. (The comment-text source had a matching pair of sentences; they went with
+    // the source.)
+    // 🔴 IT NAMES WHICH OF THE TWO HAPPENED. "did not run or failed" was one sentence covering two
+    // situations that call for different actions — one is a deployment without the source wired up,
+    // the other is a broken read that needs fixing today — and a reader could not tell them apart
+    // from the report OR from the counters. `readFailures` is what separates them.
+    (signals.sources.filenameSamples
       ? ''
-      : ` 🔴 CONTENT SAMPLE DATA WAS UNAVAILABLE this run — the read either did not run or failed ` +
-        `and its partial result was discarded — so the content-templating heuristic scored 0 for ` +
-        `every member for want of data. That is not evidence that no accounts posted the same text. ` +
-        `The rest of the run was scored normally.`) +
-    (signals.sources.contentBudgetExhausted
-      ? ` 🔴 THE CONTENT SAMPLE BUDGET (${maxContentSamples} rows) WAS EXHAUSTED after ` +
-        `${signals.sources.membersSampledForContent} of ${cohort.members.length} members. Members ` +
-        `are sampled newest-first, so the unsampled remainder is the OLDEST end of the window and ` +
-        `scored 0 on content templating for want of data.`
+      : signals.sources.readFailures.filenameSamples
+      ? ` 🔴 THE UPLOADED-FILENAME READ FAILED this run and its partial result was discarded, so ` +
+        `the content-templating heuristic scored 0 for every member for want ` +
+        `of data. That is not evidence that no accounts uploaded files under the same name — it is ` +
+        `a broken read, and it is counted in evidence_source_read_failures.`
+      : ` 🔴 UPLOADED-FILENAME DATA WAS UNAVAILABLE this run — the read did not run — so the ` +
+        `content-templating heuristic scored 0 for every member for want of ` +
+        `data. That is not evidence that no accounts uploaded files under the same name.`) +
+    (signals.sources.filenameBudgetExhausted
+      ? ` 🔴 THE FILENAME SAMPLE BUDGET (${maxFilenameSamples} rows) WAS EXHAUSTED after ` +
+        `${signals.sources.membersSampledForFilenames} of ${cohort.members.length} members. ` +
+        `Members are sampled newest-first, so the unsampled remainder is the OLDEST end of the ` +
+        `window and scored 0 on filename clustering for want of data.`
+      : '') +
+    // 🔴 THE STAGED-IMAGE SOURCE'S OWN DISCLOSURES, AND THEY SAY SOMETHING STRONGER THAN THE OTHERS.
+    // A dead ring source leaves a weaker version of a claim about the cohort; a dead staged-image
+    // read leaves `asset-staging` asserting that every account's uploads were published, which is a
+    // claim about each account individually and is simply false rather than merely weak. The
+    // sentence says so in those terms, and names which of the two happened.
+    (signals.sources.stagedImages
+      ? ''
+      : signals.sources.readFailures.stagedImages
+      ? ` 🔴 THE STAGED-IMAGE READ FAILED this run and its partial result was discarded, so the ` +
+        `asset-staging heuristic scored 0 for every member for want of data. That is not evidence ` +
+        `that these accounts published what they uploaded — it is a broken read, and it is counted ` +
+        `in evidence_source_read_failures.`
+      : ` 🔴 STAGED-IMAGE DATA WAS UNAVAILABLE this run — the read did not run — so the ` +
+        `asset-staging heuristic scored 0 for every member for want of data. That is not evidence ` +
+        `that these accounts published what they uploaded.`) +
+    (signals.sources.stagedImageBudgetExhausted
+      ? ` 🔴 THE STAGED-IMAGE BUDGET (${maxStagedImageSamples} rows) WAS EXHAUSTED after ` +
+        `${signals.sources.membersSampledForStagedImages} of ${cohort.members.length} members. ` +
+        `Members are sampled newest-first, so the unsampled remainder is the OLDEST end of the ` +
+        `window and scored 0 on asset staging for want of data.`
       : '') +
     (cohort.capped
       ? ` 🔴 TRUNCATED at the ${maxAccounts}-account cap. Accounts are read NEWEST FIRST, so the ` +

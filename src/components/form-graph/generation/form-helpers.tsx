@@ -1,9 +1,12 @@
-import { Input, Menu, Tooltip, UnstyledButton } from '@mantine/core';
+import { Button, Input, Menu, Tooltip, UnstyledButton } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
+import { IconSparkles } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCallback, useEffect, useMemo } from 'react';
 
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
+import type { PromptEnhanceImage } from '~/components/Generation/PromptEnhance/promptEnhanceStore';
+import { triggerPromptEnhance } from '~/components/Generation/PromptEnhance/triggerPromptEnhance';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
@@ -12,6 +15,7 @@ import {
   type VersionGroup,
   type VersionOption,
 } from '~/shared/form-graph/generation/checkpoint';
+import type { ResourceData } from '~/shared/data-graph/generation/common';
 import type { SnippetsValue } from '~/shared/form-graph/generation/defs';
 import { trpc } from '~/utils/trpc';
 
@@ -39,6 +43,51 @@ export function ControllerLabel({
         {info}
       </InfoPopover>
       {required && <span className="text-red-5">*</span>}
+    </div>
+  );
+}
+
+/** A prompt label with the Enhance button on its right, shown once the prompt has text. */
+export function PromptLabel({
+  store,
+  prompt,
+  ...labelProps
+}: React.ComponentProps<typeof ControllerLabel> & {
+  store: GenerationStore;
+  prompt: string | undefined;
+}) {
+  return (
+    <div className="flex w-full items-center justify-between gap-2">
+      <ControllerLabel {...labelProps} />
+      {prompt && (
+        <Button
+          variant="subtle"
+          size="compact-xs"
+          leftSection={<IconSparkles size={14} />}
+          onClick={() => {
+            const snap = store.getSnapshot().state as {
+              ecosystem?: string;
+              negativePrompt?: string;
+              resources?: ResourceData[];
+              snippets?: SnippetsValue;
+              images?: PromptEnhanceImage[];
+            };
+            triggerPromptEnhance(
+              {
+                prompt,
+                negativePrompt: snap.negativePrompt,
+                ecosystem: snap.ecosystem ?? '',
+                resources: snap.resources,
+                snippetTargets: snap.snippets?.targets,
+                images: snap.images,
+              },
+              (workflow) => store.set({ workflow })
+            );
+          }}
+        >
+          Enhance
+        </Button>
+      )}
     </div>
   );
 }

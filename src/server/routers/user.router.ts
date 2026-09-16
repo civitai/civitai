@@ -297,7 +297,11 @@ export const userRouter = router({
     .meta({ requiredScope: TokenScope.Full })
     .query(({ ctx }) => ({ token: createToken(ctx.user.id) })),
   removeAllContent: moderatorProcedure.input(getByIdSchema).mutation(async ({ input, ctx }) => {
-    await removeAllContent(input);
+    // `actorUserId` is threaded so the App Blocks storage purge this now triggers
+    // records WHO ordered the wipe. The other caller of `removeAllContent`
+    // (`/api/mod/remove-all-content`, a secret-authed WebhookEndpoint) has no user
+    // identity and correctly passes none.
+    await removeAllContent({ ...input, actorUserId: ctx.user.id });
     ctx.track.userActivity({
       type: 'RemoveContent',
       targetUserId: input.id,

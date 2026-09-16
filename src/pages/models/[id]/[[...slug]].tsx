@@ -93,6 +93,7 @@ import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionM
 import { AddToHubMenuItem } from '~/components/MenuItems/AddToHubMenuItem';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { Gated } from '~/components/Gated/Gated';
+import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
@@ -814,6 +815,7 @@ export default function ModelDetailsV2({
     description: removeTags(model.description ?? ''),
     name: model.name,
     image: imageUrl,
+    // Google rejects an aggregateRating whose item has no author, so deleted users get a placeholder.
     author:
       !model.user.deletedAt && model.user.username
         ? {
@@ -823,7 +825,7 @@ export default function ModelDetailsV2({
               ? `${env.NEXT_PUBLIC_BASE_URL}/user/${model.user.username}`
               : undefined,
           }
-        : undefined,
+        : { '@type': 'Person', name: 'Civitai user' },
     datePublished: model.publishedAt,
     ...(totalRatingCount > 0 && {
       aggregateRating: {
@@ -877,6 +879,13 @@ export default function ModelDetailsV2({
         canonical: `/models/${model.id}/${slugit(model.name)}`,
         alternate: `/models/${model.id}`,
         schema: metaSchema,
+        breadcrumb: buildBreadcrumbSchema(env.NEXT_PUBLIC_BASE_URL ?? '', [
+          { name: 'Models', path: '/models' },
+          ...(category
+            ? [{ name: category.name, path: `/tag/${encodeURIComponent(category.name)}` }]
+            : []),
+          { name: model.name },
+        ]),
         deIndex:
           model.status !== ModelStatus.Published ||
           model.availability === Availability.Unsearchable,

@@ -122,6 +122,9 @@ export type CapturableSearchInput = {
   modelId?: number;
   modelVersionId?: number;
   userId?: number;
+  followed?: boolean;
+  /** Resolved by the primary path only; `followed` without it is not servable. */
+  followedUserIds?: number[];
   postId?: number;
   collectionId?: number;
   hubId?: number;
@@ -137,7 +140,7 @@ export type FeedRequestSource = 'getImagesFromSearch' | 'getAllImages';
 export type FeedRequestOutcome = {
   source: FeedRequestSource;
   /** Meili path only: which feed-fetch-filter variant answered ('none' = no search client). */
-  filterMode?: 'pre' | 'post' | 'none';
+  filterMode?: 'pre' | 'post' | 'none' | 'feed';
   error?: boolean;
   elapsedMs: number;
   resultIds: number[];

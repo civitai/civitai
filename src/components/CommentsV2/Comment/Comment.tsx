@@ -138,9 +138,10 @@ export function CommentContent({
   );
 
   const handleCopyLink = () => {
-    const url = new URL(window.location.href);
-    url.searchParams.set('highlight', String(comment.id));
-    clipboard.copy(url.toString());
+    // Resolve through /comments/v2/<id> rather than patching the current URL: the latter keeps
+    // whatever deep-link params (commentParentId, threadId) the page arrived with, so a link copied
+    // from a notification thread stays rooted on the notification's comment instead of this one.
+    clipboard.copy(`${window.location.origin}/comments/v2/${comment.id}`);
     showSuccessNotification({ message: 'Comment link copied to clipboard' });
   };
 

@@ -278,6 +278,33 @@ module.exports = {
       },
     },
     {
+      // 🔴 THE `/apps/*` CHROME MUST NOT BRANCH A RENDER ON A VIEWPORT/CONTAINER HOOK.
+      // The rail/drawer swap is a CSS media query on purpose, so React never learns the
+      // breakpoint was crossed and the server markup matches the first client paint.
+      // These hooks have no server answer — `useContainerSmallerThan` in particular
+      // returns FALSE while `inlineSize === 0`, which is what the server always sees —
+      // so branching on one reintroduces the hydration mismatch this surface has already
+      // paid for once.
+      //
+      // SCOPE: deliberately narrow. `useIsMobile` alone appears in 83 files across the
+      // repo and most of those are legitimate client-only surfaces, so this is NOT a
+      // repo-wide ban; it is switched on for the chrome that is server-rendered and
+      // hydration-sensitive. Widen the glob when another surface earns it.
+      //
+      // Replaces a 250-line hand-rolled source scanner that applied to ONE file and was
+      // bypassable in five consecutive audit rounds — see the rule header in
+      // eslint-local-rules.js.
+      files: [
+        'src/components/Apps/AppsPageLayout.tsx',
+        'src/components/Apps/AppsRailNav.tsx',
+        'src/components/Apps/useAppsNavSections.ts',
+        'src/components/Apps/appsRailState.tsx',
+      ],
+      rules: {
+        'local-rules/no-ssr-divergent-media-query': 'error',
+      },
+    },
+    {
       // Browser-mode component tests must not use an http(s) URL as an image
       // source. Nothing serves it to the test browser, so the <img> fires a real
       // `error` event a few ms after mount and the component's own onError

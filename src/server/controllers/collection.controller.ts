@@ -38,6 +38,7 @@ import {
   getCollectionItemCount,
   getCollectionItemsByCollectionId,
   getContributorCount,
+  getPendingCollectionReviewCounts,
   getPendingReviewCount,
   getUserCollectionItemsByItem,
   getUserCollectionPermissionsById,
@@ -169,14 +170,26 @@ export const getAllUserCollectionsHandler = async ({
   const { user } = ctx;
 
   try {
-    const collections = await getUserCollectionsWithPermissions({
-      input: {
-        ...input,
-        userId: user.id,
-      },
-    });
+    // Concurrent, not serial: the permission query and the pending-review
+    // aggregate hit independent backends and share only `user.id`. Both SSG
+    // prefetches run this inside getServerSideProps, so a second round trip
+    // lands straight on TTFB.
+    const [collections, counts] = await Promise.all([
+      getUserCollectionsWithPermissions({ input: { ...input, userId: user.id } }),
+      input.withPendingReviewCounts
+        ? getPendingCollectionReviewCounts({ userId: user.id }).catch(() => ({
+            total: 0,
+            byCollection: {} as Record<number, number>,
+          }))
+        : undefined,
+    ]);
 
-    return collections;
+    if (!counts) return collections;
+
+    return collections.map((collection) => ({
+      ...collection,
+      pendingReviewCount: counts.byCollection[collection.id] ?? 0,
+    }));
   } catch (error) {
     throw throwDbError(error);
   }

@@ -12,6 +12,7 @@ import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
 import type { ReactElement } from 'react';
+import { useState } from 'react';
 import { AdsProvider } from '~/components/Ads/AdsProvider';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
@@ -51,6 +52,7 @@ import { ThirdPartyConsentProvider } from '~/components/Consent/ThirdPartyConsen
 import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
 import { FaroProvider } from '~/components/Faro/FaroProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
+import { AppsRailProvider } from '~/components/Apps/appsRailState';
 // import { PaddleProvider } from '~/providers/PaddleProvider';
 // import { PaypalProvider } from '~/providers/PaypalProvider';
 // import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
@@ -87,6 +89,7 @@ import { applyNodeOverrides } from '~/utils/node-override';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion } from '~/server/utils/region-blocking';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
+import { getSiteSchema } from '~/components/Meta/site-schema';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
 
@@ -165,6 +168,8 @@ function MyApp(props: CustomAppProps) {
     },
   } = props;
 
+  const [siteSchema] = useState(() => getSiteSchema({ domain, serverDomains }));
+
   // // Standalone pages bypass all providers and render directly
   // if ('standalone' in Component && Component.standalone) {
   //   return <Component {...pageProps} />;
@@ -220,6 +225,13 @@ function MyApp(props: CustomAppProps) {
     >
       <Head>
         <title>Civitai | Share your models</title>
+        {siteSchema && (
+          <script
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{ __html: JSON.stringify(siteSchema) }}
+            key="site-schema"
+          />
+        )}
       </Head>
       <ThemeProvider colorScheme={colorScheme}>
         <ThirdPartyConsentProvider
@@ -235,58 +247,71 @@ function MyApp(props: CustomAppProps) {
           >
             <UpdateRequiredWatcher>
               <IsClientProvider>
-                <ClientHistoryStore />
-                <RegisterCatchNavigation />
-                <RouterTransition />
-                {/* <ChadGPT isAuthed={!!session} /> */}
-                <FeatureFlagsProvider flags={flags} userFlags={userFeatureFlags}>
-                  {/* Faro RUM bootstrap — dark until the `faro` flag + build-args are on */}
-                  <FaroProvider />
-                  <GoogleAnalytics />
-                  <AccountProvider>
-                    <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
-                      <ErrorBoundary>
-                        <BrowserSettingsProvider>
-                          <BrowsingLevelProvider>
-                            <BrowsingSettingsAddonsProvider initialData={browsingSettingsAddons}>
-                              <SignalsProviderStack>
-                                <ActivityReportingProvider>
-                                  <ReferralsProvider {...cookies.referrals}>
-                                    <FiltersProvider>
-                                      <AdsProvider gated={adsGated}>
-                                        <HiddenPreferencesProvider>
-                                          <CivitaiLinkProvider>
-                                            <BrowserRouterProvider>
-                                              <IntersectionObserverProvider>
-                                                <ToursProvider>
-                                                  <AuctionContextProvider>
-                                                    <BaseLayout>
-                                                      {isProd && <TrackPageView />}
-                                                      <CustomModalsProvider>
-                                                        {getLayout(<Component {...pageProps} />)}
-                                                        {/* <StripeSetupSuccessProvider /> */}
-                                                        <DialogProvider />
-                                                        <RoutedDialogProvider />
-                                                      </CustomModalsProvider>
-                                                    </BaseLayout>
-                                                  </AuctionContextProvider>
-                                                </ToursProvider>
-                                              </IntersectionObserverProvider>
-                                            </BrowserRouterProvider>
-                                          </CivitaiLinkProvider>
-                                        </HiddenPreferencesProvider>
-                                      </AdsProvider>
-                                    </FiltersProvider>
-                                  </ReferralsProvider>
-                                </ActivityReportingProvider>
-                              </SignalsProviderStack>
-                            </BrowsingSettingsAddonsProvider>
-                          </BrowsingLevelProvider>
-                        </BrowserSettingsProvider>
-                      </ErrorBoundary>
-                    </CivitaiSessionProvider>
-                  </AccountProvider>
-                </FeatureFlagsProvider>
+                {/* The `/apps/*` left rail's collapse state, SSR-seeded from the cookie
+                    `parseCookies` already reads above — the same shape as
+                    `cookies.consent` / `cookies.disableHidden` / `cookies.referrals`
+                    going to their own providers.
+
+                    🔴 IT IS MOUNTED HERE, ABOVE THE ROUTER OUTLET, BECAUSE THAT IS WHAT
+                    MAKES THE COLLAPSE ONE GLOBAL VALUE. `AppsPageLayout` is unmounted
+                    and remounted on every navigation, so state held there would re-open
+                    the rail on every click between apps pages — and
+                    `AppsPageLayout.chromeAlignment.browser.test.tsx` asserts the rail's
+                    left edge and width are identical on all 12 routes. */}
+                <AppsRailProvider value={cookies.appsRail}>
+                  <ClientHistoryStore />
+                  <RegisterCatchNavigation />
+                  <RouterTransition />
+                  {/* <ChadGPT isAuthed={!!session} /> */}
+                  <FeatureFlagsProvider flags={flags} userFlags={userFeatureFlags}>
+                    {/* Faro RUM bootstrap — dark until the `faro` flag + build-args are on */}
+                    <FaroProvider />
+                    <GoogleAnalytics />
+                    <AccountProvider>
+                      <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
+                        <ErrorBoundary>
+                          <BrowserSettingsProvider>
+                            <BrowsingLevelProvider>
+                              <BrowsingSettingsAddonsProvider initialData={browsingSettingsAddons}>
+                                <SignalsProviderStack>
+                                  <ActivityReportingProvider>
+                                    <ReferralsProvider {...cookies.referrals}>
+                                      <FiltersProvider>
+                                        <AdsProvider gated={adsGated}>
+                                          <HiddenPreferencesProvider>
+                                            <CivitaiLinkProvider>
+                                              <BrowserRouterProvider>
+                                                <IntersectionObserverProvider>
+                                                  <ToursProvider>
+                                                    <AuctionContextProvider>
+                                                      <BaseLayout>
+                                                        {isProd && <TrackPageView />}
+                                                        <CustomModalsProvider>
+                                                          {getLayout(<Component {...pageProps} />)}
+                                                          {/* <StripeSetupSuccessProvider /> */}
+                                                          <DialogProvider />
+                                                          <RoutedDialogProvider />
+                                                        </CustomModalsProvider>
+                                                      </BaseLayout>
+                                                    </AuctionContextProvider>
+                                                  </ToursProvider>
+                                                </IntersectionObserverProvider>
+                                              </BrowserRouterProvider>
+                                            </CivitaiLinkProvider>
+                                          </HiddenPreferencesProvider>
+                                        </AdsProvider>
+                                      </FiltersProvider>
+                                    </ReferralsProvider>
+                                  </ActivityReportingProvider>
+                                </SignalsProviderStack>
+                              </BrowsingSettingsAddonsProvider>
+                            </BrowsingLevelProvider>
+                          </BrowserSettingsProvider>
+                        </ErrorBoundary>
+                      </CivitaiSessionProvider>
+                    </AccountProvider>
+                  </FeatureFlagsProvider>
+                </AppsRailProvider>
               </IsClientProvider>
             </UpdateRequiredWatcher>
           </SessionProvider>
@@ -491,9 +516,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     // outright. The client query self-heals on its 5-minute refetch.
     liveNow = false,
   } = settingsBootstrap;
-  const { getFeatureFlagsAsync, computeUserFeatureFlagsOverlay } = await import(
-    '~/server/services/feature-flags.service'
-  );
+  const { getFeatureFlagsAsync, computeUserFeatureFlagsOverlay, getFliptGatedEligibility } =
+    await import('~/server/services/feature-flags.service');
   const flags = await getFeatureFlagsAsync({
     user: session?.user,
     host: request?.headers.host,
@@ -519,7 +543,11 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   //   rides down through pageProps to AppProvider as-is.
   let userFeatureFlags: FeatureAccess | undefined;
   if (session?.user && settings) {
-    userFeatureFlags = computeUserFeatureFlagsOverlay(settings.features, flags);
+    userFeatureFlags = computeUserFeatureFlagsOverlay(
+      settings.features,
+      flags,
+      getFliptGatedEligibility({ user: session.user, host: request?.headers.host, req: request })
+    );
   }
 
   // SSR-seed `chat.getUserSettings` (logged-in only) so the chat widget reads a

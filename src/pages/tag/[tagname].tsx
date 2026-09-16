@@ -17,7 +17,7 @@ import styles from './[tagname].module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ctx, ssg }) => {
+  resolver: async ({ ctx, ssg, features }) => {
     const tagname = ctx.query.tagname as string;
 
     if (tagname) {
@@ -30,18 +30,23 @@ export const getServerSideProps = createServerSideProps({
     if (tagname) await ssg?.tag.getTagWithModelCount.prefetch({ name: tagname });
 
     let seoData: TagPageSeoData = { count: 0, models: [] };
+    let deIndexMatureOnly = false;
     if (tagname) {
-      const { getTagPageSeoData } = await import('~/server/services/tag.service');
-      seoData = await getTagPageSeoData({ name: tagname });
+      const { getTagPageSeoData, shouldDeIndexMatureOnlyTag } = await import(
+        '~/server/services/tag.service'
+      );
+      seoData = await getTagPageSeoData({ name: tagname, safeOnly: !!features?.isGreen });
+      deIndexMatureOnly = shouldDeIndexMatureOnlyTag(seoData);
     }
 
-    return { props: { tagname, seoData } };
+    return { props: { tagname, seoData, deIndexMatureOnly } };
   },
 });
 
 export default function TagPage({
   tagname,
   seoData,
+  deIndexMatureOnly,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { set, ...queryFilters } = useModelQueryParams();
 
@@ -97,7 +102,7 @@ export default function TagPage({
         title={`${tag?.name ?? tagname} AI Models | Civitai`}
         description={description}
         canonical={`/tag/${tagname}`}
-        deIndex={tag?.unfeatured ?? false}
+        deIndex={(tag?.unfeatured ?? false) || deIndexMatureOnly}
         schema={schema}
       />
       {tag && (
@@ -127,6 +132,7 @@ export default function TagPage({
             </Group>
             <ModelsInfinite
               filters={{ ...queryFilters, followed: false, newCreators: false, hidden: false }}
+              periodFallback
               showEof
               showAds
             />

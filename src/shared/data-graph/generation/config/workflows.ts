@@ -108,6 +108,7 @@ const TXT2IMG_IDS = [
   ECO.Grok,
   ECO.WanImage27,
   ECO.Ernie,
+  ECO.Ideogram,
   ECO.Lens,
   ECO.Krea2,
   ECO.MAI,

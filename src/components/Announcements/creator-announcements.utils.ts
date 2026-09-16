@@ -50,14 +50,17 @@ export function useIsCreatorMuted(creatorId?: number) {
   return data ?? false;
 }
 
-export function useToggleAnnouncementMute(creatorId: number) {
+export function useToggleAnnouncementMute(creatorId: number, creatorName?: string | null) {
   const queryUtils = trpc.useUtils();
   const mutation = trpc.announcement.toggleAnnouncementMute.useMutation({
     onSuccess: async (result) => {
+      // Mute and dismiss sit adjacent on the same card, so a confirmation naming neither the
+      // action nor the creator cannot tell a reader which of the two they just used.
+      const who = creatorName || 'this creator';
       showSuccessNotification({
         message: result.muted
-          ? 'Announcements from this creator are muted'
-          : 'Announcements from this creator are unmuted',
+          ? `Muted announcements from ${who}`
+          : `Unmuted announcements from ${who}`,
       });
       await Promise.all([
         queryUtils.announcement.getMutedCreators.invalidate(),

@@ -4,11 +4,12 @@ import { createCache } from './cache';
 import { dbRead } from './db';
 import { bounded } from './bounded';
 import { getImageReviewCounts } from './image-review.service';
-import { countImagesPendingIngestion, countIngestionErrorImages } from './ingestion.service';
+import { countStuckIngestion, countIngestionErrorImages } from './ingestion.service';
 import { getImageRatingReviewCount } from './image-rating-review.service';
 import { countModeratorArticles } from './articles.service';
 import { getArticleRatingReviewCounts } from './article-rating-reviews.service';
 import { getReportCounts } from './reports.service';
+import { countNewFeedback } from './feedback.service';
 
 export type SidebarCounts = Record<string, number>;
 
@@ -28,8 +29,9 @@ async function fetchCounts(): Promise<SidebarCounts> {
     articles,
     articleRatings,
     reports,
-    toIngest,
+    stuckIngestion,
     ingestionErrors,
+    feedbackNew,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
@@ -59,10 +61,13 @@ async function fetchCounts(): Promise<SidebarCounts> {
     countModeratorArticles(),
     getArticleRatingReviewCounts(),
     getReportCounts(),
-    // Both queues were populated and badgeless — the counts simply had no key. Bounded because
-    // neither predicate has an index of its own; see `bounded`.
-    bounded(countImagesPendingIngestion),
+    // Bounded: neither count is served by an index alone; see `bounded`.
+    bounded(countStuckIngestion),
     bounded(countIngestionErrorImages),
+    // NOT bounded: an index-only count over a table the producer can only grow five rows per user
+    // per hour. `bounded` exists for aggregates with no index of their own — wrapping this one in a
+    // 3-second race would add a timer and a nullable to buy nothing.
+    countNewFeedback(),
   ]);
   return {
     ...modes,
@@ -73,7 +78,8 @@ async function fetchCounts(): Promise<SidebarCounts> {
     reported: Number(reported?.count ?? 0),
     articles,
     articleRatings: articleRatings.Pending,
-    ...(toIngest != null ? { toIngest } : {}),
+    feedbackNew,
+    ...(stuckIngestion != null ? { stuckIngestion } : {}),
     ...(ingestionErrors != null ? { ingestionErrors } : {}),
   };
 }
