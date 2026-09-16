@@ -91,7 +91,7 @@
 --        - NO ENDPOINT EXISTS WHOSE PURPOSE IS REVOCATION. `revokeInstance` has
 --          exactly two production call sites, both in
 --          `block-registry.service.ts`, and in both the marker is a SIDE EFFECT:
---          `uninstallFromModel` (:2358) and `toggleEnabled(false)` (:2393);
+--          `uninstallFromModel` and `toggleEnabled(false)`;
 --        - both ARE reachable over tRPC (`blocks.router.ts:1848` and `:1810`,
 --          both `protectedProcedure`), and `assertCanManageBlocks` early-returns
 --          for moderators (`:1521`) — so a mod CAN set a marker deliberately,

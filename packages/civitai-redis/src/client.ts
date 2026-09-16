@@ -2327,9 +2327,11 @@ const REDIS_KEYS_UNPREFIXED = {
     // Per-blockInstanceId revocation marker; block-scope middleware 403s when present.
     // TTL is MAX_BLOCK_TOKEN_LIFETIME_SECONDS — the longest token it must outlive
     // (the dev token), NOT 15 minutes as this line said until 2026-09-16.
-    // 🔴 Deliberately NOT restated as a number here: per block-token-lifetimes.ts,
-    // a hardcoded figure is exactly what let this line claim 15min while dev
-    // tokens lived hours. Read the constant.
+    // 🔴 Deliberately NOT restated as a number here: per
+    // src/server/services/block-token-lifetimes.ts (the Next app — a different
+    // workspace package, so it cannot be imported from here), a hardcoded figure
+    // is exactly what let this line claim 15min while dev tokens lived hours.
+    // Read the constant there rather than trusting a number written here.
     REVOKED_INSTANCE: 'blocks:revoked-instance',
     // Per-ecosystem-key most-popular-Checkpoint cache (JSON ValidatedCheckpoint, 1h TTL).
     POPULAR_CHECKPOINT: 'blocks:popular-checkpoint',
