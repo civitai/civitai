@@ -4,16 +4,18 @@ import { page, userEvent } from 'vitest/browser';
 import type * as Notifications from '@mantine/notifications';
 import type * as TrackUtils from '../TrackView/track.utils';
 import type * as UseBuzz from '~/components/Buzz/useBuzz';
+import type * as BuzzUtils from './buzz.utils';
 
-// CONFIRMATION_TIMEOUT in InteractiveTipBuzzButton.tsx. Not exported, so the two are
-// kept in step by hand. `closes on its own` brackets the deadline from BOTH sides, so
-// moving the constant in either direction fails it rather than only lengthening it.
+// CONFIRMATION_TIMEOUT in InteractiveTipBuzzButton.tsx. Not exported, so the two are kept
+// in step by hand. `closes on its own` brackets the deadline from both sides, which catches
+// a constant moved OUTSIDE roughly [3500, 5400]ms — 5000 -> 4000 passes both halves. The
+// bracket is loose on purpose: tightening it trades mutation sensitivity for flake.
 const CONFIRMATION_TIMEOUT = 5000;
 const WELL_BEFORE_CLOSE = CONFIRMATION_TIMEOUT - 1500;
 const PAST_CLOSE = CONFIRMATION_TIMEOUT + 400;
 
 let mutationPending = false;
-const tipMutate = vi.fn((_vars: { amount: number; toAccountId: number }) => {
+const tipMutate = vi.fn<(vars: { amount: number; toAccountId: number }) => void>(() => {
   mutationPending = true;
 });
 const conditionalPerform = vi.fn((_amount: number, perform: () => void) => perform());
@@ -47,10 +49,10 @@ vi.mock('../TrackView/track.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof TrackUtils>()),
   useTrackEvent: () => ({ trackAction: vi.fn().mockResolvedValue(undefined) }),
 }));
-// Hand-listed rather than spread: the real module imports `trpc`, which this harness
-// deliberately keeps out of the browser graph. All five keys of the hook's return are
-// supplied so a future gate on one of them does not silently read undefined.
-vi.mock('./buzz.utils', () => ({
+// All five keys of the hook's return are supplied, so a future gate on one of them reads a
+// real value here rather than silently taking the undefined branch.
+vi.mock('./buzz.utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzUtils>()),
   useBuzzTransaction: () => ({
     tipUserMutation: { mutate: tipMutate, isPending: mutationPending },
     conditionalPerformTransaction: conditionalPerform,
@@ -74,6 +76,17 @@ const requireAmountField = () => {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// The confirm timer is armed by the click, not by the assertion that follows it, so waits
+// are measured from the click. Otherwise opening cost (~165ms, and worse on a loaded box)
+// comes out of the margin the lower bracket below depends on.
+let openedAt = 0;
+const waitFromOpen = (ms: number) => wait(Math.max(0, ms - (performance.now() - openedAt)));
+
+// Deliberately matches contenteditable="false" too. React renders the attribute either way,
+// so the narrow selector above goes null in the 'confirmed' state as well as on close — it
+// cannot tell a closed pop-up from one left open and merely uneditable.
+const anyAmountField = () => document.querySelector<HTMLElement>('[contenteditable]');
+
 const openTipPopover = async () => {
   renderWithProviders(
     <InteractiveTipBuzzButton toUserId={2} entityId={3} entityType="Image">
@@ -82,6 +95,7 @@ const openTipPopover = async () => {
   );
 
   await userEvent.click(page.getByText('tip', { exact: true }));
+  openedAt = performance.now();
   await expect.element(page.getByText('Tipping')).toBeInTheDocument();
   return requireAmountField();
 };
@@ -99,18 +113,18 @@ describe('InteractiveTipBuzzButton', () => {
   test('closes on its own after the confirmation timeout, and not before', async () => {
     await openTipPopover();
 
-    await wait(WELL_BEFORE_CLOSE);
+    await waitFromOpen(WELL_BEFORE_CLOSE);
     expect(amountField()).not.toBeNull();
 
-    await wait(PAST_CLOSE - WELL_BEFORE_CLOSE);
-    expect(amountField()).toBeNull();
+    await waitFromOpen(PAST_CLOSE);
+    expect(anyAmountField()).toBeNull();
   });
 
   test('keeps the pop-up open past the confirmation timeout while the amount field is focused', async () => {
     const field = await openTipPopover();
 
     field.focus();
-    await wait(PAST_CLOSE);
+    await waitFromOpen(PAST_CLOSE);
 
     expect(amountField()).not.toBeNull();
   });
@@ -122,7 +136,7 @@ describe('InteractiveTipBuzzButton', () => {
     field.blur();
     await wait(PAST_CLOSE);
 
-    expect(amountField()).toBeNull();
+    expect(anyAmountField()).toBeNull();
   });
 
   test('Enter in the amount field sends the typed amount', async () => {
@@ -136,6 +150,7 @@ describe('InteractiveTipBuzzButton', () => {
     expect(tipMutate.mock.calls[0][0]).toMatchObject({ amount: 50, toAccountId: 2 });
     // The balance gate must be asked about the amount actually being sent, not about
     // a stale counter — it is what opens the buy-Buzz modal instead of tipping.
+    expect(conditionalPerform).toHaveBeenCalledTimes(1);
     expect(conditionalPerform).toHaveBeenCalledWith(50, expect.any(Function));
   });
 
@@ -163,7 +178,9 @@ describe('InteractiveTipBuzzButton', () => {
     field.textContent = '50';
 
     await userEvent.keyboard('{Enter}');
-    await userEvent.keyboard('{Enter}');
+    field.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    );
 
     expect(tipMutate).toHaveBeenCalledTimes(1);
   });
