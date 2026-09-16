@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { feedFliptContext, feedHydrateQuery, serveFromFeed } from '../feed-primary.service';
+import {
+  feedFliptContext,
+  feedHydrateQuery,
+  reasonLabel,
+  serveFromFeed,
+} from '../feed-primary.service';
 import type { FeedAnswer } from '../feed-shadow.service';
 
 const base = { sort: 'Most Reactions', period: 'Week', browsingLevel: 31, limit: 100 };
@@ -73,6 +78,16 @@ describe('serveFromFeed follow feeds', () => {
     );
     expect(r).toEqual({ ok: true, page: { data: [], nextCursor: undefined, feedMs: 0 } });
     expect(fetchFeed).not.toHaveBeenCalled();
+  });
+});
+
+describe('reasonLabel', () => {
+  it('keeps the fixed reasons and collapses the ones that carry request text', () => {
+    expect(reasonLabel('flag:followed')).toBe('flag:followed');
+    expect(reasonLabel('hydrate:empty')).toBe('hydrate:empty');
+    expect(reasonLabel('offset>20000')).toBe('offset>20000');
+    expect(reasonLabel('sort:Random')).toBe('sort');
+    expect(reasonLabel('types:image,foo')).toBe('types');
   });
 });
 
