@@ -312,15 +312,36 @@ export type ResolvedGalleryTarget = {
  * against the MODEL OWNER'S `rewardsMultiplier`, which is a base read off
  * operator-authored `Product.metadata` (`subscriptions.schema.ts` requires it
  * positive and puts no ceiling on it) times a global bonus clamped to
- * `MAX_GLOBAL_BONUS` of 5 (`buzz.service.ts`). At the gold tier's 4x recorded in
- * `src/server/rewards/multiplier.ts`, one award during a maximum bonus event is
- * **1,000 blue Buzz** — 20x the compiled amount. `awardAmount` is in turn
- * operator-overridable up to `MAX_AWARD_AMOUNT`
- * (`src/shared/constants/reward-config.constants.ts`), and the payout floors at 0 for
- * an owner reported rewards-ineligible — and sub-1 product multipliers are
- * intentional (`foldUserMultipliers`), so 50 is the payout at a 1x multiplier and is
- * neither a floor nor a ceiling. **Weigh this residual at the multiplied figure, and
- * say which multiplier the figure assumed.**
+ * `MAX_GLOBAL_BONUS` of 5 (`buzz.service.ts`).
+ *
+ * 🔴 THAT IN-MEMORY PRODUCT IS NOT WHAT PAYS, BECAUSE THIS REWARD SETTLES ON THE
+ * BATCH PATH. `imagePostedToModelReward` declares no `onDemand` key, so `apply`
+ * writes a pending row whose `multiplier` is clamped to `BUZZ_EVENTS_MAX_MULTIPLIER`
+ * of 9.99 (`packages/civitai-clickhouse/src/buzz-events.ts` — the `buzzEvents.multiplier`
+ * column is `Decimal(3, 2)`), `src/server/jobs/process-rewards.ts` reads that stored
+ * value back out with `argMax(multiplier, version)`, `process` never recomputes it,
+ * and `sendAward` pays from it. So the effective per-award ceiling is
+ * `awardAmount * 9.99` — at the compiled 50, `Math.ceil(50 * 9.99)` = **500 blue
+ * Buzz**, about 10x the compiled amount. The gold tier's 4x
+ * (`src/server/rewards/multiplier.ts`) during a maximum 5x bonus computes 20, stores
+ * 9.99 and pays 500, not 1,000; at that tier the clamp engages above a bonus of
+ * 9.99/4 ≈ 2.5x, and the live bonus is 2x, so nothing is trimmed today.
+ *
+ * ⚠️ That ceiling is the DEPLOYED COLUMN's, not a product decision, and it has a
+ * written reopen trigger:
+ * `src/server/clickhouse/migrations/2026-08-24-buzz-events-multiplier-width.sql` is
+ * deliberately unapplied, names `imagePostedToModel` as one of four rewards for which
+ * the stored multiplier is a payout value rather than an audit one, records that gold
+ * members are still paid half during a 5x bonus event, and says to reopen it if a
+ * bonus event above 2.5x is scheduled. Widen the column and raise the constant and
+ * every figure here has to be re-derived.
+ *
+ * `awardAmount` is in turn operator-overridable up to `MAX_AWARD_AMOUNT`
+ * (`src/shared/constants/reward-config.constants.ts`), which raises that ceiling in
+ * proportion, and the payout floors at 0 for an owner reported rewards-ineligible —
+ * and sub-1 product multipliers are intentional (`foldUserMultipliers`), so 50 is the
+ * payout at a 1x multiplier and is neither a floor nor a ceiling. **Weigh this
+ * residual at the multiplied figure, and say which multiplier the figure assumed.**
  *
  * ⚠️ The reward's `caps` — 5,000 all-time per `(owner, version)` and 50,000/month
  * per owner — are ceilings on the REWARD across all posters and all paths. They
@@ -329,8 +350,9 @@ export type ResolvedGalleryTarget = {
  * THE SAME PRE-MULTIPLIER UNITS AS THE 50, for the same reason: this reward has no
  * `onDemand` key, so it settles on the BATCH path, where the cap is applied to
  * `event.awardAmount` (`base.reward.ts`, the `caps` loop in `process`) and the
- * owner's multiplier is applied afterwards by `sendAward`. The Buzz a 5,000 cap
- * permits is therefore up to 5,000 times that multiplier.
+ * multiplier STORED ON THE ROW — clamped to 9.99, per the paragraph above — is
+ * applied afterwards by `sendAward`. The Buzz a 5,000 cap permits is therefore up to
+ * about 49,950, not an unbounded multiple.
  *
  * The account type is `blue`, which is not the withdrawal account —
  * `buzz-withdrawal-request.service.ts` requests withdrawal against `'yellow'`
@@ -1106,9 +1128,11 @@ export async function writeBlockPost(input: {
  * `modelOwnerId === posterId` guard or by an unresolved owner, and others would have
  * been trimmed by a cap. 🔴 It does NOT become the Buzz not paid by multiplying by
  * `awardAmount`: the payout is `awardAmount` times the MODEL OWNER'S rewards
- * multiplier, which has no code-enforced ceiling and reaches 20x at the gold tier
- * during a maximum bonus event — see the figures under "the residual, in numbers" on
- * `resolveGalleryTarget`, and the derivation at the counter itself. ⚠️ It is also a
+ * multiplier as STORED on the pending row, which this reward's batch path clamps to
+ * 9.99 — so one award tops out near `Math.ceil(50 * 9.99)` = 500 Buzz while the
+ * `buzzEvents.multiplier` column stays `Decimal(3, 2)` — see the figures under "the
+ * residual, in numbers" on `resolveGalleryTarget`, and the derivation at the counter
+ * itself. ⚠️ It is also a
  * size, not a DETECTOR: it says how often the decline fires and nothing about who
  * was aimed at. See the detector note below, which it does not close.
  *

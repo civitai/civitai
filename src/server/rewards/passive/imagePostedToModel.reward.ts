@@ -56,8 +56,11 @@ export const imagePostedToModelReward = createBuzzEvent({
     // across ALL posters, not one poster's repeats. ⚠️ And those `amount`s are in
     // PRE-MULTIPLIER units, like `awardAmount`: this reward has no `onDemand` key, so
     // it settles on the batch path, where the cap trims `event.awardAmount` and
-    // `sendAward` multiplies afterwards — 5,000 permits up to 5,000 x the owner's
-    // multiplier in Buzz. See the bound recorded on
+    // `sendAward` multiplies afterwards. ⚠️ The multiplier that pays there is the one
+    // STORED ON THE ROW, which the batch path clamps to `BUZZ_EVENTS_MAX_MULTIPLIER`
+    // of 9.99 — so 5,000 permits up to about 49,950 Buzz, not an unbounded multiple.
+    // The clamp and its written reopen trigger are derived at the counter below.
+    // See the bound recorded on
     // `applyBlockPostPublishEffects` — do not restate this guard as "an app-composed
     // post never pays".
     //
@@ -114,15 +117,43 @@ export const imagePostedToModelReward = createBuzzEvent({
       // (`base.reward.ts`), and the multiplier is the MODEL OWNER'S
       // `rewardsMultiplier` — `getMultipliersForUser(definedKey.toUserId)`. That
       // value is a base read off operator-authored `Product.metadata`
-      // (`subscriptions.schema.ts` requires it positive and puts NO ceiling on it;
+      // (`subscriptions.schema.ts` requires it positive and puts no ceiling on it;
       // `clampRewardMultiplier` deliberately only floors it) multiplied by a global
-      // bonus clamped to `MAX_GLOBAL_BONUS` of 5 (`buzz.service.ts`). At the gold
-      // tier's 4x recorded in `src/server/rewards/multiplier.ts`, one award during a
-      // maximum bonus event is 20 x 50 = 1,000 Buzz — 20x what a bare `awardAmount`
-      // multiplication would report, and in the UNSAFE direction. `awardAmount` is
-      // itself operator-overridable up to `MAX_AWARD_AMOUNT`
-      // (`src/shared/constants/reward-config.constants.ts`). Per-award payout also
-      // FLOORS at 0, for an owner `getMultipliersForUser` reports ineligible.
+      // bonus clamped to `MAX_GLOBAL_BONUS` of 5 (`buzz.service.ts`).
+      //
+      // 🔴 BUT THAT IN-MEMORY VALUE IS NOT THE ONE THAT PAYS HERE, AND THIS REWARD
+      // IS PRECISELY THE CASE WHERE THE DIFFERENCE BITES. There is no `onDemand` key
+      // in the config above, so this settles on the BATCH path: `apply` writes a
+      // `pending` row via `addBuzzEvent` → `toClickhouseBuzzEvent`, which clamps
+      // `multiplier` with `clampBuzzEventMultiplier` to `BUZZ_EVENTS_MAX_MULTIPLIER`
+      // of 9.99 (`packages/civitai-clickhouse/src/buzz-events.ts`) because the column
+      // is `Decimal(3, 2)`. `src/server/jobs/process-rewards.ts` then reads
+      // `argMax(multiplier, version)` back OUT of that column, `process` never
+      // recomputes it, and `sendAward` pays from the clamped value —
+      // `toClickhouseBuzzEvent`'s own comment states it: on the batch path this value
+      // is not audit, so a clamp UNDERPAYS.
+      //
+      // So the effective per-award ceiling is `awardAmount * 9.99`: at the compiled
+      // 50 that is `Math.ceil(50 * 9.99)` = 500 Buzz. The gold tier's 4x recorded in
+      // `src/server/rewards/multiplier.ts` against a maximum 5x bonus computes 20 in
+      // memory, stores 9.99, and therefore pays 500 — about 10x a bare `awardAmount`
+      // multiplication, not 20x. At that tier the clamp engages above a global bonus
+      // of 9.99/4 ≈ 2.5x; the live bonus is 2x, so gold writes 8 today and nothing is
+      // trimmed. The direction of the original error stands — a bare `awardAmount`
+      // still understates — only its size was wrong.
+      //
+      // 🔴 THE CEILING IS A PROPERTY OF THE DEPLOYED COLUMN, NOT A PRODUCT DECISION,
+      // AND IT CARRIES A WRITTEN REOPEN TRIGGER.
+      // `src/server/clickhouse/migrations/2026-08-24-buzz-events-multiplier-width.sql`
+      // is deliberately UNAPPLIED; it names `imagePostedToModel` as one of four
+      // rewards for which the stored multiplier is a payout value rather than an audit
+      // one, records that gold members are still paid half during a 5x bonus event,
+      // and says to reopen it if a bonus event above 2.5x is ever scheduled. If that
+      // column is widened and the constant raised, this ceiling moves and every figure
+      // above has to be re-derived. `awardAmount` is itself operator-overridable up to
+      // `MAX_AWARD_AMOUNT` (`src/shared/constants/reward-config.constants.ts`), which
+      // raises the ceiling in proportion. Per-award payout also FLOORS at 0, for an
+      // owner `getMultipliersForUser` reports ineligible.
       //
       // So this counter sizes how OFTEN the decline fires. No single Buzz figure
       // follows from it, and any that is quoted has to name the multiplier it assumed.

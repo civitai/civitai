@@ -4611,8 +4611,11 @@ export const blocksRouter = router({
       //
       // ⚠️ BOTH FAIL OPEN on a Redis error, by the convention every blocks
       // limiter follows. Do not read either as a hard cap or a security control:
-      // what actually bounds abuse on this path is the publisher guard, the
-      // per-source ownership proofs and the per-post consent confirm.
+      // what actually bounds abuse on this path is the per-source ownership proofs
+      // and the per-post consent confirm. 🔴 The publisher guard used to be named
+      // here as a third; it is not, because its rationale is retracted and no
+      // replacement was authored — see `resolveGalleryTarget` in
+      // `block-post.service.ts`.
       const postRate = await checkBlockPostRateLimit(claims.blockInstanceId);
       if (!postRate.allowed) {
         throw new TRPCError({
