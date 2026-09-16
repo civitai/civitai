@@ -23,7 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * module boundary, so the router runs in-process.
  *
  * RED/GREEN MATRIX, measured rather than asserted — at `7def68db71` (this branch's base) this file
- * is 17 failed / 10 passed; at HEAD it is 27 passed. The seventeen are the regression coverage.
+ * is 18 failed / 10 passed; at HEAD it is 28 passed. The eighteen are the regression coverage.
  * The ten that pass BOTH WAYS are marked `INVARIANT GUARD` below and are NOT regression coverage:
  * six pin properties the base happened to satisfy for the trivial reason that it scoped nothing at
  * all, and four cover `publishGenerationOutputs`, whose two guards already existed there and had
@@ -342,6 +342,27 @@ describe('blocks.pollWorkflow — viewer scope', () => {
     }
   });
 
+  it('🔴 a dev:live token gets NO app-scope exemption — poll', async () => {
+    // 🔴 THE APP HALF OF THE SAME PROPERTY, and it was open at ALL FIVE call sites at once.
+    // Round 6 closed `if (!claims.dev)` on the VIEWER assertion; the identical keying on
+    // `assertBlockWorkflowTaggedForApp` — and, worse, a one-line
+    // `if (input.appId.startsWith('local-')) return;` INSIDE the consolidated helper, which
+    // disables the app scope for every dev token everywhere — left the entire repo green. The
+    // consolidation is what made that a one-line edit, so it is what this case has to cover.
+    //
+    // The gap existed because no test anywhere paired a dev token with its OWN id AND another
+    // app's tag: the other dev cases either hit the viewer guard first (stranger's id) or use a
+    // matching tag, and neither can tell "the comparison ran" from "it was skipped".
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ dev: true, appId: 'local-myapp' }));
+    mockGetWorkflow.mockResolvedValue(
+      workflowFixture({ tags: ['civitai', `app-block:${OTHER_APP_ID}`], cost: { total: 29 } })
+    );
+
+    await expect(caller().pollWorkflow({ blockToken: 'tok', workflowId: OWN_ID })).rejects.toThrow(
+      'workflow is not tagged for this app'
+    );
+  });
+
   it('🔴 a dev:live token gets NO viewer exemption — poll', async () => {
     // The poll twin of the cancel case; see it for why `claims.dev` must not gate this. Site-local
     // weakenings are why both paths need their own: keying the POLL site on `if (!claims.dev)`
@@ -373,11 +394,16 @@ describe('blocks.pollWorkflow — viewer scope', () => {
   it('a dev:live token polls its own workflow normally — it is NOT ORCHESTRATOR_MODE=dev', async () => {
     // INVARIANT GUARD (passes at base too, where nothing was scoped at all).
     //
-    // WHAT THIS PINS: a `claims.dev === true` token's synthetic `local-<slug>` appId goes through
-    // the ordinary app-tag comparison. 🔴 It does NOT pin that the token gets no VIEWER exemption —
-    // an earlier revision of this comment claimed it did, and it cannot: this case drives the
-    // viewer's OWN id, so "not exempted" and "exempted" produce the same pass. That property has
-    // its own cases below (`a dev:live token gets NO viewer exemption …`), on both paths.
+    // WHAT THIS PINS: a correctly-tagged dev:live workflow is NOT refused — i.e. nothing rejects a
+    // synthetic `local-<slug>` appId out of hand.
+    //
+    // 🔴 IT PINS NEITHER EXEMPTION, and both halves of that are worth stating because a previous
+    // revision of this comment claimed each in turn. It cannot show the token gets no VIEWER
+    // exemption: it drives the viewer's OWN id, so exempted and not-exempted produce the same
+    // pass. And it cannot show the app-tag comparison RAN rather than being skipped for this
+    // token: it drives a MATCHING tag, so those two also produce the same pass. Each converse has
+    // its own case — `a dev:live token gets NO viewer exemption` (both paths) and `a dev:live
+    // token gets NO app-scope exemption`.
     //
     // 🔴 WHAT IT DOES NOT PIN, stated because an earlier revision of this comment claimed it did:
     // it is NOT a tripwire on dev-token minting. `dev:live` survives the app scope only because a
