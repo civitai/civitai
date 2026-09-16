@@ -684,6 +684,7 @@ export interface User {
   appOwnershipTransfersFrom?: AppOwnershipTransfer[];
   appOwnershipTransfersTo?: AppOwnershipTransfer[];
   targetedAnnouncements?: AnnouncementUser[];
+  dismissedAnnouncements?: AnnouncementDismissal[];
   authoredAnnouncements?: Announcement[];
   announcementSpends?: AnnouncementSpend[];
   announcementMutesGiven?: UserAnnouncementMute[];
@@ -2723,6 +2724,7 @@ export interface Announcement {
   cover?: Image | null;
   profileOnly: boolean;
   targetUsers?: AnnouncementUser[];
+  dismissals?: AnnouncementDismissal[];
   spends?: AnnouncementSpend[];
   reports?: AnnouncementReport[];
 }
@@ -2747,6 +2749,14 @@ export interface UserAnnouncementMute {
 export interface AnnouncementUser {
   announcementId: number;
   userId: number;
+  announcement?: Announcement;
+  user?: User;
+}
+
+export interface AnnouncementDismissal {
+  announcementId: number;
+  userId: number;
+  dismissedAt: Date;
   announcement?: Announcement;
   user?: User;
 }

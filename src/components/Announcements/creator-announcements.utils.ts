@@ -1,3 +1,7 @@
+import { useMemo } from 'react';
+import { useMergeServerDismissals } from '~/components/Announcements/announcement-dismissal-merge';
+import { useServerDismissedAnnouncements } from '~/components/Announcements/announcement-dismissal-sync';
+import { mergeDismissedCreatorAnnouncements } from '~/components/Announcements/creator-announcement-dismissals';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -32,7 +36,19 @@ export function useQueryFollowedAnnouncements(enabled = true, limit = 20) {
     { enabled: active }
   );
 
-  return { announcements: data?.items ?? [], isLoading: active ? isLoading : false };
+  const announcements = useMemo(() => data?.items ?? [], [data]);
+
+  // Both the panel and the bell's badge read this hook, so the account-level merge lives here
+  // rather than in either of them — two copies would be two chances to drift.
+  const serverDismissedIds = useServerDismissedAnnouncements();
+  const liveIds = useMemo(() => announcements.map((x) => x.id), [announcements]);
+  useMergeServerDismissals({
+    liveIds,
+    serverDismissedIds,
+    merge: mergeDismissedCreatorAnnouncements,
+  });
+
+  return { announcements, isLoading: active ? isLoading : false };
 }
 
 export function useMutedCreators() {

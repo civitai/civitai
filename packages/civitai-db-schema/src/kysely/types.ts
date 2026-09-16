@@ -181,6 +181,11 @@ export type Announcement = {
    */
   profileOnly: Generated<boolean>;
 };
+export type AnnouncementDismissal = {
+  announcementId: number;
+  userId: number;
+  dismissedAt: Generated<Timestamp>;
+};
 export type AnnouncementReport = {
   announcementId: number;
   reportId: number;
@@ -4375,6 +4380,7 @@ export type DB = {
   Account: Account;
   AdToken: AdToken;
   Announcement: Announcement;
+  AnnouncementDismissal: AnnouncementDismissal;
   AnnouncementReport: AnnouncementReport;
   AnnouncementSpend: AnnouncementSpend;
   AnnouncementUser: AnnouncementUser;
