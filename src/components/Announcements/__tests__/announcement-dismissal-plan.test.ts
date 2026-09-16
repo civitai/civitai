@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+// @vitest-environment happy-dom
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { planDismissalRequests } from '~/components/Announcements/announcement-dismissal-plan';
+import {
+  isSignedInBrowser,
+  planDismissalRequests,
+} from '~/components/Announcements/announcement-dismissal-plan';
 
 describe('planDismissalRequests', () => {
   /**
@@ -20,7 +24,7 @@ describe('planDismissalRequests', () => {
     ]);
   });
 
-  it('sends nothing when there is nothing to dismiss', () => {
+  it('has nothing to send for an empty dismissal', () => {
     expect(planDismissalRequests({ ids: [], isAuthed: true, batchSize: 100 })).toEqual([]);
   });
 
@@ -34,5 +38,26 @@ describe('planDismissalRequests', () => {
 
     expect(batches.map((batch) => batch.length)).toEqual([100, 100, 50]);
     expect(batches.flat()).toEqual(ids);
+  });
+});
+
+describe('isSignedInBrowser', () => {
+  afterEach(() => {
+    delete (window as { isAuthed?: boolean }).isAuthed;
+  });
+
+  /**
+   * 🔴 The property name is the whole guard, and it is the one thing `planDismissalRequests`
+   * cannot see. `CivitaiSessionProvider` sets `window.isAuthed`; read anything else and no
+   * dismissal is ever recorded, for anyone, with every other test in this file still green.
+   */
+  it('reads the flag the session provider actually sets', () => {
+    (window as { isAuthed?: boolean }).isAuthed = true;
+
+    expect(isSignedInBrowser()).toBe(true);
+  });
+
+  it('is false before the session provider has run', () => {
+    expect(isSignedInBrowser()).toBe(false);
   });
 });

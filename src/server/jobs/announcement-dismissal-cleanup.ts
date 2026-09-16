@@ -26,16 +26,23 @@ export const announcementDismissalCleanupJob = createJob(
   async () => {
     const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000);
 
-    // An open-ended announcement (`endsAt: null`) has not ended and is never a candidate.
-    const ended = await dbRead.announcement.findMany({
-      where: { endsAt: { lt: cutoff } },
+    // Two ways an announcement stops being shown, and most retired ones use the second: a large
+    // minority of prod rows carry no `endsAt` at all, so an `endsAt`-only rule would never
+    // collect them. A disabled row is dated by `updatedAt`, so the grace period restarts
+    // whenever a moderator touches it — which is the case the period exists for.
+    //
+    // An open-ended, still-enabled announcement is live and is never a candidate either way.
+    const retired = await dbRead.announcement.findMany({
+      where: {
+        OR: [{ endsAt: { lt: cutoff } }, { disabled: true, updatedAt: { lt: cutoff } }],
+      },
       select: { id: true },
     });
-    if (!ended.length) return { deleted: 0 };
+    if (!retired.length) return { deleted: 0 };
 
     let deleted = 0;
     for (const batch of chunk(
-      ended.map((x) => x.id),
+      retired.map((x) => x.id),
       DELETE_CHUNK_SIZE
     )) {
       const { count } = await dbWrite.announcementDismissal.deleteMany({
@@ -44,7 +51,9 @@ export const announcementDismissalCleanupJob = createJob(
       deleted += count;
     }
 
-    log(`deleted ${deleted} dismissals for ${ended.length} announcements ended before ${cutoff}`);
+    log(
+      `deleted ${deleted} dismissals for ${retired.length} announcements retired before ${cutoff}`
+    );
 
     return { deleted };
   },

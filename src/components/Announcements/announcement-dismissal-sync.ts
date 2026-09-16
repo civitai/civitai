@@ -1,4 +1,7 @@
-import { planDismissalRequests } from '~/components/Announcements/announcement-dismissal-plan';
+import {
+  isSignedInBrowser,
+  planDismissalRequests,
+} from '~/components/Announcements/announcement-dismissal-plan';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { MAX_ANNOUNCEMENT_DISMISSALS_PER_REQUEST } from '~/server/schema/announcement.schema';
 import { trpc, trpcVanilla } from '~/utils/trpc';
@@ -11,6 +14,10 @@ import { trpc, trpcVanilla } from '~/utils/trpc';
  * This module adds a second, slower store so a dismissal made on one device is not undone by
  * opening another: every dismissal a signed-in user makes is also written to their account,
  * and what the account holds is merged into the device store while the session runs.
+ *
+ * Not to be confused with `User.settings.dismissedAlerts` (`~/components/Alerts/useFeatureNotice`),
+ * the other account-level dismissal store: that one holds registry-bound string ids and lives in
+ * the settings payload, which is why announcement ids — unbounded and numeric — are a table here.
  */
 
 // Long enough that the merge is not a per-navigation fetch, short enough that a dismissal made
@@ -30,7 +37,7 @@ const EMPTY: number[] = [];
 export function recordAnnouncementDismissals(ids: number | number[]) {
   const batches = planDismissalRequests({
     ids: Array.isArray(ids) ? ids : [ids],
-    isAuthed: typeof window !== 'undefined' && !!window.isAuthed,
+    isAuthed: isSignedInBrowser(),
     batchSize: MAX_ANNOUNCEMENT_DISMISSALS_PER_REQUEST,
   });
 

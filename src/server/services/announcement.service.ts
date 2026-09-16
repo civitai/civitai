@@ -270,6 +270,10 @@ async function getAnnouncementsCached(domain?: DomainColor) {
  * Only ids that name a currently-live announcement are written. That bounds the table by the
  * announcement lifecycle rather than by how much a client sends, and it means a user-supplied
  * id can never reach the foreign key. `ids` is already length-bounded by the schema.
+ *
+ * Returns nothing deliberately: a count of the ids that matched would answer "which of these
+ * announcements is live right now" for any signed-in caller, including ones targeted at someone
+ * else, and no caller needs the number.
  */
 export async function dismissAnnouncementsForUser({
   userId,
@@ -284,14 +288,12 @@ export async function dismissAnnouncementsForUser({
     where: { id: { in: ids }, ...activeAnnouncementWhere(new Date()) },
     select: { id: true },
   });
-  if (!live.length) return { dismissed: 0 };
+  if (!live.length) return;
 
-  const { count } = await dbWrite.announcementDismissal.createMany({
+  await dbWrite.announcementDismissal.createMany({
     data: live.map(({ id }) => ({ userId, announcementId: id })),
     skipDuplicates: true,
   });
-
-  return { dismissed: count };
 }
 
 /**

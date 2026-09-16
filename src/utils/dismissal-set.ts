@@ -42,8 +42,7 @@ export function addDismissals<T>(dismissed: readonly T[], ids: T | readonly T[])
  * "haven't loaded the live ids" are indistinguishable from in here.
  */
 export function pruneDismissals<T>(dismissed: readonly T[], live: Iterable<T>): T[] | undefined {
-  const liveSet = live instanceof Set ? (live as Set<T>) : new Set(live);
-  const kept = dismissed.filter((id) => liveSet.has(id));
+  const kept = selectLiveDismissals(dismissed, live);
   if (kept.length === dismissed.length) return undefined;
   return kept;
 }

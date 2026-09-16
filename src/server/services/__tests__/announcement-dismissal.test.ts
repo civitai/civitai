@@ -26,13 +26,22 @@ afterEach(() => {
 describe('dismissAnnouncementsForUser', () => {
   it('writes only the ids that name a live announcement', async () => {
     liveLookup.mockResolvedValue([{ id: 7 }]);
-    createMany.mockResolvedValue({ count: 1 });
 
-    const result = await dismissAnnouncementsForUser({ userId: 3, ids: [7, 8] });
+    await dismissAnnouncementsForUser({ userId: 3, ids: [7, 8] });
 
     expect(createMany).toHaveBeenCalledTimes(1);
     expect(createMany.mock.calls[0][0].data).toEqual([{ userId: 3, announcementId: 7 }]);
-    expect(result).toEqual({ dismissed: 1 });
+  });
+
+  /**
+   * A count of the ids that matched is an oracle for "which of these announcements is live right
+   * now", answerable by any signed-in caller against ids they cannot otherwise see.
+   */
+  it('tells the caller nothing about which ids were live', async () => {
+    liveLookup.mockResolvedValue([{ id: 7 }]);
+    createMany.mockResolvedValue({ count: 1 });
+
+    expect(await dismissAnnouncementsForUser({ userId: 3, ids: [7, 8] })).toBeUndefined();
   });
 
   /**
@@ -41,7 +50,6 @@ describe('dismissAnnouncementsForUser', () => {
    */
   it('checks the ids against the live window on the writer, not the replica', async () => {
     liveLookup.mockResolvedValue([{ id: 7 }]);
-    createMany.mockResolvedValue({ count: 1 });
 
     await dismissAnnouncementsForUser({ userId: 3, ids: [7, 8] });
 
@@ -55,15 +63,13 @@ describe('dismissAnnouncementsForUser', () => {
   it('writes nothing when no id is live', async () => {
     liveLookup.mockResolvedValue([]);
 
-    const result = await dismissAnnouncementsForUser({ userId: 3, ids: [8] });
+    await dismissAnnouncementsForUser({ userId: 3, ids: [8] });
 
     expect(createMany).not.toHaveBeenCalled();
-    expect(result).toEqual({ dismissed: 0 });
   });
 
   it('is idempotent on a repeat dismissal', async () => {
     liveLookup.mockResolvedValue([{ id: 7 }]);
-    createMany.mockResolvedValue({ count: 0 });
 
     await dismissAnnouncementsForUser({ userId: 3, ids: [7] });
 
@@ -85,15 +91,22 @@ describe('getDismissedAnnouncementIds', () => {
    *
    * The expectation is built from `activeAnnouncementWhere` rather than restating the predicate,
    * so this stays true when the predicate changes and fails when the read stops using it — the
-   * repo has a guard family about one rule derived twice. The second assertion is what keeps it
-   * from passing vacuously if that helper ever returned an empty filter.
+   * repo has a guard family about one rule derived twice. That is only non-circular because the
+   * helper itself is pinned independently in `announcement-media-window.test.ts`; the assertions
+   * below are the local half, and catch it being reduced to an empty or bound-less filter.
    */
   it('scopes the query to announcements that can still be shown', async () => {
     await getDismissedAnnouncementIds({ userId: 3 });
 
     const where = dismissalLookup.mock.calls[0][0].where;
     expect(where).toEqual({ userId: 3, announcement: activeAnnouncementWhere(NOW) });
-    expect(activeAnnouncementWhere(NOW)).toMatchObject({ disabled: false });
+    expect(activeAnnouncementWhere(NOW)).toEqual({
+      disabled: false,
+      AND: [
+        { OR: [{ startsAt: { lte: NOW } }, { startsAt: { equals: null } }] },
+        { OR: [{ endsAt: { gte: NOW } }, { endsAt: { equals: null } }] },
+      ],
+    });
   });
 
   it('narrows to the requesting domain when one is stamped', async () => {

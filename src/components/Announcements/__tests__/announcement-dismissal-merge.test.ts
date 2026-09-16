@@ -9,11 +9,14 @@ import { useMergeServerDismissals } from '~/components/Announcements/announcemen
 // React 18.3 exposes `act` on the `react` export, ahead of our @types/react.
 const act = (React as unknown as { act: typeof actType }).act;
 
-function renderMerge(props: {
-  liveIds: number[];
-  serverDismissedIds: number[];
-  merge: (ids: number[]) => void;
-}) {
+function renderMerge(
+  props: {
+    liveIds: number[];
+    serverDismissedIds: number[];
+    merge: (ids: number[]) => void;
+  },
+  { renders = 1 }: { renders?: number } = {}
+) {
   const container = document.createElement('div');
   const root = createRoot(container);
   const Harness = () => {
@@ -21,9 +24,10 @@ function renderMerge(props: {
     return null;
   };
 
-  act(() => {
-    root.render(React.createElement(Harness));
-  });
+  for (let i = 0; i < renders; i++)
+    act(() => {
+      root.render(React.createElement(Harness));
+    });
 
   act(() => {
     root.unmount();
@@ -42,6 +46,19 @@ describe('useMergeServerDismissals', () => {
     renderMerge({ liveIds: [1, 2, 3], serverDismissedIds: [2], merge });
 
     expect(merge).toHaveBeenCalledWith([2]);
+    expect(merge).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The merge writes to a store every one of these surfaces renders from, so a merge that fires
+   * per render is a render loop rather than wrong data — no assertion about the ids can see it.
+   */
+  it('merges once across re-renders with the same inputs', () => {
+    const merge = vi.fn();
+
+    renderMerge({ liveIds: [1, 2, 3], serverDismissedIds: [2], merge }, { renders: 3 });
+
+    expect(merge).toHaveBeenCalledTimes(1);
   });
 
   /**
@@ -65,8 +82,9 @@ describe('useMergeServerDismissals', () => {
   });
 
   /**
-   * Before the live set has landed there is nothing to intersect against, and merging the whole
-   * account list would put ids in a bucket that does not own them.
+   * Before the live set has landed the intersection is empty, so the hook waits without a guard
+   * of its own. Merging the whole account list here would put ids in a bucket that does not own
+   * them.
    */
   it('waits for the live set', () => {
     const merge = vi.fn();
