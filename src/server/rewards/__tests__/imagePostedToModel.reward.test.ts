@@ -7,8 +7,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *
  * On the App Blocks post path that choice is made by the calling app rather than
  * by the person whose byline the post carries, so the reward declines the call
- * outright. `viaAppId` is the signal, it is server-derived at every call site (the
- * verified block token's `appId`), and `getKey` returning `false` is the
+ * outright. `viaAppId` is the signal, it is server-derived wherever it is supplied
+ * (the verified block token's `appId`), and `getKey` returning `false` is the
  * framework's existing per-call suppression — `apply` reads it as
  * `if (!definedKey) return null`.
  *
@@ -21,10 +21,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * with `viaAppId` absent: the control proves the call reaches `getKey` at all, and
  * only then does the suppressed case's silence mean anything.
  *
- * The discriminator is the OWNER LOOKUP (`dbWrite.$queryRaw`) plus the multiplier
- * read. Both sit strictly after this guard and strictly before the self-post guard
- * resolves, so a suppression that fired for the WRONG reason — the self-post guard,
- * an unresolvable owner — would still show the lookup.
+ * The discriminator is the OWNER LOOKUP (`dbWrite.$queryRaw`), and it is the ONLY
+ * thing between the two guards: it runs after this one and before the self-post one,
+ * so a suppression that fired for the WRONG reason — the self-post guard, an
+ * unresolvable owner — would still show the lookup.
+ *
+ * ⚠️ The multiplier read is NOT a discriminator between them, and an earlier version
+ * of this comment said it was. `getMultipliersForUser` runs only once `getKey` has
+ * returned a key (`base.reward.ts`, inside `apply`'s resolution envelope), so it is
+ * absent from BOTH declines — the last case in this file is the proof. It is used
+ * below as a "no key was resolved" assertion, which is a different claim.
  */
 
 const h = vi.hoisted(() => ({
@@ -34,6 +40,7 @@ const h = vi.hoisted(() => ({
   hGetImpl: vi.fn(async () => '{}'),
   createBuzzTransactionMany: vi.fn(async () => ({ transactions: [] })),
   getMultipliersForUser: vi.fn(async () => ({ rewardsMultiplier: 1 })),
+  suppressedInc: vi.fn(),
 }));
 
 vi.mock('~/server/clickhouse/client', () => ({
@@ -48,6 +55,7 @@ vi.mock('~/server/prom/client', () => ({
   rewardFailedCounter: { inc: vi.fn() },
   rewardGivenCounter: { inc: vi.fn() },
   clickhouseFailSoftCounter: { inc: vi.fn() },
+  imagePostedToModelAppSuppressedCounter: { inc: (...a: unknown[]) => h.suppressedInc(...a) },
 }));
 
 vi.mock('~/server/services/buzz.service', () => ({
@@ -156,6 +164,27 @@ describe('🔴 imagePostedToModelReward — an app-composed post pays the model 
     await imagePostedToModelReward.apply(nativeEvent({ viaAppId: '' }));
 
     expect(h.getMultipliersForUser).toHaveBeenCalledWith(MODEL_OWNER_ID);
+  });
+
+  it('COUNTS the suppression, so the decline is observable at all', async () => {
+    // Without this the guard emits nothing: `getKey` returns `false` before any
+    // ClickHouse row, Redis entry or log line, so neither the frequency of the
+    // decline nor the product loss it carries can be read anywhere. The counter is
+    // the only signal this path produces.
+    await imagePostedToModelReward.apply(nativeEvent({ viaAppId: APP_ID }));
+
+    expect(h.suppressedInc).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts ONLY this guard — a decline by the self-post guard is not counted', async () => {
+    // A counter placed anywhere below the guard, or incremented unconditionally,
+    // would make the series mean "declined for some reason" instead of "declined
+    // because an app composed the post", and the two are not the same measurement.
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ userId: POSTER_ID }]);
+
+    await imagePostedToModelReward.apply(nativeEvent());
+
+    expect(h.suppressedInc).not.toHaveBeenCalled();
   });
 
   it('leaves the pre-existing self-post decline intact, and it is distinguishable', async () => {

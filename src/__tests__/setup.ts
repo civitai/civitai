@@ -233,6 +233,7 @@ vi.mock('~/server/prom/client', () => ({
   // rather than on whatever it was written to check.
   clickhouseFailSoftCounter: promMetricStub(),
   rewardConfigReadFailedCounter: promMetricStub(),
+  imagePostedToModelAppSuppressedCounter: promMetricStub(),
   clavataCounter: promMetricStub(),
   cacheHitCounter: promMetricStub(),
   cacheMissCounter: promMetricStub(),

@@ -192,6 +192,16 @@ export const rewardConfigReadFailedCounter = registerCounter({
   name: 'reward_config_read_failed_total',
   help: 'Runtime reward-config read failed; rewards ran on the last good config',
 });
+// `imagePostedToModelReward` declines before it keys anything, so without this the
+// decline writes no ClickHouse row, no Redis entry and no log line — there is no
+// series anywhere that counts it. Unlabelled on purpose: which app composed the
+// post is already recorded on `Post.metadata.blockPublishedAppId`, and a label per
+// OAuth client would put an operator-registrable value into the metric's
+// cardinality.
+export const imagePostedToModelAppSuppressedCounter = registerCounter({
+  name: 'reward_image_posted_to_model_app_suppressed_total',
+  help: 'imagePostedToModel reward declined because the call named a composing app',
+});
 
 export const clavataCounter = registerCounter({
   name: 'clavata_req_total',
