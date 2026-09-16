@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { backend, browser, generateUrl, hrefFor, navigate } from '$lib/host';
+  import { backend, browser, generate, generateUrl, hrefFor, navigate } from '$lib/host';
   import { loraBlobAir } from '$lib/train-core';
   import { locationHref } from '$lib/actions/locationHref';
   import JSZip from 'jszip';
@@ -294,19 +294,26 @@
     handoffReuse(await toReuseItems(d.dataset, d.workflowId));
   }
 
-  // "Generate with this epoch": the host's /generate deep-link URL for a checkpoint's weights blob.
-  // Null hides the affordance — no generateUrl from the host, no ecosystem to scope the AIR by, or
-  // no downloadable weights yet. `external` implements the seam contract (host.ts): only a
+  // "Generate with this epoch": the handoff for a checkpoint's weights blob. A host `generate`
+  // opens its generator in place (button); otherwise `generateUrl` gives a /generate deep link.
+  // Null hides the affordance — neither callback from the host, no ecosystem to scope the AIR by,
+  // or no downloadable weights yet. `external` implements the seam contract (host.ts): only a
   // host-relative URL is a same-tab in-host navigation; anything else (including protocol-relative)
   // opens the generator's origin in a new tab.
-  function epochGenerateLink(epoch: TrainingDetailEpoch): { href: string; external: boolean } | null {
-    const toUrl = generateUrl();
-    if (!toUrl || !d.ecosystem || !epoch.modelKey) return null;
-    const href = toUrl({
+  function epochGenerateLink(
+    epoch: TrainingDetailEpoch
+  ): { action: () => void } | { href: string; external: boolean } | null {
+    if (!d.ecosystem || !epoch.modelKey) return null;
+    const req = {
       air: loraBlobAir(d.ecosystem, epoch.modelKey),
       workflowId: d.workflowId,
       name: `${d.name} · epoch ${epoch.number}`,
-    });
+    };
+    const inPlace = generate();
+    if (inPlace) return { action: () => inPlace(req) };
+    const toUrl = generateUrl();
+    if (!toUrl) return null;
+    const href = toUrl(req);
     return { href, external: !(href.startsWith('/') && !href.startsWith('//')) };
   }
 
@@ -745,14 +752,24 @@
             {@const gen = epochGenerateLink(featured)}
             <div class="ml-auto flex flex-wrap items-center gap-2">
               {#if gen}
-                <a
-                  href={gen.href}
-                  target={gen.external ? '_blank' : undefined}
-                  rel={gen.external ? 'noreferrer' : undefined}
-                  class="inline-flex items-center gap-1.5 rounded border border-primary/40 px-3 py-1.5 text-[13px] font-semibold text-primary transition-colors hover:bg-primary/10"
-                >
+                {#if 'action' in gen}
+                  <button
+                    type="button"
+                    onclick={gen.action}
+                    class="inline-flex items-center gap-1.5 rounded border border-primary/40 px-3 py-1.5 text-[13px] font-semibold text-primary transition-colors hover:bg-primary/10"
+                  >
 <IconSparkles size={14} stroke={2} class="mr-1 inline" />Generate
-                </a>
+                  </button>
+                {:else}
+                  <a
+                    href={gen.href}
+                    target={gen.external ? '_blank' : undefined}
+                    rel={gen.external ? 'noreferrer' : undefined}
+                    class="inline-flex items-center gap-1.5 rounded border border-primary/40 px-3 py-1.5 text-[13px] font-semibold text-primary transition-colors hover:bg-primary/10"
+                  >
+<IconSparkles size={14} stroke={2} class="mr-1 inline" />Generate
+                  </a>
+                {/if}
               {/if}
               <a
                 href={featured.modelUrl}
@@ -842,15 +859,26 @@
                   </div>
                 </button>
                 {#if gen}
-                  <a
-                    href={gen.href}
-                    target={gen.external ? '_blank' : undefined}
-                    rel={gen.external ? 'noreferrer' : undefined}
-                    title="Generate with epoch {epoch.number}"
-                    class="absolute right-2 top-2 inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  >
-                    <IconSparkles size={12} stroke={2} />Generate
-                  </a>
+                  {#if 'action' in gen}
+                    <button
+                      type="button"
+                      onclick={gen.action}
+                      title="Generate with epoch {epoch.number}"
+                      class="absolute right-2 top-2 inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    >
+                      <IconSparkles size={12} stroke={2} />Generate
+                    </button>
+                  {:else}
+                    <a
+                      href={gen.href}
+                      target={gen.external ? '_blank' : undefined}
+                      rel={gen.external ? 'noreferrer' : undefined}
+                      title="Generate with epoch {epoch.number}"
+                      class="absolute right-2 top-2 inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    >
+                      <IconSparkles size={12} stroke={2} />Generate
+                    </a>
+                  {/if}
                 {/if}
               </div>
             {/each}

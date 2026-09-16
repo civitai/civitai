@@ -55,9 +55,15 @@ interface TrainingStudioHost {
   hrefFor(loc: StudioLocation): string;
   navigate(loc: StudioLocation, opts?: { refreshAll?: boolean }): Promise<void>;
 
+  /** Open the host page's own generator in place, seeded with an epoch's trained weights — no
+   *  navigation (the main app opens its sidebar generation panel). Preferred over `generateUrl`
+   *  when both are provided. */
+  generate?(req: { air: string; workflowId: string; name: string }): void;
+
   /** URL for the main app's `/generate` deep link primed with an epoch's trained weights
-   *  (`?air=<blob AIR>&workflowId=…&name=…`). Optional — omit to hide the per-epoch Generate
-   *  affordance. The component navigates same-tab for a relative URL, new-tab for an absolute one. */
+   *  (`?air=<blob AIR>&workflowId=…&name=…`). Optional — omit both this and `generate` to hide
+   *  the per-epoch Generate affordance. The component navigates same-tab for a relative URL,
+   *  new-tab for an absolute one. */
   generateUrl?(req: { air: string; workflowId: string; name: string }): string;
 }
 

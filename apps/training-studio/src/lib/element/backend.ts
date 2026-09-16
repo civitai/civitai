@@ -27,8 +27,12 @@ export interface StudioElementHost {
   };
   hrefFor(loc: StudioLocation): string;
   navigate(loc: StudioLocation, opts?: { refreshAll?: boolean }): Promise<void>;
-  /** URL for the main app's `/generate` deep link primed with an epoch's weights; omit to hide the
-   *  per-epoch Generate affordance (e.g. the viewing user can't use the generator hand-off). */
+  /** Open the host page's own generator in place, seeded with an epoch's weights — no navigation.
+   *  Preferred over `generateUrl` when both are provided. */
+  generate?(req: GenerateRequest): void;
+  /** URL for the main app's `/generate` deep link primed with an epoch's weights; omit both this
+   *  and `generate` to hide the per-epoch Generate affordance (e.g. the viewing user can't use
+   *  the generator hand-off). */
   generateUrl?(req: GenerateRequest): string;
 }
 

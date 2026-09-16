@@ -40,9 +40,13 @@ export interface HostContext {
   navigate: (loc: StudioLocation, opts?: { refreshAll?: boolean }) => Promise<void>;
   /** Re-run the host's data load for a dependency key (Kit `invalidate` in the shell). */
   refresh: (key: string) => Promise<void>;
+  /** Open the host's own generator in place, seeded with an epoch's weights — no navigation.
+   *  Preferred over `generateUrl` when both are provided (the embed's sidebar generator). */
+  generate?: (req: GenerateRequest) => void;
   /** The host's URL for the main app's `/generate` deep link, primed with an epoch's weights.
-   *  Absent when the host has no generator to hand off to — the affordance hides. A relative URL
-   *  is an in-host navigation; an absolute one opens the generator's origin in a new tab. */
+   *  Absent (with `generate`) when the host has no generator to hand off to — the affordance
+   *  hides. A relative URL is an in-host navigation; an absolute one opens the generator's
+   *  origin in a new tab. */
   generateUrl?: (req: GenerateRequest) => string;
   /** Where portalled UI (dialogs, select/tooltip content) should land. The element supplies its
    *  body-level portal root (an ancestor `container-type` on the embedding page makes it the
@@ -74,6 +78,7 @@ export const hrefFor = (loc: StudioLocation) => host().hrefFor(loc);
 export const navigate = (loc: StudioLocation, opts?: { refreshAll?: boolean }) =>
   host().navigate(loc, opts);
 export const refresh = (key: string) => host().refresh(key);
+export const generate = () => host().generate;
 export const generateUrl = () => host().generateUrl;
 export function portalProps(): { to?: Element; disabled?: boolean } {
   const target = host().portalTarget?.();

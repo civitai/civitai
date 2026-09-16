@@ -6,8 +6,10 @@ import { useRouter } from 'next/router';
 import { env } from '~/env/client';
 import { env as serverEnv } from '~/env/server';
 import { Page } from '~/components/AppLayout/Page';
+import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-seed';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 
 /**
  * The Training Studio embedded in the main app (docs/training-studio-web-component.md), behind the
@@ -75,10 +77,10 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
   const routerRef = useRef(router);
   routerRef.current = router;
 
-  // Providing generateUrl is the capability signal: without it the element hides its per-epoch
-  // Generate links. Only the form-graph lane ingests /generate?air= — the v2 lane leaves the
-  // params in the URL untouched and ignores them — so the link needs BOTH flags or it would
-  // point at a lane that silently does nothing with it.
+  // Providing generate/generateUrl is the capability signal: without them the element hides its
+  // per-epoch Generate affordance. Only the form-graph lane consumes the seeded epoch resource —
+  // the v2 lane ignores it — so both need BOTH flags or they would target a lane that silently
+  // does nothing with the handoff.
   const features = useFeatureFlags();
   const canGenerate = features.generationAirResources && features.formGraphGenerator;
 
@@ -136,6 +138,14 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
         navigate: async (loc: StudioLocation) => {
           await routerRef.current.push(hrefFor(loc), undefined, { shallow: true });
         },
+        // In-place handoff: seed the epoch's raw-AIR resource and open the globally-mounted
+        // sidebar generator (GenerationSidebar in BaseLayout) — no navigation. The element
+        // prefers this over generateUrl, which stays as the link fallback.
+        generate: canGenerate
+          ? (req: { air: string; workflowId: string; name: string }) => {
+              if (seedRawAirResource(req)) void generationGraphPanel.open();
+            }
+          : undefined,
         // Relative on purpose: the element treats a relative URL as a normal same-tab navigation
         // into this app's generator.
         generateUrl: canGenerate
