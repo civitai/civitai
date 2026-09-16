@@ -120,6 +120,8 @@ export function InteractiveTipBuzzButton({
   const startTimerTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const confirmTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [status, setStatus] = useState<'pending' | 'confirming' | 'confirmed'>('pending');
+  const statusRef = useRef(status);
+  statusRef.current = status;
   const [showCountDown, setShowCountDown] = useState(false);
 
   const interval = useInterval(() => {
@@ -398,10 +400,15 @@ export function InteractiveTipBuzzButton({
                 contentEditable={status === 'confirming'}
                 onBlur={(e) => {
                   processEnteredNumber(e.currentTarget.textContent ?? '1');
-                  if (status === 'confirming') startConfirming();
+                  // Deliberately the ref, not the closed-over `status`: startConfirming
+                  // re-enters the SPENDABLE state, and this path has no ledger dedup
+                  // behind it. Chromium dispatches no blur when contentEditable flips
+                  // false on completion, so no test covers the difference — that is why
+                  // this reads correct-by-construction rather than correct-by-engine.
+                  if (statusRef.current === 'confirming') startConfirming();
                 }}
                 onKeyDown={(e) => {
-                  if (e.key !== 'Enter') return;
+                  if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
                   // contentEditable would otherwise insert a newline, and Number() of a
                   // two-line amount is NaN, which processEnteredNumber floors to 1 Buzz.
                   e.preventDefault();
