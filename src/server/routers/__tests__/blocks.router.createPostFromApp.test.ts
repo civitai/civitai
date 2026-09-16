@@ -4,8 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * `blocks.previewPostFromApp` / `blocks.createPostFromApp` — the ROUTER-level
  * guard matrix.
  *
- * The per-guard SERVICE logic (tag policy, the publisher guard, provenance,
- * atomicity)
+ * The per-guard SERVICE logic (tag policy, self-dealing, provenance, atomicity)
  * is covered in `block-post.service.test.ts`. What can only be seen HERE is the
  * PREAMBLE and its ORDER: scope → subject → runtime flag → the dedicated post
  * flag → write trust → rate buckets, and the audit row that must be written
@@ -712,32 +711,6 @@ describe('materialisation + audit', () => {
     });
     await caller().createPostFromApp(INPUT);
     expect('modelVersionId' in mockRecordScopeInvocation.mock.calls[0][0].detail).toBe(false);
-  });
-
-  it('hands the post-commit effects the VERIFIED token app id', async () => {
-    // 🔴 THE OTHER SEAM. `applyBlockPostPublishEffects` forwards this to
-    // `imagePostedToModelReward` as `viaAppId`, which is what suppresses a reward
-    // paid to a third party on an app-composed post. The reward owns the
-    // predicate and the service owns the forward; only this procedure can be
-    // shown to supply the value, and supplying the wrong one — or none — makes
-    // the whole control inert with nothing failing anywhere else.
-    await caller().createPostFromApp(INPUT);
-
-    expect(mockApplyEffects).toHaveBeenCalledWith(
-      expect.objectContaining({ appId: 'appblk-alpha' })
-    );
-  });
-
-  it('takes that app id from the TOKEN, not from a constant', async () => {
-    // A hardcoded literal satisfies the case above. Re-issuing the token with a
-    // different app id is what makes the argument observably derived.
-    mockAuthorizeBlockBridgeToken.mockResolvedValue(claims({ appId: 'appblk-zeta' }));
-
-    await caller().createPostFromApp(INPUT);
-
-    expect(mockApplyEffects).toHaveBeenCalledWith(
-      expect.objectContaining({ appId: 'appblk-zeta' })
-    );
   });
 
   it('a failure in the post-commit effects does NOT fail the already-public post', async () => {

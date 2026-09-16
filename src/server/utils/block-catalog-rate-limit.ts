@@ -73,15 +73,8 @@ export const BLOCK_PUBLISH_RATE_LIMIT_WINDOW_SECONDS = 300;
 // on `blockInstanceId` (the same choice, for the same `jti`-churn reason, as the
 // other two), it is a FIXED window so a 2× burst across a boundary is reachable
 // by construction, and it FAILS OPEN on a Redis error. It is a cost ceiling, not
-// a security control. The controls that actually bound abuse are the per-source
-// ownership proofs and the per-post consent confirm.
-//
-// 🔴 THE PUBLISHER GUARD WAS NAMED IN THAT LIST AND HAS BEEN REMOVED FROM IT. Its
-// rationale is retracted and no replacement rule has been authored — see
-// `resolveGalleryTarget` in `src/server/services/blocks/block-post.service.ts`,
-// which records that and deliberately does not supply a fresh purpose. So it is
-// not something to weigh when judging whether this bucket is loose enough, and
-// this comment is not the place to give it one.
+// a security control. The controls that actually bound abuse are the self-dealing
+// guard, the per-source ownership proofs, and the per-post consent confirm.
 export const BLOCK_POST_RATE_LIMIT_MAX = 3;
 export const BLOCK_POST_RATE_LIMIT_WINDOW_SECONDS = 3600;
 
@@ -103,9 +96,8 @@ export const BLOCK_POST_RATE_LIMIT_WINDOW_SECONDS = 3600;
 // too-tight aggregate throttles a popular, legitimate app and reaches its users
 // as "posting is broken" — a quiet, diffuse failure that nobody attributes to a
 // rate limit — while a too-loose one leaves a bounded amount of content that the
-// per-source ownership proofs and the per-post consent confirm have each already
-// refused to admit on their own terms. (The publisher guard is deliberately not
-// counted here either — same retraction as above.) Err loose.
+// self-dealing guard, the per-source ownership proofs and the per-post consent
+// confirm have each already refused to admit on their own terms. Err loose.
 //
 // ⚠️ SAME STATED LIMITS AS THE BUCKET ABOVE: fixed window (a 2× burst across a
 // boundary is reachable by construction) and FAILS OPEN on a Redis error. It is a

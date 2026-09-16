@@ -22,7 +22,7 @@ import { BLOCK_POST_MAX_IMAGES } from '~/server/services/blocks/block-post.logic
  * 🔴 WHY THE MESSAGE AND NOT JUST THE THROW. Several of these guards sit behind
  * one another (a published-image source runs ownership, provenance, `postId IS
  * NULL` and the maturity clamp; the gallery path runs five availability checks
- * before the publisher one). A test that asserts only "rejects" passes when an
+ * before the self-dealing one). A test that asserts only "rejects" passes when an
  * EARLIER guard fires for an unrelated reason, so the guard it names may not have
  * executed at all. Asserting the message is what makes each case a claim about
  * the guard in its title. Where the production message is deliberately UNIFORM
@@ -172,11 +172,7 @@ describe('resolveGalleryTarget', () => {
     });
   });
 
-  // Named for what it TESTS, not for a rationale: the guard's original economic
-  // reason ("the one control that removes the payoff") is retracted — see the
-  // rationale record on `resolveGalleryTarget`. These cases pin the behaviour, which
-  // is unchanged and stays.
-  describe('🔴 THE PUBLISHER GUARD — refuses a model owned by the calling app’s publisher', () => {
+  describe('🔴 THE SELF-DEALING GUARD — the one control that removes the payoff', () => {
     it('REFUSES a model owned by the calling app’s own publisher', async () => {
       // Everything else about this version is perfectly valid: published, public,
       // undeleted. The ONLY thing wrong is that the model owner IS the app
@@ -207,8 +203,7 @@ describe('resolveGalleryTarget', () => {
 
     it('is NOT satisfied by the poster happening to own the model', async () => {
       // A viewer posting to their OWN model is legitimate (the reward's own
-      // self-post guard handles it) and must not be confused with the publisher
-      // case this guard refuses.
+      // self-post guard handles it) and must not be confused with self-dealing.
       dbMock.dbRead.modelVersion.findUnique.mockResolvedValue(
         version({ model: { userId: VIEWER_USER_ID } })
       );

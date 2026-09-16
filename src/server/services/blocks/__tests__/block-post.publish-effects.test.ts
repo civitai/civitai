@@ -178,7 +178,6 @@ function run(over: Partial<Parameters<typeof applyBlockPostPublishEffects>[0]> =
     imageIds: [IMAGE_A, IMAGE_B],
     modelVersionId: MODEL_VERSION_ID,
     modelId: MODEL_ID,
-    appId: ACTOR.appId,
     ip: IP,
     ...over,
   });
@@ -470,14 +469,14 @@ describe('the effect ledger', () => {
     expect(queuedJobsFrom(dbMock.dbWrite.$executeRaw.mock.calls)).toEqual([]);
   });
 
-  it('passes the AUTHOR reward exactly the arguments the native call site passes', async () => {
-    // `firstDailyPostReward` is paid to the post's author, so the App Blocks path
-    // is deliberately indistinguishable from the native one here — see the
-    // operator decision recorded on `applyBlockPostPublishEffects`, which this
-    // suite's next describe narrows for the OTHER reward only.
+  it('passes the reward arguments the native call sites pass', async () => {
     await run();
     expect(effect.firstDailyPostRewardApply).toHaveBeenCalledWith(
       { postId: POST_ID, posterId: USER_ID },
+      { ip: IP }
+    );
+    expect(effect.imagePostedToModelRewardApply).toHaveBeenCalledWith(
+      { modelId: MODEL_ID, modelVersionId: MODEL_VERSION_ID, posterId: USER_ID },
       { ip: IP }
     );
   });
@@ -487,72 +486,7 @@ describe('the effect ledger', () => {
     // different value than the native call site produces.
     await run({ modelId: null });
     expect(effect.imagePostedToModelRewardApply).toHaveBeenCalledWith(
-      {
-        modelId: undefined,
-        modelVersionId: MODEL_VERSION_ID,
-        posterId: USER_ID,
-        viaAppId: ACTOR.appId,
-      },
-      { ip: IP }
-    );
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * 🔴 THE MODEL-OWNER REWARD IS SUPPRESSED ON THIS PATH, AND THIS IS THE SEAM.
- *
- * The decision is enforced in `imagePostedToModelReward`'s own `getKey` — that
- * reward's suite proves the predicate. What NO reward-side test can express is the
- * property this describe pins: that the App Blocks path actually SENDS the signal
- * the predicate reads. Each half is hermetically correct while the pair is broken
- * if the argument is dropped, so the relationship needs its own assertion.
- *
- * ⚠️ AND WHY THE ASSERTION IS ON THE ARGUMENT RATHER THAN ON A ZERO PAYOUT. The
- * reward module is mocked wholesale in this suite, so no `getKey` runs here and no
- * Buzz figure exists to read; an assertion phrased as "nothing was paid" would be
- * a fact about the mock. The argument is the only thing this file can honestly
- * observe, and it is exactly the half this file owns.
- */
-describe('🔴 the app-path suppression signal reaches the model-owner reward', () => {
-  it('carries the VERIFIED app id on every gallery-attached call', async () => {
-    await run();
-
-    expect(effect.imagePostedToModelRewardApply).toHaveBeenCalledWith(
-      {
-        modelId: MODEL_ID,
-        modelVersionId: MODEL_VERSION_ID,
-        posterId: USER_ID,
-        viaAppId: ACTOR.appId,
-      },
-      { ip: IP }
-    );
-  });
-
-  it('uses the caller-supplied app id, not a constant', async () => {
-    // A hardcoded literal would satisfy the case above and would be wrong for
-    // every other app. Feeding a value the fixture's own constant cannot equal is
-    // what makes the argument observably DERIVED.
-    const OTHER_APP_ID = 'appblk-zeta';
-    expect(OTHER_APP_ID).not.toBe(ACTOR.appId);
-
-    await run({ appId: OTHER_APP_ID });
-
-    expect(effect.imagePostedToModelRewardApply).toHaveBeenCalledWith(
-      expect.objectContaining({ viaAppId: OTHER_APP_ID }),
-      { ip: IP }
-    );
-  });
-
-  it('does NOT put the signal on the author reward — that one is unchanged', async () => {
-    // The scope claim. Widening the suppression to `firstDailyPostReward` would
-    // reverse the recorded operator decision instead of narrowing it, and this is
-    // what fails if someone does.
-    await run();
-
-    expect(effect.firstDailyPostRewardApply).toHaveBeenCalledWith(
-      expect.not.objectContaining({ viaAppId: expect.anything() }),
+      { modelId: undefined, modelVersionId: MODEL_VERSION_ID, posterId: USER_ID },
       { ip: IP }
     );
   });

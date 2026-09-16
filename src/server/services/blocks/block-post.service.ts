@@ -31,7 +31,7 @@ import { Availability } from '~/shared/utils/prisma/enums';
 /**
  * App Blocks → a REAL Civitai Post (`blocks.createPostFromApp` /
  * `CREATE_POST_FROM_APP`) — the IMPURE half: ownership proofs, provenance reads,
- * the publisher guard, and the transactional write. The pure decisions (text
+ * the self-dealing guard, and the transactional write. The pure decisions (text
  * bounds, tag normalisation, source selection) are `block-post.logic.ts`.
  *
  * ## What this is, relative to `publishGenerationOutputs`
@@ -216,7 +216,8 @@ export type ResolvedGalleryTarget = {
  * add galleries once the path has run in production. It was rejected because a
  * post that cannot reach the gallery is not the thing app authors asked for, and
  * a second gated phase would have to re-litigate the same guards. The price of
- * taking it now is the residual described under "the publisher guard" below.
+ * taking it now is the self-dealing exposure below, which is why that guard is
+ * part of this function rather than a later hardening pass.
  *
  * 🔴 THIS IS STRICTLY STRICTER THAN NATIVE, ON PURPOSE, AND NATIVE IS THE REASON.
  * `createPost` performs NO ownership, status, or permission check on
@@ -234,141 +235,81 @@ export type ResolvedGalleryTarget = {
  * Because every check here is an ADDITION over native, none of it can break a
  * native flow: this function is only ever called from the block path.
  *
- * ### The publisher guard, and the state of its rationale
+ * ### The self-dealing guard
  *
- * The guard below refuses `Model.userId === <the app publisher>`. IT STAYS. What
- * follows is a record of why the reason it was written for no longer applies, and
- * of what was decided about that — not a new reason.
+ * `imagePostedToModelReward` pays blue Buzz to the MODEL OWNER — a party who is
+ * neither the post's author nor anyone the author interacted with — and its only
+ * self-post guard is `modelOwnerId === posterId`. An app author who also owns
+ * models can therefore build an app that routes every viewer's post at their own
+ * model versions and collect one award per viewer per version — in policy, at
+ * scale, with the reward system unable to see that the post came from an app at
+ * all (no suppression signal exists: `getKey` receives only the post's own facts,
+ * `{modelId, modelVersionId, posterId, modelOwnerId?}`, and nothing that says
+ * which client composed it).
  *
- * 🔴 ITS ORIGINAL RATIONALE WAS ENTIRELY ECONOMIC, AND IT NO LONGER HOLDS. As
- * written, the guard existed because `imagePostedToModelReward` pays the MODEL
- * OWNER and nothing else took that payout off the table; the docblock said in so
- * many words that refusing the publisher was "the only control that removes the
- * payoff". That sentence is now false. The reward is suppressed at the reward
- * itself for every call this path issues (`viaAppId` → `getKey` returns `false`),
- * so there is no payout at this call site for this guard to remove. ⚠️ Bounded,
- * not absolute — the suppression is keyed to the CALL SITE, and the native
- * republish route is not covered; see the bound on
- * `applyBlockPostPublishEffects`.
+ * 🔴 REFUSING `Model.userId === <the app publisher>` IS THE ONLY CONTROL THAT
+ * REMOVES THE PAYOFF. Rate limits, trust gates and audit rows all raise the cost;
+ * this one takes the money off the table. It must not be relaxed into a warning.
  *
- * 🔴 NO REPLACEMENT RULE HAS BEEN AUTHORED. A draft one was written and then
- * withdrawn; it is recorded here so it is not re-derived as if it were a decision:
+ * #### What one award is worth, and what bounds a repeat
  *
- *     WITHDRAWN DRAFT — "What survives is the PLATFORM rule, which never depended
- *     on the payout: an app may not aim the viewer's post at a gallery belonging
- *     to a party the app itself is."
+ * 🔴 ONE AWARD IS NOT 50 BUZZ, AND THE ERROR RUNS IN THE UNSAFE DIRECTION — an
+ * earlier version of this docblock said "50 blue Buzz" and sized the exposure from
+ * it. 50 is the reward's compiled `awardAmount`, which is a PRE-MULTIPLIER figure:
+ * `sendAward` pays
+ * `Math.ceil(event.awardAmount * clampRewardMultiplier(event.multiplier ?? 1))`
+ * (`base.reward.ts`) against the MODEL OWNER'S rewards multiplier. So the app picks
+ * the recipient and the recipient's own membership tier scales what the app's
+ * viewers earn them.
  *
- * That sentence asserts a continuity the deleted text contradicts — the rationale
- * it claims to continue was the economic one, and that one is gone. Nobody
- * authored the platform rule it names, so it is not in force and it is not the
- * basis for anything below. ⚠️ DO NOT SUPPLY A FRESH ONE HERE. "I could not find a
- * purpose for this guard" is an honest and complete thing for this docblock to
- * say; a purpose found under pressure to supply one is a hypothesis wearing a
- * decision's clothes, and this is the file where that becomes load-bearing.
- *
- * 🔴 WHAT WAS ACTUALLY DECIDED: leave the question open and fix forward. Asked
- * where the guard should sit now that its rationale is gone, the operator ruled
- * that the placement stays as-is, no preventive control is to be added for a
- * hypothesis, and the residual is accepted and answered reactively if abuse is
- * observed. See `applyBlockPostPublishEffects` for the record of that decision and
- * — importantly — of the detector it currently lacks.
- *
- * ### The residual, in numbers, so the decision above can be weighed
- *
- * The magnitude is the only quantitative input to whether the residual is
- * acceptable, so it is stated rather than assumed — and stated for the residual
- * that SURVIVES, not for the reward's unsuppressed economics, which this call site
- * no longer pays at all.
- *
- * **From this call site the payout is 0.** Every call it issues carries `viaAppId`:
- * `applyBlockPostPublishEffects` takes `appId` as a REQUIRED argument and forwards
- * it. (The reward's guard is a truthiness test, so an EMPTY `appId` would not
- * suppress — a shape the reward's own suite pins.)
- *
- * The one route that still pays on a post created here is the NATIVE
- * unpublish-then-republish described under the bound on
- * `applyBlockPostPublishEffects`. Its preconditions, read off
- * `post.controller.ts` and `post.router.ts`:
- *
- *   - the post must first be unpublished and then published again — the reward sits
- *     behind `wasPublished = !post?.publishedAt && updatedPost.publishedAt`, and this
- *     path writes `publishedAt` at INSERT, so a freshly-created app post never
- *     crosses that edge;
- *   - both writes go through `post.update`, gated by `isOwnerOrModerator` — i.e. the
- *     post's OWN AUTHOR, or a moderator. The calling app cannot do it;
- *   - the reward is then keyed `byUserId: updatedPost.userId`, the author, whoever
- *     performed the update.
- *
- * So the residual is **ONE award to the model owner per distinct
- * `(modelVersionId, model owner, post author)`**, each one requiring that author (or
- * a moderator) to manually republish that author's own post. Repeats of the same
- * triple pay nothing — the bound is the Buzz ledger, NOT the caps; the mechanism,
- * why the key has three components rather than two, and what is and is not verified
- * about it are recorded on `imagePostedToModel.reward.ts`'s `getKey`.
- *
- * 🔴 ONE AWARD IS NOT NECESSARILY 50 BUZZ, AND THE SPREAD IS THE WHOLE POINT OF
- * STATING A MAGNITUDE HERE. 50 is the reward's compiled `awardAmount`. `sendAward` pays
- * `Math.ceil(awardAmount * clampRewardMultiplier(multiplier))` (`base.reward.ts`)
- * against the MODEL OWNER'S `rewardsMultiplier`, which is a base read off
- * operator-authored `Product.metadata` (`subscriptions.schema.ts` requires it
- * positive and puts no ceiling on it) times a global bonus clamped to
- * `MAX_GLOBAL_BONUS` of 5 (`buzz.service.ts`).
- *
- * 🔴 THAT IN-MEMORY PRODUCT IS NOT WHAT PAYS, BECAUSE THIS REWARD SETTLES ON THE
- * BATCH PATH. `imagePostedToModelReward` declares no `onDemand` key, so `apply`
- * writes a pending row whose `multiplier` is clamped to `BUZZ_EVENTS_MAX_MULTIPLIER`
- * of 9.99 (`packages/civitai-clickhouse/src/buzz-events.ts` — the `buzzEvents.multiplier`
- * column is `Decimal(3, 2)`), `src/server/jobs/process-rewards.ts` reads that stored
+ * ⚠️ AND THE MULTIPLIER THAT PAYS IS THE ONE STORED ON THE ROW, NOT THE ONE
+ * COMPUTED IN MEMORY, BECAUSE THIS REWARD SETTLES ON THE BATCH PATH. It declares no
+ * `onDemand` key, so `apply` writes a `pending` row through `toClickhouseBuzzEvent`,
+ * which clamps `multiplier` with `clampBuzzEventMultiplier` to
+ * `BUZZ_EVENTS_MAX_MULTIPLIER` of 9.99
+ * (`packages/civitai-clickhouse/src/buzz-events.ts`) because the `buzzEvents.multiplier`
+ * column is `Decimal(3, 2)`. `src/server/jobs/process-rewards.ts` reads that stored
  * value back out with `argMax(multiplier, version)`, `process` never recomputes it,
- * and `sendAward` pays from it. So the effective per-award ceiling is
+ * and `sendAward` pays from it. The effective per-award ceiling is therefore
  * `awardAmount * 9.99` — at the compiled 50, `Math.ceil(50 * 9.99)` = **500 blue
- * Buzz**, about 10x the compiled amount. The gold tier's 4x
- * (`src/server/rewards/multiplier.ts`) during a maximum 5x bonus computes 20, stores
- * 9.99 and pays 500, not 1,000; at that tier the clamp engages above a bonus of
- * 9.99/4 ≈ 2.5x, and the live bonus is 2x, so nothing is trimmed today.
- *
- * ⚠️ That ceiling is the DEPLOYED COLUMN's, not a product decision, and it has a
- * written reopen trigger:
+ * Buzz**, about 10x the bare `awardAmount`. 50 is what a 1x multiplier pays, not a
+ * maximum. ⚠️ That ceiling is a property of the DEPLOYED COLUMN rather than a
+ * product decision, and it has a written reopen trigger:
  * `src/server/clickhouse/migrations/2026-08-24-buzz-events-multiplier-width.sql` is
- * deliberately unapplied, names `imagePostedToModel` as one of four rewards for which
- * the stored multiplier is a payout value rather than an audit one, records that gold
- * members are still paid half during a 5x bonus event, and says to reopen it if a
- * bonus event above 2.5x is scheduled. Widen the column and raise the constant and
- * every figure here has to be re-derived.
+ * deliberately UNAPPLIED, names `imagePostedToModel` as one of four rewards whose
+ * stored multiplier is a payout value rather than an audit one, and says to reopen
+ * it if a global bonus event above 2.5x is ever scheduled. Widen that column and
+ * raise the constant and every figure here has to be re-derived. `awardAmount` is
+ * itself operator-overridable up to `MAX_AWARD_AMOUNT`
+ * (`src/shared/constants/reward-config.constants.ts`), which moves the ceiling in
+ * proportion.
  *
- * `awardAmount` is in turn operator-overridable up to `MAX_AWARD_AMOUNT`
- * (`src/shared/constants/reward-config.constants.ts`), which raises that ceiling in
- * proportion, and the payout floors at 0 for an owner reported rewards-ineligible —
- * and sub-1 product multipliers are intentional (`foldUserMultipliers`), so 50 is the
- * payout at a 1x multiplier and is neither a floor nor a ceiling. **Weigh this
- * residual at the multiplied figure, and say which multiplier the figure assumed.**
+ * 🔴 WHAT BOUNDS A REPEAT IS THE BUZZ LEDGER, NOT THE `caps` — AND THE LEDGER KEY
+ * HAS THREE COMPONENTS, NOT TWO. `sendAward` derives `externalTransactionId` as
+ * `${type}:${forId}-${toUserId}-${byUserId}` (`base.reward.ts`) — version, MODEL
+ * OWNER, poster — and a duplicate of that id comes back as a `conflict`, i.e. money
+ * that already moved, rather than a second grant (`buzz.service.ts`,
+ * `createBuzzTransactionMany`). So "one award per `(posterId, modelVersionId)`,
+ * all-time" is too short: `toUserId` is the model's CURRENT owner, so a moderator
+ * `models.transferOwnership` (`src/server/routers/moderator/index.ts`) between two
+ * such posts yields a DIFFERENT id and therefore a second award, to the new owner.
+ * ⚠️ That last step is asserted by this repo's own comments about an external Buzz
+ * service; it has not been probed here.
  *
- * ⚠️ The reward's `caps` — 5,000 all-time per `(owner, version)` and 50,000/month
- * per owner — are ceilings on the REWARD across all posters and all paths. They
- * bound this residual only in aggregate, and quoting them as its size overstates it
- * by however many distinct authors it would take to reach them. ⚠️ AND THEY ARE IN
- * THE SAME PRE-MULTIPLIER UNITS AS THE 50, for the same reason: this reward has no
- * `onDemand` key, so it settles on the BATCH path, where the cap is applied to
- * `event.awardAmount` (`base.reward.ts`, the `caps` loop in `process`) and the
- * multiplier STORED ON THE ROW — clamped to 9.99, per the paragraph above — is
+ * ⚠️ THE `caps` ARE NOT THAT MECHANISM. Neither entry is keyed on `byUserId`, so
+ * `['toUserId','forId']` (5,000 all-time) and `['toUserId']` (50,000/month) bound
+ * what ONE OWNER accrues for one version, and per month, across ALL posters — not
+ * one poster's repeats. ⚠️ AND THEY ARE IN THE SAME PRE-MULTIPLIER UNITS AS THE 50,
+ * for the same reason: on the batch path the cap is applied to `event.awardAmount`
+ * (`base.reward.ts`, the `caps` loop in `process`) and the stored multiplier is
  * applied afterwards by `sendAward`. The Buzz a 5,000 cap permits is therefore up to
- * about 49,950, not an unbounded multiple.
+ * about 49,950. Quote a figure here only with the multiplier it assumed.
  *
- * The account type is `blue`, which is not the withdrawal account —
- * `buzz-withdrawal-request.service.ts` requests withdrawal against `'yellow'`
- * only. That is the claim the source supports; "not cash-convertible" is wider
- * than anything checked here, so the narrower one is what is written.
- *
- * ⚠️ WHAT NO GUARD HERE COULD CLOSE ANYWAY, stated so the set is not read as
- * complete. A guard at this layer can only test a relationship the DATABASE
- * DECLARES, so a second account acting with the publisher is not comparable by
- * any predicate available here. That case is *detectable* rather than prevented,
- * via `Post.metadata.blockPublishedAppId` plus the `block_scope_invocations` row
- * — i.e. the attribution marker is doing anti-fraud work, not decoration. 🔴 Read
- * the detector note on `applyBlockPostPublishEffects` before relying on that
- * sentence: one of those signals has no index behind it in production and the
- * other is written best-effort, so "detectable" is a design intent rather than a
- * capability anyone has exercised.
+ * ⚠️ WHAT IT DOES NOT CLOSE, stated plainly so nobody reads it as complete: a
+ * COLLUDING PAIR (app author + a second account owning the models) defeats it
+ * entirely, and no code control can catch that. What makes collusion *detectable*
+ * is `Post.metadata.blockPublishedAppId` plus the `block_scope_invocations` row —
+ * i.e. the attribution marker is doing anti-fraud work, not decoration.
  */
 export async function resolveGalleryTarget(input: {
   modelVersionId: number;
@@ -379,11 +320,11 @@ export async function resolveGalleryTarget(input: {
    * rather than an omission. A viewer posting to their OWN model is legitimate;
    * `imagePostedToModelReward`'s own `modelOwnerId === posterId` guard already
    * declines to pay in that case, and refusing it here would break a normal flow
-   * to fix nothing. The check below compares the model owner against the APP
-   * PUBLISHER instead — see the rationale record in this function's docblock for
-   * the current status of that comparison. The field is carried so the actor is
-   * visible at the call site and so a future rule that DOES need the poster has
-   * it; `void` marks the non-use as intentional to a reader and to the linter.
+   * to fix nothing. The self-dealing hazard is the APP PUBLISHER owning the
+   * model, which is what the check below tests. The field is carried so the
+   * actor is visible at the call site and so a future rule that DOES need the
+   * poster has it; `void` marks the non-use as intentional to a reader and to
+   * the linter.
    */
   posterUserId: number;
   /** `claims.appId`; the publisher is resolved from it here, never passed in. */
@@ -424,8 +365,7 @@ export async function resolveGalleryTarget(input: {
     badRequest('gallery target is not available');
   }
 
-  // THE PUBLISHER GUARD (see this function's docblock for the state of its
-  // rationale). Resolved from the token's OWN appId → OauthClient.userId; the
+  // SELF-DEALING. Resolved from the token's OWN appId → OauthClient.userId; the
   // block supplies neither side of this comparison.
   const client = await dbRead.oauthClient.findUnique({
     where: { id: appId },
@@ -1073,148 +1013,7 @@ export async function writeBlockPost(input: {
  * post, and paying it differently would make the reward depend on which client
  * composed it. The consequence to hold in mind when reading the list below is
  * that this path is a real Buzz-spending surface, which is why the rate buckets
- * and the attach-layer guards exist rather than being belt-and-braces.
- *
- * 🔴 AND THE ONE PLACE THAT DECISION HAS SINCE BEEN NARROWED — READ THIS BEFORE
- * CITING THE PARAGRAPH ABOVE, WHICH NO LONGER DESCRIBES THE WHOLE PATH.
- *
- * The recorded rationale has TWO clauses. Clause (a) is untouched by the
- * narrowing; the clause the narrowing materially engages — and OVERRIDES — is (b).
- * Both are set out below, because quoting the half that supports the change and
- * dropping the half that does not is how a decision record stops being one:
- *
- *   (a) "a post the viewer consented to, under the viewer's own byline, is the
- *       viewer's post". This is about ONE recipient — the author — and it holds
- *       exactly as written for every reward paid to them. It says nothing about a
- *       reward paid to a party the author never interacted with, because there is
- *       no byline argument to make about somebody else.
- *   (b) "paying it differently would make the reward depend on which client
- *       composed it". 🔴 THIS CLAUSE DOES REACH THE MODEL-OWNER REWARD, AND THE
- *       NARROWING OVERRIDES IT RATHER THAN SATISFYING IT. The reward below now
- *       does depend on which client composed the post, which is precisely what
- *       (b) objected to. It was overridden because (b) reasons about the AUTHOR's
- *       experience being uniform across clients, and the model-owner reward is
- *       not the author's — its recipient is selected by the app, so "which client
- *       composed it" is not an incidental detail there but the thing that decides
- *       who is paid.
- *
- * Anyone revisiting this should weigh (b) directly rather than treating the
- * narrowing as already settled by (a).
- *
- * The two rewards below differ on precisely that:
- *
- *   - `firstDailyPostReward`     → paid to the POST'S AUTHOR. UNCHANGED on this
- *                                  path. The decision above is about this one and
- *                                  continues to govern it in full.
- *   - `imagePostedToModelReward` → paid to the GALLERY TARGET'S MODEL OWNER, a
- *                                  THIRD PARTY, on a target the calling app
- *                                  supplied. SUPPRESSED on the calls this
- *                                  function issues, by `viaAppId` — see the
- *                                  reward's own `getKey`, and the BOUND below.
- *
- * ⚠️ THE COST, STATED PLAINLY SO THE NARROWING IS NOT READ AS FREE: a perfectly
- * legitimate app-composed post no longer pays the model owner anything, where the
- * identical post composed in the site's own UI would. That is a real product loss
- * for honest apps and honest model owners, and it is the reason this is a
- * narrowing of a recorded decision rather than a bug fix. It was taken because the
- * recipient of this one reward is chosen by the app rather than by the person
- * whose byline the post carries, and no attach-layer predicate can enumerate every
- * relationship an app may have with a model owner.
- *
- * That cost is COUNTABLE, and the reward increments a counter at the guard for this
- * reason: `civitai_app_reward_image_posted_to_model_app_suppressed_total`. ⚠️ It is
- * an upper bound on the COUNT of declines — the guard returns before the owner
- * lookup, so some of those calls would have been declined anyway by the reward's own
- * `modelOwnerId === posterId` guard or by an unresolved owner, and others would have
- * been trimmed by a cap. 🔴 It does NOT become the Buzz not paid by multiplying by
- * `awardAmount`: the payout is `awardAmount` times the MODEL OWNER'S rewards
- * multiplier as STORED on the pending row, which this reward's batch path clamps to
- * 9.99 — so one award tops out near `Math.ceil(50 * 9.99)` = 500 Buzz while the
- * `buzzEvents.multiplier` column stays `Decimal(3, 2)` — see the figures under "the
- * residual, in numbers" on `resolveGalleryTarget`, and the derivation at the counter
- * itself. ⚠️ It is also a
- * size, not a DETECTOR: it says how often the decline fires and nothing about who
- * was aimed at. See the detector note below, which it does not close.
- *
- * The suppression is expressed ONCE, in the reward, not as a condition around the
- * call below, so the PREDICATE is not re-implemented per caller. ⚠️ That is not the
- * same as covering every future caller: `viaAppId` is OPTIONAL on the reward's
- * input, so a new app-originated caller that omits it is PAID. The `appId` argument
- * below is REQUIRED for exactly that reason, but a required field is a guarantee
- * about THIS function, not about the reward's input. A new caller has to opt in.
- * See the same note on the reward's `getKey`.
- *
- * 🔴 AND ITS BOUND, BECAUSE "THIS PATH PAYS NOTHING" IS NOT THE SAME CLAIM AS
- * "THIS POST PAYS NOTHING". THE SUPPRESSION IS KEYED TO THE CALL SITE, NOT TO THE
- * POST. `viaAppId` is an argument this function supplies; nothing is stamped on
- * the `Post` row that the reward reads. So a post created here and then UNPUBLISHED
- * AND REPUBLISHED through the native UI reaches `post.controller.ts:443`, which
- * calls `imagePostedToModelReward.apply` with no `viaAppId` — and that call pays.
- * ⚠️ What bounds the REPEAT is the BUZZ LEDGER, not the reward's caps: `sendAward`
- * derives `externalTransactionId` as `${type}:${forId}-${toUserId}-${byUserId}` and a
- * repeat of that id comes back as a `conflict` rather than a second grant. ⚠️ THAT
- * KEY HAS THREE COMPONENTS — version, model owner, post author — so "one award per
- * `(post author, version)`" is too short: `toUserId` is the model's CURRENT owner, and
- * a moderator `models.transferOwnership` between republishes yields a new id and a
- * second award. See the reward's `getKey`. Neither `caps` entry is keyed on
- * `byUserId`, so `['toUserId','forId']` bounds what ONE OWNER receives for ONE
- * VERSION across ALL posters — it is not a per-poster dedupe and an earlier version
- * of this note called it one. (The ledger step is asserted by this repo's own
- * comments about an external Buzz service; it has not been probed here.)
- *
- * Either way, "the block path closes every payout on an app-composed post" is FALSE
- * AS STATED; what is true is that every payout issued FROM THIS CALL SITE is
- * suppressed. Closing the republish route needs the marker read on the native
- * publish path, which is a change to `post.controller.ts` and is not in this
- * change. Quote the bounded sentence, not the absolute one.
- *
- * ### 🔴 THE RESIDUAL, THE OPERATOR'S RULING ON IT, AND THE DETECTOR IT LACKS
- *
- * The narrowing above removes the payout from this call site. It does not answer
- * the separate question of where the attach-layer publisher guard should sit now
- * that its own (economic) rationale is gone — see the rationale record on
- * `resolveGalleryTarget`, including the figures that size the residual.
- *
- * ⚠️ RULING: LEAVE IT OPEN AND FIX FORWARD. Asked to rule, the operator chose not
- * to author a replacement platform rule and not to add preventive controls for a
- * hypothesis, accepting the residual and responding if abuse is observed. Two
- * candidate preventive controls (an accepted-collaborator refusal at the attach
- * layer, and an images-must-support-the-target check) were written and then
- * REMOVED under that ruling; they are not parked work and should not be revived
- * without a rule to justify them.
- *
- * 🔴 THE PRECONDITION FIX-FORWARD DOES NOT CURRENTLY HAVE: A DETECTOR. Responding
- * to observed abuse requires abuse to be OBSERVABLE, and today neither signal is a
- * usable query:
- *
- *   - `Post.metadata.blockPublishedAppId` — written unconditionally by
- *     `writeBlockPost`, so the data will exist; but the only index that makes the
- *     containment sweep ("every post this app created") anything other than a
- *     sequential scan of `Post` is the partial expression index in
- *     `packages/civitai-db-schema/prisma/migrations/20260913120000_post_block_published_app_id_index/migration.sql`,
- *     and THIS REPO DOES NOT AUTO-APPLY PRISMA MIGRATIONS — that file is committed
- *     for history and applied by hand, per environment. Until a human runs it
- *     against production there is no practical sweep.
- *   - the `block_scope_invocations` row — written fire-and-forget from
- *     `block-scope.middleware.ts` on `res.on('finish')`, with errors logged and
- *     SWALLOWED (`recordScopeInvocation`). It is an activity feed, not a ledger:
- *     an absence of rows is not evidence that nothing happened.
- *   - the suppression counter added on the reward is NOT a third candidate. It
- *     carries no app, no model and no user — by design, to keep an
- *     operator-registrable id out of the metric's cardinality — so it can size the
- *     decline and cannot attribute it.
- *
- * WHAT WOULD GIVE IT ONE, and how this note ends: (1) the migration above applied
- * to production, and (2) one query, run by hand and recorded, that returns posts
- * grouped by `blockPublishedAppId` with their gallery targets. 🔴 CLOSING
- * CONDITION for this paragraph: it is deleted when `psql` on the production
- * database reports `indisvalid = true` for `Post_blockPublishedAppId_idx` (the
- * exact check is in the migration's own header comment) AND that grouping query
- * has been run once against production. Both are mechanical and either passes or
- * does not; the person applying the migration is the one who checks them, because
- * applying it is when they are cheapest to run. Until then, treat "we will fix
- * forward" as a stated intention with no instrumentation behind it, and say so
- * rather than implying the path is monitored.
+ * and the self-dealing guard exist rather than being belt-and-braces.
  *
  * 🔴 AND THE SECOND REASON, WHICH IS NOT ABOUT `post.controller.ts` AT ALL: SOME
  * `Post` DATABASE TRIGGERS DO NOT FIRE ON THIS PATH. `writeBlockPost` writes
@@ -1284,16 +1083,16 @@ export async function writeBlockPost(input: {
  * What fires HERE, and the native line it mirrors:
  *   - the seed `PostMetric(AllTime)` row — the `publish_post_metrics` trigger.
  *   - `firstDailyPostReward`      — 25 blue Buzz, 25/day cap, double-deduped.
- *   - `imagePostedToModelReward`  — issued only when a gallery target was
- *                                   attached, and SUPPRESSED when it is: the call
- *                                   carries `viaAppId`, on which the reward's
- *                                   `getKey` returns `false`. It therefore appears
- *                                   in the effect ledger and pays nothing. Its own
- *                                   `modelOwnerId === posterId` guard is unchanged
- *                                   and still decides the native call site
- *                                   (`post.controller.ts:443`), which sends no
- *                                   `viaAppId` and therefore still pays — see the
- *                                   bound stated in this function's docblock.
+ *   - `imagePostedToModelReward`  — ONLY when a gallery target was attached; blue
+ *                                   Buzz to the MODEL OWNER, `awardAmount` times
+ *                                   that owner's stored rewards multiplier, so a
+ *                                   compiled 50 is what a 1x multiplier pays and
+ *                                   not a maximum — the figures and what bounds a
+ *                                   repeat are on `resolveGalleryTarget`. Its own
+ *                                   `modelOwnerId === posterId` guard handles the
+ *                                   self-post case; the SELF-DEALING guard in
+ *                                   `resolveGalleryTarget` is what handles the
+ *                                   app-publisher case, which that guard cannot see.
  *   - `eventEngine.processEngagement` — the `published` engagement.
  *   - `bustCachesForPosts`        — the `images-modelVersion:` / `images-model:`
  *                                   gallery busts. 🔴 NOT OPTIONAL: the native
@@ -1330,17 +1129,6 @@ export async function applyBlockPostPublishEffects(input: {
   imageIds: number[];
   modelVersionId: number | null;
   modelId: number | null;
-  /**
-   * `claims.appId` — the app that composed this post.
-   *
-   * 🔴 REQUIRED, NOT OPTIONAL, AND THAT IS THE POINT. It is the suppression
-   * signal `imagePostedToModelReward` reads (see the reward-scope note in this
-   * function's docblock). An optional field would let a future call site omit it
-   * and silently re-enable a reward this path does not pay; a required one makes
-   * the compiler ask the question. There is exactly one caller and it is the
-   * block path by construction, so there is no value it could legitimately lack.
-   */
-  appId: string;
   ip?: string;
 }): Promise<void> {
   const { firstDailyPostReward, imagePostedToModelReward } = await import('~/server/rewards');
@@ -1392,24 +1180,11 @@ export async function applyBlockPostPublishEffects(input: {
     { ip: input.ip }
   );
   if (input.modelVersionId != null) {
-    // 🔴 `viaAppId` IS THE SUPPRESSION SIGNAL, AND THE CALL IS STILL ISSUED. The
-    // reward's own `getKey` returns `false` on it, so nothing is keyed and nothing
-    // is paid — see that function for why the rule lives there rather than as an
-    // `if` around this call. Issuing it anyway keeps ONE code path for both
-    // outcomes.
-    //
-    // 🔴 WHAT A CALLER INHERITS IS THE PREDICATE, NOT THE SUPPRESSION — do not read
-    // the line above as "every caller is covered". `viaAppId` is OPTIONAL on the
-    // reward's input, and this call is suppressed only because it SENDS the field.
-    // A second app-originated caller that omits it is PAID. If you are adding one,
-    // forward the app id; the bound is stated in full on this function's docblock
-    // and on the reward's own `getKey`.
     await imagePostedToModelReward.apply(
       {
         modelId: input.modelId ?? undefined,
         modelVersionId: input.modelVersionId,
         posterId: input.userId,
-        viaAppId: input.appId,
       },
       { ip: input.ip }
     );

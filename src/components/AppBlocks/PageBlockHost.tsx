@@ -4011,7 +4011,7 @@ export function PageBlockHost({
   //
   // 🔴 THE PREVIEW IS NOT AUTHORIZATION. `createPostFromApp` re-runs every guard
   // from scratch — scope, flags, write-trust, per-source ownership, the
-  // publisher guard, rate limits. A preview/commit divergence is a UX bug,
+  // self-dealing guard, rate limits. A preview/commit divergence is a UX bug,
   // never a hole; the client could skip the preview entirely and get the same
   // refusals.
   //
@@ -4061,7 +4061,7 @@ export function PageBlockHost({
             ...(modelVersionId != null ? { modelVersionId } : {}),
           })) as CreatePostPreview;
         } catch (err) {
-          // Scope / flag / trust / ownership / publisher refusals all surface
+          // Scope / flag / trust / ownership / self-dealing refusals all surface
           // here as a legible message rather than a wedged button. The server's
           // refusals are deliberately uniform where they would otherwise be an
           // existence oracle.

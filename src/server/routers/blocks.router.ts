@@ -4565,7 +4565,7 @@ export const blocksRouter = router({
    *   9. ✚ text bounds + link refusal + `throwOnBlockedUserContent` over title,
    *      detail AND the resolved tag names (native screens title/detail only).
    *  10. ✚ existing-tags-only resolution — a block may never mint a site tag.
-   *  11. ✚ the `modelVersionId` gate incl. the PUBLISHER guard.
+   *  11. ✚ the `modelVersionId` gate incl. the SELF-DEALING guard.
    *  12. ✚ an atomic create → adopt → publish transaction.
    *
    * 🔴 THE HOST CONFIRM IS NOT ONE OF THESE GUARDS AND MUST NOT BE READ AS ONE.
@@ -4611,11 +4611,8 @@ export const blocksRouter = router({
       //
       // ⚠️ BOTH FAIL OPEN on a Redis error, by the convention every blocks
       // limiter follows. Do not read either as a hard cap or a security control:
-      // what actually bounds abuse on this path is the per-source ownership proofs
-      // and the per-post consent confirm. 🔴 The publisher guard used to be named
-      // here as a third; it is not, because its rationale is retracted and no
-      // replacement was authored — see `resolveGalleryTarget` in
-      // `block-post.service.ts`.
+      // what actually bounds abuse on this path is the self-dealing guard, the
+      // per-source ownership proofs and the per-post consent confirm.
       const postRate = await checkBlockPostRateLimit(claims.blockInstanceId);
       if (!postRate.allowed) {
         throw new TRPCError({
@@ -4801,10 +4798,6 @@ export const blocksRouter = router({
           imageIds,
           modelVersionId: created.modelVersionId,
           modelId: gallery?.modelId ?? null,
-          // The VERIFIED token's app id, never a client value — the same value
-          // `writeBlockPost` stamps onto `Post.metadata`. It is what tells
-          // `imagePostedToModelReward` this post was composed by an app.
-          appId: claims.appId,
           ip: ctx.ip,
         }).catch((error) =>
           logToAxiom({
