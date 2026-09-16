@@ -73,6 +73,29 @@ describe('useMergeServerDismissals', () => {
   });
 
   /**
+   * 🔴 The same sequence on the other input, and this one is not hypothetical either: the creator
+   * surface has no seed at all. `useQueryFollowedAnnouncements` builds its list from a plain tRPC
+   * query, so `liveIds` is empty on the first render and arrives on a later one — and a hook that
+   * stops watching it never merges a creator dismissal at all.
+   *
+   * `serverDismissedIds` is deliberately the SAME array reference across both steps. A fresh
+   * literal would re-run the effect on that dependency instead, and the test would pass with
+   * `liveIds` dropped from the deps — varying two things and proving neither.
+   */
+  it('merges when the live set arrives after the first render', () => {
+    const merge = vi.fn();
+    const serverDismissedIds = [2];
+
+    renderMerge(
+      { liveIds: [], serverDismissedIds, merge },
+      { liveIds: [1, 2, 3], serverDismissedIds, merge }
+    );
+
+    expect(merge).toHaveBeenCalledWith([2]);
+    expect(merge).toHaveBeenCalledTimes(1);
+  });
+
+  /**
    * The merge writes to a store every one of these surfaces renders from, so a merge that fires
    * per render is a render loop rather than wrong data — no assertion about the ids can see it.
    */

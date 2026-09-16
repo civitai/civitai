@@ -33,6 +33,11 @@ const EMPTY: number[] = [];
  *
  * Signed out there is no account to write to — the procedure is protected — and the device
  * store is the whole story, exactly as before.
+ *
+ * 🔴 Callers pass the ids of the action in hand, never the store's contents. That one-way flow is
+ * what keeps the device store a sink for account state rather than a source: a sync that uploaded
+ * the local set would write whatever the previous signed-in user left in the cookie under the
+ * current user's account.
  */
 export function recordAnnouncementDismissals(ids: number | number[]) {
   const batches = planDismissalRequests({

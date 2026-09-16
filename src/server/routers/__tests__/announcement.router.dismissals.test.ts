@@ -10,6 +10,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as MiddlewareTrpc from '~/server/middleware.trpc';
 
+// The mocks below are CUTS, to keep Prisma, Redis and the image services off the load path — not
+// a list that has to grow with the router. What is not cut still loads for real
+// (`announcement-allowance.service`, and `middleware.trpc` through `importOriginal`), so a
+// load-time client appearing in any of those fails this file at COLLECTION, which reports nothing
+// rather than red. After touching the router's imports, confirm this file still collects 5.
+
 const { mockDismiss, mockGetDismissed } = vi.hoisted(() => ({
   mockDismiss: vi.fn(),
   mockGetDismissed: vi.fn(),
@@ -94,7 +100,9 @@ describe('announcement dismissal procedures', () => {
   it('rejects a dismissal list longer than one request allows', async () => {
     const ids = Array.from({ length: 101 }, (_, i) => i + 1);
 
-    await expect(callerFor({ id: 7 }).dismissAnnouncements({ ids })).rejects.toThrow();
+    // Named rather than bare: a bare `rejects.toThrow()` passes on any throw, including a mock
+    // nobody configured, and cannot see the bound itself changing.
+    await expect(callerFor({ id: 7 }).dismissAnnouncements({ ids })).rejects.toThrow(/<=100 items/);
     expect(mockDismiss).not.toHaveBeenCalled();
   });
 });
