@@ -32,12 +32,7 @@ export const getInfiniteCruciblesHandler = async ({
 }: {
   input: GetCruciblesInfiniteSchema;
 }) => {
-  const items = await getCrucibles({ input, select: crucibleListSelect });
-
-  return {
-    items,
-    nextCursor: items.length > 0 ? items[items.length - 1].id : undefined,
-  };
+  return getCrucibles({ input, select: crucibleListSelect });
 };
 
 export const getCrucibleByIdHandler = async ({
