@@ -122,14 +122,26 @@ export async function getGrantedScopes(opts: {
  * per-`blockInstanceId` Redis marker checked on the block-scope path — but read
  * what actually sets it before relying on it:
  *
- *  - 🔴 IT IS NOT OPERATOR-INVOKED, and an earlier version of this paragraph
- *    said it was. `revokeInstance` has exactly two production call sites, both
- *    AUTOMATIC and both in `block-registry.service.ts`: uninstall (:2358) and
- *    `toggleEnabled(false)` (:2393). There is no admin router, no tRPC
- *    procedure and no script — so a marker appears because a USER acted, not
- *    because someone chose to write one. The practical consequence is the
- *    opposite of what "operator-invoked" implies: the middleware's 403 branch
- *    is HOT, not cold.
+ *  - 🔴 NO CALL SITE EXISTS WHOSE *PURPOSE* IS REVOCATION — which is a narrower
+ *    claim than either of the two this paragraph has already got wrong. It
+ *    first said `BlockRevocation` was "operator-invoked" (false), and the
+ *    correction then said "there is no admin router, no tRPC procedure and no
+ *    script" (ALSO false, on the middle term). What the tree actually shows:
+ *
+ *    `revokeInstance` has exactly two production call sites, both in
+ *    `block-registry.service.ts` — `uninstallFromModel` (:2358) and
+ *    `toggleEnabled(false)` (:2393) — and in both the marker is a SIDE EFFECT
+ *    of a different operation. But both are reachable over tRPC
+ *    (`blocks.router.ts:1848`, `:1810`, both `protectedProcedure`), and
+ *    `assertCanManageBlocks` early-returns for moderators (`:1521`), so a
+ *    moderator CAN cause a marker deliberately, against any user's install on
+ *    any model.
+ *
+ *    So the useful statement is not "nobody can write one" but: **there is no
+ *    endpoint that revokes a token without also uninstalling or disabling the
+ *    install.** Every route to a marker has a separate, user-visible outcome.
+ *    And the middleware's 403 branch is HOT either way, because ordinary users
+ *    hit both paths routinely.
  *  - it is per-INSTANCE, not per-user and not per-scope;
  *  - it FAILS OPEN (`isRevoked` swallows a Redis error and returns false);
  *  - writing `revoked_at` in Postgres sets NO marker. The two mechanisms do not

@@ -65,15 +65,20 @@
 --      header told you to "revoke the affected instances as a SEPARATE action",
 --      and THAT INSTRUCTION IS NOT FOLLOWABLE. Four things decide whether it
 --      helps you here, and three of them say it does not:
---        - it is NOT operator-invoked. `revokeInstance` has exactly two
---          production call sites, both AUTOMATIC — uninstall and
---          `toggleEnabled(false)` in `block-registry.service.ts`. There is no
---          admin endpoint, no tRPC procedure and no script;
---        - so the only ways to set a marker by hand are toggling every affected
---          install OFF in the UI — which also DISABLES the install, a different
---          and user-visible outcome — or writing
+--        - NO ENDPOINT EXISTS WHOSE PURPOSE IS REVOCATION. `revokeInstance` has
+--          exactly two production call sites, both in
+--          `block-registry.service.ts`, and in both the marker is a SIDE EFFECT:
+--          `uninstallFromModel` (:2358) and `toggleEnabled(false)` (:2393);
+--        - both ARE reachable over tRPC (`blocks.router.ts:1848` and `:1810`,
+--          both `protectedProcedure`), and `assertCanManageBlocks` early-returns
+--          for moderators (`:1521`) — so a mod CAN set a marker deliberately,
+--          on any user's install. What you cannot do is set one WITHOUT also
+--          uninstalling or disabling that install: every route carries a
+--          separate, user-visible outcome, which is why none of them is a quiet
+--          token revocation and none is recommended here;
+--        - the remaining route is writing
 --          `blocks:revoked-instance:<blockInstanceId>` into Redis yourself with
---          an EX. Neither is a normal operation and neither is recommended here;
+--          an EX. Also not a normal operation;
 --        - you cannot even ENUMERATE the instances from this file. It works on
 --          `app_user_scope_grants`, keyed (user_id, app_block_id);
 --          `block_instance_id` lives on `block_user_subscriptions`. Joining them
