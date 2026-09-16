@@ -619,6 +619,7 @@ model User {
   appOwnershipTransfersFrom          AppOwnershipTransfer[]     @relation("AppOwnershipTransferFrom")
   appOwnershipTransfersTo            AppOwnershipTransfer[]     @relation("AppOwnershipTransferTo")
   targetedAnnouncements              AnnouncementUser[]
+  dismissedAnnouncements             AnnouncementDismissal[]
   authoredAnnouncements              Announcement[]             @relation("authoredAnnouncements")
   announcementSpends                 AnnouncementSpend[]        @relation("announcementSpends")
   announcementMutesGiven             UserAnnouncementMute[]     @relation("announcementMutesGiven")
@@ -4163,6 +4164,7 @@ model Announcement {
   /// Profile-only rows never enter the announcements feed and never notify.
   profileOnly Boolean            @default(false)
   targetUsers AnnouncementUser[]
+  dismissals  AnnouncementDismissal[]
   spends      AnnouncementSpend[]
   reports     AnnouncementReport[]
 
@@ -4203,6 +4205,24 @@ model UserAnnouncementMute {
 model AnnouncementUser {
   announcementId Int
   userId         Int
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, announcementId])
+  @@index([announcementId])
+}
+
+/// A dismissal is meaningful only while its announcement can still be shown, so rows are read
+/// scoped to currently-active announcements and a stale row is inert rather than wrong. That is
+/// what lets cleanup be lazy: nothing user-visible depends on it having run.
+///
+/// Deleting a row for an announcement that is still live is the defect this table exists to fix —
+/// see the client-side prune it replaces. Bound this by the announcement's death, never by a
+/// per-user count.
+model AnnouncementDismissal {
+  announcementId Int
+  userId         Int
+  dismissedAt    DateTime     @default(now())
   announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 

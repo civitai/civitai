@@ -263,6 +263,66 @@ async function getAnnouncementsCached(domain?: DomainColor) {
 }
 
 /**
+ * Records dismissals against the account, as a cross-device backstop for the device stores
+ * (the announcements cookie, and localStorage for creator announcements). Those stay the
+ * only thing the render path reads; this is merged into them once a session.
+ *
+ * Only ids that name a currently-live announcement are written. That bounds the table by the
+ * announcement lifecycle rather than by how much a client sends, and it means a user-supplied
+ * id can never reach the foreign key. `ids` is already length-bounded by the schema.
+ */
+export async function dismissAnnouncementsForUser({
+  userId,
+  ids,
+}: {
+  userId: number;
+  ids: number[];
+}) {
+  // dbWrite: an announcement that went live seconds ago may not be on the replica yet, and a
+  // dismissal dropped here is silent — the user would see it again on their other device.
+  const live = await dbWrite.announcement.findMany({
+    where: { id: { in: ids }, ...activeAnnouncementWhere(new Date()) },
+    select: { id: true },
+  });
+  if (!live.length) return { dismissed: 0 };
+
+  const { count } = await dbWrite.announcementDismissal.createMany({
+    data: live.map(({ id }) => ({ userId, announcementId: id })),
+    skipDuplicates: true,
+  });
+
+  return { dismissed: count };
+}
+
+/**
+ * The ids this user has dismissed, of the announcements that can still be shown.
+ *
+ * 🔴 The active-announcement join is the bound on this response, and it is server-side on
+ * purpose: a client filter would still have shipped every id a user ever dismissed. A row for
+ * a dead announcement is inert rather than wrong, which is what lets cleanup be lazy.
+ */
+export async function getDismissedAnnouncementIds({
+  userId,
+  domain,
+}: {
+  userId: number;
+  domain?: DomainColor;
+}) {
+  const rows = await dbRead.announcementDismissal.findMany({
+    where: {
+      userId,
+      announcement: {
+        ...activeAnnouncementWhere(new Date()),
+        ...(domain ? { domain: { hasSome: [DomainColor.all, domain] } } : {}),
+      },
+    },
+    select: { announcementId: true },
+  });
+
+  return rows.map((x) => x.announcementId);
+}
+
+/**
  * Enabled announcements whose (open-ended) start/end window overlaps `[from, to]`.
  *
  * The single source of truth for "is this announcement showing". `activeAnnouncementWhere`
