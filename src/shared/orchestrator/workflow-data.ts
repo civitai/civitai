@@ -112,6 +112,12 @@ export class WorkflowData {
     return this.steps.flatMap((s) => s.blockedReasons);
   }
 
+  /** Whether any step still owes the user an output. See `StepData.awaitingOutput`. */
+  get awaitingOutput(): boolean {
+    if (!this.steps.length) return true;
+    return this.steps.some((s) => s.awaitingOutput);
+  }
+
   /** Create a StepData bound to this workflow. */
   step(step: Record<string, any> & Pick<NormalizedStep, 'metadata'>) {
     return new StepData(step, this);
@@ -251,6 +257,16 @@ export class StepData {
   /** Blocked reason strings (for display grouping). */
   get blockedReasons(): string[] {
     return this.output.map((x) => x.blockedReason).filter((x): x is string => !!x);
+  }
+  /**
+   * Whether this step still owes the user an output. A non-terminal status is not
+   * enough on its own: the orchestrator holds a workflow at `processing` indefinitely
+   * when a mature result needs the owner to unlock it (`allowMatureContent: false` +
+   * `upgradeMode: 'manual'`), and every output has already landed by then.
+   */
+  get awaitingOutput(): boolean {
+    if (this.status && orchestratorCompletedStatuses.includes(this.status)) return false;
+    return !this.output.length || this.processingCount > 0;
   }
 }
 

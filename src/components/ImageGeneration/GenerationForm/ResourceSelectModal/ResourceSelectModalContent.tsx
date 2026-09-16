@@ -155,6 +155,10 @@ export function ResourceSelectModalContent({ Rail }: { Rail?: React.ComponentTyp
                 // Autofocus opens the on-screen keyboard over half the catalog
                 // before anything has been browsed.
                 autoFocus={!isMobile}
+                // React's autoFocus alone loses the race: Mantine's focus trap
+                // runs a tick after mount and focuses the first focusable node —
+                // the close button — unless something claims data-autofocus.
+                data-autofocus={!isMobile ? true : undefined}
               />
             </div>
 

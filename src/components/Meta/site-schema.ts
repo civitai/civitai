@@ -41,14 +41,14 @@ export function getSiteSchema({
   domain,
   serverDomains,
 }: {
-  domain: ColorDomain;
-  serverDomains: ServerDomains;
+  domain?: ColorDomain;
+  serverDomains?: ServerDomains;
 }) {
-  const host = serverDomains[domain]?.primary;
+  const host = domain ? serverDomains?.[domain]?.primary : undefined;
   if (!host) return undefined;
 
   const siteUrl = httpsUrl(host);
-  const greenHost = serverDomains.green?.primary;
+  const greenHost = serverDomains?.green?.primary;
 
   // No `potentialAction`/`SearchAction`: robots.txt deliberately disallows
   // `/search/*` and `*?query=` as thin duplicate content, so declaring a search
