@@ -238,9 +238,29 @@ export function InteractiveTipBuzzButton({
     return amount;
   };
 
+  // Set when a clamp rewrote the amount under the user. Both send paths refuse while it is
+  // set, so the figure has to be on screen for one deliberate press before it can be spent.
+  const clampNeedsConfirmRef = useRef(false);
+
+  // Shared by blur and Enter. The comparison is on the STRING, not on Number(): a numeric
+  // comparison passes '5e3' and '0x32' untouched, which sends an amount the field does not
+  // read as. After a rewrite the field holds exactly amount.toString(), so this converges.
+  const applyEnteredAmount = (el: HTMLElement | null) => {
+    const entered = el?.textContent ?? '1';
+    const amount = processEnteredNumber(entered);
+    const clamped = entered.trim() !== amount.toString();
+    // Written directly because buzzCounter may already equal the clamp, and then no
+    // re-render repaints dangerouslySetInnerHTML — the field would keep showing the
+    // rejected entry and never become sendable.
+    if (clamped && el) el.textContent = amount.toString();
+    clampNeedsConfirmRef.current = clamped;
+    return { amount, clamped };
+  };
+
   const reset = () => {
     setBuzzCounter(0);
     setShowCountDown(false);
+    clampNeedsConfirmRef.current = false;
     clearConfirmTimeout();
   };
 
@@ -399,7 +419,7 @@ export function InteractiveTipBuzzButton({
               <div
                 contentEditable={status === 'confirming'}
                 onBlur={(e) => {
-                  processEnteredNumber(e.currentTarget.textContent ?? '1');
+                  applyEnteredAmount(e.currentTarget);
                   // Deliberately the ref, not the closed-over `status`: startConfirming
                   // re-enters the SPENDABLE state, and this path has no ledger dedup
                   // behind it. Chromium dispatches no blur when contentEditable flips
@@ -412,19 +432,11 @@ export function InteractiveTipBuzzButton({
                   // contentEditable would otherwise insert a newline, and Number() of a
                   // two-line amount is NaN, which processEnteredNumber floors to 1 Buzz.
                   e.preventDefault();
-                  const entered = e.currentTarget.textContent ?? '1';
-                  const amount = processEnteredNumber(entered);
-                  // Enter sends what the field SHOWS. processEnteredNumber silently
-                  // rewrites an out-of-range entry, so sending here would spend a figure
-                  // the user never saw — 5000 against a balance of 500 is one keystroke
-                  // from an emptied account. Show the clamp, make them press Enter again.
-                  if (amount !== Number(entered)) {
-                    // Written directly because buzzCounter may already equal the clamp,
-                    // and then no re-render repaints dangerouslySetInnerHTML — the field
-                    // would keep showing the rejected entry and never become sendable.
-                    e.currentTarget.textContent = amount.toString();
-                    return;
-                  }
+                  // Autorepeat would otherwise supply the confirming press itself, from a
+                  // key the user never released — and that press IS the safeguard.
+                  if (e.repeat) return;
+                  const { amount, clamped } = applyEnteredAmount(e.currentTarget);
+                  if (clamped) return;
                   sendTip(amount);
                 }}
                 onFocus={() => {
@@ -440,7 +452,19 @@ export function InteractiveTipBuzzButton({
             <LegacyActionIcon
               variant="transparent"
               color={status === 'confirmed' ? 'green' : buzzConfig.color}
-              onClick={status === 'confirming' ? () => sendTip() : undefined}
+              onClick={
+                status === 'confirming'
+                  ? () => {
+                      // The blur this click caused may have clamped the amount. The click
+                      // authorised the figure on screen BEFORE that, so spend nothing yet.
+                      if (clampNeedsConfirmRef.current) {
+                        clampNeedsConfirmRef.current = false;
+                        return;
+                      }
+                      sendTip();
+                    }
+                  : undefined
+              }
               loading={tipUserMutation.isPending}
             >
               {status === 'confirmed' ? <IconCheck size={20} /> : <IconSend size={20} />}
