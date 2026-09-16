@@ -1451,8 +1451,15 @@ export function isModerationPostureImplemented(posture: StepModerationPosture): 
 // (standalone `$type` with a consumer-recipe endpoint, deterministic CPU
 // hashing, bounded hash-string output, no resources) but has no demonstrated
 // developer demand, and every registered id is a permanent public wire
-// commitment. Adding it later is one file plus one line here — which is the
-// entire point of the registry.
+// commitment. ~~Adding it later is one file plus one line here~~ —
+// 🔴 NO LONGER TRUE, and the correction is the point: `mediaHash` is now on the
+// platform-internal DENYLIST (`./orchestrator-denylist.ts`, "hashing / model
+// ingestion"), so clause (0a) throws at registry LOAD for it. Writing the step
+// file and adding the line here would be a BOOT failure, not a test failure.
+// The two judgements genuinely conflict — this paragraph adjudicated it
+// app-safe, the denylist adjudicated it platform machinery — and the denylist
+// is the newer decision. To register it, that decision has to be reopened
+// first; do not discover this by breaking the boot.
 // ─────────────────────────────────────────────────────────────────────────────
 // 🔴 FROZEN, FOR THE SAME REASON `STEP_TYPE_ACCEPTABLE_POSTURES` IS — and BE
 // PRECISE ABOUT WHAT THAT BUYS, because it is less than the freeze above buys.

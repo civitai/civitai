@@ -30,18 +30,31 @@
  * heading (`comfyNodepackSnapshot`, `qwenImageBench`), and the two web-egress
  * steps (`webScrape`, `webSearch`).
  *
- * ## 🔴 THREE ENTRIES ARE A JUDGEMENT CALL AND ARE DELIBERATELY REVERSIBLE
+ * ## 🔴 A RETRACTED ADDITION — `ageClassification`, `mediaRating`, `wdTagging`
  *
- * `ageClassification`, `mediaRating` and `wdTagging` were added by the
- * implementing change, NOT by the operator decision this module implements.
- * The argument is specific to moving moderation to the **publish boundary**: an
- * app that can invoke the platform's own classifiers gets a **moderation
- * oracle** — it can grade candidate content against the very model that will
- * judge it at publish, and iterate until it passes. The type boundary used to
- * deny that for free; the publish boundary does not.
+ * An earlier draft of this module ALSO denied those three, on a
+ * "moderation oracle" argument: with moderation moved to the publish boundary,
+ * an app that can invoke the platform's own classifiers could grade candidate
+ * content against the very model that will judge it, and iterate until it
+ * passes. **That argument did not survive audit and the three are ALLOWED.**
+ * Recorded rather than deleted, so it is not re-derived:
  *
- * If that argument is rejected, these three move to ALLOW and nothing else in
- * this module changes. Say so in the PR rather than editing the set silently.
+ *  1. **It buys loop SPEED, not capability denial.** An app holding
+ *     `ai:write:budgeted` can publish and observe the platform's own rating
+ *     come back on the scanned object. Denying the `$type`s makes a grading
+ *     loop slower; it does not make one impossible.
+ *  2. **It denied the good-citizen case along with the gaming one.** An app
+ *     that wants to REFUSE to publish content its own check flags is exactly
+ *     the behaviour we want, and `ageClassification` is the sharp example: the
+ *     denial stopped an app checking whether an image depicts a minor BEFORE
+ *     touching it. The denial was not neutral.
+ *  3. **`wdTagging` is not a moderation grader at all** — it is a WD14-family
+ *     tagger with ordinary benign uses (auto-tagging a user's own gallery). It
+ *     was in the set by association.
+ *
+ * Note this is also the reading closer to the operator decision, which named
+ * the internal classes as scanners, model ingestion, hashing, web egress and
+ * training — not these.
  *
  * ## What is deliberately NOT here
  *
@@ -73,47 +86,57 @@
 /**
  * Orchestrator `$type` values an App Block may never submit.
  *
- * Frozen: this is on the spend/submit path and is read by a load-time invariant,
- * so post-load mutation would be a way to widen what a block may reach without a
- * code review.
+ * 🔴 AN ARRAY, NOT A `Set`, AND THAT IS THE WHOLE POINT. A previous draft
+ * exported `Object.freeze(new Set([...]))` with a comment claiming the freeze
+ * stopped post-load mutation widening what a block may reach. **That claim was
+ * false and was measured false:** `Set.prototype.add`/`delete` write internal
+ * slots rather than properties, so `Object.freeze` is inert against both —
+ * `PLATFORM_INTERNAL_STEP_TYPES.delete('xGuardModeration')` succeeded on a
+ * frozen Set and the guard silently stopped denying it.
+ *
+ * `Object.freeze` on an ARRAY genuinely does reject `push`/`splice`/index
+ * assignment, so this one is real. The lookup Set below is module-private and
+ * never exported, which is what actually makes it unreachable for mutation.
+ *
+ * (The same trap is documented one container over, on
+ * `STEP_TYPE_ACCEPTABLE_POSTURES` in `./index.ts` — that note says a shallow
+ * freeze is "a compile-time fiction that a plain `arr.push('none')` walks
+ * straight through at runtime", demonstrated by execution. This module repeated
+ * the mistake it warns about; now it does not.)
  */
-export const PLATFORM_INTERNAL_STEP_TYPES: ReadonlySet<string> = Object.freeze(
-  new Set<string>([
-    // Scanners — the admissibility pipeline.
-    'modelPickleScan',
-    'modelClamScan',
-    'imageScanning',
+export const PLATFORM_INTERNAL_STEP_TYPES: readonly string[] = Object.freeze([
+  // Scanners — the admissibility pipeline.
+  'modelPickleScan',
+  'modelClamScan',
+  'imageScanning',
 
-    // Moderation classifiers — the models that grade at the publish boundary.
-    'xGuardModeration',
-    'shieldstralModeration',
+  // Moderation classifiers — the models that grade at the publish boundary.
+  'xGuardModeration',
+  'shieldstralModeration',
 
-    // Hashing / model ingestion — dedup and catalogue identity.
-    'mediaHash',
-    'modelHash',
-    'modelParseMetadata',
+  // Hashing / model ingestion — dedup and catalogue identity.
+  // ⚠️ `mediaHash` is denied here while `./index.ts` records it as "considered
+  // and NOT registered … adding it later is one file plus one line here". Both
+  // cannot be true; this denial is the newer decision and that note now says so.
+  'mediaHash',
+  'modelHash',
+  'modelParseMetadata',
 
-    // The orchestrator catalog's own "Platform internals" heading.
-    'comfyNodepackSnapshot',
-    'qwenImageBench',
+  // The orchestrator catalog's own "Platform internals" heading.
+  'comfyNodepackSnapshot',
+  'qwenImageBench',
 
-    // Web egress.
-    'webScrape',
-    'webSearch',
+  // Web egress.
+  'webScrape',
+  'webSearch',
+]);
 
-    // 🔴 JUDGEMENT CALL — the moderation-oracle argument in this module's
-    // docblock. Reversible: if rejected, delete these three and nothing else
-    // changes.
-    'ageClassification',
-    'mediaRating',
-    'wdTagging',
-  ])
-) as ReadonlySet<string>;
-
-/** Stable, sorted view — for error text and tests. Never for membership. */
-export const PLATFORM_INTERNAL_STEP_TYPE_LIST: readonly string[] = Object.freeze(
-  [...PLATFORM_INTERNAL_STEP_TYPES].sort()
-);
+/**
+ * Module-private membership index. Never exported — that is what makes the set
+ * genuinely unmutatable from outside, where the retracted `Object.freeze(Set)`
+ * only looked as though it did.
+ */
+const PLATFORM_INTERNAL_LOOKUP = new Set<string>(PLATFORM_INTERNAL_STEP_TYPES);
 
 /**
  * Thrown when a block reaches for a platform-internal `$type`.
@@ -140,7 +163,7 @@ export class PlatformInternalStepTypeError extends Error {
 
 /** True when `stepType` is platform-internal and must never be app-submittable. */
 export function isPlatformInternalStepType(stepType: string): boolean {
-  return PLATFORM_INTERNAL_STEP_TYPES.has(stepType);
+  return PLATFORM_INTERNAL_LOOKUP.has(stepType);
 }
 
 /**

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   PLATFORM_INTERNAL_STEP_TYPES,
-  PLATFORM_INTERNAL_STEP_TYPE_LIST,
   PlatformInternalStepTypeError,
   assertStepTypeAllowed,
   isPlatformInternalStepType,
@@ -72,22 +71,38 @@ describe('orchestrator denylist — the predicate', () => {
     expect(() => assertStepTypeAllowed('somethingInventedUpstreamTomorrow')).not.toThrow();
   });
 
-  it('exposes a sorted list view that agrees with the set', () => {
-    expect([...PLATFORM_INTERNAL_STEP_TYPE_LIST].sort()).toEqual([
-      ...PLATFORM_INTERNAL_STEP_TYPE_LIST,
-    ]);
-    expect(new Set(PLATFORM_INTERNAL_STEP_TYPE_LIST)).toEqual(PLATFORM_INTERNAL_STEP_TYPES);
+  /**
+   * 🔴 THE RETRACTION, PINNED — these three were DENIED in an earlier draft on a
+   * "moderation oracle" argument that did not survive audit, and this test is
+   * what stops them drifting back in. The reasons are in the module docblock;
+   * the sharp one is that denying `ageClassification` stopped an app checking
+   * whether an image depicts a minor BEFORE touching it, so the denial was not
+   * neutral.
+   */
+  it('ALLOWS ageClassification/mediaRating/wdTagging — a retracted denial', () => {
+    for (const t of ['ageClassification', 'mediaRating', 'wdTagging']) {
+      expect(isPlatformInternalStepType(t)).toBe(false);
+      expect(() => assertStepTypeAllowed(t)).not.toThrow();
+    }
   });
 
   /**
-   * The three judgement-call entries are asserted BY NAME and separately from
-   * the rest, so removing them is a deliberate, visible edit to a test that says
-   * why they are there — not a silent set change.
+   * 🔴 THE EXPORTED SET IS GENUINELY IMMUTABLE — the assertion that a previous
+   * draft's `Object.freeze(new Set([...]))` could not make.
+   *
+   * Measured: `Set.prototype.add`/`delete` write internal slots, not properties,
+   * so `Object.freeze` was inert and `.delete('xGuardModeration')` SUCCEEDED on
+   * the frozen Set, silently un-denying it. A frozen ARRAY does reject
+   * mutation, and the lookup Set is module-private.
    */
-  it('includes the three moderation-oracle entries (reversible — see the module docblock)', () => {
-    for (const t of ['ageClassification', 'mediaRating', 'wdTagging']) {
-      expect(isPlatformInternalStepType(t)).toBe(true);
-    }
+  it('the exported denylist cannot be mutated to un-deny a type', () => {
+    expect(Object.isFrozen(PLATFORM_INTERNAL_STEP_TYPES)).toBe(true);
+    expect(() => {
+      (PLATFORM_INTERNAL_STEP_TYPES as string[]).push('textToImage');
+    }).toThrow(TypeError);
+    // and the guard is unmoved by the attempt
+    expect(isPlatformInternalStepType('xGuardModeration')).toBe(true);
+    expect(isPlatformInternalStepType('textToImage')).toBe(false);
   });
 });
 
@@ -98,7 +113,7 @@ describe('orchestrator denylist — the live seam: the step registry', () => {
    * No current wire arm lets a block name an arbitrary `$type`, so the property
    * this buys is "a platform-internal type cannot be REGISTERED as a block
    * step", not "a block cannot submit one". Stating the narrower claim is the
-   * point — see clause (9a) in `assertStepInvariants`.
+   * point — see clause (0a) in `assertStepInvariants`.
    */
   it('no registered step declares a platform-internal orchestratorType', () => {
     const entries = listRegisteredSteps();
@@ -112,7 +127,7 @@ describe('orchestrator denylist — the live seam: the step registry', () => {
   });
 
   /**
-   * MUTATION / REACHABILITY: prove clause (9a) actually RUNS and is not
+   * MUTATION / REACHABILITY: prove clause (0a) actually RUNS and is not
    * shadowed by an earlier clause. We take a real registered entry, swap only
    * its `orchestratorType` for a denylisted one, and require the registry
    * invariant to reject it WITH THE DENYLIST'S OWN ERROR.
