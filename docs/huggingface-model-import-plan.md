@@ -152,19 +152,16 @@ the prerequisite list.
 commit `sha` is pinned rather than `main`, so a re-import is reproducible and the provenance record
 means something.
 
-## The old importer is live, not dead — and it is not a head start
+## The old importer is retired
 
-`src/server/importers/huggingFaceModel.ts` creates a `Model` with **no versions**: the loop that
-creates `ModelVersion` rows is commented out, `baseModel` is hardcoded to `SD 1.5`, and
-`ModelFile.url` points at huggingface.co rather than our storage, so nothing is ever transferred.
+The previous importer (`src/server/importers/*`, `GET /api/import` and the hourly `processImportsJob`)
+is deleted. It created a `Model` with no versions, hardcoded `baseModel` to `SD 1.5`, and pointed
+`ModelFile.url` at huggingface.co, so it never transferred anything — and it carried a second HF
+client. Removing `processImportsJob` from the `jobs` array is what stops the scheduler running it.
 
-It is reachable today. `src/pages/api/import.ts` is a `ModEndpoint` (`GET /api/import?source=…`) and
-`processImportsJob` drains the `Import` table hourly, so it is live-but-broken rather than dead. It
-also duplicates this segment's HF client — its own regex, its own API fetch, no auth header, and
-`main` instead of a pinned commit — which is two HF clients for the next person to fix.
-
-Retiring it (the importers, `/api/import`, and `processImportsJob`) is a separate change; this segment
-deliberately does not touch it.
+The `Import` table, its `ImportStatus` enum, and the `fromImportId` columns on `Model` and
+`ModelVersion` are left in place: dropping them is a migration over existing rows, and nothing reads
+them any more.
 
 ## Open questions
 
