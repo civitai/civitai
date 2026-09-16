@@ -78,9 +78,10 @@ describe('ai:write:budgeted consent copy', () => {
   it('does not name any capability we have previously caught ourselves pre-promising', () => {
     const copy = SCOPE_DESCRIPTIONS['ai:write:budgeted']!.toLowerCase();
     for (const term of NOT_REACHABLE_TODAY) {
-      expect(copy, `consent copy must not promise "${term.trim()}" — it is not reachable`).not.toContain(
-        term
-      );
+      expect(
+        copy,
+        `consent copy must not promise "${term.trim()}" — it is not reachable`
+      ).not.toContain(term);
     }
   });
 
