@@ -14,6 +14,8 @@ const CONFIRMATION_TIMEOUT = 5000;
 const WELL_BEFORE_CLOSE = CONFIRMATION_TIMEOUT - 1500;
 const PAST_CLOSE = CONFIRMATION_TIMEOUT + 400;
 
+const BALANCE = 500;
+
 let mutationPending = false;
 const tipMutate = vi.fn<(vars: { amount: number; toAccountId: number }) => void>(() => {
   mutationPending = true;
@@ -28,7 +30,7 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 }));
 vi.mock('~/components/Buzz/useBuzz', async (importOriginal) => ({
   ...(await importOriginal<typeof UseBuzz>()),
-  useQueryBuzz: () => ({ data: { total: 1_000_000 } }),
+  useQueryBuzz: () => ({ data: { total: BALANCE } }),
 }));
 vi.mock('~/components/Currency/useCurrencyConfig', () => ({
   useBuzzCurrencyConfig: () => ({ color: 'yellow.7' }),
@@ -182,6 +184,51 @@ describe('InteractiveTipBuzzButton', () => {
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
     );
 
+    expect(tipMutate).toHaveBeenCalledTimes(1);
+  });
+
+  // Justin's call, 2026-09-16: Enter sends what the field SHOWS. processEnteredNumber
+  // rewrites an out-of-range entry rather than rejecting it, so sending on the first Enter
+  // spends a figure that was never on screen. Do not "simplify" this back into one
+  // keystroke without asking him — the friction is the point, not an oversight.
+  test('Enter on an over-balance amount shows the clamp instead of spending it', async () => {
+    const field = await openTipPopover();
+    field.focus();
+    field.textContent = String(BALANCE * 10);
+
+    await userEvent.keyboard('{Enter}');
+
+    expect(tipMutate).not.toHaveBeenCalled();
+    expect(field.textContent).toBe(String(BALANCE));
+  });
+
+  test('a second Enter sends the clamped amount', async () => {
+    const field = await openTipPopover();
+    field.focus();
+    field.textContent = String(BALANCE * 10);
+
+    await userEvent.keyboard('{Enter}');
+    await userEvent.keyboard('{Enter}');
+
+    expect(tipMutate).toHaveBeenCalledTimes(1);
+    expect(tipMutate.mock.calls[0][0]).toMatchObject({ amount: BALANCE });
+  });
+
+  // The counter already equals the clamp here, so setBuzzCounter is a same-value no-op and
+  // React repaints nothing. Without the direct write the field keeps showing the rejected
+  // entry, every Enter compares it against the clamp again, and the tip can never be sent.
+  test('re-entering an over-balance amount is still recoverable', async () => {
+    const field = await openTipPopover();
+    field.focus();
+    field.textContent = String(BALANCE * 10);
+    await userEvent.keyboard('{Enter}');
+
+    field.textContent = String(BALANCE * 10);
+    await userEvent.keyboard('{Enter}');
+    expect(tipMutate).not.toHaveBeenCalled();
+    expect(field.textContent).toBe(String(BALANCE));
+
+    await userEvent.keyboard('{Enter}');
     expect(tipMutate).toHaveBeenCalledTimes(1);
   });
 

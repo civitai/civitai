@@ -412,7 +412,19 @@ export function InteractiveTipBuzzButton({
                   // contentEditable would otherwise insert a newline, and Number() of a
                   // two-line amount is NaN, which processEnteredNumber floors to 1 Buzz.
                   e.preventDefault();
-                  const amount = processEnteredNumber(e.currentTarget.textContent ?? '1');
+                  const entered = e.currentTarget.textContent ?? '1';
+                  const amount = processEnteredNumber(entered);
+                  // Enter sends what the field SHOWS. processEnteredNumber silently
+                  // rewrites an out-of-range entry, so sending here would spend a figure
+                  // the user never saw — 5000 against a balance of 500 is one keystroke
+                  // from an emptied account. Show the clamp, make them press Enter again.
+                  if (amount !== Number(entered)) {
+                    // Written directly because buzzCounter may already equal the clamp,
+                    // and then no re-render repaints dangerouslySetInnerHTML — the field
+                    // would keep showing the rejected entry and never become sendable.
+                    e.currentTarget.textContent = amount.toString();
+                    return;
+                  }
                   sendTip(amount);
                 }}
                 onFocus={() => {
