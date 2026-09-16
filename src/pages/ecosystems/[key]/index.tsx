@@ -113,6 +113,16 @@ export default function EcosystemPage({
       return count ? `${formatCount(count)}+` : '—';
     });
 
+  // Same tokens in the title and description, but a missing count drops the number instead of
+  // putting a dash into the search snippet.
+  const resolveMetaText = (value: string) =>
+    value
+      .replace(LORA_COUNT_TOKEN, (_, key: string) => {
+        const count = data.loraCounts[key];
+        return count ? `${formatCount(count)}+` : '';
+      })
+      .replace(/\s{2,}/g, ' ');
+
   // A row of live counts can't carry a hand-set winner — highlight whichever column actually
   // has the most. Rows without tokens keep their curated `winner`.
   const comparisonWinner = (row: EcosystemSeoConfig['comparison']['rows'][number]) => {
@@ -156,8 +166,8 @@ export default function EcosystemPage({
   return (
     <>
       <Meta
-        title={`${name} AI Models & Generator | Civitai`}
-        description={config.metaDescription}
+        title={resolveMetaText(config.seoTitle ?? `${name} AI Models & Generator | Civitai`)}
+        description={resolveMetaText(config.metaDescription)}
         canonical={`/ecosystems/${slug}`}
         images={ogImage}
         schema={schema}
