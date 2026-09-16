@@ -496,6 +496,11 @@ export const getHomeBlockData = async ({
       if (!feed) return null;
 
       const limit = resolveFeedFetchLimit(feed.limit);
+      // `[]` means "no filter" here, but the two consumers disagree about that: the images
+      // path guards on `.length` and skips the filter, while model.service guards on
+      // truthiness and strips every version off every model, ejecting the whole block.
+      // Metadata is cast rather than parsed and is hand-written, so `[]` is reachable.
+      const baseModels = feed.baseModels?.length ? feed.baseModels : undefined;
 
       if (feed.entity === 'images') {
         const { items } = await getAllImagesIndex({
@@ -507,7 +512,7 @@ export const getHomeBlockData = async ({
           period: feed.period ?? MetricTimeframe.Week,
           newCreators: feed.newCreators,
           types: feed.types,
-          baseModels: feed.baseModels,
+          baseModels,
           user,
           headers: { src: 'getHomeBlockData:feed' },
         });
@@ -523,7 +528,7 @@ export const getHomeBlockData = async ({
           sort: (feed.sort as ModelSort) ?? ModelSort.HighestRated,
           period: feed.period ?? MetricTimeframe.Week,
           newCreators: feed.newCreators,
-          baseModels: feed.baseModels,
+          baseModels,
         },
         user,
         domain: input.domain,

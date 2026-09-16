@@ -6,13 +6,17 @@ import { getHomeBlockData } from '~/server/services/home-block.service';
 import type * as ImageService from '~/server/services/image.service';
 import type * as ModelService from '~/server/services/model.service';
 
-const { getAllImagesIndexMock, getModelsWithImagesAndModelVersionsMock, getFeaturedModelsMock } =
-  vi.hoisted(() => ({
-    getAllImagesIndexMock: vi.fn(async () => ({ items: [], nextCursor: undefined })),
-    getModelsWithImagesAndModelVersionsMock: vi.fn(async () => ({ items: [] })),
-    getFeaturedModelsMock: vi.fn(async () => [{ modelId: 1 }]),
-  }));
+const { getAllImagesIndexMock, getModelsWithImagesAndModelVersionsMock } = vi.hoisted(() => ({
+  getAllImagesIndexMock: vi.fn(async () => ({ items: [], nextCursor: undefined })),
+  getModelsWithImagesAndModelVersionsMock: vi.fn(async () => ({ items: [] })),
+}));
 
+// home-block-fetch-sizing.test.ts avoids mocking image.service because the specifier is on the
+// shared-mock ratchet. That reasoning does not reach here: asserting the argument requires
+// observing the call, and home-block.service imports getAllImagesIndex directly (:24), so the
+// graph loads either way — measured at 11s for that file against 12s for this one. The
+// specifier is PENDING rather than CANONICAL, which no-direct-shared-module-mock counts and
+// deliberately does not assert.
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   getAllImagesIndex: getAllImagesIndexMock,
@@ -21,7 +25,6 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 vi.mock('~/server/services/model.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelService>()),
   getModelsWithImagesAndModelVersions: getModelsWithImagesAndModelVersionsMock,
-  getFeaturedModels: getFeaturedModelsMock,
 }));
 
 const feedBlock = (feed: Record<string, unknown>) => ({
@@ -74,4 +77,40 @@ describe('feed baseModels filter', () => {
       (getModelsWithImagesAndModelVersionsMock.mock.calls[0]?.[0] as { input: unknown }).input
     ).toMatchObject({ baseModels: ['MiniMax H3'] });
   });
+
+  it('sends no baseModels to the models feed when the block configures none', async () => {
+    await getHomeBlockData({ input: {}, homeBlock: feedBlock({ entity: 'models' }) });
+
+    expect(getModelsWithImagesAndModelVersionsMock).toHaveBeenCalledTimes(1);
+    expect(
+      (
+        getModelsWithImagesAndModelVersionsMock.mock.calls[0]?.[0] as {
+          input: { baseModels?: string[] };
+        }
+      ).input.baseModels
+    ).toBeUndefined();
+  });
+
+  // `[]` reaches both consumers as "match nothing" or "match everything" depending on which
+  // guard they use — model.service strips every version off every model and ejects the block.
+  // The branch normalizes it to undefined so neither consumer ever sees an empty array.
+  it.each([
+    ['images', () => getAllImagesIndexMock.mock.calls[0]?.[0] as { baseModels?: string[] }],
+    [
+      'models',
+      () =>
+        (
+          getModelsWithImagesAndModelVersionsMock.mock.calls[0]?.[0] as {
+            input: { baseModels?: string[] };
+          }
+        ).input,
+    ],
+  ] as const)(
+    'normalizes an empty baseModels to undefined for the %s feed',
+    async (entity, arg) => {
+      await getHomeBlockData({ input: {}, homeBlock: feedBlock({ entity, baseModels: [] }) });
+
+      expect(arg().baseModels).toBeUndefined();
+    }
+  );
 });
