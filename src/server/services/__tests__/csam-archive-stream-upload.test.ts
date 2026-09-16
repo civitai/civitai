@@ -781,7 +781,7 @@ describe('csam archive streaming upload', () => {
 // MEASURED, and stated with its exact scope because a bare pass count here is unreproducible:
 // with both `recordCsamArchive(...)` lines deleted from the service, running
 // `csam-archive.metrics.test.ts` + `csam-archive-stream-upload.test.ts` +
-// `csam-archive-backpressure.test.ts` leaves all 37 PRE-EXISTING tests in those three files
+// `csam-archive-backpressure.test.ts` leaves all 37 NON-SEAM tests in those three files
 // green, and ONLY the four cases below go red. (A wider file set gives a different total; the
 // number that means anything is "every pre-existing test stayed green", not the total.)
 //
