@@ -1,10 +1,11 @@
 import { Checkbox, Input, Stack, Textarea } from '@mantine/core';
 import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
-import { Controller } from 'form-graph/react';
+import { Controller, useField } from 'form-graph/react';
 
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
 import { PromptEditorShell } from '~/components/Generate/Input/PromptEditorShell';
 import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
+import { BaseModelInput } from '~/components/generation_v2/inputs/BaseModelInput';
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
 import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
@@ -19,53 +20,65 @@ import type { GenerationStore } from './store';
 
 /**
  * The AUDIO generation form — one `<Controller graph={audioHub}>` per field.
- * The graph decides visibility (simple vs custom mode, Ace vs MiniMax), so
+ * The graph decides which fields apply to the selected ecosystem, so
  * this holds the superset of audio fields. `title` exists in the Ace graph
  * but has no control, matching v1.
  */
 
 export function AudioGenerationForm({ store }: { store: GenerationStore }) {
+  const ecosystem = useField<string>(store, 'ecosystem')?.value;
   return (
     <Stack gap="sm">
       <Controller
         graph={generationHub}
         name="ecosystem"
-        render={({ value: ecosystem, meta: ecosystemMeta, onChange: onEcosystemChange }) => (
-          <Controller
-            graph={audioHub}
-            name="model"
-            render={({ value, meta, onChange }) => (
-              <>
-                <CheckpointRow
-                  value={value}
-                  ecosystem={ecosystem}
-                  options={meta?.options}
-                  onOpenPicker={() =>
-                    openCheckpointPicker({
-                      options: meta?.options,
-                      onSelect: onChange,
-                      onEcosystemChange,
-                      ecosystem: {
-                        value: ecosystem,
-                        compatibleEcosystems: ecosystemMeta?.compatibleEcosystems,
-                        excludeEcosystems: ecosystemMeta?.hiddenEcosystems,
-                        ecosystemStates: ecosystemMeta?.ecosystemStates,
-                        outputType: ecosystemMeta?.mediaType,
-                      },
-                    })
-                  }
-                />
-                {meta?.versions ? (
-                  <VersionGroupSelector
-                    versions={meta.versions}
-                    modelId={value?.id}
-                    onChange={onChange}
+        render={({ value: ecosystem, meta: ecosystemMeta, onChange: onEcosystemChange }) =>
+          ecosystem === 'YuE2' ? (
+            <BaseModelInput
+              value={ecosystem}
+              onChange={onEcosystemChange}
+              compatibleEcosystems={ecosystemMeta?.compatibleEcosystems}
+              excludeEcosystems={ecosystemMeta?.hiddenEcosystems}
+              ecosystemStates={ecosystemMeta?.ecosystemStates}
+              outputType="audio"
+            />
+          ) : (
+            <Controller
+              graph={audioHub}
+              name="model"
+              render={({ value, meta, onChange }) => (
+                <>
+                  <CheckpointRow
+                    value={value}
+                    ecosystem={ecosystem}
+                    options={meta?.options}
+                    onOpenPicker={() =>
+                      openCheckpointPicker({
+                        options: meta?.options,
+                        onSelect: onChange,
+                        onEcosystemChange,
+                        ecosystem: {
+                          value: ecosystem,
+                          compatibleEcosystems: ecosystemMeta?.compatibleEcosystems,
+                          excludeEcosystems: ecosystemMeta?.hiddenEcosystems,
+                          ecosystemStates: ecosystemMeta?.ecosystemStates,
+                          outputType: ecosystemMeta?.mediaType,
+                        },
+                      })
+                    }
                   />
-                ) : null}
-              </>
-            )}
-          />
-        )}
+                  {meta?.versions ? (
+                    <VersionGroupSelector
+                      versions={meta.versions}
+                      modelId={value?.id}
+                      onChange={onChange}
+                    />
+                  ) : null}
+                </>
+              )}
+            />
+          )
+        }
       />
       <GateRuleWarnings />
       <Controller
@@ -186,6 +199,37 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
       />
       <Controller
         graph={audioHub}
+        name="yue2Mode"
+        render={({ value, meta, onChange }) => (
+          <div className="flex flex-col gap-1">
+            <Input.Label>Score planning</Input.Label>
+            <SegmentedControlWrapper
+              value={value}
+              onChange={(v) => onChange(v as typeof value)}
+              data={[...(meta?.options ?? [])]}
+            />
+          </div>
+        )}
+      />
+      <Controller
+        graph={audioHub}
+        name="yue2Abc"
+        render={({ value, onChange, error }) => (
+          <Textarea
+            label="ABC score (optional)"
+            description="Supply a score to skip automatic composition. Leave blank to compose from your style and lyrics."
+            placeholder={'X:1\nM:4/4\nL:1/4\nQ:1/4=105\nK:C\nC D E G |'}
+            value={value}
+            onChange={(e) => onChange(e.currentTarget.value)}
+            error={error?.message}
+            autosize
+            minRows={3}
+          />
+        )}
+      />
+
+      <Controller
+        graph={audioHub}
         name="bpm"
         render={({ value, meta, onChange }) => (
           <SliderInput
@@ -232,7 +276,7 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
         name="duration"
         render={({ value, meta, onChange }) => (
           <SliderInput
-            label="Duration (seconds)"
+            label={ecosystem === 'YuE2' ? 'Maximum duration (seconds)' : 'Duration (seconds)'}
             value={value}
             onChange={onChange}
             min={meta?.min ?? 1}

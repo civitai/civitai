@@ -21,6 +21,7 @@ const FLAGS_3D = {
   hunyuan3dGenerator: true,
   pixal3dGenerator: true,
   trellis2Generator: true,
+  yue2Generator: true,
 } as GenerationCtx['flags'];
 
 const BASE: GenerationCtx = {
@@ -53,6 +54,21 @@ const CONTEXTS: [string, GenerationCtx][] = [
 const IMAGE = { url: 'https://example.com/a.png', width: 1280, height: 720 };
 
 const AUDIO_SHAPES: AnyRecord[] = [
+  { musicDescription: 'synth-pop', lyrics: '[verse] Morning light', seed: 0 },
+  {
+    musicDescription: 'synth-pop',
+    lyrics: '[verse] Morning light',
+    yue2Mode: 'melody',
+    yue2Abc: 'X:1\nK:C\nC D E G |',
+  },
+  {
+    musicDescription: 'synth-pop',
+    lyrics: '[verse] Morning light',
+    yue2Mode: 'off',
+    yue2Abc: 'X:1\nK:C\nC D E G |',
+  },
+  { musicDescription: '   ', lyrics: '   ' },
+
   { prompt: 'an upbeat song' },
   { prompt: '' },
   { prompt: 'an upbeat song', seed: 42, duration: 45 },
@@ -136,7 +152,7 @@ const MODEL3D_SHAPES: AnyRecord[] = [
   { images: [IMAGE], faceLimit: 5 },
 ];
 
-const AUDIO_ECOSYSTEMS = ['Ace', 'MiniMaxMusic3'];
+const AUDIO_ECOSYSTEMS = ['Ace', 'MiniMaxMusic3', 'YuE2'];
 const MODEL3D_ECOSYSTEMS = ['PolyGen', 'Tripo', 'Hunyuan3D', 'Pixal3D', 'Trellis2'];
 
 const SLICES: Array<{ ecosystems: string[]; workflows: string[]; shapes: AnyRecord[] }> = [

@@ -1192,7 +1192,7 @@ export function GenerationForm() {
             <Controller
               graph={graph}
               name="lyrics"
-              render={({ value, onChange }) => (
+              render={({ value, onChange, error }) => (
                 <Textarea
                   label="Lyrics"
                   description="Structured lyrics with section markers like [Verse], [Chorus], [Bridge]"
@@ -1201,8 +1201,40 @@ export function GenerationForm() {
                   }
                   value={value as string}
                   onChange={(e) => onChange(e.currentTarget.value)}
+                  error={error?.message}
                   autosize
                   minRows={4}
+                />
+              )}
+            />
+
+            <Controller
+              graph={graph}
+              name="yue2Mode"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <Input.Label>Score planning</Input.Label>
+                  <SegmentedControlWrapper
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={[...(meta.options ?? [])]}
+                  />
+                </div>
+              )}
+            />
+            <Controller
+              graph={graph}
+              name="yue2Abc"
+              render={({ value, onChange, error }) => (
+                <Textarea
+                  label="ABC score (optional)"
+                  description="Supply a score to skip automatic composition. Leave blank to compose from your style and lyrics."
+                  placeholder={'X:1\nM:4/4\nL:1/4\nQ:1/4=105\nK:C\nC D E G |'}
+                  value={value}
+                  onChange={(e) => onChange(e.currentTarget.value)}
+                  error={error?.message}
+                  autosize
+                  minRows={3}
                 />
               )}
             />
@@ -1793,7 +1825,11 @@ export function GenerationForm() {
                 if (sliderMeta.min !== undefined && sliderMeta.max !== undefined) {
                   return (
                     <SliderInput
-                      label="Duration (seconds)"
+                      label={
+                        snapshot.ecosystem === 'YuE2'
+                          ? 'Maximum duration (seconds)'
+                          : 'Duration (seconds)'
+                      }
                       value={value as number}
                       onChange={onChange}
                       min={sliderMeta.min}

@@ -45,6 +45,37 @@ const VIDEO_INPUT = {
 
 /** Every input carries a seed so neither dispatcher reaches its RNG. */
 const CASES: Record<string, unknown>[] = [
+  {
+    workflow: 'txt2music',
+    ecosystem: 'YuE2',
+    musicDescription: 'synth-pop',
+    lyrics: '[verse] Morning light',
+    seed: 42,
+    expectFlags: { yue2Generator: true },
+  },
+  {
+    workflow: 'txt2music',
+    ecosystem: 'YuE2',
+    musicDescription: 'synth-pop',
+    lyrics: '[verse] Morning light',
+    seed: 42,
+    yue2Mode: 'melody',
+    yue2Abc: 'X:1\nK:C\nC D E G |',
+    duration: 90,
+    steps: 50,
+    expectFlags: { yue2Generator: true },
+  },
+  {
+    workflow: 'txt2music',
+    ecosystem: 'YuE2',
+    musicDescription: 'synth-pop',
+    lyrics: '[verse] Morning light',
+    seed: 42,
+    yue2Mode: 'off',
+    yue2Abc: 'X:1\nK:C\nC D E G |',
+    expectFlags: { yue2Generator: true },
+  },
+
   // SD family: textToImage, draft batching, comfy (img2img + hires), controlnets
   { workflow: 'txt2img', ecosystem: 'SDXL', prompt: 'a cat', seed: 42 },
   { workflow: 'txt2img:draft', ecosystem: 'SD1', prompt: 'a cat', seed: 42, quantity: 4 },
