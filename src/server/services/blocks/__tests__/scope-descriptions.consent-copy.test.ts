@@ -22,7 +22,7 @@ import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.
  */
 describe('ai:write:budgeted consent copy', () => {
   const CURRENT =
-    "Run AI work that spends the viewer's Buzz, with a per-call cap — including generating images and video, running language models, and training models";
+    "Run AI work that spends the viewer's Buzz, with a per-call cap — including generating images and video, and running language models";
 
   const SUPERSEDED_2026_09_16 = 'Submit generations with a per-call Buzz cap';
 
@@ -35,16 +35,35 @@ describe('ai:write:budgeted consent copy', () => {
   });
 
   /**
-   * The two capabilities the widening ADDED are the two a reader is most likely
-   * to be surprised by, so they are asserted by meaning as well as by the exact
-   * string above — a future reword that keeps the string test passing cannot
-   * happen, but a future reword that REPLACES both tests should still have to
-   * delete these deliberately.
+   * The capability the widening actually ADDED and that is reachable today.
+   * Asserted by meaning as well as by the exact string above, so a future reword
+   * that replaces both tests still has to delete this deliberately.
    */
-  it('names the two capabilities the widening added', () => {
+  it('names the capability the widening added', () => {
     const copy = SCOPE_DESCRIPTIONS['ai:write:budgeted']!.toLowerCase();
     expect(copy).toContain('language model');
-    expect(copy).toContain('training models');
+  });
+
+  /**
+   * 🔴 A NEGATIVE GUARD, AND THE REASON IS THE WHOLE POINT OF THE RE-CONSENT.
+   *
+   * An earlier draft promised "training models". Training is ALLOWED by the
+   * denylist but is NOT REACHABLE: no wire arm accepts it, and
+   * `isBillingModeImplemented` accepts `'prepaidFixed'` only, so a
+   * variable-cost training step cannot even be registered.
+   *
+   * Promising it while re-consenting would BANK permission for a widening that
+   * has not shipped — and nothing would re-prompt when it does, because consent
+   * is stored per (user, app) and no lookup reads a version. That is the
+   * "silent scope escalation" `app_user_scope_grants` exists to prevent.
+   *
+   * If you are here because you made training reachable: good — change the
+   * sentence AND re-take the grants. Do not just delete this test.
+   */
+  it('does NOT promise a capability that is not reachable yet', () => {
+    const copy = SCOPE_DESCRIPTIONS['ai:write:budgeted']!.toLowerCase();
+    expect(copy).not.toContain('training');
+    expect(copy).not.toContain('train ');
   });
 
   it('still promises the per-call cap, which did not change', () => {

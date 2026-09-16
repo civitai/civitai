@@ -27,10 +27,25 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   //
   // It previously read "Submit generations with a per-call Buzz cap". Under the
   // no-allowlist direction the per-call cap half is still exactly true, but
-  // "generations" stopped being: the scope now reaches every orchestrator step
-  // type that is not platform-internal (`steps/orchestrator-denylist.ts`), which
-  // includes hosted LLM inference and model training. A user who agreed to the
-  // old sentence did not agree to this one.
+  // "generations" stopped being: the scope now reaches hosted LLM inference
+  // (`chatCompletion`, registered and live), which is not a generation in any
+  // sense a reader of the old sentence would have understood. A user who agreed
+  // to the old sentence did not agree to this one.
+  //
+  // 🔴 THIS SENTENCE NAMES ONLY WHAT IS REACHABLE TODAY, AND THAT IS LOAD-BEARING.
+  // An earlier draft also promised "training models". Training is ALLOWED by the
+  // denylist, but it is not reachable: no wire arm accepts it, and
+  // `isBillingModeImplemented` accepts `'prepaidFixed'` ONLY, so a variable-cost
+  // training step cannot even be registered. Promising it here and re-consenting
+  // now would BANK permission for a widening that has not shipped — and when it
+  // does ship, nothing would re-prompt, because consent is stored per
+  // (user, app) and no lookup reads a version. That is precisely the "silent
+  // scope escalation" this table was created to prevent (see its migration
+  // header). Platform gap tracked separately.
+  //
+  // So: when a capability named here becomes reachable, that is fine. When a
+  // capability NOT named here becomes reachable, this sentence must change and
+  // the grants must be re-taken again. Do not pre-load it.
   //
   // 🔴 CHANGING THIS STRING DOES NOT RE-ASK ANYBODY. Consent is stored per
   // (user, app) in `app_user_scope_grants` and the lookup does NOT read the
@@ -41,7 +56,7 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   // re-consent to the OLD sentence and the exercise is void while both halves
   // individually look done.
   'ai:write:budgeted':
-    "Run AI work that spends the viewer's Buzz, with a per-call cap — including generating images and video, running language models, and training models",
+    "Run AI work that spends the viewer's Buzz, with a per-call cap — including generating images and video, and running language models",
   'social:tip:self': 'Post tips on behalf of the viewer',
   'apps:storage:read': "Read this app's private per-install data store",
   'apps:storage:write': "Write to this app's private per-install data store",

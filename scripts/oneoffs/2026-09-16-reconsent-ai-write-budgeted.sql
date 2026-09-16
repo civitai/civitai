@@ -12,10 +12,20 @@
 --
 --     "Submit generations with a per-call Buzz cap"
 --
--- The per-call cap half is still true. "Generations" is not: the scope now
--- reaches every orchestrator step type that is not platform-internal, which
--- includes hosted LLM inference and model training. Everyone holding a live
--- grant agreed to the narrower sentence, so the grants have to be re-taken.
+-- The per-call cap half is still true. "Generations" is not: the scope reaches
+-- hosted LLM inference (`chatCompletion`, registered and live), which is not a
+-- generation in any sense a reader of that sentence would have understood.
+-- Everyone holding a live grant agreed to the narrower sentence, so the grants
+-- have to be re-taken.
+--
+-- 🔴 THE NEW SENTENCE NAMES ONLY WHAT IS REACHABLE TODAY, ON PURPOSE. It does
+-- NOT promise model training: training is allowed by the denylist but no wire
+-- arm accepts it and no implemented billing mode can carry it. Re-consenting to
+-- a capability that does not exist BANKS permission for a widening that has not
+-- shipped, and nothing would re-prompt when it does — which is the silent scope
+-- escalation this table exists to prevent. When a NEW capability becomes
+-- reachable, the sentence changes and the grants are re-taken AGAIN. That is
+-- the intended cost, not an oversight.
 --
 -- ============================================================================
 -- 🔴 ORDERING — THE ONE WAY TO GET THIS WRONG
