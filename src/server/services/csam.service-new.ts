@@ -1542,10 +1542,21 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
    * investigating. This line is the one that survives a killed container.
    *
    * Before `createDir`, because that loop writes to the scratch volume and sits OUTSIDE
-   * the try block below — so a write failure there (the disk-pressure class this whole
-   * arc was about) throws past both counter calls. Emitting first is what stops that
-   * failure being completely invisible; the counter still cannot see it, which is
-   * recorded in the counter's own help text rather than left for a reader to discover.
+   * the try block below — so a failure there (the disk-pressure class this whole arc was
+   * about) throws past both counter calls.
+   *
+   * 🔴 IT WAS NOT INVISIBLE BEFORE, AND SAYING SO WOULD BE WRONG: the caller already
+   * catches and logs it — `process-csam.ts`'s per-report `catch` emits
+   * `subType: 'archive-data'` carrying `errorMessage(e)`, which for the `mkdirSync` throw
+   * is the real errno (`ENOSPC: … mkdir '<path>'`). What that record does NOT carry is any
+   * of `reportId`, `reportType` or `archivePath`. So what emitting first actually buys is
+   * ATTRIBUTION — which report, and which path it was routed to — not visibility. The
+   * counter still cannot see it either way, which the counter's own help text states.
+   *
+   * 🔴 Do NOT "fix" that by moving the `createDir` loop inside the try: `removeDir` is
+   * `fs.rmSync(dir, { recursive: true })` with no `force`, so it throws `ENOENT` on a
+   * directory that was never created — and the catch's cleanup loop would then throw from
+   * inside the catch. Documenting the blind spot is the cheaper correct answer.
    */
   logToAxiom({
     name: 'csam-report',

@@ -774,10 +774,16 @@ describe('csam archive streaming upload', () => {
 // 🔴 WHY THIS BLOCK EXISTS. `csam-archive.metrics.test.ts` drives the counter module directly and
 // pins its cardinality, seeding and fail-soft behaviour — all real, and all blind to the only
 // question that decides whether any of it reaches production: whether `archiveCsamDataForReport`
-// invokes it at all. Measured: deleting BOTH `recordCsamArchive(...)` lines from the service left
-// the entire csam suite green (42/42), because every test that loads the service asserted on
-// archives and blobs, and every test that loads the counter called it itself. Two surfaces, each
-// hermetically tested, with the defect living in the seam neither one owns.
+// invokes it at all — because every test that loads the service asserted on archives and blobs,
+// and every test that loads the counter called it itself. Two surfaces, each hermetically tested,
+// with the defect living in the seam neither one owns.
+//
+// MEASURED, and stated with its exact scope because a bare pass count here is unreproducible:
+// with both `recordCsamArchive(...)` lines deleted from the service, running
+// `csam-archive.metrics.test.ts` + `csam-archive-stream-upload.test.ts` +
+// `csam-archive-backpressure.test.ts` leaves all 37 PRE-EXISTING tests in those three files
+// green, and ONLY the four cases below go red. (A wider file set gives a different total; the
+// number that means anything is "every pre-existing test stayed green", not the total.)
 //
 // So these cases assert a RELATIONSHIP — service → emitter — not a component. They would also
 // catch the two call sites having their `success`/`error` arguments swapped, which no

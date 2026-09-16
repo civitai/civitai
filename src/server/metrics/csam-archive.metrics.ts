@@ -16,7 +16,9 @@
 // executed. On an `outcome="error"` row it is only the path SELECTED for this
 // report. `archivePath` is resolved before any archiving begins, so a failure
 // upstream of the media archive — the base-bundle upload, an image count, a
-// scratch-volume write — records the selected path even though that branch never
+// scratch-volume WRITE inside the try (as distinct from the earlier mkdir, which
+// throws before it and is not counted at all — see the help text) — records the
+// selected path even though that branch never
 // executed. Concretely: `{path="stream", outcome="error"}` does NOT establish that
 // the streaming upload failed. Read it as "a report routed to streaming failed
 // somewhere", then use the log line's report id to find out where.
@@ -187,7 +189,7 @@ export function ensureRegisterCsamArchiveMetrics(reg: Registry = client.register
     reg,
     'civitai_csam_archive_total',
     'CSAM evidence-archive attempts that reached the archive stage, by the media-archive path selected for them. ' +
-      'NOT every terminal state: a report with no reported user is stamped archived and returns BEFORE the flag is read, and a scratch-volume mkdir failure throws before the try block, so neither is counted here — the first is visible as details.archiveSkipped, the second only in the log line. ' +
+      'NOT every terminal state: a report with no reported user is stamped archived and returns BEFORE the flag is read, and the scratch-volume MKDIR (not the later writes, which are counted) throws before the try block, so neither is counted here. Both are still recorded elsewhere — the first as details.archiveSkipped on the row, the second as a csam-report log with subType=archive-data carrying the errno, plus the subType=archive-path line that attributes it to a report and a path. ' +
       'On outcome=success, path is what RAN. On outcome=error it is only the path SELECTED: the failure may be upstream of the media archive, so {path="stream",outcome="error"} does not establish that streaming failed. ' +
       'path (stream = the two large media zips were streamed straight to object storage, the #4771 path behind the csam-archive-stream-upload flag; ' +
       'disk = they were staged on the container scratch emptyDir first, the long-standing path and the flag-off rollback; ' +
