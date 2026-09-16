@@ -1,13 +1,8 @@
 import { faro } from '@grafana/faro-web-sdk';
+import { reportApplicationError } from '~/utils/application-error';
 
-export const BOUNDARY_ERROR_TYPE = 'react-error-boundary';
-
-/**
- * Where the error was caught. Rides along as a Faro context field so the stream is segmentable
- * by boundary. Deliberately a CLOSED set — add a member when another boundary adopts this
- * reporter, so the context values stay a known vocabulary rather than free text.
- */
-export type BoundaryName = 'root' | 'user';
+/** Where the error was caught. Rides along as a Faro context field so the stream is segmentable. */
+export type BoundaryName = 'root' | 'user' | 'game';
 
 type ReportOptions = {
   boundary: BoundaryName;
@@ -15,57 +10,60 @@ type ReportOptions = {
 };
 
 export type ReportDeps = {
-  pushError?: (error: Error, opts: { type: string; context: Record<string, string> }) => void;
-  post?: typeof fetch;
+  pushError?: (error: Error, opts: { context: Record<string, string> }) => void;
+  report?: typeof reportApplicationError;
 };
 
 /**
  * Report an error caught by a React error boundary to BOTH sinks, independently.
  *
- * 🔴 The two sinks are not redundant — they cover DIFFERENT failure shapes, which is why
- * each gets its own try/catch and neither can suppress the other:
+ * The two sinks are not redundant — they reach different consumers:
+ *  - **Faro** (`pushError`) puts it in the RUM stream our frontend error alerting watches. No
+ *    boundary reached that stream before this helper existed; the only `pushError` call site was
+ *    the Meili search client.
+ *  - **`reportApplicationError`** (→ `/api/application-error` → Axiom, and the server-side log
+ *    line our log alerting watches) is the pre-existing path, kept because it is what those
+ *    alerts read.
  *
- *  - **Faro** (`pushError`) reaches the RUM stream our frontend error alerting watches, but
- *    only once `FaroProvider` has mounted. It is the sink for a crash on a client-side
- *    navigation, where the SDK is already live.
- *  - **`POST /api/application-error`** (→ Axiom) is a plain server endpoint and needs no client
- *    state at all. It is the only sink that survives a crash on the FIRST render, where
- *    `FaroProvider` — which lives inside `_app`'s returned JSX — never mounted.
+ * Each gets its own `try`/`catch` so neither can suppress the other.
  *
- * Measured on the regression fixed in #4867: a throw in `_app`'s own render body produced no
- * report on EITHER sink, and none server-side either — the server branch still rendered fine, so
- * nothing anywhere recorded it. Keep both sinks, and keep them independent.
+ * 🔴 **Do NOT pass a `name` to `reportApplicationError` here.** The endpoint defaults an absent
+ * `name` to the literal `application-error`, and the two server-side log alerts on this signal
+ * select on exactly that value — one of them at critical severity, routed to the on-call pager. A
+ * named report is silently OUTSIDE both populations. Every other caller of
+ * `reportApplicationError` does pass a name and is therefore already excluded by design, which is
+ * why this reads as a harmless convention to follow and is not: boundary errors are the
+ * population those alerts were watching. The boundary identity travels in `message` instead, and
+ * in the Faro `context` below. Changing this needs the alert queries changed in the same breath.
  */
 export function reportBoundaryError(
-  error: Error,
+  error: unknown,
   { boundary, componentStack }: ReportOptions,
   deps: ReportDeps = {}
 ) {
-  // `stack` is REQUIRED as a string by the endpoint's zod schema. `componentStack` is
-  // `string | null` on React's ErrorInfo, and an absent key makes `schema.parse` throw →
-  // the endpoint answers 400 and the report is silently lost. Coerce, never pass through.
-  const stack = componentStack ?? error.stack ?? '';
-
   try {
     const pushError = deps.pushError ?? faro?.api?.pushError?.bind(faro.api);
-    pushError?.(error, {
-      type: BOUNDARY_ERROR_TYPE,
-      context: { boundary: String(boundary) },
+    // 🔴 No `type:` — Faro core resolves `type: type || error.name || <default>`, so passing one
+    // REPLACES the error class, and `~/utils/faro/classifyException` keys its `chunkload` and
+    // `meili` rules off that field. Tagging these would make a boundary-caught ChunkLoadError
+    // classify as a real app error: it would inflate the general JS-error-rate alert and drop out
+    // of the chunk-load one. The boundary identity goes in `context`, which is the field the
+    // classifier and the dashboards actually query.
+    pushError?.(error instanceof Error ? error : new Error(String(error)), {
+      context: { boundary },
     });
   } catch {
-    // Reporting must never break the fallback render, and must never stop the POST below.
+    // Reporting must never break the fallback render, and must never stop the report below.
   }
 
   try {
-    const post = deps.post ?? (typeof fetch === 'function' ? fetch : undefined);
-    // NOTE: deliberately NO `Content-Type: application/json`. The handler does
-    // `JSON.parse(req.body)`, so it needs the RAW string — Next's body parser would hand it a
-    // already-parsed object for an application/json request and `JSON.parse` would then throw.
-    void post?.('/api/application-error', {
-      method: 'POST',
-      body: JSON.stringify({ message: error.message, stack, name: error.name }),
-    })?.catch(() => {
-      // Offline / blocked / aborted. Nothing to do; Faro above may still have carried it.
+    const report = deps.report ?? reportApplicationError;
+    // `reportApplicationError` normalizes a non-Error throw, prefixes `message`, coerces the
+    // stack to a string and swallows its own rejection — so none of that is repeated here.
+    // Passing `componentStack` as `stack` is what it documents the field for.
+    report(error, {
+      message: `error boundary: ${boundary}`,
+      ...(componentStack ? { stack: componentStack } : {}),
     });
   } catch {
     // `fetch` missing entirely (SSR, very old browser).

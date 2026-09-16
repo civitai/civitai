@@ -1,168 +1,172 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  BOUNDARY_ERROR_TYPE,
-  reportBoundaryError,
-} from '~/components/ErrorBoundary/reportBoundaryError';
-import { RootErrorBoundary } from '~/components/ErrorBoundary/RootErrorBoundary';
+import { reportBoundaryError } from '~/components/ErrorBoundary/reportBoundaryError';
+import { applicationErrorSchema } from '~/pages/api/application-error';
 
-/** A resolved-promise `fetch` double, so `void post(...)?.catch(...)` has something to chain on. */
-const okPost = () =>
+/** A resolved-promise `fetch` double, so the reporter's fire-and-forget `.catch` has a target. */
+const okFetch = () =>
   vi.fn((...args: [RequestInfo | URL, RequestInit?]) => {
     void args;
     return Promise.resolve(new Response(null, { status: 200 }));
   });
 
-const initOf = (post: ReturnType<typeof okPost>) => post.mock.calls[0][1] as RequestInit;
-const bodyOf = (post: ReturnType<typeof okPost>) => JSON.parse(initOf(post).body as string);
+const initOf = (f: ReturnType<typeof okFetch>) => f.mock.calls[0][1] as RequestInit;
+const bodyOf = (f: ReturnType<typeof okFetch>) => JSON.parse(initOf(f).body as string);
 
-describe('reportBoundaryError', () => {
-  it('pushes the error to Faro, tagged with the boundary that caught it', () => {
-    const pushError = vi.fn();
-    const err = new Error('boom');
+/**
+ * Runs the reporter through the REAL `reportApplicationError`, intercepting only `globalThis.fetch`
+ * — so what these tests inspect is the actual wire body, not a stub's arguments.
+ */
+function withFetch(fn: (f: ReturnType<typeof okFetch>) => void) {
+  const f = okFetch();
+  const original = globalThis.fetch;
+  globalThis.fetch = f as unknown as typeof fetch;
+  try {
+    fn(f);
+  } finally {
+    globalThis.fetch = original;
+  }
+}
 
-    reportBoundaryError(err, { boundary: 'user', componentStack: '\n at Foo' }, { pushError, post: okPost() });
+describe('reportBoundaryError — the POST sink', () => {
+  // 🔴 THE STRUCTURAL GUARD. Pins the RELATIONSHIP "whatever we post satisfies the endpoint's
+  // contract" against the endpoint's OWN schema, for every throw shape a boundary can see —
+  // rather than pinning two hand-picked `stack` strings, which is walkable by any input the
+  // fixtures did not imagine. A body that fails this is a 400, and `fetch` does not reject on a
+  // 4xx, so the report would vanish with nothing to observe.
+  const throwables: [name: string, thrown: unknown][] = [
+    ['an ordinary Error', new Error('boom')],
+    ['a TypeError', new TypeError('kaboom')],
+    ['an Error with no stack', Object.assign(new Error('stackless'), { stack: undefined })],
+    ['an Error with an undefined message', Object.assign(new Error(), { message: undefined })],
+    ['a bare string', 'just a string'],
+    ['a plain object', { code: 'E_X' }],
+    ['null', null],
+    ['undefined', undefined],
+  ];
 
-    expect(pushError).toHaveBeenCalledTimes(1);
-    expect(pushError).toHaveBeenCalledWith(err, {
-      type: BOUNDARY_ERROR_TYPE,
-      context: { boundary: 'user' },
+  it.each(throwables)('posts a body satisfying the endpoint schema when given %s', (_n, thrown) => {
+    withFetch((f) => {
+      reportBoundaryError(thrown, { boundary: 'user', componentStack: '\n at Foo' });
+      expect(f).toHaveBeenCalledTimes(1);
+      const parsed = applicationErrorSchema.safeParse(bodyOf(f));
+      expect(parsed.success).toBe(true);
     });
   });
 
-  it('posts message, stack and name to /api/application-error', () => {
-    const post = okPost();
-    const err = new TypeError('kaboom');
-
-    reportBoundaryError(err, { boundary: 'root', componentStack: '\n at Bar' }, { pushError: vi.fn(), post });
-
-    expect(post).toHaveBeenCalledTimes(1);
-    expect(post.mock.calls[0][0]).toBe('/api/application-error');
-    expect(initOf(post).method).toBe('POST');
-    expect(bodyOf(post)).toEqual({ message: 'kaboom', stack: '\n at Bar', name: 'TypeError' });
+  // 🔴 ALERTING INVARIANT, not a style choice. The endpoint defaults an absent `name` to the
+  // literal `application-error`, and the two server-side log alerts on this signal select on
+  // exactly that value — one at critical severity, routed to the on-call pager. Setting any `name`
+  // silently removes boundary errors from both populations. This guard fails if someone "follows
+  // the convention" that every other caller uses.
+  it.each(throwables)('does not set a name, keeping the alert population, for %s', (_n, thrown) => {
+    withFetch((f) => {
+      reportBoundaryError(thrown, { boundary: 'user' });
+      expect(bodyOf(f).name).toBeUndefined();
+    });
   });
 
-  // 🔴 The endpoint's zod schema has `stack: z.string()` (required). React's ErrorInfo types
-  // `componentStack` as `string | null`, and passing null through drops the key from the JSON
-  // body → `schema.parse` throws → 400 → the report is silently lost. That was the behaviour
-  // of the inline fetch this helper replaced.
-  it('coerces a null componentStack to the error stack rather than sending no stack', () => {
-    const post = okPost();
-    const err = new Error('no component stack');
-    err.stack = 'Error: no component stack\n    at somewhere';
-
-    reportBoundaryError(err, { boundary: 'root', componentStack: null }, { pushError: vi.fn(), post });
-
-    const body = bodyOf(post);
-    expect(body.stack).toBe('Error: no component stack\n    at somewhere');
-    expect(typeof body.stack).toBe('string');
+  it('carries the boundary identity in the message instead', () => {
+    withFetch((f) => {
+      reportBoundaryError(new Error('boom'), { boundary: 'game' });
+      expect(bodyOf(f).message).toContain('error boundary: game');
+      expect(bodyOf(f).message).toContain('boom');
+    });
   });
 
-  it('sends an empty-string stack when neither a component stack nor an error stack exists', () => {
-    const post = okPost();
-    const err = new Error('stackless');
-    err.stack = undefined;
-
-    reportBoundaryError(err, { boundary: 'root' }, { pushError: vi.fn(), post });
-
-    expect(bodyOf(post).stack).toBe('');
-    expect('stack' in bodyOf(post)).toBe(true);
+  it('sends the componentStack as the stack when there is one', () => {
+    withFetch((f) => {
+      reportBoundaryError(new Error('boom'), { boundary: 'user', componentStack: '\n at Bar' });
+      expect(bodyOf(f).stack).toBe('\n at Bar');
+    });
   });
 
-  // 🔴 THE SEAM GUARD. The two sinks cover different failure shapes — Faro only works once
-  // FaroProvider has mounted, the POST works even when it never did — so neither may be able to
-  // suppress the other. Collapsing them into one try/catch, or reordering so a Faro throw
-  // escapes first, must fail here.
-  it('still posts when Faro throws', () => {
-    const post = okPost();
+  // 🔴 The handler does `JSON.parse(req.body)`, so it needs the RAW string. Declaring
+  // application/json makes Next's body parser hand it an object and that parse throws.
+  it('does not declare a JSON content-type, which the raw-body handler depends on', () => {
+    withFetch((f) => {
+      reportBoundaryError(new Error('boom'), { boundary: 'user' });
+      const headers = (initOf(f).headers ?? {}) as Record<string, string>;
+      expect(Object.keys(headers).map((h) => h.toLowerCase())).not.toContain('content-type');
+    });
+  });
+});
+
+describe('reportBoundaryError — the Faro sink', () => {
+  // 🔴 Faro core resolves `type: type || error.name || <default>`, and
+  // `~/utils/faro/classifyException` keys its `chunkload`/`meili` rules off that field. Passing a
+  // `type` would replace the error class and misclassify a boundary-caught ChunkLoadError as a
+  // real app error — inflating one alert and removing it from another.
+  it('does NOT pass a type, so the error class survives for the classifier', () => {
+    const pushError = vi.fn();
+    reportBoundaryError(new Error('boom'), { boundary: 'user' }, { pushError, report: vi.fn() });
+
+    expect(pushError).toHaveBeenCalledTimes(1);
+    expect(pushError.mock.calls[0][1]).not.toHaveProperty('type');
+  });
+
+  it('tags the beacon with the boundary in context', () => {
+    const pushError = vi.fn();
+    reportBoundaryError(new Error('boom'), { boundary: 'game' }, { pushError, report: vi.fn() });
+    expect(pushError.mock.calls[0][1]).toEqual({ context: { boundary: 'game' } });
+  });
+
+  it('normalizes a non-Error throw before handing it to Faro', () => {
+    const pushError = vi.fn();
+    reportBoundaryError(null, { boundary: 'root' }, { pushError, report: vi.fn() });
+    expect(pushError.mock.calls[0][0]).toBeInstanceOf(Error);
+  });
+});
+
+describe('reportBoundaryError — sink independence', () => {
+  // 🔴 THE SEAM GUARD. The sinks reach different consumers, so neither may be able to suppress the
+  // other. Collapsing the two try/catch blocks into one, or letting a shared expression above them
+  // throw, must fail here.
+  it('still reports to the POST sink when Faro throws', () => {
+    const report = vi.fn();
     const pushError = vi.fn(() => {
       throw new Error('faro is not initialised');
     });
 
     expect(() =>
-      reportBoundaryError(new Error('boom'), { boundary: 'root' }, { pushError, post })
+      reportBoundaryError(new Error('boom'), { boundary: 'root' }, { pushError, report })
     ).not.toThrow();
-
-    expect(pushError).toHaveBeenCalledTimes(1);
-    expect(post).toHaveBeenCalledTimes(1);
+    expect(report).toHaveBeenCalledTimes(1);
   });
 
-  it('still pushes to Faro when the POST throws synchronously', () => {
+  it('still pushes to Faro when the POST sink throws', () => {
     const pushError = vi.fn();
-    const post = vi.fn(() => {
+    const report = vi.fn(() => {
       throw new Error('fetch blew up');
-    }) as unknown as typeof fetch;
+    });
 
     expect(() =>
-      reportBoundaryError(new Error('boom'), { boundary: 'root' }, { pushError, post })
+      reportBoundaryError(new Error('boom'), { boundary: 'root' }, { pushError, report })
     ).not.toThrow();
-
     expect(pushError).toHaveBeenCalledTimes(1);
   });
 
-  it('swallows a rejected POST instead of producing an unhandled rejection', async () => {
-    const post = vi.fn(() => Promise.reject(new Error('offline'))) as unknown as typeof fetch;
-
-    expect(() =>
-      reportBoundaryError(new Error('boom'), { boundary: 'root' }, { pushError: vi.fn(), post })
-    ).not.toThrow();
-
-    // Let the rejection settle; an unhandled one fails the run under Vitest.
-    await Promise.resolve();
-    await Promise.resolve();
-  });
-
-  // 🔴 Pins a subtlety a "cleanup" would otherwise break: the handler does
-  // `JSON.parse(req.body)`, so it needs the RAW string. Declaring application/json makes Next's
-  // body parser hand it an already-parsed object and `JSON.parse` then throws.
-  it('does not declare a JSON content-type, which the raw-body handler depends on', () => {
-    const post = okPost();
-
-    reportBoundaryError(new Error('boom'), { boundary: 'root' }, { pushError: vi.fn(), post });
-
-    const headers = (initOf(post).headers ?? {}) as Record<string, string>;
-    const names = Object.keys(headers).map((h) => h.toLowerCase());
-    expect(names).not.toContain('content-type');
-  });
+  // The shape that escaped the previous version: a non-Error throw made a shared expression above
+  // both try blocks throw, killing both sinks at once.
+  it.each([[null], [undefined], [{ code: 'E_X' }], ['a string']])(
+    'reaches both sinks for a non-Error throw (%p)',
+    (thrown) => {
+      const pushError = vi.fn();
+      const report = vi.fn();
+      expect(() =>
+        reportBoundaryError(thrown, { boundary: 'root' }, { pushError, report })
+      ).not.toThrow();
+      expect(pushError).toHaveBeenCalledTimes(1);
+      expect(report).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it('does not throw when neither sink is available', () => {
     expect(() =>
       reportBoundaryError(
         new Error('boom'),
         { boundary: 'root' },
-        { pushError: undefined, post: undefined }
+        { pushError: undefined, report: undefined }
       )
     ).not.toThrow();
-  });
-});
-
-describe('RootErrorBoundary', () => {
-  it('flips into its fallback state on any error', () => {
-    expect(RootErrorBoundary.getDerivedStateFromError()).toEqual({ hasError: true });
-  });
-
-  // End-to-end through the REAL reporter (no module mocking): the boundary exists to make an
-  // `_app`-render-body throw reportable at all, so this asserts a report actually leaves it,
-  // tagged `root` so it is distinguishable in the stream.
-  it('reports what it caught through to the POST sink, tagged as the root boundary', () => {
-    const post = okPost();
-    const original = globalThis.fetch;
-    globalThis.fetch = post as unknown as typeof fetch;
-
-    try {
-      const boundary = new RootErrorBoundary({ children: null });
-      boundary.componentDidCatch(new Error('thrown above every other boundary'), {
-        componentStack: '\n at MyAppInner',
-      });
-
-      expect(post).toHaveBeenCalledTimes(1);
-      expect(post.mock.calls[0][0]).toBe('/api/application-error');
-      expect(bodyOf(post)).toEqual({
-        message: 'thrown above every other boundary',
-        stack: '\n at MyAppInner',
-        name: 'Error',
-      });
-    } finally {
-      globalThis.fetch = original;
-    }
   });
 });

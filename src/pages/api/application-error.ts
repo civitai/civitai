@@ -5,13 +5,23 @@ import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { applySourceMaps } from '~/server/utils/errorHandling';
 
-const schema = z.object({ message: z.string(), stack: z.string(), name: z.string().optional() });
+/**
+ * Exported so callers can be TESTED against the real contract rather than a copy of it. `message`
+ * and `stack` are REQUIRED strings: a caller that lets either go `undefined` has the key dropped by
+ * `JSON.stringify`, `parse` throws, and this endpoint answers 400 — a silently lost report, since
+ * `fetch` does not reject on a 4xx.
+ */
+export const applicationErrorSchema = z.object({
+  message: z.string(),
+  stack: z.string(),
+  name: z.string().optional(),
+});
 
 export default PublicEndpoint(
   async function handler(req, res) {
     try {
       const session = await getServerAuthSession({ req, res });
-      const queryInput = schema.parse(JSON.parse(req.body));
+      const queryInput = applicationErrorSchema.parse(JSON.parse(req.body));
       if (isProd) {
         const payload = {
           name: queryInput.name ?? 'application-error',

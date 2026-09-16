@@ -42,10 +42,9 @@ class UserErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.log('Error Boundary:', { error, errorInfo });
     this.setState({ error, stack: errorInfo.componentStack });
-    // Reports to Faro AND to /api/application-error. Faro is the half that matters here: our
-    // frontend error alerting watches that RUM stream, and until now NO boundary reached it —
-    // the only `pushError` call site in the repo was the Meili search client, so every
-    // boundary-caught error went to a single sink that nothing alerts on.
+    // Reports to Faro AND to /api/application-error. The second sink is the pre-existing one and
+    // its server-side log alerting already watched it; what this adds is the Faro half, which no
+    // error boundary reached before.
     reportBoundaryError(error, { boundary: 'user', componentStack: errorInfo.componentStack });
   }
 
