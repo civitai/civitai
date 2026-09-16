@@ -1,6 +1,6 @@
 import { dbRead, dbWrite } from './db';
-import { recordModActivity } from './mod-activity';
-import type { FeedbackStatus } from '$lib/feedback';
+import { recordModActivity, recordModActivityBatch } from './mod-activity';
+import { FEEDBACK_PAGE_SIZE, type FeedbackStatus } from '$lib/feedback';
 import {
   isFeedbackSortState,
   type FeedbackSort,
@@ -20,7 +20,9 @@ import { MAX_INT4 } from './users.service';
  * silently overwrites a colleague's verdict is indistinguishable, on screen, from one that worked.
  */
 
-export const FEEDBACK_PAGE_SIZE = 50;
+// Re-exported so existing importers keep one import site; the value is owned by `$lib/feedback.ts`
+// because the browser needs it too (see its docstring).
+export { FEEDBACK_PAGE_SIZE };
 
 /** The four columns `20260911120000_feedback_triage` adds — the only ones this page can explain. */
 const TRIAGE_COLUMNS = ['triageNote', 'handledById', 'handledAt', 'bugId'];
@@ -518,6 +520,154 @@ export async function triageFeedback(input: {
   return (await feedbackExists(dbWrite, input.id))
     ? { ok: true, changed: false }
     : { ok: false, reason: 'gone' };
+}
+
+/**
+ * Set one status across many rows, each scoped on the status ITS OWN row was showing.
+ *
+ * 🔴 ONE STATEMENT PER DISTINCT `expectedStatus`, NOT ONE PER ROW. The selection spans rows at
+ * different statuses, and `FEEDBACK_STATUSES` has four members, so this is at most four UPDATEs
+ * however many rows are selected. Each carries the same `WHERE status = ?` guard the single-row path
+ * uses, so a row someone else moved is refused individually rather than taking the batch with it.
+ *
+ * 🔴 `RETURNING id` IS WHAT MAKES PARTIAL SUCCESS HONEST. A bare affected-row COUNT says how many
+ * moved but not WHICH, and the audit rows have to name the rows that actually changed — counting
+ * and then logging the whole selection would write `ModActivity` entries for reports this moderator
+ * did not move. The returned ids are the only set that is true of both.
+ *
+ * Rows that did not move are not distinguished here between "someone else got there first" and
+ * "deleted": the single-row path spends an extra read on that because it has one row and one
+ * sentence to write, while here the honest summary is a count either way, and per-row reads would be
+ * one query per refusal to produce words nobody can act on individually.
+ */
+export async function bulkTriageFeedback(input: {
+  /**
+   * 🔴 IDS MUST BE UNIQUE, AND THIS FUNCTION DOES NOT ENFORCE IT. `parseFeedbackBulkRows` refuses a
+   * repeated id before this is reached — two pairs naming one row carry two different expectations —
+   * but this is exported and the test tier calls it directly. A duplicate would inflate `actionable`
+   * without `changed` following, i.e. report a refusal that never happened.
+   */
+  rows: readonly { id: number; expectedStatus: FeedbackStatus }[];
+  status: FeedbackStatus;
+  moderatorId: number;
+}): Promise<{ changed: number[]; actionable: number }> {
+  const handled = input.status !== 'new';
+  const byExpected = new Map<FeedbackStatus, number[]>();
+  for (const row of input.rows) {
+    const ids = byExpected.get(row.expectedStatus);
+    if (ids) ids.push(row.id);
+    else byExpected.set(row.expectedStatus, [row.id]);
+  }
+
+  /**
+   * 🔴 ONE TRANSACTION ACROSS THE (AT MOST FOUR) STATEMENTS. They are issued sequentially, so a
+   * throw on the second would otherwise leave the first group's rows MOVED with no audit row for
+   * them — `recordModActivityBatch` runs after the loop. Rolling back is the only outcome that
+   * leaves the queue and the audit log agreeing. Same argument `promoteFeedbackToBug` makes
+   * further down this file.
+   *
+   * ⚠️ IT PROTECTS THE DATA AND NOTHING ELSE. Nothing here catches, so a throw still reaches the
+   * error boundary and still takes an open detail panel's unsaved draft with it — the siblings
+   * (`triage`, `promote`) behave the same way, and `CLAUDE.md` bans `throw error()` rather than
+   * uncaught throws. An earlier version of this comment claimed the transaction covered that too.
+   */
+  const { changed, actionable } = await dbWrite.transaction().execute(async (trx) => {
+    const changed: number[] = [];
+    let actionable = 0;
+    for (const [expectedStatus, ids] of byExpected) {
+      /**
+       * 🔴 A ROW ALREADY AT THE TARGET STATUS IS SKIPPED AND EXCLUDED FROM `actionable`, AND BOTH
+       * HALVES MATTER.
+       *
+       * 🔴 DO NOT READ THIS AS A NO-OP — AN EARLIER VERSION OF THIS COMMENT SAID THE UPDATE "COULD
+       * NOT MATCH", WHICH IS MEASURABLY FALSE AND WOULD LICENSE DELETING THE GUARD.
+       * `UPDATE … SET status='reviewed' WHERE status='reviewed'` matches perfectly well and writes a
+       * new tuple: measured by removing this line, after which `RETURNING id` hands the
+       * already-at-target row back. Without the skip, such a row has its `handledById`/`handledAt`
+       * RE-STAMPED to whoever clicked, lands in `changed`, and earns a spurious `ModActivity` row
+       * asserting a triage that did not happen.
+       *
+       * The second half: a skipped row left inside the denominator would be reported to the operator
+       * as a row that "did not change" — a refusal that did not happen, over a row already in the
+       * state they asked for.
+       *
+       * The filter lives HERE rather than in the action so there is one definition of what this
+       * function was asked to move. A caller filtering first, plus this, would be the same predicate
+       * in two places.
+       */
+      if (expectedStatus === input.status) continue;
+      actionable += ids.length;
+      const rows = await trx
+        .updateTable('Feedback')
+        .set({
+          status: input.status,
+          // 🔴 `triageNote` UNTOUCHED. A bulk verdict says what happened to a batch; a note says
+          // something about ONE report, and writing one across a selection would overwrite whatever
+          // each row already had. The single-row form is where a note belongs.
+          handledById: handled ? input.moderatorId : null,
+          handledAt: handled ? new Date() : null,
+          // 🔴 `bugId` UNTOUCHED, for the reason `triageFeedback` records at length — the link says
+          // THIS REPORT IS ABOUT THAT ISSUE, which a status change does not make false.
+        })
+        .where('id', 'in', ids)
+        .where('status', '=', expectedStatus)
+        .returning('id')
+        .execute();
+      changed.push(...rows.map((r) => r.id));
+    }
+    return { changed, actionable };
+  });
+
+  // Outside the transaction, and best-effort by design: the audit row records a write that already
+  // committed, so failing the operator's action because the log failed would turn a completed bulk
+  // triage into an error message.
+  await recordModActivityBatch({
+    userId: input.moderatorId,
+    entityType: 'feedback',
+    entityIds: changed,
+    activity: 'triage',
+  });
+
+  return { changed, actionable };
+}
+
+export type KnownIssueOption = {
+  id: number;
+  title: string;
+  status: string;
+  /** Resolved with `isBugClosed`, never by the caller eyeballing `status` — see `getKnownIssues`. */
+  closed: boolean;
+};
+
+/**
+ * The issue picker's options.
+ *
+ * 🔴 NOT FILTERED TO OPEN ISSUES, and that is measured rather than assumed: of 31 rows, 6 are
+ * disabled and exactly ONE has `status = 'Open'`. An open-only picker is a one-item list, and the
+ * report in front of the moderator is usually a second sighting of something already triaged —
+ * which is the whole reason to attach rather than create. `status` rides along so the operator can
+ * see they are attaching to something closed rather than discovering it afterwards.
+ *
+ * `disabled` IS filtered: that flag is the issue board's own "retired", and offering one is offering
+ * a link the board will not show.
+ *
+ * Bounded because it is a picker, not a report. Ordered by id descending so the newest issues — the
+ * ones a fresh duplicate is most likely about — are the ones that survive the bound.
+ */
+export async function getKnownIssues(limit = 200): Promise<KnownIssueOption[]> {
+  const rows = await dbRead
+    .selectFrom('Bug')
+    .select(['id', 'title', 'status'])
+    .where('disabled', '=', false)
+    .orderBy('id', 'desc')
+    .limit(limit)
+    .execute();
+  // 🔴 DECIDED HERE, WITH THE PREDICATE THIS MODULE ALREADY OWNS. `Bug.status` is a free-form
+  // ClickUp string with no enum — "Complete", "Done", "Resolved" all mean closed — so a picker that
+  // rendered the raw value and left the reader to recognise it would make the docstring's claim
+  // ("so the operator can see they are attaching to something closed") depend on eyeballing free
+  // text. One definition of closed, in one place.
+  return rows.map((r) => ({ ...r, closed: isBugClosed(r.status) }));
 }
 
 /**
