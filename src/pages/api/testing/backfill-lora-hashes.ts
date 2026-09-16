@@ -44,7 +44,7 @@ import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { refreshImageResources } from '~/server/services/image.service';
 import { parsePromptMetadata } from '~/utils/metadata';
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { handleEndpointError, WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const CHAR_SPLIT_KEY = /^lora:\d+$/;
 const MAX_BATCH = 500;
@@ -238,14 +238,6 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
       ...(verbose ? { samples } : {}),
     });
   } catch (error) {
-    return res.status(500).json({
-      error: (error as Error).message,
-      progress: {
-        batches,
-        scanned,
-        repaired,
-        resumeFrom: after ? `${after.createdAt.toISOString()}|${after.id}` : null,
-      },
-    });
+    return handleEndpointError(res, error);
   }
 });
