@@ -490,10 +490,10 @@ Real, working features the head moderator doesn't use or doesn't know about. Mig
   - Notes: not on the head-mod list; commented out in nav + research-only — parked here pending confirmation (could be excluded).
 
 - [ ] **`/moderator/huggingface-import`** — `huggingface-import.tsx` + `components/Moderation/HuggingFaceImport/` — flag: none (`requireModerator`) — **added 2026-09-14, after this inventory was taken**
-  - Procedures: `huggingFaceImport.getAll` (query); `lookup`, `enqueue`, `attach`, `detach`, `renameGroup`, `retry`, `cancel` (mutations)
-  - Services: `huggingface.service.ts` (HF API client), `huggingface-import.service.ts` (queue + resumable multipart transfer)
+  - Procedures: `huggingFaceImport.getAll`, `getCounts`, `getConfig` (queries); `lookup`, `enqueue`, `attach`, `detach`, `delete`, `renameGroup`, `retry`, `cancel`, `setConfig` (mutations)
+  - Services: `huggingface.service.ts` (HF API client), `huggingface-import.service.ts` (queue + resumable multipart transfer), `huggingface-import-config.service.ts` (transfer settings)
   - Schemas: `huggingface-import.schema.ts`
-  - Infra: **Postgres (`HuggingFaceImport`) + S3/B2 multipart + the `process-huggingface-imports` cron**
+  - Infra: **Postgres (`HuggingFaceImport`) + S3/B2 multipart + Redis (sysRedis transfer config) + the `process-huggingface-imports` cron**
   - Notes: a port moves the page, not the transfer — the cron and `createFileHandler` (scan + hash submission) stay in the main app, so this is delegate-shaped if it moves at all.
 
 ---

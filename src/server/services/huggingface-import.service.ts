@@ -408,46 +408,35 @@ export async function detachImport(input: { id: number; userId: number; isModera
 }
 
 /**
- * Renames a batch while it is still queued.
+ * Renames a batch at any status — the name never reaches a storage key, so nothing desynchronises.
  *
- * The Queued restriction is a workflow rule, not a storage one — the name never reaches a key, so a
- * rename at any point would desynchronise nothing. It exists so the name is settled before a transfer
- * that runs for hours starts under it. Relaxing it is a one-line change if that stops being wanted.
+ * Scoped by the CURRENT name as well as repo and revision: one repo at one revision can be imported
+ * as two batches, and renaming by repo alone would silently merge them.
  */
 export async function renameGroup({
   repo,
   revision,
+  from,
   groupName,
   userId,
   isModerator,
 }: {
   repo: string;
   revision: string;
+  from: string;
   groupName: string;
   userId: number;
   isModerator: boolean;
 }) {
   const name = groupName.trim();
   if (!name) throw throwBadRequestError('A group name cannot be empty.');
-
-  const scope = {
-    repo,
-    revision,
-    ...(isModerator ? {} : { userId }),
-  };
-  const moved = await dbRead.huggingFaceImport.count({
-    where: { ...scope, status: { not: 'Queued' } },
-  });
-  if (moved)
-    throw throwBadRequestError(
-      `${moved} file(s) in this group have already started transferring — the name is fixed now.`
-    );
+  if (name === from) return { renamed: 0, groupName: name };
 
   const { count } = await dbWrite.huggingFaceImport.updateMany({
-    where: { ...scope, status: 'Queued' },
+    where: { repo, revision, groupName: from, ...(isModerator ? {} : { userId }) },
     data: { groupName: name },
   });
-  if (!count) throw throwNotFoundError('No queued files found for that group.');
+  if (!count) throw throwNotFoundError(`No files found in group "${from}".`);
   return { renamed: count, groupName: name };
 }
 

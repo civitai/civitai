@@ -17,7 +17,7 @@ this as the first route.
 | HF API client — parse a URL, resolve a branch to a commit sha, list files with sizes and LFS sha256, ranged reads | `src/server/services/huggingface.service.ts` |
 | Queue + the resumable transfer | `src/server/services/huggingface-import.service.ts` |
 | The runner | `src/server/jobs/process-huggingface-imports.ts`, registered in the `jobs` array in `run-jobs` |
-| tRPC surface (`getAll` — filterable by `groupName`/`repo`, and by `unattached` — `getCounts`, `lookup`, `enqueue`, `attach`, `detach`, `delete`, `renameGroup`, `retry`, `cancel`; `renameGroup` has no caller yet) | `src/server/routers/huggingface-import.router.ts` |
+| tRPC surface (`getAll` — filterable by `groupName`/`repo`, and by `unattached` — `getCounts`, `lookup`, `enqueue`, `attach`, `detach`, `delete`, `renameGroup`, `retry`, `cancel`) | `src/server/routers/huggingface-import.router.ts` |
 | Moderator page | `src/pages/moderator/huggingface-import.tsx` + `src/components/Moderation/HuggingFaceImport/` |
 | The *Manage files* picker (moderator-only) | `src/components/Moderation/HuggingFaceImport/AddFromImportsModal.tsx`, opened via `src/components/Dialog/triggers/add-from-hugging-face-imports.ts` from `AddFromImportsButton.tsx` in `src/components/Resource/Files.tsx` |
 | Server-side multipart helpers (`createMultipartUpload`, `uploadPart`) | `src/utils/s3-utils.ts` |
@@ -84,12 +84,11 @@ copying the bytes. **The `HuggingFaceImport` row is the index**: `repo`, `revisi
 - `repo` is taken from **Hugging Face's own response**, never from the pasted URL — the same repo typed
   with different casing would otherwise be filed under two groups nothing could merge.
 - `groupName` defaults to the repo's own name (`black-forest-labs/FLUX.1-Krea-dev` → `FLUX.1-Krea-dev`)
-  and is typed on the lookup screen before Import is pressed. That is the **only** place it can be set
-  today: `renameGroup` exists and allows changes while every file is still `Queued`, but nothing calls
-  it, and the queue table does not display the group at all.
-- The `Queued` restriction is a **workflow rule, not a storage one**: the name never reaches a key, so
-  a later rename would desynchronise nothing — it exists so the name is settled before a transfer that
-  runs for hours begins under it.
+  and is typed on the lookup screen before Import is pressed.
+- It can be renamed later, at any status, from the group header on the **Unattached** tab. The name
+  never reaches a storage key, so a rename desynchronises nothing. `renameGroup` is scoped by the
+  group's current name as well as repo and revision, because one repo at one revision can be two
+  batches.
 
 ### Finding a group again
 

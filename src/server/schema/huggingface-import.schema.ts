@@ -44,6 +44,8 @@ export type RenameHuggingFaceGroupInput = z.infer<typeof renameHuggingFaceGroupS
 export const renameHuggingFaceGroupSchema = z.object({
   repo: z.string().trim().min(1),
   revision: z.string().trim().min(1),
+  /** The group's current name. Not trimmed: it must match the stored value exactly. */
+  from: z.string().min(1).max(120),
   groupName: z.string().trim().min(1).max(120),
 });
 

@@ -1,6 +1,7 @@
 import { Alert, Badge, Button, Group, Stack, Text } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { RenameGroupControl } from '~/components/Moderation/HuggingFaceImport/RenameGroupControl';
 import { byGroup } from '~/components/Moderation/HuggingFaceImport/utils';
 import dayjs from '~/shared/utils/dayjs';
 import { formatBytes } from '~/utils/number-helpers';
@@ -103,6 +104,11 @@ export function UnattachedSection({ filter }: { filter: string }) {
                 <Text fw={600} size="sm">
                   {group.groupName}
                 </Text>
+                <RenameGroupControl
+                  repo={group.repo}
+                  revision={group.revision}
+                  groupName={group.groupName}
+                />
                 <Badge size="xs" variant="light" color="gray">
                   {group.repo}
                 </Badge>

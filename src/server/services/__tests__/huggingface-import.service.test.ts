@@ -61,6 +61,7 @@ import {
   getImports,
   PART_SIZE_BYTES,
   processImportQueue,
+  renameGroup,
 } from '~/server/services/huggingface-import.service';
 
 /** The width under test. Passed in rather than read from config, so these tests do not depend on
@@ -820,5 +821,70 @@ describe('unattached and delete', () => {
 
     await expect(deleteImport({ id: 1, userId: 7, isModerator: true })).rejects.toThrow();
     expect(dbWrite.huggingFaceImport.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('renameGroup', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const input = {
+    repo: 'owner/name',
+    revision: 'abc123',
+    from: 'flux-krea',
+    groupName: 'FLUX Krea',
+    userId: 7,
+    isModerator: true,
+  };
+
+  it('renames only the rows of the named group, whatever their status', async () => {
+    dbWrite.huggingFaceImport.updateMany.mockResolvedValue({ count: 3 });
+
+    await expect(renameGroup(input)).resolves.toEqual({ renamed: 3, groupName: 'FLUX Krea' });
+
+    const { where, data } = dbWrite.huggingFaceImport.updateMany.mock.calls[0][0];
+    // The current name is part of the scope: one repo at one revision can be two batches.
+    expect(where).toEqual({ repo: 'owner/name', revision: 'abc123', groupName: 'flux-krea' });
+    expect(data).toEqual({ groupName: 'FLUX Krea' });
+  });
+
+  it('scopes to the owner when the caller is not a moderator', async () => {
+    dbWrite.huggingFaceImport.updateMany.mockResolvedValue({ count: 1 });
+
+    await renameGroup({ ...input, isModerator: false });
+
+    expect(dbWrite.huggingFaceImport.updateMany.mock.calls[0][0].where).toMatchObject({
+      userId: 7,
+    });
+  });
+
+  it('trims the new name', async () => {
+    dbWrite.huggingFaceImport.updateMany.mockResolvedValue({ count: 1 });
+
+    await renameGroup({ ...input, groupName: '  FLUX Krea  ' });
+
+    expect(dbWrite.huggingFaceImport.updateMany.mock.calls[0][0].data).toEqual({
+      groupName: 'FLUX Krea',
+    });
+  });
+
+  it('refuses an empty name without writing', async () => {
+    await expect(renameGroup({ ...input, groupName: '   ' })).rejects.toThrow();
+    expect(dbWrite.huggingFaceImport.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing when the name is unchanged', async () => {
+    await expect(renameGroup({ ...input, groupName: 'flux-krea' })).resolves.toEqual({
+      renamed: 0,
+      groupName: 'flux-krea',
+    });
+    expect(dbWrite.huggingFaceImport.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('reports a group that no longer exists', async () => {
+    dbWrite.huggingFaceImport.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(renameGroup(input)).rejects.toThrow(/No files found in group/);
   });
 });
