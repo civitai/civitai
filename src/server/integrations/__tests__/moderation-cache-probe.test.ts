@@ -19,7 +19,7 @@
  * `@civitai/telemetry/client` is not stubbed by src/__tests__/setup.ts.
  */
 import promClient from 'prom-client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mutable env mock, overriding the global stub in src/__tests__/setup.ts, so each case can flip the
 // probe flag. `vi.hoisted` so it exists before the hoisted `vi.mock` factory references it.
@@ -102,12 +102,30 @@ function stubFetchOk() {
  * Poll the registry rather than sleeping a fixed amount — a fixed sleep is the classic flake, and
  * it also silently passes if the probe is slower than the sleep.
  *
- * The explicit budget is for the FIRST call in this file: it resolves the probe's lazy `import()`
- * inside the poll, which can exceed `vi.waitFor`'s 1 s default on Windows.
+ * 🔴 KEEP THE DEFAULT 1 s BUDGET. It is the only thing bounding how long a WARM observation may
+ * take, and the fixed 200 ms absence legs below depend on that bound: widen it to 5 s and a
+ * regression that pushes warm latency into the 1-5 s band leaves every poll green while those legs
+ * pass vacuously. Measured against an injected 2 s delay in `runProbe` — 12 of 22 cases red at the
+ * default, 2 at a 5 s budget, and `records NOTHING … when the flag is off` among the ones that
+ * flipped to green.
  */
 async function untilProbeTotal(n: number) {
-  await vi.waitFor(async () => expect(await probeTotal()).toBe(n), { timeout: 5000 });
+  await vi.waitFor(async () => expect(await probeTotal()).toBe(n));
 }
+
+/**
+ * Resolve the probe's lazy `import()` once, outside any test's poll budget — on a contended
+ * Windows box that cold transform alone overran the 1 s default and failed the first case 3 runs
+ * in 5. Warming it at the ceiling instead was measurably worse: see the budget note above.
+ */
+beforeAll(async () => {
+  probeModerationCacheRepeat('generate', 'a warm-up prompt');
+  // Best-effort: if the probe records nothing at all, every case below must say so in its own
+  // words. Letting this hook throw instead reports one hook timeout and SKIPS all 22.
+  await vi
+    .waitFor(async () => expect(await probeTotal()).toBeGreaterThan(0), { timeout: 30000 })
+    .catch(() => undefined);
+});
 
 beforeEach(() => {
   promClient.register.getSingleMetric(PROBE)?.reset();
