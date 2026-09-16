@@ -23,13 +23,19 @@ import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.
  * a copy change is cosmetic.
  */
 describe('ai:write:budgeted consent copy', () => {
-  const CURRENT = "Run AI generation services that spend the viewer's Buzz, with a per-call cap";
+  const CURRENT = "Run AI work that spends the viewer's Buzz, with a per-call cap";
 
   /**
-   * Every sentence this scope has carried, newest first. Kept as a list rather
-   * than a single `not.toBe` because the arc is the evidence: each was replaced
-   * for a DIFFERENT reason, and a reader reaching for "let's just enumerate the
-   * capabilities again" should see how that went.
+   * Every sentence this scope has carried OR was one merge away from carrying,
+   * newest first. Kept as a list rather than a single `not.toBe` because the arc
+   * is the evidence: each was replaced for a DIFFERENT reason, and a reader
+   * reaching for "let's just enumerate the capabilities again" should see how
+   * that went.
+   *
+   * The last entry never shipped — it was caught in audit — and it is in the
+   * list precisely because it is the draft most likely to be re-proposed: it
+   * looks generic and reads well, and it is wrong for a reason you have to know
+   * the arc to see.
    */
   const SUPERSEDED = [
     // Too narrow once chatCompletion shipped — "generations" did not cover LLM
@@ -44,6 +50,11 @@ describe('ai:write:budgeted consent copy', () => {
     // bounded by no enum.
     "Run AI work that spends the viewer's Buzz, with a per-call cap — including generating images and video, and running language models",
     "Run AI work that spends the viewer's Buzz, with a per-call cap — including generating images and running language models",
+    // NEVER SHIPPED — proposed as the generic replacement and rejected in audit.
+    // It drops the enumeration correctly but reuses the ONE root word the
+    // re-consent exists to retire: "generation". See the `generation` guard
+    // below for why that is not a nit.
+    "Run AI generation services that spend the viewer's Buzz, with a per-call cap",
   ];
 
   it('is the exact agreed sentence', () => {
@@ -68,22 +79,66 @@ describe('ai:write:budgeted consent copy', () => {
    * of every live grant, because consent is per (user, app) and no lookup reads
    * a version. A generic term cannot be falsified by a capability arriving.
    *
-   * So what is pinned is the SHAPE: no modality nouns. This is still a SPELLED
+   * So what is pinned is the SHAPE: no named capability. This is still a SPELLED
    * guard — "moving pictures" walks past it — and the real control remains the
    * whole-string pin above plus a human deciding. Its value is narrow and
    * specific: it makes re-adding a list a deliberate act with a red test and
    * this comment attached, rather than a helpful-looking edit.
+   *
+   * ⚠️ The list mixes modalities (`video`, `3d`) with a capability KIND
+   * (`training`), and the name says so. `training` is here for a second,
+   * independent reason: it is denylist-ALLOWED but NOT REACHABLE
+   * (`isBillingModeImplemented` accepts `'prepaidFixed'` only), so naming it
+   * would bank permission for a widening that has not shipped. That supersedes
+   * decision 6 of `appblocks-no-allowlist-decision-2026-09-15.md` §5a, on the
+   * operator's call of 2026-09-16. When training becomes reachable, remove it
+   * from this list, change the sentence, AND re-take the grants.
    */
-  const MODALITY_NOUNS = ['video', 'audio', 'music', 'speech', 'voice', '3d', 'image', 'training'];
+  const NAMED_CAPABILITIES = [
+    'video',
+    'audio',
+    'music',
+    'speech',
+    'voice',
+    '3d',
+    'image',
+    'training',
+  ];
 
-  it('does not enumerate modalities — the shape that failed three times', () => {
+  it('does not enumerate capabilities — the shape that failed three times', () => {
     const copy = SCOPE_DESCRIPTIONS['ai:write:budgeted']!.toLowerCase();
-    for (const term of MODALITY_NOUNS) {
+    for (const term of NAMED_CAPABILITIES) {
       expect(
         copy,
-        `consent copy should not name "${term}" — enumerating modalities here has been wrong in both directions; keep it generic`
+        `consent copy should not name "${term}" — enumerating capabilities here has been wrong in both directions; keep it generic`
       ).not.toContain(term);
     }
+  });
+
+  /**
+   * 🔴 A SEPARATE RULE FROM THE ONE ABOVE, AND IT WAS LEARNED THE EXPENSIVE WAY.
+   * "Do not enumerate" and "do not reuse the word `generation`" are independent:
+   * a sentence can satisfy the first and violate the second, and one did —
+   * "Run AI generation services…" was proposed as THE generic fix and shipped
+   * nowhere only because a human read it.
+   *
+   * Why the root word is disqualified: `generations` is precisely what the
+   * original sentence said, and the stated justification for revoking every live
+   * grant is that it does NOT cover hosted LLM inference (`chatCompletion`,
+   * registered and live) — see the head of
+   * `scripts/oneoffs/2026-09-16-reconsent-ai-write-budgeted.sql`. On Civitai the
+   * word is narrower still: "Generate" and "Train a LoRA" are two distinct
+   * top-level actions. So a replacement built on the same root re-commits the
+   * defect the re-consent is being spent to fix, while looking like a fix.
+   *
+   * Matched as a PREFIX so `generation`, `generations`, `generating` and
+   * `generative` are all caught.
+   */
+  it('does not rebuild the sentence on the word the scope outgrew', () => {
+    expect(
+      SCOPE_DESCRIPTIONS['ai:write:budgeted']!.toLowerCase(),
+      'consent copy must not reuse the "generat*" root — it is the exact word whose inadequacy justifies re-taking every live grant'
+    ).not.toMatch(/generat/);
   });
 
   it('still promises the per-call cap, which did not change', () => {

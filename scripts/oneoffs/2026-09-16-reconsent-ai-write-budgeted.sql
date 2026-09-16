@@ -18,12 +18,16 @@
 -- Everyone holding a live grant agreed to the narrower sentence, so the grants
 -- have to be re-taken.
 --
--- 🔴 THE NEW SENTENCE NAMES ONLY WHAT IS REACHABLE TODAY, ON PURPOSE. It does
--- NOT promise model training: training is allowed by the denylist but no wire
--- arm accepts it and no implemented billing mode can carry it. Re-consenting to
--- a capability that does not exist BANKS permission for a widening that has not
--- shipped, and nothing would re-prompt when it does — which is the silent scope
--- escalation this table exists to prevent. When a NEW capability becomes
+-- 🔴 THE NEW SENTENCE NAMES NO CAPABILITY AT ALL, ON PURPOSE — see the block
+-- headed "THE COPY IS GENERIC" further down for why enumerating failed. It in
+-- particular does NOT promise model training: training is allowed by the
+-- denylist but no wire arm accepts it and no implemented billing mode can carry
+-- it. Re-consenting to a capability that does not exist BANKS permission for a
+-- widening that has not shipped, and nothing would re-prompt when it does —
+-- which is the silent scope escalation this table exists to prevent. This
+-- supersedes decision 6 of `appblocks-no-allowlist-decision-2026-09-15.md` §5a
+-- (which required training to be named in words); operator call, 2026-09-16.
+-- When training — or any change of KIND rather than of modality — becomes
 -- reachable, the sentence changes and the grants are re-taken AGAIN. That is
 -- the intended cost, not an oversight.
 --
@@ -35,9 +39,24 @@
 -- with the OLD sentence, silently re-consents to the thing you were trying to
 -- stop them being bound by, and both halves of the change still look done.
 --
--- Confirm the live copy first: open an app that declares the scope and read the
--- consent modal. The new sentence names language models and training
--- explicitly; the old one says "Submit generations".
+-- 🔴 CONFIRM IT BY MATCHING THE EXACT STRING, NOT BY RECOGNISING A WORD. This
+-- block used to say "the new sentence names language models and training
+-- explicitly; the old one says Submit generations" — and by 2026-09-16 that
+-- test PASSED against a sentence the arc had already retracted, because an
+-- interim release did name language models. A keyword test cannot tell the
+-- current sentence from the last three. The live copy must be, character for
+-- character:
+--
+--     Run AI work that spends the viewer's Buzz, with a per-call cap
+--
+-- Read it from the deployed branch, not from a merge:
+--
+--     gh api repos/civitai/civitai/contents/src/server/services/blocks/scope-descriptions.constants.ts?ref=release \
+--       --jq .content | base64 -d | grep -A1 "ai:write:budgeted"
+--
+-- then open an app declaring the scope and read the rendered consent modal.
+-- Both, not either — the first proves what is deployed, the second proves what
+-- a user actually sees.
 --
 -- ============================================================================
 -- WHAT IT DOES, AND WHAT IT DOES NOT
@@ -107,7 +126,7 @@
 -- peak, and do not describe the window as closed the moment the UPDATE commits.
 --
 -- ============================================================================
--- ✅ THE VIDEO QUESTION IS ANSWERED — AND THE ANSWER CHANGED THE COPY
+-- ✅ THE COPY IS GENERIC — THE VIDEO QUESTION IS WHAT MADE IT SO
 -- ============================================================================
 -- This block used to ask whether a stock-node inline `customComfy` graph could
 -- emit video, and told you to settle it before running anything. Operator,
@@ -117,23 +136,34 @@
 -- models") UNDER-name a reachable capability — the worse direction for consent,
 -- because the user agrees to "images" while the app spends their Buzz on video.
 --
--- 🔴 SO THE SENTENCE IS NOW GENERIC, AND THIS FILE DEPENDS ON THAT. The copy is
+-- 🔴 SO THE SENTENCE NAMES NOTHING, AND THIS FILE DEPENDS ON THAT. The copy is
 --
---     "Run AI generation services that spend the viewer's Buzz, with a
---      per-call cap"
+--     Run AI work that spends the viewer's Buzz, with a per-call cap
 --
 -- Enumerating modalities was tried three times and was wrong three times —
 -- twice over-promising (training, then video-as-unreachable), once
--- under-naming. A generic term cannot be falsified by a capability arriving,
--- which is the property that makes ONE re-consent sufficient instead of a
--- fourth.
+-- under-naming. A generic term cannot be falsified by a MODALITY arriving,
+-- which is what removes the re-consent treadmill this arc kept walking.
+--
+-- ⚠️ It does NOT make re-consent a one-time cost forever, and the block above
+-- says so: a change of KIND still requires a new sentence and fresh grants.
+-- Training is the live example — denylist-allowed, not reachable, deliberately
+-- unnamed, and it will cost another round when #599 lands.
+--
+-- 🔴 AND IT MUST NOT REUSE THE WORD "GENERATION". A draft of this very change
+-- read "Run AI generation services…" and was caught in audit: `generations` is
+-- the word the head of this file says does NOT cover `chatCompletion`, which is
+-- the whole justification for re-taking the grants. A replacement built on that
+-- root re-commits the defect while looking like the fix.
 --
 -- 🔴 PRECONDITION, AND IT IS NOT SATISFIED BY A MERGE TO `main`: the generic
 -- sentence must be LIVE IN PRODUCTION before this runs. civitai deploys from
 -- `release`, not `main`, so confirm the new text renders in the consent modal
--- on civitai.com — not that a PR merged. Running this against the old sentence
--- re-prompts every affected user with wording we have already retracted, and
--- burns the one re-consent this whole exercise exists to spend well.
+-- on civitai.com — not that a PR merged. Use the character-for-character check
+-- in the ORDERING block above; a keyword test has already passed falsely once.
+-- Running this against the old sentence re-prompts every affected user with
+-- wording we have already retracted, and burns the one re-consent this whole
+-- exercise exists to spend well.
 --
 -- It does NOT build a user-facing withdraw affordance. That is a separate,
 -- still-open piece of work with its own design questions (JWT invalidation,
