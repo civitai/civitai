@@ -31,6 +31,7 @@ import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessi
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
 import { ErrorBoundary } from '~/components/ErrorBoundary/ErrorBoundary';
+import { RootErrorBoundary } from '~/components/ErrorBoundary/RootErrorBoundary';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 // import { RecaptchaWidgetProvider } from '~/components/Recaptcha/RecaptchaWidget';
@@ -137,7 +138,7 @@ type CustomAppProps = {
   adsGated?: boolean;
 }>;
 
-function MyApp(props: CustomAppProps) {
+function MyAppInner(props: CustomAppProps) {
   const {
     Component,
     pageProps: {
@@ -321,6 +322,25 @@ function MyApp(props: CustomAppProps) {
 
       {isDev && <ReactQueryDevtools buttonPosition="bottom-right" />}
     </AppProvider>
+  );
+}
+
+/**
+ * 🔴 `RootErrorBoundary` must stay OUTSIDE `MyAppInner`, and that is the entire point of the
+ * split above — a boundary cannot catch a throw from its own PARENT's render, so a boundary
+ * placed anywhere inside the JSX `MyAppInner` returns is structurally unable to catch a throw
+ * in `MyAppInner`'s own render body. That gap is not hypothetical: it is what #4867 hit — a blank
+ * page and no report on ANY channel, client or server, because no boundary was ever entered.
+ *
+ * Keep this wrapper trivial. Anything that throws HERE is above the boundary again and is
+ * unreportable by construction; `getInitialProps` stays on `MyApp` because Next.js reads it
+ * off the default export.
+ */
+function MyApp(props: CustomAppProps) {
+  return (
+    <RootErrorBoundary>
+      <MyAppInner {...props} />
+    </RootErrorBoundary>
   );
 }
 
