@@ -981,3 +981,61 @@ async function toggleHideImage({
     hidden: hiding,
   };
 }
+
+/**
+ * The viewer's own `Hide` rows for one creator's images.
+ *
+ * Deliberately not the feed query. Both feed paths require `postId IS NOT NULL`
+ * and cap by browsing level, and a profile cover is post-less — so a hidden
+ * cover was listed by nothing, and `getImage` 404s it for everyone but its
+ * owner, leaving no surface anywhere that could unhide it (ClickUp 868m5qc3b).
+ */
+export async function getHiddenImagesForUser({
+  userId,
+  targetUserId,
+  limit = 200,
+}: {
+  userId: number;
+  targetUserId: number;
+  limit?: number;
+}) {
+  const [engagements, profile] = await Promise.all([
+    dbRead.imageEngagement.findMany({
+      where: { userId, type: 'Hide', image: { userId: targetUserId } },
+      select: {
+        createdAt: true,
+        image: {
+          select: {
+            id: true,
+            name: true,
+            url: true,
+            nsfwLevel: true,
+            width: true,
+            height: true,
+            hash: true,
+            type: true,
+            postId: true,
+            userId: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit + 1,
+    }),
+    dbRead.userProfile.findUnique({
+      where: { userId: targetUserId },
+      select: { coverImageId: true },
+    }),
+  ]);
+
+  const hasMore = engagements.length > limit;
+
+  return {
+    items: engagements.slice(0, limit).map(({ image, createdAt }) => ({
+      ...image,
+      hiddenAt: createdAt,
+      isProfileCover: image.id === profile?.coverImageId,
+    })),
+    hasMore,
+  };
+}
