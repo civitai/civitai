@@ -1157,6 +1157,26 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Stack>
       )}
 
+      {runs.some((r) => r.params.engine === 'kohya') && (
+        <AlertWithIcon
+          icon={<IconAlertTriangle size={16} />}
+          iconColor="yellow"
+          radius={0}
+          size="md"
+          color="yellow"
+          mt="sm"
+        >
+          <Stack gap={4}>
+            <Text fw={600}>Kohya is no longer actively maintained</Text>
+            <Text>
+              Kohya training is no longer actively maintained and may become less stable over time.
+              We do not recommend using Kohya for new model training. For a more reliable and
+              actively maintained training experience, we recommend AI-Toolkit instead.
+            </Text>
+          </Stack>
+        </AlertWithIcon>
+      )}
+
       {baseTypePrefersCaptions(selectedRun.baseType) &&
         thisMetadata?.labelType !== 'caption' &&
         (thisMetadata?.numCaptions ?? 0) > 0 && (

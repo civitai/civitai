@@ -479,7 +479,18 @@ export const actions: Actions = {
       moderatorId: locals.user.id,
     });
     if (!result.ok) return buzzFail(result.error);
-    return { success: true };
+    // The parsed input, not the raw form: the confirmation the panel shows has to name what was
+    // actually filed. An echo of the typed fields would still read 'sent' for a request the server
+    // coerced differently.
+    return {
+      success: true,
+      filed: {
+        action: input.action,
+        amount: input.amount,
+        buzzType: input.buzzType,
+        transactionType: input.transactionType,
+      },
+    };
   }),
 
   // Scoped to `account`, not `buzz`: the buttons live in the Admin section's action panel, and a
@@ -530,8 +541,8 @@ export const actions: Actions = {
           input.op === 'delete'
             ? 'bulkDelete'
             : input.op === 'tos'
-              ? 'removeAsTos'
-              : 'restoreFromTos',
+            ? 'removeAsTos'
+            : 'restoreFromTos',
         commentIds,
         commentV2Ids,
         userId: input.userId,

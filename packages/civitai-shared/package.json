@@ -16,7 +16,8 @@
     "./moderator-paths": "./src/moderator-paths.ts",
     "./missing-media": "./src/missing-media.ts",
     "./image-ingestion": "./src/image-ingestion.ts",
-    "./training-custom-model": "./src/training-custom-model.ts"
+    "./training-custom-model": "./src/training-custom-model.ts",
+    "./job-queue": "./src/job-queue.ts"
   },
   "scripts": {
     "test": "vitest run",

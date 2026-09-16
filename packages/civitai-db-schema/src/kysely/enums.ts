@@ -143,6 +143,15 @@ export const ImportStatus = {
   Completed: 'Completed',
 } as const;
 export type ImportStatus = (typeof ImportStatus)[keyof typeof ImportStatus];
+export const HuggingFaceImportStatus = {
+  Queued: 'Queued',
+  Transferring: 'Transferring',
+  Completed: 'Completed',
+  Failed: 'Failed',
+  Canceled: 'Canceled',
+} as const;
+export type HuggingFaceImportStatus =
+  (typeof HuggingFaceImportStatus)[keyof typeof HuggingFaceImportStatus];
 export const ModelStatus = {
   Draft: 'Draft',
   Training: 'Training',
@@ -172,6 +181,7 @@ export const CommercialUse = {
   RentCivit: 'RentCivit',
   Rent: 'Rent',
   Sell: 'Sell',
+  SellMerge: 'SellMerge',
 } as const;
 export type CommercialUse = (typeof CommercialUse)[keyof typeof CommercialUse];
 export const CheckpointType = {

@@ -123,6 +123,7 @@ export function UserAvatar({
   const avatarUser = user ?? { ...fallbackUser, cosmetics: [] };
   const imageUrl = useGetEdgeUrl(avatarUser?.image, {
     width: typeof avatarSize === 'number' ? avatarSize : 96,
+    optimized: true,
   });
 
   // If using a userId, show loading
@@ -203,6 +204,7 @@ export function UserAvatar({
                 width={imageSize * 2}
                 original={false}
                 style={{ ...decorationFrameStyle(decoration.data), zIndex: 1 }}
+                optimized
               />
             )}
             {hasValidProfilePicture && !blockedProfilePicture && !userDeleted ? (

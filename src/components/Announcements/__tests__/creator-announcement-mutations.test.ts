@@ -24,6 +24,8 @@ const invalidate = vi.hoisted(() => ({
 
 const captured = vi.hoisted(() => ({ options: {} as Record<string, any> }));
 
+const notifications = vi.hoisted(() => ({ showSuccessNotification: vi.fn() }));
+
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof Trpc>();
   const mutationHook = (name: string) => ({
@@ -52,7 +54,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 });
 
 vi.mock('~/utils/notifications', () => ({
-  showSuccessNotification: vi.fn(),
+  showSuccessNotification: notifications.showSuccessNotification,
   showErrorNotification: vi.fn(),
 }));
 
@@ -60,10 +62,14 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ creatorAnnouncements: true }),
 }));
 
+import { showSuccessNotification } from '~/utils/notifications';
 import {
   useDeleteCreatorAnnouncement,
   useToggleAnnouncementMute,
 } from '~/components/Announcements/creator-announcements.utils';
+
+const successMessage = () =>
+  vi.mocked(showSuccessNotification).mock.calls.at(-1)?.[0].message as string;
 
 describe('creator announcement mutations invalidate both feeds', () => {
   beforeEach(() => {
@@ -87,5 +93,52 @@ describe('creator announcement mutations invalidate both feeds', () => {
 
     expect(invalidate.getFollowedAnnouncements).toHaveBeenCalled();
     expect(invalidate.getMutedCreators).toHaveBeenCalled();
+  });
+});
+
+/**
+ * The mute confirmation names WHO was muted.
+ *
+ * Deliberate, and the reason is not obvious from the string: a toast already existed here and
+ * testers still reported no confirmation. Mute and dismiss sit adjacent on the same card, so a
+ * message naming neither the action nor the creator does not tell a reader which one ran.
+ *
+ * Asserted as whole-string equality, NOT `toContain`: the message this replaced was
+ * "Announcements from this creator are muted", so a substring check on the creator name, on
+ * "muted", or on "Announcements from" passes with the fix reverted. If you are here to relax
+ * these to `toContain`, the assertion stops protecting anything.
+ */
+describe('the mute confirmation names the creator', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    captured.options = {};
+  });
+
+  it('a mute names the creator in the from-slot', async () => {
+    useToggleAnnouncementMute(99, 'Kolors');
+    await captured.options.mute.onSuccess({ muted: true });
+
+    expect(successMessage()).toBe('Muted announcements from Kolors');
+  });
+
+  it('an unmute names the creator too, and says which way it went', async () => {
+    useToggleAnnouncementMute(99, 'Kolors');
+    await captured.options.mute.onSuccess({ muted: false });
+
+    expect(successMessage()).toBe('Unmuted announcements from Kolors');
+  });
+
+  it('a surface with no name in hand still says which action ran', async () => {
+    useToggleAnnouncementMute(99);
+    await captured.options.mute.onSuccess({ muted: true });
+
+    expect(successMessage()).toBe('Muted announcements from this creator');
+  });
+
+  it('an empty username falls back rather than reading "from "', async () => {
+    useToggleAnnouncementMute(99, '');
+    await captured.options.mute.onSuccess({ muted: true });
+
+    expect(successMessage()).toBe('Muted announcements from this creator');
   });
 });

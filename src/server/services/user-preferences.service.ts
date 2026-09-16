@@ -1,4 +1,5 @@
-import type { NsfwLevel } from '~/server/common/enums';
+import { NsfwLevel } from '~/server/common/enums';
+import { isImageReviewed } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { setUserFollowCached, userFollowsCache } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
@@ -12,7 +13,8 @@ import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { clearUserEngagement, setUserEngagement } from '~/server/services/user-engagement';
-import { TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
+import { Availability, TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
+import { isDefined } from '~/utils/type-guards';
 
 const HIDDEN_CACHE_EXPIRY_BASE = 60 * 60 * 4; // 4 hours
 const HIDDEN_CACHE_JITTER_MAX = 60 * 30; // up to 30 minutes of jitter
@@ -979,5 +981,100 @@ async function toggleHideImage({
     added: [],
     removed: [],
     hidden: hiding,
+  };
+}
+
+/**
+ * The viewer's own `Hide` rows for one creator's images.
+ *
+ * Deliberately not the feed query. Both feed paths require `postId IS NOT NULL`
+ * and cap by browsing level, and a profile cover is post-less — so a hidden
+ * cover was listed by nothing, and `getImage` 404s it for everyone but its
+ * owner, leaving no surface anywhere that could unhide it (ClickUp 868m5qc3b).
+ */
+export async function getHiddenImagesForUser({
+  userId,
+  targetUserId,
+  limit = 200,
+}: {
+  userId: number;
+  targetUserId: number;
+  limit?: number;
+}) {
+  const [engagements, profile] = await Promise.all([
+    dbRead.imageEngagement.findMany({
+      where: { userId, type: 'Hide', image: { userId: targetUserId } },
+      select: {
+        createdAt: true,
+        image: {
+          select: {
+            id: true,
+            name: true,
+            url: true,
+            nsfwLevel: true,
+            width: true,
+            height: true,
+            hash: true,
+            type: true,
+            postId: true,
+            userId: true,
+            // `ImageGuard2` reads these off the image it is handed (`useImageStore`
+            // spreads it), and swaps the tile for the ToS notice on `tosViolation`.
+            tosViolation: true,
+            needsReview: true,
+            ingestion: true,
+            nsfwLevelLocked: true,
+            post: { select: { publishedAt: true, availability: true, userId: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit + 1,
+    }),
+    // The green domain serves `sfwCoverImage` instead (see `getUserWithProfile`),
+    // so both are covers and either can be the one that was hidden.
+    dbRead.userProfile.findUnique({
+      where: { userId: targetUserId },
+      select: { coverImageId: true, sfwCoverImageId: true },
+    }),
+  ]);
+
+  const coverImageIds = new Set(
+    [profile?.coverImageId, profile?.sfwCoverImageId].filter(isDefined)
+  );
+  const now = new Date();
+  const hasMore = engagements.length > limit;
+
+  return {
+    items: engagements.slice(0, limit).map(({ image, createdAt }) => {
+      const { post, ingestion, nsfwLevelLocked, ...rest } = image;
+      const isProfileCover = coverImageIds.has(image.id);
+      const isOwner = image.userId === userId;
+
+      // A row is listed however it is gated — it has to be, or it can never be
+      // unhidden — but the media only rides along while the viewer could still
+      // see the image elsewhere. Hiding predates any later takedown, unpublish
+      // or privacy change, and this is not `getImage`: nothing else here would
+      // stop a revoked image from being handed back to the browser.
+      const canViewMedia =
+        isOwner ||
+        (isImageReviewed({ ingestion, nsfwLevelLocked }) &&
+          rest.nsfwLevel !== NsfwLevel.Blocked &&
+          !rest.tosViolation &&
+          (post
+            ? !!post.publishedAt &&
+              post.publishedAt <= now &&
+              post.availability !== Availability.Private
+            : isProfileCover));
+
+      return {
+        ...rest,
+        url: canViewMedia ? rest.url : null,
+        canViewMedia,
+        hiddenAt: createdAt,
+        isProfileCover,
+      };
+    }),
+    hasMore,
   };
 }

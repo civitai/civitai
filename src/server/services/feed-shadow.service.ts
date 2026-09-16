@@ -69,6 +69,8 @@ const PERIOD_DAYS: Record<string, number | undefined> = {
   AllTime: undefined,
 };
 const LEVELS = [1, 2, 4, 8, 16, 32];
+// The feed service's own ceiling on userIds.
+const MAX_FOLLOWED = 1000;
 // Filters the candidate has no dimension for; the app resolves the server-side lists
 // (followed, hidden, newCreators) inside the search functions, out of this hook's reach.
 const UNSUPPORTED_KEYS = [
@@ -83,9 +85,9 @@ const UNSUPPORTED_KEYS = [
   'generation',
   'reactions',
   'blockedFor',
+  'remixOfId',
 ] as const;
 const UNSUPPORTED_FLAGS = [
-  'followed',
   'newCreators',
   'hidden',
   'withMeta',
@@ -96,6 +98,8 @@ const UNSUPPORTED_FLAGS = [
   'hideChallenges',
   'pending',
   'publishedOnly',
+  'remixesOnly',
+  'nonRemixesOnly',
 ] as const;
 
 const present = (v: unknown) =>
@@ -135,6 +139,12 @@ export function mapSearchInputToFeedQuery(
   const skip = (reason: string): FeedQueryMapping => ({ ok: false, reason });
   for (const key of UNSUPPORTED_KEYS) if (present(input[key])) return skip(`input:${key}`);
   for (const flag of UNSUPPORTED_FLAGS) if (input[flag] === true) return skip(`flag:${flag}`);
+  const followed = input.followed === true ? input.followedUserIds : undefined;
+  if (input.followed === true) {
+    if (!Array.isArray(followed)) return skip('flag:followed');
+    if (followed.length > MAX_FOLLOWED) return skip(`followed>${MAX_FOLLOWED}`);
+    if (present(input.userId)) return skip('flag:followed:userId');
+  }
 
   let offset = 0;
   let before: number | undefined;
@@ -189,6 +199,8 @@ export function mapSearchInputToFeedQuery(
   if (excludedUsers.length) params.set('excludedUserIds', excludedUsers.slice(0, 1000).join(','));
   if (versionIds) params.set('versionIds', versionIds.join(','));
   if (userId) params.set('userIds', String(userId));
+  const followedIds = ints(followed);
+  if (followedIds.length) params.set('userIds', followedIds.join(','));
   if (types.length) params.set('types', types.join(','));
   const baseModels = Array.isArray(input.baseModels)
     ? input.baseModels.map(String).filter(Boolean)

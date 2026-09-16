@@ -14,6 +14,7 @@ import {
   listModelTagVotes,
 } from '@civitai/db-queries/tag';
 import { CacheTTL, constants } from '~/server/common/constants';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { NsfwLevel, TagSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { kyselyRead } from '~/server/db/kyselyDb';
@@ -145,6 +146,8 @@ const bustTagWithModelCountCache = async (name: string) => {
 
 export type TagPageSeoData = {
   count: number;
+  /** Set only for `safeOnly` reads: whether the tag has any published model at all. */
+  hasModels?: boolean;
   models: {
     id: number;
     name: string;
@@ -154,10 +157,31 @@ export type TagPageSeoData = {
   }[];
 };
 
-export async function getTagPageSeoData({ name }: { name: string }): Promise<TagPageSeoData> {
-  const cacheKey = `${
-    REDIS_KEYS.CACHES.TAG_PAGE_SEO
-  }:${name.toLowerCase()}` as `${typeof REDIS_KEYS.CACHES.TAG_PAGE_SEO}:${string}`;
+// Mature-only tags are canonical on red; on green their grid is empty. `hasModels` is absent on
+// red reads, so this can only ever fire for a green read.
+export const shouldDeIndexMatureOnlyTag = (seoData: TagPageSeoData) =>
+  seoData.hasModels === true && seoData.count === 0;
+
+/**
+ * `safeOnly` restricts the count and the listed models to what green can show, so the meta
+ * description and CollectionPage schema never advertise mature models there. The two variants
+ * are cached separately.
+ */
+export async function getTagPageSeoData({
+  name,
+  safeOnly = false,
+}: {
+  name: string;
+  safeOnly?: boolean;
+}): Promise<TagPageSeoData> {
+  const cacheKey = `${REDIS_KEYS.CACHES.TAG_PAGE_SEO}:${name.toLowerCase()}${
+    safeOnly ? ':safe' : ''
+  }` as `${typeof REDIS_KEYS.CACHES.TAG_PAGE_SEO}:${string}`;
+
+  // Keep in step with the green rule in sitemap-models.xml, or the two disagree about indexing.
+  const safeFilter = safeOnly
+    ? Prisma.sql`AND m."nsfw" = false AND (m."nsfwLevel" & ${publicBrowsingLevelsFlag}) != 0`
+    : Prisma.empty;
 
   return fetchThroughCache(
     cacheKey,
@@ -167,9 +191,10 @@ export async function getTagPageSeoData({ name }: { name: string }): Promise<Tag
         select: { id: true },
       });
 
-      if (!tag) return { count: 0, models: [] };
+      if (!tag)
+        return safeOnly ? { count: 0, hasModels: false, models: [] } : { count: 0, models: [] };
 
-      const [countResult, models] = await Promise.all([
+      const [countResult, models, anyResult] = await Promise.all([
         dbRead.$queryRaw<[{ count: bigint }]>`
           SELECT COUNT(*) as count
           FROM "TagsOnModels" tom
@@ -177,6 +202,7 @@ export async function getTagPageSeoData({ name }: { name: string }): Promise<Tag
           WHERE tom."tagId" = ${tag.id}
             AND m."status" = 'Published'::"ModelStatus"
             AND m."availability" != 'Unsearchable'::"Availability"
+            ${safeFilter}
         `,
         dbRead.$queryRaw<
           {
@@ -202,13 +228,28 @@ export async function getTagPageSeoData({ name }: { name: string }): Promise<Tag
           WHERE tom."tagId" = ${tag.id}
             AND m."status" = 'Published'::"ModelStatus"
             AND m."availability" != 'Unsearchable'::"Availability"
+            ${safeFilter}
           ORDER BY COALESCE(mm."downloadCount", 0) DESC
           LIMIT 20
         `,
+        // Tells "no models at all" apart from "only mature models" once the count is filtered.
+        safeOnly
+          ? dbRead.$queryRaw<[{ exists: boolean }]>`
+              SELECT EXISTS (
+                SELECT 1
+                FROM "TagsOnModels" tom
+                JOIN "Model" m ON m."id" = tom."modelId"
+                WHERE tom."tagId" = ${tag.id}
+                  AND m."status" = 'Published'::"ModelStatus"
+                  AND m."availability" != 'Unsearchable'::"Availability"
+              ) AS "exists"
+            `
+          : undefined,
       ]);
 
       return {
         count: Number(countResult[0]?.count ?? 0),
+        ...(anyResult ? { hasModels: anyResult[0]?.exists ?? false } : {}),
         models: models.map((m) => ({
           id: m.id,
           name: m.name,

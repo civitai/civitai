@@ -36,8 +36,6 @@ import {
   useWildcardHandlers,
 } from './form-helpers';
 import { GateRuleWarnings } from './GateRuleWarnings';
-import { CheckpointRow } from './inputs/CheckpointRow';
-import { openCheckpointPicker, readResources } from './inputs/openCheckpointPicker';
 import { SourceImagesInput } from './inputs/SourceImagesInput';
 import type { GenerationStore } from './store';
 
@@ -56,57 +54,42 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
     <Stack gap="sm">
       <div className="flex flex-col gap-1">
         <Controller
-          graph={generationHub}
-          name="ecosystem"
-          render={({ value: ecosystem, meta: ecosystemMeta, onChange: onEcosystemChange }) => (
-            <Controller
-              graph={imageHub}
-              name="model"
-              render={({ value, meta, onChange }) => {
-                const defaultModelId = meta?.defaultModelId;
-                return (
-                  <>
-                    <CheckpointRow
-                      value={value}
-                      ecosystem={ecosystem}
-                      options={meta?.options}
-                      locked={meta?.modelLocked}
-                      onOpenPicker={() =>
-                        openCheckpointPicker({
-                          options: meta?.options,
-                          onSelect: onChange,
-                          onEcosystemChange,
-                          // Read at click time rather than subscribing: the
-                          // footer is the only consumer, and a subscription
-                          // would re-render this row on every strength drag.
-                          resources: readResources(store),
-                          ecosystem: {
-                            value: ecosystem,
-                            compatibleEcosystems: ecosystemMeta?.compatibleEcosystems,
-                            excludeEcosystems: ecosystemMeta?.hiddenEcosystems,
-                            ecosystemStates: ecosystemMeta?.ecosystemStates,
-                            outputType: ecosystemMeta?.mediaType,
-                          },
-                        })
-                      }
-                      onRevertToDefault={
-                        defaultModelId
-                          ? () => onChange({ id: defaultModelId, model: { type: 'Checkpoint' } })
-                          : undefined
-                      }
+          graph={imageHub}
+          name="model"
+          render={({ value, meta, onChange }) => {
+            const defaultModelId = meta?.defaultModelId;
+            return (
+              <>
+                <ResourceSelectInput
+                  value={value}
+                  onChange={onChange}
+                  label={
+                    <ControllerLabel
+                      label="Model"
+                      info="Models are the resources you're generating with. Using a different base model can drastically alter the style and composition of images, while adding additional resources can change the characters, concepts and objects."
                     />
-                    {meta?.versions ? (
-                      <VersionGroupSelector
-                        versions={meta.versions}
-                        modelId={value?.id}
-                        onChange={onChange}
-                      />
-                    ) : null}
-                  </>
-                );
-              }}
-            />
-          )}
+                  }
+                  buttonLabel="Select Model"
+                  modalTitle="Select Model"
+                  options={meta?.options}
+                  allowRemove={false}
+                  allowSwap={!meta?.modelLocked}
+                  onRevertToDefault={
+                    defaultModelId
+                      ? () => onChange({ id: defaultModelId, model: { type: 'Checkpoint' } })
+                      : undefined
+                  }
+                />
+                {meta?.versions ? (
+                  <VersionGroupSelector
+                    versions={meta.versions}
+                    modelId={value?.id}
+                    onChange={onChange}
+                  />
+                ) : null}
+              </>
+            );
+          }}
         />
       </div>
       <GateRuleWarnings />

@@ -734,6 +734,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                           <EdgeMedia2
                             src={challenge.coverImage!.url}
                             type={challenge.coverImage!.type}
+                            width={800}
                             className="aspect-[4/3] w-full object-cover"
                           />
                         ) : (

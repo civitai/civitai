@@ -359,9 +359,14 @@ export const useGenerationGraphStore = create<GenerationGraphState>()(
               }
             }
 
-            // Update remix store for similarity tracking
+            // Symmetric with `lastEntryAction` below: an open that establishes
+            // new form data and is NOT a remix must drop the previous remix, or
+            // the next submit attributes itself to whatever image the user last
+            // remixed (ClickUp 868m5acdq).
             if (isMedia && result.remixOfId) {
               remixStore.setRemix(result.remixOfId, result.params);
+            } else {
+              remixStore.clearRemix();
             }
 
             set((state) => {
@@ -448,9 +453,13 @@ export const useGenerationGraphStore = create<GenerationGraphState>()(
         if (typeof window !== 'undefined' && !location.pathname.startsWith('/generate'))
           useGenerationPanelStore.setState({ view: 'generate' });
 
-        // Update remix store for similarity tracking
+        // See `open` — patch/append are sub-flows inside an already-open
+        // session and must leave the current remix alone; the intentful entry
+        // points either establish a remix or end the previous one.
         if ((runType === 'remix' || runType === 'replay') && remixOfId) {
           remixStore.setRemix(remixOfId, params);
+        } else if (runType !== 'patch' && runType !== 'append') {
+          remixStore.clearRemix();
         }
 
         set((state) => {

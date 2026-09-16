@@ -166,7 +166,10 @@ export function PanelDetailDrawer({
                     </Text>
                   </div>
                 ) : detailPanel.imageUrl ? (
-                  <img src={getEdgeUrl(detailPanel.imageUrl, { width: 800 })} alt="Panel" />
+                  <img
+                    src={getEdgeUrl(detailPanel.imageUrl, { width: 800, optimized: true })}
+                    alt="Panel"
+                  />
                 ) : (
                   <div
                     className="w-full flex items-center justify-center"

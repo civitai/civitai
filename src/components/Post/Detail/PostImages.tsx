@@ -183,6 +183,7 @@ export function PostImages({
                               imageId={image.id}
                               width={width < maxWidth ? width : maxWidth}
                               hiDpi={features.hiDpiPreviews}
+                              sourceWidth={image.width}
                               original={image.type === 'video'}
                               anim={safe}
                               html5Controls={showsControlStrip}

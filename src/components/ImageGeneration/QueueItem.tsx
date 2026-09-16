@@ -421,6 +421,7 @@ export function QueueItem({
           <div className="flex flex-col gap-3 py-3 @container">
             {showDelayedMessage &&
               cancellable &&
+              request.awaitingOutput &&
               !request.steps.some((s) => s.$type === 'videoGen') && (
                 <Alert color="yellow" p={0}>
                   <div className="flex items-center gap-2 px-2 py-1">
@@ -591,6 +592,8 @@ function StepOutputs({
       step.output.find((x) => !x.available && x.blockedReason)?.blockedReason
     : undefined;
 
+  const awaitingOutput = step ? step.awaitingOutput : request.awaitingOutput;
+
   return (
     <>
       {step && <WorkflowStatusAlert status={request.status} failureReason={stepFailure} />}
@@ -611,7 +614,7 @@ function StepOutputs({
           workflowId={request.id}
           transactions={request.transactions}
         />
-        {(pending || processing) && (
+        {(pending || processing) && awaitingOutput && (
           <TwCard
             className="items-center justify-center border"
             style={{ aspectRatio: images[0]?.aspect ?? 1 }}
@@ -1088,7 +1091,7 @@ function Model3DQueueCardOutputs({
   // full-screen lightbox so both render the same variant taxonomy.
   const viewableVariants: Model3DViewableVariant[] = blob ? getModel3DViewableVariants(blob) : [];
 
-  const showSpinner = pending || processing;
+  const showSpinner = (pending || processing) && request.awaitingOutput;
   // Terminal failure states — workflow won't produce a thumbnail. The
   // orchestrator auto-refunds spent buzz on these, so surface that to the
   // user instead of the ambiguous "No preview available yet".

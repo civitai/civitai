@@ -28,3 +28,18 @@ export const imageReviewedSql = (alias = 'i') => {
     )
   )`;
 };
+
+/**
+ * TS twin of `imageReviewedSql`, for rows already fetched. Kept next to it
+ * deliberately: the rule is one decision with two encodings, and they have to
+ * move together.
+ */
+export const isImageReviewed = ({
+  ingestion,
+  nsfwLevelLocked,
+}: {
+  ingestion: ImageIngestionStatus;
+  nsfwLevelLocked: boolean;
+}) =>
+  ingestion === ImageIngestionStatus.Scanned ||
+  (nsfwLevelLocked && !ingestionStatesModRatingCannotOverride.includes(ingestion));

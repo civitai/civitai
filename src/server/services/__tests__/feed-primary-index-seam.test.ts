@@ -1,0 +1,93 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as PromClient from '~/server/prom/client';
+import type * as FliptClient from '~/server/flipt/client';
+import type * as FeedPrimary from '~/server/services/feed-primary.service';
+
+vi.mock('~/server/prom/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof PromClient>();
+  return { ...actual, registerCounter: () => ({ inc: vi.fn() }) };
+});
+vi.mock('../../../../event-engine-common/services/metrics', () => ({
+  MetricService: class {
+    fetch = vi.fn();
+  },
+}));
+vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
+vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
+vi.mock('~/env/server', () => ({
+  env: new Proxy({ LOGGING: [] as string[] } as Record<string, unknown>, {
+    get: (target, prop) => {
+      if (prop in target) return target[prop as string];
+      if (typeof prop === 'string' && (prop.endsWith('_URL') || prop.endsWith('_ENDPOINT')))
+        return 'https://test:test@localhost:5432/test';
+      if (
+        typeof prop === 'string' &&
+        /(_CONCURRENCY|_LIMIT|_MS|_PORT|_TIMEOUT|_MAX|_SIZE|_COUNT)$/.test(prop)
+      )
+        return 1;
+      return undefined;
+    },
+  }),
+}));
+vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
+vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
+  enforceBlockedBrowsingTags: vi.fn().mockResolvedValue({ emptyResult: false }),
+}));
+
+const primaryOn = vi.fn(() => false);
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof FliptClient>();
+  return {
+    ...actual,
+    getFliptBoolean: vi.fn(async (flag: string) =>
+      flag === actual.FLIPT_FEATURE_FLAGS.FEED_SERVICE_PRIMARY ? primaryOn() : false
+    ),
+  };
+});
+const fetchFeedPrimary = vi.fn();
+vi.mock('~/server/services/feed-primary.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof FeedPrimary>();
+  return { ...actual, fetchFeedPrimary: (...args: unknown[]) => fetchFeedPrimary(...args) };
+});
+
+import { getAllImagesIndex } from '../image.service';
+import '~/__tests__/mocks/db.mock';
+
+const request = () =>
+  ({
+    sort: 'Most Reactions',
+    period: 'Week',
+    browsingLevel: 1,
+    limit: 100,
+    include: [],
+    user: { id: 42, isModerator: false },
+  } as unknown as Parameters<typeof getAllImagesIndex>[0]);
+
+describe('getAllImagesIndex with feed-service-primary', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('does not ask the feed when the flag is off', async () => {
+    primaryOn.mockReturnValue(false);
+    await getAllImagesIndex(request());
+    expect(fetchFeedPrimary).not.toHaveBeenCalled();
+  });
+
+  it('asks the feed once and falls through to the search path when hydration yields nothing', async () => {
+    primaryOn.mockReturnValue(true);
+    fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '17|5' });
+    const r = await getAllImagesIndex(request());
+    expect(fetchFeedPrimary).toHaveBeenCalledTimes(1);
+    expect(r.source).not.toBe('feed');
+    expect(r.nextCursor).toBeUndefined();
+  });
+
+  it('asks the feed once and falls through when the feed itself fails', async () => {
+    primaryOn.mockReturnValue(true);
+    fetchFeedPrimary.mockRejectedValue(Object.assign(new Error('t'), { name: 'TimeoutError' }));
+    const r = await getAllImagesIndex(request());
+    expect(fetchFeedPrimary).toHaveBeenCalledTimes(1);
+    expect(r.items).toEqual([]);
+  });
+});

@@ -81,6 +81,9 @@ describe('mapSearchInputToFeedQuery', () => {
     };
     expect(reason({ followed: true })).toBe('flag:followed');
     expect(reason({ postId: 4 })).toBe('input:postId');
+    expect(reason({ remixOfId: 4 })).toBe('input:remixOfId');
+    expect(reason({ remixesOnly: true })).toBe('flag:remixesOnly');
+    expect(reason({ nonRemixesOnly: true })).toBe('flag:nonRemixesOnly');
     expect(reason({ modelId: 4 })).toBe('modelId');
     expect(reason({ cursor: '30000|1788000000000' })).toBe('offset>20000');
     expect(reason({ sort: 'Random' })).toBe('sort:Random');
@@ -88,6 +91,20 @@ describe('mapSearchInputToFeedQuery', () => {
     expect(reason({ notPublished: true, userId: 3 })).toBe('ok');
     expect(reason({ tags: [0] })).toBe('tags:none');
     expect(reason({ tags: [0, 5] })).toBe('ok');
+  });
+
+  it('serves a follow feed only from a resolved follow list the feed can take', () => {
+    const m = mapSearchInputToFeedQuery({ ...base, followed: true, followedUserIds: [7, 3, 0] });
+    expect(m.ok && new URLSearchParams(m.query).get('userIds')).toBe('7,3');
+    const reason = (i: Record<string, unknown>) => {
+      const r = mapSearchInputToFeedQuery({ ...base, followed: true, ...i });
+      return r.ok ? 'ok' : r.reason;
+    };
+    expect(reason({})).toBe('flag:followed');
+    expect(reason({ followedUserIds: Array.from({ length: 1001 }, (_, i) => i + 1) })).toBe(
+      'followed>1000'
+    );
+    expect(reason({ followedUserIds: [7], userId: 7 })).toBe('flag:followed:userId');
   });
 
   it('continues a feed-served page only when the feed is primary', () => {

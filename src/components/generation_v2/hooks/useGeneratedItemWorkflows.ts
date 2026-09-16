@@ -370,6 +370,7 @@ export async function applyWorkflowWithCheck({
       },
       resources: image.resources,
       runType: 'replay',
+      remixOfId: image.remixOfId,
     });
     return;
   }
