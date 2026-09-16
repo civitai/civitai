@@ -1368,24 +1368,30 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       };
 
       if (audit.severity === 'soft') {
+        // A trigger-word-only hit marks no image card, so copy that says "labels" sends the
+        // creator hunting through labels that are all fine.
+        const subject = [
+          audit.invalidKeys.length ? 'labels' : undefined,
+          audit.triggerWordInvalid ? 'trigger word' : undefined,
+        ]
+          .filter(isDefined)
+          .join(' and ');
         return openConfirmModal({
           title: (
             <Group gap="xs">
               <IconAlertTriangle color="gold" />
-              <Text size="lg">Check these labels</Text>
+              <Text size="lg">{`Check your ${subject}`}</Text>
             </Group>
           ),
           children: (
             <Stack gap="xs">
               <Text size="sm">
-                {`These labels look like they might be inappropriate: ${audit.offendingWords.join(', ')}.`}
+                {`These look like they might be inappropriate: ${audit.offendingWords.join(', ')}.`}
               </Text>
-              <Text size="sm">
-                If they are legitimate tags for your dataset, you can continue.
-              </Text>
+              <Text size="sm">If they are legitimate for your dataset, you can continue.</Text>
             </Stack>
           ),
-          labels: { cancel: 'Review labels', confirm: 'Continue anyway' },
+          labels: { cancel: `Review ${subject}`, confirm: 'Continue anyway' },
           centered: true,
           onConfirm: continueSubmit,
         });
