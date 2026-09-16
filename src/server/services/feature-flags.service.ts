@@ -1136,7 +1136,16 @@ export function getFliptGatedEligibility(
 ): Partial<Record<FeatureFlagKey, boolean>> {
   const fliptContext = buildFliptContext(ctx.user);
   const out: Partial<Record<FeatureFlagKey, boolean>> = {};
-  for (const key of fliptGatedToggleableKeys) out[key] = hasFeature(key, ctx, fliptContext);
+  for (const key of fliptGatedToggleableKeys) {
+    // Mods stay eligible for `availability: ['mod']` keys no matter what Flipt says.
+    // Inside `hasFeature` a non-null Flipt eval short-circuits the static role check,
+    // so without this a mod's eligibility flapped with Flipt health: eval null →
+    // static fallback grants, eval false (segment miss) → the toggle they already
+    // switched on renders NotFound. Flipt segments ramp the non-mod population.
+    const modAlwaysEligible =
+      !!ctx.user?.isModerator && featureFlags[key].availability.includes('mod');
+    out[key] = modAlwaysEligible || hasFeature(key, ctx, fliptContext);
+  }
   return out;
 }
 
