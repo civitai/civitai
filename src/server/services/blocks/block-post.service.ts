@@ -1032,8 +1032,9 @@ export async function writeBlockPost(input: {
  *                                  continues to govern it in full.
  *   - `imagePostedToModelReward` → paid to the GALLERY TARGET'S MODEL OWNER, a
  *                                  THIRD PARTY, on a target the calling app
- *                                  supplied. SUPPRESSED on this path, by
- *                                  `viaAppId` — see the reward's own `getKey`.
+ *                                  supplied. SUPPRESSED on the calls this
+ *                                  function issues, by `viaAppId` — see the
+ *                                  reward's own `getKey`, and the BOUND below.
  *
  * ⚠️ THE COST, STATED PLAINLY SO THE NARROWING IS NOT READ AS FREE: a perfectly
  * legitimate app-composed post no longer pays the model owner anything, where the

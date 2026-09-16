@@ -28,8 +28,16 @@ export const imagePostedToModelReward = createBuzzEvent({
     };
   },
   getKey: async (input: ImagePostedToModelEvent, ctx) => {
-    // 🔴 A POST COMPOSED BY A THIRD-PARTY APP PAYS THIS REWARD TO NOBODY, AND THIS
-    // IS THE ONLY SITE THAT DECIDES IT.
+    // 🔴 A CALL THAT NAMES A COMPOSING APP PAYS THIS REWARD TO NOBODY, AND THIS IS
+    // THE ONLY SITE THAT DECIDES IT.
+    //
+    // ⚠️ READ THAT AS A CLAIM ABOUT THE CALL, NOT ABOUT THE POST. The signal is an
+    // argument, not a column: nothing on the `Post` row says an app composed it, so
+    // a post created by an app and later republished through `post.controller.ts`
+    // arrives here WITHOUT `viaAppId` and is paid. The all-time `(toUserId, forId)`
+    // cap bounds that to once per `(poster, version)`. See the bound recorded on
+    // `applyBlockPostPublishEffects` — do not restate this guard as "an app-composed
+    // post never pays".
     //
     // This reward is unlike every other reward on a post path: it is paid to the
     // MODEL OWNER, who is a THIRD PARTY to the post — neither the author nor
@@ -37,12 +45,13 @@ export const imagePostedToModelReward = createBuzzEvent({
     // calling app, so on an app-composed post the recipient is chosen by the app
     // rather than by the person whose byline the post carries.
     //
-    // The attach-layer guards in `block-post.service.ts#resolveGalleryTarget`
-    // refuse specific relationships between the app and the model owner. Each new
-    // relationship is a NEW predicate there and the SAME single predicate here, so
-    // this is where the rule lives. `false` is the framework's per-call
-    // suppression signal — `apply` reads it as `if (!definedKey) return null`, so
-    // nothing is keyed, nothing is deduped and nothing is paid.
+    // `false` is the framework's per-call suppression signal — `apply` reads it as
+    // `if (!definedKey) return null`, so nothing is keyed, nothing is deduped and
+    // nothing is paid.
+    //
+    // It lives HERE rather than as an `if` around the call site because one
+    // predicate on the recipient covers every app-originated caller, present and
+    // future, without each of them having to re-spell it.
     //
     // 🔴 DELIBERATELY FIRST, BEFORE THE OWNER LOOKUP. A suppressed call must not
     // pay for a `$queryRaw`, and putting it after the self-post guard would make
