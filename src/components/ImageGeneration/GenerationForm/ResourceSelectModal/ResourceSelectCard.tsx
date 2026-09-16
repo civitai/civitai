@@ -327,28 +327,23 @@ export function ResourceSelectCard({
               {data.name}
             </Text>
             <div className="flex items-center justify-between gap-2">
-              {/* In `checkpoint` role the version is a field under the model row,
-                  not part of the pick — see the header comment on
-                  ResourceSelectRole. */}
-              {role !== 'checkpoint' && (
-                <Select
-                  className="flex-1"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                  }}
-                  readOnly={versions.length <= 1}
-                  value={_selectedIndex?.toString()}
-                  data={versions.map((version, index) => ({
-                    label: version.name,
-                    value: index.toString(),
-                  }))}
-                  onChange={(index) => setSelectedIndex(Number(index ?? 0))}
-                  styles={{
-                    input: { cursor: versions.length <= 1 ? 'auto !important' : undefined },
-                  }}
-                />
-              )}
+              <Select
+                className="flex-1"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                readOnly={versions.length <= 1}
+                value={_selectedIndex?.toString()}
+                data={versions.map((version, index) => ({
+                  label: version.name,
+                  value: index.toString(),
+                }))}
+                onChange={(index) => setSelectedIndex(Number(index ?? 0))}
+                styles={{
+                  input: { cursor: versions.length <= 1 ? 'auto !important' : undefined },
+                }}
+              />
               {compatibility === 'partial' && (
                 <Badge color="yellow" variant="light" size="sm">
                   Partial support
@@ -386,7 +381,6 @@ export function ResourceSelectCard({
                 </Tooltip>
               )}
               <Button
-                className={role === 'checkpoint' ? 'flex-1' : undefined}
                 loading={loading}
                 disabled={incompatible || (batching && atLimit)}
                 variant={isAdded ? 'light' : 'filled'}

@@ -8,6 +8,7 @@ import { PromptEditorShell } from '~/components/Generate/Input/PromptEditorShell
 import { ResourceAlerts } from '~/components/generation_v2/ResourceAlerts';
 import { AspectRatioInput } from '~/components/generation_v2/inputs/AspectRatioInput';
 import { ResourceSelectMultipleInput } from '~/components/generation_v2/inputs/ResourceSelectMultipleInput';
+import { ResourceSelectInput } from '~/components/generation_v2/inputs/ResourceSelectInput';
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SelectInput } from '~/components/generation_v2/inputs/SelectInput';
 import { InterpolationFactorInput } from '~/components/generation_v2/inputs/InterpolationFactorInput';
@@ -38,8 +39,6 @@ import {
   useWildcardHandlers,
 } from './form-helpers';
 import { GateRuleWarnings } from './GateRuleWarnings';
-import { CheckpointRow } from './inputs/CheckpointRow';
-import { openCheckpointPicker, readResources } from './inputs/openCheckpointPicker';
 import { SourceImagesInput } from './inputs/SourceImagesInput';
 import type { GenerationStore } from './store';
 
@@ -56,54 +55,37 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
     <Stack gap="sm">
       <div className="flex flex-col gap-1">
         <Controller
-          graph={generationHub}
-          name="ecosystem"
-          render={({ value: ecosystem, meta: ecosystemMeta, onChange: onEcosystemChange }) => (
-            <Controller
-              graph={videoHub}
-              name="model"
-              render={({ value, meta, onChange }) => {
-                const defaultModelId = meta?.defaultModelId;
-                return (
-                  <>
-                    <CheckpointRow
-                      value={value}
-                      ecosystem={ecosystem}
-                      options={meta?.options}
-                      locked={meta?.modelLocked}
-                      onOpenPicker={() =>
-                        openCheckpointPicker({
-                          options: meta?.options,
-                          onSelect: onChange,
-                          onEcosystemChange,
-                          resources: readResources(store),
-                          ecosystem: {
-                            value: ecosystem,
-                            compatibleEcosystems: ecosystemMeta?.compatibleEcosystems,
-                            excludeEcosystems: ecosystemMeta?.hiddenEcosystems,
-                            ecosystemStates: ecosystemMeta?.ecosystemStates,
-                            outputType: ecosystemMeta?.mediaType,
-                          },
-                        })
-                      }
-                      onRevertToDefault={
-                        defaultModelId
-                          ? () => onChange({ id: defaultModelId, model: { type: 'Checkpoint' } })
-                          : undefined
-                      }
-                    />
-                    {meta?.versions ? (
-                      <VersionGroupSelector
-                        versions={meta.versions}
-                        modelId={value?.id}
-                        onChange={onChange}
-                      />
-                    ) : null}
-                  </>
-                );
-              }}
-            />
-          )}
+          graph={videoHub}
+          name="model"
+          render={({ value, meta, onChange }) => {
+            const defaultModelId = meta?.defaultModelId;
+            return (
+              <>
+                <ResourceSelectInput
+                  value={value}
+                  onChange={onChange}
+                  label={<ControllerLabel label="Model" />}
+                  buttonLabel="Select Model"
+                  modalTitle="Select Model"
+                  options={meta?.options}
+                  allowRemove={false}
+                  allowSwap={!meta?.modelLocked}
+                  onRevertToDefault={
+                    defaultModelId
+                      ? () => onChange({ id: defaultModelId, model: { type: 'Checkpoint' } })
+                      : undefined
+                  }
+                />
+                {meta?.versions ? (
+                  <VersionGroupSelector
+                    versions={meta.versions}
+                    modelId={value?.id}
+                    onChange={onChange}
+                  />
+                ) : null}
+              </>
+            );
+          }}
         />
         <Controller
           graph={videoHub}

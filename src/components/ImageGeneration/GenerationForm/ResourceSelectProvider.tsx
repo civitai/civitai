@@ -18,12 +18,10 @@ const defaultTab: Tabs = 'all';
  * behaves exactly as it always has — every consumer outside the form-graph
  * generation form passes nothing.
  *
- * `checkpoint` drops the per-card version dropdown: the version is a field under
- * the model row in the form, not part of the pick.
  * `resource` judges each card against the checkpoint's ecosystem and, when the
  * caller supplies `onSelectMultiple`, collects several picks before committing.
  */
-export type ResourceSelectRole = 'checkpoint' | 'resource';
+export type ResourceSelectRole = 'resource';
 
 export type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -36,16 +34,6 @@ export type ResourceSelectModalProps = {
   onSelectMultiple?: (values: GenerationResource[]) => void;
   /** Cap on a multi-select batch — the form's remaining slots. */
   limit?: number;
-  /**
-   * Slots. The modal knows nothing about what goes in them — the form-graph
-   * generation form fills them with an ecosystem rail and a consequence footer,
-   * which is why neither concept appears in this file.
-   *
-   * Components, not nodes: they render INSIDE the provider, so a rail can aim
-   * the catalog at a pending ecosystem via `setOptionsOverride`.
-   */
-  rail?: React.ComponentType;
-  footer?: React.ComponentType;
 };
 
 type ResourceSelectState = Omit<
@@ -55,12 +43,6 @@ type ResourceSelectState = Omit<
   selectSource: ResourceSelectSource;
   canGenerate?: boolean;
   excludedIds: number[];
-  /**
-   * Lets a rail re-aim the catalog at an ecosystem the user is considering but
-   * has not committed to. Null restores the options the modal was opened with.
-   */
-  optionsOverride: ResourceSelectOptions | null;
-  setOptionsOverride: (options: ResourceSelectOptions | null) => void;
   multiSelect: boolean;
   staged: GenerationResource[];
   addStaged: (value: GenerationResource) => void;
@@ -117,8 +99,7 @@ export function ResourceSelectProvider({
   });
   const [sort, setSort] = useState<ResourceSort>('relevance');
   const [categoryTag, setCategoryTag] = useState<string | undefined>();
-  const [optionsOverride, setOptionsOverride] = useState<ResourceSelectOptions | null>(null);
-  const activeOptions = optionsOverride ?? props.options;
+  const activeOptions = props.options;
   // Memoised because staging a resource now re-renders this provider, and a new
   // `resources` identity invalidates the hit list's `filterVersions` callback —
   // which re-filters every loaded model and re-lays out the whole grid.
@@ -203,8 +184,6 @@ export function ResourceSelectProvider({
         categoryTag,
         setCategoryTag,
         onSelect: handleSelect,
-        optionsOverride,
-        setOptionsOverride,
         multiSelect,
         staged,
         addStaged,
