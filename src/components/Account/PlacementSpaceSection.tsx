@@ -26,6 +26,7 @@ import {
 } from '~/shared/utils/sticker-placement';
 import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
+import { useNotificationSettings } from '~/components/Notifications/useNotificationSettings';
 import {
   STICKER_QUEUE_RECEIVED_URL,
   STICKER_QUEUE_SENT_URL,
@@ -38,6 +39,14 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 const { defaultMode: DEFAULT_MODE, defaultPrice: DEFAULT_PRICE } = PLACEMENT_SURFACES.sticker;
+
+/**
+ * The notification an `auto` space owner has to opt into. Spelled here and
+ * pinned against `notificationProcessors` by a test: a rename would leave this
+ * reading `undefined`, which is falsy, so the pointer below would sit open
+ * forever offering a setting that no longer exists.
+ */
+const AUTO_ACCEPTED_NOTIFICATION = 'sticker-placement-auto-accepted';
 
 /**
  * Account-level control over who may place stickers on this creator's images.
@@ -59,6 +68,7 @@ export function PlacementSpaceSection({
   footer,
 }: { flat?: boolean; footer?: ReactNode } = {}) {
   const { pendingPlacements } = useQueryNotificationsCount();
+  const { notificationSettings } = useNotificationSettings();
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const utils = trpc.useUtils();
@@ -146,6 +156,13 @@ export function PlacementSpaceSection({
   // the user menu shows, where before this card and the menu answered "how many
   // are waiting on me" differently.
   const waiting = pendingPlacements;
+
+  // Only worth saying to someone who is not already subscribed. `false` and
+  // `undefined` are both falsy, and the difference matters: undefined means the
+  // type below no longer exists, which would pin this open forever — pinned
+  // against the real processor list in the tests rather than guessed at here.
+  const offerAutoNotification =
+    mode === 'auto' && notificationSettings[AUTO_ACCEPTED_NOTIFICATION] === false;
 
   const placedCount = pendingCount(sent ?? []);
   const caption = placementPriceCaption(
@@ -336,6 +353,22 @@ export function PlacementSpaceSection({
           Stickers you&apos;ve placed
         </Button>
       </Group>
+
+      {/* "Accept all" removes the review step, and with it the only thing that
+          told this creator a sticker had landed. The notification that replaces
+          it is opt-in, so without a pointer from here the setting is a checkbox
+          nobody was ever prompted about. */}
+      {offerAutoNotification && (
+        <Alert color="blue" p="xs">
+          <Text size="xs">
+            Stickers are accepted without asking you, so nothing reaches your review queue.{' '}
+            <Anchor href="/user/account/notifications" inherit>
+              Turn on notifications
+            </Anchor>{' '}
+            to hear when someone places one.
+          </Text>
+        </Alert>
+      )}
 
       {/* Gated on there being no price rather than no row: a row with a null
           price is now the ordinary result of setting a mode without touching
