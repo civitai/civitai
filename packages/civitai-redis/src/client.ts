@@ -2007,6 +2007,13 @@ export const REDIS_SYS_KEYS = {
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
     REMIX_AUDIT_CHECKED: 'generation:remix-audit-checked',
     CLIENT: 'generation:client',
+    // One field per entry, keyed by id, so saving one rule or message never rewrites the rest.
+    GATE_RULES: 'generation:gate-rules:by-id',
+    // Never delete: the migration would rerun and restore every legacy rule deleted since.
+    GATE_RULES_MIGRATED: 'generation:gate-rules:migrated',
+    MESSAGES: 'generation:messages:by-id',
+    // Never delete: the migration would rerun and restore every legacy message deleted since.
+    MESSAGES_MIGRATED: 'generation:messages:migrated',
     /**
      * MEASUREMENT ONLY — a dark probe, not a cache. Holds `1` against a truncated SHA-256 of the
      * exact string sent to the external prompt classifier, so we can count how often that string

@@ -401,4 +401,10 @@ export default withBlockScope(baseHandler, {
   // `req.url` or any other client-controlled input.
   endpoint: (req) => (req.method === 'POST' ? 'tools_call' : 'tools'),
   allowOpaqueOrigin: true,
+  // GET is a static in-process tool registry; POST is a catalog search on the same clamped
+  // path blocks/models.ts serves. No requiredScope, nothing viewer-scoped, nothing written
+  // — so refusing on an unreachable replica removes no takedown path. Both methods are
+  // covered by this one declaration, which is correct: neither discloses anything the
+  // approval row gates.
+  onApprovalLookupFailure: 'serve',
 });

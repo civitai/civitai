@@ -122,6 +122,9 @@ export type CapturableSearchInput = {
   modelId?: number;
   modelVersionId?: number;
   userId?: number;
+  followed?: boolean;
+  /** Resolved by the primary path only; `followed` without it is not servable. */
+  followedUserIds?: number[];
   postId?: number;
   collectionId?: number;
   hubId?: number;

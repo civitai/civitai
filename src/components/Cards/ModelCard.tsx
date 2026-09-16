@@ -2,6 +2,7 @@ import {
   Badge,
   getPrimaryShade,
   Text,
+  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
@@ -9,6 +10,8 @@ import { memo, useMemo } from 'react';
 import {
   IconArchiveFilled,
   IconBolt,
+  IconClockDollar,
+  IconLockDollar,
   IconBookmark,
   IconDownload,
   IconLock,
@@ -23,9 +26,13 @@ import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RemixButton } from '~/components/Cards/components/RemixButton';
 import { useModelCardContext, useModelSaleBadge } from '~/components/Cards/ModelCardContext';
-import { SaleDiscountLabel } from '~/components/Model/ModelVersions/ModelVersionSaleBadge';
+import {
+  SaleDiscountLabel,
+  saleDiscountText,
+} from '~/components/Model/ModelVersions/ModelVersionSaleBadge';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { ModelCardContextMenu } from '~/components/Cards/ModelCardContextMenu';
-import { getCardBaseModels } from '~/components/Cards/model-card.utils';
+import { getCardBaseModels, getModelRecency } from '~/components/Cards/model-card.utils';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { useElementInView } from '~/components/IntersectionObserver/ElementInView';
@@ -38,9 +45,7 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
-import { constants } from '~/server/common/constants';
 import { Availability, ModelModifier } from '~/shared/utils/prisma/enums';
-import { aDayAgo } from '~/utils/date-helpers';
 import { getModelUrl } from '~/utils/string-helpers';
 
 function ModFlagBadge({ labels }: { labels: string[] }) {
@@ -59,18 +64,83 @@ export const ModelCard = memo(function ModelCard({ data }: Props) {
   return <ModelCardContent data={data} />;
 });
 
+const accessChipStyles = { label: { display: 'flex', alignItems: 'center', gap: 4 } } as const;
+
+/**
+ * A link, not a labelled `div`: the card header is `pointer-events: none` so its chips fall through
+ * to the image link, and making this one hit-testable — which it must be, or the tooltip's trigger
+ * is never reached — took that away. An anchor gives the click back.
+ *
+ * `pointer-events-auto` is load-bearing: the header is `pointer-events: none` and the `.chip` this
+ * card uses never turns it back on, so without it the chip takes neither the hover nor the click.
+ *
+ * The name comes from ARIA because the content is an abstract glyph, and a merged discount has to
+ * ride in the name too: `aria-label` overrides the subtree, so the drawn "20% off" reaches no
+ * screen reader on its own.
+ */
+function AccessChip({
+  label,
+  icon,
+  href,
+  sale,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  href: string;
+  sale?: Parameters<typeof SaleDiscountLabel>[0]['sale'];
+}) {
+  const theme = useMantineTheme();
+  // `circle` sizes the width from the badge size while `.chip` pins height at 26px, so both axes
+  // are set here.
+  // Green rather than the `success` teal, which sits close enough to the recency chip's blue at
+  // chip size to read as one colour.
+  const style = {
+    backgroundColor: theme.colors.green[7],
+    ...(sale ? { paddingInline: 8 } : { width: 26, height: 26, padding: 0 }),
+  };
+
+  return (
+    <Tooltip
+      label={label}
+      position="right"
+      withinPortal
+      withArrow
+      openDelay={0}
+      zIndex={10000}
+      // No `touch`: the chip is a link, so a tap navigates before the label can be read. Hover and
+      // focus are the two that reach anyone.
+      events={{ hover: true, focus: true, touch: false }}
+    >
+      <Badge
+        component={NextLink}
+        href={href}
+        className={clsx(cardClasses.chip, 'pointer-events-auto')}
+        variant="filled"
+        radius="xl"
+        data-status-badge="access"
+        aria-label={sale ? `${label}, ${saleDiscountText(sale)}` : label}
+        {...(sale ? {} : { circle: true })}
+        styles={accessChipStyles}
+        style={style}
+      >
+        {icon}
+        {sale && (
+          <Text c="white" size="xs" tt="capitalize">
+            <SaleDiscountLabel sale={sale} />
+          </Text>
+        )}
+      </Badge>
+    </Tooltip>
+  );
+}
+
 function ModelCardContent({ data }: Props) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
 
   const currentUser = useCurrentUser();
 
-  const isNew = data.publishedAt && data.publishedAt > aDayAgo;
-  const isUpdated =
-    data.lastVersionAt &&
-    data.publishedAt &&
-    data.lastVersionAt > aDayAgo &&
-    data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
+  const { isNew, isUpdated } = getModelRecency(data);
   const isEarlyAccess = data.earlyAccessDeadline && data.earlyAccessDeadline > new Date();
   // Any live gate. `isEarlyAccess` stays a client-side deadline check because a search document can
   // be 15 minutes stale; this flag covers the gates with no deadline to check — permanent ones, and
@@ -91,16 +161,9 @@ function ModelCardContent({ data }: Props) {
     if (isNSFW) modFlagLabels.push('NSFW');
   }
 
-  const statusBadgeStyle = useMemo(
-    () => ({
-      backgroundColor:
-        isEarlyAccess || isPaidAccess
-          ? theme.colors.success[5]
-          : isUpdated
-          ? theme.colors.teal[5]
-          : theme.colors.blue[getPrimaryShade(theme, colorScheme)],
-    }),
-    [isEarlyAccess, isPaidAccess, isUpdated, theme, colorScheme]
+  const recencyBadgeStyle = useMemo(
+    () => ({ backgroundColor: theme.colors.blue[getPrimaryShade(theme, colorScheme)] }),
+    [theme, colorScheme]
   );
 
   const { useModelVersionRedirect, activeBaseModels, salesByModelId, hasSaleProvider } =
@@ -113,6 +176,7 @@ function ModelCardContent({ data }: Props) {
   // by the time the flag flipped.
   const ownSale = useModelSaleBadge(data.id, !!hasSaleProvider);
   const sale = salesByModelId?.[data.id] ?? ownSale;
+
   const cardBaseModels = getCardBaseModels(
     data as Parameters<typeof getCardBaseModels>[0],
     activeBaseModels
@@ -178,7 +242,7 @@ function ModelCardContent({ data }: Props) {
               baseModels={cardBaseModels}
             />
 
-            {sale && (
+            {sale && !isPaidAccess && !isEarlyAccess && (
               <Badge className={cardClasses.chip} variant="filled" radius="xl" color="green">
                 <Text c="white" size="xs" tt="capitalize">
                   <SaleDiscountLabel sale={sale} />
@@ -186,25 +250,34 @@ function ModelCardContent({ data }: Props) {
               </Badge>
             )}
 
-            {(isNew || isUpdated || isEarlyAccess || isPaidAccess) && (
+            {(isNew || isUpdated) && (
               <Badge
                 className={cardClasses.chip}
                 variant="filled"
                 radius="xl"
-                data-status-badge
-                style={statusBadgeStyle}
+                data-status-badge="recency"
+                style={recencyBadgeStyle}
               >
                 <Text c="white" size="xs" tt="capitalize">
-                  {isEarlyAccess
-                    ? 'Early Access'
-                    : isPaidAccess
-                    ? 'Paid'
-                    : isUpdated
-                    ? 'Updated'
-                    : 'New'}
+                  {isUpdated ? 'Updated' : 'New'}
                 </Text>
               </Badge>
             )}
+            {isEarlyAccess ? (
+              <AccessChip
+                label="Early Access"
+                icon={<IconClockDollar size={16} color="white" />}
+                href={href}
+                sale={sale}
+              />
+            ) : isPaidAccess ? (
+              <AccessChip
+                label="Paid"
+                icon={<IconLockDollar size={16} color="white" />}
+                href={href}
+                sale={sale}
+              />
+            ) : null}
             {isArchived && (
               <Badge
                 className={clsx(cardClasses.infoChip, cardClasses.chip)}

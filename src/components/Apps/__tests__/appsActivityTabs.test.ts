@@ -99,7 +99,7 @@ describe('tab visibility', () => {
   it('🔴 THE FLOOR IS 1, AND THE PAGE COLLAPSES ITS BAR THERE', () => {
     // The state the previous round proved unreachable and correctly declined to build a
     // branch for. Gating `permissions` made it reachable, so `activity.tsx` now hides its
-    // `Tabs.List` below two visible tabs, mirroring `AppsSubNav`'s `links.length < 2`.
+    // `Tabs.List` below two visible tabs, mirroring the `/apps` rail's APPS_NAV_MIN_SECTIONS.
     //
     // 🔴 THIS IS THE TRIPWIRE FOR THAT COLLAPSE. Asserted as an EXACT count, not a
     // `<= 2`: a bound would stay green if a later change put a second tab back and left

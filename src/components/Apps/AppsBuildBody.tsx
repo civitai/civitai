@@ -83,7 +83,8 @@ export function AppsBuildBody() {
     ? isAppDeveloper(currentUser, { appBlocksAuthor: features.appBlocksAuthor })
     : false;
 
-  // 🔴 THE `enabled` GATE MIRRORS THE PROCEDURE, NOT THE PAGE — the same rule `AppsSubNav`
+  // 🔴 THE `enabled` GATE MIRRORS THE PROCEDURE, NOT THE PAGE — the same rule
+  // `useAppsNavSections`
   // documents. `blocks.getNavSummary` is `protectedProcedure.use(enforceAppBlocksFlag)`,
   // so without `appBlocks` or without a session it short-circuits to an all-false summary
   // having read nothing (`enforceAppBlocksFlag` returns `next({ ctx: { _appBlocksDisabled: true } })`

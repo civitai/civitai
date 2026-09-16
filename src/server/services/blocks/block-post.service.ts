@@ -6,8 +6,9 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { BLOCK_PUBLISHED_APP_ID_META_KEY } from '~/server/services/blocks/block-image-upload.service';
 import { isAllowedOutputHost } from '~/server/services/blocks/block-image-upload.logic';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
+import { assertBlockWorkflowTaggedForApp } from '~/server/services/blocks/block-workflow-access';
 import { blockWorkflowOwnedByAppUser } from '~/server/services/blocks/block-workflows.service';
-import { appBlockTag, projectAppWorkflow } from '~/server/services/blocks/workflow.service';
+import { projectAppWorkflow } from '~/server/services/blocks/workflow.service';
 import {
   BLOCK_POST_MAX_IMAGES,
   BLOCK_POST_MAX_TAGS,
@@ -387,9 +388,7 @@ export async function resolveOwnedWorkflowOutputs(input: {
   const workflow = (await input.getWorkflow(input.workflowId)) as Parameters<
     typeof projectAppWorkflow
   >[0];
-  if (!(workflow.tags ?? []).includes(appBlockTag(input.appId))) {
-    forbidden('workflow is not tagged for this app');
-  }
+  assertBlockWorkflowTaggedForApp({ tags: workflow.tags, appId: input.appId });
 
   const projected = projectAppWorkflow(workflow);
 

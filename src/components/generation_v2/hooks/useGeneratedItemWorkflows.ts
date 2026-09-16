@@ -34,8 +34,10 @@ import { workflowPreferences } from '~/store/workflow-preferences.store';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
 import { sourceMetadataStore } from '~/store/source-metadata.store';
+import { resolveSourceDimensions } from '~/components/generation_v2/utils/resolve-source-dimensions';
 import { getImageDimensions } from '~/utils/image-utils';
-import { showWarningNotification } from '~/utils/notifications';
+import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
+import { isDefined } from '~/utils/type-guards';
 
 // =============================================================================
 // Types
@@ -187,14 +189,24 @@ function getTargetEcosystemKey(
   return ecosystemKey ?? workflowPreferences.getPreferredEcosystem(workflowId);
 }
 
-/**
- * Resolve image dimensions, checking sourceMetadataStore cache first.
- * Falls back to loading the image and reading its natural dimensions.
- */
-async function resolveImageDimensions(image: BlobData): Promise<{ width: number; height: number }> {
-  const stored = sourceMetadataStore.getMetadata(image.url);
-  if (stored?.width && stored?.height) return { width: stored.width, height: stored.height };
-  return getImageDimensions(image.url).catch(() => ({ width: 512, height: 512 }));
+function loadImageDimensions(image: BlobData) {
+  return resolveSourceDimensions({
+    cached: sourceMetadataStore.getMetadata(image.url),
+    load: () => getImageDimensions(image.url, { loadRetries: 2 }),
+  });
+}
+
+function notifyUnreadableImages(count: number) {
+  showErrorNotification({
+    title: count === 1 ? 'Could not load image' : `Could not load ${count} images`,
+    error: new Error("We couldn't read the image size. Please try again in a moment."),
+  });
+}
+
+async function resolveImageDimensions(image: BlobData) {
+  const dimensions = await loadImageDimensions(image);
+  if (!dimensions) notifyUnreadableImages(1);
+  return dimensions;
 }
 
 /**
@@ -214,11 +226,12 @@ async function appendUpscaleImage(image: BlobData) {
     });
   }
 
-  const { width, height } = await resolveImageDimensions(image);
+  const dimensions = await resolveImageDimensions(image);
+  if (!dimensions) return;
   generationGraphStore.setData({
     params: {
       workflow: 'img2img:upscale',
-      images: [{ url: image.url, width, height }],
+      images: [{ url: image.url, ...dimensions }],
     },
     resources: [],
     runType: 'append',
@@ -254,8 +267,9 @@ async function applyWorkflowToForm({
 
   let images: { url: string; width: number; height: number }[] | undefined;
   if (acceptsImages) {
-    const { width, height } = await resolveImageDimensions(image);
-    images = [{ url: image.url, width, height }];
+    const dimensions = await resolveImageDimensions(image);
+    if (!dimensions) return;
+    images = [{ url: image.url, ...dimensions }];
   }
 
   if (isEnhancement && (image.params || image.resources)) {
@@ -341,8 +355,9 @@ export async function applyWorkflowWithCheck({
 
     let images: { url: string; width: number; height: number }[] | undefined;
     if (acceptsImages) {
-      const { width, height } = await resolveImageDimensions(image);
-      images = [{ url: image.url, width, height }];
+      const dimensions = await resolveImageDimensions(image);
+      if (!dimensions) return;
+      images = [{ url: image.url, ...dimensions }];
     }
 
     generationGraphStore.setData({
@@ -355,6 +370,7 @@ export async function applyWorkflowWithCheck({
       },
       resources: image.resources,
       runType: 'replay',
+      remixOfId: image.remixOfId,
     });
     return;
   }
@@ -457,15 +473,20 @@ export async function applyBulkWorkflow(
     }
   }
 
-  const resolvedImages = await Promise.all(
-    batch.map(async (img) => {
-      const { width, height } = await resolveImageDimensions(img);
-      return { url: img.url, width, height };
-    })
-  );
+  const resolved = (
+    await Promise.all(
+      batch.map(async (blob) => {
+        const dimensions = await loadImageDimensions(blob);
+        return dimensions && { blob, image: { url: blob.url, ...dimensions } };
+      })
+    )
+  ).filter(isDefined);
+  const added = resolved.map((r) => r.blob);
+  if (added.length < batch.length) notifyUnreadableImages(batch.length - added.length);
+  if (!added.length) return [];
 
   generationGraphStore.setData({
-    params: { workflow: workflowId, images: resolvedImages },
+    params: { workflow: workflowId, images: resolved.map((r) => r.image) },
     resources: [],
     runType: 'append',
   });
@@ -475,10 +496,10 @@ export async function applyBulkWorkflow(
   if (skipped > 0) {
     showWarningNotification({
       title: 'Some images were not added',
-      message: `Added ${batch.length} of ${newImages.length} images. The workflow is now at its maximum of ${max}. Clear some images or submit your current batch to add more.`,
+      message: `Added ${added.length} of ${newImages.length} images. The workflow is now at its maximum of ${max}. Clear some images or submit your current batch to add more.`,
       autoClose: 5000,
     });
   }
 
-  return batch;
+  return added;
 }

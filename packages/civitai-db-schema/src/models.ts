@@ -34,7 +34,7 @@ export type ModelStatus = "Draft" | "Training" | "Published" | "Scheduled" | "Un
 
 export type TrainingStatus = "Pending" | "Submitted" | "Paused" | "Denied" | "Processing" | "InReview" | "Failed" | "Approved" | "Expired";
 
-export type CommercialUse = "None" | "Image" | "RentCivit" | "Rent" | "Sell";
+export type CommercialUse = "None" | "Image" | "RentCivit" | "Rent" | "Sell" | "SellMerge";
 
 export type CheckpointType = "Trained" | "Merge";
 

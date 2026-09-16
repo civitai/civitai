@@ -221,11 +221,11 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
 - ~~**`/moderator/generation`**~~ — **removed**. The "Unavailable Resources" list was replaced by a
   per-version "Block generation" action on the model-version menu, backed by the
   `ModelVersionFlag.GenerationDisabled` bit on `ModelVersion.flags`. No page to migrate.
-- [ ] **`/moderator/generation-config`** — `generation-config.tsx` — flag: none
-  - Procedures: `getGateRules` (query); `setGateRules` (mutation)
-  - Services: `generation/generation.service.ts` (`getGateRules`, `setGateRules`)
-  - Schemas: `shared/data-graph/generation/gates.ts` (`gateRuleSchema`)
-  - Infra: **Redis (sysRedis `SYSTEM.FEATURES`) + Flipt** (`GENERATION_TESTING`)
+- [ ] **`/moderator/generation-config`** — `generation-config.tsx` + `components/Moderation/GenerationConfig/` (`GateRulesSection`, `GeneratorMessagesSection`, `target-inputs`) — flag: none
+  - Procedures: `getGateRules`, `getGeneratorMessages` (queries); `saveGateRule`, `deleteGateRule`, `saveGeneratorMessage`, `deleteGeneratorMessage` (mutations)
+  - Services: `generation/generation.service.ts` (the same names)
+  - Schemas: `shared/data-graph/generation/gates.ts` (`gateRuleSchema`), `shared/generation/messages.ts` (`generatorMessageSchema`)
+  - Infra: **Redis** — sysRedis hashes `GENERATION.GATE_RULES` / `GENERATION.MESSAGES` (one field per entry, migrated on first use from `SYSTEM.FEATURES`; the status cards still read `SYSTEM.FEATURES`) **+ Flipt** (`GENERATION_TESTING`)
 - [x] **`/moderator/generation-restrictions`** — **Migrated** to the spoke at
   **`/audit/generator-restrictions`** (label "Generator Restrictions").
   - Spoke: `user-restriction.service.ts` reads the queue with Kysely and writes suspicious matches to the

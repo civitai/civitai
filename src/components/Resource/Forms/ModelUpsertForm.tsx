@@ -119,7 +119,10 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
   { value: CommercialUse.Image, label: 'Sell generated images' },
   { value: CommercialUse.RentCivit, label: 'Use on Civitai generation service' },
   { value: CommercialUse.Rent, label: 'Use on other generation services' },
-  { value: CommercialUse.Sell, label: 'Sell this model or merges' },
+  { value: CommercialUse.Sell, label: 'Sell this model' },
+  // SellMerge is deliberately absent until every pod knows the label -- see the decision test in
+  // license-sell-merge-split.test.ts. An option a creator can tick writes the same row the default
+  // used to write, with a creator behind it, and a previous-build pod cannot read it.
 ];
 
 // 'tags' is deliberately absent: the field is named `tagsOnModels`, so the watch effect below

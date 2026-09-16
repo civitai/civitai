@@ -1,5 +1,6 @@
 import { IRedisClient } from '../types/package-stubs';
 import { chunk, sleep } from '../utils/basic';
+import { decodeCacheFields, type CacheFieldTypes } from './value-codec';
 
 const CACHE_TTL = 24 * 60 * 60; // 24 hours
 const MISS_CACHE_TTL = 5 * 60; // 5 minutes
@@ -17,6 +18,17 @@ export type CacheContext = {
 export type CacheConfig<T extends object> = {
   redisKey: string; // Prefix for cached items (e.g., 'user:data')
   idKey: keyof T; // Property used as key in result (e.g., 'userId')
+  /**
+   * How each stored field is read back out of the Redis hash.
+   *
+   * REQUIRED, and required to be COMPLETE — the type is a non-`Partial` record
+   * over `keyof T`, so adding a column to `fetch`'s `SELECT` does not compile
+   * until it is declared. Without a declaration a field falls back to guessing
+   * its type from the text, which is how an all-digit username was read back as
+   * a number and a leading-zero one was read back as a DIFFERENT name
+   * (civitai#4768). See `caches/value-codec.ts`.
+   */
+  fieldTypes: CacheFieldTypes<T>;
   fetch: (ctx: CacheContext, ids: number[]) => Promise<T[]>; // Fetch function returns array
   ttl?: number; // Default cache TTL in seconds
   debounceTime?: number; // Time for writes to propagate to read replicas (default 10s)
@@ -86,26 +98,11 @@ export function createCache<T extends object>(config: CacheConfig<T>) {
           continue;
         }
 
-        // Parse the cached data
+        // Parse the cached data. `value-codec` is the single place that knows
+        // how a field is to be read back; inferring the type from the text here
+        // is what destroyed all-digit usernames (civitai#4768).
         const cachedAt = cacheResult.cachedAt ? new Date(cacheResult.cachedAt) : new Date(0);
-        const item: any = {};
-
-        for (const [key, value] of Object.entries(cacheResult)) {
-          if (key === 'cachedAt') continue;
-
-          // Try to parse as JSON first (for arrays/objects)
-          if (value.startsWith('[') || value.startsWith('{')) {
-            try {
-              item[key] = JSON.parse(value);
-              continue;
-            } catch {
-              // Not valid JSON, fall through to string/number handling
-            }
-          }
-
-          // Try to parse as number if it looks like one
-          item[key] = isNaN(Number(value)) ? value : Number(value);
-        }
+        const item: any = decodeCacheFields(cacheResult, config.fieldTypes);
 
         // Check if stale and needs revalidation
         if (staleWhileRevalidate && cachedAt < ttlExpiry) {
@@ -253,14 +250,12 @@ export function createCache<T extends object>(config: CacheConfig<T>) {
             // Skip not found entries
             if (cacheResult.notFound === '1') continue;
 
-            // Parse the cached data
-            const item: any = {};
-            for (const [key, value] of Object.entries(cacheResult)) {
-              if (key === 'cachedAt') continue;
-              item[key] = isNaN(Number(value)) ? value : Number(value);
-            }
-
-            results[id] = item as T;
+            // Parse the cached data through the SAME codec as the uncontended
+            // read above. This branch used to carry its own copy of the decoder,
+            // and that copy had no array/object handling at all — so a cached
+            // `tags`/`cosmetics` array came back as the raw text '[3,9]' and
+            // every `Array.isArray` check downstream silently saw `false`.
+            results[id] = decodeCacheFields(cacheResult, config.fieldTypes) as T;
           }
         }
 

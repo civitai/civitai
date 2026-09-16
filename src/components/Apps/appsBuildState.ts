@@ -23,7 +23,7 @@
  * would tell someone with a submission history that they have not started yet, and
  * would hide the only surface those records have. This is the same union
  * `/apps/mine`'s sub-nav row carried for the same reason — see the note on that entry
- * in `~/components/Apps/AppsSubNav`.
+ * in `~/components/Apps/apps-sections`.
  *
  * 🔴 `pitch` IS THE DEFAULT, AND THAT ORDERING IS LOAD-BEARING FOR HYDRATION. The two
  * summary booleans come from `blocks.getNavSummary`, which is

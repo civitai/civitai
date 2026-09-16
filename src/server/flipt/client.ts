@@ -16,8 +16,8 @@ export enum FLIPT_FEATURE_FLAGS {
   CRUCIBLE_JOBS_ENABLED = 'crucible-jobs-enabled',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
-  // Answers getImagesFromSearch from the PostgreSQL feed service instead of Meilisearch
-  // for matching users; everyone else keeps Meilisearch with the feed service in shadow.
+  // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from
+  // Postgres) for matching users; everyone else keeps Meilisearch with the feed in shadow.
   FEED_SERVICE_PRIMARY = 'feed-service-primary',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
 

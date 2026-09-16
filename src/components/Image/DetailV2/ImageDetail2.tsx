@@ -74,6 +74,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { StickerPlacementBar } from '~/components/Sticker/StickerPlacementBar';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Gated } from '~/components/Gated/Gated';
+import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { Metrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
@@ -293,7 +294,7 @@ export function ImageDetail2() {
             ? `${env.NEXT_PUBLIC_BASE_URL}/user/${image.user.username}`
             : undefined,
         }
-      : undefined;
+      : { '@type': 'Person', name: 'Civitai user' };
   const creditText = image.user.username && !image.user.deletedAt ? image.user.username : undefined;
   const copyrightNotice =
     image.user.username && !image.user.deletedAt ? `© ${image.user.username}` : undefined;
@@ -355,6 +356,10 @@ export function ImageDetail2() {
         ogEndpoint: `/api/og?type=image&id=${image.id}`,
         canonical: `/images/${image.id}`,
         schema: mediaSchema,
+        breadcrumb: buildBreadcrumbSchema(env.NEXT_PUBLIC_BASE_URL ?? '', [
+          { name: isVideo ? 'Videos' : 'Images', path: isVideo ? '/videos' : '/images' },
+          { name: title },
+        ]),
         // Per-image HTML pages are thin/duplicative and drive negligible search
         // traffic, so plain images stay deindexed (Google Images still surfaces
         // them via the ImageObject schema). Videos are the exception: a single-

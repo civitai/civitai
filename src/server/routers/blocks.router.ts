@@ -139,6 +139,10 @@ import { getRequestDomainColor, isHostForColor } from '~/server/utils/server-dom
 // lazy import of recordScopeInvocation below.
 import type { ResolveCanGenerateVersion } from '~/server/services/generation/generation.service';
 import {
+  assertBlockWorkflowMintedForViewer,
+  assertBlockWorkflowTaggedForApp,
+} from '~/server/services/blocks/block-workflow-access';
+import {
   appBlockTag,
   buildCustomComfyWorkflowInput,
   buildTextToImageInput,
@@ -3239,9 +3243,9 @@ export const blocksRouter = router({
 
   /**
    * Lightweight booleans that drive the conditional links in the apps
-   * sub-nav (`AppsSubNav`). One round-trip instead of fanning out to
+   * nav (`useAppsNavSections`). One round-trip instead of fanning out to
    * `listMySubscriptions` + `listMyPublishRequests` + `getMyApps` (the
-   * heavyweight per-page queries) just to decide which tabs to show.
+   * heavyweight per-page queries) just to decide which rail entries to show.
    *
    * Booleans ONLY — no rows, no manifests, no per-app data. Each check is a
    * `findFirst({ select: { id } })` so Prisma pushes `LIMIT 1` into SQL and
@@ -3785,9 +3789,17 @@ export const blocksRouter = router({
    * Read a workflow's current status. Returns a `BlockWorkflowSnapshot` —
    * a flattened, public-safe subset of the orchestrator's Workflow shape.
    *
-   * Ownership: we fetch with the user's orchestrator token (`getOrchestratorToken`),
-   * so the orchestrator returns 404/403 for workflows the user doesn't own.
-   * That's the gate — we don't need a second client-side ownership check.
+   * SCOPE — `workflowId` arrives as request input rather than as a token claim, so it is scoped
+   * explicitly, FAIL-CLOSED, by the two assertions in `block-workflow-access.ts`: the id must name
+   * the CALLING VIEWER as its owner (checked BEFORE any orchestrator call), and the orchestrator's
+   * record must carry the CALLING APP's `app-block:<appId>` provenance tag (checked on the fetched
+   * workflow, before anything is published back to the block).
+   *
+   * 🔴 THAT IS NOT THE SAME PAIR `cancelAppWorkflow` / `publishGenerationOutputs` USE, and reading
+   * it as interchangeable is the trap worth naming. They share the app-tag half; their viewer half
+   * is the `block_workflows` read-model row, which binds per-APP-BLOCK rather than per-user. The
+   * row is deliberately not used here — it is written best-effort and never written at all for
+   * `dev:live` tokens — and the id-prefix check is NOT a drop-in replacement for it there.
    *
    * OPTIONALLY A LONG POLL. With `waitSeconds`, the orchestrator holds the read
    * open until the workflow reaches a terminal status instead of answering with
@@ -3848,6 +3860,8 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
+      // VIEWER SCOPE, before any orchestrator call: the id must name this viewer as its owner.
+      assertBlockWorkflowMintedForViewer({ workflowId: input.workflowId, userId });
       const token = await getOrchestratorToken(userId, ctx);
       const waitSeconds = resolveBlockPollWaitSeconds(input.waitSeconds);
       const workflow = await getWorkflow({
@@ -3857,6 +3871,10 @@ export const blocksRouter = router({
         // to the pre-long-poll one rather than carrying a `?wait=0`.
         ...(waitSeconds !== undefined ? { query: { wait: waitSeconds } } : {}),
       });
+      // APP SCOPE — the orchestrator's own record must agree this is the calling app's workflow.
+      // It runs here, on the fetched record, because the tag lives on the record; it is still
+      // ahead of every line below that publishes anything derived from it back to the block.
+      assertBlockWorkflowTaggedForApp({ tags: workflow.tags, appId: claims.appId });
       // 🔴 THE OUTPUT-MODERATION BOUNDARY. `snapshotFromWorkflow` cannot emit
       // generated text: it publishes `imageUrls` off `extractOutput`, which a
       // text-posture entry may not declare (`TextOutputSurface.extractOutput?:
@@ -3987,15 +4005,24 @@ export const blocksRouter = router({
   /**
    * Cancel a running workflow on the orchestrator (a real server-side stop).
    *
-   * Mirrors pollWorkflow's auth + ownership model exactly: we cancel with the
-   * viewer's orchestrator token (`getOrchestratorToken`), so the orchestrator
-   * 403/404s for workflows the viewer doesn't own — that's the gate, no second
-   * client-side ownership check needed. After the cancel PATCH lands we re-read
-   * the workflow and return its (now-canceled) snapshot so the block can render
-   * the terminal state. Best-effort from the block's side: a workflow that
-   * already reached a terminal status may reject the cancel, which surfaces as
-   * the mutation throwing — the host echoes a failure snapshot and the block
-   * still clears its card.
+   * SCOPE — the same two assertions `pollWorkflow` makes, and FAIL-CLOSED ahead of the side effect.
+   * `workflowId` is request input, so `block-workflow-access.ts` is what binds it: the id must name
+   * the CALLING VIEWER as its owner, and the orchestrator's own record for it must carry the
+   * CALLING APP's `app-block:<appId>` provenance tag. Both hold BEFORE the cancel is issued — which
+   * is why this reads the workflow first (the tag lives on that record) rather than only
+   * afterwards. See `pollWorkflow` for why this is NOT the same pair `cancelAppWorkflow` uses.
+   *
+   * COST + THE FAILURE MODE THAT BUYS, stated because the read-first order is what introduces it.
+   * Cancel is now GET + PATCH + GET. The pre-read is bounded by the module's 20s orchestrator read
+   * backstop, so a parked read refuses the cancel rather than issuing one it could not authorize —
+   * the deliberate trade: a scope check that runs after the stop has not scoped anything. A refused
+   * cancel reaches the block as a failure snapshot and is retryable.
+   *
+   * After the cancel PATCH lands we re-read the workflow and return its (now-canceled) snapshot so
+   * the block can render the terminal state. 🔴 A cancel of an ALREADY-TERMINAL workflow does NOT
+   * throw: `cancelWorkflow` passes no `throwOnError`, so a non-2xx PATCH resolves silently and the
+   * re-read returns the workflow's real terminal status. (An earlier revision of this docblock said
+   * such a cancel "surfaces as the mutation throwing"; it does not, and never did.)
    */
   cancelWorkflow: publicProcedure
     // Block-JWT-authed (no session for dev:live) — flag evaluated against the
@@ -4020,7 +4047,13 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
+      // VIEWER SCOPE, before any orchestrator call: the id must name this viewer as its owner.
+      assertBlockWorkflowMintedForViewer({ workflowId: input.workflowId, userId });
       const token = await getOrchestratorToken(userId, ctx);
+      // APP SCOPE — read the record FIRST so the provenance tag can be asserted while the cancel
+      // is still un-issued. Both scopes hold before anything is stopped.
+      const existing = await getWorkflow({ token, path: { workflowId: input.workflowId } });
+      assertBlockWorkflowTaggedForApp({ tags: existing.tags, appId: claims.appId });
       await cancelWorkflow({ workflowId: input.workflowId, token });
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
       // Same output-moderation boundary as `pollWorkflow`. A CANCEL still
@@ -4247,12 +4280,7 @@ export const blocksRouter = router({
       // carries the per-app tag — defense-in-depth over (a). Done with the
       // viewer's token (which does NOT itself gate ownership per the note above).
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
-      if (!(workflow.tags ?? []).includes(appBlockTag(claims.appId))) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'workflow is not tagged for this app',
-        });
-      }
+      assertBlockWorkflowTaggedForApp({ tags: workflow.tags, appId: claims.appId });
       // Both guards passed — cancel, then re-read + project the terminal state.
       await cancelWorkflow({ workflowId: input.workflowId, token });
       const canceled = await getWorkflow({ token, path: { workflowId: input.workflowId } });
@@ -4342,9 +4370,7 @@ export const blocksRouter = router({
       const token = await getOrchestratorToken(userId, ctx);
       // GUARD (b): re-read + assert the orchestrator's own app-tag (defense in depth).
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
-      if (!(workflow.tags ?? []).includes(appBlockTag(claims.appId))) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'workflow is not tagged for this app' });
-      }
+      assertBlockWorkflowTaggedForApp({ tags: workflow.tags, appId: claims.appId });
 
       // The SAME ordered projection queryAppWorkflows hands the block — so the
       // block's `imageIndexes` line up exactly with what it saw. Only `available`
@@ -5824,9 +5850,14 @@ export const blocksRouter = router({
       // recordSpendAttribution): a failed queue write must NEVER add latency to,
       // or break, the submit response.
       //
-      // Only on a REAL workflow id, and NOT for dev/live-harness tokens (which
-      // carry a synthetic non-FK appBlockId — the FK would reject them; the
-      // dev/live queue is ephemeral and held in the harness).
+      // Only on a REAL workflow id, and NOT for dev/live-harness tokens — the dev/live queue
+      // is ephemeral and held in the harness.
+      //
+      // 🔴 THE REASON IS THE EXCLUSION ITSELF, NOT THE ID SHAPE. An earlier revision of this
+      // comment said dev tokens "carry a synthetic non-FK appBlockId — the FK would reject
+      // them", and that is false: the approved and dev-tunnel mint paths both sign the app's
+      // REAL `AppBlock.id` with `dev: true`. See `upsertBlockWorkflowOnSubmit`'s docblock.
+      // Nothing downstream may infer from `claims.dev` that a row cannot match.
       if (
         claims.dev !== true &&
         snapshot.workflowId &&

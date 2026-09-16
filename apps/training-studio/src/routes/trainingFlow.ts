@@ -5,6 +5,7 @@ import {
   cardByType,
   cardsForMedia,
   loraTypeById,
+  versionSuffix,
   type LabelType,
   type Media,
   type ModelCard,
@@ -90,8 +91,9 @@ export function isCustom(run: Run): boolean {
 
 export function runVersionLabel(run: Run): string {
   if (isCustom(run)) return 'Custom';
-  const v = runCard(run).versions.find((x) => x.key === run.versionKey);
-  return v?.label ?? '';
+  const card = runCard(run);
+  const v = card.versions.find((x) => x.key === run.versionKey);
+  return versionSuffix(card.name, v?.label);
 }
 
 export function newRun(card: ModelCard): Run {

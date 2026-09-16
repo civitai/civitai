@@ -2548,7 +2548,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     },
     overview: [
       "Seedance 2.0 is a hosted multimodal video generator from ByteDance's Seed team. It's built on a Dual-branch DiT (Diffusion Transformer) architecture that jointly generates the visuals, dialogue, lip-sync, and ambient sound in one pipeline, natively fusing text, image, and audio inputs rather than treating audio as a separate post step. Weights aren't published — the ByteDance-Seed org is on Hugging Face, but Seedance runs as a hosted model, which on Civitai means you generate it through the on-site generator instead of downloading it.",
-      'Two variants are available on Civitai: Seedance 2.0, the full-quality model set as the generator default, and Seedance 2.0 Fast, a speed-optimized variant that trades some fidelity for quicker turnaround. Both do text-to-video and image-to-video and both produce synchronized audio. Clips run from 480p up to 4K native, and the model can take reference inputs — up to nine images plus short audio and video clips — to steer a generation. Because it is API-only there are no LoRAs or local runs; you prompt it directly in the generator.',
+      'Two variants are available on Civitai: Seedance 2.0, the full-quality model, and Seedance 2.0 Fast, a speed-optimized variant that trades some fidelity for quicker turnaround. Both do text-to-video and image-to-video and both produce synchronized audio. Clips run from 480p up to 4K native, and the model can take reference inputs — up to nine images plus short audio and video clips — to steer a generation. Because it is API-only there are no LoRAs or local runs; you prompt it directly in the generator.',
       'Choose Seedance when you want video and matching audio in a single generation — synchronized speech, sound effects, and ambience without a separate audio pass. Against a polished closed API like Kling or a fast one like Hailuo you get the joint audio-plus-video pipeline; against open-weight Wan you trade downloadable models and a LoRA ecosystem for that one-pass audio and ByteDance hosting. It runs right here on Civitai either way.',
     ],
     promptTips: [
@@ -2658,7 +2658,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: "What's the difference between Seedance 2.0 and 2.0 Fast?",
-        a: 'Seedance 2.0 is the full-quality model and the generator default; 2.0 Fast is a speed-optimized variant that returns clips more quickly and costs less Buzz, trading a little fidelity. Run the same prompt on each and compare — both are available on Civitai.',
+        a: 'Seedance 2.0 is the full-quality model; 2.0 Fast is a speed-optimized variant that returns clips more quickly and costs less Buzz, trading a little fidelity. Run the same prompt on each and compare — both are available on Civitai.',
       },
       {
         q: 'Can I use my own image or reference clips with Seedance?',

@@ -6,7 +6,7 @@
 </script>
 
 <span
-  class="inline-flex shrink-0 items-center gap-1.5 rounded px-2.5 py-1 text-[11px] font-semibold {badge.cls} {className}"
+  class="inline-flex shrink-0 items-center gap-1.5 rounded px-2.5 py-1 text-xs font-semibold {badge.cls} {className}"
 >
   <span class="h-1.5 w-1.5 rounded-full {badge.dot}"></span>{badge.label}
 </span>

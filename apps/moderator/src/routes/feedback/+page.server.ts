@@ -11,6 +11,7 @@ import {
   feedbackAreaOptions,
   isFeedbackStatus,
 } from '$lib/feedback';
+import { FEEDBACK_CURSOR_VALUE_PARAM, parseFeedbackSort } from '$lib/feedback-sort';
 import {
   FEEDBACK_PAGE_SIZE,
   getFeedbackAreas,
@@ -30,10 +31,40 @@ const querySchema = z.object({
   area: z.string().trim().catch(''),
   cursor: z.coerce.number().int().positive().max(MAX_INT4).optional().catch(undefined),
   open: z.coerce.number().int().positive().max(MAX_INT4).optional().catch(undefined),
+  /**
+   * The compound keyset's value half. Bounded in LENGTH only and never coerced here: which type it
+   * has to be depends on which column `?sort=` names, and that mapping is the service's — see
+   * `FEEDBACK_SORT_KEYS`. The bound exists because this reaches Postgres as a parameter and an
+   * unbounded one is free work for whoever hand-edits the URL.
+   */
+  [FEEDBACK_CURSOR_VALUE_PARAM]: z.string().max(300).optional().catch(undefined),
 });
 
 export const load: PageServerLoad = async ({ url, request }) => {
-  const { status, area, cursor, open } = parseQuery(url, querySchema, ['status']);
+  // `cursorValue` is destructured by its literal name on purpose: the schema key above is the
+  // CONSTANT, so renaming the param breaks this line at compile time rather than silently reading a
+  // field nothing writes.
+  const { status, area, cursor, open, cursorValue } = parseQuery(url, querySchema, ['status']);
+  // Both params are typed by whoever is holding the keyboard. `parseFeedbackSort` is an allowlist
+  // membership test, so an unknown column degrades to the default ordering rather than reaching the
+  // query builder.
+  //
+  // 🔴 THE SERVICE REFUSES A SECOND TIME AND THROWS RATHER THAN DEGRADING, so this line is also the
+  // thing that keeps a hand-typed `?sort=` off the error boundary: everything the parser emits is a
+  // state `getFeedbackList` accepts. Do not "simplify" this to reading the params directly.
+  const sort = parseFeedbackSort(url.searchParams);
+  /**
+   * 🔴 PRESENT-BUT-REJECTED IS NOT ABSENT, AND THE TWO ARE OPPOSITE INSTRUCTIONS. `.catch(undefined)`
+   * collapses a param the schema refused into the same value as one that was never sent — and the
+   * service reads an absent value half as "the boundary row's value IS null", a real position in the
+   * ordering. So an over-long `?cursorValue=` would not degrade, it would silently relocate the
+   * operator into the trailing null block. Nothing else on this page has this problem: every other
+   * param's rejected value and its absent value mean the same thing.
+   *
+   * The whole cursor goes, not just the half — the service's own contract, for the same reason.
+   */
+  const cursorValueRejected =
+    url.searchParams.has(FEEDBACK_CURSOR_VALUE_PARAM) && cursorValue === undefined;
   // A present-but-empty `?status=` is a deliberate "all"; an ABSENT one is the default view.
   const statuses = url.searchParams.has('status')
     ? status.filter(isFeedbackStatus)
@@ -69,7 +100,9 @@ export const load: PageServerLoad = async ({ url, request }) => {
       getFeedbackList({
         statuses,
         area: area || null,
-        cursor: cursor ?? null,
+        cursor: cursorValueRejected ? null : cursor ?? null,
+        cursorValue: cursorValue ?? null,
+        sort,
         limit: FEEDBACK_PAGE_SIZE,
       }),
       getFeedbackAreas(),
@@ -79,6 +112,8 @@ export const load: PageServerLoad = async ({ url, request }) => {
     return {
       items: [],
       nextCursor: null,
+      nextCursorValue: null,
+      sort,
       statuses,
       area,
       open: null,
@@ -102,6 +137,8 @@ export const load: PageServerLoad = async ({ url, request }) => {
     migrationPending: false as const,
     items: list.items,
     nextCursor: list.nextCursor,
+    nextCursorValue: list.nextCursorValue,
+    sort,
     statuses,
     area,
     open: open ?? null,

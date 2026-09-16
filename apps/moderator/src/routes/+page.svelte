@@ -25,6 +25,8 @@
   import type { Jsonified } from '$lib/format';
   import type { MostReportedRow } from '$lib/server/reports.service';
   import type { BoardPayload } from './api/moderation-board/types';
+  import type { JobQueueHealthPayload } from './api/job-queue-health/types';
+  import JobQueueHealthPanel from './JobQueueHealthPanel.svelte';
   import { LINK_CLASS } from '$lib/format';
   import { SvelteMap } from 'svelte/reactivity';
   import NumberedPager from '$lib/components/NumberedPager.svelte';
@@ -117,6 +119,15 @@
       return r.json();
     });
   });
+
+  const jobQueue = $derived(
+    browser
+      ? fetch('/api/job-queue-health').then((r): Promise<JobQueueHealthPayload> => {
+          if (!r.ok) throw new Error(`job-queue-health ${r.status}`);
+          return r.json();
+        })
+      : null
+  );
 
   onMount(loadMostReported);
 
@@ -707,3 +718,17 @@
     Could not load the queue board. The counts above are unaffected.
   </p>
 {/await}
+
+<!-- Its own await, not folded into the board's: this reads a different table on a different cadence,
+     and the board's "Mark swept" refetch must not drop this panel back to a skeleton. -->
+<div class="mt-8">
+  {#await jobQueue}
+    <div class="h-32 animate-pulse rounded-xl border border-dark-4 bg-dark-6"></div>
+  {:then health}
+    {#if health}
+      <JobQueueHealthPanel {health} />
+    {/if}
+  {:catch}
+    <p class="text-sm text-red-300">Could not load background job health.</p>
+  {/await}
+</div>

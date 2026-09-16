@@ -41,14 +41,19 @@ export function SubNavSettingsButton({
   if (!withHomepageOption)
     return (
       <LegacyActionIcon
-        size="md"
+        size={32}
+        radius="xl"
         variant="subtle"
-        color="gray"
+        // `bright`, not `LegacyActionIcon`'s grey. Measured 2026-09-15 in DARK: the grey put this
+        // at rgb(222,226,230) beside the nav's other icons at rgb(254,254,254), which at a matched
+        // 16px box reads as a smaller icon rather than a dimmer one. `bright` is the theme's
+        // black/white pair, the same one the pills use, so it tracks them in both schemes.
+        c="var(--mantine-color-bright)"
         className={className}
         aria-label="Customize navigation"
         onClick={() => openSubNavSettings()}
       >
-        <IconSettings />
+        <IconSettings size={16} />
       </LegacyActionIcon>
     );
 
@@ -56,13 +61,14 @@ export function SubNavSettingsButton({
     <Menu position="bottom-end" withinPortal>
       <Menu.Target>
         <LegacyActionIcon
-          size="md"
+          size={32}
+          radius="xl"
           variant="subtle"
-          color="gray"
+          c="var(--mantine-color-bright)"
           className={className}
           aria-label="Customize page and navigation"
         >
-          <IconSettings />
+          <IconSettings size={16} />
         </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown>

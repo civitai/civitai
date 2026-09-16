@@ -18,8 +18,10 @@ import {
   getGenerationConfig,
   getResourceData,
   resolveImageMeta,
-  setGateRules,
-  setGeneratorMessages,
+  saveGateRule,
+  deleteGateRule,
+  saveGeneratorMessage,
+  deleteGeneratorMessage,
   setGenerationStatus,
   setSelfHostedGenerationStatus,
   // textToImage,
@@ -117,13 +119,19 @@ export const generationRouter = router({
       })
     ),
   getGateRules: moderatorProcedure.query(() => getGateRules()),
-  setGateRules: moderatorProcedure
-    .input(z.array(gateRuleSchema))
-    .mutation(({ input }) => setGateRules(input)),
+  saveGateRule: moderatorProcedure
+    .input(gateRuleSchema)
+    .mutation(({ input }) => saveGateRule(input)),
+  deleteGateRule: moderatorProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(({ input }) => deleteGateRule(input.id)),
   getGeneratorMessages: moderatorProcedure.query(() => getGeneratorMessages()),
-  setGeneratorMessages: moderatorProcedure
-    .input(z.array(generatorMessageSchema))
-    .mutation(({ input }) => setGeneratorMessages(input)),
+  saveGeneratorMessage: moderatorProcedure
+    .input(generatorMessageSchema)
+    .mutation(({ input }) => saveGeneratorMessage(input)),
+  deleteGeneratorMessage: moderatorProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(({ input }) => deleteGeneratorMessage(input.id)),
   toggleGenerationDisabled: moderatorProcedure
     .input(getByIdSchema)
     .mutation(({ input, ctx }) =>

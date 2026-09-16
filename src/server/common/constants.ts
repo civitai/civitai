@@ -487,7 +487,8 @@ export const constants = {
         .replace(/^https?:\/\//, '')
         .replace(/\./g, '\\.')}|civitai\\.com)`
     ),
-    externalRegex: /^(?:https?:\/\/)?(?:www\.)?(github\.com|twitter\.com|x\.com)/,
+    externalRegex:
+      /^(?:https?:\/\/)?(?:www\.)?(github\.com|twitter\.com|x\.com|civitai\.red(?=[/:?#]|$))/,
   },
   entityCollaborators: {
     maxCollaborators: 15,
@@ -935,6 +936,31 @@ export function getEffectiveDifferentLicense(
   baseModel?: string | null
 ): boolean {
   return requiresSameLicenseBaseModel(baseModel) ? false : allowDifferentLicense;
+}
+
+// Whether a model's own terms add anything to the base license, which decides if Attachment B
+// is offered. Returns true for every input: every element of a CommercialUse[] is in CommercialUse
+// by construction, so the `.some` is `length > 0` and the `!length` arm covers the rest, and
+// `throwBadRequestError('No additional permissions')` cannot fire. The literal list this replaced
+// was equally unconditional, so this diff did not create the dead gate.
+// Narrowing it changes which models are served Attachment B -- a licensing decision.
+export function hasAdditionalLicensePermissions(permissions: {
+  allowCommercialUse: CommercialUse[];
+  allowNoCredit: boolean;
+  allowDerivatives: boolean;
+  allowDifferentLicense: boolean;
+}): boolean {
+  const { allowCommercialUse, allowNoCredit, allowDerivatives, allowDifferentLicense } =
+    permissions;
+  return (
+    !allowCommercialUse.length ||
+    allowCommercialUse.some((permission) =>
+      (Object.values(CommercialUse) as string[]).includes(permission)
+    ) ||
+    !allowNoCredit ||
+    !allowDerivatives ||
+    allowDifferentLicense
+  );
 }
 
 export function isNsfwLevelRestrictedForBaseModel(

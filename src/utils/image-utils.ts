@@ -124,8 +124,11 @@ export async function createImageElement(
   throw lastError;
 }
 
-export async function getImageDimensions(src: string | Blob | File) {
-  const img = await createImageElement(src);
+export async function getImageDimensions(
+  src: string | Blob | File,
+  options?: CreateImageElementOptions
+) {
+  const img = await createImageElement(src, options);
   return {
     width: img.width,
     height: img.height,

@@ -4,7 +4,6 @@
     Table,
     TableBody,
     TableCell,
-    TableHead,
     TableHeader,
     TableRow,
   } from '@civitai/ui/components/ui/table/index.js';
@@ -13,8 +12,8 @@
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { LINK_CLASS, dateTime, shortAge } from '$lib/format';
   import { issuesUrl, userLookupUrl } from '$lib/entity-url';
-  import { urlWith } from '$lib/url';
   import { feedbackOpenHref } from '$lib/feedback-tabs';
+  import { feedbackNextPageHref } from '$lib/feedback-sort';
   import {
     feedbackAttachmentCount,
     feedbackStatusBadgeClass,
@@ -23,6 +22,7 @@
   } from '$lib/feedback';
   import FeedbackFilters from './FeedbackFilters.svelte';
   import FeedbackDetail from './FeedbackDetail.svelte';
+  import FeedbackSortHeader, { type FeedbackColumn } from './FeedbackSortHeader.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -62,12 +62,36 @@
   const pageError = $derived(
     !data.openVisible && form && 'error' in form && form.error ? String(form.error) : null
   );
+
+  const nextPageHref = $derived(
+    data.nextCursor === null
+      ? null
+      : feedbackNextPageHref(page.url, data.nextCursor, data.nextCursorValue)
+  );
+
+  // 🔴 `COLUMNS.length` is what every `colspan` below reads — adding a row here without that is how
+  // the detail panel and the empty state end up a cell short.
+  const COLUMNS: FeedbackColumn[] = [
+    { id: 'age', label: 'Age', sortable: 'age' },
+    { id: 'area', label: 'Area', sortable: 'area' },
+    { id: 'user', label: 'User', sortable: 'user' },
+    { id: 'message', label: 'Message', sortable: null },
+    // Not sortable — a SQL ordering would need a second implementation of the attachment count;
+    // `$lib/feedback-sort.ts` has the reasoning.
+    { id: 'attachments', label: '📎', sortable: null, class: 'text-right' },
+    { id: 'status', label: 'Status', sortable: 'status' },
+    { id: 'handled', label: 'Handled', sortable: 'handled' },
+    { id: 'issue', label: 'Issue', sortable: 'issue' },
+    { id: 'actions', label: '', sortable: null, class: 'w-px' },
+  ];
 </script>
 
 <header class="page-header">
   <h1>Feedback</h1>
   <p>
-    In-product reports from the site's feedback prompts, newest first. Everything under
+    <!-- "by default": the ordering is a column sort now, so an unconditional "newest first" is a
+         claim this page stops supporting the moment an operator clicks a header. -->
+    In-product reports from the site's feedback prompts, newest first by default. Everything under
     <strong>Context</strong> is what the reporter's browser said — a claim, not evidence.
   </p>
 </header>
@@ -122,15 +146,9 @@
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>Age</TableHead>
-          <TableHead>Area</TableHead>
-          <TableHead>User</TableHead>
-          <TableHead>Message</TableHead>
-          <TableHead class="text-right">📎</TableHead>
-          <TableHead>Status</TableHead>
-          <TableHead>Handled</TableHead>
-          <TableHead>Issue</TableHead>
-          <TableHead class="w-px"></TableHead>
+          {#each COLUMNS as column (column.id)}
+            <FeedbackSortHeader {column} sort={data.sort} />
+          {/each}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -189,7 +207,7 @@
               <!-- `whitespace-normal` undoes `TableCell`'s default `whitespace-nowrap`: the panel
                    holds prose and a JSON dump, and inheriting nowrap would make every long line
                    widen the table rather than wrap inside the panel. -->
-              <TableCell colspan={9} class="bg-dark-7/40 p-0 whitespace-normal">
+              <TableCell colspan={COLUMNS.length} class="bg-dark-7/40 p-0 whitespace-normal">
                 <FeedbackDetail
                   {row}
                   {context}
@@ -204,7 +222,7 @@
           {/if}
         {:else}
           <TableRow>
-            <TableCell colspan={9} class="py-8 text-center text-dark-2">
+            <TableCell colspan={COLUMNS.length} class="py-8 text-center text-dark-2">
               No feedback matches this view.
             </TableCell>
           </TableRow>
@@ -213,7 +231,5 @@
     </Table>
   </div>
 
-  <CursorPager
-    href={data.nextCursor ? urlWith(page.url, { cursor: data.nextCursor, open: null }) : null}
-  />
+  <CursorPager href={nextPageHref} />
 {/if}

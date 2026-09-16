@@ -2,7 +2,6 @@ import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { Prisma } from '@prisma/client';
 import { type ModelVersionTerms } from '@civitai/buzz';
 import { uniqBy } from 'lodash-es';
-import { z } from 'zod';
 import type { SessionUser } from '~/types/session';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
@@ -738,81 +737,142 @@ export async function resolveTestingAccess(user: {
   });
 }
 
-const gateRulesArraySchema = z.array(gateRuleSchema);
+type EntrySchema<T> = { safeParse(value: unknown): { success: boolean; data?: T } };
 
 /**
- * Parse stored rules one at a time and drop the unreadable ones. A whole-array
- * parse fails closed on the FIRST rule a build doesn't understand — and since
- * every gate reads this one store, a single rule carrying a presentation added
- * in a newer deploy would drop hidden and kill-switch rules too, on every pod
- * still running the old build.
+ * Parse stored entries one at a time and drop the unreadable ones. A single
+ * entry a build doesn't understand — a presentation added by a newer deploy,
+ * say — must not silence the rest, least of all hidden and kill-switch rules.
  */
-function parseGateRules(value: unknown): GateRule[] {
-  if (!Array.isArray(value)) return [];
-  const rules: GateRule[] = [];
-  for (const raw of value) {
-    const parsed = gateRuleSchema.safeParse(raw);
-    if (parsed.success) rules.push(parsed.data);
+function parseEntries<T>(schema: EntrySchema<T>, values: unknown[]): T[] {
+  const entries: T[] = [];
+  for (const value of values) {
+    const parsed = schema.safeParse(value);
+    if (parsed.success && parsed.data) entries.push(parsed.data);
   }
-  return rules;
+  return entries;
 }
 
+type PerEntryHashKey =
+  | typeof REDIS_SYS_KEYS.GENERATION.GATE_RULES
+  | typeof REDIS_SYS_KEYS.GENERATION.MESSAGES;
+type PerEntryMarkerKey =
+  | typeof REDIS_SYS_KEYS.GENERATION.GATE_RULES_MIGRATED
+  | typeof REDIS_SYS_KEYS.GENERATION.MESSAGES_MIGRATED;
+
+const hasStringId = (value: unknown): value is { id: string } =>
+  !!value && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string';
+
 /**
- * The operator-authored gate rules (the normalized "rules" model). Stored as a
- * single JSON array under `generation:gate-rules`; the only gating store, though
- * it coexists with the self-hosted toggle. Fail-open to `[]` so a bad/missing
- * value never blocks generation.
+ * A config store kept as one sysRedis hash (field = entry id), migrated on first
+ * use from an older single JSON array in the features hash. The array is left in
+ * place as a backup and never read again once the marker is set.
+ */
+function perEntryStore<T extends { id: string }>({
+  hashKey,
+  markerKey,
+  legacyField,
+  schema,
+}: {
+  hashKey: PerEntryHashKey;
+  markerKey: PerEntryMarkerKey;
+  legacyField: string;
+  schema: EntrySchema<T>;
+}) {
+  // Copies raw entries, not parsed ones, so an entry only a newer build understands
+  // survives. `hSetNX` lets concurrent first runs agree, but a run after a delete
+  // re-adds the deleted entry from the legacy array — the marker is set last and
+  // must never be cleared.
+  const migrate = async () => {
+    const legacy = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, legacyField);
+    const raw = legacy ? fromJson<unknown[]>(legacy) : null;
+    const entries = Array.isArray(raw) ? raw.filter(hasStringId) : [];
+    await Promise.all(entries.map((entry) => sysRedis.hSetNX(hashKey, entry.id, toJson(entry))));
+    await sysRedis.set(markerKey, '1');
+  };
+  const ensureMigrated = async () => {
+    if (!(await sysRedis.get(markerKey))) await migrate();
+  };
+
+  return {
+    async read(): Promise<T[]> {
+      const [migrated, stored] = await Promise.all([
+        sysRedis.get(markerKey),
+        sysRedis.hGetAll(hashKey),
+      ]);
+      let values = stored;
+      if (!migrated) {
+        await migrate();
+        values = await sysRedis.hGetAll(hashKey);
+      }
+      return parseEntries(
+        schema,
+        Object.values(values).map((value) => fromJson(value))
+      );
+    },
+    async save(entry: T) {
+      await ensureMigrated();
+      await sysRedis.hSet(hashKey, entry.id, toJson(entry));
+    },
+    async remove(id: string) {
+      await ensureMigrated();
+      await sysRedis.hDel(hashKey, id);
+    },
+  };
+}
+
+const gateRuleStore = perEntryStore<GateRule>({
+  hashKey: REDIS_SYS_KEYS.GENERATION.GATE_RULES,
+  markerKey: REDIS_SYS_KEYS.GENERATION.GATE_RULES_MIGRATED,
+  legacyField: 'generation:gate-rules',
+  schema: gateRuleSchema,
+});
+
+const generatorMessageStore = perEntryStore<GeneratorMessage>({
+  hashKey: REDIS_SYS_KEYS.GENERATION.MESSAGES,
+  markerKey: REDIS_SYS_KEYS.GENERATION.MESSAGES_MIGRATED,
+  legacyField: 'generation:messages',
+  schema: generatorMessageSchema,
+});
+
+/**
+ * The operator-authored gate rules. Fail-open to `[]` so a bad or unreachable
+ * store never blocks generation.
  */
 export async function getGateRules(): Promise<GateRule[]> {
-  // Wall-clock deadline: getGateRules runs in getGenerationConfig's
-  // Promise.all on every gen submit — a silent sysRedis half-open would park it.
-  const cached = await withSysReadDeadline(
-    sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:gate-rules')
-  )
-    .then((data) => (data ? fromJson<GateRule[]>(data) : null))
-    .catch((err) => {
-      logSysRedisFailOpen('read-degraded', 'getGateRules', err);
-      return null;
-    });
-  return parseGateRules(cached ?? []);
+  // Wall-clock deadline: this runs in getGenerationConfig's Promise.all on every
+  // gen submit — a silent sysRedis half-open would park it.
+  return withSysReadDeadline(gateRuleStore.read()).catch((err) => {
+    logSysRedisFailOpen('read-degraded', 'getGateRules', err);
+    return [];
+  });
 }
 
-/** Persists the full gate-rules array. The mod UI is the single source of truth. */
-export async function setGateRules(rules: GateRule[]): Promise<GateRule[]> {
-  const parsed = gateRulesArraySchema.parse(rules);
-  await sysRedis.hSet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:gate-rules', toJson(parsed));
+export async function saveGateRule(rule: GateRule): Promise<GateRule> {
+  const parsed = gateRuleSchema.parse(rule);
+  await gateRuleStore.save(parsed);
   return parsed;
 }
 
-/**
- * Mod-authored generator messages — a separate store from the gate rules, since
- * a message gates nothing (see `shared/generation/messages.ts`). Parsed one at a
- * time for the same reason as the rules: one unreadable entry must not silence
- * the rest.
- */
+export const deleteGateRule = (id: string) => gateRuleStore.remove(id);
+
+/** Oldest first — the store is a hash, so it has no order of its own. */
 export async function getGeneratorMessages(): Promise<GeneratorMessage[]> {
-  const cached = await withSysReadDeadline(
-    sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:messages')
-  )
-    .then((data) => (data ? fromJson<GeneratorMessage[]>(data) : null))
-    .catch((err) => {
-      logSysRedisFailOpen('read-degraded', 'getGeneratorMessages', err);
-      return null;
-    });
-  if (!Array.isArray(cached)) return [];
-  const messages: GeneratorMessage[] = [];
-  for (const raw of cached) {
-    const parsed = generatorMessageSchema.safeParse(raw);
-    if (parsed.success) messages.push(parsed.data);
-  }
-  return messages;
+  const messages = await withSysReadDeadline(generatorMessageStore.read()).catch((err) => {
+    logSysRedisFailOpen('read-degraded', 'getGeneratorMessages', err);
+    return [] as GeneratorMessage[];
+  });
+  return messages.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
 }
 
-export async function setGeneratorMessages(messages: GeneratorMessage[]) {
-  const parsed = z.array(generatorMessageSchema).parse(messages);
-  await sysRedis.hSet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:messages', toJson(parsed));
-  return parsed;
+export async function saveGeneratorMessage(message: GeneratorMessage) {
+  const parsed = generatorMessageSchema.parse(message);
+  const record = { ...parsed, createdAt: parsed.createdAt ?? Date.now() };
+  await generatorMessageStore.save(record);
+  return record;
 }
+
+export const deleteGeneratorMessage = (id: string) => generatorMessageStore.remove(id);
 
 export type GenerationConfig = {
   unstableResources: number[];
@@ -1599,6 +1659,29 @@ export function extractHashCandidates(
  *
  * Returns { resources, params } where params are ready for the generation graph.
  */
+type HashMatch = { versionPublished: boolean; versionDate: Date; fileId: number };
+
+/**
+ * Which of several files sharing one hash gets the credit. Mirrors
+ * get_image_resources.sql's `ORDER BY IIF(version_published,0,1), version_date, file_id`:
+ * published first, then OLDEST, then lowest file id.
+ *
+ * Oldest, not newest. A hash shared across owners is in practice a re-upload of someone
+ * else's weights, so the earliest published copy is the closest thing to the original
+ * uploader; preferring the most recent hands every duplicated model to whoever posted it
+ * last. This read `>` until 2026-09-15, which meant the image page credited the original
+ * and the generator credited the re-uploader for the same file — the two are the same
+ * rule in two languages, and nothing compares them.
+ */
+export function prefersHashMatch(candidate: HashMatch, existing: HashMatch | undefined): boolean {
+  if (!existing) return true;
+  if (existing.versionPublished !== candidate.versionPublished) return candidate.versionPublished;
+  const existingDate = existing.versionDate.valueOf();
+  const candidateDate = candidate.versionDate.valueOf();
+  if (existingDate !== candidateDate) return candidateDate < existingDate;
+  return candidate.fileId < existing.fileId;
+}
+
 export async function resolveImageMeta({
   input,
   user,
@@ -1646,22 +1729,10 @@ export async function resolveImageMeta({
     `;
 
     // Build a map of hash → best matching modelVersionId
-    // When multiple files match the same hash, prefer published > recent > lowest fileId
     const bestByHash = new Map<string, (typeof hashResults)[0]>();
     for (const row of hashResults) {
       if (row.excludeFromAutoDetection) continue;
-      const existing = bestByHash.get(row.hash);
-      if (
-        !existing ||
-        (!existing.versionPublished && row.versionPublished) ||
-        (existing.versionPublished === row.versionPublished &&
-          row.versionDate > existing.versionDate) ||
-        (existing.versionPublished === row.versionPublished &&
-          existing.versionDate === row.versionDate &&
-          row.fileId < existing.fileId)
-      ) {
-        bestByHash.set(row.hash, row);
-      }
+      if (prefersHashMatch(row, bestByHash.get(row.hash))) bestByHash.set(row.hash, row);
     }
 
     // Match hash candidates to resolved version IDs

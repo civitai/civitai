@@ -496,9 +496,14 @@ export function SourceImageUploadMultiple({
     const snapshot = value;
     Promise.all(
       unresolved.map((url) =>
-        getImageDimensions(url)
+        getImageDimensions(url, { loadRetries: 2 })
           .then(({ width, height }) => ({ url, width, height }))
-          .catch(() => null)
+          .catch(() => {
+            // A failed load must stay retryable, or the dimensions it was meant to
+            // correct are submitted as-is for the life of this mount.
+            verifiedDimsRef.current.delete(url);
+            return null;
+          })
           .finally(() => {
             setImageVerifying(url, false);
             trackedVerifyingUrlsRef.current.delete(url);

@@ -1,6 +1,12 @@
 import { dbRead, dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
 import type { FeedbackStatus } from '$lib/feedback';
+import {
+  isFeedbackSortState,
+  type FeedbackSort,
+  type FeedbackSortColumn,
+} from '$lib/feedback-sort';
+import { MAX_INT4 } from './users.service';
 
 /**
  * The `Feedback` table, read and triaged.
@@ -61,13 +67,185 @@ export type FeedbackRow = {
   bugStatus: string | null;
 };
 
+/**
+ * Every sortable column, as the SQL reference it orders by and the `FeedbackRow` field that carries
+ * the same value back out for the cursor.
+ *
+ * 🔴 THE TWO HALVES MUST NAME THE SAME VALUE: the keyset compares the SQL side against a value read
+ * off the ROW side, so a pair that disagrees compares against the wrong column — which does not
+ * error, it just returns the wrong rows.
+ *
+ * ⚠️ `satisfies` DOES NOT CHECK THAT. It pins that all six columns are present, that no seventh is,
+ * and that `field` is SOME key of `FeedbackRow` — `{ ref: 'f.area', field: 'status' }` type-checks
+ * cleanly, which is exactly the defect above. What catches a mismatched pair is behavioural: the
+ * order assertions in `feedback-sort.pglite.test.ts` compare against an expectation computed from
+ * the fixture, and a swapped `field` reorders the result. Do not read the type as coverage.
+ *
+ * 🔴 NO SORT KEY IS A TIMESTAMP, AND THAT IS DELIBERATE RATHER THAN INCIDENTAL. The cursor's value
+ * half makes a round trip through the URL, so a `timestamp WITHOUT time zone` key would have to be
+ * serialised and re-parsed — and the driver's handling of exactly that is asymmetric between
+ * production and this app's own test tier (PGlite serialises a `Date` as UTC and reads the column
+ * back as local; node-postgres does neither, see `feedback-pglite.harness.ts`). A boundary that shifts
+ * by the local offset skips or repeats rows, and the test tier cannot see it. So:
+ *   - `age` sorts on `f.id`, which IS arrival order here — the same argument the default ordering
+ *     below makes at length, and the reason the Age cell can be ordered by an integer at all.
+ *   - `handled` sorts on the HANDLER, not on `handledAt` — the thing that cell is ABOUT, and the
+ *     thing an operator clicking that header is asking to group by; ordering by a timestamp the cell
+ *     does not show would look arbitrary on screen.
+ *     ⚠️ It is not exactly what the cell PRINTS, and the gap is worth knowing: `handledByLabel`
+ *     falls back to `#<handledById>` or `deleted account` when the handler's `User.username` is
+ *     null, so those rows read as handled and sort into the null block with the untriaged ones. Same
+ *     shape on `user`, where a reporter with no username renders `#<userId>` and sorts last.
+ *
+ * `kind` decides how the URL's value half is coerced before it reaches the comparison: an `int`
+ * column compared against a text parameter is a Postgres error, not a miss.
+ *
+ * `nullable` says whether this column HAS a null block. It is what makes an absent `?cursorValue=`
+ * readable: on a nullable column that spelling means "the boundary row's value is null", and on a
+ * NOT NULL one it means the URL was edited, because nothing this code writes can produce it. The
+ * second reading is the dangerous one to get wrong — searching for a null block that cannot exist
+ * returns an EMPTY page, which is indistinguishable on screen from "the queue ends here".
+ */
+const FEEDBACK_SORT_KEYS = {
+  /**
+   * 🔴 THE DIRECTION TOKEN IS THE SQL DIRECTION, HERE AND ON EVERY OTHER COLUMN — `asc` means
+   * `f.id ASC`, i.e. earliest arrival first, i.e. the OLDEST report first. It reads as DESCENDING on
+   * screen, because the Age cell renders `shortAge(createdAt)` — a duration, which grows as the id
+   * shrinks. That flip is a statement about the cell, so it lives with the header
+   * (`READS_INVERTED` in `$lib/feedback-sort.ts`) and reaches nothing in this file.
+   *
+   * 🔴 IT USED TO LIVE HERE, AS AN `invert` FLAG THIS MAP CARRIED AND `sqlAscending` CONSULTED, AND
+   * THAT WAS THE WRONG LAYER. Two readers needed it — the `ORDER BY` and the keyset's comparison
+   * operator — so a flip applied to one and not the other produced an ordering the cursor walks
+   * backwards through, every page turn re-serving rows the previous page already showed. Nothing in
+   * this module inverts anything now; `ascending` below is the operator's direction, read once.
+   *
+   * ⚠️ `age` IS ALSO THE ONE COLUMN WITH A SINGLE SORTED STATE. Its other one ordered `f.id DESC`,
+   * which IS the default ordering, so it moved no rows — `FEEDBACK_SORT_DIRECTIONS` carries the
+   * measurement, and this service refuses the state rather than serving a sort that does nothing.
+   */
+  age: { ref: 'f.id', field: 'id', kind: 'int', nullable: false },
+  area: { ref: 'f.area', field: 'area', kind: 'text', nullable: false },
+  // Nullable twice over: `User.username` is itself nullable, and the join is a LEFT one.
+  user: { ref: 'u.username', field: 'username', kind: 'text', nullable: true },
+  status: { ref: 'f.status', field: 'status', kind: 'text', nullable: false },
+  // Every untriaged row has no handler — this column's null block is most of the default view.
+  handled: { ref: 'h.username', field: 'handledByUsername', kind: 'text', nullable: true },
+  issue: { ref: 'f.bugId', field: 'bugId', kind: 'int', nullable: true },
+} as const satisfies Record<
+  FeedbackSortColumn,
+  { ref: string; field: keyof FeedbackRow; kind: 'int' | 'text'; nullable: boolean }
+>;
+
+/**
+ * Thrown when a caller hands `getFeedbackList` a sort state this page does not have — an unknown
+ * column, an unknown direction, or a direction the column does not offer.
+ *
+ * 🔴 IT THROWS WHERE `parseFeedbackSort` DEGRADES, AND THE TWO LAYERS ARE DELIBERATELY DIFFERENT.
+ * That parser's input is a URL somebody typed, so a hostile `?sort=` must degrade to the default
+ * ordering rather than 500 a queue nobody can then open. This function's input is an ARGUMENT, and
+ * degrading it would hand the caller A PAGE OF REAL DATA IN AN ORDERING THEY DID NOT ASK FOR, WITH
+ * NO SIGNAL — the same silently-wrong shape this page refuses on the client side, where a
+ * `.sort()` over one loaded page presents itself as an ordering of the queue. An unreachable state
+ * at this layer is a programming error, and the only useful thing to do with one is say so.
+ *
+ * The one production caller (`routes/feedback/+page.server.ts`) pre-validates through
+ * `parseFeedbackSort`, and the parameter is union-typed, so a test has to CAST to reach this at all.
+ * The pairing is what has to hold: everything the parser can emit, this accepts — pinned in
+ * `feedback-sort.test.ts` and exercised in `feedback-sort.pglite.test.ts`.
+ */
+export class InvalidFeedbackSort extends Error {
+  constructor(readonly sort: unknown) {
+    super(`not a feedback sort state: ${JSON.stringify(sort)}`);
+    this.name = 'InvalidFeedbackSort';
+  }
+}
+
+/** The boundary row's value in the sorted column, as it travels through the URL. */
+const sortValueOf = (row: FeedbackRow, column: FeedbackSortColumn): string | null => {
+  const value = row[FEEDBACK_SORT_KEYS[column].field];
+  return value === null || value === undefined ? null : String(value);
+};
+
+/**
+ * The URL's value half, coerced to what the column can actually be compared against.
+ *
+ * Returns `undefined` for a value this column CANNOT HOLD, which is three different URLs:
+ *   - anything that is not a plain integer on an integer column;
+ *   - a value outside the int4 range, which ERRORS the comparison in Postgres rather than missing it;
+ *   - an ABSENT param on a NOT NULL column, where "the boundary row's value is null" is not a
+ *     position the ordering has. Left as `null` it would send the query looking for a null block
+ *     that cannot exist, and an empty page reads as the end of the queue rather than as a bad URL.
+ *
+ * The caller drops the WHOLE cursor on `undefined` rather than just this half: a keyset with one
+ * half missing is not a narrower query, it is a different position in the ordering.
+ *
+ * 🔴 THE SHAPE IS MATCHED BEFORE `Number()`, NOT AFTER. `Number` is not a parser — it maps `''` and
+ * `'  '` to **0**, `'0x10'` to 16, `'1e3'` to 1000 and `' 12 '` to 12, and every one of those passes
+ * `Number.isInteger`. A bare `?cursorValue=` on an integer column would therefore become the boundary
+ * `0` rather than a refusal: on `issue asc` that admits every row and looks like page one, and on
+ * `issue desc` it returns ONLY the trailing null block — a silently wrong page, from a URL that
+ * carries no value at all.
+ */
+const INTEGER = /^-?\d+$/;
+
+const coerceSortValue = (
+  raw: string | null,
+  { kind, nullable }: { kind: 'int' | 'text'; nullable: boolean }
+): string | number | null | undefined => {
+  if (raw === null) return nullable ? null : undefined;
+  if (kind === 'text') return raw;
+  if (!INTEGER.test(raw)) return undefined;
+  const n = Number(raw);
+  // The real int4 range, which is not symmetric — `-2147483648` is legal and `2147483648` is not.
+  return n >= -MAX_INT4 - 1 && n <= MAX_INT4 ? n : undefined;
+};
+
 export async function getFeedbackList(input: {
   statuses: readonly FeedbackStatus[];
   area?: string | null;
   cursor?: number | null;
+  /**
+   * The sorted column's value on the boundary row. `null` means the boundary row's value IS null —
+   * a real position, since `handled` and `issue` are nullable and those rows sort last. Only read
+   * when `sort` is set.
+   */
+  cursorValue?: string | null;
+  sort?: FeedbackSort | null;
   limit?: number;
-}): Promise<{ items: FeedbackRow[]; nextCursor: number | null }> {
+}): Promise<{
+  items: FeedbackRow[];
+  nextCursor: number | null;
+  nextCursorValue: string | null;
+}> {
   const limit = input.limit ?? FEEDBACK_PAGE_SIZE;
+  /**
+   * 🔴 REFUSED HERE TOO, not only at the URL parser — and refused by THROWING. The column names a
+   * SQL identifier, and this is the last place before the query builder sees it, so a caller that
+   * stops validating (a new route, a script, an internal API) must not be able to hand this function
+   * an arbitrary string. The lookup is a map read and nothing is ever interpolated, so the WORST
+   * case was never an injection — it was a silent fallback, which is why the fallback is gone. See
+   * `InvalidFeedbackSort`.
+   *
+   * ALL THREE facts, not just the column: the column is on the list, the direction is a direction,
+   * and the direction is one THAT COLUMN OFFERS. The third is what keeps `age` two-state all the way
+   * down — its `desc` is the default ordering wearing a sort's clothes, and serving it would put an
+   * arrow over rows that did not move.
+   */
+  if (input.sort && !isFeedbackSortState(input.sort)) throw new InvalidFeedbackSort(input.sort);
+  const sort: FeedbackSort | null = input.sort ?? null;
+
+  /**
+   * The direction the SQL orders by — the operator's direction, with no inversion anywhere in this
+   * module (`FEEDBACK_SORT_KEYS.age` records where the one display flip went, and why).
+   *
+   * 🔴 ONE VALUE, BECAUSE TWO PLACES READ IT AND THEY MUST NEVER DISAGREE: the `ORDER BY` and the
+   * keyset's comparison operator. Read as two separate expressions they can be changed
+   * independently, and a direction applied to one and not the other produces an ordering the cursor
+   * walks backwards through — every page turn returning rows the previous page already showed. A
+   * single local cannot be flipped at one site only.
+   */
+  const ascending = sort?.direction === 'asc';
 
   /**
    * ⚠️ THE REPLICA, DELIBERATELY, AND IT HAS A COST — read this before "fixing" it. Every write
@@ -106,28 +284,98 @@ export async function getFeedbackList(input: {
       'b.title as bugTitle',
       'b.status as bugStatus',
     ])
-    /**
-     * 🔴 `id DESC`, not `createdAt DESC`, and the keyset below compares the same column.
-     *
-     * The two are the same order here and the id is the better key twice over. `Feedback` is
-     * insert-only with `createdAt DEFAULT now()` and nothing backdates or rewrites it, so id order
-     * IS arrival order; and the id is UNIQUE where the timestamp is not, so a page boundary cannot
-     * repeat or skip rows sharing a millisecond.
-     *
-     * It also keeps the boundary out of the DRIVER's timestamp handling. `createdAt` is `timestamp
-     * WITHOUT time zone`: node-postgres serialises a `Date` parameter as local time with an
-     * explicit offset and parses the column back as local, which round-trips — but that symmetry is
-     * the driver's, not Postgres', and it does not hold everywhere (PGlite, which this app's own
-     * test tier runs on, serialises the same `Date` as UTC and shifts the comparison by the local
-     * offset). An integer comparison carries no such question.
-     */
-    .orderBy('f.id', 'desc')
     .limit(limit + 1);
+
+  /**
+   * 🔴 `id DESC`, not `createdAt DESC`, and the keyset below compares the same column.
+   *
+   * The two are the same order here and the id is the better key twice over. `Feedback` is
+   * insert-only with `createdAt DEFAULT now()` and nothing backdates or rewrites it, so id order
+   * IS arrival order; and the id is UNIQUE where the timestamp is not, so a page boundary cannot
+   * repeat or skip rows sharing a millisecond.
+   *
+   * It also keeps the boundary out of the DRIVER's timestamp handling. `createdAt` is `timestamp
+   * WITHOUT time zone`: node-postgres serialises a `Date` parameter as local time with an
+   * explicit offset and parses the column back as local, which round-trips — but that symmetry is
+   * the driver's, not Postgres', and it does not hold everywhere (PGlite, which this app's own
+   * test tier runs on, serialises the same `Date` as UTC and shifts the comparison by the local
+   * offset). An integer comparison carries no such question.
+   *
+   * 🔴 THE SAME ARGUMENT IS WHY THE COLUMN SORT BELOW IS COMPOUND. Sorting on any other column
+   * produces ties — `area`, `status` and a handler's username all repeat freely — and a keyset on a
+   * non-unique key either repeats or skips the rows sharing a boundary value. So the ordering is
+   * always `(<column>, f.id)` with the id as the unique tie-break, and the cursor carries BOTH
+   * halves. The id half never goes away: it is what makes the pair unique.
+   *
+   * `NULLS LAST` in both directions, explicitly, rather than Postgres' defaults (last for ASC,
+   * FIRST for DESC). The keyset predicate has to know where the null block sits, and a rule that
+   * flips with the direction is one the predicate would have to flip with it.
+   *
+   * ⚠️ A SORTED KEY CAN BE MUTABLE, WHERE THE DEFAULT ONE NEVER WAS — accepted, not overlooked. The
+   * triage action writes `status`, `handledById` and `handledAt`, i.e. the keys behind the `status`
+   * and `handled` sorts, and every successful write calls `invalidateAll()`, which re-runs `load`
+   * against the same `?cursor=`/`?cursorValue=`. Under `id DESC` the key was immutable and a reload
+   * was always the same page; under a sort, a row triaged on the current page moves in the ordering,
+   * so the next page turn can repeat or skip its neighbours. Clearing paging on a successful triage
+   * would fix it by throwing the operator back to page one mid-queue, which is worse than the drift
+   * — the queue is drained from the front and a triaged row is usually meant to leave the view.
+   */
+  if (sort) {
+    const { ref } = FEEDBACK_SORT_KEYS[sort.column];
+    query = query.orderBy(ref, (ob) => (ascending ? ob.asc().nullsLast() : ob.desc().nullsLast()));
+  }
+  query = query.orderBy('f.id', 'desc');
 
   // An empty selection is every status, said by the caller rather than implied here.
   if (input.statuses.length) query = query.where('f.status', 'in', [...input.statuses]);
   if (input.area) query = query.where('f.area', '=', input.area);
-  if (input.cursor) query = query.where('f.id', '<', input.cursor);
+
+  if (input.cursor) {
+    if (!sort) {
+      query = query.where('f.id', '<', input.cursor);
+    } else {
+      const key = FEEDBACK_SORT_KEYS[sort.column];
+      const ref = key.ref;
+      const boundary = coerceSortValue(input.cursorValue ?? null, key);
+      /**
+       * 🔴 THE WHOLE CURSOR IS DROPPED, not just the half that failed to parse. Keeping the id half
+       * alone would compare `f.id` against a boundary from a DIFFERENT ordering and return a page
+       * that is neither the first nor the next one — arbitrary rows that look like data. Starting
+       * over at page one is visibly wrong instead.
+       */
+      if (boundary !== undefined) {
+        const cursorId = input.cursor;
+        const after = ascending ? '>' : '<';
+        query = query.where((eb) => {
+          const col = eb.ref(ref);
+          /**
+           * The boundary row is itself in the null block, so everything after it is the rest of
+           * that block — ordered by `f.id DESC`, like every tie here.
+           */
+          if (boundary === null) return eb.and([eb(col, 'is', null), eb('f.id', '<', cursorId)]);
+          return eb.or([
+            // Strictly past the boundary value…
+            eb(col, after, boundary),
+            // …its ties, which the id orders…
+            eb.and([eb(col, '=', boundary), eb('f.id', '<', cursorId)]),
+            /**
+             * …and the null block, which `NULLS LAST` puts after every value in both directions.
+             *
+             * ⚠️ NO ID BOUND HERE, AND THAT IS CORRECT BUT NOT CHEAP. While the boundary is still in
+             * the valued part of the ordering, EVERY null row is genuinely still ahead of it, so the
+             * arm has to be unbounded. The cost is that each such page re-reads and re-sorts the
+             * whole null block, so page N costs about what page 1 does — on `handled`, where most
+             * rows are null, that is most of the table. Irrelevant at 26 rows and worth revisiting
+             * before it is not, since O(page) paging is the reason the ordering is server-side at
+             * all. Once the boundary is ITSELF in the null block the `boundary === null` branch above
+             * takes over and is bounded.
+             */
+            eb(col, 'is', null),
+          ]);
+        });
+      }
+    }
+  }
 
   const rows = await query.execute();
   const hasMore = rows.length > limit;
@@ -139,9 +387,14 @@ export async function getFeedbackList(input: {
     })
   );
 
+  const boundaryRow = hasMore && items.length ? items[items.length - 1] : null;
   return {
     items,
-    nextCursor: hasMore && items.length ? items[items.length - 1].id : null,
+    nextCursor: boundaryRow ? boundaryRow.id : null,
+    // Null when there is no next page, AND when the boundary row's sort value is genuinely null —
+    // the caller only reads it alongside a non-null `nextCursor`, where the second reading is the
+    // only one available.
+    nextCursorValue: boundaryRow && sort ? sortValueOf(boundaryRow, sort.column) : null,
   };
 }
 

@@ -195,7 +195,42 @@ export async function smitePlayer({
   modId,
   reason,
   size,
-}: SmitePlayerInput & { modId: number }) {
+  onSmiteCreated,
+}: SmitePlayerInput & {
+  modId: number;
+  /**
+   * 🔴 THE DURABLE-WRITE SIGNAL, AND THE ONLY THING THAT CAN CARRY IT OUT OF A FAILED CALL.
+   *
+   * Called once, synchronously, the instant the smite ROW is committed — before the active-smite
+   * count, before any career reset, before the counter increment, the signal and the notification.
+   * Everything past the `create` is either derived state or best-effort delivery; the row is the
+   * penalty, and once it exists the player is smited whether or not this function returns.
+   *
+   * A return value cannot express that, because the case that matters is the one where there IS no
+   * return: `smitesCounter.increment` re-throws a non-connection ClickHouse error out of `getCount`
+   * and then writes to `sysRedis` unguarded, so a Redis blip throws AFTER the penalty is live. A
+   * caller that records "smited" from the call succeeding therefore under-counts a live penalty; a
+   * caller that hooks this over-counts nothing, because the row is already committed when it fires.
+   *
+   * Optional, and no existing caller passes it — behaviour for everyone else is unchanged.
+   *
+   * Keep it to recording a fact. Both failure shapes are contained at the call site and logged under
+   * `new-order:smite-hook-failed`: a synchronous throw by the `try`, and a rejected promise by a
+   * `.catch` on the result. The `.catch` is what stops a rejection going unhandled; the return type
+   * documents the async case but cannot contain it.
+   *
+   * The return type is `unknown` because the value is discarded. A narrower `void | Promise<void>`
+   * is not more permissive but LESS — TypeScript's void-return exemption applies only to a target of
+   * exactly `void`, and a union does not get it, so it rejects an expression-bodied arrow whose body
+   * returns a value. Measured with tsc 5.9.2: that rejects `(s) => smitedUserIds.add(s.id)`, because
+   * `Set.add` returns the Set.
+   *
+   * ⚠️ TWO LIMITS. The tail does NOT await an async hook, so its write may land after this function
+   * returns and it cannot be depended on for ordering. And a hook that fails still records nothing —
+   * the log is the only trace, so the caller is back to not knowing.
+   */
+  onSmiteCreated?: (smite: { id: number }) => unknown;
+}) {
   const smite = await dbWrite.newOrderSmite.create({
     data: {
       targetPlayerId: playerId,
@@ -205,6 +240,46 @@ export async function smitePlayer({
       remaining: size,
     },
   });
+  // The tail must not depend on a caller's hook. This is a newly-exported seam on a function that
+  // has already committed the penalty, and the prose asking callers not to throw was the only thing
+  // holding — structural here, so a future caller cannot turn its own bug into a half-applied smite.
+  //
+  // 🔴 BOTH SHAPES, AND THE ORDER MATTERS. `Promise.resolve(onSmiteCreated?.(smite))` cannot catch a
+  // SYNCHRONOUS throw on its own: the hook is evaluated as the argument, so it throws before
+  // `Promise.resolve` is ever called and before any `.catch` is attached. The `try` covers that one;
+  // the `.catch` covers a rejected promise, which an `async` hook produces and which would otherwise
+  // be an unhandled rejection — there is no global `unhandledRejection` handler in this process to
+  // fall back on.
+  //
+  // Logged, not swallowed. A stable, opaque key in this file's established style, so an alert can
+  // match it; the id goes in the details rather than the name, which would make every failure its
+  // own unmatchable key. The rationale this replaced — "the hook's own failure is the hook's to
+  // report" — cannot hold: a hook that threw has by construction not reported. Before this seam
+  // existed the throw reached the job's own `handleLogError`; without a log here it now reaches
+  // nothing at all.
+  // Normalised, not cast. `handleLogError` reads `e.message` with no guard, so a non-`Error` throw
+  // value — `throw null`, a rejected non-`Error` payload — makes the LOGGER throw a TypeError: out
+  // of the `catch` below on the sync path, taking the tail with it, and out of the `.catch` on the
+  // async path as an unhandled rejection. Both are the failures this block exists to prevent.
+  //
+  // 🔴 AND THE NORMALISATION ITSELF MUST NOT THROW, which is why the value is carried as `cause`
+  // rather than stringified. `String(e)` reintroduces exactly those two failures for any value whose
+  // primitive conversion throws — a null-prototype object, an object with a throwing `toString`, a
+  // revoked `Proxy` — because it runs INSIDE the handler that is supposed to contain them; measured,
+  // the tail was skipped and the counter took 0 calls. `new Error(msg, { cause: e })` stores the
+  // reference and reads no property of `e`, so it runs no user code for any throw value.
+  // `Object.prototype.toString.call(e)` is NOT equivalent: it still throws on a revoked `Proxy`.
+  const reportHookFailure = (e: unknown) =>
+    handleLogError(
+      e instanceof Error ? e : new Error('non-Error hook throw', { cause: e }),
+      'new-order:smite-hook-failed',
+      { smiteId: smite.id }
+    );
+  try {
+    void Promise.resolve(onSmiteCreated?.(smite)).catch(reportHookFailure);
+  } catch (e) {
+    reportHookFailure(e);
+  }
 
   const activeSmiteCount = await dbWrite.newOrderSmite.count({
     where: { targetPlayerId: playerId, cleansedAt: null },
@@ -1896,7 +1971,9 @@ export async function getPlayerHistory({
   // page 1 — acceptable for a history view.)
   if (cursor)
     HAVING.push(
-      `(max(createdAt), imageId) < (parseDateTimeBestEffort('${cursor.createdAt.toISOString()}'), ${cursor.imageId})`
+      `(max(createdAt), imageId) < (parseDateTimeBestEffort('${cursor.createdAt.toISOString()}'), ${
+        cursor.imageId
+      })`
     );
 
   const judgments = await clickhouse.$query<{

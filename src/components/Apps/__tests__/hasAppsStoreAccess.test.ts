@@ -6,7 +6,7 @@ import { resolveAppsPageAccess } from '../resolveAppsPageAccess';
  * `hasAppsStoreAccess` — the SHARED App-store visibility predicate.
  *
  * WHY IT EXISTS: the rule `appListings || appBlocks` was open-coded at six
- * places, and one of them — the `/apps/*` sub-nav (`AppsSubNav`) — had drifted to
+ * places, and one of them — the `/apps/*` nav (now `useAppsNavSections`) — had drifted to
  * `appBlocks` ALONE. A cohort holding `app-listings` without `app-blocks-enabled`
  * would therefore load `/apps` (the SSR resolver ORs both) and get NO
  * sub-navigation. Not reachable today (both flags resolve true for the current
@@ -15,7 +15,7 @@ import { resolveAppsPageAccess } from '../resolveAppsPageAccess';
  *
  * These pin the predicate itself across the FULL 2×2 flag matrix, so the
  * behaviour is asserted in one place rather than re-derived at each call site.
- * The companion browser suite (`AppsSubNav.storeGate.browser.test.tsx`) pins the
+ * The companion browser suite (`AppsRailNav.storeGate.browser.test.tsx`) pins the
  * sub-nav's rendered output for the same four combinations, and
  * `resolveAppsPageAccess.test.ts` (UNMODIFIED by this change) pins the SSR gate.
  */
@@ -24,7 +24,7 @@ describe('hasAppsStoreAccess — the 2×2 flag matrix', () => {
     expect(hasAppsStoreAccess({ appListings: true, appBlocks: true })).toBe(true);
   });
 
-  it('appListings ONLY → access (the case AppsSubNav used to get wrong)', () => {
+  it('appListings ONLY → access (the case the /apps nav used to get wrong)', () => {
     expect(hasAppsStoreAccess({ appListings: true, appBlocks: false })).toBe(true);
     // …and with `appBlocks` absent from the object entirely.
     expect(hasAppsStoreAccess({ appListings: true })).toBe(true);
