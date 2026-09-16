@@ -360,13 +360,11 @@ export function ImageDetail2() {
           { name: isVideo ? 'Videos' : 'Images', path: isVideo ? '/videos' : '/images' },
           { name: title },
         ]),
-        // Per-image HTML pages are thin/duplicative and drive negligible search
-        // traffic, so plain images stay deindexed (Google Images still surfaces
-        // them via the ImageObject schema). Videos are the exception: a single-
-        // video page is a legitimate "watch page", so we index safe-rated videos
-        // and back them with VideoObject schema. NSFW videos stay deindexed to
-        // avoid the content/meta mismatch on the green domain (see docs/seo-audit.md).
-        deIndex: !isVideo || nsfw,
+        // Deindexed on every domain, videos included. The only per-page text is the prompt, which
+        // stays out of search snippets, and indexed safe videos earned effectively no search
+        // traffic over 2.5 months (GSC, Sep 2026). Video results come from the model, post and
+        // article pages that embed the media — don't re-enable this without new evidence.
+        deIndex: true,
       }}
     >
       <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />

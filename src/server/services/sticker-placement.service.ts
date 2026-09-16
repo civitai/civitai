@@ -21,7 +21,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import type { PlacementStatus } from '~/shared/utils/placement';
+import type { PlacementSpaceMode, PlacementStatus } from '~/shared/utils/placement';
 import {
   PLACEMENT_QUEUE_PAGE_SIZE,
   PLACEMENT_SURFACES,
@@ -41,11 +41,36 @@ import {
   parseStickerPlacementData,
   stickerMaxScale,
   stickerRemovableAt,
+  STICKER_AUTO_SPACE_KEY,
   STICKER_PLACEMENT_QUEUE_LIMIT,
 } from '~/shared/utils/sticker-placement';
 
 const SURFACE = 'sticker' as const;
 const TARGET_TYPE = 'image' as const;
+
+/**
+ * Records that nobody reviewed this placement, on the row, at the moment the
+ * resolved mode is in hand.
+ *
+ * The `sticker-placement-auto-accepted` notification needs to tell an auto
+ * approval from an owner approving in their queue, and nothing else on the row
+ * can: both go through `settlePlacement({ action: 'approve', actorId: ownerId })`.
+ * Reading `PlacementSpace` from the notification's SQL instead would re-derive
+ * the image/post/user cascade that lives in `resolvePlacementSpace` alone, and
+ * would read the mode as of the job rather than as of the approval.
+ *
+ * Both create paths call this. The free one is easy to miss and fails silently —
+ * the notification simply never fires for free placements.
+ *
+ * The stamp records the SPACE, not the outcome. If the settle below throws, the
+ * row stays pending, reaches the owner's queue, and this notification fires when
+ * they approve it by hand, about a placement they did review. Left that way
+ * knowingly: telling the two apart needs a column the row does not carry, and
+ * the same is already true of a failed creation settling as `expired`. Do not
+ * "fix" it with a WHERE clause; it would need the settle to mark itself.
+ */
+const autoSpaceStamp = (space: { mode: PlacementSpaceMode }) =>
+  space.mode === 'auto' ? { [STICKER_AUTO_SPACE_KEY]: true } : {};
 
 /**
  * How many pending placements one placer may have waiting on one owner.
@@ -273,6 +298,7 @@ export async function createStickerPlacement({
         // Omitted rather than stored as an empty string, so "left the field
         // blank" and "wrote nothing but spaces" are the same row.
         ...(comment ? { comment } : {}),
+        ...autoSpaceStamp(space),
       },
     },
     select: { id: true },
@@ -369,6 +395,7 @@ async function placeFreeSticker({
       cosmeticId: sticker.id,
       ...normalizeStickerPlacement(data),
       ...(comment ? { comment } : {}),
+      ...autoSpaceStamp(space),
     },
   });
 

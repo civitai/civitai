@@ -1,6 +1,6 @@
 ---
 name: official-model-admin
-description: Create a Draft CivitaiOfficial model and version through the API, work out whether the version is API-only or needs hosted model files (and walk the user through uploading them), update an existing model's description, or transfer a model to CivitaiOfficial. Every description write requires the user's approval of the exact text, enforced by an approval hash. Use when setting up an official model or version for review before publishing, or when an official model's description needs to change. Called by onboard-generator-model; usable on its own.
+description: Create a Draft CivitaiOfficial model and version through the API, work out whether the version is API-only or needs hosted model files (and either import those from Hugging Face or walk the user through uploading them), update an existing model's description, or transfer a model to CivitaiOfficial. Every description write requires the user's approval of the exact text, enforced by an approval hash. Use when setting up an official model or version for review before publishing, or when an official model's description needs to change. Called by onboard-generator-model; usable on its own.
 ---
 
 # Official Model Admin
@@ -82,14 +82,46 @@ node .claude/skills/official-model-admin/model.mjs create-version --model-id <id
 
 ### 4. Hosted weights only: get the files uploaded
 
-`create-version` prints the upload link, `/models/<modelId>/model-versions/<versionId>/wizard?step=2`. This is the one step that can't be scripted.
+Two routes. When the weights live on Hugging Face, our servers can fetch them and you attach the
+result yourself; otherwise the user uploads through the wizard.
+
+#### From Hugging Face
+
+Ask the user to queue the repo at **`/moderator/huggingface-import`** — paste the model URL, check the
+**Group name** (prefilled from the repo; it is what the batch is filed under, and nothing renames it
+after Import), tick the files, Import. The transfer runs server-side on a cron, so it takes as long as it takes; nothing
+downloads to anyone's machine. Then:
+
+```bash
+node .claude/skills/official-model-admin/model.mjs hf-imports --repo <owner/name>
+node .claude/skills/official-model-admin/model.mjs attach-import --import <id> --version <id> --type Model --writable
+```
+
+`hf-imports` lists each transferred file with its size, state, group and a suggested type;
+`attach-import` creates the model file on your version, and scanning and hashing follow on their own.
+
+Both filters run on the server. `--repo` is an **exact** match against the repo id Hugging Face
+returned rather than what was pasted, so its casing must be HF's; `--group` is a case-insensitive
+substring of the group name and is the forgiving one to reach for.
+
+🔴 **You choose `--type`, and it decides whether the version can load at all.** The suggested type is
+advisory and deliberately never names the primary weights — a mislabelled weight file passes every
+check and produces a version nothing can load. Read the filename:
+`ae.safetensors` is a `VAE`, anything under `text_encoder/` is a `Text Encoder`, and the large
+`.safetensors` at the repo root is the weight file (`Model`, or `Diffusion Model` / `UNet` when the
+repo splits them). If the repo's layout does not make a file's role obvious, ask the user rather than
+guessing — a mislabelled weight file passes every check here and produces a version nothing can load.
+
+#### Uploaded by hand
+
+`create-version` prints the upload link, `/models/<modelId>/model-versions/<versionId>/wizard?step=2`.
 
 **Give the user that link and ask them to upload the model files there.** They can also use the model page: the version menu → **Manage files**. Tell them what the files need:
 
 - **At least one weight file** with type `Model`, `Pruned Model`, `Diffusion Model`, `UNet`, `Negative` or `VAE`. Supporting files such as text encoders can also be uploaded.
 - **`SafeTensor` format** for a checkpoint.
 
-Then wait. When they say the upload is done, run:
+Then wait. When the files are attached or the user says the upload is done, run:
 
 ```bash
 node .claude/skills/official-model-admin/model.mjs files --version <id>

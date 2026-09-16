@@ -30,6 +30,8 @@ export type ModelType = "Checkpoint" | "TextualInversion" | "Hypernetwork" | "Ae
 
 export type ImportStatus = "Pending" | "Processing" | "Failed" | "Completed";
 
+export type HuggingFaceImportStatus = "Queued" | "Transferring" | "Completed" | "Failed" | "Canceled";
+
 export type ModelStatus = "Draft" | "Training" | "Published" | "Scheduled" | "Unpublished" | "UnpublishedViolation" | "GatherInterest" | "Deleted";
 
 export type TrainingStatus = "Pending" | "Submitted" | "Paused" | "Denied" | "Processing" | "InReview" | "Failed" | "Approved" | "Expired";
@@ -832,6 +834,38 @@ export interface Import {
   model?: Model | null;
   children?: Import[];
   importId: number | null;
+}
+
+export interface HuggingFaceImport {
+  id: number;
+  repo: string;
+  revision: string;
+  filename: string;
+  groupName: string;
+  sourceUrl: string;
+  sizeBytes: bigint | null;
+  sourceSha256: string | null;
+  status: HuggingFaceImportStatus;
+  bytesTransferred: bigint;
+  uploadId: string | null;
+  partSize: number | null;
+  parts: JsonValue | null;
+  bucket: string | null;
+  key: string | null;
+  url: string | null;
+  error: string | null;
+  attempts: number;
+  nextAttemptAt: Date | null;
+  userId: number | null;
+  modelVersionId: number | null;
+  modelFileId: number | null;
+  claimedBy: string | null;
+  claimedAt: Date | null;
+  heartbeatAt: Date | null;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface Model {

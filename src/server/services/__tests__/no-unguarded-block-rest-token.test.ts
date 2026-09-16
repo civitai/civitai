@@ -242,10 +242,16 @@ const DELIBERATELY_UNWRAPPED: Record<string, string> = {
 /** The file extensions Next.js dispatches as an API page. */
 const PAGE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs'];
 
+/**
+ * Every ledger key and path literal in this file is posix, while `path.join` yields `\` on
+ * win32 — so both walks below must normalise or every set comparison here fails off Linux.
+ */
+const toPosix = (p: string) => p.split(path.sep).join('/');
+
 function walk(relDir: string, out: string[] = []): string[] {
   const abs = path.join(REPO_ROOT, relDir);
   for (const entry of fs.readdirSync(abs, { withFileTypes: true })) {
-    const rel = path.join(relDir, entry.name);
+    const rel = toPosix(path.join(relDir, entry.name));
     if (entry.isDirectory()) {
       walk(rel, out);
       continue;
@@ -797,13 +803,13 @@ const BACKING_ROW_LOOKUP_LEDGER: Record<string, string> = {
 
 /** Files the walk must skip: test suites are allowed to spell anything. */
 function isTestPath(rel: string): boolean {
-  return rel.includes(`${path.sep}__tests__${path.sep}`) || /\.test\.tsx?$/.test(rel);
+  return rel.includes('/__tests__/') || /\.test\.tsx?$/.test(rel);
 }
 
 function walkSource(relDir: string, out: string[] = []): string[] {
   const abs = path.join(REPO_ROOT, relDir);
   for (const entry of fs.readdirSync(abs, { withFileTypes: true })) {
-    const rel = path.join(relDir, entry.name);
+    const rel = toPosix(path.join(relDir, entry.name));
     if (entry.isDirectory()) {
       if (entry.name === '__tests__' || entry.name === 'node_modules') continue;
       walkSource(rel, out);

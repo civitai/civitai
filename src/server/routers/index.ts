@@ -36,6 +36,9 @@ export const appRouter = router({
   download: lazy(() => import('./download.router').then((m) => m.downloadRouter)),
   feedback: lazy(() => import('./feedback.router').then((m) => m.feedbackRouter)),
   homeBlock: lazy(() => import('./home-block.router').then((m) => m.homeBlockRouter)),
+  huggingFaceImport: lazy(() =>
+    import('./huggingface-import.router').then((m) => m.huggingFaceImportRouter)
+  ),
   image: lazy(() => import('./image.router').then((m) => m.imageRouter)),
   merch: lazy(() => import('./merch.router').then((m) => m.merchRouter)),
   model: lazy(() => import('./model.router').then((m) => m.modelRouter)),

@@ -225,46 +225,42 @@ site baseline, and the result is written into this doc as a go/no-go.
 
 ---
 
-## 5. Video detail pages — one confirmed bug, the rest declined
+## 5. Video detail pages — deindexed everywhere, on evidence
 
-The watch pages work. A Googlebot fetch of a safe-rated video page returns 200 with a
-server-rendered `<video>`, a self-canonical, no `noindex`, and a `VideoObject` whose `contentUrl`
-matches the file Search Console flagged. The CDN serves no `robots.txt`, so nothing blocks the
-media. The backlog of "Video isn't on a watch page" errors are stale verdicts recorded while every
-image page was still deindexed, before `b7a23ed785` (2026-06-29).
+**Decided 2026-09-16: every `/images/:id` page is `noindex` on every domain, videos included.**
+`b7a23ed785` (2026-06-29) had made safe-rated video pages indexable on green; that is reverted.
 
-**Size of the prize, measured:** video rich results do reach us today, at roughly 250 clicks a
-month, an average position around 18, and ~1.3% CTR. Small and ranking badly.
+### What the evidence said
 
-### Confirmed bug: the deindex rule is domain-blind
+A Search Console Performance export filtered to the **Videos** search appearance (green, last three
+months) attributes nearly all video-result clicks to pages that embed a video alongside real
+content: model pages carried roughly two-thirds, then posts, articles and collections. The
+`/images/:id` video pages — indexable for two and a half months by then — appeared **once** in the
+export, with effectively no clicks. The template does not earn search traffic even when indexed.
 
-`deIndex: !isVideo || nsfw` in `src/components/Image/DetailV2/ImageDetail2.tsx:364` has no domain
-term, so it deindexes mature video watch pages on **civitai.red** as well as green. The comment
-above it reasons entirely in green terms.
+The pages are thin by our own choice. One generated string ("Video posted by <user>") serves as the
+title, the og:title and both `VideoObject` fields, and there is no meta description. The only
+per-page text is the prompt, and there is a standing decision to keep unmoderated prompt text out of
+titles and search snippets. Indexing them adds near-identical pages to a site where Google already
+declines to index a large share of what it crawls.
 
-Policy is now stated (2026-09-15): **mature content should be indexed on civitai.red, which has its
-own Search Console property.** That makes this a defect against policy rather than an open
-question. Only ~13% of video is safe-rated, so this gates an eighth of the corpus against all of it.
+### Red
 
-**Closing condition:** the rule takes the domain into account, and a Googlebot fetch of a mature
-video page on red returns no `noindex`.
+Indexing mature video pages on civitai.red was considered and declined for the same reason: it is the
+same template, and roughly six in seven videos are mature, so it would multiply the thin pages
+rather than add value. A check of red's own Videos appearance cannot settle this, because red's video
+pages were deindexed during the window it covers — the impressions it shows come from other pages
+that embed videos.
 
-### Declined: making video pages distinctive
+### The "Video isn't on a watch page" warnings
 
-One generated `title` string serves as the `<title>`, the `og:title`, and both `VideoObject.name`
-and `.description`, so every video by a given user carries an identical title, and no meta
-`description` is emitted at all. `duration` is also absent.
+Leave them. Google reports them for model and post pages that embed a video, and those are exactly
+the pages earning the video clicks. There are ways to point Google at `/images/:id` as the watch page
+(a video sitemap, crawlable gallery links — model pages currently have none), but doing so would
+likely move video credit from the model page to the thin page. Not doing it.
 
-**Not scheduled, deliberately.** The only genuinely per-page-unique field these pages hold is the
-prompt, and there is a standing decision not to surface prompt text in titles or SERP snippets — it
-is unmoderated user text on a Google-owned surface with no review step. That decision and "these
-pages will not be distinctive" are the same decision. A non-prompt alternative exists (titles built
-from the resources used, which are moderated text and better aligned with query intent than prompts
-ever were), but resources are not currently in the SSR payload, so it is only worth doing if
-something else wants them there.
-
-Safe-rated video pages stay indexed — reverting `b7a23ed785` was considered and declined on
-2026-09-15.
+**Revisit only if** there is new evidence that a standalone video page can earn traffic — for example
+a template with genuine per-page text that is not the prompt.
 
 ---
 

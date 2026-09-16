@@ -5,6 +5,7 @@ import {
   REMIX_QUEUE_RECEIVED_URL,
   STICKER_QUEUE_RECEIVED_URL,
 } from '~/components/Placement/queue-routes';
+import { STICKER_AUTO_SPACE_KEY } from '~/shared/utils/sticker-placement';
 
 /**
  * A pending placement is invisible to the creator until something tells them.
@@ -782,6 +783,88 @@ export const placementNotifications = createNotificationProcessor({
         details
       FROM data
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = data."userId" AND type = 'sticker-placement-resolved')
+    `,
+  },
+
+  /**
+   * The owner's side of an `auto` space, which has no review step to notify them
+   * about.
+   *
+   * The two pending types gate on `status = 'pending'`, and an auto space
+   * approves at the call site before the job next runs, so an owner who chose
+   * "Accept all" hears nothing at all — their image changes and the only record
+   * is a queue they turned off. This is the one notification that tells them.
+   *
+   * 🔴 **Opt-IN, which inverts what a settings row MEANS here.** A row is
+   * SUBSCRIBED, and the absence of one is off. That is the rare shape in this
+   * codebase — one other type has it — so this query derives its recipients by
+   * JOINing `UserNotificationSettings` and must never also carry the usual
+   * `NOT EXISTS` clause, which would make a row mean both at once. The polarity
+   * guard pins both halves.
+   *
+   * Opt-in rather than opt-out because choosing "Accept all" is already a
+   * decision to stop being asked. Defaulting this on would hand that creator a
+   * notification per placement in exchange for the setting they picked to avoid
+   * exactly that.
+   *
+   * Reads `data ->> 'autoSpace'` rather than joining `PlacementSpace`, for the
+   * reason `remix-gallery-undelivered` reads its own payload: no status column
+   * records the distinction. `settlePlacement` is called with the same action and
+   * the same `actorId` whether a space auto-approved or its owner clicked
+   * approve, and `mode` is a three-level cascade resolved in one function that
+   * SQL here would have to re-derive — as of the job, not as of the approval.
+   *
+   * Keyed on the placement alone, unlike `sticker-placement-resolved`: an auto
+   * space accepts a given placement once, and a later takedown is the placer's
+   * notification rather than another of these.
+   */
+  'sticker-placement-auto-accepted': {
+    optIn: true,
+    displayName: 'A sticker was accepted on your image automatically',
+    category: NotificationCategory.Creator,
+    prepareMessage: ({ details }) => ({
+      message: `${details.placerUsername} placed a sticker on your image`,
+      // The revealing URL, not the queue: this sticker is live on the image and
+      // there is nothing to review. Placed stickers are hidden by default, so the
+      // plain URL would land the owner on work that looks untouched.
+      url: imageWithStickersUrl(details.imageId),
+    }),
+    prepareQuery: async ({ lastSent }) => `
+      WITH data AS (
+        SELECT
+          p."ownerId" "userId",
+          p.id "placementId",
+          jsonb_build_object(
+            'placementId', p.id,
+            'imageId', p."targetId",
+            'placerId', p."placerId",
+            'placerUsername', u.username
+          ) as "details"
+        FROM "Placement" p
+        JOIN "User" u ON u.id = p."placerId"
+        -- A row means SUBSCRIBED for this type, so the join IS the filter and an
+        -- owner with no row gets nothing. Inner, deliberately: a LEFT JOIN here
+        -- restricts no one and would send this to every creator on the site.
+        JOIN "UserNotificationSettings" uns ON uns."userId" = p."ownerId" AND uns.type = 'sticker-placement-auto-accepted'
+        WHERE p.surface = 'sticker'
+          AND p."targetType" = 'image'
+          AND p.status = 'approved'
+          -- Covers paid and free alike. The message quotes no amount, so unlike
+          -- the pending pair there is nothing here that a free row's 0 makes
+          -- false, and one type serves both.
+          AND p.data ->> '${STICKER_AUTO_SPACE_KEY}' = 'true'
+          -- Keyed off when it was approved, not when it was created: the two are
+          -- seconds apart on this path, but a createdAt window would still miss a
+          -- placement created just before a run and approved just after it.
+          AND p."resolvedAt" IS NOT NULL
+          AND p."resolvedAt" > '${lastSent}'
+      )
+      SELECT
+        CONCAT('sticker-placement-auto-accepted:',"placementId") "key",
+        "userId",
+        'sticker-placement-auto-accepted' "type",
+        details
+      FROM data
     `,
   },
 });
