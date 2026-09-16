@@ -69,8 +69,10 @@ import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 import { resetHybridNodes } from '~/__tests__/mocks/hybrid';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { getResourceData } from '~/server/services/generation/generation.service';
 import {
   createWorkflowStepsFromGraph,
+  formatGenerationResponse2,
   generateFromGraph,
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
@@ -377,5 +379,56 @@ describe('orchestratorToken threading at the service boundary', () => {
       token: TOKEN,
       path: { workflowId: WORKFLOW_ID },
     });
+  });
+});
+
+/**
+ * Read path: `formatGenerationResponse2` hydrates every stored resource via
+ * `getResourceData` (a ModelVersion lookup), which cannot resolve a raw-AIR
+ * entry's synthetic negative id. Before the fix the entry was silently dropped
+ * from the queue item's resource list; now it is rebuilt from its stored
+ * fields. `getResourceData` is mocked to `[]`, so anything surviving in the
+ * output can only have come from the raw-AIR pass-through.
+ */
+describe('read path: formatGenerationResponse2 keeps raw-AIR resources', () => {
+  const storedWorkflow = () =>
+    ({
+      id: 'wf-read-1',
+      status: 'succeeded',
+      createdAt: new Date().toISOString(),
+      metadata: {
+        params: { prompt: 'test', ecosystem: 'SDXL', workflow: 'txt2img' },
+        resources: [
+          rawAirResource({ baseModel: 'SDXL 1.0' }),
+          { id: 999, model: { type: 'LORA' }, strength: 1 },
+        ],
+      },
+      steps: [],
+    } as never);
+
+  it('surfaces the stored epoch as a self-contained resource with its name, air and workflowId', async () => {
+    const [formatted] = await formatGenerationResponse2([storedWorkflow()]);
+
+    const epoch = formatted.metadata?.resources?.find((r) => r.id === -42);
+    expect(epoch).toMatchObject({
+      id: -42,
+      name: 'my epoch',
+      air: AIR,
+      strength: 0.8,
+      baseModel: 'SDXL 1.0',
+      model: { id: -42, name: 'my epoch', type: 'LORA' },
+    });
+    // Remix needs the ownership proof to survive the round-trip.
+    expect((epoch as { workflowId?: string } | undefined)?.workflowId).toBe(WORKFLOW_ID);
+  });
+
+  it('does not ask getResourceData to hydrate the synthetic negative id', async () => {
+    vi.mocked(getResourceData).mockClear();
+
+    await formatGenerationResponse2([storedWorkflow()]);
+
+    const calls = vi.mocked(getResourceData).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect((calls[0][0] as Array<{ id: number }>).map((r) => r.id)).toEqual([999]);
   });
 });

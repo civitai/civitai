@@ -1,5 +1,6 @@
 import { Air } from '@civitai/client';
 import { ecosystems, getRootEcosystem } from '~/shared/constants/basemodel.constants';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
 type CivitaiAir = {
@@ -174,6 +175,37 @@ export function rawAirResourceId(air: string): number {
     hash = Math.imul(hash, 0x01000193);
   }
   return -((hash >>> 0) % 0x7fffffff || 1);
+}
+
+/**
+ * Full display/remix shape for a raw AIR resource, built entirely from its
+ * stored fields — there is no ModelVersion row to hydrate from. Used by the
+ * Training Studio handoff seed and by the workflow read path (so queue items
+ * keep the epoch in their resource list instead of dropping it at hydration).
+ */
+export function rawAirGenerationResource(stored: {
+  id: number;
+  air: string;
+  workflowId?: string;
+  name?: string | null;
+  strength?: number;
+  baseModel?: string;
+}): GenerationResource & { air: string; workflowId?: string } {
+  const label = stored.name?.trim() || 'Training epoch';
+  return {
+    id: stored.id,
+    name: label,
+    trainedWords: [],
+    baseModel: stored.baseModel ?? '',
+    canGenerate: true,
+    hasAccess: true,
+    strength: stored.strength ?? 1,
+    minStrength: -1,
+    maxStrength: 2,
+    air: stored.air,
+    workflowId: stored.workflowId,
+    model: { id: stored.id, name: label, type: ModelType.LORA },
+  };
 }
 
 export function stringifyAIR({

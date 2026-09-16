@@ -3,13 +3,12 @@ import {
   getRootEcosystem,
 } from '~/shared/constants/basemodel.constants';
 import { isWorkflowAvailable } from '~/shared/data-graph/generation/config/workflows';
-import type { GenerationResource } from '~/shared/types/generation.types';
 import {
   getEcosystemByAirSegment,
   parseRawAirResourceUrn,
+  rawAirGenerationResource,
   rawAirResourceId,
 } from '~/shared/utils/air';
-import { ModelType } from '~/shared/utils/prisma/enums';
 import { generationGraphStore } from '~/store/generation-graph.store';
 
 export interface RawAirSeedRequest {
@@ -37,22 +36,13 @@ export function seedRawAirResource({ air, workflowId, name }: RawAirSeedRequest)
   const baseModel = getBaseModelsByEcosystemId(formEco.id)[0]?.name;
   if (!baseModel) return false;
 
-  const id = rawAirResourceId(air);
-  const label = name?.trim() || 'Training epoch';
-  const resource: GenerationResource & { workflowId: string } = {
-    id,
-    name: label,
-    trainedWords: [],
-    baseModel,
-    canGenerate: true,
-    hasAccess: true,
-    strength: 1,
-    minStrength: -1,
-    maxStrength: 2,
+  const resource = rawAirGenerationResource({
+    id: rawAirResourceId(air),
     air,
     workflowId,
-    model: { id, name: label, type: ModelType.LORA },
-  };
+    name,
+    baseModel,
+  });
 
   generationGraphStore.setData({
     params: { ecosystem: formEco.key },

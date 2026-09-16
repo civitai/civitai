@@ -88,6 +88,7 @@ import {
   getEcosystemByAirSegment,
   isRawAirResource,
   parseRawAirResourceUrn,
+  rawAirGenerationResource,
   type RawAirResource,
 } from '~/shared/utils/air';
 import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
@@ -2986,6 +2987,9 @@ export async function formatGenerationResponse2(
     const wfResources = wfMeta.resources as ResourceData[] | undefined;
     if (wfResources) {
       for (const r of wfResources) {
+        // Raw-AIR resources (negative synthetic ids) have no ModelVersion row
+        // to hydrate — they render from their stored fields below.
+        if (isRawAirResource(r)) continue;
         allResourceRefs.push({ id: r.id, epoch: r.epochDetails?.epochNumber });
       }
     }
@@ -3029,6 +3033,10 @@ export async function formatGenerationResponse2(
       const wfRawResources = rawWfMeta.resources as ResourceData[] | undefined;
       const wfResources: GenerationResource[] = [];
       for (const r of wfRawResources ?? []) {
+        if (isRawAirResource(r)) {
+          wfResources.push(rawAirGenerationResource(r));
+          continue;
+        }
         const enriched = enrichedResources.find((ar) => ar.id === r.id);
         if (enriched) {
           wfResources.push({ ...enriched, strength: r.strength ?? enriched.strength });

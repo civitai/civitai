@@ -55,6 +55,7 @@ import {
   orchestratorPendingStatuses,
 } from '~/shared/constants/generation.constants';
 import { getEcosystem } from '~/shared/constants/basemodel.constants';
+import { isRawAirResource } from '~/shared/utils/air';
 import { generationGraphPanel, generationGraphStore } from '~/store/generation-graph.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -511,6 +512,45 @@ function ResourceRow({ resource }: { resource: GenerationResource }) {
   const unstable = unstableResources?.includes(id);
   const truncatedModelName =
     model.name.length > 30 ? `${model.name.slice(0, 30).trimEnd()}…` : model.name;
+
+  // Raw-AIR training epochs have no model page to link to — render the stored
+  // name as a non-linking pill.
+  if (isRawAirResource(resource)) {
+    return (
+      <Button.Group className="max-w-full">
+        <Button
+          size="compact-sm"
+          variant="default"
+          leftSection={
+            <Badge size="xs" variant="light" radius="sm">
+              epoch
+            </Badge>
+          }
+          className="min-w-0 flex-1 cursor-default"
+          classNames={{ label: 'truncate' }}
+        >
+          {truncatedModelName}
+        </Button>
+        <ButtonTooltip {...tooltipProps} label="Generate with this resource">
+          <Button
+            size="compact-sm"
+            variant="default"
+            px={4}
+            onClick={() => {
+              generationGraphStore.setData({
+                params: { ecosystem: getEcosystem(resource.baseModel)?.key },
+                resources: [resource],
+                runType: 'run',
+              });
+              generationGraphPanel.open();
+            }}
+          >
+            <IconPlus size={14} />
+          </Button>
+        </ButtonTooltip>
+      </Button.Group>
+    );
+  }
 
   return (
     <Button.Group className="max-w-full">
