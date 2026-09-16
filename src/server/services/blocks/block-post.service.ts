@@ -1146,12 +1146,29 @@ export async function writeBlockPost(input: {
  * 🔴 AND THE ONE PLACE THAT DECISION HAS SINCE BEEN NARROWED — READ THIS BEFORE
  * CITING THE PARAGRAPH ABOVE, WHICH NO LONGER DESCRIBES THE WHOLE PATH.
  *
- * The rationale is stated in terms of ONE recipient — "the viewer's own post",
- * "under the viewer's own byline" — and it holds exactly as written for every
- * reward whose recipient IS the author. It does not reach a reward whose
- * recipient is somebody else, because there is no byline argument to make about a
- * party the author never interacted with. The two rewards below differ on
- * precisely that:
+ * The recorded rationale has TWO clauses and the narrowing engages only the
+ * first. Said plainly, because quoting the half that supports the change and
+ * dropping the half that does not is how a decision record stops being one:
+ *
+ *   (a) "a post the viewer consented to, under the viewer's own byline, is the
+ *       viewer's post". This is about ONE recipient — the author — and it holds
+ *       exactly as written for every reward paid to them. It says nothing about a
+ *       reward paid to a party the author never interacted with, because there is
+ *       no byline argument to make about somebody else.
+ *   (b) "paying it differently would make the reward depend on which client
+ *       composed it". 🔴 THIS CLAUSE DOES REACH THE MODEL-OWNER REWARD, AND THE
+ *       NARROWING OVERRIDES IT RATHER THAN SATISFYING IT. The reward below now
+ *       does depend on which client composed the post, which is precisely what
+ *       (b) objected to. It was overridden because (b) reasons about the AUTHOR's
+ *       experience being uniform across clients, and the model-owner reward is
+ *       not the author's — its recipient is selected by the app, so "which client
+ *       composed it" is not an incidental detail there but the thing that decides
+ *       who is paid.
+ *
+ * Anyone revisiting this should weigh (b) directly rather than treating the
+ * narrowing as already settled by (a).
+ *
+ * The two rewards below differ on precisely that:
  *
  *   - `firstDailyPostReward`     → paid to the POST'S AUTHOR. UNCHANGED on this
  *                                  path. The decision above is about this one and
