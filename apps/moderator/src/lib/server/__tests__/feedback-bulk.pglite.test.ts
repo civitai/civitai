@@ -208,7 +208,10 @@ describe('bulkTriageFeedback', () => {
   it('never writes a note, on any row it moves', async () => {
     const withNote = await seed('new');
     const withoutNote = await seed('new');
-    await db.query('UPDATE "Feedback" SET "triageNote" = $1 WHERE "id" = $2', ['keep me', withNote]);
+    await db.query('UPDATE "Feedback" SET "triageNote" = $1 WHERE "id" = $2', [
+      'keep me',
+      withNote,
+    ]);
 
     await service.bulkTriageFeedback({
       rows: [withNote, withoutNote].map((id) => ({ id, expectedStatus: 'new' as const })),
