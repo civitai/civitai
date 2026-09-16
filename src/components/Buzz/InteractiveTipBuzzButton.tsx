@@ -248,7 +248,18 @@ export function InteractiveTipBuzzButton({
   // sentinel reads as "clamped at page load" and refuses every send for the first
   // CLAMP_CONFIRM_DELAY of a document's life.
   const clampShownAtRef = useRef(-Infinity);
-  const pressStartedAtRef = useRef(-Infinity);
+
+  // Ordering is a COUNTER, not a clock. performance.now() is clamped to 1ms in Firefox and
+  // Safari and 100us in Chromium without cross-origin isolation, and pointerdown and the
+  // blur it causes land in one event-loop turn — so the two stamps tie, `a < a` is false,
+  // and the guard reports "did not predate" for a press that did. A tie is a silent send of
+  // the whole balance, so the comparison must not be able to tie.
+  const eventSeqRef = useRef(0);
+  const clampSeqRef = useRef(0);
+  const pressSeqRef = useRef(0);
+  const markPressStart = () => {
+    pressSeqRef.current = ++eventSeqRef.current;
+  };
 
   const clampIsTooFreshToConfirm = () =>
     performance.now() - clampShownAtRef.current < CLAMP_CONFIRM_DELAY;
@@ -258,7 +269,7 @@ export function InteractiveTipBuzzButton({
   // elapsed time at click is the length of the user's own hold. Hold the button past
   // CLAMP_CONFIRM_DELAY and one uninterrupted press would otherwise confirm the figure it
   // just rewrote — which on this path is the whole balance.
-  const pressPredatesClamp = () => pressStartedAtRef.current < clampShownAtRef.current;
+  const pressPredatesClamp = () => pressSeqRef.current < clampSeqRef.current;
 
   // Shared by blur and Enter. The comparison is on the STRING, not on Number(): a numeric
   // comparison passes '5e3' and '0x32' untouched, which sends an amount the field does not
@@ -276,6 +287,7 @@ export function InteractiveTipBuzzButton({
     if (clamped) {
       el.textContent = amount.toString();
       clampShownAtRef.current = performance.now();
+      clampSeqRef.current = ++eventSeqRef.current;
     }
     return { amount, clamped };
   };
@@ -283,6 +295,9 @@ export function InteractiveTipBuzzButton({
   const reset = () => {
     setBuzzCounter(0);
     setShowCountDown(false);
+    clampShownAtRef.current = -Infinity;
+    clampSeqRef.current = 0;
+    pressSeqRef.current = 0;
     clearConfirmTimeout();
   };
 
@@ -458,11 +473,11 @@ export function InteractiveTipBuzzButton({
                   // key the user never released — and that press IS the safeguard.
                   if (e.repeat) return;
                   const { amount, clamped } = applyEnteredAmount(e.currentTarget);
-                  // `clamped` is implied by the freshness check here — applyEnteredAmount
-                  // stamps as it rewrites, microseconds earlier — so no test can tell the
-                  // two apart on THIS path. Kept as the statement of intent, and because it
-                  // stops being implied the moment that stamp moves. On the icon path it is
-                  // not implied: the click sometimes reads the field before React repaints.
+                  // `clamped` is implied by the freshness check on BOTH send paths —
+                  // applyEnteredAmount stamps as it rewrites, microseconds earlier — so no
+                  // test can tell the two apart. The one case where it is not implied is the
+                  // null-element return, which refuses WITHOUT stamping. Kept as the
+                  // statement of intent, and because it stops being implied if that moves.
                   if (clamped || clampIsTooFreshToConfirm()) return;
                   sendTip(amount);
                 }}
@@ -499,11 +514,19 @@ export function InteractiveTipBuzzButton({
               // CLAMP_CONFIRM_DELAY those clicks look like a deliberate confirmation. The
               // freshness rule bounds how soon a confirmation can arrive; only this bounds
               // one arriving from a key that was never released.
-              onPointerDown={() => {
-                pressStartedAtRef.current = performance.now();
-              }}
+              onPointerDown={markPressStart}
               onKeyDown={(e: React.KeyboardEvent) => {
-                if (e.repeat && e.key === 'Enter') e.preventDefault();
+                if (e.key !== 'Enter') return;
+                // Autorepeat must not activate the button: a held Enter fires repeated
+                // clicks, and once the hold passes CLAMP_CONFIRM_DELAY they look deliberate.
+                if (e.repeat) {
+                  e.preventDefault();
+                  return;
+                }
+                // Keyboard and assistive-tech activation dispatch a click with NO pointer
+                // event. Without this the press ordering never advances, so after any clamp
+                // the icon is permanently dead for anyone without a pointer.
+                markPressStart();
               }}
               loading={tipUserMutation.isPending}
             >

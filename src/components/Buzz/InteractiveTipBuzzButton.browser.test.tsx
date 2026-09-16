@@ -14,8 +14,13 @@ const CONFIRMATION_TIMEOUT = 5000;
 const WELL_BEFORE_CLOSE = CONFIRMATION_TIMEOUT - 1500;
 const PAST_CLOSE = CONFIRMATION_TIMEOUT + 400;
 
-const BALANCE = 500;
+// vi.hoisted, because the useBuzz mock factory below reads this and vi.mock is hoisted above
+// ordinary consts — a plain `const` is in TDZ if the factory runs early, which surfaces as
+// "There was an error when mocking a module" rather than as anything naming BALANCE.
+const { BALANCE } = vi.hoisted(() => ({ BALANCE: 500 }));
 // CLAMP_CONFIRM_DELAY in the component. A confirming press sooner than this is refused.
+// Must exceed CLAMP_CONFIRM_DELAY, or `an Enter held past the confirm delay` goes quietly
+// green: the repeat press would be refused by freshness rather than by the guard it names.
 const PAST_CLAMP_DELAY = 600;
 // Must stay below BALANCE, or the clamp fires in the tests that are not about clamping and
 // they fail as `to be called 1 times, but got 0` — a message that names none of this.
@@ -288,7 +293,12 @@ describe('InteractiveTipBuzzButton', () => {
     expect(tipMutate).not.toHaveBeenCalled();
 
     await wait(PAST_CLAMP_DELAY);
-    await userEvent.click(sendButton());
+    // pointerdown + click rather than userEvent.click: if the first click ever regressed
+    // into sending, the icon enters its loading state and userEvent's actionability wait
+    // turns a caught regression into a 15s timeout naming nothing. The pointerdown is not
+    // decoration — it is what advances the press ordering the guard compares.
+    sendButton().dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    sendButton().dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 
     expect(tipMutate).toHaveBeenCalledTimes(1);
     expect(tipMutate.mock.calls[0][0]).toMatchObject({ amount: BALANCE });
@@ -430,6 +440,22 @@ describe('InteractiveTipBuzzButton', () => {
 
     expect(tipMutate).toHaveBeenCalledTimes(1);
     expect(tipMutate.mock.calls[0][0]).toMatchObject({ amount: TYPED_AMOUNT });
+  });
+
+  // Keyboard and AT activation dispatch a click with no pointer event. The ordering guard
+  // has to advance from somewhere, or after ANY clamp the icon is permanently dead for a
+  // user without a pointer — silently, with no state change to notice.
+  test('the send icon still works from the keyboard after a clamp', async () => {
+    const field = await openTipPopover();
+    field.focus();
+    field.textContent = String(BALANCE * 10);
+    sendButton().focus();
+    await wait(PAST_CLAMP_DELAY);
+
+    await userEvent.keyboard('{Enter}');
+
+    expect(tipMutate).toHaveBeenCalledTimes(1);
+    expect(tipMutate.mock.calls[0][0]).toMatchObject({ amount: BALANCE });
   });
 
   test('an IME composition commit does not send a tip', async () => {
