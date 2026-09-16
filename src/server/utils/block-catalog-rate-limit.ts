@@ -73,7 +73,7 @@ export const BLOCK_PUBLISH_RATE_LIMIT_WINDOW_SECONDS = 300;
 // on `blockInstanceId` (the same choice, for the same `jti`-churn reason, as the
 // other two), it is a FIXED window so a 2× burst across a boundary is reachable
 // by construction, and it FAILS OPEN on a Redis error. It is a cost ceiling, not
-// a security control. The controls that actually bound abuse are the self-dealing
+// a security control. The controls that actually bound abuse are the publisher
 // guard, the per-source ownership proofs, and the per-post consent confirm.
 export const BLOCK_POST_RATE_LIMIT_MAX = 3;
 export const BLOCK_POST_RATE_LIMIT_WINDOW_SECONDS = 3600;
@@ -96,7 +96,7 @@ export const BLOCK_POST_RATE_LIMIT_WINDOW_SECONDS = 3600;
 // too-tight aggregate throttles a popular, legitimate app and reaches its users
 // as "posting is broken" — a quiet, diffuse failure that nobody attributes to a
 // rate limit — while a too-loose one leaves a bounded amount of content that the
-// self-dealing guard, the per-source ownership proofs and the per-post consent
+// publisher guard, the per-source ownership proofs and the per-post consent
 // confirm have each already refused to admit on their own terms. Err loose.
 //
 // ⚠️ SAME STATED LIMITS AS THE BUCKET ABOVE: fixed window (a 2× burst across a

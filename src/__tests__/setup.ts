@@ -232,6 +232,20 @@ vi.mock('~/server/prom/client', () => ({
   // neighbours use, so the first test to drive either fail-soft path dies here
   // rather than on whatever it was written to check.
   clickhouseFailSoftCounter: promMetricStub(),
+  // The two below are `@civitai/telemetry/client` re-exports this module-replacing
+  // factory drops too — but NOT for the reason above: both call sites DO use
+  // `?.inc?.()` (`reward-config.ts`, `imagePostedToModel.reward.ts`). Do not read
+  // the chaining as making them optional here. Measured against this mock:
+  // accessing an export the factory omits throws `[vitest] No "<name>" export is
+  // defined on the "~/server/prom/client" mock`, and `?.` guards the RESULT of the
+  // access, not the access itself, so the throw lands either way.
+  //
+  // ⚠️ Measured too, because the sentence above would otherwise overclaim: deleting
+  // `imagePostedToModelAppSuppressedCounter` today reds NOTHING. The one suite that
+  // executes that counter's line (`imagePostedToModel.reward.test.ts`) registers its
+  // own `~/server/prom/client` factory carrying it, so this entry is never reached.
+  // It is here for the next suite that drives the app-suppression path through THIS
+  // mock — not because a current test depends on it.
   rewardConfigReadFailedCounter: promMetricStub(),
   imagePostedToModelAppSuppressedCounter: promMetricStub(),
   clavataCounter: promMetricStub(),

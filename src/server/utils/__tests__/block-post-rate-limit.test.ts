@@ -100,7 +100,7 @@ describe('checkBlockPostRateLimit', () => {
 
   it('FAILS OPEN on a redis error — and that is a stated limitation, not a bug', async () => {
     // 🔴 Recorded as a test so nobody reads the bucket as a security control. It
-    // is a cost ceiling; the controls that bound abuse are the self-dealing
+    // is a cost ceiling; the controls that bound abuse are the publisher
     // guard, the per-source ownership proofs and the per-post consent confirm.
     mockRedis.incrBy.mockRejectedValue(new Error('redis down'));
     await expect(checkBlockPostRateLimit('bki_test')).resolves.toEqual({ allowed: true });

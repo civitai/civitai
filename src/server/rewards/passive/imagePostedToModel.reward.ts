@@ -35,16 +35,29 @@ export const imagePostedToModelReward = createBuzzEvent({
     // ⚠️ READ THAT AS A CLAIM ABOUT THE CALL, NOT ABOUT THE POST. The signal is an
     // argument, not a column: nothing on the `Post` row says an app composed it, so
     // a post created by an app and later republished through `post.controller.ts`
-    // arrives here WITHOUT `viaAppId` and is paid. What bounds that to ONE award per
-    // `(byUserId, forId)` is the Buzz ledger, NOT the caps above: `sendAward` derives
-    // `externalTransactionId` as `${type}:${forId}-${toUserId}-${byUserId}`
-    // (`base.reward.ts`), and a repeat of that id comes back as a `conflict` — money
-    // already moved — rather than a second grant (`buzz.service.ts`,
-    // `createBuzzTransactionMany`). ⚠️ That last step is asserted by THIS repo's
-    // comments about an external Buzz service; it has not been probed here. The two
-    // `caps` entries are NOT the mechanism — neither is keyed on `byUserId`, so
-    // `['toUserId','forId']` bounds the total paid to one owner for one version
-    // across ALL posters, not one poster's repeats. See the bound recorded on
+    // arrives here WITHOUT `viaAppId` and is paid. What bounds the REPEAT is the Buzz
+    // ledger, NOT the caps above: `sendAward` derives `externalTransactionId` as
+    // `${type}:${forId}-${toUserId}-${byUserId}` (`base.reward.ts`), and a repeat of
+    // that id comes back as a `conflict` — money already moved — rather than a second
+    // grant (`buzz.service.ts`, `createBuzzTransactionMany`). ⚠️ That last step is
+    // asserted by THIS repo's comments about an external Buzz service; it has not
+    // been probed here.
+    //
+    // ⚠️ THE LEDGER KEY IS `(forId, toUserId, byUserId)` — ALL THREE, and do not
+    // shorten it to `(byUserId, forId)`. `toUserId` is not a constant of the version:
+    // it is resolved below from the model's CURRENT owner, so a
+    // `modRouter.models.transferOwnership` (moderator-only,
+    // `src/server/routers/moderator/index.ts`, which moves `Model.userId` via
+    // `transferModelOwnership`) between two republishes of the same post yields a
+    // DIFFERENT id and therefore a second award, to the new owner.
+    //
+    // The two `caps` entries are NOT the mechanism — neither is keyed on `byUserId`, so
+    // `['toUserId','forId']` bounds what one owner accrues for one version
+    // across ALL posters, not one poster's repeats. ⚠️ And those `amount`s are in
+    // PRE-MULTIPLIER units, like `awardAmount`: this reward has no `onDemand` key, so
+    // it settles on the batch path, where the cap trims `event.awardAmount` and
+    // `sendAward` multiplies afterwards — 5,000 permits up to 5,000 x the owner's
+    // multiplier in Buzz. See the bound recorded on
     // `applyBlockPostPublishEffects` — do not restate this guard as "an app-composed
     // post never pays".
     //
@@ -90,10 +103,29 @@ export const imagePostedToModelReward = createBuzzEvent({
       // product loss stated on `applyBlockPostPublishEffects` is readable
       // anywhere, and "fix forward if abuse is observed" has nothing behind it.
       //
-      // Unlabelled, and an UPPER BOUND rather than the loss itself: this returns
-      // before the owner lookup, so some of these calls would have been declined
-      // anyway by the `modelOwnerId === posterId` guard below or by an unresolved
-      // owner. Times `awardAmount`, it is the most that could have been paid.
+      // Unlabelled, and an upper bound on the COUNT of declines rather than the
+      // loss itself: this returns before the owner lookup, so some of these calls
+      // would have been declined anyway by the `modelOwnerId === posterId` guard
+      // below or by an unresolved owner.
+      //
+      // 🔴 IT DOES NOT BECOME A BUZZ FIGURE BY MULTIPLYING BY `awardAmount`, AND
+      // THE ERROR IS IN THE UNSAFE DIRECTION. `sendAward` pays
+      // `Math.ceil(event.awardAmount * clampRewardMultiplier(event.multiplier ?? 1))`
+      // (`base.reward.ts`), and the multiplier is the MODEL OWNER'S
+      // `rewardsMultiplier` — `getMultipliersForUser(definedKey.toUserId)`. That
+      // value is a base read off operator-authored `Product.metadata`
+      // (`subscriptions.schema.ts` requires it positive and puts NO ceiling on it;
+      // `clampRewardMultiplier` deliberately only floors it) multiplied by a global
+      // bonus clamped to `MAX_GLOBAL_BONUS` of 5 (`buzz.service.ts`). At the gold
+      // tier's 4x recorded in `src/server/rewards/multiplier.ts`, one award during a
+      // maximum bonus event is 20 x 50 = 1,000 Buzz — 20x what a bare `awardAmount`
+      // multiplication would report, and in the UNSAFE direction. `awardAmount` is
+      // itself operator-overridable up to `MAX_AWARD_AMOUNT`
+      // (`src/shared/constants/reward-config.constants.ts`). Per-award payout also
+      // FLOORS at 0, for an owner `getMultipliersForUser` reports ineligible.
+      //
+      // So this counter sizes how OFTEN the decline fires. No single Buzz figure
+      // follows from it, and any that is quoted has to name the multiplier it assumed.
       // Optional-chained to match the reward counters in `base.reward.ts` —
       // `getKey` runs synchronously inside a user mutation, so nothing here may
       // throw.

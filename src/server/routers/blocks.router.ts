@@ -4565,7 +4565,7 @@ export const blocksRouter = router({
    *   9. ✚ text bounds + link refusal + `throwOnBlockedUserContent` over title,
    *      detail AND the resolved tag names (native screens title/detail only).
    *  10. ✚ existing-tags-only resolution — a block may never mint a site tag.
-   *  11. ✚ the `modelVersionId` gate incl. the SELF-DEALING guard.
+   *  11. ✚ the `modelVersionId` gate incl. the PUBLISHER guard.
    *  12. ✚ an atomic create → adopt → publish transaction.
    *
    * 🔴 THE HOST CONFIRM IS NOT ONE OF THESE GUARDS AND MUST NOT BE READ AS ONE.
@@ -4611,7 +4611,7 @@ export const blocksRouter = router({
       //
       // ⚠️ BOTH FAIL OPEN on a Redis error, by the convention every blocks
       // limiter follows. Do not read either as a hard cap or a security control:
-      // what actually bounds abuse on this path is the self-dealing guard, the
+      // what actually bounds abuse on this path is the publisher guard, the
       // per-source ownership proofs and the per-post consent confirm.
       const postRate = await checkBlockPostRateLimit(claims.blockInstanceId);
       if (!postRate.allowed) {

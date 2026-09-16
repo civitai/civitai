@@ -7,7 +7,7 @@
  * normalisation, and all three are cheap to get subtly wrong and expensive to
  * test through a DB.
  *
- * The IMPURE half — ownership proofs, provenance reads, the self-dealing guard,
+ * The IMPURE half — ownership proofs, provenance reads, the publisher guard,
  * the transaction — is `block-post.service.ts`.
  */
 

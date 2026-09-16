@@ -299,17 +299,38 @@ export type ResolvedGalleryTarget = {
  *   - the reward is then keyed `byUserId: updatedPost.userId`, the author, whoever
  *     performed the update.
  *
- * So the residual is **50 blue Buzz to the model owner per distinct
- * `(post author, modelVersionId)`**, each one requiring that author (or a moderator)
- * to manually republish that author's own post. Repeats of the same pair pay
- * nothing — the bound is the Buzz ledger, NOT the caps; the mechanism and what is
- * and is not verified about it are recorded on `imagePostedToModel.reward.ts`'s
- * `getKey`.
+ * So the residual is **ONE award to the model owner per distinct
+ * `(modelVersionId, model owner, post author)`**, each one requiring that author (or
+ * a moderator) to manually republish that author's own post. Repeats of the same
+ * triple pay nothing — the bound is the Buzz ledger, NOT the caps; the mechanism,
+ * why the key has three components rather than two, and what is and is not verified
+ * about it are recorded on `imagePostedToModel.reward.ts`'s `getKey`.
+ *
+ * 🔴 ONE AWARD IS NOT NECESSARILY 50 BUZZ, AND THE SPREAD IS THE WHOLE POINT OF
+ * STATING A MAGNITUDE HERE. 50 is the reward's compiled `awardAmount`. `sendAward` pays
+ * `Math.ceil(awardAmount * clampRewardMultiplier(multiplier))` (`base.reward.ts`)
+ * against the MODEL OWNER'S `rewardsMultiplier`, which is a base read off
+ * operator-authored `Product.metadata` (`subscriptions.schema.ts` requires it
+ * positive and puts no ceiling on it) times a global bonus clamped to
+ * `MAX_GLOBAL_BONUS` of 5 (`buzz.service.ts`). At the gold tier's 4x recorded in
+ * `src/server/rewards/multiplier.ts`, one award during a maximum bonus event is
+ * **1,000 blue Buzz** — 20x the compiled amount. `awardAmount` is in turn
+ * operator-overridable up to `MAX_AWARD_AMOUNT`
+ * (`src/shared/constants/reward-config.constants.ts`), and the payout floors at 0 for
+ * an owner reported rewards-ineligible — and sub-1 product multipliers are
+ * intentional (`foldUserMultipliers`), so 50 is the payout at a 1x multiplier and is
+ * neither a floor nor a ceiling. **Weigh this residual at the multiplied figure, and
+ * say which multiplier the figure assumed.**
  *
  * ⚠️ The reward's `caps` — 5,000 all-time per `(owner, version)` and 50,000/month
  * per owner — are ceilings on the REWARD across all posters and all paths. They
  * bound this residual only in aggregate, and quoting them as its size overstates it
- * by however many distinct authors it would take to reach them.
+ * by however many distinct authors it would take to reach them. ⚠️ AND THEY ARE IN
+ * THE SAME PRE-MULTIPLIER UNITS AS THE 50, for the same reason: this reward has no
+ * `onDemand` key, so it settles on the BATCH path, where the cap is applied to
+ * `event.awardAmount` (`base.reward.ts`, the `caps` loop in `process`) and the
+ * owner's multiplier is applied afterwards by `sendAward`. The Buzz a 5,000 cap
+ * permits is therefore up to 5,000 times that multiplier.
  *
  * The account type is `blue`, which is not the withdrawal account —
  * `buzz-withdrawal-request.service.ts` requests withdrawal against `'yellow'`
@@ -1079,14 +1100,17 @@ export async function writeBlockPost(input: {
  * relationship an app may have with a model owner.
  *
  * That cost is COUNTABLE, and the reward increments a counter at the guard for this
- * reason: `civitai_app_reward_image_posted_to_model_app_suppressed_total`. ⚠️ Times
- * the reward's `awardAmount` it is an UPPER BOUND on the Buzz not paid, not the
- * figure itself — the guard returns before the owner lookup, so some of those calls
- * would have been declined anyway by the reward's own `modelOwnerId === posterId`
- * guard or by an unresolved owner, and others would have been trimmed by a cap.
- * ⚠️ It is also a size, not a DETECTOR: it says how often the decline fires and
- * nothing about who was aimed at. See the detector note below, which it does not
- * close.
+ * reason: `civitai_app_reward_image_posted_to_model_app_suppressed_total`. ⚠️ It is
+ * an upper bound on the COUNT of declines — the guard returns before the owner
+ * lookup, so some of those calls would have been declined anyway by the reward's own
+ * `modelOwnerId === posterId` guard or by an unresolved owner, and others would have
+ * been trimmed by a cap. 🔴 It does NOT become the Buzz not paid by multiplying by
+ * `awardAmount`: the payout is `awardAmount` times the MODEL OWNER'S rewards
+ * multiplier, which has no code-enforced ceiling and reaches 20x at the gold tier
+ * during a maximum bonus event — see the figures under "the residual, in numbers" on
+ * `resolveGalleryTarget`, and the derivation at the counter itself. ⚠️ It is also a
+ * size, not a DETECTOR: it says how often the decline fires and nothing about who
+ * was aimed at. See the detector note below, which it does not close.
  *
  * The suppression is expressed ONCE, in the reward, not as a condition around the
  * call below, so the PREDICATE is not re-implemented per caller. ⚠️ That is not the
@@ -1102,10 +1126,13 @@ export async function writeBlockPost(input: {
  * the `Post` row that the reward reads. So a post created here and then UNPUBLISHED
  * AND REPUBLISHED through the native UI reaches `post.controller.ts:443`, which
  * calls `imagePostedToModelReward.apply` with no `viaAppId` — and that call pays.
- * ⚠️ What bounds that to ONE award per `(post author, version)` is the BUZZ LEDGER,
- * not the reward's caps: `sendAward` derives `externalTransactionId` as
- * `${type}:${forId}-${toUserId}-${byUserId}` and a repeat of that id comes back as a
- * `conflict` rather than a second grant. Neither `caps` entry is keyed on
+ * ⚠️ What bounds the REPEAT is the BUZZ LEDGER, not the reward's caps: `sendAward`
+ * derives `externalTransactionId` as `${type}:${forId}-${toUserId}-${byUserId}` and a
+ * repeat of that id comes back as a `conflict` rather than a second grant. ⚠️ THAT
+ * KEY HAS THREE COMPONENTS — version, model owner, post author — so "one award per
+ * `(post author, version)`" is too short: `toUserId` is the model's CURRENT owner, and
+ * a moderator `models.transferOwnership` between republishes yields a new id and a
+ * second award. See the reward's `getKey`. Neither `caps` entry is keyed on
  * `byUserId`, so `['toUserId','forId']` bounds what ONE OWNER receives for ONE
  * VERSION across ALL posters — it is not a per-poster dedupe and an earlier version
  * of this note called it one. (The ledger step is asserted by this repo's own
@@ -1345,8 +1372,14 @@ export async function applyBlockPostPublishEffects(input: {
     // reward's own `getKey` returns `false` on it, so nothing is keyed and nothing
     // is paid — see that function for why the rule lives there rather than as an
     // `if` around this call. Issuing it anyway keeps ONE code path for both
-    // outcomes, so the suppression is a property of the reward that every caller
-    // inherits instead of a condition each caller has to remember to re-spell.
+    // outcomes.
+    //
+    // 🔴 WHAT A CALLER INHERITS IS THE PREDICATE, NOT THE SUPPRESSION — do not read
+    // the line above as "every caller is covered". `viaAppId` is OPTIONAL on the
+    // reward's input, and this call is suppressed only because it SENDS the field.
+    // A second app-originated caller that omits it is PAID. If you are adding one,
+    // forward the app id; the bound is stated in full on this function's docblock
+    // and on the reward's own `getKey`.
     await imagePostedToModelReward.apply(
       {
         modelId: input.modelId ?? undefined,

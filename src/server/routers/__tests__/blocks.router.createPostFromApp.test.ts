@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * `blocks.previewPostFromApp` / `blocks.createPostFromApp` — the ROUTER-level
  * guard matrix.
  *
- * The per-guard SERVICE logic (tag policy, self-dealing, provenance, atomicity)
+ * The per-guard SERVICE logic (tag policy, the publisher guard, provenance,
+ * atomicity)
  * is covered in `block-post.service.test.ts`. What can only be seen HERE is the
  * PREAMBLE and its ORDER: scope → subject → runtime flag → the dedicated post
  * flag → write trust → rate buckets, and the audit row that must be written
