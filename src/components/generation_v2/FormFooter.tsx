@@ -1350,7 +1350,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         ...(sourceProvenance.length ? { sourceProvenance } : {}),
         externalId,
         acknowledgedSoftBlock,
-        ...preBoostSubmitFields(preBoost, whatIfData),
+        ...preBoostSubmitFields(preBoost),
       });
 
       if (preBoost) setPreBoost(false);

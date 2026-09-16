@@ -18,8 +18,7 @@ import { getModelClient, queryResourcesClient } from '~/server/services/orchestr
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
+import { createCachedObject } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { modelVersionToAir } from '~/server/utils/resource-air';
@@ -199,51 +198,56 @@ export async function getResourceLoadQueue({ cursor, take }: GetResourceLoadQueu
 }
 
 const RESIDENCY_CACHE_SECONDS = 30;
-const PUBLIC_QUEUE_CACHE_SECONDS = 10;
-const PUBLIC_QUEUE_TAKE = 50;
 
-export type ResourceResidency = { modelVersionId: number; availability: ResourceLoadAvailability };
+export type ResourceResidency = {
+  modelVersionId: number;
+  availability: ResourceLoadAvailability;
+  /** Bytes. Absent when the resource is unknown to the orchestrator. */
+  size?: number;
+};
 
 /**
  * Load state alone, for the model page and the generator: one Redis read for the whole set and one
  * DB query for whatever missed. That is what lets it run for every signed-in viewer where the
  * uncached `getResourceLoadState` cannot.
  */
+async function fetchResourceResidency(modelVersionIds: number[]) {
+  // Only what the AIR needs: `getPrimaryFile` scores on each file's type and metadata.
+  const versions = (await dbRead.modelVersion.findMany({
+    where: { id: { in: modelVersionIds } },
+    select: {
+      id: true,
+      name: true,
+      baseModel: true,
+      flags: true,
+      model: { select: { id: true, name: true, type: true } },
+      files: { select: { type: true, metadata: true } },
+    },
+  })) as VersionForAir[];
+
+  const entries: Record<number, ResourceResidency> = {};
+  const tasks = versions.map((version) => async () => {
+    const response = await getModelClient({
+      token: env.ORCHESTRATOR_ACCESS_TOKEN,
+      air: modelVersionToAir(version),
+    });
+    entries[version.id] = {
+      modelVersionId: version.id,
+      availability: parseAvailability(response?.data?.availability),
+      size: response?.data?.size,
+    };
+  });
+
+  await limitConcurrency(tasks, STATE_FETCH_CONCURRENCY);
+  return entries;
+}
+
 function createResourceResidencyCache() {
   return createCachedObject<ResourceResidency>({
     key: REDIS_KEYS.CACHES.RESOURCE_LOAD_RESIDENCY,
     idKey: 'modelVersionId',
     ttl: RESIDENCY_CACHE_SECONDS,
-    async lookupFn(ids) {
-      const modelVersionIds = Array.isArray(ids) ? ids : [ids];
-      // Only what the AIR needs: `getPrimaryFile` scores on each file's type and metadata.
-      const versions = (await dbRead.modelVersion.findMany({
-        where: { id: { in: modelVersionIds } },
-        select: {
-          id: true,
-          name: true,
-          baseModel: true,
-          flags: true,
-          model: { select: { id: true, name: true, type: true } },
-          files: { select: { type: true, metadata: true } },
-        },
-      })) as VersionForAir[];
-
-      const entries: Record<number, ResourceResidency> = {};
-      const tasks = versions.map((version) => async () => {
-        const response = await getModelClient({
-          token: env.ORCHESTRATOR_ACCESS_TOKEN,
-          air: modelVersionToAir(version),
-        });
-        entries[version.id] = {
-          modelVersionId: version.id,
-          availability: parseAvailability(response?.data?.availability),
-        };
-      });
-
-      await limitConcurrency(tasks, STATE_FETCH_CONCURRENCY);
-      return entries;
-    },
+    lookupFn: (ids) => fetchResourceResidency(Array.isArray(ids) ? ids : [ids]),
   });
 }
 
@@ -261,103 +265,14 @@ export async function getResourceResidency(
   return Object.values(cached);
 }
 
-export type PublicResourceLoadQueueItem = {
-  size: number;
-  availability: ResourceLoadAvailability;
-  model: {
-    id: number;
-    name: string;
-    versionId: number;
-    versionName: string;
-    baseModel: string;
-  } | null;
-};
-
-async function fetchPublicResourceLoadQueue() {
-  const { data, error } = await queryResourcesClient({
-    token: env.ORCHESTRATOR_ACCESS_TOKEN,
-    query: { view: 'queue', take: PUBLIC_QUEUE_TAKE },
-  });
-  if (!data) {
-    logToAxiom({
-      type: 'error',
-      name: 'resource-load-public-queue',
-      message: error?.detail ?? 'no data',
-    }).catch(() => undefined);
-    throw throwBadRequestError('Could not read the download queue. Try again in a moment.');
-  }
-
-  const versionIds = data.items.flatMap((item) => parseAIRSafe(item.air)?.version ?? []);
-  const versions = versionIds.length
-    ? await dbRead.modelVersion.findMany({
-        where: { id: { in: versionIds } },
-        select: {
-          id: true,
-          name: true,
-          baseModel: true,
-          status: true,
-          availability: true,
-          model: {
-            select: {
-              id: true,
-              name: true,
-              status: true,
-              availability: true,
-              nsfwLevel: true,
-              mode: true,
-              poi: true,
-            },
-          },
-        },
-      })
-    : [];
-  // One cached answer serves every domain, so the SFW rule applies to everyone. `nsfwLevel` 0 means
-  // not yet scanned, which getIsSafeBrowsingLevel also rejects.
-  const listable = new Map(
-    versions
-      .filter(
-        (v) =>
-          v.status === 'Published' &&
-          v.availability === 'Public' &&
-          v.model.status === 'Published' &&
-          v.model.availability === 'Public' &&
-          !v.model.mode &&
-          !v.model.poi &&
-          getIsSafeBrowsingLevel(v.model.nsfwLevel)
-      )
-      .map((v) => [v.id, v])
-  );
-
-  const items: PublicResourceLoadQueueItem[] = data.items.map((item) => {
-    const versionId = parseAIRSafe(item.air)?.version;
-    const version = versionId ? listable.get(versionId) : undefined;
-    return {
-      size: item.size,
-      availability: parseAvailability(item.availability),
-      model: version
-        ? {
-            id: version.model.id,
-            name: version.model.name,
-            versionId: version.id,
-            versionName: version.name,
-            baseModel: version.baseModel,
-          }
-        : null,
-    };
-  });
-
-  return { items };
-}
-
 /**
- * The queue as anyone may see it. A row whose model is not public keeps its place — it still holds
- * a position in line — but loses its name: a public list must not reveal which private, unpublished,
- * taken-down or mature models are being loaded.
+ * The same answer uncached, for a waiting generation's own few models: the shared cache can hold a
+ * pre-queue `unavailable` for its whole TTL, which is exactly when the queue card needs a fresh one.
  */
-export async function getPublicResourceLoadQueue() {
-  return fetchThroughCache(REDIS_KEYS.CACHES.RESOURCE_LOAD_QUEUE, fetchPublicResourceLoadQueue, {
-    ttl: PUBLIC_QUEUE_CACHE_SECONDS,
-  });
+export async function getLiveResourceResidency(
+  modelVersionIds: number[]
+): Promise<ResourceResidency[]> {
+  return Object.values(await fetchResourceResidency([...new Set(modelVersionIds)]));
 }
 
 /** Refuses `available` too: the orchestrator accepts an already-resident prepare and completes it

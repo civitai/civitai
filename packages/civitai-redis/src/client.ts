@@ -2362,7 +2362,6 @@ const REDIS_KEYS_UNPREFIXED = {
   CACHES: {
     ECOSYSTEM_SEO: 'packed:caches:ecosystem-seo',
     RESOURCE_LOAD_RESIDENCY: 'packed:caches:resource-load-residency',
-    RESOURCE_LOAD_QUEUE: 'packed:caches:resource-load-queue',
     METRIC_EXCLUDED_USERS: 'packed:caches:metric-excluded-users',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',

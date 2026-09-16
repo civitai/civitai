@@ -224,7 +224,6 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'nowPayments.getBuzzConversionRate',
   'nowPayments.getMinAmount',
   'nowPayments.getSupportedCurrencies',
-  'resourceLoad.getPublicQueue',
   'system.getBenignPhrases',
   'system.getCreationBlockedTags',
   'system.getDbKV',

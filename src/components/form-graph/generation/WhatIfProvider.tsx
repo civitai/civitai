@@ -16,7 +16,7 @@ import {
   useRef,
   type ReactNode,
 } from 'react';
-import { usePreBoost } from '~/components/generation_v2/hooks/usePreBoost';
+import { usePreBoostWhatIf } from '~/components/generation_v2/hooks/usePreBoost';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useImagesUploadingOrVerifying } from '~/components/Generation/Input/SourceImageUploadMultiple';
 import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
@@ -27,7 +27,6 @@ import { applyWhatIfFingerprints } from '~/shared/data-graph/generation/whatif-f
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
 import { defaultWorkflowCost } from '~/shared/orchestrator/workflow-data';
-import { trpc } from '~/utils/trpc';
 import type { GenerationStore } from './store';
 
 /** The first blocking message, in field declaration order. */
@@ -103,21 +102,11 @@ export function useWhatIfFromStore({
   const workflow = (store.getSnapshot().state as { workflow?: string }).workflow;
   const isNoSubmit = workflowConfigByKey.get(workflow ?? '')?.noSubmit === true;
 
-  const { preBoost, setPreBoost, whatIfPayload } = usePreBoost(revision, queryPayload);
-
-  const queryResult = trpc.orchestrator.whatIfFromGraph.useQuery(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    whatIfPayload as any,
-    {
-      enabled:
-        enabled &&
-        !isNoSubmit &&
-        !!currentUser &&
-        !!queryPayload &&
-        !resourcesLoading &&
-        !imagesPending,
-    }
-  );
+  const { queryResult, preBoost, setPreBoost, download } = usePreBoostWhatIf({
+    revision,
+    queryPayload,
+    enabled: enabled && !isNoSubmit && !!currentUser && !resourcesLoading && !imagesPending,
+  });
 
   const data = useMemo(
     () =>
@@ -141,6 +130,7 @@ export function useWhatIfFromStore({
     validationErrors,
     preBoost,
     setPreBoost,
+    download,
   };
 }
 

@@ -11,14 +11,17 @@
  */
 
 import type { DownloadPreparation } from '~/shared/orchestrator/download-preparation';
-import { Alert, List, Stack, Switch, Text } from '@mantine/core';
+import { Alert, List, Loader, Stack, Switch, Text } from '@mantine/core';
+import { IconBolt } from '@tabler/icons-react';
 import { useRef } from 'react';
 
 import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useAppContext } from '~/providers/AppProvider';
 import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
-import { numberWithCommas } from '~/utils/number-helpers';
+import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
 import { formatDownloadEta } from '~/components/ResourceLoad/download-eta';
+import { BOOST_LANE_LABEL, DownloadLanesInfo } from '~/components/ResourceLoad/download-lanes';
+import { DownloadEtaCompare } from '~/components/ResourceLoad/DownloadEtaCompare';
 import { useWhatIfContext } from './WhatIfProvider';
 
 // =============================================================================
@@ -208,30 +211,34 @@ export function SeedanceImg2VidAlert({ ecosystem, workflow }: SeedanceImg2VidAle
 // =============================================================================
 
 export type DownloadAlertWhatIf = {
-  data: { ready?: boolean; preparation?: DownloadPreparation; cost?: unknown };
+  data: { ready?: boolean };
   isLoading: boolean;
   isSuccess: boolean;
   canEstimateCost: boolean;
   preBoost: boolean;
   setPreBoost: (on: boolean) => void;
+  download?: {
+    preparation: DownloadPreparation;
+    boostable: boolean;
+    boostFee: number | null;
+    pricing: boolean;
+  };
 };
 
 /** Takes the whatIf as a prop because the two generation forms each have their own provider. */
 export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) {
-  const { data, isLoading, isSuccess, canEstimateCost, preBoost, setPreBoost } = whatIf;
+  const { data, download, isLoading, isSuccess, canEstimateCost, preBoost, setPreBoost } = whatIf;
 
-  // Switching the pre-boost refetches the whatIf; rendering from the last settled response keeps
-  // the switch on screen while that loads.
-  const settledRef = useRef<typeof data | null>(null);
-  if (isSuccess && !isLoading) settledRef.current = data;
+  // Rendering from the last settled response keeps the alert on screen while a changed form re-prices.
+  const settledRef = useRef<{ ready?: boolean; download: typeof download } | null>(null);
+  if (isSuccess && !isLoading) settledRef.current = { ready: data.ready, download };
   const settled = settledRef.current;
 
-  if (!canEstimateCost || !settled || (settled.ready !== false && !settled.preparation)) {
+  if (!canEstimateCost || !settled || (settled.ready !== false && !settled.download)) {
     return null;
   }
 
-  const { preparation } = settled;
-  if (!preparation) {
+  if (!settled.download) {
     return (
       <Alert color="yellow" title="Potentially slow generation" radius="md">
         <Text size="xs">
@@ -242,45 +249,84 @@ export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) 
     );
   }
 
-  const boostFee = (settled.cost as { fixed?: Record<string, number> | null } | undefined)?.fixed
-    ?.downloadPriority;
-  const canPreBoost =
-    preBoost || (preparation.lane !== 'high' && preparation.boostedEtaSeconds != null);
-  const fileCount = preparation.resources.length;
+  const { preparation, boostable, boostFee, pricing } = settled.download;
+  const { etaSeconds, boostedEtaSeconds, lane } = preparation;
+  const count = preparation.resources.length;
+  const resourcesLabel = count === 1 ? 'resource' : `${count} resources`;
+  const totalBytes = preparation.resources.reduce((sum, r) => sum + r.sizeBytes, 0);
+  const on = preBoost && boostable;
 
   return (
-    <Alert color="yellow" title="Resources need to download first" radius="md">
-      <Stack gap={6}>
-        <Text size="xs">
-          {fileCount > 1 ? `${fileCount} files need` : 'A model needs'} to download before this can
-          start. It will wait in your queue until then.
-        </Text>
-        <Text size="xs">
-          {preparation.queuePosition === 0
-            ? 'Downloading now'
-            : `${preparation.queuePosition} ahead in the download queue`}
-          {preparation.etaSeconds != null &&
-            ` · ready in ${formatDownloadEta(preparation.etaSeconds)}`}
-        </Text>
-        {canPreBoost && (
-          <Switch
-            size="xs"
-            color="yellow"
-            checked={preBoost}
-            disabled={isLoading}
-            onChange={(e) => setPreBoost(e.currentTarget.checked)}
-            label={
-              preBoost
-                ? `Boost download${
-                    boostFee ? ` · ${numberWithCommas(boostFee)} Buzz, included in the cost` : ''
-                  }`
-                : `Boost download${
-                    preparation.boostedEtaSeconds != null
-                      ? ` · ready in ${formatDownloadEta(preparation.boostedEtaSeconds)}`
-                      : ''
-                  }`
-            }
+    <Alert color={on ? 'yellow' : 'blue'} radius="md" p="sm">
+      <Stack gap="sm">
+        {on ? (
+          <Text size="sm">
+            <Text span fw={600}>
+              Boosted
+            </Text>{' '}
+            — your {resourcesLabel} go{count === 1 ? 'es' : ''} in the {BOOST_LANE_LABEL} lane
+            {boostedEtaSeconds != null &&
+              `, so this generation starts in ${formatDownloadEta(boostedEtaSeconds)}`}
+            {etaSeconds != null && ` instead of ${formatDownloadEta(etaSeconds)}`}.
+          </Text>
+        ) : (
+          <Text size="sm">
+            <Text span fw={600}>
+              {count === 1 ? 'A resource needs' : `${count} resources need`} to download first
+            </Text>{' '}
+            — {formatBytes(totalBytes)}.
+            {boostable && boostedEtaSeconds != null
+              ? ` Boost to ${
+                  lane === 'low' ? 'skip the free lane and ' : ''
+                }start in ${formatDownloadEta(boostedEtaSeconds)}.`
+              : etaSeconds != null
+              ? ` Ready in ${formatDownloadEta(etaSeconds)}.`
+              : ''}
+          </Text>
+        )}
+
+        {boostable && etaSeconds != null && boostedEtaSeconds != null && (
+          <DownloadEtaCompare
+            etaSeconds={etaSeconds}
+            boostedEtaSeconds={boostedEtaSeconds}
+            afterLabel={on ? 'Ready in' : 'Boosted'}
+            struck={on}
           />
+        )}
+
+        {boostable && (
+          <div className="flex items-center gap-2 border-t border-white/10 pt-2.5">
+            <Switch
+              size="sm"
+              color="yellow"
+              checked={on}
+              disabled={boostFee == null}
+              onChange={(e) => setPreBoost(e.currentTarget.checked)}
+              label="Boost download"
+              styles={{ label: { fontWeight: 600 } }}
+            />
+            <DownloadLanesInfo
+              placement={{
+                lane,
+                queuePosition: preparation.queuePosition,
+                etaSeconds,
+                boostedEtaSeconds,
+                rateLimitBytesPerSecond: preparation.rateLimitBytesPerSecond,
+                totalBytes,
+                boostFee,
+              }}
+            />
+            <span className="ml-auto">
+              {boostFee != null ? (
+                <Text size="sm" fw={700} c="yellow.6" className="whitespace-nowrap tabular-nums">
+                  <IconBolt size={13} className="inline align-[-1px]" />
+                  {numberWithCommas(boostFee)}
+                </Text>
+              ) : pricing ? (
+                <Loader size="xs" color="yellow" />
+              ) : null}
+            </span>
+          </div>
         )}
       </Stack>
     </Alert>

@@ -1,7 +1,8 @@
 import { CacheTTL } from '~/server/common/constants';
-import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
+import { rateLimit } from '~/server/middleware.trpc';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import {
+  getDownloadStatusSchema,
   getResourceLoadQueueSchema,
   getResourceLoadStateSchema,
   getResourceResidencySchema,
@@ -9,9 +10,9 @@ import {
 } from '~/server/schema/resource-load.schema';
 import {
   estimateResourceLoad,
-  getPublicResourceLoadQueue,
   getResourceLoadQueue,
   getResourceLoadState,
+  getLiveResourceResidency,
   getResourceResidency,
   submitResourceLoad,
 } from '~/server/services/resource-load.service';
@@ -90,9 +91,14 @@ export const resourceLoadRouter = router({
     )
     .input(getResourceResidencySchema)
     .query(({ input }) => getResourceResidency(input.modelVersionIds)),
-  getPublicQueue: publicProcedure
-    .use(edgeCacheIt({ ttl: 10 }))
-    .query(() => getPublicResourceLoadQueue()),
+  getDownloadStatus: protectedProcedure
+    .use(
+      rateLimit([{ limit: 60, period: 60 }], undefined, {
+        sharedKey: 'resource-load:download-status',
+      })
+    )
+    .input(getDownloadStatusSchema)
+    .query(({ input }) => getLiveResourceResidency(input.modelVersionIds)),
   getQueue: publicProcedure
     .use(isFlagProtected('resourceLoad'))
     .input(getResourceLoadQueueSchema)

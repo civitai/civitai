@@ -5,11 +5,8 @@ import {
   Badge,
   Button,
   Card,
-  Group,
   Loader,
-  Popover,
   RingProgress,
-  Stack,
   Text,
   Tooltip,
   Anchor,
@@ -29,7 +26,6 @@ import {
   IconInfoHexagon,
   IconTrash,
   IconLink,
-  IconBolt,
 } from '@tabler/icons-react';
 import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
 import dayjs from '~/shared/utils/dayjs';
@@ -42,7 +38,6 @@ import {
   matchesMarkerTags,
   useCancelTextToImageRequest,
   useDeleteTextToImageRequest,
-  useBoostWorkflow,
   useUpdateWorkflow,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import type { TransactionInfo, WorkflowStatus } from '@civitai/client';
@@ -86,17 +81,11 @@ import type {
   VideoBlob,
 } from '~/shared/orchestrator/workflow-data';
 import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
-import { formatDownloadEta } from '~/components/ResourceLoad/download-eta';
-import { trpc } from '~/utils/trpc';
-import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
-import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import {
-  DownloadLanesExplainer,
-  downloadLaneLabel,
-  downloadQueueHref,
-} from '~/components/ResourceLoad/download-lanes';
-import { parseAIRSafe } from '~/shared/utils/air';
-import type { DownloadPreparation } from '~/shared/orchestrator/download-preparation';
+  DownloadBoostPanel,
+  useWorkflowDownloads,
+} from '~/components/ImageGeneration/DownloadBoostPanel';
+import type { DownloadRow } from '~/components/ImageGeneration/download-status';
 import { getModelUrl } from '~/utils/string-helpers';
 import type { Model3DViewableVariant } from '~/components/Model3D/Viewer/Model3DVariantViewer';
 import {
@@ -312,7 +301,9 @@ export function QueueItem({
   const version = params.version as string | undefined;
 
   const queuePosition = request.steps.find((s) => s.queuePosition)?.queuePosition;
-  const preparation = request.steps.find((s) => s.preparation)?.preparation;
+  const downloads = useWorkflowDownloads({ request, enabled: pending && inView });
+  const waitingOnDownloads = pending && downloads.rows.length > 0;
+  const downloadsByVersion = new Map(downloads.rows.map((x) => [x.resource.id, x.row]));
   const stepDisplay = workflowDefinition?.stepDisplay ?? 'inline';
 
   return (
@@ -461,10 +452,16 @@ export function QueueItem({
             {resources.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {resources.map((resource) => (
-                  <ResourceRow key={resource.id} resource={resource} />
+                  <ResourceRow
+                    key={resource.id}
+                    resource={resource}
+                    download={downloadsByVersion.get(resource.id)}
+                  />
                 ))}
               </div>
             )}
+
+            {waitingOnDownloads && <DownloadBoostPanel request={request} downloads={downloads} />}
 
             {stepDisplay === 'inline' && (
               <WorkflowStatusAlert status={status} failureReason={failureReason} />
@@ -488,7 +485,7 @@ export function QueueItem({
                         pending={pending}
                         processing={processing}
                         queuePosition={queuePosition}
-                        preparation={preparation}
+                        waitingOnDownloads={waitingOnDownloads}
                         markerTags={markerTags}
                       />
                     </div>
@@ -502,7 +499,7 @@ export function QueueItem({
                 pending={pending}
                 processing={processing}
                 queuePosition={queuePosition}
-                preparation={preparation}
+                waitingOnDownloads={waitingOnDownloads}
                 markerTags={markerTags}
               />
             )}
@@ -524,7 +521,13 @@ export function QueueItem({
   );
 }
 
-function ResourceRow({ resource }: { resource: GenerationResource }) {
+function ResourceRow({
+  resource,
+  download,
+}: {
+  resource: GenerationResource;
+  download?: DownloadRow;
+}) {
   const { unstableResources } = useGenerationConfig();
   const { model, id, name, epochDetails } = resource;
   const unstable = unstableResources?.includes(id);
@@ -540,18 +543,29 @@ function ResourceRow({ resource }: { resource: GenerationResource }) {
         href={getModelUrl({ modelId: model.id, modelName: model.name, modelVersionId: id })}
         onClick={() => generationGraphPanel.close()}
         leftSection={
-          unstable ? (
+          download ? (
+            <Loader size={10} color="yellow" />
+          ) : unstable ? (
             <Tooltip label="Unstable resource">
               <IconAlertTriangleFilled size={14} className="text-yellow-500" />
             </Tooltip>
           ) : undefined
         }
-        color={unstable ? 'yellow' : undefined}
+        color={unstable || download ? 'yellow' : undefined}
         className="min-w-0 flex-1"
         classNames={{ label: 'truncate' }}
       >
         {truncatedModelName} - {name}
         {epochDetails?.epochNumber && ` #${epochDetails.epochNumber}`}
+        {!!download?.sizeBytes && (
+          <Text span size="xs" c="dimmed" ml={6} fw={500}>
+            {download.progress != null
+              ? `${formatBytes(download.sizeBytes * download.progress)} / ${formatBytes(
+                  download.sizeBytes
+                )}`
+              : formatBytes(download.sizeBytes)}
+          </Text>
+        )}
       </Button>
       <ButtonTooltip {...tooltipProps} label="Generate with this resource">
         <Button
@@ -585,7 +599,7 @@ function StepOutputs({
   pending,
   processing,
   queuePosition,
-  preparation,
+  waitingOnDownloads,
   markerTags,
 }: {
   step: StepData | null;
@@ -594,7 +608,8 @@ function StepOutputs({
   pending: boolean;
   processing: boolean;
   queuePosition?: WorkflowData['steps'][number]['queuePosition'];
-  preparation?: DownloadPreparation;
+  /** The download panel stands in for the pending tile. */
+  waitingOnDownloads?: boolean;
   markerTags?: string[];
 }) {
   const images = step ? step.output : request.steps.flatMap((s) => s.output);
@@ -632,7 +647,7 @@ function StepOutputs({
           workflowId={request.id}
           transactions={request.transactions}
         />
-        {(pending || processing) && (
+        {(processing || (pending && !waitingOnDownloads)) && (
           <TwCard
             className="items-center justify-center border"
             style={{ aspectRatio: images[0]?.aspect ?? 1 }}
@@ -645,11 +660,7 @@ function StepOutputs({
                 </Text>
               </>
             )}
-            {pending && preparation && (
-              <DownloadBoost request={request} preparation={preparation} />
-            )}
             {pending &&
-              !preparation &&
               (queuePosition ? (
                 <>
                   {queuePosition.support === 'unavailable' && (
@@ -678,184 +689,6 @@ function StepOutputs({
         )}
       </div>
     </>
-  );
-}
-
-function DownloadBoost({
-  request,
-  preparation,
-}: {
-  request: WorkflowData;
-  preparation: DownloadPreparation;
-}) {
-  const boosted = request.downloadPriority === 'high' || preparation.lane === 'high';
-  const canBoost = !boosted && preparation.boostedEtaSeconds != null;
-  const [confirmOpened, setConfirmOpened] = useState(false);
-  // Priced only when the user asks: each price is a whatif PUT, and the queue can hold many cards.
-  const { data: boostCost, isLoading: costLoading } = trpc.orchestrator.getBoostCost.useQuery(
-    { workflowId: request.id },
-    { enabled: confirmOpened, staleTime: 0 }
-  );
-  const { mutate, isPending } = useBoostWorkflow();
-  const { conditionalPerformTransaction } = useBuzzTransaction({
-    message: (requiredBalance) =>
-      `You don't have enough Buzz to boost this download. Required Buzz: ${numberWithCommas(
-        requiredBalance
-      )}. Buy more Buzz to perform this action.`,
-    performTransactionOnPurchase: true,
-  });
-
-  const cost = boostCost?.cost;
-  const resources = preparation.resources.map((resource) => ({
-    ...resource,
-    air: parseAIRSafe(resource.resource),
-  }));
-  const versionIds = resources.flatMap((resource) => resource.air?.version ?? []);
-
-  function handleConfirm() {
-    if (isPending || !cost) return;
-    setConfirmOpened(false);
-    // `expectedCost` is what the user just agreed to; the server refuses if it has moved.
-    conditionalPerformTransaction(cost, () =>
-      mutate(
-        { workflowId: request.id, expectedCost: cost },
-        {
-          onSuccess: (result) => {
-            if (result.boosted) return;
-            if (result.cost == null) {
-              showErrorNotification({
-                title: 'Nothing left to boost',
-                error: new Error('This generation is no longer waiting on a download.'),
-              });
-              return;
-            }
-            setConfirmOpened(true);
-            showWarningNotification({
-              title: 'The boost price changed',
-              message: `It now costs ${numberWithCommas(
-                result.cost
-              )} Buzz. Confirm again to boost.`,
-            });
-          },
-        }
-      )
-    );
-  }
-
-  return (
-    <div className="flex flex-col items-center gap-1 px-2 text-center">
-      <Text size="xs" c="dimmed">
-        {preparation.queuePosition === 0
-          ? `Downloading model${
-              preparation.progress != null ? ` · ${Math.round(preparation.progress * 100)}%` : ''
-            }`
-          : `Model download queued · ${preparation.queuePosition} ahead`}
-      </Text>
-      {resources.length > 1 && (
-        <Stack gap={0}>
-          {resources.map((resource) => (
-            <Text key={resource.resource} size="xs" c="dimmed">
-              {resource.air?.type ?? 'file'} · {formatBytes(resource.sizeBytes)} ·{' '}
-              {resource.progress != null
-                ? `${Math.round(resource.progress * 100)}%`
-                : resource.queuePosition
-                ? `${resource.queuePosition} ahead`
-                : 'next'}
-            </Text>
-          ))}
-        </Stack>
-      )}
-      {preparation.etaSeconds != null && (
-        <Text size="xs" c="dimmed">
-          Ready in {formatDownloadEta(preparation.etaSeconds)}
-        </Text>
-      )}
-      <Group gap={2} justify="center" wrap="nowrap">
-        <Text size="xs" c="dimmed">
-          {downloadLaneLabel(preparation.lane)} lane
-        </Text>
-        <InfoPopover
-          size="xs"
-          iconProps={{ size: 14 }}
-          withinPortal
-          zIndex={imageGenerationDrawerZIndex + 1}
-        >
-          <DownloadLanesExplainer />
-        </InfoPopover>
-      </Group>
-      <Anchor component={Link} href={downloadQueueHref(versionIds)} size="xs" target="_blank">
-        View download queue
-      </Anchor>
-      {boosted ? (
-        <Badge color="yellow" size="sm" leftSection={<IconBolt size={12} />}>
-          Boosted
-        </Badge>
-      ) : canBoost ? (
-        <>
-          <Text size="xs" c="dimmed">
-            Boosted: {formatDownloadEta(preparation.boostedEtaSeconds!)}
-          </Text>
-          <Popover
-            opened={confirmOpened}
-            onChange={setConfirmOpened}
-            withinPortal
-            withArrow
-            width={260}
-            zIndex={imageGenerationDrawerZIndex + 1}
-          >
-            <Popover.Target>
-              <Button
-                size="compact-xs"
-                color="yellow"
-                leftSection={<IconBolt size={14} />}
-                loading={isPending}
-                onClick={() => setConfirmOpened((o) => !o)}
-              >
-                Boost
-              </Button>
-            </Popover.Target>
-            <Popover.Dropdown>
-              <Stack gap="xs">
-                <Text size="sm" fw={500}>
-                  Boost this download?
-                </Text>
-                <Text size="xs" c="dimmed">
-                  Moves this generation&apos;s downloads to the priority lane. Ready in{' '}
-                  {formatDownloadEta(preparation.boostedEtaSeconds!)}
-                  {preparation.etaSeconds != null &&
-                    ` instead of ${formatDownloadEta(preparation.etaSeconds)}`}
-                  .
-                </Text>
-                {!costLoading && cost == null && (
-                  <Text size="xs" c="red">
-                    Couldn&apos;t get a price for this boost. Try again in a moment.
-                  </Text>
-                )}
-                <Group gap={8} justify="flex-end">
-                  <Button
-                    variant="default"
-                    size="compact-sm"
-                    onClick={() => setConfirmOpened(false)}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    size="compact-sm"
-                    color="yellow"
-                    leftSection={<IconBolt size={14} />}
-                    loading={costLoading}
-                    disabled={!cost}
-                    onClick={handleConfirm}
-                  >
-                    {cost ? `Boost · ${numberWithCommas(cost)} Buzz` : 'Boost'}
-                  </Button>
-                </Group>
-              </Stack>
-            </Popover.Dropdown>
-          </Popover>
-        </>
-      ) : null}
-    </div>
   );
 }
 

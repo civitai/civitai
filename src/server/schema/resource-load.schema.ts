@@ -23,6 +23,7 @@ export const resourceAvailabilitySchema = z.discriminatedUnion('status', [
     etaSeconds: z.number().nullish(),
     lane: z.string().nullish(),
     bytesPerSecond: z.number().nullish(),
+    rateLimitBytesPerSecond: z.number().nullish(),
   }),
   z.object({
     status: z.literal('queued'),
@@ -30,6 +31,7 @@ export const resourceAvailabilitySchema = z.discriminatedUnion('status', [
     lane: z.string(),
     etaSeconds: z.number().nullish(),
     boostedEtaSeconds: z.number().nullish(),
+    rateLimitBytesPerSecond: z.number().nullish(),
   }),
   z.object({ status: z.literal('unavailable'), queuePosition: z.number().nullish() }),
   z.object({ status: z.literal('unsupported') }),
@@ -77,6 +79,11 @@ export const getResourceLoadStateSchema = z.object({
 /** One page of resource-picker results. */
 export const getResourceResidencySchema = z.object({
   modelVersionIds: z.array(z.number()).min(1).max(50),
+});
+
+/** One queue card's models. Uncached, so the cap is small. */
+export const getDownloadStatusSchema = z.object({
+  modelVersionIds: z.array(z.number()).min(1).max(10),
 });
 
 /** Capped well under the orchestrator's own max: each item costs it two grain calls. */

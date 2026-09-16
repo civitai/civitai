@@ -42,26 +42,39 @@ orchestrator source at `9306e7333`.
 
 ## What is built
 
-**Queue card** (`QueueItem.tsx` → `DownloadBoost`), while a pending step reports `preparation`:
-download queue position or progress, approximate ETA and boosted ETA, the lane with an explainer, one
-line per file when several are pending, a link to the download queue, and a **Boost** button whose
-confirmation prices the boost on open — listing the queue prices nothing. A **Boosted** badge
-replaces it afterwards.
+The UI follows Justin's download-boost mockup. Lanes are shown as **Standard** (`low`), **Priority**
+(`normal`, members) and **Express** (`high`, boosted) (`download-lanes.tsx`). The speed shown is the
+orchestrator's `rateLimitBytesPerSecond` (beta.107) for the viewer's own lane — a per-download cap,
+`null` when uncapped, which is what Express is. Other lanes' caps are not reported, so they show none.
+One lanes explainer (`DownloadLanesInfo`) opens from every boost control.
+
+**Queue card** (`DownloadBoostPanel`). The card reads one source: its models' live status,
+`resourceLoad.getDownloadStatus` — uncached, ≤10 of the card's own versions, 60/min per user. A pending
+card on screen asks once, then every 10s while any model is not loaded; the step's `preparation` and
+status are not consulted, because a new card comes from the submit reply before anything is queued and
+step events can lag (and never reach a local dev server). The cached `getResidency` is too slow here: it
+can hold a pre-queue `unavailable` for its whole 30s TTL.
+
+While a model is not loaded, the pending image tile gives way to a panel: the lane, position (from 1),
+lane speed and ETA of the slowest download, then each unloaded model with its position and ETA,
+progress, or "waiting to start". Its resource chips spin with their size. When a boosted ETA is
+reported, the panel adds the "Skip the free lane" pitch, a "Normally → Boosted" comparison and a
+**Boost this download** Buzz button with its price, fetched when the panel renders (`getBoostCost`, 30s
+stale), so **each boostable card costs one whatIf PUT**. For a boost bought on this page, the panel keeps
+the ETA it would have been. The rules are pure functions in `download-status.ts`. There is no site-wide
+download queue page.
 
 **Generator — both forms** (`generation_v2` data-graph and form-graph): when the whatIf reports
-downloads, `DownloadReadyAlert` shows queue position and ETA plus a **pre-boost switch**. The switch
-re-runs the whatIf at `downloadPriority: "high"` (which is where its price comes from) and the submit
-then carries the boost. It is pinned to the form revision, so it never carries over to a selection the
-user has not re-priced, and it clears after a submit (`usePreBoost`).
+downloads, `DownloadReadyAlert` shows the resource count and size, the "Normally → Boosted"
+comparison, and a **Boost download** switch with its price. While downloads are pending the whatIf is
+also run at `downloadPriority: "high"`, so the price shows before the switch is on and flipping it
+swaps to the already-priced response. The switch is pinned to the form revision, so it never carries
+over to a selection the user has not re-priced, and it clears after a submit (`usePreBoostWhatIf`).
 
 **Load indicators**, checkpoints only: inside the model page's **Create** button, on the selected
 checkpoint in both forms, and on checkpoint results in the resource picker. Backed by
 `resourceLoad.getResidency` — signed-in, ≤50 ids, rate-limited, cached 30s per version, and batched
 one request per picker page.
-
-**Public download queue** at `/generate/downloads`: what is downloading and queued with size, lane and
-ETA, the lane explainer, and the viewer's own versions highlighted via `?versions=`. Cached 10s and
-edge-cached. A row whose model is not public keeps its place but loses its name.
 
 **Moderator tool** at `/moderator/resource-load` (flag `resourceLoad`): the explicit purchase path —
 `resourceLoad.estimate` / `submit`, the per-tier caps, the `resource-load:update` signal and the
@@ -72,7 +85,7 @@ plus the raw-SQL queries), which is what lets a normal user pick a checkpoint th
 
 **Money-path properties worth keeping true:**
 
-- The boost is charged only at the price the user confirmed: `boostWorkflow` re-prices first and
+- The boost is charged only at the price on the button: `boostWorkflow` re-prices first and
   refuses, charging nothing, if the price moved or nothing is left to boost.
 - After the charge, a failed read reports the boost as done rather than as an error, so a retry
   cannot pay twice.
@@ -88,7 +101,10 @@ Read `node_modules/@civitai/orchestration-client/dist/generated/types.gen.d.ts` 
 this section once it ages. The app's own orchestrator calls still go through the older
 `@civitai/client`, which predates `downloadPriority` and `preparation` — hence the casts around them.
 
-### Step preparation — what the card and the alert render
+### Step preparation — what the generator alert renders
+
+The queue card no longer reads it (see **Queue card** above); the whatIf alert, the pre-boost check and
+the moderator page still do.
 
 From beta.106, `WorkflowStep.preparation` is `WorkflowStepPreparationResource[] | null` — every
 resource the step waits on, **gating resource first**, each with `sizeBytes`, `lane`,
@@ -186,7 +202,8 @@ rule instead of restating it. The numbers, the audit and the readers list are in
 
 Everything here is the deploying engineer's, before this branch merges.
 
-- [ ] **Confirm the production orchestrator is on beta.106.** The site reads only the resource-list
+- [ ] **Confirm the production orchestrator is on beta.106 or later** (the site is built against
+      beta.107, whose `rateLimitBytesPerSecond` drives the lane speed). The site reads only the resource-list
       `preparation`; an older orchestrator's summary object reads as nothing to download, so no
       download panel and no Boost.
       *Closes when:* a preparing step's `preparation` from the production orchestrator is an array.
@@ -195,9 +212,9 @@ Everything here is the deploying engineer's, before this branch merges.
 - [ ] **Run `comment-review` over the diff and `docs-drift-review` over the commits.** The two lanes
       with no automated gate.
 - [ ] **Manual pass in a browser**, none of which has been exercised: the queue card's download panel
-      and priced confirmation (including in the narrow sidebar layout), the pre-submit alert and
-      pre-boost switch in **both** generator forms, the Create-button and picker indicators, and
-      `/generate/downloads`.
+      with its per-model rows and Boost button (including in the narrow sidebar layout), the lanes
+      explainer, the pre-submit alert and Boost switch in **both** generator forms, compared against
+      the mockup, and the Create-button and picker indicators.
 - [ ] **Boost a real queued workflow end to end.**
       *Closes when:* the workflow reports `downloadPriority: "high"` and `cost.fixed.downloadPriority`
       was charged.

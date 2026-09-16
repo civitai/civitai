@@ -10,6 +10,8 @@ const preparationResourceSchema = z.object({
   bytesPerSecond: z.number().nullish(),
   etaSeconds: z.number().nullish(),
   boostedEtaSeconds: z.number().nullish(),
+  /** The lane's per-stream cap. Null when uncapped, which is what boosting buys. */
+  rateLimitBytesPerSecond: z.number().nullish(),
 });
 
 /** `WorkflowStep.preparation`: every resource the step waits on, gating resource first. */
@@ -28,6 +30,7 @@ export type DownloadPreparation = {
   lane: string;
   /** What `etaSeconds` would become in the high lane. Null once already high. */
   boostedEtaSeconds?: number | null;
+  rateLimitBytesPerSecond?: number | null;
   resources: PreparationResource[];
 };
 
@@ -54,6 +57,7 @@ export function summarizePreparation(
     etaSeconds: maxKnown(resources.map((r) => r.etaSeconds)),
     lane: gating.lane,
     boostedEtaSeconds: maxKnown(resources.map((r) => r.boostedEtaSeconds)),
+    rateLimitBytesPerSecond: gating.rateLimitBytesPerSecond,
     resources,
   };
 }

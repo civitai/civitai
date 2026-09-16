@@ -27,7 +27,6 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import {
   estimateResourceLoad,
-  getPublicResourceLoadQueue,
   getResourceLoadQueue,
   getResourceLoadState,
   getResourceResidency,
@@ -137,7 +136,7 @@ describe('getResourceResidency', () => {
 
     const result = await getResourceResidency([501, 501]);
 
-    expect(result).toEqual([{ modelVersionId: 501, availability: queued }]);
+    expect(result).toEqual([{ modelVersionId: 501, availability: queued, size: 1024 }]);
   });
 
   // The router leaves this open to every signed-in viewer on the strength of the cache, so the
@@ -167,76 +166,6 @@ describe('getResourceResidency', () => {
     expect(result).toEqual([
       { modelVersionId: 501, availability: { status: 'available', workers: 2 } },
     ]);
-  });
-});
-
-describe('getPublicResourceLoadQueue', () => {
-  const publicVersion = {
-    id: 501,
-    name: 'v1',
-    baseModel: 'SDXL 1.0',
-    status: 'Published',
-    availability: 'Public',
-    model: {
-      id: 42,
-      name: 'Public Model',
-      status: 'Published',
-      availability: 'Public',
-      // `nsfwLevel`, never `Model.nsfw`: a model with the box unticked still carries the level its
-      // images earned, and naming it here would put a mature name on an anonymous page.
-      nsfwLevel: 1,
-      mode: null,
-      poi: false,
-    },
-  };
-  /** Each row varies ONE condition, and carries a distinct name the leak check can see. */
-  const hidden = [
-    { id: 502, name: 'Private Model', over: { model: { availability: 'Private' } } },
-    { id: 503, name: 'Mature Model', over: { model: { nsfwLevel: 4 } } },
-    { id: 504, name: 'Unscanned Model', over: { model: { nsfwLevel: 0 } } },
-    { id: 505, name: 'Taken Down Model', over: { model: { mode: 'TakenDown' } } },
-    { id: 506, name: 'Real Person Model', over: { model: { poi: true } } },
-    { id: 507, name: 'Unpublished Model', over: { model: { status: 'Draft' } } },
-    { id: 508, name: 'Draft Version Model', over: { status: 'Draft' } },
-    { id: 509, name: 'Private Version Model', over: { availability: 'Private' } },
-  ];
-
-  it('keeps every row in line but names only models the public may see', async () => {
-    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
-      publicVersion,
-      ...hidden.map(({ id, name, over }) => ({
-        ...publicVersion,
-        ...over,
-        id,
-        model: { ...publicVersion.model, name, ...(over.model ?? {}) },
-      })),
-    ]);
-    const queued = { status: 'queued', queuePosition: 1, lane: 'low' };
-    const ids = [501, ...hidden.map((x) => x.id)];
-    queryResources.mockResolvedValue({
-      data: {
-        items: [
-          ...ids.map((id) => ({
-            air: `urn:air:sdxl:checkpoint:civitai:42@${id}`,
-            size: 1,
-            availability: queued,
-          })),
-          { air: 'not-an-air', size: 1, availability: queued },
-        ],
-      },
-    });
-
-    const { items } = await getPublicResourceLoadQueue();
-
-    expect(items).toHaveLength(ids.length + 1);
-    expect(items[0].model).toMatchObject({ name: 'Public Model', versionId: 501 });
-    expect(items.slice(1).map((item) => item.model)).toEqual(
-      ids
-        .slice(1)
-        .map(() => null)
-        .concat(null)
-    );
-    for (const { name } of hidden) expect(JSON.stringify(items)).not.toContain(name);
   });
 });
 

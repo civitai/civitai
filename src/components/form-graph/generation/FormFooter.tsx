@@ -881,7 +881,7 @@ export function FormFooter({
         ...(sourceMetadataMap ? { sourceMetadataMap } : {}),
         externalId,
         acknowledgedSoftBlock,
-        ...preBoostSubmitFields(preBoost, whatIfData),
+        ...preBoostSubmitFields(preBoost),
       });
 
       if (preBoost) setPreBoost(false);

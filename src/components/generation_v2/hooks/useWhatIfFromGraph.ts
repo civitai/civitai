@@ -11,7 +11,7 @@
 
 import { isEqual, omit } from 'lodash-es';
 import { useEffect, useMemo, useReducer, useRef } from 'react';
-import { usePreBoost } from '~/components/generation_v2/hooks/usePreBoost';
+import { usePreBoostWhatIf } from '~/components/generation_v2/hooks/usePreBoost';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { NodeError } from '~/libs/data-graph/data-graph';
 import { useGraph } from '~/libs/data-graph/react';
@@ -19,7 +19,6 @@ import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
 import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
 import { applyWhatIfFingerprints } from '~/shared/data-graph/generation/whatif-fingerprints';
 import { defaultWorkflowCost } from '~/shared/orchestrator/workflow-data';
-import { trpc } from '~/utils/trpc';
 import { useResourceDataContext } from '../inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '../utils';
 import { useImagesUploadingOrVerifying } from '~/components/Generation/Input/SourceImageUploadMultiple';
@@ -134,16 +133,10 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   const workflowConfig = workflowConfigByKey.get(snapshot?.workflow as string);
   const isNoSubmit = workflowConfig?.noSubmit === true;
 
-  const { preBoost, setPreBoost, whatIfPayload } = usePreBoost(revision, queryPayload);
-
-  const queryResult = trpc.orchestrator.whatIfFromGraph.useQuery(whatIfPayload as any, {
-    enabled:
-      enabled &&
-      !isNoSubmit &&
-      !!currentUser &&
-      !!queryPayload &&
-      !resourcesLoading &&
-      !imagesPending,
+  const { queryResult, preBoost, setPreBoost, download } = usePreBoostWhatIf({
+    revision,
+    queryPayload,
+    enabled: enabled && !isNoSubmit && !!currentUser && !resourcesLoading && !imagesPending,
   });
 
   const data = useMemo(
@@ -169,5 +162,6 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
     validationErrors,
     preBoost,
     setPreBoost,
+    download,
   };
 }
