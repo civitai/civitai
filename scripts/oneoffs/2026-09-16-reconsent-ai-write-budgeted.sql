@@ -43,10 +43,31 @@
 -- WHAT IT DOES, AND WHAT IT DOES NOT
 -- ============================================================================
 -- `getGrantedScopes` and `getConsentBuzzBudget` both short-circuit on
--- `!row || row.revokedAt`, so a revoked row already yields an EMPTY grant set:
--- the user's token carries no `ai:write:budgeted` and reaches no spend path.
--- That read path is live and fail-closed today; only a writer was missing, and
--- this file is that writer, once.
+-- `!row || row.revokedAt`, so a revoked row yields an EMPTY grant set at the
+-- next MINT: the token issued after this runs carries no `ai:write:budgeted`.
+--
+-- 🔴 "FAIL-CLOSED" IS NOT TRUE OF ALREADY-MINTED TOKENS, AND THE GAP OPENS
+-- WIDER BEFORE IT CLOSES. An earlier draft of this header claimed the revoke
+-- immediately "reaches no spend path". It does not:
+--
+--   1. Block tokens are JWTs with NO revocation list and NO jti check
+--      (`block-token.service.ts`). Default lifetime is 900s (300s for
+--      settings-scoped, 4h for dev). So for up to ~15 MINUTES after this runs,
+--      a token minted just before it still carries the scope.
+--   2. 🔴 WORSE, AND COUNTER-INTUITIVE: the revoke removes the user's OWN CAP
+--      FIRST. `getConsentBuzzBudget` returns null for a revoked row, and
+--      `reserveBlockBuzzSpendForClaims` treats a null budget as "no consent
+--      reservation" — it falls back to the PLATFORM ceiling
+--      (`BLOCK_BUZZ_CAP_PER_DAY`) alone. A user who had set, say, 500 Buzz/day
+--      on an app has that lifted for the remainder of their token's life.
+--
+-- Concretely: user U holds a live token and a 500/day budget on app A. You run
+-- this at T. Between T and T+15min, A can spend U's Buzz against the platform
+-- allowance rather than 500, and nothing errors.
+--
+-- This is bounded and small, and it is the accepted cost of having no revoke
+-- path — but run this when spend is quiet rather than at peak, and do not
+-- describe the window as closed the moment the UPDATE commits.
 --
 -- It does NOT build a user-facing withdraw affordance. That is a separate,
 -- still-open piece of work with its own design questions (JWT invalidation,
@@ -90,6 +111,17 @@ WHERE 'ai:write:budgeted' = ANY (granted_scopes)
 --   * only grants that are still live — `revoked_at IS NULL` keeps this
 --     re-runnable and stops a second run from overwriting the first run's
 --     timestamps with a later one.
+--
+-- ⚠️ THE SCOPING IS NARROW ACROSS ROWS, NOT WITHIN ONE. `revoked_at` is a ROW
+-- column and `getGrantedScopes` returns an empty Set for a revoked row, so any
+-- OTHER scopes granted on the same row — `user:read:self`, `models:read:self`,
+-- `apps:storage:*` — go with it until the user re-consents. Expect support
+-- reports of an app "forgetting" something unrelated to Buzz.
+--
+-- Re-granting restores them cleanly: `recordScopeGrant` MERGES `granted_scopes`
+-- and clears `revoked_at`. A stored per-day budget also survives, because the
+-- consent modal omits the budget key when the spend switch is off rather than
+-- writing a zero.
 -- ---------------------------------------------------------------------------
 UPDATE app_user_scope_grants
 SET revoked_at = now()
@@ -99,20 +131,39 @@ WHERE 'ai:write:budgeted' = ANY (granted_scopes)
 -- ---------------------------------------------------------------------------
 -- STEP 3 — VERIFY BEFORE COMMITTING.
 --
--- `still_live` MUST be 0. `revoked_now` must equal the `live_grants_to_revoke`
--- you read in step 1 (plus anything already revoked by an earlier run, which is
--- why it is reported separately rather than compared blind).
+-- `still_live` MUST be 0.
 --
--- If `still_live` is not 0, ROLLBACK and find out why before retrying.
+-- `revoked_by_this_run` is what to compare against `live_grants_to_revoke` from
+-- step 1 — they must be EQUAL. It is reported separately from
+-- `revoked_before_this_run` precisely so a prior run's rows do not inflate the
+-- number you are checking. (An earlier draft told you to compare a column named
+-- `revoked_now`, which this query never emitted, against a conflated total. It
+-- was uncheckable as written.)
+--
+-- The realistic way `still_live` is non-zero: a new grant was committed between
+-- STEP 2 and here. That is exactly what this gate is for.
 -- ---------------------------------------------------------------------------
+-- `now()` is transaction_timestamp() and is CONSTANT across this transaction,
+-- so it is the same value STEP 2 wrote. (`statement_timestamp()` would NOT be —
+-- it advances per statement and would report 0 for this run's own rows.)
 SELECT
-  count(*) FILTER (WHERE revoked_at IS NULL)     AS still_live,
-  count(*) FILTER (WHERE revoked_at IS NOT NULL) AS revoked_total
+  count(*) FILTER (WHERE revoked_at IS NULL)                  AS still_live,
+  count(*) FILTER (WHERE revoked_at = now())                  AS revoked_by_this_run,
+  count(*) FILTER (WHERE revoked_at IS NOT NULL
+                     AND revoked_at <> now())                 AS revoked_before_this_run
 FROM app_user_scope_grants
 WHERE 'ai:write:budgeted' = ANY (granted_scopes);
 
--- Replace with ROLLBACK if step 3 did not read still_live = 0.
-COMMIT;
+-- 🔴 DO NOT RUN THIS FILE WITH `psql -f`. It is written to be stepped through.
+-- Under `-f` every statement executes and the COMMIT below lands BEFORE any
+-- human has read STEP 3 — which makes the verification gate decorative.
+--
+-- Run it interactively: paste STEP 1, read the count; paste STEP 2; paste
+-- STEP 3; and only then type COMMIT (or ROLLBACK) yourself. The COMMIT is left
+-- here, commented, as documentation of the intended end state rather than as an
+-- executable line.
+--
+-- COMMIT;   -- ← type this by hand, only after STEP 3 reads still_live = 0
 
 -- ============================================================================
 -- ROLLBACK, if the widening is reverted

@@ -5,14 +5,16 @@ import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.
  * The `ai:write:budgeted` consent sentence is a PROMISE a user agreed to, not a
  * UI label. It was rewritten when the scope's meaning widened under the
  * no-allowlist direction: the per-call cap half stayed true, "generations" did
- * not, because the scope now reaches hosted LLM inference and model training.
+ * not, because the scope now reaches hosted LLM inference (`chatCompletion`).
  *
  * 🔴 WHY PIN THE WHOLE STRING AND NOT A KEYWORD. A guard on words is walkable by
  * rewording — someone could satisfy "mentions training" while dropping the cap,
  * or restore the old sentence with a synonym. Pinning the exact string means a
  * cosmetic reword fails this test, and paying that is the point: the test exists
  * so the sentence cannot change without someone deciding that it should, and
- * asking whether the 15 live consent grants need re-taking again.
+ * asking whether the live consent grants need re-taking again. (Deliberately no
+ * count here: the SQL that revokes them opens with "do not take the population
+ * from any document" — it can only have grown.)
  *
  * If you are here because this test went red: changing this string does NOT
  * re-ask anybody. Consent is stored per (user, app) and the lookup never reads
@@ -22,7 +24,7 @@ import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.
  */
 describe('ai:write:budgeted consent copy', () => {
   const CURRENT =
-    "Run AI work that spends the viewer's Buzz, with a per-call cap — including generating images and video, and running language models";
+    "Run AI work that spends the viewer's Buzz, with a per-call cap — including generating images and running language models";
 
   const SUPERSEDED_2026_09_16 = 'Submit generations with a per-call Buzz cap';
 
@@ -45,25 +47,41 @@ describe('ai:write:budgeted consent copy', () => {
   });
 
   /**
-   * 🔴 A NEGATIVE GUARD, AND THE REASON IS THE WHOLE POINT OF THE RE-CONSENT.
+   * 🔴 A SPELLED GUARD, AND ITS NAME NOW SAYS SO — the previous version was
+   * titled "does NOT promise a capability that is not reachable yet" while
+   * checking exactly one word (`training`). That description claimed coverage of
+   * a CLASS and the body inspected a single member, and the gap it left was
+   * immediately occupied: the very next audit round found "and video" sitting in
+   * the sentence, unreachable for the same reason training was.
    *
-   * An earlier draft promised "training models". Training is ALLOWED by the
-   * denylist but is NOT REACHABLE: no wire arm accepts it, and
-   * `isBillingModeImplemented` accepts `'prepaidFixed'` only, so a
-   * variable-cost training step cannot even be registered.
+   * So this list is defence-in-depth against the specific capabilities we have
+   * already caught ourselves pre-promising. It is NOT a reachability check and
+   * cannot be one — a reword ("clip generation", "moving images") walks straight
+   * past it.
    *
-   * Promising it while re-consenting would BANK permission for a widening that
-   * has not shipped — and nothing would re-prompt when it does, because consent
-   * is stored per (user, app) and no lookup reads a version. That is the
-   * "silent scope escalation" `app_user_scope_grants` exists to prevent.
-   *
-   * If you are here because you made training reachable: good — change the
-   * sentence AND re-take the grants. Do not just delete this test.
+   * 🔴 THE REAL CONTROL IS THE WHOLE-STRING PIN ABOVE plus a human enumerating
+   * `blockWorkflowBodySchema`'s members before changing the sentence. If you are
+   * adding a capability here, do that enumeration; do not just extend this list
+   * and assume it protected you.
    */
-  it('does NOT promise a capability that is not reachable yet', () => {
+  const NOT_REACHABLE_TODAY = [
+    'training', // no implemented billing mode can carry a variable-cost step
+    'train ',
+    'video', // textToImage is bounded to BLOCK_IMAGE_WORKFLOW_TYPES
+    'audio',
+    'music',
+    'speech',
+    'voice',
+    '3d',
+  ];
+
+  it('does not name any capability we have previously caught ourselves pre-promising', () => {
     const copy = SCOPE_DESCRIPTIONS['ai:write:budgeted']!.toLowerCase();
-    expect(copy).not.toContain('training');
-    expect(copy).not.toContain('train ');
+    for (const term of NOT_REACHABLE_TODAY) {
+      expect(copy, `consent copy must not promise "${term.trim()}" — it is not reachable`).not.toContain(
+        term
+      );
+    }
   });
 
   it('still promises the per-call cap, which did not change', () => {

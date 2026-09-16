@@ -33,19 +33,39 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   // to the old sentence did not agree to this one.
   //
   // 🔴 THIS SENTENCE NAMES ONLY WHAT IS REACHABLE TODAY, AND THAT IS LOAD-BEARING.
-  // An earlier draft also promised "training models". Training is ALLOWED by the
-  // denylist, but it is not reachable: no wire arm accepts it, and
-  // `isBillingModeImplemented` accepts `'prepaidFixed'` ONLY, so a variable-cost
-  // training step cannot even be registered. Promising it here and re-consenting
-  // now would BANK permission for a widening that has not shipped — and when it
-  // does ship, nothing would re-prompt, because consent is stored per
-  // (user, app) and no lookup reads a version. That is precisely the "silent
-  // scope escalation" this table was created to prevent (see its migration
-  // header). Platform gap tracked separately.
+  // Promising a capability that has not shipped and re-consenting NOW would BANK
+  // the permission — and when it does ship, nothing re-prompts, because consent
+  // is stored per (user, app) and no lookup reads a version. That is precisely
+  // the "silent scope escalation" this table was created to prevent (see its
+  // migration header).
   //
-  // So: when a capability named here becomes reachable, that is fine. When a
-  // capability NOT named here becomes reachable, this sentence must change and
+  // 🔴 TWO CAPABILITIES HAVE ALREADY BEEN CUT FROM THIS SENTENCE FOR THAT
+  // REASON, IN SUCCESSIVE AUDIT ROUNDS — which is why the rule is written out
+  // rather than left as a judgement:
+  //
+  //   - "training models". ALLOWED by the denylist, NOT reachable:
+  //     `isBillingModeImplemented` accepts `'prepaidFixed'` ONLY, so a
+  //     variable-cost training step cannot even be registered.
+  //   - "and video". Also not reachable: `blockWorkflowBodySchema` has three
+  //     members, `textToImage` is bounded to `BLOCK_IMAGE_WORKFLOW_TYPES`
+  //     (txt2img / img2img / img2img:edit), both registered recipes are image,
+  //     and both registered steps are `convertImage` / `chatCompletion`.
+  //     `workflow.schema.ts` says a non-image media class is "a later phase".
+  //
+  // 🔴 THE RULE, because "name only what is reachable" was applied TWICE and a
+  // second unreachable capability still shipped in the same sentence: reach for
+  // the WIRE, not for the denylist. A `$type` being allowed says nothing about
+  // whether any arm accepts it. Enumerate `blockWorkflowBodySchema`'s members,
+  // then what each one actually admits, and write down only that.
+  //
+  // When a capability named here becomes reachable, that is fine. When a
+  // capability NOT named here becomes reachable, this sentence must change AND
   // the grants must be re-taken again. Do not pre-load it.
+  //
+  // ⚠️ An inline `customComfy` graph is the one arm whose reach is not bounded
+  // by an enum in this repo. If it turns out a stock-node graph can produce
+  // video or audio, that is a capability this sentence does not name — decide
+  // and write it down rather than discovering it after the grants are re-taken.
   //
   // 🔴 CHANGING THIS STRING DOES NOT RE-ASK ANYBODY. Consent is stored per
   // (user, app) in `app_user_scope_grants` and the lookup does NOT read the
@@ -56,7 +76,7 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   // re-consent to the OLD sentence and the exercise is void while both halves
   // individually look done.
   'ai:write:budgeted':
-    "Run AI work that spends the viewer's Buzz, with a per-call cap — including generating images and video, and running language models",
+    "Run AI work that spends the viewer's Buzz, with a per-call cap — including generating images and running language models",
   'social:tip:self': 'Post tips on behalf of the viewer',
   'apps:storage:read': "Read this app's private per-install data store",
   'apps:storage:write': "Write to this app's private per-install data store",

@@ -87,13 +87,45 @@ describe('orchestrator denylist — the predicate', () => {
   });
 
   /**
+   * 🔴 THE WHOLE SET, PINNED — because deleting most entries was a SURVIVING
+   * mutant. Measured: removing each of the 12 in turn, only `modelPickleScan`,
+   * `xGuardModeration` and `modelHash` killed the suite; the other NINE —
+   * `modelClamScan`, `imageScanning`, `shieldstralModeration`, `mediaHash`,
+   * `modelParseMetadata`, `comfyNodepackSnapshot`, `qwenImageBench`,
+   * `webScrape`, `webSearch` — survived fully green, because the named tests
+   * only exercise three of them and nothing else in the repo pins membership.
+   * A careless edit could silently un-deny both web-egress types, two scanners
+   * and a classifier with CI green.
+   *
+   * This assertion is what makes every entry's deletion observable. It is
+   * deliberately the whole sorted list and not a count: a count is satisfied by
+   * swapping one entry for another.
+   */
+  it('denies exactly this set — every entry pinned', () => {
+    expect([...PLATFORM_INTERNAL_STEP_TYPES].sort()).toEqual([
+      'comfyNodepackSnapshot',
+      'imageScanning',
+      'mediaHash',
+      'modelClamScan',
+      'modelHash',
+      'modelParseMetadata',
+      'modelPickleScan',
+      'qwenImageBench',
+      'shieldstralModeration',
+      'webScrape',
+      'webSearch',
+      'xGuardModeration',
+    ]);
+  });
+
+  /**
    * 🔴 THE EXPORTED SET IS GENUINELY IMMUTABLE — the assertion that a previous
    * draft's `Object.freeze(new Set([...]))` could not make.
    *
    * Measured: `Set.prototype.add`/`delete` write internal slots, not properties,
    * so `Object.freeze` was inert and `.delete('xGuardModeration')` SUCCEEDED on
-   * the frozen Set, silently un-denying it. A frozen ARRAY does reject
-   * mutation, and the lookup Set is module-private.
+   * the frozen Set, silently un-denying it. A frozen ARRAY does reject mutation,
+   * and the lookup Set is module-private.
    */
   it('the exported denylist cannot be mutated to un-deny a type', () => {
     expect(Object.isFrozen(PLATFORM_INTERNAL_STEP_TYPES)).toBe(true);
@@ -134,7 +166,7 @@ describe('orchestrator denylist — the live seam: the step registry', () => {
    *
    * A plain `toThrow()` here would be satisfied by clause (9)'s
    * native-extraction guard or any other clause, i.e. green for the wrong
-   * reason and still green with (9a) deleted.
+   * reason and still green with (0a) deleted.
    */
   it('assertStepInvariants rejects a denylisted orchestratorType with the denylist error', () => {
     const [id, real] = listRegisteredSteps()[0]!;
