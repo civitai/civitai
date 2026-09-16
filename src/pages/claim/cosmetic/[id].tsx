@@ -183,6 +183,7 @@ function ClaimCosmeticPageInner({ id }: { id: number }) {
               <EdgeMedia
                 src={(cosmetic.data as MixedObject).url}
                 alt={cosmetic.name}
+                width={144}
                 style={{ height: 144, width: 144 }}
                 optimized
               />
