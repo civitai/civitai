@@ -1692,6 +1692,49 @@ const imageFeedStatementTimeoutCounter = registerCounterWithLabels({
   labelNames: ['dbTarget'] as const,
 });
 
+// The feed service hydrates its pages by id, so an empty by-id page is a fallback to Meilisearch;
+// the stage names the branch that emptied it.
+const imagesByIdsEmptyCounter = registerCounterWithLabels({
+  name: 'images_by_ids_empty_total',
+  help: 'getAllImages pages requested by id that came back empty, by the branch that emptied them',
+  labelNames: ['stage'] as const,
+});
+const IDS_EMPTY_LOG_INTERVAL_MS = 10_000;
+let idsEmptyLoggedAt = 0;
+function noteEmptyIdsPage(
+  input: {
+    ids?: number[];
+    sort?: unknown;
+    browsingLevel?: number;
+    useCombinedNsfwLevel?: boolean;
+    user?: { id?: number; isModerator?: boolean };
+  },
+  stage: string,
+  details?: Record<string, unknown>
+) {
+  if (!input.ids?.length) return;
+  imagesByIdsEmptyCounter.inc({ stage });
+  const now = Date.now();
+  if (now - idsEmptyLoggedAt < IDS_EMPTY_LOG_INTERVAL_MS) return;
+  idsEmptyLoggedAt = now;
+  logToAxiom(
+    {
+      type: 'warning',
+      name: 'images-by-ids-empty',
+      stage,
+      ids: input.ids.length,
+      firstIds: input.ids.slice(0, 5),
+      sort: input.sort,
+      browsingLevel: input.browsingLevel,
+      useCombinedNsfwLevel: input.useCombinedNsfwLevel,
+      viewerId: input.user?.id,
+      isModerator: input.user?.isModerator,
+      ...details,
+    },
+    'civitai-prod'
+  ).catch(() => undefined);
+}
+
 // getImageMetricsObject soft-fallback rate: incremented whenever the ClickHouse
 // image-metrics read exceeds CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS and we serve
 // empty (TRANSIENT-zero) metrics. Makes the otherwise axiom-only fallback rate
@@ -1771,7 +1814,10 @@ const getAllImagesUncaptured = async (
     username: input.user?.username,
     isModerator: input.user?.isModerator,
   });
-  if (blockedEnforcement.emptyResult) return { nextCursor: undefined, items: [] };
+  if (blockedEnforcement.emptyResult) {
+    noteEmptyIdsPage(input, 'blocked-tags');
+    return { nextCursor: undefined, items: [] };
+  }
   applyHideChallengesExclusion(input);
 
   const {
@@ -1919,6 +1965,7 @@ const getAllImagesUncaptured = async (
       isPersonalized = true; // per-user hidden image set
       AND.push(Prisma.sql`i."id" IN (${Prisma.join(imageIds)})`);
     } else {
+      noteEmptyIdsPage(input, 'hidden');
       return { items: [], nextCursor: undefined };
     }
   }
@@ -1939,6 +1986,7 @@ const getAllImagesUncaptured = async (
     const cachedData = await imagesForModelVersionsCache.fetch([modelVersionId]);
     const versionData = cachedData[modelVersionId];
     if (!versionData || !versionData.images?.length) {
+      noteEmptyIdsPage(input, 'prioritized');
       return { items: [], nextCursor: undefined };
     }
 
@@ -2162,6 +2210,7 @@ const getAllImagesUncaptured = async (
   if (collectionId) {
     // Check if user has access to collection (prefetched)
     if (!prefetchedCollectionPermissions?.read) {
+      noteEmptyIdsPage(input, 'collection');
       return { nextCursor: undefined, items: [] };
     }
 
@@ -2551,10 +2600,12 @@ const getAllImagesUncaptured = async (
           baseModelCount: baseModels?.length,
         },
       }).catch(() => undefined);
+      noteEmptyIdsPage(input, 'statement-timeout', { dbTarget });
       return { items: [], nextCursor: undefined };
     }
     throw e;
   }
+  if (!rawImages.length) noteEmptyIdsPage(input, 'no-rows', { dbTarget });
   // const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>(query);
 
   const imageIds = rawImages.map((i) => i.id);
@@ -2661,6 +2712,8 @@ const getAllImagesUncaptured = async (
       // if (x.ingestion !== 'Scanned' && x.userId !== userId) return false;
       return true;
     });
+    if (rawImages.length && !filtered.length)
+      noteEmptyIdsPage(input, 'filtered', { rows: rawImages.length });
 
     const result: Array<
       Omit<ImageV2Model, 'nsfwLevel' | 'metadata'> & {
