@@ -12,6 +12,7 @@ import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
 import type { ReactElement } from 'react';
+import { useState } from 'react';
 import { AdsProvider } from '~/components/Ads/AdsProvider';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
@@ -167,7 +168,7 @@ function MyApp(props: CustomAppProps) {
     },
   } = props;
 
-  const siteSchema = getSiteSchema({ domain, serverDomains });
+  const [siteSchema] = useState(() => getSiteSchema({ domain, serverDomains }));
 
   // // Standalone pages bypass all providers and render directly
   // if ('standalone' in Component && Component.standalone) {
