@@ -529,15 +529,16 @@ describe('blocks.cancelWorkflow — viewer scope', () => {
     //
     // 🔴 AT THE OTHER THREE SITES THE SAME EXEMPTION REMOVES A BELT, NOT A DOOR — and it is worth
     // being exact about why, because the tempting shorter answer is FALSE. Those three sit behind
-    // `blockWorkflowOwnedByAppUser`, and the row check is not a dev-token filter:
-    // `claims.dev === true` does NOT imply a synthetic `appBlockId`. Of the dev mint paths, only
-    // the pending and no-row modes mint `pending-…`/`local-…`; the APPROVED mode signs
-    // `appBlockId: block.id` — the real one — and `signDevScopedPageToken` stamps `dev: true`
-    // unconditionally, so such a token matches rows written by that same user's ordinary submits.
+    // `blockWorkflowOwnedByAppUser`, and that row check is NOT a dev-token filter: several mint
+    // paths sign a real `AppBlock.id` with `dev: true` (see `upsertBlockWorkflowOnSubmit`'s
+    // docblock for which), so a dev token can match rows that user's ordinary submits wrote.
+    //
     // What actually makes those three cells narrower is that the row and the tag are stamped from
-    // the same claims at submit, so guard (a) derives the same answer guard (b) would — defense in
-    // depth rather than the sole binding. That is a much weaker statement than "unreachable", and
-    // it is the one a maintainer needs: read as unreachable, guard (b) looks deletable there.
+    // the same claims at one submit, so a row match IMPLIES a tag match — guard (b) adds nothing
+    // there that guard (a) has not already established. 🔴 ONE WAY ONLY, and that direction is the
+    // whole point: guard (a) is strictly stronger — it also binds the VIEWER and narrows app to
+    // app-BLOCK, neither of which (b) does — so this licenses nothing about deleting (a), which
+    // its own docblock calls the load-bearing user binding. Stated as "the same answer", it would.
     mockVerifyBlockToken.mockResolvedValue(validClaims({ dev: true, appId: 'local-myapp' }));
     mockGetWorkflow.mockResolvedValue(
       workflowFixture({ tags: ['civitai', `app-block:${OTHER_APP_ID}`], cost: { total: 31 } })

@@ -5850,9 +5850,14 @@ export const blocksRouter = router({
       // recordSpendAttribution): a failed queue write must NEVER add latency to,
       // or break, the submit response.
       //
-      // Only on a REAL workflow id, and NOT for dev/live-harness tokens (which
-      // carry a synthetic non-FK appBlockId — the FK would reject them; the
-      // dev/live queue is ephemeral and held in the harness).
+      // Only on a REAL workflow id, and NOT for dev/live-harness tokens — the dev/live queue
+      // is ephemeral and held in the harness.
+      //
+      // 🔴 THE REASON IS THE EXCLUSION ITSELF, NOT THE ID SHAPE. An earlier revision of this
+      // comment said dev tokens "carry a synthetic non-FK appBlockId — the FK would reject
+      // them", and that is false: the approved and dev-tunnel mint paths both sign the app's
+      // REAL `AppBlock.id` with `dev: true`. See `upsertBlockWorkflowOnSubmit`'s docblock.
+      // Nothing downstream may infer from `claims.dev` that a row cannot match.
       if (
         claims.dev !== true &&
         snapshot.workflowId &&

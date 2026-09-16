@@ -69,13 +69,18 @@ export type BlockWorkflowQueueItem = {
  * The CALLER excludes dev/live-harness tokens (`claims.dev === true`), so this only ever
  * runs for a real deployed app block and the `app_block_id` FK never sees a synthetic id.
  *
- * 🔴 DO NOT READ THAT BACKWARDS: `claims.dev === true` does NOT imply a synthetic
- * appBlockId, and an earlier revision of this sentence implied it did. Only the pending
- * and no-row dev mint modes produce `pending-…`/`local-…` ids; the APPROVED mode signs
- * the real `AppBlock.id` while `signDevScopedPageToken` stamps `dev: true`
- * unconditionally. So a dev token can carry ids that match rows written by that same
- * user's ordinary submits — the exclusion here is the caller's choice, not something the
- * id shape enforces, and no downstream check may assume a dev token cannot match a row.
+ * 🔴 DO NOT READ THAT BACKWARDS, and an earlier revision of this sentence invited it:
+ * `claims.dev === true` does NOT imply a synthetic `appBlockId`. At
+ * least two mint paths sign the app's REAL `AppBlock.id` with `dev: true`: `dev-token.ts`'s
+ * APPROVED mode (`signAppBlockId: block.id`) and `block-tokens/index.ts`'s dev-tunnel branch
+ * for an owned but NON-approved app, whose own comment says "SIGN with the app's REAL ids".
+ * The synthetic ids come from the other paths and are `pending.id` / `page_local_<slug>` /
+ * `ephemeral-<slug>` — note those are `appBlockId` values; `pending-…`/`local-…` are the
+ * `appId` prefixes, a different field. Treat this as "at least these", not an enumeration:
+ * the point is that no downstream check may assume a dev token cannot match a row.
+ * `signDevScopedPageToken` stamps `dev: true` unconditionally, so such a token matches rows
+ * that same user's ordinary submits wrote. The exclusion above is the caller's choice, not
+ * something the id shape enforces.
  */
 export async function upsertBlockWorkflowOnSubmit(input: {
   workflowId: string;
