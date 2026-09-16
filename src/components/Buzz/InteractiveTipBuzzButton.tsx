@@ -458,6 +458,11 @@ export function InteractiveTipBuzzButton({
                   // key the user never released — and that press IS the safeguard.
                   if (e.repeat) return;
                   const { amount, clamped } = applyEnteredAmount(e.currentTarget);
+                  // `clamped` is implied by the freshness check here — applyEnteredAmount
+                  // stamps as it rewrites, microseconds earlier — so no test can tell the
+                  // two apart on THIS path. Kept as the statement of intent, and because it
+                  // stops being implied the moment that stamp moves. On the icon path it is
+                  // not implied: the click sometimes reads the field before React repaints.
                   if (clamped || clampIsTooFreshToConfirm()) return;
                   sendTip(amount);
                 }}
