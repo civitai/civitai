@@ -20,7 +20,11 @@ export default function HiddenImagesFromUserModal({
   const items = data?.items ?? [];
 
   return (
-    <Modal {...dialog} size="lg" title={username ? `Hidden images from ${username}` : 'Hidden images'}>
+    <Modal
+      {...dialog}
+      size="lg"
+      title={username ? `Hidden images from ${username}` : 'Hidden images'}
+    >
       {isLoading ? (
         <Center py="xl">
           <Loader />
@@ -37,7 +41,10 @@ export default function HiddenImagesFromUserModal({
                 <div className="relative aspect-square overflow-hidden rounded-md bg-gray-2 dark:bg-dark-6">
                   <ImageGuard2 image={image} explain={false}>
                     {(safe) =>
-                      !safe ? (
+                      // `canViewMedia` is false once the image stopped being
+                      // viewable elsewhere (taken down, unpublished, made
+                      // private) — the row stays so it can be unhidden.
+                      !safe || !image.canViewMedia || !image.url ? (
                         <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
                       ) : (
                         <EdgeMedia
@@ -57,9 +64,14 @@ export default function HiddenImagesFromUserModal({
                     </Badge>
                   )}
                 </div>
+                {!image.canViewMedia && (
+                  <Text size="xs" c="dimmed">
+                    No longer available
+                  </Text>
+                )}
                 {/* A post-less image (a profile cover is one) has no image page a
                     non-owner can open — linking there would 404. */}
-                {image.postId && (
+                {image.postId && image.canViewMedia && (
                   <Text
                     component={Link}
                     href={`/images/${image.id}`}
