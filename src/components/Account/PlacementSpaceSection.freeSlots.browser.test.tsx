@@ -22,7 +22,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 
 const { mutate, spaces, sent, waiting, notificationSettings, toggleSetting } = vi.hoisted(() => ({
   mutate: vi.fn(),
-  notificationSettings: { value: [] as { type: string }[] },
+  notificationSettings: { value: [] as { type: string }[] | undefined },
   toggleSetting: vi.fn(),
   spaces: { value: [] as Record<string, unknown>[] },
   sent: { value: [] as { status: string }[] },
@@ -277,26 +277,43 @@ describe('PlacementSpaceSection — the received count', () => {
 describe('PlacementSpaceSection — the auto-mode notification prompt', () => {
   const AUTO_ACCEPTED_NOTIFICATION = 'sticker-placement-auto-accepted';
 
+  /**
+   * Located by ROLE with a loose name, then read. Two things follow from that
+   * and neither is cosmetic.
+   *
+   * A locator that matches nothing spends the whole 15s budget and then reports
+   * only that it found nothing -- the same reason `names the control once, not
+   * twice` above locates loosely. Reading the label off the element fails in
+   * milliseconds with BOTH labels in the message.
+   *
+   * And `.element()` is strict, so a component that rendered both buttons fails
+   * here. Asserting `getByText('Notify me')` per arm would pass for that
+   * component, because each arm only ever looks for its own label.
+   */
+  const notifyButton = () => page.getByRole('button', { name: /notif/i });
+
   test('offers it to a creator with no row', async () => {
     givenSpace(null);
     renderWithProviders(<PlacementSpaceSection />);
 
     await userEvent.click(page.getByText('Accept all'));
 
-    await expect.element(page.getByText('Notify me')).toBeVisible();
+    await expect.element(notifyButton()).toBeVisible();
+    expect(notifyButton().element().textContent).toBe('Notify me');
   });
 
   test('offers the way OUT to a creator who already has a row', async () => {
-    // The negative control for the test above, and a finding in its own right:
-    // subscribing in one click and then having to find a checkbox that is
-    // `disabled` for this exact population is the same dead end reversed.
+    // The other arm, and a finding in its own right: subscribing in one click
+    // and then having to find a checkbox that is `disabled` for this exact
+    // population is the same dead end reversed.
     notificationSettings.value = [{ type: AUTO_ACCEPTED_NOTIFICATION }];
     givenSpace(null);
     renderWithProviders(<PlacementSpaceSection />);
 
     await userEvent.click(page.getByText('Accept all'));
 
-    await expect.element(page.getByText('Stop notifying me')).toBeVisible();
+    await expect.element(notifyButton()).toBeVisible();
+    expect(notifyButton().element().textContent).toBe('Stop notifying me');
   });
 
   test('asks for the state it is NOT in, in both directions', async () => {
@@ -309,11 +326,41 @@ describe('PlacementSpaceSection — the auto-mode notification prompt', () => {
     renderWithProviders(<PlacementSpaceSection />);
 
     await userEvent.click(page.getByText('Accept all'));
-    await userEvent.click(page.getByText('Stop notifying me'));
+    await userEvent.click(notifyButton());
 
     expect(toggleSetting).toHaveBeenCalledWith({
       toggle: false,
       type: [AUTO_ACCEPTED_NOTIFICATION],
     });
+    // A doubled write is not harmless in the other direction: two deletes are
+    // idempotent, two inserts are only saved by the unique constraint.
+    expect(toggleSetting).toHaveBeenCalledTimes(1);
+  });
+
+  test('says nothing on a space that still reviews', async () => {
+    // Every other test here clicks "Accept all" first, so all of them run at
+    // mode `auto` and none of them would notice the mode term disappearing from
+    // the gate -- which would tell a creator who reviews each sticker by hand
+    // that stickers are accepted without asking them.
+    givenSpace(null);
+    renderWithProviders(<PlacementSpaceSection />);
+
+    // The awaited positive first: an absence read before the render commits
+    // asserts nothing at all.
+    await expect.element(page.getByText('Accept all')).toBeVisible();
+    expect(notifyButton().elements()).toHaveLength(0);
+  });
+
+  test('says nothing until the settings have arrived', async () => {
+    // The flash guard. An opt-in type with no row is indistinguishable from one
+    // nobody subscribed to, so without `!!notificationSettings` the alert offers
+    // "Notify me" to a creator who already subscribed, until the query lands.
+    notificationSettings.value = undefined;
+    givenSpace(null);
+    renderWithProviders(<PlacementSpaceSection />);
+
+    await userEvent.click(page.getByText('Accept all'));
+
+    expect(notifyButton().elements()).toHaveLength(0);
   });
 });

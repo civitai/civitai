@@ -185,9 +185,19 @@ describe('notification settings polarity', () => {
     //
     // Passing `subscribedToAuto` straight through is a click that does nothing in either
     // direction -- the exact bug the /shop bell shipped.
+    //
+    // Asserted here AND behaviourally in PlacementSpaceSection.freeSlots.browser.test.tsx, which is
+    // the stronger of the two. The duplication is deliberate: the browser project runs in no CI job,
+    // so the behavioural one protects nobody who is not running it locally. Drop this textual pin if
+    // that ever changes. The cost of keeping it is that renaming `subscribedToAuto` reddens a test in
+    // this file, which the rename is not looking at -- the failure message names the file to fix.
     const section = readFileSync('src/components/Account/PlacementSpaceSection.tsx', 'utf8');
-    expect(section).toMatch(/toggle:\s*!subscribedToAuto/);
-    expect(section).not.toMatch(/toggle:\s*subscribedToAuto/);
+    // Anchored on the CALL, exactly like the /shop bell's assertion four tests down. Without
+    // `mutate({` the positive is satisfied by the string appearing anywhere -- including in the
+    // four-line comment above that call, which explains this very polarity -- and the negative
+    // reddens when someone rewords that comment. Both failures are one documentation edit away.
+    expect(section).toMatch(/mutate\(\{\s*toggle:\s*!subscribedToAuto/);
+    expect(section).not.toMatch(/mutate\(\{\s*toggle:\s*subscribedToAuto/);
   });
 
   it('the two callers that CAN share one optimistic update do', () => {
