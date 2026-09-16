@@ -38,7 +38,10 @@ import type { ProfanityEvaluation } from '~/libs/profanity-simple';
 // label: a row carrying it throws on READ for a whole result set on any pod still running the
 // previous build, and this endpoint is reachable by any signed-in owner, not only through the
 // upload form -- removing the checkbox removed the affordance, not the endpoint.
-// The PR that turns the write paths on deletes this refine alongside the two defaults and the option.
+// The PR that turns the write paths on deletes this refine alongside the two defaults and the
+// option. 🔴 ORDER: that deletion must ship in the same deploy as the backfill or before it. Once a
+// row carries the member, the edit form submits it back untouched, and the refine would reject the
+// whole save with a message naming a permission the creator has no control for.
 const WITHHELD_COMMERCIAL_USE: CommercialUse[] = [CommercialUse.SellMerge];
 
 const licensingSchema = z.object({

@@ -266,10 +266,6 @@ describe('sell / sell-merge split in the generated licence', () => {
   });
 
   /**
-   * The slicers must fail rather than narrow: `clauseBody` returning '' and `preamble` returning
-   * `slice(0, -1)` both leave every negative assertion above passing for free.
-   */
-  /**
    * DELIBERATE, AND NOT AN OVERSIGHT: nothing in this build writes the SellMerge label except the
    * admin backfill endpoint, which needs a deliberate token POST. Both default sets stay
    * four-valued, the form offers no option, and the upsert contract refuses the member.
@@ -289,10 +285,13 @@ describe('sell / sell-merge split in the generated licence', () => {
       join(__dirname, '../../../../packages/civitai-db-schema/prisma/schema.full.prisma'),
       'utf8'
     );
-    const modelDefault = schema.match(
-      /allowCommercialUse\s+CommercialUse\[\]\s+@default\(\[(.*)\]\)/
-    );
-    expect(modelDefault).not.toBeNull();
+    // matchAll with a length check: `.match` pins the FIRST occurrence, so a second model carrying
+    // its own default would be invisible to every assertion below.
+    const modelDefaults = [
+      ...schema.matchAll(/allowCommercialUse\s+CommercialUse\[\]\s+@default\(\[(.*)\]\)/g),
+    ];
+    expect(modelDefaults).toHaveLength(1);
+    const modelDefault = modelDefaults[0];
     // Set rather than exact string: `prisma format` may reorder or respace this line, and a guard
     // that reddens on formatting is one the third person to hit it deletes.
     expect(members(modelDefault?.[1] ?? '').sort()).toEqual(
@@ -318,13 +317,13 @@ describe('sell / sell-merge split in the generated licence', () => {
     // first leaves a creator able to write the row a previous-build pod cannot read.
     const options = form.match(/const commercialUseOptions[\s\S]*?=\s*\[([\s\S]*?)\n\];/);
     expect(options).not.toBeNull();
-    // Value position, not a bare substring: the comment standing where the option used to be names
-    // SellMerge, and a reader writing it as `CommercialUse.SellMerge` there must not redden this.
-    expect(options?.[1]).not.toMatch(/value:\s*CommercialUse\.SellMerge/);
     expect(options?.[1]).toMatch(/value:\s*CommercialUse\.Sell\b/);
 
-    // The option list is also reachable by mutation after its literal, which no capture above sees.
-    expect(form).not.toMatch(/commercialUseOptions\s*\.\s*(push|splice|concat|unshift)/);
+    // The literal is not the only way to ship the option: a spread at the render site, an index
+    // assignment, or Object.assign all put it in front of a creator without touching the array.
+    // Pinning method names would pin spellings; this pins the property. Comments are stripped, so
+    // the note standing where the option used to be may name the member either way.
+    expect(form.replace(/\/\/[^\n]*/g, '')).not.toContain('CommercialUse.SellMerge');
 
     // The third door, and the only one that opened by itself: the upsert contract derived its
     // member set from the enum, so extending the enum widened what a signed-in owner may POST.
@@ -345,21 +344,36 @@ describe('sell / sell-merge split in the generated licence', () => {
     const { modelUpsertSchema } = await import('~/server/schema/model.schema');
     const base = { name: 'x', type: 'Checkpoint', status: 'Draft', uploadType: 'Created' };
 
+    // A MINIMAL PAIR: one member either way, so the only difference is which member. Varying the
+    // length as well lets a predicate keyed on cardinality -- `values.length < 2` -- satisfy both
+    // assertions with the SellMerge gate gone, while rejecting ordinary two-permission payloads.
     const withheld = modelUpsertSchema.safeParse({
       ...base,
-      allowCommercialUse: [CommercialUse.Sell, CommercialUse.SellMerge],
+      allowCommercialUse: [CommercialUse.SellMerge],
     });
     expect(withheld.success).toBe(false);
+    // ...and rejected for THIS reason. `success: false` alone names no field.
+    expect(JSON.stringify(withheld.error?.issues)).toContain('not available yet');
 
-    // Positive control: the same payload without the withheld member must pass, or the rejection
-    // above proves nothing about SellMerge -- it could be any other field failing.
     const allowed = modelUpsertSchema.safeParse({
       ...base,
       allowCommercialUse: [CommercialUse.Sell],
     });
     expect(allowed.success).toBe(true);
+
+    // A second data point, not the attribution: the withheld member is refused alongside others.
+    expect(
+      modelUpsertSchema.safeParse({
+        ...base,
+        allowCommercialUse: [CommercialUse.Sell, CommercialUse.SellMerge],
+      }).success
+    ).toBe(false);
   });
 
+  /**
+   * The slicers must fail rather than narrow: `clauseBody` returning '' and `preamble` returning
+   * `slice(0, -1)` both leave every negative assertion above passing for free.
+   */
   it('the slicers refuse a document they cannot find their anchor in', () => {
     expect(() => clauseBody('nothing here', MODEL_CLAUSE)).toThrow(/clause not found/);
     expect(() => preamble('nothing here')).toThrow(/preamble anchor not found/);
