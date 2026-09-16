@@ -1,18 +1,9 @@
 import { Anchor, Button, Group, NumberInput, Popover, Select, Stack, Text } from '@mantine/core';
 import { useState } from 'react';
-import { constants } from '~/server/common/constants';
-import { filterFileTypeByExtension } from '~/utils/file-display-helpers';
+import type { ModelFileType } from '~/server/common/constants';
+import { getModelFileTypeOptions } from '~/utils/file-display-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-
-/**
- * The same filter the upload UI and the merge-versions modal use — it keeps retired types out of new
- * pickers and refuses types the extension cannot be. A hand-written list here would be a fourth copy
- * of the file-type rules.
- */
-function typeOptions(filename: string) {
-  return constants.modelFileTypes.filter((type) => filterFileTypeByExtension(type, filename));
-}
 
 export function AttachControl({
   importId,
@@ -29,9 +20,13 @@ export function AttachControl({
 }) {
   const [opened, setOpened] = useState(false);
   const [versionId, setVersionId] = useState<number | ''>('');
-  const options = typeOptions(filename);
-  const [type, setType] = useState<string | null>(
-    suggestedType && options.includes(suggestedType as never) ? suggestedType : options[0] ?? null
+  const options = getModelFileTypeOptions(filename);
+  // No fallback to the list's first entry: `suggestFileType` leaves primary weights unsuggested on
+  // purpose, and that label decides whether the version loads.
+  const [type, setType] = useState<ModelFileType | null>(
+    options.some((option) => option.value === suggestedType)
+      ? (suggestedType as ModelFileType)
+      : null
   );
   const queryUtils = trpc.useUtils();
 
@@ -89,7 +84,14 @@ export function AttachControl({
             allowDecimal={false}
             hideControls
           />
-          <Select size="xs" label="File type" data={options} value={type} onChange={setType} />
+          <Select
+            size="xs"
+            label="File type"
+            placeholder="Pick a file type"
+            data={options}
+            value={type}
+            onChange={(value) => setType(value as ModelFileType | null)}
+          />
           <Group justify="flex-end">
             <Button
               size="compact-xs"
@@ -98,7 +100,7 @@ export function AttachControl({
               onClick={() =>
                 versionId &&
                 type &&
-                attach.mutate({ id: importId, modelVersionId: versionId, type: type as never })
+                attach.mutate({ id: importId, modelVersionId: versionId, type })
               }
             >
               Attach

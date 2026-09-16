@@ -17,8 +17,9 @@ this as the first route.
 | HF API client — parse a URL, resolve a branch to a commit sha, list files with sizes and LFS sha256, ranged reads | `src/server/services/huggingface.service.ts` |
 | Queue + the resumable transfer | `src/server/services/huggingface-import.service.ts` |
 | The runner | `src/server/jobs/process-huggingface-imports.ts`, registered in the `jobs` array in `run-jobs` |
-| tRPC surface (`getAll` — filterable by `groupName`/`repo` — `lookup`, `enqueue`, `attach`, `detach`, `renameGroup`, `retry`, `cancel`; `detach` and `renameGroup` have no caller yet) | `src/server/routers/huggingface-import.router.ts` |
+| tRPC surface (`getAll` — filterable by `groupName`/`repo`, and by `unattached` — `getCounts`, `lookup`, `enqueue`, `attach`, `detach`, `delete`, `renameGroup`, `retry`, `cancel`; `renameGroup` has no caller yet) | `src/server/routers/huggingface-import.router.ts` |
 | Moderator page | `src/pages/moderator/huggingface-import.tsx` + `src/components/Moderation/HuggingFaceImport/` |
+| The *Manage files* picker (moderator-only) | `src/components/Moderation/HuggingFaceImport/AddFromImportsModal.tsx`, opened via `src/components/Dialog/triggers/add-from-hugging-face-imports.ts` from `AddFromImportsButton.tsx` in `src/components/Resource/Files.tsx` |
 | Server-side multipart helpers (`createMultipartUpload`, `uploadPart`) | `src/utils/s3-utils.ts` |
 | The shared key builder (`buildUploadKey`) | `src/utils/upload-key.ts` — used by `/api/upload` **and** the import |
 
@@ -51,9 +52,10 @@ away."
 rather than writing the row directly — that is what gets the storage-resolver registration and the
 inline scan submission, so scanning and hashing follow on their own.
 
-Three ways in, one path underneath: the Attach control on a completed row, the
-`huggingFaceImport.attach` procedure, and two commands on `official-model-admin` —
-`hf-imports` (what transferred) and `attach-import` (put one on a version).
+Four ways in, one path underneath: the Attach control on a completed row, the **Add from Hugging
+Face imports** picker inside a version's *Manage files*, the `huggingFaceImport.attach` procedure,
+and two commands on `official-model-admin` — `hf-imports` (what transferred) and `attach-import`
+(put one on a version).
 
 What that changes for the skill: the 20GB re-upload a person used to perform is gone, and attaching is
 scriptable. A human still queues the repo on the page, and still confirms the file type when the
@@ -122,17 +124,19 @@ No real-world measurement exists yet — nothing has run against a live bucket.
 **Nothing checks that the file you attached is the file you meant.** The scan catches malware, not
 mislabelling.
 
-**No orphan view, and no picker.** A completed import that no version claims is findable only by
-scrolling the queue. Two surfaces are designed and not built:
+The direction is a **pull**: an import usually happens before anyone knows which version will want
+it, so the version draws from the pool rather than the import pushing at a version. Both surfaces
+that make that work now exist — the **Unattached** tab on the import page and the **Add from Hugging
+Face imports** picker inside a version's *Manage files*, both grouped and filtered by `groupName`.
 
-- an **Unattached** tab on the import page, grouped by `groupName`, where the only two exits are
-  *attached* or *deleted* — there is deliberately no dismissed-but-stored state, because a hidden row
-  still costs storage and would let the count understate what we hold;
-- an **Add from Hugging Face imports** picker inside a version's *Manage files*, filtered by group,
-  moderator-only. Attaching from there is immediate, since the bytes already landed.
+The only two exits from the unattached list are *attached* and *deleted*: there is deliberately no
+dismissed-but-stored state, because a hidden row still costs storage and would let the count
+understate what we hold.
 
-The direction is a **pull**: an import usually happens before anyone knows which version will want it,
-so the version draws from the pool rather than the import pushing at a version.
+🔴 **Deleting refuses whenever a `ModelFile` still points at the object**, resolved through
+`urlsSafeToDelete` over `ModelFile.url` — not through the import row's `modelFileId`, which detach
+clears while leaving the `ModelFile` alive. Judging from the row alone destroys the bytes a
+published version is serving, two clicks after a detach.
 
 **No quota.** Moderator-only at the router; everything underneath is already scoped per owner, so
 opening it up needs a per-user quota — size and count — and a `userId` in the
@@ -167,9 +171,9 @@ deliberately does not touch it.
 
 1. **Who may import**, and under what quota — see above.
 2. **Whether redistribution rights should be enforced** rather than displayed.
-3. **Does deleting an unattached import remove its row, or leave a tombstone?** `(repo, revision,
-   filename)` is unique, so a tombstone blocks re-importing that exact file unless the retry path
-   resets it. Hard-deleting the row makes re-import just work, at the cost of losing the record that we
-   once had those bytes.
+3. ~~**Does deleting an unattached import remove its row, or leave a tombstone?**~~ **Settled: hard
+   delete.** `(repo, revision, filename)` is unique, so a tombstone would block re-importing that
+   exact file — and a deliberate deletion is precisely the case where you might want it back. The
+   cost is losing the record that we once held those bytes.
 4. **Attribution.** The row records repo, revision and filename, and an attached file links back to it.
    Nothing surfaces that on the model page yet.
