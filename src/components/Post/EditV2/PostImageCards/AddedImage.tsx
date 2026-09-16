@@ -1222,7 +1222,9 @@ function PostImage() {
           src={url}
           width={metadata?.width ?? DEFAULT_EDGE_IMAGE_WIDTH}
           type={type}
-          original={type === 'video' ? true : undefined}
+          // 🔴 PostImageCards renders every image in the post with no virtualisation, and EdgeImage
+          // sets no `loading`, so without this a 16-image post (p90) fetches all of them eagerly.
+          loading="lazy"
           className={showPreview ? 'rounded-none' : 'rounded-lg'}
           anim={type === 'video'}
           html5Controls

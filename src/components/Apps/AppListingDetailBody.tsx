@@ -356,7 +356,9 @@ function StatChips({ detail, preview }: { detail: ListingDetail; preview: boolea
  */
 function CreatorChip({ creator }: { creator: ListingDetail['creator'] }) {
   if (!creator || !creator.username) return null;
-  const avatarSrc = creator.image ? getEdgeUrl(creator.image, { width: 64 }) : undefined;
+  const avatarSrc = creator.image
+    ? getEdgeUrl(creator.image, { width: 64, optimized: true })
+    : undefined;
   return (
     <Anchor
       component={Link}

@@ -118,8 +118,8 @@ export function CandidateImageModal({
           Select an image for this panel. Click the magnifier to zoom in.
           {showMatureBlurNotice && (
             <>
-              {' '}Mature results are blurred — click <em>Show</em> on a tile
-              before selecting it.
+              {' '}
+              Mature results are blurred — click <em>Show</em> on a tile before selecting it.
             </>
           )}
         </Text>
@@ -134,9 +134,9 @@ export function CandidateImageModal({
             {showInPlaceUnlock ? (
               <>
                 <Text size="sm" c="white" ta="center">
-                  Some results contain mature content. Unlock once to reveal
-                  every locked result from this generation — the preview is
-                  blurred and the full URL is never stored on the panel.
+                  Some results contain mature content. Unlock once to reveal every locked result
+                  from this generation — the preview is blurred and the full URL is never stored on
+                  the panel.
                 </Text>
                 <Button
                   size="compact-sm"
@@ -152,9 +152,8 @@ export function CandidateImageModal({
             ) : (
               <>
                 <Text size="sm" c="white" ta="center">
-                  Some results contain mature content and can only be viewed
-                  on civitai.red. Open the project there to unlock and pick
-                  them.
+                  Some results contain mature content and can only be viewed on civitai.red. Open
+                  the project there to unlock and pick them.
                 </Text>
                 {unlockHref ? (
                   <Button
@@ -230,8 +229,7 @@ export function CandidateImageModal({
             // the blur+Show treatment is unnecessary friction; on green
             // mature outputs would normally arrive locked, but if a clean
             // mature one slips through we keep the blur as a safety net.
-            const showBlur =
-              blurMatureCandidates && matureClean && !revealedKeys.has(slot.key);
+            const showBlur = blurMatureCandidates && matureClean && !revealedKeys.has(slot.key);
             return (
               <div key={slot.key} className="relative">
                 <button
@@ -241,8 +239,8 @@ export function CandidateImageModal({
                     border: isSelected
                       ? '3px solid var(--mantine-color-blue-6)'
                       : matureClean && showBlur
-                        ? '3px solid var(--mantine-color-yellow-6)'
-                        : '3px solid transparent',
+                      ? '3px solid var(--mantine-color-yellow-6)'
+                      : '3px solid transparent',
                     padding: 0,
                     cursor: isSelecting || showBlur ? 'wait' : 'pointer',
                     background: '#2C2E33',
@@ -258,7 +256,7 @@ export function CandidateImageModal({
                   disabled={isSelecting}
                 >
                   <img
-                    src={getEdgeUrl(slot.key, { width: 400 })}
+                    src={getEdgeUrl(slot.key, { width: 400, optimized: true })}
                     alt="Candidate"
                     style={{
                       width: '100%',
@@ -383,7 +381,7 @@ export function CandidateImageModal({
       >
         {zoomedKey && (
           <img
-            src={getEdgeUrl(zoomedKey, { width: 1024 })}
+            src={getEdgeUrl(zoomedKey, { width: 1024, optimized: true })}
             alt="Zoomed candidate"
             style={{ width: '100%', borderRadius: 'var(--mantine-radius-md)' }}
           />

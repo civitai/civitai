@@ -55,7 +55,7 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { constants } from '~/server/common/constants';
+import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { upsertBountyInputSchema } from '~/server/schema/bounty.schema';
 import type { BaseFileSchema } from '~/server/schema/file.schema';
@@ -466,6 +466,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                           placeholder="empty"
                           src={image.url}
                           alt={undefined}
+                          width={DEFAULT_EDGE_IMAGE_WIDTH}
                           style={{ objectFit: 'cover', height: '100%' }}
                         />
                         <div style={{ position: 'absolute', top: 12, right: 12 }}>
@@ -510,6 +511,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                                 placeholder="empty"
                                 src={file.url}
                                 alt={file.name ?? undefined}
+                                width={DEFAULT_EDGE_IMAGE_WIDTH}
                                 style={{ objectFit: 'cover', height: '100%' }}
                               />
                               <div style={{ position: 'absolute', top: 12, right: 12 }}>

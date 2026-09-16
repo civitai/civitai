@@ -119,6 +119,8 @@ export const userUpdateSchema = z.object({
       format: z.string().optional(),
       size: z.string().optional(),
       fp: z.string().optional(),
+      // Accepted but unread: the media-quality control is gone, and a cached client still
+      // sending its stored value must not 400 the whole preferences save.
       imageFormat: z.string().optional(),
       quantType: z.string().max(64).optional(),
     })

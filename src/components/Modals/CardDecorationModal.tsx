@@ -152,6 +152,7 @@ export default function CardDecorationModal({
                         className="size-full object-cover"
                         wrapperProps={{ className: 'h-full' }}
                         skip={4}
+                        optimized
                       />
                     </Paper>
                     <IconArrowRight size={24} style={{ flexShrink: 0 }} />
@@ -166,6 +167,7 @@ export default function CardDecorationModal({
                         wrapperProps={{ className: 'h-full' }}
                         skip={4}
                         contain
+                        optimized
                       />
                     </Paper>
                   </Group>
@@ -222,6 +224,7 @@ export const PreviewCard = ({
         wrapperProps={{ className: 'h-full' }}
         anim
         contain
+        optimized
       />
     </MasonryCard>
   );
