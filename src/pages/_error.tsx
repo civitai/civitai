@@ -3,7 +3,7 @@ import NextErrorComponent from 'next/error';
 import React from 'react';
 import { reportBoundaryError } from '~/components/ErrorBoundary/reportBoundaryError';
 
-type Props = { statusCode: number };
+type Props = { statusCode?: number };
 
 /**
  * Reports client-side errors that no app-owned boundary can catch.
@@ -29,12 +29,21 @@ type Props = { statusCode: number };
  * ⚠ `404`s do not come here: `src/pages/404.tsx` takes them.
  */
 function CustomErrorPage({ statusCode }: Props) {
-  return <NextErrorComponent statusCode={statusCode} />;
+  // `statusCode` is deliberately optional — see getInitialProps. `next/error` types it as
+  // required but reads `statusCode ? … : clientExceptionCopy`, so undefined is the supported
+  // client-exception path.
+  return <NextErrorComponent statusCode={statusCode as number} />;
 }
 
 CustomErrorPage.getInitialProps = async (ctx: NextPageContext): Promise<Props> => {
   const { err, res } = ctx;
-  const statusCode = res?.statusCode ?? err?.statusCode ?? 500;
+  // 🔴 Leave `statusCode` UNDEFINED for a caught client render error, matching what Next's built-in
+  // page resolved before this file existed. Both `res` and `err.statusCode` are absent on that
+  // path, so defaulting to 500 would render a bare "500 | Internal Server Error" — asserting an
+  // HTTP status that never occurred, and dropping the "see the browser console" hint that support
+  // triage reads off a user's screenshot. `next/error` renders the client-exception copy precisely
+  // when this is undefined.
+  const statusCode = res?.statusCode ?? err?.statusCode;
 
   // `typeof window` is the guard, not `!res`: Next calls this on the client for the
   // caught-render-error path with no `res` AND on the server for an SSR failure, and only the

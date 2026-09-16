@@ -44,9 +44,25 @@ describe('reportBoundaryError — the POST sink', () => {
     ['undefined', undefined],
   ];
 
-  it.each(throwables)('posts a body satisfying the endpoint schema when given %s', (_n, thrown) => {
+  // 🔴 The componentStack is PARAMETERISED, and that is load-bearing rather than thorough.
+  // `_error.tsx` — the only call site for `boundary: 'root'` — passes NO componentStack, so a
+  // matrix that supplied one for every fixture made `ctx.stack` always truthy and left the
+  // `?? ''` stack fallback in `reportApplicationError` unreachable. Measured: removing that
+  // fallback kept the whole suite green, while the real `root` shape (no componentStack, stackless
+  // error) posted a body with NO `stack` key at all → 400 → report silently lost, which is the
+  // exact hazard this guard is named for. A fixture constant was short-circuiting the branch.
+  const stacks: [label: string, componentStack: string | null | undefined][] = [
+    ['with a componentStack', '\n at Foo'],
+    ['with a null componentStack', null],
+    ['with NO componentStack (the `root` shape)', undefined],
+  ];
+  const matrix = throwables.flatMap(([tn, thrown]) =>
+    stacks.map(([sn, cs]) => [`${tn} ${sn}`, thrown, cs] as const)
+  );
+
+  it.each(matrix)('posts a body satisfying the endpoint schema given %s', (_n, thrown, cs) => {
     withFetch((f) => {
-      reportBoundaryError(thrown, { boundary: 'user', componentStack: '\n at Foo' });
+      reportBoundaryError(thrown, { boundary: 'user', componentStack: cs });
       expect(f).toHaveBeenCalledTimes(1);
       const parsed = applicationErrorSchema.safeParse(bodyOf(f));
       expect(parsed.success).toBe(true);
@@ -54,10 +70,9 @@ describe('reportBoundaryError — the POST sink', () => {
   });
 
   // 🔴 ALERTING INVARIANT, not a style choice. The endpoint defaults an absent `name` to the
-  // literal `application-error`, and the two server-side log alerts on this signal select on
-  // exactly that value — one at critical severity, routed to the on-call pager. Setting any `name`
-  // silently removes boundary errors from both populations. This guard fails if someone "follows
-  // the convention" that every other caller uses.
+  // literal `application-error`, and log-based alerting keys off that value, so setting any `name`
+  // silently moves these reports into a different population. This guard fails if someone "follows
+  // the convention" that every other caller uses. (Alert specifics live in the infra repo.)
   it.each(throwables)('does not set a name, keeping the alert population, for %s', (_n, thrown) => {
     withFetch((f) => {
       reportBoundaryError(thrown, { boundary: 'user' });
@@ -82,11 +97,15 @@ describe('reportBoundaryError — the POST sink', () => {
 
   // 🔴 The handler does `JSON.parse(req.body)`, so it needs the RAW string. Declaring
   // application/json makes Next's body parser hand it an object and that parse throws.
+  // Read through `new Headers(...)`, NOT `Object.keys`. `Object.keys` only sees a plain object, so
+  // it is blind to the two other legal `HeadersInit` shapes — measured: both
+  // `new Headers({'Content-Type': 'application/json'})` and `[['Content-Type', ...]]` walked the
+  // previous version of this guard with the suite fully green, while breaking the handler exactly
+  // as a plain object would.
   it('does not declare a JSON content-type, which the raw-body handler depends on', () => {
     withFetch((f) => {
       reportBoundaryError(new Error('boom'), { boundary: 'user' });
-      const headers = (initOf(f).headers ?? {}) as Record<string, string>;
-      expect(Object.keys(headers).map((h) => h.toLowerCase())).not.toContain('content-type');
+      expect(new Headers(initOf(f).headers ?? {}).get('content-type')).toBeNull();
     });
   });
 });
@@ -148,7 +167,7 @@ describe('reportBoundaryError — sink independence', () => {
   // The shape that escaped the previous version: a non-Error throw made a shared expression above
   // both try blocks throw, killing both sinks at once.
   it.each([[null], [undefined], [{ code: 'E_X' }], ['a string']])(
-    'reaches both sinks for a non-Error throw (%p)',
+    'reaches both sinks for a non-Error throw (%j)',
     (thrown) => {
       const pushError = vi.fn();
       const report = vi.fn();

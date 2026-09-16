@@ -28,13 +28,13 @@ export type ReportDeps = {
  * Each gets its own `try`/`catch` so neither can suppress the other.
  *
  * 🔴 **Do NOT pass a `name` to `reportApplicationError` here.** The endpoint defaults an absent
- * `name` to the literal `application-error`, and the two server-side log alerts on this signal
- * select on exactly that value — one of them at critical severity, routed to the on-call pager. A
- * named report is silently OUTSIDE both populations. Every other caller of
- * `reportApplicationError` does pass a name and is therefore already excluded by design, which is
- * why this reads as a harmless convention to follow and is not: boundary errors are the
- * population those alerts were watching. The boundary identity travels in `message` instead, and
- * in the Faro `context` below. Changing this needs the alert queries changed in the same breath.
+ * `name` to the literal `application-error`, and log-based alerting keys off that value — so
+ * setting any `name` silently moves these reports into a different population. Every other caller
+ * does pass one and is therefore already in that other population by design, which is exactly why
+ * following the convention here looks harmless and is not. The boundary identity travels in
+ * `message` instead, and in the Faro `context` below. Changing this requires changing the alert
+ * queries in the infrastructure repo in the same breath — details deliberately live there, not in
+ * this public repo.
  */
 export function reportBoundaryError(
   error: unknown,
