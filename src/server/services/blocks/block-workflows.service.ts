@@ -66,9 +66,16 @@ export type BlockWorkflowQueueItem = {
  * violating the CHECK constraint (defensive; the caller passes a snapshot status
  * that is always in-set).
  *
- * The CALLER excludes dev/live-harness tokens (`claims.dev === true`, synthetic
- * non-FK appBlockId) — this only ever runs for a real deployed app block, so the
- * `app_block_id` FK never sees a synthetic id.
+ * The CALLER excludes dev/live-harness tokens (`claims.dev === true`), so this only ever
+ * runs for a real deployed app block and the `app_block_id` FK never sees a synthetic id.
+ *
+ * 🔴 DO NOT READ THAT BACKWARDS: `claims.dev === true` does NOT imply a synthetic
+ * appBlockId, and an earlier revision of this sentence implied it did. Only the pending
+ * and no-row dev mint modes produce `pending-…`/`local-…` ids; the APPROVED mode signs
+ * the real `AppBlock.id` while `signDevScopedPageToken` stamps `dev: true`
+ * unconditionally. So a dev token can carry ids that match rows written by that same
+ * user's ordinary submits — the exclusion here is the caller's choice, not something the
+ * id shape enforces, and no downstream check may assume a dev token cannot match a row.
  */
 export async function upsertBlockWorkflowOnSubmit(input: {
   workflowId: string;
@@ -258,6 +265,7 @@ export async function listMyBlockWorkflows(input: {
       updatedAt: r.updatedAt,
     })
   );
-  const nextCursor = rows.length > limit && page.length > 0 ? encodeCursor(page[page.length - 1]) : null;
+  const nextCursor =
+    rows.length > limit && page.length > 0 ? encodeCursor(page[page.length - 1]) : null;
   return { items: page, nextCursor };
 }

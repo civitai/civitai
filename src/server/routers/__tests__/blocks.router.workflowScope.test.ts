@@ -521,14 +521,23 @@ describe('blocks.cancelWorkflow — viewer scope', () => {
   });
 
   it('🔴 a dev:live token gets NO app-scope exemption — cancel', async () => {
-    // 🔴 THE TWIN OF THE POLL CASE, AND THE CELL THAT IS ACTUALLY REACHABLE. The same weakening at
-    // `cancelAppWorkflow` / `publishGenerationOutputs` / `resolveOwnedWorkflowOutputs` is inert for
-    // the tokens it would exempt: those three sit behind the `block_workflows` row check, and all
-    // three submit sites skip the row write when `claims.dev === true`, so guard (a) already
-    // refuses a dev token there. `cancelWorkflow` deliberately consults no row — there is an
-    // INVARIANT GUARD above pinning that — so its app-tag assertion is the SOLE app binding, and a
-    // `claims.dev` exemption here is live. It is also the larger consequence of the two cells that
-    // are: poll discloses, cancel discloses AND stops.
+    // 🔴 THE TWIN OF THE POLL CASE, AND THE CELL WHERE THE APP-TAG ASSERTION IS THE ONLY APP
+    // BINDING. `cancelWorkflow` deliberately consults no `block_workflows` row — there is an
+    // INVARIANT GUARD above pinning that — so exempting its tag check removes the whole app scope.
+    // Poll is the same shape; between the two, cancel is the larger consequence, because poll
+    // discloses and cancel discloses AND stops.
+    //
+    // 🔴 AT THE OTHER THREE SITES THE SAME EXEMPTION REMOVES A BELT, NOT A DOOR — and it is worth
+    // being exact about why, because the tempting shorter answer is FALSE. Those three sit behind
+    // `blockWorkflowOwnedByAppUser`, and the row check is not a dev-token filter:
+    // `claims.dev === true` does NOT imply a synthetic `appBlockId`. Of the dev mint paths, only
+    // the pending and no-row modes mint `pending-…`/`local-…`; the APPROVED mode signs
+    // `appBlockId: block.id` — the real one — and `signDevScopedPageToken` stamps `dev: true`
+    // unconditionally, so such a token matches rows written by that same user's ordinary submits.
+    // What actually makes those three cells narrower is that the row and the tag are stamped from
+    // the same claims at submit, so guard (a) derives the same answer guard (b) would — defense in
+    // depth rather than the sole binding. That is a much weaker statement than "unreachable", and
+    // it is the one a maintainer needs: read as unreachable, guard (b) looks deletable there.
     mockVerifyBlockToken.mockResolvedValue(validClaims({ dev: true, appId: 'local-myapp' }));
     mockGetWorkflow.mockResolvedValue(
       workflowFixture({ tags: ['civitai', `app-block:${OTHER_APP_ID}`], cost: { total: 31 } })
