@@ -8,7 +8,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 /**
  * The media-quality select is the only place the lossless membership gate is expressed in UI.
  * Four things it has to get right are invisible to the resolver's unit tests: a non-member's
- * stored `metadata` must read as Compressed (what they are actually served), picking Uncompressed
+ * stored `metadata` must read as Compressed (what they are actually served), picking Lossless
  * without a membership must route to pricing and write NOTHING, a paid member's pick must
  * write, and a rejected write must not leave the select showing a preference that never landed.
  */
@@ -69,10 +69,10 @@ beforeEach(() => {
   capturedMutationOptions.value = undefined;
 });
 
-describe('ImageFormatSelect — the uncompressed membership gate', () => {
-  test("reads a non-member's stored uncompressed choice as Compressed", async () => {
+describe('ImageFormatSelect — the lossless membership gate', () => {
+  test("reads a non-member's stored lossless choice as Compressed", async () => {
     // The choice is deliberately left in the database so it comes back on subscribing. Showing
-    // it back as Uncompressed would claim a delivery they are not getting.
+    // it back as Lossless would claim a delivery they are not getting.
     currentUser.value = {
       id: 7,
       isPaidMember: false,
@@ -83,18 +83,18 @@ describe('ImageFormatSelect — the uncompressed membership gate', () => {
     await expect.element(page.getByRole('textbox', { name: LABEL })).toHaveValue('Compressed');
   });
 
-  test("reads a paid member's stored choice as Uncompressed", async () => {
+  test("reads a paid member's stored choice as Lossless", async () => {
     currentUser.value = { id: 7, isPaidMember: true, filePreferences: { imageFormat: 'metadata' } };
     renderWithProviders(<ImageFormatSelect />);
 
-    await expect.element(page.getByRole('textbox', { name: LABEL })).toHaveValue('Uncompressed');
+    await expect.element(page.getByRole('textbox', { name: LABEL })).toHaveValue('Lossless');
   });
 
   test('sends a non-member to pricing and writes nothing', async () => {
     renderWithProviders(<ImageFormatSelect />);
 
     await openOptions();
-    await userEvent.click(page.getByRole('option', { name: /Uncompressed/ }));
+    await userEvent.click(page.getByRole('option', { name: /Lossless/ }));
 
     expect(vi.mocked(useRouter().push)).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -111,7 +111,7 @@ describe('ImageFormatSelect — the uncompressed membership gate', () => {
     renderWithProviders(<ImageFormatSelect />);
 
     await openOptions();
-    await userEvent.click(page.getByRole('option', { name: /Uncompressed/ }));
+    await userEvent.click(page.getByRole('option', { name: /Lossless/ }));
 
     expect(mutate).toHaveBeenCalledWith({ id: 7, filePreferences: { imageFormat: 'metadata' } });
     expect(vi.mocked(useRouter().push)).not.toHaveBeenCalled();
@@ -125,8 +125,8 @@ describe('ImageFormatSelect — the uncompressed membership gate', () => {
     renderWithProviders(<ImageFormatSelect />);
 
     await openOptions();
-    await userEvent.click(page.getByRole('option', { name: /Uncompressed/ }));
-    await expect.element(page.getByRole('textbox', { name: LABEL })).toHaveValue('Uncompressed');
+    await userEvent.click(page.getByRole('option', { name: /Lossless/ }));
+    await expect.element(page.getByRole('textbox', { name: LABEL })).toHaveValue('Lossless');
 
     capturedMutationOptions.value?.onError?.();
 

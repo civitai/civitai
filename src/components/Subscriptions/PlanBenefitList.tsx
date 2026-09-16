@@ -14,7 +14,7 @@ const themeIconSize = benefitIconSize + 6;
 const defaultBenefits = [
   { content: 'Ad free browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
   {
-    content: 'Uncompressed image quality while browsing',
+    content: 'Lossless image quality while browsing',
     icon: <IconPhotoStar size={benefitIconSize} />,
   },
   {
