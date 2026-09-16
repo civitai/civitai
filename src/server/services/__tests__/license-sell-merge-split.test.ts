@@ -122,6 +122,13 @@ const buildLicense = (
 
 const OTHERS = [CommercialUse.Image, CommercialUse.RentCivit, CommercialUse.Rent];
 
+/**
+ * Derived from the enum, not listed: the whole failure mode is a member nobody added to the
+ * defaults, so a hand-written list here would have to be updated by the same person who forgot.
+ * `None` is excluded because it is the marker for granting nothing, not a permission to grant.
+ */
+const GRANTABLE = Object.values(CommercialUse).filter((v) => v !== CommercialUse.None);
+
 describe('sell / sell-merge split in the generated licence', () => {
   it('grants both: neither restriction appears', () => {
     const license = buildLicense([...OTHERS, CommercialUse.Sell, CommercialUse.SellMerge]);
@@ -266,14 +273,13 @@ describe('sell / sell-merge split in the generated licence', () => {
   });
 
   /**
-   * DELIBERATE, AND NOT AN OVERSIGHT: nothing in this build writes the SellMerge label except the
-   * admin backfill endpoint, which needs a deliberate token POST. Both default sets stay
-   * four-valued, the form offers no option, and the upsert contract refuses the member.
-   *
-   * The PR that turns the write paths on inverts this case. If you are here because it looks like
-   * the feature was half-shipped: it was, on purpose, for one day.
+   * A CommercialUse member with no entry in a default set is not merely absent from it -- the
+   * licence emits restrictions by ABSENCE, so a member missing from the granted array produces no
+   * clause and therefore GRANTS the permission. Dropping SellMerge from either default silently
+   * gives every new model away, with no clause, no badge change a creator would notice, and no
+   * type error. That is why these are pinned as sets rather than checked for one member.
    */
-  it('the two product write paths for SellMerge are off: the defaults and the option list', () => {
+  it('both defaults and the option list carry every CommercialUse member', () => {
     const members = (capture: string) =>
       capture
         .replace(/\/\/[^\n]*/g, '')
@@ -294,9 +300,7 @@ describe('sell / sell-merge split in the generated licence', () => {
     const modelDefault = modelDefaults[0];
     // Set rather than exact string: `prisma format` may reorder or respace this line, and a guard
     // that reddens on formatting is one the third person to hit it deletes.
-    expect(members(modelDefault?.[1] ?? '').sort()).toEqual(
-      ['Image', 'Rent', 'RentCivit', 'Sell'].sort()
-    );
+    expect(members(modelDefault?.[1] ?? '').sort()).toEqual(GRANTABLE.sort());
 
     const form = readFileSync(
       join(__dirname, '../../../components/Resource/Forms/ModelUpsertForm.tsx'),
@@ -308,65 +312,45 @@ describe('sell / sell-merge split in the generated licence', () => {
       /allowCommercialUse: model\?\.allowCommercialUse \?\? \[([\s\S]*?)\],\n/
     );
     expect(formDefault).not.toBeNull();
-    // Asserted as a SET, so dropping members to hide one reddens too.
-    expect(members(formDefault?.[1] ?? '').sort()).toEqual(
-      ['Image', 'Rent', 'RentCivit', 'Sell'].sort()
-    );
+    expect(members(formDefault?.[1] ?? '').sort()).toEqual(GRANTABLE.sort());
 
-    // The default is the passive write path. The checkbox is the active one, and removing only the
-    // first leaves a creator able to write the row a previous-build pod cannot read.
+    // The default decides what a creator gets without choosing; the option list decides what they
+    // CAN choose. A member present in the default but absent here is grantable only by accident and
+    // unrevokable through the product.
     const options = form.match(/const commercialUseOptions[\s\S]*?=\s*\[([\s\S]*?)\n\];/);
     expect(options).not.toBeNull();
-    expect(options?.[1]).toMatch(/value:\s*CommercialUse\.Sell\b/);
+    const offered = [...(options?.[1] ?? '').matchAll(/value:\s*CommercialUse\.(\w+)/g)].map(
+      (m) => m[1]
+    );
+    expect(offered.sort()).toEqual(GRANTABLE.sort());
 
-    // The literal is not the only way to ship the option: a spread at the render site, an index
-    // assignment, or Object.assign all put it in front of a creator without touching the array.
-    // Pinning method names would pin spellings; this pins the property. Comments are stripped, so
-    // the note standing where the option used to be may name the member either way.
-    expect(form.replace(/\/\/[^\n]*/g, '')).not.toContain('CommercialUse.SellMerge');
-
-    // The third door, and the only one that opened by itself: the upsert contract derived its
-    // member set from the enum, so extending the enum widened what a signed-in owner may POST.
-    // Removing the checkbox removed the affordance, not the endpoint.
+    // Nothing holds a member back at the write contract either. The refine that did this lived at
+    // model.schema.ts and was deleted with the rest; if one reappears, it belongs in a case that
+    // says why rather than in a passing suite.
     const schemaSrc = readFileSync(join(__dirname, '../../schema/model.schema.ts'), 'utf8');
-    const withheld = schemaSrc.match(/const WITHHELD_COMMERCIAL_USE[^=]*=\s*\[([\s\S]*?)\]/);
-    expect(withheld).not.toBeNull();
-    expect(members(withheld?.[1] ?? '')).toEqual(['SellMerge']);
-    // ...and the list must actually be applied, or it is decoration.
-    expect(schemaSrc).toMatch(/WITHHELD_COMMERCIAL_USE\.includes/);
+    expect(schemaSrc).not.toMatch(/WITHHELD_COMMERCIAL_USE/);
   });
 
   /**
    * The list above is a source-text assertion; this one runs the contract. A text guard cannot tell
-   * a rejection from a refine that was written and never wired in.
+   * a member being accepted from a field that stopped validating.
    */
-  it('the upsert contract rejects a withheld permission and accepts the rest', async () => {
+  it('the upsert contract accepts every grantable member, and still rejects a bogus one', async () => {
     const { modelUpsertSchema } = await import('~/server/schema/model.schema');
     const base = { name: 'x', type: 'Checkpoint', status: 'Draft', uploadType: 'Created' };
 
-    // A MINIMAL PAIR: one member either way, so the only difference is which member. Varying the
-    // length as well lets a predicate keyed on cardinality -- `values.length < 2` -- satisfy both
-    // assertions with the SellMerge gate gone, while rejecting ordinary two-permission payloads.
-    const withheld = modelUpsertSchema.safeParse({
-      ...base,
-      allowCommercialUse: [CommercialUse.SellMerge],
-    });
-    expect(withheld.success).toBe(false);
-    // ...and rejected for THIS reason. `success: false` alone names no field.
-    expect(JSON.stringify(withheld.error?.issues)).toContain('not available yet');
+    for (const member of GRANTABLE) {
+      const parsed = modelUpsertSchema.safeParse({ ...base, allowCommercialUse: [member] });
+      expect(parsed.success, `${member} should be writable`).toBe(true);
+    }
+    expect(modelUpsertSchema.safeParse({ ...base, allowCommercialUse: GRANTABLE }).success).toBe(
+      true
+    );
 
-    const allowed = modelUpsertSchema.safeParse({
-      ...base,
-      allowCommercialUse: [CommercialUse.Sell],
-    });
-    expect(allowed.success).toBe(true);
-
-    // A second data point, not the attribution: the withheld member is refused alongside others.
+    // The negative half, and it is what stops the loop above passing because the field stopped
+    // validating at all. A member that is not in the enum must still be refused.
     expect(
-      modelUpsertSchema.safeParse({
-        ...base,
-        allowCommercialUse: [CommercialUse.Sell, CommercialUse.SellMerge],
-      }).success
+      modelUpsertSchema.safeParse({ ...base, allowCommercialUse: ['SellTheMoon'] }).success
     ).toBe(false);
   });
 
