@@ -36,6 +36,11 @@ type Props = UnstyledButtonProps &
 
 const CLICK_AMOUNT = 10;
 const CONFIRMATION_TIMEOUT = 5000;
+// A press this soon after a clamp rewrote the amount did not follow from SEEING it. Covers
+// every gesture that supplies its own confirmation — a held Enter in the field, a held Enter
+// on the focused send button (which autorepeats clicks), a double-click — with one rule
+// instead of one per input device. The exact number is a judgement, not a measurement.
+const CLAMP_CONFIRM_DELAY = 500;
 
 /**NOTES**
  Why use zustand?
@@ -238,9 +243,11 @@ export function InteractiveTipBuzzButton({
     return amount;
   };
 
-  // Set when a clamp rewrote the amount under the user. Both send paths refuse while it is
-  // set, so the figure has to be on screen for one deliberate press before it can be spent.
-  const clampNeedsConfirmRef = useRef(false);
+  const amountFieldRef = useRef<HTMLDivElement>(null);
+  const clampShownAtRef = useRef(0);
+
+  const clampIsTooFreshToConfirm = () =>
+    performance.now() - clampShownAtRef.current < CLAMP_CONFIRM_DELAY;
 
   // Shared by blur and Enter. The comparison is on the STRING, not on Number(): a numeric
   // comparison passes '5e3' and '0x32' untouched, which sends an amount the field does not
@@ -252,15 +259,16 @@ export function InteractiveTipBuzzButton({
     // Written directly because buzzCounter may already equal the clamp, and then no
     // re-render repaints dangerouslySetInnerHTML — the field would keep showing the
     // rejected entry and never become sendable.
-    if (clamped && el) el.textContent = amount.toString();
-    clampNeedsConfirmRef.current = clamped;
+    if (clamped) {
+      if (el) el.textContent = amount.toString();
+      clampShownAtRef.current = performance.now();
+    }
     return { amount, clamped };
   };
 
   const reset = () => {
     setBuzzCounter(0);
     setShowCountDown(false);
-    clampNeedsConfirmRef.current = false;
     clearConfirmTimeout();
   };
 
@@ -436,13 +444,14 @@ export function InteractiveTipBuzzButton({
                   // key the user never released — and that press IS the safeguard.
                   if (e.repeat) return;
                   const { amount, clamped } = applyEnteredAmount(e.currentTarget);
-                  if (clamped) return;
+                  if (clamped || clampIsTooFreshToConfirm()) return;
                   sendTip(amount);
                 }}
                 onFocus={() => {
                   setShowCountDown(false);
                   clearConfirmTimeout();
                 }}
+                ref={amountFieldRef}
                 className={classes.tipAmount}
                 dangerouslySetInnerHTML={{ __html: buzzCounter.toString() }}
               />
@@ -455,16 +464,25 @@ export function InteractiveTipBuzzButton({
               onClick={
                 status === 'confirming'
                   ? () => {
-                      // The blur this click caused may have clamped the amount. The click
-                      // authorised the figure on screen BEFORE that, so spend nothing yet.
-                      if (clampNeedsConfirmRef.current) {
-                        clampNeedsConfirmRef.current = false;
-                        return;
-                      }
-                      sendTip();
+                      // Read the field rather than trusting buzzCounter. Where no blur
+                      // fires — touch, and engines that do not focus a button on
+                      // pointer-down — buzzCounter is whatever it was before the user
+                      // typed, and sendTip() would spend that instead of what is shown.
+                      // Where a blur DOES fire it has just clamped, and the freshness
+                      // check is what refuses that press.
+                      const { amount, clamped } = applyEnteredAmount(amountFieldRef.current);
+                      if (clamped || clampIsTooFreshToConfirm()) return;
+                      sendTip(amount);
                     }
                   : undefined
               }
+              // A held Enter on this button autorepeats CLICKS, and once the hold passes
+              // CLAMP_CONFIRM_DELAY those clicks look like a deliberate confirmation. The
+              // freshness rule bounds how soon a confirmation can arrive; only this bounds
+              // one arriving from a key that was never released.
+              onKeyDown={(e: React.KeyboardEvent) => {
+                if (e.repeat) e.preventDefault();
+              }}
               loading={tipUserMutation.isPending}
             >
               {status === 'confirmed' ? <IconCheck size={20} /> : <IconSend size={20} />}
