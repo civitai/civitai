@@ -7,6 +7,7 @@ import { BLOCK_PUBLISHED_APP_ID_META_KEY } from '~/server/services/blocks/block-
 import { isAllowedOutputHost } from '~/server/services/blocks/block-image-upload.logic';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
 import { assertBlockWorkflowTaggedForApp } from '~/server/services/blocks/block-workflow-access';
+import { isAcceptedCollaboratorOnAppBlockListing } from '~/server/services/blocks/app-access.service';
 import { blockWorkflowOwnedByAppUser } from '~/server/services/blocks/block-workflows.service';
 import { projectAppWorkflow } from '~/server/services/blocks/workflow.service';
 import {
@@ -14,6 +15,7 @@ import {
   BLOCK_POST_MAX_TAGS,
   isTerminalBlockPostWorkflowStatus,
   normalizeBlockPostTagNames,
+  readWorkflowResourceVersionIds,
   resolveWorkflowOutputSelection,
   validateBlockPostText,
   type BlockPostPreview,
@@ -94,8 +96,19 @@ export type BlockPostActor = {
 };
 
 /** One resolved image, ready to be adopted or materialised. */
-type ResolvedSourceImage =
-  | { kind: 'workflow'; url: string; width: number | null; height: number | null }
+export type ResolvedSourceImage =
+  | {
+      kind: 'workflow';
+      url: string;
+      width: number | null;
+      height: number | null;
+      /**
+       * The resource ids the producing workflow recorded. See the slot type on
+       * `resolveOwnedWorkflowOutputs` — and note that EMPTY means "nothing
+       * readable", not "no resources used".
+       */
+      modelVersionIds: number[];
+    }
   | {
       kind: 'published';
       imageId: number;
@@ -235,26 +248,56 @@ export type ResolvedGalleryTarget = {
  * Because every check here is an ADDITION over native, none of it can break a
  * native flow: this function is only ever called from the block path.
  *
- * ### The self-dealing guard
+ * ### The party guards
  *
- * `imagePostedToModelReward` pays **50 blue Buzz to the MODEL OWNER** per distinct
- * `(posterId, modelVersionId)` pair, all-time, capped at 5,000 per version and
- * 50,000/month per owner, and its only self-post guard is
- * `modelOwnerId === posterId`. An app author who also owns models can therefore
- * build an app that routes every viewer's post at their own model versions and
- * collect 50 Buzz per viewer per version — in policy, at scale, with the reward
- * system unable to see that the post came from an app at all (no suppression
- * signal exists: `getKey` receives only `{modelId, modelVersionId, posterId}`).
+ * A gallery attach names somebody else's model, so it is a decision about a THIRD
+ * PARTY — and on this path the app, not the person whose byline the post carries,
+ * is what chooses which one.
  *
- * 🔴 REFUSING `Model.userId === <the app publisher>` IS THE ONLY CONTROL THAT
- * REMOVES THE PAYOFF. Rate limits, trust gates and audit rows all raise the cost;
- * this one takes the money off the table. It must not be relaxed into a warning.
+ * 🔴 THE MONEY IS NOT DECIDED HERE, AND HAS NOT BEEN SINCE `viaAppId` LANDED. An
+ * earlier revision of this docblock said refusing the publisher was "the only
+ * control that removes the payoff" for `imagePostedToModelReward`, and that
+ * sentence is now WRONG: that reward is suppressed for every app-composed post, at
+ * the reward itself. See the scope note on `applyBlockPostPublishEffects`, which
+ * records both the original operator decision and the one place it was narrowed.
  *
- * ⚠️ WHAT IT DOES NOT CLOSE, stated plainly so nobody reads it as complete: a
- * COLLUDING PAIR (app author + a second account owning the models) defeats it
- * entirely, and no code control can catch that. What makes collusion *detectable*
- * is `Post.metadata.blockPublishedAppId` plus the `block_scope_invocations` row —
+ * What survives is the PLATFORM rule, which never depended on the payout: an app
+ * may not aim the viewer's post at a gallery belonging to a party the app itself
+ * is. Two such parties are declared in the database and both are refused, each
+ * with its OWN message so neither can be mistaken for the other under test:
+ *
+ *   - the app's PUBLISHER — `OauthClient.userId` for `claims.appId`;
+ *   - an ACCEPTED `AppCollaborator` on the app's store listing, resolved via
+ *     `isAcceptedCollaboratorOnAppBlockListing`. `accepted` only: a PENDING invite
+ *     would let a listing owner make a rival's gallery unreachable by inviting
+ *     them, which is a griefing lever rather than a control.
+ *
+ * Both are resolved from the TOKEN's own ids, so the block supplies neither side
+ * of either comparison. The publisher check FAILS CLOSED on an unresolvable
+ * client; the collaborator check allows when there is no listing or no seat (an
+ * AppBlock without a store listing is an ordinary state) and throws on a database
+ * error rather than reporting "not affiliated" — with ONE inherited exception, a
+ * missing `app_collaborators` table, which reports no seat. Read
+ * `isAcceptedCollaboratorOnAppBlockListing` before relying on the fail direction.
+ *
+ * ⚠️ WHAT THEY DO NOT CLOSE, stated plainly so nobody reads the set as complete.
+ * A guard here can only test a relationship the DATABASE DECLARES, so:
+ *
+ *   - a SECOND ACCOUNT acting with the publisher is declared nowhere and is not
+ *     comparable by any predicate at this layer;
+ *   - a USER OF THE APP whose app-side content names the target is likewise not
+ *     on the post wire.
+ *
+ * Both remain *detectable* rather than prevented, via
+ * `Post.metadata.blockPublishedAppId` plus the `block_scope_invocations` row —
  * i.e. the attribution marker is doing anti-fraud work, not decoration.
+ *
+ * ### What this function does NOT check, by construction
+ *
+ * Whether the target has anything to do with the IMAGES. That needs the resolved
+ * sources, which are resolved after this runs, so it lives in
+ * `assertGalleryTargetMatchesSources` — read its docblock rather than assuming
+ * this function covers it.
  */
 export async function resolveGalleryTarget(input: {
   modelVersionId: number;
@@ -274,8 +317,15 @@ export async function resolveGalleryTarget(input: {
   posterUserId: number;
   /** `claims.appId`; the publisher is resolved from it here, never passed in. */
   appId: string;
+  /**
+   * `claims.appBlockId`. Used to reach the app's STORE LISTING, which is where
+   * collaborator seats live — `appId` cannot get there, because seats are keyed to
+   * `AppListing` and the listing is joined to the block, not to the OAuth client.
+   * Like `appId`, it comes from the verified token and is never a client value.
+   */
+  appBlockId: string;
 }): Promise<ResolvedGalleryTarget> {
-  const { modelVersionId, posterUserId, appId } = input;
+  const { modelVersionId, posterUserId, appId, appBlockId } = input;
   void posterUserId;
 
   const version = await dbRead.modelVersion.findUnique({
@@ -322,6 +372,20 @@ export async function resolveGalleryTarget(input: {
   if (!client) forbidden('cannot verify app publisher for a gallery attach');
   if (client.userId === version.model.userId) {
     forbidden('this app may not attach posts to its own publisher’s models');
+  }
+
+  // COLLABORATOR. The publisher is not the only party an app can be directed by:
+  // an ACCEPTED collaborator on the app's store listing is a second one, and
+  // unlike an undeclared arrangement it is a relationship the database records.
+  // Resolved from the token's OWN `appBlockId`; as above, the block supplies
+  // neither side of the comparison.
+  //
+  // 🔴 ITS OWN MESSAGE, NOT THE PUBLISHER'S. Two guards sharing a refusal string
+  // are indistinguishable under test, so neither can be shown to work — and this
+  // one sits directly behind the other, which is exactly the arrangement that
+  // makes a guard look covered while never executing.
+  if (await isAcceptedCollaboratorOnAppBlockListing(appBlockId, version.model.userId)) {
+    forbidden('this app may not attach posts to its collaborators’ models');
   }
 
   return {
@@ -377,7 +441,25 @@ export async function resolveOwnedWorkflowOutputs(input: {
   appBlockId: string;
   workflowId: string;
   getWorkflow: (workflowId: string) => Promise<unknown>;
-}): Promise<Array<{ url: string; width: number | null; height: number | null } | null>> {
+}): Promise<
+  Array<{
+    url: string;
+    width: number | null;
+    height: number | null;
+    /**
+     * Every `ModelVersion` id this workflow record says it ran against — the only
+     * server-side evidence relating a post's images to its gallery attach. Read off
+     * the RAW workflow, because `projectAppWorkflow` deliberately strips it (a block
+     * must never read generation internals of a queue it owns only by tag), so it is
+     * carried on the slot rather than re-fetched.
+     *
+     * ⚠️ AN EMPTY ARRAY MEANS "NOTHING READABLE", NEVER "NO RESOURCES USED" — see
+     * `readWorkflowResourceVersionIds`. Identical on every slot of one workflow: the
+     * record is per workflow, not per output.
+     */
+    modelVersionIds: number[];
+  } | null>
+> {
   const owned = await blockWorkflowOwnedByAppUser({
     userId: input.userId,
     appBlockId: input.appBlockId,
@@ -419,7 +501,12 @@ export async function resolveOwnedWorkflowOutputs(input: {
   //
   // BLANKED IN PLACE, NOT FILTERED OUT — see the 🔴 note in the docblock. The
   // slot survives so index `n` still means the output the block saw at index `n`.
-  return projected.images.map((img) => (isAllowedOutputHost(img.url) ? img : null));
+  // Read off the RAW workflow, before the projection drops it.
+  const modelVersionIds = readWorkflowResourceVersionIds(workflow);
+
+  return projected.images.map((img) =>
+    isAllowedOutputHost(img.url) ? { ...img, modelVersionIds } : null
+  );
 }
 
 /** The gated edge-url width used for consent thumbnails + the published-image read. */
@@ -641,7 +728,13 @@ export async function resolveBlockPostSources(input: {
           // regression against the behaviour before the slots were blanked.
           continue;
         }
-        out.push({ kind: 'workflow', url: o.url, width: o.width, height: o.height });
+        out.push({
+          kind: 'workflow',
+          url: o.url,
+          width: o.width,
+          height: o.height,
+          modelVersionIds: o.modelVersionIds,
+        });
       }
     } else {
       const images = await resolveAppPublishedImages({
@@ -658,6 +751,89 @@ export async function resolveBlockPostSources(input: {
   }
   if (out.length === 0) badRequest('a post needs at least one image');
   return out;
+}
+
+/**
+ * Refuse a gallery attach that the post's own images CONTRADICT.
+ *
+ * ## The gap this closes
+ *
+ * `modelVersionId` and `sources[]` are two independent fields of one request, and
+ * until this guard nothing related them: every other check on the attach asks
+ * whether the TARGET is a legal thing to attach to (published, public, undeleted,
+ * not the app's own publisher's, not a collaborator's), and none asks whether it
+ * has anything to do with the images being posted. A post could therefore land in
+ * the gallery of a model it never used.
+ *
+ * 🔴 IT REFUSES A CONTRADICTION. IT DOES NOT REQUIRE A PROOF. THIS IS THE WHOLE
+ * SHAPE OF THE GUARD AND IT MUST NOT BE READ AS WIDER.
+ *
+ * It fires only when the evidence is present AND disagrees. Absent evidence is
+ * ALLOWED, in three enumerated cases below. That is a deliberate choice against
+ * the stricter alternative ("prove the target was used, or be refused"), which was
+ * rejected because it converts every shape of evidence this server cannot read
+ * into a broken post for an honest app — and the evidence comes from an external
+ * service with several step shapes, so "cannot read" is a live case rather than a
+ * theoretical one. A guard that refuses honest requests gets relaxed into a
+ * warning; this one is built so it never has to be.
+ *
+ * ## 🔴 THE THREE WAYS THIS GUARD DOES NOT FIRE, stated so nobody reads it as complete
+ *
+ *   1. **ANY `published` source in the post.** An app-published `Image` row carries
+ *      NO resource provenance whatsoever — `persistBlockWorkflowOutputImage`
+ *      creates a bare row with `meta` NULL, no `ImageResource*` rows, no post and
+ *      no workflow link, and its `metadata` holds exactly `{ size,
+ *      blockPublishedAppId }`. There is nothing to compare, and it is not
+ *      recoverable after the fact: the stored object is a fresh uuid with no path
+ *      back to the orchestrator blob. Publish-then-post is an explicitly supported
+ *      flow, so refusing it is not an option — the control is scoped to the arm
+ *      that can carry it, and the other arm is left open and said so.
+ *      ⚠️ **THIS IS ALSO THE BYPASS**: adding one published image to a post
+ *      disables this guard for the whole post. Closing it needs provenance written
+ *      at PUBLISH time, which is a schema and publish-path change, not a check.
+ *   2. **ANY workflow source with no readable resource record.** See
+ *      `readWorkflowResourceVersionIds` — an empty result is an absence of
+ *      evidence, and this guard treats it as one.
+ *      🔴 **ANY, not ALL, and the difference is a false-refusal class.** With
+ *      `ALL`, a post whose workflow A records resources and whose workflow B
+ *      records none would be graded against A's set alone — so an attach to a
+ *      model B genuinely used gets refused, because the server cannot see B. The
+ *      evidence has to be complete for the post before a disagreement means
+ *      anything.
+ *   3. **No gallery target at all.** Nothing to check.
+ *
+ * ## What it compares
+ *
+ * The EXACT `modelVersionId`, against the union over every workflow source. A
+ * sibling version of the same model is refused: the reward and the gallery are
+ * both per-VERSION, so "some version of this model" is not the same claim. This is
+ * stricter than native, which checks nothing at all — and like every other check
+ * on this path, being an addition over native means it cannot break a native flow.
+ *
+ * `BAD_REQUEST`, not `FORBIDDEN`: nothing about the caller is unauthorised — the
+ * request is internally inconsistent, and the app's correct response is to send a
+ * target the images support or none at all.
+ */
+export function assertGalleryTargetMatchesSources(input: {
+  gallery: ResolvedGalleryTarget | null;
+  images: ResolvedSourceImage[];
+}): void {
+  const { gallery, images } = input;
+  if (!gallery) return;
+
+  // Cases 1 and 2. Both are "the server cannot see what this image was made
+  // with", and ONE such image makes the whole post unknowable — a partial set
+  // graded as if it were complete is how a legitimate attach gets refused.
+  const used = new Set<number>();
+  for (const img of images) {
+    if (img.kind !== 'workflow') return;
+    if (img.modelVersionIds.length === 0) return;
+    for (const id of img.modelVersionIds) used.add(id);
+  }
+
+  if (!used.has(gallery.modelVersionId)) {
+    badRequest('gallery target was not used by the images being posted');
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -702,6 +878,7 @@ export async function previewBlockPost(input: {
           modelVersionId: input.modelVersionId,
           posterUserId: input.actor.userId,
           appId: input.actor.appId,
+          appBlockId: input.actor.appBlockId,
         })
       : null;
 
@@ -710,6 +887,12 @@ export async function previewBlockPost(input: {
     actor: input.actor,
     getWorkflow: input.getWorkflow,
   });
+
+  // Runs HERE and not inside `resolveGalleryTarget`, because it is the one gallery
+  // check that needs the IMAGES, which are resolved after the target. The preview
+  // must run it for the same reason it runs every other gate: a preview that
+  // renders a gallery line the write will refuse is a UX bug.
+  assertGalleryTargetMatchesSources({ gallery, images: resolved });
 
   return {
     title: text.title,
@@ -960,6 +1143,37 @@ export async function writeBlockPost(input: {
  * that this path is a real Buzz-spending surface, which is why the rate buckets
  * and the self-dealing guard exist rather than being belt-and-braces.
  *
+ * 🔴 AND THE ONE PLACE THAT DECISION HAS SINCE BEEN NARROWED — READ THIS BEFORE
+ * CITING THE PARAGRAPH ABOVE, WHICH NO LONGER DESCRIBES THE WHOLE PATH.
+ *
+ * The rationale is stated in terms of ONE recipient — "the viewer's own post",
+ * "under the viewer's own byline" — and it holds exactly as written for every
+ * reward whose recipient IS the author. It does not reach a reward whose
+ * recipient is somebody else, because there is no byline argument to make about a
+ * party the author never interacted with. The two rewards below differ on
+ * precisely that:
+ *
+ *   - `firstDailyPostReward`     → paid to the POST'S AUTHOR. UNCHANGED on this
+ *                                  path. The decision above is about this one and
+ *                                  continues to govern it in full.
+ *   - `imagePostedToModelReward` → paid to the GALLERY TARGET'S MODEL OWNER, a
+ *                                  THIRD PARTY, on a target the calling app
+ *                                  supplied. SUPPRESSED on this path, by
+ *                                  `viaAppId` — see the reward's own `getKey`.
+ *
+ * ⚠️ THE COST, STATED PLAINLY SO THE NARROWING IS NOT READ AS FREE: a perfectly
+ * legitimate app-composed post no longer pays the model owner anything, where the
+ * identical post composed in the site's own UI would. That is a real product loss
+ * for honest apps and honest model owners, and it is the reason this is a
+ * narrowing of a recorded decision rather than a bug fix. It was taken because the
+ * recipient of this one reward is chosen by the app rather than by the person
+ * whose byline the post carries, and no attach-layer predicate can enumerate every
+ * relationship an app may have with a model owner.
+ *
+ * The suppression is expressed ONCE, in the reward, not as a condition around the
+ * call below — so it covers any future app-originated caller without that caller
+ * having to know about it.
+ *
  * 🔴 AND THE SECOND REASON, WHICH IS NOT ABOUT `post.controller.ts` AT ALL: SOME
  * `Post` DATABASE TRIGGERS DO NOT FIRE ON THIS PATH. `writeBlockPost` writes
  * `publishedAt` INSIDE the `post.create` (deliberately, so the post is never
@@ -1028,12 +1242,14 @@ export async function writeBlockPost(input: {
  * What fires HERE, and the native line it mirrors:
  *   - the seed `PostMetric(AllTime)` row — the `publish_post_metrics` trigger.
  *   - `firstDailyPostReward`      — 25 blue Buzz, 25/day cap, double-deduped.
- *   - `imagePostedToModelReward`  — ONLY when a gallery target was attached; 50
- *                                   blue Buzz to the MODEL OWNER. Its own
- *                                   `modelOwnerId === posterId` guard handles the
- *                                   self-post case; the SELF-DEALING guard in
- *                                   `resolveGalleryTarget` is what handles the
- *                                   app-publisher case, which that guard cannot see.
+ *   - `imagePostedToModelReward`  — issued only when a gallery target was
+ *                                   attached, and SUPPRESSED when it is: the call
+ *                                   carries `viaAppId`, on which the reward's
+ *                                   `getKey` returns `false`. It therefore appears
+ *                                   in the effect ledger and pays nothing. Its own
+ *                                   `modelOwnerId === posterId` guard and the
+ *                                   attach-layer guards in `resolveGalleryTarget`
+ *                                   are unchanged and still run on the native path.
  *   - `eventEngine.processEngagement` — the `published` engagement.
  *   - `bustCachesForPosts`        — the `images-modelVersion:` / `images-model:`
  *                                   gallery busts. 🔴 NOT OPTIONAL: the native
@@ -1070,6 +1286,17 @@ export async function applyBlockPostPublishEffects(input: {
   imageIds: number[];
   modelVersionId: number | null;
   modelId: number | null;
+  /**
+   * `claims.appId` — the app that composed this post.
+   *
+   * 🔴 REQUIRED, NOT OPTIONAL, AND THAT IS THE POINT. It is the suppression
+   * signal `imagePostedToModelReward` reads (see the reward-scope note in this
+   * function's docblock). An optional field would let a future call site omit it
+   * and silently re-enable a reward this path does not pay; a required one makes
+   * the compiler ask the question. There is exactly one caller and it is the
+   * block path by construction, so there is no value it could legitimately lack.
+   */
+  appId: string;
   ip?: string;
 }): Promise<void> {
   const { firstDailyPostReward, imagePostedToModelReward } = await import('~/server/rewards');
@@ -1121,11 +1348,18 @@ export async function applyBlockPostPublishEffects(input: {
     { ip: input.ip }
   );
   if (input.modelVersionId != null) {
+    // 🔴 `viaAppId` IS THE SUPPRESSION SIGNAL, AND THE CALL IS STILL ISSUED. The
+    // reward's own `getKey` returns `false` on it, so nothing is keyed and nothing
+    // is paid — see that function for why the rule lives there rather than as an
+    // `if` around this call. Issuing it anyway keeps ONE code path for both
+    // outcomes, so the suppression is a property of the reward that every caller
+    // inherits instead of a condition each caller has to remember to re-spell.
     await imagePostedToModelReward.apply(
       {
         modelId: input.modelId ?? undefined,
         modelVersionId: input.modelVersionId,
         posterId: input.userId,
+        viaAppId: input.appId,
       },
       { ip: input.ip }
     );

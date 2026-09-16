@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -34,6 +35,7 @@ const {
   mockResolveBlockPostSources,
   mockResolveExistingPostTags,
   mockResolveGalleryTarget,
+  mockAssertGalleryMatchesSources,
   mockWriteBlockPost,
   mockApplyEffects,
   mockPersistImage,
@@ -56,6 +58,7 @@ const {
   mockResolveBlockPostSources: vi.fn(),
   mockResolveExistingPostTags: vi.fn(),
   mockResolveGalleryTarget: vi.fn(),
+  mockAssertGalleryMatchesSources: vi.fn(),
   mockWriteBlockPost: vi.fn(),
   mockApplyEffects: vi.fn(),
   mockPersistImage: vi.fn(),
@@ -96,6 +99,7 @@ vi.mock('~/server/services/blocks/block-post.service', () => ({
   resolveBlockPostSources: (...a: unknown[]) => mockResolveBlockPostSources(...a),
   resolveExistingPostTags: (...a: unknown[]) => mockResolveExistingPostTags(...a),
   resolveGalleryTarget: (...a: unknown[]) => mockResolveGalleryTarget(...a),
+  assertGalleryTargetMatchesSources: (...a: unknown[]) => mockAssertGalleryMatchesSources(...a),
   writeBlockPost: (...a: unknown[]) => mockWriteBlockPost(...a),
   applyBlockPostPublishEffects: (...a: unknown[]) => mockApplyEffects(...a),
 }));
@@ -223,6 +227,11 @@ beforeEach(() => {
     tagNames: [],
   });
   mockApplyEffects.mockResolvedValue(undefined);
+  // 🔴 RE-ARMED, not merely cleared. `vi.clearAllMocks()` drops CALLS but keeps
+  // IMPLEMENTATIONS, so the case that makes this gate throw would otherwise throw
+  // in every case after it — see the note this file already carries on the same
+  // hazard for `preventReplicationLag` in the sibling suite.
+  mockAssertGalleryMatchesSources.mockReset();
   dbMock.dbRead.account.count.mockResolvedValue(1);
 });
 
@@ -602,12 +611,77 @@ describe('content + gallery re-derivation on the WRITE path', () => {
       modelVersionId: 3100,
       posterUserId: VIEWER_ID,
       appId: 'appblk-alpha',
+      // The collaborator half of the gate cannot be reached from `appId` — seats
+      // are keyed to the app's LISTING, which is joined to the block. Dropping
+      // this argument would leave that guard permanently unable to find a seat,
+      // which is the silent-inert failure it is asserted against here.
+      appBlockId: 'apb_alpha',
     });
   });
 
   it('does NOT call the gallery gate when no attach was requested', async () => {
     await caller().createPostFromApp(INPUT);
     expect(mockResolveGalleryTarget).not.toHaveBeenCalled();
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 THE SEAM. `assertGalleryTargetMatchesSources` needs BOTH the resolved
+  // target and the resolved images, so unlike every other gallery check it cannot
+  // live inside `resolveGalleryTarget` and the ROUTER has to call it. Its own
+  // suite proves the predicate; nothing there can prove this procedure invokes it,
+  // or that it hands over the real resolved set rather than the request's.
+  it('runs the image/target consistency gate, with the RESOLVED images', async () => {
+    mockResolveGalleryTarget.mockResolvedValue({
+      modelVersionId: 3100,
+      modelId: 800,
+      modelName: 'M',
+      versionName: 'v1',
+    });
+    const resolvedImages = [
+      { kind: 'workflow', url: 'https://x/a.jpg', width: 1, height: 1, modelVersionIds: [3100] },
+    ];
+    mockResolveBlockPostSources.mockResolvedValue(resolvedImages);
+
+    await caller().createPostFromApp({
+      ...INPUT,
+      modelVersionId: 3100,
+      confirmedImageCount: 1,
+    });
+
+    expect(mockAssertGalleryMatchesSources).toHaveBeenCalledWith({
+      gallery: { modelVersionId: 3100, modelId: 800, modelName: 'M', versionName: 'v1' },
+      images: resolvedImages,
+    });
+  });
+
+  it('its refusal FAILS the post — it is a gate, not an advisory', async () => {
+    // A gate whose throw is swallowed is decoration. Driven by making the mock
+    // throw, because the router is what has to let the throw through.
+    mockResolveGalleryTarget.mockResolvedValue({
+      modelVersionId: 3100,
+      modelId: 800,
+      modelName: 'M',
+      versionName: 'v1',
+    });
+    mockAssertGalleryMatchesSources.mockImplementation(() => {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: 'nope' });
+    });
+
+    await expect(
+      caller().createPostFromApp({ ...INPUT, modelVersionId: 3100 })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'nope' });
+    expect(mockWriteBlockPost).not.toHaveBeenCalled();
+  });
+
+  it('still runs the gate when there is NO attach, so the null case is the gate’s to decide', async () => {
+    // Deliberately NOT `if (gallery) assert(...)` at the call site: a caller-side
+    // condition is a second copy of the predicate that can drift from the one in
+    // the function. The function owns "no target ⇒ nothing to check".
+    await caller().createPostFromApp(INPUT);
+
+    expect(mockAssertGalleryMatchesSources).toHaveBeenCalledWith(
+      expect.objectContaining({ gallery: null })
+    );
   });
 });
 
@@ -711,6 +785,32 @@ describe('materialisation + audit', () => {
     });
     await caller().createPostFromApp(INPUT);
     expect('modelVersionId' in mockRecordScopeInvocation.mock.calls[0][0].detail).toBe(false);
+  });
+
+  it('hands the post-commit effects the VERIFIED token app id', async () => {
+    // 🔴 THE OTHER SEAM. `applyBlockPostPublishEffects` forwards this to
+    // `imagePostedToModelReward` as `viaAppId`, which is what suppresses a reward
+    // paid to a third party on an app-composed post. The reward owns the
+    // predicate and the service owns the forward; only this procedure can be
+    // shown to supply the value, and supplying the wrong one — or none — makes
+    // the whole control inert with nothing failing anywhere else.
+    await caller().createPostFromApp(INPUT);
+
+    expect(mockApplyEffects).toHaveBeenCalledWith(
+      expect.objectContaining({ appId: 'appblk-alpha' })
+    );
+  });
+
+  it('takes that app id from the TOKEN, not from a constant', async () => {
+    // A hardcoded literal satisfies the case above. Re-issuing the token with a
+    // different app id is what makes the argument observably derived.
+    mockAuthorizeBlockBridgeToken.mockResolvedValue(claims({ appId: 'appblk-zeta' }));
+
+    await caller().createPostFromApp(INPUT);
+
+    expect(mockApplyEffects).toHaveBeenCalledWith(
+      expect.objectContaining({ appId: 'appblk-zeta' })
+    );
   });
 
   it('a failure in the post-commit effects does NOT fail the already-public post', async () => {

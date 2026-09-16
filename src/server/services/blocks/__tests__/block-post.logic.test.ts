@@ -6,6 +6,7 @@ import {
   BLOCK_POST_MAX_TAGS,
   BLOCK_POST_TITLE_MAX,
   normalizeBlockPostTagNames,
+  readWorkflowResourceVersionIds,
   resolveWorkflowOutputSelection,
   validateBlockPostText,
 } from '~/server/services/blocks/block-post.logic';
@@ -215,5 +216,164 @@ describe('resolveWorkflowOutputSelection', () => {
     expect(
       resolveWorkflowOutputSelection({ requested: undefined, availableCount: 0, maxCount: 20 })
     ).toEqual([]);
+  });
+});
+
+/**
+ * 🔴 `readWorkflowResourceVersionIds` — the only server-side evidence relating a
+ * post's IMAGES to its gallery ATTACH.
+ *
+ * Every id below is pairwise distinct AND distinct from every other constant in
+ * this file, so a mutant that returned the wrong carrier's value, or one that
+ * returned a constant, cannot survive by coincidence.
+ *
+ * ⚠️ The property under test is "what can be READ", never "what was used". An
+ * empty result means nothing was readable — the consuming guard is built around
+ * exactly that, so a case here that produces `[]` is pinning an ABSENCE OF
+ * EVIDENCE and says so.
+ */
+describe('readWorkflowResourceVersionIds', () => {
+  const CHECKPOINT = 7101;
+  const LORA = 7202;
+  const STEP_RESOURCE = 7303;
+  const AIR_VERSION = 7404;
+
+  it('reads `metadata.resources[].id`', () => {
+    expect(
+      readWorkflowResourceVersionIds({ metadata: { resources: [{ id: CHECKPOINT }] } })
+    ).toEqual([CHECKPOINT]);
+  });
+
+  it('reads `metadata.params.resources[].id` — the nested spelling', () => {
+    expect(
+      readWorkflowResourceVersionIds({ metadata: { params: { resources: [{ id: LORA }] } } })
+    ).toEqual([LORA]);
+  });
+
+  it('reads a per-STEP metadata record', () => {
+    expect(
+      readWorkflowResourceVersionIds({
+        steps: [{ metadata: { params: { resources: [{ id: STEP_RESOURCE }] } } }],
+      })
+    ).toEqual([STEP_RESOURCE]);
+  });
+
+  it('reads a civitai AIR on `steps[].input.model`', () => {
+    expect(
+      readWorkflowResourceVersionIds({
+        steps: [{ input: { model: `urn:air:sd1:checkpoint:civitai:900@${AIR_VERSION}` } }],
+      })
+    ).toEqual([AIR_VERSION]);
+  });
+
+  it('reads the AIR KEYS of `additionalNetworks` — the value carries only strength', () => {
+    expect(
+      readWorkflowResourceVersionIds({
+        steps: [
+          {
+            input: {
+              additionalNetworks: {
+                [`urn:air:sd1:lora:civitai:901@${LORA}`]: { strength: 0.8 },
+              },
+            },
+          },
+        ],
+      })
+    ).toEqual([LORA]);
+  });
+
+  it('reads a custom-graph step’s explicit AIR list', () => {
+    expect(
+      readWorkflowResourceVersionIds({
+        steps: [{ input: { resources: [`urn:air:sd1:lora:civitai:902@${STEP_RESOURCE}`] } }],
+      })
+    ).toEqual([STEP_RESOURCE]);
+  });
+
+  it('UNIONS every carrier and de-duplicates', () => {
+    // The case that fails for a mutant reading only the first carrier it finds.
+    const out = readWorkflowResourceVersionIds({
+      metadata: { resources: [{ id: CHECKPOINT }] },
+      steps: [
+        { metadata: { resources: [{ id: LORA }] } },
+        {
+          input: {
+            model: `urn:air:sd1:checkpoint:civitai:900@${CHECKPOINT}`,
+            additionalNetworks: { [`urn:air:sd1:lora:civitai:903@${AIR_VERSION}`]: {} },
+          },
+        },
+      ],
+    });
+    expect([...out].sort((a, b) => a - b)).toEqual(
+      [CHECKPOINT, LORA, AIR_VERSION].sort((a, b) => a - b)
+    );
+  });
+
+  it('SKIPS a non-civitai AIR that DOES carry a numeric version', () => {
+    // 🔴 THE FIXTURE IS THE WHOLE TEST, AND THE OBVIOUS ONE IS VACUOUS. A
+    // realistic-looking orchestrator AIR such as
+    // `urn:air:sd1:lora:orchestrator:job-abc/file.safetensors` parses to
+    // `version: null`, so it is dropped by the integer check regardless of the
+    // source check — a mutant that deleted `source === 'civitai'` SURVIVES that
+    // fixture, measured. These two parse to real numbers (5678 and 1), so they
+    // are admitted the moment the source check goes, which is what makes this a
+    // test of the source check rather than of the integer check.
+    //
+    // Neither id has a `ModelVersion` behind it: one is an orchestrator-hosted
+    // asset, the other a comfy node pack. Admitting either would put a value in
+    // the set that can never legitimately match a gallery target, while making
+    // the set look populated to a caller that distinguishes empty from non-empty.
+    expect(
+      readWorkflowResourceVersionIds({
+        steps: [
+          {
+            input: {
+              resources: [
+                'urn:air:sdxl:checkpoint:orchestrator:1234@5678',
+                'urn:air:comfy:nodepack:comfy:some-pack@1',
+              ],
+            },
+          },
+        ],
+      })
+    ).toEqual([]);
+  });
+
+  it('SKIPS an AIR whose version is not a number at all', () => {
+    expect(
+      readWorkflowResourceVersionIds({
+        steps: [
+          { input: { resources: ['urn:air:sd1:lora:orchestrator:job-abc/file.safetensors'] } },
+        ],
+      })
+    ).toEqual([]);
+  });
+
+  it('SKIPS non-integer and non-positive ids', () => {
+    expect(
+      readWorkflowResourceVersionIds({
+        metadata: {
+          resources: [{ id: 0 }, { id: -5 }, { id: 1.5 }, { id: '7101' }, { id: null }],
+        },
+      })
+    ).toEqual([]);
+  });
+
+  it('ABSENCE OF EVIDENCE: a workflow with no readable carrier reports []', () => {
+    // NOT "no resources were used". The consuming guard must treat this as
+    // unknown, and does — see `assertGalleryTargetMatchesSources`.
+    expect(readWorkflowResourceVersionIds({ steps: [{ $type: 'comfy', input: {} }] })).toEqual([]);
+  });
+
+  it('never throws on a malformed payload — a bad field costs that field, not the request', () => {
+    for (const bad of [null, undefined, 42, 'workflow', [], { steps: 'nope' }, { metadata: 7 }]) {
+      expect(readWorkflowResourceVersionIds(bad)).toEqual([]);
+    }
+    expect(
+      readWorkflowResourceVersionIds({
+        metadata: { resources: [null, 'x', 5, { id: CHECKPOINT }] },
+        steps: [null, 'x', { input: null }, { input: { additionalNetworks: 'x' } }],
+      })
+    ).toEqual([CHECKPOINT]);
   });
 });
