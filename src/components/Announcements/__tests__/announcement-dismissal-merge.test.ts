@@ -9,24 +9,28 @@ import { useMergeServerDismissals } from '~/components/Announcements/announcemen
 // React 18.3 exposes `act` on the `react` export, ahead of our @types/react.
 const act = (React as unknown as { act: typeof actType }).act;
 
-function renderMerge(
-  props: {
-    liveIds: number[];
-    serverDismissedIds: number[];
-    merge: (ids: number[]) => void;
-  },
-  { renders = 1 }: { renders?: number } = {}
-) {
+type MergeProps = {
+  liveIds: number[];
+  serverDismissedIds: number[];
+  merge: (ids: number[]) => void;
+};
+
+/**
+ * Renders the hook once per entry in `steps`, so a test can describe a SEQUENCE. The production
+ * sequence is the point: `useServerDismissedAnnouncements` has no `initialData`, so the account's
+ * ids are always absent on the first render and arrive on a later one.
+ */
+function renderMerge(...steps: MergeProps[]) {
   const container = document.createElement('div');
   const root = createRoot(container);
-  const Harness = () => {
+  const Harness = ({ props }: { props: MergeProps }) => {
     useMergeServerDismissals(props);
     return null;
   };
 
-  for (let i = 0; i < renders; i++)
+  for (const props of steps)
     act(() => {
-      root.render(React.createElement(Harness));
+      root.render(React.createElement(Harness, { props }));
     });
 
   act(() => {
@@ -50,13 +54,33 @@ describe('useMergeServerDismissals', () => {
   });
 
   /**
+   * 🔴 The sequence that actually ships. The account's ids are absent on the first render — the
+   * query behind them has no `initialData` — so an effect that runs only on mount never merges
+   * anything, for anyone, and the account store becomes write-only. Nothing about the ids can see
+   * that; only a second render with different inputs can.
+   */
+  it('merges when the account list arrives after the first render', () => {
+    const merge = vi.fn();
+    const liveIds = [1, 2, 3];
+
+    renderMerge(
+      { liveIds, serverDismissedIds: [], merge },
+      { liveIds, serverDismissedIds: [2], merge }
+    );
+
+    expect(merge).toHaveBeenCalledWith([2]);
+    expect(merge).toHaveBeenCalledTimes(1);
+  });
+
+  /**
    * The merge writes to a store every one of these surfaces renders from, so a merge that fires
    * per render is a render loop rather than wrong data — no assertion about the ids can see it.
    */
   it('merges once across re-renders with the same inputs', () => {
     const merge = vi.fn();
+    const props = { liveIds: [1, 2, 3], serverDismissedIds: [2], merge };
 
-    renderMerge({ liveIds: [1, 2, 3], serverDismissedIds: [2], merge }, { renders: 3 });
+    renderMerge(props, props, props);
 
     expect(merge).toHaveBeenCalledTimes(1);
   });

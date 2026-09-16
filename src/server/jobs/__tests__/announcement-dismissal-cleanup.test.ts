@@ -71,6 +71,10 @@ describe('announcement-dismissal-cleanup', () => {
 
     await run();
 
+    // The positive half. Without it this test is green when the job issues nothing at all, or
+    // when either statement moves to a path these two mocks do not cover.
+    expect(retiredLookup).toHaveBeenCalledTimes(1);
+    expect(deleteMany).toHaveBeenCalledTimes(1);
     expect(dbMock.dbWrite.announcement.findMany).not.toHaveBeenCalled();
     expect(dbMock.dbRead.announcementDismissal.deleteMany).not.toHaveBeenCalled();
   });
