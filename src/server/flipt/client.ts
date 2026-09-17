@@ -138,6 +138,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // OFF is the shipped default and means the pattern list is recorded but not enforced on these
   // surfaces. The link-domain half throws either way — this flag has never governed it.
   USER_CONTENT_PATTERN_ENFORCE = 'user-content-pattern-enforce',
+
+  // Submits image ingestion as one imageScanning step instead of wdTagging + mediaRating.
+  // DEFAULT-OFF — an unknown flag or unreachable Flipt keeps the two-step path. Evaluated
+  // with the imageId and no context, so ramp by percentage or boolean; a segment matches nothing.
+  IMAGE_INGESTION_IMAGE_SCANNING = 'image-ingestion-image-scanning',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

@@ -2065,15 +2065,6 @@ export const REDIS_SYS_KEYS = {
     LIVE_FEATURE_FLAGS: 'system:live-feature-flags',
     SUSPICIOUS_AUDIT_MATCHES: 'system:suspicious-audit-matches',
     /*
-      Runtime toggle for the new image ingestion path (createImageIngestionRequest
-      with the expanded mediaRating step). Read by image.service.ts before
-      routing to the new vs legacy scanner. Accepts '1'/'true' to enable,
-      '0'/'false' to disable. If the key is missing, the first call seeds it to
-      'false' so the toggle is discoverable in Redis. Lets ops flip without a
-      deploy.
-     */
-    IMAGE_SCANNER_NEW: 'system:image-scanner-new',
-    /*
       Per-run image cap for the remove-deleted-user-images job. Set to '0' to
       pause the drain without a deploy. Missing key means the job's compiled
       default applies.

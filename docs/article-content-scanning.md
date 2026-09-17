@@ -438,22 +438,12 @@ Both use `GREATEST` semantics (never lower, only raise) and lock `userNsfwLevel`
 
 #### 4. Webhook Integration
 
-**File**: `src/pages/api/webhooks/image-scan-result.ts` (image scanning)
+**File**: `src/pages/api/webhooks/image-scan-result.ts` reads the flag; the scan processors (`image-scan-result.service.ts`, `image-scanning-result.service.ts`) do the fan-out
 
 ```typescript
-// Feature flag gated
-const featureFlags = getFeatureFlagsLazy({ req });
-if (featureFlags.articleImageScanning) {
-  // Find articles using this image
-  const articleConnections = await dbWrite.imageConnection.findMany({
-    where: { imageId: image.id, entityType: 'Article' },
-  });
-
-  // Debounced updates
-  for (const { entityId } of articleConnections) {
-    await debounceArticleUpdate(entityId);
-  }
-}
+articleImageScanning: getFeatureFlagsLazy({ req }).articleImageScanning, // webhook → processor input
+// in the processor, once the verdict is written:
+if (articleImageScanning) await fanOutArticleImageUpdates(imageId); // content + cover articles → debounceArticleUpdate
 ```
 
 **File**: `src/pages/api/webhooks/text-moderation-result.ts` (text moderation)
@@ -993,7 +983,8 @@ console.log('Article Image Scanning:', flags.articleImageScanning);
 - `src/server/services/article.service.ts` - Main article operations, image linking, scan status
 - `src/server/services/article-content-cleanup.service.ts` - Image/media extraction from content (server-side)
 - `src/server/services/nsfwLevels.service.ts` - NSFW level calculation (cover + content images)
-- `src/pages/api/webhooks/image-scan-result.ts` - Image scan webhook handler
+- `src/pages/api/webhooks/image-scan-result.ts` - Image scan webhook handler (reads the flag, routes by workflow step)
+- `src/server/services/image-scan-result.service.ts`, `image-scanning-result.service.ts`, `image-scan-pipeline.ts` - scan processing + article fan-out
 - `src/server/utils/webhook-debounce.ts` - Redis-based debouncing logic
 - `src/utils/article-helpers.ts` - Image extraction (client-side), shared helpers
 

@@ -15,12 +15,9 @@ import { decreaseDate } from '~/utils/date-helpers';
 const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
 const IMAGE_SCANNING_RETRY_LIMIT = 9;
 
-// Hard per-image backstop for a single submit. The orchestrator submit is already
-// bounded per-attempt (createImageIngestionRequest, ~15s AbortSignal), but this also
-// covers any other external await inside ingestImage (Redis flag read, prompt lookup,
-// the scanJobs UPDATE) so one hung submit ties up a single concurrency slot rather
-// than the whole run. A fired timeout just fails that image → it stays queued and is
-// retried on a later run.
+// Hard per-image backstop. The orchestrator submit is bounded per attempt (~15s), but the
+// Flipt flag read before it and the scanJobs UPDATE after it are not, so this keeps one hung
+// image to one concurrency slot. A timed-out image stays queued for a later run.
 const INGEST_IMAGE_TIMEOUT_MS = 60 * 1000;
 
 // Per-run wall-clock budget. Once exceeded we stop STARTING new submits so the run
@@ -702,9 +699,9 @@ export const removeBlockedImages = createJob(
     // DOES NOT RETRACT — the row is still hard-deleted here, exactly as before; only the shared
     //   object is left alone:
     //     • the scan pipeline's three block outcomes — the orchestrator content rating
-    //       (`blockImageFromRating`), the prompt/text audit, and the moderation rule engine — in
-    //       BOTH copies of that pipeline: `image-scan-result.service` and the legacy bodies in
-    //       `api/webhooks/image-scan-result`. Automated, no moderator, no `ModActivity`.
+    //       (`blockImageFromRating`), the prompt/text audit, and the moderation rule engine
+    //       (`image-scan-result.service` / `image-scan-pipeline`). Automated, no moderator, no
+    //       `ModActivity`.
     //     • the CSAM branch of `report.service` — reached from `report.create`, which is a
     //       `guardedProcedureAllowUnverifiedEmail`, so it is fired by ANY reporting user's report
     //       and not by a moderator reviewing one. This is the writer that would be most dangerous

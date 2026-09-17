@@ -258,7 +258,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     // 🔴 Strip the NORMALIZED copy. `auditPromptEnriched` folds accents before the
     // detector runs, so stripping raw text matches one alphabet while the detector
     // reads another and a whitelisted `emma stone` still blocks `émma stone`. The
-    // scan paths in image-scan-result.service.ts already normalize first.
+    // scan paths in image-scan-pipeline.ts already normalize first.
     const [auditedPrompt, auditedNegativePrompt] = await Promise.all([
       stripBenignPhrases(normalizeText(prompt), BlocklistType.PromptBenignPhrase),
       stripBenignPhrases(normalizeText(negativePrompt), BlocklistType.NegativeBenignPhrase),
