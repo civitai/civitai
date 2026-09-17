@@ -212,12 +212,17 @@ export const BLOCK_GENERATION_TYPES: readonly BlockGenerationType[] = [
  * `Array.includes` over a derived list was a complete bound. Interpolating
  * registry ids into the value makes the space COMPOSITE, and a flat membership
  * test over a precomputed cross-product would have to be regenerated in lockstep
- * with two registries. So the bound is stated structurally instead:
+ * with two registries. So the bound is stated structurally instead, and these
+ * are the properties it GUARANTEES — not a checklist of the lines below, which
+ * are deliberately fewer (see the note in the body):
  *
  *   - the COARSE key (everything before the first colon) is in the closed
  *     `BLOCK_GENERATION_COARSE_TYPES`;
  *   - there is AT MOST ONE colon — the subtype is colon-free;
- *   - the subtype is non-empty and in the closed set that coarse key allows.
+ *   - the subtype is non-empty and in the closed set that coarse key allows,
+ *     which for a registered step id is the EMPTY set (a step carries no
+ *     subtype, so `convert-image:anything` is refused rather than waved
+ *     through as "some future step subtype").
  *
  * 🔴 EVERY LOOKUP IS AN ARRAY MEMBERSHIP TEST, DELIBERATELY — never an index
  * into a registry object. `getStep(id)` / `getRecipe(id)` index plain object
@@ -237,26 +242,26 @@ export function isBlockGenerationType(value: unknown): value is BlockGenerationT
     return BLOCK_GENERATION_COARSE_TYPES.includes(value);
   }
 
-  const coarse = value.slice(0, firstColon);
-  const subtype = value.slice(firstColon + 1);
-
-  if (!BLOCK_GENERATION_COARSE_TYPES.includes(coarse)) return false;
-
-  // 🔴 NO SEPARATE "at most one colon" OR "non-empty subtype" CHECK, AND THAT IS
-  // A DELIBERATE DELETION, NOT AN OVERSIGHT. Both were written, then removed
-  // because a mutation sweep proved neither could be killed: every member of
-  // every allowed-subtype set is colon-free and non-empty, so the membership
-  // test below already refuses `textToImage:img2img:edit` and `textToImage:`.
-  // A guard no test can turn red is worse than no guard — it reads as coverage
-  // while providing none.
+  // 🔴 ONE MEMBERSHIP TEST, NOT FOUR — AND THE MISSING THREE ARE A DELIBERATE
+  // DELETION, NOT AN OVERSIGHT. Separate checks for "the coarse key is known",
+  // "at most one colon" and "the subtype is non-empty" were all written, and a
+  // mutation sweep proved NONE of them could be turned red: `subtypesFor`
+  // returns the EMPTY set for an unknown coarse key, and every member of every
+  // allowed set is colon-free and non-empty, so this single line already refuses
+  // `videoToVideo:txt2img`, `textToImage:img2img:edit` and `textToImage:`. A
+  // guard no test can turn red is worse than no guard — it reads as coverage
+  // while providing none, which is how a reviewer is talked out of looking.
   //
-  // What that leaves the grammar resting on is the allowed sets themselves, and
-  // the one way they could ever admit a colon is a REGISTRY ID containing one
-  // (recipe ids are interpolated verbatim). That is pinned at registration time
-  // by the "no registry id contains a colon" invariant guard in
-  // `generation-type.test.ts`, which is where a new entry would trip it — not
-  // here at runtime, where the value would already have been written.
-  return blockGenerationSubtypesFor(coarse).includes(subtype);
+  // So the whole bound on the composite half is ONE rule in ONE place: the
+  // allowed-subtype set for this coarse key. The one way such a set could ever
+  // admit a colon is a REGISTRY ID containing one (recipe ids are interpolated
+  // verbatim). That is pinned at REGISTRATION time by the "no registry id
+  // contains a colon" invariant guard in `generation-type.test.ts` — where a new
+  // entry trips it — rather than here at runtime, where the value would already
+  // have been written.
+  return blockGenerationSubtypesFor(value.slice(0, firstColon)).includes(
+    value.slice(firstColon + 1)
+  );
 }
 
 /**

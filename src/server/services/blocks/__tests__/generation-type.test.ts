@@ -456,9 +456,19 @@ describe('isBlockGenerationType bounds the open-ended value space', () => {
   });
 
   it('rejects an UNKNOWN coarse key however plausible its subtype', () => {
+    // 🔴 The subtypes here are deliberately REAL ones drawn from BOTH closed
+    // sets, not invented tokens. The bound on the composite half is a single
+    // membership test against "the set this coarse key allows", which for an
+    // unknown key is the EMPTY set — so the only fixtures that can see a
+    // fallback returning some OTHER key's set are ones whose subtype is in it.
+    // Invented tokens would leave that mutant alive on a fully green suite.
     expect(isBlockGenerationType('videoToVideo:txt2img')).toBe(false);
+    expect(isBlockGenerationType('videoToVideo:img2img-edit')).toBe(false);
+    expect(isBlockGenerationType('videoToVideo:inline')).toBe(false);
+    expect(isBlockGenerationType('videoToVideo:seamless-pano-360')).toBe(false);
     expect(isBlockGenerationType('convertImage:png')).toBe(false); // orchestrator spelling
     expect(isBlockGenerationType('texttoimage:txt2img')).toBe(false); // case-sensitive
+    expect(isBlockGenerationType('texttoimage:img2img')).toBe(false);
   });
 
   it('rejects empty and degenerate spellings', () => {
