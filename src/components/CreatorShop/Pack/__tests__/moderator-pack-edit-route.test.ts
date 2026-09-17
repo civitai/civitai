@@ -489,6 +489,32 @@ describe('the moderator cosmetic-store pack edit route', () => {
       '`blueChanged` must compare against the stored value, so the client refuses on ' +
         'exactly the condition the payload and the server use.'
     ).toContain('const blueChanged = acceptsBlueBuzz !== !!existing?.meta.acceptsBlueBuzz;');
+
+    // Archiving OVERWRITES status, so the history is the only thing that separates
+    // a rejected pack from an ordinary archived one. Without the history term the
+    // alert tells a moderator to restore a pack whose restore the server refuses
+    // as REJECTED_IS_FINAL — the dead end this derivation exists to remove, and it
+    // was pinned by nothing.
+    expect(
+      modalSource,
+      'The rejected-vs-archived split must use wasLastReviewARejection, not restate ' +
+        'the rule — an archived-after-rejection pack is NOT restorable.'
+    ).toContain('wasLastReviewARejection(existing.meta.history)');
+    expect(
+      modalSource,
+      'The alert must choose its copy from wasRejected, or the two arms can be swapped back.'
+    ).toContain('{wasRejected');
+
+    // Both buttons that mutate the selection, in one count: hydration REPLACES
+    // `selected`, so either one live before getPack lands silently discards the
+    // moderator's change. Add gained the guard first; Remove is its mirror.
+    // Scoped to the Remove button itself. A COUNT is vacuous here: six controls
+    // carry this prop, so dropping one still clears any threshold — measured, the
+    // count form stayed green against exactly the mutation it was added for.
+    expect(
+      blockAfter(modalSource, 'leftSection={<IconX size={14} />}', 'onClick='),
+      'The Remove button must wait for hydration like Add: hydration REPLACES the selection, so a removal made before getPack lands is silently undone.'
+    ).toContain('disabled={awaitingPack}');
     expect(
       modalSource,
       'The Blue Buzz switch must be un-tickable but never un-un-tickable, and must wait ' +
