@@ -4,6 +4,10 @@ import { TRPCError } from '@trpc/server';
 // mock below. A `typeof import(...)` annotation there is an eslint error
 // (`consistent-type-imports`), so the type is imported up here instead.
 import type * as BlockStepsModule from '~/server/services/blocks/steps';
+// Type-only: names the shape `vi.importActual()` returns for the settle service
+// in the pass-through seam tests below. An inline `typeof import(...)` there is an
+// eslint error (`consistent-type-imports`).
+import type * as CustomComfySettleModule from '~/server/services/blocks/custom-comfy-settle.service';
 
 /**
  * Coverage for the three workflow procedures on blocksRouter. Each procedure
@@ -552,6 +556,13 @@ import type { ModelSubstitutionReason } from '~/shared/data-graph/generation/mod
 // production. NOT mocked anywhere, so this is the shipped graph.
 import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+// The PASS-THROUGH arm's one control, imported REAL (the `steps` module is
+// mocked above, but `orchestrator-denylist` is a sibling module and is not).
+import {
+  PLATFORM_INTERNAL_STEP_TYPES,
+  PlatformInternalStepTypeError,
+} from '~/server/services/blocks/steps/orchestrator-denylist';
+import { REGISTERED_STEP_IDS } from '~/server/services/blocks/steps';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockRedis = redisMock.redis;
@@ -9563,5 +9574,480 @@ describe('blocks — #3520 model substitution observability', () => {
         expect(result.snapshot.modelSubstitutions).toEqual([SUBSTITUTION]);
       }
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// App Blocks PASS-THROUGH bridge (`kind:'step'` with a bare `$type`).
+//
+// 🔴 WHAT THIS SUITE IS FOR. The arm removes every wire-level control except one
+// — `PLATFORM_INTERNAL_STEP_TYPES` — so these tests are not "does it work", they
+// are the ledger of what the one remaining control does and where the money
+// belt binds. Two properties dominate:
+//
+//   1. The denylist runs on the SUBMITTED `$type`, on BOTH orchestrator-reaching
+//      paths (estimate and submit), and BEFORE anything that costs something.
+//      Every refusal is asserted by the `PlatformInternalStepTypeError` CAUSE,
+//      never by the FORBIDDEN code, so a test cannot stay green on a
+//      neighbouring gate's rejection after the denylist is deleted.
+//   2. `input` reaches the orchestrator UNMODIFIED. Asserted by object IDENTITY
+//      plus a JSON byte-comparison — deep-equality would survive a rebuilt
+//      object with a server-added key.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
+  /** A `$type` the live orchestrator has and `stepRegistry` does not. */
+  const PT_TYPE = 'textToImageV2';
+  /** Two members of `PLATFORM_INTERNAL_STEP_TYPES`, named by the acceptance criteria. */
+  const DENIED_TYPES = ['xGuardModeration', 'modelPickleScan'] as const;
+  const MAX_BUZZ = 20;
+
+  function ptClaims(over: Record<string, unknown> = {}) {
+    return validClaims({
+      ctx: { entityType: 'none', slotId: 'page' },
+      appBlockId: 'apb_test',
+      buzzBudget: 50,
+      ...over,
+    });
+  }
+
+  /** A non-trivial nested input — the object criterion 3 follows end-to-end. */
+  function ptInput() {
+    return {
+      prompt: 'a cat',
+      nested: { list: [1, 2, { deep: 'value', nullish: null }], flag: false },
+      params: { seed: 1234, quantity: 2 },
+    };
+  }
+
+  function ptBody(over: Record<string, unknown> = {}) {
+    return { kind: 'step' as const, $type: PT_TYPE, input: ptInput(), maxBuzz: MAX_BUZZ, ...over };
+  }
+
+  const isWhatIf = (c: unknown[]) =>
+    (c[0] as { query?: { whatif?: boolean } } | undefined)?.query?.whatif === true;
+  const ptRealSubmits = () => mockSubmitWorkflow.mock.calls.filter((c) => !isWhatIf(c));
+  const ptWhatIfs = () => mockSubmitWorkflow.mock.calls.filter((c) => isWhatIf(c));
+
+  /** Drive the quote and the realized cost independently. */
+  function ptQuoting(quotedCost: number | null, realizedCost: number) {
+    mockSubmitWorkflow.mockImplementation(async (opts: { query?: { whatif?: boolean } }) => {
+      if (opts?.query?.whatif === true) {
+        return {
+          id: 'wf_quote',
+          status: 'unassigned',
+          steps: [],
+          ...(quotedCost === null ? {} : { cost: { total: quotedCost } }),
+        };
+      }
+      return {
+        id: 'wf_pt_1',
+        status: 'processing',
+        steps: [{ $type: PT_TYPE, output: {} }],
+        cost: { total: realizedCost },
+      };
+    });
+  }
+
+  const caller = () => blocksRouter.createCaller(fakeCtx() as never);
+
+  describe('🔴 criterion 1 — an UNREGISTERED $type parses and submits', () => {
+    it('submits a $type that is not in stepRegistry', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+
+      expect(result.snapshot.workflowId).toBe('wf_pt_1');
+      expect(ptRealSubmits()).toHaveLength(1);
+      expect(ptRealSubmits()[0][0].body.steps[0].$type).toBe(PT_TYPE);
+      // The CONTROL: this id is genuinely outside the registry, so the registry
+      // arm could not have served it.
+      expect(REGISTERED_STEP_IDS).not.toContain(PT_TYPE);
+    });
+
+    // 🔴 THE ARM DISCRIMINATOR IS THE VALUE OF `step`, NOT THE PRESENCE OF THE
+    // KEY — and this is the ROUTING half of that, which the schema test cannot
+    // reach. An SDK spreading an optional variable sends `step: undefined` as an
+    // own key; `undefined` survives superjson; a `'step' in body` test would
+    // hand that body to the REGISTRY handler, which would answer BAD_REQUEST
+    // ('unknown step type') for a body the wire schema accepted.
+    it('routes an EXPLICIT `step: undefined` to the pass-through handler', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      const result = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ptBody({ step: undefined }),
+      });
+      expect(result.snapshot.workflowId).toBe('wf_pt_1');
+      expect(ptRealSubmits()[0][0].body.steps[0].$type).toBe(PT_TYPE);
+    });
+
+    it('estimates the same $type without a real submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      const result = await caller().estimateWorkflow({ blockToken: 'tok', body: ptBody() });
+      expect(result.snapshot).toMatchObject({ workflowId: 'wf_estimate', status: 'pending' });
+      expect(ptRealSubmits()).toHaveLength(0);
+      expect(ptWhatIfs()).toHaveLength(1);
+    });
+  });
+
+  describe('🔴 criterion 2 — the DENYLIST is the control, and it is the one that fires', () => {
+    it.each(DENIED_TYPES)('submit REFUSES %s with PlatformInternalStepTypeError', async (t) => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+
+      const err = await caller()
+        .submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: t }) })
+        .then(
+          () => null,
+          (e: unknown) => e
+        );
+
+      // 🔴 THE CAUSE, NOT THE CODE. `FORBIDDEN` is thrown by half a dozen gates
+      // on this path; only the denylist throws THIS class. An assertion on the
+      // code alone stays green with the denylist call deleted, because
+      // `assertStepRequestAllowed` would still be there to refuse something
+      // else on a different body.
+      expect(err).toBeInstanceOf(TRPCError);
+      expect((err as TRPCError).code).toBe('FORBIDDEN');
+      expect((err as TRPCError).cause).toBeInstanceOf(PlatformInternalStepTypeError);
+      expect(((err as TRPCError).cause as PlatformInternalStepTypeError).stepType).toBe(t);
+    });
+
+    it.each(DENIED_TYPES)('estimate REFUSES %s with the same error', async (t) => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      const err = await caller()
+        .estimateWorkflow({ blockToken: 'tok', body: ptBody({ $type: t }) })
+        .then(
+          () => null,
+          (e: unknown) => e
+        );
+      expect((err as TRPCError).cause).toBeInstanceOf(PlatformInternalStepTypeError);
+    });
+
+    // 🔴 BEFORE ANYTHING THAT COSTS SOMETHING. A denylist that fires after the
+    // quote has already handed a platform-internal `$type` to the orchestrator;
+    // one that fires after a reservation has money to refund.
+    it('refuses BEFORE the orchestrator is touched and before any reservation', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      await caller()
+        .submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: 'xGuardModeration' }) })
+        .catch(() => undefined);
+
+      expect(mockSubmitWorkflow, 'not even the free whatif quote').not.toHaveBeenCalled();
+      expect(mockGetOrchestratorToken).not.toHaveBeenCalled();
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      const capIncrs = mockSysRedis.incrBy.mock.calls.filter((c) =>
+        String(c[0]).startsWith('system:blocks:buzz-cap:')
+      );
+      expect(capIncrs).toHaveLength(0);
+    });
+
+    // The set is the authority; naming two types in the criteria does not make
+    // the other thirteen someone else's problem.
+    it('refuses EVERY member of PLATFORM_INTERNAL_STEP_TYPES', async () => {
+      for (const t of PLATFORM_INTERNAL_STEP_TYPES) {
+        mockVerifyBlockToken.mockResolvedValue(ptClaims());
+        happyUser();
+        ptQuoting(5, 5);
+        const err = await caller()
+          .submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: t }) })
+          .then(
+            () => null,
+            (e: unknown) => e
+          );
+        expect((err as TRPCError | null)?.cause, `\`${t}\` must be refused`).toBeInstanceOf(
+          PlatformInternalStepTypeError
+        );
+      }
+    });
+  });
+
+  describe('🔴 criterion 3 — `input` reaches the orchestrator UNMODIFIED', () => {
+    it('hands the orchestrator the app‘s own input object, byte-identical', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      const input = ptInput();
+
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ input }) });
+
+      const submittedInput = ptRealSubmits()[0][0].body.steps[0].input;
+      // Byte-equality over a non-trivial nested object: a coerced number, a
+      // dropped null, a re-ordered key or an added server field all move this.
+      expect(JSON.stringify(submittedInput)).toBe(JSON.stringify(input));
+      // And the QUOTE priced the same bytes, so the two can never describe
+      // different work.
+      expect(JSON.stringify(ptWhatIfs()[0][0].body.steps[0].input)).toBe(JSON.stringify(input));
+    });
+
+    it('adds NO server-owned key to the submitted step input', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ input: { a: 1 } }) });
+      expect(Object.keys(ptRealSubmits()[0][0].body.steps[0].input)).toEqual(['a']);
+    });
+  });
+
+  describe('🔴 criterion 4 — the spend belt', () => {
+    it('reserves max(maxBuzz, quote) when the QUOTE is higher', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(31, 31);
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      // 31 > maxBuzz 20 — a value neither operand can produce alone.
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 31);
+      expect(mockSysRedis.incrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        31
+      );
+    });
+
+    it('reserves maxBuzz when the DECLARED ceiling is higher', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(3, 3);
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', MAX_BUZZ);
+    });
+
+    it('reserves maxBuzz when the step is UNQUOTABLE — it does not refuse it', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(null, 4);
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      expect(result.snapshot.workflowId).toBe('wf_pt_1');
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', MAX_BUZZ);
+    });
+
+    // 🔴 `stepTimeoutSeconds = maxBuzz`, and the timeout is what the orchestrator
+    // physically enforces. It must track the DECLARED number, never the
+    // reservation — an app that declares 20 has consented to 20 seconds of
+    // runtime, not to whatever the quote came back as.
+    it('stamps a step timeout derived from maxBuzz, NOT from the reservation', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(31, 31);
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      // 20 s → HH:MM:SS. 31 would render `00:00:31`, so this cannot pass on the
+      // reservation.
+      expect(ptRealSubmits()[0][0].body.steps[0].timeout).toBe('00:00:20');
+      expect(ptWhatIfs()[0][0].body.steps[0].timeout).toBe('00:00:20');
+    });
+
+    it('scales the timeout with maxBuzz (two points, not one)', async () => {
+      // 125 is above the default per-call budget, so raise it — otherwise the
+      // static gate refuses before a step is ever built and the assertion below
+      // reads `undefined`, which is how this case first failed.
+      mockVerifyBlockToken.mockResolvedValue(ptClaims({ buzzBudget: 200 }));
+      happyUser();
+      ptQuoting(1, 1);
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ maxBuzz: 125 }) });
+      expect(ptRealSubmits()[0][0].body.steps[0].timeout).toBe('00:02:05');
+    });
+
+    it('persists a settle record at the RESERVED ceiling, with constant labels', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(31, 31);
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      expect(mockPersistCustomComfySettle).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workflowId: 'wf_pt_1',
+          ceiling: 31,
+          // 🔴 CONSTANT, never the `$type` — the metric these label is
+          // cardinality-bounded and the `$type` set is open by construction.
+          engine: 'passthrough',
+          recipe: '__passthrough__',
+        })
+      );
+    });
+
+    it('gates on the per-call budget using the RESERVATION, and spends nothing when over', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims({ buzzBudget: 30 }));
+      happyUser();
+      ptQuoting(31, 31);
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      expect(result.snapshot).toMatchObject({
+        workflowId: 'failed',
+        status: 'failed',
+        cost: { total: 31 },
+      });
+      expect(ptRealSubmits(), 'the free QUOTE may run; NOTHING may be SPENT').toHaveLength(0);
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+    });
+
+    it('reserves on the PER-APP aggregate cap and refunds it when the submit throws', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      mockSubmitWorkflow.mockImplementation(async (opts: { query?: { whatif?: boolean } }) => {
+        if (opts?.query?.whatif === true) {
+          return { id: 'wf_quote', status: 'unassigned', steps: [], cost: { total: 5 } };
+        }
+        throw new Error('orchestrator down');
+      });
+      await expect(caller().submitWorkflow({ blockToken: 'tok', body: ptBody() })).rejects.toThrow(
+        /orchestrator down/
+      );
+      expect(mockRefundAppSpend).toHaveBeenCalledWith(
+        'system:blocks:app-spend-cap:apb_test:day',
+        MAX_BUZZ
+      );
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        MAX_BUZZ
+      );
+    });
+
+    // 🔴 AN OVER-RUN CANNOT REDUCE WHAT THE CAPS COUNTED — A SEAM TEST, NOT A
+    // COMPONENT ONE. `custom-comfy-settle.service.test.ts` already proves the
+    // `max(0, ceiling - actual)` clamp in isolation, and the router test above
+    // already proves what this arm RESERVES. Neither says the two are joined:
+    // the settle record this handler writes is the only thing that carries the
+    // reservation across to the clamp, so the record it ACTUALLY wrote is fed to
+    // the REAL settle function here rather than a hand-built one.
+    it('an over-run refunds NOTHING — the reservation the router wrote is what binds', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(31, 31);
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+
+      const record = mockPersistCustomComfySettle.mock.calls[0][0] as {
+        ceiling: number;
+        buzzCapKey: string;
+        appSpendKey: string | null;
+      };
+      expect(record.ceiling).toBe(31);
+
+      const { settleCustomComfySpend: realSettle } = await vi.importActual<
+        typeof CustomComfySettleModule
+      >('~/server/services/blocks/custom-comfy-settle.service');
+      mockSysRedis.get.mockResolvedValue(JSON.stringify(record));
+      mockSysRedis.del.mockResolvedValue(1);
+      mockSysRedis.decrBy.mockClear();
+      mockRefundAppSpend.mockClear();
+
+      await realSettle({ workflowId: 'wf_pt_1', actualCost: 55 });
+
+      expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
+      expect(mockRefundAppSpend).not.toHaveBeenCalled();
+    });
+
+    // 🔴 THE POSITIVE CONTROL FOR THE TEST ABOVE. "No refund calls" is
+    // indistinguishable from a settle wired to nothing — the same record, a
+    // CHEAPER run, must move the counters.
+    it('a cheaper run DOES refund the difference on the same record', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(31, 31);
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      const record = mockPersistCustomComfySettle.mock.calls[0][0] as { buzzCapKey: string };
+
+      const { settleCustomComfySpend: realSettle } = await vi.importActual<
+        typeof CustomComfySettleModule
+      >('~/server/services/blocks/custom-comfy-settle.service');
+      mockSysRedis.get.mockResolvedValue(JSON.stringify(record));
+      mockSysRedis.del.mockResolvedValue(1);
+      mockSysRedis.decrBy.mockClear();
+
+      await realSettle({ workflowId: 'wf_pt_1', actualCost: 6 });
+
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(record.buzzCapKey, 25);
+    });
+  });
+
+  describe('the arm inherits every gate the registry arm has', () => {
+    it('is PAGE-ONLY — a model-bound token is refused', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ appBlockId: 'apb_test' }));
+      happyUser();
+      ptQuoting(5, 5);
+      await expect(caller().submitWorkflow({ blockToken: 'tok', body: ptBody() })).rejects.toThrow(
+        /page-only/
+      );
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('requires the ai:write:budgeted scope', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims({ scopes: [] }));
+      happyUser();
+      await expect(caller().submitWorkflow({ blockToken: 'tok', body: ptBody() })).rejects.toThrow(
+        /ai:write:budgeted/
+      );
+    });
+
+    it('records a spend-attribution row with no model binding', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(mockRecordSpendAttribution).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 42,
+          workflowId: 'wf_pt_1',
+          appBlockId: 'apb_test',
+          modelId: null,
+          sharedContentKey: null,
+        })
+      );
+    });
+
+    it('IDEMPOTENCY: a replayed submit does not double-charge', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      const first = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ptBody(),
+        idempotencyKey: 'pt-key',
+      });
+      const second = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ptBody(),
+        idempotencyKey: 'pt-key',
+      });
+      expect(first.snapshot.workflowId).toBe('wf_pt_1');
+      expect(second.snapshot.workflowId).toBe('wf_pt_1');
+      expect(ptRealSubmits()).toHaveLength(1);
+      expect(mockReserveAppSpend).toHaveBeenCalledTimes(1);
+      for (const call of ptWhatIfs()) {
+        expect(call[0].body.externalId).toBeUndefined();
+      }
+    });
+  });
+
+  // 🔴 THE REGISTRY ARM IS UNTOUCHED. The two share a discriminant, so a routing
+  // mistake sends a registered body down the wrong handler — where `getStep`
+  // would not be consulted, the param `.strict()` schema would not run, and the
+  // moderation posture would not dispatch.
+  describe('the REGISTRY arm still routes to the registry handler', () => {
+    it('a registered step id still parses params through the entry schema', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(1, 1);
+      const err = await caller()
+        .submitWorkflow({
+          blockToken: 'tok',
+          body: { kind: 'step', step: 'convert-image', params: { nonsense: true } },
+        })
+        .then(
+          () => null,
+          (e: unknown) => e
+        );
+      // The per-entry `.strict()` schema refused it — only the registry handler
+      // runs that.
+      expect((err as TRPCError).code).toBe('BAD_REQUEST');
+      expect((err as TRPCError).message).toMatch(/invalid params for step 'convert-image'/);
+    });
   });
 });

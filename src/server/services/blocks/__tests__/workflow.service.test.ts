@@ -2423,10 +2423,17 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
     ]);
   });
 
-  // An UNREGISTERED, non-native `$type` must still be skipped — the branch is
-  // additive for registered steps only, not a wildcard that starts reading
-  // arbitrary step outputs.
-  it('still skips an unregistered, non-native $type', () => {
+  // ⚠️ THIS CASE INVERTED, DELIBERATELY. It used to assert that an unregistered,
+  // non-native `$type` was SKIPPED — "the branch is additive for registered
+  // steps only, not a wildcard that starts reading arbitrary step outputs".
+  // The PASS-THROUGH arm (`kind:'step'` with a bare `$type`) makes that wildcard
+  // the feature: a block may now submit any non-denylisted orchestrator type, so
+  // an output nothing extracts is an output the block paid for and cannot see.
+  //
+  // What did NOT change, and is what the original case was really protecting: the
+  // REGISTERED branch above is still posture-gated and still cannot shadow a
+  // native `$type`. Only the final `continue` moved.
+  it('extracts an unregistered, non-native $type as a PASS-THROUGH output', () => {
     const wf = fakeWorkflow({
       id: 'wf_other',
       createdAt: '2026-08-02T00:00:00.000Z',
@@ -2441,8 +2448,14 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
         },
       ],
     });
-    expect(snapshotFromWorkflow(wf as never).imageUrls).toBeUndefined();
-    expect(projectAppWorkflow(wf as never).images).toEqual([]);
+    expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual(['https://cdn/nope.png']);
+    expect(projectAppWorkflow(wf as never).images).toEqual([
+      { url: 'https://cdn/nope.png', width: null, height: null, nsfwLevel: null },
+    ]);
+    // The blob is lifted OUT of the forwarded output, never duplicated into it.
+    expect(snapshotFromWorkflow(wf as never).stepOutputs).toEqual([
+      { $type: 'imageBackgroundRemoval', output: {} },
+    ]);
   });
 });
 

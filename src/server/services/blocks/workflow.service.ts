@@ -1,7 +1,11 @@
 import { TRPCError } from '@trpc/server';
 import type { CustomComfyStepTemplate, Workflow, WorkflowStatus } from '@civitai/client';
 import type { AnyBlockRecipe, CustomComfyStepInput, ResolvedRecipeResources } from './recipes';
-import { getStepByOrchestratorType, postureProducesMedia } from './steps';
+import {
+  getStepByOrchestratorType,
+  postureProducesMedia,
+  splitPassThroughStepOutput,
+} from './steps';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { dbRead } from '~/server/db/client';
 import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.constants';
@@ -92,6 +96,7 @@ export function snapshotFromWorkflow(
 ): BlockWorkflowSnapshot {
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
   const imageUrls: string[] = [];
+  const stepOutputs: NonNullable<BlockWorkflowSnapshot['stepOutputs']> = [];
   for (const step of workflow.steps ?? []) {
     // A `customComfy` step (App Blocks customComfy bridge) surfaces its outputs
     // as `output.blobs` (CustomComfyOutput), NOT `output.images` — so it needs
@@ -140,6 +145,23 @@ export function snapshotFromWorkflow(
       continue;
     }
     if (step.$type !== 'textToImage' && step.$type !== 'imageGen' && step.$type !== 'comfy') {
+      // A PASS-THROUGH step (`kind:'step'` with a bare `$type`): not native, not
+      // registered. Its output shape is whatever that `$type` returns, so there
+      // is no declared extractor to ask — the blobs are split out by key and the
+      // REST is forwarded verbatim.
+      //
+      // 🔴 THE BLOBS GO TO `imageUrls`, NOT TO `stepOutputs`. That keeps every
+      // image this arm produces on the one channel the publish path and the
+      // per-viewer gated read already own; see `stepOutputs` in
+      // `schema/blocks/workflow.schema`.
+      const { media, rest } = splitPassThroughStepOutput(
+        (step as unknown as { output?: unknown }).output
+      );
+      for (const m of media) imageUrls.push(m.url);
+      // A step that has not produced anything yet has no `output` at all — the
+      // submit reply is the common case. Reporting `{ $type, output: undefined }`
+      // there would put an entry on every fresh submit snapshot that says nothing.
+      if (rest !== undefined) stepOutputs.push({ $type: step.$type, output: rest });
       continue;
     }
     const stepOutput = (
@@ -175,6 +197,9 @@ export function snapshotFromWorkflow(
     status,
     ...(typeof total === 'number' ? { cost: { total } } : {}),
     ...(imageUrls.length > 0 ? { imageUrls } : {}),
+    // Omitted entirely when no pass-through step is present, so every existing
+    // snapshot stays byte-identical on the wire.
+    ...(stepOutputs.length > 0 ? { stepOutputs } : {}),
     // Surface the realized spent account (money page blocks). Additive +
     // optional — omitted when there's no debit to report so every existing
     // snapshot stays byte-identical to before.
@@ -297,6 +322,25 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
       continue;
     }
     if (step.$type !== 'textToImage' && step.$type !== 'imageGen' && step.$type !== 'comfy') {
+      // A PASS-THROUGH step. Same split as `snapshotFromWorkflow`, and it MUST be
+      // here too: this projection is what `resolveOwnedWorkflowOutputs` reads, so
+      // a pass-through image absent here is an image the viewer can see in their
+      // own block and can never publish — which would route it AROUND the
+      // per-viewer gated read rather than through it.
+      //
+      // The non-media half is deliberately DROPPED, not forwarded: `AppWorkflow`
+      // is the cross-surface queue contract and exists to hand a block nothing
+      // but images, cost and status.
+      for (const m of splitPassThroughStepOutput((step as unknown as { output?: unknown }).output)
+        .media) {
+        images.push({
+          url: m.url,
+          width: m.width,
+          height: m.height,
+          nsfwLevel:
+            m.nsfwLevel && m.nsfwLevel !== 'na' ? nsfwLevelFromContentRating(m.nsfwLevel) : null,
+        });
+      }
       continue;
     }
     const stepOutput = (

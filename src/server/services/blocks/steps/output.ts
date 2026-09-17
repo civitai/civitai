@@ -82,3 +82,54 @@ export function mediaFromBlobs(
   }
   return media;
 }
+
+/**
+ * The output keys an orchestrator step carries MEDIA under.
+ *
+ * Enumerated rather than sniffed. The three shapes in the catalog today are
+ * `{ blobs }` (customComfy and most blob-producing types), `{ blob }`
+ * (convertImage, SINGULAR) and `{ images }` (the image steps), and a key list is
+ * auditable where a "does this look like a blob?" predicate is not.
+ *
+ * 🔴 A TYPE THAT NAMES ITS MEDIA SOMETHING ELSE IS NOT COVERED, and the
+ * consequence is stated at {@link splitPassThroughStepOutput}.
+ */
+export const ORCHESTRATOR_BLOB_OUTPUT_KEYS = ['blob', 'blobs', 'image', 'images'] as const;
+
+/**
+ * Split an ARBITRARY orchestrator step output into the media it carries and
+ * everything else — the pass-through arm's (`kind:'step'` with a bare `$type`)
+ * one and only output rule.
+ *
+ * 🔴 THE STRIP IS UNCONDITIONAL, NOT "strip what produced media". Every key in
+ * {@link ORCHESTRATOR_BLOB_OUTPUT_KEYS} is removed from `rest` whether or not it
+ * yielded anything, so a blob that `mediaFromBlobs` DROPPED — unavailable,
+ * blocked, empty url — cannot ride out through `rest` instead. Filtering and
+ * stripping on the same predicate is how a dead or blocked url reaches a block
+ * through the back door.
+ *
+ * 🔴 A `$type` THAT NAMES ITS MEDIA OUTSIDE THAT KEY LIST PASSES ITS URL THROUGH
+ * `rest`. That is a known limit of an enumerated list and it is why this is the
+ * only place the list lives: widening it is one edit, and the alternative —
+ * sniffing every string for something url-shaped — would strip prose that merely
+ * contains a link, which is the output half of the same false-positive trap the
+ * `urn:air:` substring scan documents on the input half.
+ */
+export function splitPassThroughStepOutput(output: unknown): {
+  media: StepOutputMedia[];
+  rest: unknown;
+} {
+  if (output == null || typeof output !== 'object' || Array.isArray(output)) {
+    return { media: [], rest: output };
+  }
+  const media: StepOutputMedia[] = [];
+  const rest: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(output as Record<string, unknown>)) {
+    if ((ORCHESTRATOR_BLOB_OUTPUT_KEYS as readonly string[]).includes(key)) {
+      media.push(...mediaFromBlobs(value as Parameters<typeof mediaFromBlobs>[0]));
+      continue;
+    }
+    rest[key] = value;
+  }
+  return { media, rest };
+}
