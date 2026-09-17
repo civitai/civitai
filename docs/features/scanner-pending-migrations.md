@@ -43,8 +43,8 @@ ORDER BY (scanner, label, contentHash, version);
 
 Column semantics:
 
-- **`version`** (per-label) — policyHash from `result.policyHash` for XGuard scans; hardcoded `'1'` for image scans until the orchestrator team surfaces per-result version info on the `mediaRating` step.
-- **`modelVersion`** (workflow-level) — scanner/model version stamp, sourced from `workflow.metadata.version`. Hardcoded `'1'` everywhere today.
+- **`version`** (per-label) — policyHash from `result.policyHash` for XGuard scans; for image scans a fixed `'1'` (`mediaRating` lane) or `'2'` (`imageScanning` lane) until the orchestrator surfaces per-result version info.
+- **`modelVersion`** (workflow-level) — scanner/model version stamp, sourced from `workflow.metadata.version` (default `'1'`); image scans write `'1'` or `'2'` by lane, as above.
 
 Both kept as separate columns so when the orchestrator starts returning per-label version info on `mediaRating`, we can populate `version` independently of `modelVersion`.
 

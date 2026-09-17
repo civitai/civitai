@@ -18,9 +18,23 @@ describe('isAllowedSaveImageUrl (SAVE_IMAGE origin allowlist)', () => {
         CDN
       )
     ).toBe(true);
-    // sanity: the static list is exactly the two known product hosts
+    // A preview opted onto the "next" orchestrator browses against that origin, so a blob URL
+    // it mints must be fetchable here too.
+    expect(
+      isAllowedSaveImageUrl(
+        'https://orchestration-next.civitai.com/v2/consumer/blobs/ABC123.jpeg?sig=x',
+        CDN
+      )
+    ).toBe(true);
+    // Ledger: the static list is EXACTLY these hosts. Deliberately an exact-set assertion rather
+    // than `toContain`, so the set fails when it GROWS as well as when it shrinks — adding a host
+    // widens where the download bridge will fetch from, which is a decision that should be made
+    // here rather than noticed later. Note this is stricter than the prose in saveImageDownload.ts,
+    // which says the list "may legally hold MORE hosts"; that remains true of the module's
+    // contract, and this ledger is what makes each addition explicit.
     expect([...CIVITAI_IMAGE_HOSTS].sort()).toEqual([
       'image.civitai.com',
+      'orchestration-next.civitai.com',
       'orchestration.civitai.com',
     ]);
   });

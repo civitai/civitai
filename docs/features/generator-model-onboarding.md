@@ -11,7 +11,7 @@ How a new model gets from nothing to generatable. That covers a new ecosystem, a
 | 2 | Model, `Draft`, owned by CivitaiOfficial, with description — or the existing model's description updated for the new version | `model.upsert` + `moderator.models.transferOwnership` | `write-model-description`, then `official-model-admin` (`create-model` / `update-description`) once the user has approved the text | always (review only if nothing changes) |
 | 3 | Version, `Draft`, with its base model and `usageControl` | `modelVersion.upsert` | `official-model-admin` (`create-version`) | always |
 | 4 | Coverage row, then a cache bust | `"EcosystemCheckpoints"`, written through `postgres-query --writable` | `generation-coverage` (`add`) | always |
-| 5 | Gate rule that hides it from non-mods | Redis `generation:gate-rules` | `generation-gate-rules` (`add`) or `/moderator/generation-config` | always |
+| 5 | Gate rule that hides it from non-mods | Redis `generation:gate-rules:by-id` | `generation-gate-rules` (`add`) or `/moderator/generation-config` | always |
 | 6 | Generation support, in both generator lanes | constants, graphs, handlers | `add-generation-support` | always |
 | 7 | Prompt-enhancement guide | orchestrator prompt-analysis service | `add-prompt-enhancement-guide` | new ecosystem (image/video only) |
 | — | **Deploy**, then mods test on the live generator | | `generator-launch` (`check`) | |
@@ -65,7 +65,7 @@ MiniMax H3 appears in both rows, one version each, so the base model alone doesn
 
 The deciding question is whether the provider publishes weights we run, or only an API. `official-model-admin evidence` collects these signals, and the user confirms the kind.
 
-The upload wizard (`/models/<modelId>/model-versions/<versionId>/wizard`) skips its files step for `ExternalGeneration`. For hosted weights, files go in at `?step=2`, or through the **Manage files** item in the version menu. This is the only step that has to be done in the browser.
+The upload wizard (`/models/<modelId>/model-versions/<versionId>/wizard`) skips its files step for `ExternalGeneration`. For hosted weights there are two routes: weights already on Hugging Face are queued at `/moderator/huggingface-import` and fetched server-side, then attached with `official-model-admin attach-import`; anything else is uploaded by hand at `?step=2`, or through the **Manage files** item in the version menu. Either way a human drives it — this is the one step no skill completes on its own.
 
 A hosted-weights version is ready to cover once it has a scanned file of a weight type, and a checkpoint also needs a SafeTensor file. That's the same rule `checkLoadable` in `src/server/services/resource-load.service.ts` applies. `official-model-admin files` checks it.
 

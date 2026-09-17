@@ -38,3 +38,6 @@ export const toggleHiddenTagsSchema = z.object({
   addedIds: z.number().array().optional(),
   removedIds: z.number().array().optional(),
 });
+
+export type GetHiddenImagesForUserInput = z.infer<typeof getHiddenImagesForUserSchema>;
+export const getHiddenImagesForUserSchema = z.object({ userId: z.number() });

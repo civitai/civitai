@@ -574,13 +574,13 @@ that takedown tool is built, not a live bug today.
 ### Cache invalidation on `app_blocks.status` transitions (audit-10 H3)
 
 `BlockRegistry.listForModel` caches its per-`(model, slot)` result for 60s
-(`CACHE_TTL_SECONDS`, `block-registry.service.ts:39`) and the SQL only filters
+(`CACHE_TTL_SECONDS` in `block-registry.service.ts`) and the SQL only filters
 on `ab.status = 'approved'` at query time, not at cache-read time.
-`invalidateModelCache(modelId)` (`block-registry.service.ts:461`) is called only
-from the four per-model mutation paths — install, uninstall, toggleEnabled,
-updateSettings (lines 1950 / 2019 / 2055 / 2108). It is NOT called on any
-`app_blocks.status` transition, because a status change on a block doesn't know
-which models the block is installed on.
+`invalidateModelCache(modelId)` (same file) is called only from the four
+per-model mutation paths — `BlockRegistry.installOnModel`,
+`uninstallFromModel`, `toggleEnabled` and `updateSettings`, which are its only
+callers. It is NOT called on any `app_blocks.status` transition, because a
+status change on a block doesn't know which models the block is installed on.
 
 Two facts bound the actual risk today:
 
@@ -594,9 +594,10 @@ Two facts bound the actual risk today:
   late; it never keeps rendering after it should have stopped.
 - **The emergency kill list is applied fresh on every cache hit**, so it is NOT
   subject to the 60s cache. `getKillList()` has its own 5s in-process TTL
-  (`KILL_LIST_CACHE_TTL_MS`, `block-registry.service.ts:480`) and `listForModel`
-  filters the cached rows against it on every read (lines 657–664). "Stop this
-  block right now" (`sysRedis SET system:blocks:emergency-kill-list`) therefore
+  (`KILL_LIST_CACHE_TTL_MS` in `block-registry.service.ts`) and `listForModel`
+  filters the cached rows against it on every read (the `kill.has(r.blockId)`
+  filter on `listForModel`'s cache-hit branch). "Stop this block right now"
+  (`sysRedis SET system:blocks:emergency-kill-list`) therefore
   takes effect within ~5s regardless of the registry cache.
 
 So the real work item is: before shipping a moderator `suspend`/`deprecate`
@@ -653,6 +654,6 @@ documented above, so they're dropped from this list.
 - **DNS-rebinding gate at `assetBundleUrl` fetch time** (still lexical-only at
   submit — see the SSRF note in the threat model).
 - **Per-slot install-cap race hardening.** The cap is enforced at install time
-  (`MAX_BLOCKS_PER_SLOT`, `block-registry.service.ts:1849`) via a
+  (`MAX_BLOCKS_PER_SLOT`, checked in `BlockRegistry.installOnModel`) via a
   count-then-insert, not a row-locked transaction, so a rare concurrent double
   install can still exceed the cap; accepted for now.

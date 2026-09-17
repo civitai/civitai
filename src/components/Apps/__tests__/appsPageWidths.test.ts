@@ -31,6 +31,7 @@ import {
   SUBMISSIONS_CONTAINER_CHROME,
   SUBMISSIONS_TABLE_MIN_WIDTH,
 } from '~/components/Apps/submissionsTable';
+import { APPS_RESERVED_SCROLLBAR, appsRailChromeWidth } from '~/components/Apps/appsRailGeometry';
 
 /**
  * `/apps/*` geometry pins (blocking `unit` project).
@@ -591,7 +592,7 @@ describe('🔴 the card-list column ladder steps exactly where the surplus appea
   test('one column through the OLD container, two in the current one', () => {
     // The whole justification for `/apps/activity` becoming a grid: it must change
     // nothing a 1440 or 1920 monitor showed, and spend the 640px the ultrawide pass
-    // added. A min column of 1200 is what puts the step between the two.
+    // added. The min column is what puts the step between the two.
     expect(columnsAt(1408)).toBe(1); // 1440 viewport
     expect(columnsAt(LEGACY_USABLE)).toBe(1); // the old 1920 container
     expect(columnsAt(USABLE)).toBe(2); // the current 2560 container
@@ -599,12 +600,75 @@ describe('🔴 the card-list column ladder steps exactly where the surplus appea
 
   test('the step is not sitting on either fixture width', () => {
     // A ladder whose rung lands ON a width the tests measure cannot detect an
-    // off-by-one. The second column arrives at 2416, which is 528 above the old
-    // container's content width and 112 below the current one.
-    expect(columnsAt(2415)).toBe(1);
-    expect(columnsAt(2416)).toBe(2);
-    expect(USABLE - 2416).toBeGreaterThan(64);
-    expect(2416 - LEGACY_USABLE).toBeGreaterThan(64);
+    // off-by-one. 🔴 THE RUNG MOVED 2416 → 2216 WITH THE RAIL RE-TUNE
+    // (`APPS_CARD_LIST_MIN_COLUMN` 1200 → 1100), and this literal is the independent
+    // witness for that: it is written out rather than recomputed from the constant, so a
+    // constant change without a decision fails here.
+    expect(columnsAt(2215)).toBe(1);
+    expect(columnsAt(2216)).toBe(2);
+    expect(USABLE - 2216).toBeGreaterThan(64);
+    expect(2216 - LEGACY_USABLE).toBeGreaterThan(64);
+  });
+
+  /**
+   * 🔴 THE RAIL-OPEN RUNG — the reason the constant moved at all, and the case the old
+   * value silently lost.
+   *
+   * The left rail takes 276px off every `/apps/*` body, so at a 2560 viewport the card
+   * list gets 2242 of grid rather than 2528. At the old 1200 that is ONE column: the
+   * 640px content-to-control gap this constant exists to close reopened on exactly the
+   * monitors it was written for. 1100 restores the second column there and changes
+   * nothing at 1300 / 1440 / 1920, where a single column was already correct.
+   *
+   * RED AT `origin/main` BY CONSTRUCTION: at `APPS_CARD_LIST_MIN_COLUMN = 1200`,
+   * `columnsAt(2242)` is 1.
+   */
+  test('🔴 with the rail OPEN, a 2560 viewport still gets TWO columns', () => {
+    const railOpenGrid =
+      APPS_PAGE_CONTAINER_WIDTH -
+      APPS_RESERVED_SCROLLBAR -
+      APPS_CONTAINER_GUTTER -
+      appsRailChromeWidth(false);
+    expect(railOpenGrid).toBe(2242);
+    expect(columnsAt(railOpenGrid)).toBe(2);
+
+    // …and the narrower viewports are UNCHANGED — one column with the rail open, exactly
+    // as they were with no rail at 1200. This is the half that makes the constant change
+    // a repair rather than a new density opinion.
+    for (const viewport of [1300, 1440, 1920]) {
+      const grid =
+        Math.min(viewport - APPS_RESERVED_SCROLLBAR, APPS_PAGE_CONTAINER_WIDTH) -
+        APPS_CONTAINER_GUTTER -
+        appsRailChromeWidth(false);
+      expect(columnsAt(grid), `@${viewport} rail open`).toBe(1);
+    }
+
+    // 🔴 THE BOUND IS SOLVED, NOT SAMPLED — and this is the correction an audit forced.
+    // The previous version asserted 1100 / 1120 / 1200 and the COMMENT generalised that
+    // three-point sample into "1100 is the LOOSEST value that restores it". It is not:
+    // two columns need `2n + 16 <= 2242`, so the largest admissible value is **1113**, and
+    // the sample simply had no point between 1100 and 1120. A sampled inequality cannot
+    // establish a maximum; scanning for the first failure can, so it does.
+    const columnsAtMin = (w: number, min: number) =>
+      Math.max(1, Math.floor((w + APPS_CARD_LIST_GAP) / (min + APPS_CARD_LIST_GAP)));
+    let bound = 0;
+    for (let n = 1000; n <= 1400; n += 1) {
+      if (columnsAtMin(railOpenGrid, n) >= 2) bound = n;
+      else break;
+    }
+    expect(bound, 'the largest min-column that still yields two columns at 2242').toBe(1113);
+    expect(columnsAtMin(railOpenGrid, bound)).toBe(2);
+    expect(columnsAtMin(railOpenGrid, bound + 1)).toBe(1);
+
+    // …and the SHIPPED value is under that bound with deliberate margin, not on it. A
+    // value at the bound is maximally loose and maximally fragile — one pixel of rail,
+    // gutter or scrollbar change and the rung disappears.
+    expect(APPS_CARD_LIST_MIN_COLUMN).toBe(1100);
+    expect(APPS_CARD_LIST_MIN_COLUMN).toBeLessThan(bound);
+    expect(columnsAtMin(railOpenGrid, APPS_CARD_LIST_MIN_COLUMN)).toBe(2);
+    // The old sample points, kept as the regression they were: 1200 (the retired value)
+    // still fails, which is the defect this constant change repairs.
+    expect(columnsAtMin(railOpenGrid, 1200)).toBe(1);
   });
 });
 
@@ -658,6 +722,13 @@ describe('🔴 the store width and the store grid ladder are a MATCHED PAIR', ()
     expect(APPS_FULL_MEASURE_PAGES).toContain('/apps');
   });
 
+  /**
+   * ⚠️ BOTH TESTS BELOW ARE MAIN'S, RESTORED. A left-rail re-tune inverted them — the
+   * first to four columns at 620px, the second to THREE columns at 1600/1920 — and that
+   * re-tune is reverted. The store ladder ships `main`'s rungs, so these assert `main`'s
+   * outcomes again. The rail's own cost now falls only on viewers who OPEN it, and is
+   * measured in `appListingGrid.ts` rather than baked into this container arithmetic.
+   */
   test('the container yields the card width the top of the reachable ladder was tuned for', () => {
     //   container 2560 − 2×16 Container padding = 2528 of grid
     //   the widest REACHABLE rung is FIVE columns from 2364; gap 16 → 4 gaps between them

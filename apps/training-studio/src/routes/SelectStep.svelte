@@ -17,6 +17,7 @@
     MEDIA_OPTIONS,
     cardByType,
     cardsForMedia,
+    releasedLabel,
     typesForMedia,
     type Media,
     type ModelCard,
@@ -38,7 +39,6 @@
     type Run,
     type Selection,
   } from './trainingFlow';
-  import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
 
   let {
     onContinue,
@@ -77,9 +77,12 @@
   const recommendedType = $derived(type.recommended[media]);
   const recommendedCard = $derived(recommendedType ? cardByType(recommendedType) : undefined);
   // A tight, current set is featured up front; the long tail (older / niche models) sits behind a "show
-  // more" toggle so the list isn't a wall of ~20 models. Only image has enough models to warrant it —
-  // video/audio show everything. `featuredCards` keeps the FEATURED order (recommended is first in it).
-  const FEATURED: Partial<Record<Media, string[]>> = { image: ['zimage', 'anima', 'krea2'] };
+  // more" toggle so the list isn't a wall of ~20 models. Audio has one card, so it shows everything.
+  // `featuredCards` keeps the FEATURED order — the recommended model is first in it.
+  const FEATURED: Partial<Record<Media, string[]>> = {
+    image: ['zimage', 'anima', 'krea2'],
+    video: ['minimaxh3', 'wan', 'ltx'],
+  };
   const featuredCards = $derived.by(() => {
     const cards = cardsForMedia(media);
     const featured = FEATURED[media];
@@ -107,8 +110,10 @@
   function pickMedia(m: Media) {
     if (m === media) return;
     media = m;
-    // A dataset can't span media, so switching resets to that media's recommended type + model.
-    const t = typesForMedia(m)[0]!;
+    // A dataset can't span media, so the MODEL always resets. The type carries over when the new media
+    // offers it — switching Image→Video with Style chosen should stay Style, not silently become Character.
+    const next = typesForMedia(m);
+    const t = next.find((o) => o.id === loraType) ?? next[0]!;
     loraType = t.id;
     runs = [newRun(recommendedCardFor(t.id, m))];
     focus = 0;
@@ -160,8 +165,8 @@
 
   function versionsFor(card: ModelCard) {
     return [
-      ...card.versions.map((v) => ({ key: v.key, label: v.label, note: v.note, surcharge: 0 })),
-      { key: CUSTOM_VERSION_KEY, label: 'Custom…', note: 'pick a model', surcharge: CUSTOM_MODEL_SURCHARGE },
+      ...card.versions.map((v) => ({ key: v.key, label: v.label, surcharge: 0 })),
+      { key: CUSTOM_VERSION_KEY, label: 'Custom', surcharge: CUSTOM_MODEL_SURCHARGE },
     ];
   }
 
@@ -202,7 +207,7 @@
   <div class="mt-2.5">
     <label
       for={`custom-air-${run.id}`}
-      class="font-mono text-[10px] uppercase tracking-wider text-dark-2"
+      class="font-mono text-xs uppercase tracking-wider text-dark-2"
     >
       Civitai model AIR
     </label>
@@ -213,7 +218,7 @@
       placeholder="urn:air:sdxl:checkpoint:civitai:…@…"
       class="mt-1 font-mono text-xs"
     />
-    <p class="mt-1 text-[10px] leading-snug text-dark-2">
+    <p class="mt-1 text-xs leading-snug text-dark-2">
       {#if run.customAir && !isValidAir(run.customAir)}
         <span class="text-buzz">Paste a full model AIR — it starts with <code>urn:air:</code>.</span>
       {:else}
@@ -304,7 +309,7 @@
     <div>
       <div class="mb-1 flex items-baseline justify-between gap-2">
         <div class="font-mono text-xs uppercase tracking-wider text-dark-2">Base model</div>
-        <div class="font-mono text-[11px] text-dark-2">
+        <div class="font-mono text-xs text-dark-2">
           {labelMode === 'tag' ? 'auto-labeled with tags' : 'auto-labeled with captions'}
         </div>
       </div>
@@ -327,7 +332,6 @@
         {#each visibleCards as card (card.type)}
           {@const selected = card.type === focused.cardType}
           {@const disabled = multi && !selected && !labelOptions(card).includes(labelMode)}
-          {@const isRecommended = card.type === recommendedType}
           {@const cardPrice = price(card.type)}
           <button
             type="button"
@@ -338,7 +342,7 @@
             onclick={() => pickBase(card)}
             aria-label={`${card.name}. ${card.description} ${
               cardPrice != null ? `From ${cardPrice.toLocaleString()} Buzz.` : 'Price not available.'
-            } ${isRecommended ? 'Recommended. ' : ''}${
+            } ${card.flag ? `${card.flag}. ` : ''}${
               card.versions.length > 1 ? `${card.versions.length} versions. ` : ''
             }${disabled ? `Unavailable — uses ${labelNoun(card)}, your sweep uses ${labelModeNoun}.` : ''}`}
             title={disabled
@@ -351,13 +355,12 @@
               {disabled ? 'cursor-not-allowed opacity-40 grayscale' : ''}"
           >
             <div class="flex items-center gap-2">
-              <ModelCodeBadge code={card.code} size="sm" />
               <div class="min-w-0 flex-1">
                 <div class="truncate text-sm font-semibold text-dark-0">{card.name}</div>
               </div>
-              {#if isRecommended}
-                <span class="inline-flex shrink-0 items-center gap-0.5 rounded bg-primary px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-wide text-primary-foreground">
-                  <IconStarFilled size={8} />Recommended
+              {#if card.flag}
+                <span class="inline-flex shrink-0 items-center gap-0.5 rounded bg-primary px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-wide text-primary-foreground">
+                  {#if card.flag === 'recommended'}<IconStarFilled size={8} />{/if}{card.flag}
                 </span>
               {/if}
               {#if selected}
@@ -366,24 +369,29 @@
                 </span>
               {/if}
             </div>
-            <div class="mt-1 line-clamp-1 text-[11px] leading-snug text-dark-2">
+            <!-- Two lines, and always two lines tall: at one line most taglines were clipped mid-sentence,
+                 and letting the height follow the text made the price rows sit at different heights. -->
+            <div class="mt-1 line-clamp-2 min-h-[2lh] text-xs leading-snug text-dark-2">
               {card.description}
             </div>
             <div class="mt-2 flex items-center gap-2">
               {#if cardPrice != null}
                 <span
-                  class="inline-flex items-center whitespace-nowrap rounded border border-buzz/25 bg-buzz/[0.08] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-buzz"
+                  class="inline-flex items-center whitespace-nowrap rounded border border-buzz/25 bg-buzz/[0.08] px-1.5 py-0.5 font-mono text-xs font-semibold text-buzz"
                 >
                   from <IconBoltFilled size={11} stroke={2} class="mx-px inline" />{cardPrice.toLocaleString()}
                 </span>
               {:else}
-                <span class="font-mono text-[10px] text-dark-2">—</span>
+                <span class="font-mono text-xs text-dark-2">—</span>
+              {/if}
+              {#if releasedLabel(card.released)}
+                <span class="font-mono text-xs text-dark-2">{releasedLabel(card.released)}</span>
               {/if}
               {#if card.versions.length > 1}
                 <span
                   aria-hidden="true"
                   title={`${card.versions.length} versions`}
-                  class="ml-auto inline-flex items-center gap-0.5 rounded-sm border border-dark-4 px-1 py-px font-mono text-[9px] leading-none text-dark-2"
+                  class="ml-auto inline-flex items-center gap-0.5 rounded-sm border border-dark-4 px-1 py-px font-mono text-xs leading-none text-dark-2"
                 >
                   <IconStack2 size={10} stroke={2} />
                   {card.versions.length}
@@ -398,12 +406,15 @@
         <button
           type="button"
           onclick={() => (showAllModels = !showAllModels)}
-          class="mt-2 flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-dark-4 py-2 font-mono text-[11px] text-dark-2 transition-colors hover:border-dark-3 hover:text-dark-1"
+          class="mt-2 flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-dark-4 py-2 font-mono text-xs text-dark-2 transition-colors hover:border-dark-3 hover:text-dark-1"
         >
           {#if modelsExpanded}
             <IconMinus size={12} stroke={2} />Show fewer models
           {:else}
-            <IconPlus size={12} stroke={2} />Show {otherCards.length} more models ({otherCards
+            <IconPlus size={12} stroke={2} />Show {otherCards.length} more model{otherCards.length ===
+            1
+              ? ''
+              : 's'} ({otherCards
               .slice(0, 3)
               .map((c) => c.name)
               .join(', ')}…)
@@ -417,13 +428,12 @@
         {@const runPrice = price(primary.cardType, isCustom(primary))}
         <div class="mt-3 rounded-md border border-dark-4 bg-dark-6 p-3">
           <div class="flex items-center gap-3">
-            <ModelCodeBadge code={card.code} size="md" />
             <div class="min-w-0">
               <div class="truncate text-sm font-bold text-dark-0">
                 {card.name}
                 {runVersionLabel(primary)}
               </div>
-              <div class="font-mono text-[11px] text-dark-2">
+              <div class="font-mono text-xs text-dark-2">
                 {labelNoun(card)}{#if isCustom(primary)} · custom (+<IconBoltFilled
                     size={10}
                     stroke={2}
@@ -434,7 +444,7 @@
             <div class="ml-auto">{@render priceTag(runPrice, 'text-[13px]')}</div>
           </div>
           {#if versionsFor(card).length > 1}
-            <div class="mt-1 font-mono text-[10px] uppercase tracking-wider text-dark-2">Version</div>
+            <div class="mt-3 font-mono text-xs uppercase tracking-wider text-dark-2">Version</div>
             <div
               class="mt-1.5 flex flex-wrap gap-2"
               role="radiogroup"
@@ -452,17 +462,16 @@
                     : 'border-dark-4 bg-dark-7 hover:border-dark-3'}
                     {v.key === CUSTOM_VERSION_KEY ? 'border-dashed' : ''}"
                 >
-                  <div class="text-[12.5px] font-bold text-dark-0">{v.label}</div>
-                  {#if v.surcharge}
-                    <div
-                      class="mt-0.5 inline-flex rounded bg-buzz/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-buzz"
-                    >
-                      +<IconBoltFilled size={10} stroke={2} class="inline" />{v.surcharge.toLocaleString()}
-                    </div>
-                  {/if}
-                  {#if v.note}
-                    <div class="font-mono text-[10px] text-dark-2">{v.note}</div>
-                  {/if}
+                  <div class="flex items-center gap-2">
+                    <span class="text-[12.5px] font-bold text-dark-0">{v.label}</span>
+                    {#if v.surcharge}
+                      <span
+                        class="inline-flex rounded bg-buzz/15 px-1.5 py-0.5 font-mono text-xs font-semibold text-buzz"
+                      >
+                        +<IconBoltFilled size={10} stroke={2} class="inline" />{v.surcharge.toLocaleString()}
+                      </span>
+                    {/if}
+                  </div>
                 </button>
               {/each}
             </div>
@@ -485,7 +494,7 @@
           <span class="inline-flex items-center gap-1 text-sm font-semibold text-dark-1">
             <IconPlus size={14} stroke={2} />Train an additional model
           </span>
-          <span class="font-mono text-[11px] text-dark-2">same dataset · another model or settings</span>
+          <span class="font-mono text-xs text-dark-2">same dataset · another model or settings</span>
         </button>
       {:else}
         <div class="flex flex-col gap-2.5 p-3.5">
@@ -507,13 +516,12 @@
                   onclick={() => (focus = ri)}
                   class="flex min-w-0 flex-1 items-center gap-3 text-left"
                 >
-                  <ModelCodeBadge code={card.code} size="md" />
                   <div class="min-w-0">
                     <div class="truncate text-sm font-bold text-dark-0">
                       Run {ri + 1} · {card.name}
                       {runVersionLabel(r)}
                     </div>
-                    <div class="font-mono text-[11px] text-dark-2">
+                    <div class="font-mono text-xs text-dark-2">
                       {labelNoun(card)}{#if isCustom(r)} · custom (+<IconBoltFilled
                           size={10}
                           stroke={2}
@@ -547,17 +555,16 @@
                       : 'border-dark-4 bg-dark-7 hover:border-dark-3'}
                       {v.key === CUSTOM_VERSION_KEY ? 'border-dashed' : ''}"
                   >
-                    <div class="text-[12.5px] font-bold text-dark-0">{v.label}</div>
-                    {#if v.surcharge}
-                      <div
-                        class="mt-0.5 inline-flex rounded bg-buzz/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-buzz"
-                      >
-                        +<IconBoltFilled size={10} stroke={2} class="inline" />{v.surcharge.toLocaleString()}
-                      </div>
-                    {/if}
-                    {#if v.note}
-                      <div class="font-mono text-[10px] text-dark-2">{v.note}</div>
-                    {/if}
+                    <div class="flex items-center gap-2">
+                      <span class="text-[12.5px] font-bold text-dark-0">{v.label}</span>
+                      {#if v.surcharge}
+                        <span
+                          class="inline-flex rounded bg-buzz/15 px-1.5 py-0.5 font-mono text-xs font-semibold text-buzz"
+                        >
+                          +<IconBoltFilled size={10} stroke={2} class="inline" />{v.surcharge.toLocaleString()}
+                        </span>
+                      {/if}
+                    </div>
                   </button>
                 {/each}
               </div>
@@ -580,7 +587,8 @@
   </div>
 
   <!-- summary -->
-  <aside class="sticky top-4 h-fit max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl border border-dark-4 bg-dark-6 p-5">
+  <div class="sticky top-4 h-fit">
+  <aside class="max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl border border-dark-4 bg-dark-6 p-5">
     <h3 class="m-0 mb-3 font-mono text-xs uppercase tracking-widest text-dark-2">Your training</h3>
     <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
       <span class="text-dark-2">Media</span><span class="font-semibold capitalize text-dark-0">{media}</span>
@@ -588,15 +596,17 @@
     <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
       <span class="text-dark-2">Type</span><span class="font-semibold text-dark-0">{type.name}</span>
     </div>
-    <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
-      <span class="text-dark-2">Models</span><span class="font-semibold text-dark-0">{runs.length}</span>
-    </div>
+    {#if multi}
+      <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
+        <span class="text-dark-2">Models</span><span class="font-semibold text-dark-0">{runs.length}</span>
+      </div>
+    {/if}
     <div class="flex justify-between gap-2.5 py-2 text-sm">
       <span class="text-dark-2">Labeling</span>
       <span class="font-semibold text-dark-0">{labelMode === 'tag' ? 'Tags' : 'Captions'}</span>
     </div>
-    <div class="mt-3.5 flex items-baseline justify-between border-t border-dark-4 pt-3.5">
-      <span class="text-sm text-dark-2">Starting at</span>
+    <div class="mt-1.5 flex items-baseline justify-between border-t border-dark-4 pt-3.5">
+      <span class="text-sm font-semibold text-white">Starting at</span>
       {#if total != null}
         <span class="font-mono text-2xl font-bold text-buzz">
           <IconBoltFilled size={20} stroke={2} class="mb-0.5 inline" /> {total.toLocaleString()}
@@ -605,39 +615,40 @@
         <span class="font-mono text-2xl font-bold text-dark-2">—</span>
       {/if}
     </div>
-    <div class="mt-1 text-right font-mono text-[11px] text-dark-2">
-      final price after your data &amp; settings
+    <div class="mt-1 text-right font-mono text-xs text-dark-2">
+      price depends on data and settings
     </div>
     <Button
-      class="mt-4 w-full"
+      class="mt-4 h-11 w-full"
       disabled={customIncomplete}
       onclick={() => onContinue({ media, loraType, runs })}
     >
       Continue to data<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
     </Button>
     {#if customIncomplete}
-      <p class="mt-1.5 text-center font-mono text-[11px] text-buzz">
+      <p class="mt-1.5 text-center font-mono text-xs text-buzz">
         Paste a Civitai model AIR for the custom base to continue.
       </p>
     {/if}
-    <p
-      class="mt-3 flex items-center justify-center gap-1.5 whitespace-nowrap font-mono text-[11px] text-dark-2"
-    >
-      <svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="var(--color-buzz)"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        class="h-3.5 w-3.5 shrink-0"
-        aria-hidden="true"
-      >
-        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
-        <path d="M12 9v4" />
-        <path d="M12 17h.01" />
-      </svg>
-      Nothing is saved until you start training
-    </p>
   </aside>
+  <p
+    class="mt-3 flex items-center justify-center gap-1.5 whitespace-nowrap font-mono text-xs text-dark-2"
+  >
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="var(--color-buzz)"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class="h-3 w-3 shrink-0"
+      aria-hidden="true"
+    >
+      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+      <path d="M12 9v4" />
+      <path d="M12 17h.01" />
+    </svg>
+    Nothing is saved until you start training
+  </p>
+  </div>
 </div>

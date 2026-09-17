@@ -19,6 +19,8 @@ import {
   getBaseModelsByEcosystemId,
   MODEL3D_ECOSYSTEM_KEYS,
 } from '~/shared/constants/basemodel.constants';
+import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-seed';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   workflowConfigByKey,
   isWorkflowAvailable,
@@ -26,6 +28,7 @@ import {
 } from '~/shared/data-graph/generation/config/workflows';
 import type { ResourceData, SnippetsNodeValue } from '~/shared/data-graph/generation/common';
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
+import { showErrorNotification } from '~/utils/notifications';
 import {
   useGenerationGraphStore,
   generationGraphStore,
@@ -94,6 +97,41 @@ export function useGenerationIngestion(store: GenerationStore) {
 
     generationGraphPanel.open({ type: 'modelVersion', id });
   }, []);
+
+  // `/generate?air=…&workflowId=…&name=…` deep link — the Training Studio's
+  // "generate with this epoch" handoff (see seedRawAirResource). Same route
+  // guard and strip-before-apply shape as the modelVersionId effect above.
+  const features = useFeatureFlags();
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!window.location.pathname.startsWith('/generate')) return;
+
+    const url = new URL(window.location.href);
+    const air = url.searchParams.get('air');
+    if (!air) return;
+    const workflowId = url.searchParams.get('workflowId');
+    const name = url.searchParams.get('name');
+
+    url.searchParams.delete('air');
+    url.searchParams.delete('workflowId');
+    url.searchParams.delete('name');
+    window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+
+    // The studio's shell can't read this flag, so its Generate link exists for everyone —
+    // an ineligible user must hear WHY the generator opened unseeded, not lose the epoch
+    // silently.
+    if (!features.generationAirResources) {
+      showErrorNotification({
+        title: 'Epoch generation unavailable',
+        error: new Error('Generating with training epochs is not enabled for your account yet.'),
+      });
+      return;
+    }
+    if (useGenerationGraphStore.getState().data) return;
+    if (!workflowId) return;
+
+    seedRawAirResource({ air, workflowId, name });
+  }, [features.generationAirResources]);
 
   // Sync generation graph store data into the form
   // - Remix/Replay: full override (reset + set)

@@ -244,7 +244,7 @@ export function ProjectSettingsModal({
                 style={{ width: 120, height: 160, background: '#2C2E33' }}
               >
                 <img
-                  src={getEdgeUrl(editCoverUrl, { width: 240 })}
+                  src={getEdgeUrl(editCoverUrl, { width: 240, optimized: true })}
                   alt="Cover"
                   className="w-full h-full object-cover"
                 />

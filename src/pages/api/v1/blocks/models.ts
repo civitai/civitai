@@ -198,4 +198,13 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 // (`Origin: null`) so its direct catalog fetch needs `ACAO: null` to clear the
 // CORS preflight; safe here (public maturity-clamped data, no credentials,
 // still token-gated) — see WithBlockScopeOpts.allowOpaqueOrigin.
-export default withBlockScope(baseHandler, { endpoint: 'models', allowOpaqueOrigin: true });
+export default withBlockScope(baseHandler, {
+  endpoint: 'models',
+  allowOpaqueOrigin: true,
+  // Public, maturity-clamped catalog read. No requiredScope, no context binding, nothing
+  // scoped to the viewer and nothing written — a suspended app reaching this handler on an
+  // unreachable replica obtains public data clamped by a ceiling the TOKEN carries, which
+  // does not depend on the approval row. Refusing removes no takedown path; it only turns
+  // a replica blip into a fleet-wide 503 for a body that is public anyway.
+  onApprovalLookupFailure: 'serve',
+});

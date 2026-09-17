@@ -391,7 +391,7 @@ articleImageScanning: [], // was ['public']
 ```
 
 **Effect**:
-- New articles still save, still submit to text moderation, but `debounceArticleUpdate` in `image-scan-result.ts` short-circuits
+- New articles still save, still submit to text moderation, but the scan processors skip `fanOutArticleImageUpdates`, so no article update is queued
 - Articles already in `Processing` will **not** auto-transition to `Published` — they need manual intervention or the flag re-enabled
 - Existing NSFW levels stay as-is
 

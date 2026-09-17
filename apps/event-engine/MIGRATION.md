@@ -17,7 +17,9 @@ Dockerfile filter/paths. **Runtime identifiers were intentionally left unchanged
 - Kafka **consumer group** default `metric-event-watcher` (`src/config/index.ts`, `scripts/reset-consumer-offsets.ts`)
   — so the cutover resumes from existing offsets rather than reprocessing.
 - Prometheus **`app` label `metric-event-watcher`** + the **`mew_` metric prefix** (`src/metrics.ts`) — so existing
-  dashboards/alerts keep working. (The legacy `k8s/grafana-dashboard.json` still keys on these.)
+  dashboards/alerts keep working. (The dashboard that keys on these now lives in the ops repo; the
+  legacy `k8s/grafana-dashboard.json` copy has since been deleted — see the `k8s/` bullet under
+  "What changed vs. the standalone repo".)
 - Kafka `clientId` (`src/index.ts`) — cosmetic; left as-is.
 
 Rename these later as a deliberate, separately-planned step (with an offset seed + dashboard update) if desired.
@@ -33,9 +35,59 @@ root changes were needed.
 - `package.json`: name → `@civitai/event-engine`, `"private": true`; dropped repo-level scripts
   (`sync:submodule`, `install:hooks`, `release*`). Deps/build/tsconfig kept as-is.
 - Removed `.gitmodules` (submodule retired → vendored) and `package-lock.json` (npm → the monorepo is pnpm).
-- `Dockerfile` rewritten to the monorepo pnpm-deploy pattern (see below) — **DRAFT, unverified**.
-- `k8s/`, `.github/`, `docker-compose.yml` are kept **as legacy reference only** (the old CI + the Kafka/
-  Debezium infra manifests). They are inert here and should be relocated to the ops repo — see DevOps below.
+- `Dockerfile` rewritten to the monorepo pnpm-deploy pattern — **DRAFT, unverified**. (This bullet said
+  "see below"; no section describing that pattern was ever written. Read the `Dockerfile` itself.)
+- `.github/` **was** kept as legacy reference only and has since been **DELETED** (2026-09-15), together
+  with `scripts/release.mjs` — the standalone repo's release machinery, both members. The reason the
+  workflow was safe to delete is worth keeping: GitHub reads workflows only from the repo-root
+  `.github/workflows/`, so a nested copy is **structurally never scheduled** — verified against the
+  Actions API, which listed **zero** workflows under `apps/`. (Quote that zero, not a count of root
+  entries: the registry carries rows that do not correspond to the default branch's tree at all —
+  both for workflow files since deleted **and** for files that only ever existed on a branch — so the
+  root number it returns is larger than the tree's, and a re-verifier will not reproduce it. Measured
+  2026-09-15: 6 root rows against 4 tracked root workflow files.)
+  🔴 `scripts/release.mjs` was the dangerous half and was **not** inert: 437 lines, wired to no
+  `package.json` script and referenced by nothing, but executable. Run as
+  `node scripts/release.mjs` **from `apps/event-engine`** it would check out `release`, rebase it onto
+  `main`, bump this app's version, tag a bare `v<version>` and **push `release`** — an unreviewed
+  production deploy of whatever `main` held, plus a tag in the root release namespace. This app's real
+  release path is `pnpm release:event-engine:*` → `scripts/release-app.mjs`, which tags
+  `event-engine-v*`.
+  ⚠ The cwd qualifier is load-bearing and an earlier draft of this bullet omitted it: `:264` ran
+  `git add package.json` **relative to the process cwd** while the version write resolved the app's
+  own manifest, so invoked from the repo root it staged the untouched root manifest and the commit
+  exited non-zero. It stopped **there** — after an `ensureOnMain()` checkout and a version write to
+  the app's manifest, but before the switch to `release` — so it left a dirty, version-bumped
+  manifest behind and reached no tag and no push. The blob was also `100644`, so `./…` would not run
+  it. Deleting it was right either way; the overstatement is corrected here rather than left
+  for the next reader to re-derive and disbelieve.
+- `docker-compose.yml` is **NOT legacy and NOT inert**: it is the live local-dev Kafka/Debezium harness,
+  driven by `README.md`, `scripts/produce-comic-event.ts` and `scripts/setup-digitalocean.ts`. Do not
+  delete it as legacy.
+- `k8s/` **was** kept on the same terms and has since been **DELETED** (2026-09-14). The relocation this
+  section called for has happened: the Kafka/Debezium manifests, the Kafka UI and the app's own
+  Deployment all live in the ops repo now and are what actually deploys. The copies here deployed
+  nothing and had begun to read as the live source. **One** file outside this one referenced them —
+  `docs/plans/ci-cd.md`, a task prompt for the CI/CD work item 7 below now records as done, which
+  named the manifest with a `\` separator; it was deleted in the same PR. A sweep for references of
+  this kind must match **both** path separators — a `k8s/` grep alone returns a confident zero.
+- `docs/reference/release-script-example.js` and `docs/reference/service-deploy-workflow.yml` were
+  referenced only by that deleted task prompt and are now orphaned. **Kept deliberately** as
+  examples of the pre-monorepo release shape; they should not be read as live.
+  🔴 **"Not wired to anything" is NOT why the first one is safe — the `.github/`+`release.mjs` bullet
+  earlier in this list says in terms that unwired-but-executable is exactly the dangerous shape, and
+  this file is a 446-line near-copy of the `scripts/release.mjs` just deleted, sharing its branch
+  constants and its `createGitTag`/`pushRelease` path.** What actually stops it is narrower and worth
+  stating, because nothing else records it: `getCurrentVersion()` resolves `<its dir>/../package.json`
+  — a `docs/` parent, which holds none — so it throws `ENOENT` in the version **read**, before any
+  write. That read sits *after* an `ensureOnMain()` checkout but **before** the release branch is
+  touched, so it cannot reach a tag or a push. Two consequences for whoever reads this next: do not
+  cite "unreferenced" as the reason it is retained, and do not conclude from the bullet above that
+  the runnable-release-script class was cleared from this app — one copy remains, deliberately, and
+  its safety rests on a path that does not exist.
+  ⚠ Retaining it is **an open question, not a settled decision**: the same criterion in the
+  `.github/`+`release.mjs` bullet
+  deleted a near-identical file. Either delete this one too, or keep it and this paragraph is why.
 
 ## Outbox reconciliation poller (ported in on top of the lift-and-shift)
 A background **OutboxPoller** was ported in — a backstop that drains Outbox rows the live CDC path never
@@ -82,9 +134,12 @@ workstreams from `docs/plans/monorepo-migration.md` (in the watcher repo):
 5. **ClickHouse version** — `@clickhouse/client` is `1.12` here vs `0.2.2` at the monorepo root; only needs
    reconciling if adopting `@civitai/clickhouse`.
 6. **Meilisearch** — keep this app's own client, or factor a `@civitai/meilisearch` package.
-7. **DevOps (Zach):** add a Tekton tag-webhook trigger + a `release-app.mjs`/`release:event-engine`
+7. ~~**DevOps (Zach):** add a Tekton tag-webhook trigger + a `release-app.mjs`/`release:event-engine`
    entry + the k8s Deployment/HPA/secret (port from the legacy `k8s/09-metric-watcher-app.yml`). The
-   **Kafka/Debezium k8s infra (`k8s/02-*`, `03-*`) stays as separate infra** regardless. Deploy the app on
-   the same Kafka **consumer group** so the cutover doesn't reprocess or drop offsets.
+   **Kafka/Debezium k8s infra (`k8s/02-*`, `03-*`) stays as separate infra** regardless.~~ **DONE** —
+   the app, the Kafka/Debezium infra and the Kafka UI are all deployed from the ops repo. The legacy
+   `k8s/` copies that this item said to port from have been deleted. Still true and still the reason
+   the runtime identifiers above were left alone: the app runs on the same Kafka **consumer group**, so
+   the cutover did not reprocess or drop offsets.
 8. **Node 20 → 22** — the monorepo standard is Node 22; bump `@types/node` and validate when convenient.
 9. **Optional rename** — if this becomes the general events/signals/CDC app, rename the package/dir.

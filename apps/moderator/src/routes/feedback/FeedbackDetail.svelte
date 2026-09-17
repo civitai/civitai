@@ -15,12 +15,17 @@
   import FeedbackContextPanel from './FeedbackContextPanel.svelte';
   import FeedbackAttachments from './FeedbackAttachments.svelte';
   import FeedbackPromote from './FeedbackPromote.svelte';
-  import type { FeedbackRow, FeedbackSibling } from '$lib/server/feedback.service';
+  import type {
+    FeedbackRow,
+    FeedbackSibling,
+    KnownIssueOption,
+  } from '$lib/server/feedback.service';
 
   let {
     row,
     context,
     siblings,
+    knownIssues,
     grafanaUrl,
     civitaiUrl,
     canTriage,
@@ -29,6 +34,8 @@
     row: FeedbackRow;
     context: FeedbackContext;
     siblings: FeedbackSibling[];
+    /** Passed straight through to `FeedbackPromote`'s issue picker. */
+    knownIssues: KnownIssueOption[];
     grafanaUrl: string | null;
     civitaiUrl: string;
     canTriage: boolean;
@@ -309,6 +316,7 @@
     <FeedbackPromote
       {row}
       {siblings}
+      {knownIssues}
       {civitaiUrl}
       {canPromote}
       form={promoteForm}

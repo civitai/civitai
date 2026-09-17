@@ -13,9 +13,14 @@ function revokedKey(blockInstanceId: string) {
 
 /**
  * Per-blockInstanceId token revocation, written when an install is
- * uninstalled, toggled off, or the publisher is banned. Tokens for the
- * revoked instance are rejected by the block-scope middleware until the
- * marker's TTL elapses.
+ * uninstalled or toggled off. Tokens for the revoked instance are rejected by
+ * the block-scope middleware until the marker's TTL elapses.
+ *
+ * 🔴 THIS LIST USED TO INCLUDE "or the publisher is banned", AND NO SUCH WRITER
+ * EXISTS. `revokeInstance` has exactly two production call sites, both in
+ * `block-registry.service.ts` — `uninstallFromModel` and `toggleEnabled(false)`.
+ * No ban path writes a marker (see `block-scope.middleware.ts`), yet this
+ * docblock described one as shipped. Do not reason about a ban path from here.
  *
  * This is a deliberately coarse-grained revocation primitive (per-instance,
  * not per-jti). A per-jti denylist is heavier infra and gains little for v1
@@ -26,7 +31,7 @@ export class BlockRevocation {
     try {
       await redis.set(revokedKey(blockInstanceId), '1', { EX: REVOCATION_TTL_SECONDS });
     } catch {
-      // Fail open: an uninstall/toggle/ban write path must not block on a
+      // Fail open: an uninstall/toggle write path must not block on a
       // Redis incident. If the marker isn't written, tokens for this
       // instance remain valid until natural exp — exposure is bounded by the
       // token lifetime rather than by Redis-recovery time. Accepted tradeoff.

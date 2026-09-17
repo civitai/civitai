@@ -66,7 +66,7 @@ vi.mock('~/components/Apps/OnsiteReviewModal', async (importOriginal) => {
   };
 });
 
-// Pass-through layout — the real one renders `AppsSubNav` → `useCurrentUser`,
+// Pass-through layout — the real one renders the rail → `useAppsNavSections` → `useCurrentUser`,
 // which needs the CivitaiSession context this network-free test doesn't mount.
 vi.mock('~/components/Apps/AppsPageLayout', () => ({
   AppsPageLayout: ({ children }: any) => <div>{children}</div>,

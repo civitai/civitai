@@ -1,35 +1,47 @@
 /**
  * Remix Store
  *
- * Stores the remix source ID and original generation data for similarity checking.
- * When a user remixes an image, we store the original params here so we can
- * calculate how much the current form has deviated from the original.
+ * Holds the source image the user entered the generator through, so the footer
+ * can send `remixOfId` at submit time. It is a claim, not proof — verified
+ * derivation is `remix-provenance.store` plus the server's own check.
  *
- * If similarity drops below 75%, the generation is treated as a new image
- * rather than a remix.
+ * Lifetime is the whole point, and it must not outlive the tab — sessionStorage
+ * like `remix-provenance.store`, expired against `createdAt`. `remixOfId` is
+ * recorded against blocked prompts in `prohibitedRequests`, so it reaches the
+ * evidence a moderator reads when ruling on a restriction, and
+ * `audit-remix-sources` can pull the source image — someone else's — into a
+ * review queue off it. A claim that outlives the remix puts a stranger's image
+ * behind prompts that never touched it (ClickUp 868m5acdq). Whether the claim
+ * still HOLDS at submit time is a further question, answered by
+ * `utils/remix-claim.ts`.
  */
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 
-interface RemixData {
+/**
+ * Long enough to iterate on a remix, short enough that a tab left open
+ * overnight does not carry the source into the next day's prompts.
+ */
+export const REMIX_CLAIM_TTL = 1000 * 60 * 60 * 2;
+
+export interface RemixData {
   /** The image ID being remixed */
   remixOfId: number;
-  /** Original generation parameters for similarity comparison */
+  /** The generation parameters the remix seeded the form with */
   originalParams: Record<string, unknown>;
   /** Timestamp when remix was initiated */
   createdAt: number;
 }
 
 interface RemixState {
-  /** Current remix data (if any) */
   data: RemixData | null;
-
-  /** Set remix data when user initiates a remix */
   setRemix: (remixOfId: number, originalParams: Record<string, unknown>) => void;
-
-  /** Clear remix data (e.g., on form reset or new generation) */
   clearRemix: () => void;
+}
+
+export function isRemixDataFresh(data: RemixData | null): data is RemixData {
+  return !!data && Date.now() - data.createdAt < REMIX_CLAIM_TTL;
 }
 
 export const useRemixStore = create<RemixState>()(
@@ -53,8 +65,8 @@ export const useRemixStore = create<RemixState>()(
     }),
     {
       name: 'remix-data',
-      storage: createJSONStorage(() => localStorage),
-      version: 1,
+      storage: createJSONStorage(() => sessionStorage),
+      version: 2,
     }
   )
 );
@@ -67,7 +79,9 @@ export const remixStore = {
   clearRemix: () => {
     useRemixStore.getState().clearRemix();
   },
+  /** Null once past `REMIX_CLAIM_TTL`. Use this, not `getState().data`. */
   getData: () => {
-    return useRemixStore.getState().data;
+    const { data } = useRemixStore.getState();
+    return isRemixDataFresh(data) ? data : null;
   },
 };

@@ -619,6 +619,7 @@ model User {
   appOwnershipTransfersFrom          AppOwnershipTransfer[]     @relation("AppOwnershipTransferFrom")
   appOwnershipTransfersTo            AppOwnershipTransfer[]     @relation("AppOwnershipTransferTo")
   targetedAnnouncements              AnnouncementUser[]
+  dismissedAnnouncements             AnnouncementDismissal[]
   authoredAnnouncements              Announcement[]             @relation("authoredAnnouncements")
   announcementSpends                 AnnouncementSpend[]        @relation("announcementSpends")
   announcementMutesGiven             UserAnnouncementMute[]     @relation("announcementMutesGiven")
@@ -848,6 +849,63 @@ model Import {
   importId     Int?
 }
 
+enum HuggingFaceImportStatus {
+  Queued
+  Transferring
+  Completed
+  Failed
+  Canceled
+}
+
+/// One file pulled from Hugging Face into our storage. The row IS the provenance record: the
+/// uploaded object (bucket/key/url) is traceable back to the exact repo revision it came from.
+model HuggingFaceImport {
+  id               Int                     @id @default(autoincrement())
+  repo             String
+  /// Commit sha, never a branch name — an import must name the exact bytes it took.
+  revision         String
+  filename         String
+  /// What a moderator calls this batch, defaulting to the repo's own name. Never appears in a
+  /// storage key — the key is the ordinary upload shape — so this is free to be corrected.
+  groupName        String
+  sourceUrl        String
+  /// Both come from the HF tree API before any bytes move: size, and lfs.oid which is the content
+  /// sha256 for LFS files. The sha is what lets us skip a file we already store under the same hash;
+  /// the transfer itself is not verified against it.
+  sizeBytes        BigInt?
+  sourceSha256     String?
+  status           HuggingFaceImportStatus @default(Queued)
+  bytesTransferred BigInt                  @default(0)
+  /// The resume point. A transfer is a sequence of ranged reads from HF written as multipart parts,
+  /// and `uploadId` + `parts` is what lets a LATER job run continue one an earlier run left unfinished
+  /// instead of starting the file again.
+  uploadId         String?
+  partSize         Int?
+  parts            Json?
+  bucket           String?
+  key              String?
+  url              String?
+  error            String?
+  attempts         Int                     @default(0)
+  nextAttemptAt    DateTime?
+  userId           Int?
+  modelVersionId   Int?
+  modelFileId      Int?
+  /// Worker lease. A transfer outlives any one job run, so a claim plus a heartbeat is what stops two
+  /// runs moving the same file and what lets the next run tell "in flight" from "abandoned".
+  claimedBy        String?
+  claimedAt        DateTime?
+  heartbeatAt      DateTime?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  @@unique([repo, revision, filename])
+  @@index([status, createdAt])
+  @@index([groupName])
+}
+
 enum ModelStatus {
   /// saved but incomplete
   Draft
@@ -894,6 +952,7 @@ enum CommercialUse {
   RentCivit
   Rent
   Sell
+  SellMerge
 }
 
 enum CheckpointType {
@@ -965,7 +1024,7 @@ model Model {
   allowNoCredit         Boolean         @default(true)
   // Must stay equal to the column default in Postgres: Prisma supplies this itself on create, so a
   // narrower value here never reaches the database default and silently licenses the row instead.
-  allowCommercialUse    CommercialUse[] @default([Image, RentCivit, Rent, Sell])
+  allowCommercialUse    CommercialUse[] @default([Image, RentCivit, Rent, Sell, SellMerge])
   allowDerivatives      Boolean         @default(true)
   allowDifferentLicense Boolean         @default(true)
 
@@ -1876,6 +1935,12 @@ model ImageTagForReview {
 
   @@id([imageId, tagId])
   @@index([tagId])
+}
+
+model ImageMetaFlags {
+  imageId Int     @id
+  hasMeta Boolean
+  onSite  Boolean
 }
 
 model ImageFlag {
@@ -3537,6 +3602,34 @@ model BlockSpendAttribution {
   /// (bounded, app-owned). NULL when the app supplied none.
   sharedContentKey    String? @map("shared_content_key")
 
+  /// The APP-FACING generation type this spend paid for, as `<coarse>` or
+  /// `<coarse>:<subtype>` — e.g. `textToImage:img2img-edit`,
+  /// `customComfy:seamless-pano-360`, `customComfy:inline`, or a bare
+  /// registered STEP ID (`convert-image`, `chat-completion`). NEVER the
+  /// orchestrator's internal `$type` (`convertImage` / `chatCompletion`), which
+  /// is free to change without a wire-contract decision.
+  ///
+  /// 🔴 THE COARSE KEY IS EVERYTHING BEFORE THE FIRST COLON, and a value carries
+  /// at most one. A per-generation-type author fee keys on the coarse key, so
+  /// `split_part(generation_type, ':', 1)` is the stable grouping no matter how
+  /// the subtype axis grows. A step id implies `kind: 'step'` and carries no
+  /// subtype, so one column covers the whole axis with no companion `kind`.
+  ///
+  /// Deliberately unconstrained TEXT — no CHECK, no enum. Both the step and
+  /// recipe registries are designed to grow additively (register an entry, not
+  /// a schema change), and a CHECK would make every new step or recipe a
+  /// migration. The bound is enforced in code against those registries
+  /// (`resolveBlockGenerationType` / `isBlockGenerationType`, in
+  /// `src/server/services/blocks/generation-type.ts`) and re-checked at the
+  /// write.
+  ///
+  /// NULL on rows written before this column existed (no backfill is possible —
+  /// the type was never recorded) and on any submit whose type could not be
+  /// resolved. Resolution is fail-open: an unresolvable SUB-axis degrades to the
+  /// bare coarse key, and an unresolvable body to NULL, rather than throwing on
+  /// the fire-and-forget spend path.
+  generationType      String? @map("generation_type")
+
   // Must stay equal to the column default in Postgres and to what backpay selects: Prisma supplies
   // this itself on create, so a value backpay does not read makes an omitted-status row invisible to
   // payout forever. Pinned by block-spend-attribution-status-default.test.ts.
@@ -4162,6 +4255,7 @@ model Announcement {
   /// Profile-only rows never enter the announcements feed and never notify.
   profileOnly Boolean            @default(false)
   targetUsers AnnouncementUser[]
+  dismissals  AnnouncementDismissal[]
   spends      AnnouncementSpend[]
   reports     AnnouncementReport[]
 
@@ -4202,6 +4296,24 @@ model UserAnnouncementMute {
 model AnnouncementUser {
   announcementId Int
   userId         Int
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, announcementId])
+  @@index([announcementId])
+}
+
+/// A dismissal is meaningful only while its announcement can still be shown, so rows are read
+/// scoped to currently-active announcements and a stale row is inert rather than wrong. That is
+/// what lets cleanup be lazy: nothing user-visible depends on it having run.
+///
+/// Deleting a row for an announcement that is still live is the defect this table exists to fix —
+/// see the client-side prune it replaces. Bound this by the announcement's death, never by a
+/// per-user count.
+model AnnouncementDismissal {
+  announcementId Int
+  userId         Int
+  dismissedAt    DateTime     @default(now())
   announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 

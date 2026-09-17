@@ -100,20 +100,75 @@ export async function getGrantedScopes(opts: {
  * ceiling (`BLOCK_BUZZ_CAP_PER_DAY`) alone — the behaviour of every grant written
  * before the column existed.
  *
- * 🔴 A REVOKED GRANT RETURNS `null`, AND THAT IS NOT A LOOSENING. `getGrantedScopes`
- * already treats a revoked row as an empty grant, so a revoked user's token carries
- * no `ai:write:budgeted` and can reach no spend path at all — there is nothing left
- * for a budget to bound. Returning the stored number for a revoked row would be
- * enforcing a ceiling on spend that cannot happen.
+ * 🔴 A REVOKED GRANT RETURNS `null` — AND THAT **IS** A TRANSIENT LOOSENING. THIS
+ * PARAGRAPH PREVIOUSLY SAID THE OPPOSITE AND WAS WRONG; THE CORRECTION IS THE POINT.
  *
- * ⚠️ THE REVOKED BRANCH IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE, BECAUSE THE
- * STATE IS CURRENTLY UNREACHABLE. Nothing in this codebase ever SETS
- * `app_user_scope_grants.revoked_at` — grep it: every write is `revokedAt: null`
- * (re-granting un-revokes). A revoked row therefore only exists if an operator writes
- * one by hand. The `!row || row.revokedAt` tests here, in `getGrantedScopes`, and in
- * `listMyScopeGrants` are pinning an invariant against a future revoke path, and the
- * tests that exercise them by constructing a revoked row are testing that invariant —
- * they are NOT evidence that a bug was ever possible on this path.
+ * It used to read: *"a revoked user's token carries no `ai:write:budgeted` and can
+ * reach no spend path at all — there is nothing left for a budget to bound."* The
+ * first half is true only at the NEXT MINT. Block tokens are JWTs with no per-jti
+ * revocation and a 900s default lifetime (300s settings-scoped, 4h dev —
+ * `block-token-lifetimes.ts`), so an already-minted token keeps the scope for up to
+ * its remaining life.
+ *
+ * During that window this function returning `null` is what REMOVES the viewer's own
+ * cap: `reserveBlockBuzzSpendForClaims` treats a null budget as "no consent
+ * reservation" and falls back to the platform ceiling (`BLOCK_BUZZ_CAP_PER_DAY`)
+ * alone. So a user who set 500 Buzz/day on an app has that lifted, not enforced, for
+ * the remainder of their token's life. The ordering is counter-intuitive and worth
+ * stating plainly: **the revoke drops the user's own ceiling BEFORE it drops the
+ * scope.**
+ *
+ * `BlockRevocation` (`block-revocation.service.ts`) narrows that window — a
+ * per-`blockInstanceId` Redis marker checked on the block-scope path — but read
+ * what actually sets it before relying on it:
+ *
+ *  - 🔴 NO CALL SITE EXISTS WHOSE *PURPOSE* IS REVOCATION — which is a narrower
+ *    claim than either of the two this paragraph has already got wrong. It
+ *    first said `BlockRevocation` was "operator-invoked" (false), and the
+ *    correction then said "there is no admin router, no tRPC procedure and no
+ *    script" (ALSO false, on the middle term). What the tree actually shows:
+ *
+ *    `revokeInstance` has exactly two production call sites, both in
+ *    `block-registry.service.ts` — `uninstallFromModel` and
+ *    `toggleEnabled(false)` — and in both the marker is a SIDE EFFECT
+ *    of a different operation. But both are reachable over tRPC
+ *    (`blocks.router.ts:1848`, `:1810`, both `protectedProcedure`), and
+ *    `assertCanManageBlocks` early-returns for moderators (`:1521`), so a
+ *    moderator CAN cause a marker deliberately, against any user's install on
+ *    any model.
+ *
+ *    So the useful statement is not "nobody can write one" but: **there is no
+ *    endpoint that revokes a token without also uninstalling or disabling the
+ *    install.** Every route to a marker has a separate, user-visible outcome.
+ *
+ *    🔴 HOW OFTEN THE MIDDLEWARE'S 403 BRANCH IS ACTUALLY EXERCISED IS NOT
+ *    ESTABLISHED, AND THIS COMMENT NO LONGER GUESSES. Two successive drafts
+ *    asserted it was HOT, each for a reason the next round refuted — first
+ *    "a marker appears because a USER acted" (drawn from the false
+ *    no-tRPC-procedure claim), then "ordinary users hit both paths routinely"
+ *    (false: both mutations carry `enforceAppBlocksFlag`, and the live
+ *    `app-blocks-enabled` flag is base-`false` with a moderators-only segment,
+ *    so an ordinary user cannot reach either one). The conclusion outlived two
+ *    dead justifications because each round replaced the reason and kept the
+ *    claim.
+ *
+ *    🔴 DO NOT WRITE A THIRD. Nothing in this tree establishes the rate in
+ *    either direction — it depends on live Flipt state and on install
+ *    behaviour, neither of which is readable from source. If you need the
+ *    number, measure it; do not derive it here.
+ *  - it is per-INSTANCE, not per-user and not per-scope;
+ *  - it FAILS OPEN (`isRevoked` swallows a Redis error and returns false);
+ *  - writing `revoked_at` in Postgres sets NO marker. The two mechanisms do not
+ *    know about each other.
+ *
+ * ⚠️ THE REVOKED BRANCH IS NO LONGER UNREACHABLE. This paragraph used to say nothing
+ * in the codebase ever SETS `app_user_scope_grants.revoked_at`, which was true of
+ * application code and is still true of it — every Prisma write here is
+ * `revokedAt: null`, and re-granting un-revokes. But
+ * `scripts/oneoffs/2026-09-16-reconsent-ai-write-budgeted.sql` is a committed,
+ * hand-applied writer built specifically to produce that state, so "only if an
+ * operator writes one by hand" is now a description of a PLANNED operation rather
+ * than a hypothetical. Read that file before reasoning about this branch.
  *
  * 🔴 READS THE PRIMARY BY DEFAULT. This runs on the spend path, immediately after a
  * consent write that may have just LOWERED the budget: served off the replica, a

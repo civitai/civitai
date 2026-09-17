@@ -9,8 +9,8 @@ export enum FLIPT_FEATURE_FLAGS {
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
-  // Answers getImagesFromSearch from the PostgreSQL feed service instead of Meilisearch
-  // for matching users; everyone else keeps Meilisearch with the feed service in shadow.
+  // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from
+  // Postgres) for matching users; everyone else keeps Meilisearch with the feed in shadow.
   FEED_SERVICE_PRIMARY = 'feed-service-primary',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
 
@@ -138,6 +138,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // OFF is the shipped default and means the pattern list is recorded but not enforced on these
   // surfaces. The link-domain half throws either way — this flag has never governed it.
   USER_CONTENT_PATTERN_ENFORCE = 'user-content-pattern-enforce',
+
+  // Submits image ingestion as one imageScanning step instead of wdTagging + mediaRating.
+  // DEFAULT-OFF — an unknown flag or unreachable Flipt keeps the two-step path. Evaluated
+  // with the imageId and no context, so ramp by percentage or boolean; a segment matches nothing.
+  IMAGE_INGESTION_IMAGE_SCANNING = 'image-ingestion-image-scanning',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

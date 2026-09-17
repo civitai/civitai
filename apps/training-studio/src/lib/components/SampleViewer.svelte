@@ -226,10 +226,10 @@
     tabindex="-1"
   >
     <div class="mb-3 flex items-center gap-3">
-      <span class="rounded bg-primary px-2.5 py-1 text-[11px] font-semibold text-primary-foreground">
+      <span class="rounded bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground">
         Epoch {epoch.number}
       </span>
-      <span class="font-mono text-[11px] text-dark-2">
+      <span class="font-mono text-xs text-dark-2">
         sample {navigablePosition} of {navigableCount}
       </span>
       <div class="ml-auto flex items-center gap-1.5">
@@ -296,7 +296,7 @@
             <div>
               <IconAlertTriangle size={30} stroke={2} class="mx-auto text-dark-2" />
               <p class="mt-2 text-sm text-white">This sample could not be loaded.</p>
-              <p class="mt-1 text-[11px] text-dark-2">
+              <p class="mt-1 text-xs text-dark-2">
                 Sample media is removed 30 days after training completes.
               </p>
             </div>
@@ -349,7 +349,7 @@
     </div>
 
     <div class="mt-3 flex items-start gap-2">
-      <span class="shrink-0 font-mono text-[11px] text-dark-2">Prompt</span>
+      <span class="shrink-0 font-mono text-xs text-dark-2">Prompt</span>
       <p class="m-0 flex-1 whitespace-pre-wrap break-words text-sm text-dark-0">
         {prompt.trim().length ? prompt : '(no prompt provided)'}
       </p>
@@ -359,7 +359,7 @@
           onclick={copyPrompt}
           aria-label={copied ? 'Copied' : 'Copy prompt'}
           title={copied ? 'Copied' : 'Copy prompt'}
-          class="inline-flex shrink-0 items-center gap-1 rounded px-2 py-1 font-mono text-[11px] text-dark-2 transition-colors hover:bg-dark-5 hover:text-white"
+          class="inline-flex shrink-0 items-center gap-1 rounded px-2 py-1 font-mono text-xs text-dark-2 transition-colors hover:bg-dark-5 hover:text-white"
         >
           {#if copied}<IconCheck size={12} stroke={2.5} />Copied{:else}Copy{/if}
         </button>

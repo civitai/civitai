@@ -1,10 +1,10 @@
 import { TRPCError } from '@trpc/server';
-import { dbRead } from '~/server/db/client';
 import {
   verifyBlockToken,
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
+import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-approval.service';
 
 /**
  * THE authorization gate for the tRPC half of the host↔block postMessage bridge
@@ -19,22 +19,30 @@ import { BlockRevocation } from '~/server/services/block-revocation.service';
  * (apps.router) and `resolveSharedContext` (apps-shared.router). The bridge procs called
  * `verifyBlockToken` directly, thirteen times, and checked neither.
  *
- * 🔴 THE REST WRAPPER CHECKS REVOCATION ONLY. `withBlockScope`
- * (`block-scope.middleware.ts`) calls `BlockRevocation.isRevoked` and has NO
- * approved-status gate, and neither does any handler it wraps — measured, not assumed.
- * So step 3 below has no REST counterpart: after a moderator suspension (which flips
- * `app_blocks.status` and writes NO revocation marker — see `flipBackingBlockStatus` in
- * `offsite-moderation.service.ts`) the tRPC bridge refuses while the REST endpoints keep
- * serving for the rest of the token lifetime. That asymmetry is REAL and is NOT closed
- * here; do not read this helper as evidence the two paths agree. Widening `withBlockScope`
- * was deliberately left out of scope rather than decided against.
+ * ⚠️ THE REST WRAPPER NOW HAS AN APPROVED-STATUS GATE TOO. This paragraph used to say it
+ * checked revocation ONLY and that the resulting asymmetry was real and unclosed; that was
+ * true when this helper was written and is not true now. `withBlockScope`
+ * (`block-scope.middleware.ts`) resolves the same verdict through the same predicate, so
+ * after a moderator suspension — which flips `app_blocks.status` and writes NO revocation
+ * marker (`flipBackingBlockStatus` in `offsite-moderation.service.ts`) — BOTH halves refuse.
+ *
+ * 🔴 ONE REMAINING ASYMMETRY, AND IT IS DELIBERATE: a MISSING row. This path answers
+ * `NOT_FOUND`; the REST wrapper counts it and SERVES the request, because a 404 there lands
+ * on a public HTTP endpoint and a missing row is a healthy app rather than a takedown (no
+ * takedown deletes the row). See `assertAppBlockApproved` below and the predicate module's
+ * docblock. Do not "fix" that difference without deciding it.
  *
  * ORDER, and why it is this order:
  *   1. TOKEN VALIDITY — nothing downstream can be trusted before it; an unverifiable
  *      token also has no `blockInstanceId` to key a revocation lookup on.
  *   2. REVOCATION — a Redis GET, so it is the cheap check and it runs before the DB
- *      read. It is also the one that responds to a user action (uninstall / toggle-off /
- *      publisher ban) within seconds rather than at the next approval change.
+ *      read. It is also the one that responds to a user action (uninstall /
+ *      toggle-off) within seconds rather than at the next approval change.
+ *      🔴 NOT publisher ban, which this line claimed until 2026-09-16: no ban
+ *      path writes a revocation marker. `revokeInstance` has exactly two
+ *      production call sites — `uninstallFromModel` and `toggleEnabled(false)`,
+ *      both in `block-registry.service.ts` — so a ban is NOT contained within
+ *      seconds here; a banned publisher's live tokens run to natural `exp`.
  *   3. APPROVED STATUS — the backing `app_blocks` row must still say `approved`.
  *
  * Each step fails closed EXCEPT revocation, which fails OPEN by construction inside
@@ -44,11 +52,13 @@ import { BlockRevocation } from '~/server/services/block-revocation.service';
  * rather than re-decided, so the REST and tRPC paths cannot drift apart on it.
  *
  * 🔴 THE PER-REQUEST COST, because this runs on EVERY bridge call including the polling
- * ones. Steps 2 and 3 add ONE Redis GET plus ONE indexed `dbRead.appBlock.findUnique`
- * (the `(appId, blockId)` unique, on the replica — never the primary) to every bridge
- * request. `pollWorkflow` is the shape to think about: a running block polls it on a
- * timer, so that pair is paid per poll, per open block instance. A `dev` token skips the
- * DB read (see `assertAppBlockApproved`) but still pays the Redis GET.
+ * ones. Steps 2 and 3 add ONE Redis GET plus ONE indexed `appBlock.findUnique` (the
+ * `(appId, blockId)` unique, on the replica — never the primary) to every bridge request.
+ * The read itself is issued by the shared predicate rather than spelled here, which moves
+ * where it lives and not what it costs. `pollWorkflow` is the shape to think about: a
+ * running block polls it on a timer, so that pair is paid per poll, per open block
+ * instance. A `dev` token skips the DB read (the predicate short-circuits on the
+ * exemption, before the query) but still pays the Redis GET.
  *
  * 🔴 AND THE ORDER THIS PUT THE RATE LIMITER IN. `checkBlockCatalogRateLimit` has five
  * call sites in `blocks.router.ts`, covering seven of the fifteen bridge procedures. Four
@@ -129,16 +139,37 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
  *
  * Revocation above is NOT exempted — every one of those mints stamps a revocable instance
  * id, so a dev token is still killable.
+ *
+ * 🔴 THE LOOKUP IS SHARED WITH THE REST GATE; THE POLICY IS NOT. `resolveAppBlockApprovalVerdict`
+ * (`block-approval.service.ts`) is the one place the row is read and `approved` is compared,
+ * so the two halves of the runtime cannot drift on WHICH row or WHAT counts as approved.
+ * What they do about the answer is deliberately different, and this is the divergence to
+ * keep in mind before "aligning" them:
+ *
+ *   - `not_found` — THIS PATH ANSWERS `NOT_FOUND`. The REST gate SERVES it, because
+ *     `withBlockScope` fronts public HTTP endpoints where a 404 on a healthy app is a
+ *     live outage with no toggle (see that module's docblock). The bridge is a
+ *     first-party postMessage surface reached only through the host page, this is its
+ *     long-standing behaviour, and nothing here argued for changing it — so it did not
+ *     change. If you make these agree, make it a decision, not a refactor.
+ *   - a read that THROWS — propagates from here exactly as it always has, surfacing as
+ *     the tRPC internal error. The REST gate converts it to a fail-closed 503 instead.
+ *     That mapping lives in `resolveRestApprovalVerdict`, which this function does not
+ *     call, precisely so the conversion does not reach the bridge.
  */
 async function assertAppBlockApproved(claims: BlockTokenClaims): Promise<void> {
-  if (claims.dev === true) return;
-
-  const block = await dbRead.appBlock.findUnique({
-    where: { appId_blockId: { appId: claims.appId, blockId: claims.blockId } },
-    select: { status: true },
-  });
-  if (!block) throw new TRPCError({ code: 'NOT_FOUND', message: 'app block not found' });
-  if (block.status !== 'approved') {
+  const verdict = await resolveAppBlockApprovalVerdict(claims);
+  if (verdict === 'ok' || verdict === 'dev_exempt') return;
+  if (verdict === 'not_found') {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'app block not found' });
+  }
+  if (verdict === 'not_approved') {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'app block is not approved' });
   }
+  // Compile-time exhaustiveness: a verdict added to the shared union fails to build here
+  // until this path decides what it means, rather than inheriting "not approved" — the
+  // two policies already differ on `not_found`, so a silent default is the wrong shape.
+  // Runtime still fails CLOSED on an unexpected value.
+  verdict satisfies never;
+  throw new TRPCError({ code: 'FORBIDDEN', message: 'app block is not approved' });
 }

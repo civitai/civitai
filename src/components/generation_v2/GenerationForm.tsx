@@ -13,7 +13,7 @@
  * | useTipStore                        | store/tip.store.ts                           | FormFooter                                                       | localStorage   |
  * | useSourceMetadataStore             | store/source-metadata.store.ts               | ImageUploadMultipleInput, FormFooter, useGeneratedItemWorkflows  | sessionStorage |
  * | useRemixProvenanceStore            | store/remix-provenance.store.ts              | SourceImageUploadMultiple, FormFooter                            | sessionStorage |
- * | useRemixStore                      | store/remix.store.ts                         | FormFooter, useRemixOfId, useGeneratedItemWorkflows              | localStorage   |
+ * | useRemixStore                      | store/remix.store.ts                         | FormFooter, GenerationForm, useGeneratedItemWorkflows            | sessionStorage |
  * | useEcosystemGroupPreferencesStore  | store/ecosystem-group-preferences.store.ts   | BaseModelInput                                                   | localStorage   |
  * | usePromptFocusedStore              | inputs/PromptInput.tsx (local)               | PromptInput                                                      | memory         |
  */

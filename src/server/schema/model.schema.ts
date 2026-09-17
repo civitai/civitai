@@ -96,6 +96,10 @@ export const getAllModelsSchema = z.object({
   sort: z.enum(ModelSort).default(constants.modelFilterDefaults.sort),
   period: z.enum(MetricTimeframe).default(constants.modelFilterDefaults.period),
   periodMode: periodModeSchema,
+  // Opt-in: retry the first page at AllTime when `period` returns nothing. Off by
+  // default because an empty result is the correct answer on a browse feed — the
+  // caller has to be a surface where an empty page is a dead end, like /tag/:name.
+  periodFallback: z.boolean().optional(),
   rating: z
     .preprocess((val) => Number(val), z.number())
     .transform((val) => Math.floor(val))
@@ -316,6 +320,10 @@ export type MinorFlagSnapshot = {
 };
 
 export type ModelMeta = Partial<{
+  /** Orchestrator workflow this Trained model was drafted from (Training Studio publish flow).
+   *  The idempotency key for `createDraftModelFromWorkflow`, and what the publish handler uses
+   *  to stamp the published model back onto the workflow. */
+  trainingStudioWorkflowId: string;
   unpublishedReason: UnpublishReason;
   customMessage: string;
   needsReview: boolean;

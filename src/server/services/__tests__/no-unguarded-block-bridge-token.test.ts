@@ -7,8 +7,18 @@ import { describe, expect, it } from 'vitest';
  * through `authorizeBlockBridgeToken`, never through `verifyBlockToken` directly.
  *
  * `verifyBlockToken` answers one question — is this a token we signed, not yet expired.
- * It cannot see an uninstall, a toggle-off, a publisher ban or a suspended app. The
- * bridge procs each called it directly and checked none of those, so a revoked install
+ * It cannot see an uninstall, a toggle-off or a suspended app.
+ *
+ * 🔴 THIS LIST AND THE FAILURE MESSAGE BELOW BOTH USED TO INCLUDE A BANNED
+ * PUBLISHER, UNTIL 2026-09-16. They should not: `authorizeBlockBridgeToken`
+ * checks token validity, the revocation marker and `app_blocks.status`, and
+ * `toggleBan` writes none of the three. So routing a proc through the guard does
+ * NOT contain a ban — a banned publisher's live tokens run to natural `exp`
+ * either way — and naming it among the things the guard catches told a developer
+ * the opposite at the moment their CI went red. See `block-scope.middleware.ts`
+ * for the two-call-site enumeration.
+ *
+ * The bridge procs each called it directly and checked none of those, so a revoked install
  * kept driving the bridge — orchestrator polls, workflow cancels, and
  * `publishGenerationOutputs`, which persists public `Image` rows — until the token
  * expired on its own. The REST `withBlockScope` wrapper never had this gap.
@@ -81,6 +91,8 @@ import { describe, expect, it } from 'vitest';
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const ROUTER = 'src/server/routers/blocks.router.ts';
 const GUARD = 'src/server/services/blocks/block-bridge-auth.service.ts';
+/** The shared row-lookup + `approved` comparison both halves of the runtime resolve through. */
+const APPROVAL_PREDICATE = 'src/server/services/blocks/block-approval.service.ts';
 
 /**
  * The bridge call sites, by owning procedure. `authorizeBlockBuzzRead` is the router's
@@ -206,6 +218,44 @@ function scan(source: string): { guarded: string[]; direct: number[] } {
 
 function read(rel: string): string {
   return fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
+}
+
+/**
+ * 🔴 STRIP COMMENT LINES BEFORE ANY SPELLING CHECK. A `toMatch` over a WHOLE FILE asks
+ * "does this identifier appear anywhere", and a docblock is anywhere — so the assertion
+ * becomes satisfiable by the prose that DESCRIBES the check rather than by the check.
+ * Once that happens the test is not weak, it is INERT: it reads as coverage, which stops
+ * anyone looking, while the thing it names can be deleted outright.
+ *
+ * This is not hypothetical and it is not a one-off. It has now been found FOUR times in
+ * this family of guards:
+ *   1. `status === 'approved'` — the predicate module's docblock quotes that exact
+ *      expression while describing the mint endpoint. MEASURED: weakening the real
+ *      comparison to `!== 'suspended'` left the whole-file form GREEN.
+ *   2. `appBlock.findUnique` — same file, same shape, fixed alongside it.
+ *   3. `resolveAppBlockApprovalVerdict\s*\(` in this file. It happened to be
+ *      NON-vacuous only by luck of punctuation: the guard docblock's one occurrence is
+ *      followed by a backtick and a newline, which `\s*` cannot bridge to a `(`. Any
+ *      future docblock line writing the name with a paren after it silently re-inerts it.
+ *   4. The same regex over the same file in the REST sibling,
+ *      `no-unguarded-block-rest-token.test.ts`, on the identical luck.
+ *
+ * (3) and (4) are the argument for fixing this as a SHAPE rather than per-instance: both
+ * were one ordinary sentence away from proving nothing, and nothing would have announced
+ * it. `BlockRevocation.isRevoked(claims.blockInstanceId)` is filtered here for the same
+ * reason even though its docblock mention carries no argument list today.
+ *
+ * LIMIT, stated because it is real: this is a line-wise filter, not a parser. A trailing
+ * `// comment` on a code line survives, and so does a block comment opened on one line and
+ * continued without a leading `*`. Both are the fail-OPEN direction for a presence check.
+ * It exists to stop PROSE satisfying a code assertion, which is the failure that has
+ * actually occurred, four times.
+ */
+function codeLinesOnly(source: string): string {
+  return source
+    .split('\n')
+    .filter((line) => !/^\s*(?:\/\/|\*|\/\*)/.test(line))
+    .join('\n');
 }
 
 /**
@@ -897,8 +947,8 @@ describe('no unguarded block-bridge token verification', () => {
       'These procedures accept a blockToken and never reach authorizeBlockBridgeToken — ' +
         'not directly and not through a router-local helper. Whatever they do with the ' +
         'token instead (decode it, trust it, verify it by some other name), the install ' +
-        'is not being checked: a revoked install, a suspended app and a banned publisher ' +
-        'all still drive them until the token expires on its own. Resolve claims through ' +
+        'is not being checked: a revoked install and a suspended app both still drive ' +
+        'them until the token expires on its own. Resolve claims through ' +
         'authorizeBlockBridgeToken. If the verification genuinely lives in an imported ' +
         'module, this scan cannot see it — say so here and widen the scan, do not exempt ' +
         'the procedure.'
@@ -999,20 +1049,115 @@ describe('no unguarded block-bridge token verification', () => {
     ).toBe(1);
   });
 
+  /**
+   * 🔴 THE POSITIVE CONTROL FOR `codeLinesOnly`, AND WHY ITS ABSENCE WAS A REAL GAP.
+   *
+   * Every spelling assertion in the two tests below is filtered through `codeLinesOnly`, and
+   * that filter is the ONLY thing standing between them and prose satisfying them — this
+   * file's own docblocks name both `BlockRevocation.isRevoked` and
+   * `resolveAppBlockApprovalVerdict`, and the predicate module's docblock quotes
+   * `status === 'approved'` verbatim while describing the mint endpoint.
+   *
+   * Measured: replacing this copy's body with `return source;` left the whole file GREEN at
+   * 21/21. The REST sibling's copy IS controlled — the same mutation fails there, via
+   * `POSITIVE CONTROL — the lookup-failure opt-out regex reads code and ignores prose` — but
+   * the helper is deliberately DUPLICATED rather than shared (see its docblock), which is
+   * precisely what makes that control non-transferable. A guard whose own filter can be
+   * deleted without complaint is the shape this family keeps producing, so each copy needs
+   * its own control.
+   */
+  it('POSITIVE CONTROL — codeLinesOnly really strips comments, so prose cannot satisfy a spelling check', () => {
+    // The exact shapes the assertions below would otherwise be satisfied by.
+    expect(codeLinesOnly("// expect(guard).toMatch(/status === 'approved'/)")).toBe('');
+    expect(codeLinesOnly(' * resolveAppBlockApprovalVerdict(claims) resolves the verdict.')).toBe(
+      ''
+    );
+    expect(codeLinesOnly('/* BlockRevocation.isRevoked(claims.blockInstanceId) */')).toBe('');
+    // …and a line of real CODE survives, or the filter would strip everything and the
+    // assertions below would fail for the wrong reason rather than pass for the right one.
+    expect(codeLinesOnly('const v = await resolveAppBlockApprovalVerdict(claims);')).toBe(
+      'const v = await resolveAppBlockApprovalVerdict(claims);'
+    );
+    // 🔴 THE MUTATION THIS CONTROL EXISTS TO KILL, stated as a behavioural fact rather than
+    // a hope: an identity `codeLinesOnly` returns the comment unchanged, so this is the
+    // assertion that goes red when the body is replaced with `return source;`.
+    const mixed = [
+      ' * resolveAppBlockApprovalVerdict(claims) — named in PROSE only.',
+      'const unrelated = 1;',
+    ].join('\n');
+    expect(codeLinesOnly(mixed)).toBe('const unrelated = 1;');
+    expect(/\bresolveAppBlockApprovalVerdict\s*\(/.test(codeLinesOnly(mixed))).toBe(false);
+  });
+
   it('still SPELLS the two checks the guard exists for', () => {
     const guard = read(GUARD);
-    // 🔴 THIS IS A SPELLING CHECK, NOT A BEHAVIOURAL ONE — it asserts these three strings
-    // are still present, and that is ALL it can see. It is walkable in both directions: a
-    // semantically identical rewrite (`status === 'approved' ? … : throw`) FAILS it while
-    // the behaviour is intact, and a comparison against the WRONG value spelled this way
-    // PASSES it. So it cannot certify either check is correct — it only catches one
-    // dropped wholesale while everything still type-checks.
+    // 🔴 THIS IS A SPELLING CHECK, NOT A BEHAVIOURAL ONE — it asserts these strings are
+    // still present, and that is ALL it can see. It is walkable in both directions: a
+    // semantically identical rewrite FAILS it while the behaviour is intact, and a
+    // comparison against the WRONG value spelled this way PASSES it. So it cannot certify
+    // either check is correct — it only catches one dropped wholesale while everything
+    // still type-checks.
     //
     // What actually pins the behaviour is `blocks.router.bridgeTokenGuard.test.ts` (a
     // different vitest project, which is why this cheap presence check exists at all). If
     // you are tempted to read this test as coverage, read that file instead.
-    expect(guard).toMatch(/BlockRevocation\.isRevoked\(\s*claims\.blockInstanceId\s*\)/);
-    expect(guard).toMatch(/appBlock\.findUnique/);
-    expect(guard).toMatch(/status !== 'approved'/);
+    // 🔴 CODE LINES ONLY, on EVERY assertion in this test — see `codeLinesOnly`. These
+    // used to read the WHOLE file, which is satisfiable by prose: this very file's
+    // docblocks name both `BlockRevocation.isRevoked` and `resolveAppBlockApprovalVerdict`.
+    const guardCode = codeLinesOnly(guard);
+    expect(guardCode).toMatch(/BlockRevocation\.isRevoked\(\s*claims\.blockInstanceId\s*\)/);
+    // 🔴 THE APPROVAL CHECK IS NO LONGER SPELLED IN THIS FILE. The row lookup and the
+    // `approved` comparison moved to the shared predicate `resolveAppBlockApprovalVerdict`
+    // (`block-approval.service.ts`), which the REST gate resolves through as well, so
+    // neither half of the runtime can drift on WHICH row is read or WHAT counts as
+    // approved. What this file must still spell is that the guard DELEGATES to it; what
+    // the predicate module must still spell is the lookup itself. Both halves are asserted,
+    // because either one alone passes while the check is gone: the delegation without the
+    // predicate is a call to nothing, and the predicate without the delegation is dead code.
+    expect(guardCode).toMatch(/\bresolveAppBlockApprovalVerdict\s*\(/);
+    // 🔴 The same filter, for the reason it was FIRST written: a whole-file `toMatch` for
+    // `status === 'approved'` PASSES on the predicate module's own docblock, which quotes
+    // that exact expression while describing the mint endpoint. Measured: weakening the
+    // real comparison to `!== 'suspended'` left the whole-file form GREEN. A spelling
+    // check that its own prose satisfies is not weak, it is inert.
+    const predicateCode = codeLinesOnly(read(APPROVAL_PREDICATE));
+    expect(predicateCode).toMatch(/appBlock\.findUnique/);
+    expect(predicateCode).toMatch(/status === 'approved'/);
+  });
+
+  /**
+   * 🔴 THE DIVERGENCE THAT CONSOLIDATION MUST NOT SWALLOW, pinned where a reader of the
+   * bridge will meet it.
+   *
+   * The bridge and the REST gate share the predicate and deliberately DISAGREE on what a
+   * missing row means: the bridge answers `NOT_FOUND`, the REST wrapper serves the request
+   * and only counts it. A "cleanup" that routed the bridge through the REST policy helper
+   * (`resolveRestApprovalVerdict`) would look like more consolidation and would silently
+   * change two things at once — the missing-row response, and what an unreachable replica
+   * does (that helper swallows the error into a `lookup_failed` verdict, where this path
+   * lets it propagate).
+   *
+   * ⚠️ WHAT THIS CAN SEE: that the guard file does not name the REST policy helper. It is
+   * a spelling check like the one above and inherits every limit of one. The BEHAVIOUR it
+   * protects — `NOT_FOUND` on a missing row — is pinned in
+   * `blocks.router.bridgeTokenGuard.test.ts`, which is the file to change if this ever
+   * becomes a decision rather than an accident.
+   */
+  it('does NOT route the bridge through the REST policy wrapper — the two differ on a missing row', () => {
+    const guard = read(GUARD);
+    const offenders = guard
+      .split('\n')
+      .map((line, i) => [line, i + 1] as const)
+      .filter(([line]) => /\bresolveRestApprovalVerdict\b/.test(line))
+      .filter(([line]) => !/^\s*(?:\/\/|\*|\/\*)/.test(line))
+      .map(([line, n]) => `${GUARD}:${n}: ${line.trim()}`);
+
+    expect(
+      offenders,
+      `${GUARD} names resolveRestApprovalVerdict in code. That helper carries the REST ` +
+        "policy, not the bridge's: it SERVES a missing row (the bridge answers NOT_FOUND) " +
+        'and converts a failed read into a lookup_failed verdict (the bridge lets it ' +
+        'propagate). Resolve through resolveAppBlockApprovalVerdict and map the verdict here.'
+    ).toEqual([]);
   });
 });

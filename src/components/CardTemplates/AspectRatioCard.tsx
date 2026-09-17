@@ -78,7 +78,7 @@ function AspectRatioCardContent({
 }: Pick<AspectRatioCardProps, 'render' | 'header' | 'footer' | 'footerGradient'>) {
   const inView = useElementInView() ?? false;
   return (
-    <div className={clsx(styles.content, { [styles.inView]: inView })}>
+    <div data-card-hover className={clsx(styles.content, { [styles.inView]: inView })}>
       {render({ inView })}
       {header && <div className={styles.header}>{header}</div>}
       {footer && (

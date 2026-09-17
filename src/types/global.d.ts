@@ -167,14 +167,12 @@ declare global {
     | 'Workflow'
     | 'Config'
     | 'Other';
-  type ImageFormat = 'optimized' | 'metadata';
 
   type UserFilePreferences = {
     format: ModelFileFormat;
     size: ModelFileSize;
     fp: ModelFileFp;
     quantType?: ModelFileQuantType;
-    imageFormat: ImageFormat;
   };
 
   type BasicFileMetadata = {

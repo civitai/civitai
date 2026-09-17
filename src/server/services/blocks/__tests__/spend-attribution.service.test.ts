@@ -249,7 +249,7 @@ describe('recordSpendAttribution', () => {
     expect(computeSpendShareSpy).not.toHaveBeenCalled();
   });
 
-  it('DORMANT per-app cap: reserves the row\'s accrued share (0 today) → no clamp, no behaviour change', async () => {
+  it("DORMANT per-app cap: reserves the row's accrued share (0 today) → no clamp, no behaviour change", async () => {
     // The per-app bounty cap is wired into the write, but while the spend flow
     // is TRACK-ONLY the accrued share is identically 0 — so the cap reserves 0,
     // grants 0, and changes nothing. This is the "dormant by construction"
@@ -529,5 +529,139 @@ describe('recordSpendAttribution — content-author basis (G5)', () => {
         where: { workflowId_appBlockId: { workflowId: WORKFLOW_ID, appBlockId: APP_BLOCK_ID } },
       })
     );
+  });
+});
+
+describe('recordSpendAttribution — generation type', () => {
+  // The APP-FACING generation type this spend paid for, persisted so a
+  // per-generation-type author fee has data to reason about. Nothing reads the
+  // column yet; these pin that it is WRITTEN, bounded, and never a new way for
+  // the fire-and-forget spend path to throw.
+  //
+  // Expected values are literals, never re-derived from the resolver.
+
+  it('persists the app-facing key for a non-registry kind', async () => {
+    await recordSpendAttribution(fakeInput({ generationType: 'textToImage' }));
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+    expect(data.generationType).toBe('textToImage');
+  });
+
+  it('persists a COMPOSITE <coarse>:<subtype> value verbatim — the sub-axis is not stripped', async () => {
+    // 🔴 The widening, at the write. The column carries the sub-axis, and the
+    // service must not normalise or truncate it back to the coarse key.
+    for (const value of [
+      'textToImage:txt2img',
+      'textToImage:img2img',
+      'textToImage:img2img-edit',
+      'customComfy:seamless-pano-360',
+      'customComfy:inline',
+    ]) {
+      mockDbWrite.blockSpendAttribution.create.mockClear();
+      await recordSpendAttribution(fakeInput({ generationType: value as never }));
+      const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+      expect(data.generationType).toBe(value);
+    }
+  });
+
+  it('persists NULL for a MALFORMED composite — the re-check validates the SHAPE, not just a list', async () => {
+    // 🔴 WHY THE RE-CHECK GOT MORE VALUABLE, NOT LESS. An earlier review called
+    // it redundant given the parameter's type. That was arguable while the value
+    // set was a handful of literals; it is not now the value INTERPOLATES
+    // registry ids, because the only complete statement of what is legal is the
+    // shape test. Each of these type-checks at a cast and is still refused.
+    const malformed = [
+      'textToImage:not-a-class', // unknown subtype under a known coarse key
+      'customComfy:not-a-recipe', // unregistered recipe id
+      'customComfy:toString', // prototype key in the SUBTYPE position
+      'textToImage:img2img:edit', // two colons — not the stored spelling
+      'convert-image:png', // a step id carries NO subtype
+      'videoToVideo:txt2img', // unknown coarse key
+      'txt2img', // a BARE subtype destroys the fee's coarse key
+      'inline',
+      'textToImage:', // empty subtype
+      ':txt2img',
+    ];
+    for (const value of malformed) {
+      mockDbWrite.blockSpendAttribution.create.mockClear();
+      const res = await recordSpendAttribution({
+        ...fakeInput(),
+        generationType: value,
+      } as unknown as RecordSpendAttributionInput);
+      const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+      expect(res.written).toBe(true);
+      expect(data.generationType).toBeNull();
+    }
+  });
+
+  it('persists the REGISTERED STEP ID, and does not rewrite it to the orchestrator type', async () => {
+    // 🔴 The design risk. The column must carry `chat-completion` (the permanent
+    // public wire id), never `chatCompletion` (the orchestrator's spelling).
+    await recordSpendAttribution(fakeInput({ generationType: 'chat-completion' }));
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+    expect(data.generationType).toBe('chat-completion');
+    expect(data.generationType).not.toBe('chatCompletion');
+  });
+
+  it('persists NULL when the caller supplies no type', async () => {
+    const res = await recordSpendAttribution(fakeInput());
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+    expect(res.written).toBe(true);
+    expect(data.generationType).toBeNull();
+  });
+
+  it('persists NULL — not the raw value, and without throwing — for an UNRECOGNISED type', async () => {
+    // Re-checked at the write against the same registry-derived list, so a
+    // caller that bypasses the type (a cast, a future writer) still cannot stamp
+    // an arbitrary string on a money/audit row. A wrong type is worse than a
+    // missing one.
+    const hostile = {
+      ...fakeInput(),
+      generationType: 'chatCompletion', // the orchestrator spelling — not an app-facing key
+    } as unknown as RecordSpendAttributionInput;
+    const res = await recordSpendAttribution(hostile);
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+    expect(res.written).toBe(true);
+    expect(data.generationType).toBeNull();
+  });
+
+  it('persists NULL and STILL WRITES the row for a prototype-key value', async () => {
+    const hostile = {
+      ...fakeInput(),
+      generationType: 'toString',
+    } as unknown as RecordSpendAttributionInput;
+    const res = await recordSpendAttribution(hostile);
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+    expect(res.written).toBe(true);
+    expect(data.generationType).toBeNull();
+  });
+
+  it('the spend row is otherwise UNCHANGED when the type is unresolvable — the money basis still lands', async () => {
+    // The whole point of degrading to NULL: an unresolvable type must cost the
+    // row nothing. Same track-only shape as a typed write.
+    const hostile = {
+      ...fakeInput({ buzzAmount: 5000 }),
+      generationType: 'not-a-type',
+    } as unknown as RecordSpendAttributionInput;
+    const res = await recordSpendAttribution(hostile);
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+    expect(res.written).toBe(true);
+    expect(data.generationType).toBeNull();
+    expect(data.grossValueCents).toBe(500); // 5000 Buzz = $5
+    expect(data.status).toBe('tracked');
+    expect(data.spendSharePct).toBe(0);
+    expect(data.rateCardVersion).toBe(UNRATED_RATE_CARD_VERSION);
+  });
+
+  it('a voided (self-spend) row still records the type', async () => {
+    // Voided rows are never backpaid, but they are still the audit trail — the
+    // type belongs on them too.
+    const res = await recordSpendAttribution(
+      fakeInput({ userId: APP_OWNER_USER_ID, generationType: 'convert-image' })
+    );
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+    expect(res.written).toBe(true);
+    expect(data.status).toBe('voided');
+    expect(data.voidedReason).toBe('self_spend');
+    expect(data.generationType).toBe('convert-image');
   });
 });

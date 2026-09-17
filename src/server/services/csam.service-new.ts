@@ -53,6 +53,7 @@ import type { JsonReplacer } from '~/server/utils/json-stream-helpers';
 import { writeJsonObject } from '~/server/utils/json-stream-helpers';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
 import { logToAxiom } from '~/server/logging/client';
+import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
 
 const cybertipClient = new Client({
@@ -1504,10 +1505,6 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     trainingData: `${baseDir}/training-data/${data.id}`,
   };
 
-  for (const dir of Object.values(reportDirs)) {
-    createDir(dir);
-  }
-
   /**
    * Whether the two large media archives are streamed straight to object storage instead of being
    * staged on the container's scratch volume first.
@@ -1526,6 +1523,55 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
    * it back off disk, so neither has the disk ceiling this removes.
    */
   const streamArchivesToStorage = await isFlipt(FLIPT_FEATURE_FLAGS.CSAM_ARCHIVE_STREAM_UPLOAD);
+
+  /**
+   * The media-archive path SELECTED for this report.
+   *
+   * 🔴 Not the same thing as the flag value: the flag governs
+   * `archiveImages`/`archiveGeneratedImages` only, so a `TrainingData` or `ExternalLink`
+   * report resolves to `none` however the flag is set. Derived in one place so the log
+   * line and the counter cannot disagree about which path this report was routed to.
+   */
+  const archivePath = csamArchivePathFor(report.type, streamArchivesToStorage);
+
+  /**
+   * 🔴 EMITTED AT THE DECISION, AND BEFORE `createDir` — both deliberately.
+   *
+   * At the decision, because an archive that dies partway never reaches either counter
+   * call, so a completion-only record would be silent for exactly the failures worth
+   * investigating. This line is the one that survives a killed container.
+   *
+   * Before `createDir`, because that loop writes to the scratch volume and sits OUTSIDE
+   * the try block below — so a failure there (the disk-pressure class this whole arc was
+   * about) throws past both counter calls.
+   *
+   * 🔴 IT WAS NOT INVISIBLE BEFORE, AND SAYING SO WOULD BE WRONG: the caller already
+   * catches and logs it — `process-csam.ts`'s per-report `catch` emits
+   * `subType: 'archive-data'` carrying `errorMessage(e)`, which for the `mkdirSync` throw
+   * is the real errno (`ENOSPC: … mkdir '<path>'`). What that record does NOT carry is any
+   * of `reportId`, `reportType` or `archivePath`. So what emitting first actually buys is
+   * ATTRIBUTION — which report, and which path it was routed to — not visibility. The
+   * counter still cannot see it either way, which the counter's own help text states.
+   *
+   * 🔴 Do NOT "fix" that by moving the `createDir` loop inside the try: `removeDir` is
+   * `fs.rmSync(dir, { recursive: true })` with no `force`, so it throws `ENOENT` on a
+   * directory that was never created — and the catch's cleanup loop would then throw from
+   * inside the catch. Documenting the blind spot is the cheaper correct answer.
+   */
+  logToAxiom({
+    name: 'csam-report',
+    type: 'info',
+    subType: 'archive-path',
+    message: `archiving report ${report.id} (${report.type}) via the ${archivePath} path`,
+    reportId: report.id,
+    reportType: report.type,
+    archivePath,
+    streamArchivesToStorage,
+  });
+
+  for (const dir of Object.values(reportDirs)) {
+    createDir(dir);
+  }
 
   /**
    * A fresh keyset-paged scan of every image the reported user owns.
@@ -1578,6 +1624,8 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       },
     });
 
+    recordCsamArchive(archivePath, report.type, 'success');
+
     for (const dir of Object.values(reportDirs)) removeDir(dir);
   } catch (e) {
     console.log(e);
@@ -1592,6 +1640,21 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         });
       }
     }
+    // 🔴 TWO THINGS THIS ROW DOES NOT MEAN, both easy to misread:
+    //
+    // (a) `path` here is the path SELECTED, not the path that failed. `archivePath` was
+    //     resolved before any archiving began, so a failure upstream of the media archive
+    //     — the base bundle, an image count — still records it. `{path="stream",
+    //     outcome="error"}` does NOT establish that the streaming upload broke; use the
+    //     log line's report id to find where it actually died.
+    // (b) `error` means THIS CALL THREW, not that the report is unarchived: the
+    //     `training data not found` branch above stamps `archivedAt` and then rethrows,
+    //     so that benign case lands here while the row reads archived. Left as one
+    //     outcome rather than three — it is confined to a type the flag does not govern,
+    //     the `type` label makes it self-explanatory, and a third value would widen every
+    //     series in the counter to describe one known-benign branch.
+    recordCsamArchive(archivePath, report.type, 'error');
+
     for (const dir of Object.values(reportDirs)) removeDir(dir);
     throw e;
   }

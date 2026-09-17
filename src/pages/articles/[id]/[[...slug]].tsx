@@ -55,6 +55,7 @@ import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Gated } from '~/components/Gated/Gated';
+import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
@@ -79,7 +80,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { buildPassthroughQuery, parseNumericString } from '~/utils/query-string-helpers';
-import { removeTags, slugit } from '~/utils/string-helpers';
+import { getArticleUrl, removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './[[...slug]].module.scss';
@@ -330,7 +331,10 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
           }}
         </ToggleArticleEngagement>
       </LoginRedirect>
-      <ShareButton url={`/articles/${article.id}/${slugit(article.title)}`} title={article.title}>
+      <ShareButton
+        url={getArticleUrl({ id: article.id, title: article.title })}
+        title={article.title}
+      >
         <LegacyActionIcon variant="subtle" color="gray">
           <IconShare3 />
         </LegacyActionIcon>
@@ -386,9 +390,13 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         description: truncate(articleBodyText, { length: 150 }),
         images: article?.coverImage,
         ogEndpoint: `/api/og?type=article&id=${article.id}`,
-        canonical: `/articles/${article.id}/${slugit(article.title)}`,
+        canonical: getArticleUrl({ id: article.id, title: article.title }),
         alternate: `/articles/${article.id}`,
         schema: articleSchema,
+        breadcrumb: buildBreadcrumbSchema(env.NEXT_PUBLIC_BASE_URL ?? '', [
+          { name: 'Articles', path: '/articles' },
+          { name: article.title },
+        ]),
         ogType: 'article' as const,
         deIndex: !article?.publishedAt || article?.availability === Availability.Unsearchable,
       }}

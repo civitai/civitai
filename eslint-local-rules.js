@@ -118,7 +118,6 @@ const IO_CALL_NAMES = new Set([
   'fetch',
   // image ingestion / scanner
   'ingestImage',
-  'ingestImageBulk',
   'createImageIngestionRequest',
   // orchestrator
   'submitWorkflow',
@@ -1572,9 +1571,121 @@ const noUnboundedPagingFake = {
   },
 };
 
+/**
+ * no-ssr-divergent-media-query
+ *
+ * Flags the hooks that answer a VIEWPORT/CONTAINER question during render and have
+ * no server answer, on surfaces where the server render must match the first client
+ * paint. It is deliberately NOT on by default: `useIsMobile` alone appears in 83
+ * files, and most of them are legitimate. Turn it on per-surface from `.eslintrc.js`
+ * `overrides` — the same shape `no-module-scope-cache` uses.
+ *
+ * WHY THESE FOUR. Each returns a value on the client that it cannot return on the
+ * server, so branching a RENDER on one produces markup that differs between the two
+ * and React reconciles it away (or bails out of hydration entirely):
+ *
+ *   useMediaQuery            no `window.matchMedia` on the server
+ *   useIsMobile              wraps the same question
+ *   useContainerQuery        needs a measured container
+ *   useContainerSmallerThan  wraps `useContainerQuery`; returns FALSE while
+ *                            `inlineSize === 0`, which is what the server always sees
+ *
+ * 🔴 `useContainerSmallerThan` IS THE ONE THAT MATTERS AND IT IS EASY TO OMIT. It is
+ * what `CollectionsLayout` — the in-repo rail precedent — uses for its own rail/drawer
+ * swap (`useContainerSmallerThan('sm')`). A rule banning the other three while the
+ * precedent everyone copies uses the fourth is an allowlist wearing a class ban's name.
+ *
+ * WHAT IT COVERS
+ *   - a direct call: `useMediaQuery('(min-width: 1300px)')`
+ *   - a member call: `hooks.useIsMobile()`
+ *   - an ALIASED import: `import { useMediaQuery as useMQ } from '@mantine/hooks'`
+ *     then `useMQ(...)` — the local name is resolved back through the import.
+ *
+ * WHAT IT DOES NOT COVER, stated rather than left to be discovered:
+ *   - a banned hook RE-EXPORTED from an intermediate module under a new name. The rule
+ *     is single-file (ESLint rules see one module at a time) and cannot follow that.
+ *   - a call made through a value the rule cannot name statically — stored in an
+ *     object, passed as a prop, or assembled at runtime.
+ *   - the raw `window.matchMedia` API itself. That is deliberate: its UNGUARDED form
+ *     already throws `ReferenceError: window is not defined` under
+ *     `renderToStaticMarkup`, which `src/components/Apps/__tests__/appsPageLayoutRender.test.ts`
+ *     exercises (measured: an unguarded render-body read reds all 17 of its tests), and
+ *     its GUARDED form is a legitimate pattern in an effect.
+ */
+const SSR_DIVERGENT_HOOKS = new Set([
+  'useMediaQuery',
+  'useIsMobile',
+  'useContainerQuery',
+  'useContainerSmallerThan',
+]);
+
+const noSsrDivergentMediaQuery = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description:
+        'Disallow viewport/container hooks that have no server answer on surfaces where the server render must match the first client paint. Off by default; enable per-surface via .eslintrc overrides.',
+      recommended: false,
+    },
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          extraHooks: { type: 'array', items: { type: 'string' } },
+        },
+        additionalProperties: false,
+      },
+    ],
+    messages: {
+      ssrDivergentMediaQuery:
+        "`{{spelled}}` has NO SERVER ANSWER, so branching a render on it makes the server markup differ from the first client paint — a hydration mismatch on a surface that is configured not to tolerate one. ({{spelled}} resolves to `{{name}}`.) The rail/drawer swap on `/apps/*` is a CSS media query on purpose, precisely so React never has to know the breakpoint. If you genuinely need the breakpoint in JS, read it in a `useEffect` that only CLOSES something — an effect runs after paint and cannot decide what was rendered. If this call really is safe here, say why: // eslint-disable-next-line local-rules/no-ssr-divergent-media-query -- <reason>",
+    },
+  },
+  create(context) {
+    const options = context.options[0] || {};
+    const banned = new Set([...SSR_DIVERGENT_HOOKS, ...(options.extraHooks || [])]);
+    /** local name -> the banned name it was imported as. */
+    const aliases = new Map();
+
+    return {
+      ImportDeclaration(node) {
+        for (const spec of node.specifiers) {
+          if (
+            spec.type === 'ImportSpecifier' &&
+            spec.imported &&
+            spec.imported.type === 'Identifier' &&
+            banned.has(spec.imported.name)
+          ) {
+            aliases.set(spec.local.name, spec.imported.name);
+          }
+        }
+      },
+      CallExpression(node) {
+        const callee = node.callee;
+        let spelled;
+        if (callee.type === 'Identifier') spelled = callee.name;
+        else if (callee.type === 'MemberExpression' && callee.property.type === 'Identifier') {
+          spelled = callee.property.name;
+        }
+        if (!spelled) return;
+
+        const name = banned.has(spelled) ? spelled : aliases.get(spelled);
+        if (!name) return;
+
+        context.report({
+          node,
+          messageId: 'ssrDivergentMediaQuery',
+          data: { name, spelled },
+        });
+      },
+    };
+  },
+};
+
 module.exports = {
   'no-io-in-transaction': noIoInTransaction,
   'no-module-scope-cache': noModuleScopeCache,
+  'no-ssr-divergent-media-query': noSsrDivergentMediaQuery,
   'no-unbounded-paging-fake': noUnboundedPagingFake,
   'no-unloadable-image-fixture': noUnloadableImageFixture,
   'no-wholesale-module-mock': noWholesaleModuleMock,

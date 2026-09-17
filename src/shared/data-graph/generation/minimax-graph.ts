@@ -30,16 +30,16 @@ import {
   triggerWordsGraph,
 } from './common';
 import { isWorkflowOrVariant } from './config/workflows';
+import { minimaxVersionIds } from './version-ids';
 import { minimaxH3ControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
 import {
   getAspectRatioOptions,
   type GenerationAspectRatio,
 } from '~/shared/constants/generation.constants';
 
-export const minimaxVersionIds = {
-  'v1.0': 3183239,
-  comfy: 3216500,
-} as const;
+// minimaxVersionIds moved to ./version-ids (leaf module), where the other video
+// ecosystems keep theirs; re-exported here for existing importers.
+export { minimaxVersionIds };
 
 export type MinimaxVariant = 'api' | 'comfy';
 

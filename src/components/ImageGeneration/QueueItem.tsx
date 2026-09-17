@@ -55,6 +55,7 @@ import {
   orchestratorPendingStatuses,
 } from '~/shared/constants/generation.constants';
 import { getEcosystem } from '~/shared/constants/basemodel.constants';
+import { isRawAirResource } from '~/shared/utils/air';
 import { generationGraphPanel, generationGraphStore } from '~/store/generation-graph.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -421,6 +422,7 @@ export function QueueItem({
           <div className="flex flex-col gap-3 py-3 @container">
             {showDelayedMessage &&
               cancellable &&
+              request.awaitingOutput &&
               !request.steps.some((s) => s.$type === 'videoGen') && (
                 <Alert color="yellow" p={0}>
                   <div className="flex items-center gap-2 px-2 py-1">
@@ -507,10 +509,54 @@ export function QueueItem({
 
 function ResourceRow({ resource }: { resource: GenerationResource }) {
   const { unstableResources } = useGenerationConfig();
+  const features = useFeatureFlags();
   const { model, id, name, epochDetails } = resource;
   const unstable = unstableResources?.includes(id);
   const truncatedModelName =
     model.name.length > 30 ? `${model.name.slice(0, 30).trimEnd()}…` : model.name;
+
+  // Raw-AIR training epochs have no model page to link to — render the stored
+  // name as a non-linking pill. Quick-add follows the same flags as the seeding
+  // paths; without them the server rejects the quote and the button is a trap.
+  if (isRawAirResource(resource)) {
+    const canQuickAdd = features.generationAirResources && features.formGraphGenerator;
+    return (
+      <Button.Group className="max-w-full">
+        <Button
+          size="compact-sm"
+          variant="default"
+          leftSection={
+            <Badge size="xs" variant="light" radius="sm">
+              epoch
+            </Badge>
+          }
+          className="min-w-0 flex-1 cursor-default"
+          classNames={{ label: 'truncate' }}
+        >
+          {truncatedModelName}
+        </Button>
+        {canQuickAdd && (
+          <ButtonTooltip {...tooltipProps} label="Generate with this resource">
+            <Button
+              size="compact-sm"
+              variant="default"
+              px={4}
+              onClick={() => {
+                generationGraphStore.setData({
+                  params: { ecosystem: getEcosystem(resource.baseModel)?.key },
+                  resources: [resource],
+                  runType: 'run',
+                });
+                generationGraphPanel.open();
+              }}
+            >
+              <IconPlus size={14} />
+            </Button>
+          </ButtonTooltip>
+        )}
+      </Button.Group>
+    );
+  }
 
   return (
     <Button.Group className="max-w-full">
@@ -591,6 +637,8 @@ function StepOutputs({
       step.output.find((x) => !x.available && x.blockedReason)?.blockedReason
     : undefined;
 
+  const awaitingOutput = step ? step.awaitingOutput : request.awaitingOutput;
+
   return (
     <>
       {step && <WorkflowStatusAlert status={request.status} failureReason={stepFailure} />}
@@ -611,7 +659,7 @@ function StepOutputs({
           workflowId={request.id}
           transactions={request.transactions}
         />
-        {(pending || processing) && (
+        {(pending || processing) && awaitingOutput && (
           <TwCard
             className="items-center justify-center border"
             style={{ aspectRatio: images[0]?.aspect ?? 1 }}
@@ -1088,7 +1136,7 @@ function Model3DQueueCardOutputs({
   // full-screen lightbox so both render the same variant taxonomy.
   const viewableVariants: Model3DViewableVariant[] = blob ? getModel3DViewableVariants(blob) : [];
 
-  const showSpinner = pending || processing;
+  const showSpinner = (pending || processing) && request.awaitingOutput;
   // Terminal failure states — workflow won't produce a thumbnail. The
   // orchestrator auto-refunds spent buzz on these, so surface that to the
   // user instead of the ambiguous "No preview available yet".

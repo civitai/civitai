@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * block JWT alone. `verifyBlockToken` checks the signature, the issuer/audience and the
  * expiry — and NOTHING about whether the install still exists or the app is still
  * allowed to run. So before `authorizeBlockBridgeToken` existed, revoking an install
- * (uninstall / toggle-off / publisher ban) or suspending the app left every already
+ * (uninstall / toggle-off) or suspending the app left every already
  * minted token driving the bridge until its natural expiry.
  *
  * The REST `withBlockScope` wrapper has always enforced revocation

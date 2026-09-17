@@ -75,7 +75,7 @@
           }}
   <div
     class={cn(
-      'grid aspect-square w-full place-items-center rounded border border-dashed bg-dark-7 font-mono text-[10px]',
+      'grid aspect-square w-full place-items-center rounded border border-dashed bg-dark-7 font-mono text-xs',
       tone.cls,
       className
     )}

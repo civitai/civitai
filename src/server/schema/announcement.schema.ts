@@ -70,6 +70,23 @@ export const getAnnouncementsPagedSchema = paginationSchema.extend({
   domain: domainColorEnum.optional(),
 });
 
+/**
+ * One request's worth of dismissals. The notifications panel's dismiss-all is the widest real
+ * caller and it dismisses what is on screen; anything larger is not a user action.
+ */
+export const MAX_ANNOUNCEMENT_DISMISSALS_PER_REQUEST = 100;
+
+export type DismissAnnouncementsSchema = z.infer<typeof dismissAnnouncementsSchema>;
+export const dismissAnnouncementsSchema = z.object({
+  ids: z.array(z.number().int().positive()).min(1).max(MAX_ANNOUNCEMENT_DISMISSALS_PER_REQUEST),
+});
+
+export type GetDismissedAnnouncementsSchema = z.infer<typeof getDismissedAnnouncementsSchema>;
+export const getDismissedAnnouncementsSchema = z.object({
+  // Stamped from the request host by applyRequestDomainColor, never sent by the client.
+  domain: domainColorEnum.optional(),
+});
+
 export type GetCurrentAnnouncementsSchema = z.infer<typeof getCurrentAnnouncementsSchema>;
 export const getCurrentAnnouncementsSchema = z.object({
   domain: domainColorEnum.optional(),

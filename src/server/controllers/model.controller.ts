@@ -17,6 +17,7 @@ import {
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
+import { stampWorkflowPublished } from '~/server/services/orchestrator/training/publish-from-workflow';
 import { getTrainingWorkflowOverlay } from '~/server/services/orchestrator/training/training-state';
 import {
   applyTrainingWorkflowOverlay,
@@ -584,6 +585,8 @@ export const getModelsInfiniteHandler = async ({
     // value so the feed-hydration path skips the metric-privacy resolution when OFF.
     const metricPrivacyEnabled = !!ctx.features.modelMetricPrivacyReadtime;
     const results: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'] = [];
+    // The loop below advances `input.cursor`, so capture what the caller actually asked for.
+    const requestedCursor = input.cursor;
     while (results.length < (input.limit ?? 100) && loopCount < 3) {
       const result = await getModelsWithImagesAndModelVersions({
         input,
@@ -601,6 +604,35 @@ export const getModelsInfiniteHandler = async ({
       nextCursor = result.nextCursor;
       loopCount++;
     }
+
+    // A period-filtered feed that finds nothing is a dead end on surfaces whose whole
+    // purpose is to list one collection — /tag/:name promises "N models tagged X" in its
+    // meta description and CollectionPage schema, then renders an empty grid whenever
+    // none of those models shipped inside the window. Retry once at AllTime so the page
+    // shows the content it advertises. First page only: deep paging legitimately runs out.
+    if (
+      !results.length &&
+      !requestedCursor &&
+      input.periodFallback &&
+      input.period !== MetricTimeframe.AllTime
+    ) {
+      const fallback = await getModelsWithImagesAndModelVersions({
+        input: { ...input, cursor: undefined, period: MetricTimeframe.AllTime },
+        user: ctx.user,
+        domain: getRequestBoardDomainColor(ctx.req),
+        imagesPerModel,
+        biasImageSlice: slim,
+        metricPrivacyEnabled,
+      });
+      if (fallback.isPrivate) isPrivate = true;
+      if (isPrivate) ctx.cache.canCache = false;
+      return {
+        items: fallback.items,
+        nextCursor: fallback.nextCursor,
+        periodFallbackApplied: true,
+      };
+    }
+
     if (isPrivate) ctx.cache.canCache = false;
     return { items: results, nextCursor };
   } catch (error) {
@@ -813,6 +845,18 @@ export const publishModelHandler = async ({
         type: 'published',
         entityType: 'model',
         entityId: updatedModel.id,
+      });
+    }
+
+    // A scheduled publish skips this (status isn't Published yet) and the scheduled-publishing job
+    // doesn't stamp either — the studio then just keeps offering its idempotent publish entry.
+    if (modelMeta?.trainingStudioWorkflowId && updatedModel.status === ModelStatus.Published) {
+      await stampWorkflowPublished({
+        ownerId: updatedModel.userId,
+        callerId: ctx.user.id,
+        workflowId: modelMeta.trainingStudioWorkflowId,
+        modelId: updatedModel.id,
+        modelVersionId: updatedModel.modelVersions[0]?.id,
       });
     }
 
@@ -1286,6 +1330,10 @@ export const getMyDraftModelsHandler = async ({
         updatedAt: true,
         modelVersions: {
           select: {
+            id: true,
+            name: true,
+            status: true,
+            publishedAt: true,
             _count: {
               select: { files: true, posts: { where: { userId, publishedAt: { not: null } } } },
             },

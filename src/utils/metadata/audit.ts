@@ -262,9 +262,14 @@ export const auditPromptEnriched = (
     });
     if (profanityResults.isProfane) {
       timer.finish(prompt, negativePrompt);
+      // Report the word the input carried, not the dataset word it matched: obscenity matches
+      // substrings, so a `fagus` tag would otherwise be blocked "for" `fag`.
+      const offendingWords = profanityResults.matchedWords.length
+        ? profanityResults.matchedWords
+        : profanityResults.matches;
       return {
-        blockedFor: profanityResults.matches,
-        triggers: profanityResults.matches.map((word: string) => ({
+        blockedFor: offendingWords,
+        triggers: offendingWords.map((word: string) => ({
           category: 'profanity' as const,
           message: word,
           matchedWord: word,

@@ -22,6 +22,7 @@ import { generationGraphPanel } from '~/store/generation-graph.store';
 import { GenerationLayout, GenerationFooter } from '~/components/generation_v2/GenerationLayout';
 import { PresetControl } from '~/components/generation_v2/preset/PresetControl';
 import { SelectedWorkflowDisplay } from '~/components/generation_v2/inputs/WorkflowInput';
+import { BaseModelInput } from '~/components/generation_v2/inputs/BaseModelInput';
 import { ExperimentalRulesSync } from '~/components/generation_v2/Experimental';
 import { MetadataExtractionPanel } from '~/components/generation_v2/inputs/MetadataExtractionPanel';
 import { MetadataExtractionFooter } from '~/components/generation_v2/FormFooter';
@@ -48,7 +49,7 @@ import { useOutputType, type GenerationStore } from './store';
 /**
  * The BASE generation form: the entry component. Owns the store over the
  * composed root (`generationHub`) and mirrors GenerationFormV2's shell —
- * GenerationLayout chrome, preset strip, the workflow chip, the img2meta /
+ * GenerationLayout chrome, preset strip, the workflow + ecosystem row, the img2meta /
  * prompt:enhance self-contained panels, and the footer slot. The per-output
  * bodies below all receive the SAME store — the graph is one form; only the
  * rendering splits.
@@ -191,20 +192,35 @@ function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMem
   return (
     <GenerationLayout>
       <PresetControl />
-      {/* Workflow chip — always visible; the ecosystem moved into the checkpoint picker */}
-      <Controller
-        graph={generationHub}
-        name="workflow"
-        render={({ value, onChange }) => (
-          <WorkflowPicker
-            value={value}
-            ecosystemId={ecosystemId}
-            onChange={(graphKey) => onChange(graphKey)}
-            isMember={isMember}
-            onBack={shouldShowBackButton(value) ? handleNavigationBack : undefined}
-          />
-        )}
-      />
+      <div className="flex w-full min-w-0 items-center gap-2 overflow-hidden sm:gap-4">
+        <Controller
+          graph={generationHub}
+          name="workflow"
+          render={({ value, onChange }) => (
+            <WorkflowPicker
+              value={value}
+              ecosystemId={ecosystemId}
+              onChange={(graphKey) => onChange(graphKey)}
+              isMember={isMember}
+              onBack={shouldShowBackButton(value) ? handleNavigationBack : undefined}
+            />
+          )}
+        />
+        <Controller
+          graph={generationHub}
+          name="ecosystem"
+          render={({ value, meta, onChange }) => (
+            <BaseModelInput
+              value={value}
+              onChange={onChange}
+              compatibleEcosystems={meta?.compatibleEcosystems}
+              excludeEcosystems={meta?.hiddenEcosystems}
+              ecosystemStates={meta?.ecosystemStates}
+              outputType={meta?.mediaType}
+            />
+          )}
+        />
+      </div>
 
       {/* img2meta: self-contained panel, no graph controllers */}
       {workflow === 'img2meta' && (
@@ -232,7 +248,7 @@ function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMem
           ) : output === 'video' ? (
             <VideoGenerationForm store={store} />
           ) : output === 'audio' ? (
-            <AudioGenerationForm />
+            <AudioGenerationForm store={store} />
           ) : (
             <Model3dGenerationForm store={store} />
           )}

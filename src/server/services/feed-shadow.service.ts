@@ -13,6 +13,7 @@ import {
 } from '~/server/services/feed-request-capture.service';
 
 export const MAX_OFFSET = 20_000;
+export const DEEP_OFFSET = `offset>${MAX_OFFSET}`;
 const CONFIG_TTL_MS = 15_000;
 const ERROR_LOG_INTERVAL_MS = 60_000;
 
@@ -69,8 +70,11 @@ const PERIOD_DAYS: Record<string, number | undefined> = {
   AllTime: undefined,
 };
 const LEVELS = [1, 2, 4, 8, 16, 32];
+// The feed service's own ceiling on userIds.
+const MAX_USER_IDS = 1000;
+const MAX_FOLLOWED = MAX_USER_IDS;
 // Filters the candidate has no dimension for; the app resolves the server-side lists
-// (followed, hidden, newCreators) inside the search functions, out of this hook's reach.
+// (hidden) inside the search functions, out of this hook's reach.
 const UNSUPPORTED_KEYS = [
   'postId',
   'postIds',
@@ -83,10 +87,9 @@ const UNSUPPORTED_KEYS = [
   'generation',
   'reactions',
   'blockedFor',
+  'remixOfId',
 ] as const;
 const UNSUPPORTED_FLAGS = [
-  'followed',
-  'newCreators',
   'hidden',
   'withMeta',
   'requiringMeta',
@@ -96,6 +99,8 @@ const UNSUPPORTED_FLAGS = [
   'hideChallenges',
   'pending',
   'publishedOnly',
+  'remixesOnly',
+  'nonRemixesOnly',
 ] as const;
 
 const present = (v: unknown) =>
@@ -135,6 +140,18 @@ export function mapSearchInputToFeedQuery(
   const skip = (reason: string): FeedQueryMapping => ({ ok: false, reason });
   for (const key of UNSUPPORTED_KEYS) if (present(input[key])) return skip(`input:${key}`);
   for (const flag of UNSUPPORTED_FLAGS) if (input[flag] === true) return skip(`flag:${flag}`);
+  const followed = input.followed === true ? input.followedUserIds : undefined;
+  if (input.followed === true) {
+    if (!Array.isArray(followed)) return skip('flag:followed');
+    if (followed.length > MAX_FOLLOWED) return skip(`followed>${MAX_FOLLOWED}`);
+    if (present(input.userId)) return skip('flag:followed:userId');
+  }
+  const newCreators = input.newCreators === true ? input.newCreatorUserIds : undefined;
+  if (input.newCreators === true) {
+    if (!Array.isArray(newCreators)) return skip('flag:newCreators');
+    if (newCreators.length > MAX_USER_IDS) return skip(`newCreators>${MAX_USER_IDS}`);
+    if (present(input.userId) || input.followed === true) return skip('flag:newCreators:userId');
+  }
 
   let offset = 0;
   let before: number | undefined;
@@ -149,7 +166,6 @@ export function mapSearchInputToFeedQuery(
     before = Math.floor(Number(m[2]) / 60_000) * 60_000;
   } else if (cursor) return skip('cursor:unparsed');
   if (typeof input.offset === 'number' && input.offset > 0) offset = Math.max(offset, input.offset);
-  if (offset > MAX_OFFSET) return skip(`offset>${MAX_OFFSET}`);
 
   const sort = SORTS[String(input.sort)];
   if (!sort) return skip(`sort:${String(input.sort || 'none')}`);
@@ -179,6 +195,7 @@ export function mapSearchInputToFeedQuery(
       ? 'scheduled'
       : undefined;
   if (visibility && !userId) return skip(`flag:${visibility}:no-user`);
+  if (offset > MAX_OFFSET) return skip(DEEP_OFFSET);
 
   const params = new URLSearchParams();
   params.set('levels', levels.join(','));
@@ -189,6 +206,10 @@ export function mapSearchInputToFeedQuery(
   if (excludedUsers.length) params.set('excludedUserIds', excludedUsers.slice(0, 1000).join(','));
   if (versionIds) params.set('versionIds', versionIds.join(','));
   if (userId) params.set('userIds', String(userId));
+  const followedIds = ints(followed);
+  if (followedIds.length) params.set('userIds', followedIds.join(','));
+  const newCreatorIds = ints(newCreators);
+  if (newCreatorIds.length) params.set('userIds', newCreatorIds.join(','));
   if (types.length) params.set('types', types.join(','));
   const baseModels = Array.isArray(input.baseModels)
     ? input.baseModels.map(String).filter(Boolean)
@@ -210,7 +231,9 @@ export function mapSearchInputToFeedQuery(
   params.set('limit', String(limit));
   if (feedCursor) params.set('cursor', feedCursor);
   else if (offset) params.set('offset', String(offset));
-  if (before) params.set('before', String(before));
+  // The site freezes a paged set at the first page's minute only for Newest; the other
+  // sorts page a live set, so a cut there would compare different sets.
+  if (before && sort === 'newest') params.set('before', String(before));
   return { ok: true, query: params.toString() };
 }
 

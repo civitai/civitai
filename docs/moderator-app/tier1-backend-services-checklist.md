@@ -266,7 +266,8 @@ Establish the service-porting rhythm on the cheapest pages (Postgres, plus alrea
 - ~~`getGenerationResources`~~ — **removed** along with the `/moderator/generation` page; the
   generation blacklist now lives on the `ModelVersion.flags` `GenerationDisabled` bit.
 - [ ] `getGateRules` — *Redis sysRedis; audience tiers resolve via `resolveTestingAccess` (Flipt `GENERATION_TESTING`)*
-- [ ] `setGateRules`
+- [ ] `saveGateRule` / `deleteGateRule`
+- [ ] `getGeneratorMessages` / `saveGeneratorMessage` / `deleteGeneratorMessage`
 
 ### User-restriction service  ·  used by: generation-restrictions, prompt-audit-test  ·  **NEW service (extract)**
 > Logic is **inline in `user-restriction.router.ts`** today — extract into a service.

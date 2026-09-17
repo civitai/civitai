@@ -583,6 +583,19 @@ function withConsentBudget(buzzBudgetPerDay: number | null) {
 }
 const mockLogToAxiom = loggingMock.logToAxiom;
 
+// Every workflow a block can legitimately name carries its producing app's provenance tag, and
+// `blocks.pollWorkflow`/`cancelWorkflow` assert it. These fixtures are about other properties, so
+// they carry the default claims' tag; the scoping guard itself is exercised in
+// blocks.router.workflowScope.test.ts.
+//
+// 🔴 AND THIS FILE IS STRUCTURALLY BLIND TO THE OTHER HALF OF THAT SCOPING. It never sets
+// `ORCHESTRATOR_MODE`, so it runs under the schema default `'dev'` — the one mode in which the
+// VIEWER assertion short-circuits. That is why ids like `wf_1` below are fine here and would be
+// refused in prod. If you clone a `pollWorkflow`/`cancelWorkflow` case out of this file, it
+// inherits that blindness while looking like coverage: set the mode explicitly, as
+// blocks.router.workflowScope.test.ts does.
+const BLOCK_APP_TAG = 'app-block:app_test';
+
 function validClaims(over: Record<string, unknown> = {}) {
   return {
     iss: 'civitai',
@@ -868,6 +881,7 @@ describe('blocks.pollWorkflow', () => {
   it('returns a snapshot for a valid token + workflowId', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims());
     mockGetWorkflow.mockResolvedValue({
+      tags: [BLOCK_APP_TAG],
       id: 'wf_1',
       status: 'succeeded',
       cost: { total: 10 },
@@ -927,6 +941,7 @@ describe('blocks.pollWorkflow', () => {
     function pollTerminal(status: 'succeeded' | 'failed' | 'expired' | 'canceled') {
       mockVerifyBlockToken.mockResolvedValue(validClaims());
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_1',
         status, // orchestrator terminal status → same block-contract status
         cost: { total: 10 },
@@ -959,6 +974,7 @@ describe('blocks.pollWorkflow', () => {
     it('does NOT flip on a non-terminal (processing) poll — no DB write on intermediate polls', async () => {
       mockVerifyBlockToken.mockResolvedValue(validClaims());
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_1',
         status: 'processing',
         cost: { total: 10 },
@@ -973,6 +989,7 @@ describe('blocks.pollWorkflow', () => {
     it('does NOT flip on a still-queued (unassigned → pending) poll', async () => {
       mockVerifyBlockToken.mockResolvedValue(validClaims());
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_1',
         status: 'unassigned', // maps to the non-terminal block-contract `pending`
         cost: { total: 10 },
@@ -1007,6 +1024,7 @@ describe('blocks.cancelWorkflow', () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims());
     mockCancelWorkflow.mockResolvedValue(undefined);
     mockGetWorkflow.mockResolvedValue({
+      tags: [BLOCK_APP_TAG],
       id: 'wf_1',
       status: 'canceled',
       cost: { total: 0 },
@@ -2585,6 +2603,7 @@ describe('blocks.submitWorkflow', () => {
       mockGetUserById.mockResolvedValue({ id: 42, isModerator: true });
       mockGetSessionUser.mockResolvedValue({ id: 42, isModerator: true, tier: 'free' });
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_1',
         status: 'succeeded',
         cost: { total: 0 },
@@ -2656,6 +2675,73 @@ describe('blocks.submitWorkflow', () => {
     expect(arg.workflowId).toBe('wf_real'); // the orchestrator's id
     // Amount is the orchestrator-computed cost (ceil), not a client value.
     expect(arg.buzzAmount).toBe(25);
+  });
+
+  it('A-flow: stamps the APP-FACING generation type "textToImage:txt2img" on the spend attribution', async () => {
+    // The spend row records WHICH capability the Buzz paid for, so a
+    // per-generation-type author fee has data to reason about. Literal
+    // expectation — never derived from the resolver under test.
+    //
+    // 🔴 THE SUBTYPE IS THE POINT, and it is why this is an END-TO-END
+    // assertion rather than a resolver unit test. The image workflow CLASS is
+    // not on the body — it is resolved from the checkpoint's ecosystem deep
+    // inside `buildTextToImageInput` — so the only thing that proves the class
+    // reaches the column is driving the real handler and reading what it passed.
+    // A bare `textToImage` here means the wiring is dead.
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    happySubmitWithWorkflow(25, 'wf_real');
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+    const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
+    expect(stamped).toBe('textToImage:txt2img');
+    // The coarse key survives the widening — a per-type fee keys on it.
+    expect(String(stamped).split(':')[0]).toBe('textToImage');
+    // And it is NOT the bare subtype, which would destroy that key.
+    expect(stamped).not.toBe('txt2img');
+  });
+
+  it('A-flow: an img2img submit is distinguishable from a txt2img one — "textToImage:img2img"', async () => {
+    // 🔴 THE REGRESSION THIS WIDENING EXISTS FOR. Before it, this submit and the
+    // one above wrote the SAME value, and the difference — which the body
+    // carries and nothing else records — was permanently lost. img2img is
+    // PAGE-only in this phase, so the token is page-bound.
+    //
+    // The class is `img2img` rather than `img2img:edit` because the fixture
+    // checkpoint is SD-family (`SDXL 1.0`); on an edit-capable ecosystem the
+    // SAME body resolves to the edit class. That is precisely why the class
+    // cannot be read off the body.
+    mockVerifyBlockToken.mockResolvedValue(
+      validClaims({
+        buzzBudget: 1000,
+        blockInstanceId: 'page_apb_page',
+        ctx: { slotId: 'app.page', entityType: 'none' },
+      })
+    );
+    happyVersionLookup();
+    happyUser();
+    happySubmitWithWorkflow(25, 'wf_real');
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({
+      blockToken: 'tok',
+      body: validBody({
+        sourceImage: { url: 'https://image.civitai.com/abc/def.jpeg', width: 768, height: 1024 },
+      }),
+    });
+    await flushMicrotasks();
+
+    expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+    const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
+    expect(stamped).toBe('textToImage:img2img');
+    expect(stamped).not.toBe('textToImage:txt2img');
+    expect(stamped).not.toBe('textToImage');
+    expect(String(stamped).split(':')[0]).toBe('textToImage');
   });
 
   it('G5: threads the body sharedContentKey (opaque) through to the spend attribution', async () => {
@@ -3532,6 +3618,7 @@ describe('runtime procedures no longer require the AUTHORING capability', () => 
     mockVerifyBlockToken.mockResolvedValue(validClaims());
     nonAuthorViewer();
     mockGetWorkflow.mockResolvedValue({
+      tags: [BLOCK_APP_TAG],
       id: 'wf_1',
       status: 'succeeded',
       cost: { total: 0 },
@@ -3550,6 +3637,7 @@ describe('runtime procedures no longer require the AUTHORING capability', () => 
     nonAuthorViewer();
     mockCancelWorkflow.mockResolvedValue(undefined);
     mockGetWorkflow.mockResolvedValue({
+      tags: [BLOCK_APP_TAG],
       id: 'wf_1',
       status: 'canceled',
       cost: { total: 0 },
@@ -6368,7 +6456,15 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         buzzType: 'blue', // free-first floor when no paid debit is surfaced → 0 payout
         modelId: null, // recipe-based, no single user-picked model
         sharedContentKey: null, // customComfy body has no sharedContentKey field
+        // The app-facing key for this kind, carrying WHICH registered recipe
+        // ran. The coarse key (before the first colon) is still `customComfy`.
+        generationType: 'customComfy:seamless-pano-360',
       });
+      // 🔴 Not the bare kind — that is what this widening replaced, and it is
+      // the value a regressed resolver would fall back to.
+      const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
+      expect(stamped).not.toBe('customComfy');
+      expect(String(stamped).split(':')[0]).toBe('customComfy');
     });
 
     it('derives the PAID currency basis (green debit) off the REALIZED transactions', async () => {
@@ -6797,6 +6893,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
     it('poll to a terminal status settles the workflow to its REAL accrued cost', async () => {
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_cc_1',
         status: 'succeeded',
         cost: { total: 30 },
@@ -6812,6 +6909,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
     it('does NOT settle on a non-terminal (processing) poll', async () => {
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_cc_1',
         status: 'processing',
         cost: { total: 10 },
@@ -6825,6 +6923,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
       mockCancelWorkflow.mockResolvedValue(undefined);
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_cc_1',
         status: 'canceled',
         cost: { total: 12 }, // accrued-so-far billed by the orchestrator on cancel
@@ -6898,6 +6997,25 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(step.$type).toBe('customComfy');
       // maxBuzz === stepTimeoutSeconds, BY CONSTRUCTION: 90s → '00:01:30'.
       expect(step.timeout).toBe('00:01:30');
+    });
+
+    it('stamps "customComfy:inline" — the ARM is distinguishable from a recipe submit', async () => {
+      // 🔴 The second sub-axis this widening captures. Both arms carry
+      // `kind: 'customComfy'`, so before this they wrote the SAME value and the
+      // arm — an app-authored graph vs a code-reviewed server recipe, which is
+      // exactly the distinction a per-type fee would want — was lost. Inline is
+      // ONE bucket by design: an inline graph has no stable server-side identity
+      // to key a fee on, which is the whole difference from a recipe.
+      mockRecordSpendAttribution.mockClear();
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      await caller().submitWorkflow({ blockToken: 'tok', body: inlineBody() });
+      await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
+      const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
+      expect(stamped).toBe('customComfy:inline');
+      expect(stamped).not.toBe('customComfy');
+      expect(stamped).not.toBe('customComfy:seamless-pano-360');
+      expect(String(stamped).split(':')[0]).toBe('customComfy');
     });
 
     it('🔴 the emitted step input carries ONLY resources/trace/workflow — the body is never spread', async () => {
@@ -8254,6 +8372,28 @@ describe("step-type registry bridge (kind: 'step')", () => {
       );
     });
 
+    it('stamps the REGISTERED STEP ID as the generation type — not the orchestrator $type', async () => {
+      // 🔴 The design risk, pinned at the call site. The orchestrator returns
+      // `$type: 'convertImage'` for this submit (see happyStepSubmit), so a
+      // resolver reading the wrong side would produce a value that still looks
+      // plausible. The column must carry the registry id.
+      mockRecordSpendAttribution.mockClear();
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      await new Promise((r) => setTimeout(r, 0)); // fire-and-forget writes
+
+      expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+      const arg = mockRecordSpendAttribution.mock.calls[0][0];
+      expect(arg.generationType).toBe('convert-image');
+      expect(arg.generationType).not.toBe('convertImage');
+      // ...and it is NOT the `kind` — a step submit must be distinguishable from
+      // an image generation, which is the whole reason the column exists.
+      expect(arg.generationType).not.toBe('step');
+      expect(arg.generationType).not.toBe('textToImage');
+    });
+
     // 🔴 THE USAGE DIMENSIONS. Every OTHER field on this row is identical to the
     // one the txt2img path writes — same `ai:write:budgeted` scope, same
     // `workflow:submit:<id>` endpoint shape — so without `detail.step` a step
@@ -9134,6 +9274,7 @@ describe('blocks — #3520 model substitution observability', () => {
       // it was gone by the time the block had images to display beside it.
       mockVerifyBlockToken.mockResolvedValue(validClaims());
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_1',
         status: 'succeeded',
         cost: { total: 10 },
@@ -9160,6 +9301,7 @@ describe('blocks — #3520 model substitution observability', () => {
     it('pollWorkflow OMITS the field for a workflow that substituted nothing', async () => {
       mockVerifyBlockToken.mockResolvedValue(validClaims());
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_1',
         status: 'succeeded',
         cost: { total: 10 },
@@ -9175,6 +9317,7 @@ describe('blocks — #3520 model substitution observability', () => {
       mockVerifyBlockToken.mockResolvedValue(validClaims());
       mockCancelWorkflow.mockResolvedValue(undefined);
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_1',
         status: 'canceled',
         cost: { total: 3 },
@@ -9467,6 +9610,7 @@ describe('blocks — #3520 model substitution observability', () => {
     it('the subsequent POLL of that step workflow carries no record either', async () => {
       mockVerifyBlockToken.mockResolvedValue(stepClaims());
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_step_1',
         status: 'succeeded',
         cost: { total: 1 },
@@ -9487,6 +9631,7 @@ describe('blocks — #3520 model substitution observability', () => {
       // reader that is blind on a registered `$type`.
       mockVerifyBlockToken.mockResolvedValue(stepClaims());
       mockGetWorkflow.mockResolvedValue({
+        tags: [BLOCK_APP_TAG],
         id: 'wf_step_1',
         status: 'succeeded',
         cost: { total: 1 },
@@ -9514,6 +9659,7 @@ describe('blocks — #3520 model substitution observability', () => {
       async (_label, order) => {
         mockVerifyBlockToken.mockResolvedValue(stepClaims());
         mockGetWorkflow.mockResolvedValue({
+          tags: [BLOCK_APP_TAG],
           id: 'wf_mixed',
           status: 'succeeded',
           cost: { total: 26 },

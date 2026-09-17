@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
 
 const {
   mockDbWrite,
@@ -7,6 +8,7 @@ const {
   mockStringifyAIR,
   mockResolveDownloadUrl,
   mockIsProd,
+  mockIsFlipt,
 } = vi.hoisted(() => ({
   mockDbWrite: {
     modelFile: { update: vi.fn() },
@@ -19,6 +21,7 @@ const {
   // don't regress; failure-path tests reset to mockRejectedValue.
   mockResolveDownloadUrl: vi.fn().mockResolvedValue({ url: 'https://cdn.example/file' }),
   mockIsProd: { value: true },
+  mockIsFlipt: vi.fn(),
 }));
 
 vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
@@ -78,6 +81,11 @@ vi.mock('~/env/server', () => ({
   },
 }));
 
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: mockIsFlipt,
+}));
+
 // orchestrator.service.ts pulls in edge-url which validates
 // NEXT_PUBLIC_* env vars at import-time. Stub it to keep tests hermetic.
 vi.mock('~/client-utils/edge-url', () => ({
@@ -85,6 +93,7 @@ vi.mock('~/client-utils/edge-url', () => ({
 }));
 
 import {
+  createImageIngestionRequest,
   createModelFileScanRequest,
   ModelFileScanSubmissionError,
 } from '~/server/services/orchestrator/orchestrator.service';
@@ -606,6 +615,133 @@ describe('createModelFileScanRequest', () => {
 
       expect(mockResolveDownloadUrl).not.toHaveBeenCalled();
       expect(mockSubmitWorkflow).toHaveBeenCalled();
+    });
+  });
+});
+
+describe('createImageIngestionRequest', () => {
+  const submittedSteps = () =>
+    mockSubmitWorkflow.mock.calls[0][0].body.steps as Array<{ $type: string; input: unknown }>;
+
+  beforeEach(() => {
+    mockIsFlipt.mockReset().mockResolvedValue(false);
+    mockSubmitWorkflow.mockResolvedValue({
+      data: { id: 'workflow-1' },
+      response: { status: 200, headers: new Headers() },
+    });
+  });
+
+  it('submits wdTagging + mediaRating while the imageScanning flag is off', async () => {
+    await createImageIngestionRequest({ imageId: 1, url: 'image-key' });
+    expect(mockIsFlipt).toHaveBeenCalledWith('image-ingestion-image-scanning', '1');
+    // The legacy submit is the production path; its inputs must stay exactly as they were.
+    const metadata = { imageId: 1 };
+    const priority = 'normal';
+    const mediaUrl = { $ref: '$arguments', path: 'mediaUrl' };
+    expect(submittedSteps()).toEqual([
+      {
+        $type: 'wdTagging',
+        name: 'tags',
+        metadata,
+        priority,
+        input: {
+          mediaUrl,
+          model:
+            'urn:air:siglip2:repository:huggingface:cella110n/cl_tagger_v2@b57909b8e9c63f71e208a26473e7aabdf45ed6b6.tar',
+          threshold: 0.55,
+        },
+      },
+      {
+        $type: 'mediaRating',
+        name: 'rating',
+        metadata,
+        priority,
+        input: {
+          mediaUrl,
+          engine: 'civitai',
+          includeAgeClassification: true,
+          includeAIRecognition: false,
+          includeFaceRecognition: false,
+          includeAnimeRecognition: false,
+        },
+      },
+      {
+        $type: 'mediaHash',
+        name: 'hash',
+        metadata,
+        priority,
+        input: { mediaUrl, hashTypes: ['perceptual'] },
+      },
+    ]);
+  });
+
+  it.each([
+    [false, 'image-ingestion'],
+    [true, 'image-scanning-ingestion'],
+  ])('logs a failed submit under its pipeline name (flag %s)', async (flagOn, name) => {
+    vi.useRealTimers();
+    mockIsFlipt.mockResolvedValue(flagOn);
+    mockSubmitWorkflow.mockResolvedValue({
+      data: undefined,
+      error: 'bad request',
+      response: { status: 400, headers: new Headers() },
+    });
+    const result = await createImageIngestionRequest({ imageId: 1, url: 'image-key' });
+
+    expect(result.useImageScanning).toBe(flagOn);
+    expect(mockLogToAxiom).toHaveBeenCalledWith(expect.objectContaining({ name, imageId: 1 }));
+  });
+
+  it('submits one imageScanning step when the flag is on', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    await createImageIngestionRequest({ imageId: 1, url: 'image-key' });
+    const steps = submittedSteps();
+    expect(steps.map((step) => step.$type)).toEqual(['imageScanning', 'mediaHash']);
+    expect(steps[0].input).toEqual({ image: { $ref: '$arguments', path: 'mediaUrl' } });
+    expect(steps[1].input).toEqual({
+      mediaUrl: { $ref: '$arguments', path: 'mediaUrl' },
+      hashTypes: ['perceptual'],
+    });
+  });
+
+  const frameUrl = { $ref: 'frame', path: 'url' };
+  it.each([
+    [
+      false,
+      [
+        ['wdTagging', 'mediaUrl'],
+        ['mediaRating', 'mediaUrl'],
+      ],
+    ],
+    [true, [['imageScanning', 'image']]],
+  ])('repeats the per-frame steps over video frames (flag %s)', async (flagOn, templates) => {
+    mockIsFlipt.mockResolvedValue(flagOn);
+    await createImageIngestionRequest({ imageId: 1, url: 'video-key', type: 'video' });
+    const steps = submittedSteps() as Array<{
+      $type: string;
+      input: {
+        videoUrl?: unknown;
+        for?: unknown;
+        template?: { $type: string; input: Record<string, unknown> };
+      };
+    }>;
+
+    expect(steps[0]).toMatchObject({
+      $type: 'videoFrameExtraction',
+      input: {
+        videoUrl: { $ref: '$arguments', path: 'mediaUrl' },
+        frameRate: 1,
+        uniqueThreshold: 0.9,
+        maxFrames: 50,
+      },
+    });
+    expect(steps.slice(1)).toHaveLength(templates.length);
+    steps.slice(1).forEach((step, i) => {
+      const [type, urlField] = templates[i];
+      expect(step.$type).toBe('repeat');
+      expect(step.input.for).toEqual({ $ref: 'videoFrames', path: 'output.frames', as: 'frame' });
+      expect(step.input.template?.$type).toBe(type);
+      expect(step.input.template?.input[urlField]).toEqual(frameUrl);
     });
   });
 });

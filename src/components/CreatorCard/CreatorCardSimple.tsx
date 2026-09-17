@@ -155,6 +155,7 @@ const CreatorCardSimpleContent = ({
                     objectFit: 'cover',
                   }
             }
+            optimized
           />
         )}
         <Stack p="md">

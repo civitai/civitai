@@ -142,14 +142,14 @@ merge; the strongest a red one gets is rendering red for a human to notice, and 
 The vitest suites are projects in `vitest.config.mts`. The unit suite is **two** projects —
 `unit` and `unit-native` — so select it as **`--project 'unit*'`**, never `--project unit`.
 
-🔴 **`--project unit` silently runs 1059 of 1065 files and exits 0.** The six `unit-native` files are
+🔴 **`--project unit` silently runs 1846 of 1852 files and exits 0.** The six `unit-native` files are
 `exclude`d from `unit` rather than merely routed elsewhere, so naming one of them explicitly reports
 `No test files found`. A selector matching one project and not the other is a green run over a
 suite you did not run — the scripts above already use `'unit*'` for this reason.
 
 #### Run the suites that cover your change; run the WHOLE suite once, at the end
 
-The full unit suite is ~21,500 tests and ~75s, and `test:unit:run` is serialised through the dev-server
+The full unit suite is ~41,600 tests over 1,852 files, and `test:unit:run` is serialised through the dev-server
 queue — so running it between edits blocks everyone else's runs for minutes at a time. Name the covering
 suites before you start editing and run those on each iteration:
 
@@ -211,11 +211,10 @@ Use a top-level `import type * as PromClient` — an inline `typeof import('...'
 **Before widening a mock, check whether the import edge is needed at all.** A failing suite may be telling you the code pulled in a dependency it doesn't want, not that the mock is too narrow, and widening it would hide that. (Bit us twice in one day, Aug 2026, on two branches; one of those three suites was fixed by extracting the helpers into their own module instead.)
 
 #### Convention guards run as tests
-Several repo conventions are enforced by tests, not by eslint. 33 live in
-`src/server/services/__tests__/no-*.test.ts` — `no-agent-ground-truth-write`, `no-coerce-boolean-in-api`,
+Several repo conventions are enforced by tests, not by eslint. 37 live in `src/server/services/__tests__/no-*.test.ts` — `no-agent-ground-truth-write`, `no-coerce-boolean-in-api`,
 `no-direct-shared-module-mock` (the shared-mock ratchet, see `docs/testing/shared-module-mocks.md`),
 `no-divergent-can-generate-derivation` (coverage alone is not canGenerate — the ecosystem must also support the model TYPE, and the pair is composed only in `isGenerationEligible`),
-`no-divergent-paid-gate-derivation` (the feed and the search index must derive the paid badge from one helper, never two copies of the query), `no-divergent-safetensor-rule` (the coverage view and `checkLoadable` state the checkpoint SafeTensor rule twice and nothing executes the SQL, so the two literals and the checkpoint scoping are pinned textually), `no-doubled-free-slot-noun`, `no-hand-typed-redis-key-constants` (the Redis key-constant
+`no-divergent-generation-submit-payload` (the two generation footers must submit the same payload keys — the form-graph lane silently dropped `sourceProvenance`, so its remixes lost the only VERIFIED half of their provenance while the unverified `remixOfId` went through), `no-divergent-model-recency-derivation` (the New/Updated card rule and its day-old cutoff each have one definition — three cards restated them, and when the paid badge took ModelCard's single status slot only that copy knew, so a paid model published minutes ago showed "Paid" on the feed and "New" in the resource picker), `no-divergent-paid-gate-derivation` (the feed and the search index must derive the paid badge from one helper, never two copies of the query), `no-divergent-safetensor-rule` (the coverage view and `checkLoadable` state the checkpoint SafeTensor rule twice and nothing executes the SQL, so the two literals and the checkpoint scoping are pinned textually), `no-doubled-free-slot-noun`, `no-hand-typed-redis-key-constants` (the Redis key-constant
 ratchet — hand-typed `REDIS_KEYS` in an allowlisted mock had drifted 15 times), `no-io-in-transaction`,
 `no-job-kind-on-remix-mint` (the remix provenance mint must sign `kind: 'mint'` — a `job`
 token there is spendable on the upload path, which is the free remix-gallery submission),
@@ -223,11 +222,14 @@ token there is spendable on the upload path, which is the free remix-gallery sub
 `no-menu-target-tooltip-nesting` (a `Tooltip` INSIDE `Menu.Target` steals the ref the menu needs and
 the trigger silently stops opening — six sites had it independently),
 `no-module-scope-cache`, `no-pk-addressed-engagement-write`, `no-server-infra-in-app-graph`,
-`no-sharp-outside-native-project`, `no-stale-moderator-route-probe`, `no-static-html2canvas-import`,
+`no-sharp-outside-native-project`, `no-ssr-divergent-media-query`, `no-stale-moderator-route-probe`, `no-static-html2canvas-import`,
 `no-unbounded-paging-fake`, `no-unbumped-draft-status-write` (a raw-SQL write that moves a Model
 into `Draft` must set `"updatedAt" = now()`, or `remove-old-drafts` can cascade-delete it with no
 grace period), `no-unguarded-billable-submit` (a user-token orchestrator submit must have its
 owner checked — see `assertWorkflowOwner`),
+`no-unguarded-block-rest-token` (every block REST page route must be wrapped by
+`withBlockScope`, which is the only place the REST surface takes the approved-status
+decision — an open-coded `verifyBlockToken` in a route is the same shape the bridge had),
 `no-unguarded-block-bridge-token` (every tRPC bridge proc must resolve its claims through
 `authorizeBlockBridgeToken` — a bare `verifyBlockToken` honours a revoked install and a
 suspended app for a whole token lifetime), `no-unguarded-user-text`, `no-unloadable-image-fixture`,
@@ -251,7 +253,7 @@ was last audited, on 2026-08-24, and were wired in then. **Add a new guard to th
 you write it**, and don't read a green `test:lint-rules` as "all guards passed" without checking the directory
 against the script.
 
-`test:lint-rules` names 38 files today.
+`test:lint-rules` names 42 files today.
 
 The count above, the count in the list, and the list itself are what went stale three times, so
 `no-lint-rules-script-drift` fails when they disagree with the directory or the script. It reads two exact

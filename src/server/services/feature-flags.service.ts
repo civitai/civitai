@@ -191,23 +191,22 @@ const featureFlags = createFeatureFlags({
   // with `enabled: false` and no rollout hides the bar for everyone, moderators included.
   // Until that flag exists, evaluation returns null and static evaluation keeps it on.
   feedTagBar: { availability: ['public'], fliptKey: 'feed-tag-bar' },
-  // Serve post-detail and model-page showcase images a `srcSet` carrying a 2x variant, and
-  // force the optimized format there whatever the user's `imageFormat` preference. Without
-  // it those surfaces request a width in CSS pixels and every DPR>=2 display upscales:
-  // measured 1.82x on post detail at DPR 2, 1.38x on an iPhone (ClickUp 868m36wyd).
+  // Gates the hi-DPI `srcSet` on every surface that renders content: post detail, the model
+  // showcase and review carousels, the model gallery and the feed cards. Without it those surfaces
+  // request a width in CSS pixels and every DPR>=2 display upscales — measured 1.82x on post detail
+  // at DPR 2, 1.38x on an iPhone (ClickUp 868m36wyd). It does NOT decide the format: the viewer's
+  // media quality does, so a paying member on lossless keeps lossless at 2x. How the candidate is
+  // chosen, and why it is bounded by the source width, is in `hiDpiCandidateWidth`.
   //
-  // `['public']` and NOT `[]`: the 2x variant is also the OPTIMIZED one, so for a user on
-  // the default `imageFormat: 'metadata'` it is FEWER bytes than the unoptimized JPEG shipped
-  // today (measured 305kB vs 421kB), and the Flipt-down fallback should be the cheaper,
-  // sharper path. So DO NOT create `hi-dpi-previews` in flipt-state to ship this: while it
-  // does not exist, evaluation returns null and static evaluation keeps it on. Creating it as
-  // a boolean with `enabled: false` and no rollout IS the kill switch — Flipt's answer
-  // overrides static evaluation in both directions.
+  // `['public']` and NOT `[]` so that a Flipt outage does not visibly change the site: the flag is
+  // live and enabled, and failing open matches it. It is NOT the cheaper path — with compressed the
+  // default, flag-off is an 800px webp and flag-on a 1600px one, so failing open costs ~2.2x the
+  // bytes. That was the opposite way round before compressed became the default.
   //
-  // Deliberately NOT applied to card feeds (`/images`, the model-page gallery). Those request
-  // 450, whose 2x doubles to 900 and then snaps to the 1200 rung — ~3.7x the bytes (60kB ->
-  // 221kB) on an infinitely scrolling surface, for a box that only renders ~318 CSS px. Wants a
-  // ~900 rung in civitai-image-cacher's `CommonSizes` before it can be turned on there.
+  // 🔴 DO NOT create `hi-dpi-previews` in flipt-state to ship this. While it does not exist,
+  // evaluation returns null and static evaluation keeps it on; creating it as a boolean with
+  // `enabled: false` and no rollout IS the kill switch — Flipt's answer overrides static
+  // evaluation in both directions.
   hiDpiPreviews: { availability: ['public'], fliptKey: 'hi-dpi-previews' },
   // `availability: []` is the Flipt-down fallback, and off is the right one here: the search
   // refinement is useless until the gated documents carry `hasActivePaidAccess`, which is a backfill
@@ -309,7 +308,10 @@ const featureFlags = createFeatureFlags({
     availability: ['user'],
   },
   profileCollections: ['public'],
-  imageSearch: ['public'],
+  // Retired by default (see 868m4c2dn): the `images_v6` search index is no longer fed or served.
+  // Static availability is empty so image search is off for everyone; re-enable without a deploy
+  // by turning on the `image-search` Flipt flag, which is authoritative when it exists.
+  imageSearch: { availability: [], fliptKey: 'image-search' },
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
@@ -514,6 +516,13 @@ const featureFlags = createFeatureFlags({
   },
   articleImageScanning: ['public'],
   generationPresets: { availability: ['public'], fliptKey: 'generation-presets' },
+  // Raw orchestrator-blob AIR resources in the generator (Training Studio
+  // "generate with this epoch" handoff) — gates both server acceptance and the
+  // /generate?air= form entry. That entry exists ONLY in the form-graph lane
+  // (form-graph/generation/ingestion.ts); the v2 lane ignores the params. So
+  // don't widen this flag beyond formGraphGenerator's audience — move the two
+  // in lockstep.
+  generationAirResources: { availability: ['mod'], fliptKey: 'generation-air-resources' },
   wildcards: { availability: ['public'], fliptKey: 'wildcards' },
   // 3D Models — split flags: feed (view/comment/review) vs generator (create).
   // Both mod-only at launch; Flipt key allows broadening without a code change.
@@ -1129,7 +1138,16 @@ export function getFliptGatedEligibility(
 ): Partial<Record<FeatureFlagKey, boolean>> {
   const fliptContext = buildFliptContext(ctx.user);
   const out: Partial<Record<FeatureFlagKey, boolean>> = {};
-  for (const key of fliptGatedToggleableKeys) out[key] = hasFeature(key, ctx, fliptContext);
+  for (const key of fliptGatedToggleableKeys) {
+    // Mods stay eligible for `availability: ['mod']` keys no matter what Flipt says.
+    // Inside `hasFeature` a non-null Flipt eval short-circuits the static role check,
+    // so without this a mod's eligibility flapped with Flipt health: eval null →
+    // static fallback grants, eval false (segment miss) → the toggle they already
+    // switched on renders NotFound. Flipt segments ramp the non-mod population.
+    const modAlwaysEligible =
+      !!ctx.user?.isModerator && featureFlags[key].availability.includes('mod');
+    out[key] = modAlwaysEligible || hasFeature(key, ctx, fliptContext);
+  }
   return out;
 }
 

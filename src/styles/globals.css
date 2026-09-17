@@ -149,13 +149,34 @@
    it grows OR shrinks, so adding or removing a rule here without updating that
    expectation is a test failure, not a silent change.
 
-   🔴 WHY THIS IS CSS AND NOT A MANIFEST FIELD. The App Block manifest schema is
-   byte-mirrored across three repos (`public/schemas/app-block/v1.json`, the Go
-   CLI, `@civitai/app-sdk`) and has to move in lockstep, and this host is pinned
-   to `@civitai/app-sdk@^0.14.0` while guests ship 0.35.x — so a new manifest
-   field would be UNTYPED at exactly the point the host consumes it. A rule here
-   is one line, needs no schema motion, and cannot be forged: the guest is
-   cross-origin and can never reach this cascade.
+   🔴 WHY THIS IS CSS AND NOT A MANIFEST FIELD: AN OPERATOR DECISION, NOT A
+   TECHNICAL FINDING. Full bleed is managed by styling — this ledger — because the
+   repo owner decided it should be. That decision is the whole of the reason, and
+   it is written down here so that no one has to reconstruct one. The alternative
+   was not hypothetical: a `page` manifest field replacing this ledger was built
+   and opened as PR #4812, and it was closed unmerged on exactly that call.
+
+   🔴 THE TECHNICAL REASON THIS COMMENT USED TO GIVE WAS MEASURED FALSE. Kept,
+   retracted, so it is not rediscovered and acted on: a manifest field "would be
+   UNTYPED at exactly the point the host consumes it" because this host pins
+   `@civitai/app-sdk@^0.14.0`. The PIN IS REAL; the conclusion does not follow --
+   the host never reads a manifest through an SDK type at all.
+   `block-manifest-validator.service.ts` imports nothing from `@civitai/app-sdk`,
+   and `src/components/AppBlocks/types.ts`, which declares the host's own
+   `BlockManifest`, has no imports at all. Never cite the SDK pin as a cost of a
+   manifest field again.
+
+   The one MEASURED cost of the alternative -- recorded because the alternative
+   was on the table, NOT because it is the reason: the released Go CLI 0.1.101
+   rejects an undeclared key under `page`, so `civitai app validate` exits 1
+   locally, before any network call. Scoped to the CLI deliberately.
+   `@civitai/app-sdk` vendors a copy of the schema too, but nothing consumes it as
+   a validator and it is ALREADY DRIFTED from the canonical (missing five
+   top-level properties at 0.14.0), so it gates nothing and a "three mirrors must
+   move together" cost must not be asserted from it.
+
+   A rule here cannot be forged: the guest is cross-origin and can never reach
+   this cascade.
 
    🔴 NEVER KEY A RULE HERE ON `data-testid` — IT DOES NOT EXIST IN PRODUCTION,
    AND THAT IS EXACTLY HOW THIS LEDGER SHIPPED BROKEN. `next.config.mjs` sets

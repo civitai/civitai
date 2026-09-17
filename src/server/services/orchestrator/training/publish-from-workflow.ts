@@ -6,9 +6,11 @@ import type {
   Workflow,
 } from '@civitai/client';
 import type { SessionUser } from '~/types/session';
+import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { upsertModel } from '~/server/services/model.service';
 import { upsertModelVersion } from '~/server/services/model-version.service';
 import { createFile } from '~/server/services/model-file.service';
+import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbWrite } from '~/server/db/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
@@ -119,7 +121,7 @@ function toIso(value?: string | null): string | undefined {
 }
 
 /**
- * Map a training workflow's epochs into `TrainingResultsV2` — the shape the wizard's step-4 file picker
+ * Map a training workflow's epochs into `TrainingResultsV2` — the shape the wizard's epoch picker
  * and the generator's epoch resolver both read off `metadata.trainingResults`. Mirrors
  * `deriveTrainingWorkflowState`'s field reads for the two step types, but does NOT require
  * `step.metadata.modelFileId` (training-studio runs are created without one).
@@ -175,13 +177,14 @@ export function mapWorkflowToTrainingResultsV2(workflow: Workflow): TrainingResu
 
 /**
  * Turn a completed Training Studio orchestrator workflow into a Draft Trained Model + v1 ModelVersion +
- * Training-Data ModelFile, so the user can drop into the main app's publish wizard (step 4) or generate
+ * Training-Data ModelFile, so the user can drop into the main app's publish wizard or generate
  * off the draft. Training Studio trains orchestrator-only (no `ModelVersion` exists), so this reconstructs
  * the minimal chain the wizard/generator require — it does NOT move assets, create a 'Model' file, or
- * publish; the wizard does those on user action.
+ * publish; the from-orchestrator page finalizes those client-side off the returned `selectedEpoch`.
  *
  * Idempotent per workflow: the first call stamps `meta.trainingStudioWorkflowId`, and later calls for the
- * same workflow return the existing ids instead of creating a duplicate.
+ * same workflow return the existing ids instead of creating a duplicate. `selectedEpoch` is null only on
+ * that path — once the blobs expire the draft still resolves, but there is nothing left to finalize.
  */
 export async function createDraftModelFromWorkflow({
   user,
@@ -193,8 +196,17 @@ export async function createDraftModelFromWorkflow({
   workflow: Workflow;
   selectedEpochNumber: number;
   name?: string;
-}): Promise<{ modelId: number; modelVersionId: number }> {
+}): Promise<{
+  modelId: number;
+  modelVersionId: number;
+  selectedEpoch: TrainingResultsV2['epochs'][number] | null;
+}> {
   if (!workflow.id) throw throwBadRequestError('Workflow is missing an id');
+
+  const trainingResults = mapWorkflowToTrainingResultsV2(workflow);
+  const selectedEpoch =
+    trainingResults.epochs.find((epoch) => epoch.epochNumber === selectedEpochNumber) ??
+    trainingResults.epochs.at(-1);
 
   const existing = await dbWrite.model.findFirst({
     where: {
@@ -208,7 +220,14 @@ export async function createDraftModelFromWorkflow({
     },
   });
   if (existing?.modelVersions[0])
-    return { modelId: existing.id, modelVersionId: existing.modelVersions[0].id };
+    return {
+      modelId: existing.id,
+      modelVersionId: existing.modelVersions[0].id,
+      selectedEpoch: selectedEpoch?.modelUrl ? selectedEpoch : null,
+    };
+
+  if (!selectedEpoch?.modelUrl)
+    throw throwBadRequestError('This training run has no downloadable checkpoint to publish.');
 
   const {
     baseModel,
@@ -227,13 +246,6 @@ export async function createDraftModelFromWorkflow({
     workflow.tags?.find((tag) => tag.startsWith('name:'))?.slice('name:'.length) ||
     trigger ||
     'Trained LoRA';
-
-  const trainingResults = mapWorkflowToTrainingResultsV2(workflow);
-  const selectedEpoch =
-    trainingResults.epochs.find((epoch) => epoch.epochNumber === selectedEpochNumber) ??
-    trainingResults.epochs.at(-1);
-  if (!selectedEpoch?.modelUrl)
-    throw throwBadRequestError('This training run has no downloadable checkpoint to publish.');
 
   // Best-effort params so the version's trainingDetails is complete for the wizard. The load-bearing
   // fields are `baseModel`/`type`; the rest are defaulted (the run's real hyperparameters live on the
@@ -283,7 +295,7 @@ export async function createDraftModelFromWorkflow({
     nsfw: false,
     poi: false,
     minor: false,
-    meta: { trainingStudioWorkflowId: workflow.id } as Record<string, unknown>,
+    meta: { trainingStudioWorkflowId: workflow.id },
   });
   if (!model) throw throwBadRequestError('Could not create the model');
 
@@ -312,5 +324,83 @@ export async function createDraftModelFromWorkflow({
     select: { id: true },
   });
 
-  return { modelId: model.id, modelVersionId: modelVersion.id };
+  return { modelId: model.id, modelVersionId: modelVersion.id, selectedEpoch };
+}
+
+/**
+ * Link the workflow to its draft model as soon as the draft exists — the studio renders a
+ * back-link off `metadata.modelId` before the model is even published. The caller already holds
+ * the workflow and the owner's token (the from-orchestrator SSR), so no refetch; no-op when the
+ * ids are already stamped, so the idempotent re-entry path costs nothing. Best-effort like
+ * `stampWorkflowPublished` — a draft the studio can't link is better than a failed publish entry.
+ */
+export async function stampWorkflowDraftModel({
+  token,
+  workflow,
+  modelId,
+  modelVersionId,
+}: {
+  token: string;
+  workflow: Workflow;
+  modelId: number;
+  modelVersionId: number;
+}): Promise<void> {
+  if (!workflow.id) return;
+  const meta = (workflow.metadata ?? {}) as Record<string, unknown>;
+  if (meta.modelId === modelId && meta.modelVersionId === modelVersionId) return;
+  try {
+    await updateWorkflow({
+      token,
+      workflowId: workflow.id,
+      metadata: { ...meta, modelId, modelVersionId },
+    });
+  } catch (error) {
+    console.error(
+      `stampWorkflowDraftModel failed (workflow ${workflow.id}, model ${modelId}):`,
+      error
+    );
+  }
+}
+
+/**
+ * Back-link a just-published studio-born model onto its source workflow: merge
+ * `{ published, modelId, modelVersionId }` into the workflow's metadata, which is the studio's only
+ * datastore — its run list flips the run to `published` and links the model page off these fields.
+ * The orchestrator replaces metadata wholesale on update, hence the read-merge-write.
+ *
+ * Best-effort by contract: the model is already public when this runs, so an unreachable
+ * orchestrator must not fail the publish — log and move on. Token is minted for the model OWNER
+ * (a moderator can publish someone else's model), with the cross-user cache bypass when the two differ.
+ */
+export async function stampWorkflowPublished({
+  ownerId,
+  callerId,
+  workflowId,
+  modelId,
+  modelVersionId,
+}: {
+  ownerId: number;
+  callerId: number;
+  workflowId: string;
+  modelId: number;
+  modelVersionId?: number;
+}): Promise<void> {
+  try {
+    const token = await getOrchestratorToken(ownerId, undefined, {
+      bypassCache: callerId !== ownerId,
+    });
+    const workflow = await getWorkflow({ token, path: { workflowId } });
+    const metadata = {
+      ...((workflow?.metadata ?? {}) as Record<string, unknown>),
+      published: true,
+      modelId,
+      ...(modelVersionId != null && { modelVersionId }),
+    };
+    await updateWorkflow({ token, workflowId, metadata });
+  } catch (error) {
+    console.error(
+      `stampWorkflowPublished failed (workflow ${workflowId}, model ${modelId}):`,
+      error
+    );
+  }
 }

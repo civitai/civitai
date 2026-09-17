@@ -3,7 +3,11 @@ import type { CommentV2Model } from '~/server/selectors/commentv2.selector';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
 import { recordStickerUsage, spendStickerUses } from '~/server/services/sticker.service';
 import { MAX_THREAD_CHAIN_DEPTH, muteableThreadsCte } from '~/server/common/thread-chain';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  isPrismaForeignKeyViolation,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { Prisma } from '@prisma/client';
 import { dbWrite, dbRead } from '~/server/db/client';
 import type {
@@ -425,14 +429,24 @@ export const upsertComment = async ({
           ? await tx.thread.findUnique({ where: { id: parentThreadId } })
           : undefined;
 
-        thread = await tx.thread.create({
-          data: {
-            [`${entityType}Id`]: entityId,
-            parentThreadId: parentThread?.id ?? parentThreadId,
-            rootThreadId: parentThread?.rootThreadId ?? parentThread?.id ?? parentThreadId,
-          },
-          select: { id: true, locked: true, rootThreadId: true, parentThreadId: true },
-        });
+        try {
+          thread = await tx.thread.create({
+            data: {
+              [`${entityType}Id`]: entityId,
+              parentThreadId: parentThread?.id ?? parentThreadId,
+              rootThreadId: parentThread?.rootThreadId ?? parentThread?.id ?? parentThreadId,
+            },
+            select: { id: true, locked: true, rootThreadId: true, parentThreadId: true },
+          });
+        } catch (error) {
+          // This create carries the FK to the entity being commented on; when that row is gone
+          // (a deleted image whose page still rendered a comment box), it rejects with a P2003
+          // whose raw constraint name would otherwise reach the user. Scoped to this call so a
+          // P2003 from anything else in the transaction is not mislabeled as a missing entity.
+          if (isPrismaForeignKeyViolation(error))
+            throw throwNotFoundError(`Cannot comment: this ${entityType} no longer exists.`);
+          throw error;
+        }
       }
       const created = await tx.commentV2.create({
         data: {

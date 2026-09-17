@@ -93,7 +93,12 @@ export async function freshFeedbackDb(): Promise<PGlite> {
 export const feedbackKysely = (db: PGlite): Kysely<DB> =>
   new Kysely<DB>({ dialect: pgliteDialect(db) });
 
-export async function seedUser(db: PGlite, username: string): Promise<number> {
+/**
+ * `username` is NULLABLE on the real table, and a fixture that never exercises that is a fixture
+ * whose LEFT JOIN can only ever produce a row — so any ordering or rendering decision about a
+ * missing username goes untested. Pass `null` to get one.
+ */
+export async function seedUser(db: PGlite, username: string | null): Promise<number> {
   const res = await db.query<{ id: number }>(
     'INSERT INTO "User" ("username") VALUES ($1) RETURNING "id"',
     [username]
@@ -110,11 +115,24 @@ export async function seedFeedback(
     context?: unknown;
     status?: string;
     createdAt?: string;
+    /**
+     * The triage columns, for fixtures that need a row ALREADY handled or linked without going
+     * through the service. `handledAt` follows `handledById` so the pair can never disagree — a row
+     * with a handler and no timestamp renders as unhandled (`handledByLabel` gates on `handledAt`),
+     * which is a state the service never writes and a fixture should not invent.
+     *
+     * 🔴 An ISO STRING, like `createdAt` above, never a `Date`. PGlite serialises a `Date`
+     * parameter as UTC and reads a `timestamp WITHOUT time zone` column back as local — see this
+     * file's header — so a `Date` here seeds a value shifted by the local offset.
+     */
+    handledById?: number | null;
+    bugId?: number | null;
   }
 ): Promise<number> {
   const res = await db.query<{ id: number }>(
-    `INSERT INTO "Feedback" ("area", "userId", "message", "context", "status", "createdAt")
-     VALUES ($1, $2, $3, $4::jsonb, $5, $6) RETURNING "id"`,
+    `INSERT INTO "Feedback"
+       ("area", "userId", "message", "context", "status", "createdAt", "handledById", "handledAt", "bugId")
+     VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9) RETURNING "id"`,
     [
       row.area ?? 'apps-marketplace',
       row.userId,
@@ -122,7 +140,20 @@ export async function seedFeedback(
       JSON.stringify(row.context ?? {}),
       row.status ?? 'new',
       row.createdAt ?? '2026-09-01T12:00:00.000Z',
+      row.handledById ?? null,
+      row.handledById == null ? null : '2026-09-02T09:00:00.000Z',
+      row.bugId ?? null,
     ]
+  );
+  return res.rows[0].id;
+}
+
+/** A `Bug` a feedback row can point at. `updatedAt` is NOT NULL with no default — see the service. */
+export async function seedBug(db: PGlite, title: string): Promise<number> {
+  const res = await db.query<{ id: number }>(
+    `INSERT INTO "Bug" ("title", "summary", "status", "updatedAt")
+     VALUES ($1, $1, 'Open', '2026-09-01T12:00:00.000Z') RETURNING "id"`,
+    [title]
   );
   return res.rows[0].id;
 }

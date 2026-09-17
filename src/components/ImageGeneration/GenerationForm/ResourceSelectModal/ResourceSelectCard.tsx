@@ -39,10 +39,10 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { constants } from '~/server/common/constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { fetchGenerationData } from '~/store/generation-graph.store';
-import { aDayAgo, formatDate } from '~/utils/date-helpers';
+import { getModelRecency } from '~/components/Cards/model-card.utils';
+import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -167,12 +167,7 @@ export function ResourceSelectCard({
     });
   };
 
-  const isNew = data.publishedAt && data.publishedAt > aDayAgo;
-  const isUpdated =
-    data.lastVersionAt &&
-    data.publishedAt &&
-    data.lastVersionAt > aDayAgo &&
-    data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
+  const { isNew, isUpdated } = getModelRecency(data);
 
   const originalAspectRatio = image.width && image.height ? image.width / image.height : 1;
   const width = originalAspectRatio > 1 ? IMAGE_CARD_WIDTH * originalAspectRatio : IMAGE_CARD_WIDTH;
@@ -332,28 +327,23 @@ export function ResourceSelectCard({
               {data.name}
             </Text>
             <div className="flex items-center justify-between gap-2">
-              {/* In `checkpoint` role the version is a field under the model row,
-                  not part of the pick — see the header comment on
-                  ResourceSelectRole. */}
-              {role !== 'checkpoint' && (
-                <Select
-                  className="flex-1"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                  }}
-                  readOnly={versions.length <= 1}
-                  value={_selectedIndex?.toString()}
-                  data={versions.map((version, index) => ({
-                    label: version.name,
-                    value: index.toString(),
-                  }))}
-                  onChange={(index) => setSelectedIndex(Number(index ?? 0))}
-                  styles={{
-                    input: { cursor: versions.length <= 1 ? 'auto !important' : undefined },
-                  }}
-                />
-              )}
+              <Select
+                className="flex-1"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                readOnly={versions.length <= 1}
+                value={_selectedIndex?.toString()}
+                data={versions.map((version, index) => ({
+                  label: version.name,
+                  value: index.toString(),
+                }))}
+                onChange={(index) => setSelectedIndex(Number(index ?? 0))}
+                styles={{
+                  input: { cursor: versions.length <= 1 ? 'auto !important' : undefined },
+                }}
+              />
               {compatibility === 'partial' && (
                 <Badge color="yellow" variant="light" size="sm">
                   Partial support
@@ -391,7 +381,6 @@ export function ResourceSelectCard({
                 </Tooltip>
               )}
               <Button
-                className={role === 'checkpoint' ? 'flex-1' : undefined}
                 loading={loading}
                 disabled={incompatible || (batching && atLimit)}
                 variant={isAdded ? 'light' : 'filled'}

@@ -139,6 +139,10 @@ import { getRequestDomainColor, isHostForColor } from '~/server/utils/server-dom
 // lazy import of recordScopeInvocation below.
 import type { ResolveCanGenerateVersion } from '~/server/services/generation/generation.service';
 import {
+  assertBlockWorkflowMintedForViewer,
+  assertBlockWorkflowTaggedForApp,
+} from '~/server/services/blocks/block-workflow-access';
+import {
   appBlockTag,
   buildCustomComfyWorkflowInput,
   buildTextToImageInput,
@@ -178,6 +182,11 @@ import {
   planStepSpend,
   resolveStepVariant,
 } from '~/server/services/blocks/steps';
+// APP-FACING generation type for the spend-attribution row, resolved from the
+// submitted body. Imported (not open-coded at each of the three submit paths) so
+// the `kind` → key and step-id → key mapping has exactly one definition — and so
+// the "registry id, never orchestratorType" decision lives in one place.
+import { resolveBlockGenerationType } from '~/server/services/blocks/generation-type';
 // Moderation dispatch for the same registry. A SEPARATE module because it pulls
 // `auditPromptServer` (Redis + ClickHouse + DB + notifications) and the registry
 // itself is imported by `workflow.schema` for the wire enum, which must stay
@@ -3239,9 +3248,9 @@ export const blocksRouter = router({
 
   /**
    * Lightweight booleans that drive the conditional links in the apps
-   * sub-nav (`AppsSubNav`). One round-trip instead of fanning out to
+   * nav (`useAppsNavSections`). One round-trip instead of fanning out to
    * `listMySubscriptions` + `listMyPublishRequests` + `getMyApps` (the
-   * heavyweight per-page queries) just to decide which tabs to show.
+   * heavyweight per-page queries) just to decide which rail entries to show.
    *
    * Booleans ONLY — no rows, no manifests, no per-app data. Each check is a
    * `findFirst({ select: { id } })` so Prisma pushes `LIMIT 1` into SQL and
@@ -3785,9 +3794,17 @@ export const blocksRouter = router({
    * Read a workflow's current status. Returns a `BlockWorkflowSnapshot` —
    * a flattened, public-safe subset of the orchestrator's Workflow shape.
    *
-   * Ownership: we fetch with the user's orchestrator token (`getOrchestratorToken`),
-   * so the orchestrator returns 404/403 for workflows the user doesn't own.
-   * That's the gate — we don't need a second client-side ownership check.
+   * SCOPE — `workflowId` arrives as request input rather than as a token claim, so it is scoped
+   * explicitly, FAIL-CLOSED, by the two assertions in `block-workflow-access.ts`: the id must name
+   * the CALLING VIEWER as its owner (checked BEFORE any orchestrator call), and the orchestrator's
+   * record must carry the CALLING APP's `app-block:<appId>` provenance tag (checked on the fetched
+   * workflow, before anything is published back to the block).
+   *
+   * 🔴 THAT IS NOT THE SAME PAIR `cancelAppWorkflow` / `publishGenerationOutputs` USE, and reading
+   * it as interchangeable is the trap worth naming. They share the app-tag half; their viewer half
+   * is the `block_workflows` read-model row, which binds per-APP-BLOCK rather than per-user. The
+   * row is deliberately not used here — it is written best-effort and never written at all for
+   * `dev:live` tokens — and the id-prefix check is NOT a drop-in replacement for it there.
    *
    * OPTIONALLY A LONG POLL. With `waitSeconds`, the orchestrator holds the read
    * open until the workflow reaches a terminal status instead of answering with
@@ -3848,6 +3865,8 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
+      // VIEWER SCOPE, before any orchestrator call: the id must name this viewer as its owner.
+      assertBlockWorkflowMintedForViewer({ workflowId: input.workflowId, userId });
       const token = await getOrchestratorToken(userId, ctx);
       const waitSeconds = resolveBlockPollWaitSeconds(input.waitSeconds);
       const workflow = await getWorkflow({
@@ -3857,6 +3876,10 @@ export const blocksRouter = router({
         // to the pre-long-poll one rather than carrying a `?wait=0`.
         ...(waitSeconds !== undefined ? { query: { wait: waitSeconds } } : {}),
       });
+      // APP SCOPE — the orchestrator's own record must agree this is the calling app's workflow.
+      // It runs here, on the fetched record, because the tag lives on the record; it is still
+      // ahead of every line below that publishes anything derived from it back to the block.
+      assertBlockWorkflowTaggedForApp({ tags: workflow.tags, appId: claims.appId });
       // 🔴 THE OUTPUT-MODERATION BOUNDARY. `snapshotFromWorkflow` cannot emit
       // generated text: it publishes `imageUrls` off `extractOutput`, which a
       // text-posture entry may not declare (`TextOutputSurface.extractOutput?:
@@ -3987,15 +4010,24 @@ export const blocksRouter = router({
   /**
    * Cancel a running workflow on the orchestrator (a real server-side stop).
    *
-   * Mirrors pollWorkflow's auth + ownership model exactly: we cancel with the
-   * viewer's orchestrator token (`getOrchestratorToken`), so the orchestrator
-   * 403/404s for workflows the viewer doesn't own — that's the gate, no second
-   * client-side ownership check needed. After the cancel PATCH lands we re-read
-   * the workflow and return its (now-canceled) snapshot so the block can render
-   * the terminal state. Best-effort from the block's side: a workflow that
-   * already reached a terminal status may reject the cancel, which surfaces as
-   * the mutation throwing — the host echoes a failure snapshot and the block
-   * still clears its card.
+   * SCOPE — the same two assertions `pollWorkflow` makes, and FAIL-CLOSED ahead of the side effect.
+   * `workflowId` is request input, so `block-workflow-access.ts` is what binds it: the id must name
+   * the CALLING VIEWER as its owner, and the orchestrator's own record for it must carry the
+   * CALLING APP's `app-block:<appId>` provenance tag. Both hold BEFORE the cancel is issued — which
+   * is why this reads the workflow first (the tag lives on that record) rather than only
+   * afterwards. See `pollWorkflow` for why this is NOT the same pair `cancelAppWorkflow` uses.
+   *
+   * COST + THE FAILURE MODE THAT BUYS, stated because the read-first order is what introduces it.
+   * Cancel is now GET + PATCH + GET. The pre-read is bounded by the module's 20s orchestrator read
+   * backstop, so a parked read refuses the cancel rather than issuing one it could not authorize —
+   * the deliberate trade: a scope check that runs after the stop has not scoped anything. A refused
+   * cancel reaches the block as a failure snapshot and is retryable.
+   *
+   * After the cancel PATCH lands we re-read the workflow and return its (now-canceled) snapshot so
+   * the block can render the terminal state. 🔴 A cancel of an ALREADY-TERMINAL workflow does NOT
+   * throw: `cancelWorkflow` passes no `throwOnError`, so a non-2xx PATCH resolves silently and the
+   * re-read returns the workflow's real terminal status. (An earlier revision of this docblock said
+   * such a cancel "surfaces as the mutation throwing"; it does not, and never did.)
    */
   cancelWorkflow: publicProcedure
     // Block-JWT-authed (no session for dev:live) — flag evaluated against the
@@ -4020,7 +4052,13 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
+      // VIEWER SCOPE, before any orchestrator call: the id must name this viewer as its owner.
+      assertBlockWorkflowMintedForViewer({ workflowId: input.workflowId, userId });
       const token = await getOrchestratorToken(userId, ctx);
+      // APP SCOPE — read the record FIRST so the provenance tag can be asserted while the cancel
+      // is still un-issued. Both scopes hold before anything is stopped.
+      const existing = await getWorkflow({ token, path: { workflowId: input.workflowId } });
+      assertBlockWorkflowTaggedForApp({ tags: existing.tags, appId: claims.appId });
       await cancelWorkflow({ workflowId: input.workflowId, token });
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
       // Same output-moderation boundary as `pollWorkflow`. A CANCEL still
@@ -4247,12 +4285,7 @@ export const blocksRouter = router({
       // carries the per-app tag — defense-in-depth over (a). Done with the
       // viewer's token (which does NOT itself gate ownership per the note above).
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
-      if (!(workflow.tags ?? []).includes(appBlockTag(claims.appId))) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'workflow is not tagged for this app',
-        });
-      }
+      assertBlockWorkflowTaggedForApp({ tags: workflow.tags, appId: claims.appId });
       // Both guards passed — cancel, then re-read + project the terminal state.
       await cancelWorkflow({ workflowId: input.workflowId, token });
       const canceled = await getWorkflow({ token, path: { workflowId: input.workflowId } });
@@ -4342,9 +4375,7 @@ export const blocksRouter = router({
       const token = await getOrchestratorToken(userId, ctx);
       // GUARD (b): re-read + assert the orchestrator's own app-tag (defense in depth).
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
-      if (!(workflow.tags ?? []).includes(appBlockTag(claims.appId))) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'workflow is not tagged for this app' });
-      }
+      assertBlockWorkflowTaggedForApp({ tags: workflow.tags, appId: claims.appId });
 
       // The SAME ordered projection queryAppWorkflows hands the block — so the
       // block's `imageIndexes` line up exactly with what it saw. Only `available`
@@ -4841,12 +4872,30 @@ export const blocksRouter = router({
   /**
    * Cross-user gated image read — the read half of the Model-Benchmarking
    * shared-grid seam. Given the image ids a benchmark grid stored, returns a
-   * per-VIEWER gated projection: `visible` (moderated projection incl. a gated
-   * edge url) for images this viewer may see, `hidden` (NO url) for anything
-   * above their browsing ceiling / unscanned / flagged. The clamp is the block
-   * token's `maxBrowsingLevel` (the platform-computed viewer+domain ceiling),
-   * failed closed to the public floor — a block can NEVER obtain an unclamped url
-   * for an image the viewer isn't allowed to see.
+   * per-VIEWER gated projection with exactly two statuses:
+   *
+   *  - `visible` — the moderated projection incl. a gated edge url. TWO shapes
+   *    now live under this one status. A RATED image carries `nsfwLevel` +
+   *    `contentRating` exactly as before. An image NOTHING HAS RATED YET carries
+   *    NEITHER, plus `ratingPending: true` — and is returned ONLY to the image's
+   *    own author. 🔴 So `nsfwLevel`/`contentRating` are OPTIONAL on a `visible`
+   *    entry: a consumer must not read a missing one as "rated G". That absence
+   *    is the fix — a freshly-published image used to come back `hidden`, and
+   *    the grid rendered its author's own unrated lighthouse as "rated mature".
+   *  - `hidden` — NO url, for everything else: above their browsing ceiling,
+   *    flagged, hard-blocked, scan-refused, AND (for every viewer who is not the
+   *    author) not yet rated. 🔴 The last case is deliberately NOT given a
+   *    status of its own on the wire. Distinguishing "unscanned" from "above
+   *    your ceiling" for someone else's image would let a SFW viewer enumerate
+   *    which cells of a shared grid are mature-or-flagged; the per-row verdict
+   *    does draw that distinction (`classifyGatedImageForViewer`'s `pending`),
+   *    and the service consumes it on the owner path alone.
+   *
+   * The clamp is the block token's `maxBrowsingLevel` (the platform-computed
+   * viewer+domain ceiling), failed closed to the public floor — a block can NEVER
+   * obtain an unclamped url for an image the viewer isn't allowed to see, and the
+   * owner affordance above does not widen it: an author's RATED above-ceiling
+   * image is still `hidden` from them.
    *
    * The read is scoped to bare (post-less) rows THIS app PUBLISHED (the
    * `blockPublishedAppId` provenance marker = the token's own `appId`), so a
@@ -5824,9 +5873,14 @@ export const blocksRouter = router({
       // recordSpendAttribution): a failed queue write must NEVER add latency to,
       // or break, the submit response.
       //
-      // Only on a REAL workflow id, and NOT for dev/live-harness tokens (which
-      // carry a synthetic non-FK appBlockId — the FK would reject them; the
-      // dev/live queue is ephemeral and held in the harness).
+      // Only on a REAL workflow id, and NOT for dev/live-harness tokens — the dev/live queue
+      // is ephemeral and held in the harness.
+      //
+      // 🔴 THE REASON IS THE EXCLUSION ITSELF, NOT THE ID SHAPE. An earlier revision of this
+      // comment said dev tokens "carry a synthetic non-FK appBlockId — the FK would reject
+      // them", and that is false: the approved and dev-tunnel mint paths both sign the app's
+      // REAL `AppBlock.id` with `dev: true`. See `upsertBlockWorkflowOnSubmit`'s docblock.
+      // Nothing downstream may infer from `claims.dev` that a row cannot match.
       if (
         claims.dev !== true &&
         snapshot.workflowId &&
@@ -5971,6 +6025,30 @@ export const blocksRouter = router({
             // SERVER-SIDE from the app's own shared storage (never trusts the
             // client). Omitted → unchanged app-owner-only attribution.
             sharedContentKey: textToImageBody.sharedContentKey ?? null,
+            // APP-FACING generation type for this spend. Resolved from the
+            // captured body (the same alias the sharedContentKey read uses, for
+            // the same narrowing reason). Resolution is total and non-throwing —
+            // an unresolvable body degrades to NULL, never an exception on this
+            // fire-and-forget path.
+            //
+            // 🔴 `generateInput.workflow` IS THE AUTHORITATIVE IMAGE WORKFLOW
+            // CLASS, AND IT IS NOT DERIVABLE FROM THE BODY. A body carrying a
+            // source image maps to `img2img` on an SD-family ecosystem and to
+            // `img2img:edit` on an edit-capable one — the discriminator is the
+            // CHECKPOINT'S ECOSYSTEM, resolved inside `buildTextToImageInput`
+            // (see `resolveBlockImageWorkflowType`). This reads back the value
+            // that builder stamped onto the graph input at the top of this
+            // handler, i.e. the class the generation was actually billed for,
+            // rather than re-deriving it here — a re-derivation could disagree,
+            // and it would also re-run a function that THROWS on an
+            // edit-only/unsupported ecosystem, which is the one thing this
+            // fire-and-forget closure must not do. Typed `unknown` on the way in
+            // (the builder returns `Record<string, unknown>`); the resolver
+            // bounds it and degrades to the bare `textToImage` key if it is
+            // anything else.
+            generationType: resolveBlockGenerationType(textToImageBody, {
+              imageWorkflowType: generateInput.workflow,
+            }),
           });
         })().catch(() => {
           /* best-effort: a failed attribution write never breaks submit */
@@ -8126,6 +8204,16 @@ async function submitCustomComfyWorkflow(opts: {
         modelId: null,
         // customComfy has no sharedContentKey field (recipe+params only) → omit.
         sharedContentKey: null,
+        // APP-FACING generation type — `customComfy:<registered recipe id>` on
+        // the recipe arm, `customComfy:inline` on the inline one. Both arms
+        // carry `kind: 'customComfy'`, so the COARSE key (everything before the
+        // first colon, which is what the per-generation-type author fee looks
+        // up) is identical for either; the arm and the recipe are the SUB-axis,
+        // read off the body by the resolver. No arm branch is needed here —
+        // `mode` and `recipe` are both on the body the wire schema already
+        // parsed. Non-throwing: an unresolvable sub-axis degrades to the bare
+        // `customComfy` key, an unresolvable body to NULL.
+        generationType: resolveBlockGenerationType(body),
       });
     })().catch(() => {
       /* best-effort: a failed attribution write never breaks submit */
@@ -9254,6 +9342,23 @@ async function submitStepWorkflow(opts: {
         modelId: null,
         // A step body is `{ kind, step, params }` `.strict()` — no sharedContentKey.
         sharedContentKey: null,
+        // APP-FACING generation type = the REGISTERED STEP ID (`convert-image`,
+        // `chat-completion`), NEVER the entry's `orchestratorType`
+        // (`convertImage`, `chatCompletion`). Taken off the body's schema-gated
+        // `step` rather than `step.orchestratorType`: the registry key is the
+        // permanent public wire commitment, the orchestrator spelling is not.
+        // `assertStepInvariants` clause (0) pins `step.id === <registry key>`,
+        // so this is the same value `detail.step` on the invocation row carries.
+        //
+        // NOT a per-step branch — nothing here tests WHICH step it is.
+        //
+        // A step id is a COARSE key and carries NO subtype: the value is the
+        // bare `convert-image` / `chat-completion`, with no colon. That is a
+        // depth decision, not an omission — a step's own params (which chat
+        // model, which output format) are a third level and already ride on the
+        // step invocation row's `detail`. `isBlockGenerationType` refuses
+        // `convert-image:<anything>` for exactly that reason.
+        generationType: resolveBlockGenerationType(body),
       });
     })().catch(() => {
       /* best-effort: a failed attribution write never breaks submit */
