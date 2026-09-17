@@ -1317,6 +1317,10 @@ export const getMyDraftModelsHandler = async ({
         updatedAt: true,
         modelVersions: {
           select: {
+            id: true,
+            name: true,
+            status: true,
+            publishedAt: true,
             _count: {
               select: { files: true, posts: { where: { userId, publishedAt: { not: null } } } },
             },
