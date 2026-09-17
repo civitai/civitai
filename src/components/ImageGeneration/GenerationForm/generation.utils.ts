@@ -12,6 +12,7 @@ import type { CivitaiResource, ImageMetaProps } from '~/server/schema/image.sche
 import type { NormalizedWorkflowMetadata } from '~/server/services/orchestrator';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseAIR } from '~/utils/string-helpers';
+import { isRawAirResource } from '~/shared/utils/air';
 import { trpc } from '~/utils/trpc';
 import { isImageMetaOnSite } from '~/server/utils/image-onsite';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
@@ -304,14 +305,18 @@ export function getStepMeta(step?: {
   if (!step) return;
   const metaParams = step.params;
   const metaResources = step.resources;
-  const civitaiResources = metaResources?.map((args): CivitaiResource => {
-    if ('air' in args && typeof args.air === 'string') {
-      const { version, type } = parseAIR(args.air);
-      return { modelVersionId: version, type, weight: args.strength };
-    } else {
-      return { modelVersionId: args.id, type: args.model.type, weight: args.strength };
-    }
-  });
+  // Raw-AIR training epochs have no ModelVersion: their blob key parses to a NaN version id,
+  // which fails civitaiResourceSchema and blocks posting the image.
+  const civitaiResources = metaResources
+    ?.filter((args) => !isRawAirResource(args))
+    .map((args): CivitaiResource => {
+      if ('air' in args && typeof args.air === 'string') {
+        const { version, type } = parseAIR(args.air);
+        return { modelVersionId: version, type, weight: args.strength };
+      } else {
+        return { modelVersionId: args.id, type: args.model.type, weight: args.strength };
+      }
+    });
   // remove 'resources' due to property being set on video gen
   const { resources, ...params } = (metaParams ?? {}) as Record<string, unknown> & {
     resources: any;

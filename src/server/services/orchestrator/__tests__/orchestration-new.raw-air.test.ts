@@ -76,6 +76,7 @@ import {
   generateFromGraph,
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
+import { rawAirResourceId } from '~/shared/utils/air';
 
 const USER_ID = 5;
 const WORKFLOW_ID = `${USER_ID}-1700000000000`;
@@ -102,11 +103,14 @@ function workflowWithEpoch({
 }
 
 function rawAirResource(overrides?: Record<string, unknown>) {
+  // The id must be the FNV hash of the (possibly overridden) AIR, or the pairing check
+  // rejects before the behavior a test means to exercise.
+  const air = (overrides?.air as string) ?? AIR;
   return {
-    id: -42,
+    id: rawAirResourceId(air),
     model: { type: 'LORA' },
     strength: 0.8,
-    air: AIR,
+    air,
     workflowId: WORKFLOW_ID,
     name: 'my epoch',
     ...overrides,
@@ -204,6 +208,20 @@ describe('raw-AIR resource ownership validation', () => {
   it('rejects a workflowId whose owner prefix names another user, without fetching', async () => {
     expect(await submit({ resource: rawAirResource({ workflowId: '999-1700000000000' }) })).toMatch(
       /do not have access/
+    );
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('rejects a workflowId whose owner cannot be read — unreadable is a refusal, not a fall-through', async () => {
+    expect(
+      await submit({ resource: rawAirResource({ workflowId: 'not-a-parseable-id' }) })
+    ).toMatch(/do not have access/);
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('rejects a resource whose id is not the hash of its AIR', async () => {
+    expect(await submit({ resource: rawAirResource({ id: -999 }) })).toMatch(
+      /mismatched resource id/
     );
     expect(mockGetWorkflow).not.toHaveBeenCalled();
   });
@@ -409,14 +427,15 @@ describe('read path: formatGenerationResponse2 keeps raw-AIR resources', () => {
   it('surfaces the stored epoch as a self-contained resource with its name, air and workflowId', async () => {
     const [formatted] = await formatGenerationResponse2([storedWorkflow()]);
 
-    const epoch = formatted.metadata?.resources?.find((r) => r.id === -42);
+    const airId = rawAirResourceId(AIR);
+    const epoch = formatted.metadata?.resources?.find((r) => r.id === airId);
     expect(epoch).toMatchObject({
-      id: -42,
+      id: airId,
       name: 'my epoch',
       air: AIR,
       strength: 0.8,
       baseModel: 'SDXL 1.0',
-      model: { id: -42, name: 'my epoch', type: 'LORA' },
+      model: { id: airId, name: 'my epoch', type: 'LORA' },
     });
     // Remix needs the ownership proof to survive the round-trip.
     expect((epoch as { workflowId?: string } | undefined)?.workflowId).toBe(WORKFLOW_ID);

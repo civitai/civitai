@@ -89,6 +89,7 @@ import {
   isRawAirResource,
   parseRawAirResourceUrn,
   rawAirGenerationResource,
+  rawAirResourceId,
   type RawAirResource,
 } from '~/shared/utils/air';
 import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
@@ -497,6 +498,11 @@ async function validateRawAirResources({
     const label = resource.name ?? resource.air;
     const parsed = parseRawAirResourceUrn(resource.air);
     if (!parsed) throw throwBadRequestError(`Invalid epoch resource: ${label}`);
+    // The id must be THE id for this AIR: two resources claiming one id but different AIRs
+    // would silently overwrite each other in the AIR map after validation.
+    if (resource.id !== rawAirResourceId(resource.air)) {
+      throw throwBadRequestError(`Epoch resource "${label}" has a mismatched resource id.`);
+    }
     // The AIR segment can be a root OR child ecosystem key ('sdxl',
     // 'flux2klein'); compare root-to-root against the request's ecosystem.
     const airEco = getEcosystemByAirSegment(parsed.ecosystem);
@@ -515,11 +521,12 @@ async function validateRawAirResources({
         `Epoch resource "${label}" must reference the training workflow it came from.`
       );
     }
-    // Fast advisory check on the `<userId>-<timestamp>` id shape; an
-    // unparseable prefix falls through (null), so the authoritative guard is
-    // the token-scoped fetch below.
+    // Owner check on the `<userId>-<timestamp>` id shape. An unreadable owner is a rejection,
+    // not a fall-through — every real workflow id parses, and assertBlockWorkflowMintedForViewer
+    // set that rule for request-supplied workflow ids (the orchestrator has resolved a correct
+    // token to the wrong user before). The token-scoped fetch below stays the authoritative guard.
     const claimedOwner = workflowOwnerId(resource.workflowId);
-    if (claimedOwner !== null && claimedOwner !== user.id) {
+    if (claimedOwner === null || claimedOwner !== user.id) {
       throw throwBadRequestError(`You do not have access to epoch resource "${label}".`);
     }
     const list = byWorkflow.get(resource.workflowId) ?? [];

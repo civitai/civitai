@@ -508,14 +508,17 @@ export function QueueItem({
 
 function ResourceRow({ resource }: { resource: GenerationResource }) {
   const { unstableResources } = useGenerationConfig();
+  const features = useFeatureFlags();
   const { model, id, name, epochDetails } = resource;
   const unstable = unstableResources?.includes(id);
   const truncatedModelName =
     model.name.length > 30 ? `${model.name.slice(0, 30).trimEnd()}…` : model.name;
 
   // Raw-AIR training epochs have no model page to link to — render the stored
-  // name as a non-linking pill.
+  // name as a non-linking pill. Quick-add follows the same flags as the seeding
+  // paths; without them the server rejects the quote and the button is a trap.
   if (isRawAirResource(resource)) {
+    const canQuickAdd = features.generationAirResources && features.formGraphGenerator;
     return (
       <Button.Group className="max-w-full">
         <Button
@@ -531,23 +534,25 @@ function ResourceRow({ resource }: { resource: GenerationResource }) {
         >
           {truncatedModelName}
         </Button>
-        <ButtonTooltip {...tooltipProps} label="Generate with this resource">
-          <Button
-            size="compact-sm"
-            variant="default"
-            px={4}
-            onClick={() => {
-              generationGraphStore.setData({
-                params: { ecosystem: getEcosystem(resource.baseModel)?.key },
-                resources: [resource],
-                runType: 'run',
-              });
-              generationGraphPanel.open();
-            }}
-          >
-            <IconPlus size={14} />
-          </Button>
-        </ButtonTooltip>
+        {canQuickAdd && (
+          <ButtonTooltip {...tooltipProps} label="Generate with this resource">
+            <Button
+              size="compact-sm"
+              variant="default"
+              px={4}
+              onClick={() => {
+                generationGraphStore.setData({
+                  params: { ecosystem: getEcosystem(resource.baseModel)?.key },
+                  resources: [resource],
+                  runType: 'run',
+                });
+                generationGraphPanel.open();
+              }}
+            >
+              <IconPlus size={14} />
+            </Button>
+          </ButtonTooltip>
+        )}
       </Button.Group>
     );
   }
