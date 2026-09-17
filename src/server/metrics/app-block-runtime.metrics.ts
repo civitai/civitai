@@ -595,7 +595,10 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // Both are CONSTANTS chosen precisely because those arms have no registry to
   // resolve an enum from — the pass-through `$type` set is open by construction —
   // so the bound holds, but "enum-resolved from the registry" is no longer the
-  // reason it does. Anything that adds a post-paid arm adds one pair here.
+  // reason it does. A new post-paid arm with constant labels adds one pair;
+  // flipping `postPaidSettle` on a REGISTRY step entry instead adds one pair per
+  // (step id × variant), because that persist site passes the resolved variant
+  // and the step id rather than constants.
   const customComfyActualBuzz = getOrCreateHistogram(
     reg,
     'civitai_app_block_customcomfy_actual_buzz',
@@ -1011,10 +1014,10 @@ export type StepPriceCheckOutcome =
  *     `civitai_app_block_customcomfy_wallclock_seconds{engine="passthrough"}`:
  *     one sample per pass-through workflow that reached terminal, because the
  *     record it settles from is persisted only after a workflow exists. A LOWER
- *     BOUND, not a join — it needs a terminal observation, drops a wallclock over
- *     its top bucket, and carries no label tying it to an individual `absent`.
- *     ⚠️ Two drafts of this clause said no series carried it at all, which sent a
- *     triaging operator away from the one that does. `quoted` is its success half and
+ *     BOUND, not a join — it needs a terminal observation, drops a sample above
+ *     `MAX_CUSTOMCOMFY_WALLCLOCK_SECONDS` (600s, well past its 240s top bucket,
+ *     so a slow gen IS still observed), and carries no label tying it to an
+ *     individual `absent`. `quoted` is its success half and
  *     exists so `absent` has a denominator: without a pair, `absent` falls when
  *     submit volume falls, which reads as healthy. Not gated on billing mode
  *     (that arm has none).
