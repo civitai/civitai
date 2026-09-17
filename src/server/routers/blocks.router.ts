@@ -4188,11 +4188,20 @@ export const blocksRouter = router({
       //      `textOutputs`/`textOutputWithheld` to populate, so wrapping would
       //      have nowhere to put a verdict. A block that wants a text step's
       //      output polls `pollWorkflow`, which is wrapped.
-      //   2. `images` IS POSTURE-GATED. `projectAppWorkflow` calls a registered
-      //      entry's `extractOutput` only when `postureProducesMedia(...)`, and a
-      //      text-posture entry cannot declare one at all
-      //      (`TextOutputSurface.extractOutput?: never`, registry clause 8-ii).
-      //      So a text step contributes NOTHING here — not even a url.
+      //   2. `images` IS POSTURE-GATED FOR A REGISTERED STEP. `projectAppWorkflow`
+      //      calls a registered entry's `extractOutput` only when
+      //      `postureProducesMedia(...)`, and a text-posture entry cannot declare
+      //      one at all (`TextOutputSurface.extractOutput?: never`, registry
+      //      clause 8-ii). So a registered text step contributes NOTHING here —
+      //      not even a url.
+      //
+      //      ⚠️ THAT NO LONGER COVERS THE WHOLE ARRAY, and saying so is the point
+      //      of restating it: the PASS-THROUGH arm's branch pushes media into
+      //      `images` with no registry entry and no posture at all. What bounds
+      //      that branch is different and narrower — it fires only for a step
+      //      carrying the server-stamped `BLOCK_STEP_NAME`, and it lifts only
+      //      values with the orchestrator `Blob` shape. Do not read "posture-
+      //      gated" as a property of `images`.
       //
       // 🔴 AND THE COST ARGUMENT, because it is the reason not to "just wrap it
       // for symmetry": this returns up to 50 workflows per call, so wrapping
@@ -4386,9 +4395,16 @@ export const blocksRouter = router({
       // HIGHEST-CONSEQUENCE of the three unwrapped `projectAppWorkflow`
       // consumers (see the enumeration at `pollWorkflow`): the urls below are
       // not merely returned, they are FETCHED and re-uploaded into public
-      // civitai `Image` rows. What makes it safe is the same posture gate the
-      // others rely on — `projectAppWorkflow` calls a registered entry's
-      // `extractOutput` only when `postureProducesMedia(...)`, and a
+      // civitai `Image` rows. ⚠️ THE POSTURE GATE IS NO LONGER THE WHOLE ANSWER
+      // HERE — the PASS-THROUGH arm contributes to `images` with no registry
+      // entry and no posture (see the enumeration at `pollWorkflow`). What holds
+      // for EVERY url on this path, registered or not, is the ingestion belt
+      // below: `persistBlockWorkflowOutputImage` host-allowlists each url
+      // (`isAllowedOutputHost`, re-validated per redirect hop), sniffs magic
+      // bytes, and creates the row at default ingestion so it meets a REAL scan.
+      // For a registered step the posture gate still applies on top —
+      // `projectAppWorkflow` calls a registered entry's `extractOutput` only when
+      // `postureProducesMedia(...)`, and a
       // text-posture entry may not declare one at all
       // (`TextOutputSurface.extractOutput?: never`, registry clause 8-ii) — so a
       // `'textOutput'` step contributes NO url here to be ingested. If that gate
@@ -9469,7 +9485,13 @@ async function estimatePassThroughStepWorkflow(opts: {
   const token = await getOrchestratorToken(userId, ctx).catch(() => null);
   let quotedBuzz: number | null = null;
   if (token) {
-    quotedBuzz = await quotePassThroughBuzz({ claims, body, orchestratorStep, token });
+    quotedBuzz = await quotePassThroughBuzz({
+      claims,
+      body,
+      orchestratorStep,
+      token,
+      phase: 'estimate',
+    });
   } else {
     recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, 'estimate_absent');
   }
@@ -9510,8 +9532,19 @@ async function quotePassThroughBuzz(opts: {
   body: PassThroughStepBody;
   orchestratorStep: ReturnType<typeof buildPassThroughOrchestratorStep>;
   token: string;
+  /**
+   * 🔴 THE PHASE, THREADED, NOT ASSUMED. `estimate_*` is defined by the counter
+   * as "one emit per estimate, BEFORE any spend exists"; `absent` is the
+   * submit-side availability signal. This helper serves both call sites, so a
+   * fixed label would file the one event with money behind it — a submit
+   * reserving at the declared ceiling because no quote was had — into the
+   * no-spend bucket, blended with estimate traffic under one constant `step`
+   * label. That is the exact outage the counter exists to make visible.
+   */
+  phase: 'estimate' | 'submit';
 }): Promise<number | null> {
-  const { claims, body, orchestratorStep, token } = opts;
+  const { claims, body, orchestratorStep, token, phase } = opts;
+  const absent = phase === 'estimate' ? 'estimate_absent' : 'absent';
   try {
     const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
     const quote = await submitWorkflow({
@@ -9527,13 +9560,13 @@ async function quotePassThroughBuzz(opts: {
     });
     const total = quote.cost?.total;
     if (typeof total !== 'number' || !Number.isFinite(total)) {
-      recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, 'estimate_absent');
+      recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, absent);
       return null;
     }
-    recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, 'estimate_quoted');
+    if (phase === 'estimate') recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, 'estimate_quoted');
     return Math.ceil(total);
   } catch {
-    recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, 'estimate_absent');
+    recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, absent);
     return null;
   }
 }
@@ -9569,7 +9602,13 @@ async function submitPassThroughStepWorkflow(opts: {
   // the helper safe on its own terms if it ever gains a caller that does not
   // pre-check — the same belt, for the same reason, as the customComfy sibling.
   if (typeof claims.buzzBudget !== 'number' || claims.buzzBudget <= 0) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'block token missing budget' });
+    // A DISTINCT message on purpose: the outer gate's is byte-identical, so a
+    // test matching the shared text cannot say which one fired — which is how
+    // "this copy is unreachable" became a claim resting on a comment.
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'pass-through step: block token missing budget',
+    });
   }
 
   // 🔴 THE ONE CONTROL, AND IT RUNS BEFORE EVERYTHING THAT COSTS SOMETHING —
@@ -9599,7 +9638,13 @@ async function submitPassThroughStepWorkflow(opts: {
   const tags = buildWorkflowTags(claims, PASS_THROUGH_ENGINE_LABEL, 'step');
 
   const token = await getOrchestratorToken(userId, ctx);
-  const quotedBuzz = await quotePassThroughBuzz({ claims, body, orchestratorStep, token });
+  const quotedBuzz = await quotePassThroughBuzz({
+    claims,
+    body,
+    orchestratorStep,
+    token,
+    phase: 'submit',
+  });
 
   // 🔴 THE RESERVATION IS THE LARGER OF THE TWO, AND THE TIMEOUT IS STILL
   // `maxBuzz`. The declared ceiling is the floor because the job may accrue up

@@ -35,6 +35,7 @@ import { BLOCK_STEP_NAME, projectAppWorkflow, snapshotFromWorkflow } from '../wo
 import { splitPassThroughStepOutput } from '../steps';
 import { getBlockGatedImagesByIds } from '../block-gated-images.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { contentRatingFromNsfwLevel } from '~/shared/constants/browsingLevel.constants';
 
 /**
  * A `$type` the step registry does not know and `workflow.service` does not
@@ -83,36 +84,19 @@ describe('splitPassThroughStepOutput', () => {
     expect(JSON.stringify(rest)).not.toContain(BLOB_URL);
   });
 
-  // 🔴 EVERY PROPERTY NAME THE LIVE CATALOG ACTUALLY CARRIES A BLOB UNDER, not
-  // the two the happy path happens to use. Derived 2026-09-17 by resolving every
-  // `*Output` schema in `WorkflowStepTemplate.discriminator.mapping` and keeping
-  // the properties whose type has the orchestrator `Blob` shape. The first draft
-  // of the splitter enumerated FOUR key names; these are the nineteen, and each
-  // of the missing fifteen would have ridden out as a raw url inside the
-  // forwarded output — the second image channel the module exists to prevent.
-  const MEASURED_BLOB_KEYS = [
-    'additionalVideos',
-    'animatedFbxModel',
-    'animatedModel',
-    'audioBlob',
-    'basicAnimations',
-    'blob',
-    'blobs',
-    'draftCache',
-    'fbxModel',
-    'frames',
-    'image',
-    'images',
-    'model',
-    'riggedFbxModel',
-    'riggedModel',
-    'svg',
-    'tempBlobs',
-    'thumbnail',
-    'video',
-  ] as const;
-
-  it.each(MEASURED_BLOB_KEYS)('lifts media out of the `%s` property', (key) => {
+  // 🔴 THE PREDICATE IS KEY-AGNOSTIC, WHICH IS THE POINT — so two representative
+  // names prove it and nineteen would not prove more. The first draft of this
+  // splitter enumerated four key NAMES; measured 2026-09-17 against every
+  // `*Output` schema in `WorkflowStepTemplate.discriminator.mapping`, the live
+  // catalog carries blobs under NINETEEN: `blob`, `blobs`, `image`, `images`,
+  // `video`, `audioBlob`, `svg`, `frames`, `tempBlobs`, `draftCache`,
+  // `additionalVideos`, `model`, `fbxModel`, `thumbnail`, `riggedModel`,
+  // `riggedFbxModel`, `animatedModel`, `animatedFbxModel`, `basicAnimations`.
+  // The other fifteen would each have ridden out as a raw url inside the
+  // forwarded output. That measurement is why the key list is gone; it is
+  // recorded here rather than re-encoded as 38 test bodies that all exercise one
+  // branch and pin nothing.
+  it.each(['audioBlob', 'frames'])('lifts media out of the `%s` property', (key) => {
     const { media, rest } = splitPassThroughStepOutput({
       [key]: { url: BLOB_URL, available: true },
       keep: 1,
@@ -121,13 +105,42 @@ describe('splitPassThroughStepOutput', () => {
     expect(rest).toEqual({ keep: 1 });
   });
 
-  it.each(MEASURED_BLOB_KEYS)('strips `%s` even when it produced nothing', (key) => {
+  it.each(['audioBlob', 'frames'])('strips `%s` even when it produced nothing', (key) => {
     const { media, rest } = splitPassThroughStepOutput({
       [key]: { url: BLOB_URL, available: false },
       keep: 1,
     });
     expect(media).toEqual([]);
     expect(JSON.stringify(rest)).not.toContain(BLOB_URL);
+  });
+
+  // 🔴 A MIXED LIST — the shape that made the first `every` spelling LEAK. One
+  // element without a `url` key (a blocked or not-yet-available blob: the
+  // orchestrator's `Blob.url` is optional) disqualified the whole array, left the
+  // key unstripped, and forwarded every sibling's raw url through `rest`.
+  it('lifts a list that is only PARTLY blob-shaped, and strips it', () => {
+    const { media, rest } = splitPassThroughStepOutput({
+      frames: [{ url: BLOB_URL, available: true }, { note: 'not a blob' }],
+      keep: 1,
+    });
+    expect(media).toEqual([{ url: BLOB_URL, width: null, height: null, nsfwLevel: null }]);
+    expect(rest).toEqual({ keep: 1 });
+    expect(JSON.stringify(rest)).not.toContain(BLOB_URL);
+  });
+
+  it('lifts a TOP-LEVEL blob LIST, forwarding nothing', () => {
+    const { media, rest } = splitPassThroughStepOutput([
+      { url: BLOB_URL, available: true },
+      { available: false },
+    ]);
+    expect(media).toHaveLength(1);
+    expect(rest).toEqual([]);
+  });
+
+  it('forwards a plain array that carries no blobs', () => {
+    const { media, rest } = splitPassThroughStepOutput([{ note: 'x' }, 1, 'two']);
+    expect(media).toEqual([]);
+    expect(rest).toEqual([{ note: 'x' }, 1, 'two']);
   });
 
   // 🔴 SOME STEP TYPES *ARE* A BLOB — `transcode`'s whole output is one. Without
@@ -165,6 +178,17 @@ describe('splitPassThroughStepOutput', () => {
     const { media, rest } = splitPassThroughStepOutput({ source });
     expect(media).toEqual([]);
     expect(rest).toEqual({ source });
+  });
+
+  // 🔴 THE SAME CONTROL AT THE TOP-LEVEL CALL SITE, which is a SECOND use of the
+  // predicate and needs its own. Weakening it there replaces the ENTIRE output of
+  // any reply carrying a top-level `url` — a permalink, a callback ref — with
+  // `{}` on the arm whose contract is "forward verbatim".
+  it('does NOT treat a top-level object with a url but no `available` as media', () => {
+    const output = { url: 'https://docs.example/ref', text: 'an answer' };
+    const { media, rest } = splitPassThroughStepOutput(output);
+    expect(media).toEqual([]);
+    expect(rest).toEqual(output);
   });
 
   // 🔴 THE DEPTH LIMIT, PINNED RATHER THAN IMPLIED. A blob nested inside another
@@ -346,13 +370,14 @@ describe('projectAppWorkflow — pass-through step', () => {
 // its first assertion, before it ever reaches the gated read.
 //
 // What is still NOT covered, stated rather than implied: the middle link —
-// `resolveOwnedWorkflowOutputs` → `publishGenerationOutputs` → the `Image` row —
-// is mocked away here, so "an `Image` row with this url gets written" is an
-// assumption, not a measurement. It also has its own host allowlist
-// (`isAllowedOutputHost`), which a pass-through `$type` returning blobs from an
-// unlisted host would fail — fail-safe, and untested for this arm.
+// `resolveOwnedWorkflowOutputs` → `publishGenerationOutputs` →
+// `persistBlockWorkflowOutputImage` → the `Image` row — is mocked away, so
+// "a row gets written" is an assumption, not a measurement. That path also has
+// its own host allowlist (`isAllowedOutputHost`), which a pass-through `$type`
+// returning blobs from an unlisted host would fail — fail-safe, and untested for
+// this arm. Nothing here performs a publish; the describe name says so.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('a published pass-through output is read back as BlockGatedImage', () => {
+describe('the gated read over an Image row a pass-through publish would produce', () => {
   const APP = 'app_test';
   const VIEWER = 42;
   const AUTHOR = 7;
@@ -360,41 +385,55 @@ describe('a published pass-through output is read back as BlockGatedImage', () =
   const PUBLISHED_ID = 9001;
 
   /**
-   * The url a pass-through blob reaches the publish path as — taken from the
-   * projection, not written down. This is the link the block exists to test.
+   * The projected output a publish of a pass-through step would draw from.
+   *
+   * 🔴 DERIVED, NOT WRITTEN DOWN — that is what makes this block fail when the
+   * pass-through branch in `projectAppWorkflow` is deleted, rather than passing
+   * over a hand-built row as an earlier version did.
    */
-  function publishableUrl(): string {
+  function projectedOutput() {
     const projected = projectAppWorkflow(
       workflowWithPassThroughStep({
-        blobs: [{ url: BLOB_URL, available: true, width: 512, height: 512 }],
+        blobs: [{ url: BLOB_URL, available: true, width: 512, height: 384 }],
       }) as never
     );
     expect(
       projected.images,
       'a pass-through blob must be publishable at all — see projectAppWorkflow'
     ).toHaveLength(1);
-    return projected.images[0].url;
+    return projected.images[0];
   }
 
-  /** The `Image` row a publish of that projected output produces. */
-  const publishedRow = (over: Record<string, unknown> = {}) => ({
-    id: PUBLISHED_ID,
-    userId: AUTHOR,
-    // The storage key the publish derives from the projected url. Derived here
-    // too, so a projection that stops surfacing the blob cannot be papered over.
-    url: publishableUrl().replace(/^https?:\/\//, ''),
-    nsfwLevel: NsfwLevel.PG,
-    ingestion: ImageIngestionStatus.Scanned,
-    width: 512,
-    height: 512,
-    needsReview: null,
-    poi: false,
-    minor: false,
-    tosViolation: false,
-    acceptableMinor: false,
-    blockedFor: null,
-    ...over,
-  });
+  /**
+   * The `Image` row a publish of that projected output produces.
+   *
+   * ⚠️ `url` is an OPAQUE KEY, not derived from the projected url, and a draft of
+   * this fixture got that backwards. `persistBlockWorkflowOutputImage` FETCHES
+   * the projected url and stores the bytes under a fresh uuid
+   * (`uploadImageBufferToStore`), so the projected url is the fetch SOURCE and
+   * never the row's `url`. `width`/`height` ARE carried across, so those are what
+   * this derives — and they are deliberately UNEQUAL, so a `width`/`height` swap
+   * in the gated read cannot pass.
+   */
+  const publishedRow = (over: Record<string, unknown> = {}) => {
+    const projected = projectedOutput();
+    return {
+      id: PUBLISHED_ID,
+      userId: AUTHOR,
+      url: 'a4f1c0de-0000-4000-8000-000000000001.png',
+      nsfwLevel: NsfwLevel.PG,
+      ingestion: ImageIngestionStatus.Scanned,
+      width: projected.width,
+      height: projected.height,
+      needsReview: null,
+      poi: false,
+      minor: false,
+      tosViolation: false,
+      acceptableMinor: false,
+      blockedFor: null,
+      ...over,
+    };
+  };
 
   beforeEach(() => {
     dbMock.dbRead.$queryRaw.mockReset();
@@ -415,12 +454,15 @@ describe('a published pass-through output is read back as BlockGatedImage', () =
         imageId: PUBLISHED_ID,
         status: 'visible',
         nsfwLevel: NsfwLevel.PG,
-        contentRating: expect.anything(),
+        // The literal, not `expect.anything()` — a hardcoded rating on the
+        // per-viewer moderation surface would otherwise pass.
+        contentRating: contentRatingFromNsfwLevel(NsfwLevel.PG),
         // The gated EDGE url (1200 = the service's own GATED_IMAGE_EDGE_WIDTH,
         // module-private), never the raw storage key.
         url: `edge:${row.url}@1200`,
+        // Carried from the projection, and UNEQUAL, so a swap cannot pass.
         width: 512,
-        height: 512,
+        height: 384,
       },
     ]);
   });

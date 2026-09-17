@@ -112,9 +112,31 @@ function isOrchestratorBlobLike(value: unknown): boolean {
   );
 }
 
-/** True for a non-empty array whose every element has the blob shape. */
-function isOrchestratorBlobList(value: unknown): boolean {
-  return Array.isArray(value) && value.length > 0 && value.every(isOrchestratorBlobLike);
+/**
+ * The media a value carries, or `null` when it is not media at all.
+ *
+ * 🔴 AN ARRAY QUALIFIES IF **ANY** ELEMENT IS BLOB-SHAPED, NOT IF EVERY ONE IS.
+ * The `every` spelling was measured to leak: `@civitai/client`'s `Blob` declares
+ * `url?: null | string`, so a blocked or not-yet-available sibling can lack the
+ * key entirely — and under `every` ONE such element disqualified the whole array,
+ * left the key unstripped, and forwarded every OTHER element's raw url out
+ * through `rest`. That is the second image channel this module exists to
+ * prevent, arriving through the very door the "unconditional strip" rule claims
+ * is shut.
+ *
+ * Non-conforming elements of a qualifying array are DROPPED rather than
+ * forwarded. They are siblings of blobs in a blob-typed field; dropping is the
+ * fail-safe direction and keeps `rest` free of anything the media path did not
+ * account for.
+ */
+function liftOrchestratorBlobs(value: unknown): StepOutputMedia[] | null {
+  if (isOrchestratorBlobLike(value)) {
+    return mediaFromBlobs(value as OrchestratorBlobLike);
+  }
+  if (Array.isArray(value) && value.some(isOrchestratorBlobLike)) {
+    return mediaFromBlobs(value.filter(isOrchestratorBlobLike) as OrchestratorBlobLike[]);
+  }
+  return null;
 }
 
 /**
@@ -130,8 +152,8 @@ function isOrchestratorBlobList(value: unknown): boolean {
  *
  * 🔴 SOME STEP TYPES *ARE* A BLOB. `transcode` returns the blob itself as its
  * whole output (`TranscodeOutput` = `{ id, available, url, … }`), so the
- * top-level case is checked before the per-key walk. Without it that type's url
- * is the entire forwarded object.
+ * top-level case runs before the per-key walk AND before the array
+ * short-circuit. Without it that type's url is the entire forwarded object.
  *
  * 🔴 DEPTH 1, AND THAT IS THE REAL LIMIT. A blob NESTED inside another object —
  * `training.epochs[]`, or a provider reply that embeds media inside a message —
@@ -144,17 +166,22 @@ export function splitPassThroughStepOutput(output: unknown): {
   media: StepOutputMedia[];
   rest: unknown;
 } {
-  if (output == null || typeof output !== 'object' || Array.isArray(output)) {
+  if (output == null || typeof output !== 'object') {
     return { media: [], rest: output };
   }
-  if (isOrchestratorBlobLike(output)) {
-    return { media: mediaFromBlobs(output as OrchestratorBlobLike), rest: {} };
-  }
+  // The WHOLE output is media — `transcode` returns the blob itself, and a
+  // list-shaped equivalent has the same property. Checked before the per-key
+  // walk, and before the array short-circuit, or the url IS the forwarded value.
+  const whole = liftOrchestratorBlobs(output);
+  if (whole) return { media: whole, rest: Array.isArray(output) ? [] : {} };
+  if (Array.isArray(output)) return { media: [], rest: output };
+
   const media: StepOutputMedia[] = [];
   const rest: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(output as Record<string, unknown>)) {
-    if (isOrchestratorBlobLike(value) || isOrchestratorBlobList(value)) {
-      media.push(...mediaFromBlobs(value as Parameters<typeof mediaFromBlobs>[0]));
+    const lifted = liftOrchestratorBlobs(value);
+    if (lifted) {
+      media.push(...lifted);
       continue;
     }
     rest[key] = value;

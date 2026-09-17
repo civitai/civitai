@@ -585,8 +585,10 @@ const blockPassThroughStepShape = {
   $type: z.string().min(1).max(PASS_THROUGH_TYPE_MAX_CHARS),
   // 🔴 ORCHESTRATOR-NATIVE AND FORWARDED UNMODIFIED. The server does not read,
   // rewrite, merge or default any field in here — that is the whole point of the
-  // arm, and `blocks.router` asserts the submitted step's `input` is this same
-  // object.
+  // arm, and the submitted step's `input` is BYTE-IDENTICAL to this value.
+  // (Not the SAME object: `z.record` rebuilds the top level, so the caller's own
+  // object never reaches the orchestrator whatever the router does. An earlier
+  // draft claimed identity here and in `blocks.router`; measured false.)
   input: z.record(z.string(), z.unknown()),
   maxBuzz: z.number().int().min(1).max(PASS_THROUGH_MAX_BUZZ),
 };

@@ -563,6 +563,7 @@ import {
   PlatformInternalStepTypeError,
 } from '~/server/services/blocks/steps/orchestrator-denylist';
 import { REGISTERED_STEP_IDS } from '~/server/services/blocks/steps';
+import { BLOCK_STEP_NAME } from '~/server/services/blocks/workflow.service';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockRedis = redisMock.redis;
@@ -9609,6 +9610,7 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
   const PT_TYPE = 'imageBackgroundRemoval';
   /** An arbitrary string: the arm accepts any `$type`, not only a known one. */
   const PT_UNKNOWN_TYPE = 'notAStepTypeAtAll';
+  const PT_BLOB_URL = 'https://blobs.example/pt-router.webp';
   /** Two members of `PLATFORM_INTERNAL_STEP_TYPES`, named by the acceptance criteria. */
   const DENIED_TYPES = ['xGuardModeration', 'modelPickleScan'] as const;
   const MAX_BUZZ = 20;
@@ -9654,7 +9656,18 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       return {
         id: 'wf_pt_1',
         status: 'processing',
-        steps: [{ $type: PT_TYPE, output: {} }],
+        // 🔴 THE REPLY ECHOES `name`, BECAUSE THE REAL ORCHESTRATOR DOES —
+        // `WorkflowStep.name` is a required response field. A fake that omitted
+        // it made the router's own `snapshotFromWorkflow(submitted)` drop the
+        // step on every test in this describe once the name gate landed, so the
+        // extraction was inert here and nothing noticed.
+        steps: [
+          {
+            $type: PT_TYPE,
+            name: BLOCK_STEP_NAME,
+            output: { blobs: [{ url: PT_BLOB_URL, available: true }], note: 'kept' },
+          },
+        ],
         cost: { total: realizedCost },
       };
     });
@@ -9676,6 +9689,15 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       // The CONTROL: this id is genuinely outside the registry, so the registry
       // arm could not have served it.
       expect(REGISTERED_STEP_IDS).not.toContain(PT_TYPE);
+
+      // 🔴 THE STAMP↔READ SEAM, JOINED THROUGH ONE REAL PATH. The submit stamps
+      // `name`; the orchestrator echoes it; both extractors gate on it. Stamping
+      // any other name silently makes EVERY pass-through output disappear on a
+      // submit the user was charged for, and nothing else in either suite can
+      // see that.
+      expect(ptRealSubmits()[0][0].body.steps[0].name).toBe(BLOCK_STEP_NAME);
+      expect(result.snapshot.imageUrls).toEqual([PT_BLOB_URL]);
+      expect(result.snapshot.stepOutputs).toEqual([{ $type: PT_TYPE, output: { note: 'kept' } }]);
     });
 
     it('submits an ARBITRARY string $type — the arm is not a second allowlist', async () => {
@@ -9717,7 +9739,6 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect(ptWhatIfs()).toHaveLength(1);
       // An estimate binds nothing: no reservation on any of the four counters.
       expect(mockReserveAppSpend).not.toHaveBeenCalled();
-      expect(mockReserveDevSessionBuzz).not.toHaveBeenCalled();
       expect(
         mockSysRedis.incrBy.mock.calls.filter((c) => String(c[0]).startsWith('system:blocks:'))
       ).toHaveLength(0);
@@ -9841,21 +9862,28 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       happyUser();
       ptQuoting(5, 5);
       const input = ptInput();
+      // 🔴 CLONED BEFORE THE CALL. zod shares NESTED references, so a builder
+      // that mutated `body.input.nested.flag` would move this variable too and
+      // the comparison would still pass.
+      const expected = structuredClone(input);
 
       await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ input }) });
 
       const submittedInput = ptRealSubmits()[0][0].body.steps[0].input;
       // Byte-equality over a non-trivial nested object: a coerced number, a
       // dropped null, a re-ordered key or an added server field all move this.
-      expect(JSON.stringify(submittedInput)).toBe(JSON.stringify(input));
-      // And the QUOTE priced the same bytes, so the two can never describe
-      // different work.
-      expect(JSON.stringify(ptWhatIfs()[0][0].body.steps[0].input)).toBe(JSON.stringify(input));
-      // 🔴 ONE STEP OBJECT, SHARED. This is what makes "the quote priced the same
-      // work" a property of the code rather than of two call sites agreeing —
-      // building the step separately for the quote and the submit kills it.
-      // ⚠️ It does NOT catch a `{ ...body.input }` spread: that mutant is
-      // observationally identical and survives the whole suite. Measured.
+      expect(JSON.stringify(submittedInput)).toBe(JSON.stringify(expected));
+      // 🔴 THE QUOTE PRICED THE SAME WORK — the whole step, not just the input,
+      // so `$type`, `name` and `timeout` are covered too. This is the property;
+      // it survives a refactor that builds the step twice identically.
+      expect(JSON.stringify(ptWhatIfs()[0][0].body.steps[0])).toBe(
+        JSON.stringify(ptRealSubmits()[0][0].body.steps[0])
+      );
+      // And the structural pin beside it: ONE object, so the two cannot drift at
+      // all. Labelled as what it is — an allocation pin, not a safety property.
+      // ⚠️ Neither catches a `{ ...body.input }` spread: `z.record` has already
+      // rebuilt the top level, so that mutant is a second copy of what zod did
+      // and is observationally identical. Measured; it survives the suite.
       expect(ptWhatIfs()[0][0].body.steps[0]).toBe(ptRealSubmits()[0][0].body.steps[0]);
     });
 
@@ -9978,60 +10006,107 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       );
     });
 
-    // 🔴 AN OVER-RUN CANNOT REDUCE WHAT THE CAPS COUNTED — A SEAM TEST, NOT A
-    // COMPONENT ONE. `custom-comfy-settle.service.test.ts` already proves the
-    // `max(0, ceiling - actual)` clamp in isolation, and the router test above
-    // already proves what this arm RESERVES. Neither says the two are joined:
-    // the settle record this handler writes is the only thing that carries the
-    // reservation across to the clamp, so the record it ACTUALLY wrote is fed to
-    // the REAL settle function here rather than a hand-built one.
-    it('an over-run refunds NOTHING — the reservation the router wrote is what binds', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ptClaims());
-      happyUser();
-      ptQuoting(31, 31);
-      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+    // 🔴 THE SETTLE SEAM, JOINED ON THE REDIS KEY — not two samples of one side.
+    //
+    // `custom-comfy-settle.service.test.ts` proves the `max(0, ceiling - actual)`
+    // clamp in isolation and the tests above prove what this arm RESERVES.
+    // Neither says the two are joined, and a first version of this block did not
+    // either: it fed a hand-read mock argument to the real settle over a
+    // `get` that answered for ANY key, so `persistCustomComfySettle({ workflowId:
+    // <wrong id> })` or a changed key prefix survived.
+    //
+    // Both halves run for real against ONE key-addressed store, so the write key
+    // and the read key must agree, the record round-trips through JSON, and `del`
+    // returns a truthful value — which is also the only way the double-refund
+    // guard (`if (removed !== 1) return`) is reachable at all.
+    describe('settle-to-actual, through the real persist AND the real settle', () => {
+      function withRedisStore() {
+        const store = new Map<string, string>();
+        mockSysRedis.set.mockImplementation(async (k: unknown, v: unknown) => {
+          store.set(String(k), String(v));
+          return 'OK';
+        });
+        mockSysRedis.get.mockImplementation(async (k: unknown) => store.get(String(k)) ?? null);
+        mockSysRedis.del.mockImplementation(async (k: unknown) =>
+          store.delete(String(k)) ? 1 : 0
+        );
+        return store;
+      }
 
-      const record = mockPersistCustomComfySettle.mock.calls[0][0] as {
-        ceiling: number;
-        buzzCapKey: string;
-        appSpendKey: string | null;
-      };
-      expect(record.ceiling).toBe(31);
+      async function realSettleModule() {
+        return vi.importActual<typeof CustomComfySettleModule>(
+          '~/server/services/blocks/custom-comfy-settle.service'
+        );
+      }
 
-      const { settleCustomComfySpend: realSettle } = await vi.importActual<
-        typeof CustomComfySettleModule
-      >('~/server/services/blocks/custom-comfy-settle.service');
-      mockSysRedis.get.mockResolvedValue(JSON.stringify(record));
-      mockSysRedis.del.mockResolvedValue(1);
-      mockSysRedis.decrBy.mockClear();
-      mockRefundAppSpend.mockClear();
+      /** Submit for real, then replay the persisted record through the real persist. */
+      async function submitAndPersist(quoted: number, realized: number) {
+        mockVerifyBlockToken.mockResolvedValue(ptClaims());
+        happyUser();
+        ptQuoting(quoted, realized);
+        const store = withRedisStore();
+        await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+        const record = mockPersistCustomComfySettle.mock.calls[0][0] as Parameters<
+          typeof CustomComfySettleModule.persistCustomComfySettle
+        >[0];
+        const { persistCustomComfySettle: realPersist } = await realSettleModule();
+        await realPersist(record);
+        expect(store.size, 'the real persist must have written a record').toBe(1);
+        return { record, store };
+      }
 
-      await realSettle({ workflowId: 'wf_pt_1', actualCost: 55 });
+      it('an over-run refunds NOTHING — the counters stay at what the router reserved', async () => {
+        const { record } = await submitAndPersist(31, 31);
+        expect(record.ceiling).toBe(31);
+        // 🔴 JOINED ON THE KEY: the record names the SAME cap key the submit
+        // INCR'd. A record carrying a stale or wrong key would refund the wrong
+        // counter and this is the only assertion that can see it.
+        const reservedKey = mockSysRedis.incrBy.mock.calls
+          .map((c) => String(c[0]))
+          .find((k) => k.startsWith('system:blocks:buzz-cap:'));
+        expect(record.buzzCapKey).toBe(reservedKey);
 
-      expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
-      expect(mockRefundAppSpend).not.toHaveBeenCalled();
-    });
+        mockSysRedis.decrBy.mockClear();
+        mockRefundAppSpend.mockClear();
+        const { settleCustomComfySpend: realSettle } = await realSettleModule();
+        await realSettle({ workflowId: 'wf_pt_1', actualCost: 55 });
 
-    // 🔴 THE POSITIVE CONTROL FOR THE TEST ABOVE. "No refund calls" is
-    // indistinguishable from a settle wired to nothing — the same record, a
-    // CHEAPER run, must move the counters.
-    it('a cheaper run DOES refund the difference on the same record', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ptClaims());
-      happyUser();
-      ptQuoting(31, 31);
-      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
-      const record = mockPersistCustomComfySettle.mock.calls[0][0] as { buzzCapKey: string };
+        expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
+        expect(mockRefundAppSpend).not.toHaveBeenCalled();
+      });
 
-      const { settleCustomComfySpend: realSettle } = await vi.importActual<
-        typeof CustomComfySettleModule
-      >('~/server/services/blocks/custom-comfy-settle.service');
-      mockSysRedis.get.mockResolvedValue(JSON.stringify(record));
-      mockSysRedis.del.mockResolvedValue(1);
-      mockSysRedis.decrBy.mockClear();
+      it('a cheaper run refunds the difference on the key the submit reserved', async () => {
+        const { record } = await submitAndPersist(31, 31);
+        mockSysRedis.decrBy.mockClear();
+        const { settleCustomComfySpend: realSettle } = await realSettleModule();
+        await realSettle({ workflowId: 'wf_pt_1', actualCost: 6 });
+        expect(mockSysRedis.decrBy).toHaveBeenCalledWith(record.buzzCapKey, 25);
+      });
 
-      await realSettle({ workflowId: 'wf_pt_1', actualCost: 6 });
+      // A second terminal observation refunds nothing because the record is
+      // CONSUMED — `del` removes it, so the second `get` misses.
+      //
+      // ⚠️ THIS IS NOT THE DOUBLE-REFUND GUARD (`if (removed !== 1) return`).
+      // That guard only fires on a CONCURRENT pair where both reads see the
+      // record and only one `del` wins, which a sequential key-addressed store
+      // cannot produce — measured: deleting the guard leaves this green. The
+      // guard has its own test in `custom-comfy-settle.service.test.ts`.
+      it('a SECOND terminal observation refunds nothing (the record is consumed)', async () => {
+        await submitAndPersist(31, 31);
+        const { settleCustomComfySpend: realSettle } = await realSettleModule();
+        await realSettle({ workflowId: 'wf_pt_1', actualCost: 6 });
+        mockSysRedis.decrBy.mockClear();
+        await realSettle({ workflowId: 'wf_pt_1', actualCost: 6 });
+        expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
+      });
 
-      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(record.buzzCapKey, 25);
+      // The write key and the read key are the same derivation — a settle that
+      // looked under a different id would find nothing and refund nothing, which
+      // is indistinguishable from "already settled" without this.
+      it('the record is stored under the SUBMITTED workflow id', async () => {
+        const { store } = await submitAndPersist(31, 31);
+        expect([...store.keys()][0]).toContain('wf_pt_1');
+      });
     });
   });
 
@@ -10047,8 +10122,12 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       mockVerifyBlockToken.mockResolvedValue(ptClaims({ buzzBudget: undefined }));
       happyUser();
       ptQuoting(5, 5);
+      // 🔴 THE EXACT OUTER MESSAGE. The handler's own copy throws
+      // `'pass-through step: block token missing budget'`, so this string proves
+      // WHICH gate fired rather than leaving it to a comment — and proves the
+      // in-handler copy was never reached.
       await expect(caller().submitWorkflow({ blockToken: 'tok', body: ptBody() })).rejects.toThrow(
-        /missing budget/
+        /^block token missing budget$/
       );
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
       expect(mockReserveAppSpend).not.toHaveBeenCalled();
@@ -10063,13 +10142,65 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       happyUser();
       ptQuoting(5, 5);
       mockReserveAppSpend.mockResolvedValue({ allowed: false, reason: 'velocity' });
-      const result = await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      const result = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ptBody(),
+        // The claim must be RELEASED on this exit — no money moved, so a genuine
+        // retry has to be able to run. Unreachable without a key.
+        idempotencyKey: 'pt-denial',
+      });
       expect(result.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
       expect(result.snapshot.error).toMatch(/rate limit/);
       expect(ptRealSubmits()).toHaveLength(0);
       expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
         expect.stringMatching(/^system:blocks:buzz-cap:42:/),
         MAX_BUZZ
+      );
+      expect(mockReleaseGen).toHaveBeenCalled();
+    });
+
+    // 🔴 THE DEV-SESSION LEG, WHICH NOTHING IN THIS DESCRIBE DROVE. The
+    // `not.toHaveBeenCalled()` assertion it replaces could not fail — the tunnel
+    // lookup defaults to null — so the whole fourth reservation could be deleted
+    // from this handler and stay green.
+    it('reserves on the DEV-SESSION cap, and refunds every leg when it denies', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      mockGetActiveDevTunnel.mockResolvedValue({
+        sessionId: 'dts_pt',
+        spendCapBuzz: 100,
+      } as never);
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: false, total: 95 });
+
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+
+      expect(mockReserveDevSessionBuzz).toHaveBeenCalledWith('dts_pt', MAX_BUZZ, 100);
+      expect(result.snapshot.error).toMatch(/dev tunnel session Buzz cap reached/);
+      expect(ptRealSubmits()).toHaveLength(0);
+      expect(mockRefundAppSpend).toHaveBeenCalledWith(
+        'system:blocks:app-spend-cap:apb_test:day',
+        MAX_BUZZ
+      );
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        MAX_BUZZ
+      );
+    });
+
+    it('reserves on the DEV-SESSION cap on a SUCCESSFUL submit too', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      mockGetActiveDevTunnel.mockResolvedValue({
+        sessionId: 'dts_pt',
+        spendCapBuzz: 100,
+      } as never);
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      expect(result.snapshot.workflowId).toBe('wf_pt_1');
+      expect(mockReserveDevSessionBuzz).toHaveBeenCalledWith('dts_pt', MAX_BUZZ, 100);
+      expect(mockPersistCustomComfySettle).toHaveBeenCalledWith(
+        expect.objectContaining({ devSessionId: 'dts_pt' })
       );
     });
 
@@ -10099,11 +10230,36 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       happyUser();
       ptQuoting(5, 5);
       await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
-      expect(mockRecordStepPriceCheck).toHaveBeenCalledWith('__passthrough__', 'estimate_quoted');
+      // 🔴 ONE EMIT, NOT "at least one". Emitting both outcomes on a single
+      // quote is the failure that makes the ratio unreadable, and the ratio is
+      // the counter's whole purpose.
+      expect(mockRecordStepPriceCheck).not.toHaveBeenCalled();
 
       mockRecordStepPriceCheck.mockClear();
       ptQuoting(null, 4);
       await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      // 🔴 `absent`, NOT `estimate_absent`. This is the SUBMIT phase — the one
+      // event with money behind it — and the counter defines `estimate_*` as
+      // "before any spend exists". Filing it there blends it with estimate
+      // traffic and hides the outage.
+      expect(mockRecordStepPriceCheck).toHaveBeenCalledTimes(1);
+      expect(mockRecordStepPriceCheck).toHaveBeenCalledWith('__passthrough__', 'absent');
+    });
+
+    it('the ESTIMATE phase emits the estimate-phase labels', async () => {
+      mockRecordStepPriceCheck.mockClear();
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      await caller().estimateWorkflow({ blockToken: 'tok', body: ptBody() });
+      expect(mockRecordStepPriceCheck).toHaveBeenCalledTimes(1);
+      expect(mockRecordStepPriceCheck).toHaveBeenCalledWith('__passthrough__', 'estimate_quoted');
+
+      // The token-mint failure branch — the one that fires during exactly the
+      // outage the counter exists to detect.
+      mockRecordStepPriceCheck.mockClear();
+      mockGetOrchestratorToken.mockRejectedValue(new Error('no token'));
+      await caller().estimateWorkflow({ blockToken: 'tok', body: ptBody() });
       expect(mockRecordStepPriceCheck).toHaveBeenCalledWith('__passthrough__', 'estimate_absent');
     });
 
