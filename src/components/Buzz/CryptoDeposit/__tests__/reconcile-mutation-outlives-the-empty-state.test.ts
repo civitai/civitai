@@ -60,9 +60,7 @@ describe('reconcile mutation ownership', () => {
     expect(SOURCE).not.toMatch(
       new RegExp(String.raw`export\s+(function\s+)?useReconcileDeposits\b`)
     );
-    expect(SOURCE).not.toMatch(
-      new RegExp(String.raw`export\s*\{[^}]*useReconcileDeposits`)
-    );
+    expect(SOURCE).not.toMatch(new RegExp(String.raw`export\s*\{[^}]*useReconcileDeposits`));
   });
 
   // The stamp has to be taken at click time. Moved into the hook body it would be
