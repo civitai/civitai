@@ -42,8 +42,11 @@ const GATED_IMAGE_EDGE_WIDTH = 1200;
  * data (incl. a gated edge url); `hidden` carries ONLY the id + status — the
  * block can NEVER obtain the url for it.
  * Mirrors `@civitai/app-sdk/blocks`' `BlockGatedImage` — keep in lockstep. That
- * lockstep is ENFORCED, not merely asked for: see the drift guard at
- * `src/server/services/blocks/__tests__/block-gated-image-sdk-drift.test.ts`.
+ * lockstep is ENFORCED, not merely asked for: the drift guard is
+ * `src/server/services/blocks/blockGatedImageSdkParity.ts`, which vendors the
+ * SDK declaration and fails the TYPECHECK (not a test run — it is deliberately
+ * not a `*.test.ts`, so it sits in the `tsc --noEmit` / `next build` graph) when
+ * the two disagree.
  *
  * 🔴 STILL EXACTLY TWO WIRE STATUSES — `pending` IS NOT ONE OF THEM, BY
  * DECISION. The per-row verdict {@link classifyGatedImageForViewer} does have a

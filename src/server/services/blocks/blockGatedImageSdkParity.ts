@@ -53,7 +53,8 @@ export const SDK_MIRROR_SOURCE =
   'civitai/civitai-app-starters — packages/civitai-app-sdk/src/blocks/types.ts (BlockGatedImage)';
 
 /**
- * The SDK's `ContentRating` (`packages/civitai-app-sdk/src/blocks/types.ts`),
+ * The SDK's `ContentRating` (civitai/civitai-app-starters,
+ * `packages/civitai-app-sdk/src/blocks/types.ts` — NOT a path in this repo),
  * inlined so this module needs nothing from the installed package. This repo's
  * `OffsiteRatingValue` must equal it — the `contentRating` field crosses the wire
  * typed as one and is read as the other.
