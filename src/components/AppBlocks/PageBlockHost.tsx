@@ -558,6 +558,21 @@ export interface PageBlockHostProps {
    *  `projectBlockInitMaturity`). Absent → the block falls back to
    *  `maxBrowsingLevel`, i.e. the pre-field behaviour. */
   effectiveBrowsingLevel?: number;
+  /**
+   * The PER-CALL Buzz ceiling the current token was SIGNED with, as reported by
+   * the mint (`/api/v1/block-tokens`) — forwarded, never derived here.
+   *
+   * 🔴 THIS USED TO BE MISSING ENTIRELY, AND THE SDK TYPE PROMISED IT. `BlockToken`
+   * declares `buzzBudget?: number` and `IframeHost` populates it on all three of
+   * its token envelopes, so a MODEL-slot block can compare its own estimate
+   * against the ceiling and say "this run costs more than this app may spend per
+   * generation" before the user commits. On the PAGE surface the field was never
+   * populated anywhere, so it was permanently `undefined`: a page block could not
+   * self-check, and an over-budget run could only ever surface as the server's
+   * `insufficient buzz budget: estimate N exceeds budget M` refusal after the
+   * fact. Absent ⇔ the token carries no `ai:write:budgeted` scope.
+   */
+  buzzBudget?: number;
   viewer: { id: number; username: string | null } | null;
   theme: 'light' | 'dark';
   /** Re-mint the page token after a consent grant so it carries the newly
@@ -716,6 +731,7 @@ export function PageBlockHost({
   domain,
   maxBrowsingLevel,
   effectiveBrowsingLevel,
+  buzzBudget,
   viewer,
   theme,
   onConsentGranted,
@@ -1167,21 +1183,39 @@ export function PageBlockHost({
     [slug, subPath, viewer, theme]
   );
 
+  // 🔴 ONE TOKEN ENVELOPE, THREE SENDERS. BLOCK_INIT, the rotation push and the
+  // REQUEST_TOKEN reply all hand the block the same object. Building it three
+  // times by hand is precisely how a field lands on some senders and not others,
+  // and that is not hypothetical: `buzzBudget` reached NONE of the three on this
+  // host while `IframeHost` populated all three of its own. One object, built
+  // once, is what makes "the block always sees the same token shape" a property
+  // of the code rather than of three separate edits staying in step.
+  //
+  // `token ?? ''` matches what BLOCK_INIT already did; the other two senders
+  // early-return on a null token, so the fallback is unreachable for them.
+  const tokenEnvelope = useMemo(
+    () => ({
+      raw: token ?? '',
+      // #3/#6: the REAL granted scopes the JWT carries (page = viewer-scoped
+      // ambient `apps:storage:*`; never money). Posting `[]` lied to the block
+      // about the capabilities it holds.
+      scopes: grantedScopes,
+      expiresAt: expiresAt ?? '',
+      // Omitted (not `undefined`) when the token carries no spend scope, so a
+      // block can test presence rather than having to distinguish the two.
+      ...(buzzBudget !== undefined ? { buzzBudget } : {}),
+    }),
+    [token, grantedScopes, expiresAt, buzzBudget]
+  );
+
   const buildInitPayload = useCallback(
     (): BlockInitPayload => ({
       blockInstanceId,
       blockId,
       appId,
-      token: {
-        // initSent only fires after token is present (gated below); the
-        // controller posts the freshest payload via the ref.
-        raw: token ?? '',
-        // #3/#6: the REAL granted scopes the JWT carries (page = viewer-scoped
-        // ambient `apps:storage:*`; never money). Posting `[]` lied to the block
-        // about the capabilities it holds.
-        scopes: grantedScopes,
-        expiresAt: expiresAt ?? '',
-      },
+      // initSent only fires after token is present (gated below); the
+      // controller posts the freshest payload via the ref.
+      token: tokenEnvelope,
       context: buildContext(),
       settings: { publisherSettings: {}, userSettings: {} },
       // 🔴 THE SECOND PRODUCER OF THE BLOCK_INIT `viewer` OBJECT. Unlike
@@ -1206,9 +1240,7 @@ export function PageBlockHost({
       blockId,
       blockInstanceId,
       buildContext,
-      expiresAt,
-      grantedScopes,
-      token,
+      tokenEnvelope,
       viewer,
       theme,
       domain,
@@ -1396,10 +1428,8 @@ export function PageBlockHost({
   // Push a TOKEN_REFRESH when the token rotates after init.
   useEffect(() => {
     if (!initSentRef.current || !token) return;
-    send('TOKEN_REFRESH', {
-      token: { raw: token, scopes: grantedScopes, expiresAt: expiresAt ?? '' },
-    });
-  }, [token, expiresAt, grantedScopes, send]);
+    send('TOKEN_REFRESH', { token: tokenEnvelope });
+  }, [token, tokenEnvelope, send]);
 
   // Answer a block-initiated REQUEST_TOKEN.
   //
@@ -1435,15 +1465,14 @@ export function PageBlockHost({
         raw && typeof raw === 'object' && typeof raw.requestId === 'string'
           ? raw.requestId
           : undefined;
-      const wrapped = { raw: token, scopes: grantedScopes, expiresAt: expiresAt ?? '' };
       if (requestId === undefined) {
-        send('TOKEN_REFRESH', { token: wrapped });
+        send('TOKEN_REFRESH', { token: tokenEnvelope });
         return;
       }
-      send('TOKEN_REFRESH_RESPONSE', { requestId, token: wrapped });
+      send('TOKEN_REFRESH_RESPONSE', { requestId, token: tokenEnvelope });
     });
     return off;
-  }, [token, expiresAt, grantedScopes, send, onMessage]);
+  }, [token, tokenEnvelope, send, onMessage]);
 
   // INVERTED HANDSHAKE: the block announces that its message listener is
   // attached (`BLOCK_HELLO`) and we push BLOCK_INIT in response rather than

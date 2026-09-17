@@ -22,6 +22,13 @@ interface UseBlockTokenResult {
   /** Advisory: the bitwise browsing-level ceiling for the domain (SFW on
    *  green/blue, all on red). undefined on legacy responses → fail closed. */
   maxBrowsingLevel: number | undefined;
+  /**
+   * The PER-CALL Buzz ceiling the CURRENT token was signed with, as reported by
+   * the mint — never re-derived here. `undefined` when the token carries no
+   * `ai:write:budgeted` scope (a ceiling means nothing without the scope it
+   * bounds) and on a legacy response that omits the field.
+   */
+  buzzBudget: number | undefined;
   /** Advisory: {@link maxBrowsingLevel} intersected with the VIEWER's own
    *  browsing level — what THIS person may be shown here, as opposed to what
    *  the domain permits anyone. Always a subset of `maxBrowsingLevel`.
@@ -53,6 +60,9 @@ interface TokenResponse {
    *  app's approved manifest. Older responses omit these → treat as no-op. */
   needsConsent?: boolean;
   missingScopes?: string[];
+  /** The per-call Buzz ceiling baked into `token`. Omitted when the token has
+   *  no `ai:write:budgeted` scope, and by pre-feature responses. */
+  buzzBudget?: number;
   /** Advisory maturity signal. Omitted by pre-feature responses → fail closed. */
   domain?: 'green' | 'blue' | 'red' | null;
   maxBrowsingLevel?: number;
@@ -89,6 +99,7 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
   const [pending, setPending] = useState<boolean>(true);
   const [needsConsent, setNeedsConsent] = useState<boolean>(false);
   const [missingScopes, setMissingScopes] = useState<string[]>([]);
+  const [buzzBudget, setBuzzBudget] = useState<number | undefined>(undefined);
   const [domain, setDomain] = useState<'green' | 'blue' | 'red' | null>(null);
   const [maxBrowsingLevel, setMaxBrowsingLevel] = useState<number | undefined>(undefined);
   const [effectiveBrowsingLevel, setEffectiveBrowsingLevel] = useState<number | undefined>(
@@ -232,6 +243,13 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
       setExpiresAt(data.expiresAt);
       setNeedsConsent(data.needsConsent === true);
       setMissingScopes(Array.isArray(data.missingScopes) ? data.missingScopes : []);
+      // Shape-checked, never clamped or re-derived: the mint reports what it
+      // SIGNED, and a host that "corrects" it can only disagree with the gate.
+      setBuzzBudget(
+        typeof data.buzzBudget === 'number' && Number.isFinite(data.buzzBudget)
+          ? data.buzzBudget
+          : undefined
+      );
       setDomain(
         data.domain === 'green' || data.domain === 'blue' || data.domain === 'red'
           ? data.domain
@@ -440,6 +458,12 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
   const tokenMatchesInstance = heldInstanceRef.current === install.blockInstanceId;
   const scopedToken = tokenMatchesInstance ? token : null;
   const scopedExpiresAt = tokenMatchesInstance ? expiresAt : null;
+  // The budget belongs to the TOKEN, so it is scoped with it: while the held
+  // credential is withheld (instance changed, mint not resolved yet) there is no
+  // ceiling to report, and `undefined` is the fail-safe direction — a block that
+  // cannot read a ceiling falls back to the server's own refusal rather than
+  // pre-checking against the PREVIOUS app's number.
+  const scopedBuzzBudget = tokenMatchesInstance ? buzzBudget : undefined;
 
   return {
     token: scopedToken,
@@ -448,6 +472,7 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
     pending,
     needsConsent,
     missingScopes,
+    buzzBudget: scopedBuzzBudget,
     domain,
     maxBrowsingLevel,
     effectiveBrowsingLevel,

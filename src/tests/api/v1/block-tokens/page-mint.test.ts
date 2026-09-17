@@ -451,6 +451,55 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
       expect(signArg.ctx).toEqual({ slotId: 'app.page', entityType: 'none' });
     });
 
+    // ── REGRESSION: the RESPONSE must report the budget, not just sign it ────
+    // The mint computed the per-call ceiling and then kept it to itself: the JSON
+    // body carried `domain` / `maxBrowsingLevel` / `effectiveBrowsingLevel` as
+    // plaintext mirrors of token claims but NOT `buzzBudget`. The page host has
+    // no other source for it (a page has no install row, and the run route's
+    // synthetic install carries `publisherSettings: {}`), so a page block's
+    // `token.buzzBudget` was permanently undefined and an over-budget run could
+    // only ever surface as the server's own refusal, after the click.
+    //
+    // 🔴 ASSERTED AGAINST WHAT WAS SIGNED, not against a literal repeated here: a
+    // response that reports a DIFFERENT number than the gate enforces is the one
+    // failure this field could newly introduce, and only this comparison sees it.
+    it.each([
+      ['a declared manifest budget', 200],
+      ['a budget clamped to the cap', 5000],
+      ['the platform default (manifest omits one)', undefined],
+    ])('REPORTS the signed buzzBudget in the response body — %s', async (_label, declared) => {
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(
+        PAGE_BUDGET_BLOCK(declared as number | undefined)
+      );
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      const signArg = mockTokenService.sign.mock.calls[0][0];
+      const body = res._body as { buzzBudget?: number };
+      expect(signArg.buzzBudget).toBeTypeOf('number');
+      expect(body.buzzBudget).toBe(signArg.buzzBudget);
+    });
+
+    it('OMITS buzzBudget from the response when the token carries no spend scope', async () => {
+      // A ceiling is meaningless without the scope it bounds, and a present-but-
+      // undefined key would make a block distinguish two shapes for one state.
+      mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: [],
+        revokedAt: null,
+      });
+      mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BUDGET_BLOCK(200));
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+      expect(res._status).toBe(200);
+      const signArg = mockTokenService.sign.mock.calls[0][0];
+      expect(signArg.buzzBudget).toBeUndefined();
+      expect(res._body as object).not.toHaveProperty('buzzBudget');
+    });
+
     it('clamps a manifest budget above the cap to BUZZ_BUDGET_CAP (1000)', async () => {
       mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BUDGET_BLOCK(5000));
       const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
