@@ -34,6 +34,7 @@ import {
 import { FeeSection } from '~/components/CreatorShop/Submit/FeeSection';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
+import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
 import {
   PACK_MAX_MEMBERS,
   PACK_MIN_MEMBERS,
@@ -59,9 +60,10 @@ type Bundlable = PackMemberPricing & {
 const memberUses = (member: Bundlable) => stickerUsesFromCosmeticData(member.data);
 
 /**
- * The fields the editor reads off the row it was opened from. Everything else it
- * needs comes from `getPack`, so a caller that holds a different row shape — the
- * moderator cosmetic-store list — can open it without a manage-page query.
+ * A first-paint SEED, not the source of truth. `getPack` is, and the hydration
+ * effect below overwrites all four scalars with it before Save unlocks — the
+ * caller's row can be arbitrarily stale, because the query client runs at
+ * `staleTime: Infinity`.
  */
 export type PackEditTarget = Pick<
   CreatorShopManageItem,
@@ -101,6 +103,10 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
   useEffect(() => {
     if (!existing || hydrated) return;
     setHydrated(true);
+    setName(existing.title);
+    setDescription(existing.description ?? '');
+    setPrice(existing.unitAmount);
+    setQuantity(existing.availableQuantity ?? undefined);
     setSelected(
       existing.members.map((m) => ({
         cosmeticId: m.cosmeticId,
@@ -155,6 +161,13 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
     [selected]
   );
 
+  // Compared against what the server returned, so a reordered picker doesn't read
+  // as an edit and a stale caller row can't make one look unchanged.
+  const contentsChanged =
+    !existing ||
+    selected.length !== existing.members.length ||
+    selected.some((m) => !existing.members.find((e) => e.cosmeticId === m.cosmeticId));
+
   const uploading = files.some((file) => file.status === 'uploading');
   const tooFew = selected.length < PACK_MIN_MEMBERS;
   const tooMany = selected.length > PACK_MAX_MEMBERS;
@@ -178,7 +191,15 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
   // button still works.
   const feeShortfall =
     !isEdit && !loadingBuzz && packFee !== undefined && feeAccountBalance < packFee;
+  // The server refuses both outright, so without this the editor is the very
+  // thing it replaced: a form that takes what a moderator types and fails on save.
+  const uneditableStatus =
+    existing?.status === CosmeticShopItemStatus.Rejected ||
+    existing?.status === CosmeticShopItemStatus.Archived;
   const canSubmit =
+    // An edit saves what `getPack` returned, never the caller's seed.
+    (!isEdit || hydrated) &&
+    !uneditableStatus &&
     !!name.trim() &&
     (isEdit || packFee !== undefined) &&
     !tooFew &&
@@ -216,12 +237,18 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
         id: item.id,
         name,
         description: description || null,
-        price,
+        // Both are omitted when unchanged, which is the contract the server is
+        // written against. Sent unconditionally they re-snapshot every member's
+        // `floorAmount` — the basis each member's creator is PAID on — rewrite
+        // `packMemberCount` past the guard that refuses a pack whose member has
+        // gone, and drop the pack back into review, all on an edit that touched
+        // only the title.
+        ...(price !== existing?.unitAmount ? { price } : {}),
+        ...(contentsChanged ? { memberCosmeticIds } : {}),
         availableQuantity: quantity ?? null,
         acceptsBlueBuzz,
         // Explicit null so clearing the cover actually clears it.
         imageUrl: imageId ?? null,
-        memberCosmeticIds,
       });
     else {
       if (packFee === undefined) {
@@ -462,7 +489,25 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
             />
           )}
         </Group>
-        {existing?.status && (
+        {!!existing?.unavailableCount && (
+          <Alert color="gray" icon={<IconAlertTriangle size={18} />}>
+            {/* Named rather than hidden: these are already gone from the list
+                above, so editing the contents drops them for good and takes
+                their creators' payout share with them. */}
+            {existing.unavailableCount} item
+            {existing.unavailableCount > 1 ? 's are' : ' is'} no longer available and{' '}
+            {existing.unavailableCount > 1 ? 'are' : 'is'} not shown above. Changing the contents
+            removes {existing.unavailableCount > 1 ? 'them' : 'it'} permanently.
+          </Alert>
+        )}
+        {uneditableStatus && (
+          <Alert color="gray" icon={<IconAlertTriangle size={18} />}>
+            {existing?.status === CosmeticShopItemStatus.Rejected
+              ? 'This pack was rejected, which is final. It cannot be edited.'
+              : 'This pack is archived. Restore it before editing.'}
+          </Alert>
+        )}
+        {existing?.status && !uneditableStatus && (
           <Text size="xs" c="dimmed">
             Changing the contents or the price sends this pack back through review.
           </Text>

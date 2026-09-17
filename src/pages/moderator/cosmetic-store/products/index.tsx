@@ -171,7 +171,9 @@ export default function CosmeticStoreProducts() {
                           <Text>{shopItem.cosmetic?.name ?? '—'}</Text>
                         </Stack>
                       </Table.Td>
-                      <Table.Td>{shopItem.cosmetic ? getDisplayName(shopItem.cosmetic.type) : 'Pack'}</Table.Td>
+                      <Table.Td>
+                        {shopItem.cosmetic ? getDisplayName(shopItem.cosmetic.type) : 'Pack'}
+                      </Table.Td>
                       <Table.Td>
                         <Center>
                           {shopItem.cosmetic && <CosmeticSample cosmetic={shopItem.cosmetic} />}
@@ -212,7 +214,10 @@ export default function CosmeticStoreProducts() {
                               <IconEdit />
                             </LegacyActionIcon>
                           ) : (
-                            features.cosmeticPacks && (
+                            // An archived pack is refused by the save, and an
+                            // editor that cannot save is the bug this replaced.
+                            features.cosmeticPacks &&
+                            !shopItem.archivedAt && (
                               <LegacyActionIcon
                                 onClick={() =>
                                   dialogStore.trigger({
