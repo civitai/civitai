@@ -142,14 +142,14 @@ merge; the strongest a red one gets is rendering red for a human to notice, and 
 The vitest suites are projects in `vitest.config.mts`. The unit suite is **two** projects —
 `unit` and `unit-native` — so select it as **`--project 'unit*'`**, never `--project unit`.
 
-🔴 **`--project unit` silently runs 1059 of 1065 files and exits 0.** The six `unit-native` files are
+🔴 **`--project unit` silently runs 1846 of 1852 files and exits 0.** The six `unit-native` files are
 `exclude`d from `unit` rather than merely routed elsewhere, so naming one of them explicitly reports
 `No test files found`. A selector matching one project and not the other is a green run over a
 suite you did not run — the scripts above already use `'unit*'` for this reason.
 
 #### Run the suites that cover your change; run the WHOLE suite once, at the end
 
-The full unit suite is ~21,500 tests and ~75s, and `test:unit:run` is serialised through the dev-server
+The full unit suite is ~41,600 tests over 1,852 files, and `test:unit:run` is serialised through the dev-server
 queue — so running it between edits blocks everyone else's runs for minutes at a time. Name the covering
 suites before you start editing and run those on each iteration:
 
