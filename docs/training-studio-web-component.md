@@ -65,6 +65,20 @@ interface TrainingStudioHost {
    *  the per-epoch Generate affordance. The component navigates same-tab for a relative URL,
    *  new-tab for an absolute one. */
   generateUrl?(req: { air: string; workflowId: string; name: string }): string;
+
+  /** URL for the main app's publish entry (`/models/train/from-orchestrator?workflowId=…&epoch=…`),
+   *  which builds a Draft model from the run's checkpoint and drops the user into the model wizard.
+   *  Ownership is enforced there by re-fetching the workflow with the caller's own orchestrator
+   *  token. Optional — omit to hide the Publish affordance. Same URL semantics as `generateUrl`:
+   *  relative navigates same-tab, absolute opens a new tab. */
+  publishUrl?(req: { workflowId: string; epoch: number }): string;
+
+  /** URL for the run's model page, draft or published. The main app stamps
+   *  `{ modelId, modelVersionId }` into the workflow's metadata when the publish entry creates the
+   *  draft, and adds `published: true` when the model actually publishes; runs carrying a modelId
+   *  render a "View draft" / "View your model page" link through this. Optional — omit to hide
+   *  the affordance. Same URL semantics as `generateUrl`. */
+  modelPageUrl?(req: { modelId: number }): string;
 }
 
 type StudioLocation = { view: 'home' } | { view: 'new' } | { view: 'run'; workflowId: string };

@@ -31,6 +31,12 @@
     // the link goes live per-user as the flag widens.
     generateUrl: ({ air, workflowId, name }) =>
       `${data.civitaiUrl}/generate?${new URLSearchParams({ air, workflowId, name })}`,
+    publishUrl: ({ workflowId, epoch }) =>
+      `${data.civitaiUrl}/models/train/from-orchestrator?${new URLSearchParams({
+        workflowId,
+        epoch: String(epoch),
+      })}`,
+    modelPageUrl: ({ modelId }) => `${data.civitaiUrl}/models/${modelId}`,
   });
 
   // Open the shared signals connection once per tab and keep the header balance live: a `buzz:update` fires

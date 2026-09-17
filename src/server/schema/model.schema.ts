@@ -316,6 +316,10 @@ export type MinorFlagSnapshot = {
 };
 
 export type ModelMeta = Partial<{
+  /** Orchestrator workflow this Trained model was drafted from (Training Studio publish flow).
+   *  The idempotency key for `createDraftModelFromWorkflow`, and what the publish handler uses
+   *  to stamp the published model back onto the workflow. */
+  trainingStudioWorkflowId: string;
   unpublishedReason: UnpublishReason;
   customMessage: string;
   needsReview: boolean;

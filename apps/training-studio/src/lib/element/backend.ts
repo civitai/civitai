@@ -3,7 +3,7 @@
 // to the orchestrator with the client-safe cores — no server routes involved.
 import { createCivitaiClient } from '@civitai/client';
 import type { StudioBackend } from '$lib/backend';
-import type { GenerateRequest, StudioLocation } from '$lib/host';
+import type { GenerateRequest, ModelPageRequest, PublishRequest, StudioLocation } from '$lib/host';
 import { UploadError } from '$lib/upload';
 import { computeFromPrices } from '$lib/pricing-core';
 import * as label from '$lib/autolabel-core';
@@ -34,6 +34,12 @@ export interface StudioElementHost {
    *  and `generate` to hide the per-epoch Generate affordance (e.g. the viewing user can't use
    *  the generator hand-off). */
   generateUrl?(req: GenerateRequest): string;
+  /** URL for the main app's publish-from-workflow entry (draft model + wizard) for a run's
+   *  checkpoint; omit to hide the Publish affordance. Relative = same-tab, absolute = new tab. */
+  publishUrl?(req: PublishRequest): string;
+  /** URL for the run's model page — draft or published (runs carry a modelId once a draft
+   *  exists); omit to hide the "view model" affordance. Relative = same-tab, absolute = new tab. */
+  modelPageUrl?(req: ModelPageRequest): string;
 }
 
 class UnauthorizedError extends Error {}

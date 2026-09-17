@@ -152,6 +152,14 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
           ? (req: { air: string; workflowId: string; name: string }) =>
               `/generate?${new URLSearchParams(req)}`
           : undefined,
+        // Relative on purpose (same-tab). Not gated on canGenerate — the publish entry guards
+        // muted/onboarding itself, and publishing doesn't ride the generation lanes.
+        publishUrl: (req: { workflowId: string; epoch: number }) =>
+          `/models/train/from-orchestrator?${new URLSearchParams({
+            workflowId: req.workflowId,
+            epoch: String(req.epoch),
+          })}`,
+        modelPageUrl: (req: { modelId: number }) => `/models/${req.modelId}`,
       };
       el.location = locationRef.current;
       setElReady(true);

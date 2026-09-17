@@ -90,6 +90,11 @@ export interface TrainingStudioMeta {
   trigger?: string;
   /** Set once the user publishes a public model page off this workflow. */
   published?: boolean;
+  /** The run's model/version on Civitai — stamped by the main app when the DRAFT is created
+   *  (publish entry) and re-stamped alongside `published`, so the run links its model page at
+   *  either stage. */
+  modelId?: number;
+  modelVersionId?: number;
   /** Lineage of a "train further" run: the run it continued from and the checkpoint it forked at.
    *  Stamped by the continuation submit; absent on fresh runs and on continuations submitted
    *  before lineage shipped. */
@@ -334,6 +339,9 @@ export interface TrainingDetail {
   /** "Train further" lineage (see TrainingStudioMeta): the run this one continued from, when known. */
   sourceWorkflowId?: string;
   sourceEpoch?: number;
+  /** The run's model on Civitai — draft or published (see TrainingStudioMeta.modelId); drives the
+   *  model-page link. */
+  modelId?: number;
 }
 
 /** Map one workflow (fetched by id) to the detail screen's shape. Null if we can't place it. */
@@ -404,6 +412,7 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
         ? meta.sourceWorkflowId
         : undefined,
     sourceEpoch: typeof meta.sourceEpoch === 'number' ? meta.sourceEpoch : undefined,
+    modelId: typeof meta.modelId === 'number' ? meta.modelId : undefined,
   };
 }
 

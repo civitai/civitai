@@ -59,6 +59,8 @@
       navigate: (loc, opts) => h.navigate(loc, opts),
       generate: h.generate?.bind(h),
       generateUrl: h.generateUrl?.bind(h),
+      publishUrl: h.publishUrl?.bind(h),
+      modelPageUrl: h.modelPageUrl?.bind(h),
       refresh: async () => {
         reloadTick += 1;
       },
