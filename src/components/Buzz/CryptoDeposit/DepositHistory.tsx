@@ -24,7 +24,7 @@ import {
   IconWallet,
   IconWifiOff,
 } from '@tabler/icons-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import useIsClient from '~/hooks/useIsClient';
 import { BonusBuzzContent } from '~/components/Buzz/CryptoDeposit/BonusBuzzContent';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
@@ -44,7 +44,7 @@ export function DepositHistory() {
   const perPage = 3;
   const utils = trpc.useUtils();
   const { status: signalStatus } = useSignalContext();
-  const reconcile = useReconcileDeposits();
+  const reconcile = useReconcileDeposits(total);
 
   const { data, isLoading } = trpc.nowPayments.getDepositHistory.useQuery(
     { page, perPage },
@@ -79,20 +79,6 @@ export function DepositHistory() {
   );
   const total = data?.total ?? 0;
   const totalPages = Math.ceil(total / perPage);
-
-  // The mutation now outlives the branch that produced its result, so a terminal
-  // state can sit over a list that has moved on: 'No missing deposits found' above a
-  // deposit that arrived from the signal a minute later. Drop it when the list
-  // changes under it. A found-result is exempt because it stays true, and because
-  // clearing it would undo the invalidation it just triggered.
-  const found = foundDeposits(reconcile);
-  const { isSuccess, isError, reset } = reconcile;
-  const lastTotal = useRef(total);
-  useEffect(() => {
-    if (lastTotal.current === total) return;
-    lastTotal.current = total;
-    if (!found && (isSuccess || isError)) reset();
-  }, [total, found, isSuccess, isError, reset]);
 
   if (!isClient) return null;
 
@@ -265,7 +251,7 @@ function EmptyDepositState({
 }: {
   signalStatus: string | null;
   onRefresh: () => void;
-  reconcile: ReconcileMutation;
+  reconcile: Reconcile;
 }) {
   return (
     <Paper p="lg" radius="md" withBorder style={outerCardStyle}>
@@ -449,35 +435,56 @@ function BonusBuzzPopover({
   );
 }
 
-type ReconcileMutation = ReturnType<typeof useReconcileDeposits>;
-
-function foundDeposits(reconcile: ReconcileMutation) {
-  return reconcile.isSuccess && reconcile.data.processed > 0;
-}
+type Reconcile = ReturnType<typeof useReconcileDeposits>;
 
 // Owned by DepositHistory rather than by the notice: a successful reconcile
 // repopulates the list, which unmounts the empty-state branch. A mutation living
 // in the notice would take its own success state down with it, so the user never
 // saw that the click worked.
-function useReconcileDeposits() {
+function useReconcileDeposits(total: number) {
   const utils = trpc.useUtils();
-  return trpc.nowPayments.reconcileMyDeposits.useMutation({
+  const totalAtMutate = useRef(total);
+  const mutation = trpc.nowPayments.reconcileMyDeposits.useMutation({
+    onMutate: () => {
+      totalAtMutate.current = total;
+    },
     onSuccess: (data) => {
       if (data.processed > 0) utils.nowPayments.getDepositHistory.invalidate();
     },
   });
+
+  const found = mutation.isSuccess && mutation.data.processed > 0;
+
+  // A result describes the list as it stood when the button was pressed. Once the
+  // list moves — the signal delivers the deposit, another tab reconciles — a nothing-
+  // found or an error no longer describes what the user is looking at, so the notice
+  // falls back to idle rather than captioning the new list with the old answer.
+  // Stamped in onMutate, which runs at click time and so cannot be outrun by the
+  // request: without it, a deposit landing mid-flight consumes the comparison and the
+  // wrong label sticks for good.
+  //
+  // A found-result is exempt, and must stay exempt: it is the one result that ALWAYS
+  // moves the list, because it invalidates the query itself. Treat it as stale and the
+  // confirmation is wiped by its own refetch — which is the bug this whole file is
+  // about. See ClickUp 868m6j63r.
+  const resultIsStale =
+    !found && (mutation.isSuccess || mutation.isError) && totalAtMutate.current !== total;
+
+  return { mutation, found, resultIsStale };
 }
 
-function CheckDepositsNotice({ reconcile: reconcileMutation }: { reconcile: ReconcileMutation }) {
-  const found = foundDeposits(reconcileMutation);
-  const showPrompt = !reconcileMutation.isSuccess && !reconcileMutation.isError;
-  const buttonLabel = reconcileMutation.isPending
+function CheckDepositsNotice({ reconcile }: { reconcile: Reconcile }) {
+  const { mutation, found, resultIsStale } = reconcile;
+  const showPrompt = resultIsStale || (!mutation.isSuccess && !mutation.isError);
+  const buttonLabel = mutation.isPending
     ? 'Checking...'
-    : reconcileMutation.isSuccess
+    : resultIsStale
+    ? 'Check now'
+    : mutation.isSuccess
     ? found
-      ? `Found ${reconcileMutation.data.processed} deposit(s)!`
+      ? `Found ${mutation.data.processed} deposit(s)!`
       : 'No missing deposits found'
-    : reconcileMutation.isError
+    : mutation.isError
     ? 'Try again in a minute'
     : 'Check now';
 
@@ -508,9 +515,9 @@ function CheckDepositsNotice({ reconcile: reconcileMutation }: { reconcile: Reco
           variant="light"
           color={found ? 'green' : undefined}
           leftSection={<IconSearch size={14} />}
-          loading={reconcileMutation.isPending}
-          disabled={reconcileMutation.isPending}
-          onClick={() => reconcileMutation.mutate()}
+          loading={mutation.isPending}
+          disabled={mutation.isPending}
+          onClick={() => mutation.mutate()}
           className="shrink-0"
         >
           {buttonLabel}
