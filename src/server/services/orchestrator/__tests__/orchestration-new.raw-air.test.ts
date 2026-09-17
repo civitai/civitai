@@ -90,13 +90,25 @@ const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000).to
 function workflowWithEpoch({
   completedAt,
   status = 'succeeded',
-}: { completedAt?: string; status?: string } = {}) {
+  trainedEcosystem,
+  epochAvailable,
+}: {
+  completedAt?: string;
+  status?: string;
+  trainedEcosystem?: string;
+  epochAvailable?: boolean;
+} = {}) {
   return {
     steps: [
       {
         completedAt,
         status,
-        output: { epochs: [{ epochNumber: 3, model: { id: BLOB_KEY, url: null } }] },
+        ...(trainedEcosystem ? { input: { ecosystem: trainedEcosystem } } : {}),
+        output: {
+          epochs: [
+            { epochNumber: 3, model: { id: BLOB_KEY, url: null, available: epochAvailable } },
+          ],
+        },
       },
     ],
   };
@@ -224,6 +236,27 @@ describe('raw-AIR resource ownership validation', () => {
       /mismatched resource id/
     );
     expect(mockGetWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('rejects an owned blob relabeled under a different ecosystem than the run trained on', async () => {
+    mockGetWorkflow.mockResolvedValue(
+      workflowWithEpoch({ completedAt: daysAgo(1), trainedEcosystem: 'flux1' })
+    );
+    expect(await submit()).toMatch(/does not match the ecosystem its training run used/);
+  });
+
+  it('accepts the AIR when its ecosystem matches what the run trained on', async () => {
+    mockGetWorkflow.mockResolvedValue(
+      workflowWithEpoch({ completedAt: daysAgo(1), trainedEcosystem: 'sdxl' })
+    );
+    expect(await submit()).not.toMatch(/epoch resource/i);
+  });
+
+  it('does not count an unfinished checkpoint (available: false) as an owned blob', async () => {
+    mockGetWorkflow.mockResolvedValue(
+      workflowWithEpoch({ completedAt: daysAgo(1), epochAvailable: false })
+    );
+    expect(await submit()).toMatch(/does not belong to the referenced training workflow/);
   });
 
   it('rejects when the path has no orchestrator token (e.g. the App Blocks bridge)', async () => {

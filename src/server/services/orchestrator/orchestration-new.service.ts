@@ -493,7 +493,10 @@ async function validateRawAirResources({
     throw throwBadRequestError('Epoch resources are not supported on this generation path.');
 
   const requestAirEcosystem = requestEcosystem ? getAirEcosystem(requestEcosystem) : undefined;
-  const byWorkflow = new Map<string, { blobKey: string; label: string }[]>();
+  const byWorkflow = new Map<string, { blobKey: string; label: string; airEcoKey: string }[]>();
+  // The pairing check below makes a duplicate id imply a duplicate AIR — except through an FNV
+  // collision between two different AIRs, which would silently overwrite in the AIR map.
+  const airById = new Map<number, string>();
   for (const resource of resources) {
     const label = resource.name ?? resource.air;
     const parsed = parseRawAirResourceUrn(resource.air);
@@ -503,6 +506,11 @@ async function validateRawAirResources({
     if (resource.id !== rawAirResourceId(resource.air)) {
       throw throwBadRequestError(`Epoch resource "${label}" has a mismatched resource id.`);
     }
+    const priorAir = airById.get(resource.id);
+    if (priorAir !== undefined && priorAir !== resource.air) {
+      throw throwBadRequestError(`Epoch resource "${label}" conflicts with another resource.`);
+    }
+    airById.set(resource.id, resource.air);
     // The AIR segment can be a root OR child ecosystem key ('sdxl',
     // 'flux2klein'); compare root-to-root against the request's ecosystem.
     const airEco = getEcosystemByAirSegment(parsed.ecosystem);
@@ -530,7 +538,7 @@ async function validateRawAirResources({
       throw throwBadRequestError(`You do not have access to epoch resource "${label}".`);
     }
     const list = byWorkflow.get(resource.workflowId) ?? [];
-    list.push({ blobKey: parsed.blobKey, label });
+    list.push({ blobKey: parsed.blobKey, label, airEcoKey: airEco.key });
     byWorkflow.set(resource.workflowId, list);
   }
 
@@ -542,7 +550,7 @@ async function validateRawAirResources({
       // NOT_FOUND for a deleted or not-owned workflow (the orchestrator scopes
       // the read to the caller's token) is re-checked every time.
       const cacheKey = `${REDIS_KEYS.CACHES.TRAINING_EPOCH_BLOBS}:${userId}:${workflowId}` as const;
-      const { blobKeys, completedAt, stepStatus } = await fetchThroughCache(
+      const { blobKeys, completedAt, stepStatus, ecosystem } = await fetchThroughCache(
         cacheKey,
         async () => {
           const workflow = await getWorkflow({ token: orchestratorToken, path: { workflowId } });
@@ -551,10 +559,21 @@ async function validateRawAirResources({
         { ttl: CacheTTL.xs * 5 }
       );
       const availableBlobKeys = new Set(blobKeys);
+      // The AIR's ecosystem segment is caller-supplied: without this, an owned blob could be
+      // relabeled under a different ecosystem and routed through the wrong handler. Unknown
+      // workflow ecosystem (older runs, pre-field cache entries) skips the check — the request
+      // ecosystem match above still applies.
+      const trainedEco = ecosystem ? getEcosystemByAirSegment(ecosystem) : undefined;
+      const trainedEcoRoot = trainedEco ? getAirEcosystem(trainedEco.key) : undefined;
       for (const entry of entries) {
         if (!availableBlobKeys.has(entry.blobKey)) {
           throw throwBadRequestError(
             `Epoch resource "${entry.label}" does not belong to the referenced training workflow.`
+          );
+        }
+        if (trainedEcoRoot && getAirEcosystem(entry.airEcoKey) !== trainedEcoRoot) {
+          throw throwBadRequestError(
+            `Epoch resource "${entry.label}" does not match the ecosystem its training run used.`
           );
         }
       }

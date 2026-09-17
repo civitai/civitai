@@ -28,6 +28,7 @@ import {
 } from '~/shared/data-graph/generation/config/workflows';
 import type { ResourceData, SnippetsNodeValue } from '~/shared/data-graph/generation/common';
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
+import { showErrorNotification } from '~/utils/notifications';
 import {
   useGenerationGraphStore,
   generationGraphStore,
@@ -116,7 +117,16 @@ export function useGenerationIngestion(store: GenerationStore) {
     url.searchParams.delete('name');
     window.history.replaceState(null, '', url.pathname + url.search + url.hash);
 
-    if (!features.generationAirResources) return;
+    // The studio's shell can't read this flag, so its Generate link exists for everyone —
+    // an ineligible user must hear WHY the generator opened unseeded, not lose the epoch
+    // silently.
+    if (!features.generationAirResources) {
+      showErrorNotification({
+        title: 'Epoch generation unavailable',
+        error: new Error('Generating with training epochs is not enabled for your account yet.'),
+      });
+      return;
+    }
     if (useGenerationGraphStore.getState().data) return;
     if (!workflowId) return;
 
