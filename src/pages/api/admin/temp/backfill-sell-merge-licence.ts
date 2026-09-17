@@ -101,6 +101,12 @@ import { booleanString } from '~/utils/zod-helpers';
  * is never disabled, so a creator can grant one and decline the other in a single click. A closing
  * count above zero is that choice being honoured, not a short run.
  *
+ * 🔴 If you are fixing something in here, fix its twin in the same pass. The repeated failure on this
+ * file has not been wrong logic — it has been a guard added to one side and not the other: the write
+ * got a call-count assertion while the read went without, then the read got one on the dry-run branch
+ * while the live branch went without. Each time the suite stayed green and the missing half was found
+ * by the next reader rather than by any check.
+ *
  * ⚠️ The UPDATE is raw SQL and writes no `diffEntityChanges` entry although `allowCommercialUse` is a
  * watched field, for the same reason as the sibling endpoint: 422k rows through the diffing path to
  * record one change they all share is not worth it. The response and the logs are the only record of
@@ -165,10 +171,12 @@ export function contractAcceptsSellMerge(
 
 const schema = z.object({
   dryRun: booleanString().default(true),
-  // `.int()` on both because a fractional value reaches Postgres as a fractional LIMIT or comparand,
-  // which the Prisma engine rounds (measured: `LIMIT 2.5` returns 3 rows) while node-postgres rejects
-  // outright. Rounding DOWN would make `exhausted` true with the population untouched.
+  // `.int()` on batchSize because a fractional value reaches Postgres as a fractional LIMIT, which
+  // the Prisma engine rounds (measured: `LIMIT 2.5` returns 3 rows) while node-postgres rejects it
+  // outright — and rounding DOWN would make `exhausted` true with the population untouched.
   batchSize: z.coerce.number().int().min(1).max(5000),
+  // On afterId it is hygiene and symmetry only, with no failure mode behind it: `m.id > 10.5` is a
+  // valid int-vs-numeric comparison that Postgres neither rounds nor rejects.
   afterId: z.coerce.number().int().min(0).default(0),
 });
 

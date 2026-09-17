@@ -163,17 +163,24 @@ describe('backfill-sell-merge-licence', () => {
     expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
   });
 
-  it('refuses a fractional batchSize or afterId rather than rounding it', async () => {
+  it('refuses a fractional batchSize rather than rounding it', async () => {
     // Not tidiness: a fractional batchSize reaches Postgres as a fractional LIMIT. Rounding DOWN
     // (2.4 -> 2) would satisfy `modelIds.length < params.batchSize` and report `exhausted: true` with
-    // the population untouched — a run that reads as finished. Both `.int()`s are what make that
-    // unreachable, so removing either has to fail here.
-    const fractionalBatch = await call({ batchSize: '2.5' }, { method: 'GET' });
-    expect(fractionalBatch.statusCode).toBe(400);
+    // the population untouched — a run that reads as finished.
+    const { statusCode } = await call({ batchSize: '2.5' }, { method: 'GET' });
 
-    const fractionalCursor = await call({ afterId: '10.5' }, { method: 'GET' });
-    expect(fractionalCursor.statusCode).toBe(400);
+    expect(statusCode).toBe(400);
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
 
+  it('refuses a fractional afterId', async () => {
+    // A separate case from the batchSize one so a failure names which bound lost its `.int()`; with
+    // both in one test the first throw masks the second. This bound is input hygiene rather than a
+    // hazard: `m.id > 10.5` is a valid int-vs-numeric comparison that Postgres neither rounds nor
+    // rejects, so unlike batchSize there is no failure mode behind it.
+    const { statusCode } = await call({ afterId: '10.5' }, { method: 'GET' });
+
+    expect(statusCode).toBe(400);
     expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
   });
 
@@ -231,6 +238,12 @@ describe('backfill-sell-merge-licence', () => {
     expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.$executeRawUnsafe).not.toHaveBeenCalled();
+
+    // ONE read too, asserted on the LIVE path. The dry-run test carries the same assertion, and a
+    // guard that covers one branch and not its twin is how this endpoint has been bitten three times:
+    // an added `count(*)` over the ~422k in-scope rows costs most here, beside the write.
+    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbRead.$queryRawUnsafe).not.toHaveBeenCalled();
   });
 
   it('re-checks one identical predicate in the UPDATE and the SELECT, cast in the column terms', async () => {
@@ -272,8 +285,13 @@ describe('backfill-sell-merge-licence', () => {
     );
     // Anchored at the tail as well: without this, anything appended after the LIMIT — `OFFSET`,
     // `FOR UPDATE SKIP LOCKED` — is invisible, and only the clause names anyone thought to spell out
-    // would be caught.
+    // would be caught. (A trailing cast on the limit, `LIMIT ${n}::int`, is a benign edit this reds
+    // on; the message will be `expected false to be true`, so start here when that happens.)
     expect(flat(dbMock.dbRead.$queryRaw.mock.calls).endsWith('LIMIT $')).toBe(true);
+    // Kept beside the anchor rather than replaced by it: Postgres accepts `OFFSET n LIMIT m` in
+    // either order, so the anchor alone does not exclude OFFSET — only the contiguous shape above
+    // does, and this survives that string being loosened.
+    expect(flat(dbMock.dbRead.$queryRaw.mock.calls)).not.toContain('OFFSET');
 
     // ONE read per request. The write side was given this in the previous round and the read was left
     // without it, so an added `count(*)` over the ~422k in-scope rows per batch would be invisible:
@@ -364,6 +382,7 @@ describe('backfill-sell-merge-licence', () => {
     // `id = ANY('{}')` is a pointless round-trip on the one call that reports the run finished, and a
     // throw there reads as the run having failed.
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(1);
     expect(queueUpdate).not.toHaveBeenCalled();
   });
 
