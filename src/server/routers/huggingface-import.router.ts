@@ -7,6 +7,7 @@ import {
   enqueueHuggingFaceImportSchema,
   getHuggingFaceImportCountsSchema,
   getHuggingFaceImportsSchema,
+  huggingFaceImportActionSchema,
   lookupHuggingFaceRepoSchema,
 } from '~/server/schema/huggingface-import.schema';
 import {
@@ -104,9 +105,9 @@ export const huggingFaceImportRouter = router({
     ),
 
   delete: moderatorProcedure
-    .input(getByIdSchema)
+    .input(huggingFaceImportActionSchema)
     .mutation(({ input, ctx }) =>
-      deleteImport({ id: input.id, userId: ctx.user.id, isModerator: !!ctx.user.isModerator })
+      deleteImport({ ...input, userId: ctx.user.id, isModerator: !!ctx.user.isModerator })
     ),
 
   getConfig: moderatorProcedure.query(() => getHuggingFaceImportConfig()),
@@ -128,9 +129,9 @@ export const huggingFaceImportRouter = router({
     ),
 
   retry: moderatorProcedure
-    .input(getByIdSchema)
+    .input(huggingFaceImportActionSchema)
     .mutation(({ input, ctx }) =>
-      retryImport({ id: input.id, userId: ctx.user.id, isModerator: !!ctx.user.isModerator })
+      retryImport({ ...input, userId: ctx.user.id, isModerator: !!ctx.user.isModerator })
     ),
 
   cancel: moderatorProcedure

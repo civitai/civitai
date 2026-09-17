@@ -18,6 +18,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { submitWorkflowWithRetry } from '~/server/services/orchestrator/workflows';
 import { hashContent } from '~/server/services/entity-moderation.service';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { EntityModerationStatus, ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/shared/utils/air';
@@ -47,6 +48,54 @@ const IMAGE_TAGGING_MODEL =
   'urn:air:siglip2:repository:huggingface:cella110n/cl_tagger_v2@b57909b8e9c63f71e208a26473e7aabdf45ed6b6.tar';
 const IMAGE_TAGGING_THRESHOLD = 0.55;
 
+/** Axiom `name` for a failed ingestion submit, per scan pipeline. */
+export function imageIngestionLogName(useImageScanning: boolean) {
+  return useImageScanning ? 'image-scanning-ingestion' : 'image-ingestion';
+}
+
+type MediaUrlRef = { $ref: string; path: string };
+
+function imageScanSteps({
+  mediaUrl,
+  metadata,
+  priority,
+  useImageScanning,
+}: {
+  mediaUrl: MediaUrlRef;
+  metadata: Record<string, unknown>;
+  priority: Priority;
+  useImageScanning: boolean;
+}) {
+  if (useImageScanning)
+    return [
+      { $type: 'imageScanning', name: 'scan', metadata, priority, input: { image: mediaUrl } },
+    ];
+
+  return [
+    {
+      $type: 'wdTagging',
+      name: 'tags',
+      metadata,
+      priority,
+      input: { mediaUrl, model: IMAGE_TAGGING_MODEL, threshold: IMAGE_TAGGING_THRESHOLD },
+    },
+    {
+      $type: 'mediaRating',
+      name: 'rating',
+      metadata,
+      priority,
+      input: {
+        mediaUrl,
+        engine: 'civitai',
+        includeAgeClassification: true,
+        includeAIRecognition: false,
+        includeFaceRecognition: false,
+        includeAnimeRecognition: false,
+      },
+    },
+  ];
+}
+
 export async function createImageIngestionRequest({
   imageId,
   url,
@@ -68,6 +117,45 @@ export async function createImageIngestionRequest({
   // server-side, re-submitting with the same `externalId` returns the existing
   // workflow instead of duplicating it (orchestrator dedupes on (userId, externalId)).
   const externalId = randomUUID();
+  const useImageScanning = await isFlipt(
+    FLIPT_FEATURE_FLAGS.IMAGE_INGESTION_IMAGE_SCANNING,
+    String(imageId)
+  );
+  const mediaUrl = { $ref: '$arguments', path: 'mediaUrl' };
+
+  const steps =
+    type === 'image'
+      ? [
+          ...imageScanSteps({ mediaUrl, metadata, priority, useImageScanning }),
+          {
+            $type: 'mediaHash',
+            name: 'hash',
+            metadata,
+            priority,
+            input: { mediaUrl, hashTypes: ['perceptual'] },
+          },
+        ]
+      : [
+          {
+            $type: 'videoFrameExtraction',
+            name: 'videoFrames',
+            metadata,
+            priority,
+            input: { videoUrl: mediaUrl, frameRate: 1, uniqueThreshold: 0.9, maxFrames: 50 },
+          },
+          ...imageScanSteps({
+            mediaUrl: { $ref: 'frame', path: 'url' },
+            metadata,
+            priority,
+            useImageScanning,
+          }).map((template) => ({
+            $type: 'repeat',
+            input: {
+              for: { $ref: 'videoFrames', path: 'output.frames', as: 'frame' },
+              template,
+            },
+          })),
+        ];
 
   const body: WorkflowTemplate = {
     externalId,
@@ -76,110 +164,8 @@ export async function createImageIngestionRequest({
       mediaUrl: edgeUrl,
     },
     currencies: [],
-    steps:
-      type === 'image'
-        ? [
-            {
-              $type: 'wdTagging',
-              name: 'tags',
-              metadata,
-              priority,
-              input: {
-                mediaUrl: { $ref: '$arguments', path: 'mediaUrl' },
-                model: IMAGE_TAGGING_MODEL,
-                threshold: IMAGE_TAGGING_THRESHOLD,
-              },
-            } as WorkflowStepTemplate,
-            {
-              $type: 'mediaRating',
-              name: 'rating',
-              metadata,
-              priority,
-              input: {
-                mediaUrl: { $ref: '$arguments', path: 'mediaUrl' },
-                engine: 'civitai',
-                includeAgeClassification: true,
-                includeAIRecognition: false,
-                includeFaceRecognition: false,
-                includeAnimeRecognition: false,
-              },
-            } as WorkflowStepTemplate,
-            {
-              $type: 'mediaHash',
-              name: 'hash',
-              metadata,
-              priority,
-              input: {
-                mediaUrl: { $ref: '$arguments', path: 'mediaUrl' },
-                hashTypes: ['perceptual'],
-              },
-            } as WorkflowStepTemplate,
-          ]
-        : [
-            {
-              $type: 'videoFrameExtraction',
-              name: 'videoFrames',
-              metadata,
-              priority,
-              input: {
-                videoUrl: { $ref: '$arguments', path: 'mediaUrl' },
-                frameRate: 1,
-                uniqueThreshold: 0.9,
-                maxFrames: 50,
-              },
-            } as WorkflowStepTemplate,
-            {
-              $type: 'repeat',
-              input: {
-                for: {
-                  $ref: 'videoFrames',
-                  path: 'output.frames',
-                  as: 'frame',
-                },
-                template: {
-                  $type: 'wdTagging',
-                  name: 'tags',
-                  metadata,
-                  priority,
-                  input: {
-                    mediaUrl: {
-                      $ref: 'frame',
-                      path: 'url',
-                    },
-                    model: IMAGE_TAGGING_MODEL,
-                    threshold: IMAGE_TAGGING_THRESHOLD,
-                  },
-                },
-              },
-            } as WorkflowStepTemplate,
-            {
-              $type: 'repeat',
-              input: {
-                for: {
-                  $ref: 'videoFrames',
-                  path: 'output.frames',
-                  as: 'frame',
-                },
-                template: {
-                  $type: 'mediaRating',
-                  name: 'rating',
-                  metadata,
-                  priority,
-                  input: {
-                    mediaUrl: {
-                      $ref: 'frame',
-                      path: 'url',
-                    },
-                    engine: 'civitai',
-                    includeAgeClassification: true,
-                    includeAIRecognition: false,
-                    includeFaceRecognition: false,
-                    includeAnimeRecognition: false,
-                  },
-                },
-              },
-            } as WorkflowStepTemplate,
-          ],
+    // WorkflowTemplate is @civitai/client's, which predates the imageScanning step.
+    steps: steps as unknown as WorkflowStepTemplate[],
     callbacks: callbackUrl
       ? [
           {
@@ -229,7 +215,7 @@ export async function createImageIngestionRequest({
   if (!data) {
     logToAxiom({
       type: 'error',
-      name: 'image-ingestion',
+      name: imageIngestionLogName(useImageScanning),
       imageId,
       url,
       externalId,
@@ -240,7 +226,7 @@ export async function createImageIngestionRequest({
     });
   }
 
-  return { data, body, error, status: response?.status };
+  return { data, body, error, status: response?.status, useImageScanning };
 }
 
 const PERCEPTUAL_HASH_WAIT_SECONDS = 30;

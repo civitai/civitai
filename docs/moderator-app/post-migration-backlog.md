@@ -111,7 +111,7 @@ Re-read off the live ticket 2026-08-21; the section above had captured the middl
       every gallery image via `UPDATE "Image" SET minor = …, poi = …`, queueing those ids into the image
       index. `poi` is on `modelUpsertSchema` beside `minor` and `upsertModel` calls that fan-out, so
       flipping poi today already does all of it. Image-level `poi` also excludes from the image search
-      index and is re-derived from the parent model at scan time (`image-scan-result.service.ts:1089`).
+      index and is re-derived from the parent model at scan time (`getAssociatedEntities` in `image-scan-pipeline.ts`).
 
       What `poi` genuinely lacks against `minor` is narrower, and is a build list rather than a question:
       **no dedicated setter / `moderatorProcedure`**, **no snapshot** (so no rollback), **absent from

@@ -26,6 +26,17 @@
     hrefFor,
     navigate: (loc, opts) => goto(hrefFor(loc), opts?.refreshAll ? { invalidateAll: true } : undefined),
     refresh: (key) => invalidate(key),
+    // Always provided, even though the main app's /generate ingestion is flag-gated (mod-only for
+    // now) and silently drops the params for users without it — the shell can't read that flag, so
+    // the link goes live per-user as the flag widens.
+    generateUrl: ({ air, workflowId, name }) =>
+      `${data.civitaiUrl}/generate?${new URLSearchParams({ air, workflowId, name })}`,
+    publishUrl: ({ workflowId, epoch }) =>
+      `${data.civitaiUrl}/models/train/from-orchestrator?${new URLSearchParams({
+        workflowId,
+        epoch: String(epoch),
+      })}`,
+    modelPageUrl: ({ modelId }) => `${data.civitaiUrl}/models/${modelId}`,
   });
 
   // Open the shared signals connection once per tab and keep the header balance live: a `buzz:update` fires

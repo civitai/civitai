@@ -29,8 +29,9 @@ If any are missing, stop and direct the user to run `add-ecosystem` first.
 
 The orchestrator client package is **`@civitai/orchestration-client`**. It is the continuation of the old
 `@civitai/client`, which can no longer be published to and is frozen at `0.2.0-beta.98`; the version line
-carries on unbroken in the new package (`0.2.0-beta.101` and up). New ecosystem types only ever land
-there, so check it even while this repo still depends on the old package.
+carries on unbroken in the new package (`0.2.0-beta.101` and up). **The repo depends on both** — the new
+package for anything recent, the frozen one for the handlers and workflow types that still import it. New
+ecosystem types only ever land in the new package.
 
 **Always** check the latest published client version, even if types aren't in the currently installed version.
 
@@ -62,10 +63,9 @@ If the installed version is older than the latest and the latest has useful type
 pnpm add @civitai/orchestration-client@<latest-version>
 ```
 
-If the repo is still on `@civitai/client` and the types you need exist only in
-`@civitai/orchestration-client`, add the new package and import from it rather than hand-rolling the types.
-Handlers already importing from `@civitai/client` keep working — leave them unless migrating them is the
-task you were asked to do.
+Import new types from `@civitai/orchestration-client` rather than hand-rolling them. Handlers already
+importing from `@civitai/client` keep working — leave them unless migrating them is the task you were
+asked to do.
 
 ### 2. Research model defaults
 

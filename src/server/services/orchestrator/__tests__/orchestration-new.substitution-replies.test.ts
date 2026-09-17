@@ -341,6 +341,44 @@ describe('whatIfFromGraph — reply carries the substitution (mutant F)', () => 
   });
 });
 
+describe('whatIfFromGraph — reply carries the orchestrator step warnings', () => {
+  const retiring = {
+    code: 'modelDeprecated',
+    message: "Model 'max' is deprecated and will be retired on 2026-10-09.",
+  };
+
+  // The reply is the ONLY carrier: read off the steps the ORCHESTRATOR returned, not the step
+  // templates this service built — those never carry warnings, and reading them compiles.
+  it('🔴 reports one warning per distinct code + message', async () => {
+    submitWorkflow.mockImplementationOnce(async () => ({
+      id: '1-20260101000000000',
+      status: 'succeeded',
+      createdAt: new Date('2020-01-01T00:00:00Z'),
+      steps: [{ warnings: [retiring] }, { warnings: [{ ...retiring }] }],
+      cost: { total: 60 },
+      transactions: { list: [] },
+    }));
+
+    const result = (await whatIfFromGraph({
+      input: input(QWEN_DEFAULT),
+      externalCtx: ctx(),
+      ...common,
+    } as never)) as { warnings?: unknown };
+
+    expect(result.warnings).toEqual([retiring]);
+  });
+
+  it('omits the key when the orchestrator sends no warnings', async () => {
+    const result = (await whatIfFromGraph({
+      input: input(QWEN_DEFAULT),
+      externalCtx: ctx(),
+      ...common,
+    } as never)) as Record<string, unknown>;
+
+    expect('warnings' in result).toBe(false);
+  });
+});
+
 describe('generateFromGraph — reply + persistence (mutants G and H)', () => {
   // 🔴 PIN THE MODE. `ORCHESTRATOR_MODE` derives from the schema's `.default('dev')`, and
   // `assertWorkflowOwner` short-circuits in dev (every user shares the system token there). Left

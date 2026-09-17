@@ -2065,15 +2065,6 @@ export const REDIS_SYS_KEYS = {
     LIVE_FEATURE_FLAGS: 'system:live-feature-flags',
     SUSPICIOUS_AUDIT_MATCHES: 'system:suspicious-audit-matches',
     /*
-      Runtime toggle for the new image ingestion path (createImageIngestionRequest
-      with the expanded mediaRating step). Read by image.service.ts before
-      routing to the new vs legacy scanner. Accepts '1'/'true' to enable,
-      '0'/'false' to disable. If the key is missing, the first call seeds it to
-      'false' so the toggle is discoverable in Redis. Lets ops flip without a
-      deploy.
-     */
-    IMAGE_SCANNER_NEW: 'system:image-scanner-new',
-    /*
       Per-run image cap for the remove-deleted-user-images job. Set to '0' to
       pause the drain without a deploy. Missing key means the job's compiled
       default applies.
@@ -2324,7 +2315,14 @@ const REDIS_KEYS_UNPREFIXED = {
   BLOCKS: {
     REGISTRY: 'packed:caches:block-registry',
     TOKEN_RATE_LIMIT: 'blocks:token-rate-limit',
-    // Per-blockInstanceId revocation marker (15-min TTL); block-scope middleware 403s when present.
+    // Per-blockInstanceId revocation marker; block-scope middleware 403s when present.
+    // TTL is MAX_BLOCK_TOKEN_LIFETIME_SECONDS — the longest token it must outlive
+    // (the dev token), NOT 15 minutes as this line said until 2026-09-16.
+    // 🔴 Deliberately NOT restated as a number here: per
+    // src/server/services/block-token-lifetimes.ts (the Next app — a different
+    // workspace package, so it cannot be imported from here), a hardcoded figure
+    // is exactly what let this line claim 15min while dev tokens lived hours.
+    // Read the constant there rather than trusting a number written here.
     REVOKED_INSTANCE: 'blocks:revoked-instance',
     // Per-ecosystem-key most-popular-Checkpoint cache (JSON ValidatedCheckpoint, 1h TTL).
     POPULAR_CHECKPOINT: 'blocks:popular-checkpoint',
@@ -2502,6 +2500,15 @@ const REDIS_KEYS_UNPREFIXED = {
     // most recent run, and the scored result each run produces. Every key carries a
     // TTL, so the whole namespace self-cleans and no table backs it.
     CONTEST_SCORE_RUN: 'packed:caches:contest-score-run',
+    // Per-user derived view of a TRAINING workflow for raw-AIR (epoch blob)
+    // generation: the workflow's epoch blob keys + the training step's completion
+    // date. Keyed `<userId>:<workflowId>` — the fetch behind it is scoped to the
+    // caller's orchestrator token, so the userId segment keeps one user's cached
+    // ownership proof from ever serving another's request. Short TTL, no bust:
+    // epochs only accumulate while training runs, and a stale-by-minutes view
+    // only delays a brand-new epoch becoming generatable. See
+    // `validateRawAirResources` in orchestration-new.service.
+    TRAINING_EPOCH_BLOBS: 'packed:caches:training-epoch-blobs',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',

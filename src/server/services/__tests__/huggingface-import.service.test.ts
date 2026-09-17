@@ -3,6 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as HuggingFaceService from '~/server/services/huggingface.service';
 import type * as S3Utils from '~/utils/s3-utils';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 
 const {
   mockReadRange,
@@ -30,10 +31,15 @@ vi.mock('~/server/services/huggingface.service', async (importOriginal) => ({
   headHuggingFaceFile: mockHeadFile,
 }));
 
+const { DEFAULT_CLIENT, B2_CLIENT } = vi.hoisted(() => ({
+  DEFAULT_CLIENT: { backend: 'default' },
+  B2_CLIENT: { backend: 'b2' },
+}));
+
 vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   ...(await importOriginal<typeof S3Utils>()),
-  getS3Client: () => ({}),
-  getUploadS3Client: () => ({}),
+  getS3Client: () => DEFAULT_CLIENT,
+  getUploadS3Client: (backend?: string) => (backend === 'b2' ? B2_CLIENT : DEFAULT_CLIENT),
   getUploadBucket: () => 'model-bucket',
   getBucket: async () => 'model-bucket',
   getGetUrlByKey: async (key: string, opts: { bucket?: string }) => ({
@@ -62,6 +68,7 @@ import {
   PART_SIZE_BYTES,
   processImportQueue,
   renameGroup,
+  retryImport,
 } from '~/server/services/huggingface-import.service';
 
 /** The width under test. Passed in rather than read from config, so these tests do not depend on
@@ -71,6 +78,9 @@ const TEST_PARTS_IN_FLIGHT = 3;
 const sysRedisMock = redisMock.sysRedis;
 const dbWrite = dbMock.dbWrite;
 const dbRead = dbMock.dbRead;
+
+// B2 configured, as in production — the shape the resume-client bug needed.
+beforeEach(() => setEnv({ S3_UPLOAD_B2_ENDPOINT: 'https://b2.example' }));
 
 // Tracks the real constant rather than restating it — a part-size change should not need a test edit.
 const PART_SIZE = PART_SIZE_BYTES;
@@ -264,6 +274,49 @@ describe('processImportQueue', () => {
     expect(mockComplete.mock.calls[0][1]).toBe('model/7/resume-me.safetensors');
     expect(mockReadRange.mock.calls.map(([arg]) => arg.start)).toEqual([PART_SIZE, PART_SIZE * 2]);
     expect(mockComplete.mock.calls[0][3]).toHaveLength(3);
+  });
+
+  it("resumes through a client that reaches the row's bucket, not the configured backend", async () => {
+    // B2 is configured here, but this upload was opened in the default backend's bucket — an import
+    // started where B2 was not configured. Sending that bucket's name to B2 fails with "The
+    // specified bucket does not exist", on every part.
+    claimOnce(
+      baseRow({
+        uploadId: 'upload-1',
+        key: 'model/7/resume-me.safetensors',
+        bucket: 'other-bucket',
+        partSize: PART_SIZE,
+        parts: [{ PartNumber: 1, ETag: 'etag-1' }],
+      })
+    );
+
+    await processImportQueue({
+      deadline: Date.now() + 60_000,
+      worker: 'test',
+      concurrency: 1,
+      partsInFlight: TEST_PARTS_IN_FLIGHT,
+    });
+
+    expect(mockUploadPart.mock.calls.length).toBeGreaterThan(0);
+    for (const [arg] of mockUploadPart.mock.calls) expect(arg.s3).toBe(DEFAULT_CLIENT);
+    expect(mockComplete.mock.calls[0][4]).toBe(DEFAULT_CLIENT);
+  });
+
+  it('opens a new upload in the configured backend, through its client', async () => {
+    claimOnce(baseRow());
+
+    await processImportQueue({
+      deadline: Date.now() + 60_000,
+      worker: 'test',
+      concurrency: 1,
+      partsInFlight: TEST_PARTS_IN_FLIGHT,
+    });
+
+    expect(mockCreateMultipart.mock.calls[0][0]).toMatchObject({
+      bucket: 'model-bucket',
+      s3: B2_CLIENT,
+    });
+    for (const [arg] of mockUploadPart.mock.calls) expect(arg.s3).toBe(B2_CLIENT);
   });
 
   it('stops without completing when the deadline passes mid-file', async () => {
@@ -595,6 +648,15 @@ describe('getImports filtering', () => {
     expect(whereOf().repo).toBe('owner/name');
   });
 
+  it('orders a batch deterministically: largest file first, then id', async () => {
+    await getImports({ userId: 7, isModerator: true });
+    expect(dbRead.huggingFaceImport.findMany.mock.calls[0][0].orderBy).toEqual([
+      { createdAt: 'desc' },
+      { sizeBytes: { sort: 'desc', nulls: 'last' } },
+      { id: 'asc' },
+    ]);
+  });
+
   it('adds no predicate when nothing is filtered', async () => {
     await getImports({ userId: 7, isModerator: true });
     expect(whereOf()).toEqual({});
@@ -789,19 +851,126 @@ describe('unattached and delete', () => {
     );
   });
 
-  it('keeps the row when the multipart abort fails', async () => {
+  it("aborts through a client that reaches the row's bucket", async () => {
     dbRead.huggingFaceImport.findFirst.mockResolvedValue({
       id: 1,
       status: 'Failed',
-      bucket: 'b2-transfer-bucket',
+      bucket: 'other-bucket',
       key: 'model/7/x.safetensors',
       url: null,
       uploadId: 'upload-1',
       modelFileId: null,
     });
-    mockAbort.mockRejectedValue(new Error('B2 unavailable'));
+    mockAbort.mockResolvedValue(undefined);
+    mockDeleteObject.mockResolvedValue(undefined);
+    dbWrite.huggingFaceImport.deleteMany.mockResolvedValue({ count: 1 });
 
-    await expect(deleteImport({ id: 1, userId: 7, isModerator: true })).rejects.toThrow();
+    await deleteImport({ id: 1, userId: 7, isModerator: true });
+
+    expect(mockAbort.mock.calls[0][3]).toBe(DEFAULT_CLIENT);
+    expect(mockDeleteObject.mock.calls[0][2]).toBe(DEFAULT_CLIENT);
+  });
+
+  const stuckRow = {
+    id: 1,
+    status: 'Failed',
+    bucket: 'b2-transfer-bucket',
+    key: 'model/7/x.safetensors',
+    url: null,
+    uploadId: 'upload-1',
+    modelFileId: null,
+  };
+
+  it('keeps the row, and says why, when the multipart abort fails', async () => {
+    dbRead.huggingFaceImport.findFirst.mockResolvedValue(stuckRow);
+    mockAbort.mockRejectedValue(new Error('The specified bucket does not exist'));
+
+    const result = await deleteImport({ id: 1, userId: 7, isModerator: true });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'storage',
+      message: expect.stringContaining('The specified bucket does not exist'),
+    });
+    expect(dbWrite.huggingFaceImport.deleteMany).not.toHaveBeenCalled();
+  });
+
+  const storageError = (name: string, message = name) =>
+    Object.assign(new Error(message), { name });
+
+  it('treats an upload that is already gone as removed, and needs no force', async () => {
+    dbRead.huggingFaceImport.findFirst.mockResolvedValue(stuckRow);
+    mockAbort.mockRejectedValue(storageError('NoSuchUpload'));
+    mockDeleteObject.mockRejectedValue(storageError('NoSuchKey'));
+    dbWrite.huggingFaceImport.deleteMany.mockResolvedValue({ count: 1 });
+
+    expect(await deleteImport({ id: 1, userId: 7, isModerator: true })).toEqual({ ok: true });
+    expect(dbWrite.huggingFaceImport.deleteMany).toHaveBeenCalled();
+  });
+
+  it('tries the other backend when the first does not know the bucket', async () => {
+    // The row records only a bucket name; picking the wrong backend for it is how "The specified
+    // bucket does not exist" happened. The upload is still there, on the other backend.
+    dbRead.huggingFaceImport.findFirst.mockResolvedValue({ ...stuckRow, bucket: 'other-bucket' });
+    mockAbort
+      .mockRejectedValueOnce(storageError('NoSuchBucket', 'The specified bucket does not exist'))
+      .mockResolvedValueOnce(undefined);
+    mockDeleteObject.mockResolvedValue(undefined);
+    dbWrite.huggingFaceImport.deleteMany.mockResolvedValue({ count: 1 });
+
+    expect(await deleteImport({ id: 1, userId: 7, isModerator: true })).toEqual({ ok: true });
+    expect(mockAbort.mock.calls.map((call) => call[3])).toEqual([DEFAULT_CLIENT, B2_CLIENT]);
+  });
+
+  it('asks for force only when no backend could remove it', async () => {
+    dbRead.huggingFaceImport.findFirst.mockResolvedValue({ ...stuckRow, bucket: 'other-bucket' });
+    mockAbort.mockRejectedValue(
+      storageError('NoSuchBucket', 'The specified bucket does not exist')
+    );
+
+    const result = await deleteImport({ id: 1, userId: 7, isModerator: true });
+
+    expect(result).toMatchObject({ ok: false, reason: 'storage' });
+    expect(mockAbort).toHaveBeenCalledTimes(2);
+    expect(dbWrite.huggingFaceImport.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('does not try another backend for an error that is not about the bucket', async () => {
+    dbRead.huggingFaceImport.findFirst.mockResolvedValue({ ...stuckRow, bucket: 'other-bucket' });
+    mockAbort.mockRejectedValue(storageError('AccessDenied'));
+
+    await deleteImport({ id: 1, userId: 7, isModerator: true });
+
+    expect(mockAbort).toHaveBeenCalledTimes(1);
+  });
+
+  it('deletes a stuck row when forced, even though its upload cannot be aborted', async () => {
+    dbRead.huggingFaceImport.findFirst.mockResolvedValue(stuckRow);
+    mockAbort.mockRejectedValue(new Error('The specified bucket does not exist'));
+    dbWrite.huggingFaceImport.deleteMany.mockResolvedValue({ count: 1 });
+
+    const result = await deleteImport({ id: 1, userId: 7, isModerator: true, force: true });
+
+    expect(result).toEqual({ ok: true });
+    expect(dbWrite.huggingFaceImport.deleteMany).toHaveBeenCalledWith({
+      where: { id: 1, modelFileId: null },
+    });
+  });
+
+  it('never forces past a model file that still points at the object', async () => {
+    // Force overrides storage cleanup only — deleting live bytes is not a cleanup failure.
+    dbRead.huggingFaceImport.findFirst.mockResolvedValue({
+      ...stuckRow,
+      status: 'Completed',
+      uploadId: null,
+      url: 'https://s3.example/b2-transfer-bucket/model/7/x.safetensors',
+    });
+    mockUrlsSafeToDelete.mockResolvedValue({ safe: [], skipped: 1 });
+
+    await expect(
+      deleteImport({ id: 1, userId: 7, isModerator: true, force: true })
+    ).rejects.toThrow(/model file still points at/i);
+    expect(mockDeleteObject).not.toHaveBeenCalled();
     expect(dbWrite.huggingFaceImport.deleteMany).not.toHaveBeenCalled();
   });
 
@@ -819,8 +988,77 @@ describe('unattached and delete', () => {
     mockUrlsSafeToDelete.mockResolvedValue({ safe: ['https://s3.example/x'], skipped: 0 });
     mockDeleteObject.mockRejectedValue(new Error('B2 unavailable'));
 
-    await expect(deleteImport({ id: 1, userId: 7, isModerator: true })).rejects.toThrow();
+    const result = await deleteImport({ id: 1, userId: 7, isModerator: true });
+
+    expect(result).toMatchObject({ ok: false, reason: 'storage' });
     expect(dbWrite.huggingFaceImport.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('retryImport', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAbort.mockReset();
+    dbWrite.huggingFaceImport.update.mockResolvedValue({});
+  });
+
+  const failedRow = {
+    id: 1,
+    status: 'Failed',
+    bucket: 'other-bucket',
+    key: 'model/7/x.safetensors',
+    url: null,
+    uploadId: 'upload-1',
+    modelFileId: null,
+  };
+  const reset = () => dbWrite.huggingFaceImport.update.mock.calls[0]?.[0].data;
+
+  it('restarts from nothing, in the backend configured now', async () => {
+    dbRead.huggingFaceImport.findFirst.mockResolvedValue(failedRow);
+    mockAbort.mockResolvedValue(undefined);
+
+    expect(await retryImport({ id: 1, userId: 7, isModerator: true })).toEqual({ ok: true });
+    // Keeping the bucket or key would reopen the next upload where the old one lived.
+    expect(reset()).toMatchObject({
+      status: 'Queued',
+      uploadId: null,
+      key: null,
+      bucket: null,
+      partSize: null,
+      bytesTransferred: BigInt(0),
+      attempts: 0,
+    });
+  });
+
+  it('asks before restarting when the old upload cannot be aborted', async () => {
+    // Resuming the upload that cannot be aborted is what kept an import failing forever.
+    dbRead.huggingFaceImport.findFirst.mockResolvedValue(failedRow);
+    mockAbort.mockRejectedValue(new Error('The specified bucket does not exist'));
+
+    const result = await retryImport({ id: 1, userId: 7, isModerator: true });
+
+    expect(result).toMatchObject({ ok: false, reason: 'storage' });
+    expect(dbWrite.huggingFaceImport.update).not.toHaveBeenCalled();
+  });
+
+  it('restarts from nothing when forced past a failed abort', async () => {
+    dbRead.huggingFaceImport.findFirst.mockResolvedValue(failedRow);
+    mockAbort.mockRejectedValue(new Error('The specified bucket does not exist'));
+
+    const result = await retryImport({ id: 1, userId: 7, isModerator: true, force: true });
+
+    expect(result).toEqual({ ok: true });
+    expect(reset()).toMatchObject({ status: 'Queued', uploadId: null, bucket: null, key: null });
+  });
+
+  it('refuses a transfer that is still running', async () => {
+    dbRead.huggingFaceImport.findFirst.mockResolvedValue({ ...failedRow, status: 'Transferring' });
+
+    const result = await retryImport({ id: 1, userId: 7, isModerator: true, force: true });
+
+    expect(result).toEqual({ ok: false, reason: 'state' });
+    expect(mockAbort).not.toHaveBeenCalled();
+    expect(dbWrite.huggingFaceImport.update).not.toHaveBeenCalled();
   });
 });
 

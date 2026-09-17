@@ -3649,6 +3649,18 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
         uploadType: ModelUploadType.Trained,
         status: { in: [ModelStatus.Unpublished, ModelStatus.UnpublishedViolation] },
       },
+      // A Published model is excluded by the model-status branches above, so a new
+      // version scheduled on it (version status Scheduled, publishedAt in the future)
+      // or still being drafted (version status Draft) was invisible in Drafts — the
+      // one place creators go to find and manage pending work. Match on the child
+      // version's status so that pending version surfaces here regardless of the
+      // parent model's status.
+      {
+        status: { not: ModelStatus.Deleted },
+        modelVersions: {
+          some: { status: { in: [ModelStatus.Scheduled, ModelStatus.Draft] } },
+        },
+      },
     ],
   };
 

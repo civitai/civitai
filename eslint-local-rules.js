@@ -118,7 +118,6 @@ const IO_CALL_NAMES = new Set([
   'fetch',
   // image ingestion / scanner
   'ingestImage',
-  'ingestImageBulk',
   'createImageIngestionRequest',
   // orchestrator
   'submitWorkflow',

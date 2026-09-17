@@ -141,6 +141,8 @@ export function isResourceDisabled(status: ResourceStatus): boolean {
  * Show link if resource is publicly accessible OR user owns it.
  */
 export function shouldShowModelLink(resource: GenerationResource): boolean {
+  // A negative id is a raw-AIR training epoch — there is no model page behind it.
+  if (resource.id < 0) return false;
   return resource.isOwnedByUser === true || resource.isPrivate !== true;
 }
 

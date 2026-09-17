@@ -126,8 +126,8 @@ Hit each URL on each host and eyeball the output:
 | `https://civitai.red/sitemap.xml` | Index lists 3 sub-sitemaps with `civitai.red` URLs |
 | `https://civitai.com/sitemap-models.xml` | Models with `nsfw=false` AND PG bit set (incl. multi-level like PG\|PG-13\|R), all URLs on `civitai.com` |
 | `https://civitai.red/sitemap-models.xml` | Models with `nsfw=true` OR no safe bits set (R-only, X-only, R\|X, etc.), all URLs on `civitai.red`. Multi-level with any safe bit must NOT appear here |
-| `https://civitai.com/sitemap-articles.xml` | Articles with PG bit set (any combo) on `civitai.com` |
-| `https://civitai.red/sitemap-articles.xml` | Articles with no safe bits set on `civitai.red` |
+| `https://civitai.com/sitemap-articles.xml` | Articles with PG bit set on `civitai.com` that are official, moderator-written or engaged (≥ 5) |
+| `https://civitai.red/sitemap-articles.xml` | Articles with no safe bits set on `civitai.red`, same inclusion rules |
 | `https://civitai.com/robots.txt` | Full disallow list, `Host: https://civitai.com`, all `Sitemap:` lines on `civitai.com` |
 | `https://civitai.red/robots.txt` | Same but `civitai.red` |
 | `https://civitai.com/sitemap-tools.xml` | 404 (route removed) |
@@ -176,22 +176,24 @@ Suggested TTLs:
 The new model and article queries use bitwise predicates plus `m.nsfw =
 true` / `nsfwLevel != 0` filters and split per color (see [sitemap-models.xml](../src/pages/sitemap-models.xml/index.tsx)
 and [sitemap-articles.xml](../src/pages/sitemap-articles.xml/index.tsx)).
-Both are bounded by `LIMIT 1000` and ordered by indexed columns
-(`thumbsUpCount`/`downloadCount` for models, `publishedAt` for articles), so
-the predicate change should be near-free — but worth one EXPLAIN run on prod
-post-deploy to confirm.
+The model query is bounded by `LIMIT 1000` and ordered by indexed columns
+(`thumbsUpCount`/`downloadCount`), so the predicate change should be near-free
+— but worth one EXPLAIN run on prod post-deploy to confirm.
+
+The article query no longer has that shape. Since 2026-09-17 it joins `User` and
+`ArticleMetric`, caps at 50,000 and returns a few thousand rows per domain; it
+measured ~65–120 ms on prod. See [seo-improvements.md](seo-improvements.md) §4.
 
 ### 3. Article sort change
 
 The article sitemap previously used `getArticles({ sort: MostBookmarks })`.
 The new red rule ("no safe bits set") can't be expressed through
 `getArticles`'s inclusion-style `browsingLevel` param, so the route was
-rewritten as raw SQL — losing the metric-based sort along the way. It now
-sorts `ORDER BY publishedAt DESC`, which is more standard for sitemaps
-anyway (gives Google fresh content first). If you want most-bookmarked
-articles surfaced specifically, that's a refactor to either extend
-`getArticles` with an `excludeBrowsingLevel` param or to join `ArticleStat`
-in the raw query.
+rewritten as raw SQL — losing the metric-based sort along the way.
+
+*Superseded 2026-09-17:* the raw query now joins `ArticleMetric` and lists only
+official, moderator-written and engaged articles, ordered in that priority. See
+[seo-improvements.md](seo-improvements.md) §4.
 
 ### 4. Coverage gaps on red
 
@@ -201,18 +203,22 @@ directly on `civitai.red`), the cleanest change is to drop the `nsfwLevel
 != 0 AND (nsfwLevel & sfwBrowsingLevelsFlag) = 0` clause from the red branch
 of `sqlByColor.nsfw` in
 [sitemap-models.xml](../src/pages/sitemap-models.xml/index.tsx) and the
-matching clause in
+`domainFilter.nsfw` clause in
 [sitemap-articles.xml](../src/pages/sitemap-articles.xml/index.tsx). Note
 this would also require dropping the `Gated` default-deindex on `civitai.red`
 for SFW content (otherwise sitemap and `noindex` would contradict).
 
 ## Future enhancement: historical / monthly sitemaps
 
-Right now `sitemap-models.xml` and `sitemap-articles.xml` cap at 1000 entries
-each (`LIMIT 1000` on the underlying query) sorted by popularity. That means
-the long tail of older content **never appears in any sitemap** and only gets
-indexed via internal linking. For a content site of Civitai's size, that's a
-meaningful coverage gap.
+> **Not scheduled (2026-09-15).** Search Console shows almost nothing
+> discovered-but-not-crawled, so a larger model sitemap would hand Google nothing
+> it doesn't already have. The design below stays valid if that changes. The
+> articles sitemap was widened separately, as a curated list rather than a
+> coverage fix. See [seo-improvements.md](seo-improvements.md).
+
+Right now `sitemap-models.xml` caps at 1000 entries (`LIMIT 1000` on the
+underlying query) sorted by popularity. That means the long tail of older models
+**never appears in any sitemap** and only gets indexed via internal linking.
 
 The standard fix is to **partition each content sitemap by time**, with the
 sitemap index referencing every period's sub-sitemap. Google reads the index,

@@ -30,11 +30,15 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
+vi.mock('~/server/services/new-creators.service', () => ({
+  getNewCreatorUserIds: vi.fn(async () => newCreatorIds()),
+}));
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTags: vi.fn().mockResolvedValue({ emptyResult: false }),
 }));
 
 const primaryOn = vi.fn(() => false);
+const newCreatorIds = vi.fn((): number[] => []);
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const actual = await importOriginal<typeof FliptClient>();
   return {
@@ -51,7 +55,7 @@ vi.mock('~/server/services/feed-primary.service', async (importOriginal) => {
 });
 
 import { getAllImagesIndex } from '../image.service';
-import '~/__tests__/mocks/db.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const request = () =>
   ({
@@ -89,5 +93,48 @@ describe('getAllImagesIndex with feed-service-primary', () => {
     const r = await getAllImagesIndex(request());
     expect(fetchFeedPrimary).toHaveBeenCalledTimes(1);
     expect(r.items).toEqual([]);
+  });
+
+  it('scopes the feed to the creator a profile page names by username', async () => {
+    primaryOn.mockReturnValue(true);
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 7 });
+    fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [], nextCursor: undefined });
+    await getAllImagesIndex({
+      ...request(),
+      sort: 'Newest',
+      period: 'AllTime',
+      username: 'someone',
+    });
+    expect(fetchFeedPrimary).toHaveBeenCalledWith(
+      expect.stringContaining('userIds=7'),
+      expect.anything()
+    );
+  });
+
+  it('refuses a page past the offset cap instead of answering it from the search index', async () => {
+    primaryOn.mockReturnValue(true);
+    await expect(
+      getAllImagesIndex({ ...request(), sort: 'Newest', cursor: '30000|1788000000000' })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(fetchFeedPrimary).not.toHaveBeenCalled();
+  });
+
+  it('scopes the feed to the new-creator board', async () => {
+    primaryOn.mockReturnValue(true);
+    newCreatorIds.mockReturnValue([11, 12]);
+    fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [], nextCursor: undefined });
+    await getAllImagesIndex({ ...request(), newCreators: true });
+    expect(fetchFeedPrimary).toHaveBeenCalledWith(
+      expect.stringContaining('userIds=11%2C12'),
+      expect.anything()
+    );
+  });
+
+  it('serves an unpopulated new-creator board as an empty feed', async () => {
+    primaryOn.mockReturnValue(true);
+    newCreatorIds.mockReturnValue([]);
+    const r = await getAllImagesIndex({ ...request(), newCreators: true });
+    expect(r).toMatchObject({ items: [], source: 'feed' });
+    expect(fetchFeedPrimary).not.toHaveBeenCalled();
   });
 });

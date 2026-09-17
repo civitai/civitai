@@ -32,6 +32,13 @@ export const getHuggingFaceImportCountsSchema = getHuggingFaceImportsSchema.pick
   repo: true,
 });
 
+export type HuggingFaceImportActionInput = z.infer<typeof huggingFaceImportActionSchema>;
+export const huggingFaceImportActionSchema = z.object({
+  id: z.number().int().positive(),
+  /** Go ahead even though what the import already stored could not be cleaned up. */
+  force: z.boolean().optional(),
+});
+
 export type AttachHuggingFaceImportInput = z.infer<typeof attachHuggingFaceImportSchema>;
 export const attachHuggingFaceImportSchema = z.object({
   id: z.number().int().positive(),

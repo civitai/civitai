@@ -80,6 +80,8 @@ const CosmeticShopItemSearch = ({
 }) => {
   const [filters, setFilters] = useState<Omit<GetPaginatedCosmeticShopItemInput, 'limit'>>({
     page: 1,
+    // Archived cosmetics can't be sold, so they must not be featurable.
+    archived: false,
   });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
   const { cosmeticShopItems = [], isFetching: isFetchingCosmetics } =

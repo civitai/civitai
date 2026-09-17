@@ -7,8 +7,18 @@ import { describe, expect, it } from 'vitest';
  * through `authorizeBlockBridgeToken`, never through `verifyBlockToken` directly.
  *
  * `verifyBlockToken` answers one question — is this a token we signed, not yet expired.
- * It cannot see an uninstall, a toggle-off, a publisher ban or a suspended app. The
- * bridge procs each called it directly and checked none of those, so a revoked install
+ * It cannot see an uninstall, a toggle-off or a suspended app.
+ *
+ * 🔴 THIS LIST AND THE FAILURE MESSAGE BELOW BOTH USED TO INCLUDE A BANNED
+ * PUBLISHER, UNTIL 2026-09-16. They should not: `authorizeBlockBridgeToken`
+ * checks token validity, the revocation marker and `app_blocks.status`, and
+ * `toggleBan` writes none of the three. So routing a proc through the guard does
+ * NOT contain a ban — a banned publisher's live tokens run to natural `exp`
+ * either way — and naming it among the things the guard catches told a developer
+ * the opposite at the moment their CI went red. See `block-scope.middleware.ts`
+ * for the two-call-site enumeration.
+ *
+ * The bridge procs each called it directly and checked none of those, so a revoked install
  * kept driving the bridge — orchestrator polls, workflow cancels, and
  * `publishGenerationOutputs`, which persists public `Image` rows — until the token
  * expired on its own. The REST `withBlockScope` wrapper never had this gap.
@@ -937,8 +947,8 @@ describe('no unguarded block-bridge token verification', () => {
       'These procedures accept a blockToken and never reach authorizeBlockBridgeToken — ' +
         'not directly and not through a router-local helper. Whatever they do with the ' +
         'token instead (decode it, trust it, verify it by some other name), the install ' +
-        'is not being checked: a revoked install, a suspended app and a banned publisher ' +
-        'all still drive them until the token expires on its own. Resolve claims through ' +
+        'is not being checked: a revoked install and a suspended app both still drive ' +
+        'them until the token expires on its own. Resolve claims through ' +
         'authorizeBlockBridgeToken. If the verification genuinely lives in an imported ' +
         'module, this scan cannot see it — say so here and widen the scan, do not exempt ' +
         'the procedure.'

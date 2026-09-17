@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { getAirModelLink, getCivitaiAirModelLink } from '~/shared/utils/air';
+import { getAirModelLink, getCivitaiAirModelLink, rawAirResourceId } from '~/shared/utils/air';
+
+describe('rawAirResourceId', () => {
+  it('is negative, nonzero, and deterministic', () => {
+    const air = 'urn:air:sdxl:lora:orchestrator:blob@somekey';
+    expect(rawAirResourceId(air)).toBeLessThan(0);
+    expect(rawAirResourceId(air)).toBe(rawAirResourceId(air));
+    expect(rawAirResourceId('')).toBeLessThan(0);
+  });
+});
 
 describe('getCivitaiAirModelLink', () => {
   it('links to the model page for a civitai checkpoint AIR', () => {

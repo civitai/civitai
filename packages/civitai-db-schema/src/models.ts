@@ -684,6 +684,7 @@ export interface User {
   appOwnershipTransfersFrom?: AppOwnershipTransfer[];
   appOwnershipTransfersTo?: AppOwnershipTransfer[];
   targetedAnnouncements?: AnnouncementUser[];
+  dismissedAnnouncements?: AnnouncementDismissal[];
   authoredAnnouncements?: Announcement[];
   announcementSpends?: AnnouncementSpend[];
   announcementMutesGiven?: UserAnnouncementMute[];
@@ -1534,6 +1535,12 @@ export interface ImageTagForReview {
   tagId: number;
 }
 
+export interface ImageMetaFlags {
+  imageId: number;
+  hasMeta: boolean;
+  onSite: boolean;
+}
+
 export interface ImageFlag {
   imageId: number;
   image?: Image;
@@ -2323,6 +2330,7 @@ export interface BlockSpendAttribution {
   contentAuthorUserId: number | null;
   contentAuthor?: User | null;
   sharedContentKey: string | null;
+  generationType: string | null;
   status: string;
   voidedReason: string | null;
   attributedAt: Date;
@@ -2723,6 +2731,7 @@ export interface Announcement {
   cover?: Image | null;
   profileOnly: boolean;
   targetUsers?: AnnouncementUser[];
+  dismissals?: AnnouncementDismissal[];
   spends?: AnnouncementSpend[];
   reports?: AnnouncementReport[];
 }
@@ -2747,6 +2756,14 @@ export interface UserAnnouncementMute {
 export interface AnnouncementUser {
   announcementId: number;
   userId: number;
+  announcement?: Announcement;
+  user?: User;
+}
+
+export interface AnnouncementDismissal {
+  announcementId: number;
+  userId: number;
+  dismissedAt: Date;
   announcement?: Announcement;
   user?: User;
 }

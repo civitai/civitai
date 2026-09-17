@@ -19,7 +19,7 @@ import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import { toClickhouseInt64 } from '~/server/clickhouse/int64';
 import { feedRequestCapture } from '~/server/services/feed-request-capture.service';
-import { feedShadow } from '~/server/services/feed-shadow.service';
+import { DEEP_OFFSET, feedShadow } from '~/server/services/feed-shadow.service';
 import {
   feedFliptContext,
   feedHydrateQuery,
@@ -37,7 +37,6 @@ import {
 import { imageReviewedSql } from '~/server/common/image-visibility';
 import {
   BlockedReason,
-  ImageScanType,
   ImageSort,
   NotificationCategory,
   NsfwLevel,
@@ -140,11 +139,7 @@ import type {
 } from '~/server/schema/image.schema';
 import { imageMetaOutput, ingestImageSchema } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import {
-  articlesSearchIndex,
-  imagesMetricsSearchIndex,
-  imagesSearchIndex,
-} from '~/server/search-index';
+import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import type {
   ImageMetricsSearchIndexRecord,
   MetricsImageFilterableAttribute,
@@ -172,7 +167,6 @@ import {
 } from '~/server/services/model3d.service';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
-import { parseScannerFlag } from '~/server/services/image-scanner-flag';
 import {
   deleteImagTagsForReviewByImageIds,
   getImagTagsForReviewByImageIds,
@@ -203,7 +197,6 @@ import {
   throwInternalServerError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
@@ -267,7 +260,10 @@ import type {
 } from '../../../event-engine-common/types/package-stubs';
 import type { FeedQueryInput } from '../../../event-engine-common/feeds/types';
 import type { ImageQueryInput } from '../../../event-engine-common/types/image-feed-types';
-import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
+import {
+  createImageIngestionRequest,
+  imageIngestionLogName,
+} from '~/server/services/orchestrator/orchestrator.service';
 import { getGenerationDisplayKeys } from '~/server/services/orchestrator/legacy-metadata-mapper';
 import {
   sanitizeProvenance,
@@ -1154,29 +1150,6 @@ export const getImageById = async ({ id }: GetByIdInput) => {
   });
 };
 
-/**
- * Runtime toggle for the new image ingestion path (createImageIngestionRequest
- * with the expanded mediaRating step). Reads from Redis so ops can flip
- * without a deploy. Accepts '1'/'true' / '0'/'false' as string values.
- *
- * If the key doesn't exist (first request after deploy), seeds it to 'false'
- * so the toggle is discoverable in Redis and explicitly off by default.
- * Operators set the key to '1' to enable.
- */
-async function isImageScannerNewEnabled(): Promise<boolean> {
-  // The HA/Sentinel sysRedis returns a Buffer for BLOB_STRING replies, which
-  // matched none of the literals pre-fix → fell through and destructively
-  // overwrote the operator's '1' with 'false'. parseScannerFlag coerces the
-  // Buffer first and returns null ONLY for a genuinely-unset/unknown key, so
-  // the seed below now fires only in its intended default-seeding case.
-  // See PR #2697/#2700 for the canonical Buffer-vs-string regression.
-  const raw = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.IMAGE_SCANNER_NEW);
-  const parsed = parseScannerFlag(raw);
-  if (parsed !== null) return parsed;
-  await sysRedis.set(REDIS_SYS_KEYS.SYSTEM.IMAGE_SCANNER_NEW, 'false');
-  return false;
-}
-
 export const ingestImageById = async ({ id }: GetByIdInput) => {
   const images = await dbWrite.$queryRaw<IngestImageInput[]>`
     SELECT id, url, type, width, height, meta->>'prompt' as prompt
@@ -1197,16 +1170,6 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
 
   return await ingestImage({ image: images[0] });
 };
-
-// const scanner = env.EXTERNAL_IMAGE_SCANNER;
-// const clavataScan = env.CLAVATA_SCAN;
-export const imageScanTypes: ImageScanType[] = [
-  ImageScanType.WD14,
-  // ImageScanType.Hash,
-  // ImageScanType.Clavata,
-  // ImageScanType.Hive,
-  ImageScanType.SpineRating,
-];
 
 function extractSubmitErrorMessage(error: unknown): string | null {
   if (!error) return null;
@@ -1292,233 +1255,64 @@ export const ingestImage = async ({
   const scanRequestedAt = new Date();
   const dbClient = tx ?? dbWrite;
 
-  // if (!isProd || !env.IMAGE_SCANNING_ENDPOINT) {
-  //   console.log('skipping image ingestion');
-  //   const updated = await dbClient.image.update({
-  //     where: { id: image.id },
-  //     select: { postId: true },
-  //     data: {
-  //       scanRequestedAt,
-  //       scannedAt: scanRequestedAt,
-  //       ingestion: ImageIngestionStatus.Scanned,
-  //       nsfwLevel: NsfwLevel.PG,
-  //     },
-  //   });
-
-  //   // Update post NSFW level
-  //   if (updated.postId) await updatePostNsfwLevel(updated.postId);
-
-  //   return true;
-  // }
-
   const parsedImage = ingestImageSchema.safeParse(image);
   if (!parsedImage.success) throw new Error('Failed to parse image data');
 
-  const { url, id, type, width, height } = parsedImage.data;
+  const { url, id, type } = parsedImage.data;
 
   const callbackUrl =
     env.IMAGE_SCANNING_CALLBACK ??
     `${env.NEXTAUTH_URL}/api/webhooks/image-scan-result?token=${env.WEBHOOK_TOKEN}`;
 
-  if (!image.prompt) {
-    const { prompt } = await dbClient.$queryRaw<{ prompt?: string }>`
-      SELECT meta->>'prompt' as prompt FROM "Image" WHERE id = ${id}
-    `;
-    image.prompt = prompt;
-  }
-
-  if (await isImageScannerNewEnabled()) {
-    const {
-      data: workflowResponse,
-      error: submitError,
-      status: submitStatus,
-    } = await createImageIngestionRequest({
-      imageId: id,
-      url,
-      type,
-      callbackUrl,
-      priority: lowPriority ? 'low' : undefined,
-    });
-    if (!workflowResponse) {
-      imageScanSubmittedCounter.inc({ lane: 'new', result: 'failed' });
-      const failureClass = await markImageScanSubmitFailure({
-        dbClient,
-        imageId: id,
-        status: submitStatus,
-        error: submitError,
-      });
-      // The orchestrator submit already logs the transient failure in
-      // createImageIngestionRequest, but from here it's otherwise a silent
-      // `return false` — surface it at the dispatch layer so the failure is
-      // attributable to a specific image + media type.
-      logToAxiom({
-        name: 'image-ingestion',
-        type: 'error',
-        reason: 'no-workflow-response',
-        failureType: 'send-fail',
-        failureClass,
-        responseStatus: submitStatus,
-        imageId: id,
-        mediaType: type,
-      }).catch(() => null);
-      return false;
-    }
-    const scanJobsJson = JSON.stringify({ workflowId: workflowResponse.id });
-    await dbClient.$executeRaw`
-        UPDATE "Image"
-        SET
-          "scanRequestedAt" = ${scanRequestedAt},
-          "scanJobs" = CASE
-            WHEN "scanJobs" IS NOT NULL AND "scanJobs" ? 'retryCount' THEN
-              ${scanJobsJson}::jsonb || jsonb_build_object('retryCount', ("scanJobs"->'retryCount'))
-            ELSE
-              ${scanJobsJson}::jsonb
-          END
-        WHERE id = ${id}
-      `;
-    imageScanSubmittedCounter.inc({ lane: 'new', result: 'success' });
-    return true;
-  }
-
-  let scanUrl = `${env.IMAGE_SCANNING_ENDPOINT}/enqueue`;
-  if (lowPriority) scanUrl += '?lowpri=true';
-
-  const response = await fetch(scanUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    signal: fetchTimeoutSignal(60_000),
-    body: JSON.stringify({
-      imageId: id,
-      imageKey: url,
-      type,
-      width,
-      height,
-      prompt: image.prompt,
-      // wait: true,
-      scans: imageScanTypes,
-      callbackUrl,
-      movieRatingModel: env.IMAGE_SCANNING_MODEL,
-    }),
+  const {
+    data: workflowResponse,
+    error: submitError,
+    status: submitStatus,
+    useImageScanning,
+  } = await createImageIngestionRequest({
+    imageId: id,
+    url,
+    type,
+    callbackUrl,
+    priority: lowPriority ? 'low' : undefined,
   });
-  if (response.status === 202) {
-    const scanJobs = (await response.json().catch(() => Prisma.JsonNull)) as
-      | { jobId: string }
-      | typeof Prisma.JsonNull;
-
-    // Convert scanJobs to JSON string for raw SQL, preserving existing retryCount if it exists
-    const scanJobsJson = scanJobs === Prisma.JsonNull ? null : JSON.stringify(scanJobs);
-
-    if (scanJobsJson) {
-      await dbClient.$executeRaw`
-        UPDATE "Image"
-        SET
-          "scanRequestedAt" = ${scanRequestedAt},
-          "scanJobs" = CASE
-            WHEN "scanJobs" IS NOT NULL AND "scanJobs" ? 'retryCount' THEN
-              ${scanJobsJson}::jsonb || jsonb_build_object('retryCount', ("scanJobs"->'retryCount'))
-            ELSE
-              ${scanJobsJson}::jsonb
-          END
-        WHERE id = ${id}
-      `;
-    } else {
-      await dbClient.$executeRaw`
-        UPDATE "Image"
-        SET "scanRequestedAt" = ${scanRequestedAt}
-        WHERE id = ${id}
-      `;
-    }
-
-    imageScanSubmittedCounter.inc({ lane: 'legacy', result: 'success' });
-    return true;
-  } else {
-    await logToAxiom({
-      name: 'image-ingestion',
-      type: 'error',
+  const lane = useImageScanning ? 'imageScanning' : 'new';
+  if (!workflowResponse) {
+    imageScanSubmittedCounter.inc({ lane, result: 'failed' });
+    const failureClass = await markImageScanSubmitFailure({
+      dbClient,
       imageId: id,
-      url,
-      responseStatus: response.status,
+      status: submitStatus,
+      error: submitError,
     });
-
-    imageScanSubmittedCounter.inc({ lane: 'legacy', result: 'failed' });
+    // createImageIngestionRequest's own log carries neither mediaType nor failureClass.
+    logToAxiom({
+      name: imageIngestionLogName(useImageScanning),
+      type: 'error',
+      reason: 'no-workflow-response',
+      failureType: 'send-fail',
+      failureClass,
+      responseStatus: submitStatus,
+      imageId: id,
+      mediaType: type,
+    }).catch(() => null);
     return false;
   }
-};
-
-export const ingestImageBulk = async ({
-  images,
-  tx,
-  lowPriority = true,
-  scans,
-}: {
-  images: IngestImageInput[];
-  tx?: Prisma.TransactionClient;
-  lowPriority?: boolean;
-  scans?: ImageScanType[];
-}): Promise<boolean> => {
-  if (!env.IMAGE_SCANNING_ENDPOINT)
-    throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
-
-  const callbackUrl = env.IMAGE_SCANNING_CALLBACK;
-  const scanRequestedAt = new Date();
-  const imageIds = images.map(({ id }) => id);
-  const dbClient = tx ?? dbWrite;
-
-  if (!imageIds.length) return false;
-
-  // TODO.articleImageScan: uncomment when ready to enable image scanning for articles
-  // if (!isProd || !callbackUrl) {
-  //   console.log('skip ingest');
-  //   await dbClient.image.updateMany({
-  //     where: { id: { in: imageIds } },
-  //     data: {
-  //       scanRequestedAt,
-  //       scannedAt: scanRequestedAt,
-  //       ingestion: ImageIngestionStatus.Scanned,
-  //       nsfwLevel: NsfwLevel.PG,
-  //     },
-  //   });
-  //   return true;
-  // }
-
-  const needsPrompts = !images.some((x) => x.prompt);
-  if (needsPrompts) {
-    const prompts = await dbClient.$queryRaw<{ id: number; prompt?: string }[]>`
-      SELECT id, meta->>'prompt' as prompt FROM "Image" WHERE id IN (${Prisma.join(imageIds)})
+  const scanJobsJson = JSON.stringify({ workflowId: workflowResponse.id });
+  await dbClient.$executeRaw`
+      UPDATE "Image"
+      SET
+        "scanRequestedAt" = ${scanRequestedAt},
+        "scanJobs" = CASE
+          WHEN "scanJobs" IS NOT NULL AND "scanJobs" ? 'retryCount' THEN
+            ${scanJobsJson}::jsonb || jsonb_build_object('retryCount', ("scanJobs"->'retryCount'))
+          ELSE
+            ${scanJobsJson}::jsonb
+        END
+      WHERE id = ${id}
     `;
-    const promptMap = Object.fromEntries(prompts.map((x) => [x.id, x.prompt]));
-    for (const image of images) image.prompt = promptMap[image.id];
-  }
-
-  const response = await fetch(
-    env.IMAGE_SCANNING_ENDPOINT + `/enqueue-bulk?lowpri=${lowPriority}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: fetchTimeoutSignal(60_000),
-      body: JSON.stringify(
-        images.map((image) => ({
-          imageId: image.id,
-          imageKey: image.url,
-          type: image.type,
-          width: image.width,
-          height: image.height,
-          prompt: image.prompt,
-          scans: scans ?? imageScanTypes,
-          callbackUrl,
-        }))
-      ),
-    }
-  );
-  if (response.status === 202) {
-    await dbClient.image.updateMany({
-      where: { id: { in: imageIds } },
-      data: { scanRequestedAt },
-    });
-    return true;
-  }
-
-  return false;
+  imageScanSubmittedCounter.inc({ lane, result: 'success' });
+  return true;
 };
 
 export function enqueueImageIngestion({
@@ -2875,6 +2669,14 @@ type GetAllImagesIndexResult = AsyncReturnType<typeof getAllImages>;
 type GetAllImagesIndexSourcedResult = GetAllImagesIndexResult & {
   source?: 'feed' | AsyncReturnType<typeof getImagesFromSearch>['source'];
 };
+async function getUserIdByUsername(username: string) {
+  const user =
+    (await dbRead.user.findUnique({ where: { username }, select: { id: true } })) ??
+    (await dbWrite.user.findUnique({ where: { username }, select: { id: true } }));
+  if (!user) throw throwNotFoundError('User not found');
+  return user.id;
+}
+
 export const getAllImagesIndex = async (
   input: GetAllImagesInput
 ): Promise<GetAllImagesIndexSourcedResult> => {
@@ -2939,8 +2741,17 @@ export const getAllImagesIndex = async (
   const entry = isNumber(cursorParsed?.[1]) ? Number(cursorParsed?.[1]) : undefined;
 
   const currentUserId = user?.id;
+  const userId =
+    input.userId ?? (input.username ? await getUserIdByUsername(input.username) : undefined);
 
-  const searchInput = { ...input, currentUserId, isModerator: user?.isModerator, offset, entry };
+  const searchInput = {
+    ...input,
+    userId,
+    currentUserId,
+    isModerator: user?.isModerator,
+    offset,
+    entry,
+  };
   // The feed service picks and orders the page and Postgres supplies the rows; Meilisearch is
   // not consulted. What the feed cannot serve (unmapped shape, timeout, error) goes to Meilisearch.
   if (feedPrimaryAvailable()) {
@@ -2953,11 +2764,15 @@ export const getAllImagesIndex = async (
     );
     if (feedPrimary) {
       const started = Date.now();
-      const followedUserIds =
-        input.followed && currentUserId ? await getUserFollows(currentUserId) : undefined;
+      const [followedUserIds, newCreatorUserIds] = await Promise.all([
+        input.followed && currentUserId ? getUserFollows(currentUserId) : undefined,
+        input.newCreators
+          ? getNewCreatorUserIds({ entity: 'images', domain: input.domain })
+          : undefined,
+      ]);
       const served = await withSpan('image:feedPrimary', () =>
         serveFromFeed(
-          { ...searchInput, followedUserIds },
+          { ...searchInput, followedUserIds, newCreatorUserIds },
           {
             fetchFeed: fetchFeedPrimary,
             hydrate: async (ids) =>
@@ -2977,6 +2792,8 @@ export const getAllImagesIndex = async (
         });
         return { items: served.page.data, nextCursor: served.page.nextCursor, source: 'feed' };
       }
+      if (served.reason === DEEP_OFFSET)
+        throw throwBadRequestError('This feed cannot be paged this far; narrow the filters');
     }
   }
 
@@ -6967,20 +6784,6 @@ export async function reportCsamImages({
   await bulkSetReportStatus({ ids: reportIds, status: ReportStatus.Actioned, userId: user.id, ip });
 }
 
-export async function ingestArticleCoverImages(array: { imageId: number; articleId: number }[]) {
-  const imageIds = array.map((x) => x.imageId);
-  const images = await dbRead.image.findMany({
-    where: { id: { in: imageIds } },
-    select: { id: true, url: true, height: true, width: true },
-  });
-
-  await articlesSearchIndex.queueUpdate(
-    array.map((x) => ({ id: x.articleId, action: SearchIndexUpdateQueueAction.Update }))
-  );
-
-  await ingestImageBulk({ images, lowPriority: true });
-}
-
 export async function updateImageNsfwLevel({
   id,
   nsfwLevel,
@@ -7282,15 +7085,16 @@ export async function addImageTools({
     select: {
       id: true,
       url: true,
+      type: true,
     },
   });
 
-  if (updated.length > 0) {
-    await ingestImageBulk({
-      images: updated,
-      lowPriority: true,
-    });
-  }
+  enqueueImageIngestion({
+    images: updated,
+    name: 'add-image-tools',
+    userId: user.id,
+    lowPriority: true,
+  });
 
   for (const { imageId } of data) {
     purgeImageGenerationDataCache(imageId);

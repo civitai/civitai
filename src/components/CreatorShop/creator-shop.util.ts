@@ -204,6 +204,13 @@ export const useMutateCreatorShop = () => {
     async onSuccess() {
       await queryUtils.creatorShop.getManageItems.invalidate();
       await queryUtils.creatorShop.getPack.invalidate();
+      // The moderator cosmetic-store list edits packs through this same
+      // mutation, and both storefronts render a pack's title and price — a
+      // price or contents edit also drops it to PendingReview, so all three
+      // are showing a listing that is no longer on sale.
+      await queryUtils.cosmeticShop.getShopItemsPaged.invalidate();
+      await queryUtils.creatorShop.getShop.invalidate();
+      await queryUtils.creatorShop.getCommunityCosmetics.invalidate();
       showSuccessNotification({ message: 'Pack updated' });
     },
     onError: onError('Failed to update pack'),

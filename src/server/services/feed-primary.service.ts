@@ -58,11 +58,13 @@ export function feedHydrateQuery<
     entry?: number;
     limit?: number;
     period?: unknown;
+    modelId?: number;
+    modelVersionId?: number;
   }
 >(
   input: T,
   ids: number[]
-): Omit<T, 'cursor' | 'skip' | 'offset' | 'entry' | 'period'> & {
+): Omit<T, 'cursor' | 'skip' | 'offset' | 'entry' | 'period' | 'modelId' | 'modelVersionId'> & {
   ids: number[];
   limit: number;
   period: 'AllTime';
@@ -73,6 +75,10 @@ export function feedHydrateQuery<
     offset: _offset,
     entry: _entry,
     period: _period,
+    // The feed already scoped these, and counts a creator's post on a version as a member where
+    // the hydrate's resource join would drop it.
+    modelId: _modelId,
+    modelVersionId: _modelVersionId,
     ...rest
   } = input;
   return { ...rest, ids, limit: ids.length, period: 'AllTime' };
@@ -96,8 +102,12 @@ export async function serveFromFeed<T extends { id: number }>(
   input: CapturableSearchInput,
   deps: FeedPrimaryDeps<T>
 ): Promise<FeedPrimaryResult<T>> {
-  // Meilisearch answers a follow list with no creators as an empty feed, whatever else is set.
-  if (input.followed === true && input.followedUserIds?.length === 0) {
+  // Meilisearch answers a follow list with no creators as an empty feed, whatever else is set,
+  // and an unpopulated new-creator board serves nothing rather than the global feed.
+  if (
+    (input.followed === true && input.followedUserIds?.length === 0) ||
+    (input.newCreators === true && input.newCreatorUserIds?.length === 0)
+  ) {
     count('served');
     return { ok: true, page: { data: [], nextCursor: undefined, feedMs: 0 } };
   }

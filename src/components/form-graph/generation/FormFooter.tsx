@@ -57,6 +57,7 @@ import { resolveBoostSubmitFields } from '~/components/generation_v2/hooks/usePr
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { EcosystemBaseModelWarnings } from '~/components/generation_v2/BaseModelWarnings';
 import { GeneratorMessageWarnings } from './GateRuleWarnings';
+import { StepWarningsNotification } from '~/components/generation_v2/FormFooter';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '~/components/generation_v2/utils';
@@ -157,7 +158,7 @@ function PriorityAlertSpace({
   forceInsufficientBuzz?: boolean;
   onClearInsufficientBuzz?: () => void;
 }) {
-  const { error: whatIfError, isError: hasWhatIfError } = useWhatIfContext();
+  const { error: whatIfError, isError: hasWhatIfError, data: whatIfData } = useWhatIfContext();
   const { selectedType, availableTypes, setBuzzType } = useSelectedBuzzType();
   const {
     data: { accounts },
@@ -254,6 +255,10 @@ function PriorityAlertSpace({
         </div>
       </Notification>
     );
+    // Above the sdcpp branch because that one always assigns (its MultiController decides
+    // internally whether to draw), so anything after it never renders.
+  } else if (whatIfData?.warnings?.length) {
+    priorityAlert = <StepWarningsNotification warnings={whatIfData.warnings} />;
   } else if (featureFlags.enhancedCompatibilitySdcpp) {
     priorityAlert = (
       <MultiController

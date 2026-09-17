@@ -84,6 +84,21 @@ import { getAllowedAccountTypes } from '../utils/buzz-helpers';
 import { getVideoMetadata } from '~/server/services/orchestrator/videoEnhancement';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { isRawAirResource } from '~/shared/utils/air';
+
+/**
+ * True when the (unvalidated) graph input carries raw-AIR resources — training
+ * epoch blobs referenced directly, without a ModelVersion row. Used to gate the
+ * feature-flag before the input reaches the service, mirroring the
+ * workflow-flag gates below.
+ */
+function containsRawAirResources(formInput: unknown): boolean {
+  const resources = (formInput as { resources?: unknown } | undefined)?.resources;
+  if (!Array.isArray(resources)) return false;
+  return resources.some(
+    (r) => typeof r === 'object' && r !== null && isRawAirResource(r as { id?: unknown })
+  );
+}
 
 /**
  * Resolves the currencies to use for a generation request.
@@ -411,6 +426,15 @@ export const orchestratorRouter = router({
         });
       }
 
+      // Raw-AIR (training epoch blob) resources are flag-gated. The service
+      // still enforces ownership regardless of the flag; this is the rollout gate.
+      if (containsRawAirResources(formInput) && ctx.features.generationAirResources !== true) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Epoch resources are not available for your account.',
+        });
+      }
+
       // Check generation status early
       if (status.mode === 'disabled' && !ctx.user.isModerator) {
         throw new TRPCError({
@@ -515,6 +539,14 @@ export const orchestratorRouter = router({
         throw new TRPCError({
           code: 'FORBIDDEN',
           message: 'This workflow is not available for your account.',
+        });
+      }
+
+      // Mirror of the raw-AIR flag gate in `generateFromGraph`.
+      if (containsRawAirResources(input) && ctx.features.generationAirResources !== true) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Epoch resources are not available for your account.',
         });
       }
 

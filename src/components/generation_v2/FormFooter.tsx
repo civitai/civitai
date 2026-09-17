@@ -216,6 +216,19 @@ export function useSelectedBuzzType() {
  */
 const BUZZ_SELECTOR_SEEN_KEY = 'buzz-type-selector-seen';
 
+export function StepWarningsNotification({ warnings }: { warnings: { message: string }[] }) {
+  return (
+    <Notification
+      icon={<IconAlertTriangle size={18} />}
+      color="yellow"
+      className="whitespace-pre-wrap rounded-md bg-yellow-8/20"
+      withCloseButton={false}
+    >
+      {warnings.map((warning) => warning.message).join('\n')}
+    </Notification>
+  );
+}
+
 export function BuzzTypeSelector({
   cost,
   loading,
@@ -489,18 +502,6 @@ interface PriorityAlertSpaceProps {
   onClearInsufficientBuzz?: () => void;
 }
 
-/**
- * Alert space with DailyBoostRewardClaim always on top, then priority-based alerts.
- *
- * Layout:
- * - DailyBoostRewardClaim (always shown if available)
- * - Priority alert (only one shows):
- *   1. Missing field guidance (validation helper)
- *   2. WhatIf error (cost estimation failed)
- *   3. Submit error
- *   4. Membership upsell
- *   5. Queue snackbar (fallback)
- */
 function PriorityAlertSpace({
   submitError,
   onClearSubmitError,
@@ -509,7 +510,7 @@ function PriorityAlertSpace({
   forceInsufficientBuzz,
   onClearInsufficientBuzz,
 }: PriorityAlertSpaceProps) {
-  const { error: whatIfError, isError: hasWhatIfError } = useWhatIfContext();
+  const { error: whatIfError, isError: hasWhatIfError, data: whatIfData } = useWhatIfContext();
   const { selectedType, availableTypes, setBuzzType } = useSelectedBuzzType();
   const {
     data: { accounts },
@@ -612,6 +613,10 @@ function PriorityAlertSpace({
         </div>
       </Notification>
     );
+    // Above the sdcpp branch because that one always assigns (its MultiController decides
+    // internally whether to draw), so anything after it never renders.
+  } else if (whatIfData?.warnings?.length) {
+    priorityAlert = <StepWarningsNotification warnings={whatIfData.warnings} />;
   } else if (featureFlags.enhancedCompatibilitySdcpp) {
     // Dismissal is keyed per-ecosystem via DismissibleAlert's localStorage id.
     // When enhancedCompatibility is on, the bonus doesn't apply — swap in a

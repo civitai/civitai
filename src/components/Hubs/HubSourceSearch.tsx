@@ -59,9 +59,9 @@ export function HubSourceSearch({
 
   // The site's own tag list, not a hub endpoint: `tag.getAll` is what every other
   // tag picker on the site already uses, and it carries the filters this needs —
-  // image tags, listed, and not the moderation or system vocabularies. Adding a
-  // fourth arm to `sourceSuggestions` would have been a second implementation of
-  // it, scoped to relationships tags do not have.
+  // image tags, listed, and whichever vocabularies HUB_TAG_SOURCE_FILTER names.
+  // Adding a fourth arm to `sourceSuggestions` would have been a second
+  // implementation of it, scoped to relationships tags do not have.
   const { data: tagData, isFetching: fetchingTags } = trpc.tag.getAll.useQuery(
     {
       // Spread, not retyped. The same two fields were written out here verbatim,

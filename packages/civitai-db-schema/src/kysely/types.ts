@@ -181,6 +181,11 @@ export type Announcement = {
    */
   profileOnly: Generated<boolean>;
 };
+export type AnnouncementDismissal = {
+  announcementId: number;
+  userId: number;
+  dismissedAt: Generated<Timestamp>;
+};
 export type AnnouncementReport = {
   announcementId: number;
   reportId: number;
@@ -1011,6 +1016,35 @@ export type BlockSpendAttribution = {
    * (bounded, app-owned). NULL when the app supplied none.
    */
   shared_content_key: string | null;
+  /**
+   * The APP-FACING generation type this spend paid for, as `<coarse>` or
+   * `<coarse>:<subtype>` — e.g. `textToImage:img2img-edit`,
+   * `customComfy:seamless-pano-360`, `customComfy:inline`, or a bare
+   * registered STEP ID (`convert-image`, `chat-completion`). NEVER the
+   * orchestrator's internal `$type` (`convertImage` / `chatCompletion`), which
+   * is free to change without a wire-contract decision.
+   *
+   * 🔴 THE COARSE KEY IS EVERYTHING BEFORE THE FIRST COLON, and a value carries
+   * at most one. A per-generation-type author fee keys on the coarse key, so
+   * `split_part(generation_type, ':', 1)` is the stable grouping no matter how
+   * the subtype axis grows. A step id implies `kind: 'step'` and carries no
+   * subtype, so one column covers the whole axis with no companion `kind`.
+   *
+   * Deliberately unconstrained TEXT — no CHECK, no enum. Both the step and
+   * recipe registries are designed to grow additively (register an entry, not
+   * a schema change), and a CHECK would make every new step or recipe a
+   * migration. The bound is enforced in code against those registries
+   * (`resolveBlockGenerationType` / `isBlockGenerationType`, in
+   * `src/server/services/blocks/generation-type.ts`) and re-checked at the
+   * write.
+   *
+   * NULL on rows written before this column existed (no backfill is possible —
+   * the type was never recorded) and on any submit whose type could not be
+   * resolved. Resolution is fail-open: an unresolvable SUB-axis degrades to the
+   * bare coarse key, and an unresolvable body to NULL, rather than throwing on
+   * the fire-and-forget spend path.
+   */
+  generation_type: string | null;
   status: Generated<string>;
   /**
    * 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no
@@ -2484,6 +2518,11 @@ export type ImageFlag = {
   imageId: number;
   promptNsfw: Generated<boolean>;
   resourcesNsfw: Generated<boolean>;
+};
+export type ImageMetaFlags = {
+  imageId: number;
+  hasMeta: boolean;
+  onSite: boolean;
 };
 export type ImageModHelper = {
   imageId: number;
@@ -4375,6 +4414,7 @@ export type DB = {
   Account: Account;
   AdToken: AdToken;
   Announcement: Announcement;
+  AnnouncementDismissal: AnnouncementDismissal;
   AnnouncementReport: AnnouncementReport;
   AnnouncementSpend: AnnouncementSpend;
   AnnouncementUser: AnnouncementUser;
@@ -4529,6 +4569,7 @@ export type DB = {
   ImageConnection: ImageConnection;
   ImageEngagement: ImageEngagement;
   ImageFlag: ImageFlag;
+  ImageMetaFlags: ImageMetaFlags;
   ImageModHelper: ImageModHelper;
   ImageRatingRequest: ImageRatingRequest;
   ImageReaction: ImageReaction;

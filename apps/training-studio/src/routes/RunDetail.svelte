@@ -1,5 +1,16 @@
 <script lang="ts">
-  import { backend, browser, hrefFor, navigate } from '$lib/host';
+  import {
+    backend,
+    browser,
+    generate,
+    generateUrl,
+    hostLink,
+    hrefFor,
+    modelPageUrl,
+    navigate,
+    publishUrl,
+  } from '$lib/host';
+  import { loraBlobAir } from '$lib/train-core';
   import { locationHref } from '$lib/actions/locationHref';
   import JSZip from 'jszip';
   import { onSignal } from '$lib/signals';
@@ -17,6 +28,9 @@
     IconRepeat,
     IconArrowLeft,
     IconBoltFilled,
+    IconSparkles,
+    IconUpload,
+    IconExternalLink,
   } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
@@ -175,10 +189,11 @@
     return newestFirst.find((e) => e.modelUrl) ?? newestFirst[0];
   });
 
-  // Publish hands off to the main app for the highest checkpoint that actually has weights (a still-training
-  // run's newest epoch may have samples but no downloadable model yet). Null disables the button. (Generate
-  // is intentionally not here: creating a throwaway draft model just to generate was rejected — the real
-  // fix is teaching the on-site generator to accept a raw AIR/URL, done main-app-side.)
+  // Newest checkpoint that actually has weights (a still-training run's newest epoch may have
+  // samples but no downloadable model yet). Publish falls back to this when the selected epoch has
+  // no weights; it also anchors "train further". (Generate is intentionally not here: creating a
+  // throwaway draft model just to generate was rejected — the real fix is teaching the on-site
+  // generator to accept a raw AIR/URL, done main-app-side.)
   const publishTarget = $derived(newestFirst.find((e) => e.modelUrl) ?? null);
 
   // Dataset blobs need auth to fetch (see StudioBackend.datasetBlob), so each one is resolved through
@@ -292,6 +307,26 @@
     handoffReuse(await toReuseItems(d.dataset, d.workflowId));
   }
 
+  // "Generate with this epoch": the handoff for a checkpoint's weights blob. A host `generate`
+  // opens its generator in place (button); otherwise `generateUrl` gives a /generate deep link
+  // (`hostLink` decides same-tab vs new-tab). Null hides the affordance — neither callback from
+  // the host, no ecosystem to scope the AIR by, or no downloadable weights yet.
+  function epochGenerateLink(
+    epoch: TrainingDetailEpoch
+  ): { action: () => void } | ReturnType<typeof hostLink> | null {
+    if (!d.ecosystem || !epoch.modelKey) return null;
+    const req = {
+      air: loraBlobAir(d.ecosystem, epoch.modelKey),
+      workflowId: d.workflowId,
+      name: `${d.name} · epoch ${epoch.number}`,
+    };
+    const inPlace = generate();
+    if (inPlace) return { action: () => inPlace(req) };
+    const toUrl = generateUrl();
+    if (!toUrl) return null;
+    return hostLink(toUrl(req));
+  }
+
   let furtherEpochs = $state(5);
   let confirming = $state(false);
   let continuing = $state(false);
@@ -386,6 +421,20 @@
   // falls back to recommended — no reseed needed.
   let selectedId = $state<string | null>(null);
   const featured = $derived(newestFirst.find((e) => e.id === selectedId) ?? recommended);
+
+  const publishEpoch = $derived(featured?.modelUrl ? featured : publishTarget);
+  const publishLink = $derived.by(() => {
+    const toUrl = publishUrl();
+    if (!toUrl || !publishEpoch) return null;
+    return hostLink(toUrl({ workflowId: d.workflowId, epoch: publishEpoch.number }));
+  });
+
+  // Independent of `publishTarget` so the link outlives the checkpoints' blob retention.
+  const modelLink = $derived.by(() => {
+    const toUrl = modelPageUrl();
+    if (!toUrl || d.modelId == null) return null;
+    return hostLink(toUrl({ modelId: d.modelId }));
+  });
 
   let mode = $state<'epoch' | 'compare'>('epoch');
   // A single-epoch continuation still has ancestors worth comparing against, so lineage alone
@@ -724,13 +773,34 @@
             {/if}
           </div>
           {#if featured.modelUrl}
-            <a
-              href={featured.modelUrl}
-              download
-              class="ml-auto inline-flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
-            >
+            {@const gen = epochGenerateLink(featured)}
+            <div class="ml-auto flex flex-wrap items-center gap-2">
+              {#if gen}
+                {#if 'action' in gen}
+                  <button
+                    type="button"
+                    onclick={gen.action}
+                    class="inline-flex items-center gap-1.5 rounded border border-primary/40 px-3 py-1.5 text-[13px] font-semibold text-primary transition-colors hover:bg-primary/10"
+                  >
+<IconSparkles size={14} stroke={2} class="mr-1 inline" />Generate
+                  </button>
+                {:else}
+                  <a
+                    {...gen}
+                    class="inline-flex items-center gap-1.5 rounded border border-primary/40 px-3 py-1.5 text-[13px] font-semibold text-primary transition-colors hover:bg-primary/10"
+                  >
+<IconSparkles size={14} stroke={2} class="mr-1 inline" />Generate
+                  </a>
+                {/if}
+              {/if}
+              <a
+                href={featured.modelUrl}
+                download
+                class="inline-flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+              >
 <IconDownload size={14} stroke={2} class="mr-1 inline" />Download weights
-            </a>
+              </a>
+            </div>
           {:else}
             <span
               class="ml-auto rounded border border-dark-4 px-3 py-1.5 font-mono text-xs text-dark-2"
@@ -775,35 +845,62 @@
           <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {#each newestFirst as epoch (epoch.id)}
               {@const isSelected = epoch === featured}
-              <button
-                type="button"
-                onclick={() => (selectedId = epoch.id)}
-                aria-pressed={isSelected}
-                class="rounded-md border p-3 text-left transition-colors {isSelected
-                  ? 'border-primary bg-primary/5 ring-1 ring-primary/40'
-                  : 'border-dark-4 bg-dark-7 hover:border-dark-3'}"
-              >
-                <div class="mb-2.5 flex items-center gap-2">
-                  <span class="text-sm font-bold text-dark-0">Epoch {epoch.number}</span>
-                  {#if epoch === recommended}
-                    <IconStarFilled size={12} class="text-buzz" />
+              {@const gen = epochGenerateLink(epoch)}
+              <!-- The whole card is the select button, so the per-epoch Generate link can't nest
+                   inside it — it overlays the header's right slot from a relative wrapper. -->
+              <div class="relative">
+                <button
+                  type="button"
+                  onclick={() => (selectedId = epoch.id)}
+                  aria-pressed={isSelected}
+                  class="h-full w-full rounded-md border p-3 text-left transition-colors {isSelected
+                    ? 'border-primary bg-primary/5 ring-1 ring-primary/40'
+                    : 'border-dark-4 bg-dark-7 hover:border-dark-3'}"
+                >
+                  <div class="mb-2.5 flex items-center gap-2">
+                    <span class="text-sm font-bold text-dark-0">Epoch {epoch.number}</span>
+                    {#if epoch === recommended}
+                      <IconStarFilled size={12} class="text-buzz" />
 
+                    {/if}
+                    {#if !gen}
+                      <span class="ml-auto font-mono text-xs text-dark-2">
+                        {epoch.modelUrl ? 'weights ready' : 'no weights'}
+                      </span>
+                    {/if}
+                  </div>
+                  <div class="grid grid-cols-3 gap-1.5">
+                    {#each promptLabels as _, si (si)}
+                      <SampleImage
+                        isVideo={d.isVideo} isAudio={d.media === 'audio'}
+                        url={epoch.samples[si] ?? null}
+                        pending={samplesPending}
+                        alt="Epoch {epoch.number} preview {si + 1}"
+                      />
+                    {/each}
+                  </div>
+                </button>
+                {#if gen}
+                  {#if 'action' in gen}
+                    <button
+                      type="button"
+                      onclick={gen.action}
+                      title="Generate with epoch {epoch.number}"
+                      class="absolute right-2 top-2 inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    >
+                      <IconSparkles size={12} stroke={2} />Generate
+                    </button>
+                  {:else}
+                    <a
+                      {...gen}
+                      title="Generate with epoch {epoch.number}"
+                      class="absolute right-2 top-2 inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    >
+                      <IconSparkles size={12} stroke={2} />Generate
+                    </a>
                   {/if}
-                  <span class="ml-auto font-mono text-xs text-dark-2">
-                    {epoch.modelUrl ? 'weights ready' : 'no weights'}
-                  </span>
-                </div>
-                <div class="grid grid-cols-3 gap-1.5">
-                  {#each promptLabels as _, si (si)}
-                    <SampleImage
-                      isVideo={d.isVideo} isAudio={d.media === 'audio'}
-                      url={epoch.samples[si] ?? null}
-                      pending={samplesPending}
-                      alt="Epoch {epoch.number} preview {si + 1}"
-                    />
-                  {/each}
-                </div>
-              </button>
+                {/if}
+              </div>
             {/each}
           </div>
         </div>
@@ -868,20 +965,56 @@
       </div>
     {/if}
 
-    <div class="flex flex-wrap items-center gap-3 rounded-xl border border-dark-4 bg-dark-7 px-4 py-3">
-      <div class="flex flex-wrap items-center gap-2">
-        <Button size="sm" disabled>Publish a model page</Button>
-        <span
-          class="rounded-full border border-dark-4 bg-dark-6 px-2 py-0.5 font-mono text-xs uppercase tracking-wider text-dark-2"
-        >
-          Coming soon
-        </span>
+    {#if publishUrl() || modelLink}
+      <div class="flex flex-wrap items-center gap-3 rounded-xl border border-dark-4 bg-dark-6 p-5">
+        {#if d.state === 'published'}
+          <!-- State first, link second: a published run must never fall through to a Publish CTA —
+               older runs carry `published` without `modelId`, and a host may omit modelPageUrl. -->
+          {#if modelLink}
+            <Button size="sm" {...modelLink}>
+              <IconExternalLink size={14} stroke={2} />View your model page
+            </Button>
+          {/if}
+          <p class="m-0 font-mono text-xs text-dark-2">
+            This run was published as a model on Civitai.
+          </p>
+        {:else if publishLink && publishEpoch}
+          <Button size="sm" {...publishLink}>
+            <IconUpload size={14} stroke={2} />Publish a model page
+          </Button>
+          {#if modelLink}
+            <Button size="sm" variant="outline" {...modelLink}>
+              <IconExternalLink size={14} stroke={2} />View draft
+            </Button>
+            <p class="m-0 font-mono text-xs text-dark-2">
+              You already have a draft model page for this run — publishing picks up where you left
+              off, or open the draft directly.
+            </p>
+          {:else}
+            <p class="m-0 font-mono text-xs text-dark-2">
+              Creates a draft model page on Civitai from epoch {publishEpoch.number}{publishEpoch ===
+              recommended
+                ? ' (recommended)'
+                : ''} — you review, finish, and publish it there. Nothing goes public until you do.
+            </p>
+          {/if}
+        {:else if modelLink}
+          <!-- A draft exists but there's nothing to publish from here — the weights expired, or
+               this host has no publish surface. The draft link must not hide behind either. -->
+          <Button size="sm" variant="outline" {...modelLink}>
+            <IconExternalLink size={14} stroke={2} />View draft
+          </Button>
+          <p class="m-0 font-mono text-xs text-dark-2">
+            You have a draft model page for this run on Civitai.
+          </p>
+        {:else}
+          <Button size="sm" disabled>Publish a model page</Button>
+          <p class="m-0 font-mono text-xs text-dark-2">
+            Available once a checkpoint with downloadable weights is ready.
+          </p>
+        {/if}
       </div>
-      <p class="m-0 font-mono text-xs text-dark-2">
-        Publishing a trained model to Civitai from here is coming soon. For now, download the
-        weights above.
-      </p>
-    </div>
+    {/if}
   {/if}
 
   {#if d.dataset.length}
