@@ -89,7 +89,7 @@ const EDIT_HREF = 'href={`/moderator/cosmetic-store/products/${shopItem.id}/edit
  */
 const blockAfter = (source: string, open: string, close: string) => {
   const start = source.indexOf(open);
-  if (start === -1 || source.indexOf(open, start + open.length) !== -1) return '';
+  if (start === -1 || source.indexOf(open, start + 1) !== -1) return '';
   const end = source.indexOf(close, start + open.length);
   return end === -1 ? '' : source.slice(start, end + close.length);
 };
@@ -113,6 +113,18 @@ describe('the moderator cosmetic-store pack edit route', () => {
     expect(
       pageSource.split('{shopItem.cosmetic ? (').length - 1,
       'More than one `{shopItem.cosmetic ? (` in this page — editArms() would slice the wrong one.'
+    ).toBe(1);
+
+    // `) : (` is the weak marker: it occurs more than once in this file, and
+    // `editArms` takes the first one AFTER the open. A nested ternary inside the
+    // cosmetic arm would truncate that arm and push the rest into the pack arm —
+    // which makes the inversion negative below pass VACUOUSLY, and that is the
+    // most load-bearing assertion in the file.
+    const { cosmeticArm, packArm } = editArms();
+    expect(
+      (cosmeticArm + packArm).split(') : (').length - 1,
+      'A second `) : (` now sits inside the edit conditional, so the two arms are ' +
+        'split at the wrong place and the assertions below are reading the wrong text.'
     ).toBe(1);
   });
 
@@ -237,6 +249,14 @@ describe('the moderator cosmetic-store pack edit route', () => {
       payloadKeys,
       'The update payload sends `memberCosmeticIds` unconditionally again.'
     ).not.toContain('memberCosmeticIds,');
+
+    // Not a money field, same rule: sent unconditionally it makes the server's
+    // blue-buzz check run on every title edit, and a member who has since opted
+    // out then refuses an edit that never touched blue.
+    expect(
+      payloadKeys,
+      'The update payload sends `acceptsBlueBuzz` unconditionally again.'
+    ).not.toContain('acceptsBlueBuzz,');
   });
 
   it('re-validates membership only when membership was supplied', () => {
@@ -253,8 +273,19 @@ describe('the moderator cosmetic-store pack edit route', () => {
     const update = blockAfter(
       serviceSource,
       'export const updateCreatorShopPack',
-      'const nextPrice'
+      // Past the floor block, not into it: `const nextPrice` moved INSIDE
+      // `if (reSnapshot) {` this round, which truncated this slice before the
+      // throw the floor assertion below reads.
+      'const nextAcceptsBlue'
     );
+    // Its close marker moved once already this PR. Without this, every assertion
+    // below fails claiming the server stopped scoping its validation, when all
+    // that happened is a marker drifted.
+    expect(
+      update,
+      'Could not locate updateCreatorShopPack between its markers — the assertions ' +
+        'below read that slice, so fix this before trusting them.'
+    ).not.toEqual('');
     expect(
       update,
       'updateCreatorShopPack must only re-validate membership the caller actually sent.'
@@ -272,8 +303,42 @@ describe('the moderator cosmetic-store pack edit route', () => {
       update,
       '`reSnapshot` must be derived once, from membershipSupplied || repriced.'
     ).toContain('const reSnapshot = membershipSupplied || repriced;');
+
+    // 🔴 Pin what the aliases MEAN, not only that they are used. `const repriced
+    // = false` leaves every other spelling in this file intact and silently
+    // reverts the whole price half of this change: no floor check, no
+    // `floorAmount` re-snapshot, no drop to PendingReview on a reprice. Measured
+    // green before this assertion existed.
     expect(
-      blockAfter(serviceSource, 'return dbWrite.$transaction', 'acceptsBlueBuzz: nextAcceptsBlue'),
+      update,
+      '`repriced` must be `price !== undefined` — a price of 0 is still a repricing, ' +
+        'and anything narrower silently disables the price path.'
+    ).toContain('const repriced = price !== undefined;');
+    expect(update, '`membershipSupplied` must be `memberCosmeticIds !== undefined`.').toContain(
+      'const membershipSupplied = memberCosmeticIds !== undefined;'
+    );
+
+    // The floor gating itself, which is what delivers "a title-only edit is not
+    // refused". Reverting it to unconditional reddened nothing before this.
+    expect(
+      blockAfter(update, 'if (reSnapshot) {', 'throw throwBadRequestError'),
+      'The price floor must be checked only when the price or the contents moved — ' +
+        'unconditionally it refuses a title fix over a member that repriced since.'
+    ).toContain('packPriceFloor(members)');
+    // Named and guarded: the open marker differs from its sibling in
+    // createCreatorShopPack by one `await`, so adding one here would empty this
+    // slice and blame the PendingReview spread for it.
+    const txBlock = blockAfter(
+      serviceSource,
+      'return dbWrite.$transaction',
+      'acceptsBlueBuzz: nextAcceptsBlue'
+    );
+    expect(
+      txBlock,
+      "Could not locate updateCreatorShopPack's transaction body — check its markers."
+    ).not.toEqual('');
+    expect(
+      txBlock,
       'The PendingReview spread must reuse `reSnapshot`, not restate its expression.'
     ).toContain('...(reSnapshot ? { status: CosmeticShopItemStatus.PendingReview } : {})');
     for (const assertion of ['assertMembersResellable', 'assertStickerMembersAllowed']) {
@@ -305,10 +370,16 @@ describe('the moderator cosmetic-store pack edit route', () => {
     // The query client runs at `staleTime: Infinity` (src/utils/trpc.ts), so a row
     // the moderator list fetched an hour ago never refreshes. Seeding the price
     // from it and saving wrote a stale amount back over the creator's own change.
-    const hydration = modalSource.match(/setHydrated\(true\);[\s\S]*?setSelected\(/)?.[0] ?? '';
-    // All four, not just the price. `name` and `availableQuantity` are sent
-    // UNCONDITIONALLY by the payload, so an unhydrated one writes the caller's
-    // hour-old value straight over the creator's own edit.
+    const hydration = blockAfter(modalSource, 'setHydrated(true);', 'setSelected(');
+    expect(
+      hydration,
+      'Could not locate the hydration effect between setHydrated(true) and setSelected(.'
+    ).not.toEqual('');
+    // The four scalars seeded from the caller's row. `name` and
+    // `availableQuantity` are still sent unconditionally by the payload, so an
+    // unhydrated one writes the caller's hour-old value over the creator's own
+    // edit. The members and the cover are hydrated further down the same effect,
+    // past this slice's close marker, and are pinned by their own cases.
     for (const [field, call] of [
       ['title', 'setName(existing.title)'],
       ['description', "setDescription(existing.description ?? '')"],

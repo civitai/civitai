@@ -340,11 +340,6 @@ export const updateCreatorShopPack = async ({
   // floor is checked against today's list prices; leaving yesterday's snapshots
   // in place lets a lowered member price drag the pack's price down while its
   // component still pays out the old, higher amount.
-  //
-  // One expression, not four. `!== undefined` and truthiness part company on
-  // `[]` — which the schema's `.min()` forbids today and a backfill would not —
-  // and they disagreed in a way that would have run the checks while skipping
-  // the write.
   const reSnapshot = membershipSupplied || repriced;
 
   // Everything below re-validates state the edit did not necessarily touch, so

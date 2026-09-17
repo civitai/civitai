@@ -247,7 +247,10 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
         ...(price !== existing?.unitAmount ? { price } : {}),
         ...(contentsChanged ? { memberCosmeticIds } : {}),
         availableQuantity: quantity ?? null,
-        acceptsBlueBuzz,
+        // Same rule as the two above. Sent unconditionally it makes the server's
+        // blue-buzz check fire on every title edit, which a member opting out
+        // since then turns into a refusal of an edit that never touched blue.
+        ...(acceptsBlueBuzz !== !!existing?.meta.acceptsBlueBuzz ? { acceptsBlueBuzz } : {}),
         // Explicit null so clearing the cover actually clears it.
         imageUrl: imageId ?? null,
       });
@@ -446,7 +449,12 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
           label="Accept Blue Buzz"
           checked={acceptsBlueBuzz}
           onChange={(e) => setAcceptsBlueBuzz(e.currentTarget.checked)}
-          disabled={blueBlockers.length > 0}
+          // Un-tickable, never un-un-tickable. A pack saved as blue-accepting
+          // whose member later stops accepting blue hydrates this ON with
+          // blockers present — and `canSubmit` refuses that combination, so
+          // disabling it outright left the only control that clears the refusal
+          // frozen, and no way to save a title fix.
+          disabled={blueBlockers.length > 0 && !acceptsBlueBuzz}
         />
         {blueBlockers.length > 0 && (
           <Alert color="gray" icon={<IconAlertTriangle size={18} />}>
