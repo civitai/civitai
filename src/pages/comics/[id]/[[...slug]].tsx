@@ -139,6 +139,7 @@ function PublicComicReader() {
   } else if (isError || !project) {
     body = (
       <div className={styles.notFound}>
+        <Meta title="Comic not found | Civitai" deIndex />
         <IconPhotoOff size={48} />
         <p>{isError ? 'Failed to load comic' : 'Comic not found'}</p>
         <Link href="/comics" className={styles.notFoundLink}>
@@ -156,6 +157,7 @@ function PublicComicReader() {
   ) {
     body = (
       <div className="absolute inset-0 flex items-center justify-center">
+        <Meta title="Comic not available | Civitai" deIndex />
         <Text>This content is not available on this site</Text>
       </div>
     );

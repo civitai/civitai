@@ -3819,6 +3819,10 @@ export type ShopifyMerchOrder = {
 export type Tag = {
   id: Generated<number>;
   name: string;
+  /**
+   * Casing for display, where capitalising `name` gets it wrong ("LoRA", "ComfyUI").
+   */
+  displayName: string | null;
   color: string | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
