@@ -21,6 +21,11 @@ import { upsertCosmeticShopItemInput } from '~/server/schema/cosmetic-shop.schem
  * routes to, which is what a source read sees and what a mocked render of a
  * dialog store would sail past.
  *
+ * It now also guards the SAVE PATH that editor reaches — which fields the
+ * mutation sends, and that they come from the server rather than from the row
+ * the modal was opened with. Those are money assertions: the payload decides
+ * whether a save re-snapshots what each member's creator is paid.
+ *
  * NOT covered here, deliberately: whether a moderator is AUTHORIZED to save the
  * pack. That is server-side, in `updateCreatorShopPack`, and is not a property
  * of this page.
@@ -32,6 +37,10 @@ const pageSource = fs.readFileSync(
 );
 const modalSource = fs.readFileSync(
   path.join(repoRoot, 'src/components/CreatorShop/Pack/CreatorShopPackModal.tsx'),
+  'utf-8'
+);
+const serviceSource = fs.readFileSync(
+  path.join(repoRoot, 'src/server/services/creator-shop-pack.service.ts'),
   'utf-8'
 );
 const utilSource = fs.readFileSync(
@@ -66,6 +75,18 @@ const editArms = () => {
 
 const EDIT_HREF = 'href={`/moderator/cosmetic-store/products/${shopItem.id}/edit`}';
 
+/**
+ * The source between two literal markers, or '' when either is missing — never a
+ * slice from -1, which can still contain what a caller was looking for and pass
+ * for a source this function did not locate.
+ */
+const blockAfter = (source: string, open: string, close: string) => {
+  const start = source.indexOf(open);
+  if (start === -1) return '';
+  const end = source.indexOf(close, start + open.length);
+  return end === -1 ? '' : source.slice(start, end + close.length);
+};
+
 describe('the moderator cosmetic-store pack edit route', () => {
   it('splits the edit control on `shopItem.cosmetic` at all', () => {
     // The other cases slice against these three markers, so a refactor that moves
@@ -77,6 +98,15 @@ describe('the moderator cosmetic-store pack edit route', () => {
         'products/index.tsx. The assertions below slice on those markers, so fix ' +
         'this before trusting them.'
     ).toBe(true);
+
+    // The helper takes the FIRST occurrence. A second ternary on the same
+    // variable added above it would silently re-point every assertion below at
+    // the wrong conditional, and they would all fail naming the right thing for
+    // the wrong reason.
+    expect(
+      pageSource.split('{shopItem.cosmetic ? (').length - 1,
+      'More than one `{shopItem.cosmetic ? (` in this page — editArms() would slice the wrong one.'
+    ).toBe(1);
   });
 
   it('opens the pack editor on the pack arm, and only there', () => {
@@ -151,14 +181,87 @@ describe('the moderator cosmetic-store pack edit route', () => {
     // title. The server is written for these to be OMITTED when unchanged; the
     // schema comment on `memberCosmeticIds` says so. Restoring the unconditional
     // spread moves a third party's money on a typo fix.
+    // Scoped to the UPDATE payload. `submitPack.mutateAsync` legitimately sends
+    // bare `price,` and `memberCosmeticIds,` a few lines below, so an unscoped
+    // negative would pass against the wrong call — the same mis-targeting that
+    // made the first control for this file green against a reverted fix.
+    const updateBlock = blockAfter(modalSource, 'updatePack.mutateAsync({', '});');
     expect(
-      modalSource,
+      updateBlock,
+      'Could not find the updatePack payload — the assertions below pin its contents.'
+    ).not.toEqual('');
+
+    expect(
+      updateBlock,
       'CreatorShopPackModal must send `price` only when it differs from the saved pack.'
     ).toContain('...(price !== existing?.unitAmount ? { price } : {})');
     expect(
-      modalSource,
+      updateBlock,
       'CreatorShopPackModal must send `memberCosmeticIds` only when the contents changed.'
     ).toContain('...(contentsChanged ? { memberCosmeticIds } : {})');
+
+    // The negatives pin the DECISION rather than the spelling, so extracting the
+    // predicate into a named const stays green while a revert to the
+    // unconditional payload does not. Whole-line matches, so the conditional
+    // spreads above — which mention both names — cannot satisfy them.
+    const payloadKeys = updateBlock.split('\n').map((line) => line.trim());
+    expect(payloadKeys, 'The update payload sends `price` unconditionally again.').not.toContain(
+      'price,'
+    );
+    expect(
+      payloadKeys,
+      'The update payload sends `memberCosmeticIds` unconditionally again.'
+    ).not.toContain('memberCosmeticIds,');
+  });
+
+  it('re-validates membership only when membership was supplied', () => {
+    // The other half of omitting `memberCosmeticIds`. The server falls back to the
+    // pack's stored member list, which INCLUDES members whose listing has since
+    // been archived — so running the incoming-membership asserts over it refuses a
+    // title-only edit on exactly the packs `unavailableCount` describes. Measured
+    // 2026-09-17: 0 of 40 prod packs are in that state today, which makes this
+    // latent, not theoretical — a moderator archiving a member's listing creates it.
+    //
+    // NOT covered here: that the asserts still fire for a supplied list. This is a
+    // source gate because the service has no DB harness; a behavioural test would
+    // be strictly better and is not written.
+    const update = blockAfter(
+      serviceSource,
+      'export const updateCreatorShopPack',
+      'const nextPrice'
+    );
+    expect(
+      update,
+      'updateCreatorShopPack must only re-validate membership the caller actually sent.'
+    ).toContain('const membershipSupplied = memberCosmeticIds !== undefined;');
+    expect(
+      update,
+      'A price move is still floor-checked, and that floor can only be summed over ' +
+        'members that resolve — so bundlability must stay asserted when the price moves.'
+    ).toContain('if (membershipSupplied || price !== undefined) assertMembersBundlable');
+    for (const assertion of ['assertMembersResellable', 'assertStickerMembersAllowed']) {
+      expect(
+        blockAfter(update, 'if (membershipSupplied) {', '}'),
+        `${assertion} must sit inside the membershipSupplied branch, or it refuses an ` +
+          'edit that never touched the contents.'
+      ).toContain(assertion);
+    }
+  });
+
+  it('treats a removal as a contents change', () => {
+    // `contentsChanged` decides whether the contents are sent at all, so a term
+    // missing from it silently discards an edit. Dropping the length comparison
+    // makes a removal-only edit read as unchanged: the member stays in the pack
+    // and the moderator is told it saved.
+    const derivation = blockAfter(modalSource, 'const contentsChanged =', ';');
+    expect(
+      derivation,
+      'contentsChanged must compare the LENGTH, or removing a member reads as no change.'
+    ).toContain('selected.length !== existing.members.length');
+    expect(
+      derivation,
+      "contentsChanged must compare against the SERVER's members, not the caller row."
+    ).toContain('existing.members.find');
   });
 
   it('saves what the server returned, never the caller row', () => {
@@ -166,14 +269,34 @@ describe('the moderator cosmetic-store pack edit route', () => {
     // the moderator list fetched an hour ago never refreshes. Seeding the price
     // from it and saving wrote a stale amount back over the creator's own change.
     const hydration = modalSource.match(/setHydrated\(true\);[\s\S]*?setSelected\(/)?.[0] ?? '';
+    // All four, not just the price. `name` and `availableQuantity` are sent
+    // UNCONDITIONALLY by the payload, so an unhydrated one writes the caller's
+    // hour-old value straight over the creator's own edit.
+    for (const [field, call] of [
+      ['title', 'setName(existing.title)'],
+      ['description', "setDescription(existing.description ?? '')"],
+      ['price', 'setPrice(existing.unitAmount)'],
+      ['quantity', 'setQuantity(existing.availableQuantity ?? undefined)'],
+    ] as const) {
+      expect(
+        hydration,
+        `The hydration effect must reconcile ${field} against \`getPack\`, not leave the ` +
+          "caller's seed in place."
+      ).toContain(call);
+    }
+    // The OPERATOR, not just the term. `(!isEdit || hydrated) ||` is a one-character
+    // mutation that leaves the term present, passes any regex looking for it, and
+    // collapses the gate entirely — Save unlocks on the stale seed.
+    const canSubmitBlock = blockAfter(modalSource, 'const canSubmit =', ';');
     expect(
-      hydration,
-      'The hydration effect must reconcile the price against `getPack`, not leave the ' +
-        "caller's seed in place."
-    ).toContain('setPrice(existing.unitAmount)');
+      canSubmitBlock,
+      'Save must stay disabled until `getPack` has hydrated, or it can commit the seed. ' +
+        'The `&&` is the assertion — a `||` here defeats the gate while keeping the term.'
+    ).toContain('(!isEdit || hydrated) &&');
     expect(
-      modalSource,
-      'Save must stay disabled until `getPack` has hydrated, or it can commit the seed.'
-    ).toMatch(/const canSubmit =[\s\S]{0,200}?\(!isEdit \|\| hydrated\)/);
+      canSubmitBlock,
+      'A pack the server refuses outright must not present a submittable form — that is ' +
+        'the defect this editor replaced.'
+    ).toContain('!uneditableStatus &&');
   });
 });

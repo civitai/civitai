@@ -193,6 +193,7 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
     !isEdit && !loadingBuzz && packFee !== undefined && feeAccountBalance < packFee;
   // The server refuses both outright, so without this the editor is the very
   // thing it replaced: a form that takes what a moderator types and fails on save.
+  const awaitingPack = isEdit && !hydrated;
   const uneditableStatus =
     existing?.status === CosmeticShopItemStatus.Rejected ||
     existing?.status === CosmeticShopItemStatus.Archived;
@@ -280,15 +281,26 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
             <Loader type="bars" />
           </Center>
         )}
+        {/* Save is gated on `hydrated`, so without this a failed load leaves a
+            filled-in form that can never be submitted and never says why. */}
+        {isEdit && !loadingExisting && !existing && (
+          <Alert color="gray" icon={<IconAlertTriangle size={18} />}>
+            Couldn&apos;t load this pack. Close and reopen to try again.
+          </Alert>
+        )}
         <TextInput
           label="Pack name"
           withAsterisk
+          // Editable only once the server's values are in: hydration overwrites
+          // these, so typing before it lands is silently discarded.
+          disabled={awaitingPack}
           value={name}
           onChange={(e) => setName(e.currentTarget.value)}
         />
         <Textarea
           label="Description"
           autosize
+          disabled={awaitingPack}
           minRows={2}
           value={description ?? ''}
           onChange={(e) => setDescription(e.currentTarget.value)}
@@ -353,6 +365,7 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
 
         <TextInput
           label="Add items"
+          disabled={awaitingPack}
           placeholder="Search published cosmetics"
           value={search}
           onChange={(e) => setSearch(e.currentTarget.value)}
@@ -396,6 +409,7 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
         <Divider label="Pricing" />
         <NumberInput
           label="Pack price"
+          disabled={awaitingPack}
           withAsterisk
           min={floor || undefined}
           value={price}
@@ -419,6 +433,7 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
         )}
         <NumberInput
           label="Available quantity"
+          disabled={awaitingPack}
           description="Leave empty for unlimited."
           min={1}
           value={quantity}

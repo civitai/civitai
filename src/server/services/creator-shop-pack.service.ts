@@ -334,9 +334,20 @@ export const updateCreatorShopPack = async ({
   // checked against today's list prices, not the ones the pack was built against.
   const packOwnerId = existing.addedById ?? userId;
   const members = withOwnership(await resolvePackMembers(memberIds), packOwnerId);
-  assertMembersBundlable(memberIds, members);
-  assertMembersResellable(members, packOwnerId);
-  assertStickerMembersAllowed(members, stickersEnabled);
+  // All three validate an INCOMING membership, so they only apply to one the
+  // caller actually supplied. Run against a membership that didn't change they
+  // re-litigate a decision already taken, and a member whose listing has since
+  // been archived then refuses an edit that never touched the contents — which
+  // is every pack `unavailableCount` exists to describe.
+  const membershipSupplied = memberCosmeticIds !== undefined;
+  // Except for a price move, which is re-checked against a floor that can only
+  // be summed over members that still resolve. A missing one makes that floor a
+  // lie, so it has to refuse here even though it does not refuse a title edit.
+  if (membershipSupplied || price !== undefined) assertMembersBundlable(memberIds, members);
+  if (membershipSupplied) {
+    assertMembersResellable(members, packOwnerId);
+    assertStickerMembersAllowed(members, stickersEnabled);
+  }
 
   const nextPrice = price ?? existing.unitAmount;
   const floor = packPriceFloor(members);
