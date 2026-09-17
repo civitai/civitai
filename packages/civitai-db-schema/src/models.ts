@@ -2324,6 +2324,7 @@ export interface BlockSpendAttribution {
   contentAuthorUserId: number | null;
   contentAuthor?: User | null;
   sharedContentKey: string | null;
+  generationType: string | null;
   status: string;
   voidedReason: string | null;
   attributedAt: Date;

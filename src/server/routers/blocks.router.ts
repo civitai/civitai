@@ -182,6 +182,11 @@ import {
   planStepSpend,
   resolveStepVariant,
 } from '~/server/services/blocks/steps';
+// APP-FACING generation type for the spend-attribution row, resolved from the
+// submitted body. Imported (not open-coded at each of the three submit paths) so
+// the `kind` → key and step-id → key mapping has exactly one definition — and so
+// the "registry id, never orchestratorType" decision lives in one place.
+import { resolveBlockGenerationType } from '~/server/services/blocks/generation-type';
 // Moderation dispatch for the same registry. A SEPARATE module because it pulls
 // `auditPromptServer` (Redis + ClickHouse + DB + notifications) and the registry
 // itself is imported by `workflow.schema` for the wire enum, which must stay
@@ -6020,6 +6025,30 @@ export const blocksRouter = router({
             // SERVER-SIDE from the app's own shared storage (never trusts the
             // client). Omitted → unchanged app-owner-only attribution.
             sharedContentKey: textToImageBody.sharedContentKey ?? null,
+            // APP-FACING generation type for this spend. Resolved from the
+            // captured body (the same alias the sharedContentKey read uses, for
+            // the same narrowing reason). Resolution is total and non-throwing —
+            // an unresolvable body degrades to NULL, never an exception on this
+            // fire-and-forget path.
+            //
+            // 🔴 `generateInput.workflow` IS THE AUTHORITATIVE IMAGE WORKFLOW
+            // CLASS, AND IT IS NOT DERIVABLE FROM THE BODY. A body carrying a
+            // source image maps to `img2img` on an SD-family ecosystem and to
+            // `img2img:edit` on an edit-capable one — the discriminator is the
+            // CHECKPOINT'S ECOSYSTEM, resolved inside `buildTextToImageInput`
+            // (see `resolveBlockImageWorkflowType`). This reads back the value
+            // that builder stamped onto the graph input at the top of this
+            // handler, i.e. the class the generation was actually billed for,
+            // rather than re-deriving it here — a re-derivation could disagree,
+            // and it would also re-run a function that THROWS on an
+            // edit-only/unsupported ecosystem, which is the one thing this
+            // fire-and-forget closure must not do. Typed `unknown` on the way in
+            // (the builder returns `Record<string, unknown>`); the resolver
+            // bounds it and degrades to the bare `textToImage` key if it is
+            // anything else.
+            generationType: resolveBlockGenerationType(textToImageBody, {
+              imageWorkflowType: generateInput.workflow,
+            }),
           });
         })().catch(() => {
           /* best-effort: a failed attribution write never breaks submit */
@@ -8175,6 +8204,16 @@ async function submitCustomComfyWorkflow(opts: {
         modelId: null,
         // customComfy has no sharedContentKey field (recipe+params only) → omit.
         sharedContentKey: null,
+        // APP-FACING generation type — `customComfy:<registered recipe id>` on
+        // the recipe arm, `customComfy:inline` on the inline one. Both arms
+        // carry `kind: 'customComfy'`, so the COARSE key (everything before the
+        // first colon, which is what the per-generation-type author fee looks
+        // up) is identical for either; the arm and the recipe are the SUB-axis,
+        // read off the body by the resolver. No arm branch is needed here —
+        // `mode` and `recipe` are both on the body the wire schema already
+        // parsed. Non-throwing: an unresolvable sub-axis degrades to the bare
+        // `customComfy` key, an unresolvable body to NULL.
+        generationType: resolveBlockGenerationType(body),
       });
     })().catch(() => {
       /* best-effort: a failed attribution write never breaks submit */
@@ -9303,6 +9342,23 @@ async function submitStepWorkflow(opts: {
         modelId: null,
         // A step body is `{ kind, step, params }` `.strict()` — no sharedContentKey.
         sharedContentKey: null,
+        // APP-FACING generation type = the REGISTERED STEP ID (`convert-image`,
+        // `chat-completion`), NEVER the entry's `orchestratorType`
+        // (`convertImage`, `chatCompletion`). Taken off the body's schema-gated
+        // `step` rather than `step.orchestratorType`: the registry key is the
+        // permanent public wire commitment, the orchestrator spelling is not.
+        // `assertStepInvariants` clause (0) pins `step.id === <registry key>`,
+        // so this is the same value `detail.step` on the invocation row carries.
+        //
+        // NOT a per-step branch — nothing here tests WHICH step it is.
+        //
+        // A step id is a COARSE key and carries NO subtype: the value is the
+        // bare `convert-image` / `chat-completion`, with no colon. That is a
+        // depth decision, not an omission — a step's own params (which chat
+        // model, which output format) are a third level and already ride on the
+        // step invocation row's `detail`. `isBlockGenerationType` refuses
+        // `convert-image:<anything>` for exactly that reason.
+        generationType: resolveBlockGenerationType(body),
       });
     })().catch(() => {
       /* best-effort: a failed attribution write never breaks submit */
