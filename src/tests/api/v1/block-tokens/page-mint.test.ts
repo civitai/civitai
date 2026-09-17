@@ -488,12 +488,14 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
     // 🔴 ASSERTED ON THE SERIALIZED BODY, WHICH IS THE ONLY LAYER WHERE THE CLAIM
     // MEANS ANYTHING. `makeRes()` stores whatever object the handler passed to
     // `json()`, un-serialized, while the real `res.json()` goes through
-    // `JSON.stringify`. So an in-memory `not.toHaveProperty('buzzBudget')` would
-    // be testing the handler's object-literal SPELLING, not the bytes: stringify
-    // drops an `undefined`-valued key either way, meaning that assertion passes
-    // for both spellings and fails for neither — coverage in appearance only.
-    // Round-tripping first pins the thing a block actually receives, and stays
-    // red against a real regression (`buzzBudget: null`, or a 0 default).
+    // `JSON.stringify` — which drops an `undefined`-valued key, so `buzzBudget,`
+    // and `...(b !== undefined ? { buzzBudget: b } : {})` put IDENTICAL bytes on
+    // the wire. An in-memory `not.toHaveProperty` does tell those two apart (a
+    // present-but-undefined key satisfies `toHaveProperty`) — which is the
+    // problem, not the point: it graded the handler's SOURCE SPELLING, going red
+    // for a refactor no client could observe while saying nothing about the bytes.
+    // Round-tripping first pins what a block actually receives, and stays red
+    // against a real regression (`buzzBudget: null`, or a 0 default).
     it('reports NO buzzBudget on the wire when the token carries no spend scope', async () => {
       mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
         grantedScopes: [],
