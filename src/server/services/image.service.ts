@@ -2764,11 +2764,15 @@ export const getAllImagesIndex = async (
     );
     if (feedPrimary) {
       const started = Date.now();
-      const followedUserIds =
-        input.followed && currentUserId ? await getUserFollows(currentUserId) : undefined;
+      const [followedUserIds, newCreatorUserIds] = await Promise.all([
+        input.followed && currentUserId ? getUserFollows(currentUserId) : undefined,
+        input.newCreators
+          ? getNewCreatorUserIds({ entity: 'images', domain: input.domain })
+          : undefined,
+      ]);
       const served = await withSpan('image:feedPrimary', () =>
         serveFromFeed(
-          { ...searchInput, followedUserIds },
+          { ...searchInput, followedUserIds, newCreatorUserIds },
           {
             fetchFeed: fetchFeedPrimary,
             hydrate: async (ids) =>
