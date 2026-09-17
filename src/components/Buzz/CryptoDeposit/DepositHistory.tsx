@@ -2,6 +2,7 @@ import { keepPreviousData } from '@tanstack/react-query';
 import {
   ActionIcon,
   Badge,
+  Button,
   Group,
   HoverCard,
   Pagination,
@@ -19,6 +20,7 @@ import {
   IconLoader,
   IconPlus,
   IconRefresh,
+  IconSearch,
   IconWallet,
   IconWifiOff,
 } from '@tabler/icons-react';
@@ -438,39 +440,47 @@ function CheckDepositsNotice({ onSuccess }: { onSuccess: () => void }) {
     },
   });
 
-  const linkText = reconcileMutation.isPending
+  const found = reconcileMutation.isSuccess && reconcileMutation.data.processed > 0;
+  const buttonLabel = reconcileMutation.isPending
     ? 'Checking...'
     : reconcileMutation.isSuccess
-    ? reconcileMutation.data.processed > 0
+    ? found
       ? `Found ${reconcileMutation.data.processed} deposit(s)!`
       : 'No missing deposits found'
     : reconcileMutation.isError
     ? 'Try again in a minute'
-    : 'Missing a deposit? Check now';
+    : 'Check now';
 
   return (
-    <Group gap="xs" mt="sm" wrap="nowrap" align="center">
-      <IconClock size={14} className="text-yellow-500" style={{ flexShrink: 0 }} />
-      <Text size="xs" c="dimmed" lh={1.4}>
-        Deposits can take up to 1 hour to appear depending on network congestion.{' '}
-        <UnstyledButton
-          onClick={() => !reconcileMutation.isPending && reconcileMutation.mutate()}
-          disabled={reconcileMutation.isPending}
-          style={{ display: 'inline' }}
-        >
-          <Text
-            span
-            size="xs"
-            c={reconcileMutation.isSuccess && reconcileMutation.data.processed > 0 ? 'green' : 'dimmed'}
-            td="underline"
-            className="cursor-pointer"
-          >
-            {reconcileMutation.isPending && <IconLoader size={10} className="inline mr-1 animate-spin" />}
-            {linkText}
+    <Paper
+      p="sm"
+      radius="sm"
+      withBorder
+      mt="sm"
+      className="bg-gray-50 dark:bg-white/[0.03] border border-gray-200 dark:border-white/10"
+    >
+      <Group gap="sm" justify="space-between" align="center" wrap="wrap">
+        <Group gap="xs" wrap="nowrap" align="flex-start" className="min-w-[180px] flex-1">
+          <IconClock size={16} className="mt-0.5 shrink-0 text-yellow-500" />
+          <Text size="xs" c="dimmed" lh={1.4}>
+            Deposits can take up to 1 hour to appear depending on network congestion. Missing a
+            deposit?
           </Text>
-        </UnstyledButton>
-      </Text>
-    </Group>
+        </Group>
+        <Button
+          size="compact-sm"
+          variant="light"
+          color={found ? 'green' : undefined}
+          leftSection={<IconSearch size={14} />}
+          loading={reconcileMutation.isPending}
+          disabled={reconcileMutation.isPending}
+          onClick={() => reconcileMutation.mutate()}
+          className="shrink-0"
+        >
+          {buttonLabel}
+        </Button>
+      </Group>
+    </Paper>
   );
 }
 
