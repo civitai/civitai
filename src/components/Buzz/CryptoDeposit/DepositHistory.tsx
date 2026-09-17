@@ -44,6 +44,7 @@ export function DepositHistory() {
   const perPage = 3;
   const utils = trpc.useUtils();
   const { status: signalStatus } = useSignalContext();
+  const reconcile = useReconcileDeposits();
 
   const { data, isLoading } = trpc.nowPayments.getDepositHistory.useQuery(
     { page, perPage },
@@ -121,6 +122,7 @@ export function DepositHistory() {
       <EmptyDepositState
         signalStatus={signalStatus}
         onRefresh={() => utils.nowPayments.getDepositHistory.invalidate()}
+        reconcile={reconcile}
       />
     );
   }
@@ -237,9 +239,7 @@ export function DepositHistory() {
           <Pagination total={totalPages} value={page} onChange={setPage} size="sm" />
         </Group>
       )}
-      <CheckDepositsNotice
-        onSuccess={() => utils.nowPayments.getDepositHistory.invalidate()}
-      />
+      <CheckDepositsNotice reconcile={reconcile} />
     </Paper>
   );
 }
@@ -247,9 +247,11 @@ export function DepositHistory() {
 function EmptyDepositState({
   signalStatus,
   onRefresh,
+  reconcile,
 }: {
   signalStatus: string | null;
   onRefresh: () => void;
+  reconcile: ReconcileMutation;
 }) {
   return (
     <Paper p="lg" radius="md" withBorder style={outerCardStyle}>
@@ -271,7 +273,7 @@ function EmptyDepositState({
             </Text>
           </Group>
         </Paper>
-        <CheckDepositsNotice onSuccess={onRefresh} />
+        <CheckDepositsNotice reconcile={reconcile} />
       </Stack>
     </Paper>
   );
@@ -433,13 +435,22 @@ function BonusBuzzPopover({
   );
 }
 
-function CheckDepositsNotice({ onSuccess }: { onSuccess: () => void }) {
-  const reconcileMutation = trpc.nowPayments.reconcileMyDeposits.useMutation({
+type ReconcileMutation = ReturnType<typeof useReconcileDeposits>;
+
+// Owned by DepositHistory rather than by the notice: a successful reconcile
+// repopulates the list, which unmounts the empty-state branch. A mutation living
+// in the notice would take its own success state down with it, so the user never
+// saw that the click worked.
+function useReconcileDeposits() {
+  const utils = trpc.useUtils();
+  return trpc.nowPayments.reconcileMyDeposits.useMutation({
     onSuccess: (data) => {
-      if (data.processed > 0) onSuccess();
+      if (data.processed > 0) utils.nowPayments.getDepositHistory.invalidate();
     },
   });
+}
 
+function CheckDepositsNotice({ reconcile: reconcileMutation }: { reconcile: ReconcileMutation }) {
   const found = reconcileMutation.isSuccess && reconcileMutation.data.processed > 0;
   const showPrompt = !reconcileMutation.isSuccess && !reconcileMutation.isError;
   const buttonLabel = reconcileMutation.isPending
