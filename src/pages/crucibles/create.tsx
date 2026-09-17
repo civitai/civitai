@@ -537,7 +537,9 @@ export default function CrucibleCreate() {
       {/* Entry Fee */}
       <Input.Wrapper
         label="Entry Fee per User"
-        description="How much Buzz users pay to enter their image"
+        description={`How much Buzz users pay to enter their ${
+          formData.contentType === MediaType.video ? 'video' : 'image'
+        }`}
       >
         <Group gap={8} mt={8}>
           <Input

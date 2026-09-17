@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { BuzzApiError } from '@civitai/buzz';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
@@ -37,6 +38,7 @@ const entry = (id: number, userId: number, buzzTransactionId: string | null) => 
 
 const crucible = (overrides: Record<string, unknown> = {}) => ({
   id: 1,
+  userId: 4,
   status: CrucibleStatus.Active,
   entryFee: 100,
   buzzTransactionId: 'crucible-setup-4-abc',
@@ -77,18 +79,80 @@ describe('cancelCrucible — state guards', () => {
     await expect(cancelCrucible({ id: 1, userId: 4, isModerator: true })).rejects.toThrow();
   });
 
-  it.each([CrucibleStatus.Completed, CrucibleStatus.Cancelled])(
-    'refuses to cancel a %s crucible',
-    async (status) => {
-      findUnique.mockResolvedValue(crucible({ status }));
-      await expect(cancelCrucible({ id: 1, userId: 4, isModerator: true })).rejects.toThrow();
-    }
-  );
+  it('refuses to cancel a Completed crucible', async () => {
+    findUnique.mockResolvedValue(crucible({ status: CrucibleStatus.Completed }));
+    await expect(cancelCrucible({ id: 1, userId: 4, isModerator: true })).rejects.toThrow();
+  });
 
   it('does not refund a completed crucible — its prizes are already paid out', async () => {
     findUnique.mockResolvedValue(crucible({ status: CrucibleStatus.Completed }));
     await cancelCrucible({ id: 1, userId: 4, isModerator: true }).catch(() => undefined);
     expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+
+  it('re-runs on an already-Cancelled crucible instead of refusing, so owed refunds can retry', async () => {
+    findUnique.mockResolvedValue(crucible({ status: CrucibleStatus.Cancelled }));
+
+    const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
+
+    expect(result.crucibleId).toBe(1);
+    expect(refundMultiAccountTransaction).toHaveBeenCalled();
+  });
+});
+
+describe('cancelCrucible — ordering', () => {
+  it('writes the Cancelled status before any money moves', async () => {
+    await cancelCrucible({ id: 1, userId: 4, isModerator: true });
+
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 1 },
+      data: { status: CrucibleStatus.Cancelled },
+    });
+    expect(update.mock.invocationCallOrder[0]).toBeLessThan(
+      refundMultiAccountTransaction.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('moves no money at all when the status write fails', async () => {
+    update.mockRejectedValue(new Error('Server has closed the connection'));
+
+    await expect(cancelCrucible({ id: 1, userId: 4, isModerator: true })).rejects.toThrow();
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('cancelCrucible — refund idempotency', () => {
+  it.each([409, 404])('treats a buzz %i as already settled, not a failed refund', async (status) => {
+    refundMultiAccountTransaction.mockRejectedValue(new BuzzApiError(status, 'nope'));
+
+    const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
+
+    expect(result.failedRefunds).toEqual([]);
+    expect(result.refundedEntries).toBe(2);
+  });
+
+  // Without this the second cancel reports the same totals as the first and reads as a second
+  // payment, which is the report that gets someone refunded twice by hand.
+  it('counts an already-settled refund separately from one that moved money', async () => {
+    refundMultiAccountTransaction.mockRejectedValue(new BuzzApiError(409, 'Conflict'));
+
+    const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
+
+    expect(result.alreadySettled).toBe(3); // 2 entries + the creator's setup fee
+  });
+
+  it('reports nothing already settled on a first, clean cancel', async () => {
+    const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
+
+    expect(result.alreadySettled).toBe(0);
+  });
+
+  it('still reports a genuine buzz failure', async () => {
+    refundMultiAccountTransaction.mockRejectedValue(new BuzzApiError(500, 'boom'));
+
+    const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
+
+    expect(result.failedRefunds.length).toBeGreaterThan(0);
   });
 });
 
@@ -129,12 +193,14 @@ describe('cancelCrucible — entry refunds', () => {
     expect(result.failedRefunds).toEqual([{ entryId: 1, userId: 10, error: 'buzz unavailable' }]);
   });
 
-  it('still cancels the crucible when every entry refund fails', async () => {
+  it('still cancels the crucible when every refund fails', async () => {
     refundMultiAccountTransaction.mockRejectedValue(new Error('buzz down'));
 
     const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
 
-    expect(result.failedRefunds).toHaveLength(2);
+    // Two entrants plus the creator's setup fee — crucible-level refunds carry `entryId: null`.
+    expect(result.failedRefunds.filter((f) => f.entryId !== null)).toHaveLength(2);
+    expect(result.failedRefunds.filter((f) => f.entryId === null)).toHaveLength(1);
     expect(update).toHaveBeenCalledWith({
       where: { id: 1 },
       data: { status: CrucibleStatus.Cancelled },
@@ -181,9 +247,7 @@ describe('cancelCrucible — creator setup fee', () => {
 
     const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
 
-    // A failed setup-fee refund is deliberately NOT surfaced in failedRefunds, which only tracks
-    // entrants' money. The cancellation must still go through.
-    expect(result.failedRefunds).toEqual([]);
+    expect(result.failedRefunds).toEqual([{ entryId: null, userId: 4, error: 'nope' }]);
     expect(update).toHaveBeenCalled();
   });
 });
@@ -213,8 +277,7 @@ describe('cancelCrucible — seeded prize pool', () => {
   });
 
   it('makes no refund call at all for an unseeded crucible', async () => {
-    // A prefix matching zero transactions makes the refund 404, so an unseeded crucible must not
-    // reach the refund at all rather than relying on the error being swallowed.
+    // An unseeded crucible has no prefix to refund; the 404 tolerance must not be what covers that.
     const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
 
     const prefixes = refundMultiAccountTransaction.mock.calls.map(
@@ -234,7 +297,7 @@ describe('cancelCrucible — seeded prize pool', () => {
     const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
 
     expect(result.refundedSeed).toBe(0);
-    expect(result.failedRefunds).toEqual([]);
+    expect(result.failedRefunds).toEqual([{ entryId: null, userId: 4, error: 'buzz down' }]);
     expect(update).toHaveBeenCalledWith({
       where: { id: 1 },
       data: { status: CrucibleStatus.Cancelled },

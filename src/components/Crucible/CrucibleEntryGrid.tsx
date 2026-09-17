@@ -123,7 +123,7 @@ export function CrucibleEntryGrid({
             <IconUsers size={20} className="text-gray-500" />
             {title}
             <Text component="span" size="sm" c="dimmed" fw="normal">
-              ({entries.length})
+              ({displayEntries.length})
             </Text>
           </Title>
         )}
@@ -142,6 +142,8 @@ export function CrucibleEntryGrid({
               />
             ))}
           </SimpleGrid>
+        ) : userEntries.length > 0 ? (
+          <CrucibleEntryGridEmpty message="No one else has entered yet" subtext={null} />
         ) : (
           <CrucibleEntryGridEmpty message={emptyMessage} />
         )}
@@ -255,6 +257,8 @@ function PositionBadge({ rank }: PositionBadgeProps) {
 
 type CrucibleEntryGridEmptyProps = {
   message?: string;
+  /** `null` renders no subtext; `undefined` gets the default. */
+  subtext?: string | null;
   showSubmitButton?: boolean;
   onSubmitClick?: () => void;
 };
@@ -264,6 +268,7 @@ type CrucibleEntryGridEmptyProps = {
  */
 export function CrucibleEntryGridEmpty({
   message = 'No entries yet',
+  subtext = 'Be the first to submit an entry!',
   showSubmitButton = false,
   onSubmitClick,
 }: CrucibleEntryGridEmptyProps) {
@@ -276,9 +281,11 @@ export function CrucibleEntryGridEmpty({
       <Text size="lg" fw={600} c="white" mb={4}>
         {message}
       </Text>
-      <Text size="sm" c="dimmed" mb={showSubmitButton ? 'md' : undefined}>
-        Be the first to submit an entry!
-      </Text>
+      {subtext && (
+        <Text size="sm" c="dimmed" mb={showSubmitButton ? 'md' : undefined}>
+          {subtext}
+        </Text>
+      )}
       {showSubmitButton && onSubmitClick && (
         <Button
           size="md"

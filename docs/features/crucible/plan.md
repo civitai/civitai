@@ -319,7 +319,7 @@ model Crucible {
   entryFee      Int       // Buzz cost per entry
   entryLimit    Int       // Max entries per user
   maxTotalEntries Int?    // Optional cap on total entries
-  prizePositions Json     // Array of {position, percentage}
+  prizePositions Json     // Map of position -> percentage: {"1": 50, "2": 30, "3": 20}
   allowedResources Json?  // Optional: {baseModels: [], modelVersionIds: []}
 
   // Timing
