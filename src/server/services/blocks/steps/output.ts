@@ -124,15 +124,20 @@ function isOrchestratorBlobLike(value: unknown): boolean {
  * forwarded raw — reachable by the app, invisible to both the publish path and
  * the per-viewer gated read.
  *
- * 🔴 THE MARGIN IS ONE LEVEL, NOT "room". The deepest strip the catalog actually
- * requires today is level 3 (`training.epochs`(1) → an epoch(2) → `samples`(3),
- * caught by the per-element rule so its members never need walking). A new
- * upstream `$type` is ALLOWED by construction, so one extra wrapper level in a
- * future output reopens exactly this leak with no detector. Say the number when
- * you re-measure, do not say "with room".
+ * 🔴 THE MARGIN IS ONE LEVEL, NOT "room". The deepest strip the catalog requires
+ * today is `training.epochs`(1) → an epoch(2) → `samples`(3) → its members(4). A
+ * new upstream `$type` is ALLOWED by construction, so one extra wrapper level in
+ * a future output reopens exactly this leak with no detector. Say the number
+ * when you re-measure; do not say "with room".
  *
- * The bound exists at all because the input is app-supplied and only size-capped:
- * without it a cyclic or adversarially deep payload walks forever.
+ * 🔴 WHY A BOUND AT ALL, STATED HONESTLY BECAUSE A DRAFT GOT IT WRONG. It is NOT
+ * cycle protection and NOT protection against an adversarial app payload: the
+ * value walked is the ORCHESTRATOR'S `step.output`, which the client
+ * `JSON.parse`s, so it is acyclic and already depth-bounded by that parse — the
+ * app's own `input` never reaches here. The bound is a walk-COST bound over a
+ * response whose shape is open by construction (any non-denylisted `$type`), and
+ * its price is the residue above. If that trade stops being worth it, removing
+ * the cap closes the residue outright.
  */
 const PASS_THROUGH_OUTPUT_WALK_DEPTH = 4;
 
@@ -145,9 +150,14 @@ const PASS_THROUGH_OUTPUT_WALK_DEPTH = 4;
  * availability filter DROPPED — unavailable, blocked, empty or absent url —
  * cannot ride out through the remainder instead. Filtering and stripping on the
  * same predicate is how a dead or blocked url reaches a block through the back
- * door. 🔴 `mediaFromBlobs` returning an EMPTY array is what implements that:
- * `[]` is truthy at the call sites below, and the truthiness is load-bearing. A
- * "simplification" to `if (lifted?.length)` reopens the door.
+ * door. 🔴 THE PREDICATE ALONE DECIDES THE STRIP — what `mediaFromBlobs` returns
+ * is spread and never inspected. Do NOT gate the `continue`/`return {}` on a
+ * `.length`: that is the same door, reopened.
+ *
+ * ⚠️ An earlier revision of this paragraph explained the rule through the
+ * truthiness of a `liftOrchestratorBlobs` return value. That helper was deleted
+ * in the same commit that left the sentence behind, so it sent a maintainer
+ * looking for a mechanism that is not there.
  *
  * 🔴 SOME STEP TYPES *ARE* A BLOB. `transcode` returns the blob itself as its
  * whole output, so the whole-value case is checked before descending.

@@ -8641,12 +8641,16 @@ describe("step-type registry bridge (kind: 'step')", () => {
       // Two submits, one emit each.
       expect(mockRecordStepPriceCheck).toHaveBeenCalledTimes(2);
       for (const call of mockRecordStepPriceCheck.mock.calls) {
+        // 🔴 THE REGISTRY ARM'S OWN SIX, NOT THE UNION'S SEVEN. `quoted` belongs
+        // to the pass-through arm, whose `absent` means the OPPOSITE thing, so
+        // admitting it here would let a registry-arm mutant emit the value that
+        // blends the two arms in Grafana. The pass-through emits are pinned
+        // exactly, in their own describe.
         expect([
           'exact',
           'over',
           'over_reserved',
           'absent',
-          'quoted',
           'estimate_quoted',
           'estimate_absent',
         ]).toContain(call[1]);
@@ -10082,9 +10086,12 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
         // shape first.
         expect(reservedKey).toMatch(/^system:blocks:buzz-cap:42:/);
         expect(record.buzzCapKey).toBe(reservedKey);
-        // DERIVED from what `reserveAppSpend` returned, not restated — a mutant
-        // that recomputes the key instead of threading the returned one would
-        // satisfy a hardcoded literal.
+        // Read off what `reserveAppSpend` RETURNED rather than restated.
+        // ⚠️ Honest about what that buys: the mock's `dailyKey` is itself a
+        // constant, so this has the same discriminating power as the literal it
+        // replaced — a recompute would land on today's real UTC date and the
+        // literal already killed it. It is here so the assertion names its
+        // source, not because it is stronger.
         const returnedKey = (
           await (mockReserveAppSpend.mock.results[0].value as Promise<{ dailyKey: string }>)
         ).dailyKey;
@@ -10127,6 +10134,15 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
         mockSysRedis.decrBy.mockClear();
         await realSettle({ workflowId: 'wf_pt_1', actualCost: 6 });
         expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
+      });
+
+      // 🔴 THE CEILING, AT A QUOTE BELOW THE DECLARED ONE. Every other assertion
+      // in this block runs at quote 31 == ceiling, so `ceiling` in the persist
+      // call cannot be told from `quotedBuzz` there — including the `25` the
+      // cheaper-run test derives from the record itself.
+      it('persists the DECLARED ceiling when the quote is LOWER', async () => {
+        const { record } = await submitAndPersist(5, 5);
+        expect(record.ceiling).toBe(MAX_BUZZ);
       });
 
       // The write key and the read key are the same derivation — a settle that
@@ -10266,7 +10282,32 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       await expect(caller().submitWorkflow({ blockToken: 'tok', body: ptBody() })).rejects.toThrow(
         /orchestrator down/
       );
+      expect(mockRefundDevSessionBuzz).toHaveBeenCalledTimes(1);
       expect(mockRefundDevSessionBuzz).toHaveBeenCalledWith('dts_pt', 31);
+    });
+
+    // 🔴 THE MIRROR, AT A QUOTE BELOW THE DECLARED CEILING. At quote 31 the
+    // ceiling and the quote are the same number, so the test above alone cannot
+    // tell `cost: ceiling` from `cost: quotedBuzz` — the same fixture-constant
+    // collision the reserve leg already has both directions for.
+    it('refunds the DEV-SESSION leg at maxBuzz when the quote is LOWER', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      mockGetActiveDevTunnel.mockResolvedValue({
+        sessionId: 'dts_pt',
+        spendCapBuzz: 100,
+      } as never);
+      mockSubmitWorkflow.mockImplementation(async (opts: { query?: { whatif?: boolean } }) => {
+        if (opts?.query?.whatif === true) {
+          return { id: 'wf_quote', status: 'unassigned', steps: [], cost: { total: 5 } };
+        }
+        throw new Error('orchestrator down');
+      });
+      await expect(caller().submitWorkflow({ blockToken: 'tok', body: ptBody() })).rejects.toThrow(
+        /orchestrator down/
+      );
+      expect(mockRefundDevSessionBuzz).toHaveBeenCalledTimes(1);
+      expect(mockRefundDevSessionBuzz).toHaveBeenCalledWith('dts_pt', MAX_BUZZ);
     });
 
     // 🔴 NO APP-CONTROLLED STRING IN THE ORCHESTRATOR TAG ARRAY. That array

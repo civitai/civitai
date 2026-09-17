@@ -255,9 +255,40 @@ describe('splitPassThroughStepOutput', () => {
   // 🔴 THE DEPTH CAP, PINNED RATHER THAN IMPLIED. The walk is bounded because the
   // input is app-supplied and only size-capped; past the cap a value is
   // forwarded as-is, and that residue is stated in the doc.
-  // 🔴 BOTH SIDES OF THE BOUNDARY, or the constant is pinned to an INTERVAL.
-  // With only the negative case, 4→3 survives: the `epochs` fixture needs ≥3 and
-  // the too-deep one needs ≤4. The pair below distinguishes 3 from 4.
+  // 🔴 AN ARRAY INSIDE AN ARRAY. Every other array fixture here holds objects or
+  // primitives, so "recurse into the non-blob elements" was pinned for objects
+  // only: forwarding any array-valued element verbatim survived the whole suite
+  // and sent the url straight out through `stepOutputs`.
+  it('descends into an array nested directly inside an array', () => {
+    const { media, rest } = splitPassThroughStepOutput({
+      frames: [[{ url: BLOB_URL, available: true }]],
+    });
+    expect(media.map((m) => m.url)).toEqual([BLOB_URL]);
+    expect(rest).toEqual({ frames: [[]] });
+  });
+
+  // 🔴 THE BOUNDARY WITH ARRAYS ON THE PATH. Both object-chain fixtures below
+  // leave the array branch's own `depth + 1` unpinned — dropping it survived the
+  // suite, and it is the increment that stops an adversarially deep array chain
+  // (measured: 40,000 nested arrays overflow the stack without it).
+  it('counts array levels toward the depth cap', () => {
+    const atCap = splitPassThroughStepOutput({ a: [{ b: [{ url: BLOB_URL, available: true }] }] });
+    expect(atCap.media.map((m) => m.url)).toEqual([BLOB_URL]);
+    expect(JSON.stringify(atCap.rest)).not.toContain(BLOB_URL);
+
+    const pastCap = splitPassThroughStepOutput({
+      z: { a: [{ b: [{ url: BLOB_URL, available: true }] }] },
+    });
+    expect(pastCap.media).toEqual([]);
+    expect(JSON.stringify(pastCap.rest)).toContain(BLOB_URL);
+  });
+
+  // 🔴 BOTH SIDES OF THE BOUNDARY, or the constant is pinned to an INTERVAL. A
+  // negative case alone bounds it from above only; this pair pins the value.
+  // (An earlier version of this note justified it by the `epochs` fixture
+  // needing ≥3 — true of the all-or-nothing array rule that preceded the
+  // per-element walk, and stale the moment that changed. The structural reason
+  // is the one that survives a fixture reshape.)
   it('reaches a blob at exactly the deepest level the cap examines', () => {
     const { media, rest } = splitPassThroughStepOutput({
       a: { b: { c: { d: { url: BLOB_URL, available: true } } } },
@@ -274,9 +305,9 @@ describe('splitPassThroughStepOutput', () => {
   });
 
   // 🔴 THE UNCONDITIONAL STRIP AT THE WHOLE-VALUE SITE — the per-key site has its
-  // own control above, and this one had none. `if (whole?.length)` there lets a
-  // BLOCKED `transcode`-shaped output fall through to the walk and forward its
-  // url verbatim.
+  // own control above, and this one had none. Gating that branch on what
+  // `mediaFromBlobs` PRODUCED lets a BLOCKED `transcode`-shaped output fall
+  // through to the walk and forward its url verbatim.
   it('strips a whole-value blob that produced NO media', () => {
     expect(
       splitPassThroughStepOutput({ id: 'b', available: false, url: BLOB_URL, tier: 'm' })
