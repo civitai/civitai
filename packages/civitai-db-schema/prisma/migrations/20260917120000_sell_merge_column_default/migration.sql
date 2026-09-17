@@ -1,4 +1,4 @@
--- NOT YET APPLIED.
+-- APPLIED to prod 2026-09-17.
 --
 -- Apply after 20260915120000_add_sell_merge_commercial_use -- the label must exist before a
 -- default can name it. Rewrites no row.
