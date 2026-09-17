@@ -58,11 +58,13 @@ export function feedHydrateQuery<
     entry?: number;
     limit?: number;
     period?: unknown;
+    modelId?: number;
+    modelVersionId?: number;
   }
 >(
   input: T,
   ids: number[]
-): Omit<T, 'cursor' | 'skip' | 'offset' | 'entry' | 'period'> & {
+): Omit<T, 'cursor' | 'skip' | 'offset' | 'entry' | 'period' | 'modelId' | 'modelVersionId'> & {
   ids: number[];
   limit: number;
   period: 'AllTime';
@@ -73,6 +75,10 @@ export function feedHydrateQuery<
     offset: _offset,
     entry: _entry,
     period: _period,
+    // The feed already scoped these, and counts a creator's post on a version as a member where
+    // the hydrate's resource join would drop it.
+    modelId: _modelId,
+    modelVersionId: _modelVersionId,
     ...rest
   } = input;
   return { ...rest, ids, limit: ids.length, period: 'AllTime' };
