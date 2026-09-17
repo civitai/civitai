@@ -1,16 +1,14 @@
 -- NOT YET APPLIED.
 --
--- Safe to apply any time after 20260915120000_add_sell_merge_commercial_use (applied to prod
--- 2026-09-15) -- the label must exist before it can be named in a default. It changes no existing
--- row.
+-- Apply after 20260915120000_add_sell_merge_commercial_use -- the label must exist before a
+-- default can name it. Rewrites no row.
 --
--- Prisma sends its own @default from schema.full.prisma on create, so this column default is never
--- what a model is born with and a disagreement between the two is invisible in the product. That is
--- exactly how the same column shipped @default([Sell]) against a four-value column default for two
--- and a half years (fixed in #4036): nothing compares them -- not db:check-generated, and the
--- schema-drift report excludes column defaults by name.
---
--- Order matches the @default array so the two can be diffed by eye.
+-- Prisma sends its own @default from schema.full.prisma on create, so this column default only
+-- reaches rows written outside Prisma, and the two can disagree with no product symptom. Nothing
+-- compares them: db:check-generated diffs the generated client, not the database, and the
+-- schema-drift report lists column defaults under "What it does not check". That is how this same
+-- column ran @default([Sell]) against a four-value column default until #4036. Change one, change
+-- the other.
 
 ALTER TABLE "Model"
   ALTER COLUMN "allowCommercialUse"
