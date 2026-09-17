@@ -309,13 +309,17 @@ export type RecordSpendAttributionInput = {
    */
   sharedContentKey?: string | null;
   /**
-   * Optional APP-FACING generation type for this spend — `textToImage`,
-   * `customComfy`, or a registered STEP ID (`convert-image`,
-   * `chat-completion`). NEVER the orchestrator's internal `$type`. Resolved by
-   * the caller from the submitted workflow body via
-   * `resolveBlockGenerationType`; omit (or pass null) when it cannot be
-   * resolved, which persists NULL. Typed as the union rather than `string` so a
-   * future caller cannot stamp an arbitrary value on a money/audit row.
+   * Optional APP-FACING generation type for this spend, as
+   * `<coarse>` or `<coarse>:<subtype>` — e.g. `textToImage:img2img-edit`,
+   * `customComfy:seamless-pano-360`, `customComfy:inline`, or a bare registered
+   * STEP ID (`convert-image`, `chat-completion`). NEVER the orchestrator's
+   * internal `$type`. The COARSE key is everything before the FIRST colon and is
+   * what a per-generation-type fee keys on; `blockGenerationCoarseType` is the
+   * one place that decomposition lives. Resolved by the caller from the
+   * submitted workflow body via `resolveBlockGenerationType`; omit (or pass
+   * null) when it cannot be resolved, which persists NULL. Typed as the union
+   * rather than `string` so a future caller cannot stamp an arbitrary value on a
+   * money/audit row.
    */
   generationType?: BlockGenerationType | null;
 };
@@ -464,13 +468,23 @@ export async function recordSpendAttribution(
     sharedContentKey = null,
   } = input;
 
-  // APP-FACING generation type (`textToImage` / `customComfy` / a registered
-  // step id). The caller resolves it from the submitted body; re-checked here
-  // against the same registry-derived list so an unknown value can never reach
-  // the column — a money/audit row is the wrong place to discover a typo, and a
-  // wrong type is worse than a missing one. Anything unrecognised (including
-  // undefined) degrades to NULL rather than throwing: this write is
-  // fire-and-forget off an already-billed submit.
+  // APP-FACING generation type (`textToImage:txt2img`, `customComfy:inline`, a
+  // registered step id, …). The caller resolves it from the submitted body;
+  // re-checked here so an unknown value can never reach the column — a
+  // money/audit row is the wrong place to discover a typo, and a wrong type is
+  // worse than a missing one. Anything unrecognised (including undefined)
+  // degrades to NULL rather than throwing: this write is fire-and-forget off an
+  // already-billed submit.
+  //
+  // 🔴 THIS RE-CHECK GOT MORE VALUABLE WHEN THE VALUE SPACE WIDENED, NOT LESS.
+  // An earlier review called it redundant given the parameter's type, which was
+  // arguable while the value set was a handful of literals a `tsc` error could
+  // enumerate. It no longer is: the value now INTERPOLATES registry ids, so the
+  // only complete statement of what is legal is `isBlockGenerationType`'s shape
+  // test — coarse key in the closed set, and the segment after the first colon
+  // in the closed set that key allows. A caller assembling a value by hand (a
+  // cast, a future writer, a string built from a registry lookup) type-checks
+  // and is still refused here.
   const generationType = isBlockGenerationType(input.generationType) ? input.generationType : null;
 
   // Resolve + snapshot the app owner (mirrors recordAttribution). The

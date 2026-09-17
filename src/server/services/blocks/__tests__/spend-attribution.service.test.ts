@@ -546,6 +546,53 @@ describe('recordSpendAttribution — generation type', () => {
     expect(data.generationType).toBe('textToImage');
   });
 
+  it('persists a COMPOSITE <coarse>:<subtype> value verbatim — the sub-axis is not stripped', async () => {
+    // 🔴 The widening, at the write. The column carries the sub-axis, and the
+    // service must not normalise or truncate it back to the coarse key.
+    for (const value of [
+      'textToImage:txt2img',
+      'textToImage:img2img',
+      'textToImage:img2img-edit',
+      'customComfy:seamless-pano-360',
+      'customComfy:inline',
+    ]) {
+      mockDbWrite.blockSpendAttribution.create.mockClear();
+      await recordSpendAttribution(fakeInput({ generationType: value as never }));
+      const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+      expect(data.generationType).toBe(value);
+    }
+  });
+
+  it('persists NULL for a MALFORMED composite — the re-check validates the SHAPE, not just a list', async () => {
+    // 🔴 WHY THE RE-CHECK GOT MORE VALUABLE, NOT LESS. An earlier review called
+    // it redundant given the parameter's type. That was arguable while the value
+    // set was a handful of literals; it is not now the value INTERPOLATES
+    // registry ids, because the only complete statement of what is legal is the
+    // shape test. Each of these type-checks at a cast and is still refused.
+    const malformed = [
+      'textToImage:not-a-class', // unknown subtype under a known coarse key
+      'customComfy:not-a-recipe', // unregistered recipe id
+      'customComfy:toString', // prototype key in the SUBTYPE position
+      'textToImage:img2img:edit', // two colons — not the stored spelling
+      'convert-image:png', // a step id carries NO subtype
+      'videoToVideo:txt2img', // unknown coarse key
+      'txt2img', // a BARE subtype destroys the fee's coarse key
+      'inline',
+      'textToImage:', // empty subtype
+      ':txt2img',
+    ];
+    for (const value of malformed) {
+      mockDbWrite.blockSpendAttribution.create.mockClear();
+      const res = await recordSpendAttribution({
+        ...fakeInput(),
+        generationType: value,
+      } as unknown as RecordSpendAttributionInput);
+      const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+      expect(res.written).toBe(true);
+      expect(data.generationType).toBeNull();
+    }
+  });
+
   it('persists the REGISTERED STEP ID, and does not rewrite it to the orchestrator type', async () => {
     // 🔴 The design risk. The column must carry `chat-completion` (the permanent
     // public wire id), never `chatCompletion` (the orchestrator's spelling).
