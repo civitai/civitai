@@ -9534,17 +9534,25 @@ async function quotePassThroughBuzz(opts: {
   token: string;
   /**
    * 🔴 THE PHASE, THREADED, NOT ASSUMED. `estimate_*` is defined by the counter
-   * as "one emit per estimate, BEFORE any spend exists"; `absent` is the
-   * submit-side availability signal. This helper serves both call sites, so a
-   * fixed label would file the one event with money behind it — a submit
-   * reserving at the declared ceiling because no quote was had — into the
-   * no-spend bucket, blended with estimate traffic under one constant `step`
-   * label. That is the exact outage the counter exists to make visible.
+   * as "one emit per estimate, BEFORE any spend exists". This helper serves both
+   * call sites, so a fixed label would file the one event that precedes a
+   * reservation — a submit proceeding at the declared ceiling because no quote
+   * was had — into the estimate bucket, blended with estimate traffic under one
+   * constant `step` label.
+   *
+   * 🔴 BOTH PHASES EMIT A PAIR. A success-side emit is not decoration: without
+   * one, `absent` has no denominator and falls when submit volume falls, which
+   * reads as healthy. The counter's own docstring records that this arm's
+   * `absent` means the OPPOSITE of the registry arm's — it ran, it did not
+   * refuse — so the pair is what makes the line readable.
    */
   phase: 'estimate' | 'submit';
 }): Promise<number | null> {
   const { claims, body, orchestratorStep, token, phase } = opts;
-  const absent = phase === 'estimate' ? 'estimate_absent' : 'absent';
+  const [quoted, absent] =
+    phase === 'estimate'
+      ? (['estimate_quoted', 'estimate_absent'] as const)
+      : (['quoted', 'absent'] as const);
   try {
     const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
     const quote = await submitWorkflow({
@@ -9563,7 +9571,7 @@ async function quotePassThroughBuzz(opts: {
       recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, absent);
       return null;
     }
-    if (phase === 'estimate') recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, 'estimate_quoted');
+    recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, quoted);
     return Math.ceil(total);
   } catch {
     recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, absent);

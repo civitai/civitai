@@ -951,6 +951,7 @@ export type StepPriceCheckOutcome =
   | 'over'
   | 'over_reserved'
   | 'absent'
+  | 'quoted'
   | 'estimate_quoted'
   | 'estimate_absent';
 
@@ -980,6 +981,17 @@ export type StepPriceCheckOutcome =
  *     `correctReservationOverage` block — so the same caveat as the estimate
  *     bullet applies: it is `prepaidFixed`-only today because registry load
  *     rejects every other mode, not because this site checks.
+ *   - 🔴 SUBMIT, PRE-BILLING, ON THE PASS-THROUGH ARM (`quoted` / `absent`,
+ *     always with `step: '__passthrough__'`) — A THIRD SITE, AND ITS `absent`
+ *     HAS THE OPPOSITE POLARITY TO THE FAIL-CLOSED ONE ABOVE. The pass-through
+ *     `kind:'step'` arm does NOT refuse on a missing quote: it reserves the
+ *     app's declared `maxBuzz` and proceeds. So there `absent` means "a
+ *     generation RAN with its ceiling resting on the app's own number", not "a
+ *     submit was refused" — the triage instruction in the bullet above is wrong
+ *     for it, and the `step` label is what tells the two apart. `quoted` is its
+ *     success half and exists so `absent` has a denominator: without a pair,
+ *     `absent` falls when submit volume falls, which reads as healthy. Not
+ *     gated on billing mode (that arm has none).
  *   - ESTIMATE (`estimate_quoted` / `estimate_absent`) — one emit per estimate,
  *     BEFORE any spend exists, and NOT gated on billing mode: it fires for any
  *     `kind:'step'` estimate. Unreachable for a non-`prepaidFixed` entry today
@@ -992,7 +1004,8 @@ export type StepPriceCheckOutcome =
  *
  * 🔴 DO NOT ADD A POST-BILLING SIDE EFFECT BESIDE THIS CALL. Only the three
  * outcomes in the first bullet are reached with money behind them; the estimate
- * phase and the fail-closed `absent` both run with no spend at all.
+ * phase, the fail-closed `absent` and the pass-through pair all run before any
+ * spend exists.
  *
  * 🔴 Emitted unconditionally within each phase — including `outcome: 'exact'` —
  * so a flat divergence line can be told apart from a detector that never ran.

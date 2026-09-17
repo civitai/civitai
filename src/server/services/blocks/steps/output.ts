@@ -84,50 +84,47 @@ export function mediaFromBlobs(
 }
 
 /**
- * True when `value` has the orchestrator `Blob` SHAPE — `available` plus `url`.
+ * True when `value` has the orchestrator `Blob` SHAPE.
  *
  * A SHAPE test, not a key-name list and not a "does this string look like a
  * url?" sniff. The first draft of this module enumerated four key names
- * (`blob`/`blobs`/`image`/`images`) and called that auditable; measured against
- * the live spec on 2026-09-17 it covered 4 of the **19** property names that
- * carry a blob across the step types this bridge admits. The rest — `video`,
- * `audioBlob`, `svg`, `frames`, `tempBlobs`, `draftCache`, `additionalVideos`,
- * and seven on `polyGen` alone (`model`, `fbxModel`, `thumbnail`,
- * `riggedModel`, `riggedFbxModel`, `animatedModel`, `animatedFbxModel`,
- * `basicAnimations`) — would each have ridden out as a raw url inside the
- * forwarded output, i.e. exactly the second image channel this function exists
- * to prevent, on ~40% of the media-producing set.
+ * (`blob`/`blobs`/`image`/`images`); measured against the live spec on
+ * 2026-09-17 those covered 4 of the 18 property names that carry a blob across
+ * the step types this bridge admits, so `video`, `audioBlob`, `svg`, `frames`,
+ * `tempBlobs`, `draftCache`, `additionalVideos` and seven on `polyGen` alone
+ * would each have ridden out as a raw url inside the forwarded output.
  *
- * The shape is the orchestrator's own contract (`Blob` in `@civitai/client`), so
- * it covers a key nobody has seen yet, and it cannot strip prose: a string is
- * not an object with an `available` field.
+ * 🔴 KEYED ON `available` PLUS AN IDENTITY FIELD, NOT ON `available` PLUS `url`.
+ * `Blob.available` and `Blob.id` are REQUIRED upstream; `url` is
+ * `url?: null | string` — which is the whole premise the array rule below rests
+ * on. Requiring `url` meant a BLOCKED blob, whose `url` key is simply absent,
+ * failed the test and was forwarded whole: no url escaped (there is none), but
+ * its `blockedReason` and raw orchestrator `nsfwLevel` did, and the module's own
+ * "a blob that the filter DROPPED cannot ride out through `rest`" claim was
+ * false. Measured.
+ *
+ * It still cannot strip prose: a string is not an object with an `available`
+ * field.
  */
 function isOrchestratorBlobLike(value: unknown): boolean {
-  return (
-    value !== null &&
-    typeof value === 'object' &&
-    !Array.isArray(value) &&
-    'available' in (value as Record<string, unknown>) &&
-    'url' in (value as Record<string, unknown>)
-  );
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return 'available' in v && ('url' in v || 'id' in v);
 }
 
 /**
  * The media a value carries, or `null` when it is not media at all.
  *
  * 🔴 AN ARRAY QUALIFIES IF **ANY** ELEMENT IS BLOB-SHAPED, NOT IF EVERY ONE IS.
- * The `every` spelling was measured to leak: `@civitai/client`'s `Blob` declares
- * `url?: null | string`, so a blocked or not-yet-available sibling can lack the
- * key entirely — and under `every` ONE such element disqualified the whole array,
- * left the key unstripped, and forwarded every OTHER element's raw url out
- * through `rest`. That is the second image channel this module exists to
+ * The `every` spelling was measured to leak: one blocked sibling disqualified the
+ * whole array, left the key unstripped, and forwarded every OTHER element's raw
+ * url out through `rest` — the second image channel this module exists to
  * prevent, arriving through the very door the "unconditional strip" rule claims
  * is shut.
  *
- * Non-conforming elements of a qualifying array are DROPPED rather than
- * forwarded. They are siblings of blobs in a blob-typed field; dropping is the
- * fail-safe direction and keeps `rest` free of anything the media path did not
- * account for.
+ * Non-conforming elements of a qualifying array are DROPPED, not forwarded. That
+ * is fail-safe, and it is not free: a sibling carrying real non-media data goes
+ * with them, and the block gets no signal that anything was removed.
  */
 function liftOrchestratorBlobs(value: unknown): StepOutputMedia[] | null {
   if (isOrchestratorBlobLike(value)) {
@@ -140,51 +137,70 @@ function liftOrchestratorBlobs(value: unknown): StepOutputMedia[] | null {
 }
 
 /**
- * Split an ARBITRARY orchestrator step output into the media it carries and
- * everything else — the pass-through arm's (`kind:'step'` with a bare `$type`)
- * one and only output rule.
+ * How deep the walk below descends before it stops looking.
+ *
+ * 🔴 NOT 1, AND THE REASON IS A MEASUREMENT. A depth-1 walk was shipped and then
+ * measured against the live spec: of the 50 step types, three carry blobs deeper
+ * than the top level, and two of them are ALLOWED on this arm.
+ * `polyGen.basicAnimations` is a plain object holding SIX `Model3DBlob`s
+ * (walking/running × three model formats) and `training.epochs[]` carries
+ * `model` plus a `samples[]` of images/videos/audio. Every one of those urls was
+ * forwarded raw, i.e. reachable by the app and invisible to both the publish
+ * path and the per-viewer gated read.
+ *
+ * 4 clears every shape in the catalog today with room, and bounds the walk so an
+ * adversarial payload cannot make it unbounded — the input is app-supplied and
+ * only size-capped.
+ */
+const PASS_THROUGH_OUTPUT_WALK_DEPTH = 4;
+
+/**
+ * Strip every blob-shaped value out of an orchestrator step output, returning
+ * the media found and the remainder — the pass-through arm's one output rule.
  *
  * 🔴 THE STRIP IS UNCONDITIONAL, NOT "strip what produced media". A blob-shaped
- * value is removed from `rest` whether or not `mediaFromBlobs` kept it, so a
- * blob that the availability filter DROPPED — unavailable, blocked, empty url —
- * cannot ride out through `rest` instead. Filtering and stripping on the same
- * predicate is how a dead or blocked url reaches a block through the back door.
+ * value is removed whether or not `mediaFromBlobs` kept it, so a blob the
+ * availability filter DROPPED — unavailable, blocked, empty or absent url —
+ * cannot ride out through the remainder instead. Filtering and stripping on the
+ * same predicate is how a dead or blocked url reaches a block through the back
+ * door. 🔴 `liftOrchestratorBlobs` returning an EMPTY array is what implements
+ * that: `[]` is truthy, and the truthiness is load-bearing. A "simplification"
+ * to `if (lifted?.length)` reopens the door.
  *
  * 🔴 SOME STEP TYPES *ARE* A BLOB. `transcode` returns the blob itself as its
- * whole output (`TranscodeOutput` = `{ id, available, url, … }`), so the
- * top-level case runs before the per-key walk AND before the array
- * short-circuit. Without it that type's url is the entire forwarded object.
- *
- * 🔴 DEPTH 1, AND THAT IS THE REAL LIMIT. A blob NESTED inside another object —
- * `training.epochs[]`, or a provider reply that embeds media inside a message —
- * still rides through `rest`. Recursing would mean rewriting the shape of an
- * object this arm promises to forward verbatim, which is a worse trade; the
- * bound is stated here rather than implied, and it is the thing to re-measure
- * when the catalog moves.
+ * whole output, so the whole-value case is checked before descending.
  */
 export function splitPassThroughStepOutput(output: unknown): {
   media: StepOutputMedia[];
   rest: unknown;
 } {
-  if (output == null || typeof output !== 'object') {
-    return { media: [], rest: output };
-  }
-  // The WHOLE output is media — `transcode` returns the blob itself, and a
-  // list-shaped equivalent has the same property. Checked before the per-key
-  // walk, and before the array short-circuit, or the url IS the forwarded value.
-  const whole = liftOrchestratorBlobs(output);
-  if (whole) return { media: whole, rest: Array.isArray(output) ? [] : {} };
-  if (Array.isArray(output)) return { media: [], rest: output };
-
   const media: StepOutputMedia[] = [];
+  const rest = walkPassThroughOutput(output, media, 0);
+  return { media, rest };
+}
+
+function walkPassThroughOutput(value: unknown, media: StepOutputMedia[], depth: number): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  const lifted = liftOrchestratorBlobs(value);
+  if (lifted) {
+    media.push(...lifted);
+    return Array.isArray(value) ? [] : {};
+  }
+  // Past the cap the value is forwarded as-is. A deeper blob than the catalog
+  // has ever carried is the accepted residue of a bounded walk; see
+  // PASS_THROUGH_OUTPUT_WALK_DEPTH.
+  if (depth >= PASS_THROUGH_OUTPUT_WALK_DEPTH) return value;
+  if (Array.isArray(value)) {
+    return value.map((entry) => walkPassThroughOutput(entry, media, depth + 1));
+  }
   const rest: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(output as Record<string, unknown>)) {
-    const lifted = liftOrchestratorBlobs(value);
-    if (lifted) {
-      media.push(...lifted);
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    const entryLifted = liftOrchestratorBlobs(entry);
+    if (entryLifted) {
+      media.push(...entryLifted);
       continue;
     }
-    rest[key] = value;
+    rest[key] = walkPassThroughOutput(entry, media, depth + 1);
   }
-  return { media, rest };
+  return rest;
 }

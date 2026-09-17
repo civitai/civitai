@@ -35,7 +35,6 @@ import { BLOCK_STEP_NAME, projectAppWorkflow, snapshotFromWorkflow } from '../wo
 import { splitPassThroughStepOutput } from '../steps';
 import { getBlockGatedImagesByIds } from '../block-gated-images.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { contentRatingFromNsfwLevel } from '~/shared/constants/browsingLevel.constants';
 
 /**
  * A `$type` the step registry does not know and `workflow.service` does not
@@ -191,15 +190,70 @@ describe('splitPassThroughStepOutput', () => {
     expect(rest).toEqual(output);
   });
 
-  // 🔴 THE DEPTH LIMIT, PINNED RATHER THAN IMPLIED. A blob nested inside another
-  // object rides through verbatim; the doc says so and this is the assertion
-  // that keeps the doc honest.
-  it('does NOT reach a blob nested one level deeper', () => {
+  // 🔴 THE TWO REAL NESTED SHAPES IN THE LIVE CATALOG, both on ALLOWED types. A
+  // depth-1 walk shipped and was then measured: `polyGen.basicAnimations` is a
+  // plain object holding SIX `Model3DBlob`s and `training.epochs[]` carries a
+  // `model` plus a `samples[]` of media. Every one of those urls was forwarded
+  // raw — reachable by the app, invisible to the publish path and to the
+  // per-viewer gated read.
+  it('reaches blobs nested inside a plain object (polyGen.basicAnimations)', () => {
     const { media, rest } = splitPassThroughStepOutput({
-      epochs: [{ blobs: [{ url: BLOB_URL, available: true }] }],
+      model: { url: `${BLOB_URL}#m`, available: true },
+      basicAnimations: {
+        walkingModel: { url: `${BLOB_URL}#w`, available: true },
+        runningModel: { url: `${BLOB_URL}#r`, available: true },
+      },
     });
+    expect(media.map((m) => m.url)).toEqual([`${BLOB_URL}#m`, `${BLOB_URL}#w`, `${BLOB_URL}#r`]);
+    expect(JSON.stringify(rest)).not.toContain(BLOB_URL);
+  });
+
+  it('reaches blobs nested inside an array of objects (training.epochs[])', () => {
+    const { media, rest } = splitPassThroughStepOutput({
+      epochs: [
+        { epochNumber: 1, model: { url: `${BLOB_URL}#1`, available: true } },
+        { epochNumber: 2, samples: [{ url: `${BLOB_URL}#2`, available: true }] },
+      ],
+    });
+    expect(media).toHaveLength(2);
+    expect(JSON.stringify(rest)).not.toContain(BLOB_URL);
+    // The surrounding structure is preserved — only the blobs are lifted out.
+    expect(rest).toEqual({ epochs: [{ epochNumber: 1 }, { epochNumber: 2 }] });
+  });
+
+  // 🔴 THE DEPTH CAP, PINNED RATHER THAN IMPLIED. The walk is bounded because the
+  // input is app-supplied and only size-capped; past the cap a value is
+  // forwarded as-is, and that residue is stated in the doc.
+  it('does NOT descend past the depth cap', () => {
+    const deep = { a: { b: { c: { d: { e: { url: BLOB_URL, available: true } } } } } };
+    const { media, rest } = splitPassThroughStepOutput(deep);
     expect(media).toEqual([]);
     expect(JSON.stringify(rest)).toContain(BLOB_URL);
+  });
+
+  // 🔴 THE UNCONDITIONAL STRIP AT THE WHOLE-VALUE SITE — the per-key site has its
+  // own control above, and this one had none. `if (whole?.length)` there lets a
+  // BLOCKED `transcode`-shaped output fall through to the walk and forward its
+  // url verbatim.
+  it('strips a whole-value blob that produced NO media', () => {
+    expect(
+      splitPassThroughStepOutput({ id: 'b', available: false, url: BLOB_URL, tier: 'm' })
+    ).toEqual({ media: [], rest: {} });
+    expect(splitPassThroughStepOutput([{ url: BLOB_URL, available: false }])).toEqual({
+      media: [],
+      rest: [],
+    });
+  });
+
+  // 🔴 `url` IS OPTIONAL UPSTREAM — a blocked blob simply has no `url` key. Keyed
+  // on `available` + `url` it failed the shape test and was forwarded whole, so
+  // its `blockedReason` and raw `nsfwLevel` reached the app and the module's
+  // "a dropped blob cannot ride out through `rest`" claim was false.
+  it('strips a blob whose `url` key is ABSENT', () => {
+    const blocked = { type: 'image', id: 'b', available: false, blockedReason: 'r' };
+    expect(splitPassThroughStepOutput({ blob: blocked })).toEqual({ media: [], rest: {} });
+    expect(splitPassThroughStepOutput(blocked)).toEqual({ media: [], rest: {} });
+    expect(JSON.stringify(splitPassThroughStepOutput({ blob: blocked }).rest)).not.toContain('r');
   });
 
   it('handles the SINGULAR `blob` key and a non-object output', () => {
@@ -421,7 +475,12 @@ describe('the gated read over an Image row a pass-through publish would produce'
       id: PUBLISHED_ID,
       userId: AUTHOR,
       url: 'a4f1c0de-0000-4000-8000-000000000001.png',
-      nsfwLevel: NsfwLevel.PG,
+      // 🔴 PG13, NOT PG. `contentRatingFromNsfwLevel(PG)` is `'g'` — which is
+      // also what 0/null/undefined return (the documented fail-closed default),
+      // so a hardcoded rating, a dropped argument and the real computation are
+      // indistinguishable at PG. PG13 is inside the SFW ceiling below, so the
+      // row is still `visible`, and `'pg13'` is a value the default cannot be.
+      nsfwLevel: NsfwLevel.PG13,
       ingestion: ImageIngestionStatus.Scanned,
       width: projected.width,
       height: projected.height,
@@ -453,10 +512,11 @@ describe('the gated read over an Image row a pass-through publish would produce'
       {
         imageId: PUBLISHED_ID,
         status: 'visible',
-        nsfwLevel: NsfwLevel.PG,
-        // The literal, not `expect.anything()` — a hardcoded rating on the
-        // per-viewer moderation surface would otherwise pass.
-        contentRating: contentRatingFromNsfwLevel(NsfwLevel.PG),
+        nsfwLevel: NsfwLevel.PG13,
+        // 🔴 THE STRING LITERAL, not `contentRatingFromNsfwLevel(...)` — calling
+        // the same helper the service calls on the same input reimplements the
+        // thing under test and passes whatever it returns.
+        contentRating: 'pg13',
         // The gated EDGE url (1200 = the service's own GATED_IMAGE_EDGE_WIDTH,
         // module-private), never the raw storage key.
         url: `edge:${row.url}@1200`,

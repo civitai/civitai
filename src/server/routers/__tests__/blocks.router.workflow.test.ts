@@ -9644,33 +9644,39 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
 
   /** Drive the quote and the realized cost independently. */
   function ptQuoting(quotedCost: number | null, realizedCost: number) {
-    mockSubmitWorkflow.mockImplementation(async (opts: { query?: { whatif?: boolean } }) => {
-      if (opts?.query?.whatif === true) {
+    mockSubmitWorkflow.mockImplementation(
+      async (opts: {
+        query?: { whatif?: boolean };
+        body: { steps: Array<{ $type: string; name: string }> };
+      }) => {
+        if (opts?.query?.whatif === true) {
+          return {
+            id: 'wf_quote',
+            status: 'unassigned',
+            steps: [],
+            ...(quotedCost === null ? {} : { cost: { total: quotedCost } }),
+          };
+        }
         return {
-          id: 'wf_quote',
-          status: 'unassigned',
-          steps: [],
-          ...(quotedCost === null ? {} : { cost: { total: quotedCost } }),
+          id: 'wf_pt_1',
+          status: 'processing',
+          // 🔴 THE REPLY ECHOES THE SUBMITTED STEP, BECAUSE THE REAL ORCHESTRATOR
+          // DOES — `WorkflowStep.name` and `$type` are required response fields.
+          // Read off `opts`, NOT restated as constants: a hardcoded `name` feeds
+          // the read side the right value independently of what the router
+          // stamped, which is the fixture-constant collision that makes a
+          // stamp↔read seam look joined when it is not.
+          steps: [
+            {
+              $type: opts.body.steps[0].$type,
+              name: opts.body.steps[0].name,
+              output: { blobs: [{ url: PT_BLOB_URL, available: true }], note: 'kept' },
+            },
+          ],
+          cost: { total: realizedCost },
         };
       }
-      return {
-        id: 'wf_pt_1',
-        status: 'processing',
-        // 🔴 THE REPLY ECHOES `name`, BECAUSE THE REAL ORCHESTRATOR DOES —
-        // `WorkflowStep.name` is a required response field. A fake that omitted
-        // it made the router's own `snapshotFromWorkflow(submitted)` drop the
-        // step on every test in this describe once the name gate landed, so the
-        // extraction was inert here and nothing noticed.
-        steps: [
-          {
-            $type: PT_TYPE,
-            name: BLOCK_STEP_NAME,
-            output: { blobs: [{ url: PT_BLOB_URL, available: true }], note: 'kept' },
-          },
-        ],
-        cost: { total: realizedCost },
-      };
-    });
+    );
   }
 
   const caller = () => blocksRouter.createCaller(fakeCtx() as never);
@@ -10064,7 +10070,11 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
         const reservedKey = mockSysRedis.incrBy.mock.calls
           .map((c) => String(c[0]))
           .find((k) => k.startsWith('system:blocks:buzz-cap:'));
+        // Both sides `undefined` would satisfy the equality below, so pin the
+        // shape first.
+        expect(reservedKey).toMatch(/^system:blocks:buzz-cap:42:/);
         expect(record.buzzCapKey).toBe(reservedKey);
+        expect(record.appSpendKey).toBe('system:blocks:app-spend-cap:apb_test:day');
 
         mockSysRedis.decrBy.mockClear();
         mockRefundAppSpend.mockClear();
@@ -10079,8 +10089,13 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
         const { record } = await submitAndPersist(31, 31);
         mockSysRedis.decrBy.mockClear();
         const { settleCustomComfySpend: realSettle } = await realSettleModule();
+        mockRefundAppSpend.mockClear();
         await realSettle({ workflowId: 'wf_pt_1', actualCost: 6 });
         expect(mockSysRedis.decrBy).toHaveBeenCalledWith(record.buzzCapKey, 25);
+        // 🔴 THE PER-APP LEG TOO. A record persisted with `appSpendKey: null`
+        // leaves that cap counted at the ceiling forever, and the over-run test
+        // above cannot see it (a zero refund is correct there either way).
+        expect(mockRefundAppSpend).toHaveBeenCalledWith(record.appSpendKey, 25);
       });
 
       // A second terminal observation refunds nothing because the record is
@@ -10156,49 +10171,58 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
         expect.stringMatching(/^system:blocks:buzz-cap:42:/),
         MAX_BUZZ
       );
-      expect(mockReleaseGen).toHaveBeenCalled();
+      expect(mockReleaseGen).toHaveBeenCalledWith('42:apb_test:pt-denial');
     });
 
     // 🔴 THE DEV-SESSION LEG, WHICH NOTHING IN THIS DESCRIBE DROVE. The
     // `not.toHaveBeenCalled()` assertion it replaces could not fail — the tunnel
     // lookup defaults to null — so the whole fourth reservation could be deleted
     // from this handler and stay green.
-    it('reserves on the DEV-SESSION cap, and refunds every leg when it denies', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+    // 🔴 QUOTE 31 AGAINST maxBuzz 20, SO THE RESERVED AMOUNT IS PINNED. At a
+    // quote below the declared ceiling the two are the same number and a
+    // `body.maxBuzz` mutant in the dev-session reserve cannot be seen.
+    it('reserves the CEILING on the DEV-SESSION cap, and refunds every leg when it denies', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims({ buzzBudget: 50 }));
       happyUser();
-      ptQuoting(5, 5);
+      ptQuoting(31, 31);
       mockGetActiveDevTunnel.mockResolvedValue({
         sessionId: 'dts_pt',
         spendCapBuzz: 100,
       } as never);
       mockReserveDevSessionBuzz.mockResolvedValue({ allowed: false, total: 95 });
 
-      const result = await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      const result = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ptBody(),
+        // This exit has its own `releaseGenIdempotency`, unreachable without a key.
+        idempotencyKey: 'pt-dev-denial',
+      });
 
-      expect(mockReserveDevSessionBuzz).toHaveBeenCalledWith('dts_pt', MAX_BUZZ, 100);
+      expect(mockReserveDevSessionBuzz).toHaveBeenCalledWith('dts_pt', 31, 100);
       expect(result.snapshot.error).toMatch(/dev tunnel session Buzz cap reached/);
       expect(ptRealSubmits()).toHaveLength(0);
       expect(mockRefundAppSpend).toHaveBeenCalledWith(
         'system:blocks:app-spend-cap:apb_test:day',
-        MAX_BUZZ
+        31
       );
       expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
         expect.stringMatching(/^system:blocks:buzz-cap:42:/),
-        MAX_BUZZ
+        31
       );
+      expect(mockReleaseGen).toHaveBeenCalledWith('42:apb_test:pt-dev-denial');
     });
 
     it('reserves on the DEV-SESSION cap on a SUCCESSFUL submit too', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      mockVerifyBlockToken.mockResolvedValue(ptClaims({ buzzBudget: 50 }));
       happyUser();
-      ptQuoting(5, 5);
+      ptQuoting(31, 31);
       mockGetActiveDevTunnel.mockResolvedValue({
         sessionId: 'dts_pt',
         spendCapBuzz: 100,
       } as never);
       const result = await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
       expect(result.snapshot.workflowId).toBe('wf_pt_1');
-      expect(mockReserveDevSessionBuzz).toHaveBeenCalledWith('dts_pt', MAX_BUZZ, 100);
+      expect(mockReserveDevSessionBuzz).toHaveBeenCalledWith('dts_pt', 31, 100);
       expect(mockPersistCustomComfySettle).toHaveBeenCalledWith(
         expect.objectContaining({ devSessionId: 'dts_pt' })
       );
@@ -10225,7 +10249,7 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
     // The price-check counter is the only thing that can tell "the block saw a
     // live quote" from "the orchestrator stopped pricing and every job silently
     // fell back to its declared ceiling" — which this arm does by design.
-    it('counts BOTH quote outcomes', async () => {
+    it('the SUBMIT phase emits a PAIR — `quoted` and `absent`, never the estimate labels', async () => {
       mockVerifyBlockToken.mockResolvedValue(ptClaims());
       happyUser();
       ptQuoting(5, 5);
@@ -10233,7 +10257,8 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       // 🔴 ONE EMIT, NOT "at least one". Emitting both outcomes on a single
       // quote is the failure that makes the ratio unreadable, and the ratio is
       // the counter's whole purpose.
-      expect(mockRecordStepPriceCheck).not.toHaveBeenCalled();
+      expect(mockRecordStepPriceCheck).toHaveBeenCalledTimes(1);
+      expect(mockRecordStepPriceCheck).toHaveBeenCalledWith('__passthrough__', 'quoted');
 
       mockRecordStepPriceCheck.mockClear();
       ptQuoting(null, 4);
