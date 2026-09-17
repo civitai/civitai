@@ -128,9 +128,8 @@ function isOrchestratorBlobLike(value: unknown): boolean {
  * today is `training.epochs`(1) → an epoch(2) → `samples`(3) → its members(4). A
  * new upstream `$type` is ALLOWED by construction, so one extra wrapper level in
  * a future output reopens exactly this leak with no detector. Say the CATALOG
- * DEPTH when you re-measure; do not say "with room". (That one is a fact about
- * the orchestrator spec — stable and re-derivable. The overflow threshold below
- * is not, and the instruction there is the opposite.)
+ * DEPTH when you re-measure; do not say "with room". (Re-derivable from the
+ * orchestrator spec; the overflow threshold below is not.)
  *
  * 🔴 IT IS A STACK BOUND, NOT ONLY A COST BOUND — AND NOT CYCLE PROTECTION. The
  * walked value is the orchestrator's JSON-parsed `step.output`, not the app's
