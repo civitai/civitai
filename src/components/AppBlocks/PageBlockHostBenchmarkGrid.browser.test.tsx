@@ -301,6 +301,50 @@ describe('PageBlockHost GET_IMAGES_BY_IDS (per-viewer gated read)', () => {
     replies.stop();
   });
 
+  test('passes a `pending` / `ratingPending` entry through VERBATIM — no host projection', async () => {
+    // The host is a pass-through by design: the moderation decision is the
+    // server's and the host must not re-derive, summarise or drop any part of it.
+    // These two states are the ones that would go missing silently if someone
+    // ever added a projection here — `ratingPending` is the only signal telling a
+    // grid "show this, but claim no rating", and a dropped `pending` collapses
+    // back into the "hidden ⇒ mature" guess this whole seam exists to stop.
+    const images = [
+      // The viewer's OWN not-yet-rated image: url, and NO rating fields.
+      {
+        imageId: 1,
+        status: 'visible',
+        ratingPending: true,
+        url: 'edge:1',
+        width: 512,
+        height: 512,
+      },
+      // Another author's not-yet-rated image: withheld, and says WHY.
+      { imageId: 2, status: 'pending' },
+    ];
+    getImagesMutate.mockResolvedValue({ images });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('GET_IMAGES_BY_IDS', { requestId: 'rq_pending', imageIds: [1, 2] });
+
+    await vi.waitFor(() => {
+      const r = replies.last('IMAGES_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_pending', result: { images } });
+    });
+    const payload = replies.last('IMAGES_RESULT')!.payload as {
+      result: { images: Array<Record<string, unknown>> };
+    };
+    // The owner entry asserts NO rating…
+    expect(payload.result.images[0]).toHaveProperty('ratingPending', true);
+    expect(payload.result.images[0]).not.toHaveProperty('nsfwLevel');
+    expect(payload.result.images[0]).not.toHaveProperty('contentRating');
+    // …and the other author's pending entry still carries no url.
+    expect(payload.result.images[1]).not.toHaveProperty('url');
+    replies.stop();
+  });
+
   test('an empty id list short-circuits to an empty result WITHOUT a server call', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();

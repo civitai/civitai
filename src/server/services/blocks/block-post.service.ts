@@ -585,6 +585,10 @@ export async function resolveAppPublishedImages(input: {
       },
       input.browsingLevel
     );
+    // 🔴 `!== 'visible'` AND NOT `=== 'hidden'`, DELIBERATELY. The verdict gained a
+    // third state (`pending` — nothing has rated this image yet); a public Post
+    // must not carry one, and this spelling refuses it without needing to know the
+    // state exists. The seam test asserts every call site keeps this shape.
     if (verdict.status !== 'visible') badRequest('an image is not available to post');
     out.push({
       imageId: row.id,

@@ -35,8 +35,16 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const SFW = NsfwLevel.PG | NsfwLevel.PG13; // 3
 const APP = 'app_test';
+/** The requesting viewer in every case below. Distinct from both `AUTHOR` and
+ *  every image id, so a mixed-up field cannot coincidentally satisfy an
+ *  assertion. */
+const VIEWER = 42;
+/** The image's author — someone OTHER than the viewer, so the default fixture
+ *  exercises the CROSS-USER path. Owner cases opt in with `userId: VIEWER`. */
+const AUTHOR = 7;
 const clean = (id: number, over: Partial<Record<string, unknown>> = {}) => ({
   id,
+  userId: AUTHOR,
   url: `key-${id}`,
   nsfwLevel: NsfwLevel.PG,
   ingestion: ImageIngestionStatus.Scanned,
@@ -119,23 +127,129 @@ describe('getBlockGatedImagesByIds', () => {
     expect('url' in images[0]).toBe(false);
   });
 
-  it('returns HIDDEN (no url) for unscanned / flagged / hard-blocked images', async () => {
+  it('returns HIDDEN (no url) for flagged / hard-blocked / scan-refused images', async () => {
     queryRaw.mockResolvedValue([
-      clean(1, { ingestion: ImageIngestionStatus.Pending }),
-      clean(2, { needsReview: 'poi' }),
-      clean(3, { blockedFor: 'CSAM' }),
+      clean(1, { needsReview: 'poi' }),
+      clean(2, { blockedFor: 'CSAM' }),
+      clean(3, { ingestion: ImageIngestionStatus.Blocked }),
+      clean(4, { ingestion: ImageIngestionStatus.NotFound }),
     ]);
     const { images } = await getBlockGatedImagesByIds({
-      imageIds: [1, 2, 3],
+      imageIds: [1, 2, 3, 4],
       browsingLevel: SFW,
       appId: APP,
-      userId: 42,
+      userId: VIEWER,
     });
     expect(images).toEqual([
       { imageId: 1, status: 'hidden' },
       { imageId: 2, status: 'hidden' },
       { imageId: 3, status: 'hidden' },
+      { imageId: 4, status: 'hidden' },
     ]);
+  });
+
+  // ── REGRESSION (the "rated mature" defect) ────────────────────────────────
+  // Pre-change, every one of these came back `{ status: 'hidden' }` — the same
+  // token an above-ceiling image gets — so the grid had nothing to render but a
+  // maturity claim about an image nothing had rated.
+
+  it("reports ANOTHER author's not-yet-rated image as PENDING, still with no url", async () => {
+    queryRaw.mockResolvedValue([
+      clean(1, { ingestion: ImageIngestionStatus.Pending }),
+      clean(2, { nsfwLevel: 0 }), // scanned, no level written yet
+    ]);
+    const { images } = await getBlockGatedImagesByIds({
+      imageIds: [1, 2],
+      browsingLevel: SFW,
+      appId: APP,
+      userId: VIEWER, // NOT the author (AUTHOR)
+    });
+    expect(images).toEqual([
+      { imageId: 1, status: 'pending' },
+      { imageId: 2, status: 'pending' },
+    ]);
+    // The withholding is byte-identical to the `hidden` it replaced: no url of
+    // any kind — neither the gated edge url nor the raw storage key.
+    expect(JSON.stringify(images)).not.toContain('url');
+    expect(JSON.stringify(images)).not.toContain('key-1');
+  });
+
+  it("shows the VIEWER'S OWN not-yet-rated image, claiming no rating", async () => {
+    queryRaw.mockResolvedValue([
+      clean(1, { userId: VIEWER, ingestion: ImageIngestionStatus.Pending }),
+      clean(2, { userId: VIEWER, nsfwLevel: 0 }),
+    ]);
+    const { images } = await getBlockGatedImagesByIds({
+      imageIds: [1, 2],
+      browsingLevel: SFW,
+      appId: APP,
+      userId: VIEWER,
+    });
+    expect(images).toEqual([
+      {
+        imageId: 1,
+        status: 'visible',
+        ratingPending: true,
+        url: 'edge:key-1@1200',
+        width: 512,
+        height: 512,
+      },
+      {
+        imageId: 2,
+        status: 'visible',
+        ratingPending: true,
+        url: 'edge:key-2@1200',
+        width: 512,
+        height: 512,
+      },
+    ]);
+    // 🔴 THE POINT: no rating is asserted. `toEqual` above already forbids extra
+    // keys, but assert it by name so a future `contentRating: 'g'` "helpful
+    // default" has to delete a line that says why it must not exist.
+    for (const image of images) {
+      expect('nsfwLevel' in image).toBe(false);
+      expect('contentRating' in image).toBe(false);
+    }
+    // Still the gated edge url, never the raw key.
+    expect(JSON.stringify(images)).not.toContain('"url":"key-1"');
+  });
+
+  it('gives the OWNER no url when their own unrated image is flagged or scan-refused', async () => {
+    // The owner affordance must not become a bypass: moderation and the terminal
+    // scan refusals are decided BEFORE `pending`, so these never reach it.
+    queryRaw.mockResolvedValue([
+      clean(1, { userId: VIEWER, ingestion: ImageIngestionStatus.Pending, tosViolation: true }),
+      clean(2, { userId: VIEWER, nsfwLevel: 0, blockedFor: 'CSAM' }),
+      clean(3, { userId: VIEWER, ingestion: ImageIngestionStatus.Blocked }),
+      clean(4, { userId: VIEWER, ingestion: ImageIngestionStatus.NotFound }),
+    ]);
+    const { images } = await getBlockGatedImagesByIds({
+      imageIds: [1, 2, 3, 4],
+      browsingLevel: SFW,
+      appId: APP,
+      userId: VIEWER,
+    });
+    expect(images).toEqual([
+      { imageId: 1, status: 'hidden' },
+      { imageId: 2, status: 'hidden' },
+      { imageId: 3, status: 'hidden' },
+      { imageId: 4, status: 'hidden' },
+    ]);
+    expect(JSON.stringify(images)).not.toContain('url');
+  });
+
+  it('does NOT let the owner branch widen a RATED above-ceiling image', async () => {
+    // Owning an image does not raise your browsing ceiling. An R image the viewer
+    // authored is still hidden from their SFW ceiling — `ratingPending` is about
+    // the ABSENCE of a rating, never about who owns one.
+    queryRaw.mockResolvedValue([clean(1, { userId: VIEWER, nsfwLevel: NsfwLevel.R })]);
+    const { images } = await getBlockGatedImagesByIds({
+      imageIds: [1],
+      browsingLevel: SFW,
+      appId: APP,
+      userId: VIEWER,
+    });
+    expect(images).toEqual([{ imageId: 1, status: 'hidden' }]);
   });
 
   it('OMITS ids that resolve to no in-scope row (wrong app / blocked / nonexistent)', async () => {
