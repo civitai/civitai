@@ -103,9 +103,19 @@ describe('feedFliptContext', () => {
 });
 
 describe('feedHydrateQuery', () => {
-  it('keeps the request filters and drops paging and period in favour of the ids', () => {
+  it('keeps the request filters and drops paging, period and the model scope in favour of the ids', () => {
     const q = feedHydrateQuery(
-      { ...base, tags: [7], cursor: 'feed:1:2', skip: 40, offset: 400, entry: 99, limit: 40 },
+      {
+        ...base,
+        tags: [7],
+        modelId: 3,
+        modelVersionId: 4,
+        cursor: 'feed:1:2',
+        skip: 40,
+        offset: 400,
+        entry: 99,
+        limit: 40,
+      },
       [9, 5, 2]
     );
     expect(q).toEqual({
