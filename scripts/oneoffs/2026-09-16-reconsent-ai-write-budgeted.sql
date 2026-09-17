@@ -18,12 +18,21 @@
 -- Everyone holding a live grant agreed to the narrower sentence, so the grants
 -- have to be re-taken.
 --
--- 🔴 THE NEW SENTENCE NAMES ONLY WHAT IS REACHABLE TODAY, ON PURPOSE. It does
--- NOT promise model training: training is allowed by the denylist but no wire
--- arm accepts it and no implemented billing mode can carry it. Re-consenting to
--- a capability that does not exist BANKS permission for a widening that has not
--- shipped, and nothing would re-prompt when it does — which is the silent scope
--- escalation this table exists to prevent. When a NEW capability becomes
+-- 🔴 THE NEW SENTENCE NAMES NO CAPABILITY AT ALL, ON PURPOSE — see the block
+-- headed "THE COPY IS GENERIC" further down for why enumerating failed. It in
+-- particular does NOT promise model training: training is allowed by the
+-- denylist but no wire arm accepts it and no implemented billing mode can carry
+-- it. Re-consenting to a capability that does not exist BANKS permission for a
+-- widening that has not shipped, and nothing would re-prompt when it does —
+-- which is the silent scope escalation this table exists to prevent. This
+-- supersedes decision 6 of §5a of the no-allowlist decision doc, which required
+-- training to be named in words. Operator call, 2026-09-16.
+--
+-- 🔴 THAT DOC IS NOT IN THIS REPO — it is
+-- `claudedocs/appblocks-no-allowlist-decision-2026-09-15.md` in the private
+-- `civitai/talos-infra` repo, so do not go looking for it here. Its reasoning is
+-- restated in full above precisely because you may not be able to open it.
+-- When training — or any change of KIND rather than of modality — becomes
 -- reachable, the sentence changes and the grants are re-taken AGAIN. That is
 -- the intended cost, not an oversight.
 --
@@ -35,9 +44,24 @@
 -- with the OLD sentence, silently re-consents to the thing you were trying to
 -- stop them being bound by, and both halves of the change still look done.
 --
--- Confirm the live copy first: open an app that declares the scope and read the
--- consent modal. The new sentence names language models and training
--- explicitly; the old one says "Submit generations".
+-- 🔴 CONFIRM IT BY MATCHING THE EXACT STRING, NOT BY RECOGNISING A WORD. This
+-- block used to say "the new sentence names language models and training
+-- explicitly; the old one says Submit generations" — and by 2026-09-16 that
+-- test PASSED against a sentence the arc had already retracted, because an
+-- interim release did name language models. A keyword test cannot tell the
+-- current sentence from the last three. The live copy must be, character for
+-- character:
+--
+--     Run AI work that spends the viewer's Buzz, with a per-call cap
+--
+-- Read it from the deployed branch, not from a merge:
+--
+--     gh api repos/civitai/civitai/contents/src/server/services/blocks/scope-descriptions.constants.ts?ref=release \
+--       --jq .content | base64 -d | grep -A1 "ai:write:budgeted"
+--
+-- then open an app declaring the scope and read the rendered consent modal.
+-- Both, not either — the first proves what is deployed, the second proves what
+-- a user actually sees.
 --
 -- ============================================================================
 -- WHAT IT DOES, AND WHAT IT DOES NOT
@@ -51,9 +75,33 @@
 -- immediately "reaches no spend path". It does not:
 --
 --   1. Block tokens are JWTs with no per-jti revocation. Default lifetime is
---      900s (300s settings-scoped, 4h dev — `block-token-lifetimes.ts`). So for
---      up to ~15 MINUTES after this runs, a token minted just before it still
+--      900s, 300s settings-scoped (`block-token-lifetimes.ts`). So for up to
+--      ~15 MINUTES after this runs, a token minted just before it still
 --      carries the scope.
+--
+--      🔴 THE ~15 MIN BOUND IS ABOUT CONSENT-DERIVED TOKENS, WHICH IS THE ONLY
+--      POPULATION THIS SCRIPT CAN REACH. Say it explicitly, because the same
+--      file names a 4h dev lifetime elsewhere and an audit round read the two
+--      together and concluded the window was 16× understated. It is not.
+--      DEV TOKENS ARE NOT AFFECTED BY THIS SCRIPT AT ALL — in either direction:
+--        - their SCOPES do not come from `app_user_scope_grants`.
+--          `dev-scoped-mint.service.ts` derives them from the manifest, clamped
+--          to `DEV_TOKEN_SCOPE_ALLOWLIST` and the app's OAuth ceiling, so
+--          revoking a consent row cannot narrow a dev token;
+--        - their SPEND never consults consent. `blocks.router.ts`'s
+--          `if (claims.dev === true) return { ...platform, consent: null }`
+--          returns before `getConsentBuzzBudget` is called. THAT short-circuit
+--          is the whole reason item 2's cap-lift cannot compound onto a dev
+--          token — there is no per-user consent cap in play to lift.
+--          ⚠️ NOT because of `DEV_BUZZ_BUDGET_CAP`: that is 250 PER CALL, not a
+--          daily bound, and a dev token still reserves against the full
+--          platform per-day ceiling `BLOCK_BUZZ_CAP_PER_DAY`. Do not read it as
+--          "dev tokens are capped at 250/day".
+--      So a dev token keeps the scope until whoever holds it stops using dev
+--      mode (mods AND app authors hold them — the cookie dev-tunnel branches in
+--      `block-tokens/index.ts` mint them too) — before AND after this runs. That
+--      is not a window this script opens, and waiting 4h would not close it.
+--      Do not "fix" this number upward.
 --
 --      🔴 BUT THERE **IS** A REVOCATION PRIMITIVE, AND AN EARLIER DRAFT OF THIS
 --      HEADER SAID THERE WAS NOT. `BlockRevocation` (`block-revocation.service.ts`)
@@ -72,7 +120,7 @@
 --        - NO ENDPOINT EXISTS WHOSE PURPOSE IS REVOCATION. `revokeInstance` has
 --          exactly two production call sites, both in
 --          `block-registry.service.ts`, and in both the marker is a SIDE EFFECT:
---          `uninstallFromModel` (:2358) and `toggleEnabled(false)` (:2393);
+--          `uninstallFromModel` and `toggleEnabled(false)`;
 --        - both ARE reachable over tRPC (`blocks.router.ts:1848` and `:1810`,
 --          both `protectedProcedure`), and `assertCanManageBlocks` early-returns
 --          for moderators (`:1521`) — so a mod CAN set a marker deliberately,
@@ -99,34 +147,53 @@
 --      (`BLOCK_BUZZ_CAP_PER_DAY`) alone. A user who had set, say, 500 Buzz/day
 --      on an app has that lifted for the remainder of their token's life.
 --
--- Concretely: user U holds a live token and a 500/day budget on app A. You run
--- this at T. Between T and T+15min, A can spend U's Buzz against the platform
--- allowance rather than 500, and nothing errors.
+-- Concretely: user U holds a live CONSENT-DERIVED token and a 500/day budget on
+-- app A. You run this at T. Between T and T+15min, A can spend U's Buzz against
+-- the platform allowance rather than 500, and nothing errors. (Dev tokens are
+-- outside this entirely — see the bound in item 1.)
 --
 -- This is bounded and small — but run it when spend is quiet rather than at
 -- peak, and do not describe the window as closed the moment the UPDATE commits.
 --
 -- ============================================================================
--- 🔴 DECIDE THIS BEFORE YOU RUN ANYTHING — IT IS NOT A CODE QUESTION
+-- ✅ THE COPY IS GENERIC — THE VIDEO QUESTION IS WHAT MADE IT SO
 -- ============================================================================
--- The consent sentence users are about to re-agree to names IMAGES and LANGUAGE
--- MODELS. It does not name video or audio, because no enum-bounded arm produces
--- them. **One arm is not enum-bounded:** `customComfy` with `mode:'inline'`
--- forwards an arbitrary ComfyUI graph to the worker, and the read path does NOT
--- filter by media type — `workflow.service.ts` pushes every `available`
--- `output.blobs[].url` into `imageUrls` with no check.
+-- This block used to ask whether a stock-node inline `customComfy` graph could
+-- emit video, and told you to settle it before running anything. Operator,
+-- 2026-09-16: **YES, it can.**
 --
--- So: CAN a stock-node inline graph emit video or audio on the current comfy
--- worker image? That cannot be answered from this repo.
+-- That made the then-current sentence ("…generating images and running language
+-- models") UNDER-name a reachable capability — the worse direction for consent,
+-- because the user agrees to "images" while the app spends their Buzz on video.
 --
---   - If NO  → the sentence is correct; proceed.
---   - If YES → the sentence UNDER-names a reachable capability, which is the
---              worse direction for consent: the user agrees to "images" and the
---              app spends their Buzz on video. Fix the copy FIRST and ship it,
---              then come back here.
+-- 🔴 SO THE SENTENCE NAMES NOTHING, AND THIS FILE DEPENDS ON THAT. The copy is
 --
--- Answer it now rather than after. Re-taking the grants is the expensive half,
--- and getting this wrong means doing it a third time.
+--     Run AI work that spends the viewer's Buzz, with a per-call cap
+--
+-- Enumerating modalities was tried three times and was wrong three times —
+-- twice over-promising (training, then video-as-unreachable), once
+-- under-naming. A generic term cannot be falsified by a MODALITY arriving,
+-- which is what removes the re-consent treadmill this arc kept walking.
+--
+-- ⚠️ It does NOT make re-consent a one-time cost forever, and the block above
+-- says so: a change of KIND still requires a new sentence and fresh grants.
+-- Training is the live example — denylist-allowed, not reachable, deliberately
+-- unnamed, and it will cost another round when #599 lands.
+--
+-- 🔴 AND IT MUST NOT REUSE THE WORD "GENERATION". A draft of this very change
+-- read "Run AI generation services…" and was caught in audit: `generations` is
+-- the word the head of this file says does NOT cover `chatCompletion`, which is
+-- the whole justification for re-taking the grants. A replacement built on that
+-- root re-commits the defect while looking like the fix.
+--
+-- 🔴 PRECONDITION, AND IT IS NOT SATISFIED BY A MERGE TO `main`: the generic
+-- sentence must be LIVE IN PRODUCTION before this runs. civitai deploys from
+-- `release`, not `main`, so confirm the new text renders in the consent modal
+-- on civitai.com — not that a PR merged. Use the character-for-character check
+-- in the ORDERING block above; a keyword test has already passed falsely once.
+-- Running this against the old sentence re-prompts every affected user with
+-- wording we have already retracted, and burns the one re-consent this whole
+-- exercise exists to spend well.
 --
 -- It does NOT build a user-facing withdraw affordance. That is a separate,
 -- still-open piece of work with its own design questions (JWT invalidation,

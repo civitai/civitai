@@ -21,51 +21,43 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   'user:read:self': "Read the viewer's username and account status",
   'models:read:self': 'Read the model on the page where the block is mounted',
   'buzz:read:self': "Read the viewer's Buzz balance",
-  // 🔴 THIS SENTENCE IS A CONSENT PROMISE, NOT A LABEL — and it was rewritten
-  // because the scope's MEANING widened underneath it, not because the old
-  // wording was unclear.
+  // 🔴 THIS SENTENCE IS A CONSENT PROMISE, NOT A LABEL. Three rules govern it.
+  // The arc that produced them (four successive sentences, each retracted) is
+  // recorded once, in `SUPERSEDED` in
+  // `src/server/services/blocks/__tests__/scope-descriptions.consent-copy.test.ts`
+  // — machine-readable, and next to the test that goes red. Do not restate it
+  // here.
   //
-  // It previously read "Submit generations with a per-call Buzz cap". Under the
-  // no-allowlist direction the per-call cap half is still exactly true, but
-  // "generations" stopped being: the scope now reaches hosted LLM inference
-  // (`chatCompletion`, registered and live), which is not a generation in any
-  // sense a reader of the old sentence would have understood. A user who agreed
-  // to the old sentence did not agree to this one.
+  // 🔴 1. DO NOT ENUMERATE CAPABILITIES. Every enumerating draft was wrong
+  // within one audit round — twice over-promising something unreachable, once
+  // under-naming `video`, which an inline `customComfy` graph can in fact
+  // produce (operator-confirmed 2026-09-16; that arm is bounded by no enum and
+  // its read path applies no media-type check). A generic head noun asserts no
+  // inventory, so a capability arriving cannot falsify it. Each failure costs a
+  // re-consent of every live grant; the benefit of a list is specificity nobody
+  // asked for.
   //
-  // 🔴 THIS SENTENCE NAMES ONLY WHAT IS REACHABLE TODAY, AND THAT IS LOAD-BEARING.
-  // Promising a capability that has not shipped and re-consenting NOW would BANK
-  // the permission — and when it does ship, nothing re-prompts, because consent
-  // is stored per (user, app) and no lookup reads a version. That is precisely
-  // the "silent scope escalation" this table was created to prevent (see its
-  // migration header).
+  // 🔴 2. "AI work", NOT "generation". The word this scope outgrew is
+  // `generation` — the scope reaches hosted LLM inference (`chatCompletion`,
+  // registered and live), which is not a generation in the sense a reader would
+  // apply, and on Civitai "Generate" and "Train a LoRA" are two distinct
+  // top-level actions. That is the entire justification for re-taking the live
+  // grants, so the replacement must not reuse the root. A draft of this change
+  // read "AI generation services" and was caught in audit for exactly this.
   //
-  // 🔴 TWO CAPABILITIES HAVE ALREADY BEEN CUT FROM THIS SENTENCE FOR THAT
-  // REASON, IN SUCCESSIVE AUDIT ROUNDS — which is why the rule is written out
-  // rather than left as a judgement:
-  //
-  //   - "training models". ALLOWED by the denylist, NOT reachable:
-  //     `isBillingModeImplemented` accepts `'prepaidFixed'` ONLY, so a
-  //     variable-cost training step cannot even be registered.
-  //   - "and video". Also not reachable: `blockWorkflowBodySchema` has three
-  //     members, `textToImage` is bounded to `BLOCK_IMAGE_WORKFLOW_TYPES`
-  //     (txt2img / img2img / img2img:edit), both registered recipes are image,
-  //     and both registered steps are `convertImage` / `chatCompletion`.
-  //     `workflow.schema.ts` says a non-image media class is "a later phase".
-  //
-  // 🔴 THE RULE, because "name only what is reachable" was applied TWICE and a
-  // second unreachable capability still shipped in the same sentence: reach for
-  // the WIRE, not for the denylist. A `$type` being allowed says nothing about
-  // whether any arm accepts it. Enumerate `blockWorkflowBodySchema`'s members,
-  // then what each one actually admits, and write down only that.
-  //
-  // When a capability named here becomes reachable, that is fine. When a
-  // capability NOT named here becomes reachable, this sentence must change AND
-  // the grants must be re-taken again. Do not pre-load it.
-  //
-  // ⚠️ An inline `customComfy` graph is the one arm whose reach is not bounded
-  // by an enum in this repo. If it turns out a stock-node graph can produce
-  // video or audio, that is a capability this sentence does not name — decide
-  // and write it down rather than discovering it after the grants are re-taken.
+  // 🔴 3. TRAINING IS NOT NAMED, AND THAT SUPERSEDES DECISION 6.
+  // §5a decision 6 of the no-allowlist decision doc — which is NOT in this repo:
+  // `claudedocs/appblocks-no-allowlist-decision-2026-09-15.md` in the private
+  // `civitai/talos-infra` repo — required
+  // this sentence to say "an app may train a model on the viewer's Buzz" in
+  // words. Operator, 2026-09-16: superseded, because training is NOT REACHABLE
+  // — `isBillingModeImplemented` accepts `'prepaidFixed'` only, so a
+  // variable-cost training step cannot be registered at all. Naming it would
+  // BANK permission for a widening that has not shipped, and nothing re-prompts
+  // when it does; that is the silent scope escalation this table exists to
+  // prevent. When #599 lands and training becomes reachable, this sentence
+  // changes and the grants are re-taken again — the intended cost, not an
+  // oversight. The same applies to any change of KIND rather than of modality.
   //
   // 🔴 CHANGING THIS STRING DOES NOT RE-ASK ANYBODY. Consent is stored per
   // (user, app) in `app_user_scope_grants` and the lookup does NOT read the
@@ -75,8 +67,7 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   // applied BY HAND, AFTER this copy is confirmed live. Applied before, users
   // re-consent to the OLD sentence and the exercise is void while both halves
   // individually look done.
-  'ai:write:budgeted':
-    "Run AI work that spends the viewer's Buzz, with a per-call cap — including generating images and running language models",
+  'ai:write:budgeted': "Run AI work that spends the viewer's Buzz, with a per-call cap",
   'social:tip:self': 'Post tips on behalf of the viewer',
   'apps:storage:read': "Read this app's private per-install data store",
   'apps:storage:write': "Write to this app's private per-install data store",
