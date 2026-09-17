@@ -19,10 +19,12 @@ export const applicationErrorSchema = z.object({
    * Opt OUT of server-side sourcemap resolution for this report.
    *
    * `applySourceMaps` is `await`ed on this request path. For each distinct frame file that names a
-   * build chunk it reads the chunk and its map and builds a `SourceMapConsumer`, which is real
-   * work: single maps here exceed 4 MB. That work is bounded in `applySourceMaps` itself — a fixed
-   * cap on how many distinct frame files one call resolves, and a process-wide cache of parsed
-   * maps so repeat reports naming the same chunk do not re-parse it.
+   * build chunk it reads the chunk, reads its map and builds a `SourceMapConsumer` — synchronous
+   * file reads and a parse, on the pool that serves pages, sized by build output rather than by
+   * anything this request carries. That work is bounded in `applySourceMaps` itself — a fixed cap
+   * on how many distinct frame files one call resolves, spent only on frames that name a build
+   * chunk, and a process-wide cache of parsed maps so repeat reports naming the same chunk do not
+   * re-parse it.
    *
    * A caller sets this when it already knows resolution will not pay for itself, so the server can
    * skip work it would otherwise do. The two cases: a stack that carries no build-chunk frames at

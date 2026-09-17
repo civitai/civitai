@@ -65,8 +65,12 @@ export function reportBoundaryError(
     // future caller that sends no componentStack is protected without anyone remembering to add it.
     // With one, that IS the stack we send: no file frames, so the server resolver is a no-op.
     // Without one, `reportApplicationError` falls back to the error's own REAL minified stack, and
-    // resolving that server-side is an uncached multi-megabyte read+parse on the request path — so
-    // this path, which can fire once per failed render, explicitly declines it.
+    // resolving that server-side reads and parses build artifacts on the request path. The server
+    // bounds that work — a cap on distinct frame files per call, and a process-wide cache of
+    // parsed maps — so this is no longer the only thing between a failing render and amplified
+    // load. It is still work this path does not need: it can fire once per failed render, and for
+    // a repeat of one underlying fault the message and the unresolved frames are the signal, so it
+    // declines rather than asking the server to re-resolve the same stack each time.
     report(error, {
       message: `error boundary: ${boundary}`,
       ...(componentStack ? { stack: componentStack } : { resolveStack: false }),

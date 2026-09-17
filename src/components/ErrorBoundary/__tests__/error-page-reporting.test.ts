@@ -51,8 +51,10 @@ describe('_error.tsx reporting', () => {
     expect(body.message).toContain('error boundary: root');
     expect(body.message).toContain('client boom');
     // 🔴 This page is the caller that can fire once per failed render, so it must decline
-    // server-side sourcemap resolution — that is an uncached multi-megabyte read+parse on the
-    // request path, and resolving it here would make this an amplifier of the outage it observes.
+    // server-side sourcemap resolution — that reads and parses build artifacts on the request
+    // path. The server now caps and caches that work, so this is a saving rather than the only
+    // thing keeping a failed render from amplifying into load; the report is still delivered
+    // either way, with the stack unresolved.
     expect(body.resolveStack).toBe(false);
   });
 

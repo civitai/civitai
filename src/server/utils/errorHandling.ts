@@ -581,19 +581,24 @@ export function withRetries<T>(
 /**
  * How many distinct frame files one `applySourceMaps` call may resolve.
  *
- * Sized from what a real stack needs. V8 captures at most `Error.stackTraceLimit` frames, and
- * neither this app nor Next raises it from the default of 10 (nothing in `src/` or
- * `next.config.mjs` assigns it), so an Error from either caller — `/api/application-error` and the
- * job runner — carries at most 10 frames and therefore at most 10 distinct files. At 10 the cap is
- * at that ceiling: it never truncates a stack a browser or Node actually produced.
+ * 10 is sized from the half that can be established here. On V8 — Node, and Chromium browsers —
+ * `Error.stackTraceLimit` defaults to 10, and nothing in `src/` or `next.config.mjs` assigns it,
+ * so an Error captured under this app carries at most 10 frames and therefore at most 10 distinct
+ * files. `Error.stackTraceLimit` is a V8 extension, and this endpoint takes stacks from every
+ * browser: how many frames a non-V8 engine sends is not a claim this file can make, which is why
+ * the cap is written as a bound on work rather than as a ceiling nothing reaches.
  *
- * It binds on input that is not one. `stack` arrives at the endpoint as free-form text from an
- * unauthenticated caller, and each additional distinct file costs a read of the chunk, a read of
- * its map (single maps here exceed 4 MB) and a `SourceMapConsumer` build — all `await`ed on the
- * pool that serves pages. Without a bound, the number of those one request can ask for is set by
- * the request.
+ * What it bounds is input that is not a stack at all. `stack` arrives at `/api/application-error`
+ * as free-form text from an unauthenticated caller, and each additional distinct file that names a
+ * build chunk costs a read of the chunk, a read of its map and a `SourceMapConsumer` build — all
+ * `await`ed on the pool that serves pages. Without a bound, how many of those one request asks for
+ * is set by the request.
  *
- * Frames past the cap are left exactly as they arrived: unresolved, never dropped, never an error.
+ * Frames past the cap are left exactly as they arrived: unresolved, never dropped, never an error,
+ * and the report is delivered either way. The cap is spent on frames that can actually be
+ * resolved — see the candidate loop in `applySourceMaps` — so a stack topped with foreign frames
+ * (an extension, an analytics script, a payment iframe) does not spend it on work that was never
+ * going to happen.
  */
 const MAX_RESOLVED_FRAME_FILES = 10;
 
@@ -603,70 +608,69 @@ const MAX_RESOLVED_FRAME_FILES = 10;
  * This cache used to be declared inside `applySourceMaps`, so every call paid the full read and
  * parse even for a chunk the previous call had just parsed — and reports cluster hard on a few
  * chunks (framework, main, and whichever page is broken), which is exactly the shape a cache
- * serves. Bounded because each entry is a multi-megabyte parsed map held for the life of the
- * process; 8 covers that hot set with room to spare while keeping the ceiling fixed.
- */
-const MAX_CACHED_SOURCE_MAPS = 8;
-
-/**
- * A cached consumer plus the bookkeeping that makes eviction safe.
+ * serves. Bounded because each entry is a parsed map held for the life of the process.
  *
- * `destroy()` frees the consumer's mappings out of the wasm heap, so it must not run while a call
- * still holds the consumer — `originalPositionFor` on a freed consumer reads whatever now occupies
- * that memory, which would answer with a wrong source location rather than an error. `refs` counts
- * the in-flight calls holding it and `evicted` records that it has left the cache, so the free
- * happens at whichever of the two comes last.
+ * DERIVED from the cap, not chosen, because the two interact and a cache below the cap is worse
+ * than no cache: one call may resolve `MAX_RESOLVED_FRAME_FILES` distinct chunks, so a smaller
+ * cache cannot hold even a single call's own working set — the tail of that call evicts its own
+ * head, and the next report naming the same chunks re-reads and re-parses every one of them at a
+ * 0% hit rate while still paying the memory. Deriving it is what stops a later edit to either
+ * number silently re-creating that; `does not re-read any chunk of a repeated full-width stack` in
+ * `errorHandling.applySourceMaps.test.ts` is the behavioural half of the same guard.
  */
-type CachedSourceMap = { consumer: SourceMapConsumer; refs: number; evicted: boolean };
+const MAX_CACHED_SOURCE_MAPS = MAX_RESOLVED_FRAME_FILES;
 
 /** Keyed by resolved absolute chunk path, so two frame spellings of one chunk share an entry. */
-const sourceMapCache = new Map<string, CachedSourceMap>();
+const sourceMapCache = new Map<string, SourceMapConsumer>();
 
-/** Takes an entry out of service; frees it now if nothing is using it, else on the last release. */
-function retireConsumer(entry: CachedSourceMap) {
-  entry.evicted = true;
-  if (entry.refs <= 0) entry.consumer.destroy();
-}
-
-/** Borrows a cached consumer, marking it most-recently-used. */
-function retainConsumer(key: string): CachedSourceMap | undefined {
-  const entry = sourceMapCache.get(key);
-  if (!entry) return undefined;
+/**
+ * Returns a cached consumer, marking it most-recently-used.
+ *
+ * NOT named `use…`: `react-hooks/rules-of-hooks` keys off that prefix and reports any such
+ * function called in a loop as a misplaced React hook, which is an eslint error in this repo.
+ */
+function lookupCachedConsumer(key: string): SourceMapConsumer | undefined {
+  const consumer = sourceMapCache.get(key);
+  if (!consumer) return undefined;
   // A Map iterates in insertion order, so re-inserting moves this entry to the young end and the
-  // eviction below always takes the least recently used.
+  // eviction in `storeConsumer` always takes the least recently used.
   sourceMapCache.delete(key);
-  sourceMapCache.set(key, entry);
-  entry.refs += 1;
-  return entry;
+  sourceMapCache.set(key, consumer);
+  return consumer;
 }
 
-/** Caches a freshly built consumer, already borrowed by the caller, and evicts down to the bound. */
-function storeConsumer(key: string, consumer: SourceMapConsumer): CachedSourceMap {
-  // Two calls can miss on the same key concurrently and both build one. Retire the loser rather
+/**
+ * Caches a freshly built consumer and evicts down to the bound.
+ *
+ * Eviction calls `destroy()`, which frees the consumer's mappings out of the wasm heap. That is
+ * safe even while another in-flight call still holds the same consumer: in the pinned
+ * `source-map@0.7.6`, `destroy()` frees the mappings and zeroes the pointer, and
+ * `originalPositionFor` goes through `_getMappingsPtr()`, which re-parses when the pointer is
+ * zero. So a call holding a destroyed consumer gets the CORRECT location, just more slowly, and a
+ * second `destroy()` is a no-op. That is a claim about the DEPENDENCY rather than about this file,
+ * so `errorHandling.applySourceMaps.test.ts` pins it twice: `source-map: a destroyed consumer
+ * still resolves, and a second destroy is a no-op` asserts it against the library directly, and
+ * `resolves a call still holding a consumer that a concurrent call evicted` exercises it through
+ * this function. If an upgrade makes a destroyed consumer unrecoverable, both go red — and that is
+ * the signal this eviction needs rethinking, not that the tests need updating.
+ */
+function storeConsumer(key: string, consumer: SourceMapConsumer) {
+  // Two calls can miss on the same key concurrently and both build one. Free the loser here rather
   // than dropping the reference, or its wasm mappings are never freed.
   const existing = sourceMapCache.get(key);
-  if (existing) {
+  if (existing && existing !== consumer) {
     sourceMapCache.delete(key);
-    retireConsumer(existing);
+    existing.destroy();
   }
 
-  const entry: CachedSourceMap = { consumer, refs: 1, evicted: false };
-  sourceMapCache.set(key, entry);
+  sourceMapCache.set(key, consumer);
 
   while (sourceMapCache.size > MAX_CACHED_SOURCE_MAPS) {
     const oldestKey = sourceMapCache.keys().next().value as string;
     const oldest = sourceMapCache.get(oldestKey);
     sourceMapCache.delete(oldestKey);
-    if (oldest) retireConsumer(oldest);
+    oldest?.destroy();
   }
-
-  return entry;
-}
-
-/** Returns a borrowed consumer; frees it if it was evicted while this call held it. */
-function releaseConsumer(entry: CachedSourceMap) {
-  entry.refs -= 1;
-  if (entry.refs <= 0 && entry.evicted) entry.consumer.destroy();
 }
 
 /** The build directory, and the only directory this resolver may read from. */
@@ -674,7 +678,7 @@ function nextBuildDir(): string {
   return path.resolve(process.cwd(), '.next');
 }
 
-/** True when `target` is a path strictly underneath `dir`. */
+/** True when `target` is a path strictly underneath `dir`. Compares text, resolves nothing. */
 function isInsideDir(dir: string, target: string): boolean {
   const relative = path.relative(dir, target);
   return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
@@ -686,8 +690,13 @@ function isInsideDir(dir: string, target: string): boolean {
  *
  * The relative part comes out of the frame's file, which on `/api/application-error` is a string
  * the caller supplies, so it is not trusted to stay inside `.next`. Resolving it first and then
- * requiring the result to be under the build directory is what keeps this reading build artifacts:
+ * requiring the result to be under the build directory is what keeps this naming build artifacts:
  * resolution collapses the path to the file it actually names, and the check is made against that.
+ *
+ * LEXICAL ONLY — it has to be, because it runs over every distinct frame file to pick which ones
+ * the cap is spent on, and that count is set by the caller. It is a filter, not the guard: nothing
+ * may be READ on the strength of this result alone. `containedRealPath` below is what the reads
+ * are gated on.
  *
  * `null` means the caller skips the frame — an unresolvable frame is normal here (a chunk from an
  * older build, a map that was not emitted), so it is not a reason to fail the report.
@@ -696,6 +705,30 @@ function resolveBuildArtifact(relativePath: string): string | null {
   const buildDir = nextBuildDir();
   const resolved = path.resolve(buildDir, relativePath);
   return isInsideDir(buildDir, resolved) ? resolved : null;
+}
+
+/**
+ * Containment as the filesystem will apply it: on the file that gets opened, not on its spelling.
+ *
+ * `path.relative` compares strings and `fs.readFileSync` follows symlinks, so a lexically
+ * contained path can still name a file anywhere on disk — a symlink under `.next` is enough.
+ * Resolving with `realpathSync` before the check is what makes "the only directory this resolver
+ * may read from" true of the read rather than of the text. BOTH sides are resolved: the build
+ * directory itself can sit behind a symlink, and comparing a resolved target against an unresolved
+ * root would then reject every legitimate chunk.
+ *
+ * Returns the real path, or `null` when the file does not exist or resolves outside the build
+ * directory. Both mean the caller skips that frame — a missing chunk is the ordinary case (an
+ * older build, a map that was not emitted), so this never throws.
+ */
+function containedRealPath(target: string): string | null {
+  try {
+    const realRoot = fs.realpathSync(nextBuildDir());
+    const realTarget = fs.realpathSync(target);
+    return isInsideDir(realRoot, realTarget) ? realTarget : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -716,7 +749,7 @@ function extractNextPath(filePath: string): string | null {
 
 /**
  * Loads the source-map content for a built chunk, given its absolute path — which the caller must
- * already have put through `resolveBuildArtifact`.
+ * already have put through `containedRealPath`.
  *
  * Webpack names a chunk's map after the chunk itself (`abc.js` -> `abc.js.map`),
  * but Turbopack (the default bundler in Next 16) gives the map a *different* hash
@@ -737,20 +770,21 @@ function loadSourceMapContent(chunkPath: string): string | null {
         if (base64) return Buffer.from(base64[1], 'base64').toString('utf-8');
       } else {
         // The URL is read out of a file that a frame selected, so it gets the same containment
-        // rule the frame did — it is no more trusted than the path that led here.
-        const mapPath = path.resolve(path.dirname(chunkPath), url);
-        if (isInsideDir(nextBuildDir(), mapPath) && fs.existsSync(mapPath))
-          return fs.readFileSync(mapPath, 'utf-8');
+        // rule the frame did — it is no more trusted than the path that led here. `null` covers
+        // both "escapes the build directory" and "does not exist", so no `existsSync` is needed.
+        const mapPath = containedRealPath(path.resolve(path.dirname(chunkPath), url));
+        if (mapPath) return fs.readFileSync(mapPath, 'utf-8');
       }
     }
   } catch {
     // Chunk not readable; fall through to the convention-based lookup.
   }
 
-  // Fallback: webpack convention `<chunk>.map` next to the chunk.
+  // Fallback: webpack convention `<chunk>.map` next to the chunk. Contained-checked too: the
+  // sibling of a legitimate chunk is still a path, and a path can still be a symlink.
   try {
-    const fallbackPath = `${chunkPath}.map`;
-    if (fs.existsSync(fallbackPath)) return fs.readFileSync(fallbackPath, 'utf-8');
+    const fallbackPath = containedRealPath(`${chunkPath}.map`);
+    if (fallbackPath) return fs.readFileSync(fallbackPath, 'utf-8');
   } catch {
     // Ignore; no map available.
   }
@@ -779,38 +813,55 @@ function normalizeSourcePath(source: string): string {
  * @returns The stack trace with original source locations
  */
 export async function applySourceMaps(stack: string): Promise<string> {
-  // Every consumer this call borrowed, released in `finally` so an early return or a throw cannot
-  // leave an entry pinned in the cache forever.
-  const borrowed: CachedSourceMap[] = [];
   try {
     const parsedStack = parseStackTrace(stack);
     const lines = stack.split('\n');
 
-    // Build a map of relative paths to their source map consumers
-    const sourceMapConsumers = new Map<string, SourceMapConsumer>();
-    const filesToProcess = (
-      [...new Set(parsedStack.map((x) => x.file).filter(Boolean))] as string[]
-    ).slice(0, MAX_RESOLVED_FRAME_FILES);
-
-    for (const file of filesToProcess) {
+    // 🔴 SPEND THE CAP ON FRAMES THAT CAN ACTUALLY BE RESOLVED. Slicing the raw distinct-file list
+    // would let a frame the resolver is always going to reject — a browser extension, an analytics
+    // or payment script, anything not under the build directory — take a cap slot from a real app
+    // chunk further down, which then comes back minified. That is not a corner case: the stacks
+    // that reach this function are the ones a browser caller of `reportApplicationError` sent as
+    // the error's OWN stack, and a browser stack whose top frames belong to injected third-party
+    // code is ordinary. (The error-boundary path is not one of those callers — it sends either a
+    // React componentStack or `resolveStack: false` — so this is about the ones that are.)
+    //
+    // Both filters below are pure path work — a regex and `path.resolve`/`path.relative`, no IO —
+    // so running them over the distinct files costs nothing worth bounding, and the loop stops as
+    // soon as the cap is full. Containment is re-checked against the real path at read time; see
+    // `containedRealPath`.
+    const resolvableFrames: { file: string; chunkPath: string }[] = [];
+    for (const file of [...new Set(parsedStack.map((x) => x.file).filter(Boolean))] as string[]) {
       const relativePath = extractNextPath(file);
       if (!relativePath) continue;
 
       const chunkPath = resolveBuildArtifact(relativePath);
       if (!chunkPath) continue;
 
+      resolvableFrames.push({ file, chunkPath });
+      if (resolvableFrames.length >= MAX_RESOLVED_FRAME_FILES) break;
+    }
+
+    // Build a map of relative paths to their source map consumers
+    const sourceMapConsumers = new Map<string, SourceMapConsumer>();
+
+    for (const { file, chunkPath: candidatePath } of resolvableFrames) {
       try {
-        const cached = retainConsumer(chunkPath);
+        // The guard the reads are gated on. `resolveBuildArtifact` compared text; this compares
+        // the paths the filesystem will actually open.
+        const chunkPath = containedRealPath(candidatePath);
+        if (!chunkPath) continue;
+
+        const cached = lookupCachedConsumer(chunkPath);
         if (cached) {
-          borrowed.push(cached);
-          sourceMapConsumers.set(file, cached.consumer);
+          sourceMapConsumers.set(file, cached);
           continue;
         }
 
         const sourceMapContent = loadSourceMapContent(chunkPath);
         if (sourceMapContent) {
           const smc = await new SourceMapConsumer(sourceMapContent);
-          borrowed.push(storeConsumer(chunkPath, smc));
+          storeConsumer(chunkPath, smc);
           sourceMapConsumers.set(file, smc);
         }
       } catch {
@@ -839,13 +890,11 @@ export async function applySourceMaps(stack: string): Promise<string> {
     }
 
     // Consumers are NOT destroyed here any more — they belong to the cache now, which frees them
-    // on eviction. Destroying one that is still cached would hand the next call a freed consumer.
+    // on eviction, so the next call naming the same chunk does not re-read and re-parse it.
 
     return lines.join('\n');
   } catch {
     // If source map parsing fails, return the original stack
     return stack;
-  } finally {
-    for (const entry of borrowed) releaseConsumer(entry);
   }
 }
