@@ -2519,6 +2519,11 @@ export type ImageFlag = {
   promptNsfw: Generated<boolean>;
   resourcesNsfw: Generated<boolean>;
 };
+export type ImageMetaFlags = {
+  imageId: number;
+  hasMeta: boolean;
+  onSite: boolean;
+};
 export type ImageModHelper = {
   imageId: number;
   assessedNSFW: Generated<boolean | null>;
@@ -4564,6 +4569,7 @@ export type DB = {
   ImageConnection: ImageConnection;
   ImageEngagement: ImageEngagement;
   ImageFlag: ImageFlag;
+  ImageMetaFlags: ImageMetaFlags;
   ImageModHelper: ImageModHelper;
   ImageRatingRequest: ImageRatingRequest;
   ImageReaction: ImageReaction;
