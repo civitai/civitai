@@ -200,7 +200,11 @@ describe('userCapCache peak-earning query', () => {
   it('still counts generation compensation and early-access purchases', async () => {
     const { sql } = await runLookup([userId]);
 
-    expect(sql).toMatch(/type IN \('compensation'\)/);
+    // License fees are minted as their own transaction type by deliver-creator-compensation; a
+    // creator who shifts to license-fee income would otherwise have that surge invisible to the Peak
+    // Earning Month, freezing the cap on an older pre-license-fee month. Asserting the full list
+    // (not just that `'licenseFee'` appears somewhere) also pins that it sits in this clause.
+    expect(sql).toMatch(/type IN \('compensation', 'licenseFee'\)/);
     expect(sql).toMatch(/type = 'purchase' AND fromAccountId != 0/);
   });
 
