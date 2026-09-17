@@ -24,7 +24,7 @@ import {
   IconWallet,
   IconWifiOff,
 } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import useIsClient from '~/hooks/useIsClient';
 import { BonusBuzzContent } from '~/components/Buzz/CryptoDeposit/BonusBuzzContent';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
@@ -79,6 +79,20 @@ export function DepositHistory() {
   );
   const total = data?.total ?? 0;
   const totalPages = Math.ceil(total / perPage);
+
+  // The mutation now outlives the branch that produced its result, so a terminal
+  // state can sit over a list that has moved on: 'No missing deposits found' above a
+  // deposit that arrived from the signal a minute later. Drop it when the list
+  // changes under it. A found-result is exempt because it stays true, and because
+  // clearing it would undo the invalidation it just triggered.
+  const found = foundDeposits(reconcile);
+  const { isSuccess, isError, reset } = reconcile;
+  const lastTotal = useRef(total);
+  useEffect(() => {
+    if (lastTotal.current === total) return;
+    lastTotal.current = total;
+    if (!found && (isSuccess || isError)) reset();
+  }, [total, found, isSuccess, isError, reset]);
 
   if (!isClient) return null;
 
@@ -437,6 +451,10 @@ function BonusBuzzPopover({
 
 type ReconcileMutation = ReturnType<typeof useReconcileDeposits>;
 
+function foundDeposits(reconcile: ReconcileMutation) {
+  return reconcile.isSuccess && reconcile.data.processed > 0;
+}
+
 // Owned by DepositHistory rather than by the notice: a successful reconcile
 // repopulates the list, which unmounts the empty-state branch. A mutation living
 // in the notice would take its own success state down with it, so the user never
@@ -451,7 +469,7 @@ function useReconcileDeposits() {
 }
 
 function CheckDepositsNotice({ reconcile: reconcileMutation }: { reconcile: ReconcileMutation }) {
-  const found = reconcileMutation.isSuccess && reconcileMutation.data.processed > 0;
+  const found = foundDeposits(reconcileMutation);
   const showPrompt = !reconcileMutation.isSuccess && !reconcileMutation.isError;
   const buttonLabel = reconcileMutation.isPending
     ? 'Checking...'
