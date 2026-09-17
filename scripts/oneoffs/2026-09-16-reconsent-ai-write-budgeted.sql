@@ -85,12 +85,18 @@
 --          revoking a consent row cannot narrow a dev token;
 --        - their SPEND never consults consent. `blocks.router.ts`'s
 --          `if (claims.dev === true) return { ...platform, consent: null }`
---          returns before `getConsentBuzzBudget` is called, and a dev token
---          carries its own `DEV_BUZZ_BUDGET_CAP`, so item 2's cap-lift does not
---          compound onto it either.
---      So a dev token keeps the scope until the mod stops using dev mode —
---      before AND after this runs. That is not a window this script opens, and
---      waiting 4h would not close it. Do not "fix" this number upward.
+--          returns before `getConsentBuzzBudget` is called. THAT short-circuit
+--          is the whole reason item 2's cap-lift cannot compound onto a dev
+--          token — there is no per-user consent cap in play to lift.
+--          ⚠️ NOT because of `DEV_BUZZ_BUDGET_CAP`: that is 250 PER CALL, not a
+--          daily bound, and a dev token still reserves against the full
+--          platform per-day ceiling `BLOCK_BUZZ_CAP_PER_DAY`. Do not read it as
+--          "dev tokens are capped at 250/day".
+--      So a dev token keeps the scope until whoever holds it stops using dev
+--      mode (mods AND app authors hold them — the cookie dev-tunnel branches in
+--      `block-tokens/index.ts` mint them too) — before AND after this runs. That
+--      is not a window this script opens, and waiting 4h would not close it.
+--      Do not "fix" this number upward.
 --
 --      🔴 BUT THERE **IS** A REVOCATION PRIMITIVE, AND AN EARLIER DRAFT OF THIS
 --      HEADER SAID THERE WAS NOT. `BlockRevocation` (`block-revocation.service.ts`)

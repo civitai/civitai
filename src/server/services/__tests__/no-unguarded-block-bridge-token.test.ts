@@ -937,9 +937,13 @@ describe('no unguarded block-bridge token verification', () => {
       'These procedures accept a blockToken and never reach authorizeBlockBridgeToken — ' +
         'not directly and not through a router-local helper. Whatever they do with the ' +
         'token instead (decode it, trust it, verify it by some other name), the install ' +
-        'is not being checked: a revoked install, a suspended app and a banned publisher ' +
-        'all still drive them until the token expires on its own. Resolve claims through ' +
-        'authorizeBlockBridgeToken. If the verification genuinely lives in an imported ' +
+        'is not being checked: a revoked install and a suspended app both still drive ' +
+        'them until the token expires on its own. Resolve claims through ' +
+        'authorizeBlockBridgeToken. (A banned PUBLISHER was listed here until 2026-09-16 ' +
+        'and does not belong: the guard checks token validity, the revocation marker and ' +
+        'app_blocks.status, and toggleBan writes none of those — so routing through the ' +
+        'guard does NOT contain a ban, and listing it here implies it does.) ' +
+        'If the verification genuinely lives in an imported ' +
         'module, this scan cannot see it — say so here and widen the scan, do not exempt ' +
         'the procedure.'
     ).toEqual([]);

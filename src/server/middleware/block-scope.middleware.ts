@@ -901,10 +901,22 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     res.on('finish', recordBlockMetric);
     res.on('close', recordBlockMetric);
 
-    // H-2: per-instance revocation check. Uninstall, toggleEnabled(false),
-    // and (Phase 2) publisher-ban all write a marker that lives for one
-    // full token lifetime. Tokens for revoked instances are rejected here
-    // before the wrapped handler runs. Fail-open on Redis incidents.
+    // H-2: per-instance revocation check. Uninstall and toggleEnabled(false)
+    // write a marker that lives for one full token lifetime. Tokens for revoked
+    // instances are rejected here before the wrapped handler runs. Fail-open on
+    // Redis incidents.
+    //
+    // 🔴 THIS LINE USED TO READ "and (Phase 2) publisher-ban all write a marker",
+    // and other files cite THIS comment as the authority that a ban does not.
+    // The "(Phase 2)" was carrying that whole meaning, and it could not: the main
+    // verb said all three DO write one, and "(Phase 2)" labels shipped things
+    // elsewhere in this tree. The fact, by enumeration: `revokeInstance` has
+    // exactly two production call sites, `uninstallFromModel` and
+    // `toggleEnabled(false)` (both `block-registry.service.ts`). `toggleBan`
+    // (`user.service.ts`) calls only `invalidateSession`, and
+    // `block-approval.service.ts` never consults owner ban state. So banning a
+    // publisher does NOT revoke that publisher's live block tokens; they run to
+    // natural `exp`. Do not re-add a ban to this list without adding the writer.
     if (await BlockRevocation.isRevoked(claims.blockInstanceId)) {
       res.status(403).json({ error: 'block instance revoked' });
       return;
