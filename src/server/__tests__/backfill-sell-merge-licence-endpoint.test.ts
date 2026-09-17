@@ -75,9 +75,10 @@ const { contractAcceptsSellMerge, WRITE_PATH_PROBE } = endpoint;
 const { modelUpsertSchema } = await import('~/server/schema/model.schema');
 
 const CUTOFF = '2026-09-16 21:49:42';
-const PREDICATE_BLOCK = `m."allowCommercialUse" @> ARRAY['Sell']::"CommercialUse"[]
-  AND NOT (m."allowCommercialUse" @> ARRAY['SellMerge']::"CommercialUse"[])
-  AND m."updatedAt" <`;
+const PREDICATE_BLOCK =
+  `m."allowCommercialUse" @> ARRAY['Sell']::"CommercialUse"[] ` +
+  `AND NOT (m."allowCommercialUse" @> ARRAY['SellMerge']::"CommercialUse"[]) ` +
+  `AND m."updatedAt" <`;
 
 function call(
   query: Record<string, string>,
@@ -111,13 +112,17 @@ const sqlTextOf = (calls: unknown[][], index = 0) =>
 const sqlValuesOf = (calls: unknown[][], index = 0) => calls[index].slice(1);
 const rows = (ids: number[]) => ids.map((id) => ({ id }));
 
+// Collapsed whitespace, so an assertion about SQL STRUCTURE — which clause joins to which, and by
+// what connective — survives a re-indent of the statement instead of failing on it.
+const flat = (calls: unknown[][], index = 0) => sqlTextOf(calls, index).replace(/\s+/g, ' ').trim();
+
 // The shared predicate reaches `$queryRaw` as an interpolated `Prisma.Sql` VALUE, not as text in the
 // template, so the mock sees the object itself — which is what makes the identity assertion possible.
-const predicateOf = (calls: unknown[][], index = 0) =>
-  sqlValuesOf(calls, index).find(
-    (v): v is { strings: string[]; values: unknown[] } =>
-      !!v && typeof v === 'object' && Array.isArray((v as { strings?: unknown }).strings)
-  )!;
+// Returned as a LIST: `.find()` would silently pick the first of several fragments, so the identity
+// assertion could end up comparing the wrong object, or `undefined` to `undefined`, and pass.
+const isSql = (v: unknown): v is { strings: string[]; values: unknown[] } =>
+  !!v && typeof v === 'object' && Array.isArray((v as { strings?: unknown }).strings);
+const predicatesOf = (calls: unknown[][], index = 0) => sqlValuesOf(calls, index).filter(isSql);
 
 describe('backfill-sell-merge-licence', () => {
   beforeEach(() => {
@@ -197,26 +202,45 @@ describe('backfill-sell-merge-licence', () => {
   it('bounds the write to the ids the batch selected', async () => {
     await call({ dryRun: 'false' });
 
-    const sql = sqlTextOf(dbMock.dbWrite.$queryRaw.mock.calls);
-    expect(sql).toContain('m.id = ANY(');
-    // The ids, not just the operator: without this the statement can lose its batch bound and rewrite
-    // the whole population while the response still names three rows.
+    // The whole WHERE shape, not the operator's presence: the id bound is only a bound while it is
+    // ANDed to the predicate. Turn that AND into an OR and every fragment-level assertion still
+    // passes while the statement rewrites the entire population in one go.
+    expect(flat(dbMock.dbWrite.$queryRaw.mock.calls)).toContain(
+      'WHERE m.id = ANY( $ ::int[]) AND $ RETURNING m.id'
+    );
+    // The ids themselves, so the bound cannot be present but empty or wrong.
     expect(sqlValuesOf(dbMock.dbWrite.$queryRaw.mock.calls)).toContainEqual([5, 6, 7]);
+
+    // ONE statement. Every other write assertion reads call 0, so a second UPDATE appended after this
+    // one — or the sibling's `updatedAt` bump issued separately, or through `$executeRaw` — would be
+    // invisible to all of them.
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRawUnsafe).not.toHaveBeenCalled();
   });
 
   it('re-checks one identical predicate in the UPDATE and the SELECT, cast in the column terms', async () => {
     await call({ dryRun: 'false' });
 
-    const readPredicate = predicateOf(dbMock.dbRead.$queryRaw.mock.calls);
-    const writePredicate = predicateOf(dbMock.dbWrite.$queryRaw.mock.calls);
+    const readPredicates = predicatesOf(dbMock.dbRead.$queryRaw.mock.calls);
+    const writePredicates = predicatesOf(dbMock.dbWrite.$queryRaw.mock.calls);
+
+    // Exactly one fragment each, asserted before the identity comparison: two `undefined`s are `toBe`
+    // each other, so a lookup that found nothing would otherwise read as agreement.
+    expect(readPredicates).toHaveLength(1);
+    expect(writePredicates).toHaveLength(1);
+    const [readPredicate] = readPredicates;
 
     // Identity, not two matching texts: the safety argument is that the write's WHERE IS the read's,
-    // and this is the assertion that a second hand-written copy cannot satisfy.
-    expect(writePredicate).toBe(readPredicate);
+    // and this is the assertion that a second hand-written copy cannot satisfy. It is deliberately
+    // brittle to wrapping the fragment (`Prisma.sql`(${legacySellWithoutMerge})``) — that would be a
+    // true statement and a red test. Keep the identity rather than relaxing it to two text compares.
+    expect(writePredicates[0]).toBe(readPredicate);
 
-    // The whole block, not three fragments: a fragment set cannot see an AND turned into an OR, and
-    // an OR here would grant the member to exactly the post-cutoff rows whose creator declined it.
-    const text = readPredicate.strings.join(' $ ');
+    // The whole block, not three fragments: a fragment set cannot see an AND turned into an OR inside
+    // the predicate, and an OR there would grant the member to exactly the post-cutoff rows whose
+    // creator declined it. Whitespace is collapsed so a re-indent of the const is not a false red.
+    const text = readPredicate.strings.join(' $ ').replace(/\s+/g, ' ');
     expect(text).toContain(PREDICATE_BLOCK);
     expect(text).toContain('::timestamp');
     // `toContain('::timestamp')` is satisfied by `::timestamptz` as a substring, and a timestamptz
@@ -228,14 +252,18 @@ describe('backfill-sell-merge-licence', () => {
   it('pages by keyset, bounded by the stated batchSize, never by offset', async () => {
     await call({ afterId: '4000', batchSize: '1200' }, { method: 'GET' });
 
-    const sql = sqlTextOf(dbMock.dbRead.$queryRaw.mock.calls);
-    expect(sql).toContain('m.id >');
-    expect(sql).toContain('ORDER BY m.id');
-    expect(sql).toContain('LIMIT');
-    expect(sql).not.toContain('OFFSET');
-    const values = sqlValuesOf(dbMock.dbRead.$queryRaw.mock.calls);
-    expect(values).toContain(4000);
-    expect(values).toContain(1200);
+    expect(flat(dbMock.dbRead.$queryRaw.mock.calls)).toContain(
+      'WHERE $ AND m.id > $ ORDER BY m.id LIMIT $'
+    );
+    expect(flat(dbMock.dbRead.$queryRaw.mock.calls)).not.toContain('OFFSET');
+
+    // ORDER, not membership: `toContain(4000)` and `toContain(1200)` both hold with the two
+    // interpolations swapped, which would page from `id > 1200` in batches of 4,000 — skipping rows
+    // and running at four times the pace the operator stated.
+    const numbers = sqlValuesOf(dbMock.dbRead.$queryRaw.mock.calls).filter(
+      (v) => typeof v === 'number'
+    );
+    expect(numbers).toEqual([4000, 1200]);
   });
 
   it('reports a row the UPDATE declined, and queues only the rows that moved, once', async () => {

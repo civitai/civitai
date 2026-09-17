@@ -61,12 +61,24 @@ import { booleanString } from '~/utils/zod-helpers';
  * is not a decision and this may grant it. A row touched after that has been through a form offering
  * the box, so leaving it unticked IS a decision and must survive this run.
  *
+ * Erring early skips legacy rows; erring late overwrites a stated permission. That asymmetry is why
+ * this edge is the earliest defensible one rather than the latest.
+ *
  * `v5.1.103` (`a0cf2cceb6`, committed 2026-09-16 21:49:42Z) is the FIRST release containing #4874,
  * which opened the write paths — not `v5.1.105`, whose image timestamp (2026-09-17 03:11:25Z) was
- * originally taken for this edge and is about five hours later. Nothing can serve a build before its
- * commit exists, so the commit time is the conservative edge. Measured on the prod replica, the two
- * cutoffs differ by 153 rows, and every one of those is a creator's save through a build that offered
- * the checkbox.
+ * originally taken for this edge and is 5h21m later. Prod serves tagged releases, so the relevant
+ * commit is that tag's, not #4874's own merge commit (2026-09-16 19:10:43Z) — the merge is 2h39m
+ * earlier and no build existed at it. Nothing can serve a release before its commit exists, so the
+ * tag's commit time is the conservative edge, and it is re-derivable from `git log` by anyone without
+ * a database query.
+ *
+ * The two cutoffs differ by 153 rows (prod REPLICA, `DATABASE_REPLICA_URL` on 25061, measured
+ * 2026-09-17 from the primary checkout; 422,634 in scope at the old edge against 422,481 at this
+ * one). Most of those are saves through a build that offered the checkbox; the ones closest to the
+ * boundary may instead have been saved by v5.1.102 in the window between the tag and the roll, which
+ * did not offer it. Those are legacy rows this run now skips — an under-grant, which is the safe
+ * direction. The argument rests on the release ordering rather than on the count, so treat 153 as an
+ * illustration that moves with organic churn rather than as a constant.
  *
  * The evidence that build was SERVING rather than merely tagged: model 2943312, a Trained upload, was
  * born 2026-09-16 22:13:58.728Z carrying `{Image,RentCivit,Rent,Sell,SellMerge}` with
@@ -147,7 +159,9 @@ export function contractAcceptsSellMerge(
 
 const schema = z.object({
   dryRun: booleanString().default(true),
-  batchSize: z.coerce.number().min(1).max(5000),
+  // `.int()` because a fractional batchSize reaches Postgres as a fractional LIMIT, which the Prisma
+  // engine rounds (measured: `LIMIT 2.5` returns 3 rows) while node-postgres rejects it outright.
+  batchSize: z.coerce.number().int().min(1).max(5000),
   afterId: z.coerce.number().min(0).default(0),
 });
 
