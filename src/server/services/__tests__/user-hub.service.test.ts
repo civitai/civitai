@@ -510,7 +510,7 @@ describe('tag sources are restricted to the browsable vocabulary', () => {
         unlisted: false,
         adminOnly: false,
         target: { hasEvery: [TagTarget.Image] },
-        type: { in: [TagType.UserGenerated, TagType.Label] },
+        type: { in: [TagType.UserGenerated, TagType.Label, TagType.Moderation] },
       });
     });
   });
@@ -568,7 +568,7 @@ describe('tag sources are restricted to the browsable vocabulary', () => {
       unlisted: false,
       adminOnly: false,
       target: { hasEvery: [TagTarget.Image] },
-      type: { in: [TagType.UserGenerated, TagType.Label] },
+      type: { in: [TagType.UserGenerated, TagType.Label, TagType.Moderation] },
     });
   });
 });
@@ -939,7 +939,7 @@ describe('resolving a pasted link', () => {
         unlisted: false,
         adminOnly: false,
         target: { hasEvery: [TagTarget.Image] },
-        type: { in: [TagType.UserGenerated, TagType.Label] },
+        type: { in: [TagType.UserGenerated, TagType.Label, TagType.Moderation] },
       });
     });
 
@@ -962,7 +962,7 @@ describe('resolving a pasted link', () => {
         unlisted: false,
         adminOnly: false,
         target: { hasEvery: [TagTarget.Image] },
-        type: { in: [TagType.UserGenerated, TagType.Label] },
+        type: { in: [TagType.UserGenerated, TagType.Label, TagType.Moderation] },
       });
     });
 
@@ -981,7 +981,7 @@ describe('resolving a pasted link', () => {
           unlisted: false,
           adminOnly: false,
           target: { hasEvery: [TagTarget.Image] },
-          type: { in: [TagType.UserGenerated, TagType.Label] },
+          type: { in: [TagType.UserGenerated, TagType.Label, TagType.Moderation] },
         })
       );
     });

@@ -68,10 +68,16 @@ export const HUB_COLLECTION_SOURCES_ENABLED = false;
  * with it and the server ASSERTS with it, and a picker offering something the server
  * 404s is the shape this is here to stop.
  *
- * Moderation and System tags are out in BOTH directions — Justin's call, 2026-09-04.
- * Excluding a moderation label is a reasonable thing to want, but the browsing level
- * is the control that already enforces it; a second, weaker spelling would leave a
- * user believing they had set something stronger than they had.
+ * Moderation tags are IN, both directions — Justin's call, 2026-09-17, reversing his
+ * 2026-09-04 call that kept them out. The earlier reasoning was that the browsing
+ * level already enforces this; it does not. That level is a coarse nsfwLevel bitmask
+ * ANDed across the whole feed, so it cannot express "keep this band but drop images
+ * tagged sexy" — which is a per-tag exclude, and was the only thing a hub had no way
+ * to say. See `hub-moderation-tag-vocabulary.test.ts` before narrowing this again.
+ *
+ * System stays out, and not as a judgement: both System image tags are `unlisted`, and
+ * `getTags`/`hubTagWhere` drop unlisted rows separately, so listing the type would
+ * offer 0 of 2 tags. Measured against prod 2026-09-17, alongside Moderation's 51 of 53.
  */
 /**
  * ⚠️ `entityType` holding exactly ONE value is load-bearing. The picker reaches
@@ -82,7 +88,7 @@ export const HUB_COLLECTION_SOURCES_ENABLED = false;
  */
 export const HUB_TAG_SOURCE_FILTER = {
   entityType: [TagTarget.Image],
-  types: [TagType.UserGenerated, TagType.Label],
+  types: [TagType.UserGenerated, TagType.Label, TagType.Moderation],
 } as const;
 
 // The hub's public identifier, as it appears in the URL. A string, because the route
