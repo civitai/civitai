@@ -202,6 +202,13 @@ export const resourceSchema = z.object({
   strength: z.number().optional(),
   trainedWords: z.array(z.string()).optional(),
   epochDetails: z.object({ epochNumber: z.number().optional() }).optional(),
+  // Raw orchestrator-blob AIR resources (training epochs without a ModelVersion
+  // row) — negative id + air + workflowId. Mirrors data-graph common.ts; this
+  // schema serializes the whatIf/generate payloads, so dropping these here
+  // makes the server's StrictAirMap 400 on the synthetic id.
+  air: z.string().optional(),
+  workflowId: z.string().optional(),
+  name: z.string().optional(),
 });
 export type ResourceData = z.infer<typeof resourceSchema>;
 

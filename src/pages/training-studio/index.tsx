@@ -6,7 +6,10 @@ import { useRouter } from 'next/router';
 import { env } from '~/env/client';
 import { env as serverEnv } from '~/env/server';
 import { Page } from '~/components/AppLayout/Page';
+import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-seed';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 
 /**
  * The Training Studio embedded in the main app (docs/training-studio-web-component.md), behind the
@@ -74,6 +77,13 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
   const routerRef = useRef(router);
   routerRef.current = router;
 
+  // Providing generate/generateUrl is the capability signal: without them the element hides its
+  // per-epoch Generate affordance. Only the form-graph lane consumes the seeded epoch resource —
+  // the v2 lane ignores it — so both need BOTH flags or they would target a lane that silently
+  // does nothing with the handoff.
+  const features = useFeatureFlags();
+  const canGenerate = features.generationAirResources && features.formGraphGenerator;
+
   const run = typeof router.query.run === 'string' ? router.query.run : null;
   const isNew = router.query.view === 'new';
   const studioLocation = useMemo<StudioLocation>(
@@ -128,6 +138,28 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
         navigate: async (loc: StudioLocation) => {
           await routerRef.current.push(hrefFor(loc), undefined, { shallow: true });
         },
+        // In-place handoff: seed the epoch's raw-AIR resource and open the globally-mounted
+        // sidebar generator (GenerationSidebar in BaseLayout) — no navigation. The element
+        // prefers this over generateUrl, which stays as the link fallback.
+        generate: canGenerate
+          ? (req: { air: string; workflowId: string; name: string }) => {
+              if (seedRawAirResource(req)) void generationGraphPanel.open();
+            }
+          : undefined,
+        // Relative on purpose: the element treats a relative URL as a normal same-tab navigation
+        // into this app's generator.
+        generateUrl: canGenerate
+          ? (req: { air: string; workflowId: string; name: string }) =>
+              `/generate?${new URLSearchParams(req)}`
+          : undefined,
+        // Relative on purpose (same-tab). Not gated on canGenerate — the publish entry guards
+        // muted/onboarding itself, and publishing doesn't ride the generation lanes.
+        publishUrl: (req: { workflowId: string; epoch: number }) =>
+          `/models/train/from-orchestrator?${new URLSearchParams({
+            workflowId: req.workflowId,
+            epoch: String(req.epoch),
+          })}`,
+        modelPageUrl: (req: { modelId: number }) => `/models/${req.modelId}`,
       };
       el.location = locationRef.current;
       setElReady(true);
@@ -139,7 +171,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
       cancelled = true;
       link.remove();
     };
-  }, [orchestratorEndpoint, orchestratorMode]);
+  }, [orchestratorEndpoint, orchestratorMode, canGenerate]);
 
   // Browser navigation (and the element's own host.navigate round-trip) drives the view: the query
   // is the source of truth, pushed into the element as a property whenever it changes.

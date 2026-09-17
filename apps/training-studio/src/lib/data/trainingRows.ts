@@ -90,6 +90,11 @@ export interface TrainingStudioMeta {
   trigger?: string;
   /** Set once the user publishes a public model page off this workflow. */
   published?: boolean;
+  /** The run's model/version on Civitai — stamped by the main app when the DRAFT is created
+   *  (publish entry) and re-stamped alongside `published`, so the run links its model page at
+   *  either stage. */
+  modelId?: number;
+  modelVersionId?: number;
   /** Lineage of a "train further" run: the run it continued from and the checkpoint it forked at.
    *  Stamped by the continuation submit; absent on fresh runs and on continuations submitted
    *  before lineage shipped. */
@@ -122,10 +127,23 @@ interface TrainingStepInput {
    *  runs may carry a zip URL instead, in which case there are no per-image items to show. */
   trainingData?: { type?: string; items?: Array<{ air?: string; caption?: string }> };
 }
+/** The weights-blob half of an epoch entry in the training step's output. `id` is the blob's
+ *  orchestrator key — the handle continue/generate reference the checkpoint by (as a blob AIR);
+ *  `url` is a signed download link. Shared with train-core so "does this epoch have usable weights,
+ *  and by what key" (`epochModelKey`) can't fork between the generate hand-off and `continueFrom`. */
+export interface EpochModelOutput {
+  id?: string;
+  url?: string | null;
+  available?: boolean;
+}
+
+export const epochModelKey = (model: EpochModelOutput | undefined): string | undefined =>
+  model?.available && typeof model.id === 'string' ? model.id : undefined;
+
 interface TrainingStepOutput {
   epochs?: Array<{
     epochNumber?: number;
-    model?: { url?: string | null; available?: boolean };
+    model?: EpochModelOutput;
     samples?: Array<{ url?: string | null; available?: boolean }>;
     /** Tail-able live trace of this epoch's job (present only when the run requested tracing). */
     traceUrl?: string | null;
@@ -277,6 +295,9 @@ export interface TrainingDetailEpoch {
   samples: (string | null)[];
   /** The trained weights blob (a signed URL), when the epoch produced an available one. */
   modelUrl?: string;
+  /** The weights blob's orchestrator key — with the run's ecosystem it forms the epoch's LoRA blob
+   *  AIR (train-core's `loraBlobAir`) for the generate hand-off. */
+  modelKey?: string;
 }
 
 /** One dataset image the run trained on: the blob reference (resolved to a viewable URL through the
@@ -294,6 +315,9 @@ export interface TrainingDetail {
   code: string;
   state: RunState;
   createdAt: string;
+  /** The training step's orchestrator ecosystem (e.g. `sdxl`) — what an epoch's blob AIR is scoped
+   *  by. Absent on runs whose step carries none (older main-app runs). */
+  ecosystem?: string;
   /** Sample media type — drives how samples render (image tiles, `<video>`, or a full-width `<audio>` card). */
   media: Media;
   /** Convenience: video-model samples are `<video>`. */
@@ -315,6 +339,9 @@ export interface TrainingDetail {
   /** "Train further" lineage (see TrainingStudioMeta): the run this one continued from, when known. */
   sourceWorkflowId?: string;
   sourceEpoch?: number;
+  /** The run's model on Civitai — draft or published (see TrainingStudioMeta.modelId); drives the
+   *  model-page link. */
+  modelId?: number;
 }
 
 /** Map one workflow (fetched by id) to the detail screen's shape. Null if we can't place it. */
@@ -343,6 +370,7 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
           return s?.available && typeof s.url === 'string' ? s.url : null;
         }),
         modelUrl: e.model?.available && typeof e.model.url === 'string' ? e.model.url : undefined,
+        modelKey: epochModelKey(e.model),
       };
     })
     // Drop epochs the orchestrator has listed but not yet produced (no sample, no weights) — otherwise a
@@ -370,6 +398,7 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     code,
     state,
     createdAt: w.createdAt,
+    ecosystem: typeof input.ecosystem === 'string' && input.ecosystem ? input.ecosystem : undefined,
     media,
     isVideo: media === 'video',
     prompts,
@@ -383,6 +412,7 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
         ? meta.sourceWorkflowId
         : undefined,
     sourceEpoch: typeof meta.sourceEpoch === 'number' ? meta.sourceEpoch : undefined,
+    modelId: typeof meta.modelId === 'number' ? meta.modelId : undefined,
   };
 }
 
@@ -446,6 +476,7 @@ export const SAMPLE_DETAIL: TrainingDetail = {
   code: 'XL',
   state: 'ready',
   createdAt: '2026-08-21T16:48:19.000Z',
+  ecosystem: 'sdxl',
   media: 'image',
   isVideo: false,
   prompts: [
@@ -462,6 +493,7 @@ export const SAMPLE_DETAIL: TrainingDetail = {
       n === 8 && i === 1 ? null : `https://picsum.photos/seed/ts-${n}-${i}/400`
     ),
     modelUrl: '#',
+    modelKey: `preview-epoch-${n}`,
   })),
   // Preview dataset: picsum stand-ins keyed to bogus airs (the proxy is never hit in dev preview).
   dataset: [0, 1, 2, 3, 4, 5].map((i) => ({

@@ -16,6 +16,27 @@ export type StudioLocation =
   | { view: 'new' }
   | { view: 'run'; workflowId: string };
 
+/** What "generate with this epoch" hands the main app's generator: the epoch's LoRA blob AIR, the
+ *  training run the server verifies ownership against, and a display label for the resource. */
+export interface GenerateRequest {
+  air: string;
+  workflowId: string;
+  name: string;
+}
+
+/** What "publish this run" hands the main app: the training run and the checkpoint to build the
+ *  draft model from. The main app re-fetches the workflow with the caller's own orchestrator token,
+ *  so ownership is enforced server-side — everything else (name, base model) comes off the workflow. */
+export interface PublishRequest {
+  workflowId: string;
+  epoch: number;
+}
+
+/** What "view this run's model" hands the host: the Civitai model stamped onto the workflow. */
+export interface ModelPageRequest {
+  modelId: number;
+}
+
 export interface HostContext {
   /** Every read/write the flow performs — the shell's /api fetches or the element's direct SDK calls. */
   backend: StudioBackend;
@@ -32,12 +53,44 @@ export interface HostContext {
   navigate: (loc: StudioLocation, opts?: { refreshAll?: boolean }) => Promise<void>;
   /** Re-run the host's data load for a dependency key (Kit `invalidate` in the shell). */
   refresh: (key: string) => Promise<void>;
+  /** Open the host's own generator in place, seeded with an epoch's weights — no navigation.
+   *  Preferred over `generateUrl` when both are provided (the embed's sidebar generator). */
+  generate?: (req: GenerateRequest) => void;
+  /** The host's URL for the main app's `/generate` deep link, primed with an epoch's weights.
+   *  Absent (with `generate`) when the host has no generator to hand off to — the affordance
+   *  hides. A relative URL is an in-host navigation; an absolute one opens the generator's
+   *  origin in a new tab. */
+  generateUrl?: (req: GenerateRequest) => string;
+  /** The host's URL for the main app's publish-from-workflow entry (draft model + wizard), keyed on
+   *  workflowId + epoch. Absent when the host has no publish surface — the affordance hides. Same
+   *  URL semantics as `generateUrl`: relative = in-host same-tab, absolute = new tab. */
+  publishUrl?: (req: PublishRequest) => string;
+  /** The host's URL for the run's model page on Civitai — draft or published (a run carries its
+   *  modelId from the moment a draft exists; see TrainingStudioMeta). Absent => the "view model"
+   *  affordance hides. Same URL semantics as `generateUrl`. */
+  modelPageUrl?: (req: ModelPageRequest) => string;
   /** Where portalled UI (dialogs, select/tooltip content) should land. The element supplies its
    *  body-level portal root (an ancestor `container-type` on the embedding page makes it the
    *  containing block for `position: fixed`, so un-portalled overlays center against the wrong box,
    *  and the scoped CSS only reaches nodes under a scope root). Unset in the shell — its styles are
    *  global, so the default bits-ui portal to <body> is correct. */
   portalTarget?: () => Element | undefined;
+}
+
+/** Interpret a host-returned URL per the seam contract above: only a host-relative URL is an
+ *  in-host same-tab navigation; anything else (including protocol-relative) opens in a new tab.
+ *  Returns spreadable anchor attrs so a call site can't forget the `noreferrer` half. */
+export function hostLink(href: string): {
+  href: string;
+  target: '_blank' | undefined;
+  rel: 'noreferrer' | undefined;
+} {
+  const external = !(href.startsWith('/') && !href.startsWith('//'));
+  return {
+    href,
+    target: external ? '_blank' : undefined,
+    rel: external ? 'noreferrer' : undefined,
+  };
 }
 
 // Module scope is safe on the server: the shell sets a user-independent value (env config + function
@@ -62,6 +115,10 @@ export const hrefFor = (loc: StudioLocation) => host().hrefFor(loc);
 export const navigate = (loc: StudioLocation, opts?: { refreshAll?: boolean }) =>
   host().navigate(loc, opts);
 export const refresh = (key: string) => host().refresh(key);
+export const generate = () => host().generate;
+export const generateUrl = () => host().generateUrl;
+export const publishUrl = () => host().publishUrl;
+export const modelPageUrl = () => host().modelPageUrl;
 export function portalProps(): { to?: Element; disabled?: boolean } {
   const target = host().portalTarget?.();
   return target ? { to: target } : {};

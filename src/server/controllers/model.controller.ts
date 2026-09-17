@@ -17,6 +17,7 @@ import {
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
+import { stampWorkflowPublished } from '~/server/services/orchestrator/training/publish-from-workflow';
 import { getTrainingWorkflowOverlay } from '~/server/services/orchestrator/training/training-state';
 import {
   applyTrainingWorkflowOverlay,
@@ -847,6 +848,18 @@ export const publishModelHandler = async ({
       });
     }
 
+    // A scheduled publish skips this (status isn't Published yet) and the scheduled-publishing job
+    // doesn't stamp either — the studio then just keeps offering its idempotent publish entry.
+    if (modelMeta?.trainingStudioWorkflowId && updatedModel.status === ModelStatus.Published) {
+      await stampWorkflowPublished({
+        ownerId: updatedModel.userId,
+        callerId: ctx.user.id,
+        workflowId: modelMeta.trainingStudioWorkflowId,
+        modelId: updatedModel.id,
+        modelVersionId: updatedModel.modelVersions[0]?.id,
+      });
+    }
+
     await dataForModelsCache.refresh(input.id);
 
     return updatedModel;
@@ -1317,6 +1330,10 @@ export const getMyDraftModelsHandler = async ({
         updatedAt: true,
         modelVersions: {
           select: {
+            id: true,
+            name: true,
+            status: true,
+            publishedAt: true,
             _count: {
               select: { files: true, posts: { where: { userId, publishedAt: { not: null } } } },
             },
