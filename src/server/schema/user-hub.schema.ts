@@ -68,21 +68,38 @@ export const HUB_COLLECTION_SOURCES_ENABLED = false;
  * with it and the server ASSERTS with it, and a picker offering something the server
  * 404s is the shape this is here to stop.
  *
- * Moderation and System tags are out in BOTH directions — Justin's call, 2026-09-04.
- * Excluding a moderation label is a reasonable thing to want, but the browsing level
- * is the control that already enforces it; a second, weaker spelling would leave a
- * user believing they had set something stronger than they had.
- */
-/**
+ * Moderation tags are IN, both directions — Justin's call, 2026-09-17, reversing his
+ * 2026-09-04 call that kept them out.
+ *
+ * That call gave two reasons, and only the first is wrong. It said the browsing level
+ * already enforces this: it does not, because the level is a coarse nsfwLevel bitmask
+ * ANDed across the whole feed, so it cannot express "keep this band but drop images
+ * tagged sexy" — a per-tag exclude, and the one thing a hub had no way to say.
+ *
+ * The second reason still stands and was overridden rather than refuted: a tag exclude
+ * IS weaker than the browsing level. It filters on labels a scanner wrote, so an
+ * untagged image of the same kind still arrives, where the level is an enforced cap.
+ * The call is that a cap the user cannot aim is worse than a filter they can — not
+ * that the filter is equivalent. Anyone arguing this back is arguing that trade, and
+ * should say why it fell the other way, rather than re-deriving that the exclude is
+ * best-effort. It is, and that was known.
+ *
+ * System stays out, and not as a judgement: both System image tags are `unlisted`, and
+ * `getTags`/`hubTagWhere` drop unlisted rows separately, so listing the type would
+ * offer 0 of 2 tags. Moderation is 51 of 53 by that same count — the two it leaves out
+ * (`self injury`, `extremist`) are `unlisted` too, not a carve-out. Prod, 2026-09-17.
+ *
  * ⚠️ `entityType` holding exactly ONE value is load-bearing. The picker reaches
  * `getTags`, which matches it with array OVERLAP (`target && ARRAY[...]`, i.e. ANY);
  * the server's `hubTagWhere` uses `hasEvery` (ALL). Identical at one element, and
  * they part company at two — in the dangerous direction, with the picker offering
  * tags the server then refuses. Add a second target only with that reconciled.
+ *
+ * See `hub-moderation-tag-vocabulary.test.ts` before narrowing any of this.
  */
 export const HUB_TAG_SOURCE_FILTER = {
   entityType: [TagTarget.Image],
-  types: [TagType.UserGenerated, TagType.Label],
+  types: [TagType.UserGenerated, TagType.Label, TagType.Moderation],
 } as const;
 
 // The hub's public identifier, as it appears in the URL. A string, because the route

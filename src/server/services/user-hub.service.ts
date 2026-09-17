@@ -941,11 +941,8 @@ async function assertExcludedModelsFit(modelIds: number[]) {
  * and the system tags the site runs on, and a hub addressed by id would otherwise
  * reach every one of them.
  *
- * Applied to exclusions as well as sources. Excluding a moderation label is a
- * reasonable thing to WANT, but the browsing level is the control that already does
- * it and the one the server actually enforces; letting a second, unenforced spelling
- * of the same intent exist would leave a user believing they had set something they
- * had not.
+ * Moderation labels are part of that vocabulary as of 2026-09-17; System tags are not.
+ * `HUB_TAG_SOURCE_FILTER` carries the reasoning for both.
  */
 /**
  * The vocabulary rule as a `where` fragment, so the add path and the paste-a-link
