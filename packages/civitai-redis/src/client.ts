@@ -1799,6 +1799,20 @@ export const REDIS_SYS_KEYS = {
     // Fixed-window submission counter for in-product feedback — `system:feedback:rate-limit:${userId}`.
     RATE_LIMIT: 'system:feedback:rate-limit',
   },
+  CLIENT_ERROR: {
+    /**
+     * Fixed-window per-IP counter for the UNAUTHENTICATED client-error report
+     * endpoint (`POST /api/application-error`), keyed
+     * `system:client-error:rate-limit:ip:${address}`. Same `SET NX EX` + `INCR`
+     * MULTI shape as the sibling limiters (always created with its TTL), on
+     * `sysRedis`.
+     *
+     * The address is `getTrustedClientIp`, so the bucket is per edge-attested
+     * client and every non-edge caller shares one bucket — see the derivation
+     * note in `src/server/utils/application-error-rate-limit.ts`.
+     */
+    RATE_LIMIT: 'system:client-error:rate-limit',
+  },
   BLOCKS: {
     // Emergency kill list — Redis SET of `block_id` strings BlockRegistry excludes from every
     // listForModel response (disable a runaway block without a deploy).

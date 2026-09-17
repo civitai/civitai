@@ -4,6 +4,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { applySourceMaps } from '~/server/utils/errorHandling';
+import { checkApplicationErrorRateLimit } from '~/server/utils/application-error-rate-limit';
 
 /**
  * Exported so callers can be TESTED against the real contract rather than a copy of it. `message`
@@ -47,6 +48,28 @@ export const applicationErrorSchema = z.object({
 export default PublicEndpoint(
   async function handler(req, res) {
     try {
+      // Per-IP bound, FIRST — ahead of the session read, the body parse and the
+      // sourcemap resolution, so a limited caller costs one redis round-trip and
+      // nothing else.
+      //
+      // This endpoint is unauthenticated and `PublicEndpoint` applies no limiter
+      // of its own. What it produces is an operational SIGNAL — the volume of
+      // accepted reports is what tells operators the front end is broken — so a
+      // single address must not be able to supply that volume by itself. The
+      // ceiling, and why it is high enough that one user's render loop is still
+      // reported in full, is in the limiter module.
+      const rateLimit = await checkApplicationErrorRateLimit(req);
+      if (!rateLimit.allowed) {
+        res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
+        // 🔴 A 429 is SWALLOWED by every caller and cannot affect a render:
+        // `fetch` resolves rather than rejects on a 4xx, and
+        // `reportApplicationError` additionally terminates its promise with a
+        // `.catch`. That is the same reason a 400 from the schema below has
+        // always been invisible to the client. Pinned by
+        // `src/utils/__tests__/application-error-fire-and-forget.test.ts`.
+        return res.status(429).send({ message: 'Too many error reports from this client.' });
+      }
+
       const session = await getServerAuthSession({ req, res });
       const queryInput = applicationErrorSchema.parse(JSON.parse(req.body));
       if (isProd) {

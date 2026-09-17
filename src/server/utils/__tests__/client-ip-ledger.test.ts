@@ -228,6 +228,17 @@ const DERIVATION_SITES: Record<string, { symbol: string; why: string }> = {
     symbol: 'getTrustedClientIp',
     why: 'Token minting — the address IS the control, so it must fail closed.',
   },
+  'server/utils/application-error-rate-limit.ts': {
+    symbol: 'getTrustedClientIp',
+    why:
+      'Per-IP bound on the UNAUTHENTICATED client-error report endpoint. Listed under ' +
+      'ENFORCEMENT rather than beside the two attribution limiters above, and the divergence ' +
+      'is the point: those spread one user across many procedures, where over-attribution ' +
+      '429s unrelated internal and dev callers for no gain. This one is a standalone control ' +
+      'on a single public endpoint whose ONLY property is that one source cannot supply the ' +
+      'endpoint volume by itself — and a bucket a caller can choose with an uncorroborated ' +
+      'header is a bucket it can rotate, which voids exactly that property.',
+  },
 };
 
 /**
@@ -235,7 +246,11 @@ const DERIVATION_SITES: Record<string, { symbol: string; why: string }> = {
  * edge. Kept as an explicit inverse list: the ledger above says what they DO
  * bind, this says what they must not.
  */
-const MUST_NOT_HOLD_EDGE = ['server/middleware.trpc.ts', 'server/utils/public-api-rate-limit.ts'];
+const MUST_NOT_HOLD_EDGE = [
+  'server/middleware.trpc.ts',
+  'server/utils/public-api-rate-limit.ts',
+  'server/utils/application-error-rate-limit.ts',
+];
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
