@@ -90,7 +90,9 @@ describe('ai:write:budgeted consent copy', () => {
    * independent reason: it is denylist-ALLOWED but NOT REACHABLE
    * (`isBillingModeImplemented` accepts `'prepaidFixed'` only), so naming it
    * would bank permission for a widening that has not shipped. That supersedes
-   * decision 6 of `appblocks-no-allowlist-decision-2026-09-15.md` §5a, on the
+   * decision 6 of §5a in the decision doc (NOT in this repo — it is
+   * `claudedocs/appblocks-no-allowlist-decision-2026-09-15.md` in the private
+   * `civitai/talos-infra` repo), on the
    * operator's call of 2026-09-16. When training becomes reachable, remove it
    * from this list, change the sentence, AND re-take the grants.
    */

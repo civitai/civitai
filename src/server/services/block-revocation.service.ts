@@ -19,8 +19,8 @@ function revokedKey(blockInstanceId: string) {
  * 🔴 THIS LIST USED TO INCLUDE "or the publisher is banned", AND NO SUCH WRITER
  * EXISTS. `revokeInstance` has exactly two production call sites, both in
  * `block-registry.service.ts` — `uninstallFromModel` and `toggleEnabled(false)`.
- * `block-scope.middleware.ts` marks publisher-ban "(Phase 2)"; this docblock
- * described it as shipped. Do not reason about a ban path from here.
+ * No ban path writes a marker (see `block-scope.middleware.ts`), yet this
+ * docblock described one as shipped. Do not reason about a ban path from here.
  *
  * This is a deliberately coarse-grained revocation primitive (per-instance,
  * not per-jti). A per-jti denylist is heavier infra and gains little for v1

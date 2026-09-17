@@ -25,8 +25,13 @@
 -- it. Re-consenting to a capability that does not exist BANKS permission for a
 -- widening that has not shipped, and nothing would re-prompt when it does —
 -- which is the silent scope escalation this table exists to prevent. This
--- supersedes decision 6 of `appblocks-no-allowlist-decision-2026-09-15.md` §5a
--- (which required training to be named in words); operator call, 2026-09-16.
+-- supersedes decision 6 of §5a of the no-allowlist decision doc, which required
+-- training to be named in words. Operator call, 2026-09-16.
+--
+-- 🔴 THAT DOC IS NOT IN THIS REPO — it is
+-- `claudedocs/appblocks-no-allowlist-decision-2026-09-15.md` in the private
+-- `civitai/talos-infra` repo, so do not go looking for it here. Its reasoning is
+-- restated in full above precisely because you may not be able to open it.
 -- When training — or any change of KIND rather than of modality — becomes
 -- reachable, the sentence changes and the grants are re-taken AGAIN. That is
 -- the intended cost, not an oversight.

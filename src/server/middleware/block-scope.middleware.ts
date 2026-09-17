@@ -913,8 +913,12 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // elsewhere in this tree. The fact, by enumeration: `revokeInstance` has
     // exactly two production call sites, `uninstallFromModel` and
     // `toggleEnabled(false)` (both `block-registry.service.ts`). `toggleBan`
-    // (`user.service.ts`) calls only `invalidateSession`, and
-    // `block-approval.service.ts` never consults owner ban state. So banning a
+    // (`user.service.ts`) writes NONE of the three things this guard checks —
+    // it does plenty else (unpublishes the user's models, cancels the
+    // subscription, blocks media, invalidates sessions), so do not read this as
+    // "a ban only logs you out"; the point is narrower and only about THIS
+    // guard. `block-approval.service.ts` never consults owner ban state. So
+    // banning a
     // publisher does NOT revoke that publisher's live block tokens; they run to
     // natural `exp`. Do not re-add a ban to this list without adding the writer.
     if (await BlockRevocation.isRevoked(claims.blockInstanceId)) {

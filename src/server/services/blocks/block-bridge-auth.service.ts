@@ -39,8 +39,10 @@ import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-a
  *      read. It is also the one that responds to a user action (uninstall /
  *      toggle-off) within seconds rather than at the next approval change.
  *      🔴 NOT publisher ban, which this line claimed until 2026-09-16: no ban
- *      path writes a revocation marker (`block-scope.middleware.ts` marks it
- *      "(Phase 2)"), so a ban is NOT contained within seconds by this step.
+ *      path writes a revocation marker. `revokeInstance` has exactly two
+ *      production call sites — `uninstallFromModel` and `toggleEnabled(false)`,
+ *      both in `block-registry.service.ts` — so a ban is NOT contained within
+ *      seconds here; a banned publisher's live tokens run to natural `exp`.
  *   3. APPROVED STATUS — the backing `app_blocks` row must still say `approved`.
  *
  * Each step fails closed EXCEPT revocation, which fails OPEN by construction inside

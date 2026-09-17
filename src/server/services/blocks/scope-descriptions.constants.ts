@@ -46,7 +46,9 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   // read "AI generation services" and was caught in audit for exactly this.
   //
   // 🔴 3. TRAINING IS NOT NAMED, AND THAT SUPERSEDES DECISION 6.
-  // `appblocks-no-allowlist-decision-2026-09-15.md` §5a decision 6 required
+  // §5a decision 6 of the no-allowlist decision doc — which is NOT in this repo:
+  // `claudedocs/appblocks-no-allowlist-decision-2026-09-15.md` in the private
+  // `civitai/talos-infra` repo — required
   // this sentence to say "an app may train a model on the viewer's Buzz" in
   // words. Operator, 2026-09-16: superseded, because training is NOT REACHABLE
   // — `isBillingModeImplemented` accepts `'prepaidFixed'` only, so a
