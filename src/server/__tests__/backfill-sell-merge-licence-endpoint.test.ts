@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ModelSchema from '~/server/schema/model.schema';
@@ -101,6 +101,7 @@ function call(
     setHeader: () => res,
     end: () => res,
   };
+  handlerCalls += 1;
   return handler(req, res as never).then(() => ({
     statusCode,
     payload: payload as Record<string, unknown>,
@@ -124,8 +125,11 @@ const isSql = (v: unknown): v is { strings: string[]; values: unknown[] } =>
   !!v && typeof v === 'object' && Array.isArray((v as { strings?: unknown }).strings);
 const predicatesOf = (calls: unknown[][], index = 0) => sqlValuesOf(calls, index).filter(isSql);
 
+let handlerCalls = 0;
+
 describe('backfill-sell-merge-licence', () => {
   beforeEach(() => {
+    handlerCalls = 0;
     vi.clearAllMocks();
     // reset, not clear: clearAllMocks leaves a queued mockResolvedValueOnce behind, and a leaked
     // once-value surfaces in the NEXT test, which misattributes the cause.
@@ -135,6 +139,22 @@ describe('backfill-sell-merge-licence', () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue(rows([5, 6, 7]));
     queueUpdate.mockResolvedValue(undefined);
     contractMode.value = 'real';
+  });
+
+  // 🔴 The statement-count invariant, asserted for EVERY test rather than per branch. Three rounds
+  // running, the defect here was a guard added to one branch and not its twin — write but not read,
+  // then dry-run but not live — and each time the suite stayed green because the unguarded branch had
+  // no assertion to fail. No branch of this endpoint legitimately issues more than one read or one
+  // write per request, so the bound holds everywhere, including in tests nobody has written yet, and
+  // a second statement cannot be added to any path without reddening here.
+  //
+  // Per handler CALL, not per test: two cases drive the handler twice on purpose.
+  afterEach(() => {
+    expect(dbMock.dbRead.$queryRaw.mock.calls.length).toBeLessThanOrEqual(handlerCalls);
+    expect(dbMock.dbWrite.$queryRaw.mock.calls.length).toBeLessThanOrEqual(handlerCalls);
+    expect(dbMock.dbRead.$queryRawUnsafe).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRawUnsafe).not.toHaveBeenCalled();
   });
 
   it('rejects a call with the wrong token, and reads nothing', async () => {
