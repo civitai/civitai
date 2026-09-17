@@ -620,57 +620,88 @@ const MAX_RESOLVED_FRAME_FILES = 10;
  */
 const MAX_CACHED_SOURCE_MAPS = MAX_RESOLVED_FRAME_FILES;
 
+/**
+ * A cached consumer plus the bookkeeping that makes eviction safe.
+ *
+ * 🔴 THE POINT OF `refs`/`evicted` IS A LEAK, NOT A WRONG ANSWER. Plain LRU — evict, `destroy()`,
+ * done — cannot corrupt a result here, because `source-map@0.7.6`'s `destroy()` frees the mappings
+ * and zeroes `_mappingsPtr` (`lib/source-map-consumer.js`) and `originalPositionFor` goes through
+ * `_getMappingsPtr()`, which RE-PARSES when the pointer is zero. A call holding a destroyed
+ * consumer therefore still gets the correct location. What it does NOT get is a second free: that
+ * re-parse allocates a fresh copy of the mappings into the process-wide wasm heap — `lib/wasm.js`
+ * caches one `WebAssembly.Instance` for the whole process — and by then the consumer has already
+ * left the cache, so nothing will ever `destroy()` it again. `WebAssembly.Memory` never shrinks
+ * and JS GC cannot reclaim a Rust-side allocation, so every one of those re-parses is permanent.
+ *
+ * That is not a rare interleaving. `MAX_CACHED_SOURCE_MAPS === MAX_RESOLVED_FRAME_FILES`, so the
+ * cache is sized for ONE call's working set; under C concurrent calls it is C times too small and
+ * the calls evict each other's live consumers. `applySourceMaps` awaits every
+ * `new SourceMapConsumer(...)`, so concurrent requests genuinely interleave inside the build loop.
+ *
+ * `refs` counts the in-flight calls holding an entry and `evicted` records that it has left the
+ * cache; the free happens at whichever of the two comes last. Measured through the real
+ * `applySourceMaps` path, the difference is a plateau versus linear growth — see
+ * `holding a consumer across its eviction does not grow the wasm heap without bound` in
+ * `errorHandling.applySourceMaps.test.ts`, which fails if this bookkeeping is removed.
+ */
+type CachedSourceMap = { consumer: SourceMapConsumer; refs: number; evicted: boolean };
+
 /** Keyed by resolved absolute chunk path, so two frame spellings of one chunk share an entry. */
-const sourceMapCache = new Map<string, SourceMapConsumer>();
+const sourceMapCache = new Map<string, CachedSourceMap>();
+
+/** Takes an entry out of service; frees it now if nothing is using it, else on the last release. */
+function retireConsumer(entry: CachedSourceMap) {
+  entry.evicted = true;
+  if (entry.refs <= 0) entry.consumer.destroy();
+}
 
 /**
- * Returns a cached consumer, marking it most-recently-used.
+ * Borrows a cached consumer, marking it most-recently-used. The caller must hand the entry back to
+ * `releaseConsumer`, which is why `applySourceMaps` collects them and releases in a `finally`.
  *
  * NOT named `use…`: `react-hooks/rules-of-hooks` keys off that prefix and reports any such
  * function called in a loop as a misplaced React hook, which is an eslint error in this repo.
  */
-function lookupCachedConsumer(key: string): SourceMapConsumer | undefined {
-  const consumer = sourceMapCache.get(key);
-  if (!consumer) return undefined;
+function retainConsumer(key: string): CachedSourceMap | undefined {
+  const entry = sourceMapCache.get(key);
+  if (!entry) return undefined;
   // A Map iterates in insertion order, so re-inserting moves this entry to the young end and the
   // eviction in `storeConsumer` always takes the least recently used.
   sourceMapCache.delete(key);
-  sourceMapCache.set(key, consumer);
-  return consumer;
+  sourceMapCache.set(key, entry);
+  entry.refs += 1;
+  return entry;
 }
 
-/**
- * Caches a freshly built consumer and evicts down to the bound.
- *
- * Eviction calls `destroy()`, which frees the consumer's mappings out of the wasm heap. That is
- * safe even while another in-flight call still holds the same consumer: in the pinned
- * `source-map@0.7.6`, `destroy()` frees the mappings and zeroes the pointer, and
- * `originalPositionFor` goes through `_getMappingsPtr()`, which re-parses when the pointer is
- * zero. So a call holding a destroyed consumer gets the CORRECT location, just more slowly, and a
- * second `destroy()` is a no-op. That is a claim about the DEPENDENCY rather than about this file,
- * so `errorHandling.applySourceMaps.test.ts` pins it twice: `source-map: a destroyed consumer
- * still resolves, and a second destroy is a no-op` asserts it against the library directly, and
- * `resolves a call still holding a consumer that a concurrent call evicted` exercises it through
- * this function. If an upgrade makes a destroyed consumer unrecoverable, both go red — and that is
- * the signal this eviction needs rethinking, not that the tests need updating.
- */
-function storeConsumer(key: string, consumer: SourceMapConsumer) {
-  // Two calls can miss on the same key concurrently and both build one. Free the loser here rather
-  // than dropping the reference, or its wasm mappings are never freed.
+/** Caches a freshly built consumer, already borrowed by the caller, and evicts down to the bound. */
+function storeConsumer(key: string, consumer: SourceMapConsumer): CachedSourceMap {
+  // Two calls can miss on the same key concurrently and both build one. Retire the loser rather
+  // than dropping the reference, or its wasm mappings are never freed. No `existing !== consumer`
+  // arm: this is the only call site and it is only ever reached with a consumer built two lines
+  // earlier, so an entry already under this key can never be the one being stored.
   const existing = sourceMapCache.get(key);
-  if (existing && existing !== consumer) {
+  if (existing) {
     sourceMapCache.delete(key);
-    existing.destroy();
+    retireConsumer(existing);
   }
 
-  sourceMapCache.set(key, consumer);
+  const entry: CachedSourceMap = { consumer, refs: 1, evicted: false };
+  sourceMapCache.set(key, entry);
 
   while (sourceMapCache.size > MAX_CACHED_SOURCE_MAPS) {
     const oldestKey = sourceMapCache.keys().next().value as string;
     const oldest = sourceMapCache.get(oldestKey);
     sourceMapCache.delete(oldestKey);
-    oldest?.destroy();
+    if (oldest) retireConsumer(oldest);
   }
+
+  return entry;
+}
+
+/** Returns a borrowed consumer; frees it if it was evicted while this call held it. */
+function releaseConsumer(entry: CachedSourceMap) {
+  entry.refs -= 1;
+  if (entry.refs <= 0 && entry.evicted) entry.consumer.destroy();
 }
 
 /** The build directory, and the only directory this resolver may read from. */
@@ -720,12 +751,30 @@ function resolveBuildArtifact(relativePath: string): string | null {
  * Returns the real path, or `null` when the file does not exist or resolves outside the build
  * directory. Both mean the caller skips that frame — a missing chunk is the ordinary case (an
  * older build, a map that was not emitted), so this never throws.
+ *
+ * `realRoot` is resolved ONCE PER CALL by `realBuildRoot` and threaded in, rather than re-resolved
+ * here. This guard runs on every path the resolver is about to open, so re-resolving the root made
+ * a fully-cached ten-frame report perform twenty synchronous `realpathSync` calls on the
+ * page-serving event loop where it previously performed no IO at all. The guard's behaviour is
+ * unchanged: the build directory cannot move mid-call, and a root that does not resolve is still
+ * the same "read nothing" outcome, decided once instead of per path.
  */
-function containedRealPath(target: string): string | null {
+function containedRealPath(realRoot: string, target: string): string | null {
   try {
-    const realRoot = fs.realpathSync(nextBuildDir());
     const realTarget = fs.realpathSync(target);
     return isInsideDir(realRoot, realTarget) ? realTarget : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The build directory as the filesystem resolves it, or `null` when it does not exist — which on
+ * this path means the resolver reads nothing, exactly as a per-path `realpathSync` failure did.
+ */
+function realBuildRoot(): string | null {
+  try {
+    return fs.realpathSync(nextBuildDir());
   } catch {
     return null;
   }
@@ -758,7 +807,7 @@ function extractNextPath(filePath: string): string | null {
  * its `sourceMappingURL` when present, and fall back to the webpack convention so
  * this keeps working on either bundler.
  */
-function loadSourceMapContent(chunkPath: string): string | null {
+function loadSourceMapContent(realRoot: string, chunkPath: string): string | null {
   // Preferred: follow the chunk's own sourceMappingURL (covers Turbopack + webpack).
   try {
     const chunkContent = fs.readFileSync(chunkPath, 'utf-8');
@@ -772,7 +821,7 @@ function loadSourceMapContent(chunkPath: string): string | null {
         // The URL is read out of a file that a frame selected, so it gets the same containment
         // rule the frame did — it is no more trusted than the path that led here. `null` covers
         // both "escapes the build directory" and "does not exist", so no `existsSync` is needed.
-        const mapPath = containedRealPath(path.resolve(path.dirname(chunkPath), url));
+        const mapPath = containedRealPath(realRoot, path.resolve(path.dirname(chunkPath), url));
         if (mapPath) return fs.readFileSync(mapPath, 'utf-8');
       }
     }
@@ -783,7 +832,7 @@ function loadSourceMapContent(chunkPath: string): string | null {
   // Fallback: webpack convention `<chunk>.map` next to the chunk. Contained-checked too: the
   // sibling of a legitimate chunk is still a path, and a path can still be a symlink.
   try {
-    const fallbackPath = containedRealPath(`${chunkPath}.map`);
+    const fallbackPath = containedRealPath(realRoot, `${chunkPath}.map`);
     if (fallbackPath) return fs.readFileSync(fallbackPath, 'utf-8');
   } catch {
     // Ignore; no map available.
@@ -813,9 +862,17 @@ function normalizeSourcePath(source: string): string {
  * @returns The stack trace with original source locations
  */
 export async function applySourceMaps(stack: string): Promise<string> {
+  // Every cache entry this call borrowed, released in `finally` so an early return or a throw
+  // cannot leave one pinned — a pinned entry is never freed, which is the leak this bookkeeping
+  // exists to close.
+  const borrowed: CachedSourceMap[] = [];
   try {
     const parsedStack = parseStackTrace(stack);
     const lines = stack.split('\n');
+
+    // Resolved ONCE for the whole call, not per path. See `containedRealPath`.
+    const realRoot = realBuildRoot();
+    if (!realRoot) return stack;
 
     // 🔴 SPEND THE CAP ON FRAMES THAT CAN ACTUALLY BE RESOLVED. Slicing the raw distinct-file list
     // would let a frame the resolver is always going to reject — a browser extension, an analytics
@@ -849,19 +906,20 @@ export async function applySourceMaps(stack: string): Promise<string> {
       try {
         // The guard the reads are gated on. `resolveBuildArtifact` compared text; this compares
         // the paths the filesystem will actually open.
-        const chunkPath = containedRealPath(candidatePath);
+        const chunkPath = containedRealPath(realRoot, candidatePath);
         if (!chunkPath) continue;
 
-        const cached = lookupCachedConsumer(chunkPath);
+        const cached = retainConsumer(chunkPath);
         if (cached) {
-          sourceMapConsumers.set(file, cached);
+          borrowed.push(cached);
+          sourceMapConsumers.set(file, cached.consumer);
           continue;
         }
 
-        const sourceMapContent = loadSourceMapContent(chunkPath);
+        const sourceMapContent = loadSourceMapContent(realRoot, chunkPath);
         if (sourceMapContent) {
           const smc = await new SourceMapConsumer(sourceMapContent);
-          storeConsumer(chunkPath, smc);
+          borrowed.push(storeConsumer(chunkPath, smc));
           sourceMapConsumers.set(file, smc);
         }
       } catch {
@@ -889,12 +947,16 @@ export async function applySourceMaps(stack: string): Promise<string> {
       }
     }
 
-    // Consumers are NOT destroyed here any more — they belong to the cache now, which frees them
-    // on eviction, so the next call naming the same chunk does not re-read and re-parse it.
+    // Consumers are NOT destroyed here — they belong to the cache, which frees each one at
+    // whichever comes last of its eviction and the last call releasing it. Destroying one here
+    // would hand the next call a consumer whose mappings have to be re-parsed, and that re-parse
+    // is what allocates wasm memory nothing will ever free.
 
     return lines.join('\n');
   } catch {
     // If source map parsing fails, return the original stack
     return stack;
+  } finally {
+    for (const entry of borrowed) releaseConsumer(entry);
   }
 }

@@ -26,6 +26,7 @@ let tmpRoot: string;
 let buildDir: string;
 let chunkDir: string;
 let outsideFile: string;
+let outsideMapFile: string;
 let readSpy: ReturnType<typeof vi.spyOn>;
 
 /** Every path handed to `fs.readFileSync` since the last reset. */
@@ -46,6 +47,26 @@ function writeChunk(name: string): string {
   fs.writeFileSync(chunkPath, `(()=>{throw 0})()\n//# sourceMappingURL=${name}.map\n`);
   fs.writeFileSync(`${chunkPath}.map`, generator.toString());
   return chunkPath;
+}
+
+/**
+ * A source map identical in shape to the ones `writeChunk` emits, but naming a source nobody under
+ * the build directory ever maps to. Written OUTSIDE `.next`, it is what the two symlink-escape
+ * tests below point at: because it is a real, valid, resolvable map, a resolver that reads it
+ * answers with `LEAKED_SOURCE` instead of failing — so those tests can assert on the ANSWER and not
+ * only on the absence of a read.
+ */
+const LEAKED_SOURCE = 'src/leaked/OutsideTheBuildDir.tsx';
+
+function leakedMapContent(): string {
+  const generator = new SourceMapGenerator({ file: 'leaked.js' });
+  generator.addMapping({
+    generated: { line: 1, column: 10 },
+    original: { line: 7, column: 3 },
+    source: `webpack://_N_E/../${LEAKED_SOURCE}`,
+    name: 'leakedSymbol',
+  });
+  return generator.toString();
 }
 
 /** A frame in the shape a browser actually sends: an absolute `_next` URL, not a filesystem path. */
@@ -82,6 +103,8 @@ beforeAll(() => {
   fs.mkdirSync(path.join(tmpRoot, 'outside'), { recursive: true });
   outsideFile = path.join(tmpRoot, 'outside', 'not-a-build-artifact.txt');
   fs.writeFileSync(outsideFile, 'contents of a file the resolver has no business reading\n');
+  outsideMapFile = path.join(tmpRoot, 'outside', 'leaked.js.map');
+  fs.writeFileSync(outsideMapFile, leakedMapContent());
 
   vi.spyOn(process, 'cwd').mockReturnValue(tmpRoot);
 
@@ -220,6 +243,95 @@ describe('applySourceMaps — reads stay inside the build directory', () => {
 
     // Rejected, not dropped and not an error.
     expect(result).toContain('guard-symlink.js');
+    expect(result.split('\n')).toHaveLength(stack.split('\n').length);
+  });
+
+  // 🔴 THE SAME GUARD, AT THE SECOND OF ITS THREE SITES. The symlink test above enters through the
+  // CHUNK read; the containment check on the `sourceMappingURL` follow is a different call, and
+  // reverting just that one to the lexical `isInsideDir(...) && fs.existsSync(...)` it replaced was
+  // SURVIVED by every test in this file. Nothing above can see it: the existing
+  // sourceMappingURL test escapes with `..` segments, which the lexical check rejects on its own,
+  // so it never asks whether the path is resolved.
+  //
+  // The escape here is a symlink, which is lexically contained and `existsSync`-true, so only the
+  // real-path resolution can reject it. It is also not shaped to make the branch easy: the chunk is
+  // an ordinary chunk under `.next`, the URL is a plain relative filename of the kind webpack and
+  // Turbopack both emit, and the target is a VALID source map — so a resolver that follows it
+  // succeeds and says so, rather than failing for some unrelated reason.
+  it('does not follow a symlinked sourceMappingURL out of the build directory', async () => {
+    const chunkPath = path.join(chunkDir, 'guard-url-symlink.js');
+    const linkPath = path.join(chunkDir, 'guard-url-symlink-target.map');
+    fs.symlinkSync(outsideMapFile, linkPath);
+    // The URL names the LINK, and there is deliberately no `<chunk>.js.map` sibling, so the
+    // convention fallback cannot reach the same file — this test can only be answered through the
+    // sourceMappingURL path.
+    fs.writeFileSync(
+      chunkPath,
+      `(()=>{throw 0})()\n//# sourceMappingURL=guard-url-symlink-target.map\n`
+    );
+    const legit = writeChunk('guard-legit-url-symlink.js');
+    const stack = [
+      'Error: boom',
+      frame('t', 'guard-url-symlink.js'),
+      frame('u', 'guard-legit-url-symlink.js'),
+    ].join('\n');
+
+    const result = await applySourceMaps(stack);
+
+    // The guard: neither the link nor what it resolves to was opened.
+    expect(readPaths).not.toContain(outsideMapFile);
+    expect(readPaths).not.toContain(linkPath);
+    expect(readPaths.filter((p) => !path.resolve(p).startsWith(buildDir + path.sep))).toEqual([]);
+    // And the answer it would have produced is absent, which is the assertion that does not also
+    // hold for a resolver that simply read nothing.
+    expect(result).not.toContain(LEAKED_SOURCE);
+
+    // POSITIVE CONTROL, in two halves. The chunk itself WAS read, so the URL really was reached
+    // and rejected rather than never looked at; and the legitimate frame beside it resolved, so
+    // the loop ran.
+    expect(readPaths).toContain(chunkPath);
+    expect(readPaths).toContain(legit);
+    expect(result).toContain('src/components/Thing.tsx:42:4');
+
+    // Rejected, not dropped and not an error.
+    expect(result).toContain('guard-url-symlink.js');
+    expect(result.split('\n')).toHaveLength(stack.split('\n').length);
+  });
+
+  // 🔴 THE SAME GUARD, AT THE THIRD SITE: the webpack-convention `<chunk>.map` sibling. Reverting
+  // only this one to `const fallbackPath = `${chunkPath}.map`` plus an `existsSync` was likewise
+  // SURVIVED by every test in this file before this one existed — a sibling is derived from a
+  // contained path, so the lexical check it replaced was always true there and the only thing the
+  // guard adds is the symlink case.
+  //
+  // The chunk carries NO `sourceMappingURL`, which is the real webpack shape and also what keeps
+  // this test attributable: the previous site cannot answer it.
+  it('does not follow a symlinked <chunk>.map sibling out of the build directory', async () => {
+    const chunkPath = path.join(chunkDir, 'guard-fallback-symlink.js');
+    fs.writeFileSync(chunkPath, `(()=>{throw 0})()\n`);
+    const linkPath = `${chunkPath}.map`;
+    fs.symlinkSync(outsideMapFile, linkPath);
+    const legit = writeChunk('guard-legit-fallback-symlink.js');
+    const stack = [
+      'Error: boom',
+      frame('t', 'guard-fallback-symlink.js'),
+      frame('u', 'guard-legit-fallback-symlink.js'),
+    ].join('\n');
+
+    const result = await applySourceMaps(stack);
+
+    expect(readPaths).not.toContain(outsideMapFile);
+    expect(readPaths).not.toContain(linkPath);
+    expect(readPaths.filter((p) => !path.resolve(p).startsWith(buildDir + path.sep))).toEqual([]);
+    expect(result).not.toContain(LEAKED_SOURCE);
+
+    // POSITIVE CONTROL: the chunk was read — so the fallback really was reached, with nothing in
+    // the chunk to satisfy the sourceMappingURL branch first — and the legitimate frame resolved.
+    expect(readPaths).toContain(chunkPath);
+    expect(readPaths).toContain(legit);
+    expect(result).toContain('src/components/Thing.tsx:42:4');
+
+    expect(result).toContain('guard-fallback-symlink.js');
     expect(result.split('\n')).toHaveLength(stack.split('\n').length);
   });
 
@@ -408,24 +520,22 @@ describe('applySourceMaps — parsed maps are reused across calls', () => {
 });
 
 describe('applySourceMaps — eviction is safe while a call still holds the consumer', () => {
-  // Eviction calls `destroy()`, which frees the consumer's wasm mappings, and nothing stops that
-  // running while another in-flight call is still holding the same consumer: `applySourceMaps`
-  // awaits each `new SourceMapConsumer(...)`, so two concurrent calls interleave and one fills the
-  // cache behind the other's back. Both must still come back fully resolved.
+  // Eviction takes an entry out of the cache while another in-flight call may still be holding it:
+  // `applySourceMaps` awaits each `new SourceMapConsumer(...)`, so two concurrent calls interleave
+  // and one fills the cache behind the other's back. Both must still come back fully resolved.
   //
   // 🔴 REACHING THE HAZARD TAKES MORE THAN TWO CONCURRENT CALLS, and the obvious construction
   // does not reach it — measured. `SourceMapConsumer` parses its mappings LAZILY, and
   // `applySourceMaps` builds every consumer in its first loop but only asks for a position in its
-  // second, so a consumer evicted during the first loop has never parsed, `_mappingsPtr` is still
-  // 0, and its `destroy()` is a no-op that frees nothing. Two calls each naming ten fresh chunks
-  // therefore evict ten consumers and touch nothing that matters: with `destroy()` mutated to make
-  // a freed consumer unusable, that version of this test still PASSED.
+  // second, so a consumer evicted during the first loop has never parsed and there is nothing yet
+  // to free. Two calls each naming ten fresh chunks therefore evict ten consumers and touch
+  // nothing that matters.
   //
   // The reachable shape needs a consumer that has already PARSED — one an earlier call resolved a
   // frame with — to be evicted while a later call is holding it. So: warm one, have call A open on
   // a cache HIT for it and hold it for the rest of the call, and have A and B insert 19 more
-  // between them, which over a cache of 10 guarantees the warmed entry is evicted and destroyed
-  // before A reaches its frame loop.
+  // between them, which over a cache of 10 guarantees the warmed entry is evicted before A reaches
+  // its frame loop.
   it('resolves a call still holding a consumer that a concurrent call evicted', async () => {
     writeChunk('hold-shared.js');
     const sharedStack = ['Error: boom', frame('s', 'hold-shared.js')].join('\n');
@@ -437,26 +547,51 @@ describe('applySourceMaps — eviction is safe while a call still holds the cons
     const stackA = [sharedStack, ...stackOf('hold-a', 9).split('\n').slice(1)].join('\n');
     const stackB = stackOf('hold-b', 10);
 
+    readPaths = [];
     const [resultA, resultB] = await Promise.all([
       applySourceMaps(stackA),
       applySourceMaps(stackB),
     ]);
+    const readsDuringPair = [...readPaths];
 
     const resolvedLines = (s: string) =>
       s.split('\n').filter((l) => l.includes('src/components/Thing.tsx:42:4'));
     // Every frame of both stacks, including the one A held across the eviction.
     expect(resolvedLines(resultA)).toHaveLength(10);
     expect(resolvedLines(resultB)).toHaveLength(10);
+
+    // 🔴 ASSERT THE HAZARD WAS REACHED, not just that the results came back right. Both halves are
+    // decided by the code, not by scheduling: the shared entry is a cache HIT, and a hit takes no
+    // `await`, so A borrows it synchronously before `Promise.all` even starts B.
+    //
+    // (a) A HELD it: nothing re-read the shared chunk during the pair, so A resolved its first
+    //     frame through the consumer it borrowed at the top of the call.
+    expect(readsDuringPair.filter((p) => p.endsWith('hold-shared.js'))).toEqual([]);
+    // (b) It was EVICTED underneath A: 19 insertions over a cache of 10 put it out for certain, and
+    //     the observable of that is a later call having to read it again. Without this the test
+    //     would pass just as well on a cache large enough that no eviction ever happened — which is
+    //     exactly the "green without reaching the hazard" case.
+    readPaths = [];
+    const after = await applySourceMaps(sharedStack);
+    expect(readPaths.some((p) => p.endsWith('hold-shared.js'))).toBe(true);
+    expect(after).toContain('src/components/Thing.tsx:42:4');
   });
 
   // 🔴 DEPENDENCY-BEHAVIOUR GUARD, not a test of this repo's code — it calls `source-map` directly
-  // and deliberately does NOT go through `applySourceMaps`.
+  // and deliberately does NOT go through `applySourceMaps`. It is the one test in this file that
+  // survives the whole-file inert-resolver control for that reason.
   //
-  // Evicting a consumer another call is holding is safe only because of how `source-map@0.7.6`
-  // implements `destroy()`: it frees the mappings and zeroes `_mappingsPtr`, and
+  // It pins the `destroy()` semantics the cache's bookkeeping is reasoned about in
+  // `errorHandling.ts`: `source-map@0.7.6` frees the mappings and zeroes `_mappingsPtr`, and
   // `originalPositionFor` goes through `_getMappingsPtr()`, which RE-PARSES when the pointer is
-  // zero. So a freed consumer answers correctly, just more slowly. That is the whole reason this
-  // cache evicts by plain LRU with no refcounting.
+  // zero. Hence the two properties the refcounting depends on — a destroyed consumer still answers
+  // CORRECTLY (so the failure mode of getting this wrong is a leak, never a wrong source location),
+  // and a second `destroy()` is a no-op (so retiring an entry and then releasing it is safe).
+  //
+  // 🔴 AND IT IS WHY `refs`/`evicted` EXIST RATHER THAN PLAIN LRU: that re-parse allocates a fresh
+  // copy of the mappings into the process-wide wasm heap, and by then the consumer has left the
+  // cache, so nothing will ever free it. The size of that is measured by the last test in this
+  // file; this one pins the dependency behaviour that makes the reasoning valid.
   //
   // If a `source-map` upgrade makes a destroyed consumer return a wrong location, throw, or crash
   // on a second `destroy()`, this test goes red — and that is the signal that the eviction in
@@ -488,4 +623,156 @@ describe('applySourceMaps — eviction is safe while a call still holds the cons
       consumer.destroy();
     }
   });
+});
+
+/**
+ * 🔴 THE COST OF GETTING EVICTION-WHILE-HELD WRONG IS MEMORY, AND NOTHING ABOVE CAN SEE IT.
+ *
+ * Every test above asserts on a resolved stack, and the resolved stack is IDENTICAL either way:
+ * `destroy()` on a consumer another call is holding is harmless to the ANSWER, because the holder's
+ * next `originalPositionFor` re-parses. What the re-parse costs is a second allocation of the
+ * mappings in the process-wide wasm heap that nothing will ever free — the consumer has already
+ * left the cache. `WebAssembly.Memory` never shrinks and JS GC cannot reclaim a Rust-side
+ * allocation, so it is permanent, and the cache being sized for ONE call's working set
+ * (`MAX_CACHED_SOURCE_MAPS === MAX_RESOLVED_FRAME_FILES`) means concurrent calls evict each other's
+ * live consumers as a matter of course rather than as a rare interleaving.
+ *
+ * So this file needed an instrument that reads memory, not text. It is deliberately the LAST
+ * describe: it fills the cache and writes a large fixture set.
+ */
+describe('applySourceMaps — a held consumer that gets evicted is still freed', () => {
+  /**
+   * Maps big enough that one parse is worth megabytes rather than kilobytes — a real chunk's map
+   * runs to several MB, and a fixture with a handful of mappings would make a genuine leak too
+   * small to separate from allocator noise.
+   */
+  const FIXTURE_MAPPINGS = 20_000;
+  /** Rounds run before measuring, to let the steady-state working set finish allocating. */
+  const WARMUP_ROUNDS = 3;
+  /** Rounds the assertion is made over. */
+  const MEASURED_ROUNDS = 4;
+  /**
+   * Ceiling on wasm-heap growth across the measured rounds, in MiB.
+   *
+   * Chosen with headroom in both directions from a measurement on this fixture, not from taste.
+   * With the bookkeeping in place the heap plateaus and the measured growth is 0.00 MiB, repeatably
+   * — so any non-zero budget is slack. With it removed the leak is ~23.7 MiB PER ROUND, so a budget
+   * below one round's worth cannot be walked by a partially-broken implementation either. 12 sits
+   * between the two with roughly half a round of margin on the failing side and a whole budget of
+   * margin on the passing side.
+   */
+  const GROWTH_BUDGET_MIB = 12;
+
+  /** A chunk whose map is large enough for its parse to be visible in the wasm heap. */
+  function writeBigChunk(name: string): string {
+    const generator = new SourceMapGenerator({ file: name });
+    generator.addMapping({
+      generated: { line: 1, column: 10 },
+      original: { line: 42, column: 4 },
+      source: 'webpack://_N_E/../src/components/Thing.tsx',
+      name: 'renderThing',
+    });
+    for (let i = 0; i < FIXTURE_MAPPINGS; i++) {
+      generator.addMapping({
+        generated: { line: 2 + i, column: (i * 7) % 90 },
+        original: { line: 1 + (i % 5000), column: i % 80 },
+        source: `webpack://_N_E/../src/gen/File${i % 64}.tsx`,
+        name: `sym${i % 128}`,
+      });
+    }
+    const chunkPath = path.join(chunkDir, name);
+    fs.writeFileSync(chunkPath, `(()=>{throw 0})()\n//# sourceMappingURL=${name}.map\n`);
+    fs.writeFileSync(`${chunkPath}.map`, generator.toString());
+    return chunkPath;
+  }
+
+  const bigStackOf = (prefix: string, count: number) =>
+    [
+      'Error: boom',
+      ...Array.from({ length: count }, (_, i) => {
+        const name = `${prefix}-${i}.js`;
+        writeBigChunk(name);
+        return frame(`f${i}`, name);
+      }),
+    ].join('\n');
+
+  /**
+   * The wasm linear memory `source-map` allocates mappings out of.
+   *
+   * `lib/wasm.js` caches ONE `WebAssembly.Instance` for the whole process, so the memory reached
+   * through any consumer is the same heap every consumer in this process uses — which is exactly
+   * why a leak here is process-wide rather than per-consumer. Read through `_wasm` because the
+   * library exposes no public handle; the alternative instruments are worse, not better:
+   * `process.memoryUsage()` is GC-timing-dependent and would make this test flaky, and this
+   * `byteLength` is a plain counter that only ever moves when the allocator has to grow.
+   */
+  async function wasmHeap(): Promise<WebAssembly.Memory> {
+    const generator = new SourceMapGenerator({ file: 'heap-probe.js' });
+    generator.addMapping({
+      generated: { line: 1, column: 1 },
+      original: { line: 1, column: 1 },
+      source: 'probe.ts',
+    });
+    const probe = await new SourceMapConsumer(generator.toString());
+    const memory = (probe as unknown as { _wasm: { exports: { memory: WebAssembly.Memory } } })
+      ._wasm.exports.memory;
+    probe.destroy();
+    return memory;
+  }
+
+  // 🔴 THE SHAPE THAT REACHES THE LEAK, which is the same one the correctness test above uses: a
+  // warmed, already-PARSED consumer, borrowed by call A on a cache hit, evicted underneath A by the
+  // 19 fresh chunks A and B insert between them, and then used by A's frame loop. Each round leaks
+  // once for the shared chunk and once for every fresh consumer that gets evicted while its own
+  // builder is still in flight.
+  it('holding a consumer across its eviction does not grow the wasm heap without bound', async () => {
+    const memory = await wasmHeap();
+    const heapMiB = () => memory.buffer.byteLength / (1024 * 1024);
+
+    writeBigChunk('leak-shared.js');
+    const sharedStack = ['Error: boom', frame('s', 'leak-shared.js')].join('\n');
+    const warm = await applySourceMaps(sharedStack);
+    // Positive control on the fixture: the shared consumer really parsed, so it has mappings to
+    // leak. Without this the whole test could pass on a setup that never allocated anything.
+    expect(warm).toContain('src/components/Thing.tsx:42:4');
+
+    const round = async (tag: string) => {
+      const stackA = [sharedStack, ...bigStackOf(`${tag}-a`, 9).split('\n').slice(1)].join('\n');
+      const stackB = bigStackOf(`${tag}-b`, 10);
+      const [resultA, resultB] = await Promise.all([
+        applySourceMaps(stackA),
+        applySourceMaps(stackB),
+      ]);
+      const resolved = (s: string) =>
+        s.split('\n').filter((l) => l.includes('src/components/Thing.tsx:42:4')).length;
+      return resolved(resultA) + resolved(resultB);
+    };
+
+    for (let i = 0; i < WARMUP_ROUNDS; i++) {
+      // Asserted every round, not just at the end: a round that silently stopped resolving would
+      // stop allocating too, and this test would then pass by doing nothing.
+      expect(await round(`leak-warm${i}`)).toBe(20);
+    }
+
+    const before = heapMiB();
+    // POSITIVE CONTROL ON THE INSTRUMENT. `byteLength` must be something this workload can move at
+    // all, or "it did not grow" is a claim about a counter wired to nothing. The warm-up rounds
+    // above allocate a full working set of large parsed maps from a heap that starts at a few MiB,
+    // so the counter has demonstrably moved by the time it is read here.
+    expect(before).toBeGreaterThan(20);
+
+    for (let i = 0; i < MEASURED_ROUNDS; i++) {
+      expect(await round(`leak-meas${i}`)).toBe(20);
+    }
+    const growthMiB = heapMiB() - before;
+
+    expect(
+      growthMiB,
+      `wasm heap grew ${growthMiB.toFixed(2)} MiB over ${MEASURED_ROUNDS} rounds of ` +
+        `evict-while-held (budget ${GROWTH_BUDGET_MIB} MiB). A consumer evicted while an in-flight ` +
+        `call still holds it must be freed when that call releases it; if it is destroyed at ` +
+        `eviction instead, the holder re-parses its mappings into the wasm heap and nothing ever ` +
+        `frees them.`
+    ).toBeLessThan(GROWTH_BUDGET_MIB);
+  }, 120_000);
 });
