@@ -7,7 +7,7 @@ import path from 'path';
  * must read the benign-stripped prompt.
  *
  * This exists because the fix for that bug was applied to one of two live copies. The image
- * scan pipeline has two implementations — `getTagsFromIncomingTags` in the webhook (legacy
+ * scan pipeline had two implementations —`getTagsFromIncomingTags` in the webhook (legacy
  * `TagSource.WD14`/`Clavata`/`Hive` bodies) and `processTags` in the service (bodies carrying
  * `workflowId`, i.e. the orchestrator) — and the webhook dispatches between them by body
  * shape. Patching the one the audit named left the other writing a confidence-100 POI tag
@@ -33,8 +33,8 @@ import path from 'path';
  *    a new one written as an arrow needs the strip INLINE at the call to be checked properly.
  *    The escape also weakens as the enclosing function grows, since ANY `stripBenignPhrases`
  *    between the declaration and the call satisfies it. An entry whose call strips inline
- *    should therefore set `requireInline` and give up the escape entirely — only the two scan
- *    files need it, because they shadow `prompt` with the stripped copy further up.
+ *    should therefore set `requireInline` and give up the escape entirely — only the scan
+ *    pipeline needs it, because it shadows `prompt` with the stripped copy further up.
  * 2. One other server-side `includesPoi` call reads a raw prompt and is deliberately NOT
  *    covered: `services/apps/shared-content-safety.ts` throws `SharedContentBlockedError('poi')`
  *    on shared app content, which is a hard legal reject rather than a moderation label.
@@ -53,13 +53,7 @@ const REPO_ROOT = path.resolve(__dirname, '../../../..');
  */
 const GUARDED_FILES: { rel: string; consequence: string; requireInline?: boolean }[] = [
   {
-    rel: 'src/pages/api/webhooks/image-scan-result.ts',
-    consequence:
-      'writes a confidence-100 POI tag that reaches the image search index, so a ' +
-      'moderator-whitelisted phrase would still flag the image',
-  },
-  {
-    rel: 'src/server/services/image-scan-result.service.ts',
+    rel: 'src/server/services/image-scan-pipeline.ts',
     consequence:
       'writes a confidence-100 POI tag that reaches the image search index, so a ' +
       'moderator-whitelisted phrase would still flag the image',
@@ -68,7 +62,7 @@ const GUARDED_FILES: { rel: string; consequence: string; requireInline?: boolean
     rel: 'src/server/services/orchestrator/orchestration-new.service.ts',
     // The enclosing function is ~300 lines, so the scope escape below would be satisfied by ANY
     // later `stripBenignPhrases` in it — negative-prompt stripping being the obvious one, since
-    // both scan files pair it with the prompt strip. This call needs no escape, so it gets none.
+    // the scan pipeline pairs it with the prompt strip. This call needs no escape, so it gets none.
     requireInline: true,
     consequence:
       'refuses the generation outright for a viewer with `disablePoi`, so a ' +

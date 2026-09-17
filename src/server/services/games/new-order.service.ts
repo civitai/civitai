@@ -1637,7 +1637,7 @@ export async function getImagesQueue({
 
   // Per-rank pool weights drive a stratified fetch instead of the legacy
   // strict-sequential drain. Knight1/Knight2/Knight3 are content-tier
-  // buckets in practice (see image-scan-result.ts), so reading Knight1
+  // buckets in practice (see addToNewOrderQueue in image-scan-pipeline.ts), so reading Knight1
   // until full starved Knight2 (NSFW) entirely. Resolve weights from
   // Redis (ops-tunable) with a built-in fallback; missing rank → legacy.
   const rateLimitConfig = await getVotingRateLimitConfig();
