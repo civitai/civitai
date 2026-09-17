@@ -182,6 +182,11 @@ import {
   planStepSpend,
   resolveStepVariant,
 } from '~/server/services/blocks/steps';
+// APP-FACING generation type for the spend-attribution row, resolved from the
+// submitted body. Imported (not open-coded at each of the three submit paths) so
+// the `kind` → key and step-id → key mapping has exactly one definition — and so
+// the "registry id, never orchestratorType" decision lives in one place.
+import { resolveBlockGenerationType } from '~/server/services/blocks/generation-type';
 // Moderation dispatch for the same registry. A SEPARATE module because it pulls
 // `auditPromptServer` (Redis + ClickHouse + DB + notifications) and the registry
 // itself is imported by `workflow.schema` for the wire enum, which must stay
@@ -6002,6 +6007,12 @@ export const blocksRouter = router({
             // SERVER-SIDE from the app's own shared storage (never trusts the
             // client). Omitted → unchanged app-owner-only attribution.
             sharedContentKey: textToImageBody.sharedContentKey ?? null,
+            // APP-FACING generation type for this spend. Resolved from the
+            // captured body (the same alias the sharedContentKey read uses, for
+            // the same narrowing reason). Resolution is total and non-throwing —
+            // an unresolvable body degrades to NULL, never an exception on this
+            // fire-and-forget path.
+            generationType: resolveBlockGenerationType(textToImageBody),
           });
         })().catch(() => {
           /* best-effort: a failed attribution write never breaks submit */
@@ -8157,6 +8168,10 @@ async function submitCustomComfyWorkflow(opts: {
         modelId: null,
         // customComfy has no sharedContentKey field (recipe+params only) → omit.
         sharedContentKey: null,
+        // APP-FACING generation type. Both customComfy arms (recipe + inline)
+        // carry `kind: 'customComfy'`, so this resolves identically for either
+        // and needs no arm branch. Non-throwing: unresolvable → NULL.
+        generationType: resolveBlockGenerationType(body),
       });
     })().catch(() => {
       /* best-effort: a failed attribution write never breaks submit */
@@ -9285,6 +9300,16 @@ async function submitStepWorkflow(opts: {
         modelId: null,
         // A step body is `{ kind, step, params }` `.strict()` — no sharedContentKey.
         sharedContentKey: null,
+        // APP-FACING generation type = the REGISTERED STEP ID (`convert-image`,
+        // `chat-completion`), NEVER the entry's `orchestratorType`
+        // (`convertImage`, `chatCompletion`). Taken off the body's schema-gated
+        // `step` rather than `step.orchestratorType`: the registry key is the
+        // permanent public wire commitment, the orchestrator spelling is not.
+        // `assertStepInvariants` clause (0) pins `step.id === <registry key>`,
+        // so this is the same value `detail.step` on the invocation row carries.
+        //
+        // NOT a per-step branch — nothing here tests WHICH step it is.
+        generationType: resolveBlockGenerationType(body),
       });
     })().catch(() => {
       /* best-effort: a failed attribution write never breaks submit */

@@ -16,6 +16,7 @@ import {
   newBlockSpendAttributionId,
   newBlockSubscriptionAttributionId,
 } from '~/server/utils/app-block-ids';
+import { isBlockGenerationType, type BlockGenerationType } from './generation-type';
 import {
   computeRateCardSplit,
   // NOTE: neither computeSpendShare nor computeSubscriptionShare is imported
@@ -307,6 +308,16 @@ export type RecordSpendAttributionInput = {
    * for any app that publishes cross-user content, not tied to any one app kind.
    */
   sharedContentKey?: string | null;
+  /**
+   * Optional APP-FACING generation type for this spend — `textToImage`,
+   * `customComfy`, or a registered STEP ID (`convert-image`,
+   * `chat-completion`). NEVER the orchestrator's internal `$type`. Resolved by
+   * the caller from the submitted workflow body via
+   * `resolveBlockGenerationType`; omit (or pass null) when it cannot be
+   * resolved, which persists NULL. Typed as the union rather than `string` so a
+   * future caller cannot stamp an arbitrary value on a money/audit row.
+   */
+  generationType?: BlockGenerationType | null;
 };
 
 export type RecordSpendAttributionResult = {
@@ -453,6 +464,15 @@ export async function recordSpendAttribution(
     sharedContentKey = null,
   } = input;
 
+  // APP-FACING generation type (`textToImage` / `customComfy` / a registered
+  // step id). The caller resolves it from the submitted body; re-checked here
+  // against the same registry-derived list so an unknown value can never reach
+  // the column — a money/audit row is the wrong place to discover a typo, and a
+  // wrong type is worse than a missing one. Anything unrecognised (including
+  // undefined) degrades to NULL rather than throwing: this write is
+  // fire-and-forget off an already-billed submit.
+  const generationType = isBlockGenerationType(input.generationType) ? input.generationType : null;
+
   // Resolve + snapshot the app owner (mirrors recordAttribution). The
   // OauthClient is the source of truth for "who owns this app"; we
   // snapshot userId onto the row so a future reassignment doesn't
@@ -555,6 +575,10 @@ export async function recordSpendAttribution(
         // is the forge-safe server-resolved credit.
         contentAuthorUserId,
         sharedContentKey,
+        // The app-facing generation type (NULL when unresolvable). Additive and
+        // nullable — nothing reads it yet; it exists so the per-generation-type
+        // author fee has data to reason about when it lands.
+        generationType,
         status,
         voidedReason,
         voidedAt,
@@ -588,6 +612,8 @@ export async function recordSpendAttribution(
         // whether it resolved to a creditable author. Both are opaque/ids only.
         sharedContentKeyPresent: sharedContentKey != null,
         contentAuthorUserId,
+        // Bounded (registry-derived or null), so it is safe as a log field.
+        generationType,
         status,
         voidedReason,
         isSelfSpend,
@@ -813,11 +839,7 @@ export async function recordSubscriptionAttribution(
   // Void rows that are zero because of WHO bought/owns so they are never
   // backpaid. Otherwise the row is 'tracked' — share-pending, awaiting the
   // payout-time backpay at the signed-off rate.
-  const voidedReason = isSelfPurchase
-    ? 'self_purchase'
-    : isInternal
-    ? 'internal_owner'
-    : null;
+  const voidedReason = isSelfPurchase ? 'self_purchase' : isInternal ? 'internal_owner' : null;
   const status = voidedReason ? 'voided' : 'tracked';
   const voidedAt = voidedReason ? new Date() : null;
 
@@ -1313,7 +1335,10 @@ export async function getRevenueForOwner({
   appBlockId?: string;
   from?: Date;
   to?: Date;
-}): Promise<{ summary: RevenueSummary; topApps: Array<{ appBlockId: string; shareCents: number; count: number }> }> {
+}): Promise<{
+  summary: RevenueSummary;
+  topApps: Array<{ appBlockId: string; shareCents: number; count: number }>;
+}> {
   const where = {
     appOwnerUserId: ownerUserId,
     ...(appBlockId ? { appBlockId } : {}),
@@ -1384,7 +1409,13 @@ export async function getRevenueForOwner({
         grossCents: voided._sum.usdAmountCents ?? 0,
       },
     },
-    topApps: (topApps as Array<{ appBlockId: string; _sum: { appOwnerShareCents: number | null }; _count: number }>).map((r) => ({
+    topApps: (
+      topApps as Array<{
+        appBlockId: string;
+        _sum: { appOwnerShareCents: number | null };
+        _count: number;
+      }>
+    ).map((r) => ({
       appBlockId: r.appBlockId,
       shareCents: r._sum.appOwnerShareCents ?? 0,
       count: r._count,

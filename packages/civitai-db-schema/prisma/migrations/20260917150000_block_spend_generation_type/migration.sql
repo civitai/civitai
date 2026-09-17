@@ -1,0 +1,65 @@
+-- ============================================================
+-- App Blocks — buzz SPEND attribution: generation TYPE
+-- ============================================================
+-- One additive, nullable column on block_spend_attribution recording WHICH
+-- kind of generation a block-initiated spend paid for.
+--
+--   generation_type  the APP-FACING type key:
+--                      'textToImage'     (kind: 'textToImage')
+--                      'customComfy'     (kind: 'customComfy', both arms)
+--                      '<registered step id>'  for kind: 'step' — today
+--                      'convert-image' and 'chat-completion'.
+--                    NULL when the type could not be resolved.
+--
+-- WHY. Every block generation already writes exactly one row here, but the row
+-- recorded the EVENT and the MONEY BASIS and nothing about the capability, so
+-- an image generation and a chat completion were indistinguishable in the table
+-- that exists to answer "what did this app's users spend on". The author fee is
+-- moving to a per-generation-type setting; a fee per type cannot be reasoned
+-- about from data that never recorded the type. This column is the prerequisite
+-- and lands ahead of the fee itself, because an event written untyped can never
+-- be typed retrospectively.
+--
+-- 🔴 THE VALUE IS THE APP-FACING ID, NEVER THE ORCHESTRATOR $type. For a step
+-- generation this stores the REGISTERED STEP ID ('convert-image',
+-- 'chat-completion') — what the registry calls a permanent public wire
+-- commitment — and NOT the entry's orchestratorType ('convertImage',
+-- 'chatCompletion'), which is the orchestrator's internal spelling and can
+-- change without a wire decision. A step id implies kind='step', so a single
+-- column covers the whole axis; no companion 'kind' column is needed.
+--
+-- 🔴 NO CHECK CONSTRAINT AND NO ENUM, DELIBERATELY. The step registry is built
+-- to grow ADDITIVELY — registering an entry, not changing a schema — and a
+-- CHECK here would turn every new step type into a database migration, which is
+-- exactly the coupling the registry exists to avoid. The value set is bounded in
+-- CODE instead, against the same registry the wire schema derives its enum from
+-- (src/server/services/blocks/generation-type.ts). An unrecognised value is
+-- never written: it degrades to NULL.
+--
+-- ⚠️ MANUAL-APPLY: committed for history, NOT auto-applied. A human applies this
+--    to prod and the dev database out of band (the main civitai DB is not on an
+--    auto-migrate path). It is a single ADD COLUMN on a small table — no
+--    rewrite, no lock of consequence.
+--
+-- 🔴 APPLY THIS BEFORE THE CODE SHIPS — the apply is NOT order-free, and the
+--    failure would be silent. The Prisma model gains the field and the writer
+--    always passes it, so the generated INSERT names "generation_type"; against
+--    a database without the column that INSERT cannot succeed (Prisma P2022 over
+--    Postgres 42703 — reasoned from the query Prisma builds, NOT executed, since
+--    nothing here touches a database). The write is fire-and-forget behind a
+--    catch, so the user's generation would be unaffected and nothing would
+--    surface — but the attribution row would be LOST for the whole window, and a
+--    lost row is not recoverable. Applied first, the column simply sits NULL
+--    until the code that populates it deploys, which is harmless. There are zero
+--    readers of this column today.
+--
+-- 🔴 NO BACKFILL. Existing rows predate the column and the type was never
+--    recorded anywhere else on them, so there is nothing to recover — a backfill
+--    could only guess. They stay NULL, which is the honest value.
+--
+-- No index. Nothing reads the column yet; the per-type rollups that will read it
+-- arrive with the fee work, and the access shape they need is not yet known.
+-- Adding a speculative index now would be guessing at it.
+
+ALTER TABLE "block_spend_attribution"
+  ADD COLUMN "generation_type" TEXT;

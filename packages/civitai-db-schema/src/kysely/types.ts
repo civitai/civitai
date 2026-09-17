@@ -1016,6 +1016,26 @@ export type BlockSpendAttribution = {
    * (bounded, app-owned). NULL when the app supplied none.
    */
   shared_content_key: string | null;
+  /**
+   * The APP-FACING generation type this spend paid for: `textToImage`,
+   * `customComfy`, or a registered STEP ID (`convert-image`,
+   * `chat-completion`) — NEVER the orchestrator's internal `$type`
+   * (`convertImage` / `chatCompletion`), which is free to change without a
+   * wire-contract decision. A step id implies `kind: 'step'`, so one column
+   * covers the whole axis.
+   *
+   * Deliberately unconstrained TEXT — no CHECK, no enum. The step registry is
+   * designed to grow additively (register an entry, not a schema change), and
+   * a CHECK would make every new step type a migration. The bound is enforced
+   * in code against the registry (`resolveBlockGenerationType` /
+   * `isBlockGenerationType`).
+   *
+   * NULL on rows written before this column existed (no backfill is possible —
+   * the type was never recorded) and on any submit whose type could not be
+   * resolved. Resolution is fail-open: it degrades to NULL rather than
+   * throwing on the fire-and-forget spend path.
+   */
+  generation_type: string | null;
   status: Generated<string>;
   /**
    * 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no

@@ -2677,6 +2677,23 @@ describe('blocks.submitWorkflow', () => {
     expect(arg.buzzAmount).toBe(25);
   });
 
+  it('A-flow: stamps the APP-FACING generation type "textToImage" on the spend attribution', async () => {
+    // The spend row records WHICH capability the Buzz paid for, so a
+    // per-generation-type author fee has data to reason about. Literal
+    // expectation — never derived from the resolver under test.
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    happySubmitWithWorkflow(25, 'wf_real');
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+    expect(mockRecordSpendAttribution.mock.calls[0][0].generationType).toBe('textToImage');
+  });
+
   it('G5: threads the body sharedContentKey (opaque) through to the spend attribution', async () => {
     // The published-content-author key is app-supplied on the BODY and passed
     // OPAQUE to the service (which resolves the author server-side). Assert it
@@ -6389,6 +6406,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         buzzType: 'blue', // free-first floor when no paid debit is surfaced → 0 payout
         modelId: null, // recipe-based, no single user-picked model
         sharedContentKey: null, // customComfy body has no sharedContentKey field
+        generationType: 'customComfy', // the app-facing key for this kind
       });
     });
 
@@ -8276,6 +8294,28 @@ describe("step-type registry bridge (kind: 'step')", () => {
           sharedContentKey: null,
         })
       );
+    });
+
+    it('stamps the REGISTERED STEP ID as the generation type — not the orchestrator $type', async () => {
+      // 🔴 The design risk, pinned at the call site. The orchestrator returns
+      // `$type: 'convertImage'` for this submit (see happyStepSubmit), so a
+      // resolver reading the wrong side would produce a value that still looks
+      // plausible. The column must carry the registry id.
+      mockRecordSpendAttribution.mockClear();
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      await new Promise((r) => setTimeout(r, 0)); // fire-and-forget writes
+
+      expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+      const arg = mockRecordSpendAttribution.mock.calls[0][0];
+      expect(arg.generationType).toBe('convert-image');
+      expect(arg.generationType).not.toBe('convertImage');
+      // ...and it is NOT the `kind` — a step submit must be distinguishable from
+      // an image generation, which is the whole reason the column exists.
+      expect(arg.generationType).not.toBe('step');
+      expect(arg.generationType).not.toBe('textToImage');
     });
 
     // 🔴 THE USAGE DIMENSIONS. Every OTHER field on this row is identical to the
