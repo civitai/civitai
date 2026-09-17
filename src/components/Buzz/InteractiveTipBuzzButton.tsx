@@ -36,11 +36,6 @@ type Props = UnstyledButtonProps &
 
 const CLICK_AMOUNT = 10;
 const CONFIRMATION_TIMEOUT = 5000;
-// A press this soon after a clamp rewrote the amount did not follow from SEEING it. Covers
-// every gesture that supplies its own confirmation — a held Enter in the field, a held Enter
-// on the focused send button (which autorepeats clicks), a double-click — with one rule
-// instead of one per input device. The exact number is a judgement, not a measurement.
-const CLAMP_CONFIRM_DELAY = 500;
 
 /**NOTES**
  Why use zustand?
@@ -233,71 +228,42 @@ export function InteractiveTipBuzzButton({
     conditionalPerformTransaction(amount, performTransaction);
   };
 
-  const processEnteredNumber = (value: string) => {
-    let amount = Number(value);
-    if (isNaN(amount) || amount < 1) amount = 1;
-    else if (amount > buzzConstants.maxTipAmount) amount = buzzConstants.maxTipAmount;
-    else if (currencyBalance && amount > currencyBalance) amount = currencyBalance ?? 0;
-    setBuzzCounter(amount);
-
-    return amount;
-  };
-
   const amountFieldRef = useRef<HTMLDivElement>(null);
-  // -Infinity, not 0: performance.now() is milliseconds since navigation start, so a 0
-  // sentinel reads as "clamped at page load" and refuses every send for the first
-  // CLAMP_CONFIRM_DELAY of a document's life.
-  const clampShownAtRef = useRef(-Infinity);
-
-  // Ordering is a COUNTER, not a clock. performance.now() is clamped to 1ms in Firefox and
-  // Safari and 100us in Chromium without cross-origin isolation, and pointerdown and the
-  // blur it causes land in one event-loop turn — so the two stamps tie, `a < a` is false,
-  // and the guard reports "did not predate" for a press that did. A tie is a silent send of
-  // the whole balance, so the comparison must not be able to tie.
-  const eventSeqRef = useRef(0);
-  const clampSeqRef = useRef(0);
-  const pressSeqRef = useRef(0);
-  const markPressStart = () => {
-    pressSeqRef.current = ++eventSeqRef.current;
+  // Justin's ruling, 2026-09-17: REFUSE, never rewrite. The old code clamped an
+  // out-of-range entry to the balance or the cap and sent that, so a typo could spend a
+  // figure that had never been on screen. Nothing is substituted now — an amount is either
+  // sendable as typed or it is refused out loud, which is why there is no confirmation
+  // step, no delay and no press-ordering left to get wrong.
+  const enteredAmount = (el: HTMLElement | null) => {
+    const amount = Number(el?.textContent ?? '');
+    return Number.isInteger(amount) && amount >= 1 ? amount : null;
   };
 
-  const clampIsTooFreshToConfirm = () =>
-    performance.now() - clampShownAtRef.current < CLAMP_CONFIRM_DELAY;
-
-  // Ordering, which a duration cannot express. The press that confirms a clamp has to have
-  // BEGUN after it: pressing the icon is what blurs the field and causes the clamp, so the
-  // elapsed time at click is the length of the user's own hold. Hold the button past
-  // CLAMP_CONFIRM_DELAY and one uninterrupted press would otherwise confirm the figure it
-  // just rewrote — which on this path is the whole balance.
-  const pressPredatesClamp = () => pressSeqRef.current < clampSeqRef.current;
-
-  // Shared by blur and Enter. The comparison is on the STRING, not on Number(): a numeric
-  // comparison passes '5e3' and '0x32' untouched, which sends an amount the field does not
-  // read as. After a rewrite the field holds exactly amount.toString(), so this converges.
-  const applyEnteredAmount = (el: HTMLElement | null) => {
-    // No node means nothing is on screen to have been authorised. Refuse rather than fall
-    // back to a default and spend it.
-    if (!el) return { amount: 0, clamped: true };
-    const entered = el.textContent ?? '';
-    const amount = processEnteredNumber(entered);
-    const clamped = entered.trim() !== amount.toString();
-    // Written directly because buzzCounter may already equal the clamp, and then no
-    // re-render repaints dangerouslySetInnerHTML — the field would keep showing the
-    // rejected entry and never become sendable.
-    if (clamped) {
-      el.textContent = amount.toString();
-      clampShownAtRef.current = performance.now();
-      clampSeqRef.current = ++eventSeqRef.current;
+  const trySendTip = (el: HTMLElement | null) => {
+    const amount = enteredAmount(el);
+    if (amount === null) {
+      showNotification({ color: 'red', message: 'Enter a whole number of Buzz to tip.' });
+      return;
     }
-    return { amount, clamped };
+    if (amount > buzzConstants.maxTipAmount) {
+      showNotification({
+        color: 'red',
+        message: `The most you can tip at once is ${numberWithCommas(
+          buzzConstants.maxTipAmount
+        )} Buzz.`,
+      });
+      return;
+    }
+    setBuzzCounter(amount);
+    // Over the user's balance needs no branch here: conditionalPerformTransaction already
+    // refuses and surfaces "You don't have enough funds to send a tip", which is the
+    // visible refusal the ruling asks for.
+    sendTip(amount);
   };
 
   const reset = () => {
     setBuzzCounter(0);
     setShowCountDown(false);
-    clampShownAtRef.current = -Infinity;
-    clampSeqRef.current = 0;
-    pressSeqRef.current = 0;
     clearConfirmTimeout();
   };
 
@@ -456,7 +422,8 @@ export function InteractiveTipBuzzButton({
               <div
                 contentEditable={status === 'confirming'}
                 onBlur={(e) => {
-                  applyEnteredAmount(e.currentTarget);
+                  const amount = enteredAmount(e.currentTarget);
+                  if (amount !== null) setBuzzCounter(amount);
                   // Deliberately the ref, not the closed-over `status`: startConfirming
                   // re-enters the SPENDABLE state, and this path has no ledger dedup
                   // behind it. Chromium dispatches no blur when contentEditable flips
@@ -466,20 +433,13 @@ export function InteractiveTipBuzzButton({
                 }}
                 onKeyDown={(e) => {
                   if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
-                  // contentEditable would otherwise insert a newline, and Number() of a
-                  // two-line amount is NaN, which processEnteredNumber floors to 1 Buzz.
+                  // contentEditable would otherwise insert a newline, and a two-line amount
+                  // is not a number, so it would be refused rather than sent.
                   e.preventDefault();
-                  // Autorepeat would otherwise supply the confirming press itself, from a
-                  // key the user never released — and that press IS the safeguard.
+                  // Autorepeat: one held key must not send repeatedly. isPending catches the
+                  // second send once React has re-rendered; this catches it immediately.
                   if (e.repeat) return;
-                  const { amount, clamped } = applyEnteredAmount(e.currentTarget);
-                  // `clamped` is implied by the freshness check on BOTH send paths —
-                  // applyEnteredAmount stamps as it rewrites, microseconds earlier — so no
-                  // test can tell the two apart. The one case where it is not implied is the
-                  // null-element return, which refuses WITHOUT stamping. Kept as the
-                  // statement of intent, and because it stops being implied if that moves.
-                  if (clamped || clampIsTooFreshToConfirm()) return;
-                  sendTip(amount);
+                  trySendTip(e.currentTarget);
                 }}
                 onFocus={() => {
                   setShowCountDown(false);
@@ -498,38 +458,17 @@ export function InteractiveTipBuzzButton({
               onClick={
                 status === 'confirming'
                   ? () => {
-                      // Read the field rather than trusting buzzCounter. Where no blur
-                      // fires — touch, and engines that do not focus a button on
-                      // pointer-down — buzzCounter is whatever it was before the user
-                      // typed, and sendTip() would spend that instead of what is shown.
-                      // Where a blur DOES fire it has just clamped, and the freshness
-                      // check is what refuses that press.
-                      const { amount, clamped } = applyEnteredAmount(amountFieldRef.current);
-                      if (clamped || clampIsTooFreshToConfirm() || pressPredatesClamp()) return;
-                      sendTip(amount);
+                      // Read the field rather than trusting buzzCounter. Where no blur fires
+                      // — touch, and engines that do not focus a button on pointer-down —
+                      // buzzCounter is whatever it was before the user typed.
+                      trySendTip(amountFieldRef.current);
                     }
                   : undefined
               }
-              // A held Enter on this button autorepeats CLICKS, and once the hold passes
-              // CLAMP_CONFIRM_DELAY those clicks look like a deliberate confirmation. The
-              // freshness rule bounds how soon a confirmation can arrive; only this bounds
-              // one arriving from a key that was never released.
-              onPointerDown={markPressStart}
               onKeyDown={(e: React.KeyboardEvent) => {
-                if (e.key !== 'Enter') return;
-                // Autorepeat must not activate the button: a held Enter fires repeated
-                // clicks, and once the hold passes CLAMP_CONFIRM_DELAY they look deliberate.
-                if (e.repeat) {
-                  e.preventDefault();
-                  return;
-                }
-                // Keyboard Enter dispatches a click with NO pointer event, so without this the
-                // press ordering never advances and the icon is dead after any clamp.
-                // NOT covered: Space (buttons activate on keyup) and an activation that emits
-                // neither a key nor a pointer event, e.g. AXPress or element.click() — those
-                // are still refused after a clamp. Enumerating input devices is the wrong
-                // shape; the fix is a latch the activation consumes. See 868m64p4q.
-                markPressStart();
+                // A held Enter on a focused button autorepeats CLICKS. isPending catches the
+                // second send after a re-render; preventing the repeat stops it arriving.
+                if (e.repeat && e.key === 'Enter') e.preventDefault();
               }}
               loading={tipUserMutation.isPending}
             >

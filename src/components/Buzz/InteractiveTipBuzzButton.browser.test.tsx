@@ -19,9 +19,6 @@ const PAST_CLOSE = CONFIRMATION_TIMEOUT + 400;
 // factory dereferences this at hook-call time rather than while the module body runs.
 const { BALANCE } = vi.hoisted(() => ({ BALANCE: 500 }));
 // CLAMP_CONFIRM_DELAY in the component. A confirming press sooner than this is refused.
-// Must exceed CLAMP_CONFIRM_DELAY, or `an Enter held past the confirm delay` goes quietly
-// green: the repeat press would be refused by freshness rather than by the guard it names.
-const PAST_CLAMP_DELAY = 600;
 // Must stay below BALANCE, or the clamp fires in the tests that are not about clamping and
 // they fail as `to be called 1 times, but got 0` — a message that names none of this.
 const TYPED_AMOUNT = 50;
@@ -30,7 +27,17 @@ let mutationPending = false;
 const tipMutate = vi.fn<(vars: { amount: number; toAccountId: number }) => void>(() => {
   mutationPending = true;
 });
-const conditionalPerform = vi.fn((_amount: number, perform: () => void) => perform());
+const insufficientFunds = vi.fn();
+// Models useBuzzTransaction for real: it compares the amount against the balance and, when
+// short, surfaces a message INSTEAD of performing. A stub that always performs cannot observe
+// a refusal, which is the whole behaviour under test now.
+const conditionalPerform = vi.fn((amount: number, perform: () => void) => {
+  if (amount > BALANCE) {
+    insufficientFunds();
+    return;
+  }
+  perform();
+});
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ buzz: true, isGreen: false }),
@@ -74,6 +81,8 @@ vi.mock('./buzz.utils', async (importOriginal) => ({
   }),
 }));
 
+import { showNotification } from '@mantine/notifications';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
 import { InteractiveTipBuzzButton } from './InteractiveTipBuzzButton';
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -134,6 +143,7 @@ describe('InteractiveTipBuzzButton', () => {
     mutationPending = false;
     tipMutate.mockClear();
     conditionalPerform.mockClear();
+    insufficientFunds.mockClear();
   });
 
   // Brackets the deadline from both sides. The upper half alone passed with
@@ -214,97 +224,7 @@ describe('InteractiveTipBuzzButton', () => {
     expect(tipMutate).toHaveBeenCalledTimes(1);
   });
 
-  test('Enter on an over-balance amount shows the clamp instead of spending it', async () => {
-    const field = await openTipPopover();
-    field.focus();
-    field.textContent = String(BALANCE * 10);
-
-    await userEvent.keyboard('{Enter}');
-
-    expect(tipMutate).not.toHaveBeenCalled();
-    // Display sanity only. buzzCounter moves 10 -> 500 here, so React repaints the field to
-    // the clamp whatever the gate does; the direct write is pinned in the re-entry test.
-    expect(requireAmountField().textContent).toBe(String(BALANCE));
-  });
-
-  test('a second Enter sends the clamped amount', async () => {
-    const field = await openTipPopover();
-    field.focus();
-    field.textContent = String(BALANCE * 10);
-
-    await userEvent.keyboard('{Enter}');
-    expect(tipMutate).not.toHaveBeenCalled();
-
-    await wait(PAST_CLAMP_DELAY);
-    await userEvent.keyboard('{Enter}');
-
-    expect(tipMutate).toHaveBeenCalledTimes(1);
-    expect(tipMutate.mock.calls[0][0]).toMatchObject({ amount: BALANCE });
-  });
-
-  // The counter already equals the clamp here, so setBuzzCounter is a same-value no-op and
-  // React repaints nothing. Without the direct write the field keeps showing the rejected
-  // entry, every Enter compares it against the clamp again, and the tip can never be sent.
-  test('re-entering an over-balance amount is still recoverable', async () => {
-    const field = await openTipPopover();
-    field.focus();
-    field.textContent = String(BALANCE * 10);
-    // Asserted, not assumed: this is the test's PREMISE — the first Enter has to land and
-    // move buzzCounter to the clamp, or what follows is just the previous test again.
-    // (A dispatched event proves it too, but synchronously: React then repaints AFTER the
-    // re-entry below and overwrites it, so the second Enter reads the clamp and sends.)
-    await userEvent.keyboard('{Enter}');
-    expect(field.textContent).toBe(String(BALANCE));
-
-    field.textContent = String(BALANCE * 10);
-    await userEvent.keyboard('{Enter}');
-    expect(tipMutate).not.toHaveBeenCalled();
-    expect(requireAmountField().textContent).toBe(String(BALANCE));
-
-    await wait(PAST_CLAMP_DELAY);
-    await userEvent.keyboard('{Enter}');
-    expect(tipMutate).toHaveBeenCalledTimes(1);
-    expect(tipMutate.mock.calls[0][0]).toMatchObject({ amount: BALANCE });
-  });
-
-  // The send icon is the OTHER way to spend, and it was the hole: clicking it blurs the
-  // field, the blur clamps, and the click closure then spent buzzCounter — the clamped
-  // figure — while the user had authorised what was on screen a moment earlier.
-  test('the send icon shows the clamp instead of spending it', async () => {
-    const field = await openTipPopover();
-    field.focus();
-    field.textContent = String(BALANCE * 10);
-
-    await userEvent.click(sendButton());
-
-    expect(tipMutate).not.toHaveBeenCalled();
-    // Display sanity only, like its Enter twin: buzzCounter moves 10 -> 500, so React
-    // repaints to the clamp whatever the gate does. The direct write is pinned in
-    // `re-entering an over-balance amount is still recoverable`.
-    expect(requireAmountField().textContent).toBe(String(BALANCE));
-  });
-
-  test('a second click on the send icon sends the clamped amount', async () => {
-    const field = await openTipPopover();
-    field.focus();
-    field.textContent = String(BALANCE * 10);
-
-    await userEvent.click(sendButton());
-    expect(tipMutate).not.toHaveBeenCalled();
-
-    await wait(PAST_CLAMP_DELAY);
-    // pointerdown + click rather than userEvent.click: if the first click ever regressed
-    // into sending, the icon enters its loading state and userEvent's actionability wait
-    // turns a caught regression into a 15s timeout naming nothing. The pointerdown is not
-    // decoration — it is what advances the press ordering the guard compares.
-    sendButton().dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-    sendButton().dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-
-    expect(tipMutate).toHaveBeenCalledTimes(1);
-    expect(tipMutate.mock.calls[0][0]).toMatchObject({ amount: BALANCE });
-  });
-
-  test('the send icon still sends in one click when no clamp was needed', async () => {
+  test('the send icon sends the typed amount in one click', async () => {
     const field = await openTipPopover();
     field.focus();
     field.textContent = String(TYPED_AMOUNT);
@@ -313,54 +233,6 @@ describe('InteractiveTipBuzzButton', () => {
 
     expect(tipMutate).toHaveBeenCalledTimes(1);
     expect(tipMutate.mock.calls[0][0]).toMatchObject({ amount: TYPED_AMOUNT });
-  });
-
-  // The gate compares STRINGS. A numeric comparison passes this straight through, because
-  // Number('5e1') is exactly the amount that would be sent — and the field does not read as
-  // 50 to anyone looking at it. Same class as '050' and '0x32'.
-  test('an exponent-form entry shows what it resolves to before it can be sent', async () => {
-    const field = await openTipPopover();
-    field.focus();
-    field.textContent = '5e1';
-
-    await userEvent.keyboard('{Enter}');
-
-    expect(tipMutate).not.toHaveBeenCalled();
-    // Display sanity only — see the note in the over-balance test above.
-    expect(requireAmountField().textContent).toBe('50');
-  });
-
-  // Holding Enter on the FOCUSED SEND BUTTON autorepeats clicks, so the icon path had the
-  // same hole `e.repeat` closes for the field. One rule covers both: a press cannot confirm
-  // a figure that has not been on screen long enough to read.
-  test('a rapid second click does not confirm the clamp', async () => {
-    const field = await openTipPopover();
-    field.focus();
-    field.textContent = String(BALANCE * 10);
-
-    await userEvent.click(sendButton());
-    // Dispatched, not driven through userEvent: if this guard regresses the first click
-    // sends, the icon goes into its loading state, and userEvent's actionability wait turns
-    // a caught regression into a 15s timeout naming nothing instead of a failed assertion.
-    sendButton().dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-
-    expect(tipMutate).not.toHaveBeenCalled();
-  });
-
-  test('a rapid second Enter does not confirm the clamp', async () => {
-    const field = await openTipPopover();
-    field.focus();
-    field.textContent = String(BALANCE * 10);
-
-    await userEvent.keyboard('{Enter}');
-    // Dispatched: the gap between two AWAITED presses is wall-clock, and this is the only
-    // witness for the field's freshness guard. A loaded box could push the second press
-    // outside the 500ms window, where sending is correct — a false red on a money guard.
-    field.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
-    );
-
-    expect(tipMutate).not.toHaveBeenCalled();
   });
 
   // No pointer-down, so no blur — the case touch devices and some engines actually produce.
@@ -374,23 +246,6 @@ describe('InteractiveTipBuzzButton', () => {
 
     expect(tipMutate).toHaveBeenCalledTimes(1);
     expect(tipMutate.mock.calls[0][0]).toMatchObject({ amount: TYPED_AMOUNT });
-  });
-
-  // The freshness rule only bounds how SOON a confirmation can arrive. A key held past that
-  // window still autorepeats, so both of these need their own repeat guard — which is why
-  // each waits out CLAMP_CONFIRM_DELAY first. Delete either guard and the hold sends.
-  test('an Enter held past the confirm delay still does not confirm its own clamp', async () => {
-    const field = await openTipPopover();
-    field.focus();
-    field.textContent = String(BALANCE * 10);
-
-    await userEvent.keyboard('{Enter}');
-    await wait(PAST_CLAMP_DELAY);
-    field.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', repeat: true, bubbles: true, cancelable: true })
-    );
-
-    expect(tipMutate).not.toHaveBeenCalled();
   });
 
   test('the send button does not activate from an autorepeating key', async () => {
@@ -409,24 +264,6 @@ describe('InteractiveTipBuzzButton', () => {
     expect(held.defaultPrevented).toBe(true);
   });
 
-  // Pressing the icon is what blurs the field and causes the clamp, so blur-to-click elapsed
-  // is the length of the user's own hold. A single press held past CLAMP_CONFIRM_DELAY would
-  // otherwise confirm the figure it had just rewritten — the whole balance, on one gesture.
-  test('a press held past the confirm delay does not confirm the clamp it caused', async () => {
-    const field = await openTipPopover();
-    field.focus();
-    field.textContent = String(BALANCE * 10);
-
-    const button = sendButton();
-    button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-    field.blur();
-    await wait(PAST_CLAMP_DELAY);
-    button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-
-    expect(tipMutate).not.toHaveBeenCalled();
-    expect(requireAmountField().textContent).toBe(String(BALANCE));
-  });
-
   // Negative control for the button's repeat guard. Widen it to preventDefault on EVERY key
   // and the icon becomes unreachable by keyboard entirely — a deliberate Enter would do
   // nothing, on the confirm step of a money action.
@@ -443,38 +280,61 @@ describe('InteractiveTipBuzzButton', () => {
     expect(tipMutate.mock.calls[0][0]).toMatchObject({ amount: TYPED_AMOUNT });
   });
 
-  // Keyboard and AT activation dispatch a click with no pointer event. The ordering guard
-  // has to advance from somewhere, or after ANY clamp the icon is permanently dead for a
-  // user without a pointer — silently, with no state change to notice.
-  // The press BEGINS after the clamp (the focus shift is what clamped), so ordering allows it
-  // and only freshness can refuse. Tab to the icon and hit Enter and this is the real gesture.
-  test('an immediate keyboard press does not confirm the clamp the focus shift caused', async () => {
+  // Justin's ruling, 2026-09-17: REFUSE, never rewrite. Nothing is substituted for what the
+  // user typed — an over-balance amount sends nothing and says so, rather than silently
+  // becoming the balance. Do not "helpfully" clamp this back without asking him: the clamp is
+  // what let one keystroke spend a figure that had never been on screen.
+  test('an over-balance amount is refused, and the field is left as typed', async () => {
     const field = await openTipPopover();
     field.focus();
     field.textContent = String(BALANCE * 10);
-    sendButton().focus();
-    expect(document.activeElement).toBe(sendButton());
 
     await userEvent.keyboard('{Enter}');
 
     expect(tipMutate).not.toHaveBeenCalled();
+    expect(insufficientFunds).toHaveBeenCalledTimes(1);
+    expect(requireAmountField().textContent).toBe(String(BALANCE * 10));
   });
 
-  test('the send icon still works from the keyboard after a clamp', async () => {
+  test('an amount over the cap is refused without reaching the balance gate', async () => {
     const field = await openTipPopover();
     field.focus();
-    field.textContent = String(BALANCE * 10);
-    sendButton().focus();
-    // Pins the subject: without this, a future change that re-focused the field would send the
-    // Enter to the field handler — which has no ordering check — and this test would stay green
-    // while the keyboard-on-icon hole reopened.
-    expect(document.activeElement).toBe(sendButton());
-    await wait(PAST_CLAMP_DELAY);
+    field.textContent = String(buzzConstants.maxTipAmount + 1);
 
     await userEvent.keyboard('{Enter}');
 
+    expect(tipMutate).not.toHaveBeenCalled();
+    expect(conditionalPerform).not.toHaveBeenCalled();
+    expect(showNotification).toHaveBeenCalled();
+  });
+
+  test('a non-numeric entry is refused rather than floored to 1', async () => {
+    const field = await openTipPopover();
+    field.focus();
+    field.textContent = 'abc';
+
+    await userEvent.keyboard('{Enter}');
+
+    expect(tipMutate).not.toHaveBeenCalled();
+    expect(conditionalPerform).not.toHaveBeenCalled();
+  });
+
+  // The field's e.repeat guard is what covers a repeat arriving BEFORE React has re-rendered;
+  // after the re-render isPending catches it, which is why deleting e.repeat is invisible to
+  // every other test. Dispatched synchronously with no await, so no commit intervenes.
+  test('a repeat Enter arriving before the re-render does not send twice', async () => {
+    const field = await openTipPopover();
+    field.focus();
+    field.textContent = String(TYPED_AMOUNT);
+
+    const press = (repeat: boolean) =>
+      field.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', repeat, bubbles: true, cancelable: true })
+      );
+    press(false);
+    press(true);
+
     expect(tipMutate).toHaveBeenCalledTimes(1);
-    expect(tipMutate.mock.calls[0][0]).toMatchObject({ amount: BALANCE });
   });
 
   test('an IME composition commit does not send a tip', async () => {
