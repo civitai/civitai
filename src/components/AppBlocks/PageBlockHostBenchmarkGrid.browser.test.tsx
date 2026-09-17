@@ -267,8 +267,16 @@ describe('PageBlockHost GET_IMAGES_BY_IDS (per-viewer gated read)', () => {
     getImagesMutate.mockReset();
   });
 
-  test('forwards the ids + token and replies the gated projection (visible + hidden)', async () => {
+  test('forwards the ids + token and replies the gated projection VERBATIM', async () => {
+    // The host is a pass-through by design: the moderation decision is the
+    // server's and the host must not re-derive, summarise or drop any part of it
+    // (`PageBlockHost.tsx` sends the mutation's `result` straight back). So the
+    // fixture carries EVERY wire shape at once, and the `toEqual` below is what
+    // pins all of them — `ratingPending` in particular is the only signal telling
+    // a grid "show this, but claim no rating", and it would go missing silently
+    // if someone ever added a projection here.
     const images = [
+      // A rated, within-ceiling image: the full projection.
       {
         imageId: 1,
         status: 'visible',
@@ -278,70 +286,42 @@ describe('PageBlockHost GET_IMAGES_BY_IDS (per-viewer gated read)', () => {
         width: 512,
         height: 512,
       },
+      // Withheld — above the ceiling, flagged, OR (for a non-author) not yet
+      // rated. All three collapse to this one token on purpose.
       { imageId: 2, status: 'hidden' },
+      // The viewer's OWN not-yet-rated image: url, and NO rating fields.
+      {
+        imageId: 3,
+        status: 'visible',
+        ratingPending: true,
+        url: 'edge:3',
+        width: 512,
+        height: 512,
+      },
     ];
     getImagesMutate.mockResolvedValue({ images });
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const replies = listenForReply();
 
-    postFromBlock('GET_IMAGES_BY_IDS', { requestId: 'rq_get', imageIds: [1, 2] });
+    postFromBlock('GET_IMAGES_BY_IDS', { requestId: 'rq_get', imageIds: [1, 2, 3] });
 
-    expect(getImagesMutate).toHaveBeenCalledWith({ blockToken: 'tok_abc', imageIds: [1, 2] });
+    expect(getImagesMutate).toHaveBeenCalledWith({ blockToken: 'tok_abc', imageIds: [1, 2, 3] });
     await vi.waitFor(() => {
       const r = replies.last('IMAGES_RESULT');
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_get', result: { images } });
     });
-    // The hidden entry carries NO url on the wire.
     const payload = replies.last('IMAGES_RESULT')!.payload as {
       result: { images: Array<Record<string, unknown>> };
     };
+    // The hidden entry carries NO url on the wire…
     expect(payload.result.images[1]).not.toHaveProperty('url');
-    replies.stop();
-  });
-
-  test('passes a `pending` / `ratingPending` entry through VERBATIM — no host projection', async () => {
-    // The host is a pass-through by design: the moderation decision is the
-    // server's and the host must not re-derive, summarise or drop any part of it.
-    // These two states are the ones that would go missing silently if someone
-    // ever added a projection here — `ratingPending` is the only signal telling a
-    // grid "show this, but claim no rating", and a dropped `pending` collapses
-    // back into the "hidden ⇒ mature" guess this whole seam exists to stop.
-    const images = [
-      // The viewer's OWN not-yet-rated image: url, and NO rating fields.
-      {
-        imageId: 1,
-        status: 'visible',
-        ratingPending: true,
-        url: 'edge:1',
-        width: 512,
-        height: 512,
-      },
-      // Another author's not-yet-rated image: withheld, and says WHY.
-      { imageId: 2, status: 'pending' },
-    ];
-    getImagesMutate.mockResolvedValue({ images });
-    renderWithProviders(<PageBlockHost {...baseProps} />);
-    await driveToReady();
-    const replies = listenForReply();
-
-    postFromBlock('GET_IMAGES_BY_IDS', { requestId: 'rq_pending', imageIds: [1, 2] });
-
-    await vi.waitFor(() => {
-      const r = replies.last('IMAGES_RESULT');
-      if (!r) throw new Error('no reply yet');
-      expect(r.payload).toEqual({ requestId: 'rq_pending', result: { images } });
-    });
-    const payload = replies.last('IMAGES_RESULT')!.payload as {
-      result: { images: Array<Record<string, unknown>> };
-    };
-    // The owner entry asserts NO rating…
-    expect(payload.result.images[0]).toHaveProperty('ratingPending', true);
-    expect(payload.result.images[0]).not.toHaveProperty('nsfwLevel');
-    expect(payload.result.images[0]).not.toHaveProperty('contentRating');
-    // …and the other author's pending entry still carries no url.
-    expect(payload.result.images[1]).not.toHaveProperty('url');
+    // …and the owner's unrated entry asserts NO rating. (`toEqual` already
+    // forbids extra keys; named so a "helpful default" has to delete a line.)
+    expect(payload.result.images[2]).toHaveProperty('ratingPending', true);
+    expect(payload.result.images[2]).not.toHaveProperty('nsfwLevel');
+    expect(payload.result.images[2]).not.toHaveProperty('contentRating');
     replies.stop();
   });
 

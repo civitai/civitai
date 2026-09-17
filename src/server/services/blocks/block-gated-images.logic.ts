@@ -21,6 +21,16 @@ import { Flags } from '~/shared/utils/flags';
  *     freshly-published, never-scanned image render as *"rated mature"* — a
  *     rating claim about an image nothing had rated. Carries NO url of its own;
  *     the caller decides who may see the bytes (see the OWNER note below).
+ *
+ *     🔴 `pending` IS AN INTERNAL VERDICT AND IS NEVER PUT ON THE WIRE. The one
+ *     caller that acts on it (`getBlockGatedImagesByIds`) turns it into
+ *     `visible` + `ratingPending` for the image's OWN AUTHOR and into `hidden`
+ *     for everyone else, so a block still receives exactly the two statuses it
+ *     received before. That is deliberate: telling a NON-author "this one is
+ *     merely unscanned" would make the remaining `hidden` cells a positive
+ *     assertion that a rating exists and is above their ceiling — an
+ *     enumeration bit nobody asked for. Every other caller must keep refusing
+ *     anything that is not `visible`.
  *   - `hidden`  — withheld from this viewer (flagged, hard-blocked, scan-refused,
  *     or above their browsing ceiling). The host returns NO url — the block
  *     renders a blurred/placeholder cell. This is the cross-user moderation

@@ -24,7 +24,7 @@ import { BLOCK_PUBLISHED_APP_ID_META_KEY } from '~/server/services/blocks/block-
  * clamp (mirroring canonical `getAllImages`' non-owner path) applies:
  *   - blocked-users / blocked-tags → EXCLUDED at the query level (omitted),
  *   - above-ceiling / flagged / hard-blocked / scan-refused → `hidden` (NO url),
- *   - not yet rated → `pending` (NO url) for everyone EXCEPT the image's own
+ *   - not yet rated → `hidden` (NO url) for everyone EXCEPT the image's own
  *     author, who gets it `visible` + `ratingPending` (url, no rating claim),
  *   - within-ceiling + scanned + unflagged → the moderated projection.
  * The load-bearing per-row decision is {@link classifyGatedImageForViewer} (pure,
@@ -39,31 +39,41 @@ const GATED_IMAGE_EDGE_WIDTH = 1200;
 
 /**
  * The per-viewer projection returned to a block. `visible` carries the display
- * data (incl. a gated edge url); `pending` and `hidden` carry ONLY the id +
- * status — the block can NEVER obtain the url for either.
- * Mirrors `@civitai/app-sdk/blocks`' `BlockGatedImage` — keep in lockstep.
+ * data (incl. a gated edge url); `hidden` carries ONLY the id + status — the
+ * block can NEVER obtain the url for it.
+ * Mirrors `@civitai/app-sdk/blocks`' `BlockGatedImage` — keep in lockstep. That
+ * lockstep is ENFORCED, not merely asked for: see the drift guard at
+ * `src/server/services/blocks/__tests__/block-gated-image-sdk-drift.test.ts`.
  *
- * 🔴 THREE STATES, BECAUSE TWO COULD NOT TELL THE TRUTH. `hidden` used to mean
- * both "a rating exists and it is not for you" AND "nothing has rated this yet",
- * so a block had one token to render and guessed: a lighthouse published seconds
- * earlier came back `hidden` and was displayed as *"Hidden — rated mature"* — a
- * rating claim about an unrated image, which a page reload then contradicted the
- * moment the scan landed. `pending` is that second meaning, named.
+ * 🔴 STILL EXACTLY TWO WIRE STATUSES — `pending` IS NOT ONE OF THEM, BY
+ * DECISION. The per-row verdict {@link classifyGatedImageForViewer} does have a
+ * third state (`pending` — nothing has rated this image yet), but it is consumed
+ * HERE and never emitted: a non-author sees the same `hidden` token they saw
+ * before this change, so the cross-user wire shape is TOKEN-identical to the old
+ * behaviour, not merely byte-identical in its withholding. Emitting `pending` to
+ * a non-author would have ADDED a disclosure bit — post-change `hidden` would
+ * then positively assert "a rating exists and it is above your ceiling", letting
+ * a SFW viewer of a shared grid enumerate which cells are mature-or-flagged
+ * rather than merely unscanned. Nobody asked for a "still processing" placeholder
+ * on other people's cells; the defect being fixed is about the AUTHOR's own
+ * freshly-published image, so the fix stays on the author's path.
  *
- * 🔴 `ratingPending` IS A VISIBLE-WITH-NO-RATING, AND IT IS OWNER-ONLY. When the
- * requesting viewer IS the image's author, their own not-yet-rated image comes
- * back `visible` WITH the url and WITHOUT `nsfwLevel`/`contentRating` — show the
- * pixels, claim no rating. This grants the author nothing they did not already
- * hold: the row exists only because THEIR workflow produced it and they
- * confirmed the publish, and the block already received that image's
- * orchestrator url from its own `pollWorkflow`. For every OTHER viewer an
- * unrated image is `pending` with no url — byte-identical withholding to the
- * `hidden` it used to return.
+ * 🔴 `ratingPending` IS A VISIBLE-WITH-NO-RATING, AND IT IS OWNER-ONLY — it is
+ * the ONLY thing this change puts on the wire. When the requesting viewer IS the
+ * image's author, their own not-yet-rated image comes back `visible` WITH the url
+ * and WITHOUT `nsfwLevel`/`contentRating` — show the pixels, claim no rating.
+ * This grants the author nothing they did not already hold: the row exists only
+ * because THEIR workflow produced it and they confirmed the publish, and the
+ * block already received that image's orchestrator url from its own
+ * `pollWorkflow`. Every OTHER viewer gets `hidden`, exactly as before.
  *
- * 🔴 `nsfwLevel`/`contentRating` ARE OPTIONAL ON `visible` FOR THAT REASON ONLY.
- * They are present on every rated image exactly as before, and absent ONLY on an
- * owner's `ratingPending` entry. A consumer must not read them as "rated G" when
- * missing — that is the bug this type change exists to stop.
+ * 🔴 `nsfwLevel`/`contentRating` ARE OPTIONAL ON `visible` FOR THAT REASON ONLY,
+ * and that IS a wire break for a deployed block. They are present on every rated
+ * image exactly as before, and absent ONLY on an owner's `ratingPending` entry —
+ * so a block that dereferences them on a `visible` entry can now read
+ * `undefined`. A consumer must not read a missing value as "rated G"; that is the
+ * bug this type change exists to stop. The known consumer is
+ * `civitai-app-gen-matrix` (`MaturityImage.tsx`, `App.tsx`, `gallery.ts`).
  */
 export type BlockGatedImage =
   | {
@@ -79,7 +89,6 @@ export type BlockGatedImage =
       /** Present ONLY on the viewer's OWN not-yet-rated image. */
       ratingPending?: true;
     }
-  | { imageId: number; status: 'pending' }
   | { imageId: number; status: 'hidden' };
 
 /**
@@ -204,12 +213,18 @@ export async function getBlockGatedImagesByIds(input: {
       // CLAMP. Nothing has rated this image yet. Its AUTHOR may see it — they
       // generated it, they confirmed the publish, and their block already holds
       // the same picture's orchestrator url from `pollWorkflow`, so the gated
-      // edge url adds no reach. Every other viewer gets `pending` with NO url:
-      // identical withholding to the `hidden` this case used to return, now
-      // merely saying WHY, so a grid can render "still processing" instead of
-      // inventing a maturity rating.
+      // edge url adds no reach.
+      //
+      // 🔴 EVERY OTHER VIEWER GETS `hidden` — THE VERDICT'S THIRD STATE STOPS
+      // HERE AND NEVER REACHES THE WIRE. Not because `pending` would leak the
+      // bytes (it carries no url either), but because SAYING SO is itself a
+      // disclosure: if unrated cells reported `pending`, then a `hidden` cell
+      // would positively assert "a rating exists and it is above your ceiling",
+      // and a SFW viewer could enumerate which cells of someone else's grid are
+      // mature-or-flagged. Collapsing both into `hidden` keeps the non-author
+      // wire shape TOKEN-identical to the pre-change behaviour.
       if (row.userId !== input.userId) {
-        images.push({ imageId: id, status: 'pending' });
+        images.push({ imageId: id, status: 'hidden' });
         continue;
       }
       images.push({

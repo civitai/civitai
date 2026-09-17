@@ -2265,10 +2265,11 @@ export function PageBlockHost({
 
   // GET_IMAGES_BY_IDS → blocks.getImagesByIds → IMAGES_RESULT. Per-viewer gated
   // read of the shared-grid image ids. The SERVER self-binds the viewer + applies
-  // their browsing-level clamp (an above-ceiling / flagged image comes back
-  // `hidden` with NO url; one nothing has rated YET comes back `pending`, also
-  // with no url, unless the viewer is its own author — see BlockGatedImage's
-  // `ratingPending`). An empty (post-sanitization) id list short-circuits
+  // their browsing-level clamp (an above-ceiling / flagged image — and anyone
+  // else's not-yet-rated one — comes back `hidden` with NO url; the viewer's OWN
+  // not-yet-rated image comes back `visible` with the url and NO rating, see
+  // BlockGatedImage's `ratingPending`). An empty (post-sanitization) id list
+  // short-circuits
   // to an empty result — never hitting the server schema (which requires ≥1 id).
   // REQUEST-style ⇒ reply on every path; on a null token we reply with the error variant.
   useEffect(() => {
@@ -3345,9 +3346,9 @@ export function PageBlockHost({
         });
         const image = result.images.find((i) => i.imageId === req.imageId);
         if (!image || image.status !== 'visible') {
-          // Withheld (hidden / above-ceiling / flagged, or `pending` — another
-          // author's not-yet-rated image) or unresolvable → never saveable. Do NOT
-          // leak which reason. The viewer's OWN not-yet-rated image comes back
+          // Withheld (hidden / above-ceiling / flagged, or another author's
+          // not-yet-rated image) or unresolvable → never saveable. Do NOT leak
+          // which reason. The viewer's OWN not-yet-rated image comes back
           // `visible` + `ratingPending`, so it IS saveable — it is theirs, and the
           // block was already handed the same picture by `pollWorkflow`.
           send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'image is not available' });

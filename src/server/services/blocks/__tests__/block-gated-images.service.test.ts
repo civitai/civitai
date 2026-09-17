@@ -153,7 +153,15 @@ describe('getBlockGatedImagesByIds', () => {
   // token an above-ceiling image gets — so the grid had nothing to render but a
   // maturity claim about an image nothing had rated.
 
-  it("reports ANOTHER author's not-yet-rated image as PENDING, still with no url", async () => {
+  it("leaves ANOTHER author's not-yet-rated image exactly as it was — HIDDEN", async () => {
+    // 🔴 THE NON-AUTHOR WIRE SHAPE IS UNCHANGED BY THIS PR, DELIBERATELY. The
+    // verdict distinguishes "nothing has rated this" from "rated, above your
+    // ceiling"; the projection does NOT pass that distinction on to a viewer who
+    // is not the author. Emitting a third token here would carry a disclosure
+    // bit — every remaining `hidden` cell would then positively assert "a rating
+    // exists and it is above your ceiling", letting a SFW viewer enumerate which
+    // cells of someone else's grid are mature-or-flagged rather than merely
+    // unscanned. Token-identical, not merely byte-identical in its withholding.
     queryRaw.mockResolvedValue([
       clean(1, { ingestion: ImageIngestionStatus.Pending }),
       clean(2, { nsfwLevel: 0 }), // scanned, no level written yet
@@ -165,13 +173,40 @@ describe('getBlockGatedImagesByIds', () => {
       userId: VIEWER, // NOT the author (AUTHOR)
     });
     expect(images).toEqual([
-      { imageId: 1, status: 'pending' },
-      { imageId: 2, status: 'pending' },
+      { imageId: 1, status: 'hidden' },
+      { imageId: 2, status: 'hidden' },
     ]);
-    // The withholding is byte-identical to the `hidden` it replaced: no url of
-    // any kind — neither the gated edge url nor the raw storage key.
+    // No url of any kind — neither the gated edge url nor the raw storage key.
     expect(JSON.stringify(images)).not.toContain('url');
     expect(JSON.stringify(images)).not.toContain('key-1');
+  });
+
+  it("NEVER puts the verdict's third state on the wire for a non-author", async () => {
+    // The companion to the case above, stated as a property over EVERY row shape
+    // that reaches the `pending` verdict — the two ingestion routes, an unknown
+    // ingestion value, and a re-scan of an already-rated row — so a future branch
+    // that forwards `pending` for one of them cannot hide behind the two fixtures
+    // above. The wire union has exactly two statuses (pinned at compile time in
+    // `blockGatedImageSdkParity.ts`); this is the runtime half.
+    queryRaw.mockResolvedValue([
+      clean(1, { ingestion: ImageIngestionStatus.Pending }),
+      clean(2, { ingestion: ImageIngestionStatus.PendingManualAssignment }),
+      clean(3, { ingestion: ImageIngestionStatus.Error }),
+      clean(4, { ingestion: 'SomeFutureState' }),
+      clean(5, { nsfwLevel: 0 }),
+      clean(6, { ingestion: ImageIngestionStatus.Rescan }), // rated, re-scanning
+    ]);
+    const { images } = await getBlockGatedImagesByIds({
+      imageIds: [1, 2, 3, 4, 5, 6],
+      browsingLevel: SFW,
+      appId: APP,
+      userId: VIEWER, // NOT the author
+    });
+    expect(images.map((i) => i.status)).toEqual(Array(6).fill('hidden'));
+    // Not merely "not the string `pending`" — the token appears NOWHERE in the
+    // payload, `ratingPending` included (that one is owner-only, and no row here
+    // belongs to the viewer).
+    expect(JSON.stringify(images).toLowerCase()).not.toContain('pending');
   });
 
   it("shows the VIEWER'S OWN not-yet-rated image, claiming no rating", async () => {
