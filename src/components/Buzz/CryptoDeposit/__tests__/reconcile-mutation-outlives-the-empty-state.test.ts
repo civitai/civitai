@@ -51,4 +51,26 @@ describe('reconcile mutation ownership', () => {
     expect(bodyOf('function EmptyDepositState(')).not.toContain('useReconcileDeposits(');
     expect(bodyOf('function CheckDepositsNotice(')).not.toContain('useReconcileDeposits(');
   });
+
+  // The count above scans this file only, so it is sound only while the hook is
+  // module-private. Exported, a second consumer elsewhere would be invisible to it.
+  it('is not exported, which is what makes counting one file enough', () => {
+    // String.raw, not a literal: a heredoc turned the \b in this pattern into an
+    // actual backspace byte once already, which matches nothing and passes forever.
+    expect(SOURCE).not.toMatch(
+      new RegExp(String.raw`export\s+(function\s+)?useReconcileDeposits\b`)
+    );
+    expect(SOURCE).not.toMatch(
+      new RegExp(String.raw`export\s*\{[^}]*useReconcileDeposits`)
+    );
+  });
+
+  // The stamp has to be taken at click time. Moved into the hook body it would be
+  // re-read on every render, the comparison would always match, and nothing would
+  // ever be marked stale.
+  it('stamps the total in onMutate, not in render', () => {
+    const hook = bodyOf('function useReconcileDeposits(');
+    expect(hook).toContain('onMutate');
+    expect(hook.indexOf('totalAtMutate.current = total')).toBeGreaterThan(hook.indexOf('onMutate'));
+  });
 });

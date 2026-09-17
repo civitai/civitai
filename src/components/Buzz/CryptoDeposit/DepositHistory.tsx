@@ -44,7 +44,6 @@ export function DepositHistory() {
   const perPage = 3;
   const utils = trpc.useUtils();
   const { status: signalStatus } = useSignalContext();
-  const reconcile = useReconcileDeposits(total);
 
   const { data, isLoading } = trpc.nowPayments.getDepositHistory.useQuery(
     { page, perPage },
@@ -79,6 +78,7 @@ export function DepositHistory() {
   );
   const total = data?.total ?? 0;
   const totalPages = Math.ceil(total / perPage);
+  const reconcile = useReconcileDeposits(total);
 
   if (!isClient) return null;
 
@@ -437,6 +437,34 @@ function BonusBuzzPopover({
 
 type Reconcile = ReturnType<typeof useReconcileDeposits>;
 
+// A result describes the list as it stood when the button was pressed. Once the list
+// moves — the signal delivers the deposit, another tab reconciles — a nothing-found or
+// an error no longer describes what the user is looking at, so the notice falls back to
+// idle rather than captioning the new list with the old answer. The total is stamped in
+// onMutate, at click time, so a deposit landing mid-request cannot consume the
+// comparison and leave the wrong label up for good.
+//
+// A found-result is exempt and must stay exempt. It normally moves the list, because
+// crediting invalidates the query — so treating it as stale wipes the confirmation with
+// its own refetch, which is the bug this file exists to fix (ClickUp 868m6j63r). Not
+// always, though: reconciling a deposit already listed as Confirming credits an
+// existing row and adds none, leaving the total unchanged.
+export function isResultStale({
+  found,
+  isSuccess,
+  isError,
+  totalAtMutate,
+  total,
+}: {
+  found: boolean;
+  isSuccess: boolean;
+  isError: boolean;
+  totalAtMutate: number;
+  total: number;
+}) {
+  return !found && (isSuccess || isError) && totalAtMutate !== total;
+}
+
 // Owned by DepositHistory rather than by the notice: a successful reconcile
 // repopulates the list, which unmounts the empty-state branch. A mutation living
 // in the notice would take its own success state down with it, so the user never
@@ -455,22 +483,17 @@ function useReconcileDeposits(total: number) {
 
   const found = mutation.isSuccess && mutation.data.processed > 0;
 
-  // A result describes the list as it stood when the button was pressed. Once the
-  // list moves — the signal delivers the deposit, another tab reconciles — a nothing-
-  // found or an error no longer describes what the user is looking at, so the notice
-  // falls back to idle rather than captioning the new list with the old answer.
-  // Stamped in onMutate, which runs at click time and so cannot be outrun by the
-  // request: without it, a deposit landing mid-flight consumes the comparison and the
-  // wrong label sticks for good.
-  //
-  // A found-result is exempt, and must stay exempt: it is the one result that ALWAYS
-  // moves the list, because it invalidates the query itself. Treat it as stale and the
-  // confirmation is wiped by its own refetch — which is the bug this whole file is
-  // about. See ClickUp 868m6j63r.
-  const resultIsStale =
-    !found && (mutation.isSuccess || mutation.isError) && totalAtMutate.current !== total;
-
-  return { mutation, found, resultIsStale };
+  return {
+    mutation,
+    found,
+    resultIsStale: isResultStale({
+      found,
+      isSuccess: mutation.isSuccess,
+      isError: mutation.isError,
+      totalAtMutate: totalAtMutate.current,
+      total,
+    }),
+  };
 }
 
 function CheckDepositsNotice({ reconcile }: { reconcile: Reconcile }) {
