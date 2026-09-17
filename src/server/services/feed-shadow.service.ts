@@ -91,9 +91,7 @@ const UNSUPPORTED_KEYS = [
 ] as const;
 const UNSUPPORTED_FLAGS = [
   'hidden',
-  'withMeta',
   'requiringMeta',
-  'fromPlatform',
   'hideAutoResources',
   'hideManualResources',
   'hideChallenges',
@@ -211,6 +209,8 @@ export function mapSearchInputToFeedQuery(
   const newCreatorIds = ints(newCreators);
   if (newCreatorIds.length) params.set('userIds', newCreatorIds.join(','));
   if (types.length) params.set('types', types.join(','));
+  if (input.withMeta === true) params.set('withMeta', '1');
+  if (input.fromPlatform === true) params.set('fromPlatform', '1');
   const baseModels = Array.isArray(input.baseModels)
     ? input.baseModels.map(String).filter(Boolean)
     : [];

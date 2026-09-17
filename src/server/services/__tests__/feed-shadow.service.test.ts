@@ -37,6 +37,15 @@ describe('parseShadowConfig', () => {
   });
 });
 
+describe('meta flags', () => {
+  it('asks the feed for images with visible meta, and for on-site ones', () => {
+    const m = mapSearchInputToFeedQuery({ ...base, withMeta: true, fromPlatform: true });
+    const q = m.ok ? new URLSearchParams(m.query) : new URLSearchParams();
+    expect(q.get('withMeta')).toBe('1');
+    expect(q.get('fromPlatform')).toBe('1');
+  });
+});
+
 describe('mapSearchInputToFeedQuery', () => {
   it('maps the search shape onto the feed query', () => {
     const m = mapSearchInputToFeedQuery({
