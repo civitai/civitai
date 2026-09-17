@@ -1,32 +1,42 @@
 import { describe, expect, it, vi } from 'vitest';
 
-// These two cases pin a DECISION, not an implementation detail: `he` is imported statically in
-// normalize-text.ts and must stay that way. Making it lazy again reddens both; that is the point.
-// If `he` has to leave the client bundle, its replacement still has to decode on the first call;
-// a decoder that warms up asynchronously is not an option for this module, because callers read
-// its output synchronously and two of them can straddle an `await`.
-//
-// `vi.resetModules()` is what makes these tests capable of failing at all: a lazily-initialised
-// decoder is only ever un-warmed in a fresh module instance.
+// These cases pin the decision recorded in normalize-text.ts rather than re-deriving it here.
+// `vi.resetModules()` is what makes them capable of failing at all: a lazily-initialised decoder
+// is only ever un-warmed in a fresh module instance.
 describe('normalizeText HTML-entity decoding', () => {
-  const input = 'red &amp; blue';
-  const decoded = 'red & blue';
-
-  it('decodes entities on the FIRST call in a fresh module instance', async () => {
+  it('decodes on the FIRST call in a fresh module instance', async () => {
     vi.resetModules();
     const { normalizeText } = await import('~/utils/normalize-text');
 
-    expect(normalizeText(input)).toBe(decoded);
+    expect(normalizeText('red &amp; blue')).toBe('red & blue');
   });
 
-  it('returns the same text before and after an await, so two callers cannot disagree', async () => {
+  // Both reads are anchored to the decoded value, not to each other. `after === before` would
+  // pass when a decoder warms up only after the wait and both reads are undecoded, which is
+  // worse than what this pins. The post-await read is not independently protective, since
+  // nothing here can un-warm a decoder; this case earns its place by naming the straddle that
+  // the audit paths perform, so a future decoder cannot satisfy it by warming up late.
+  it('decodes on both sides of an await, so two callers cannot disagree', async () => {
     vi.resetModules();
     const { normalizeText } = await import('~/utils/normalize-text');
 
-    const beforeAwait = normalizeText(input);
+    const beforeAwait = normalizeText('red &amp; blue');
     await new Promise((resolve) => setTimeout(resolve, 10));
-    const afterAwait = normalizeText(input);
+    const afterAwait = normalizeText('red &amp; blue');
 
-    expect(afterAwait).toBe(beforeAwait);
+    expect(beforeAwait).toBe('red & blue');
+    expect(afterAwait).toBe('red & blue');
+  });
+
+  // These pin THIS module, not `he`: decoding runs BEFORE the accent fold, it covers numeric and
+  // hex references, and it is single-pass. A compact hand-rolled substitute reddens them.
+  it('decodes before folding accents, handles numeric and hex refs, and does not re-decode', async () => {
+    vi.resetModules();
+    const { normalizeText } = await import('~/utils/normalize-text');
+
+    expect(normalizeText('&eacute;clair')).toBe('eclair');
+    expect(normalizeText('&#38;')).toBe('&');
+    expect(normalizeText('&#x26;')).toBe('&');
+    expect(normalizeText('&amp;amp;')).toBe('&amp;');
   });
 });

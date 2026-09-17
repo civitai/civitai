@@ -1,11 +1,10 @@
 import { decode } from 'he';
 
-// Static, not a lazy `import('he')`. The lazy form handed back an identity `decode` until the
-// dynamic import resolved, so the first input containing an entity was normalized without being
-// decoded, and two callers normalizing the same input either side of an `await` could then see
-// two different results. Keep the decode synchronous on the first call. `he` is ~98KB of source,
-// nearly all entity table, so if it has to leave the client bundle the replacement still has to
-// decode on the first call rather than warm up.
+// Static, deliberately. `he` was made a lazy `import()` in 4aede4ff99 to shrink the client
+// bundle; the lazy form handed back an identity `decode` until it resolved, and every caller here
+// reads the result synchronously, some of them twice either side of an `await`. So a decoder that
+// is not available on the FIRST call is not an option, whatever replaces this one. If you came
+// here to shrink the bundle again: `he` is ~98KB of source, nearly all entity table.
 export function normalizeText(input?: string): string {
   if (!input) return '';
   let result = input;
