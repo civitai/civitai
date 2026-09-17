@@ -4867,12 +4867,30 @@ export const blocksRouter = router({
   /**
    * Cross-user gated image read — the read half of the Model-Benchmarking
    * shared-grid seam. Given the image ids a benchmark grid stored, returns a
-   * per-VIEWER gated projection: `visible` (moderated projection incl. a gated
-   * edge url) for images this viewer may see, `hidden` (NO url) for anything
-   * above their browsing ceiling / unscanned / flagged. The clamp is the block
-   * token's `maxBrowsingLevel` (the platform-computed viewer+domain ceiling),
-   * failed closed to the public floor — a block can NEVER obtain an unclamped url
-   * for an image the viewer isn't allowed to see.
+   * per-VIEWER gated projection with exactly two statuses:
+   *
+   *  - `visible` — the moderated projection incl. a gated edge url. TWO shapes
+   *    now live under this one status. A RATED image carries `nsfwLevel` +
+   *    `contentRating` exactly as before. An image NOTHING HAS RATED YET carries
+   *    NEITHER, plus `ratingPending: true` — and is returned ONLY to the image's
+   *    own author. 🔴 So `nsfwLevel`/`contentRating` are OPTIONAL on a `visible`
+   *    entry: a consumer must not read a missing one as "rated G". That absence
+   *    is the fix — a freshly-published image used to come back `hidden`, and
+   *    the grid rendered its author's own unrated lighthouse as "rated mature".
+   *  - `hidden` — NO url, for everything else: above their browsing ceiling,
+   *    flagged, hard-blocked, scan-refused, AND (for every viewer who is not the
+   *    author) not yet rated. 🔴 The last case is deliberately NOT given a
+   *    status of its own on the wire. Distinguishing "unscanned" from "above
+   *    your ceiling" for someone else's image would let a SFW viewer enumerate
+   *    which cells of a shared grid are mature-or-flagged; the per-row verdict
+   *    does draw that distinction (`classifyGatedImageForViewer`'s `pending`),
+   *    and the service consumes it on the owner path alone.
+   *
+   * The clamp is the block token's `maxBrowsingLevel` (the platform-computed
+   * viewer+domain ceiling), failed closed to the public floor — a block can NEVER
+   * obtain an unclamped url for an image the viewer isn't allowed to see, and the
+   * owner affordance above does not widen it: an author's RATED above-ceiling
+   * image is still `hidden` from them.
    *
    * The read is scoped to bare (post-less) rows THIS app PUBLISHED (the
    * `blockPublishedAppId` provenance marker = the token's own `appId`), so a
