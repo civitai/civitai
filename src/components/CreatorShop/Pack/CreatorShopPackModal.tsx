@@ -58,7 +58,17 @@ type Bundlable = PackMemberPricing & {
 
 const memberUses = (member: Bundlable) => stickerUsesFromCosmeticData(member.data);
 
-export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem }) {
+/**
+ * The fields the editor reads off the row it was opened from. Everything else it
+ * needs comes from `getPack`, so a caller that holds a different row shape — the
+ * moderator cosmetic-store list — can open it without a manage-page query.
+ */
+export type PackEditTarget = Pick<
+  CreatorShopManageItem,
+  'id' | 'title' | 'description' | 'unitAmount' | 'availableQuantity'
+>;
+
+export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
   const { submitPack, updatePack } = useMutateCreatorShop();
