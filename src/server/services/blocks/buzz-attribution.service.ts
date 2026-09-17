@@ -16,6 +16,7 @@ import {
   newBlockSpendAttributionId,
   newBlockSubscriptionAttributionId,
 } from '~/server/utils/app-block-ids';
+import { observeBlockAuthorFee } from './author-fee';
 import { isBlockGenerationType, type BlockGenerationType } from './generation-type';
 import {
   computeRateCardSplit,
@@ -322,6 +323,32 @@ export type RecordSpendAttributionInput = {
    * money/audit row.
    */
   generationType?: BlockGenerationType | null;
+  /**
+   * Optional BASE generation cost in Buzz — the orchestrator's
+   * `WorkflowCost.base` for this workflow.
+   *
+   * 🔴 THIS IS NOT `buzzAmount`, AND THE DIFFERENCE IS THE WHOLE POINT OF THE
+   * FIELD. `buzzAmount` above is the realized PAID DEBIT, a gross that already
+   * carries the per-resource model LICENSING fees (`WorkflowCost.fees`), the
+   * lineage fee and the viewer's tips — the orchestrator charges the sum and
+   * settles each component to its own recipient. The per-generation AUTHOR FEE
+   * is additive on top of the BASE and stacks alongside those components, so a
+   * percentage of `buzzAmount` would take a cut of another creator's licensing
+   * fee and of the viewer's tip, and would compound as more fee-charging
+   * resources are stacked onto one generation.
+   *
+   * Nothing downstream can tell the two apart — both are plain positive Buzz
+   * numbers — so the distinction has to be made by the CALLER, which reads
+   * `cost.base` off the raw orchestrator submit response. It is not reachable
+   * from the block-facing snapshot: `BlockWorkflowSnapshot.cost` is
+   * deliberately `{ total }` only, and widening that wire shape would publish
+   * the platform's cost breakdown to every third-party app.
+   *
+   * Used ONLY by the dark author-fee OBSERVATION below. It is never persisted:
+   * omit it, or pass null, and the observation records a `base-unavailable` skip
+   * instead of computing against a number that means something else.
+   */
+  baseGenerationBuzz?: number | null;
 };
 
 export type RecordSpendAttributionResult = {
@@ -608,6 +635,41 @@ export async function recordSpendAttribution(
       },
     });
 
+    // PER-GENERATION AUTHOR FEE — DARK OBSERVATION ONLY (slice 1). Computes
+    // what the additive, author-set, viewer-paid fee WOULD be for this
+    // generation and reports it to the counters + the log line below. It moves
+    // no money, writes no column, and is unreachable unless
+    // `app-blocks-author-fee-enabled` is on. Settlement onto the licensing-fee
+    // rail is a later slice; this exists so that slice can be sized from real
+    // traffic before anyone is charged.
+    //
+    // 🔴 OBSERVED AFTER THE SUCCESSFUL WRITE, NOT BEFORE IT. This row is
+    // idempotent on (workflowId, appBlockId); a re-poll / retry lands in the
+    // P2002 branch below and must NOT observe a second fee for one generation,
+    // or the sizing number is inflated by exactly the retry rate.
+    //
+    // 🔴 SELF-SPEND IS OBSERVED LIKE ANY OTHER GENERATION — deliberately, and
+    // this is a DIVERGENCE from how attribution behaves two lines up, where
+    // `isSelfSpend` voids the row and `computeSpendShare` zeroes the share. A
+    // bounty is the platform paying an author out of platform money, so paying
+    // an author for their own spend is a wash. The author fee is the VIEWER
+    // paying the author, and an author using their own app is a viewer like any
+    // other. ⚠️ FLAGGED FOR SLICE 2: at settlement that becomes a Buzz
+    // transaction from an account to ITSELF, which is at best a no-op and may be
+    // rejected outright. Slice 1's shape does not make that harder — the
+    // observation carries no recipient, and `isSelfSpend` is already on this
+    // log line beside the fee — but the settlement writer has to decide
+    // explicitly whether a self-transfer is skipped or netted, rather than
+    // discovering it from a rejected transaction.
+    //
+    // Non-throwing by contract, and belt-and-braces caught anyway: this sits
+    // after an already-billed submit on a fire-and-forget path.
+    const authorFee = await observeBlockAuthorFee({
+      // 🔴 NOT `buzzAmount` — see the field docs on RecordSpendAttributionInput.
+      baseGenerationBuzz: input.baseGenerationBuzz ?? null,
+      generationType,
+    }).catch(() => ({ observed: false, reason: 'flag-disabled' } as const));
+
     logToAxiom(
       {
         name: SPEND_ATTRIBUTION_LOG_NAME,
@@ -635,6 +697,19 @@ export async function recordSpendAttribution(
         // appBountyDailyTotal=0). Surfaces a clamp the moment the cap bites.
         appBountyClamped: bountyReservation.clamped,
         appBountyDailyTotal: bountyReservation.total,
+        // DARK author-fee observability. All bounded scalars: the fee and the
+        // base are Buzz integers, `authorFeeLeg` / `authorFeeParamsSource` are
+        // closed enums, and `authorFeeSkipped` names which of the two skip
+        // populations this row fell into. Present on every row so the sizing
+        // read has a denominator: a row with `authorFeeSkipped:'flag-disabled'`
+        // is a generation the fee did not see, not a generation with no fee.
+        authorFeeObserved: authorFee.observed,
+        authorFeeSkipped: authorFee.observed ? null : authorFee.reason,
+        authorFeeBuzz: authorFee.observed ? authorFee.computation.feeBuzz : null,
+        authorFeeBaseBuzz: authorFee.observed ? authorFee.computation.baseGenerationBuzz : null,
+        authorFeeLeg: authorFee.observed ? authorFee.computation.governingLeg : null,
+        authorFeeParamsSource: authorFee.observed ? authorFee.computation.source : null,
+        authorFeeParamsClamped: authorFee.observed ? authorFee.computation.clamped : null,
       },
       'webhooks'
     ).catch(() => null);

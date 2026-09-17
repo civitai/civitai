@@ -617,6 +617,43 @@ export async function isAppBlocksBackpayEnabled(): Promise<boolean> {
 }
 
 /**
+ * Dedicated GLOBAL flag for the PER-GENERATION AUTHOR FEE (slice 1).
+ *
+ * The fee is an additive, author-set, viewer-paid charge on each generation an
+ * app runs — `max(flatBuzz, pctOfBase × base_generation_buzz)`. Slice 1 computes
+ * it and reports it to Prometheus + Axiom so the settlement slice can be sized
+ * from real traffic; it moves no money and writes no row. This flag is what
+ * keeps even that computation off the production path until someone asks for it.
+ *
+ * GLOBAL (no user context), like `app-blocks-pipeline-enabled` /
+ * `app-blocks-backpay-enabled`: the only caller is the fire-and-forget
+ * spend-attribution writer, which is machine-side and has no session to segment
+ * on. The viewer identity is on the row, not in the gate.
+ *
+ * OPERATOR NOTE: create `app-blocks-author-fee-enabled` as a PLAIN GLOBAL
+ * BOOLEAN — base `enabled`, NO segment. A global eval returns the flag's BASE
+ * value, so a segment can neither match nor restrict: base `false` + a rollout
+ * stays dark for everyone (safe but confusing), and base `true` + a rollout is
+ * ON for everyone while looking restricted (not safe). See GLOBAL-EVAL SEMANTICS
+ * at the top of this file.
+ *
+ * Fail-safe: the flag does NOT exist in Flipt as this merges, and an absent flag
+ * — like an unreachable Flipt — evaluates `false` unconditionally. That half is
+ * genuinely fail-closed, so the as-merged behaviour is fully dark and cannot
+ * regress open.
+ */
+export const APP_BLOCKS_AUTHOR_FEE_FLAG = 'app-blocks-author-fee-enabled';
+
+/**
+ * GLOBAL fail-closed gate for the per-generation AUTHOR FEE computation.
+ * See APP_BLOCKS_AUTHOR_FEE_FLAG for the fail-safe reasoning, and
+ * `~/server/services/blocks/author-fee` for what it gates.
+ */
+export async function isAppBlocksAuthorFeeEnabled(): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_AUTHOR_FEE_FLAG);
+}
+
+/**
  * Dedicated mod-segmented flag for the MOD REVIEW SANDBOX (#2831 second half).
  *
  * When a moderator reviews a PENDING publish request they can spin up the

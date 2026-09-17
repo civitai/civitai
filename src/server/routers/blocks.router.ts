@@ -5750,6 +5750,15 @@ export const blocksRouter = router({
       // (which runs AFTER the try/catch) can read the REALIZED per-account
       // debit — `submitted` is a try-block `const` and is out of scope there.
       let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
+      // Hoisted for the same reason as `realizedTransactions` above: the DARK
+      // per-generation author-fee observation needs the orchestrator's BASE cost,
+      // and it is NOT reachable from `snapshot`. 🔴 `BlockWorkflowSnapshot.cost` is
+      // deliberately `{ total }` ONLY — that is the block-facing WIRE shape, and
+      // widening it would publish the platform's cost breakdown to every
+      // third-party app for a number no app has asked for. So the base is read off
+      // the raw orchestrator response here and passed to the attribution writer,
+      // never surfaced to the block.
+      let realizedBaseCost: number | null = null;
       try {
         // Daily-boost autoclaim. Cost cleared the install's budget cap; check
         // whether the user's actual spendable Buzz can pay for it. If they're
@@ -5802,6 +5811,7 @@ export const blocksRouter = router({
         // validation inside `createBlockTextToImageStep` above.
         snapshot = snapshotFromWorkflow(submitted, { modelSubstitutions });
         realizedTransactions = submitted.transactions;
+        realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
       } catch (e) {
         // No resolved submit → undo the reservation (net-equivalent to the old
         // "only record after a resolved submit" behavior) and propagate. Refund
@@ -6080,6 +6090,14 @@ export const blocksRouter = router({
             generationType: resolveBlockGenerationType(textToImageBody, {
               imageWorkflowType: generateInput.workflow,
             }),
+            // BASE generation cost, for the DARK per-generation author-fee
+            // observation only (never persisted). 🔴 `.base`, NOT `.total` and
+            // NOT `buzzAmount` above: `total` already carries the per-resource
+            // model licensing fees, the lineage fee and the viewer's tips, and
+            // the author fee is additive ON TOP of the base and stacks alongside
+            // those. Absent → the observation records a skip rather than
+            // computing against a number that means something else.
+            baseGenerationBuzz: realizedBaseCost,
           });
         })().catch(() => {
           /* best-effort: a failed attribution write never breaks submit */
@@ -8033,6 +8051,10 @@ async function submitCustomComfyWorkflow(opts: {
   // `submitted` is a try-block `const` and is out of scope there. Mirrors the
   // txt2img path (~:3646).
   let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
+  // The orchestrator's BASE cost, for the DARK author-fee observation. Hoisted
+  // for the same reason, and read off the raw response rather than `snapshot`,
+  // for the reason spelled out on the txt2img path.
+  let realizedBaseCost: number | null = null;
   // Captured just before the orchestrator submit → the server-side proxy for the
   // job's submit instant, so the settle-time wall-clock metric measures
   // submit→terminal-observation (incl. GPU queue-wait). Observability-only.
@@ -8077,6 +8099,7 @@ async function submitCustomComfyWorkflow(opts: {
     });
     snapshot = snapshotFromWorkflow(submitted);
     realizedTransactions = submitted.transactions;
+    realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
   } catch (e) {
     await refundBlockBuzzReservation(reservation, ceiling);
     if (appSpendReserve) {
@@ -8245,6 +8268,10 @@ async function submitCustomComfyWorkflow(opts: {
         // parsed. Non-throwing: an unresolvable sub-axis degrades to the bare
         // `customComfy` key, an unresolvable body to NULL.
         generationType: resolveBlockGenerationType(body),
+        // BASE generation cost for the DARK author-fee observation — `.base`,
+        // never `.total` (which already carries licensing fees and tips) and
+        // never `buzzAmount`. Same rule as the txt2img path.
+        baseGenerationBuzz: realizedBaseCost,
       });
     })().catch(() => {
       /* best-effort: a failed attribution write never breaks submit */
@@ -9142,6 +9169,10 @@ async function submitStepWorkflow(opts: {
   // Hoisted out of the try so the post-submit spend-attribution closure can read
   // the REALIZED per-account debit.
   let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
+  // The orchestrator's BASE cost, for the DARK author-fee observation. Hoisted
+  // for the same reason, and read off the raw response rather than `snapshot`,
+  // for the reason spelled out on the txt2img path.
+  let realizedBaseCost: number | null = null;
   const submittedAt = Date.now();
   try {
     // `orchestratorStep` + `tags` were built above the quote — the SAME objects
@@ -9161,6 +9192,7 @@ async function submitStepWorkflow(opts: {
     });
     snapshot = snapshotFromWorkflow(submitted);
     realizedTransactions = submitted.transactions;
+    realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
   } catch (e) {
     await refundBlockBuzzReservation(reservation, reserveBuzz);
     if (appSpendReserve) {
@@ -9474,6 +9506,10 @@ async function submitStepWorkflow(opts: {
         // step invocation row's `detail`. `isBlockGenerationType` refuses
         // `convert-image:<anything>` for exactly that reason.
         generationType: resolveBlockGenerationType(body),
+        // BASE generation cost for the DARK author-fee observation — `.base`,
+        // never `.total` (which already carries licensing fees and tips) and
+        // never `buzzAmount`. Same rule as the txt2img path.
+        baseGenerationBuzz: realizedBaseCost,
       });
     })().catch(() => {
       /* best-effort: a failed attribution write never breaks submit */
