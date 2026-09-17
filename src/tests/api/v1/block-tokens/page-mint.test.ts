@@ -482,9 +482,19 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
       expect(body.buzzBudget).toBe(signArg.buzzBudget);
     });
 
-    it('OMITS buzzBudget from the response when the token carries no spend scope', async () => {
-      // A ceiling is meaningless without the scope it bounds, and a present-but-
-      // undefined key would make a block distinguish two shapes for one state.
+    // INVARIANT GUARD (green on both sides of this change — not a regression
+    // test): no spend scope ⇒ the response reports NO ceiling.
+    //
+    // 🔴 ASSERTED ON THE SERIALIZED BODY, WHICH IS THE ONLY LAYER WHERE THE CLAIM
+    // MEANS ANYTHING. `makeRes()` stores whatever object the handler passed to
+    // `json()`, un-serialized, while the real `res.json()` goes through
+    // `JSON.stringify`. So an in-memory `not.toHaveProperty('buzzBudget')` would
+    // be testing the handler's object-literal SPELLING, not the bytes: stringify
+    // drops an `undefined`-valued key either way, meaning that assertion passes
+    // for both spellings and fails for neither — coverage in appearance only.
+    // Round-tripping first pins the thing a block actually receives, and stays
+    // red against a real regression (`buzzBudget: null`, or a 0 default).
+    it('reports NO buzzBudget on the wire when the token carries no spend scope', async () => {
       mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
         grantedScopes: [],
         revokedAt: null,
@@ -497,7 +507,8 @@ describe('POST /api/v1/block-tokens — W10 page mint', () => {
       expect(res._status).toBe(200);
       const signArg = mockTokenService.sign.mock.calls[0][0];
       expect(signArg.buzzBudget).toBeUndefined();
-      expect(res._body as object).not.toHaveProperty('buzzBudget');
+      const onTheWire = JSON.parse(JSON.stringify(res._body)) as object;
+      expect(onTheWire).not.toHaveProperty('buzzBudget');
     });
 
     it('clamps a manifest budget above the cap to BUZZ_BUDGET_CAP (1000)', async () => {

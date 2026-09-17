@@ -259,6 +259,19 @@ describe('POST /api/v1/block-tokens — Phase 2 dev-tunnel author-own mint', () 
     expect(arg.appBlockId).toBe('ephemeral-my-app');
     expect(arg.blockInstanceId).toBe('page_ephemeral-my-app');
     expect(typeof arg.buzzBudget).toBe('number'); // budget set (spend granted)
+    // ── REGRESSION: the RESPONSE BODY must MIRROR the signed ceiling ──────────
+    // Every other assertion in this file reads `sign()`'s ARGUMENT, so the whole
+    // dev-tunnel surface could stop reporting `buzzBudget` to the client — or
+    // report a number that disagrees with the gate — and this suite would stay
+    // green. That is the exact defect this change exists to close (a field that
+    // reached the signer but not the host), reintroduced on the surface the
+    // original fix did not cover: the tunnel is where an author dogfoods the
+    // pre-check, so an inert ceiling here ships as a working one.
+    //
+    // Compared AGAINST the signed value, never a literal: a body that reported a
+    // DIFFERENT ceiling than the gate enforces is the one failure this field can
+    // newly introduce, and only this comparison sees it.
+    expect(res._body.buzzBudget).toBe(arg.buzzBudget);
   });
 
   it('sources the BRAND-NEW scope decision from the SESSION + the flag (never the body): passes both to the resolver', async () => {
@@ -307,6 +320,10 @@ describe('POST /api/v1/block-tokens — Phase 2 dev-tunnel author-own mint', () 
     expect(arg.scopes).toEqual(['user:read:self']);
     expect(arg.scopes).not.toContain('ai:write:budgeted');
     expect(arg.buzzBudget).toBeUndefined(); // no spend granted → no budget
+    // INVARIANT GUARD (green on both sides): no spend granted ⇒ no ceiling on the
+    // wire either. Serialized first — `makeRes()` keeps the raw object, so only
+    // the round-trip tests what a client receives (see page-mint.test.ts).
+    expect(JSON.parse(JSON.stringify(res._body))).not.toHaveProperty('buzzBudget');
   });
 
   it('a resolver with NO scopes → a valid READ-ONLY token (no spend), still 200', async () => {

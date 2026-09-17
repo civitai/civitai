@@ -237,6 +237,15 @@ describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () 
     expect(arg.domain).toBeNull();
     // Budget from the manifest page.buzzBudgetPerGen (75), clamped to the dev cap (250).
     expect(arg.buzzBudget).toBe(75);
+    // ── REGRESSION: the RESPONSE BODY must MIRROR the signed ceiling ──────────
+    // The companion of the same guard in dev-tunnel-mint.test.ts, and needed
+    // separately because this branch resolves its budget from a DIFFERENT source
+    // (the approved manifest snapshot, not the session grant). Every other
+    // assertion here reads `sign()`'s ARGUMENT, so this branch could stop
+    // reporting the ceiling to the host — the exact defect this change closes —
+    // with the suite fully green. Compared against the signed value, not a
+    // literal, so a body that disagreed with the gate would also fail.
+    expect(res._body.buzzBudget).toBe(arg.buzzBudget);
     // Ownership resolve was called with the real id + caller + write db.
     expect(mockBlockRegistry.resolveOwnedNonApprovedPageBlock).toHaveBeenCalledWith(
       'apb_real',
@@ -330,6 +339,10 @@ describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () 
     const arg = mockTokenService.sign.mock.calls[0][0] as any;
     expect(arg.scopes).toEqual(['user:read:self']);
     expect(arg.buzzBudget).toBeUndefined(); // no spend scope → no budget
+    // INVARIANT GUARD (green on both sides): no spend scope ⇒ no ceiling on the
+    // wire either. Serialized first — see page-mint.test.ts for why the raw
+    // `_body` cannot settle an omission claim.
+    expect(JSON.parse(JSON.stringify(res._body))).not.toHaveProperty('buzzBudget');
   });
 
   it('a read-only approved snapshot (no ai:write:budgeted) mints no budget', async () => {

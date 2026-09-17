@@ -514,9 +514,13 @@ async function tryDevTunnelScopedMint(args: {
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
     // The per-call Buzz ceiling this dev token was SIGNED with (dev-capped). Same
-    // plaintext mirror as the public path — an author dogfooding a spend app in
-    // the tunnel needs to see the ceiling their submits are judged against.
-    ...(buzzBudget !== undefined ? { buzzBudget } : {}),
+    // plaintext mirror as the public path, and it has to be here rather than only
+    // on the public path: the tunnel is where an author DOGFOODS the very
+    // pre-check this field exists to enable, so a tunnel that withheld it would
+    // let the author test their app with the check silently inert and ship it
+    // believing it worked. `undefined` when no spend scope survived the clamp —
+    // see the public branch for why that needs no conditional spread.
+    buzzBudget,
     // Still narrowed by the author's OWN browsing level: forced-SFW caps the
     // domain half, it says nothing about the viewer half. An author with NSFW
     // off dogfoods at PG here, exactly as they would on the public run page.
@@ -693,7 +697,7 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
     // The signed per-call Buzz ceiling — see the ephemeral branch above.
-    ...(buzzBudget !== undefined ? { buzzBudget } : {}),
+    buzzBudget,
     // See the ephemeral branch above: forced-SFW is the DOMAIN half only.
     effectiveBrowsingLevel: resolveEffectiveBrowsingLevel({
       req,
@@ -1291,10 +1295,18 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     //
     // DISCLOSES NOTHING NEW: `buzzBudget` is already a claim inside the JWT in
     // the `token` field of this very response, which the same caller holds and
-    // can base64-decode. Absent (undefined ⇒ key omitted) whenever the token
-    // carries no `ai:write:budgeted` scope — a ceiling is meaningless without the
-    // scope it bounds.
-    ...(buzzBudget !== undefined ? { buzzBudget } : {}),
+    // can base64-decode — and `/api/v1/blocks/me` already returns it outright to
+    // any block holding `user:read:self`. This saves a round-trip and a scope; it
+    // does not reveal a number the caller could not already obtain.
+    //
+    // 🔴 PLAIN `buzzBudget,`, NOT A CONDITIONAL SPREAD — the omit-vs-present-and-
+    // undefined distinction is UNOBSERVABLE here and pretending otherwise buys a
+    // guard that cannot fail. `res.json()` serializes through `JSON.stringify`,
+    // which drops an `undefined`-valued key unconditionally, so both spellings put
+    // exactly the same bytes on the wire. The distinction IS observable on the
+    // postMessage envelope in `PageBlockHost` — structured clone PRESERVES
+    // `key: undefined` — and that is the one place it is spelled conditionally.
+    buzzBudget,
     // The PER-VIEWER narrowing of the line above. `maxBrowsingLevel` is a
     // property of the domain and is identical for every viewer on it; this is
     // that ceiling intersected with the viewer's own NSFW browsing level, and

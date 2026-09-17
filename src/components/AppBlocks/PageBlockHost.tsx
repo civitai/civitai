@@ -1201,8 +1201,13 @@ export function PageBlockHost({
       // about the capabilities it holds.
       scopes: grantedScopes,
       expiresAt: expiresAt ?? '',
-      // Omitted (not `undefined`) when the token carries no spend scope, so a
-      // block can test presence rather than having to distinguish the two.
+      // 🔴 CONDITIONAL *HERE*, AND ONLY HERE. This envelope crosses `postMessage`,
+      // whose structured clone PRESERVES a `key: undefined` entry — so omitting is
+      // a real, observable difference on this surface and a block may test
+      // `'buzzBudget' in token`. The mint's HTTP response spells the same field
+      // plainly, because `JSON.stringify` drops `undefined` keys and the two
+      // spellings are byte-identical there; a conditional spread on that side
+      // would read as a guarantee nothing could break.
       ...(buzzBudget !== undefined ? { buzzBudget } : {}),
     }),
     [token, grantedScopes, expiresAt, buzzBudget]
