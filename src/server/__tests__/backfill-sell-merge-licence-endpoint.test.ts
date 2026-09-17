@@ -102,10 +102,10 @@ function call(
     end: () => res,
   };
   handlerCalls += 1;
-  return handler(req, res as never).then(() => ({
-    statusCode,
-    payload: payload as Record<string, unknown>,
-  }));
+  return handler(req, res as never).then(() => {
+    statuses.push(statusCode);
+    return { statusCode, payload: payload as Record<string, unknown> };
+  });
 }
 
 const sqlTextOf = (calls: unknown[][], index = 0) =>
@@ -128,10 +128,12 @@ const predicatesOf = (calls: unknown[][], index = 0) => sqlValuesOf(calls, index
 const RAW_SURFACES = ['$queryRaw', '$queryRawUnsafe', '$executeRaw', '$executeRawUnsafe'] as const;
 
 let handlerCalls = 0;
+let statuses: number[] = [];
 
 describe('backfill-sell-merge-licence', () => {
   beforeEach(() => {
     handlerCalls = 0;
+    statuses = [];
     vi.clearAllMocks();
     // reset, not clear: clearAllMocks leaves a queued mockResolvedValueOnce behind, and a leaked
     // once-value surfaces in the NEXT test, which misattributes the cause.
@@ -149,14 +151,19 @@ describe('backfill-sell-merge-licence', () => {
   // no assertion to fail. No branch of this endpoint legitimately issues more than one raw statement
   // per client per request, so the bound holds everywhere, including in tests nobody has written yet.
   //
-  // The surface list is derived and applied to BOTH clients rather than hand-listed per side: the
-  // first version of this hook guarded `$queryRawUnsafe` on the read and `$executeRaw*` on the write,
-  // which reproduced the very defect it exists to close — `dbWrite.$queryRawUnsafe` passed it.
+  // ONE shared surface list applied to both clients — hand-typed, not computed, with the liveness
+  // checks below standing in for the type gate this file does not get. The first version of this hook
+  // listed surfaces per side, guarding `$queryRawUnsafe` on the read and `$executeRaw*` on the write,
+  // which reproduced the very defect it exists to close: `dbWrite.$queryRawUnsafe` passed it.
   //
-  // Per handler CALL, not per test, because two cases drive the handler twice on purpose. Two
-  // consequences worth knowing before adding a test: do NOT mix a refused call and a real one in the
-  // same test, since each refused call buys a budget of one that the real call can then spend; and
-  // `it.concurrent` anywhere in this file makes `handlerCalls` a shared racy counter and the bound
+  // The budget is per handler CALL and is spent only by calls the handler ANSWERED with a 2xx, or
+  // never answered at all. A call it refused with a 4xx should have issued no statement, so it buys
+  // nothing — which is what covers the refusal branches, five of which assert only one client
+  // per-test and would otherwise let a statement through on the other. `>= 400` and not `!== 200`
+  // deliberately: the test where `queueUpdate` rejects never reaches `res.status`, so its recorded
+  // status stays 0, and `!== 200` would give it budget 0 and a false red.
+  //
+  // `it.concurrent` anywhere in this file would make these counters shared and racy, and the bounds
   // meaningless.
   //
   // What it does NOT cover, stated because the previous version of this comment overclaimed: it is an
@@ -167,14 +174,22 @@ describe('backfill-sell-merge-licence', () => {
     const rawStatements = (client: (typeof dbMock)['dbRead']) =>
       RAW_SURFACES.reduce((total, surface) => total + client[surface].mock.calls.length, 0);
 
-    expect(rawStatements(dbMock.dbRead)).toBeLessThanOrEqual(handlerCalls);
-    expect(rawStatements(dbMock.dbWrite)).toBeLessThanOrEqual(handlerCalls);
+    const budget = handlerCalls - statuses.filter((status) => status >= 400).length;
+    expect(rawStatements(dbMock.dbRead)).toBeLessThanOrEqual(budget);
+    expect(rawStatements(dbMock.dbWrite)).toBeLessThanOrEqual(budget);
 
-    // The hook checking its own wiring. `RAW_SURFACES` is hand-typed strings indexed into a mock that
-    // FABRICATES a `vi.fn()` for any property name, and `src/**/__tests__/**` is excluded from
-    // tsconfig, so `'$querryRaw'` would yield a live spy that is never called: every bound above goes
-    // permanently vacuous with nothing red. A client that demonstrably ran a statement must therefore
-    // contribute to its own sum.
+    // The hook checking its own wiring, because nothing else can. `RAW_SURFACES` is hand-typed
+    // strings indexed into a mock that FABRICATES a `vi.fn()` for any property name, and
+    // `src/**/__tests__/**` is excluded from tsconfig — so a typo yields a live spy that is never
+    // called, and the assertion it was supposed to carry passes vacuously forever. Every entry is
+    // pinned to the property it names, and a client that demonstrably ran a statement must contribute
+    // to its own sum.
+    expect(RAW_SURFACES.map((surface) => dbMock.dbRead[surface])).toEqual([
+      dbMock.dbRead.$queryRaw,
+      dbMock.dbRead.$queryRawUnsafe,
+      dbMock.dbRead.$executeRaw,
+      dbMock.dbRead.$executeRawUnsafe,
+    ]);
     for (const client of [dbMock.dbRead, dbMock.dbWrite]) {
       if (client.$queryRaw.mock.calls.length) expect(rawStatements(client)).toBeGreaterThan(0);
     }
