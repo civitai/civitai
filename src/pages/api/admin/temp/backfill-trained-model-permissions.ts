@@ -112,13 +112,19 @@ import { booleanString } from '~/utils/zod-helpers';
 // Measured on the prod replica 2026-09-15 against the pre-migration `{Sell}` shape: 0 of 346,139
 // Trained post-cutoff rows, and 147,916 already carry the repair's own target shape. The repair
 // has run; `totalChanged: 0` means "already done". (The 146,503 above is the population it moved.)
-// Tolerating that shape is not the same as wanting to widen it. A `{Sell}`-only row inside this
-// endpoint's scope becomes five members here, which is the intent for a row the wizard defaulted and
-// wrong for one an API client posted deliberately — and after `backfill-sell-merge-licence` runs, the
-// same is true of `{Sell,SellMerge}`. So a re-run needs the population checked first, not just the
-// scope. Measured on the prod replica 2026-09-17: 4,372 rows carry `{Sell}` alone, and 0 of them are
-// Trained-and-post-cutoff, so this endpoint's scope excludes every one. The only remaining producer is
-// an API client posting `['Sell']` on a Trained upload; the wizard now sends the five-value default.
+// 🔴 Tolerating that shape is not the same as wanting to widen it, and the population changed on
+// 2026-09-17: a one-off script granted `SellMerge` to 422,428 legacy models carrying `Sell`, so
+// `{Sell,SellMerge}` is now a live shape rather than a hypothetical one. Measured on the prod replica
+// straight after that run: 4,372 rows are exactly `{Sell,SellMerge}`, 0 rows are `{Sell}` alone, and
+// 0 of either are Trained-and-post-2024-06-12 — so this endpoint's own scope excludes every one of
+// them TODAY, which is the only reason a `repair` re-run is currently harmless.
+//
+// It stops being harmless the moment one such row appears in scope, because `repair` widens a matched
+// row to the full five members. That is the intent for a row the training wizard defaulted, and wrong
+// for one whose owner chose it: an API client posting `['Sell']` on a Trained upload is the remaining
+// producer, since the wizard now sends the five-value default. So a re-run needs its POPULATION
+// checked, not just its scope — count the two shapes above inside the scope first, and only run if
+// that count is 0.
 const defaultedCommercialUseShapes = Prisma.sql`(
   m."allowCommercialUse" @> ARRAY['Sell']::"CommercialUse"[]
   AND m."allowCommercialUse" <@ ARRAY['Sell', 'SellMerge']::"CommercialUse"[]
