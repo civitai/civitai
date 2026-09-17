@@ -265,9 +265,7 @@ describe('the moderator cosmetic-store pack edit route', () => {
       updateBlock,
       'CreatorShopPackModal must still SEND `acceptsBlueBuzz` when it differs from the ' +
         'saved pack, or the setting becomes unchangeable.'
-    ).toContain(
-      '...(acceptsBlueBuzz !== !!existing?.meta.acceptsBlueBuzz ? { acceptsBlueBuzz } : {})'
-    );
+    ).toContain('...(blueChanged ? { acceptsBlueBuzz } : {})');
   });
 
   it('re-validates membership only when membership was supplied', () => {
@@ -325,6 +323,17 @@ describe('the moderator cosmetic-store pack edit route', () => {
       '`repriced` must be `price !== undefined` — a price of 0 is still a repricing, ' +
         'and anything narrower silently disables the price path.'
     ).toContain('const repriced = price !== undefined;');
+
+    // `members` is resolved only for the edits that read it, so the predicate has
+    // to cover every consumer. Narrowing it hands an EMPTY list to whichever
+    // check it drops — and an empty list passes the floor, the blockers and the
+    // bundlable comparison silently rather than refusing.
+    expect(
+      update,
+      'The member resolve must stay guarded by everything that reads it: reSnapshot ' +
+        'covers the asserts, the floor and the snapshot rows; acceptsBlueBuzz covers ' +
+        'the blue blockers.'
+    ).toContain('const needsMembers = reSnapshot || acceptsBlueBuzz !== undefined;');
     expect(update, '`membershipSupplied` must be `memberCosmeticIds !== undefined`.').toContain(
       'const membershipSupplied = memberCosmeticIds !== undefined;'
     );
@@ -469,7 +478,17 @@ describe('the moderator cosmetic-store pack edit route', () => {
     expect(
       canSubmitBlock,
       'canSubmit must still refuse blue-accepting with a blocking member.'
-    ).toContain('!(acceptsBlueBuzz && blueBlockers.length)');
+    ).toContain('!(blueChanged && acceptsBlueBuzz && blueBlockers.length)');
+
+    // What `blueChanged` MEANS, not only that it is used. Widen it to `true` and
+    // the client refuses a title fix on a pack whose member stopped accepting blue
+    // since, making "turn Blue Buzz off" the only route to fixing someone else's
+    // typo — this ticket's own bug in miniature.
+    expect(
+      modalSource,
+      '`blueChanged` must compare against the stored value, so the client refuses on ' +
+        'exactly the condition the payload and the server use.'
+    ).toContain('const blueChanged = acceptsBlueBuzz !== !!existing?.meta.acceptsBlueBuzz;');
     expect(
       modalSource,
       'The Blue Buzz switch must be un-tickable but never un-un-tickable, and must wait ' +

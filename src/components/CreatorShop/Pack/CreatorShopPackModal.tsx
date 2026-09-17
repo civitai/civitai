@@ -35,6 +35,7 @@ import { FeeSection } from '~/components/CreatorShop/Submit/FeeSection';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
+import { wasLastReviewARejection } from '~/server/services/creator-shop.data';
 import {
   PACK_MAX_MEMBERS,
   PACK_MIN_MEMBERS,
@@ -194,9 +195,21 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
   // The server refuses both outright, so without this the editor is the very
   // thing it replaced: a form that takes what a moderator types and fails on save.
   const awaitingPack = isEdit && !hydrated;
-  const uneditableStatus =
+  // Whether this edit touches the blue-buzz setting at all. The payload sends the
+  // field only when it did, and the server only re-checks the blockers when it
+  // did — so the client must refuse on the same condition, or it blocks a title
+  // fix the server would have accepted and makes turning blue OFF the only way
+  // out of an edit that never touched it.
+  const blueChanged = acceptsBlueBuzz !== !!existing?.meta.acceptsBlueBuzz;
+  // Archiving OVERWRITES status, so the history is the only thing that tells a
+  // rejected pack from an ordinary archived one — see `wasLastReviewARejection`.
+  // Without it the alert tells a moderator to restore a pack whose restore the
+  // server refuses as REJECTED_IS_FINAL.
+  const wasRejected =
     existing?.status === CosmeticShopItemStatus.Rejected ||
-    existing?.status === CosmeticShopItemStatus.Archived;
+    (existing?.status === CosmeticShopItemStatus.Archived &&
+      wasLastReviewARejection(existing.meta.history));
+  const uneditableStatus = wasRejected || existing?.status === CosmeticShopItemStatus.Archived;
   const canSubmit =
     // An edit saves what `getPack` returned, never the caller's seed.
     (!isEdit || hydrated) &&
@@ -208,7 +221,7 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
     !priceTooLow &&
     !uploading &&
     (isEdit || !imageId || rightsAffirmed) &&
-    !(acceptsBlueBuzz && blueBlockers.length);
+    !(blueChanged && acceptsBlueBuzz && blueBlockers.length);
 
   const handleDrop = async (dropped: File[]) => {
     const file = dropped[0];
@@ -250,7 +263,7 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
         // Same rule as the two above. Sent unconditionally it makes the server's
         // blue-buzz check fire on every title edit, which a member opting out
         // since then turns into a refusal of an edit that never touched blue.
-        ...(acceptsBlueBuzz !== !!existing?.meta.acceptsBlueBuzz ? { acceptsBlueBuzz } : {}),
+        ...(blueChanged ? { acceptsBlueBuzz } : {}),
         // Explicit null so clearing the cover actually clears it.
         imageUrl: imageId ?? null,
       });
@@ -350,6 +363,9 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
                   variant="subtle"
                   color="red"
                   leftSection={<IconX size={14} />}
+                  // Same reason as Add below: hydration REPLACES `selected`, so a
+                  // removal made before getPack lands is silently undone.
+                  disabled={awaitingPack}
                   onClick={() =>
                     setSelected((cur) => cur.filter((m) => m.cosmeticId !== member.cosmeticId))
                   }
@@ -467,8 +483,7 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
             This pack can&apos;t accept Blue Buzz because{' '}
             {blueBlockers.map((m) => m.name).join(', ')} {blueBlockers.length > 1 ? 'do' : 'does'}{' '}
             not.
-            {acceptsBlueBuzz &&
-              ' Saving is blocked until you turn Blue Buzz off, which will change what buyers can pay with.'}
+            {blueChanged && acceptsBlueBuzz && ' Turn it back off to save.'}
           </Alert>
         )}
 
@@ -533,7 +548,7 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
         )}
         {uneditableStatus && (
           <Alert color="gray" icon={<IconAlertTriangle size={18} />}>
-            {existing?.status === CosmeticShopItemStatus.Rejected
+            {wasRejected
               ? 'This pack was rejected, which is final. It cannot be edited.'
               : 'This pack is archived. Restore it before editing.'}
           </Alert>

@@ -330,10 +330,7 @@ export const updateCreatorShopPack = async ({
 
   const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
   const memberIds = memberCosmeticIds ?? existing.members.map((m) => m.cosmeticId);
-  // Re-resolved even when the contents didn't change: the price floor has to be
-  // checked against today's list prices, not the ones the pack was built against.
   const packOwnerId = existing.addedById ?? userId;
-  const members = withOwnership(await resolvePackMembers(memberIds), packOwnerId);
   const membershipSupplied = memberCosmeticIds !== undefined;
   const repriced = price !== undefined;
   // Re-snapshot whenever the price moves, not only when the contents do. The
@@ -341,6 +338,17 @@ export const updateCreatorShopPack = async ({
   // in place lets a lowered member price drag the pack's price down while its
   // component still pays out the old, higher amount.
   const reSnapshot = membershipSupplied || repriced;
+
+  // Resolved only for the edits that read it. Every consumer below — the three
+  // asserts, the floor, the blue blockers, the snapshot rows and the cover
+  // tiles — sits behind one of these two conditions, so a title-only edit was
+  // paying for a query (measured 1.1 ms, and a seq scan of every shop item)
+  // whose result nothing looked at. 🔴 Anything added below that reads
+  // `members` must extend this predicate, or it will read an empty list.
+  const needsMembers = reSnapshot || acceptsBlueBuzz !== undefined;
+  const members = needsMembers
+    ? withOwnership(await resolvePackMembers(memberIds), packOwnerId)
+    : [];
 
   // Everything below re-validates state the edit did not necessarily touch, so
   // each is scoped to the edit that makes it meaningful. Run unconditionally
