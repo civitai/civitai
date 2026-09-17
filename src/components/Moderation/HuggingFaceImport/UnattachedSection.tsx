@@ -1,16 +1,12 @@
-import { Alert, Badge, Button, Group, Stack, Text } from '@mantine/core';
+import { Alert, Button, Stack, Text } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { RenameGroupControl } from '~/components/Moderation/HuggingFaceImport/RenameGroupControl';
 import { confirmForce } from '~/components/Moderation/HuggingFaceImport/confirm-force';
-import { byGroup } from '~/components/Moderation/HuggingFaceImport/utils';
-import dayjs from '~/shared/utils/dayjs';
+import { ImportGroupList } from '~/components/Moderation/HuggingFaceImport/ImportGroupList';
+import { useImportActions } from '~/components/Moderation/HuggingFaceImport/use-import-actions';
 import { formatBytes } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import type { HuggingFaceImportView } from '~/server/services/huggingface-import.service';
-
-const STALE_DAYS = 60;
 
 export function UnattachedSection({ filter }: { filter: string }) {
   const queryUtils = trpc.useUtils();
@@ -29,6 +25,9 @@ export function UnattachedSection({ filter }: { filter: string }) {
     ]);
   };
 
+  // Per-card actions are shared with the queue tab; this second delete mutation is the BULK one,
+  // which reads each result itself and must not also raise the per-call force prompt.
+  const actions = useImportActions((id) => data.find((row) => row.id === id)?.filename ?? 'it');
   const remove = trpc.huggingFaceImport.delete.useMutation({
     onError: (error) =>
       showErrorNotification({ title: 'Could not delete', error: new Error(error.message) }),
@@ -106,11 +105,9 @@ export function UnattachedSection({ filter }: { filter: string }) {
       },
     });
 
-  const groups = byGroup(data);
-
   return (
     <Stack gap="md">
-      {!groups.length ? (
+      {!data.length ? (
         <Text c="dimmed" size="sm">
           {isLoading
             ? 'Loading…'
@@ -119,72 +116,20 @@ export function UnattachedSection({ filter }: { filter: string }) {
             : 'Nothing unattached — every transferred file is on a model version.'}
         </Text>
       ) : (
-        groups.map((group) => {
-          const stale = dayjs().diff(dayjs(group.oldest), 'day') >= STALE_DAYS;
-          return (
-            <Stack key={`${group.groupName}:${group.repo}:${group.revision}`} gap={6}>
-              <Group gap="xs" wrap="wrap">
-                <Text fw={600} size="sm">
-                  {group.groupName}
-                </Text>
-                <RenameGroupControl
-                  repo={group.repo}
-                  revision={group.revision}
-                  groupName={group.groupName}
-                />
-                <Badge size="xs" variant="light" color="gray">
-                  {group.repo}
-                </Badge>
-                <Badge size="xs" variant="light">
-                  {group.revision.slice(0, 7)}
-                </Badge>
-                <Text size="xs" c="dimmed">
-                  {group.items.length} file{group.items.length === 1 ? '' : 's'} ·{' '}
-                  {formatBytes(group.bytes)} · imported <DaysFromNow date={group.oldest} />
-                </Text>
-                {stale && (
-                  <Badge size="xs" color="red">
-                    stale
-                  </Badge>
-                )}
-                <Button
-                  size="compact-xs"
-                  variant="subtle"
-                  color="red"
-                  ml="auto"
-                  onClick={() => confirmDelete(group.items)}
-                >
-                  Delete {group.items.length}
-                </Button>
-              </Group>
-
-              {group.items.map((row) => (
-                <Group key={row.id} gap="xs" pl="sm" wrap="nowrap">
-                  <Text size="xs" ff="monospace" lineClamp={1}>
-                    {row.filename}
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    {row.sizeBytes ? formatBytes(row.sizeBytes) : '—'}
-                  </Text>
-                  {row.suggestedType && (
-                    <Badge size="xs" variant="light">
-                      {row.suggestedType}
-                    </Badge>
-                  )}
-                  <Button
-                    size="compact-xs"
-                    variant="subtle"
-                    color="red"
-                    ml="auto"
-                    onClick={() => confirmDelete([row])}
-                  >
-                    Delete
-                  </Button>
-                </Group>
-              ))}
-            </Stack>
-          );
-        })
+        <ImportGroupList
+          rows={data}
+          actions={actions}
+          groupAction={(items) => (
+            <Button
+              size="compact-xs"
+              variant="subtle"
+              color="red"
+              onClick={() => confirmDelete(items)}
+            >
+              Delete {items.length}
+            </Button>
+          )}
+        />
       )}
     </Stack>
   );

@@ -1,4 +1,4 @@
-import { Container, Stack, Text, Title } from '@mantine/core';
+import { Container, Grid, Stack, Text, Title } from '@mantine/core';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { ImportQueueTable } from '~/components/Moderation/HuggingFaceImport/ImportQueueTable';
@@ -12,7 +12,9 @@ function HuggingFaceImportPage() {
   return (
     <>
       <Meta title="Hugging Face Import" deIndex />
-      <Container size="lg" py="lg">
+      {/* The queue is a wide table of long filenames; a narrower container pushes its row actions
+          into a horizontal scroll where nobody finds them. */}
+      <Container size="xl" py="lg">
         <Stack gap="xl">
           <Stack gap={4}>
             <Title order={2}>Hugging Face Import</Title>
@@ -22,9 +24,19 @@ function HuggingFaceImportPage() {
             </Text>
           </Stack>
 
-          <RepoLookupSection />
-          <ImportQueueTable />
-          <ImportConfigSection />
+          <Grid gutter="xl" align="flex-start">
+            <Grid.Col span={{ base: 12, lg: 8.5 }}>
+              <Stack gap="xl">
+                <RepoLookupSection />
+                <ImportQueueTable />
+              </Stack>
+            </Grid.Col>
+            <Grid.Col span={{ base: 12, lg: 3.5 }}>
+              <Stack gap="xl" pos="sticky" top={70}>
+                <ImportConfigSection />
+              </Stack>
+            </Grid.Col>
+          </Grid>
         </Stack>
       </Container>
     </>
