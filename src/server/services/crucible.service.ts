@@ -56,7 +56,8 @@ import { createLogger } from '~/utils/logging';
 import { createNotification } from '~/server/services/notification.service';
 import { NotificationCategory } from '~/server/common/enums';
 import { imageResourcesCache } from '~/server/redis/caches';
-import { getCrucibleTotalPrizePool } from '~/utils/crucible-helpers';
+import { getCrucibleTotalPrizePool, parsePrizePositions } from '~/utils/crucible-helpers';
+import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 
 const log = createLogger('crucible-service', 'cyan');
 
@@ -1473,14 +1474,6 @@ export const submitVote = async ({
 // ============================================================================
 
 /**
- * Prize position type from database JSON
- */
-type PrizePosition = {
-  position: number;
-  percentage: number;
-};
-
-/**
  * Entry with final score and position after finalization
  */
 export type FinalizedEntry = {
@@ -1511,46 +1504,6 @@ function getOrdinalPosition(position: number): string {
   const suffix =
     remainder >= 11 && remainder <= 13 ? 'th' : suffixes[Math.min(position % 10, 4)] || 'th';
   return `${position}${suffix}`;
-}
-
-/**
- * Parse prize positions JSON from the database.
- *
- * `createCrucible` stores the `z.record(position, percentage)` its input schema validates, so the
- * stored value is `{"1": 50, "2": 30}` — an object. Reading it as an array alone returned `[]` for
- * every crucible ever created, which zeroed `prizeAmount` on every entry: entry fees were collected
- * into the pool and nothing was ever paid out. Nothing type-checks across the JSON boundary, so
- * both shapes are accepted here rather than trusting either.
- */
-function parsePrizePositions(prizePositionsJson: unknown): PrizePosition[] {
-  if (!prizePositionsJson || typeof prizePositionsJson !== 'object') {
-    return [];
-  }
-
-  if (Array.isArray(prizePositionsJson)) {
-    return prizePositionsJson
-      .filter(
-        (item): item is { position: number; percentage: number } =>
-          typeof item === 'object' &&
-          item !== null &&
-          typeof item.position === 'number' &&
-          typeof item.percentage === 'number'
-      )
-      .map((item) => ({
-        position: item.position,
-        percentage: item.percentage,
-      }));
-  }
-
-  return Object.entries(prizePositionsJson)
-    .map(([position, percentage]) => ({
-      position: Number(position),
-      percentage: Number(percentage),
-    }))
-    .filter(
-      ({ position, percentage }) =>
-        Number.isInteger(position) && position > 0 && Number.isFinite(percentage) && percentage > 0
-    );
 }
 
 /**
@@ -2016,22 +1969,60 @@ export type CancelCrucibleResult = {
   /** Entrants' money only — the creator's seed is reported separately as `refundedSeed`. */
   totalRefunded: number;
   refundedSeed: number;
-  failedRefunds: Array<{ entryId: number; userId: number; error: string }>;
+  /**
+   * How many of the refunds above were already settled before this call, so no money moved for
+   * them now. Non-zero on a re-run; without it a second cancel reports the same totals as the
+   * first and reads as a second payment.
+   */
+  alreadySettled: number;
+  /**
+   * Money still owed. `entryId: null` is a crucible-level refund (the creator's setup fee or
+   * seed). A duplicate the ledger rejected is NOT a failure — that money is already back.
+   */
+  failedRefunds: Array<{ entryId: number | null; userId: number; error: string }>;
 };
 
 /**
- * Cancel a crucible and refund all entry fees
- *
- * This function:
- * 1. Validates the crucible can be cancelled (not already completed/cancelled)
- * 2. Refunds all entry fees using stored transaction prefixes
- * 3. Updates crucible status to 'cancelled'
- * 4. Cleans up Redis ELO data
- *
- * @param id - The crucible ID to cancel
- * @param userId - The user requesting cancellation
- * @param isModerator - Whether the user is a moderator
- * @returns Cancellation results including refund counts
+ * Buzz keys refunds on `externalTransactionIdPrefix`: a second refund of one returns 409, and a
+ * prefix matching nothing returns 404. Neither means money is owed, so tolerating both is what
+ * makes cancelling safe to re-run — the same tolerance as `refundChallengeFundsByPrefix`.
+ */
+async function refundCrucibleTransactionOnce({
+  externalTransactionIdPrefix,
+  description,
+  crucibleId,
+  label,
+}: {
+  externalTransactionIdPrefix: string;
+  description: string;
+  crucibleId: number;
+  label: string;
+}): Promise<'refunded' | 'already-settled'> {
+  try {
+    await refundMultiAccountTransaction({
+      externalTransactionIdPrefix,
+      description,
+      details: {
+        entityId: crucibleId,
+        entityType: 'Crucible',
+        reason: 'cancellation',
+      },
+    });
+    return 'refunded';
+  } catch (error) {
+    const status = getBuzzApiStatus(error);
+    if (status === 404 || status === 409) {
+      log(`Refund for ${label} already settled (buzz ${status}); nothing moved`);
+      return 'already-settled';
+    }
+    throw error;
+  }
+}
+
+/**
+ * Cancel a crucible and return every payment it took. Safe to re-run, and re-running is the
+ * supported way to finish a cancel whose refunds did not all land: the status write happens first,
+ * and each refund is keyed so the ledger rejects a duplicate rather than paying twice.
  */
 export const cancelCrucible = async ({
   id,
@@ -2051,6 +2042,7 @@ export const cancelCrucible = async ({
     where: { id },
     select: {
       id: true,
+      userId: true, // Creator: receives the setup-fee and seed refunds
       status: true,
       entryFee: true,
       buzzTransactionId: true, // Creator setup fee transaction
@@ -2070,19 +2062,28 @@ export const cancelCrucible = async ({
     throw throwNotFoundError('Crucible not found');
   }
 
-  // Validate crucible can be cancelled
+  // Prizes have already been paid out, so there is nothing to give back.
   if (crucible.status === CrucibleStatus.Completed) {
     throw throwBadRequestError('Cannot cancel a completed crucible');
   }
 
-  if (crucible.status === CrucibleStatus.Cancelled) {
-    throw throwBadRequestError('This crucible has already been cancelled');
-  }
+  // No guard on Cancelled: the refunds below are idempotent, and re-running is how a partly
+  // refunded cancel gets finished.
 
-  // Track refund results
+  // Status first, before any money moves. An interrupted cancel then leaves a stopped crucible
+  // with refunds owed (listed in `failedRefunds`, fixed by calling again) rather than an Active
+  // one still taking entries from people who were just refunded.
+  await dbWrite.crucible.update({
+    where: { id },
+    data: {
+      status: CrucibleStatus.Cancelled,
+    },
+  });
+
   let refundedEntries = 0;
   let totalRefunded = 0;
-  const failedRefunds: Array<{ entryId: number; userId: number; error: string }> = [];
+  let alreadySettled = 0;
+  const failedRefunds: CancelCrucibleResult['failedRefunds'] = [];
 
   // Refund entry fees in parallel with concurrency limit of 10
   // This prevents timeout issues with large crucibles while avoiding overwhelming the system
@@ -2093,20 +2094,18 @@ export const cancelCrucible = async ({
       .map((entry) =>
         limit(async () => {
           try {
-            // Refund using the stored transaction prefix
-            await refundMultiAccountTransaction({
+            const settled = await refundCrucibleTransactionOnce({
               externalTransactionIdPrefix: entry.buzzTransactionId!,
               description: 'Crucible entry fee refund - crucible cancelled',
-              details: {
-                entityId: crucible.id,
-                entityType: 'Crucible',
-                reason: 'cancellation',
-              },
+              crucibleId: crucible.id,
+              label: `entry ${entry.id} for user ${entry.userId}`,
             });
 
-            log(`Refunded entry ${entry.id} for user ${entry.userId}: ${crucible.entryFee} Buzz`);
+            if (settled === 'refunded') {
+              log(`Refunded entry ${entry.id} for user ${entry.userId}: ${crucible.entryFee} Buzz`);
+            }
 
-            return { success: true, entry };
+            return { success: true, entry, settled };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             log(`Failed to refund entry ${entry.id} for user ${entry.userId}: ${errorMessage}`);
@@ -2121,13 +2120,13 @@ export const cancelCrucible = async ({
       )
   );
 
-  // Process refund results
   for (const result of refundResults) {
     if (result.status === 'fulfilled') {
       const refundResult = result.value;
       if (refundResult.success) {
         refundedEntries++;
         totalRefunded += crucible.entryFee;
+        if (refundResult.settled === 'already-settled') alreadySettled++;
       } else {
         failedRefunds.push({
           entryId: refundResult.entry.id,
@@ -2138,29 +2137,21 @@ export const cancelCrucible = async ({
     }
   }
 
-  // Refund creator setup fee if transaction ID exists
   let creatorSetupFeeRefunded = false;
   if (crucible.buzzTransactionId) {
     try {
-      await refundMultiAccountTransaction({
+      const settled = await refundCrucibleTransactionOnce({
         externalTransactionIdPrefix: crucible.buzzTransactionId,
         description: 'Crucible creator setup fee refund - crucible cancelled',
-        details: {
-          entityId: crucible.id,
-          entityType: 'Crucible',
-          reason: 'cancellation',
-        },
+        crucibleId: crucible.id,
+        label: `creator setup fee for crucible ${id}`,
       });
-
       creatorSetupFeeRefunded = true;
-      log(
-        `Refunded creator setup fee for crucible ${id} (transaction: ${crucible.buzzTransactionId})`
-      );
+      if (settled === 'already-settled') alreadySettled++;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       log(`Failed to refund creator setup fee for crucible ${id}: ${errorMessage}`);
-      // Note: We don't add this to failedRefunds array as it's separate from entry refunds
-      // The cancellation should still proceed even if the setup fee refund fails
+      failedRefunds.push({ entryId: null, userId: crucible.userId, error: errorMessage });
     }
   } else {
     log(`No creator setup fee to refund for crucible ${id} (free crucible or legacy)`);
@@ -2171,31 +2162,20 @@ export const cancelCrucible = async ({
   let refundedSeed = 0;
   if (crucible.seedTransactionId) {
     try {
-      await refundMultiAccountTransaction({
+      const settled = await refundCrucibleTransactionOnce({
         externalTransactionIdPrefix: crucible.seedTransactionId,
         description: 'Crucible seeded prize pool refund - crucible cancelled',
-        details: {
-          entityId: crucible.id,
-          entityType: 'Crucible',
-          reason: 'cancellation',
-        },
+        crucibleId: crucible.id,
+        label: `seeded prize pool for crucible ${id}`,
       });
-
       refundedSeed = crucible.seededPrizePool;
-      log(`Refunded seeded prize pool of ${refundedSeed} Buzz for crucible ${id}`);
+      if (settled === 'already-settled') alreadySettled++;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       log(`Failed to refund seeded prize pool for crucible ${id}: ${errorMessage}`);
+      failedRefunds.push({ entryId: null, userId: crucible.userId, error: errorMessage });
     }
   }
-
-  // Update crucible status to cancelled
-  await dbWrite.crucible.update({
-    where: { id },
-    data: {
-      status: CrucibleStatus.Cancelled,
-    },
-  });
 
   // Clean up Redis ELO data (set short TTL for eventual cleanup)
   await crucibleEloRedis.setTTL(id, 24 * 60 * 60); // 24 hours
@@ -2209,6 +2189,7 @@ export const cancelCrucible = async ({
     refundedEntries,
     totalRefunded,
     refundedSeed,
+    alreadySettled,
     failedRefunds,
   };
 };

@@ -4,11 +4,7 @@ import clsx from 'clsx';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
-
-export type PrizePosition = {
-  position: number;
-  percentage: number;
-};
+import type { PrizePosition } from '~/utils/crucible-helpers';
 
 export type CruciblePrizeBreakdownProps = {
   prizePositions: PrizePosition[];
@@ -165,24 +161,4 @@ function getOrdinalSuffix(n: number): string {
   const s = ['th', 'st', 'nd', 'rd'];
   const v = n % 100;
   return s[(v - 20) % 10] || s[v] || s[0];
-}
-
-// Export a helper to parse JSON prize positions from the database
-export function parsePrizePositions(prizePositionsJson: unknown): PrizePosition[] {
-  if (!prizePositionsJson || !Array.isArray(prizePositionsJson)) {
-    return [];
-  }
-
-  return prizePositionsJson
-    .filter(
-      (item): item is { position: number; percentage: number } =>
-        typeof item === 'object' &&
-        item !== null &&
-        typeof item.position === 'number' &&
-        typeof item.percentage === 'number'
-    )
-    .map((item) => ({
-      position: item.position,
-      percentage: item.percentage,
-    }));
 }

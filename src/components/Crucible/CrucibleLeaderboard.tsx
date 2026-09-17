@@ -3,7 +3,7 @@ import { IconTrophy, IconChevronRight, IconChevronLeft } from '@tabler/icons-rea
 import clsx from 'clsx';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import type { PrizePosition } from '~/components/Crucible/CruciblePrizeBreakdown';
+import type { PrizePosition } from '~/utils/crucible-helpers';
 import { useState } from 'react';
 import { getInitials } from '~/utils/string-helpers';
 
@@ -33,6 +33,11 @@ export type CrucibleLeaderboardProps = {
   entries: LeaderboardEntry[];
   prizePositions: PrizePosition[];
   totalPrizePool: number;
+  /**
+   * Whether prizes were actually paid. False on a Cancelled crucible, which also reveals its
+   * rankings — scores are final there, but every entry fee went back and nobody won anything.
+   */
+  awarded: boolean;
   className?: string;
   pageSize?: number;
 };
@@ -49,11 +54,15 @@ export type CrucibleLeaderboardProps = {
  */
 export function CrucibleLeaderboard({
   entries,
-  prizePositions,
+  prizePositions: awardedPrizePositions,
   totalPrizePool,
+  awarded,
   className,
   pageSize = 10,
 }: CrucibleLeaderboardProps) {
+  // A cancelled crucible paid nobody, so it has no prize rows, no placings and no pool to show —
+  // only the scores the entries finished on.
+  const prizePositions = awarded ? awardedPrizePositions : [];
   const currentUser = useCurrentUser();
   const [page, setPage] = useState(0);
 
@@ -89,12 +98,12 @@ export function CrucibleLeaderboard({
     remainingPositions.length > 0 ? Math.min(...remainingPositions.map((p) => p.position)) : 4;
   const maxRemainingPos =
     remainingPositions.length > 0 ? Math.max(...remainingPositions.map((p) => p.position)) : 10;
-  const remainingPosLabel =
-    minRemainingPos === maxRemainingPos
-      ? `${minRemainingPos}${getOrdinalSuffix(minRemainingPos)} Place`
-      : `${minRemainingPos}${getOrdinalSuffix(
-          minRemainingPos
-        )} - ${maxRemainingPos}${getOrdinalSuffix(maxRemainingPos)} Place`;
+  const remainingIsRange = minRemainingPos !== maxRemainingPos;
+  const remainingPosLabel = remainingIsRange
+    ? `${minRemainingPos}${getOrdinalSuffix(
+        minRemainingPos
+      )} - ${maxRemainingPos}${getOrdinalSuffix(maxRemainingPos)} Place`
+    : `${minRemainingPos}${getOrdinalSuffix(minRemainingPos)} Place`;
 
   return (
     <Paper className={clsx('rounded-lg p-6', className)} bg="dark.6">
@@ -102,18 +111,23 @@ export function CrucibleLeaderboard({
       <div className="mb-4 border-b border-[#373a40] pb-4">
         <Title order={4} className="mb-4 flex items-center gap-2 text-white">
           <IconTrophy size={20} className="text-yellow-500" />
-          Prize Pool & Leaderboard
+          {awarded ? 'Prize Pool & Leaderboard' : 'Final Standings'}
         </Title>
 
-        {/* Total prize pool box */}
-        <Box className="rounded-lg bg-[#1a1b1e] p-3 text-center">
-          <Text className="text-2xl font-bold text-yellow-500">
-            {abbreviateNumber(totalPrizePool)} Buzz
+        {awarded ? (
+          <Box className="rounded-lg bg-[#1a1b1e] p-3 text-center">
+            <Text className="text-2xl font-bold text-yellow-500">
+              {abbreviateNumber(totalPrizePool)} Buzz
+            </Text>
+            <Text size="xs" c="dimmed" mt={4}>
+              Total Prize Pool
+            </Text>
+          </Box>
+        ) : (
+          <Text size="sm" c="dimmed">
+            This crucible was cancelled. Every entry fee was refunded and no prizes were awarded.
           </Text>
-          <Text size="xs" c="dimmed" mt={4}>
-            Total Prize Pool
-          </Text>
-        </Box>
+        )}
       </div>
 
       {/* Leaderboard entries - only show top 3 with full details */}
@@ -130,6 +144,7 @@ export function CrucibleLeaderboard({
               rank={entry.rank}
               prizeInfo={prizeMap.get(entry.rank)}
               totalPrizePool={totalPrizePool}
+              awarded={awarded}
               isCurrentUser={currentUser?.id === entry.userId}
             />
           ))
@@ -143,7 +158,8 @@ export function CrucibleLeaderboard({
             {remainingPosLabel}
           </Text>
           <Text size="xs" c="dimmed">
-            {remainingPercentage}% ({abbreviateNumber(remainingPrizeAmount)} Buzz) - Divided equally
+            {remainingPercentage}% ({abbreviateNumber(remainingPrizeAmount)} Buzz)
+            {remainingIsRange ? ' - Divided equally' : ''}
           </Text>
         </Box>
       )}
@@ -183,6 +199,7 @@ type LeaderboardEntryItemProps = {
   rank: number;
   prizeInfo?: PrizePosition;
   totalPrizePool: number;
+  awarded: boolean;
   isCurrentUser?: boolean;
 };
 
@@ -194,6 +211,7 @@ function LeaderboardEntryItem({
   rank,
   prizeInfo,
   totalPrizePool,
+  awarded,
   isCurrentUser,
 }: LeaderboardEntryItemProps) {
   const isTopThree = rank <= 3;
@@ -328,14 +346,10 @@ function LeaderboardEntryItem({
         </Text>
       </div>
 
-      {/* Status text for top 3 */}
-      {isTopThree && (
+      {/* Renders only after rankings are final, so this is a result, not a prediction. */}
+      {isTopThree && awarded && (
         <Text size="xs" c="dimmed" mt={6}>
-          {rank === 1
-            ? 'Currently on track to win'
-            : rank === 2
-            ? 'Closing in quickly'
-            : 'Strong position'}
+          {rank === 1 ? 'Winner' : rank === 2 ? 'Runner-up' : 'Third place'}
         </Text>
       )}
     </Box>

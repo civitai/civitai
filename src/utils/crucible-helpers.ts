@@ -77,3 +77,42 @@ export function getCrucibleTotalPrizePool({
 }): number {
   return seededPrizePool + entryFee * entryCount;
 }
+
+export type PrizePosition = {
+  position: number;
+  percentage: number;
+};
+
+/**
+ * `createCrucible` stores the `z.record(position, percentage)` its schema validates, so the value
+ * is an object (`{"1": 50, "2": 30}`), not an array — an array-only read returns `[]` for every
+ * crucible, which zeroes payouts and hides the prize split. Both shapes are accepted because
+ * nothing type-checks across the JSON boundary.
+ */
+export function parsePrizePositions(prizePositionsJson: unknown): PrizePosition[] {
+  if (!prizePositionsJson || typeof prizePositionsJson !== 'object') return [];
+
+  if (Array.isArray(prizePositionsJson)) {
+    return prizePositionsJson
+      .filter(
+        (item): item is PrizePosition =>
+          typeof item === 'object' &&
+          item !== null &&
+          typeof item.position === 'number' &&
+          typeof item.percentage === 'number'
+      )
+      .map(({ position, percentage }) => ({ position, percentage }))
+      .filter(isUsablePrizePosition);
+  }
+
+  return Object.entries(prizePositionsJson)
+    .map(([position, percentage]) => ({
+      position: Number(position),
+      percentage: Number(percentage),
+    }))
+    .filter(isUsablePrizePosition);
+}
+
+function isUsablePrizePosition({ position, percentage }: PrizePosition): boolean {
+  return Number.isInteger(position) && position > 0 && Number.isFinite(percentage) && percentage > 0;
+}

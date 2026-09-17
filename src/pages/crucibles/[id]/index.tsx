@@ -16,7 +16,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { getCrucibleTotalPrizePool } from '~/utils/crucible-helpers';
+import { getCrucibleTotalPrizePool, parsePrizePositions } from '~/utils/crucible-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client';
@@ -25,10 +25,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
 import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
 import { CrucibleEntryGrid } from '~/components/Crucible/CrucibleEntryGrid';
-import {
-  CruciblePrizeBreakdown,
-  parsePrizePositions,
-} from '~/components/Crucible/CruciblePrizeBreakdown';
+import { CruciblePrizeBreakdown } from '~/components/Crucible/CruciblePrizeBreakdown';
 import { crucibleRankingsAreFinal } from '~/shared/constants/crucible.constants';
 import { CrucibleStatus, Currency, MediaType } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -72,20 +69,35 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     { enabled: !!id }
   );
 
-  // Cancel mutation for moderators
   const cancelMutation = trpc.crucible.cancel.useMutation({
     onSuccess: (result) => {
-      showSuccessNotification({
-        title: 'Crucible Cancelled',
-        message: `Successfully cancelled. ${
-          result.refundedEntries
-        } entries refunded (${result.totalRefunded.toLocaleString()} Buzz total).${
-          result.refundedSeed > 0
-            ? ` Seeded prize pool of ${result.refundedSeed.toLocaleString()} Buzz returned to the creator.`
-            : ''
-        }`,
-      });
-      // Invalidate the query to refetch the crucible data
+      const refunds = `${
+        result.refundedEntries
+      } entries refunded (${result.totalRefunded.toLocaleString()} Buzz total).${
+        result.refundedSeed > 0
+          ? ` Seeded prize pool of ${result.refundedSeed.toLocaleString()} Buzz returned to the creator.`
+          : ''
+      }${
+        result.alreadySettled > 0
+          ? ` ${result.alreadySettled} refund(s) had already gone through on an earlier attempt, so no Buzz moved for those now.`
+          : ''
+      }`;
+
+      // The status write lands before any refund is attempted, so the crucible is cancelled either
+      // way and an unfinished refund is a warning about money, not a failed cancellation.
+      if (result.failedRefunds.length > 0) {
+        showErrorNotification({
+          title: 'Cancelled, but some refunds did not go through',
+          error: new Error(
+            `${refunds} ${result.failedRefunds.length} refund(s) still owed — cancel again to retry.`
+          ),
+        });
+      } else {
+        showSuccessNotification({
+          title: 'Crucible Cancelled',
+          message: `Successfully cancelled. ${refunds}`,
+        });
+      }
       queryUtils.crucible.getById.invalidate({ id });
     },
     onError: (error) => {
@@ -352,6 +364,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   entries={crucible.entries.filter(hasScore)}
                   prizePositions={prizePositions}
                   totalPrizePool={totalPrizePool}
+                  awarded={crucible.status === CrucibleStatus.Completed}
                 />
               ) : (
                 <>
@@ -396,7 +409,10 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   )}
 
                   {/* Entry Limit */}
-                  <RuleItem label="Max Entries Per User" content={`${maxUserEntries} entries`} />
+                  <RuleItem
+                    label="Max Entries Per User"
+                    content={`${maxUserEntries} ${maxUserEntries === 1 ? 'entry' : 'entries'}`}
+                  />
 
                   {/* Total Entry Cap */}
                   {crucible.maxTotalEntries && (
