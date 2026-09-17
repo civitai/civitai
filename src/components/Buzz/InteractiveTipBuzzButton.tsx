@@ -2,6 +2,7 @@ import type { UnstyledButtonProps } from '@mantine/core';
 import { Group, Popover, Stack, Text, UnstyledButton, Button } from '@mantine/core';
 import { useInterval, useLocalStorage } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
+import { showErrorNotification } from '~/utils/notifications';
 import { IconBolt, IconCheck, IconSend, IconX } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { create } from 'zustand';
@@ -120,6 +121,8 @@ export function InteractiveTipBuzzButton({
   const startTimerTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const confirmTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [status, setStatus] = useState<'pending' | 'confirming' | 'confirmed'>('pending');
+  const statusRef = useRef(status);
+  statusRef.current = status;
   const [showCountDown, setShowCountDown] = useState(false);
 
   const interval = useInterval(() => {
@@ -138,7 +141,7 @@ export function InteractiveTipBuzzButton({
     defaultValue: false,
   });
 
-  const { tipUserMutation, conditionalPerformTransaction } = useBuzzTransaction({
+  const { tipUserMutation, conditionalPerformTransaction, isLoadingBalance } = useBuzzTransaction({
     message: (requiredBalance) =>
       `You don't have enough funds to send a tip. Required Buzz: ${numberWithCommas(
         requiredBalance
@@ -159,6 +162,13 @@ export function InteractiveTipBuzzButton({
 
   const selfView = toUserId === currentUser?.id;
 
+  const clearConfirmTimeout = () => {
+    if (confirmTimeoutRef.current) {
+      clearTimeout(confirmTimeoutRef.current);
+      confirmTimeoutRef.current = null;
+    }
+  };
+
   const cancelTip = () => {
     if (status !== 'confirming') return;
 
@@ -172,17 +182,11 @@ export function InteractiveTipBuzzButton({
     setTimeout(() => reset(), 100);
   };
 
-  const sendTip = (amount?: number) => {
-    if (status !== 'confirming') return;
+  const sendTip = (amount: number) => {
+    if (status !== 'confirming' || tipUserMutation.isPending) return;
 
-    // Stop countdown
     setShowCountDown(false);
-    if (confirmTimeoutRef.current) {
-      clearTimeout(confirmTimeoutRef.current);
-      confirmTimeoutRef.current = null;
-    }
-
-    amount ??= buzzCounter > 0 ? buzzCounter : CLICK_AMOUNT;
+    clearConfirmTimeout();
 
     const performTransaction = () => {
       trackAction({
@@ -223,30 +227,72 @@ export function InteractiveTipBuzzButton({
     conditionalPerformTransaction(amount, performTransaction);
   };
 
-  const processEnteredNumber = (value: string) => {
-    let amount = Number(value);
-    if (isNaN(amount) || amount < 1) amount = 1;
-    else if (amount > buzzConstants.maxTipAmount) amount = buzzConstants.maxTipAmount;
-    else if (currencyBalance && amount > currencyBalance) amount = currencyBalance ?? 0;
-    setBuzzCounter(amount);
+  const amountFieldRef = useRef<HTMLDivElement>(null);
+  // Justin's ruling, 2026-09-17: REFUSE, never rewrite. The old code clamped an
+  // out-of-range entry to the balance or the cap and sent that, so a typo could spend a
+  // figure that had never been on screen. Nothing is substituted now — an amount is either
+  // sendable as typed or it is refused out loud, which is why there is no confirmation
+  // step, no delay and no press-ordering left to get wrong.
+  const enteredAmount = (el: HTMLElement | null) => {
+    // Digits only, checked BEFORE Number(). Number() accepts the whole JS numeric grammar, so
+    // '5e1', '0x32', '050', '+50' and '5.0' all parse to a sendable integer while the field
+    // reads as something else entirely — which is the "spends a figure never on screen" defect
+    // this whole branch exists to remove. textContent also concatenates across a <br>, so a
+    // pasted two-line entry would send the lines joined.
+    const entered = el?.textContent?.trim() ?? '';
+    if (!/^\d+$/.test(entered)) return null;
+    const amount = Number(entered);
+    return amount >= 1 ? amount : null;
+  };
 
-    return amount;
+  const trySendTip = (el: HTMLElement | null) => {
+    const amount = enteredAmount(el);
+    // showErrorNotification, not a hand-rolled red toast: the sibling refusal on this same
+    // button (buzz.utils.ts, "Not enough Buzz") uses it, so a raw showNotification would give
+    // one control two different refusal chromes.
+    if (amount === null) {
+      showErrorNotification({
+        title: 'Invalid tip amount',
+        error: new Error('Enter a whole number of Buzz to tip.'),
+      });
+      return;
+    }
+    if (amount > buzzConstants.maxTipAmount) {
+      showErrorNotification({
+        title: 'Tip too large',
+        error: new Error(
+          `The most you can tip at once is ${numberWithCommas(buzzConstants.maxTipAmount)} Buzz.`
+        ),
+      });
+      return;
+    }
+    // conditionalPerformTransaction returns SILENTLY while the balance query is in flight,
+    // and sendTip clears the countdown before reaching it — so the press would leave the
+    // pop-up open, spendable, with no timer and nothing said. Refuse here instead, before
+    // anything is torn down.
+    if (isLoadingBalance) {
+      showErrorNotification({
+        title: 'Balance not ready',
+        error: new Error('Your balance is still loading. Try again in a moment.'),
+      });
+      return;
+    }
+    setBuzzCounter(amount);
+    // Over the user's balance needs no branch here: conditionalPerformTransaction refuses.
+    // How it refuses is NOT a toast — when the user can purchase it opens the Buy Buzz modal,
+    // and it shows "Not enough Buzz" only when they cannot. That is pre-existing behaviour
+    // reached by a new path, and it is with Justin.
+    sendTip(amount);
   };
 
   const reset = () => {
     setBuzzCounter(0);
     setShowCountDown(false);
-    if (confirmTimeoutRef.current) {
-      clearTimeout(confirmTimeoutRef.current);
-      confirmTimeoutRef.current = null;
-    }
+    clearConfirmTimeout();
   };
 
   const startConfirming = () => {
-    if (confirmTimeoutRef.current) {
-      clearTimeout(confirmTimeoutRef.current);
-      confirmTimeoutRef.current = null;
-    }
+    clearConfirmTimeout();
 
     setStatus('confirming');
     setShowCountDown(true);
@@ -272,8 +318,7 @@ export function InteractiveTipBuzzButton({
 
     if (confirmTimeoutRef.current) {
       setShowCountDown(false);
-      clearTimeout(confirmTimeoutRef.current);
-      confirmTimeoutRef.current = null;
+      clearConfirmTimeout();
     }
 
     startTimerTimeoutRef.current = setTimeout(() => {
@@ -401,15 +446,30 @@ export function InteractiveTipBuzzButton({
               <div
                 contentEditable={status === 'confirming'}
                 onBlur={(e) => {
-                  processEnteredNumber(e.currentTarget.textContent ?? '1');
+                  const amount = enteredAmount(e.currentTarget);
+                  if (amount !== null) setBuzzCounter(amount);
+                  // Deliberately the ref, not the closed-over `status`: startConfirming
+                  // re-enters the SPENDABLE state, and this path has no ledger dedup
+                  // behind it. Chromium dispatches no blur when contentEditable flips
+                  // false on completion, so no test covers the difference — that is why
+                  // this reads correct-by-construction rather than correct-by-engine.
+                  if (statusRef.current === 'confirming') startConfirming();
                 }}
                 onKeyDown={(e) => {
-                  if (e.ctrlKey && e.key === 'Enter') {
-                    const amount = processEnteredNumber(e.currentTarget.textContent ?? '1');
-                    sendTip(amount);
-                  }
+                  if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+                  // contentEditable would otherwise insert a newline, and a two-line amount
+                  // is not a number, so it would be refused rather than sent.
+                  e.preventDefault();
+                  // Autorepeat: one held key must not send repeatedly. isPending catches the
+                  // second send once React has re-rendered; this catches it immediately.
+                  if (e.repeat) return;
+                  trySendTip(e.currentTarget);
                 }}
-                onFocus={() => setShowCountDown(false)}
+                onFocus={() => {
+                  setShowCountDown(false);
+                  clearConfirmTimeout();
+                }}
+                ref={amountFieldRef}
                 className={classes.tipAmount}
                 dangerouslySetInnerHTML={{ __html: buzzCounter.toString() }}
               />
@@ -419,7 +479,21 @@ export function InteractiveTipBuzzButton({
             <LegacyActionIcon
               variant="transparent"
               color={status === 'confirmed' ? 'green' : buzzConfig.color}
-              onClick={status === 'confirming' ? () => sendTip() : undefined}
+              onClick={
+                status === 'confirming'
+                  ? () => {
+                      // Read the field rather than trusting buzzCounter. Where no blur fires
+                      // — touch, and engines that do not focus a button on pointer-down —
+                      // buzzCounter is whatever it was before the user typed.
+                      trySendTip(amountFieldRef.current);
+                    }
+                  : undefined
+              }
+              onKeyDown={(e: React.KeyboardEvent) => {
+                // A held Enter on a focused button autorepeats CLICKS. isPending catches the
+                // second send after a re-render; preventing the repeat stops it arriving.
+                if (e.repeat && e.key === 'Enter') e.preventDefault();
+              }}
               loading={tipUserMutation.isPending}
             >
               {status === 'confirmed' ? <IconCheck size={20} /> : <IconSend size={20} />}
