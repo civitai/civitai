@@ -1,8 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
 // These cases pin the decision recorded in normalize-text.ts rather than re-deriving it here.
-// `vi.resetModules()` is what makes them capable of failing at all: a lazily-initialised decoder
-// is only ever un-warmed in a fresh module instance.
 describe('normalizeText HTML-entity decoding', () => {
   it('decodes on the FIRST call in a fresh module instance', async () => {
     vi.resetModules();
@@ -11,11 +9,14 @@ describe('normalizeText HTML-entity decoding', () => {
     expect(normalizeText('red &amp; blue')).toBe('red & blue');
   });
 
-  // Both reads are anchored to the decoded value, not to each other. `after === before` would
-  // pass when a decoder warms up only after the wait and both reads are undecoded, which is
-  // worse than what this pins. The post-await read is not independently protective, since
-  // nothing here can un-warm a decoder; this case earns its place by naming the straddle that
-  // the audit paths perform, so a future decoder cannot satisfy it by warming up late.
+  // The post-await read is the only assertion in this file that can see a decoder which is
+  // correct on the first call and wrong later - one that releases the ~98KB entity table when it
+  // goes cold, which is the shape bundle pressure takes once lazy loading is closed off. A
+  // measured eviction mutant (correct on load, identity after 5ms) reddens this case and passes
+  // the other three. Do not collapse the two reads into `after === before`: that form passes
+  // when a decoder warms up only after the wait and both reads are undecoded.
+  // `vi.resetModules()` is load-bearing here specifically, since the window only exists in a
+  // module instance that has not warmed yet.
   it('decodes on both sides of an await, so two callers cannot disagree', async () => {
     vi.resetModules();
     const { normalizeText } = await import('~/utils/normalize-text');
@@ -28,8 +29,11 @@ describe('normalizeText HTML-entity decoding', () => {
     expect(afterAwait).toBe('red & blue');
   });
 
-  // These pin THIS module, not `he`: decoding runs BEFORE the accent fold, it covers numeric and
-  // hex references, and it is single-pass. A compact hand-rolled substitute reddens them.
+  // Pins THIS module, not `he`: decoding runs BEFORE the accent fold, covers numeric and hex
+  // references, and is single-pass. A compact hand-rolled substitute reddens these.
+  // Keep the four inputs in ONE case against ONE module instance. Split into a case each and
+  // every one becomes a first-call-in-a-fresh-instance, which a decoder that memoized its last
+  // result would satisfy every time.
   it('decodes before folding accents, handles numeric and hex refs, and does not re-decode', async () => {
     vi.resetModules();
     const { normalizeText } = await import('~/utils/normalize-text');
@@ -38,5 +42,15 @@ describe('normalizeText HTML-entity decoding', () => {
     expect(normalizeText('&#38;')).toBe('&');
     expect(normalizeText('&#x26;')).toBe('&');
     expect(normalizeText('&amp;amp;')).toBe('&amp;');
+  });
+
+  // Callers pass optional prompt fields straight in, so absent input has to come back as a
+  // string rather than as the value it was handed.
+  it('returns an empty string for absent input', async () => {
+    vi.resetModules();
+    const { normalizeText } = await import('~/utils/normalize-text');
+
+    expect(normalizeText(undefined)).toBe('');
+    expect(normalizeText('')).toBe('');
   });
 });
