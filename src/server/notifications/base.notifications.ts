@@ -71,7 +71,7 @@ export type NotificationProcessor = {
   /**
    * Inverts what a `UserNotificationSettings` row MEANS for this type: subscribed, rather than the
    * global default of opted-out. A processor may only set this if its query derives recipients by
-   * joining that table (`cosmetic-shop-item-added-to-section` is the only one) — pairing it with the
+   * joining that table (`cosmetic-shop-item-added-to-section` and `sticker-placement-auto-accepted`) — pairing it with the
    * usual `NOT EXISTS` clause ships the notification ON while the UI renders it OFF.
    *
    * Read by the toggle handler, not just the UI, so a row is never written with the wrong polarity.

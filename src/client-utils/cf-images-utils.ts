@@ -1,5 +1,4 @@
 import { useMemo } from 'react';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import {
   getEdgeUrl,
@@ -14,24 +13,23 @@ import {
 // graph). Re-exported here so every existing consumer of this module is unaffected.
 export {
   COMMON_IMAGE_WIDTHS,
-  OPTIMIZED_WIDTH_THRESHOLD,
+  MAX_EDGE_WIDTH,
   SRCSET_DPR,
   getEdgeUrl,
   getEdgeUrlSrcSet,
   getInferredMediaType,
   resolveOptimized,
-  shouldForceOptimized,
+  resolvesToOriginal,
   snapWidthToCommonSize,
 } from '~/client-utils/edge-url';
 export type { EdgeUrlProps } from '~/client-utils/edge-url';
 
-/** @param hiDpi emit a 2x `srcSet` variant, and force the optimized format — see `resolveOptimized`. */
+/** @param hiDpi also emit a variant sized for a 2x display. */
 export function useEdgeUrl(
   src: string,
   options: Omit<EdgeUrlProps, 'src'> | undefined,
   hiDpi?: boolean
 ) {
-  const currentUser = useCurrentUser();
   const inferredType = getInferredMediaType(src, options);
   let type = options?.type ?? inferredType;
 
@@ -52,10 +50,9 @@ export function useEdgeUrl(
   // Decided in `edge-url` so anything that has to reproduce this outside React (the
   // announcement banner health monitor) cannot drift from it.
   const optimized = resolveOptimized({
-    optimized: options?.optimized,
     width: options?.width,
-    hiDpi,
-    imageFormat: currentUser?.filePreferences?.imageFormat,
+    height: options?.height,
+    original: options?.original,
   });
 
   const resolved = {

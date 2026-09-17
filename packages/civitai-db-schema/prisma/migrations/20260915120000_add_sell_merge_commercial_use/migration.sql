@@ -1,3 +1,7 @@
+-- APPLIED to prod 2026-09-15. The product write paths it describes as shut were opened separately
+-- in #4874; everything below describes the state at the time this was applied, and is kept because
+-- the ordering instructions in it are still the record of why this ran when it did.
+--
 -- Apply BEFORE the deploy. The build that ships with this migration knows 'SellMerge' and nothing
 -- writes it except the admin backfill named below, which is behind WebhookEndpoint and needs a
 -- deliberate token POST. Four paths are shut: the schema @default and the upload form's default

@@ -5,17 +5,14 @@ import { Controller, useField } from 'form-graph/react';
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
 import { PromptEditorShell } from '~/components/Generate/Input/PromptEditorShell';
 import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
-import { BaseModelInput } from '~/components/generation_v2/inputs/BaseModelInput';
+import { ResourceSelectInput } from '~/components/generation_v2/inputs/ResourceSelectInput';
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
 import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
 import { audioHub } from '~/shared/form-graph/generation/audio/hub.graph';
-import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 
 import { ControllerLabel, PromptLabel, VersionGroupSelector } from './form-helpers';
 import { GateRuleWarnings } from './GateRuleWarnings';
-import { CheckpointRow } from './inputs/CheckpointRow';
-import { openCheckpointPicker } from './inputs/openCheckpointPicker';
 import type { GenerationStore } from './store';
 
 /**
@@ -30,55 +27,30 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
   return (
     <Stack gap="sm">
       <Controller
-        graph={generationHub}
-        name="ecosystem"
-        render={({ value: ecosystem, meta: ecosystemMeta, onChange: onEcosystemChange }) =>
-          ecosystem === 'YuE2' ? (
-            <BaseModelInput
-              value={ecosystem}
-              onChange={onEcosystemChange}
-              compatibleEcosystems={ecosystemMeta?.compatibleEcosystems}
-              excludeEcosystems={ecosystemMeta?.hiddenEcosystems}
-              ecosystemStates={ecosystemMeta?.ecosystemStates}
-              outputType="audio"
-            />
-          ) : (
-            <Controller
-              graph={audioHub}
-              name="model"
-              render={({ value, meta, onChange }) => (
-                <>
-                  <CheckpointRow
-                    value={value}
-                    ecosystem={ecosystem}
-                    options={meta?.options}
-                    onOpenPicker={() =>
-                      openCheckpointPicker({
-                        options: meta?.options,
-                        onSelect: onChange,
-                        onEcosystemChange,
-                        ecosystem: {
-                          value: ecosystem,
-                          compatibleEcosystems: ecosystemMeta?.compatibleEcosystems,
-                          excludeEcosystems: ecosystemMeta?.hiddenEcosystems,
-                          ecosystemStates: ecosystemMeta?.ecosystemStates,
-                          outputType: ecosystemMeta?.mediaType,
-                        },
-                      })
-                    }
-                  />
-                  {meta?.versions ? (
-                    <VersionGroupSelector
-                      versions={meta.versions}
-                      modelId={value?.id}
-                      onChange={onChange}
-                    />
-                  ) : null}
-                </>
-              )}
-            />
-          )
-        }
+        graph={audioHub}
+        name="model"
+        render={({ value, meta, onChange }) => {
+          return (
+            <>
+              <ResourceSelectInput
+                value={value}
+                onChange={onChange}
+                label={<ControllerLabel label="Model" />}
+                buttonLabel="Select Model"
+                modalTitle="Select Model"
+                options={meta?.options}
+                allowRemove={false}
+              />
+              {meta?.versions ? (
+                <VersionGroupSelector
+                  versions={meta.versions}
+                  modelId={value?.id}
+                  onChange={onChange}
+                />
+              ) : null}
+            </>
+          );
+        }}
       />
       <GateRuleWarnings />
       <Controller

@@ -174,7 +174,6 @@ export const constants = {
     'Config',
     'Other',
   ],
-  imageFormats: ['optimized', 'metadata'],
   tagFilterDefaults: {
     trendingTagsLimit: 20,
   },

@@ -90,6 +90,7 @@ export function ResourceReviewCarousel({
                                 type={image.type}
                                 width={800}
                                 hiDpi={features.hiDpiPreviews}
+                                sourceWidth={image.width}
                                 placeholder="empty"
                                 style={{ width: '100%', objectPosition: 'top' }}
                               />

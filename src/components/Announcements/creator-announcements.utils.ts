@@ -1,3 +1,7 @@
+import { useMemo } from 'react';
+import { useMergeServerDismissals } from '~/components/Announcements/announcement-dismissal-merge';
+import { useServerDismissedAnnouncements } from '~/components/Announcements/announcement-dismissal-sync';
+import { mergeDismissedCreatorAnnouncements } from '~/components/Announcements/creator-announcement-dismissals';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -32,7 +36,19 @@ export function useQueryFollowedAnnouncements(enabled = true, limit = 20) {
     { enabled: active }
   );
 
-  return { announcements: data?.items ?? [], isLoading: active ? isLoading : false };
+  const announcements = useMemo(() => data?.items ?? [], [data]);
+
+  // Both the panel and the bell's badge read this hook, so the account-level merge lives here
+  // rather than in either of them — two copies would be two chances to drift.
+  const serverDismissedIds = useServerDismissedAnnouncements();
+  const liveIds = useMemo(() => announcements.map((x) => x.id), [announcements]);
+  useMergeServerDismissals({
+    liveIds,
+    serverDismissedIds,
+    merge: mergeDismissedCreatorAnnouncements,
+  });
+
+  return { announcements, isLoading: active ? isLoading : false };
 }
 
 export function useMutedCreators() {
@@ -50,14 +66,17 @@ export function useIsCreatorMuted(creatorId?: number) {
   return data ?? false;
 }
 
-export function useToggleAnnouncementMute(creatorId: number) {
+export function useToggleAnnouncementMute(creatorId: number, creatorName?: string | null) {
   const queryUtils = trpc.useUtils();
   const mutation = trpc.announcement.toggleAnnouncementMute.useMutation({
     onSuccess: async (result) => {
+      // Mute and dismiss sit adjacent on the same card, so a confirmation naming neither the
+      // action nor the creator cannot tell a reader which of the two they just used.
+      const who = creatorName || 'this creator';
       showSuccessNotification({
         message: result.muted
-          ? 'Announcements from this creator are muted'
-          : 'Announcements from this creator are unmuted',
+          ? `Muted announcements from ${who}`
+          : `Unmuted announcements from ${who}`,
       });
       await Promise.all([
         queryUtils.announcement.getMutedCreators.invalidate(),

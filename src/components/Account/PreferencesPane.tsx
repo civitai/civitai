@@ -6,7 +6,6 @@ import {
   AutoplayGifsToggle,
   EarlyAdopterToggle,
   HideBlueBuzzToggle,
-  ImageFormatSelect,
   ModelFileFormatSelect,
   ModelPrecisionSelect,
   ModelQuantTypeSelect,
@@ -51,11 +50,6 @@ export function PreferencesPane() {
       </SettingsSection>
 
       <SettingsSection title="File preferences" description="Defaults for the download button.">
-        <SettingRow
-          label="Preferred image format"
-          description="Used on site and for downloads."
-          control={<ImageFormatSelect />}
-        />
         <SettingRow label="Preferred model format" control={<ModelFileFormatSelect />} />
         <SettingRow
           label="Preferred precision"

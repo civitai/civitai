@@ -5,7 +5,7 @@ import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import { baseModelRecords, ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import {
-  getComparisonLoraCountKeys,
+  getLoraCountKeys,
   getConfigEcosystemKeys,
   getEcosystemSeoConfig,
   type EcosystemSeoConfig,
@@ -132,7 +132,7 @@ async function computeEcosystemSeoData(config: EcosystemSeoConfig): Promise<Ecos
  * Illustrious read 187K/290K/294K depending on which page you were on.
  */
 async function getPeerLoraCounts(config: EcosystemSeoConfig): Promise<Record<string, number>> {
-  const keys = getComparisonLoraCountKeys(config).filter((key) => key !== config.key);
+  const keys = getLoraCountKeys(config).filter((key) => key !== config.key);
   const counts = await Promise.all(
     keys.map(async (key) => {
       const peer = getEcosystemSeoConfig(key);

@@ -232,6 +232,14 @@ vi.mock('~/server/prom/client', () => ({
   // neighbours use, so the first test to drive either fail-soft path dies here
   // rather than on whatever it was written to check.
   clickhouseFailSoftCounter: promMetricStub(),
+  // Also a '@civitai/telemetry/client' re-export this module-replacing factory drops,
+  // but NOT for the reason above: its call site (`reward-config.ts`) DOES use the
+  // `?.inc?.()` guard. Do not read that chaining as making this entry optional. `?.`
+  // guards the RESULT of the property access, not the module-namespace access that
+  // produces it, so the throw lands either way. Measured by deleting this line: four
+  // cases in `src/server/rewards/__tests__/reward-config.test.ts` go red with
+  // `[vitest] No "rewardConfigReadFailedCounter" export is defined on the
+  // "~/server/prom/client" mock`, pointing at the optional-chained call itself.
   rewardConfigReadFailedCounter: promMetricStub(),
   clavataCounter: promMetricStub(),
   cacheHitCounter: promMetricStub(),

@@ -176,9 +176,37 @@ describe('notification settings polarity', () => {
     expect(toggle).toMatch(/mutate\(\{\s*toggle:\s*!isEnabled/);
   });
 
-  it('both toggle callers share one optimistic update', () => {
+  it('the auto-space pointer asks for the state it is NOT in, too', () => {
+    // A THIRD caller of updateUserSettings, and the first to bypass the shared hook. It has to:
+    // the hook lives in the module that pulls all 36 notification processors, and this component
+    // is statically reachable from a public route, so importing it put 43 KB gzipped into that
+    // page's chunk. Bypassing the hook means bypassing the guard above, so the same property is
+    // pinned here.
+    //
+    // Passing `subscribedToAuto` straight through is a click that does nothing in either
+    // direction -- the exact bug the /shop bell shipped.
+    //
+    // Asserted here AND behaviourally in PlacementSpaceSection.freeSlots.browser.test.tsx, which is
+    // the stronger of the two. The duplication is deliberate: the browser project runs in no CI job,
+    // so the behavioural one protects nobody who is not running it locally. Drop this textual pin if
+    // that ever changes. The cost of keeping it is that renaming `subscribedToAuto` reddens a test in
+    // this file, which the rename is not looking at -- the failure message names the file to fix.
+    const section = readFileSync('src/components/Account/PlacementSpaceSection.tsx', 'utf8');
+    // Anchored on the CALL, exactly like the /shop bell's assertion four tests down. Without
+    // `mutate({` the positive is satisfied by the string appearing anywhere -- including in the
+    // four-line comment above that call, which explains this very polarity -- and the negative
+    // reddens when someone rewords that comment. Both failures are one documentation edit away.
+    expect(section).toMatch(/mutate\(\{\s*toggle:\s*!subscribedToAuto/);
+    expect(section).not.toMatch(/mutate\(\{\s*toggle:\s*subscribedToAuto/);
+  });
+
+  it('the two callers that CAN share one optimistic update do', () => {
     // They used to hand-roll it separately; updating one left the /shop bell writing correctly to
     // the server while its own cache patch no-opped, so the control looked inert in both directions.
+    //
+    // Two, not all three: `PlacementSpaceSection` is deliberately outside this list for the bundle
+    // reason above, and writes no optimistic state at all -- it invalidates, which cannot silently
+    // no-op the way an inverted cache patch can. Its polarity is pinned by the test above instead.
     for (const path of [
       'src/components/Account/NotificationsCard.tsx',
       'src/components/Notifications/NotificationToggle.tsx',

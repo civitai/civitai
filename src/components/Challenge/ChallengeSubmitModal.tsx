@@ -47,7 +47,7 @@ import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/ge
 import { getStepMeta } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
-import { constants } from '~/server/common/constants';
+import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import {
   ChallengeReviewCostType,
@@ -908,6 +908,7 @@ function GeneratorImageCard({
           alt="Generated image"
           src={image.url}
           type={image.type}
+          width={DEFAULT_EDGE_IMAGE_WIDTH}
           className="size-full object-cover"
           anim
         />

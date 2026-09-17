@@ -19,7 +19,7 @@
  * `@civitai/telemetry/client` is not stubbed by src/__tests__/setup.ts.
  */
 import promClient from 'prom-client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mutable env mock, overriding the global stub in src/__tests__/setup.ts, so each case can flip the
 // probe flag. `vi.hoisted` so it exists before the hoisted `vi.mock` factory references it.
@@ -101,10 +101,31 @@ function stubFetchOk() {
  * The probe is fire-and-forget, so nothing in `moderatePrompt`'s own promise chain waits for it.
  * Poll the registry rather than sleeping a fixed amount — a fixed sleep is the classic flake, and
  * it also silently passes if the probe is slower than the sleep.
+ *
+ * 🔴 KEEP THE DEFAULT 1 s BUDGET. It is the only thing bounding how long a WARM observation may
+ * take, and the fixed 200 ms absence legs below depend on that bound: widen it to 5 s and a
+ * regression that pushes warm latency into the 1-5 s band leaves every poll green while those legs
+ * pass vacuously. Measured against an injected 2 s delay in `runProbe` — 12 of 22 cases red at the
+ * default, 2 at a 5 s budget, and `records NOTHING … when the flag is off` among the ones that
+ * flipped to green.
  */
 async function untilProbeTotal(n: number) {
   await vi.waitFor(async () => expect(await probeTotal()).toBe(n));
 }
+
+/**
+ * Resolve the probe's lazy `import()` once, outside any test's poll budget — on a contended
+ * Windows box that cold transform alone overran the 1 s default and failed the first case 3 runs
+ * in 5. Warming it at the ceiling instead was measurably worse: see the budget note above.
+ */
+beforeAll(async () => {
+  probeModerationCacheRepeat('generate', 'a warm-up prompt');
+  // Best-effort: if the probe records nothing at all, every case below must say so in its own
+  // words. Letting this hook throw instead reports one hook timeout and SKIPS all 22.
+  await vi
+    .waitFor(async () => expect(await probeTotal()).toBeGreaterThan(0), { timeout: 30000 })
+    .catch(() => undefined);
+});
 
 beforeEach(() => {
   promClient.register.getSingleMetric(PROBE)?.reset();
@@ -129,9 +150,10 @@ describe('cache probe — the flag is the arming switch', () => {
     // version of this test set the flag off, called once, slept 20 ms and asserted zero — and a
     // mutation run with the flag guard DELETED still passed it. The probe's first invocation has to
     // resolve a lazy `import()`, which takes longer than 20 ms, so the sleep was proving that the
-    // probe is slow rather than that it is off. Warming the import inside the test and reusing the
-    // same budget makes the absence load-bearing: the flag-on leg demonstrates that observations
-    // DO land in this window, so the flag-off leg finding none is evidence.
+    // probe is slow rather than that it is off. What makes the absence load-bearing is the WARM
+    // import, not the size of the window: once the flag-on leg has paid that cost, an observation
+    // lands well inside the 200 ms below, so the flag-off leg finding none is evidence. (The two
+    // legs do not share a budget — the flag-on leg polls, this one sleeps a fixed 200 ms.)
     installRedisFake();
     stubFetchOk();
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);

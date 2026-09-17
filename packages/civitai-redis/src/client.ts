@@ -2129,6 +2129,9 @@ export const REDIS_SYS_KEYS = {
   DAILY_CHALLENGE: {
     CONFIG: 'daily-challenge:config',
   },
+  HUGGING_FACE_IMPORT: {
+    CONFIG: 'hugging-face-import:config',
+  },
   COLLECTION: {
     RANDOM_SEED: 'collection:random-seed',
   },
@@ -2321,7 +2324,14 @@ const REDIS_KEYS_UNPREFIXED = {
   BLOCKS: {
     REGISTRY: 'packed:caches:block-registry',
     TOKEN_RATE_LIMIT: 'blocks:token-rate-limit',
-    // Per-blockInstanceId revocation marker (15-min TTL); block-scope middleware 403s when present.
+    // Per-blockInstanceId revocation marker; block-scope middleware 403s when present.
+    // TTL is MAX_BLOCK_TOKEN_LIFETIME_SECONDS — the longest token it must outlive
+    // (the dev token), NOT 15 minutes as this line said until 2026-09-16.
+    // 🔴 Deliberately NOT restated as a number here: per
+    // src/server/services/block-token-lifetimes.ts (the Next app — a different
+    // workspace package, so it cannot be imported from here), a hardcoded figure
+    // is exactly what let this line claim 15min while dev tokens lived hours.
+    // Read the constant there rather than trusting a number written here.
     REVOKED_INSTANCE: 'blocks:revoked-instance',
     // Per-ecosystem-key most-popular-Checkpoint cache (JSON ValidatedCheckpoint, 1h TTL).
     POPULAR_CHECKPOINT: 'blocks:popular-checkpoint',
