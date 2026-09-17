@@ -587,6 +587,15 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // the series count grows by a handful with each new recipe/engine — always trivially
   // bounded regardless of the wire (labels are free-form + fail-soft, but the values
   // are enum-resolved from the registry, so they can't blow up).
+  //
+  // 🔴 NOT ONLY THE customComfy BRIDGE ANY MORE, AND NOT ONLY REGISTRY-DERIVED
+  // LABELS. Every arm that reserves a post-paid CEILING settles through the same
+  // record, so these also carry the inline arm ({inline, __inline__}) and the
+  // denylist-only PASS-THROUGH `kind:'step'` arm ({passthrough, __passthrough__}).
+  // Both are CONSTANTS chosen precisely because those arms have no registry to
+  // resolve an enum from — the pass-through `$type` set is open by construction —
+  // so the bound holds, but "enum-resolved from the registry" is no longer the
+  // reason it does. Anything that adds a post-paid arm adds one pair here.
   const customComfyActualBuzz = getOrCreateHistogram(
     reg,
     'civitai_app_block_customcomfy_actual_buzz',
@@ -776,7 +785,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const stepPriceCheckTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_step_price_check_total',
-    "App Block `kind:'step'` price checks, by step id and outcome. Only the post-billing submit outcomes are prepaidFixed-gated; the fail-closed absent and the estimate-phase outcomes fire for any kind:'step' request. Submit phase: exact = billed within both the declared price and the reservation; over = billed above the DECLARED price but within the quote-backed reservation (the declared constant is wrong; no money or cap impact — expected to be ~100% for a usage-priced step, do NOT alert on it); over_reserved = billed above the RESERVATION, so every cap counter was short until corrected (ALERT ON THIS); absent = READ THE step LABEL FIRST, THE TWO MEANINGS ARE OPPOSITE: on a REGISTRY step id, either the submit was refused because the orchestrator returned no price quote (no spend, no generation - triage as availability) or a billed submit carried no numeric cost; on step=\"__passthrough__\" it means only that the submit was not refused FOR LACK OF A QUOTE - that arm falls back to the app's own declared maxBuzz and CARRIES ON, so a generation MAY have run with its Buzz ceiling resting on a number the app supplied. It fires before every cap and before the real submit, so the same `$type` being rejected outright by the orchestrator also lands here. Read it against quoted; this counter cannot separate the two causes - only whether a submit produced a workflow does, and no App Block series carries that. quoted = the pass-through submit got a live orchestrator quote; it is absent's denominator and exists so absent cannot be read alone, since a bare count falls when submit volume falls. Estimate phase: estimate_quoted = the block was shown a live orchestrator quote; estimate_absent = the quote failed and it was shown the declared price instead (read as a ratio against estimate_quoted, never alone)",
+    "App Block `kind:'step'` price checks, by step id and outcome. Only the post-billing submit outcomes are prepaidFixed-gated; the fail-closed absent and the estimate-phase outcomes fire for any kind:'step' request. Submit phase: exact = billed within both the declared price and the reservation; over = billed above the DECLARED price but within the quote-backed reservation (the declared constant is wrong; no money or cap impact — expected to be ~100% for a usage-priced step, do NOT alert on it); over_reserved = billed above the RESERVATION, so every cap counter was short until corrected (ALERT ON THIS); absent = READ THE step LABEL FIRST, THE TWO MEANINGS ARE OPPOSITE: on a REGISTRY step id, either the submit was refused because the orchestrator returned no price quote (no spend, no generation - triage as availability) or a billed submit carried no numeric cost; on step=\"__passthrough__\" it means only that the submit was not refused FOR LACK OF A QUOTE - that arm falls back to the app's own declared maxBuzz and CARRIES ON, so a generation MAY have run with its Buzz ceiling resting on a number the app supplied. It fires before every cap and before the real submit, so the same `$type` being rejected outright by the orchestrator also lands here. Read it against quoted; this counter cannot separate the two causes - only whether a submit produced a workflow does, and the nearest series for that is civitai_app_block_customcomfy_wallclock_seconds{engine=\"passthrough\"} (one sample per pass-through workflow that reached terminal - a lower bound, not joinable to this counter per event). quoted = the pass-through submit got a live orchestrator quote; it is absent's denominator and exists so absent cannot be read alone, since a bare count falls when submit volume falls. Estimate phase: estimate_quoted = the block was shown a live orchestrator quote; estimate_absent = the quote failed and it was shown the declared price instead (read as a ratio against estimate_quoted, never alone)",
     ['step', 'outcome']
   );
 
@@ -996,9 +1005,16 @@ export type StepPriceCheckOutcome =
  *     every reservation leg and the real submit, so an orchestrator that
  *     rejects the `$type` outright lands here too with nothing having run. The
  *     triage instruction in the bullet above is wrong for this arm, and the
- *     `step` label is what tells the two sites apart. 🔴 NOTHING IN THIS MODULE
- *     SEPARATES THE TWO CAUSES — only whether a submit produced a workflow does,
- *     and no App Block series carries that. `quoted` is its success half and
+ *     `step` label is what tells the two sites apart. 🔴 THIS COUNTER CANNOT
+ *     SEPARATE THE TWO CAUSES — only whether a submit produced a workflow does,
+ *     and the nearest series for that is
+ *     `civitai_app_block_customcomfy_wallclock_seconds{engine="passthrough"}`:
+ *     one sample per pass-through workflow that reached terminal, because the
+ *     record it settles from is persisted only after a workflow exists. A LOWER
+ *     BOUND, not a join — it needs a terminal observation, drops a wallclock over
+ *     its top bucket, and carries no label tying it to an individual `absent`.
+ *     ⚠️ Two drafts of this clause said no series carried it at all, which sent a
+ *     triaging operator away from the one that does. `quoted` is its success half and
  *     exists so `absent` has a denominator: without a pair, `absent` falls when
  *     submit volume falls, which reads as healthy. Not gated on billing mode
  *     (that arm has none).

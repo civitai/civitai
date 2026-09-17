@@ -9660,7 +9660,7 @@ async function submitPassThroughStepWorkflow(opts: {
   // 🔴 WHAT THIS DOES NOT DO, because the obvious reading is wrong and expensive:
   // it does NOT make the caps an upper bound on real spend. The settle clamps the
   // refund at 0 and nothing raises a counter, so a job billed ABOVE the
-  // reservation leaves every counter it reserved short by the overage,
+  // reservation leaves every counter the submit reserved short by the overage,
   // permanently. The
   // thing that would prevent that is the quote, and this arm deliberately does
   // not fail closed when there is none (see `quotePassThroughBuzz`) — for a
