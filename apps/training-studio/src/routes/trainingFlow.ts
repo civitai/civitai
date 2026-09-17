@@ -2,6 +2,7 @@ import {
   CUSTOM_MODEL_SURCHARGE,
   LORA_TYPES,
   MODEL_CARDS,
+  TE_TRAINING_UNSUPPORTED,
   cardByType,
   cardsForMedia,
   loraTypeById,
@@ -140,6 +141,10 @@ export interface Img {
   /** Set once auto-labeling has attempted this image (success, empty, or failure), so the automatic
    *  drain labels each image at most once. A failed attempt falls back to manual editing. */
   labelTried?: boolean;
+  /** The label text this item ARRIVED with (a zip's .txt, a reused dataset's caption), verbatim.
+   *  A label-format switch re-applies this instead of discarding it and re-auto-labeling — wiping
+   *  a user's own caption files on a mode toggle is how tester data got silently destroyed. */
+  sourceLabel?: string;
   tags: string[];
   caption: string;
 }
@@ -261,6 +266,14 @@ export function labelString(img: Img, mode: LabelType): string {
   return mode === 'tag' ? img.tags.join(', ') : img.caption.trim();
 }
 
+/** labelString's inverse — one definition so a mode round-trip can't corrupt labels. */
+export function parseLabel(text: string, mode: LabelType): { tags: string[]; caption: string } {
+  const t = text.trim();
+  return mode === 'tag'
+    ? { tags: t ? t.split(',').map((s) => s.trim()).filter(Boolean) : [], caption: '' }
+    : { tags: [], caption: t };
+}
+
 // Parse a Review-step numeric field, falling back to a safe generic value when blank/garbage: Number('') is
 // NaN, which JSON-serializes to null, and the orchestrator rejects a null `lr`. The seeds are per-model
 // (PARAM_DEFAULTS); this is only the last-resort fallback if a field is cleared.
@@ -301,7 +314,11 @@ export function buildTrainingRuns(
       steps: params.steps,
       epochs: params.epochs,
       unetLr: num(params.unetLr, 0.0004),
-      textEncoderLr: num(params.textEncoderLr, 0.00005),
+      // Zeroed at submit, not just disabled in the UI — a param edited before switching models
+      // could otherwise carry a TE rate into a run that hangs on it.
+      textEncoderLr: TE_TRAINING_UNSUPPORTED.has(run.versionKey)
+        ? 0
+        : num(params.textEncoderLr, 0.00005),
       networkDim: num(params.networkDim, 32),
       networkAlpha: num(params.networkAlpha, 16),
       resolution: num(params.resolution, 1024),

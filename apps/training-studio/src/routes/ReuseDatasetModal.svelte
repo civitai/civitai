@@ -15,7 +15,9 @@
     open: boolean;
     /** Only same-media runs are reusable — an image dataset can't seed an audio run, etc. */
     media: Media;
-    onReuse: (items: { blobId: string; url: string; name: string; caption: string }[]) => void;
+    onReuse: (
+      items: { blobId: string; name: string; caption: string; previewWorkflowId: string }[]
+    ) => void;
   } = $props();
 
   // Derive the fetch from `open` so the list re-loads each time it's opened; never rejects the panel.
@@ -35,11 +37,11 @@
         return;
       }
       onReuse(
-        (await toReuseItems(dataset, row.workflowId)).map((i) => ({
+        toReuseItems(dataset, row.workflowId).map((i) => ({
           blobId: i.air,
-          url: i.previewUrl,
           name: i.name,
           caption: i.caption,
+          previewWorkflowId: i.workflowId,
         }))
       );
       open = false;
