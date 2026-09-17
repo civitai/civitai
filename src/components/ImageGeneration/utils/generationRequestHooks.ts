@@ -235,6 +235,12 @@ export function useBoostWorkflow() {
         else items[index].downloadPriority = 'high';
       });
     },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Could not boost this download',
+        error: new Error(error.message),
+      });
+    },
   });
 }
 

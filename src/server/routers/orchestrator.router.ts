@@ -21,7 +21,7 @@ import {
   buildServerFaultErrorLog,
   markServerFaultLogged,
 } from '~/server/logging/client';
-import { edgeCacheIt } from '~/server/middleware.trpc';
+import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { generatorFeedbackReward } from '~/server/rewards';
 import { generationStatusDefaultMessage } from '~/server/schema/generation.schema';
 import {
@@ -247,6 +247,11 @@ export const orchestratorRouter = router({
       return result;
     }),
   getBoostCost: orchestratorProcedure
+    // Each call is a whatif PUT to the orchestrator, and a window focus re-prices every boostable
+    // card at once.
+    .use(
+      rateLimit([{ limit: 120, period: 60 }], undefined, { sharedKey: 'orchestrator:boost-cost' })
+    )
     .input(workflowIdSchema)
     .query(({ ctx, input }) =>
       getWorkflowBoostCost({ token: ctx.token, workflowId: input.workflowId })

@@ -14,8 +14,11 @@ import {
 import { DownloadEtaCompare } from '~/components/ResourceLoad/DownloadEtaCompare';
 import {
   describeDownload,
-  summarizeDownloads,
+  isWorthBoosting,
+  mergeDownloadRow,
   toDownloadRow,
+  summarizeDownloads,
+  versionIdFromAir,
   type DownloadSummary,
 } from '~/components/ImageGeneration/download-status';
 import type { WorkflowData } from '~/server/services/orchestrator';
@@ -34,9 +37,9 @@ const useBoostReceipts = create<Record<string, number>>(() => ({}));
 export type WorkflowDownloads = ReturnType<typeof useWorkflowDownloads>;
 
 /**
- * A pending generation's downloads, from its models' live status. A new card comes from the submit
- * reply — before anything is queued — and step events can lag or, in local dev, never arrive, so the
- * card asks directly: once, then every few seconds while a model waits.
+ * A pending generation's downloads. The workflow's own `preparation` — on the submit reply, the
+ * list and step events — says which lane it is in and where; live model status is polled only
+ * while a download is involved, for progress and for when a model lands.
  */
 export function useWorkflowDownloads({
   request,
@@ -45,21 +48,28 @@ export function useWorkflowDownloads({
   request: WorkflowData;
   enabled: boolean;
 }) {
+  const preparation = request.steps.find((s) => s.preparation)?.preparation;
+  const preparing = request.steps.some((s) => s.status === 'preparing');
   const modelVersionIds = request.resources.map((r) => r.id).slice(0, 10);
   const { data } = trpc.resourceLoad.getDownloadStatus.useQuery(
     { modelVersionIds },
     {
-      enabled: enabled && modelVersionIds.length > 0,
+      enabled: enabled && (!!preparation || preparing) && modelVersionIds.length > 0,
+      // Stops on its own once every model has landed, rather than waiting for the workflow refetch
+      // that clears `preparation`.
       refetchInterval: (query) =>
-        query.state.data?.some((x) => toDownloadRow(x.availability))
+        !query.state.data || query.state.data.some((x) => toDownloadRow(x.availability))
           ? DOWNLOAD_STATUS_POLL_MS
           : false,
     }
   );
 
   const rows = request.resources.flatMap((resource) => {
-    const status = data?.find((x) => x.modelVersionId === resource.id);
-    const row = status && toDownloadRow(status.availability, status.size);
+    const prepared = preparation?.resources.find(
+      (r) => versionIdFromAir(r.resource) === resource.id
+    );
+    const live = data?.find((x) => x.modelVersionId === resource.id);
+    const row = mergeDownloadRow(prepared, live);
     return row ? [{ resource, row }] : [];
   });
 
@@ -74,7 +84,7 @@ export function DownloadBoostPanel({
   downloads: WorkflowDownloads;
 }) {
   const boosted = request.downloadPriority === 'high' || summary?.lane === 'high';
-  const boostable = !boosted && summary?.boostedEtaSeconds != null;
+  const offer = !boosted && isWorthBoosting(summary) ? summary : undefined;
   const receiptEta = useBoostReceipts((state) => state[request.id]);
   const laneLabel = downloadLaneLabel(summary?.lane);
 
@@ -88,6 +98,26 @@ export function DownloadBoostPanel({
             {laneLabel ? `${laneLabel} lane` : 'starting'}
           </Text>
         </Text>
+        {/* The Boost button carries its own, with the fee — this is for every other state. */}
+        {!offer && (
+          <span className="ml-auto">
+            <DownloadLanesInfo
+              placement={
+                summary?.lane
+                  ? {
+                      lane: summary.lane,
+                      queuePosition: summary.queuePosition,
+                      transferring: summary.transferring,
+                      etaSeconds: summary.etaSeconds,
+                      boostedEtaSeconds: summary.boostedEtaSeconds,
+                      rateLimitBytesPerSecond: summary.rateLimitBytesPerSecond,
+                      totalBytes: summary.totalBytes,
+                    }
+                  : undefined
+              }
+            />
+          </span>
+        )}
       </div>
 
       {summary && (
@@ -143,18 +173,18 @@ export function DownloadBoostPanel({
         </Section>
       )}
 
-      {boostable && summary.etaSeconds != null && (
+      {offer && offer.etaSeconds != null && (
         <Section>
           <Text size="xs" mb={8}>
             <Text span inherit fw={600}>
-              {summary.lane === 'low' ? 'Skip the free lane.' : 'Skip the queue.'}
+              {offer.lane === 'low' ? 'Skip the free lane.' : 'Skip the queue.'}
             </Text>{' '}
-            Boost moves {summary.count === 1 ? 'this download' : `all ${summary.count} downloads`}{' '}
-            into {BOOST_LANE_LABEL}.
+            Boost moves {offer.count === 1 ? 'this download' : `all ${offer.count} downloads`} into{' '}
+            {BOOST_LANE_LABEL}.
           </Text>
           <DownloadEtaCompare
-            etaSeconds={summary.etaSeconds}
-            boostedEtaSeconds={summary.boostedEtaSeconds!}
+            etaSeconds={offer.etaSeconds}
+            boostedEtaSeconds={offer.boostedEtaSeconds}
           />
         </Section>
       )}
@@ -181,7 +211,7 @@ export function DownloadBoostPanel({
         </Section>
       )}
 
-      {boostable && <BoostButton request={request} summary={summary} />}
+      {offer && <BoostButton request={request} summary={offer} />}
     </div>
   );
 }
@@ -243,7 +273,8 @@ function BoostButton({ request, summary }: { request: WorkflowData; summary: Dow
           <DownloadLanesInfo
             placement={{
               lane: summary.lane,
-              queuePosition: summary.queuePosition ?? 0,
+              queuePosition: summary.queuePosition,
+              transferring: summary.transferring,
               etaSeconds: summary.etaSeconds,
               boostedEtaSeconds: summary.boostedEtaSeconds,
               rateLimitBytesPerSecond: summary.rateLimitBytesPerSecond,

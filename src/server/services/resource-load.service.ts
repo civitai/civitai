@@ -206,11 +206,7 @@ export type ResourceResidency = {
   size?: number;
 };
 
-/**
- * Load state alone, for the model page and the generator: one Redis read for the whole set and one
- * DB query for whatever missed. That is what lets it run for every signed-in viewer where the
- * uncached `getResourceLoadState` cannot.
- */
+/** One orchestrator grain call per version — the cache's lookup. */
 async function fetchResourceResidency(modelVersionIds: number[]) {
   // Only what the AIR needs: `getPrimaryFile` scores on each file's type and metadata.
   const versions = (await dbRead.modelVersion.findMany({
@@ -247,6 +243,9 @@ function createResourceResidencyCache() {
     key: REDIS_KEYS.CACHES.RESOURCE_LOAD_RESIDENCY,
     idKey: 'modelVersionId',
     ttl: RESIDENCY_CACHE_SECONDS,
+    // A hard miss takes no lock, and a popular checkpoint is asked for by every concurrent submit
+    // naming it — so serve the expiring answer while one caller refreshes it.
+    staleWhileRevalidate: true,
     lookupFn: (ids) => fetchResourceResidency(Array.isArray(ids) ? ids : [ids]),
   });
 }

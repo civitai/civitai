@@ -14,7 +14,7 @@ export function formatDownloadEta(seconds: number) {
   return `about ${plural(Math.round(seconds / DAY), 'day')}`;
 }
 
-/** The same buckets as `formatDownloadEta`, for figures big enough to carry no "about". */
+/** Same buckets as `formatDownloadEta`, without the "about" — keep the two in step. */
 export function formatDownloadEtaShort(seconds: number) {
   if (seconds < MINUTE) return '<1 min';
   if (seconds < 10 * MINUTE) return `${Math.round(seconds / MINUTE)} min`;

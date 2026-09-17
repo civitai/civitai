@@ -1,5 +1,6 @@
 import type { ResourceLoadAvailability } from '~/server/schema/resource-load.schema';
 import { formatDownloadEtaShort } from '~/components/ResourceLoad/download-eta';
+import { parseAIRSafe } from '~/shared/utils/air';
 
 /** One model's download, as the queue card shows it. */
 export type DownloadRow = {
@@ -58,6 +59,37 @@ export function toDownloadRow(
   }
 }
 
+/** The model version an AIR names, or undefined — a non-Civitai AIR's version need not be a number. */
+export function versionIdFromAir(air: string) {
+  const version = parseAIRSafe(air)?.version;
+  return version && Number.isSafeInteger(version) && version > 0 ? version : undefined;
+}
+
+/**
+ * One model's row from the workflow's own `preparation` and the model's shared live status.
+ *
+ * A download is shared by every workflow waiting on the model, so its live lane — and that lane's
+ * cap and position — is whoever asked highest, not this workflow. Those come from `preparation`;
+ * live status contributes only transfer progress and ETA, and says when the model has landed.
+ */
+export function mergeDownloadRow(
+  prepared: DownloadRow | undefined,
+  live: { availability: ResourceLoadAvailability; size?: number | null } | undefined
+): DownloadRow | undefined {
+  if (!live) return prepared;
+  const row = toDownloadRow(live.availability, live.size);
+  if (!row) return undefined;
+  // Everything a shared download reports is about whoever asked highest, not this workflow — so
+  // without preparation to read, only the facts that hold for every waiter survive.
+  if (!prepared) return { progress: row.progress, sizeBytes: row.sizeBytes };
+  return {
+    ...prepared,
+    progress: row.progress,
+    etaSeconds: row.etaSeconds ?? prepared.etaSeconds,
+    sizeBytes: prepared.sizeBytes ?? row.sizeBytes,
+  };
+}
+
 const maxKnown = (values: (number | null | undefined)[]) => {
   const known = values.filter((value): value is number => value != null);
   return known.length ? Math.max(...known) : null;
@@ -85,6 +117,20 @@ export function summarizeDownloads(rows: DownloadRow[]): DownloadSummary | undef
     totalBytes: rows.reduce((sum, r) => sum + (r.sizeBytes ?? 0), 0),
     count: rows.length,
   };
+}
+
+/**
+ * Whether a boost is worth offering. The two ETAs are measured at different moments — the boosted one
+ * when the workflow queued, the plain one live — so a download that has since sped up can quote a
+ * "boost" that is slower than the current wait.
+ */
+export function isWorthBoosting(
+  summary: DownloadSummary | undefined
+): summary is DownloadSummary & { boostedEtaSeconds: number } {
+  return (
+    !!summary?.boostedEtaSeconds &&
+    (summary.etaSeconds == null || summary.boostedEtaSeconds < summary.etaSeconds)
+  );
 }
 
 export function describeDownload({ progress, queuePosition, etaSeconds }: DownloadRow) {

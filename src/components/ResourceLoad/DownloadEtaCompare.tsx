@@ -13,7 +13,6 @@ export function DownloadEtaCompare({
   boostedEtaSeconds: number;
   beforeLabel?: string;
   afterLabel?: string;
-  /** Once bought, the slower time is the receipt, not an option. */
   struck?: boolean;
 }) {
   const speedup = downloadSpeedup(etaSeconds, boostedEtaSeconds);

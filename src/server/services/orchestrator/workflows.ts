@@ -3,6 +3,7 @@ import type {
   Options,
   SubmitWorkflowData,
   UpdateWorkflowRequest,
+  Workflow,
   WorkflowTemplate,
 } from '@civitai/client';
 import {
@@ -732,7 +733,8 @@ export async function setWorkflowDownloadPriority({
   if (!response?.ok)
     throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });
 
-  return data as { cost?: { fixed?: Record<string, number> | null } } | undefined;
+  // The 200 body is the updated workflow — with `whatif`, the priced one it would become.
+  return data as (Workflow & { cost?: { fixed?: Record<string, number> | null } }) | undefined;
 }
 
 function orchestratorErrorMessage(error: unknown) {

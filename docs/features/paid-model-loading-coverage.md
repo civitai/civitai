@@ -274,7 +274,7 @@ feature needs; worth filing.
 when `covered` stops implying *resident*. The generation gate was read closely; the rest are
 identified and grouped, not yet read line by line.
 
-### 🔴 A — the generation gate. Read this before scheduling the swap.
+### A — the generation gate. The swap has shipped; this is why it was the risky one.
 
 `canGenerate` in [generation.service.ts](../../src/server/services/generation/generation.service.ts)
 is `(resource.covered || explicitCoveredModelVersionIds.includes(id)) && !isUnavailable`, and an
@@ -290,12 +290,11 @@ orchestrator starts the download **implicitly, on submit**.
 implicit path via a generation submit has no cap at all. The gap was already recorded; the coverage
 change turns it from a theoretical bypass into an invitation with 33k entries.
 
-**Sequencing that follows:** the shared rate-limit key on the generation submit path, and C2
-pricing, both land **before** anything reads the new view. Not after, and not in the same change.
-
-**Superseded by [the boost model](paid-model-loading.md).** Downloads are free there by
-design. The abuse controls are the download lanes, the queue slot a waiting job occupies, and
-cancellation removing its downloads — not a price or a rate limit on submit.
+**Superseded by [the boost model](paid-model-loading.md).** Downloads are free there by design, so the
+abuse controls are the download lanes, the queue slot a waiting job occupies, and cancellation removing
+its downloads — not a price or a rate limit on submit. The sequencing this section originally demanded
+(a shared rate-limit key on the generation submit path, and C2 pricing, both landing before anything
+read the new view) was dropped with it: the swap shipped without either.
 
 ### B — search
 

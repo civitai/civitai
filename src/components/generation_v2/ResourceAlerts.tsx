@@ -16,6 +16,7 @@ import { IconBolt } from '@tabler/icons-react';
 import { useRef } from 'react';
 
 import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { useAppContext } from '~/providers/AppProvider';
 import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
 import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
@@ -228,6 +229,9 @@ export type DownloadAlertWhatIf = {
 /** Takes the whatIf as a prop because the two generation forms each have their own provider. */
 export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) {
   const { data, download, isLoading, isSuccess, canEstimateCost, preBoost, setPreBoost } = whatIf;
+  // Too tall for a phone. Mobile gets the same offer as a confirm on Generate instead
+  // (`resolveBoostSubmitFields`).
+  const isMobile = useIsMobile({ type: 'media' });
 
   // Rendering from the last settled response keeps the alert on screen while a changed form re-prices.
   const settledRef = useRef<{ ready?: boolean; download: typeof download } | null>(null);
@@ -236,6 +240,25 @@ export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) 
 
   if (!canEstimateCost || !settled || (settled.ready !== false && !settled.download)) {
     return null;
+  }
+
+  // Mobile trades the full alert for the confirm on Generate, but that only opens when there is a
+  // boost to sell — so the wait itself still has to be said somewhere.
+  if (isMobile) {
+    const preparation = settled.download?.preparation;
+    if (!preparation) return null;
+    const size = preparation.resources.reduce((sum, r) => sum + r.sizeBytes, 0);
+    return (
+      <Alert color="blue" radius="md" p="xs">
+        <Text size="xs">
+          {preparation.resources.length === 1 ? 'A resource needs' : 'Resources need'} to download
+          first{size > 0 ? ` — ${formatBytes(size)}` : ''}
+          {preparation.etaSeconds != null
+            ? `. Ready in ${formatDownloadEta(preparation.etaSeconds)}.`
+            : '.'}
+        </Text>
+      </Alert>
+    );
   }
 
   if (!settled.download) {
@@ -309,6 +332,7 @@ export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) 
               placement={{
                 lane,
                 queuePosition: preparation.queuePosition,
+                transferring: preparation.progress != null,
                 etaSeconds,
                 boostedEtaSeconds,
                 rateLimitBytesPerSecond: preparation.rateLimitBytesPerSecond,

@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
+import { confirmDownloadBoost } from '~/components/generation_v2/DownloadBoostConfirm';
+import type { DownloadPreparation } from '~/shared/orchestrator/download-preparation';
 import { trpc } from '~/utils/trpc';
 
 /**
- * The generator's whatIf, plus the pre-boost switch. Both generation forms share this, because a fix
- * to either half in one form would otherwise miss the other.
+ * The generator's whatIf, plus the pre-boost switch, shared by both generation forms.
  *
  * While downloads are pending, the same request is also priced in the high lane, so the switch shows
  * its price before it is turned on. The switch is pinned to the form revision it was chosen at: a
@@ -53,7 +54,35 @@ export function usePreBoostWhatIf<T extends Record<string, unknown> | null>({
   };
 }
 
-/** What a submit adds when the user pre-boosted. */
-export function preBoostSubmitFields(preBoost: boolean) {
-  return preBoost ? { downloadPriority: 'high' as const } : {};
+type BoostDownloads = {
+  preparation: DownloadPreparation;
+  boostable: boolean;
+  boostFee: number | null;
+};
+
+/**
+ * What a submit adds for a boost, and the mobile ask.
+ *
+ * The footer alert is too tall for a phone, so mobile trades it for a confirm at the Generate press.
+ * Returns null when the user dismissed that dialog — the submit is then abandoned, not sent unboosted,
+ * since they chose neither.
+ */
+export async function resolveBoostSubmitFields({
+  preBoost,
+  download,
+  askFirst,
+}: {
+  preBoost: boolean;
+  download?: BoostDownloads;
+  askFirst: boolean;
+}): Promise<{ downloadPriority?: 'high' } | null> {
+  if (preBoost) return { downloadPriority: 'high' };
+  // No price, no offer — a dialog whose Boost button is disabled can only waste a tap.
+  if (!askFirst || !download?.boostable || download.boostFee == null) return {};
+  const choice = await confirmDownloadBoost({
+    preparation: download.preparation,
+    boostFee: download.boostFee,
+  });
+  if (!choice) return null;
+  return choice === 'boost' ? { downloadPriority: 'high' } : {};
 }

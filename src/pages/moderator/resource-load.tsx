@@ -84,7 +84,7 @@ function LiveProgress({ live }: { live: ResourceLoadProgress }) {
     <Stack gap={4}>
       <Progress value={pct ?? 0} animated={pct != null} />
       <Text size="xs" c="dimmed">
-        {live.queuePosition > 0
+        {live.queuePosition != null && live.queuePosition > 0
           ? `${live.queuePosition} download${live.queuePosition === 1 ? '' : 's'} ahead`
           : pct != null
           ? `Downloading — ${pct}%${eta}`

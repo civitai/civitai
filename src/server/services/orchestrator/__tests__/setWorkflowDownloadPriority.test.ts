@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * The boost quote and the boost charge are the SAME orchestrator call, told apart only by
  * `whatif=true` — and that flag rides through an `as never` cast, because the pinned client predates
  * the query. So a dropped spread or a `whatIf` typo still compiles, and "show me the price" silently
- * becomes "charge me": the quote fires when the confirmation popover opens, and again on confirm.
+ * becomes "charge me": the quote fires when the queue card renders the panel, and again on confirm.
  * Nothing else in the suite would print anything.
  */
 

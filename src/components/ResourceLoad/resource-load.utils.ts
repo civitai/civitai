@@ -10,8 +10,8 @@ import { trpc } from '~/utils/trpc';
 
 export type ResourceLoadProgress = {
   modelVersionId: number;
-  /** Downloads ahead of this one. Zero means it is transferring now. */
-  queuePosition: number;
+  /** Downloads ahead of this one; null while it is transferring or not yet queued. */
+  queuePosition: number | null;
   /** 0..1, or null while the download is still queued. */
   progress: number | null;
   etaSeconds: number | null;

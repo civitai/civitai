@@ -53,7 +53,8 @@ import {
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { BuzzTypeSelector, useSelectedBuzzType } from '~/components/generation_v2/FormFooter';
 import { DownloadReadyAlert } from '~/components/generation_v2/ResourceAlerts';
-import { preBoostSubmitFields } from '~/components/generation_v2/hooks/usePreBoost';
+import { resolveBoostSubmitFields } from '~/components/generation_v2/hooks/usePreBoost';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { EcosystemBaseModelWarnings } from '~/components/generation_v2/BaseModelWarnings';
 import { GeneratorMessageWarnings } from './GateRuleWarnings';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -703,7 +704,9 @@ export function FormFooter({
     data: whatIfData,
     preBoost,
     setPreBoost,
+    download,
   } = useWhatIfContext();
+  const isMobile = useIsMobile({ type: 'media' });
   const missingFieldMessage = !canEstimateCost ? getMissingFieldMessage(validationErrors) : null;
 
   const [submitError, setSubmitError] = useState<string | undefined>();
@@ -878,6 +881,16 @@ export function FormFooter({
 
     const hasPaidAccess = resourceData.some((x) => x.paidAccess);
 
+    const boostFields = await resolveBoostSubmitFields({
+      preBoost,
+      download,
+      askFirst: !!isMobile,
+    });
+    if (!boostFields) return;
+    // The switch re-prices the whole whatIf, so its fee is already in totalCost; the mobile confirm
+    // is answered after that number was read, so its fee has to be added before the balance check.
+    const boostFee = !preBoost && boostFields.downloadPriority ? download?.boostFee ?? 0 : 0;
+
     const performTransaction = async () => {
       await generateMutation.mutateAsync({
         input: {
@@ -894,7 +907,7 @@ export function FormFooter({
         ...(sourceProvenance.length ? { sourceProvenance } : {}),
         externalId,
         acknowledgedSoftBlock,
-        ...preBoostSubmitFields(preBoost),
+        ...boostFields,
       });
 
       if (preBoost) setPreBoost(false);
@@ -921,7 +934,7 @@ export function FormFooter({
       onSubmitSuccess?.();
     };
 
-    conditionalPerformTransaction(totalCost, performTransaction);
+    conditionalPerformTransaction(totalCost + boostFee, performTransaction);
   };
 
   const handleReset = () => {

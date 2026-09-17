@@ -48,12 +48,21 @@ orchestrator's `rateLimitBytesPerSecond` (beta.107) for the viewer's own lane �
 `null` when uncapped, which is what Express is. Other lanes' caps are not reported, so they show none.
 One lanes explainer (`DownloadLanesInfo`) opens from every boost control.
 
-**Queue card** (`DownloadBoostPanel`). The card reads one source: its models' live status,
-`resourceLoad.getDownloadStatus` — uncached, ≤10 of the card's own versions, 60/min per user. A pending
-card on screen asks once, then every 10s while any model is not loaded; the step's `preparation` and
-status are not consulted, because a new card comes from the submit reply before anything is queued and
-step events can lag (and never reach a local dev server). The cached `getResidency` is too slow here: it
-can hold a pre-queue `unavailable` for its whole 30s TTL.
+**Queue card** (`DownloadBoostPanel`). The workflow's own step `preparation` gives its lane,
+position, lane cap and boosted ETA: it is per workflow, while a download is shared by every workflow
+waiting on the model, so the model's live lane is whoever asked highest. A submit reply predates the
+orchestrator queueing anything, so `generateFromGraph` attaches the estimate from a whatIf of the same
+steps (`attachEstimatedPreparation`) — run alongside the submit under a 2s deadline it never holds the
+reply for, and only when the cached residency says a download is already queued or loading for one of
+its models (`unavailable` is the resting state of most of the catalogue, not a queued download). The
+estimate is restated in the high lane only when the submitted workflow actually came back `high`, and
+it carries only what a whatIf can honestly know — the lane and the sizes. Position and ETAs are dropped
+(`asEstimate`): they are measured against a queue the job has not joined, and the card's own poll has
+the orchestrator's within seconds. So a fresh card reads "Waiting on downloads — Standard lane" with
+`—` for position and time, and offers no Boost until the real figures arrive. Later reads and step
+events replace it. While a step has `preparation` or is `preparing`, the card also polls its models'
+live status (`resourceLoad.getDownloadStatus` — uncached, ≤10 versions, 60/min per user) every 10s, for
+transfer progress, ETA and when a model lands; never for lane (`mergeDownloadRow`).
 
 While a model is not loaded, the pending image tile gives way to a panel: the lane, position (from 1),
 lane speed and ETA of the slowest download, then each unloaded model with its position and ETA,
@@ -71,14 +80,22 @@ also run at `downloadPriority: "high"`, so the price shows before the switch is 
 swaps to the already-priced response. The switch is pinned to the form revision, so it never carries
 over to a selection the user has not re-priced, and it clears after a submit (`usePreBoostWhatIf`).
 
+Both render it in the footer, beside the other pre-submit warnings.
+
+**On mobile the full alert is hidden** — it costs too much of the viewport — and the offer is made as a
+confirm on the Generate press instead (`DownloadBoostConfirm`, chosen in `resolveBoostSubmitFields`):
+the wait, the "Normally → Boosted" comparison, then **Boost · N Buzz** or **Continue without boosting**.
+Dismissing it cancels the submit rather than sending it unboosted, since the user chose neither. That
+confirm only opens when there is a boost to sell, so mobile keeps a one-line notice of the wait itself.
+
 **Load indicators**, checkpoints only: inside the model page's **Create** button, on the selected
 checkpoint in both forms, and on checkpoint results in the resource picker. Backed by
 `resourceLoad.getResidency` — signed-in, ≤50 ids, rate-limited, cached 30s per version, and batched
 one request per picker page.
 
 **Moderator tool** at `/moderator/resource-load` (flag `resourceLoad`): the explicit purchase path —
-`resourceLoad.estimate` / `submit`, the per-tier caps, the `resource-load:update` signal and the
-load-complete toast. Kept deliberately (2026-09-11) for pricing and observing a single download.
+`resourceLoad.estimate` / `submit`, the flag-gated `getQueue` and uncapped `getState` reads, the
+per-tier caps, the `resource-load:update` signal and the load-complete toast. Kept deliberately (2026-09-11) for pricing and observing a single download.
 
 **Coverage** — every reader of `GenerationCoverage` reads `GenerationCoverageNext` (Prisma `@@map`
 plus the raw-SQL queries), which is what lets a normal user pick a checkpoint that is not loaded.
@@ -92,6 +109,28 @@ plus the raw-SQL queries), which is what lets a normal user pick a checkpoint th
 - A pre-boosted submit sends `downloadPriority` only when a whatIf shows something waiting to
   download.
 - ETAs shown to users are approximate (`formatDownloadEta`); the moderator page keeps exact figures.
+- A boost is only offered when it is actually faster (`isWorthBoosting`): the plain ETA is live and the
+  boosted one was measured when the workflow queued, so a download that has since sped up can otherwise
+  quote a "boost" slower than the current wait.
+- The mobile confirm's fee is added to the balance check before it runs, since the dialog is answered
+  after the generation's own total was read.
+
+**Timeouts — the site now sends none.** A generation step used to carry a `timeout` built by
+`buildStepTimeout` (20 minutes, 40 for video, +1 per extra resource). A job waiting in the free lane
+can wait far longer than that, and an expired step is not a slow generation, it is a dead one — so
+`createWorkflowStepsFromGraph` stopped setting `timeout`, and the client cutoffs that mirrored it went
+with it: the queue card's "This is taking longer than usual" alert at 5 minutes **and its promise that
+we refund automatically by `createdAt + min(step timeout, 10 min)`** (`QueueItem`), the iterative
+editor's 5-minute warning and 25-minute hard stop (`IterativeImageEditor`), the comics panel poll's
+25-minute `Failed` cutoff (`comics.router.ts`) and its 3-minute modal timeout (`GenerateImageModal`).
+Whatever bound remains is the orchestrator's own; the site still renders the `expired` workflow status
+it produces, and promises nothing about when it arrives.
+
+**App Blocks keeps its step timeouts** (`formatStepTimeout` / `stepTimeoutSeconds` in
+`src/server/services/blocks/workflow.service.ts`) and was deliberately not touched. There the timeout
+is the only deterministic per-job Buzz bound — worst-case Buzz is derived from it and reserved against
+the per-user cap — so removing it would uncap spend, not just uncap waiting. It is per engine, and it
+moves with `maxBuzz`.
 
 ---
 
@@ -101,10 +140,7 @@ Read `node_modules/@civitai/orchestration-client/dist/generated/types.gen.d.ts` 
 this section once it ages. The app's own orchestrator calls still go through the older
 `@civitai/client`, which predates `downloadPriority` and `preparation` — hence the casts around them.
 
-### Step preparation — what the generator alert renders
-
-The queue card no longer reads it (see **Queue card** above); the whatIf alert, the pre-boost check and
-the moderator page still do.
+### Step preparation — what the card and the alert render
 
 From beta.106, `WorkflowStep.preparation` is `WorkflowStepPreparationResource[] | null` — every
 resource the step waits on, **gating resource first**, each with `sizeBytes`, `lane`,
@@ -151,8 +187,8 @@ cluster will never host this" and "we could not read the answer" need different 
 
 Cursor-paged `ResourceInfo[]`, merged across providers, de-duped by AIR and ranked server-side. **Do
 not re-rank client-side.** The cursor is an integer offset over a list re-ranked from live state on
-every request, so paging is unstable — show one page and poll it. Each item costs two grain calls, so
-`take` stays small (clamped 1..500, default 100).
+every request, so paging is unstable — show one page and poll it. Each item costs the orchestrator two
+grain calls, so the site clamps `take` to 1..100, default 50 (`getResourceLoadQueueSchema`).
 
 ### Prices and who charges
 
@@ -202,11 +238,13 @@ rule instead of restating it. The numbers, the audit and the readers list are in
 
 Everything here is the deploying engineer's, before this branch merges.
 
-- [ ] **Confirm the production orchestrator is on beta.106 or later** (the site is built against
-      beta.107, whose `rateLimitBytesPerSecond` drives the lane speed). The site reads only the resource-list
-      `preparation`; an older orchestrator's summary object reads as nothing to download, so no
-      download panel and no Boost.
-      *Closes when:* a preparing step's `preparation` from the production orchestrator is an array.
+- [ ] **Confirm the production orchestrator is on beta.107.** Two things need it and they fail
+      differently: beta.106's resource-list `preparation` (an older orchestrator's summary object
+      reads as nothing to download — no panel, no Boost, anywhere), and beta.107's
+      `rateLimitBytesPerSecond` (absent on beta.106, so every lane silently shows no speed while
+      everything else works).
+      *Closes when:* a preparing step's `preparation` from the production orchestrator is an array
+      **and** its entries carry `rateLimitBytesPerSecond`.
 - [ ] **`pnpm run typecheck`, `pnpm run lint`, `pnpm run prettier:write`, and the full
       `pnpm run test:unit:run` once.** Targeted suites are not a substitute for the last one.
 - [ ] **Run `comment-review` over the diff and `docs-drift-review` over the commits.** The two lanes
@@ -214,7 +252,9 @@ Everything here is the deploying engineer's, before this branch merges.
 - [ ] **Manual pass in a browser**, none of which has been exercised: the queue card's download panel
       with its per-model rows and Boost button (including in the narrow sidebar layout), the lanes
       explainer, the pre-submit alert and Boost switch in **both** generator forms, compared against
-      the mockup, and the Create-button and picker indicators.
+      the mockup, the Create-button and picker indicators, and — **on a narrow viewport** — that the
+      alert is hidden, that `DownloadBoostConfirm` appears on Generate, and that dismissing it sends
+      nothing rather than submitting unboosted.
 - [ ] **Boost a real queued workflow end to end.**
       *Closes when:* the workflow reports `downloadPriority: "high"` and `cost.fixed.downloadPriority`
       was charged.
@@ -266,6 +306,7 @@ Everything here is the deploying engineer's, before this branch merges.
 | — | **The boost price itself** — whether it scales with size, is cheaper for members, or applies to LoRAs. The UI reads `cost.fixed.downloadPriority` and computes nothing, so a change needs no site work. | Koen / Justin | the numbers are set |
 | — | **The unboosted ETA.** A whatIf priced at `high` reports the high-lane ETA, so one request may not say how long the user waits *without* boosting. The generator sidesteps it by pricing at the user's own lane. | Koen | confirmed either way |
 | — | **Price shown ≠ price charged, structurally.** The charging `PUT` takes no expected price; we re-price immediately before charging and refuse on a mismatch. An expected-price field on the orchestrator would close the window properly. | Koen | such a field exists, or we accept the re-price |
+| — | **Does an unbounded generation still refund?** The site sends no step `timeout` and the queue card no longer promises an automatic refund. Whether the orchestrator expires a job on its own, after how long, and whether it refunds undelivered images, is unverified — and support has no line to give a user whose job sits in the free lane. | Koen | he states the orchestrator's own expiry and refund behaviour with no step `timeout` set, and it is written into the timeouts paragraph above |
 | K3 | **Does the orchestrator refund a failed prepare?** Never exercised, because no prepare has ever been charged. Matters for the moderator tool, not the boost. | Koen | he answers |
 | 2.5 | **The rate-limit numbers are off by one** — `attempts > limit`, so 3/6/10 permit 4/7/11. Renumber to 2/5/9, or keep and say so. Documented beside the limiter either way; do not "fix" the shared comparison. | whoever closes C10 | renumbered, or the decision taken |
 | 2.6 | **17 base models claim generation support in `basemodel.constants.ts` with no `GenerationBaseModel` row**, and 5 rows exist the constants do not declare. Nothing detects the disagreement. Predates this feature. | unowned | rows added, constants corrected, or a guard pins them |
@@ -281,27 +322,22 @@ Everything here is the deploying engineer's, before this branch merges.
 
 ### The model
 
-- Generation is always accepted; downloads are free; the queue slot is the cost.
-- Paying buys lane priority, not access. One paid lane, so a boost is never outbid.
-- Members get `normal`, non-members `low`, boosting gives `high`.
-- Cancelling a queued job removes its downloads — an abuse control alongside the lanes.
-- A boost moves the whole workflow, LoRAs included; whether LoRAs are *charged* is Koen's pricing
-  question.
-- The UI shows the worst resource, never "1 of 3".
+All of it is in [How it works](#how-it-works), and all of it is decided — none of those bullets is
+open. The one thing not stated there: **one paid lane, so a boost is never outbid.**
 
 ### Coverage
 
-- `CoveredCheckpoint` stops gating generation; `EcosystemCheckpoints` and `GenerationBaseModel` stay.
-- Loading is for checkpoints — size is why the loader exists.
-- Only base models in `GenerationBaseModel` are loadable.
-- A checkpoint needs a SafeTensor weight file; file-less API models never load.
-- Taken-down and archived models are not covered, for any type.
-- The purchase path refuses anything outside coverage, which is how `RentCivit` is enforced.
+The rules are in [Coverage, in one paragraph](#coverage-in-one-paragraph) and every one is decided.
+Three that are not stated there: loading is for checkpoints (size is why the loader exists); only base
+models in `GenerationBaseModel` are loadable; and coverage means *allowed to generate*, while residency
+is the orchestrator's axis.
 - Coverage means *allowed to generate*; residency is the orchestrator's axis.
 
 ### Surfaces and delivery
 
-- Load state and the queue are **public reads**.
+- Load state is a **signed-in read** (`getResidency`). The queue listing and the uncapped `getState`
+  are behind the `resourceLoad` flag and serve the moderator tool alone — the public
+  `/generate/downloads` page was built and removed on this branch (2026-09-16).
 - Progress signals go to the buyer's own channel, never a model-version group.
 - A browser keeps what it is *watching* in `localStorage`, drained on every page load, with a 48h
   ceiling so every item can leave. The durable record of a purchase is the orchestrator's — workflows

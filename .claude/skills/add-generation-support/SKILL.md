@@ -298,17 +298,21 @@ Three DB tables are keyed off the constants **by string or version id** but are 
 
 See [docs/features/featured-auction-ecosystem-sync.md](docs/features/featured-auction-ecosystem-sync.md) for the full rationale and architecture; the essentials:
 
-### 0. First: which branch of `GenerationCoverage` will cover this version?
+### 0. First: which branch of `GenerationCoverageNext` will cover this version?
 
-`GenerationCoverage` is a three-branch `OR`. **Read the live definition before writing any SQL** — `SELECT pg_get_viewdef('"GenerationCoverage"'::regclass, true)` — because which branch applies decides which table you need, and picking the wrong one produces SQL that runs cleanly and changes nothing.
+**`GenerationCoverageNext` is the view the app reads** — the Prisma `GenerationCoverage` model `@@map`s to it, and the raw-SQL readers name it directly. `GenerationCoverage` still exists and still answers the old rules, so querying it tells you nothing about what the site will do. **Read the live definition before writing any SQL** — `SELECT pg_get_viewdef('"GenerationCoverageNext"'::regclass, true)` — because which branch applies decides which table you need, and picking the wrong one produces SQL that runs cleanly and changes nothing.
+
+**A top-level `m.mode IS NULL` sits above all three branches:** a model a moderator has archived or taken down is covered by none of them.
 
 | Branch | Condition | Typical ecosystem |
 | --- | --- | --- |
 | 1 | `mv.id IN "EcosystemCheckpoints"` — **no status check, no `NOT m.poi` guard** | file-less API checkpoints, `usageControl = 'Generation'` |
 | 2 | `usageControl = 'ExternalGeneration' AND status = 'Published' AND NOT m.poi` | file-less API checkpoints, mod-published |
-| 3 | files + `allowCommercialUse` + `baseModel IN "GenerationBaseModel"` + `CoveredCheckpoint` | downloadable weights |
+| 3 | files + `allowCommercialUse` + `baseModel IN "GenerationBaseModel"`; a **Checkpoint** also needs a scanned `SafeTensor` weight file, because the loader serves nothing else | downloadable weights |
 
 `GenerationBaseModel` is consulted by **branch 3 only**. For a file-less API model the row is inert — correct to add for the future, but it is not what makes the model generatable, so don't stop there and assume you're done.
+
+`CoveredCheckpoint` no longer gates anything. It survives inside branch 3 as a disjunct excusing an auction-resident checkpoint from the SafeTensor requirement, and goes when the auction stops writing rows. **Never add a row there to make a version generatable.**
 
 ### 1a. `EcosystemCheckpoints` — covers a specific VERSION unconditionally
 

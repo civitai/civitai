@@ -79,7 +79,9 @@ import { useResourceDataContext } from './inputs/ResourceDataProvider';
 import { useWhatIfContext } from './WhatIfProvider';
 import { filterSnapshotForSubmit } from './utils';
 import { getMissingFieldMessage } from './hooks/useWhatIfFromGraph';
-import { preBoostSubmitFields } from './hooks/usePreBoost';
+import { ReadyAlert } from './ResourceAlerts';
+import { resolveBoostSubmitFields } from './hooks/usePreBoost';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import type { SourceMetadata } from '~/store/source-metadata.store';
 import { sourceMetadataStore } from '~/store/source-metadata.store';
 import { remixProvenanceStore } from '~/store/remix-provenance.store';
@@ -662,6 +664,7 @@ function PriorityAlertSpace({
       <QueueSnackbar right={snackbarRight} />
       <GeneratorMessageWarnings />
       <BaseModelWarnings />
+      <ReadyAlert />
       {priorityAlert}
     </>
   );
@@ -1100,7 +1103,8 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   );
 
   // Get whatIf data for buzz transaction checking
-  const { data: whatIfData, preBoost, setPreBoost } = useWhatIfContext();
+  const { data: whatIfData, preBoost, setPreBoost, download } = useWhatIfContext();
+  const isMobile = useIsMobile({ type: 'media' });
 
   // Resolved buzz type shown in the UI — defaults to the site's primary type
   // (e.g. green on .com) when the user hasn't explicitly picked one. Sent with
@@ -1328,7 +1332,16 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     // Any resource with an active paid-access gate (paidAccess is set only for live gates upstream).
     const hasPaidAccess = resourceData.some((x) => x.paidAccess);
 
-    // Wrap the mutation call with buzz transaction check
+    const boostFields = await resolveBoostSubmitFields({
+      preBoost,
+      download,
+      askFirst: !!isMobile,
+    });
+    if (!boostFields) return;
+    // The switch re-prices the whole whatIf, so its fee is already in totalCost; the mobile confirm
+    // is answered after that number was read, so its fee has to be added before the balance check.
+    const boostFee = !preBoost && boostFields.downloadPriority ? download?.boostFee ?? 0 : 0;
+
     const performTransaction = async () => {
       await generateMutation.mutateAsync({
         input: {
@@ -1345,7 +1358,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         ...(sourceProvenance.length ? { sourceProvenance } : {}),
         externalId,
         acknowledgedSoftBlock,
-        ...preBoostSubmitFields(preBoost),
+        ...boostFields,
       });
 
       if (preBoost) setPreBoost(false);
@@ -1385,7 +1398,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
       onSubmitSuccess?.();
     };
 
-    conditionalPerformTransaction(totalCost, performTransaction);
+    conditionalPerformTransaction(totalCost + boostFee, performTransaction);
   };
 
   const handleReset = () => {

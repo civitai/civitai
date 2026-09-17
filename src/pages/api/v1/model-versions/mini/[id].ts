@@ -145,6 +145,9 @@ export default MixedAuthEndpoint(async function handler(
         (m."availability" = 'Private')
 
       ) AS "checkPermission",
+      -- 🔴 GenerationCoverageNext, not GenerationCoverage: the ORCHESTRATOR reads this endpoint to
+      -- decide what prepareResource may load, and the live view excludes the community checkpoints
+      -- paid model loading exists for. See docs/features/paid-model-loading-coverage.md.
       (SELECT covered FROM "GenerationCoverageNext" WHERE "modelVersionId" = mv.id) AS "covered",
       mv."meta"->'generationAlias' AS "generationAlias",
       (

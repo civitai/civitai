@@ -28,7 +28,6 @@ import {
   IconLink,
 } from '@tabler/icons-react';
 import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
-import dayjs from '~/shared/utils/dayjs';
 import { useEffect, useState } from 'react';
 import { GeneratedOutput } from '~/components/ImageGeneration/GeneratedOutput';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
@@ -41,7 +40,6 @@ import {
   useUpdateWorkflow,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import type { TransactionInfo, WorkflowStatus } from '@civitai/client';
-import { TimeSpan } from '@civitai/client';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
@@ -100,9 +98,6 @@ const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
   'processing',
 ];
-const LONG_DELAY_TIME = 5; // minutes
-const EXPIRY_TIME = 10; // minutes
-const delayTimeouts = new Map<string, NodeJS.Timeout>();
 
 /** 3D ecosystem key → user-facing model name shown on the queue card. */
 const POLYGEN_ECOSYSTEM_MODEL_LABELS: Record<string, string> = {
@@ -130,7 +125,6 @@ export function QueueItem({
 
   const { copied, copy } = useClipboard();
 
-  const [showDelayedMessage, setShowDelayedMessage] = useState(false);
   const { status } = request;
   const params = request.params;
   const resources = request.resources;
@@ -155,38 +149,6 @@ export function QueueItem({
   const canceled = status === 'canceled';
 
   const cancellable = PENDING_PROCESSING_STATUSES.includes(status);
-
-  useEffect(() => {
-    if (!cancellable) return;
-
-    const id = request.id.toString();
-
-    function removeTimeout(id: string) {
-      const timeout = delayTimeouts.get(id);
-      if (timeout) {
-        clearTimeout(timeout);
-        delayTimeouts.delete(id);
-      }
-    }
-
-    removeTimeout(id);
-    delayTimeouts.set(
-      id,
-      setTimeout(() => {
-        setShowDelayedMessage(true);
-        delayTimeouts.delete(id);
-      }, LONG_DELAY_TIME * 60 * 1000)
-    );
-    return () => {
-      removeTimeout(id);
-    };
-  }, [request.id, request.createdAt, cancellable]);
-
-  const minTimeout = request.steps.reduce((min, s) => {
-    const minutes = s.timeout ? new TimeSpan(s.timeout).minutes : EXPIRY_TIME;
-    return Math.min(min, minutes);
-  }, EXPIRY_TIME);
-  const refundTime = dayjs(request.createdAt).add(minTimeout, 'minute').toDate();
 
   const handleCopy = () => {
     copy(request.id);
@@ -427,27 +389,6 @@ export function QueueItem({
       {inView && !isPolyGen && (
         <>
           <div className="flex flex-col gap-3 py-3 @container">
-            {showDelayedMessage &&
-              cancellable &&
-              request.awaitingOutput &&
-              !request.steps.some((s) => s.$type === 'videoGen') && (
-                <Alert color="yellow" p={0}>
-                  <div className="flex items-center gap-2 px-2 py-1">
-                    <Text size="xs" c="yellow" lh={1}>
-                      <IconAlertTriangleFilled size={20} />
-                    </Text>
-                    <Text size="xs" lh={1.2} c="yellow">
-                      <Text fw={500} component="span">
-                        This is taking longer than usual.
-                      </Text>
-                      {` Don't want to wait? Cancel this job to get refunded for any undelivered images. If we aren't done by ${formatDateMin(
-                        refundTime
-                      )} we'll refund you automatically.`}
-                    </Text>
-                  </div>
-                </Alert>
-              )}
-
             {prompt && <LineClamp lh={1.3}>{prompt}</LineClamp>}
 
             {resources.length > 0 && (

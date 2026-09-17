@@ -33,8 +33,10 @@ import type {
   PreprocessVideoStepTemplate,
 } from '@civitai/orchestration-client';
 import type { DownloadPreparation } from '~/shared/orchestrator/download-preparation';
-import { normalizePreparation } from '~/shared/orchestrator/download-preparation';
-import { TimeSpan } from '@civitai/client';
+import {
+  attachEstimatedPreparation,
+  normalizePreparation,
+} from '~/shared/orchestrator/download-preparation';
 import { createVideoPreprocessStep } from './ecosystems/video-preprocess.handler';
 import {
   generationGraph,
@@ -89,12 +91,13 @@ import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workf
 import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { mapDataToGraphInput } from './legacy-metadata-mapper';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { sleep, throwBadRequestError } from '~/server/utils/errorHandling';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
 import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { getResourceResidency } from '~/server/services/resource-load.service';
 import { WORKFLOW_TAGS, VID_QUANTITY_BY_TIER } from '~/shared/constants/generation.constants';
 import { includesPoi } from '~/utils/metadata/audit';
 import { BlocklistType } from '~/server/common/enums';
@@ -197,7 +200,7 @@ export type WhatIfOptions = {
 /**
  * Step input returned by step creators.
  * Based on WorkflowStepTemplate with required $type and input.
- * Allows optional overrides for priority, timeout, metadata at the creator level.
+ * Allows optional overrides for priority and metadata at the creator level.
  *
  * Step creators that need per-step source metadata (e.g., upscale, remove-bg,
  * or chained workflows) should call `buildResolvedSource` and set the
@@ -208,14 +211,6 @@ type StepInput = WorkflowStepTemplate & {
   /** Pre-computed source metadata from step creators via `buildResolvedSource`. */
   resolvedSource?: { metadata: Record<string, unknown>; imageMetadata: string };
 };
-
-const DEFAULT_STEP_TIMEOUT_MINUTES = 20;
-const VIDEO_STEP_TIMEOUT_MINUTES = 40;
-const VIDEO_STEP_TYPES = new Set(['videoGen', 'videoInterpolation']);
-
-function buildStepTimeout(minutes: number) {
-  return new TimeSpan(0, minutes, 0).toString(['hours', 'minutes', 'seconds']);
-}
 
 /** Ecosystem workflows - GenerationGraphOutput where ecosystem is defined */
 type EcosystemGraphOutput = Extract<GenerationGraphOutput, { ecosystem: string }>;
@@ -1045,7 +1040,6 @@ function buildResolvedSource(
  * - Resource validation (subscription, expired epochs, canGenerate, POI)
  * - POI prompt detection
  * - Private generation detection
- * - Timeout calculation (base 20 min + 1 min per additional resource)
  */
 export async function createWorkflowStepsFromGraph({
   data,
@@ -1142,12 +1136,6 @@ export async function createWorkflowStepsFromGraph({
     // deserialization. MAX_RANDOM_SEED keeps the default within Int32 range.
     seed: 'seed' in data && data.seed != null ? data.seed : randomInt(MAX_RANDOM_SEED),
   };
-
-  // Calculate timeout: base (20 minutes, 40 for video steps) + 1 minute per
-  // additional resource
-  const extraResourceMinutes = Math.max(0, enrichedResources.length - 1);
-  const timeout = buildStepTimeout(DEFAULT_STEP_TIMEOUT_MINUTES + extraResourceMinutes);
-  const videoTimeout = buildStepTimeout(VIDEO_STEP_TIMEOUT_MINUTES + extraResourceMinutes);
 
   // Convert graph output to legacy {resources, params} format for storage.
   // This is the TEMPLATE snapshot — `params.prompt`/`negativePrompt` still
@@ -1252,7 +1240,7 @@ export async function createWorkflowStepsFromGraph({
       steps.push(...variantSteps);
     }
 
-    // Wrap with request-level concerns: priority, timeout, outputFormat
+    // Wrap with request-level concerns: priority, outputFormat
     // isPrivateGeneration lives on workflow.metadata, not per-step.
     // `remixOfId` is ALSO copied onto each step's metadata: the orchestrator's
     // `WorkflowStepHandler.GenerateJobsAsync` reads `workflowStep.Metadata["remixOfId"]`
@@ -1273,9 +1261,6 @@ export async function createWorkflowStepsFromGraph({
         outputFormat: (step.input as { outputFormat?: string }).outputFormat ?? data.outputFormat,
       },
       priority: data.priority,
-      // A handler-set timeout wins, so a slow ecosystem can ask for more than the
-      // per-step-type default.
-      timeout: step.timeout ?? (VIDEO_STEP_TYPES.has(step.$type) ? videoTimeout : timeout),
       metadata: isWhatIf
         ? undefined
         : ({
@@ -1550,6 +1535,31 @@ function extractInputImageUrls(data: Record<string, unknown>): string[] | undefi
   return urls.length ? urls : undefined;
 }
 
+/** Long enough for a healthy whatIf, short enough that a slow one never delays a generation. */
+const DOWNLOAD_ESTIMATE_TIMEOUT_MS = 2_000;
+
+/**
+ * Whether a download is already moving for one of this submit's models — the only case where a whatIf
+ * can produce a queue position and an ETA worth showing.
+ *
+ * Deliberately NOT `unavailable`: that is "nothing is pulling it", which is the resting state for most
+ * of the catalogue, so triggering on it would price a second workflow on a large share of all submits
+ * to produce an estimate the orchestrator has no queue for.
+ */
+async function hasQueuedDownloads(data: unknown) {
+  const { model, vae, resources } = data as {
+    model?: { id?: number } | null;
+    vae?: { id?: number } | null;
+    resources?: { id?: number }[] | null;
+  };
+  const ids = [model, vae, ...(resources ?? [])]
+    .map((r) => r?.id)
+    .filter((id): id is number => typeof id === 'number');
+  if (!ids.length) return false;
+  const residency = await getResourceResidency(ids).catch(() => []);
+  return residency.some(({ availability }) => ['loading', 'queued'].includes(availability.status));
+}
+
 /**
  * Submits a generation workflow using generation-graph input.
  *
@@ -1735,11 +1745,8 @@ export async function generateFromGraph({
         }
       : workflowMetadata;
 
-  // A download boost is a fixed fee, so it is only sent when a whatIf shows something waiting to
-  // download. If that check fails the generation still goes out, unboosted and unbilled for it.
-  const boostDownloads =
-    !!downloadPriority &&
-    (await submitWorkflow({
+  const priceDownloads = () =>
+    submitWorkflow({
       token,
       body: {
         steps,
@@ -1748,9 +1755,22 @@ export async function generateFromGraph({
         currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
       },
       query: { whatif: true },
-    })
-      .then((priced) => !!priced.steps?.some((step) => readPreparation(step)))
-      .catch(() => false));
+    }).catch(() => undefined);
+
+  // A download boost is a fixed fee, so it is only sent when a whatIf shows something waiting to
+  // download. If that check fails the generation still goes out, unboosted and unbilled for it.
+  const boostWhatIf = downloadPriority ? await priceDownloads() : undefined;
+  const boostDownloads = !!boostWhatIf?.steps?.some((step) => readPreparation(step));
+  // The submit reply predates the orchestrator queueing any download, so the queue card's first
+  // render has nothing to show. A whatIf of the same steps does, and runs alongside the submit.
+  //
+  // 🔴 Never let it hold the reply. A generation that is accepted is the headline property here, and
+  // this only buys the card a head start on numbers its own poll fetches seconds later.
+  const downloadWhatIf =
+    boostWhatIf ??
+    ((await hasQueuedDownloads(data))
+      ? Promise.race([priceDownloads(), sleep(DOWNLOAD_ESTIMATE_TIMEOUT_MS).then(() => undefined)])
+      : Promise.resolve(undefined));
 
   // Submit workflow to orchestrator
   const workflow = (await submitWorkflow({
@@ -1792,6 +1812,14 @@ export async function generateFromGraph({
 
   // Format and return response
   const [formatted] = await formatGenerationResponse2([workflow], { id: userId } as any);
+  const priced = await downloadWhatIf;
+  attachEstimatedPreparation(
+    formatted.steps,
+    (priced?.steps ?? []).map((step) => ({ name: step.name, preparation: readPreparation(step) })),
+    // What the workflow BECAME, not what was asked for: restating an estimate as Express on a
+    // workflow the orchestrator left in the free lane shows the payer a boost they did not get.
+    readDownloadPriority(workflow) === 'high'
+  );
 
   // 🔴 ALSO ON THE REPLY, and deliberately not only via the metadata round-trip.
   // The formatter recovers substitutions from `workflow.metadata`, but only when
@@ -3228,10 +3256,6 @@ export async function getWorkflowStatusUpdate({
   }
 }
 
-// =============================================================================
-// Download boost
-// =============================================================================
-
 /** The price of boosting, or null when the orchestrator reports no download fee. */
 export async function getWorkflowBoostCost({
   token,
@@ -3263,10 +3287,14 @@ export async function boostWorkflow({
   const { cost } = await getWorkflowBoostCost({ token, workflowId });
   if (cost == null || cost !== expectedCost) return { boosted: false as const, cost };
 
-  await setWorkflowDownloadPriority({ token, workflowId });
-  // The charge has already gone through, so a failed read must not report it as a failure.
-  const workflow = await getWorkflow({ token, path: { workflowId } })
-    .then((result) => formatGenerationResponse2([result], user))
+  // The update's own reply is the boosted workflow — its lane, position and ETA are the orchestrator's
+  // answer for this boost, so the card never has to infer them. The charge has already gone through,
+  // so a failed read must not report it as a failure.
+  const updated = await setWorkflowDownloadPriority({ token, workflowId });
+  const workflow = await Promise.resolve(
+    updated?.steps?.length ? updated : getWorkflow({ token, path: { workflowId } })
+  )
+    .then((result) => formatGenerationResponse2([result as Workflow], user))
     .then(([formatted]) => formatted)
     .catch(() => null);
   return { boosted: true as const, workflow };

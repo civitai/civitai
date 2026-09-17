@@ -116,7 +116,7 @@ export function ResidencyBatchProvider({
   return <ResidencyBatchContext.Provider value={value}>{children}</ResidencyBatchContext.Provider>;
 }
 
-/** Shown only while a resource is not loaded — a loaded one needs no mark in a compact row. */
+/** Nothing to show for a loaded resource — a compact row needs no mark. */
 export function ResourceResidencyIcon({ modelVersionId }: { modelVersionId: number }) {
   const batched = useContext(ResidencyBatchContext);
   const fetched = useResourceResidency(batched ? undefined : modelVersionId);

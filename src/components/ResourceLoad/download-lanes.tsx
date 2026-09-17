@@ -30,10 +30,11 @@ export function formatLaneSpeed(rateLimitBytesPerSecond: number | null | undefin
   return `up to ${Math.round((rateLimitBytesPerSecond * 8) / 1_000_000)} Mbps`;
 }
 
-/** Where one generation's downloads stand, for the lanes explainer to place it. */
 export type DownloadLanePlacement = {
   lane: string;
-  queuePosition: number;
+  /** Downloads ahead, or null before this one is queued. */
+  queuePosition?: number | null;
+  transferring?: boolean;
   etaSeconds?: number | null;
   boostedEtaSeconds?: number | null;
   rateLimitBytesPerSecond?: number | null;
@@ -97,10 +98,10 @@ export function DownloadLanes({ placement }: { placement?: DownloadLanePlacement
                       <IconGauge size={13} /> {speed}
                     </span>
                   )}
-                  {here && (
+                  {here && (placement.transferring || placement.queuePosition != null) && (
                     <span className="inline-flex items-center gap-1">
                       <IconUsers size={13} />
-                      {placement.queuePosition === 0
+                      {placement.transferring
                         ? 'downloading now'
                         : `${placement.queuePosition} ahead of you`}
                     </span>
@@ -141,7 +142,6 @@ export function DownloadLanes({ placement }: { placement?: DownloadLanePlacement
   );
 }
 
-/** One explainer, opened from every place that offers a boost. */
 export function DownloadLanesInfo({ placement }: { placement?: DownloadLanePlacement }) {
   return (
     <InfoPopover
