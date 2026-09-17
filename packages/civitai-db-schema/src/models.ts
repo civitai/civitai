@@ -1655,6 +1655,7 @@ export interface CollectionMetric {
 export interface Tag {
   id: number;
   name: string;
+  displayName: string | null;
   color: string | null;
   createdAt: Date;
   updatedAt: Date;

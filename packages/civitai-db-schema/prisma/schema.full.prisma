@@ -2131,8 +2131,10 @@ enum TagType {
 }
 
 model Tag {
-  id         Int         @id @default(autoincrement())
-  name       String      @db.Citext
+  id          Int     @id @default(autoincrement())
+  name        String  @db.Citext
+  /// Casing for display, where capitalising `name` gets it wrong ("LoRA", "ComfyUI").
+  displayName String?
   color      String?
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt

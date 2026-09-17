@@ -11,7 +11,8 @@ import { env } from '~/env/client';
 import { constants } from '~/server/common/constants';
 import type { TagPageSeoData } from '~/server/services/tag.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { slugit } from '~/utils/string-helpers';
+import { getModelUrl } from '~/utils/string-helpers';
+import { tagDisplayName } from '~/utils/tag-display-name';
 import { trpc } from '~/utils/trpc';
 import styles from './[tagname].module.scss';
 
@@ -54,22 +55,32 @@ export default function TagPage({
   const [tag] = data;
 
   const baseUrl = env.NEXT_PUBLIC_BASE_URL ?? 'https://civitai.com';
+  const displayName = tagDisplayName({
+    name: tag?.name ?? tagname,
+    displayName: tag?.displayName,
+  });
+  const count = seoData.count;
+  const description = `Browse ${
+    count > 0 ? `${count.toLocaleString('en-US')} ` : ''
+  }AI models tagged "${displayName}" on Civitai, including checkpoints and LoRAs for Illustrious, Pony, SDXL, Flux and more. Download or generate online.`;
+  const title = `${displayName} AI Models${
+    count > 0 ? ` (${count.toLocaleString('en-US')})` : ''
+  } | Civitai`;
+
   const schema =
     tag && seoData.models.length > 0
       ? {
           '@context': 'https://schema.org',
           '@type': 'CollectionPage',
-          name: `${tag.name} AI Models`,
-          description: `Browse ${seoData.count.toLocaleString()} Stable Diffusion & Flux models, LoRAs, checkpoints, and embeddings tagged with ${
-            tag.name
-          }.`,
+          name: `${displayName} AI Models`,
+          description,
           url: `${baseUrl}/tag/${tagname}`,
           numberOfItems: seoData.count,
           hasPart: seoData.models.map((m) => ({
             '@type': 'SoftwareApplication',
             name: m.name,
             applicationCategory: m.type,
-            url: `${baseUrl}/models/${m.id}/${slugit(m.name)}`,
+            url: `${baseUrl}${getModelUrl({ modelId: m.id, modelName: m.name })}`,
             author: { '@type': 'Person', name: m.creator },
             interactionStatistic: [
               {
@@ -87,19 +98,10 @@ export default function TagPage({
         }
       : undefined;
 
-  const description =
-    seoData.count > 0
-      ? `Browse ${seoData.count.toLocaleString()} Stable Diffusion & Flux models, LoRAs, checkpoints, and embeddings tagged with ${
-          tag?.name ?? tagname
-        }.`
-      : `Browse ${
-          tag?.name ?? tagname
-        } Stable Diffusion & Flux models, LoRAs, checkpoints, embeddings, and more for AI image generation.`;
-
   return (
     <>
       <Meta
-        title={`${tag?.name ?? tagname} AI Models | Civitai`}
+        title={title}
         description={description}
         canonical={`/tag/${tagname}`}
         deIndex={(tag?.unfeatured ?? false) || deIndexMatureOnly}
@@ -110,7 +112,7 @@ export default function TagPage({
           <Center>
             <Stack gap="xs">
               <Title order={1} className="text-center">
-                {tag.name}
+                {displayName}
               </Title>
               <Text className="text-center" color="dimmed">
                 {description}
