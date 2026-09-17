@@ -395,7 +395,9 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
                     size="compact-xs"
                     variant="light"
                     leftSection={<IconPlus size={14} />}
-                    disabled={selected.length >= PACK_MAX_MEMBERS}
+                    // `awaitingPack` too: hydration REPLACES `selected`, so an
+                    // item added before getPack lands disappears without a word.
+                    disabled={awaitingPack || selected.length >= PACK_MAX_MEMBERS}
                     onClick={() => setSelected((cur) => [...cur, option as Bundlable])}
                   >
                     Add

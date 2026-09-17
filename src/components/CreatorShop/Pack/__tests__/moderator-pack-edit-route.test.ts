@@ -76,13 +76,20 @@ const editArms = () => {
 const EDIT_HREF = 'href={`/moderator/cosmetic-store/products/${shopItem.id}/edit`}';
 
 /**
- * The source between two literal markers, or '' when either is missing — never a
- * slice from -1, which can still contain what a caller was looking for and pass
- * for a source this function did not locate.
+ * The source between two literal markers, or '' when the open marker is missing,
+ * AMBIGUOUS, or unterminated — never a slice from -1, which can still contain
+ * what a caller was looking for and pass for a source this function did not
+ * locate.
+ *
+ * Ambiguity matters in one direction only, and it is a measured false green
+ * rather than a theoretical one: a SECOND `updatePack.mutateAsync({` added
+ * BELOW the real one leaves `indexOf` on the original, every assertion passes,
+ * and the new call's unconditional payload is reviewed by nothing. (Added
+ * above, the positives already fail.) Returning '' makes both orderings red.
  */
 const blockAfter = (source: string, open: string, close: string) => {
   const start = source.indexOf(open);
-  if (start === -1) return '';
+  if (start === -1 || source.indexOf(open, start + open.length) !== -1) return '';
   const end = source.indexOf(close, start + open.length);
   return end === -1 ? '' : source.slice(start, end + close.length);
 };
@@ -156,10 +163,20 @@ describe('the moderator cosmetic-store pack edit route', () => {
     // this mutation did not invalidate when only the creator manage page could
     // reach it. Without this the moderator saves and the row still shows the old
     // title and price.
-    const updatePackBlock =
-      utilSource.match(
-        /const updatePack = [\s\S]*?onError: onError\('Failed to update pack'\)/
-      )?.[0] ?? '';
+    const updatePackBlock = blockAfter(
+      utilSource,
+      'const updatePack =',
+      "onError: onError('Failed to update pack')"
+    );
+    // Without this, renaming that toast empties the block and all three assertions
+    // below fail claiming the invalidations are missing — the wrong cause, for
+    // someone who only changed an error message.
+    expect(
+      updatePackBlock,
+      "Could not locate updatePack's mutation block — its closing marker (the " +
+        "'Failed to update pack' toast) may have been renamed."
+    ).not.toEqual('');
+
     expect(
       updatePackBlock,
       'updatePack must invalidate cosmeticShop.getShopItemsPaged — the moderator ' +
@@ -169,8 +186,15 @@ describe('the moderator cosmetic-store pack edit route', () => {
     // Its two twins. Both storefronts render packs, and a price or contents edit
     // drops the pack to PendingReview, so both were advertising a listing that is
     // no longer on sale. Deleting either reddened nothing before this line.
-    expect(updatePackBlock).toContain('creatorShop.getShop.invalidate()');
-    expect(updatePackBlock).toContain('creatorShop.getCommunityCosmetics.invalidate()');
+    expect(
+      updatePackBlock,
+      'The creator storefront renders this pack, and a price or contents edit takes it ' +
+        'off sale — without this it keeps showing the old listing.'
+    ).toContain('creatorShop.getShop.invalidate()');
+    expect(
+      updatePackBlock,
+      'The site-wide community hub renders packs too, and has the same staleness.'
+    ).toContain('creatorShop.getCommunityCosmetics.invalidate()');
   });
 
   it('sends the money fields only when they changed', () => {
@@ -200,10 +224,11 @@ describe('the moderator cosmetic-store pack edit route', () => {
       'CreatorShopPackModal must send `memberCosmeticIds` only when the contents changed.'
     ).toContain('...(contentsChanged ? { memberCosmeticIds } : {})');
 
-    // The negatives pin the DECISION rather than the spelling, so extracting the
-    // predicate into a named const stays green while a revert to the
-    // unconditional payload does not. Whole-line matches, so the conditional
-    // spreads above — which mention both names — cannot satisfy them.
+    // Belt and braces over the positives above, not a looser restatement of them:
+    // these match a WHOLE trimmed line, so the conditional spreads — which mention
+    // both names — cannot satisfy them, and a revert to a bare key is caught twice.
+    // They do NOT survive a refactor the positives would fail; the exact spellings
+    // above are the guard, and that brittleness is the price of a source gate.
     const payloadKeys = updateBlock.split('\n').map((line) => line.trim());
     expect(payloadKeys, 'The update payload sends `price` unconditionally again.').not.toContain(
       'price,'
@@ -238,7 +263,19 @@ describe('the moderator cosmetic-store pack edit route', () => {
       update,
       'A price move is still floor-checked, and that floor can only be summed over ' +
         'members that resolve — so bundlability must stay asserted when the price moves.'
-    ).toContain('if (membershipSupplied || price !== undefined) assertMembersBundlable');
+    ).toContain('if (reSnapshot) assertMembersBundlable');
+
+    // One truth function for "this edit invalidates the stored floors". Written
+    // twice, `!== undefined` and truthiness disagree on `[]`, which would run the
+    // checks while skipping the write that makes them true.
+    expect(
+      update,
+      '`reSnapshot` must be derived once, from membershipSupplied || repriced.'
+    ).toContain('const reSnapshot = membershipSupplied || repriced;');
+    expect(
+      blockAfter(serviceSource, 'return dbWrite.$transaction', 'acceptsBlueBuzz: nextAcceptsBlue'),
+      'The PendingReview spread must reuse `reSnapshot`, not restate its expression.'
+    ).toContain('...(reSnapshot ? { status: CosmeticShopItemStatus.PendingReview } : {})');
     for (const assertion of ['assertMembersResellable', 'assertStickerMembersAllowed']) {
       expect(
         blockAfter(update, 'if (membershipSupplied) {', '}'),
