@@ -521,9 +521,6 @@ export const blockStepBodySchema = makeBlockStepBodySchema(REGISTERED_STEP_IDS);
 // called on the submitted `$type` in blocks.router before any spend reservation
 // or orchestrator call).
 //
-// The registry arm is UNCHANGED and stays the default for a body that names a
-// `step`: `{kind:'step', step, params}` parses byte-identically to before.
-//
 // 🔴 WHAT THE REGISTRY ARM PROVIDED THAT THIS ONE DOES NOT REPLACE. Four of the
 // registry's controls are deliberately absent here, by operator decision, and a
 // reader is meant to see that rather than assume an oversight:
@@ -552,16 +549,21 @@ export const blockStepBodySchema = makeBlockStepBodySchema(REGISTERED_STEP_IDS);
 // there is only one number.
 
 /**
- * Hard per-job Buzz ceiling a pass-through body may declare.
+ * Hard per-job Buzz ceiling a pass-through body may declare. The same number as
+ * `INLINE_MAX_BUZZ` because two ceilings meant to be equal drift.
  *
- * Deliberately the SAME number as the inline-comfy arm rather than a second
- * constant: both are developer-driven post-paid surfaces bounded by the same
- * `DEV_BUZZ_BUDGET_CAP`, and two ceilings that are meant to be equal drift.
+ * 🔴 IT IS THE BINDING BOUND, NOT A REDUNDANT ONE. A draft of this comment said
+ * both arms were developer-only and therefore already clamped by
+ * `DEV_BUZZ_BUDGET_CAP` (250); both halves are false — neither arm runs
+ * `assertViewerIsAppDeveloper`, and an ordinary install token's per-call budget
+ * clamps at `BUZZ_BUDGET_CAP` (1000, see `shared/constants/block-scope.constants`).
+ * Recorded because the false version read as "raising this changes nothing".
+ * (`INLINE_MAX_BUZZ`'s own docblock above still carries the developer-only
+ * claim; it is wrong there too.)
  */
 export const PASS_THROUGH_MAX_BUZZ = INLINE_MAX_BUZZ;
 
-/** Max characters in a submitted orchestrator `$type`. */
-const PASS_THROUGH_TYPE_MAX = 64;
+const PASS_THROUGH_TYPE_MAX_CHARS = 64;
 
 /**
  * Max serialized bytes of a pass-through `input`.
@@ -576,11 +578,11 @@ export const PASS_THROUGH_INPUT_BYTES_MAX = INLINE_GRAPH_BYTES_MAX;
 
 const blockPassThroughStepShape = {
   kind: z.literal('step'),
-  // The ARM discriminator. `z.undefined()` — NOT an absent key. See the union
-  // note at the bottom of this file: an arm that simply omits `step` builds
+  // The ARM discriminator. `z.undefined()` — NOT an absent key. See the
+  // `blockStepMemberSchema` note below: an arm that simply omits `step` builds
   // fine and then throws on the first parse, measured.
   step: z.undefined(),
-  $type: z.string().min(1).max(PASS_THROUGH_TYPE_MAX),
+  $type: z.string().min(1).max(PASS_THROUGH_TYPE_MAX_CHARS),
   // 🔴 ORCHESTRATOR-NATIVE AND FORWARDED UNMODIFIED. The server does not read,
   // rewrite, merge or default any field in here — that is the whole point of the
   // arm, and `blocks.router` asserts the submitted step's `input` is this same
@@ -960,24 +962,38 @@ export type BlockWorkflowSnapshot = {
    * `$type` and no registry id), forwarded as-is — minus its blobs.
    *
    * 🔴 BLOBS ARE REMOVED, NOT PASSED THROUGH, AND THAT IS THE SAFETY PROPERTY.
-   * `output.blobs` / `output.images` are stripped and their available urls are
-   * pushed onto `imageUrls` instead — the SAME channel `textToImage` and
-   * `customComfy` use, and therefore the same one the publish path
-   * (`projectAppWorkflow` → `publishGenerationOutputs`) and the per-viewer gated
-   * read (`blocks.getImagesByIds` → `BlockGatedImage`) already own. A pass-through
-   * step must not create a SECOND image channel that those two do not see.
+   * Every blob-SHAPED value is stripped (`splitPassThroughStepOutput`) and its
+   * available url goes to `snapshot.imageUrls` AND to `AppWorkflow.images` —
+   * both, because the block reads the snapshot and the publish path
+   * (`resolveOwnedWorkflowOutputs` → `publishGenerationOutputs`) reads the
+   * projection, and only the second leads to the per-viewer gated read
+   * (`blocks.getImagesByIds` → `BlockGatedImage`). A pass-through step must not
+   * create a SECOND image channel that those two do not see.
    *
    * 🔴 EVERYTHING ELSE IS UNSCANNED. Unlike {@link textOutputs}, no moderation
    * scan runs over this field: the pass-through arm has no `moderationPosture`,
-   * by operator decision (moderation moved to the publish boundary). So a
-   * pass-through `chatCompletion` returns its prose here, unscanned, where a
-   * REGISTERED `chat-completion` returns it through the scanned `textOutputs`.
-   * That asymmetry is deliberate and is the decision to revisit if it turns out
-   * wrong — do not "fix" it by quietly scanning here, which would make the two
-   * arms disagree in a third way.
+   * by operator decision (moderation moved to the publish boundary).
    *
-   * OMITTED entirely when no pass-through step is present, so every existing
-   * snapshot stays byte-identical.
+   * ⚠️ AN EARLIER VERSION OF THIS PARAGRAPH ILLUSTRATED THAT WITH "a pass-through
+   * `chatCompletion` returns its prose here, unscanned", AND THAT IS FALSE —
+   * recorded rather than replaced, because it is the reading a reviewer arrives
+   * at from the wire shape alone. A `$type` that COLLIDES with a registry
+   * entry's `orchestratorType` — and `chat-completion` declares exactly
+   * `'chatCompletion'` — is claimed by the registry branch in BOTH extractors
+   * and by `attachModeratedStepTextOutputs`, all of which look the entry up by
+   * `$type` and never ask which arm submitted it. So that case IS scanned and
+   * never reaches this field.
+   *
+   * 🔴 THE REAL CONSEQUENCE IS THE SHADOWING ITSELF: whether a pass-through
+   * step's output is forwarded here or handled by a registry entry depends on a
+   * `$type` collision, and that flips the day someone registers a step. A new
+   * entry for a media-producing `$type` would silently stop surfacing that
+   * type's media for existing pass-through callers, with no error. The
+   * unscanned-text surface is real for every `$type` that does NOT collide.
+   *
+   * OMITTED entirely when the workflow carries no step with an UNRECOGNISED
+   * `$type` — which is every workflow the other three kinds produce — so their
+   * snapshots stay byte-identical.
    *
    * 🔴 WIRE CONTRACT: additive on the type `@civitai/app-sdk`'s `blocks/types.ts`
    * mirrors, exactly like `textOutputs` above. The SDK's inbound validator does

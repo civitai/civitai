@@ -710,6 +710,11 @@ beforeEach(() => {
     mockSysRedis.decrBy,
     mockSysRedis.expire,
     mockSysRedis.ttl,
+    // `del`/`set` are driven by the pass-through settle SEAM tests. Unreset, a
+    // leaked `del -> 1` would let a later test past `if (removed !== 1) return`
+    // and go green for the wrong reason.
+    mockSysRedis.del,
+    mockSysRedis.set,
     mockResolveCanGenerateForVersions,
     mockGetResourceData,
     mockGetHighestTierSubscription,
@@ -9580,23 +9585,30 @@ describe('blocks — #3520 model substitution observability', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // App Blocks PASS-THROUGH bridge (`kind:'step'` with a bare `$type`).
 //
-// 🔴 WHAT THIS SUITE IS FOR. The arm removes every wire-level control except one
-// — `PLATFORM_INTERNAL_STEP_TYPES` — so these tests are not "does it work", they
-// are the ledger of what the one remaining control does and where the money
-// belt binds. Two properties dominate:
+// Two properties dominate:
 //
 //   1. The denylist runs on the SUBMITTED `$type`, on BOTH orchestrator-reaching
-//      paths (estimate and submit), and BEFORE anything that costs something.
-//      Every refusal is asserted by the `PlatformInternalStepTypeError` CAUSE,
-//      never by the FORBIDDEN code, so a test cannot stay green on a
-//      neighbouring gate's rejection after the denylist is deleted.
-//   2. `input` reaches the orchestrator UNMODIFIED. Asserted by object IDENTITY
-//      plus a JSON byte-comparison — deep-equality would survive a rebuilt
-//      object with a server-added key.
+//      paths, and BEFORE anything that costs something. Every refusal is
+//      asserted by the `PlatformInternalStepTypeError` CAUSE, never by the
+//      FORBIDDEN code, so a test cannot stay green on a neighbouring gate's
+//      rejection after the denylist is deleted.
+//   2. `input` reaches the orchestrator UNMODIFIED — pinned byte-for-byte AND by
+//      object identity across the quote and the submit.
 // ─────────────────────────────────────────────────────────────────────────────
 describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
-  /** A `$type` the live orchestrator has and `stepRegistry` does not. */
-  const PT_TYPE = 'textToImageV2';
+  /**
+   * A `$type` the LIVE orchestrator has and `stepRegistry` does not.
+   *
+   * 🔴 A REAL ONE, measured against
+   * `https://orchestration.civitai.com/openapi/v2-consumers.json`
+   * (`WorkflowStepTemplate.discriminator.mapping`, 50 entries on 2026-09-17), not
+   * a plausible-looking invention — `textToImageV2` reads like a step type and
+   * is NOT in that mapping, so a suite built on it would be green against a
+   * `$type` no submit could ever carry.
+   */
+  const PT_TYPE = 'imageBackgroundRemoval';
+  /** An arbitrary string: the arm accepts any `$type`, not only a known one. */
+  const PT_UNKNOWN_TYPE = 'notAStepTypeAtAll';
   /** Two members of `PLATFORM_INTERNAL_STEP_TYPES`, named by the acceptance criteria. */
   const DENIED_TYPES = ['xGuardModeration', 'modelPickleScan'] as const;
   const MAX_BUZZ = 20;
@@ -9666,6 +9678,17 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect(REGISTERED_STEP_IDS).not.toContain(PT_TYPE);
     });
 
+    it('submits an ARBITRARY string $type — the arm is not a second allowlist', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ptBody({ $type: PT_UNKNOWN_TYPE }),
+      });
+      expect(ptRealSubmits()[0][0].body.steps[0].$type).toBe(PT_UNKNOWN_TYPE);
+    });
+
     // 🔴 THE ARM DISCRIMINATOR IS THE VALUE OF `step`, NOT THE PRESENCE OF THE
     // KEY — and this is the ROUTING half of that, which the schema test cannot
     // reach. An SDK spreading an optional variable sends `step: undefined` as an
@@ -9692,6 +9715,39 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect(result.snapshot).toMatchObject({ workflowId: 'wf_estimate', status: 'pending' });
       expect(ptRealSubmits()).toHaveLength(0);
       expect(ptWhatIfs()).toHaveLength(1);
+      // An estimate binds nothing: no reservation on any of the four counters.
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockReserveDevSessionBuzz).not.toHaveBeenCalled();
+      expect(
+        mockSysRedis.incrBy.mock.calls.filter((c) => String(c[0]).startsWith('system:blocks:'))
+      ).toHaveLength(0);
+    });
+  });
+
+  // The orchestrator TOKEN mint is inside the estimate's degrade and outside the
+  // submit's — an estimate binds nothing and must answer, a submit that cannot
+  // mint must fail before it reserves anything.
+  describe('an unmintable orchestrator token', () => {
+    it('estimate DEGRADES to the declared ceiling', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      mockGetOrchestratorToken.mockRejectedValue(new Error('no token'));
+      const result = await caller().estimateWorkflow({ blockToken: 'tok', body: ptBody() });
+      expect(result.snapshot.cost.total).toBe(MAX_BUZZ);
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('submit THROWS, before any reservation', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      mockGetOrchestratorToken.mockRejectedValue(new Error('no token'));
+      await expect(caller().submitWorkflow({ blockToken: 'tok', body: ptBody() })).rejects.toThrow(
+        /no token/
+      );
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
   });
 
@@ -9730,6 +9786,13 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
           (e: unknown) => e
         );
       expect((err as TRPCError).cause).toBeInstanceOf(PlatformInternalStepTypeError);
+      // 🔴 THE ORDERING, ON THIS PATH TOO. An estimate makes a REAL `whatif:true`
+      // submit, so a denylist that fired after the quote would have handed the
+      // platform-internal `$type` to the orchestrator and then refused — which is
+      // the whole thing this call site exists to stop, and is invisible to a
+      // cause-only assertion.
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockGetOrchestratorToken).not.toHaveBeenCalled();
     });
 
     // 🔴 BEFORE ANYTHING THAT COSTS SOMETHING. A denylist that fires after the
@@ -9752,8 +9815,8 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect(capIncrs).toHaveLength(0);
     });
 
-    // The set is the authority; naming two types in the criteria does not make
-    // the other thirteen someone else's problem.
+    // The set is the authority; naming two types in the criteria does not exempt
+    // the rest.
     it('refuses EVERY member of PLATFORM_INTERNAL_STEP_TYPES', async () => {
       for (const t of PLATFORM_INTERNAL_STEP_TYPES) {
         mockVerifyBlockToken.mockResolvedValue(ptClaims());
@@ -9788,6 +9851,12 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       // And the QUOTE priced the same bytes, so the two can never describe
       // different work.
       expect(JSON.stringify(ptWhatIfs()[0][0].body.steps[0].input)).toBe(JSON.stringify(input));
+      // 🔴 ONE STEP OBJECT, SHARED. This is what makes "the quote priced the same
+      // work" a property of the code rather than of two call sites agreeing —
+      // building the step separately for the quote and the submit kills it.
+      // ⚠️ It does NOT catch a `{ ...body.input }` spread: that mutant is
+      // observationally identical and survives the whole suite. Measured.
+      expect(ptWhatIfs()[0][0].body.steps[0]).toBe(ptRealSubmits()[0][0].body.steps[0]);
     });
 
     it('adds NO server-owned key to the submitted step input', async () => {
@@ -9966,7 +10035,97 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
     });
   });
 
-  describe('the arm inherits every gate the registry arm has', () => {
+  describe('gates and bookkeeping this arm inherits (not a complete ledger)', () => {
+    // ⚠️ THIS GRADES THE OUTER PROCEDURE'S GATE, NOT THE HANDLER'S COPY — and the
+    // difference was measured, not assumed: deleting the handler's own
+    // `buzzBudget` narrowing leaves this green, because `submitWorkflow` refuses
+    // the token first. Kept because the refusal on THIS body shape is worth
+    // pinning (without it the static gate would compare `ceiling > undefined`
+    // and open), but it must not be read as covering the in-handler belt. That
+    // copy is defense-in-depth and is labelled as such at the call site.
+    it('REFUSES a token with no buzzBudget, before anything is reserved', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims({ buzzBudget: undefined }));
+      happyUser();
+      ptQuoting(5, 5);
+      await expect(caller().submitWorkflow({ blockToken: 'tok', body: ptBody() })).rejects.toThrow(
+        /missing budget/
+      );
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+    });
+
+    // The per-app cap DENIAL exit — three things must happen on it (refund the
+    // per-user leg, release the idempotency claim, no submit) and each is a
+    // separate chance for this copy to diverge from the sibling it was written
+    // from.
+    it('refunds the per-user leg and spends nothing when the PER-APP cap denies', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      mockReserveAppSpend.mockResolvedValue({ allowed: false, reason: 'velocity' });
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      expect(result.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
+      expect(result.snapshot.error).toMatch(/rate limit/);
+      expect(ptRealSubmits()).toHaveLength(0);
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        MAX_BUZZ
+      );
+    });
+
+    // 🔴 NO APP-CONTROLLED STRING IN THE ORCHESTRATOR TAG ARRAY. That array
+    // carries `app-block:<appId>`, which `assertBlockWorkflowTaggedForApp` and
+    // `queryAppWorkflows` treat as the app-scoping boundary; the other arms put
+    // a bounded server-side id in the `baseModel` slot and this one must too.
+    it('stamps a CONSTANT in the tag slot, never the submitted $type', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ptBody({ $type: 'app-block:app_someone_else' }),
+      });
+      const tags: string[] = ptRealSubmits()[0][0].body.tags;
+      expect(tags).toContain('app-block:app_test');
+      expect(tags).not.toContain('app-block:app_someone_else');
+      expect(tags).toContain('passthrough');
+    });
+
+    // The price-check counter is the only thing that can tell "the block saw a
+    // live quote" from "the orchestrator stopped pricing and every job silently
+    // fell back to its declared ceiling" — which this arm does by design.
+    it('counts BOTH quote outcomes', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      expect(mockRecordStepPriceCheck).toHaveBeenCalledWith('__passthrough__', 'estimate_quoted');
+
+      mockRecordStepPriceCheck.mockClear();
+      ptQuoting(null, 4);
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      expect(mockRecordStepPriceCheck).toHaveBeenCalledWith('__passthrough__', 'estimate_absent');
+    });
+
+    // 🔴 THE AUDIT DIMENSION. The source carries a full argument for why the
+    // submitted `$type` must be the `detail` dimension — without it every
+    // pass-through submit is indistinguishable from every other in
+    // `block_scope_invocations`, on the arm whose whole point is that the type
+    // set is open. Nothing else observes that decision.
+    it('writes the submitted $type as the activity-row dimension', async () => {
+      vi.mocked(recordScopeInvocation).mockClear();
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      await vi.waitFor(() => expect(vi.mocked(recordScopeInvocation)).toHaveBeenCalled());
+      expect(vi.mocked(recordScopeInvocation).mock.calls[0][0]).toMatchObject({
+        scope: 'ai:write:budgeted',
+        endpoint: 'workflow:submit',
+        detail: { action: 'workflow.submit', step: PT_TYPE, variant: 'passthrough' },
+      });
+    });
+
     it('is PAGE-ONLY — a model-bound token is refused', async () => {
       mockVerifyBlockToken.mockResolvedValue(validClaims({ appBlockId: 'apb_test' }));
       happyUser();

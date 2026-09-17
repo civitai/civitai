@@ -84,36 +84,61 @@ export function mediaFromBlobs(
 }
 
 /**
- * The output keys an orchestrator step carries MEDIA under.
+ * True when `value` has the orchestrator `Blob` SHAPE — `available` plus `url`.
  *
- * Enumerated rather than sniffed. The three shapes in the catalog today are
- * `{ blobs }` (customComfy and most blob-producing types), `{ blob }`
- * (convertImage, SINGULAR) and `{ images }` (the image steps), and a key list is
- * auditable where a "does this look like a blob?" predicate is not.
+ * A SHAPE test, not a key-name list and not a "does this string look like a
+ * url?" sniff. The first draft of this module enumerated four key names
+ * (`blob`/`blobs`/`image`/`images`) and called that auditable; measured against
+ * the live spec on 2026-09-17 it covered 4 of the **19** property names that
+ * carry a blob across the step types this bridge admits. The rest — `video`,
+ * `audioBlob`, `svg`, `frames`, `tempBlobs`, `draftCache`, `additionalVideos`,
+ * and seven on `polyGen` alone (`model`, `fbxModel`, `thumbnail`,
+ * `riggedModel`, `riggedFbxModel`, `animatedModel`, `animatedFbxModel`,
+ * `basicAnimations`) — would each have ridden out as a raw url inside the
+ * forwarded output, i.e. exactly the second image channel this function exists
+ * to prevent, on ~40% of the media-producing set.
  *
- * 🔴 A TYPE THAT NAMES ITS MEDIA SOMETHING ELSE IS NOT COVERED, and the
- * consequence is stated at {@link splitPassThroughStepOutput}.
+ * The shape is the orchestrator's own contract (`Blob` in `@civitai/client`), so
+ * it covers a key nobody has seen yet, and it cannot strip prose: a string is
+ * not an object with an `available` field.
  */
-export const ORCHESTRATOR_BLOB_OUTPUT_KEYS = ['blob', 'blobs', 'image', 'images'] as const;
+function isOrchestratorBlobLike(value: unknown): boolean {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    'available' in (value as Record<string, unknown>) &&
+    'url' in (value as Record<string, unknown>)
+  );
+}
+
+/** True for a non-empty array whose every element has the blob shape. */
+function isOrchestratorBlobList(value: unknown): boolean {
+  return Array.isArray(value) && value.length > 0 && value.every(isOrchestratorBlobLike);
+}
 
 /**
  * Split an ARBITRARY orchestrator step output into the media it carries and
  * everything else — the pass-through arm's (`kind:'step'` with a bare `$type`)
  * one and only output rule.
  *
- * 🔴 THE STRIP IS UNCONDITIONAL, NOT "strip what produced media". Every key in
- * {@link ORCHESTRATOR_BLOB_OUTPUT_KEYS} is removed from `rest` whether or not it
- * yielded anything, so a blob that `mediaFromBlobs` DROPPED — unavailable,
- * blocked, empty url — cannot ride out through `rest` instead. Filtering and
- * stripping on the same predicate is how a dead or blocked url reaches a block
- * through the back door.
+ * 🔴 THE STRIP IS UNCONDITIONAL, NOT "strip what produced media". A blob-shaped
+ * value is removed from `rest` whether or not `mediaFromBlobs` kept it, so a
+ * blob that the availability filter DROPPED — unavailable, blocked, empty url —
+ * cannot ride out through `rest` instead. Filtering and stripping on the same
+ * predicate is how a dead or blocked url reaches a block through the back door.
  *
- * 🔴 A `$type` THAT NAMES ITS MEDIA OUTSIDE THAT KEY LIST PASSES ITS URL THROUGH
- * `rest`. That is a known limit of an enumerated list and it is why this is the
- * only place the list lives: widening it is one edit, and the alternative —
- * sniffing every string for something url-shaped — would strip prose that merely
- * contains a link, which is the output half of the same false-positive trap the
- * `urn:air:` substring scan documents on the input half.
+ * 🔴 SOME STEP TYPES *ARE* A BLOB. `transcode` returns the blob itself as its
+ * whole output (`TranscodeOutput` = `{ id, available, url, … }`), so the
+ * top-level case is checked before the per-key walk. Without it that type's url
+ * is the entire forwarded object.
+ *
+ * 🔴 DEPTH 1, AND THAT IS THE REAL LIMIT. A blob NESTED inside another object —
+ * `training.epochs[]`, or a provider reply that embeds media inside a message —
+ * still rides through `rest`. Recursing would mean rewriting the shape of an
+ * object this arm promises to forward verbatim, which is a worse trade; the
+ * bound is stated here rather than implied, and it is the thing to re-measure
+ * when the catalog moves.
  */
 export function splitPassThroughStepOutput(output: unknown): {
   media: StepOutputMedia[];
@@ -122,10 +147,13 @@ export function splitPassThroughStepOutput(output: unknown): {
   if (output == null || typeof output !== 'object' || Array.isArray(output)) {
     return { media: [], rest: output };
   }
+  if (isOrchestratorBlobLike(output)) {
+    return { media: mediaFromBlobs(output as OrchestratorBlobLike), rest: {} };
+  }
   const media: StepOutputMedia[] = [];
   const rest: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(output as Record<string, unknown>)) {
-    if ((ORCHESTRATOR_BLOB_OUTPUT_KEYS as readonly string[]).includes(key)) {
+    if (isOrchestratorBlobLike(value) || isOrchestratorBlobList(value)) {
       media.push(...mediaFromBlobs(value as Parameters<typeof mediaFromBlobs>[0]));
       continue;
     }

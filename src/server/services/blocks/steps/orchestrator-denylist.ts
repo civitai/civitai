@@ -169,18 +169,22 @@ export function isPlatformInternalStepType(stepType: string): boolean {
 /**
  * Fail-closed assertion for a single orchestrator `$type`.
  *
- * 🔴 READ THIS BEFORE WIRING A NEW SUBMIT PATH. Today the only way a block
- * reaches the orchestrator is through a REGISTERED step (`REGISTERED_STEP_IDS`,
- * two entries) or the `textToImage` / `customComfy` kinds — none of which lets a
- * block name an arbitrary `$type`. So the live enforcement of this set is the
- * registry invariant in `assertStepInvariants` (no registered entry may declare
- * a denylisted `orchestratorType`), and this function is the reusable predicate
- * behind it.
+ * 🔴 READ THIS BEFORE WIRING A NEW SUBMIT PATH. This set now has TWO
+ * enforcement sites, and they are different in kind:
  *
- * When the wide `kind:'steps'` arm lands — the one that lets a block name a
- * `$type` directly — **it must call this**, and it must call it BEFORE any
- * spend reservation or orchestrator call. A denylist that the wire does not
- * consult is decoration.
+ *   - the registry invariant in `assertStepInvariants` — no registered entry may
+ *     declare a denylisted `orchestratorType`, checked at LOAD;
+ *   - `assertPassThroughStepTypeAllowed` in `blocks.router` — the PASS-THROUGH
+ *     arm (`kind:'step'` with a bare `$type`, note the SINGULAR `step`; an
+ *     earlier draft of this paragraph called it `kind:'steps'` and the plural
+ *     greps to nothing), which lets a block name a `$type` directly and is
+ *     therefore the site where this set is the only bound. It runs on both the
+ *     estimate and the submit, BEFORE any orchestrator call and before any spend
+ *     reservation. A denylist that the wire does not consult is decoration.
+ *
+ * 🔴 THE MATCH IS EXACT AND CASE-SENSITIVE. Whether the orchestrator's own
+ * `$type` discriminator matches case-insensitively has NOT been measured; if it
+ * does, a re-cased variant walks past this set on the pass-through arm.
  */
 export function assertStepTypeAllowed(stepType: string, where?: string): void {
   if (isPlatformInternalStepType(stepType)) {

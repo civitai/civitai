@@ -25,6 +25,7 @@ import {
   buildImageWorkflowInput,
   buildTextToImageInput,
   BLOCK_CUSTOM_COMFY_STEP_NAME,
+  BLOCK_STEP_NAME,
   BLOCK_IMAGE_WORKFLOW_TYPES,
   createBlockCustomComfyStep,
   isPageLoraResource,
@@ -2423,17 +2424,16 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
     ]);
   });
 
-  // ⚠️ THIS CASE INVERTED, DELIBERATELY. It used to assert that an unregistered,
-  // non-native `$type` was SKIPPED — "the branch is additive for registered
-  // steps only, not a wildcard that starts reading arbitrary step outputs".
-  // The PASS-THROUGH arm (`kind:'step'` with a bare `$type`) makes that wildcard
-  // the feature: a block may now submit any non-denylisted orchestrator type, so
-  // an output nothing extracts is an output the block paid for and cannot see.
+  // An UNREGISTERED, non-native `$type` must still be skipped — the branch is
+  // additive for registered steps only, not a wildcard that starts reading
+  // arbitrary step outputs.
   //
-  // What did NOT change, and is what the original case was really protecting: the
-  // REGISTERED branch above is still posture-gated and still cannot shadow a
-  // native `$type`. Only the final `continue` moved.
-  it('extracts an unregistered, non-native $type as a PASS-THROUGH output', () => {
+  // 🔴 STILL TRUE AFTER THE PASS-THROUGH ARM LANDED, and that is not an accident:
+  // the pass-through branch is gated on the SERVER-STAMPED `BLOCK_STEP_NAME`,
+  // not on "the `$type` is unrecognised". A step this bridge did not submit —
+  // note `name: 'x'` below — is still dropped exactly as before. The sibling
+  // case beneath pins the other side of that gate.
+  it('still skips an unregistered, non-native $type', () => {
     const wf = fakeWorkflow({
       id: 'wf_other',
       createdAt: '2026-08-02T00:00:00.000Z',
@@ -2442,6 +2442,30 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
         {
           $type: 'imageBackgroundRemoval',
           name: 'x',
+          status: 'succeeded',
+          metadata: {},
+          output: { blob: { id: 'b', url: 'https://cdn/nope.png', available: true } },
+        },
+      ],
+    });
+    expect(snapshotFromWorkflow(wf as never).imageUrls).toBeUndefined();
+    expect(snapshotFromWorkflow(wf as never).stepOutputs).toBeUndefined();
+    expect(projectAppWorkflow(wf as never).images).toEqual([]);
+  });
+
+  // The other side of that gate: the SAME `$type` and the SAME output, submitted
+  // by this bridge's pass-through arm, IS extracted. Without this pair the name
+  // gate would read as "unregistered types are dropped", which is now only half
+  // the rule.
+  it('extracts the same $type when the step carries BLOCK_STEP_NAME', () => {
+    const wf = fakeWorkflow({
+      id: 'wf_pt',
+      createdAt: '2026-08-02T00:00:00.000Z',
+      status: 'succeeded',
+      steps: [
+        {
+          $type: 'imageBackgroundRemoval',
+          name: BLOCK_STEP_NAME,
           status: 'succeeded',
           metadata: {},
           output: { blob: { id: 'b', url: 'https://cdn/nope.png', available: true } },

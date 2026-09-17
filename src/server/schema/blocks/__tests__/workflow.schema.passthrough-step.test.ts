@@ -22,8 +22,13 @@ import { PLATFORM_INTERNAL_STEP_TYPES } from '~/server/services/blocks/steps/orc
 
 const REGISTERED_ID = REGISTERED_STEP_IDS[0];
 
-/** A `$type` the orchestrator has and the step registry does not. */
-const UNREGISTERED_TYPE = 'textToImageV2';
+/**
+ * A `$type` the LIVE orchestrator has and the step registry does not — measured
+ * against `WorkflowStepTemplate.discriminator.mapping` (50 entries on
+ * 2026-09-17), not invented. `textToImageV2` reads like a step type and is not
+ * in that mapping.
+ */
+const UNREGISTERED_TYPE = 'imageBackgroundRemoval';
 
 function passThroughBody(over: Record<string, unknown> = {}) {
   return { kind: 'step', $type: UNREGISTERED_TYPE, input: {}, maxBuzz: 10, ...over };
@@ -106,6 +111,19 @@ describe("blockWorkflowBodySchema — kind: 'step' PASS-THROUGH arm", () => {
           .success
       ).toBe(true);
     });
+  });
+
+  it('REJECTS an empty or over-long $type', () => {
+    expect(blockWorkflowBodySchema.safeParse(passThroughBody({ $type: '' })).success).toBe(false);
+    expect(
+      blockWorkflowBodySchema.safeParse(passThroughBody({ $type: 'x'.repeat(65) })).success
+    ).toBe(false);
+    // The longest real orchestrator type name is 22 chars
+    // (`imageBackgroundRemoval`, measured 2026-09-17), so the bound clears the
+    // catalog with room — this asserts the bound is above it, not at it.
+    expect(
+      blockWorkflowBodySchema.safeParse(passThroughBody({ $type: 'x'.repeat(64) })).success
+    ).toBe(true);
   });
 
   it('REJECTS an input over the payload bound', () => {

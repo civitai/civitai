@@ -144,6 +144,7 @@ import {
 } from '~/server/services/blocks/block-workflow-access';
 import {
   appBlockTag,
+  BLOCK_STEP_NAME,
   buildCustomComfyWorkflowInput,
   buildTextToImageInput,
   createBlockCustomComfyStep,
@@ -182,10 +183,6 @@ import {
   planStepSpend,
   resolveStepVariant,
 } from '~/server/services/blocks/steps';
-// The PASS-THROUGH arm's only control. `assertStepTypeAllowed` was written for
-// the registry's load-time invariant and its own header says the wide arm "must
-// call this, and it must call it BEFORE any spend reservation or orchestrator
-// call" — `assertPassThroughStepTypeAllowed` below is that call.
 import {
   assertStepTypeAllowed,
   PlatformInternalStepTypeError,
@@ -3944,10 +3941,11 @@ export const blocksRouter = router({
         } catch {
           /* best-effort: a read-model write failure never breaks the poll */
         }
-        // customComfy post-paid SETTLE-TO-ACTUAL (plan §5.3): refund the reserved
-        // CEILING down to the workflow's REAL accrued cost on BOTH reservation
-        // keys. Self-scoping + idempotent (a settle record exists ONLY for a
-        // customComfy submit and is consumed once via GET+DEL), and best-effort
+        // Post-paid SETTLE-TO-ACTUAL (plan §5.3): refund the reserved CEILING
+        // down to the workflow's REAL accrued cost on every reservation key.
+        // Self-scoping + idempotent (a settle record is written only by a submit
+        // that reserved a ceiling — customComfy, a post-paid registry step, or a
+        // pass-through step — and is consumed once via GET+DEL), and best-effort
         // (never throws) — so it is safe to call for ANY terminal workflow; a
         // txt2img / already-settled workflow simply no-ops.
         await settleCustomComfySpend({
@@ -4981,9 +4979,6 @@ export const blocksRouter = router({
       // whatIf", which was the defect, not the design. The textToImage path
       // below stays byte-identical (we only ADD a branch).
       if (input.body.kind === 'step') {
-        // Two arms share this discriminant: the registry arm (`step` id +
-        // `params`) and the denylist-only PASS-THROUGH arm (`$type` + native
-        // `input`). Neither path changes the other.
         return isPassThroughStepBody(input.body)
           ? await estimatePassThroughStepWorkflow({ ctx, claims, body: input.body })
           : await estimateStepWorkflow({ ctx, claims, body: input.body });
@@ -8240,22 +8235,16 @@ type RegistryStepBody = Exclude<StepBody, PassThroughStepBody>;
 /**
  * Narrow a `kind:'step'` body to its PASS-THROUGH arm.
  *
- * 🔴 KEYED ON THE VALUE OF `step`, WHICH IS THE ARM DISCRIMINATOR ITSELF — never
- * on the presence of `$type`. Same rule as `isInlineComfyBody` one section up,
- * and for a sharper reason here: the pass-through arm declares `step:
- * z.undefined()`, so `{…, step: undefined, $type, input, maxBuzz}` is a LEGAL
- * pass-through body carrying `step` as an own key (an SDK spreading an optional
- * variable produces exactly that, and `undefined` survives superjson). A
- * `'step' in body` test would route it to the registry handler, which would then
- * look up `getStep(undefined)` and answer BAD_REQUEST for a body the wire schema
- * accepted.
+ * 🔴 KEYED ON THE VALUE OF `step`, NOT `'step' in body`. The pass-through arm
+ * declares `step: z.undefined()`, so a body carrying `step` as an own key is a
+ * LEGAL pass-through body (an SDK spreading an optional variable produces one,
+ * and `undefined` survives superjson); a presence test routes it to
+ * `resolveBlockStep`, which answers BAD_REQUEST. Same rule as
+ * `isInlineComfyBody`.
  */
 function isPassThroughStepBody(body: StepBody): body is PassThroughStepBody {
   return body.step === undefined;
 }
-
-/** Orchestrator step name stamped on a block step submission. */
-const BLOCK_STEP_NAME = 'block-step';
 
 /**
  * Settle-time observability labels for a pass-through submit.
@@ -8296,10 +8285,17 @@ function assertPassThroughStepTypeAllowed($type: string): void {
 /**
  * Build the orchestrator step a pass-through body submits.
  *
- * 🔴 `input` IS THE APP'S OBJECT, BY REFERENCE AND UNMODIFIED. No spread, no
- * merge, no defaulting, no server-owned key — that is the entire contract of
- * this arm, and it is the one property `blocks.router.passthroughStep.test.ts`
- * asserts by identity rather than by deep-equality.
+ * 🔴 `input` IS FORWARDED UNMODIFIED — no merge, no defaulting, no server-owned
+ * key. Pinned byte-for-byte on BOTH the quote and the submit in
+ * `src/server/routers/__tests__/blocks.router.workflow.test.ts`.
+ *
+ * ⚠️ A DRAFT OF THIS LINE CLAIMED THE TEST PINS IT "BY REFERENCE IDENTITY, so a
+ * spread cannot pass". It does not, and a `{ ...body.input }` mutant SURVIVED
+ * the whole suite — correctly, because a shallow spread of this object is
+ * observationally identical (same keys, same nested references, same JSON). Do
+ * not re-add that claim. What the identity assertion in that suite DOES pin is
+ * that the quote and the submit hold ONE step object, which is what makes
+ * "the quote priced the same work" true; building the step twice kills it.
  *
  * `timeout` is the PHYSICAL Buzz ceiling, derived from the single declared
  * `maxBuzz` exactly as the inline-comfy arm derives it: `stepTimeoutSeconds =
@@ -9424,11 +9420,10 @@ async function submitStepWorkflow(opts: {
 // and the only thing standing between an app and a `$type` is
 // `PLATFORM_INTERNAL_STEP_TYPES`.
 //
-// 🔴 WHAT THIS ARM DOES NOT DO, so nobody reads an absence as an oversight. No
-// per-step param schema, no prompt audit, no `urn:air:` scan and no entitlement
-// check — all four by explicit operator decision. Moderation moved to the
-// PUBLISH boundary and spend, not entitlement, is the binding control here. The
-// registry arm beside it keeps every one of them for its two entries.
+// 🔴 WHAT THIS ARM DOES NOT DO, and why, is on `blockPassThroughStepBodySchema`
+// in `schema/blocks/workflow.schema` — the wire shape that admits the gap. One
+// copy, because four operator decisions stated twice disagree the first time one
+// of them changes.
 //
 // 🔴 THE SPEND SHAPE IS THE INLINE-COMFY ONE, REUSED RATHER THAN REINVENTED. The
 // app declares ONE number; the server derives `stepTimeoutSeconds = maxBuzz` and
@@ -9443,10 +9438,7 @@ async function submitStepWorkflow(opts: {
  * PASS-THROUGH ESTIMATE. Quotes the orchestrator, floored at the declared
  * `maxBuzz`.
  *
- * 🔴 THE DENYLIST RUNS HERE TOO. An estimate makes a real `whatif:true` submit,
- * so an arm that checked the `$type` only on submit would let a block probe a
- * platform-internal type's price — and, more to the point, would put the one
- * control this bridge has on one of its two orchestrator-reaching paths.
+ * 🔴 THE DENYLIST RUNS HERE TOO — an estimate makes a real `whatif:true` submit.
  *
  * 🔴 NEVER SHOW LESS THAN THE SUBMIT WILL RESERVE, same rule as the registry
  * arm's estimate: the submit reserves `max(maxBuzz, quoted)`, so the estimate
@@ -9454,10 +9446,11 @@ async function submitStepWorkflow(opts: {
  *
  * The no-quote FALLBACK is `maxBuzz`, NOT an error — and unlike the registry
  * arm's submit, the pass-through SUBMIT does not fail closed on a missing quote
- * either. It does not have to: `prepaidFixed` needed the quote because nothing
- * else bounded it, whereas here the stamped `timeout` is a bound the
- * orchestrator enforces whether or not it will price the step. An unquotable
- * `$type` is therefore usable, at a ceiling of `maxBuzz`.
+ * either. That is an operator decision ("say so rather than silently refusing
+ * those types"), not a derivation, and the honest statement of what it costs is
+ * at the `ceiling` in `submitPassThroughStepWorkflow`: the stamped `timeout`
+ * bounds a GPU-second-metered step and nothing else, so for a per-unit-priced
+ * `$type` an unquotable submit reserves `maxBuzz` and may bill more.
  */
 async function estimatePassThroughStepWorkflow(opts: {
   ctx: Context;
@@ -9469,7 +9462,17 @@ async function estimatePassThroughStepWorkflow(opts: {
   assertPassThroughStepTypeAllowed(body.$type);
 
   const orchestratorStep = buildPassThroughOrchestratorStep(body);
-  const quotedBuzz = await quotePassThroughBuzz({ ctx, claims, body, orchestratorStep, userId });
+  // The token mint is INSIDE the quote's catch on this path and outside it on
+  // the submit's, which is why it is threaded in rather than minted by the quote:
+  // an estimate must degrade to the declared ceiling when the mint fails, while a
+  // submit that cannot mint must throw before it reserves anything.
+  const token = await getOrchestratorToken(userId, ctx).catch(() => null);
+  let quotedBuzz: number | null = null;
+  if (token) {
+    quotedBuzz = await quotePassThroughBuzz({ claims, body, orchestratorStep, token });
+  } else {
+    recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, 'estimate_absent');
+  }
 
   return {
     snapshot: {
@@ -9486,50 +9489,63 @@ async function estimatePassThroughStepWorkflow(opts: {
  * The orchestrator's live price for an already-built pass-through step, or
  * `null` if it could not be had.
  *
- * Only the TRANSIENT half is swallowed — token mint and the round-trip. The
- * `$type` refusal is deliberately outside this, at both call sites, so a
- * deterministic denial can never degrade into "no quote" and then into a price.
- * (The registry arm learned that the expensive way; see the note at
- * `estimateStepWorkflow`'s build site.)
+ * Only the orchestrator ROUND-TRIP is swallowed. The `$type` refusal is
+ * deliberately outside this, at both call sites, so a deterministic denial can
+ * never degrade into "no quote" and then into a price. (The registry arm learned
+ * that the expensive way; see the note at `estimateStepWorkflow`'s build site.)
+ *
+ * 🔴 EVERY OUTCOME IS COUNTED, and it matters MORE here than on the registry arm
+ * it borrows the counter from. There a missing quote fails the submit closed, so
+ * the outage is loud; here the arm deliberately falls back to the declared
+ * `maxBuzz` and proceeds — so without this pair, an orchestrator that stopped
+ * pricing would move every pass-through job onto its declared ceiling with
+ * nothing anywhere moving. Read the ratio, not `estimate_absent` alone.
+ *
+ * 🔴 LABELLED WITH A CONSTANT, never the submitted `$type` — `step` is a metric
+ * label and the `$type` set is open by construction on this arm. Same reasoning
+ * as `PASS_THROUGH_ENGINE_LABEL`.
  */
 async function quotePassThroughBuzz(opts: {
-  ctx: Context;
   claims: BlockClaims;
   body: PassThroughStepBody;
   orchestratorStep: ReturnType<typeof buildPassThroughOrchestratorStep>;
-  userId: number;
+  token: string;
 }): Promise<number | null> {
-  const { ctx, claims, body, orchestratorStep, userId } = opts;
+  const { claims, body, orchestratorStep, token } = opts;
   try {
     const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
-    const token = await getOrchestratorToken(userId, ctx);
     const quote = await submitWorkflow({
       token,
       body: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         steps: [orchestratorStep as any],
-        tags: buildWorkflowTags(claims, body.$type, 'step'),
+        tags: buildWorkflowTags(claims, PASS_THROUGH_ENGINE_LABEL, 'step'),
         currencies: resolveBlockCurrenciesForAccount(isGreen, undefined),
         ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
       },
       query: { whatif: true },
     });
     const total = quote.cost?.total;
-    if (typeof total !== 'number' || !Number.isFinite(total)) return null;
+    if (typeof total !== 'number' || !Number.isFinite(total)) {
+      recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, 'estimate_absent');
+      return null;
+    }
+    recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, 'estimate_quoted');
     return Math.ceil(total);
   } catch {
+    recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, 'estimate_absent');
     return null;
   }
 }
 
 /**
- * PASS-THROUGH SUBMIT. Order: gates → DENYLIST → spend ceiling → orchestrator
- * quote → static budget gate → idempotency claim → per-user cap → per-app cap →
- * dev-session cap → submit → settle record → audit + attribution.
+ * PASS-THROUGH SUBMIT. Post-paid, sharing `submitCustomComfyWorkflow`'s
+ * reservation order, refund rules and settle machinery — the two must not drift.
  *
- * Identical belt, identical order and identical refund rules to
- * `submitCustomComfyWorkflow` — this arm is post-paid for the same reason and
- * shares its settle machinery, so the two must not drift.
+ * 🔴 IT DIFFERS FROM THAT SIBLING IN ONE PLACE: it takes a `whatif` quote before
+ * reserving, because the app's declared `maxBuzz` is not the only price this arm
+ * can face. `submitCustomComfyWorkflow` makes no quote at all — its ceiling IS
+ * the declared number.
  */
 async function submitPassThroughStepWorkflow(opts: {
   ctx: Context;
@@ -9545,6 +9561,13 @@ async function submitPassThroughStepWorkflow(opts: {
     : mintServerBlockExternalId();
 
   const userId = await assertStepRequestAllowed(claims);
+  // DEFENSE-IN-DEPTH, AND NOT REACHABLE TODAY — say so rather than counting it as
+  // coverage. The `submitWorkflow` procedure rejects a token without a positive
+  // `buzzBudget` before it dispatches here, so no request arrives with one
+  // missing; a mutation of THIS line survives the suite, measured. It re-narrows
+  // the claim to a number the static gate below can compare against, and keeps
+  // the helper safe on its own terms if it ever gains a caller that does not
+  // pre-check — the same belt, for the same reason, as the customComfy sibling.
   if (typeof claims.buzzBudget !== 'number' || claims.buzzBudget <= 0) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'block token missing budget' });
   }
@@ -9562,28 +9585,37 @@ async function submitPassThroughStepWorkflow(opts: {
   const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
 
   const orchestratorStep = buildPassThroughOrchestratorStep(body);
-  // Parameterized tags, same shape as the registry arm (which passes its step
-  // id). The `baseModel` slot is the only place an APP-supplied string becomes an
-  // orchestrator tag; it cannot be steered into the `app-block:*` provenance
-  // namespace because a `$type` the orchestrator does not know fails the submit,
-  // so no workflow is ever persisted carrying the forged tag.
-  const tags = buildWorkflowTags(claims, body.$type, 'step');
+  // 🔴 A CONSTANT IN THE `baseModel` SLOT, NOT THE SUBMITTED `$type`. The other
+  // arms pass a bounded server-side id there (a registry step id, a recipe id);
+  // `$type` is app-supplied free text, and `buildWorkflowTags` emits that slot
+  // verbatim into the same array as `app-block:<appId>` — the tag
+  // `assertBlockWorkflowTaggedForApp` and `queryAppWorkflows` treat as the
+  // app-scoping boundary. The argument that it is safe anyway (an unknown
+  // `$type` fails the submit, so no workflow persists the forged tag) delegates
+  // the control to an orchestrator behaviour this repo does not own and has not
+  // measured. A constant needs no such argument. The per-`$type` dimension is
+  // kept on the audit row's `detail` JSON, which has no scoping meaning and no
+  // cardinality budget.
+  const tags = buildWorkflowTags(claims, PASS_THROUGH_ENGINE_LABEL, 'step');
 
   const token = await getOrchestratorToken(userId, ctx);
-  const quotedBuzz = await quotePassThroughBuzz({
-    ctx,
-    claims,
-    body,
-    orchestratorStep,
-    userId,
-  });
+  const quotedBuzz = await quotePassThroughBuzz({ claims, body, orchestratorStep, token });
 
   // 🔴 THE RESERVATION IS THE LARGER OF THE TWO, AND THE TIMEOUT IS STILL
-  // `maxBuzz`. The declared ceiling is a floor for the cap counters because the
-  // job may accrue up to it; the quote raises the reservation when the
-  // orchestrator prices this `$type` above it, so a cap counter can never
-  // under-read what was actually committed. Over-reserving only makes a cap
-  // stricter, and the terminal settle refunds `ceiling - actual` back down.
+  // `maxBuzz`. The declared ceiling is the floor because the job may accrue up
+  // to it; the quote raises the reservation when the orchestrator prices this
+  // `$type` above it. Over-reserving only makes a cap stricter, and the terminal
+  // settle refunds `ceiling - actual` back down.
+  //
+  // 🔴 WHAT THIS DOES NOT DO, because the obvious reading is wrong and expensive:
+  // it does NOT make the caps an upper bound on real spend. The settle clamps the
+  // refund at 0 and nothing raises a counter, so a job billed ABOVE the
+  // reservation leaves all four counters short by the overage, permanently. The
+  // thing that would prevent that is the quote, and this arm deliberately does
+  // not fail closed when there is none (see `quotePassThroughBuzz`) — for a
+  // GPU-second-metered `$type` the stamped `timeout` still bounds it, but most
+  // reachable types are priced per unit at submit, where a timeout bounds
+  // wall-clock and nothing else. Operator decision, recorded in the PR.
   const ceiling = Math.max(body.maxBuzz, quotedBuzz ?? body.maxBuzz);
 
   // (1) STATIC pre-submit gate against the token's per-call budget.

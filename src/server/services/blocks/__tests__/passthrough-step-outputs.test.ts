@@ -31,24 +31,31 @@ vi.mock('~/server/services/blocks/block-image-upload.service', () => ({
   BLOCK_PUBLISHED_APP_ID_META_KEY: 'blockPublishedAppId',
 }));
 
-import { projectAppWorkflow, snapshotFromWorkflow } from '../workflow.service';
+import { BLOCK_STEP_NAME, projectAppWorkflow, snapshotFromWorkflow } from '../workflow.service';
 import { splitPassThroughStepOutput } from '../steps';
 import { getBlockGatedImagesByIds } from '../block-gated-images.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-/** A `$type` the step registry does not know and `workflow.service` does not
- *  extract natively — i.e. reachable ONLY through the pass-through arm. */
-const PASS_THROUGH_TYPE = 'textToImageV2';
+/**
+ * A `$type` the step registry does not know and `workflow.service` does not
+ * extract natively — i.e. reachable ONLY through the pass-through arm. A REAL
+ * one from `WorkflowStepTemplate.discriminator.mapping` (50 entries, measured
+ * 2026-09-17), not a plausible-looking invention.
+ */
+const PASS_THROUGH_TYPE = 'imageBackgroundRemoval';
 
 const BLOB_URL = 'https://blobs.example/pass-through-1.webp';
 
-function workflowWithPassThroughStep(output: unknown) {
+function workflowWithPassThroughStep(output: unknown, name: string = BLOCK_STEP_NAME) {
   return {
     id: 'wf_pt_1',
     status: 'succeeded',
     createdAt: '2026-09-17T00:00:00Z',
     cost: { total: 7 },
-    steps: [{ $type: PASS_THROUGH_TYPE, output }],
+    // `name` is the gate: the extractors key on the SERVER-STAMPED step name, so
+    // every fixture here carries the real one and the negative cases below pass
+    // a different one rather than a different `$type`.
+    steps: [{ $type: PASS_THROUGH_TYPE, name, output }],
   };
 }
 
@@ -74,6 +81,101 @@ describe('splitPassThroughStepOutput', () => {
     expect(media).toEqual([]);
     expect(rest).toEqual({ note: 'kept' });
     expect(JSON.stringify(rest)).not.toContain(BLOB_URL);
+  });
+
+  // 🔴 EVERY PROPERTY NAME THE LIVE CATALOG ACTUALLY CARRIES A BLOB UNDER, not
+  // the two the happy path happens to use. Derived 2026-09-17 by resolving every
+  // `*Output` schema in `WorkflowStepTemplate.discriminator.mapping` and keeping
+  // the properties whose type has the orchestrator `Blob` shape. The first draft
+  // of the splitter enumerated FOUR key names; these are the nineteen, and each
+  // of the missing fifteen would have ridden out as a raw url inside the
+  // forwarded output — the second image channel the module exists to prevent.
+  const MEASURED_BLOB_KEYS = [
+    'additionalVideos',
+    'animatedFbxModel',
+    'animatedModel',
+    'audioBlob',
+    'basicAnimations',
+    'blob',
+    'blobs',
+    'draftCache',
+    'fbxModel',
+    'frames',
+    'image',
+    'images',
+    'model',
+    'riggedFbxModel',
+    'riggedModel',
+    'svg',
+    'tempBlobs',
+    'thumbnail',
+    'video',
+  ] as const;
+
+  it.each(MEASURED_BLOB_KEYS)('lifts media out of the `%s` property', (key) => {
+    const { media, rest } = splitPassThroughStepOutput({
+      [key]: { url: BLOB_URL, available: true },
+      keep: 1,
+    });
+    expect(media).toHaveLength(1);
+    expect(rest).toEqual({ keep: 1 });
+  });
+
+  it.each(MEASURED_BLOB_KEYS)('strips `%s` even when it produced nothing', (key) => {
+    const { media, rest } = splitPassThroughStepOutput({
+      [key]: { url: BLOB_URL, available: false },
+      keep: 1,
+    });
+    expect(media).toEqual([]);
+    expect(JSON.stringify(rest)).not.toContain(BLOB_URL);
+  });
+
+  // 🔴 SOME STEP TYPES *ARE* A BLOB — `transcode`'s whole output is one. Without
+  // the top-level case its url is the entire forwarded object.
+  it('treats a top-level blob-shaped output as media, forwarding nothing', () => {
+    const { media, rest } = splitPassThroughStepOutput({
+      id: 'b',
+      available: true,
+      url: BLOB_URL,
+      tier: 'managed',
+    });
+    expect(media).toEqual([{ url: BLOB_URL, width: null, height: null, nsfwLevel: null }]);
+    expect(rest).toEqual({});
+  });
+
+  // The predicate is a SHAPE test, so it must not strip a value that merely
+  // shares a NAME with a media property. This is the false-positive control.
+  it('does NOT strip a same-named property that is not blob-shaped', () => {
+    const { media, rest } = splitPassThroughStepOutput({
+      model: 'gpt-4o-mini',
+      images: 3,
+      video: { durationSeconds: 5 },
+    });
+    expect(media).toEqual([]);
+    expect(rest).toEqual({ model: 'gpt-4o-mini', images: 3, video: { durationSeconds: 5 } });
+  });
+
+  // 🔴 BOTH HALVES OF THE SHAPE, NOT JUST `url`. Dropping the `available` test
+  // widens the predicate to every object that merely HAS a url — a provider
+  // reference, a citation, a callback — and silently removes it from the output
+  // the arm promises to forward verbatim. This is the control for that mutant;
+  // without it, relaxing the predicate is invisible.
+  it('does NOT strip an object that has a url but no `available`', () => {
+    const source = { url: 'https://docs.example/ref', title: 'a citation' };
+    const { media, rest } = splitPassThroughStepOutput({ source });
+    expect(media).toEqual([]);
+    expect(rest).toEqual({ source });
+  });
+
+  // 🔴 THE DEPTH LIMIT, PINNED RATHER THAN IMPLIED. A blob nested inside another
+  // object rides through verbatim; the doc says so and this is the assertion
+  // that keeps the doc honest.
+  it('does NOT reach a blob nested one level deeper', () => {
+    const { media, rest } = splitPassThroughStepOutput({
+      epochs: [{ blobs: [{ url: BLOB_URL, available: true }] }],
+    });
+    expect(media).toEqual([]);
+    expect(JSON.stringify(rest)).toContain(BLOB_URL);
   });
 
   it('handles the SINGULAR `blob` key and a non-object output', () => {
@@ -111,14 +213,55 @@ describe('snapshotFromWorkflow — pass-through step', () => {
     ]);
   });
 
+  // 🔴 A STEP THIS BRIDGE DID NOT SUBMIT IS STILL DROPPED. Same `$type`, same
+  // output, different `name` — so this is the gate and not the `$type` test.
+  // Without it the arm would forward the output of any step the ORCHESTRATOR put
+  // on the workflow, on `textToImage` and `customComfy` workflows too, through a
+  // channel with no moderation posture.
+  it('DROPS a foreign step with the same $type but a different name', () => {
+    const wf = workflowWithPassThroughStep(
+      { blobs: [{ url: BLOB_URL, available: true }], text: 'secret' },
+      'some-other-step'
+    );
+    const snap = snapshotFromWorkflow(wf as never);
+    expect(snap.imageUrls).toBeUndefined();
+    expect(snap.stepOutputs).toBeUndefined();
+    expect(projectAppWorkflow(wf as never).images).toEqual([]);
+  });
+
   // A fresh submit reply carries steps with no `output` at all. An entry there
   // would say nothing and would appear on EVERY pass-through submit reply.
   it('OMITS stepOutputs for a step that has produced nothing yet', () => {
     const snap = snapshotFromWorkflow({
       id: 'wf_pt_new',
       status: 'processing',
-      steps: [{ $type: PASS_THROUGH_TYPE }],
+      steps: [{ $type: PASS_THROUGH_TYPE, name: BLOCK_STEP_NAME }],
     } as never);
+    expect(snap.stepOutputs).toBeUndefined();
+  });
+
+  // 🔴 A MIXED WORKFLOW — the shape nothing else in this file builds, and the one
+  // the "every existing snapshot stays byte-identical" claim is really about. A
+  // native step alongside a step this bridge did not submit must produce the
+  // pre-change snapshot exactly: the native urls, and no `stepOutputs` at all.
+  it('a NATIVE step beside a foreign step yields the pre-change snapshot', () => {
+    const snap = snapshotFromWorkflow({
+      id: 'wf_mixed',
+      status: 'succeeded',
+      steps: [
+        {
+          $type: 'textToImage',
+          name: 't',
+          output: { images: [{ url: 'https://i/x.png', available: true }] },
+        },
+        {
+          $type: PASS_THROUGH_TYPE,
+          name: 'orchestrator-added',
+          output: { blobs: [{ url: BLOB_URL, available: true }] },
+        },
+      ],
+    } as never);
+    expect(snap.imageUrls).toEqual(['https://i/x.png']);
     expect(snap.stepOutputs).toBeUndefined();
   });
 
@@ -186,8 +329,28 @@ describe('projectAppWorkflow — pass-through step', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The far end of the chain: once a pass-through output is PUBLISHED, a
-// cross-viewer read of it is the ordinary gated read, and it must still clamp.
+// THE SEAM, not the two ends of it.
+//
+// 🔴 AN EARLIER VERSION OF THIS BLOCK BUILT AN `Image` ROW BY HAND AND CALLED
+// `getBlockGatedImagesByIds` ON IT. Every assertion passed — and every one of
+// them would have passed with this whole feature DELETED, because no
+// pass-through symbol was in scope. It was a test of the pre-existing gated read
+// wearing this feature's name.
+//
+// The join is what matters: a pass-through blob is publishable ONLY because
+// `projectAppWorkflow` surfaces it (that projection is what
+// `resolveOwnedWorkflowOutputs` reads), and it is safe cross-viewer ONLY because
+// what `publishGenerationOutputs` then writes is read back through the gated
+// clamp. So the row below is DERIVED from the projection rather than invented:
+// delete the pass-through branch in `projectAppWorkflow` and this block fails at
+// its first assertion, before it ever reaches the gated read.
+//
+// What is still NOT covered, stated rather than implied: the middle link —
+// `resolveOwnedWorkflowOutputs` → `publishGenerationOutputs` → the `Image` row —
+// is mocked away here, so "an `Image` row with this url gets written" is an
+// assumption, not a measurement. It also has its own host allowlist
+// (`isAllowedOutputHost`), which a pass-through `$type` returning blobs from an
+// unlisted host would fail — fail-safe, and untested for this arm.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('a published pass-through output is read back as BlockGatedImage', () => {
   const APP = 'app_test';
@@ -196,11 +359,30 @@ describe('a published pass-through output is read back as BlockGatedImage', () =
   const SFW = NsfwLevel.PG | NsfwLevel.PG13;
   const PUBLISHED_ID = 9001;
 
-  /** The `Image` row `publishGenerationOutputs` writes for a pass-through blob. */
+  /**
+   * The url a pass-through blob reaches the publish path as — taken from the
+   * projection, not written down. This is the link the block exists to test.
+   */
+  function publishableUrl(): string {
+    const projected = projectAppWorkflow(
+      workflowWithPassThroughStep({
+        blobs: [{ url: BLOB_URL, available: true, width: 512, height: 512 }],
+      }) as never
+    );
+    expect(
+      projected.images,
+      'a pass-through blob must be publishable at all — see projectAppWorkflow'
+    ).toHaveLength(1);
+    return projected.images[0].url;
+  }
+
+  /** The `Image` row a publish of that projected output produces. */
   const publishedRow = (over: Record<string, unknown> = {}) => ({
     id: PUBLISHED_ID,
     userId: AUTHOR,
-    url: `key-${PUBLISHED_ID}`,
+    // The storage key the publish derives from the projected url. Derived here
+    // too, so a projection that stops surfacing the blob cannot be papered over.
+    url: publishableUrl().replace(/^https?:\/\//, ''),
     nsfwLevel: NsfwLevel.PG,
     ingestion: ImageIngestionStatus.Scanned,
     width: 512,
@@ -220,7 +402,8 @@ describe('a published pass-through output is read back as BlockGatedImage', () =
   });
 
   it('yields a VISIBLE BlockGatedImage (an edge url, never the raw key) in-ceiling', async () => {
-    dbMock.dbRead.$queryRaw.mockResolvedValue([publishedRow()]);
+    const row = publishedRow();
+    dbMock.dbRead.$queryRaw.mockResolvedValue([row]);
     const { images } = await getBlockGatedImagesByIds({
       imageIds: [PUBLISHED_ID],
       browsingLevel: SFW,
@@ -235,7 +418,7 @@ describe('a published pass-through output is read back as BlockGatedImage', () =
         contentRating: expect.anything(),
         // The gated EDGE url (1200 = the service's own GATED_IMAGE_EDGE_WIDTH,
         // module-private), never the raw storage key.
-        url: `edge:key-${PUBLISHED_ID}@1200`,
+        url: `edge:${row.url}@1200`,
         width: 512,
         height: 512,
       },
@@ -245,7 +428,8 @@ describe('a published pass-through output is read back as BlockGatedImage', () =
   // 🔴 THE OVER-CEILING VIEWER. `hidden` and NO url — the per-viewer moderation
   // boundary the pass-through arm must not route around.
   it('yields HIDDEN with no url for an over-ceiling viewer', async () => {
-    dbMock.dbRead.$queryRaw.mockResolvedValue([publishedRow({ nsfwLevel: NsfwLevel.X })]);
+    const row = publishedRow({ nsfwLevel: NsfwLevel.X });
+    dbMock.dbRead.$queryRaw.mockResolvedValue([row]);
     const { images } = await getBlockGatedImagesByIds({
       imageIds: [PUBLISHED_ID],
       browsingLevel: SFW,
@@ -253,6 +437,6 @@ describe('a published pass-through output is read back as BlockGatedImage', () =
       userId: VIEWER,
     });
     expect(images).toEqual([{ imageId: PUBLISHED_ID, status: 'hidden' }]);
-    expect(JSON.stringify(images)).not.toContain(`key-${PUBLISHED_ID}`);
+    expect(JSON.stringify(images)).not.toContain(row.url);
   });
 });
