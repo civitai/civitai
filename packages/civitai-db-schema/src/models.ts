@@ -1535,6 +1535,12 @@ export interface ImageTagForReview {
   tagId: number;
 }
 
+export interface ImageMetaFlags {
+  imageId: number;
+  hasMeta: boolean;
+  onSite: boolean;
+}
+
 export interface ImageFlag {
   imageId: number;
   image?: Image;

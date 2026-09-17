@@ -1937,6 +1937,12 @@ model ImageTagForReview {
   @@index([tagId])
 }
 
+model ImageMetaFlags {
+  imageId Int     @id
+  hasMeta Boolean
+  onSite  Boolean
+}
+
 model ImageFlag {
   imageId       Int     @id
   image         Image   @relation(fields: [imageId], references: [id], onDelete: Cascade)
