@@ -12,6 +12,10 @@ export const getPaginatedCosmeticShopItemInput = paginationSchema.merge(
     types: z.array(z.enum(CosmeticType)).optional(),
     minPrice: z.number().optional(),
     maxPrice: z.number().optional(),
+    // Tri-state archived filter: `false` hides archived listings (the
+    // section-items picker — archived cosmetics can't be sold, so they must not
+    // be featurable), `true` shows only archived, `undefined` shows all (the
+    // moderator store management list).
     archived: z.boolean().optional(),
     // Only published creator-listed items marked sellable-by-others — lets mods
     // pick up resellable creator cosmetics for official shop sections.
