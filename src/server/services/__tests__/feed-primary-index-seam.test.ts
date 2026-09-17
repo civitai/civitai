@@ -106,4 +106,12 @@ describe('getAllImagesIndex with feed-service-primary', () => {
       expect.anything()
     );
   });
+
+  it('refuses a page past the offset cap instead of answering it from the search index', async () => {
+    primaryOn.mockReturnValue(true);
+    await expect(
+      getAllImagesIndex({ ...request(), sort: 'Newest', cursor: '30000|1788000000000' })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(fetchFeedPrimary).not.toHaveBeenCalled();
+  });
 });

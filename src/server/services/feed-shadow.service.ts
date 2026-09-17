@@ -13,6 +13,7 @@ import {
 } from '~/server/services/feed-request-capture.service';
 
 export const MAX_OFFSET = 20_000;
+export const DEEP_OFFSET = `offset>${MAX_OFFSET}`;
 const CONFIG_TTL_MS = 15_000;
 const ERROR_LOG_INTERVAL_MS = 60_000;
 
@@ -159,7 +160,6 @@ export function mapSearchInputToFeedQuery(
     before = Math.floor(Number(m[2]) / 60_000) * 60_000;
   } else if (cursor) return skip('cursor:unparsed');
   if (typeof input.offset === 'number' && input.offset > 0) offset = Math.max(offset, input.offset);
-  if (offset > MAX_OFFSET) return skip(`offset>${MAX_OFFSET}`);
 
   const sort = SORTS[String(input.sort)];
   if (!sort) return skip(`sort:${String(input.sort || 'none')}`);
@@ -189,6 +189,7 @@ export function mapSearchInputToFeedQuery(
       ? 'scheduled'
       : undefined;
   if (visibility && !userId) return skip(`flag:${visibility}:no-user`);
+  if (offset > MAX_OFFSET) return skip(DEEP_OFFSET);
 
   const params = new URLSearchParams();
   params.set('levels', levels.join(','));
