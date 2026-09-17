@@ -170,7 +170,9 @@ export async function getImports({
       ...(unattached ? UNATTACHED_WHERE : {}),
     },
     select: importSelect,
-    orderBy: { createdAt: 'desc' },
+    // A batch is one `createMany`, so its rows share `createdAt`, and every progress write moves a
+    // row physically — without a full tiebreak the list reshuffles on each poll.
+    orderBy: [{ createdAt: 'desc' }, { sizeBytes: { sort: 'desc', nulls: 'last' } }, { id: 'asc' }],
     take: limit,
   });
   return rows.map(toView);
@@ -239,6 +241,20 @@ async function uploadTarget() {
     s3: useB2 ? getUploadS3Client('b2') : getS3Client(),
     bucket: useB2 ? getUploadBucket('b2') : await getBucket(),
   };
+}
+
+/**
+ * The bucket a row's bytes live in, and a client that can reach it.
+ *
+ * 🔴 The client follows the ROW's bucket, never the current config. A row keeps the bucket its
+ * upload was opened in, which can belong to another backend — an import started where B2 is not
+ * configured opens its upload in the default bucket, and a pod that has B2 then sent that bucket's
+ * name to B2: "The specified bucket does not exist".
+ */
+async function rowTarget(row: { bucket: string | null }) {
+  if (!row.bucket) return uploadTarget();
+  const s3 = row.bucket === getUploadBucket('b2') ? getUploadS3Client('b2') : getS3Client();
+  return { s3, bucket: row.bucket };
 }
 
 export async function enqueueImports({
@@ -349,8 +365,8 @@ export async function buildAttachInput({
   //
   // `objectExists` is deliberately tri-state: `null` means the bucket could not be consulted, and a
   // guard that cannot ask must not block a legitimate attach.
-  const { s3, bucket } = await uploadTarget();
-  const present = await objectExists(row.bucket ?? bucket, row.key, s3);
+  const { s3, bucket } = await rowTarget(row);
+  const present = await objectExists(bucket, row.key, s3);
   if (present === false)
     throw throwBadRequestError(
       'The stored object for that import is gone. Re-import it before attaching.'
@@ -451,7 +467,12 @@ export async function renameGroup({
  * Refuses while any `ModelFile` points at the object, which would leave a model version serving
  * nothing.
  */
-export async function deleteImport(input: { id: number; userId: number; isModerator: boolean }) {
+export async function deleteImport(input: {
+  id: number;
+  userId: number;
+  isModerator: boolean;
+  force?: boolean;
+}): Promise<ImportActionResult> {
   const row = await ownedImport(input);
   if (row.modelFileId)
     throw throwBadRequestError(
@@ -472,29 +493,11 @@ export async function deleteImport(input: { id: number; userId: number; isModera
       );
   }
 
-  // An in-flight multipart and a finished object are freed differently, and a row can carry either.
-  // The row is the only handle that can free already-uploaded parts, so a failed abort must keep it.
-  if (!(await abortIfInFlight(row)))
-    throw throwBadRequestError(
-      'Could not abort the in-flight upload, so its parts cannot be freed yet. Nothing was removed.'
-    );
-
-  if (row.key) {
-    // Bucket and client from one resolution: a row with no bucket falling back to `getBucket()`
-    // would address the main bucket with the B2 client, and a delete against the wrong endpoint
-    // returns 204 with the bytes still there.
-    const { s3, bucket: fallbackBucket } = await uploadTarget();
-    const bucket = row.bucket ?? fallbackBucket;
-    await deleteObject(bucket, row.key, s3).catch((error) => {
-      logToAxiom({
-        type: 'error',
-        name: 'huggingface-import',
-        message: 'object delete failed; the row is kept so the bytes stay reachable',
-        key: row.key,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw throwBadRequestError('Could not delete the stored object. Nothing was removed.');
-    });
+  // The row is the only handle on what it stored, so by default a cleanup failure keeps it.
+  const cleanup = await freeStorage(row);
+  if (!cleanup.ok) {
+    if (!input.force) return { ok: false, reason: 'storage', message: cleanup.message };
+    logLeftBehind('delete', row, cleanup.message);
   }
 
   // The predicate rides into the write: `ownedImport` read the REPLICA, so an attach that committed
@@ -506,13 +509,22 @@ export async function deleteImport(input: { id: number; userId: number; isModera
   return { ok: true as const };
 }
 
-export async function retryImport(input: { id: number; userId: number; isModerator: boolean }) {
+export async function retryImport(input: {
+  id: number;
+  userId: number;
+  isModerator: boolean;
+  force?: boolean;
+}): Promise<ImportActionResult> {
   const row = await ownedImport(input);
-  if (row.status !== 'Failed' && row.status !== 'Canceled') return { ok: false as const };
+  if (row.status !== 'Failed' && row.status !== 'Canceled') return { ok: false, reason: 'state' };
 
-  // Restart from zero when the abort succeeded — a failure we could not finish is the case where the
-  // bytes we did write are least worth trusting. A failed abort keeps the upload, so that row resumes.
-  const aborted = await abortIfInFlight(row);
+  // Always from nothing, in the backend configured now. Resuming after a failed abort is what kept
+  // an import stuck: the upload that could not be aborted was the one that kept failing.
+  const abort = await abortIfInFlight(row);
+  if (!abort.ok) {
+    if (!input.force) return { ok: false, reason: 'storage', message: abort.message };
+    logLeftBehind('retry', row, abort.message);
+  }
   await dbWrite.huggingFaceImport.update({
     where: { id: row.id },
     data: {
@@ -521,14 +533,18 @@ export async function retryImport(input: { id: number; userId: number; isModerat
       attempts: 0,
       nextAttemptAt: null,
       bytesTransferred: BigInt(0),
-      ...(aborted ? { uploadId: null, parts: Prisma.DbNull } : {}),
+      uploadId: null,
+      parts: Prisma.DbNull,
+      key: null,
+      bucket: null,
+      partSize: null,
       claimedBy: null,
       claimedAt: null,
       heartbeatAt: null,
       startedAt: null,
     },
   });
-  return { ok: true as const };
+  return { ok: true };
 }
 
 export async function cancelImport(input: { id: number; userId: number; isModerator: boolean }) {
@@ -553,32 +569,92 @@ export async function cancelImport(input: { id: number; userId: number; isModera
     where: { id: row.id },
     select: { bucket: true, key: true, uploadId: true },
   });
-  if (current) await abortIfInFlight(current);
+  const abort = current ? await abortIfInFlight(current) : ({ ok: true } as const);
+  // The upload id stays on the row, so a later Restart or Delete tries the abort again.
+  if (!abort.ok)
+    logToAxiom({
+      type: 'warn',
+      name: 'huggingface-import',
+      message: 'cancel could not abort',
+      error: abort.message,
+    });
   return { ok: true as const };
 }
 
-/** Returns whether the upload is known to be gone — callers may only forget an `uploadId` on true. */
-async function abortIfInFlight(row: {
-  bucket: string | null;
-  key: string | null;
-  uploadId: string | null;
-}): Promise<boolean> {
-  if (!row.bucket || !row.key || !row.uploadId) return true;
-  const { s3 } = await uploadTarget();
-  try {
-    await abortMultipartUpload(row.bucket, row.key, row.uploadId, s3);
-    return true;
-  } catch (error) {
-    logToAxiom({
-      type: 'error',
-      name: 'huggingface-import',
-      message: 'multipart abort failed; upload id retained so it can be aborted later',
-      key: row.key,
-      uploadId: row.uploadId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return false;
+type StoredRow = { bucket: string | null; key: string | null; uploadId: string | null };
+type Cleanup = { ok: true } | { ok: false; message: string };
+
+export type ImportActionResult =
+  | { ok: true }
+  | { ok: false; reason: 'state' }
+  | { ok: false; reason: 'storage'; message: string };
+
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/** `ok` means the upload is known to be gone — only then may a caller forget its `uploadId`. */
+const errorName = (error: unknown) => (error as { name?: string } | null)?.name;
+/** The thing to remove is already gone — which is what removing it was for. */
+const alreadyGone = (error: unknown) =>
+  ['NoSuchUpload', 'NoSuchKey', 'NotFound'].includes(errorName(error) ?? '');
+
+/**
+ * Runs a removal against the row's storage. A bucket unknown to the backend `rowTarget` picked is
+ * tried on the other configured backend before giving up: a bucket name is all a row records, and
+ * guessing its backend wrong is exactly how "The specified bucket does not exist" arose.
+ */
+async function removeFromRowStorage(
+  row: StoredRow,
+  describe: string,
+  remove: (bucket: string, s3: ReturnType<typeof getS3Client>) => Promise<unknown>
+): Promise<Cleanup> {
+  const { s3, bucket } = await rowTarget(row);
+  const clients = [s3];
+  if (bucket === getUploadBucket('b2')) clients.push(getS3Client());
+  else if (env.S3_UPLOAD_B2_ENDPOINT) clients.push(getUploadS3Client('b2'));
+
+  let lastError: unknown;
+  for (const client of clients) {
+    try {
+      await remove(bucket, client);
+      return { ok: true };
+    } catch (error) {
+      if (alreadyGone(error)) return { ok: true };
+      lastError = error;
+      if (errorName(error) !== 'NoSuchBucket') break;
+    }
   }
+  return { ok: false, message: `Could not ${describe}: ${errorText(lastError)}` };
+}
+
+async function abortIfInFlight(row: StoredRow): Promise<Cleanup> {
+  const { key, uploadId } = row;
+  if (!row.bucket || !key || !uploadId) return { ok: true };
+  return removeFromRowStorage(row, 'abort the partial upload', (bucket, s3) =>
+    abortMultipartUpload(bucket, key, uploadId, s3)
+  );
+}
+
+/** Frees whatever the row stored: an unfinished multipart, a finished object, or both. */
+async function freeStorage(row: StoredRow): Promise<Cleanup> {
+  const abort = await abortIfInFlight(row);
+  const { key } = row;
+  if (!abort.ok || !key) return abort;
+  return removeFromRowStorage(row, 'delete the stored file', (bucket, s3) =>
+    deleteObject(bucket, key, s3)
+  );
+}
+
+/** A forced action forgets the row's handle, so this log line is what is left to clean up from. */
+function logLeftBehind(action: 'delete' | 'retry', row: StoredRow, reason: string) {
+  logToAxiom({
+    type: 'warn',
+    name: 'huggingface-import',
+    message: `forced ${action} left storage behind`,
+    bucket: row.bucket,
+    key: row.key,
+    uploadId: row.uploadId,
+    error: reason,
+  });
 }
 
 type ClaimedRow = {
@@ -639,7 +715,15 @@ async function failOrRetry(row: ClaimedRow, error: unknown) {
   const attempts = row.attempts + 1;
   const giveUp = attempts >= MAX_ATTEMPTS;
 
-  const aborted = giveUp ? await abortIfInFlight(row) : false;
+  const abort = giveUp ? await abortIfInFlight(row) : null;
+  if (abort && !abort.ok)
+    logToAxiom({
+      type: 'warn',
+      name: 'huggingface-import',
+      message: 'gave up but could not abort; the upload id stays on the row',
+      error: abort.message,
+    });
+  const aborted = abort?.ok ?? false;
   await dbWrite.huggingFaceImport.updateMany({
     where: { id: row.id, claimedBy: row.claimedBy, status: { not: 'Canceled' } },
     data: {
@@ -681,19 +765,14 @@ async function advanceImport(
     : (await headHuggingFaceFile(row.sourceUrl)) ?? 0;
   if (!size) throw new Error(`Hugging Face reported no size for ${row.repo}/${row.filename}`);
 
-  const target = await uploadTarget();
-  const s3 = target.s3;
   let uploadId = row.uploadId;
   let key = row.key;
-  // 🔴 A resume MUST address the bucket the multipart upload was created in, which is the one on the
-  // row — not whatever the backend config resolves to now. Re-deriving it sends the remaining parts
-  // to a different bucket than `completeMultipartUpload` names, and the transfer fails at the end
-  // having moved every byte.
-  let bucket = row.bucket ?? target.bucket;
+  // A resume addresses the bucket the multipart upload was opened in, through a client that reaches
+  // it — see `rowTarget`.
+  const { s3, bucket } = uploadId && key ? await rowTarget(row) : await uploadTarget();
   const partSize = row.partSize ?? partSizeFor(size);
 
   if (!uploadId || !key) {
-    bucket = target.bucket;
     // Refuse rather than invent an owner: `model/0/…` is a key no upload path could produce, and the
     // userId segment is what `/api/upload/sign-part` authorises against.
     if (!row.userId)

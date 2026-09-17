@@ -17,6 +17,7 @@ import {
 } from '@mantine/core';
 import { IconPlayerStop, IconRefresh, IconTrash, IconUnlink } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
+import { confirmForce } from '~/components/Moderation/HuggingFaceImport/confirm-force';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { UnattachedSection } from '~/components/Moderation/HuggingFaceImport/UnattachedSection';
 import { AttachControl } from '~/components/Moderation/HuggingFaceImport/AttachControl';
@@ -57,6 +58,8 @@ export function ImportQueueTable() {
     }
   );
 
+  const nameOf = (id: number) => data.find((row) => row.id === id)?.filename ?? 'this import';
+
   const onError = (error: { message: string }) =>
     showErrorNotification({ title: 'Action failed', error: new Error(error.message) });
 
@@ -84,11 +87,29 @@ export function ImportQueueTable() {
   // Retry was the only exit, so abandoning a transfer meant paying for it indefinitely.
   const remove = trpc.huggingFaceImport.delete.useMutation({
     onError,
-    onSuccess: (result) => onSettled(result, 'delete'),
+    onSuccess: (result, input) => {
+      if (!result.ok && result.reason === 'storage' && !input.force)
+        return confirmForce({
+          action: 'Delete',
+          what: nameOf(input.id),
+          message: result.message,
+          onConfirm: () => remove.mutate({ id: input.id, force: true }),
+        });
+      return onSettled(result, 'delete');
+    },
   });
   const retry = trpc.huggingFaceImport.retry.useMutation({
     onError,
-    onSuccess: (result) => onSettled(result, 'retry'),
+    onSuccess: (result, input) => {
+      if (!result.ok && result.reason === 'storage' && !input.force)
+        return confirmForce({
+          action: 'Restart',
+          what: nameOf(input.id),
+          message: result.message,
+          onConfirm: () => retry.mutate({ id: input.id, force: true }),
+        });
+      return onSettled(result, 'restart');
+    },
   });
   const cancel = trpc.huggingFaceImport.cancel.useMutation({
     onError,
@@ -255,6 +276,7 @@ export function ImportQueueTable() {
                                 variant="subtle"
                                 color="orange"
                                 size="sm"
+                                aria-label="Cancel import"
                                 loading={cancel.isPending && cancel.variables?.id === row.id}
                                 onClick={() => cancel.mutate({ id: row.id })}
                               >
@@ -264,10 +286,11 @@ export function ImportQueueTable() {
                           )}
                           {(row.status === 'Failed' || row.status === 'Canceled') && (
                             <>
-                              <Tooltip label="Retry from the start">
+                              <Tooltip label="Restart from the beginning">
                                 <ActionIcon
                                   variant="subtle"
                                   size="sm"
+                                  aria-label="Restart import"
                                   loading={retry.isPending && retry.variables?.id === row.id}
                                   onClick={() => retry.mutate({ id: row.id })}
                                 >
@@ -279,6 +302,7 @@ export function ImportQueueTable() {
                                   variant="subtle"
                                   color="red"
                                   size="sm"
+                                  aria-label="Delete import"
                                   loading={remove.isPending && remove.variables?.id === row.id}
                                   onClick={() =>
                                     openConfirmModal({

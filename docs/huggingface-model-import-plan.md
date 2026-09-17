@@ -46,6 +46,20 @@ eligible on the very next tick; a run that *dies* leaves its claim, and the 20-m
 what recovers it. That asymmetry is deliberate — it is what tells "out of budget" from "the pod went
 away."
 
+A resume reaches the bucket stored on the row, using the client for that bucket's backend rather than
+whichever backend is configured now. An upload opened where B2 was not configured lives in the default
+backend, and B2 knows no bucket by that name.
+
+**Getting a stuck import unstuck.** Cancel a queued or transferring row, then **Restart** or
+**Delete** it. Restart always begins from nothing, in the backend configured now. Both first try to
+free what the row already stored: abort the partial upload, or delete the finished object. Something
+already gone counts as freed, and a bucket the first backend doesn't know is tried on the other
+configured backend. If removal still fails, the page shows the reason and offers *Restart anyway* /
+*Delete anyway*. Going ahead forgets
+the row's handle on the leftover, so the forced action logs the bucket, key and upload id to Axiom
+(`forced delete left storage behind` / `forced retry left storage behind`). A delete that would remove
+bytes a model file still points at is refused either way.
+
 ## Attaching to a version
 
 `attach` turns a finished import into a `ModelFile` on a version, going through `createFileHandler`
