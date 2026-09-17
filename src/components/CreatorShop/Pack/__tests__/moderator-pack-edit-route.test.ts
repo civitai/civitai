@@ -405,6 +405,17 @@ describe('the moderator cosmetic-store pack edit route', () => {
       derivation,
       "contentsChanged must compare against the SERVER's members, not the caller row."
     ).toContain('existing.members.find');
+    // The predicate around them, which neither substring pins. Dropping the `!`
+    // makes contentsChanged true whenever any member is UNCHANGED — so the
+    // contents go on every title edit and every floorAmount is re-snapshotted,
+    // which is the decision this file exists to protect. `.some` to `.every`
+    // makes a same-length swap read as no change. Both measured green before this.
+    expect(
+      derivation,
+      'contentsChanged must be true when a selected member is ABSENT from the server list.'
+    ).toContain(
+      'selected.some((m) => !existing.members.find((e) => e.cosmeticId === m.cosmeticId))'
+    );
   });
 
   it('saves what the server returned, never the caller row', () => {
@@ -414,7 +425,7 @@ describe('the moderator cosmetic-store pack edit route', () => {
     const hydration = blockAfter(modalSource, 'setHydrated(true);', '}, [existing, hydrated');
     expect(
       hydration,
-      'Could not locate the hydration effect between setHydrated(true) and setSelected(.'
+      'Could not locate the hydration effect between setHydrated(true) and its dep array.'
     ).not.toEqual('');
     // Every seed the effect writes, not a subset. `name` and
     // `availableQuantity` are sent unconditionally by the payload, so an

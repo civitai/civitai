@@ -467,6 +467,8 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
             This pack can&apos;t accept Blue Buzz because{' '}
             {blueBlockers.map((m) => m.name).join(', ')} {blueBlockers.length > 1 ? 'do' : 'does'}{' '}
             not.
+            {acceptsBlueBuzz &&
+              ' Saving is blocked until you turn Blue Buzz off, which will change what buyers can pay with.'}
           </Alert>
         )}
 
