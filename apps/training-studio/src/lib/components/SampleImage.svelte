@@ -25,14 +25,7 @@
 
   // Play on hover, reset on leave — a lightweight preview without autoplaying every tile at once. Full
   // playback (with controls) lives in the fullscreen SampleViewer.
-  function play(e: Event) {
-    (e.currentTarget as HTMLVideoElement).play().catch(() => {});
-  }
-  function reset(e: Event) {
-    const v = e.currentTarget as HTMLVideoElement;
-    v.pause();
-    v.currentTime = 0;
-  }
+  import { playOnHover as play, resetOnLeave as reset } from '$lib/video-preview';
 </script>
 
 {#if url}

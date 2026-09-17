@@ -16,14 +16,7 @@
   };
   const tileClass = 'aspect-square w-full rounded object-cover ring-1 ring-inset ring-dark-4/60';
 
-  function play(e: Event) {
-    (e.currentTarget as HTMLVideoElement).play().catch(() => {});
-  }
-  function reset(e: Event) {
-    const v = e.currentTarget as HTMLVideoElement;
-    v.pause();
-    v.currentTime = 0;
-  }
+  import { playOnHover as play, resetOnLeave as reset } from '$lib/video-preview';
 </script>
 
 <div class={cn('grid gap-1.5', colClass[cols] ?? 'grid-cols-4', className)}>

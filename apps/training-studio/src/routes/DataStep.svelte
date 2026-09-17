@@ -26,6 +26,7 @@
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import { backend, portalProps } from '$lib/host';
   import { directDatasetUrl, type ReuseItem } from '$lib/reuse';
+  import { playOnHover, resetOnLeave } from '$lib/video-preview';
   import { extOfAir, mediaOfExt, mimeOfExt } from '$lib/media';
   import {
     ToggleGroup,
@@ -467,10 +468,12 @@
   function addFromGenerations(items: GenerationItem[]) {
     addFromBlobs(
       items.map((i) => ({
-        // The AIR (what trains) comes from the FULL blob url; the tile preview + auto-label use the small
-        // preview so importing doesn't pull every full-size image into the browser.
+        // The AIR (what trains) comes from the FULL blob url. Image tiles preview through the small
+        // preview so importing doesn't pull every full-size image into the browser — but a video's
+        // previewUrl is a STILL thumbnail, which a <video> tag can't play; those keep the real url
+        // (preload="metadata" keeps the cost to a first frame until hovered).
         blobId: blobAirFromUrl(i.url),
-        url: i.previewUrl ?? i.url,
+        url: media === 'image' ? i.previewUrl ?? i.url : i.url,
         name: `generation ${i.blobId.slice(0, 8)}`,
       }))
     );
@@ -780,7 +783,16 @@
                   <img src={img.previewUrl} alt={img.name} class="h-full w-full object-cover" />
                 {:else if img.mediaType === 'video'}
                   <!-- svelte-ignore a11y_media_has_caption -->
-                  <video src={img.previewUrl} muted class="h-full w-full object-cover"></video>
+                  <video
+                    src={img.previewUrl}
+                    muted
+                    loop
+                    playsinline
+                    preload="metadata"
+                    onmouseenter={playOnHover}
+                    onmouseleave={resetOnLeave}
+                    class="h-full w-full object-cover"
+                  ></video>
                 {:else}
                   <div class="flex h-full flex-col items-center justify-center gap-2 p-2.5 text-center">
                     <IconMusic size={20} stroke={2} class="text-dark-2" />
