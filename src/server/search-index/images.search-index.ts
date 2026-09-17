@@ -247,6 +247,11 @@ const transformData = async ({
 export type ImageSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
 
 export const imagesSearchIndex = createSearchIndexUpdateProcessor({
+  // Retired: the `images_v6` Meilisearch index is no longer served (the /search/images page
+  // redirects and the `imageSearch` flag is off by default). All writes and syncs no-op, so the
+  // call sites that still queue image updates cost nothing. Restoring image search means clearing
+  // this and re-running a reset to rebuild the index. See ticket 868m4c2dn.
+  retired: true,
   workerCount: 10,
   indexName: INDEX_ID,
   setup: onIndexSetup,
