@@ -1,10 +1,10 @@
 import * as z from 'zod';
-import { isProd } from '~/env/other';
+import { isDev, isProd } from '~/env/other';
 import { logToAxiom } from '~/server/logging/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { applySourceMaps } from '~/server/utils/errorHandling';
-import { checkApplicationErrorRateLimit } from '~/server/utils/application-error-rate-limit';
+import { isSameOriginBeacon } from '~/server/utils/beacon-same-origin';
 
 /**
  * Exported so callers can be TESTED against the real contract rather than a copy of it. `message`
@@ -48,27 +48,23 @@ export const applicationErrorSchema = z.object({
 export default PublicEndpoint(
   async function handler(req, res) {
     try {
-      // Per-IP bound, FIRST — ahead of the session read, the body parse and the
-      // sourcemap resolution, so a limited caller costs one redis round-trip and
-      // nothing else.
+      // Same-origin guard, FIRST — ahead of the session read, the body parse and the sourcemap
+      // resolution, so a rejected caller sheds that work rather than only changing a status code.
       //
-      // This endpoint is unauthenticated and `PublicEndpoint` applies no limiter
-      // of its own. What it produces is an operational SIGNAL — the volume of
-      // accepted reports is what tells operators the front end is broken — so a
-      // single address must not be able to supply that volume by itself. The
-      // ceiling, and why it is high enough that one user's render loop is still
-      // reported in full, is in the limiter module.
-      const rateLimit = await checkApplicationErrorRateLimit(req);
-      if (!rateLimit.allowed) {
-        res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
-        // 🔴 A 429 is SWALLOWED by every caller and cannot affect a render:
-        // `fetch` resolves rather than rejects on a 4xx, and
-        // `reportApplicationError` additionally terminates its promise with a
-        // `.catch`. That is the same reason a 400 from the schema below has
-        // always been invisible to the client. Pinned by
-        // `src/utils/__tests__/application-error-fire-and-forget.test.ts`.
-        return res.status(429).send({ message: 'Too many error reports from this client.' });
-      }
+      // This endpoint is unauthenticated and `PublicEndpoint` applies no bound of its own. What it
+      // produces is not a response but an operational SIGNAL — the volume of accepted reports is
+      // what says the front end is broken — so a caller that is not one of our own pages should not
+      // be able to contribute to it. `isSameOriginBeacon` is the guard the sibling telemetry
+      // beacons already use; see that module for what it does and does not assert.
+      //
+      // WHY THE SHORT-CIRCUIT IS SCOPED TO THE GUARD and not, as in the siblings, to the whole
+      // handler: their dev branch exists to skip an analytics write, and returning 200 immediately
+      // costs them nothing. Here it would also skip the schema parse, so a malformed body would
+      // answer 200 in dev and 400 in production — turning the one environment where a caller's
+      // mistake is cheap to find into the one that hides it. The observable dev property is the
+      // same either way: the guard rejects nothing locally.
+      if (!isDev && !isSameOriginBeacon(req))
+        return res.status(400).send({ message: 'invalid request' });
 
       const session = await getServerAuthSession({ req, res });
       const queryInput = applicationErrorSchema.parse(JSON.parse(req.body));

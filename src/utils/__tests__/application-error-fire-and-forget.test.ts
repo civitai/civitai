@@ -1,101 +1,24 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { reportApplicationError } from '~/utils/application-error';
-
 /**
- * The FIRE-AND-FORGET contract on the client-error reporting path.
+ * THE LEDGER: who may call `/api/application-error`.
  *
- * Why it is pinned here and now: `/api/application-error` gained a per-IP rate
- * limit, so it can answer **429** to a caller that previously only ever saw 200
- * or 400. Every call site is a `catch` block or a React error boundary — the
- * place a thrown or rejected promise does the most damage — so the new status
- * must be as invisible to the client as the old ones are.
+ * `reportApplicationError` is the one module permitted to fetch the reporting endpoint, because it
+ * is where the terminating `.catch` lives — every call site is a `catch` block or a React error
+ * boundary, the place a rejected promise does the most damage. Asserting that contract on the
+ * helper alone would say nothing about a module that fetches the endpoint itself: the behavioural
+ * cases would stay green while an unprotected raw `fetch` sat next to them. This ledger is what
+ * makes the contract cover the population — it pins the caller set and fails when it GROWS.
  *
- * TWO INDEPENDENT REASONS IT IS INVISIBLE, and the test asserts BOTH, because
- * either alone would be enough and relying on the unstated one is how this
- * regresses:
- *
- *  1. `fetch` RESOLVES on a 4xx. It rejects only on a network-level failure, so
- *     a 429 arrives as an ordinary `Response` and no rejection exists to handle.
- *     This is the reason that holds for any caller, `.catch` or not.
- *  2. `reportApplicationError` terminates its promise with `.catch`, so even a
- *     real network failure resolves to `undefined` rather than surfacing.
- *
- * 🔴 THE LEDGER AT THE BOTTOM IS WHAT MAKES THE TWO ABOVE COVER THE POPULATION.
- * Asserting the contract on this helper says nothing about a call site that
- * fetches the endpoint itself — the behavioural cases would stay green while an
- * unprotected raw `fetch` sat next to them. The ledger pins that the helper is
- * the ONLY module in `src/**` that calls this endpoint, and fails when that set
- * grows.
+ * WHAT USED TO BE ABOVE, AND WHY IT IS GONE: a `describe` block asserting that a 429 resolves
+ * rather than throwing. It was added alongside a per-IP rate limiter that this endpoint no longer
+ * has, and it would not have been worth keeping even if it did — its fixture installed a `fetch`
+ * double that RESOLVES by construction, so "a 429 resolves" asserted only that a resolving mock
+ * resolves. The property was supplied by the fixture, not by the code under test.
  */
-
-const originalFetch = globalThis.fetch;
-
-afterEach(() => {
-  globalThis.fetch = originalFetch;
-  vi.restoreAllMocks();
-});
-
-/** A `Response`-shaped resolution, which is what `fetch` yields for any status. */
-function respondWith(status: number) {
-  const fetchMock = vi.fn(async () => ({ ok: status < 400, status } as unknown as Response));
-  globalThis.fetch = fetchMock as unknown as typeof fetch;
-  return fetchMock;
-}
-
-describe('reportApplicationError — a rate-limited response cannot reach the caller', () => {
-  it('POSITIVE CONTROL: the helper really does call fetch', async () => {
-    // Without this, every "it did not throw" below is satisfied by a helper that
-    // never ran — the reassuring-zero shape, where nothing happening and nothing
-    // going wrong are indistinguishable.
-    const fetchMock = respondWith(200);
-    await reportApplicationError(new Error('boom'));
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toBe('/api/application-error');
-  });
-
-  it('429 resolves rather than throwing', async () => {
-    respondWith(429);
-    await expect(reportApplicationError(new Error('boom'))).resolves.not.toThrow();
-  });
-
-  it('429 produces no unhandled rejection — the promise settles fulfilled', async () => {
-    respondWith(429);
-    const settled = await Promise.allSettled([reportApplicationError(new Error('boom'))]);
-    expect(settled[0].status).toBe('fulfilled');
-  });
-
-  it('the pre-existing 400 behaves identically, so 429 introduces no new shape', async () => {
-    // The comparison is the point: if a 429 were special, it would differ from a
-    // status this path has always been able to return.
-    respondWith(400);
-    const four00 = await Promise.allSettled([reportApplicationError(new Error('boom'))]);
-    respondWith(429);
-    const four29 = await Promise.allSettled([reportApplicationError(new Error('boom'))]);
-    expect(four29[0].status).toBe(four00[0].status);
-  });
-
-  it('even a real NETWORK failure is swallowed by the terminating catch', async () => {
-    globalThis.fetch = vi.fn(async () => {
-      throw new TypeError('Failed to fetch');
-    }) as unknown as typeof fetch;
-
-    const settled = await Promise.allSettled([reportApplicationError(new Error('boom'))]);
-    expect(settled[0].status).toBe('fulfilled');
-    expect((settled[0] as PromiseFulfilledResult<undefined>).value).toBeUndefined();
-  });
-
-  it('NEGATIVE CONTROL: the harness CAN observe a rejection when one exists', async () => {
-    // Proves the `allSettled` assertions above are capable of reporting
-    // 'rejected'. Without it, every one of them could be green because the
-    // instrument only ever says 'fulfilled'.
-    const settled = await Promise.allSettled([Promise.reject(new Error('x'))]);
-    expect(settled[0].status).toBe('rejected');
-  });
-});
 
 // ── The ledger: who may call this endpoint ───────────────────────────────────
 
