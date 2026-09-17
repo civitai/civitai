@@ -272,17 +272,16 @@ export function InteractiveTipBuzzButton({
     // anything is torn down.
     if (isLoadingBalance) {
       showErrorNotification({
-        title: 'One moment',
-        error: new Error('Still checking your balance. Try again in a second.'),
+        title: 'Balance not ready',
+        error: new Error('Your balance is still loading. Try again in a moment.'),
       });
       return;
     }
     setBuzzCounter(amount);
     // Over the user's balance needs no branch here: conditionalPerformTransaction refuses.
     // How it refuses is NOT a toast — when the user can purchase it opens the Buy Buzz modal,
-    // and it shows "Not enough Buzz" only when they cannot. If the balance query is still in
-    // flight it returns silently, which is the one refusal on this path the user is not told
-    // about. Pre-existing; raised with Justin rather than changed here.
+    // and it shows "Not enough Buzz" only when they cannot. That is pre-existing behaviour
+    // reached by a new path, and it is with Justin.
     sendTip(amount);
   };
 

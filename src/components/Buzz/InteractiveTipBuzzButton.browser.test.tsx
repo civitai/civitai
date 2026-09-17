@@ -388,6 +388,23 @@ describe('InteractiveTipBuzzButton', () => {
     expect(showErrorNotification).toHaveBeenCalledTimes(1);
   });
 
+  // The comment on the guard claims it refuses BEFORE anything is torn down. The Enter test
+  // above cannot see that — onFocus has already cleared the countdown, so guard-before and
+  // guard-after teardown are indistinguishable there. Only the icon path can: the field is
+  // never focused, so the countdown armed by the opening click is still live, and a guard
+  // placed after sendTip's teardown would clear it and strand a spendable pop-up open.
+  test('a refusal while the balance loads leaves the auto-close running', async () => {
+    balanceLoading = true;
+    const field = await openTipPopover();
+    field.textContent = String(TYPED_AMOUNT);
+
+    await userEvent.click(sendButton());
+    expect(tipMutate).not.toHaveBeenCalled();
+
+    await waitFromOpen(PAST_CLOSE);
+    expect(anyAmountField()).toBeNull();
+  });
+
   test('an IME composition commit does not send a tip', async () => {
     const field = await openTipPopover();
     field.focus();
