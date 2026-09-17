@@ -23,6 +23,7 @@ const { BALANCE } = vi.hoisted(() => ({ BALANCE: 500 }));
 const TYPED_AMOUNT = 50;
 
 let mutationPending = false;
+let balanceLoading = false;
 const tipMutate = vi.fn<(vars: { amount: number; toAccountId: number }) => void>(() => {
   mutationPending = true;
 });
@@ -77,7 +78,7 @@ vi.mock('./buzz.utils', async (importOriginal) => ({
     tipUserMutation: { mutate: tipMutate, isPending: mutationPending },
     conditionalPerformTransaction: conditionalPerform,
     hasRequiredAmount: () => true,
-    isLoadingBalance: false,
+    isLoadingBalance: balanceLoading,
     canPurchase: true,
   }),
 }));
@@ -137,6 +138,7 @@ describe('InteractiveTipBuzzButton', () => {
       // private mode / blocked storage — the flag only suppresses a mocked notification
     }
     mutationPending = false;
+    balanceLoading = false;
     tipMutate.mockClear();
     conditionalPerform.mockClear();
     insufficientFunds.mockClear();
@@ -367,6 +369,23 @@ describe('InteractiveTipBuzzButton', () => {
     press(true);
 
     expect(tipMutate).toHaveBeenCalledTimes(1);
+  });
+
+  // conditionalPerformTransaction returns silently while the balance query is in flight, and
+  // sendTip clears the countdown before reaching it — so without this guard the press leaves a
+  // spendable pop-up open with no timer and no message. Same failure this branch exists to
+  // remove, reached from a third direction.
+  test('a press while the balance is still loading is refused out loud', async () => {
+    balanceLoading = true;
+    const field = await openTipPopover();
+    field.focus();
+    field.textContent = String(TYPED_AMOUNT);
+
+    await userEvent.keyboard('{Enter}');
+
+    expect(tipMutate).not.toHaveBeenCalled();
+    expect(conditionalPerform).not.toHaveBeenCalled();
+    expect(showErrorNotification).toHaveBeenCalledTimes(1);
   });
 
   test('an IME composition commit does not send a tip', async () => {

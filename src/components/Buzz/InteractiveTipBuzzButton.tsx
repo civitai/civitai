@@ -141,7 +141,7 @@ export function InteractiveTipBuzzButton({
     defaultValue: false,
   });
 
-  const { tipUserMutation, conditionalPerformTransaction } = useBuzzTransaction({
+  const { tipUserMutation, conditionalPerformTransaction, isLoadingBalance } = useBuzzTransaction({
     message: (requiredBalance) =>
       `You don't have enough funds to send a tip. Required Buzz: ${numberWithCommas(
         requiredBalance
@@ -263,6 +263,17 @@ export function InteractiveTipBuzzButton({
         error: new Error(
           `The most you can tip at once is ${numberWithCommas(buzzConstants.maxTipAmount)} Buzz.`
         ),
+      });
+      return;
+    }
+    // conditionalPerformTransaction returns SILENTLY while the balance query is in flight,
+    // and sendTip clears the countdown before reaching it — so the press would leave the
+    // pop-up open, spendable, with no timer and nothing said. Refuse here instead, before
+    // anything is torn down.
+    if (isLoadingBalance) {
+      showErrorNotification({
+        title: 'One moment',
+        error: new Error('Still checking your balance. Try again in a second.'),
       });
       return;
     }
