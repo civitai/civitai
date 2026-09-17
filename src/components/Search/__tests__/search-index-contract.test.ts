@@ -12,7 +12,6 @@ import { BROWSING_LEVEL_ATTRIBUTE } from '~/components/Search/search-index-filte
 import { buildBrowsingLevelClause } from '~/components/Search/search-filters';
 import type { SearchIndexKey } from '~/components/Search/search.types';
 import { searchIndexMap } from '~/components/Search/search.types';
-import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { filterableAttributesByIndex } from '~/server/search-index/filterable-attributes';
 import {
   bountiesSortableAttributes,
@@ -44,10 +43,6 @@ describe('BROWSING_LEVEL_ATTRIBUTE', () => {
     );
 
     expect(unmapped).toEqual([]);
-  });
-
-  it('the images override attribute is filterable', () => {
-    expect(filterableAttributesByIndex[IMAGES_SEARCH_INDEX]).toContain('combinedNsfwLevel');
   });
 });
 

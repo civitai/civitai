@@ -38,7 +38,6 @@ export const imagesFilterableAttributes = [
   'baseModel',
   'aspectRatio',
   'nsfwLevel',
-  'combinedNsfwLevel',
   'type',
   'toolNames',
   'techniqueNames',

@@ -343,7 +343,6 @@ export const getInfiniteImagesHandler = async ({
         ...scopedInput,
         user,
         domain: getRequestBoardDomainColor(ctx.req),
-        useCombinedNsfwLevel: !features.canViewNsfw,
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...scopedInput.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
@@ -359,7 +358,6 @@ export const getInfiniteImagesHandler = async ({
         ...scopedInput,
         user,
         domain: getRequestBoardDomainColor(ctx.req),
-        useCombinedNsfwLevel: !features.canViewNsfw,
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...scopedInput.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
@@ -438,7 +436,6 @@ export const getImagesAsPostsInfiniteHandler = async ({
         reviewId: undefined,
         // Max pinned posts (20) Ã— max images per post (20) = 400
         limit: constants.modelGallery.maxPinnedPosts * POST_IMAGE_LIMIT,
-        useCombinedNsfwLevel: !features.canViewNsfw,
         followed: false,
         postIds: versionPinnedPosts,
         user,
@@ -470,7 +467,6 @@ export const getImagesAsPostsInfiniteHandler = async ({
         ...input,
         followed: false,
         domain: getRequestBoardDomainColor(ctx.req),
-        useCombinedNsfwLevel: !features.canViewNsfw,
         cursor,
         ids: fetchHidden ? versionHiddenImages : undefined,
         limit: Math.ceil(limit * 2), // Overscan so that I can merge by postId

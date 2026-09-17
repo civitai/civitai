@@ -212,7 +212,6 @@ export async function runImageSearch(
         withMeta: false,
         currentUserId: user?.id,
         isModerator: user?.isModerator,
-        useCombinedNsfwLevel: !features.canViewNsfw,
         disableMinor: true,
         disablePoi: true,
         actor,

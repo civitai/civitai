@@ -76,11 +76,7 @@ function RenderFilters() {
 
   return (
     <>
-      <BrowsingLevelFilter
-        indexKey="images"
-        filters={filters}
-        attributeOverride={features.canViewNsfw ? undefined : 'combinedNsfwLevel'}
-      />
+      <BrowsingLevelFilter indexKey="images" filters={filters} />
       <SortBy
         title="Sort images by"
         items={!features.canViewNsfw ? items.filter((x) => x.label !== 'Newest') : items}
