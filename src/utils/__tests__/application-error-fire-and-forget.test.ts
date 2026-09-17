@@ -1,10 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import { reportApplicationError } from '~/utils/application-error';
+
 /**
- * THE LEDGER: who may call `/api/application-error`.
+ * TWO CONTRACTS ON THE CLIENT-ERROR REPORTING PATH: the terminating `.catch`, and the ledger of
+ * who is allowed to skip it.
  *
  * `reportApplicationError` is the one module permitted to fetch the reporting endpoint, because it
  * is where the terminating `.catch` lives — every call site is a `catch` block or a React error
@@ -13,12 +16,39 @@ import path from 'path';
  * cases would stay green while an unprotected raw `fetch` sat next to them. This ledger is what
  * makes the contract cover the population — it pins the caller set and fails when it GROWS.
  *
- * WHAT USED TO BE ABOVE, AND WHY IT IS GONE: a `describe` block asserting that a 429 resolves
- * rather than throwing. It was added alongside a per-IP rate limiter that this endpoint no longer
- * has, and it would not have been worth keeping even if it did — its fixture installed a `fetch`
- * double that RESOLVES by construction, so "a 429 resolves" asserted only that a resolving mock
- * resolves. The property was supplied by the fixture, not by the code under test.
+ * WHAT WAS REMOVED FROM THIS FILE, AND WHY: a set of cases asserting that a 429 resolves rather
+ * than throwing. They were added alongside a per-IP rate limiter this endpoint no longer has, and
+ * they would not have been worth keeping even if it did — their fixture installed a `fetch` double
+ * that RESOLVES by construction, so "a 429 resolves" asserted only that a resolving mock resolves.
+ * The property was supplied by the fixture, not by the code under test.
+ *
+ * WHAT SURVIVES THAT, AND WHY IT IS DIFFERENT: the single case below, on a REJECTING `fetch`. Its
+ * fixture supplies a rejection, not a resolution, so the fulfilment it asserts can only come from
+ * the terminating `.catch` in the helper. Removing that `.catch` turns this case red — watched,
+ * not assumed: it fails as `expected 'rejected' to be 'fulfilled'`. That is the whole reason it is
+ * here, and the only thing separating it from the vacuous shape of the cases described above.
  */
+
+// ── The terminating catch: a real network rejection never reaches the caller ──
+
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  vi.restoreAllMocks();
+});
+
+describe('reportApplicationError — the terminating catch', () => {
+  it('even a real NETWORK failure is swallowed by the terminating catch', async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    }) as unknown as typeof fetch;
+
+    const settled = await Promise.allSettled([reportApplicationError(new Error('boom'))]);
+    expect(settled[0].status).toBe('fulfilled');
+    expect((settled[0] as PromiseFulfilledResult<undefined>).value).toBeUndefined();
+  });
+});
 
 // ── The ledger: who may call this endpoint ───────────────────────────────────
 
