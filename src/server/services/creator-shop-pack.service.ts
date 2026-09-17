@@ -330,35 +330,63 @@ export const updateCreatorShopPack = async ({
 
   const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
   const memberIds = memberCosmeticIds ?? existing.members.map((m) => m.cosmeticId);
-  // Re-resolved even when the contents didn't change: the price floor has to be
-  // checked against today's list prices, not the ones the pack was built against.
   const packOwnerId = existing.addedById ?? userId;
-  const members = withOwnership(await resolvePackMembers(memberIds), packOwnerId);
-  assertMembersBundlable(memberIds, members);
-  assertMembersResellable(members, packOwnerId);
-  assertStickerMembersAllowed(members, stickersEnabled);
-
-  const nextPrice = price ?? existing.unitAmount;
-  const floor = packPriceFloor(members);
-  if (nextPrice < floor)
-    throw throwBadRequestError(
-      `This pack must be listed for at least ${floor} Buzz — every item another creator made has to be covered at its own price`
-    );
-
-  const blockers = blueBuzzBlockers(members);
-  const nextAcceptsBlue = acceptsBlueBuzz ?? !!meta.acceptsBlueBuzz;
-  if (nextAcceptsBlue && blockers.length)
-    throw throwBadRequestError(
-      `These items don't accept Blue Buzz, so this pack can't either: ${blockers
-        .map((b) => b.name)
-        .join(', ')}`
-    );
-
+  const membershipSupplied = memberCosmeticIds !== undefined;
+  const repriced = price !== undefined;
   // Re-snapshot whenever the price moves, not only when the contents do. The
   // floor is checked against today's list prices; leaving yesterday's snapshots
   // in place lets a lowered member price drag the pack's price down while its
   // component still pays out the old, higher amount.
-  const reSnapshot = !!memberCosmeticIds || price !== undefined;
+  const reSnapshot = membershipSupplied || repriced;
+
+  // Resolved only for the edits that read it. Every consumer below — the three
+  // asserts, the floor, the blue blockers, the snapshot rows and the cover
+  // tiles — sits behind one of these two conditions, so a title-only edit was
+  // paying for a query (measured 1.1 ms, and a seq scan of every shop item)
+  // whose result nothing looked at. 🔴 Anything added below that reads
+  // `members` must extend this predicate, or it will read an empty list.
+  const needsMembers = reSnapshot || acceptsBlueBuzz !== undefined;
+  const members = needsMembers
+    ? withOwnership(await resolvePackMembers(memberIds), packOwnerId)
+    : [];
+
+  // Everything below re-validates state the edit did not necessarily touch, so
+  // each is scoped to the edit that makes it meaningful. Run unconditionally
+  // they refuse a title fix over a member's later, unrelated decision — which is
+  // the same "form that cannot save" this whole editor exists to remove.
+  //
+  // Bundlability rides `reSnapshot` rather than membership alone: a price move is
+  // re-checked against a floor that can only be summed over members that still
+  // resolve, so a missing one has to refuse there.
+  if (reSnapshot) assertMembersBundlable(memberIds, members);
+  if (membershipSupplied) {
+    // Resale consent is deliberately NOT re-checked on a price move. Revoking
+    // `sellableByOthers` is an offer withdrawn from FUTURE resellers, never a
+    // term of an existing listing — see the note on `resaleChanged` in
+    // creator-shop.service.ts.
+    assertMembersResellable(members, packOwnerId);
+    assertStickerMembersAllowed(members, stickersEnabled);
+  }
+
+  if (reSnapshot) {
+    const nextPrice = price ?? existing.unitAmount;
+    const floor = packPriceFloor(members);
+    if (nextPrice < floor)
+      throw throwBadRequestError(
+        `This pack must be listed for at least ${floor} Buzz — every item another creator made has to be covered at its own price`
+      );
+  }
+
+  const nextAcceptsBlue = acceptsBlueBuzz ?? !!meta.acceptsBlueBuzz;
+  if (membershipSupplied || acceptsBlueBuzz !== undefined) {
+    const blockers = blueBuzzBlockers(members);
+    if (nextAcceptsBlue && blockers.length)
+      throw throwBadRequestError(
+        `These items don't accept Blue Buzz, so this pack can't either: ${blockers
+          .map((b) => b.name)
+          .join(', ')}`
+      );
+  }
 
   return dbWrite.$transaction(async (tx) => {
     if (reSnapshot) {
@@ -384,19 +412,17 @@ export const updateCreatorShopPack = async ({
           : {}),
         // Contents or price changing sends the pack back through review, the
         // same way an item's content edit does.
-        ...(memberCosmeticIds || price !== undefined
-          ? { status: CosmeticShopItemStatus.PendingReview }
-          : {}),
+        ...(reSnapshot ? { status: CosmeticShopItemStatus.PendingReview } : {}),
         meta: {
           ...meta,
           // `null` clears, `undefined` leaves alone — without the distinction
           // the clear button emptied the form and saved nothing.
           ...(imageUrl === undefined ? {} : { coverUrl: imageUrl ?? undefined }),
-          ...(memberCosmeticIds ? { coverTiles: coverTilesFrom(members) } : {}),
+          ...(membershipSupplied ? { coverTiles: coverTilesFrom(members) } : {}),
           // Only re-baselined when the contents were actually chosen. A member
           // Cosmetic being deleted cascades its join row away, so rewriting this
           // on a price-only edit would quietly ratify the shrunken pack.
-          ...(memberCosmeticIds ? { packMemberCount: members.length } : {}),
+          ...(membershipSupplied ? { packMemberCount: members.length } : {}),
           acceptsBlueBuzz: nextAcceptsBlue,
         } as Prisma.InputJsonValue,
       },
