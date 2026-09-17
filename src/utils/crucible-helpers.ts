@@ -114,5 +114,7 @@ export function parsePrizePositions(prizePositionsJson: unknown): PrizePosition[
 }
 
 function isUsablePrizePosition({ position, percentage }: PrizePosition): boolean {
-  return Number.isInteger(position) && position > 0 && Number.isFinite(percentage) && percentage > 0;
+  return (
+    Number.isInteger(position) && position > 0 && Number.isFinite(percentage) && percentage > 0
+  );
 }

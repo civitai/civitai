@@ -122,14 +122,17 @@ describe('cancelCrucible — ordering', () => {
 });
 
 describe('cancelCrucible — refund idempotency', () => {
-  it.each([409, 404])('treats a buzz %i as already settled, not a failed refund', async (status) => {
-    refundMultiAccountTransaction.mockRejectedValue(new BuzzApiError(status, 'nope'));
+  it.each([409, 404])(
+    'treats a buzz %i as already settled, not a failed refund',
+    async (status) => {
+      refundMultiAccountTransaction.mockRejectedValue(new BuzzApiError(status, 'nope'));
 
-    const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
+      const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
 
-    expect(result.failedRefunds).toEqual([]);
-    expect(result.refundedEntries).toBe(2);
-  });
+      expect(result.failedRefunds).toEqual([]);
+      expect(result.refundedEntries).toBe(2);
+    }
+  );
 
   // Without this the second cancel reports the same totals as the first and reads as a second
   // payment, which is the report that gets someone refunded twice by hand.
