@@ -102,8 +102,12 @@ export async function serveFromFeed<T extends { id: number }>(
   input: CapturableSearchInput,
   deps: FeedPrimaryDeps<T>
 ): Promise<FeedPrimaryResult<T>> {
-  // Meilisearch answers a follow list with no creators as an empty feed, whatever else is set.
-  if (input.followed === true && input.followedUserIds?.length === 0) {
+  // Meilisearch answers a follow list with no creators as an empty feed, whatever else is set,
+  // and an unpopulated new-creator board serves nothing rather than the global feed.
+  if (
+    (input.followed === true && input.followedUserIds?.length === 0) ||
+    (input.newCreators === true && input.newCreatorUserIds?.length === 0)
+  ) {
     count('served');
     return { ok: true, page: { data: [], nextCursor: undefined, feedMs: 0 } };
   }
