@@ -10,12 +10,10 @@ import {
 import { getArticleUrl } from '~/utils/string-helpers';
 
 // Articles below this all-time engagement (reactions + comments + collects) are left out unless
-// they are official, written by a moderator, or recent. Leaving one out doesn't deindex it —
+// they are official or written by a moderator. Leaving one out doesn't deindex it —
 // Google still reaches it through links — it just isn't advertised. Views are excluded because
 // search traffic itself inflates them.
 const ARTICLE_SITEMAP_MIN_ENGAGEMENT = 5;
-// New articles haven't had time to collect engagement, and they are the ones that need discovering.
-const ARTICLE_SITEMAP_RECENT_DAYS = 30;
 // The sitemap protocol's per-file cap.
 const MAX_URLS = 50_000;
 
@@ -47,7 +45,6 @@ const buildSql = (domain: keyof typeof domainFilter) => `
     AND (
       a."isOfficial"
       OR u."isModerator" = true
-      OR a."publishedAt" > now() - make_interval(days => $3)
       OR ${engagement} >= $2
     )
   ORDER BY a."isOfficial" DESC, (u."isModerator" = true) DESC, ${engagement} DESC NULLS LAST,
@@ -64,11 +61,7 @@ export const getServerSideProps: GetServerSideProps = async (ctx) => {
     id: number;
     title: string;
     publishedAt: Date | null;
-  }>(buildSql(isGreen ? 'green' : 'nsfw'), [
-    browsingLevel,
-    ARTICLE_SITEMAP_MIN_ENGAGEMENT,
-    ARTICLE_SITEMAP_RECENT_DAYS,
-  ]);
+  }>(buildSql(isGreen ? 'green' : 'nsfw'), [browsingLevel, ARTICLE_SITEMAP_MIN_ENGAGEMENT]);
   ctx.res.on('close', query.cancel);
   const data = await query.result();
 

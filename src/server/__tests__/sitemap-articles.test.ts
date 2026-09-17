@@ -31,9 +31,8 @@ vi.mock('~/server/utils/url-helpers', async (importOriginal) => ({
 import { getServerSideProps } from '~/pages/sitemap-articles.xml';
 
 /**
- * The articles sitemap advertises official articles, moderator articles, recent articles and
- * anything with real engagement — not the whole catalogue, and never a page that tells Google not
- * to index it.
+ * The articles sitemap advertises official articles, moderator articles and anything with real
+ * engagement — not the whole catalogue, and never a page that tells Google not to index it.
  */
 
 type Row = { id: number; title: string; publishedAt: Date | null };
@@ -50,14 +49,19 @@ async function run(rows: Row[], color: 'green' | 'red' = 'green') {
 describe('sitemap-articles.xml', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('includes official, moderator, recent and engaged articles', async () => {
+  it('includes official, moderator and engaged articles', async () => {
     const { sql, params } = await run([]);
 
     expect(sql).toMatch(/a\."isOfficial"/);
     expect(sql).toMatch(/u\."isModerator" = true/);
-    expect(sql).toMatch(/"publishedAt" > now\(\) - make_interval\(days => \$3\)/);
     expect(sql).toMatch(/>= \$2/);
-    expect(params.slice(1)).toEqual([5, 30]);
+    expect(params.slice(1)).toEqual([5]);
+  });
+
+  it('does not list a new article on recency alone', async () => {
+    const { sql } = await run([]);
+
+    expect(sql).not.toMatch(/"publishedAt" >/);
   });
 
   it('never lists an article the page marks noindex', async () => {
