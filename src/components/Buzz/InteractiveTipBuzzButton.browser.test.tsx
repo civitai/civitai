@@ -18,7 +18,6 @@ const PAST_CLOSE = CONFIRMATION_TIMEOUT + 400;
 // docs/testing/shared-module-mock-migration.md). A plain const also works here, because the
 // factory dereferences this at hook-call time rather than while the module body runs.
 const { BALANCE } = vi.hoisted(() => ({ BALANCE: 500 }));
-// CLAMP_CONFIRM_DELAY in the component. A confirming press sooner than this is refused.
 // Must stay below BALANCE, or the clamp fires in the tests that are not about clamping and
 // they fail as `to be called 1 times, but got 0` — a message that names none of this.
 const TYPED_AMOUNT = 50;
@@ -28,9 +27,10 @@ const tipMutate = vi.fn<(vars: { amount: number; toAccountId: number }) => void>
   mutationPending = true;
 });
 const insufficientFunds = vi.fn();
-// Models useBuzzTransaction for real: it compares the amount against the balance and, when
-// short, surfaces a message INSTEAD of performing. A stub that always performs cannot observe
-// a refusal, which is the whole behaviour under test now.
+// Models the DECISION useBuzzTransaction makes — refuse when the amount exceeds the balance —
+// not how it announces it. The real hook opens the Buy Buzz modal when the user can purchase,
+// and shows "Not enough Buzz" only when they cannot, so this spy stands for "refused", not for
+// "toasted". A stub that always performs could not observe a refusal at all.
 const conditionalPerform = vi.fn((amount: number, perform: () => void) => {
   if (amount > BALANCE) {
     insufficientFunds();
@@ -64,6 +64,7 @@ vi.mock('@mantine/notifications', async (importOriginal) => ({
   ...(await importOriginal<typeof Notifications>()),
   showNotification: vi.fn(),
 }));
+vi.mock('~/utils/notifications', () => ({ showErrorNotification: vi.fn() }));
 vi.mock('../TrackView/track.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof TrackUtils>()),
   useTrackEvent: () => ({ trackAction: vi.fn().mockResolvedValue(undefined) }),
@@ -81,7 +82,7 @@ vi.mock('./buzz.utils', async (importOriginal) => ({
   }),
 }));
 
-import { showNotification } from '@mantine/notifications';
+import { showErrorNotification } from '~/utils/notifications';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
 import { InteractiveTipBuzzButton } from './InteractiveTipBuzzButton';
 import { renderWithProviders } from '../../../test/component-setup';
@@ -128,11 +129,6 @@ const openTipPopover = async () => {
   return requireAmountField();
 };
 
-// Justin's call, 2026-09-16: a tip sends what the field SHOWS. processEnteredNumber rewrites
-// an out-of-range entry rather than rejecting it, so spending on the first press spends a
-// figure that was never on screen. Both send paths — Enter and the send icon — require a
-// second deliberate press once a clamp has moved the amount. Do not "simplify" either back
-// into one press without asking him: the friction is the point, not an oversight.
 describe('InteractiveTipBuzzButton', () => {
   beforeEach(() => {
     try {
@@ -144,6 +140,10 @@ describe('InteractiveTipBuzzButton', () => {
     tipMutate.mockClear();
     conditionalPerform.mockClear();
     insufficientFunds.mockClear();
+    // Not optional: openTipPopover drives a real click, which fires the first-tip tutorial
+    // notification. Without this clear, an assertion that a refusal notified is already
+    // satisfied before the act — it was, and it could not fail.
+    vi.mocked(showErrorNotification).mockClear();
   });
 
   // Brackets the deadline from both sides. The upper half alone passed with
@@ -305,7 +305,13 @@ describe('InteractiveTipBuzzButton', () => {
 
     expect(tipMutate).not.toHaveBeenCalled();
     expect(conditionalPerform).not.toHaveBeenCalled();
-    expect(showNotification).toHaveBeenCalled();
+    expect(showErrorNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.objectContaining({
+          message: expect.stringContaining('most you can tip'),
+        }),
+      })
+    );
   });
 
   test('a non-numeric entry is refused rather than floored to 1', async () => {
@@ -317,8 +323,34 @@ describe('InteractiveTipBuzzButton', () => {
 
     expect(tipMutate).not.toHaveBeenCalled();
     expect(conditionalPerform).not.toHaveBeenCalled();
+    // The ruling is refused OUT LOUD, so the refusal has to say something.
+    expect(showErrorNotification).toHaveBeenCalledTimes(1);
   });
 
+  // Restored. A test asserting exactly this was deleted with the clamp machinery, and its own
+  // comment warned that a NUMERIC comparison would pass these straight through — which is what
+  // the replacement then did. Number() accepts the whole JS numeric grammar, so each of these
+  // parses to a sendable integer while the field reads as something else.
+  // '050' is deliberately NOT here: it is all digits and reads as fifty to anyone looking at
+  // it, so sending 50 is honest. The deleted test lumped it in with the others; these are the
+  // entries that genuinely display one figure and would send another.
+  test.each(['5e1', '0x32', '+50', '5.0', ' 5 0 '])(
+    'refuses %s rather than sending what it parses to',
+    async (entry) => {
+      const field = await openTipPopover();
+      field.focus();
+      field.textContent = entry;
+
+      await userEvent.keyboard('{Enter}');
+
+      expect(tipMutate).not.toHaveBeenCalled();
+      expect(conditionalPerform).not.toHaveBeenCalled();
+    }
+  );
+
+  // Rests on React 18 flushing sync-lane work in a MICROTASK rather than at the end of the
+  // discrete event dispatch — that is why the second press still sees isPending false. If an
+  // upgrade makes that flush synchronous, isPending catches it and this goes quietly green.
   // The field's e.repeat guard is what covers a repeat arriving BEFORE React has re-rendered;
   // after the re-render isPending catches it, which is why deleting e.repeat is invisible to
   // every other test. Dispatched synchronously with no await, so no commit intervenes.

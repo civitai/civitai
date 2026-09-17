@@ -2,6 +2,7 @@ import type { UnstyledButtonProps } from '@mantine/core';
 import { Group, Popover, Stack, Text, UnstyledButton, Button } from '@mantine/core';
 import { useInterval, useLocalStorage } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
+import { showErrorNotification } from '~/utils/notifications';
 import { IconBolt, IconCheck, IconSend, IconX } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { create } from 'zustand';
@@ -181,13 +182,11 @@ export function InteractiveTipBuzzButton({
     setTimeout(() => reset(), 100);
   };
 
-  const sendTip = (amount?: number) => {
+  const sendTip = (amount: number) => {
     if (status !== 'confirming' || tipUserMutation.isPending) return;
 
     setShowCountDown(false);
     clearConfirmTimeout();
-
-    amount ??= buzzCounter > 0 ? buzzCounter : CLICK_AMOUNT;
 
     const performTransaction = () => {
       trackAction({
@@ -235,29 +234,44 @@ export function InteractiveTipBuzzButton({
   // sendable as typed or it is refused out loud, which is why there is no confirmation
   // step, no delay and no press-ordering left to get wrong.
   const enteredAmount = (el: HTMLElement | null) => {
-    const amount = Number(el?.textContent ?? '');
-    return Number.isInteger(amount) && amount >= 1 ? amount : null;
+    // Digits only, checked BEFORE Number(). Number() accepts the whole JS numeric grammar, so
+    // '5e1', '0x32', '050', '+50' and '5.0' all parse to a sendable integer while the field
+    // reads as something else entirely — which is the "spends a figure never on screen" defect
+    // this whole branch exists to remove. textContent also concatenates across a <br>, so a
+    // pasted two-line entry would send the lines joined.
+    const entered = el?.textContent?.trim() ?? '';
+    if (!/^\d+$/.test(entered)) return null;
+    const amount = Number(entered);
+    return amount >= 1 ? amount : null;
   };
 
   const trySendTip = (el: HTMLElement | null) => {
     const amount = enteredAmount(el);
+    // showErrorNotification, not a hand-rolled red toast: the sibling refusal on this same
+    // button (buzz.utils.ts, "Not enough Buzz") uses it, so a raw showNotification would give
+    // one control two different refusal chromes.
     if (amount === null) {
-      showNotification({ color: 'red', message: 'Enter a whole number of Buzz to tip.' });
+      showErrorNotification({
+        title: 'Invalid tip amount',
+        error: new Error('Enter a whole number of Buzz to tip.'),
+      });
       return;
     }
     if (amount > buzzConstants.maxTipAmount) {
-      showNotification({
-        color: 'red',
-        message: `The most you can tip at once is ${numberWithCommas(
-          buzzConstants.maxTipAmount
-        )} Buzz.`,
+      showErrorNotification({
+        title: 'Tip too large',
+        error: new Error(
+          `The most you can tip at once is ${numberWithCommas(buzzConstants.maxTipAmount)} Buzz.`
+        ),
       });
       return;
     }
     setBuzzCounter(amount);
-    // Over the user's balance needs no branch here: conditionalPerformTransaction already
-    // refuses and surfaces "You don't have enough funds to send a tip", which is the
-    // visible refusal the ruling asks for.
+    // Over the user's balance needs no branch here: conditionalPerformTransaction refuses.
+    // How it refuses is NOT a toast — when the user can purchase it opens the Buy Buzz modal,
+    // and it shows "Not enough Buzz" only when they cannot. If the balance query is still in
+    // flight it returns silently, which is the one refusal on this path the user is not told
+    // about. Pre-existing; raised with Justin rather than changed here.
     sendTip(amount);
   };
 
