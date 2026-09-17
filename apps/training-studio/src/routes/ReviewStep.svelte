@@ -196,7 +196,9 @@
     if (prompts.length > 1) prompts = prompts.filter((_, k) => k !== i);
   }
   async function start() {
-    if (starting || (needsAttestation && !attestSfw)) return;
+    // Never submit without a shown price — the total the user sees must be the one that gets charged, so a
+    // run the orchestrator couldn't price (total === null, rendered "—") blocks the spend. Mirrors RunDetail.
+    if (starting || total == null || (needsAttestation && !attestSfw)) return;
     starting = true;
     startError = '';
     try {
@@ -441,7 +443,11 @@
       </div>
     {/if}
 
-    <Button class="mt-4 w-full" onclick={start} disabled={starting || (needsAttestation && !attestSfw)}>
+    <Button
+      class="mt-4 w-full"
+      onclick={start}
+      disabled={starting || total == null || (needsAttestation && !attestSfw)}
+    >
       {#if starting}
         <IconBoltFilled size={16} stroke={2} class="mr-1 inline" /> Starting…
       {:else}
@@ -451,6 +457,10 @@
     </Button>
     {#if startError}
       <p class="mt-2 text-center font-mono text-xs text-red-400">{startError}</p>
+    {:else if total == null}
+      <p class="mt-2 text-center font-mono text-xs text-dark-2">
+        We couldn't price every run right now — start is disabled until each run shows a cost.
+      </p>
     {/if}
     <p class="mt-3 text-center font-mono text-xs text-dark-2">
       Refunded automatically if training fails
