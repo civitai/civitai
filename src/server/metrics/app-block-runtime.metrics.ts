@@ -989,10 +989,15 @@ export type StepPriceCheckOutcome =
  *     always with `step: '__passthrough__'`) — A THIRD SITE, AND ITS `absent`
  *     HAS THE OPPOSITE POLARITY TO THE FAIL-CLOSED ONE ABOVE. The pass-through
  *     `kind:'step'` arm does NOT refuse on a missing quote: it reserves the
- *     app's declared `maxBuzz` and proceeds. So there `absent` means "a
- *     generation RAN with its ceiling resting on the app's own number", not "a
- *     submit was refused" — the triage instruction in the bullet above is wrong
- *     for it, and the `step` label is what tells the two apart. `quoted` is its
+ *     app's declared `maxBuzz` and proceeds. So there `absent` means only that
+ *     the submit was not refused FOR LACK OF A QUOTE — a generation MAY have run
+ *     with its ceiling resting on the app's own number. ⚠️ It is NOT a statement
+ *     that one did, and an earlier revision of this line said it was: the emit
+ *     sits inside the quote, ahead of the static gate, all three reservations
+ *     and the real submit, so an orchestrator that rejects the `$type` outright
+ *     lands here too with nothing having run. The triage instruction in the
+ *     bullet above is wrong for this arm; the `step` label tells the two SITES
+ *     apart and the submit-failure signal tells the two CAUSES apart. `quoted` is its
  *     success half and exists so `absent` has a denominator: without a pair,
  *     `absent` falls when submit volume falls, which reads as healthy. Not
  *     gated on billing mode (that arm has none).

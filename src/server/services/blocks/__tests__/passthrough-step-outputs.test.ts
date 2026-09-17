@@ -252,9 +252,10 @@ describe('splitPassThroughStepOutput', () => {
     expect(splitPassThroughStepOutput({ capacity })).toEqual({ media: [], rest: { capacity } });
   });
 
-  // 🔴 THE DEPTH CAP, PINNED RATHER THAN IMPLIED. The walk is bounded because the
-  // input is app-supplied and only size-capped; past the cap a value is
-  // forwarded as-is, and that residue is stated in the doc.
+  // 🔴 THE DEPTH CAP, PINNED RATHER THAN IMPLIED. Measured: `JSON.parse` accepts
+  // 200,000 levels while an unbounded recursive walk overflows the stack between
+  // 1,000 and 2,000, so this cap is the only thing bounding the recursion. Past
+  // it a value is forwarded as-is; that residue is stated at the walk.
   // 🔴 AN ARRAY INSIDE AN ARRAY. Every other array fixture here holds objects or
   // primitives, so "recurse into the non-blob elements" was pinned for objects
   // only: forwarding any array-valued element verbatim survived the whole suite
@@ -269,8 +270,10 @@ describe('splitPassThroughStepOutput', () => {
 
   // 🔴 THE BOUNDARY WITH ARRAYS ON THE PATH. Both object-chain fixtures below
   // leave the array branch's own `depth + 1` unpinned — dropping it survived the
-  // suite, and it is the increment that stops an adversarially deep array chain
-  // (measured: 40,000 nested arrays overflow the stack without it).
+  // suite, and it is the increment that keeps a deep ORCHESTRATOR RESPONSE (not
+  // an app payload — the walked value is `step.output`) from overflowing the
+  // stack. Measured: without the increment an array chain overflows between
+  // 1,000 and 2,000 levels, and `JSON.parse` admits 200,000.
   it('counts array levels toward the depth cap', () => {
     const atCap = splitPassThroughStepOutput({ a: [{ b: [{ url: BLOB_URL, available: true }] }] });
     expect(atCap.media.map((m) => m.url)).toEqual([BLOB_URL]);

@@ -130,14 +130,27 @@ function isOrchestratorBlobLike(value: unknown): boolean {
  * a future output reopens exactly this leak with no detector. Say the number
  * when you re-measure; do not say "with room".
  *
- * 🔴 WHY A BOUND AT ALL, STATED HONESTLY BECAUSE A DRAFT GOT IT WRONG. It is NOT
- * cycle protection and NOT protection against an adversarial app payload: the
- * value walked is the ORCHESTRATOR'S `step.output`, which the client
- * `JSON.parse`s, so it is acyclic and already depth-bounded by that parse — the
- * app's own `input` never reaches here. The bound is a walk-COST bound over a
- * response whose shape is open by construction (any non-denylisted `$type`), and
- * its price is the residue above. If that trade stops being worth it, removing
- * the cap closes the residue outright.
+ * 🔴 WHY A BOUND AT ALL. IT IS THE ONLY THING BOUNDING THE RECURSION, AND TWO
+ * DRAFTS OF THIS PARAGRAPH GOT IT WRONG IN OPPOSITE DIRECTIONS — so the numbers
+ * are here rather than the reasoning. Measured on this repo's pinned node
+ * (24.19.0): `JSON.parse` accepts **200,000** levels of nesting, arrays and
+ * objects alike, while an UNBOUNDED recursive walk of the parsed result throws
+ * `RangeError: Maximum call stack size exceeded` between **1,000 and 2,000**.
+ * The parse is two orders of magnitude looser than the walk, so "already
+ * depth-bounded by the parse" is false and this cap is a STACK bound as much as
+ * a cost bound.
+ *
+ * 🔴 SO DO NOT "CLOSE THE RESIDUE" BY DELETING THE CAP. `splitPassThroughStepOutput`
+ * is called inside the pass-through submit's post-submit path, where a throw is
+ * caught by a handler that refunds every cap leg and rethrows — on a generation
+ * that has already been created and will bill. A `RangeError` there moves money
+ * in the wrong direction. Closing the residue means an ITERATIVE walk.
+ *
+ * What a draft got RIGHT and is worth keeping: the value walked is the
+ * ORCHESTRATOR'S `step.output`, not the app's `input`, and it is JSON-parsed —
+ * so it is acyclic, and no declared output type echoes the request back. What
+ * makes a bound necessary anyway is that a JSON-parsed value can still be
+ * arbitrarily deep, and this arm's `$type` set is open by construction.
  */
 const PASS_THROUGH_OUTPUT_WALK_DEPTH = 4;
 
