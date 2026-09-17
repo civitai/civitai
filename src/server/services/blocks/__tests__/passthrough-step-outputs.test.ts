@@ -67,7 +67,10 @@ describe('splitPassThroughStepOutput', () => {
       nested: { a: [1, 2] },
     });
     expect(media).toEqual([{ url: BLOB_URL, width: 10, height: 20, nsfwLevel: 'pg' }]);
-    expect(rest).toEqual({ text: 'a reply', nested: { a: [1, 2] } });
+    // 🔴 THE EMPTIED ARRAY IS KEPT, the blob elements are removed from it. The
+    // walk lifts PER ELEMENT, so a non-blob sibling — or a blob nested inside
+    // one — survives; an all-or-nothing rule discarded them with the array.
+    expect(rest).toEqual({ blobs: [], text: 'a reply', nested: { a: [1, 2] } });
   });
 
   // 🔴 THE STRIP IS UNCONDITIONAL. A blob that the availability filter DROPPED
@@ -79,7 +82,7 @@ describe('splitPassThroughStepOutput', () => {
       note: 'kept',
     });
     expect(media).toEqual([]);
-    expect(rest).toEqual({ note: 'kept' });
+    expect(rest).toEqual({ blobs: [], note: 'kept' });
     expect(JSON.stringify(rest)).not.toContain(BLOB_URL);
   });
 
@@ -97,11 +100,11 @@ describe('splitPassThroughStepOutput', () => {
   // branch and pin nothing.
   it.each(['audioBlob', 'frames'])('lifts media out of the `%s` property', (key) => {
     const { media, rest } = splitPassThroughStepOutput({
-      [key]: { url: BLOB_URL, available: true },
+      [key]: [{ url: BLOB_URL, available: true }],
       keep: 1,
     });
     expect(media).toHaveLength(1);
-    expect(rest).toEqual({ keep: 1 });
+    expect(rest).toEqual({ [key]: [], keep: 1 });
   });
 
   it.each(['audioBlob', 'frames'])('strips `%s` even when it produced nothing', (key) => {
@@ -117,20 +120,39 @@ describe('splitPassThroughStepOutput', () => {
   // element without a `url` key (a blocked or not-yet-available blob: the
   // orchestrator's `Blob.url` is optional) disqualified the whole array, left the
   // key unstripped, and forwarded every sibling's raw url through `rest`.
-  it('lifts a list that is only PARTLY blob-shaped, and strips it', () => {
+  it('lifts the blob elements of a PARTLY blob-shaped list and keeps the rest', () => {
     const { media, rest } = splitPassThroughStepOutput({
       frames: [{ url: BLOB_URL, available: true }, { note: 'not a blob' }],
       keep: 1,
     });
     expect(media).toEqual([{ url: BLOB_URL, width: null, height: null, nsfwLevel: null }]);
-    expect(rest).toEqual({ keep: 1 });
+    expect(rest).toEqual({ frames: [{ note: 'not a blob' }], keep: 1 });
     expect(JSON.stringify(rest)).not.toContain(BLOB_URL);
+  });
+
+  // 🔴 THE INTERACTION NEITHER RULE'S OWN TESTS COVERED: a blob-shaped element
+  // BESIDE an object that CONTAINS a blob. An all-or-nothing array rule lifted
+  // the first and discarded the second from BOTH sides — never published, never
+  // forwarded, a silent media LOSS on the arm the app paid for.
+  it('lifts a blob NESTED inside a non-blob sibling of a blob element', () => {
+    const { media, rest } = splitPassThroughStepOutput({
+      items: [
+        { url: `${BLOB_URL}#a`, available: true },
+        { label: 'wrapper', inner: { url: `${BLOB_URL}#b`, available: true } },
+      ],
+    });
+    expect(media.map((m) => m.url)).toEqual([`${BLOB_URL}#a`, `${BLOB_URL}#b`]);
+    expect(rest).toEqual({ items: [{ label: 'wrapper' }] });
   });
 
   it('lifts a TOP-LEVEL blob LIST, forwarding nothing', () => {
     const { media, rest } = splitPassThroughStepOutput([
       { url: BLOB_URL, available: true },
-      { available: false },
+      // 🔴 `id`, NOT a bare `{available:false}`. Without an identity field this
+      // element is not blob-shaped at all, so the test would pass under a
+      // predicate that had never been widened — it would pin nothing it looks
+      // like it pins.
+      { id: 'b2', available: false },
     ]);
     expect(media).toHaveLength(1);
     expect(rest).toEqual([]);
@@ -215,15 +237,35 @@ describe('splitPassThroughStepOutput', () => {
         { epochNumber: 2, samples: [{ url: `${BLOB_URL}#2`, available: true }] },
       ],
     });
-    expect(media).toHaveLength(2);
+    expect(media.map((m) => m.url)).toEqual([`${BLOB_URL}#1`, `${BLOB_URL}#2`]);
     expect(JSON.stringify(rest)).not.toContain(BLOB_URL);
     // The surrounding structure is preserved — only the blobs are lifted out.
-    expect(rest).toEqual({ epochs: [{ epochNumber: 1 }, { epochNumber: 2 }] });
+    expect(rest).toEqual({ epochs: [{ epochNumber: 1 }, { epochNumber: 2, samples: [] }] });
+  });
+
+  // 🔴 THE IDENTITY CONJUNCT, WHICH THE `available`-ONLY CONTROLS CANNOT SEE.
+  // Dropping `('url' in v || 'id' in v)` leaves every control above green and
+  // makes any object carrying an `available` key vanish from the forwarded
+  // output — measured as a surviving mutant before this test existed.
+  it('does NOT strip an object with `available` but no identity field', () => {
+    const capacity = { available: true, queueDepth: 3 };
+    expect(splitPassThroughStepOutput({ capacity })).toEqual({ media: [], rest: { capacity } });
   });
 
   // 🔴 THE DEPTH CAP, PINNED RATHER THAN IMPLIED. The walk is bounded because the
   // input is app-supplied and only size-capped; past the cap a value is
   // forwarded as-is, and that residue is stated in the doc.
+  // 🔴 BOTH SIDES OF THE BOUNDARY, or the constant is pinned to an INTERVAL.
+  // With only the negative case, 4→3 survives: the `epochs` fixture needs ≥3 and
+  // the too-deep one needs ≤4. The pair below distinguishes 3 from 4.
+  it('reaches a blob at exactly the deepest level the cap examines', () => {
+    const { media, rest } = splitPassThroughStepOutput({
+      a: { b: { c: { d: { url: BLOB_URL, available: true } } } },
+    });
+    expect(media.map((m) => m.url)).toEqual([BLOB_URL]);
+    expect(JSON.stringify(rest)).not.toContain(BLOB_URL);
+  });
+
   it('does NOT descend past the depth cap', () => {
     const deep = { a: { b: { c: { d: { e: { url: BLOB_URL, available: true } } } } } };
     const { media, rest } = splitPassThroughStepOutput(deep);
@@ -250,10 +292,12 @@ describe('splitPassThroughStepOutput', () => {
   // its `blockedReason` and raw `nsfwLevel` reached the app and the module's
   // "a dropped blob cannot ride out through `rest`" claim was false.
   it('strips a blob whose `url` key is ABSENT', () => {
-    const blocked = { type: 'image', id: 'b', available: false, blockedReason: 'r' };
+    const blocked = { type: 'image', id: 'b', available: false, blockedReason: 'csam-policy' };
     expect(splitPassThroughStepOutput({ blob: blocked })).toEqual({ media: [], rest: {} });
     expect(splitPassThroughStepOutput(blocked)).toEqual({ media: [], rest: {} });
-    expect(JSON.stringify(splitPassThroughStepOutput({ blob: blocked }).rest)).not.toContain('r');
+    expect(JSON.stringify(splitPassThroughStepOutput({ blob: blocked }).rest)).not.toContain(
+      'csam-policy'
+    );
   });
 
   it('handles the SINGULAR `blob` key and a non-object output', () => {
@@ -275,7 +319,7 @@ describe('snapshotFromWorkflow — pass-through step', () => {
     );
     expect(snap.imageUrls).toEqual([BLOB_URL]);
     expect(snap.stepOutputs).toEqual([
-      { $type: PASS_THROUGH_TYPE, output: { text: 'a model reply' } },
+      { $type: PASS_THROUGH_TYPE, output: { blobs: [], text: 'a model reply' } },
     ]);
     // 🔴 THE NEGATIVE HALF: no second image channel.
     expect(JSON.stringify(snap.stepOutputs)).not.toContain(BLOB_URL);

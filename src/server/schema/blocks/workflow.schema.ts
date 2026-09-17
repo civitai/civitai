@@ -972,6 +972,15 @@ export type BlockWorkflowSnapshot = {
    * (`blocks.getImagesByIds` → `BlockGatedImage`). A pass-through step must not
    * create a SECOND image channel that those two do not see.
    *
+   * ⚠️ "BLOB-SHAPED" IS THE EXACT SCOPE OF THAT PROPERTY, AND TWO ALLOWED TYPES
+   * FALL OUTSIDE IT. `blobArchive`'s whole output is `{ url, entryCount, … }`
+   * and `imageResourceTraining.epochs[].blobUrl` is a plain string; a shape test
+   * cannot see either, so those urls reach the app here and are never seen by
+   * the publish path or the gated read. Stated rather than implied, because the
+   * measurement behind the splitter enumerated blob-TYPED fields and a reader
+   * takes it for the whole population. Closing it is a decision — lift a named
+   * string field, or refuse those `$type`s — not a cleanup.
+   *
    * 🔴 EVERYTHING ELSE IS UNSCANNED. Unlike {@link textOutputs}, no moderation
    * scan runs over this field: the pass-through arm has no `moderationPosture`,
    * by operator decision (moderation moved to the publish boundary).

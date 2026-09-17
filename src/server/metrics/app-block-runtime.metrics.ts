@@ -764,15 +764,19 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // ignore it. `over` is a REPORT that a declared constant does not describe
   // reality; `over_reserved` is the thing that costs money. Read
   // `outcome="exact"` to confirm the check runs at all; investigate a rising
-  // `absent` or a falling `estimate_quoted`/`estimate_absent` ratio.
+  // `absent` or a falling `estimate_quoted`/`estimate_absent` ratio — and read
+  // `absent` per `step` label, because its meaning inverts on `__passthrough__`
+  // (see the help text).
   //
   // Cardinality: `step` is drawn from the code-owned registry keys (never client
   // input — the wire enum derives from those same keys, so an unregistered id
-  // cannot reach here); `outcome` is a closed 6-value set. Bounded and small.
+  // cannot reach here) PLUS the single constant `__passthrough__`, which the
+  // pass-through `kind:'step'` arm emits under precisely because ITS `$type` set
+  // is open by construction; `outcome` is a closed 7-value set. Bounded and small.
   const stepPriceCheckTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_step_price_check_total',
-    "App Block `kind:'step'` price checks, by step id and outcome. Only the post-billing submit outcomes are prepaidFixed-gated; the fail-closed absent and the estimate-phase outcomes fire for any kind:'step' request. Submit phase: exact = billed within both the declared price and the reservation; over = billed above the DECLARED price but within the quote-backed reservation (the declared constant is wrong; no money or cap impact — expected to be ~100% for a usage-priced step, do NOT alert on it); over_reserved = billed above the RESERVATION, so every cap counter was short until corrected (ALERT ON THIS); absent = EITHER the submit was refused because the orchestrator returned no price quote (no spend, no generation - triage as availability) OR a billed submit carried no numeric cost. Estimate phase: estimate_quoted = the block was shown a live orchestrator quote; estimate_absent = the quote failed and it was shown the declared price instead (read as a ratio against estimate_quoted, never alone)",
+    "App Block `kind:'step'` price checks, by step id and outcome. Only the post-billing submit outcomes are prepaidFixed-gated; the fail-closed absent and the estimate-phase outcomes fire for any kind:'step' request. Submit phase: exact = billed within both the declared price and the reservation; over = billed above the DECLARED price but within the quote-backed reservation (the declared constant is wrong; no money or cap impact — expected to be ~100% for a usage-priced step, do NOT alert on it); over_reserved = billed above the RESERVATION, so every cap counter was short until corrected (ALERT ON THIS); absent = READ THE step LABEL FIRST, THE TWO MEANINGS ARE OPPOSITE: on a REGISTRY step id, either the submit was refused because the orchestrator returned no price quote (no spend, no generation - triage as availability) or a billed submit carried no numeric cost; on step=\"__passthrough__\" the submit was NOT refused - that arm reserves the app's own declared maxBuzz and the generation RAN with its Buzz ceiling resting on a number the app supplied (read it against quoted, and treat a rising ratio as loss of price control, not as an outage). quoted = the pass-through submit got a live orchestrator quote; it is absent's denominator and exists so absent cannot be read alone, since a bare count falls when submit volume falls. Estimate phase: estimate_quoted = the block was shown a live orchestrator quote; estimate_absent = the quote failed and it was shown the declared price instead (read as a ratio against estimate_quoted, never alone)",
     ['step', 'outcome']
   );
 

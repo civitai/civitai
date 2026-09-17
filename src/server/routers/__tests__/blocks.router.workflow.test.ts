@@ -8623,7 +8623,10 @@ describe("step-type registry bridge (kind: 'step')", () => {
       expect(mockRecordStepPriceCheck).toHaveBeenCalledWith(STEP_ID, 'absent');
     });
 
-    it('the outcome label is drawn from a CLOSED 3-value set (bounded cardinality)', async () => {
+    // The title said "3-value" while the body listed six and the union has seven;
+    // it also only ever sees registry-arm emits, so `quoted` is out of its reach
+    // by construction. Named for what it checks.
+    it('a REGISTRY-arm submit emits one outcome per submit, from the closed set', async () => {
       mockVerifyBlockToken.mockResolvedValue(stepClaims());
       happyUser();
       stepSubmitQuoting(1, 1);
@@ -8643,6 +8646,7 @@ describe("step-type registry bridge (kind: 'step')", () => {
           'over',
           'over_reserved',
           'absent',
+          'quoted',
           'estimate_quoted',
           'estimate_absent',
         ]).toContain(call[1]);
@@ -9703,7 +9707,11 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       // see that.
       expect(ptRealSubmits()[0][0].body.steps[0].name).toBe(BLOCK_STEP_NAME);
       expect(result.snapshot.imageUrls).toEqual([PT_BLOB_URL]);
-      expect(result.snapshot.stepOutputs).toEqual([{ $type: PT_TYPE, output: { note: 'kept' } }]);
+      // The emptied `blobs` array is kept and its members lifted — see
+      // `splitPassThroughStepOutput`.
+      expect(result.snapshot.stepOutputs).toEqual([
+        { $type: PT_TYPE, output: { blobs: [], note: 'kept' } },
+      ]);
     });
 
     it('submits an ARBITRARY string $type — the arm is not a second allowlist', async () => {
@@ -10074,7 +10082,13 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
         // shape first.
         expect(reservedKey).toMatch(/^system:blocks:buzz-cap:42:/);
         expect(record.buzzCapKey).toBe(reservedKey);
-        expect(record.appSpendKey).toBe('system:blocks:app-spend-cap:apb_test:day');
+        // DERIVED from what `reserveAppSpend` returned, not restated — a mutant
+        // that recomputes the key instead of threading the returned one would
+        // satisfy a hardcoded literal.
+        const returnedKey = (
+          await (mockReserveAppSpend.mock.results[0].value as Promise<{ dailyKey: string }>)
+        ).dailyKey;
+        expect(record.appSpendKey).toBe(returnedKey);
 
         mockSysRedis.decrBy.mockClear();
         mockRefundAppSpend.mockClear();
@@ -10182,7 +10196,7 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
     // quote below the declared ceiling the two are the same number and a
     // `body.maxBuzz` mutant in the dev-session reserve cannot be seen.
     it('reserves the CEILING on the DEV-SESSION cap, and refunds every leg when it denies', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ptClaims({ buzzBudget: 50 }));
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
       happyUser();
       ptQuoting(31, 31);
       mockGetActiveDevTunnel.mockResolvedValue({
@@ -10212,20 +10226,47 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect(mockReleaseGen).toHaveBeenCalledWith('42:apb_test:pt-dev-denial');
     });
 
+    // 🔴 THE OTHER DIRECTION, at a quote BELOW the declared ceiling. The denial
+    // test above runs at quote 31 so `ceiling === quotedBuzz` there; without this
+    // one at quote 5 the mirror mutant (`ceiling` → `quotedBuzz ?? maxBuzz`)
+    // survives, because both readings give 31. `reserveAppSpend` is covered from
+    // both sides for the same reason.
     it('reserves on the DEV-SESSION cap on a SUCCESSFUL submit too', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ptClaims({ buzzBudget: 50 }));
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
       happyUser();
-      ptQuoting(31, 31);
+      ptQuoting(5, 5);
       mockGetActiveDevTunnel.mockResolvedValue({
         sessionId: 'dts_pt',
         spendCapBuzz: 100,
       } as never);
       const result = await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
       expect(result.snapshot.workflowId).toBe('wf_pt_1');
-      expect(mockReserveDevSessionBuzz).toHaveBeenCalledWith('dts_pt', 31, 100);
+      expect(mockReserveDevSessionBuzz).toHaveBeenCalledWith('dts_pt', MAX_BUZZ, 100);
       expect(mockPersistCustomComfySettle).toHaveBeenCalledWith(
         expect.objectContaining({ devSessionId: 'dts_pt' })
       );
+    });
+
+    // The dev-session leg must also be REFUNDED on a throw after reserving —
+    // nothing in this describe drove that path with a tunnel active, so the
+    // reservation's recorded cost was unpinned.
+    it('refunds the DEV-SESSION leg at the CEILING when the submit throws', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      mockGetActiveDevTunnel.mockResolvedValue({
+        sessionId: 'dts_pt',
+        spendCapBuzz: 100,
+      } as never);
+      mockSubmitWorkflow.mockImplementation(async (opts: { query?: { whatif?: boolean } }) => {
+        if (opts?.query?.whatif === true) {
+          return { id: 'wf_quote', status: 'unassigned', steps: [], cost: { total: 31 } };
+        }
+        throw new Error('orchestrator down');
+      });
+      await expect(caller().submitWorkflow({ blockToken: 'tok', body: ptBody() })).rejects.toThrow(
+        /orchestrator down/
+      );
+      expect(mockRefundDevSessionBuzz).toHaveBeenCalledWith('dts_pt', 31);
     });
 
     // 🔴 NO APP-CONTROLLED STRING IN THE ORCHESTRATOR TAG ARRAY. That array

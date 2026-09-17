@@ -113,30 +113,6 @@ function isOrchestratorBlobLike(value: unknown): boolean {
 }
 
 /**
- * The media a value carries, or `null` when it is not media at all.
- *
- * 🔴 AN ARRAY QUALIFIES IF **ANY** ELEMENT IS BLOB-SHAPED, NOT IF EVERY ONE IS.
- * The `every` spelling was measured to leak: one blocked sibling disqualified the
- * whole array, left the key unstripped, and forwarded every OTHER element's raw
- * url out through `rest` — the second image channel this module exists to
- * prevent, arriving through the very door the "unconditional strip" rule claims
- * is shut.
- *
- * Non-conforming elements of a qualifying array are DROPPED, not forwarded. That
- * is fail-safe, and it is not free: a sibling carrying real non-media data goes
- * with them, and the block gets no signal that anything was removed.
- */
-function liftOrchestratorBlobs(value: unknown): StepOutputMedia[] | null {
-  if (isOrchestratorBlobLike(value)) {
-    return mediaFromBlobs(value as OrchestratorBlobLike);
-  }
-  if (Array.isArray(value) && value.some(isOrchestratorBlobLike)) {
-    return mediaFromBlobs(value.filter(isOrchestratorBlobLike) as OrchestratorBlobLike[]);
-  }
-  return null;
-}
-
-/**
  * How deep the walk below descends before it stops looking.
  *
  * 🔴 NOT 1, AND THE REASON IS A MEASUREMENT. A depth-1 walk was shipped and then
@@ -145,12 +121,18 @@ function liftOrchestratorBlobs(value: unknown): StepOutputMedia[] | null {
  * `polyGen.basicAnimations` is a plain object holding SIX `Model3DBlob`s
  * (walking/running × three model formats) and `training.epochs[]` carries
  * `model` plus a `samples[]` of images/videos/audio. Every one of those urls was
- * forwarded raw, i.e. reachable by the app and invisible to both the publish
- * path and the per-viewer gated read.
+ * forwarded raw — reachable by the app, invisible to both the publish path and
+ * the per-viewer gated read.
  *
- * 4 clears every shape in the catalog today with room, and bounds the walk so an
- * adversarial payload cannot make it unbounded — the input is app-supplied and
- * only size-capped.
+ * 🔴 THE MARGIN IS ONE LEVEL, NOT "room". The deepest strip the catalog actually
+ * requires today is level 3 (`training.epochs`(1) → an epoch(2) → `samples`(3),
+ * caught by the per-element rule so its members never need walking). A new
+ * upstream `$type` is ALLOWED by construction, so one extra wrapper level in a
+ * future output reopens exactly this leak with no detector. Say the number when
+ * you re-measure, do not say "with room".
+ *
+ * The bound exists at all because the input is app-supplied and only size-capped:
+ * without it a cyclic or adversarially deep payload walks forever.
  */
 const PASS_THROUGH_OUTPUT_WALK_DEPTH = 4;
 
@@ -163,12 +145,30 @@ const PASS_THROUGH_OUTPUT_WALK_DEPTH = 4;
  * availability filter DROPPED — unavailable, blocked, empty or absent url —
  * cannot ride out through the remainder instead. Filtering and stripping on the
  * same predicate is how a dead or blocked url reaches a block through the back
- * door. 🔴 `liftOrchestratorBlobs` returning an EMPTY array is what implements
- * that: `[]` is truthy, and the truthiness is load-bearing. A "simplification"
- * to `if (lifted?.length)` reopens the door.
+ * door. 🔴 `mediaFromBlobs` returning an EMPTY array is what implements that:
+ * `[]` is truthy at the call sites below, and the truthiness is load-bearing. A
+ * "simplification" to `if (lifted?.length)` reopens the door.
  *
  * 🔴 SOME STEP TYPES *ARE* A BLOB. `transcode` returns the blob itself as its
  * whole output, so the whole-value case is checked before descending.
+ *
+ * 🔴 THE RESIDUE IS A SHAPE RESIDUE AS WELL AS A DEPTH ONE, AND THE SECOND HALF
+ * IS EASY TO MISS BECAUSE THE MEASUREMENT ABOVE ENUMERATED BLOB-*TYPED* FIELDS,
+ * NOT URL-*CARRYING* ONES. Two ALLOWED types carry a url as a PLAIN STRING and
+ * are therefore invisible to a shape test: `blobArchive`, whose entire output is
+ * `{ url, entryCount, format, expiresAt }`, and
+ * `imageResourceTraining.epochs[].blobUrl`. Those urls reach the app through
+ * `stepOutputs` and are never seen by the publish path or the per-viewer gated
+ * read. Sniffing every string for something url-shaped is NOT the fix — it would
+ * strip prose that merely contains a link. Lifting a named string field, or
+ * refusing those `$type`s, is; both are decisions, not cleanups.
+ *
+ * 🔴 IT REBUILDS RATHER THAN FORWARDS. Every object and array it descends into
+ * is reconstructed, so "forward verbatim" is true of VALUES and not of identity:
+ * a non-JSON value below the root (a `Date`, a `Map`, a class instance) would
+ * come out as `{}`, and a `__proto__` key vanishes at every level. Inert today —
+ * the orchestrator client `JSON.parse`s the response, so every value here is
+ * plain JSON — and the thing to re-check if a response transformer is ever added.
  */
 export function splitPassThroughStepOutput(output: unknown): {
   media: StepOutputMedia[];
@@ -181,23 +181,33 @@ export function splitPassThroughStepOutput(output: unknown): {
 
 function walkPassThroughOutput(value: unknown, media: StepOutputMedia[], depth: number): unknown {
   if (value === null || typeof value !== 'object') return value;
-  const lifted = liftOrchestratorBlobs(value);
-  if (lifted) {
-    media.push(...lifted);
-    return Array.isArray(value) ? [] : {};
+  if (isOrchestratorBlobLike(value)) {
+    media.push(...mediaFromBlobs(value as OrchestratorBlobLike));
+    return {};
   }
-  // Past the cap the value is forwarded as-is. A deeper blob than the catalog
-  // has ever carried is the accepted residue of a bounded walk; see
-  // PASS_THROUGH_OUTPUT_WALK_DEPTH.
+  // Past the cap the value is forwarded as-is. See PASS_THROUGH_OUTPUT_WALK_DEPTH
+  // for the measured margin this leaves.
   if (depth >= PASS_THROUGH_OUTPUT_WALK_DEPTH) return value;
   if (Array.isArray(value)) {
-    return value.map((entry) => walkPassThroughOutput(entry, media, depth + 1));
+    // 🔴 PER ELEMENT, NOT ALL-OR-NOTHING. An earlier rule qualified the whole
+    // array on `some(isBlobLike)` and replaced it wholesale, which lost a blob
+    // NESTED inside a non-blob sibling: `[blob, { nested: blob }]` lifted the
+    // first and discarded the second from BOTH sides — never published, never
+    // forwarded. Lifting per element and walking the rest keeps both.
+    const out: unknown[] = [];
+    for (const entry of value) {
+      if (isOrchestratorBlobLike(entry)) {
+        media.push(...mediaFromBlobs(entry as OrchestratorBlobLike));
+        continue;
+      }
+      out.push(walkPassThroughOutput(entry, media, depth + 1));
+    }
+    return out;
   }
   const rest: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    const entryLifted = liftOrchestratorBlobs(entry);
-    if (entryLifted) {
-      media.push(...entryLifted);
+    if (isOrchestratorBlobLike(entry)) {
+      media.push(...mediaFromBlobs(entry as OrchestratorBlobLike));
       continue;
     }
     rest[key] = walkPassThroughOutput(entry, media, depth + 1);
