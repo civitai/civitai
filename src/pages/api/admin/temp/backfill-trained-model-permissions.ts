@@ -112,6 +112,13 @@ import { booleanString } from '~/utils/zod-helpers';
 // Measured on the prod replica 2026-09-15 against the pre-migration `{Sell}` shape: 0 of 346,139
 // Trained post-cutoff rows, and 147,916 already carry the repair's own target shape. The repair
 // has run; `totalChanged: 0` means "already done". (The 146,503 above is the population it moved.)
+//
+// 🔴 DO NOT RE-RUN `repair` NOW THAT `backfill-sell-merge-licence` HAS. This predicate matches the
+// exact shape that backfill produces — it grants `SellMerge` beside an existing `Sell` and nothing
+// else — so a Trained post-cutoff row it widened is a candidate here, and `repair` would push it to
+// the full five-member array, granting `Image`/`RentCivit`/`Rent` its creator never chose. The
+// containment bound above was written to tolerate that backfill's output, not to invite a second pass
+// over it.
 const defaultedCommercialUseShapes = Prisma.sql`(
   m."allowCommercialUse" @> ARRAY['Sell']::"CommercialUse"[]
   AND m."allowCommercialUse" <@ ARRAY['Sell', 'SellMerge']::"CommercialUse"[]
