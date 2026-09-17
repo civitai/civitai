@@ -112,13 +112,13 @@ import { booleanString } from '~/utils/zod-helpers';
 // Measured on the prod replica 2026-09-15 against the pre-migration `{Sell}` shape: 0 of 346,139
 // Trained post-cutoff rows, and 147,916 already carry the repair's own target shape. The repair
 // has run; `totalChanged: 0` means "already done". (The 146,503 above is the population it moved.)
-//
-// 🔴 DO NOT RE-RUN `repair` NOW THAT `backfill-sell-merge-licence` HAS. This predicate matches the
-// exact shape that backfill produces — it grants `SellMerge` beside an existing `Sell` and nothing
-// else — so a Trained post-cutoff row it widened is a candidate here, and `repair` would push it to
-// the full five-member array, granting `Image`/`RentCivit`/`Rent` its creator never chose. The
-// containment bound above was written to tolerate that backfill's output, not to invite a second pass
-// over it.
+// Tolerating that shape is not the same as wanting to widen it. A `{Sell}`-only row inside this
+// endpoint's scope becomes five members here, which is the intent for a row the wizard defaulted and
+// wrong for one an API client posted deliberately — and after `backfill-sell-merge-licence` runs, the
+// same is true of `{Sell,SellMerge}`. So a re-run needs the population checked first, not just the
+// scope. Measured on the prod replica 2026-09-17: 4,372 rows carry `{Sell}` alone, and 0 of them are
+// Trained-and-post-cutoff, so this endpoint's scope excludes every one. The only remaining producer is
+// an API client posting `['Sell']` on a Trained upload; the wizard now sends the five-value default.
 const defaultedCommercialUseShapes = Prisma.sql`(
   m."allowCommercialUse" @> ARRAY['Sell']::"CommercialUse"[]
   AND m."allowCommercialUse" <@ ARRAY['Sell', 'SellMerge']::"CommercialUse"[]
