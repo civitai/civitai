@@ -601,6 +601,11 @@ export const resourceSchema = z.object({
       epochNumber: z.number().optional(),
     })
     .optional(),
+  // Raw orchestrator-blob AIR resources (training epochs without a ModelVersion
+  // row) — negative id + air + workflowId. See RawAirResource in shared/utils/air.
+  air: z.string().optional(),
+  workflowId: z.string().optional(),
+  name: z.string().optional(),
 });
 
 /** Resource data type inferred from resourceSchema (minimal client-side data) */

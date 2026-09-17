@@ -11,4 +11,7 @@ export const load: LayoutServerLoad = async ({ locals, url }) => ({
   buzz: locals.devPreview ? null : await getSpendableBuzz(locals.user.id),
   // The dev-login stub has no real user to mint a signals token for, so it stays on polling.
   signalsEnabled: !locals.devPreview,
+  // Main-app origin for the /generate hand-off links — resolved here so CIVITAI_URL stays the one
+  // knob for every main-app deep link.
+  civitaiUrl: (env.CIVITAI_URL || 'https://civitai.com').replace(/\/+$/, ''),
 });

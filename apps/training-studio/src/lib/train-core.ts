@@ -20,8 +20,10 @@ import {
 import { describeSubmitError, isFlux2, type OrchestratorClient } from './orchestrator-core';
 import {
   CIVITAI_TAG,
+  epochModelKey,
   META_VERSION,
   TRAINING_TAG,
+  type EpochModelOutput,
   type TrainingStudioMeta,
 } from '$lib/data/trainingRows';
 
@@ -315,14 +317,15 @@ export async function submitTrainingBatch(
 
 type EpochOutput = {
   epochNumber?: number;
-  model?: { id?: string; url?: string | null; available?: boolean };
+  model?: EpochModelOutput;
 };
 
-// `continueFrom` must reference the epoch's trained LoRA, and the orchestrator resolves it as a LoRA only
-// when the AIR carries the `lora` type and the run's real ecosystem — `other:other` is rejected with
-// "continueFrom must reference a LoRA resource". Built with @civitai/client's `Air` (the same builder the
-// main app's stringifyAIR wraps) for a blob-backed epoch: urn:air:<ecosystem>:lora:orchestrator:blob@<blobKey>.
-const loraBlobAir = (ecosystem: string, blobKey: string) =>
+// An epoch's trained-LoRA reference (`continueFrom`, the generate hand-off): the orchestrator resolves it
+// as a LoRA only when the AIR carries the `lora` type and the run's real ecosystem — `other:other` is
+// rejected with "continueFrom must reference a LoRA resource". Built with @civitai/client's `Air` (the same
+// builder the main app's stringifyAIR wraps) for a blob-backed epoch:
+// urn:air:<ecosystem>:lora:orchestrator:blob@<blobKey>.
+export const loraBlobAir = (ecosystem: string, blobKey: string) =>
   Air.stringify({ ecosystem, type: 'lora', source: 'orchestrator', id: 'blob', version: blobKey });
 
 export interface ContinueOpts {
@@ -357,9 +360,9 @@ async function buildContinuation(
     throw new Error('keep training: only ai-toolkit runs can continue from a checkpoint');
 
   const epoch = (output?.epochs ?? []).find(
-    (e) => e.epochNumber === opts.fromEpoch && e.model?.available && typeof e.model.id === 'string'
+    (e) => e.epochNumber === opts.fromEpoch && epochModelKey(e.model) !== undefined
   );
-  const modelKey = epoch?.model?.id;
+  const modelKey = epochModelKey(epoch?.model);
   if (!modelKey) throw new Error('keep training: that checkpoint has no downloadable weights yet');
   const ecosystem = typeof input.ecosystem === 'string' ? input.ecosystem : '';
   if (!ecosystem)
