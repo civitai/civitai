@@ -38,6 +38,12 @@ import { booleanString } from '~/utils/zod-helpers';
  * A row it declines still matches the SELECT, so without the cursor one declined row would head
  * every later batch and the run would never advance past it.
  *
+ * 🔴 `exhausted: true` means THIS batch reached the end of the scan, not that the run is done — it is
+ * only the latter if this call's `afterId` came from the previous response's `nextAfterId`. An
+ * `afterId` mistyped past the id space returns `totalSelected: 0, exhausted: true` over an untouched
+ * population, and no schema bound can tell that from a finished run. The operator's loop carries that
+ * invariant; nothing here can.
+ *
  * 🔴 The UPDATE deliberately does NOT touch `updatedAt`, unlike
  * `backfill-trained-model-permissions.ts`, which bumps it for Published rows. Three reasons:
  *   - `models.search-index.ts`'s delta scan selects on `status = 'Published' AND "updatedAt" >=
@@ -159,10 +165,11 @@ export function contractAcceptsSellMerge(
 
 const schema = z.object({
   dryRun: booleanString().default(true),
-  // `.int()` because a fractional batchSize reaches Postgres as a fractional LIMIT, which the Prisma
-  // engine rounds (measured: `LIMIT 2.5` returns 3 rows) while node-postgres rejects it outright.
+  // `.int()` on both because a fractional value reaches Postgres as a fractional LIMIT or comparand,
+  // which the Prisma engine rounds (measured: `LIMIT 2.5` returns 3 rows) while node-postgres rejects
+  // outright. Rounding DOWN would make `exhausted` true with the population untouched.
   batchSize: z.coerce.number().int().min(1).max(5000),
-  afterId: z.coerce.number().min(0).default(0),
+  afterId: z.coerce.number().int().min(0).default(0),
 });
 
 export default WebhookEndpoint(async (req, res) => {

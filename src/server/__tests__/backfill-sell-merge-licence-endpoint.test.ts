@@ -163,6 +163,20 @@ describe('backfill-sell-merge-licence', () => {
     expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
   });
 
+  it('refuses a fractional batchSize or afterId rather than rounding it', async () => {
+    // Not tidiness: a fractional batchSize reaches Postgres as a fractional LIMIT. Rounding DOWN
+    // (2.4 -> 2) would satisfy `modelIds.length < params.batchSize` and report `exhausted: true` with
+    // the population untouched — a run that reads as finished. Both `.int()`s are what make that
+    // unreachable, so removing either has to fail here.
+    const fractionalBatch = await call({ batchSize: '2.5' }, { method: 'GET' });
+    expect(fractionalBatch.statusCode).toBe(400);
+
+    const fractionalCursor = await call({ afterId: '10.5' }, { method: 'GET' });
+    expect(fractionalCursor.statusCode).toBe(400);
+
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+
   it('refuses a live run that is not a POST, before reading anything', async () => {
     const { statusCode } = await call({ dryRun: 'false' }, { method: 'GET' });
 
@@ -225,8 +239,9 @@ describe('backfill-sell-merge-licence', () => {
     const readPredicates = predicatesOf(dbMock.dbRead.$queryRaw.mock.calls);
     const writePredicates = predicatesOf(dbMock.dbWrite.$queryRaw.mock.calls);
 
-    // Exactly one fragment each, asserted before the identity comparison: two `undefined`s are `toBe`
-    // each other, so a lookup that found nothing would otherwise read as agreement.
+    // The read's length is the load-bearing one: inline the fragment as text in BOTH statements and
+    // the identity compare becomes `undefined` to `undefined`, which passes. The write's length only
+    // buys legibility — a write-side inline already reddens the identity compare below.
     expect(readPredicates).toHaveLength(1);
     expect(writePredicates).toHaveLength(1);
     const [readPredicate] = readPredicates;
@@ -255,7 +270,15 @@ describe('backfill-sell-merge-licence', () => {
     expect(flat(dbMock.dbRead.$queryRaw.mock.calls)).toContain(
       'WHERE $ AND m.id > $ ORDER BY m.id LIMIT $'
     );
-    expect(flat(dbMock.dbRead.$queryRaw.mock.calls)).not.toContain('OFFSET');
+    // Anchored at the tail as well: without this, anything appended after the LIMIT — `OFFSET`,
+    // `FOR UPDATE SKIP LOCKED` — is invisible, and only the clause names anyone thought to spell out
+    // would be caught.
+    expect(flat(dbMock.dbRead.$queryRaw.mock.calls).endsWith('LIMIT $')).toBe(true);
+
+    // ONE read per request. The write side was given this in the previous round and the read was left
+    // without it, so an added `count(*)` over the ~422k in-scope rows per batch would be invisible:
+    // `modelIds` still comes from call 0 and the fixture answers both calls.
+    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(1);
 
     // ORDER, not membership: `toContain(4000)` and `toContain(1200)` both hold with the two
     // interpolations swapped, which would page from `id > 1200` in batches of 4,000 — skipping rows
