@@ -441,6 +441,7 @@ function CheckDepositsNotice({ onSuccess }: { onSuccess: () => void }) {
   });
 
   const found = reconcileMutation.isSuccess && reconcileMutation.data.processed > 0;
+  const showPrompt = !reconcileMutation.isSuccess && !reconcileMutation.isError;
   const buttonLabel = reconcileMutation.isPending
     ? 'Checking...'
     : reconcileMutation.isSuccess
@@ -462,10 +463,16 @@ function CheckDepositsNotice({ onSuccess }: { onSuccess: () => void }) {
       <Group gap="sm" justify="space-between" align="center" wrap="wrap">
         <Group gap="xs" wrap="nowrap" align="flex-start" className="min-w-[180px] flex-1">
           <IconClock size={16} className="mt-0.5 shrink-0 text-yellow-500" />
-          <Text size="xs" c="dimmed" lh={1.4}>
-            Deposits can take up to 1 hour to appear depending on network congestion. Missing a
-            deposit?
-          </Text>
+          <Stack gap={2}>
+            {showPrompt && (
+              <Text size="xs" fw={600}>
+                Missing a deposit?
+              </Text>
+            )}
+            <Text size="xs" c="dimmed" lh={1.4}>
+              Deposits can take up to 1 hour to appear depending on network congestion.
+            </Text>
+          </Stack>
         </Group>
         <Button
           size="compact-sm"
