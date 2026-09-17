@@ -110,6 +110,23 @@ describe('reportBoundaryError — the POST sink', () => {
     }
   );
 
+  // 🔴 The fixture that makes the guard above mean what its caption says. Every other case pairs
+  // `root` with no componentStack, or a non-`root` boundary WITH one — two shapes that a keying on
+  // the BOUNDARY NAME satisfies exactly as well as a keying on the componentStack, so neither
+  // separates them. This one is the case where they disagree: a non-`root` boundary carrying no
+  // componentStack, which is what any future boundary looks like before someone remembers to wire
+  // one up. Measured: a version keyed on `boundary === 'root'` left the other 63 cases green and
+  // fails only here.
+  it.each(throwables)(
+    'declines resolution for a NON-root boundary with no componentStack, for %s',
+    (_n, thrown) => {
+      withFetch((f) => {
+        reportBoundaryError(thrown, { boundary: 'user' });
+        expect(bodyOf(f).resolveStack).toBe(false);
+      });
+    }
+  );
+
   // The mirror half: with a componentStack there are no file frames, so the resolver is a no-op and
   // we must NOT opt out — that keeps the body byte-identical to what every other caller sends.
   it('does NOT decline resolution when a componentStack is supplied', () => {

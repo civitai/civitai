@@ -16,20 +16,28 @@ export const applicationErrorSchema = z.object({
   stack: z.string(),
   name: z.string().optional(),
   /**
-   * 🔴 Opt OUT of server-side sourcemap resolution. `applySourceMaps` is `await`ed on this
-   * request path, and for each distinct `.next/static/**` frame file it does a `readFileSync` of
-   * the chunk AND its `.map` (single maps here exceed 4 MB) and builds a `SourceMapConsumer` —
-   * with the consumer cache scoped INSIDE the function, so nothing is reused across requests.
+   * Opt OUT of server-side sourcemap resolution for this report.
    *
-   * Callers sending a React `componentStack` are unaffected: it carries no file frames, so the
-   * resolver's loop never runs. The hazard is a caller sending a REAL minified browser stack that
-   * can fire once per failed render — a client-side render loop would then turn each report into
-   * several megabytes of synchronous parsing on the pool that serves pages, making the
-   * instrumentation an amplifier of the outage it exists to observe.
+   * `applySourceMaps` is `await`ed on this request path. For each distinct frame file that names a
+   * build chunk it reads the chunk and its map and builds a `SourceMapConsumer`, which is real
+   * work: single maps here exceed 4 MB. That work is bounded in `applySourceMaps` itself — a fixed
+   * cap on how many distinct frame files one call resolves, and a process-wide cache of parsed
+   * maps so repeat reports naming the same chunk do not re-parse it.
    *
-   * Client-controlled, and safe in that direction: it can only ever REDUCE server work, never
-   * increase it. The stack is still stored, just unresolved — and remains resolvable offline
-   * against the `civitai-web-maps:<tag>` artifact via `scripts/resolve-cpuprofile.mjs`.
+   * A caller sets this when it already knows resolution will not pay for itself, so the server can
+   * skip work it would otherwise do. The two cases: a stack that carries no build-chunk frames at
+   * all (a React `componentStack`), where resolution is a no-op; and a reporting path that can
+   * fire repeatedly for one underlying fault, such as a render that fails and retries, where the
+   * useful signal is the message and the unresolved frames rather than a resolved stack per
+   * repeat. `src/components/ErrorBoundary/reportBoundaryError.ts` is the second case.
+   *
+   * The other callers of `reportApplicationError` do not set it and do not need to: they report
+   * once per user action. Note that they also pass no `stack`, so what they send is the error's own
+   * stack and it IS resolved — the resolver is not a no-op for them, which is why the bound above
+   * is in `applySourceMaps` rather than in each caller's choice of this flag.
+   *
+   * The stack is stored either way. Unresolved, it stays resolvable later against the browser maps
+   * that ship in the runtime image for that build — see `~/utils/application-error`.
    */
   resolveStack: z.boolean().optional(),
 });

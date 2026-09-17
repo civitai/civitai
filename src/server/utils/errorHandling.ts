@@ -579,6 +579,126 @@ export function withRetries<T>(
 }
 
 /**
+ * How many distinct frame files one `applySourceMaps` call may resolve.
+ *
+ * Sized from what a real stack needs. V8 captures at most `Error.stackTraceLimit` frames, and
+ * neither this app nor Next raises it from the default of 10 (nothing in `src/` or
+ * `next.config.mjs` assigns it), so an Error from either caller — `/api/application-error` and the
+ * job runner — carries at most 10 frames and therefore at most 10 distinct files. At 10 the cap is
+ * at that ceiling: it never truncates a stack a browser or Node actually produced.
+ *
+ * It binds on input that is not one. `stack` arrives at the endpoint as free-form text from an
+ * unauthenticated caller, and each additional distinct file costs a read of the chunk, a read of
+ * its map (single maps here exceed 4 MB) and a `SourceMapConsumer` build — all `await`ed on the
+ * pool that serves pages. Without a bound, the number of those one request can ask for is set by
+ * the request.
+ *
+ * Frames past the cap are left exactly as they arrived: unresolved, never dropped, never an error.
+ */
+const MAX_RESOLVED_FRAME_FILES = 10;
+
+/**
+ * How many parsed source maps stay resident between calls.
+ *
+ * This cache used to be declared inside `applySourceMaps`, so every call paid the full read and
+ * parse even for a chunk the previous call had just parsed — and reports cluster hard on a few
+ * chunks (framework, main, and whichever page is broken), which is exactly the shape a cache
+ * serves. Bounded because each entry is a multi-megabyte parsed map held for the life of the
+ * process; 8 covers that hot set with room to spare while keeping the ceiling fixed.
+ */
+const MAX_CACHED_SOURCE_MAPS = 8;
+
+/**
+ * A cached consumer plus the bookkeeping that makes eviction safe.
+ *
+ * `destroy()` frees the consumer's mappings out of the wasm heap, so it must not run while a call
+ * still holds the consumer — `originalPositionFor` on a freed consumer reads whatever now occupies
+ * that memory, which would answer with a wrong source location rather than an error. `refs` counts
+ * the in-flight calls holding it and `evicted` records that it has left the cache, so the free
+ * happens at whichever of the two comes last.
+ */
+type CachedSourceMap = { consumer: SourceMapConsumer; refs: number; evicted: boolean };
+
+/** Keyed by resolved absolute chunk path, so two frame spellings of one chunk share an entry. */
+const sourceMapCache = new Map<string, CachedSourceMap>();
+
+/** Takes an entry out of service; frees it now if nothing is using it, else on the last release. */
+function retireConsumer(entry: CachedSourceMap) {
+  entry.evicted = true;
+  if (entry.refs <= 0) entry.consumer.destroy();
+}
+
+/** Borrows a cached consumer, marking it most-recently-used. */
+function retainConsumer(key: string): CachedSourceMap | undefined {
+  const entry = sourceMapCache.get(key);
+  if (!entry) return undefined;
+  // A Map iterates in insertion order, so re-inserting moves this entry to the young end and the
+  // eviction below always takes the least recently used.
+  sourceMapCache.delete(key);
+  sourceMapCache.set(key, entry);
+  entry.refs += 1;
+  return entry;
+}
+
+/** Caches a freshly built consumer, already borrowed by the caller, and evicts down to the bound. */
+function storeConsumer(key: string, consumer: SourceMapConsumer): CachedSourceMap {
+  // Two calls can miss on the same key concurrently and both build one. Retire the loser rather
+  // than dropping the reference, or its wasm mappings are never freed.
+  const existing = sourceMapCache.get(key);
+  if (existing) {
+    sourceMapCache.delete(key);
+    retireConsumer(existing);
+  }
+
+  const entry: CachedSourceMap = { consumer, refs: 1, evicted: false };
+  sourceMapCache.set(key, entry);
+
+  while (sourceMapCache.size > MAX_CACHED_SOURCE_MAPS) {
+    const oldestKey = sourceMapCache.keys().next().value as string;
+    const oldest = sourceMapCache.get(oldestKey);
+    sourceMapCache.delete(oldestKey);
+    if (oldest) retireConsumer(oldest);
+  }
+
+  return entry;
+}
+
+/** Returns a borrowed consumer; frees it if it was evicted while this call held it. */
+function releaseConsumer(entry: CachedSourceMap) {
+  entry.refs -= 1;
+  if (entry.refs <= 0 && entry.evicted) entry.consumer.destroy();
+}
+
+/** The build directory, and the only directory this resolver may read from. */
+function nextBuildDir(): string {
+  return path.resolve(process.cwd(), '.next');
+}
+
+/** True when `target` is a path strictly underneath `dir`. */
+function isInsideDir(dir: string, target: string): boolean {
+  const relative = path.relative(dir, target);
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+/**
+ * Turns a `.next`-relative path taken from a stack frame into an absolute path under the build
+ * directory, or `null` if it does not name one.
+ *
+ * The relative part comes out of the frame's file, which on `/api/application-error` is a string
+ * the caller supplies, so it is not trusted to stay inside `.next`. Resolving it first and then
+ * requiring the result to be under the build directory is what keeps this reading build artifacts:
+ * resolution collapses the path to the file it actually names, and the check is made against that.
+ *
+ * `null` means the caller skips the frame — an unresolvable frame is normal here (a chunk from an
+ * older build, a map that was not emitted), so it is not a reason to fail the report.
+ */
+function resolveBuildArtifact(relativePath: string): string | null {
+  const buildDir = nextBuildDir();
+  const resolved = path.resolve(buildDir, relativePath);
+  return isInsideDir(buildDir, resolved) ? resolved : null;
+}
+
+/**
  * Extracts the relative path from a stack trace file path.
  * Handles both /app/.next/... and .../_next/... formats.
  */
@@ -595,8 +715,8 @@ function extractNextPath(filePath: string): string | null {
 }
 
 /**
- * Loads the source-map content for a built chunk, given its `.next`-relative path
- * (e.g. `static/chunks/abc.js`).
+ * Loads the source-map content for a built chunk, given its absolute path — which the caller must
+ * already have put through `resolveBuildArtifact`.
  *
  * Webpack names a chunk's map after the chunk itself (`abc.js` -> `abc.js.map`),
  * but Turbopack (the default bundler in Next 16) gives the map a *different* hash
@@ -605,9 +725,7 @@ function extractNextPath(filePath: string): string | null {
  * its `sourceMappingURL` when present, and fall back to the webpack convention so
  * this keeps working on either bundler.
  */
-function loadSourceMapContent(relativePath: string): string | null {
-  const chunkPath = path.join(process.cwd(), '.next', relativePath);
-
+function loadSourceMapContent(chunkPath: string): string | null {
   // Preferred: follow the chunk's own sourceMappingURL (covers Turbopack + webpack).
   try {
     const chunkContent = fs.readFileSync(chunkPath, 'utf-8');
@@ -618,8 +736,11 @@ function loadSourceMapContent(relativePath: string): string | null {
         const base64 = url.match(/;base64,(.*)$/);
         if (base64) return Buffer.from(base64[1], 'base64').toString('utf-8');
       } else {
+        // The URL is read out of a file that a frame selected, so it gets the same containment
+        // rule the frame did — it is no more trusted than the path that led here.
         const mapPath = path.resolve(path.dirname(chunkPath), url);
-        if (fs.existsSync(mapPath)) return fs.readFileSync(mapPath, 'utf-8');
+        if (isInsideDir(nextBuildDir(), mapPath) && fs.existsSync(mapPath))
+          return fs.readFileSync(mapPath, 'utf-8');
       }
     }
   } catch {
@@ -658,22 +779,38 @@ function normalizeSourcePath(source: string): string {
  * @returns The stack trace with original source locations
  */
 export async function applySourceMaps(stack: string): Promise<string> {
+  // Every consumer this call borrowed, released in `finally` so an early return or a throw cannot
+  // leave an entry pinned in the cache forever.
+  const borrowed: CachedSourceMap[] = [];
   try {
     const parsedStack = parseStackTrace(stack);
     const lines = stack.split('\n');
 
     // Build a map of relative paths to their source map consumers
     const sourceMapConsumers = new Map<string, SourceMapConsumer>();
-    const filesToProcess = [...new Set(parsedStack.map((x) => x.file).filter(Boolean))] as string[];
+    const filesToProcess = (
+      [...new Set(parsedStack.map((x) => x.file).filter(Boolean))] as string[]
+    ).slice(0, MAX_RESOLVED_FRAME_FILES);
 
     for (const file of filesToProcess) {
       const relativePath = extractNextPath(file);
       if (!relativePath) continue;
 
+      const chunkPath = resolveBuildArtifact(relativePath);
+      if (!chunkPath) continue;
+
       try {
-        const sourceMapContent = loadSourceMapContent(relativePath);
+        const cached = retainConsumer(chunkPath);
+        if (cached) {
+          borrowed.push(cached);
+          sourceMapConsumers.set(file, cached.consumer);
+          continue;
+        }
+
+        const sourceMapContent = loadSourceMapContent(chunkPath);
         if (sourceMapContent) {
           const smc = await new SourceMapConsumer(sourceMapContent);
+          borrowed.push(storeConsumer(chunkPath, smc));
           sourceMapConsumers.set(file, smc);
         }
       } catch {
@@ -701,14 +838,14 @@ export async function applySourceMaps(stack: string): Promise<string> {
       }
     }
 
-    // Clean up source map consumers
-    for (const smc of sourceMapConsumers.values()) {
-      smc.destroy();
-    }
+    // Consumers are NOT destroyed here any more — they belong to the cache now, which frees them
+    // on eviction. Destroying one that is still cached would hand the next call a freed consumer.
 
     return lines.join('\n');
   } catch {
     // If source map parsing fails, return the original stack
     return stack;
+  } finally {
+    for (const entry of borrowed) releaseConsumer(entry);
   }
 }
