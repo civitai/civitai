@@ -61,9 +61,15 @@ export function reportBoundaryError(
     // `reportApplicationError` normalizes a non-Error throw, prefixes `message`, coerces the
     // stack to a string and swallows its own rejection — so none of that is repeated here.
     // Passing `componentStack` as `stack` is what it documents the field for.
+    // 🔴 The opt-out is keyed on WHETHER WE HAVE A componentStack, not on the boundary name — so a
+    // future caller that sends no componentStack is protected without anyone remembering to add it.
+    // With one, that IS the stack we send: no file frames, so the server resolver is a no-op.
+    // Without one, `reportApplicationError` falls back to the error's own REAL minified stack, and
+    // resolving that server-side is an uncached multi-megabyte read+parse on the request path — so
+    // this path, which can fire once per failed render, explicitly declines it.
     report(error, {
       message: `error boundary: ${boundary}`,
-      ...(componentStack ? { stack: componentStack } : {}),
+      ...(componentStack ? { stack: componentStack } : { resolveStack: false }),
     });
   } catch {
     // `fetch` missing entirely (SSR, very old browser).

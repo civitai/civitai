@@ -5,6 +5,18 @@ type ApplicationErrorContext = {
   message?: string;
   /** Overrides `error.stack` — pass React `componentStack` from an error boundary. */
   stack?: string;
+  /**
+   * Set `false` when the stack being sent is a REAL minified browser stack, to skip server-side
+   * sourcemap resolution. See the endpoint for why this matters; the short version is that
+   * resolving one is an uncached multi-megabyte read+parse on the request path, and a caller that
+   * can fire once per failed render turns that into an amplifier. The stack still reaches Axiom —
+   * unresolved, and resolvable offline against the `civitai-web-maps:<tag>` artifact with
+   * `scripts/resolve-cpuprofile.mjs`.
+   *
+   * Defaults to resolving, so existing callers are unchanged: they pass a React `componentStack`,
+   * which carries no file frames and is therefore a no-op for the resolver anyway.
+   */
+  resolveStack?: boolean;
 };
 
 /**
@@ -21,6 +33,12 @@ export function reportApplicationError(error: unknown, ctx: ApplicationErrorCont
 
   return fetch('/api/application-error', {
     method: 'POST',
-    body: JSON.stringify({ name: ctx.name, message, stack: ctx.stack ?? normalized.stack ?? '' }),
+    body: JSON.stringify({
+      name: ctx.name,
+      message,
+      stack: ctx.stack ?? normalized.stack ?? '',
+      // Only sent when opting OUT, so every existing caller's body is byte-identical.
+      ...(ctx.resolveStack === false ? { resolveStack: false } : {}),
+    }),
   }).catch(() => undefined);
 }

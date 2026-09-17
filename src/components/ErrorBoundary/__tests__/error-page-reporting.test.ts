@@ -50,6 +50,10 @@ describe('_error.tsx reporting', () => {
     const body = JSON.parse((f.mock.calls[0][1] as RequestInit).body as string);
     expect(body.message).toContain('error boundary: root');
     expect(body.message).toContain('client boom');
+    // 🔴 This page is the caller that can fire once per failed render, so it must decline
+    // server-side sourcemap resolution — that is an uncached multi-megabyte read+parse on the
+    // request path, and resolving it here would make this an amplifier of the outage it observes.
+    expect(body.resolveStack).toBe(false);
   });
 
   // 🔴 A relative URL has nothing to resolve against on the server, so reporting there would be a

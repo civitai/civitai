@@ -95,6 +95,30 @@ describe('reportBoundaryError — the POST sink', () => {
     });
   });
 
+  // 🔴 AMPLIFICATION GUARD. With no componentStack, the body carries the error's REAL minified
+  // stack, and resolving one server-side is an uncached multi-megabyte read+parse ON the request
+  // path. A caller that fires once per failed render would make the instrumentation amplify the
+  // outage it exists to observe, on the pool that serves pages. Keyed on the componentStack rather
+  // than the boundary name so a new caller inherits it.
+  it.each(throwables)(
+    'declines server-side stack resolution with no componentStack, for %s',
+    (_n, thrown) => {
+      withFetch((f) => {
+        reportBoundaryError(thrown, { boundary: 'root' });
+        expect(bodyOf(f).resolveStack).toBe(false);
+      });
+    }
+  );
+
+  // The mirror half: with a componentStack there are no file frames, so the resolver is a no-op and
+  // we must NOT opt out — that keeps the body byte-identical to what every other caller sends.
+  it('does NOT decline resolution when a componentStack is supplied', () => {
+    withFetch((f) => {
+      reportBoundaryError(new Error('boom'), { boundary: 'user', componentStack: '\n at Bar' });
+      expect('resolveStack' in bodyOf(f)).toBe(false);
+    });
+  });
+
   // 🔴 The handler does `JSON.parse(req.body)`, so it needs the RAW string. Declaring
   // application/json makes Next's body parser hand it an object and that parse throws.
   // Read through `new Headers(...)`, NOT `Object.keys`. `Object.keys` only sees a plain object, so
