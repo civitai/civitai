@@ -237,18 +237,73 @@ export type ResolvedGalleryTarget = {
  *
  * ### The self-dealing guard
  *
- * `imagePostedToModelReward` pays **50 blue Buzz to the MODEL OWNER** per distinct
- * `(posterId, modelVersionId)` pair, all-time, capped at 5,000 per version and
- * 50,000/month per owner, and its only self-post guard is
- * `modelOwnerId === posterId`. An app author who also owns models can therefore
- * build an app that routes every viewer's post at their own model versions and
- * collect 50 Buzz per viewer per version — in policy, at scale, with the reward
- * system unable to see that the post came from an app at all (no suppression
- * signal exists: `getKey` receives only `{modelId, modelVersionId, posterId}`).
+ * `imagePostedToModelReward` pays blue Buzz to the MODEL OWNER — a party who is
+ * neither the post's author nor anyone the author interacted with — and its only
+ * self-post guard is `modelOwnerId === posterId`. An app author who also owns
+ * models can therefore build an app that routes every viewer's post at their own
+ * model versions and collect one award per viewer per version — in policy, at
+ * scale, with the reward system unable to see that the post came from an app at
+ * all (no suppression signal exists: `getKey` receives only the post's own facts,
+ * `{modelId, modelVersionId, posterId, modelOwnerId?}`, and nothing that says
+ * which client composed it).
  *
  * 🔴 REFUSING `Model.userId === <the app publisher>` IS THE ONLY CONTROL THAT
  * REMOVES THE PAYOFF. Rate limits, trust gates and audit rows all raise the cost;
  * this one takes the money off the table. It must not be relaxed into a warning.
+ *
+ * #### What one award is worth, and what bounds a repeat
+ *
+ * 🔴 ONE AWARD IS NOT 50 BUZZ, AND THE ERROR RUNS IN THE UNSAFE DIRECTION — an
+ * earlier version of this docblock said "50 blue Buzz" and sized the exposure from
+ * it. 50 is the reward's compiled `awardAmount`, which is a PRE-MULTIPLIER figure:
+ * `sendAward` pays
+ * `Math.ceil(event.awardAmount * clampRewardMultiplier(event.multiplier ?? 1))`
+ * (`base.reward.ts`) against the MODEL OWNER'S rewards multiplier. So the app picks
+ * the recipient and the recipient's own membership tier scales what the app's
+ * viewers earn them.
+ *
+ * ⚠️ AND THE MULTIPLIER THAT PAYS IS THE ONE STORED ON THE ROW, NOT THE ONE
+ * COMPUTED IN MEMORY, BECAUSE THIS REWARD SETTLES ON THE BATCH PATH. It declares no
+ * `onDemand` key, so `apply` writes a `pending` row through `toClickhouseBuzzEvent`,
+ * which clamps `multiplier` with `clampBuzzEventMultiplier` to
+ * `BUZZ_EVENTS_MAX_MULTIPLIER` of 9.99
+ * (`packages/civitai-clickhouse/src/buzz-events.ts`) because the `buzzEvents.multiplier`
+ * column is `Decimal(3, 2)`. `src/server/jobs/process-rewards.ts` reads that stored
+ * value back out with `argMax(multiplier, version)`, `process` never recomputes it,
+ * and `sendAward` pays from it. The effective per-award ceiling is therefore
+ * `awardAmount * 9.99` — at the compiled 50, `Math.ceil(50 * 9.99)` = **500 blue
+ * Buzz**, about 10x the bare `awardAmount`. 50 is what a 1x multiplier pays, not a
+ * maximum. ⚠️ That ceiling is a property of the DEPLOYED COLUMN rather than a
+ * product decision, and it has a written reopen trigger:
+ * `src/server/clickhouse/migrations/2026-08-24-buzz-events-multiplier-width.sql` is
+ * deliberately UNAPPLIED, names `imagePostedToModel` as one of four rewards whose
+ * stored multiplier is a payout value rather than an audit one, and says to reopen
+ * it if a global bonus event above 2.5x is ever scheduled. Widen that column and
+ * raise the constant and every figure here has to be re-derived. `awardAmount` is
+ * itself operator-overridable up to `MAX_AWARD_AMOUNT`
+ * (`src/shared/constants/reward-config.constants.ts`), which moves the ceiling in
+ * proportion.
+ *
+ * 🔴 WHAT BOUNDS A REPEAT IS THE BUZZ LEDGER, NOT THE `caps` — AND THE LEDGER KEY
+ * HAS THREE COMPONENTS, NOT TWO. `sendAward` derives `externalTransactionId` as
+ * `${type}:${forId}-${toUserId}-${byUserId}` (`base.reward.ts`) — version, MODEL
+ * OWNER, poster — and a duplicate of that id comes back as a `conflict`, i.e. money
+ * that already moved, rather than a second grant (`buzz.service.ts`,
+ * `createBuzzTransactionMany`). So "one award per `(posterId, modelVersionId)`,
+ * all-time" is too short: `toUserId` is the model's CURRENT owner, so a moderator
+ * `models.transferOwnership` (`src/server/routers/moderator/index.ts`) between two
+ * such posts yields a DIFFERENT id and therefore a second award, to the new owner.
+ * ⚠️ That last step is asserted by this repo's own comments about an external Buzz
+ * service; it has not been probed here.
+ *
+ * ⚠️ THE `caps` ARE NOT THAT MECHANISM. Neither entry is keyed on `byUserId`, so
+ * `['toUserId','forId']` (5,000 all-time) and `['toUserId']` (50,000/month) bound
+ * what ONE OWNER accrues for one version, and per month, across ALL posters — not
+ * one poster's repeats. ⚠️ AND THEY ARE IN THE SAME PRE-MULTIPLIER UNITS AS THE 50,
+ * for the same reason: on the batch path the cap is applied to `event.awardAmount`
+ * (`base.reward.ts`, the `caps` loop in `process`) and the stored multiplier is
+ * applied afterwards by `sendAward`. The Buzz a 5,000 cap permits is therefore up to
+ * about 49,950. Quote a figure here only with the multiplier it assumed.
  *
  * ⚠️ WHAT IT DOES NOT CLOSE, stated plainly so nobody reads it as complete: a
  * COLLUDING PAIR (app author + a second account owning the models) defeats it
@@ -1028,8 +1083,12 @@ export async function writeBlockPost(input: {
  * What fires HERE, and the native line it mirrors:
  *   - the seed `PostMetric(AllTime)` row — the `publish_post_metrics` trigger.
  *   - `firstDailyPostReward`      — 25 blue Buzz, 25/day cap, double-deduped.
- *   - `imagePostedToModelReward`  — ONLY when a gallery target was attached; 50
- *                                   blue Buzz to the MODEL OWNER. Its own
+ *   - `imagePostedToModelReward`  — ONLY when a gallery target was attached; blue
+ *                                   Buzz to the MODEL OWNER, `awardAmount` times
+ *                                   that owner's stored rewards multiplier, so a
+ *                                   compiled 50 is what a 1x multiplier pays and
+ *                                   not a maximum — the figures and what bounds a
+ *                                   repeat are on `resolveGalleryTarget`. Its own
  *                                   `modelOwnerId === posterId` guard handles the
  *                                   self-post case; the SELF-DEALING guard in
  *                                   `resolveGalleryTarget` is what handles the
