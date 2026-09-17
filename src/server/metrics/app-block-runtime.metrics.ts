@@ -776,7 +776,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const stepPriceCheckTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_step_price_check_total',
-    "App Block `kind:'step'` price checks, by step id and outcome. Only the post-billing submit outcomes are prepaidFixed-gated; the fail-closed absent and the estimate-phase outcomes fire for any kind:'step' request. Submit phase: exact = billed within both the declared price and the reservation; over = billed above the DECLARED price but within the quote-backed reservation (the declared constant is wrong; no money or cap impact — expected to be ~100% for a usage-priced step, do NOT alert on it); over_reserved = billed above the RESERVATION, so every cap counter was short until corrected (ALERT ON THIS); absent = READ THE step LABEL FIRST, THE TWO MEANINGS ARE OPPOSITE: on a REGISTRY step id, either the submit was refused because the orchestrator returned no price quote (no spend, no generation - triage as availability) or a billed submit carried no numeric cost; on step=\"__passthrough__\" it means only that the submit was not refused FOR LACK OF A QUOTE - that arm falls back to the app's own declared maxBuzz and CARRIES ON, so a generation MAY have run with its Buzz ceiling resting on a number the app supplied. It fires before every cap and before the real submit, so the same `$type` being rejected outright by the orchestrator also lands here. Read it against quoted AND against the submit-failure signal; a rising ratio with submits succeeding is loss of price control, with submits failing it is an outage. quoted = the pass-through submit got a live orchestrator quote; it is absent's denominator and exists so absent cannot be read alone, since a bare count falls when submit volume falls. Estimate phase: estimate_quoted = the block was shown a live orchestrator quote; estimate_absent = the quote failed and it was shown the declared price instead (read as a ratio against estimate_quoted, never alone)",
+    "App Block `kind:'step'` price checks, by step id and outcome. Only the post-billing submit outcomes are prepaidFixed-gated; the fail-closed absent and the estimate-phase outcomes fire for any kind:'step' request. Submit phase: exact = billed within both the declared price and the reservation; over = billed above the DECLARED price but within the quote-backed reservation (the declared constant is wrong; no money or cap impact — expected to be ~100% for a usage-priced step, do NOT alert on it); over_reserved = billed above the RESERVATION, so every cap counter was short until corrected (ALERT ON THIS); absent = READ THE step LABEL FIRST, THE TWO MEANINGS ARE OPPOSITE: on a REGISTRY step id, either the submit was refused because the orchestrator returned no price quote (no spend, no generation - triage as availability) or a billed submit carried no numeric cost; on step=\"__passthrough__\" it means only that the submit was not refused FOR LACK OF A QUOTE - that arm falls back to the app's own declared maxBuzz and CARRIES ON, so a generation MAY have run with its Buzz ceiling resting on a number the app supplied. It fires before every cap and before the real submit, so the same `$type` being rejected outright by the orchestrator also lands here. Read it against quoted; a rising ratio with generations completing is loss of price control, with them failing it is an outage, and this counter does not separate those - the workflow status does. quoted = the pass-through submit got a live orchestrator quote; it is absent's denominator and exists so absent cannot be read alone, since a bare count falls when submit volume falls. Estimate phase: estimate_quoted = the block was shown a live orchestrator quote; estimate_absent = the quote failed and it was shown the declared price instead (read as a ratio against estimate_quoted, never alone)",
     ['step', 'outcome']
   );
 
@@ -992,12 +992,15 @@ export type StepPriceCheckOutcome =
  *     app's declared `maxBuzz` and proceeds. So there `absent` means only that
  *     the submit was not refused FOR LACK OF A QUOTE — a generation MAY have run
  *     with its ceiling resting on the app's own number. ⚠️ It is NOT a statement
- *     that one did, and an earlier revision of this line said it was: the emit
- *     sits inside the quote, ahead of the static gate, all three reservations
- *     and the real submit, so an orchestrator that rejects the `$type` outright
- *     lands here too with nothing having run. The triage instruction in the
- *     bullet above is wrong for this arm; the `step` label tells the two SITES
- *     apart and the submit-failure signal tells the two CAUSES apart. `quoted` is its
+ *     that one did: the emit sits inside the quote, ahead of the static gate,
+ *     all three reservations and the real submit, so an orchestrator that
+ *     rejects the `$type` outright lands here too with nothing having run. The
+ *     triage instruction in the bullet above is wrong for this arm, and the
+ *     `step` label is what tells the two sites apart. Nothing in this module
+ *     separates the two CAUSES — a rising `absent` with generations completing
+ *     is loss of price control, with them failing it is an outage, and telling
+ *     those apart needs the workflow-status signal, which lives outside here.
+ *     `quoted` is its
  *     success half and exists so `absent` has a denominator: without a pair,
  *     `absent` falls when submit volume falls, which reads as healthy. Not
  *     gated on billing mode (that arm has none).

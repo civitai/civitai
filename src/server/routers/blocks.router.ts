@@ -9543,8 +9543,9 @@ async function quotePassThroughBuzz(opts: {
    * 🔴 BOTH PHASES EMIT A PAIR. A success-side emit is not decoration: without
    * one, `absent` has no denominator and falls when submit volume falls, which
    * reads as healthy. The counter's own docstring records that this arm's
-   * `absent` means the OPPOSITE of the registry arm's — it ran, it did not
-   * refuse — so the pair is what makes the line readable.
+   * `absent` is NOT a refusal — the quote failed and the submit carried on at the
+   * declared ceiling, which may or may not have reached a generation — so the
+   * pair is what makes the line readable.
    */
   phase: 'estimate' | 'submit';
 }): Promise<number | null> {
