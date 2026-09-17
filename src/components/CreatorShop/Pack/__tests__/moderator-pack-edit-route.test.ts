@@ -257,6 +257,17 @@ describe('the moderator cosmetic-store pack edit route', () => {
       payloadKeys,
       'The update payload sends `acceptsBlueBuzz` unconditionally again.'
     ).not.toContain('acceptsBlueBuzz,');
+    // The mirror positive. Without it, DELETING the spread passes: the field is
+    // then never sent, `nextAcceptsBlue` always falls back to the stored value,
+    // and a moderator can never change a pack's blue setting again — the switch
+    // moves, the save succeeds, nothing happens.
+    expect(
+      updateBlock,
+      'CreatorShopPackModal must still SEND `acceptsBlueBuzz` when it differs from the ' +
+        'saved pack, or the setting becomes unchangeable.'
+    ).toContain(
+      '...(acceptsBlueBuzz !== !!existing?.meta.acceptsBlueBuzz ? { acceptsBlueBuzz } : {})'
+    );
   });
 
   it('re-validates membership only when membership was supplied', () => {
@@ -318,6 +329,30 @@ describe('the moderator cosmetic-store pack edit route', () => {
       'const membershipSupplied = memberCosmeticIds !== undefined;'
     );
 
+    // 🔴 Both halves of the blue-buzz decision, adjacent so neither can drift from
+    // the other. The `?? !!meta.acceptsBlueBuzz` fallback became load-bearing the
+    // moment the client stopped sending the field on every edit: `?? false` then
+    // flips a blue-accepting pack to blue-declining on a TITLE fix, silently.
+    // Measured green before this assertion. And the gate below it is the server
+    // half of the same invariant the payload spread implements on the client —
+    // unpinned, reverting it makes that spread achieve nothing.
+    const blueDecision = blockAfter(
+      serviceSource,
+      'const nextAcceptsBlue',
+      'blueBuzzBlockers(members)'
+    );
+    expect(blueDecision, 'Could not locate the blue-buzz decision in the service.').not.toEqual('');
+    expect(
+      blueDecision,
+      'The blue-buzz fallback must preserve the stored value. `?? false` flips a ' +
+        'blue-accepting pack to blue-declining on a title fix, silently.'
+    ).toContain('acceptsBlueBuzz ?? !!meta.acceptsBlueBuzz');
+    expect(
+      blueDecision,
+      'The blue check must stay scoped to an edit that touched membership or the flag — ' +
+        'unconditionally it refuses a title fix, and the client-side spread achieves nothing.'
+    ).toContain('if (membershipSupplied || acceptsBlueBuzz !== undefined) {');
+
     // The floor gating itself, which is what delivers "a title-only edit is not
     // refused". Reverting it to unconditional reddened nothing before this.
     expect(
@@ -325,6 +360,12 @@ describe('the moderator cosmetic-store pack edit route', () => {
       'The price floor must be checked only when the price or the contents moved — ' +
         'unconditionally it refuses a title fix over a member that repriced since.'
     ).toContain('packPriceFloor(members)');
+    // The operator, for the same reason canSubmit pins its `&&`: `>` leaves every
+    // pinned spelling intact and refuses every price ABOVE the floor.
+    expect(
+      blockAfter(update, 'if (reSnapshot) {', 'throw throwBadRequestError'),
+      'The floor comparison must refuse a price BELOW the floor.'
+    ).toContain('if (nextPrice < floor)');
     // Named and guarded: the open marker differs from its sibling in
     // createCreatorShopPack by one `await`, so adding one here would empty this
     // slice and blame the PendingReview spread for it.
@@ -370,21 +411,24 @@ describe('the moderator cosmetic-store pack edit route', () => {
     // The query client runs at `staleTime: Infinity` (src/utils/trpc.ts), so a row
     // the moderator list fetched an hour ago never refreshes. Seeding the price
     // from it and saving wrote a stale amount back over the creator's own change.
-    const hydration = blockAfter(modalSource, 'setHydrated(true);', 'setSelected(');
+    const hydration = blockAfter(modalSource, 'setHydrated(true);', '}, [existing, hydrated');
     expect(
       hydration,
       'Could not locate the hydration effect between setHydrated(true) and setSelected(.'
     ).not.toEqual('');
-    // The four scalars seeded from the caller's row. `name` and
-    // `availableQuantity` are still sent unconditionally by the payload, so an
+    // Every seed the effect writes, not a subset. `name` and
+    // `availableQuantity` are sent unconditionally by the payload, so an
     // unhydrated one writes the caller's hour-old value over the creator's own
-    // edit. The members and the cover are hydrated further down the same effect,
-    // past this slice's close marker, and are pinned by their own cases.
+    // edit. `acceptsBlueBuzz` is worse than that: the payload compares against
+    // this same server value, so an unhydrated seed is both the thing sent and
+    // the thing compared, and the difference vanishes.
     for (const [field, call] of [
       ['title', 'setName(existing.title)'],
       ['description', "setDescription(existing.description ?? '')"],
       ['price', 'setPrice(existing.unitAmount)'],
       ['quantity', 'setQuantity(existing.availableQuantity ?? undefined)'],
+      ['blue-buzz opt-in', 'setAcceptsBlueBuzz(!!existing.meta.acceptsBlueBuzz)'],
+      ['cover', 'setImageId(existing.meta.coverUrl ?? null)'],
     ] as const) {
       expect(
         hydration,
@@ -406,5 +450,19 @@ describe('the moderator cosmetic-store pack edit route', () => {
       'A pack the server refuses outright must not present a submittable form — that is ' +
         'the defect this editor replaced.'
     ).toContain('!uneditableStatus &&');
+
+    // Two halves of one invariant. canSubmit refuses blue-with-blockers, so the
+    // switch must stay operable in that state or the only control that clears the
+    // refusal is frozen and the pack cannot be saved at all. Pinning either alone
+    // lets the other be dropped silently.
+    expect(
+      canSubmitBlock,
+      'canSubmit must still refuse blue-accepting with a blocking member.'
+    ).toContain('!(acceptsBlueBuzz && blueBlockers.length)');
+    expect(
+      modalSource,
+      'The Blue Buzz switch must be un-tickable but never un-un-tickable, and must wait ' +
+        'for hydration like every other control.'
+    ).toContain('disabled={awaitingPack || (blueBlockers.length > 0 && !acceptsBlueBuzz)}');
   });
 });
