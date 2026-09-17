@@ -107,6 +107,27 @@ export function classifyGatedImageForViewer(
     return { status: 'hidden' };
   }
 
+  // 🔴 AN EMPTY CEILING HIDES EVERYTHING — INCLUDING AN UNRATED IMAGE. Stated
+  // separately from the clamp below because the clamp cannot express it: with no
+  // level to compare there is nothing for `Flags.intersects` to reject, so an
+  // unrated row would fall through to `pending` and reach the owner projection.
+  // The caller fails a malformed ceiling closed to the public floor and never
+  // passes 0, so this is defence in depth — but the docstring promises "a
+  // `0`/empty ceiling here hides everything", and a promise a branch does not
+  // keep is worse than no promise.
+  if (browsingLevel === 0) return { status: 'hidden' };
+
+  // 🔴 A LEVEL THAT EXISTS IS ENFORCED WHATEVER THE INGESTION STATE SAYS, and
+  // this ordering is the whole guard. `Rescan` (and any other non-terminal state
+  // reached by a row that was ALREADY rated) is not `Scanned`, so a clamp placed
+  // after the pending branch would never run for it: a previously-rated mature
+  // image going back through the scanner would be reported "not decided yet" and
+  // the owner projection would hand out its url, bypassing the domain ceiling a
+  // SFW block is minted with. Rated first, pending second.
+  if (nsfwLevel !== 0 && !Flags.intersects(nsfwLevel, browsingLevel)) {
+    return { status: 'hidden' };
+  }
+
   // Still scanning — any other non-`Scanned` state is a poll-able pending, and
   // an UNKNOWN ingestion value lands here too (fail-safe: `pending` carries no
   // url of its own, so an unrecognised state can only ever under-share).
@@ -120,10 +141,6 @@ export function classifyGatedImageForViewer(
   // no url, so `getAllImages`' `nsfwLevel != 0` conjunct is still honoured for
   // everyone but the image's own author.
   if (nsfwLevel === 0) return { status: 'pending' };
-
-  // Per-viewer browsing-level clamp: the image's level must intersect the
-  // viewer's ceiling, else it's above what THIS viewer may see → hidden.
-  if (!Flags.intersects(nsfwLevel, browsingLevel)) return { status: 'hidden' };
 
   return { status: 'visible' };
 }

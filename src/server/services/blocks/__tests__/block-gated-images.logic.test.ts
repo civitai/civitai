@@ -114,6 +114,38 @@ describe('classifyGatedImageForViewer', () => {
 
   it('HIDES everything when the viewer ceiling is empty (fail-closed 0 clamp)', () => {
     expect(classifyGatedImageForViewer(scannedClean, 0)).toEqual({ status: 'hidden' });
+    // …INCLUDING an image with no rating. There is no level for the clamp to
+    // reject, so without its own branch this would fall through to `pending` and
+    // reach the owner projection under a ceiling that admits nothing.
+    expect(classifyGatedImageForViewer({ ...scannedClean, nsfwLevel: 0 }, 0)).toEqual({
+      status: 'hidden',
+    });
+    expect(
+      classifyGatedImageForViewer({ ...scannedClean, ingestion: ImageIngestionStatus.Pending }, 0)
+    ).toEqual({ status: 'hidden' });
+  });
+
+  it('🔴 enforces an EXISTING level even while the row is re-scanning — Rescan is not a bypass', () => {
+    // `Rescan` is not `Scanned`, so a clamp placed AFTER the pending branch would
+    // never run for it: a previously-rated mature image going back through the
+    // scanner would read as "not decided yet" and the owner projection would hand
+    // out its url, above the ceiling the block was minted with.
+    const rescanning = { ...scannedClean, ingestion: ImageIngestionStatus.Rescan };
+    expect(classifyGatedImageForViewer({ ...rescanning, nsfwLevel: NsfwLevel.X }, UP_TO_R)).toEqual(
+      {
+        status: 'hidden',
+      }
+    );
+    expect(classifyGatedImageForViewer({ ...rescanning, nsfwLevel: NsfwLevel.R }, SFW)).toEqual({
+      status: 'hidden',
+    });
+    // Same row, a level the viewer MAY see → still merely pending (the rating is
+    // being redone), which is the case the owner affordance is for.
+    expect(classifyGatedImageForViewer({ ...rescanning, nsfwLevel: NsfwLevel.R }, UP_TO_R)).toEqual(
+      {
+        status: 'pending',
+      }
+    );
   });
 
   it('is a pure function of the row + ceiling — still NO identity parameter', () => {
