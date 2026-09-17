@@ -125,6 +125,8 @@ const isSql = (v: unknown): v is { strings: string[]; values: unknown[] } =>
   !!v && typeof v === 'object' && Array.isArray((v as { strings?: unknown }).strings);
 const predicatesOf = (calls: unknown[][], index = 0) => sqlValuesOf(calls, index).filter(isSql);
 
+const RAW_SURFACES = ['$queryRaw', '$queryRawUnsafe', '$executeRaw', '$executeRawUnsafe'] as const;
+
 let handlerCalls = 0;
 
 describe('backfill-sell-merge-licence', () => {
@@ -144,17 +146,44 @@ describe('backfill-sell-merge-licence', () => {
   // 🔴 The statement-count invariant, asserted for EVERY test rather than per branch. Three rounds
   // running, the defect here was a guard added to one branch and not its twin — write but not read,
   // then dry-run but not live — and each time the suite stayed green because the unguarded branch had
-  // no assertion to fail. No branch of this endpoint legitimately issues more than one read or one
-  // write per request, so the bound holds everywhere, including in tests nobody has written yet, and
-  // a second statement cannot be added to any path without reddening here.
+  // no assertion to fail. No branch of this endpoint legitimately issues more than one raw statement
+  // per client per request, so the bound holds everywhere, including in tests nobody has written yet.
   //
-  // Per handler CALL, not per test: two cases drive the handler twice on purpose.
+  // The surface list is derived and applied to BOTH clients rather than hand-listed per side: the
+  // first version of this hook guarded `$queryRawUnsafe` on the read and `$executeRaw*` on the write,
+  // which reproduced the very defect it exists to close — `dbWrite.$queryRawUnsafe` passed it.
+  //
+  // Per handler CALL, not per test, because two cases drive the handler twice on purpose. Two
+  // consequences worth knowing before adding a test: do NOT mix a refused call and a real one in the
+  // same test, since each refused call buys a budget of one that the real call can then spend; and
+  // `it.concurrent` anywhere in this file makes `handlerCalls` a shared racy counter and the bound
+  // meaningless.
+  //
+  // What it does NOT cover, stated because the previous version of this comment overclaimed: it is an
+  // UPPER bound on RAW statements. Deleting a statement passes it (the per-test
+  // `toHaveBeenCalledTimes(1)` lines are the lower bound), and a Prisma model method — `dbRead.model
+  // .count({ where })` — is not a raw surface and is not counted here at all.
   afterEach(() => {
-    expect(dbMock.dbRead.$queryRaw.mock.calls.length).toBeLessThanOrEqual(handlerCalls);
-    expect(dbMock.dbWrite.$queryRaw.mock.calls.length).toBeLessThanOrEqual(handlerCalls);
-    expect(dbMock.dbRead.$queryRawUnsafe).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.$executeRawUnsafe).not.toHaveBeenCalled();
+    const rawStatements = (client: (typeof dbMock)['dbRead']) =>
+      RAW_SURFACES.reduce((total, surface) => total + client[surface].mock.calls.length, 0);
+
+    expect(rawStatements(dbMock.dbRead)).toBeLessThanOrEqual(handlerCalls);
+    expect(rawStatements(dbMock.dbWrite)).toBeLessThanOrEqual(handlerCalls);
+
+    // The hook checking its own wiring. `RAW_SURFACES` is hand-typed strings indexed into a mock that
+    // FABRICATES a `vi.fn()` for any property name, and `src/**/__tests__/**` is excluded from
+    // tsconfig, so `'$querryRaw'` would yield a live spy that is never called: every bound above goes
+    // permanently vacuous with nothing red. A client that demonstrably ran a statement must therefore
+    // contribute to its own sum.
+    for (const client of [dbMock.dbRead, dbMock.dbWrite]) {
+      if (client.$queryRaw.mock.calls.length) expect(rawStatements(client)).toBeGreaterThan(0);
+    }
+
+    // `$queryRaw` is the only raw surface this endpoint has any business using, on either client.
+    for (const surface of RAW_SURFACES.filter((s) => s !== '$queryRaw')) {
+      expect(dbMock.dbRead[surface], `dbRead.${surface}`).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite[surface], `dbWrite.${surface}`).not.toHaveBeenCalled();
+    }
   });
 
   it('rejects a call with the wrong token, and reads nothing', async () => {
@@ -252,18 +281,16 @@ describe('backfill-sell-merge-licence', () => {
     // The ids themselves, so the bound cannot be present but empty or wrong.
     expect(sqlValuesOf(dbMock.dbWrite.$queryRaw.mock.calls)).toContainEqual([5, 6, 7]);
 
-    // ONE statement. Every other write assertion reads call 0, so a second UPDATE appended after this
-    // one — or the sibling's `updatedAt` bump issued separately, or through `$executeRaw` — would be
-    // invisible to all of them.
+    // Exactly one write, which is the LOWER bound the file-wide invariant structurally cannot give —
+    // it permits zero, so a dropped UPDATE passes it. The upper half and the `$executeRaw*` surfaces
+    // are the hook's job on both clients; they were stated here too until that duplicated list drifted
+    // from its twin, which is the defect this file keeps producing.
     expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
-    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.$executeRawUnsafe).not.toHaveBeenCalled();
 
-    // ONE read too, asserted on the LIVE path. The dry-run test carries the same assertion, and a
-    // guard that covers one branch and not its twin is how this endpoint has been bitten three times:
-    // an added `count(*)` over the ~422k in-scope rows costs most here, beside the write.
+    // Exactly one read, which is the LOWER bound the file-wide invariant structurally cannot give —
+    // it permits zero. Deleting this line does not leave the branch covered by the invariant; it
+    // leaves a dropped SELECT invisible.
     expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(1);
-    expect(dbMock.dbRead.$queryRawUnsafe).not.toHaveBeenCalled();
   });
 
   it('re-checks one identical predicate in the UPDATE and the SELECT, cast in the column terms', async () => {
