@@ -10,7 +10,7 @@ describe('normalizeText HTML-entity decoding', () => {
   });
 
   // The post-await read is the only assertion in this file that can see a decoder which is
-  // correct on the first call and wrong later - one that releases the ~98KB entity table when it
+  // correct on the first call and wrong later - one that releases the entity table when it
   // goes cold, which is the shape bundle pressure takes once lazy loading is closed off. A
   // measured eviction mutant (correct on load, identity after 5ms) reddens this case and passes
   // the other three. Do not collapse the two reads into `after === before`: that form passes
@@ -30,7 +30,7 @@ describe('normalizeText HTML-entity decoding', () => {
   });
 
   // Pins THIS module, not `he`: decoding runs BEFORE the accent fold, covers numeric and hex
-  // references, and is single-pass. A compact hand-rolled substitute reddens these.
+  // references, and is single-pass.
   // Keep the four inputs in ONE case against ONE module instance. Split into a case each and
   // every one becomes a first-call-in-a-fresh-instance, which a decoder that memoized its last
   // result would satisfy every time.
