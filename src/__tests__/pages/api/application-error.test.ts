@@ -3,7 +3,8 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type * as EnvOther from '~/env/other';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as ErrorHandling from '~/server/utils/errorHandling';
-import type * as LoggingClient from '~/server/logging/client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 // Covers the `resolveStack` opt-out on `/api/application-error`.
 //
@@ -17,15 +18,17 @@ import type * as LoggingClient from '~/server/logging/client';
 // `src/__tests__/pages/api/v1/image-upload/relay.test.ts` — a one-key wholesale factory collapses
 // the file to "no tests" the moment the route imports a second symbol from that module, which is a
 // silent zero rather than a failure.
+//
+// `logToAxiom` comes from the CANONICAL shared mock, not a local `vi.fn()`. That is enforced:
+// `src/server/services/__tests__/no-direct-shared-module-mock.test.ts` fails the build otherwise,
+// and `scripts/test-perf/codemod-shared-mocks.mjs --write <file>` performs the conversion. Found by
+// CI, not locally — running only this file and the ErrorBoundary suites never executes that gate.
 
-const { mockGetServerAuthSession, mockApplySourceMaps, mockLogToAxiom, prodFlag } = vi.hoisted(
-  () => ({
-    mockGetServerAuthSession: vi.fn(),
-    mockApplySourceMaps: vi.fn(),
-    mockLogToAxiom: vi.fn(),
-    prodFlag: { value: true },
-  })
-);
+const { mockGetServerAuthSession, mockApplySourceMaps, prodFlag } = vi.hoisted(() => ({
+  mockGetServerAuthSession: vi.fn(),
+  mockApplySourceMaps: vi.fn(),
+  prodFlag: { value: true },
+}));
 
 // `~/env/client` validates at import and throws on a missing NEXT_PUBLIC_* — the worker setup mocks
 // `~/env/server` but not this one. Same shape the `*.edge-cache-chain` tests use; `importOriginal`
@@ -53,11 +56,6 @@ vi.mock('~/server/auth/get-server-auth-session', async (importOriginal) => ({
 vi.mock('~/server/utils/errorHandling', async (importOriginal) => ({
   ...(await importOriginal<typeof ErrorHandling>()),
   applySourceMaps: mockApplySourceMaps,
-}));
-
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof LoggingClient>()),
-  logToAxiom: mockLogToAxiom,
 }));
 
 const importHandler = async () => (await import('~/pages/api/application-error')).default;
