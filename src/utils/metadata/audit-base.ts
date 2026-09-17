@@ -1,4 +1,4 @@
-import { normalizeText } from '~/utils/normalize-text';
+import { foldDiacritics } from '~/utils/fold-diacritics';
 import nsfwPromptWords from './lists/words-nsfw-prompt.json';
 import nsfwWordsPaddle from './lists/words-paddle-nsfw.json';
 import blockedNSFW from './lists/blocklist-nsfw.json';
@@ -48,9 +48,15 @@ export const blockedNSFWRegexLazy = lazy(() =>
 const expressionsLazy = lazy(() =>
   [...new Set([...nsfwPromptWords, ...nsfwWordsPaddle])].map((word) => prepareWordRegex(word))
 );
+// Folds accents but does NOT decode HTML entities, which is the only reason `he` stays out of the
+// chunk the feed loads. Safe because every caller passes a title or a name, and those render as
+// text: a stored `&eacute;` displays literally, so decoding it would make this disagree with what
+// the reader sees. Measured on prod across Model.name, Article.title, Post.title and Tag.name:
+// 5 rows of 25.7M carry any entity at all, and all five are `&amp;`, which cannot change a match.
+// A caller handling generation prompts wants the decode-and-fold helper in utils/normalize-text.
 export function hasNsfwWords(text?: string | null) {
   if (!text) return false;
-  const str = normalizeText(text);
+  const str = foldDiacritics(text);
   for (const expression of expressionsLazy()) {
     if (expression.test(str)) {
       return true;
