@@ -127,8 +127,10 @@ function isOrchestratorBlobLike(value: unknown): boolean {
  * 🔴 THE MARGIN IS ONE LEVEL, NOT "room". The deepest strip the catalog requires
  * today is `training.epochs`(1) → an epoch(2) → `samples`(3) → its members(4). A
  * new upstream `$type` is ALLOWED by construction, so one extra wrapper level in
- * a future output reopens exactly this leak with no detector. Say the number
- * when you re-measure; do not say "with room".
+ * a future output reopens exactly this leak with no detector. Say the CATALOG
+ * DEPTH when you re-measure; do not say "with room". (That one is a fact about
+ * the orchestrator spec — stable and re-derivable. The overflow threshold below
+ * is not, and the instruction there is the opposite.)
  *
  * 🔴 IT IS A STACK BOUND, NOT ONLY A COST BOUND — AND NOT CYCLE PROTECTION. The
  * walked value is the orchestrator's JSON-parsed `step.output`, not the app's
@@ -136,17 +138,16 @@ function isOrchestratorBlobLike(value: unknown): boolean {
  * What it is NOT is depth-limited: V8 parses JSON iteratively (ten million
  * nested levels parse fine) while this walk is recursive and overflows the stack
  * a few thousand levels in. 🔴 THE ORDER IS THE FACT, NOT THE FIGURE — that
- * threshold moves with stack size, frame shape and caller depth, and four
- * independent measurements of it in this file's history disagreed by more than
- * 2×. Do not write a number here again. Nothing upstream bounds the depth; this
- * cap does.
+ * threshold moves with stack size, frame shape and caller depth, and repeated
+ * measurements of it have disagreed by more than 2×. Do not write an overflow
+ * depth here again. Nothing upstream bounds the depth; this cap does.
  *
  * 🔴 SO DO NOT "CLOSE THE RESIDUE" BY DELETING THE CAP. This runs inside
  * `snapshotFromWorkflow` on `submitPassThroughStepWorkflow`'s post-submit path,
- * where a throw is caught by a handler that refunds all three cap reservations
- * and rethrows — on a generation the orchestrator has already created and will
- * bill, so the caps understate real spend permanently. Closing the residue means
- * an ITERATIVE walk.
+ * where a throw is caught by a handler that refunds every cap leg it reserved and
+ * rethrows — on a generation the orchestrator has already created and will bill,
+ * so the caps understate real spend permanently. Closing the residue means an
+ * ITERATIVE walk.
  */
 const PASS_THROUGH_OUTPUT_WALK_DEPTH = 4;
 
