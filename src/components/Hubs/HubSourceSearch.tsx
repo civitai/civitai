@@ -41,12 +41,19 @@ export function HubSourceSearch({
   onSelect,
   isAdded,
   disabled,
+  onlyType,
 }: {
   onSelect: (suggestion: Suggestion) => void;
   isAdded: (suggestion: Suggestion) => boolean;
   disabled?: boolean;
+  /**
+   * Pin the picker to one kind and drop the tab strip. Used by the add-to-group
+   * popover, where the group is already a tag group and the other tabs would offer
+   * something that cannot join it.
+   */
+  onlyType?: UserHubSourceType;
 }) {
-  const [type, setType] = useState<UserHubSourceType>(UserHubSourceType.User);
+  const [type, setType] = useState<UserHubSourceType>(onlyType ?? UserHubSourceType.User);
   const [query, setQuery] = useState('');
   const [debounced] = useDebouncedValue(query, 300);
   const isTag = type === UserHubSourceType.Tag;
@@ -90,14 +97,16 @@ export function HubSourceSearch({
 
   return (
     <Stack gap="xs">
-      <SegmentedControl
-        fullWidth
-        size="xs"
-        value={type}
-        disabled={disabled}
-        data={tabs.map(({ value, label }) => ({ value, label }))}
-        onChange={(value) => setType(value as UserHubSourceType)}
-      />
+      {!onlyType && (
+        <SegmentedControl
+          fullWidth
+          size="xs"
+          value={type}
+          disabled={disabled}
+          data={tabs.map(({ value, label }) => ({ value, label }))}
+          onChange={(value) => setType(value as UserHubSourceType)}
+        />
+      )}
 
       <TextInput
         size="xs"

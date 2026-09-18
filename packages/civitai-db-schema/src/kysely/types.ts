@@ -4180,6 +4180,7 @@ export type UserHubSource = {
   enabled: Generated<boolean>;
   exclude: Generated<boolean>;
   index: Generated<number>;
+  groupKey: number | null;
 };
 export type UserLink = {
   id: Generated<number>;

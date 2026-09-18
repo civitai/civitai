@@ -5501,6 +5501,7 @@ export interface UserHubSource {
   enabled: boolean;
   exclude: boolean;
   index: number;
+  groupKey: number | null;
 }
 
 export interface Blurb {

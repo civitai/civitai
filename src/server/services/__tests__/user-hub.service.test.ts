@@ -220,9 +220,53 @@ describe('resolveHubSources', () => {
       // Both directions asserted. Half of this — the positive sets — stays green if
       // every source is read as an exclusion, which is a hub that shows nothing.
       expect(result?.userIds).toEqual([10]);
-      expect(result?.tagIds).toEqual([77]);
+      expect(result?.tagGroups).toEqual([[77]]);
       expect(result?.excluded.userIds).toEqual([11]);
-      expect(result?.excluded.tagIds).toEqual([78]);
+      expect(result?.excluded.tagGroups).toEqual([[78]]);
+    });
+
+    it('scopes groupKey to one side of `exclude`', async () => {
+      // 🔴 Include group 0 and exclude group 0 are DIFFERENT groups. They are kept
+      // apart by grouping each polarity separately, not by the keys being distinct —
+      // the client does hand out distinct keys today, but a resolver that trusted
+      // that would fold a kept-out tag into the hub's own AND-set the day it stopped.
+      findFirstHub.mockResolvedValue({
+        forcedBrowsingLevel: 0,
+        sources: [
+          { type: UserHubSourceType.Tag, targetId: 77, exclude: false, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 78, exclude: false, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 90, exclude: true, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 91, exclude: true, groupKey: 0 },
+        ],
+      });
+
+      const result = await resolveHubSources({ hubId: 1, userId: 5 });
+
+      expect(result?.tagGroups).toEqual([[77, 78]]);
+      expect(result?.excluded.tagGroups).toEqual([[90, 91]]);
+    });
+
+    it('shrinks a group a session toggle removed a member from', async () => {
+      // The subtraction happens before grouping, so a viewer switching one tag off
+      // leaves an AND-set of the rest rather than emptying the group. Asserted
+      // because the alternative — grouping first — reads identically in the code and
+      // would serve the ungrouped tag as if the group were still whole.
+      findFirstHub.mockResolvedValue({
+        forcedBrowsingLevel: 0,
+        sources: [
+          { type: UserHubSourceType.Tag, targetId: 77, exclude: false, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 78, exclude: false, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 79, exclude: false, groupKey: null },
+        ],
+      });
+
+      const result = await resolveHubSources({
+        hubId: 1,
+        userId: 5,
+        excludedSources: [{ type: UserHubSourceType.Tag, targetId: 78 }],
+      });
+
+      expect(result?.tagGroups).toEqual([[77], [79]]);
     });
 
     it('IGNORES a session toggle aimed at a negative source', async () => {

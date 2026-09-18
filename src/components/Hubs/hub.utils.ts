@@ -1,7 +1,7 @@
 import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
 import type { HubPanelHub } from '~/components/Hubs/HubSourcePanel';
 import { hubLimits } from '~/server/schema/user-hub.schema';
-import { Availability } from '~/shared/utils/prisma/enums';
+import { Availability, UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 import { Flags } from '~/shared/utils/flags';
 import { slugit } from '~/utils/string-helpers';
@@ -89,6 +89,7 @@ export function buildDuplicateHubInput(hub: {
     alias?: string | null;
     enabled: boolean;
     exclude?: boolean;
+    groupKey?: number | null;
   }[];
 }) {
   return {
@@ -117,8 +118,52 @@ export function buildDuplicateHubInput(hub: {
       enabled: true,
       exclude: !!source.exclude,
       index,
+      // Carried, not renumbered: the keys only have to be distinct within the copy,
+      // and dropping them would silently un-group every AND-set the original had.
+      groupKey: source.groupKey ?? null,
     })),
   };
+}
+
+export type HubSourceGroup = { key: string; sources: HubSourceValue[] };
+
+/**
+ * The source list as the cards that render it: tag sources sharing a `groupKey` become
+ * ONE card whose tags are ANDed, everything else stays one card per source.
+ *
+ * Mirrors `groupTagIds` in user-hub.service.ts, including the polarity scoping — an
+ * include group 3 and an exclude group 3 are different groups. The two cannot share
+ * code (one holds rows, the other display values), so a change to either rule belongs
+ * in both.
+ */
+export function groupHubSources(value: HubSourceValue[]): HubSourceGroup[] {
+  const groups: HubSourceGroup[] = [];
+  const byKey = new Map<string, HubSourceGroup>();
+  for (const source of value) {
+    if (source.type !== UserHubSourceType.Tag || source.groupKey == null) {
+      groups.push({ key: `${source.type}-${source.targetId}`, sources: [source] });
+      continue;
+    }
+    const key = `tag-${source.exclude ? 'x' : 'i'}-${source.groupKey}`;
+    const held = byKey.get(key);
+    if (held) {
+      held.sources.push(source);
+      continue;
+    }
+    const group = { key, sources: [source] };
+    byKey.set(key, group);
+    groups.push(group);
+  }
+  return groups;
+}
+
+/**
+ * The next free group key for a hub. Taken from the whole list rather than one
+ * polarity, so an include group and an exclude group can never be handed the same
+ * number even though the resolver would keep them apart anyway.
+ */
+export function nextHubGroupKey(value: { groupKey?: number | null }[]) {
+  return value.reduce((max, source) => Math.max(max, source.groupKey ?? -1), -1) + 1;
 }
 
 // The rail and the sub-nav popover both render the panel from a `getById` row, so
@@ -137,6 +182,7 @@ export function toPanelHub(hub: {
     enabled: boolean;
     exclude: boolean;
     index: number;
+    groupKey: number | null;
   }[];
   excludedCount: number;
 }): HubPanelHub {

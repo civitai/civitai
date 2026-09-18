@@ -135,6 +135,15 @@ export const userHubSourceSchema = z.object({
   // anyway, and spelling it makes the round trip visible.
   exclude: z.boolean().default(false),
   index: z.number().int().min(0).default(0),
+  // A tag AND-set. Tag sources of one hub sharing a key, on the same side of
+  // `exclude`, must ALL match; null is a group of one. Assigned client-side by
+  // position, like `index`, which is safe because a save REPLACES the hub's whole
+  // source list — there is no stored key to collide with.
+  //
+  // Only Tag sources are grouped. It is nullable rather than validated per type
+  // because the resolver groups within the tag rows alone, so a key on any other
+  // type is inert rather than wrong.
+  groupKey: z.number().int().min(0).nullish(),
 });
 
 const capList = <T>(value: T[]) => value.slice(0, hubLimits.filterListLength);

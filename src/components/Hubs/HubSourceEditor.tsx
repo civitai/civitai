@@ -1,11 +1,23 @@
-import { Button, Card, Collapse, SegmentedControl, Stack, Text } from '@mantine/core';
+import {
+  ActionIcon,
+  Button,
+  Card,
+  Collapse,
+  Popover,
+  SegmentedControl,
+  Stack,
+  Text,
+  Tooltip,
+} from '@mantine/core';
 import { IconPlus, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { HubSourceCard } from '~/components/Hubs/HubSourceCard';
 import { HubSourceSearch } from '~/components/Hubs/HubSourceSearch';
 import { HubSourceUrlInput } from '~/components/Hubs/HubSourceUrlInput';
+import type { HubSourceGroup } from '~/components/Hubs/hub.utils';
+import { groupHubSources, nextHubGroupKey } from '~/components/Hubs/hub.utils';
 import { hubLimits } from '~/server/schema/user-hub.schema';
-import type { UserHubSourceType } from '~/shared/utils/prisma/enums';
+import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 
 export type HubSourceValue = {
@@ -16,9 +28,77 @@ export type HubSourceValue = {
   /** A negative source: kept OUT of the hub rather than collected into it. */
   exclude: boolean;
   index: number;
+  /**
+   * A tag AND-set. Tag sources sharing a key, on the same side of `exclude`, must ALL
+   * match; null is a group of one, which is every source that predates the column.
+   */
+  groupKey?: number | null;
 };
 
 type AddMode = 'include' | 'exclude';
+
+type Suggestion = { type: UserHubSourceType; targetId: number; alias: string };
+
+/**
+ * The add-another-tag affordance on a tag card. The Tooltip sits OUTSIDE the Popover
+ * rather than inside `Popover.Target`: both components clone their child to attach a
+ * ref, and stacking them on one element is the shape that silently stops the trigger
+ * opening (CLAUDE.md records it for `Menu.Target`).
+ */
+function AddTagToGroup({
+  exclude,
+  disabled,
+  isAdded,
+  onSelect,
+}: {
+  exclude?: boolean;
+  disabled?: boolean;
+  isAdded: (suggestion: Suggestion) => boolean;
+  onSelect: (suggestion: Suggestion) => void;
+}) {
+  const [opened, setOpened] = useState(false);
+
+  return (
+    <Tooltip label={exclude ? 'Only block when another tag matches too' : 'Require another tag'}>
+      <div className="flex">
+        <Popover
+          opened={opened}
+          onChange={setOpened}
+          position="bottom-end"
+          width={260}
+          shadow="md"
+          // 🔴 Explicit. ThemeProvider defaults every Popover to withinPortal={false},
+          // and the card this renders inside is an overflow-hidden Paper, so the
+          // dropdown is drawn clipped without it.
+          withinPortal
+        >
+          <Popover.Target>
+            <ActionIcon
+              size="sm"
+              variant="subtle"
+              disabled={disabled}
+              aria-label="Add another tag to this group"
+              onClick={() => setOpened((open) => !open)}
+            >
+              <IconPlus size={14} />
+            </ActionIcon>
+          </Popover.Target>
+          <Popover.Dropdown p="xs">
+            <HubSourceSearch
+              onlyType={UserHubSourceType.Tag}
+              disabled={disabled}
+              isAdded={isAdded}
+              onSelect={(item) => {
+                onSelect(item);
+                setOpened(false);
+              }}
+            />
+          </Popover.Dropdown>
+        </Popover>
+      </div>
+    </Tooltip>
+  );
+}
 
 export function HubSourceEditor({
   value,
@@ -50,16 +130,21 @@ export function HubSourceEditor({
 
   const included = value.filter((source) => !source.exclude);
   const excluded = value.filter((source) => source.exclude);
+  const includedGroups = groupHubSources(included);
+  const excludedGroups = groupHubSources(excluded);
 
-  const addSource = (type: UserHubSourceType, targetId: number, rawAlias: string) => {
-    // Match what the server stores, so the optimistic row is not a different
-    // string from the one that comes back.
-    const alias = rawAlias.trim().slice(0, hubLimits.aliasLength);
+  const sameTarget = (a: { type: UserHubSourceType; targetId: number }) => (b: HubSourceValue) =>
+    b.type === a.type && b.targetId === a.targetId;
+
+  /**
+   * The two guards every add passes, whichever affordance ran it. Returns true when the
+   * add was refused and the caller must stop — told rather than silently dropped, since
+   * either list can be long enough that the clashing row is off screen.
+   */
+  const refuseAdd = (type: UserHubSourceType, targetId: number, asExclusion: boolean) => {
     // Across BOTH lists, matching the row's unique key: a target the hub already
-    // collects cannot also be excluded. Told, not silently dropped — the same click
-    // did nothing whether the target was already collected or currently kept out, and
-    // either list can be long enough that neither is on screen.
-    const clash = value.find((s) => s.type === type && s.targetId === targetId);
+    // collects cannot also be excluded.
+    const clash = value.find(sameTarget({ type, targetId }));
     if (clash) {
       showErrorNotification({
         title: 'Already in this hub',
@@ -71,42 +156,99 @@ export function HubSourceEditor({
             : `"${clash.alias ?? targetId}" is already one of this hub's sources.`
         ),
       });
-      return;
+      return true;
     }
-    const held = exclude ? excluded.length : included.length;
-    const cap = exclude ? maxExclusions : maxSources;
+    const held = asExclusion ? excluded.length : included.length;
+    const cap = asExclusion ? maxExclusions : maxSources;
     if (held >= cap) {
       showErrorNotification({
-        title: exclude ? 'Exclusion list is full' : 'Hub is full',
+        title: asExclusion ? 'Exclusion list is full' : 'Hub is full',
         error: new Error(
-          exclude
+          asExclusion
             ? `A hub can exclude at most ${cap} sources.`
             : `A hub can hold at most ${cap} sources.`
         ),
       });
-      return;
+      return true;
     }
-    onChange([...value, { type, targetId, alias, enabled: true, exclude, index: value.length }]);
+    return false;
   };
 
-  const renderCard = (source: HubSourceValue) => (
-    <HubSourceCard
-      key={`${source.type}-${source.targetId}`}
-      source={source}
-      disabled={disabled}
-      onToggle={(enabled) =>
-        onChange(
-          value.map((s) =>
-            s.type === source.type && s.targetId === source.targetId ? { ...s, enabled } : s
-          )
-        )
-      }
-      hideRemove={readOnly}
-      onRemove={() =>
-        onChange(value.filter((s) => !(s.type === source.type && s.targetId === source.targetId)))
-      }
-    />
-  );
+  const addSource = (type: UserHubSourceType, targetId: number, rawAlias: string) => {
+    // Match what the server stores, so the optimistic row is not a different
+    // string from the one that comes back.
+    const alias = rawAlias.trim().slice(0, hubLimits.aliasLength);
+    if (refuseAdd(type, targetId, exclude)) return;
+    onChange([
+      ...value,
+      { type, targetId, alias, enabled: true, exclude, index: value.length, groupKey: null },
+    ]);
+  };
+
+  // A tag joining a group is another row against the same cap as any other source —
+  // grouping changes what the rows MEAN, not how many a hub may hold.
+  const addToGroup = (group: HubSourceGroup, item: Suggestion) => {
+    const first = group.sources[0];
+    const alias = item.alias.trim().slice(0, hubLimits.aliasLength);
+    if (refuseAdd(item.type, item.targetId, !!first.exclude)) return;
+    // Reused when the card is already a group, minted when this is the second tag —
+    // so the click that creates a group is the one that assigns its key.
+    const groupKey = first.groupKey ?? nextHubGroupKey(value);
+    const members = group.sources.map(sameTarget);
+    onChange([
+      ...value.map((source) =>
+        members.some((matches) => matches(source)) ? { ...source, groupKey } : source
+      ),
+      {
+        type: UserHubSourceType.Tag,
+        targetId: item.targetId,
+        alias,
+        // The group toggles as one, so a tag joining a switched-off group must arrive
+        // switched off — otherwise the card reads as on while half of it is not.
+        enabled: first.enabled,
+        exclude: !!first.exclude,
+        index: value.length,
+        groupKey,
+      },
+    ]);
+  };
+
+  const renderGroup = (group: HubSourceGroup) => {
+    const [first, ...rest] = group.sources;
+    const isTag = first.type === UserHubSourceType.Tag;
+    const inGroup = (source: HubSourceValue) =>
+      group.sources.some((member) => sameTarget(member)(source));
+
+    return (
+      <HubSourceCard
+        key={group.key}
+        source={first}
+        extraTags={rest.map((source) => ({ targetId: source.targetId, alias: source.alias }))}
+        onRemoveTag={
+          readOnly || rest.length === 0
+            ? undefined
+            : (targetId) =>
+                onChange(value.filter((s) => !sameTarget({ type: first.type, targetId })(s)))
+        }
+        addControl={
+          isTag && !readOnly ? (
+            <AddTagToGroup
+              exclude={first.exclude}
+              disabled={disabled}
+              isAdded={(item) => value.some(sameTarget(item))}
+              onSelect={(item) => addToGroup(group, item)}
+            />
+          ) : undefined
+        }
+        disabled={disabled}
+        // The whole group at once: a half-enabled AND-set would filter on fewer tags
+        // than the card shows, with nothing on screen saying which.
+        onToggle={(enabled) => onChange(value.map((s) => (inGroup(s) ? { ...s, enabled } : s)))}
+        hideRemove={readOnly}
+        onRemove={() => onChange(value.filter((s) => !inGroup(s)))}
+      />
+    );
+  };
 
   return (
     <Stack gap="sm">
@@ -143,9 +285,7 @@ export function HubSourceEditor({
                   </Text>
                   <HubSourceSearch
                     disabled={disabled}
-                    isAdded={(item) =>
-                      value.some((s) => s.type === item.type && s.targetId === item.targetId)
-                    }
+                    isAdded={(item) => value.some(sameTarget(item))}
                     onSelect={(item) => addSource(item.type, item.targetId, item.alias)}
                   />
                   <HubSourceUrlInput
@@ -159,20 +299,20 @@ export function HubSourceEditor({
         </>
       )}
 
-      {included.length === 0 ? (
+      {includedGroups.length === 0 ? (
         <Text size="sm" c="dimmed">
           {emptyMessage}
         </Text>
       ) : (
-        <Stack gap={6}>{included.map(renderCard)}</Stack>
+        <Stack gap={6}>{includedGroups.map(renderGroup)}</Stack>
       )}
 
-      {excluded.length > 0 && (
+      {excludedGroups.length > 0 && (
         <Stack gap={6}>
           <Text size="xs" fw={700} tt="uppercase" c="dimmed" className="tracking-wide">
             Kept out
           </Text>
-          {excluded.map(renderCard)}
+          {excludedGroups.map(renderGroup)}
         </Stack>
       )}
     </Stack>
