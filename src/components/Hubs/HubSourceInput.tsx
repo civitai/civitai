@@ -1,6 +1,6 @@
-import { Badge, Loader, Text, TextInput, UnstyledButton } from '@mantine/core';
+import { Badge, Button, Loader, Text, TextInput, UnstyledButton } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { IconCheck, IconPlus, IconSearch } from '@tabler/icons-react';
+import { IconCheck, IconPlus, IconSearch, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
 import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
@@ -72,18 +72,27 @@ const groupLabels: Record<HubTemplate, string> = {
 // the rest is a search away, and at p90 568 follows a full list never was the answer.
 const PREVIEW_ROWS = 5;
 
-function Row({ item, added, onAdd }: { item: Suggestion; added: boolean; onAdd: VoidFunction }) {
+function Row({
+  item,
+  added,
+  onToggle,
+}: {
+  item: Suggestion;
+  added: boolean;
+  onToggle: VoidFunction;
+}) {
   return (
     <UnstyledButton
-      disabled={added}
-      onClick={onAdd}
-      className={clsx(
-        'flex w-full items-center gap-2.5 px-3 py-2',
-        added ? 'opacity-60' : 'hover:bg-gray-1 dark:hover:bg-dark-6'
-      )}
+      onClick={onToggle}
+      aria-pressed={added}
+      title={added ? 'Remove from this hub' : 'Add to this hub'}
+      className="group flex w-full items-center gap-2.5 px-3 py-2 hover:bg-gray-1 dark:hover:bg-dark-6"
     >
       {added ? (
-        <IconCheck size={16} className="shrink-0 text-green-6" />
+        <>
+          <IconCheck size={16} className="shrink-0 text-green-6 group-hover:hidden" />
+          <IconX size={16} className="hidden shrink-0 text-red-6 group-hover:block" />
+        </>
       ) : (
         <IconPlus size={16} className="shrink-0 text-gray-6 dark:text-dark-2" />
       )}
@@ -110,6 +119,7 @@ function Group({
   items,
   isAdded,
   onAdd,
+  onRemove,
   onAddMany,
   remaining,
 }: {
@@ -119,6 +129,7 @@ function Group({
   items: Suggestion[];
   isAdded: (source: { type: HubSourceValue['type']; targetId: number }) => boolean;
   onAdd: (source: Suggestion) => void;
+  onRemove: (source: { type: HubSourceValue['type']; targetId: number }) => void;
   onAddMany?: (sources: HubSourceValue[]) => void;
   remaining: number;
 }) {
@@ -145,20 +156,26 @@ function Group({
   const bulkCount = Math.min(total ?? items.length, remaining);
 
   return (
-    <div className="flex flex-col">
-      <div className="flex items-center gap-2 px-3 pb-1 pt-2">
-        <Text size="xs" fw={700} tt="uppercase" c="dimmed" lineClamp={1}>
+    <div className="flex flex-col border-b border-gray-3 last:border-b-0 dark:border-dark-4">
+      <div className="flex items-center gap-2 bg-gray-1 px-3 py-1.5 dark:bg-dark-7">
+        <Text size="xs" fw={600} c="dimmed" lineClamp={1}>
           {label}
-          {total ? ` · ${total}` : ''}
         </Text>
+        {!!total && (
+          <Text size="xs" c="dimmed" className="shrink-0">
+            {abbreviateNumber(total)}
+          </Text>
+        )}
         {!!template && !!onAddMany && bulkCount > 0 && (
-          <UnstyledButton
+          <Button
+            size="compact-xs"
+            variant="subtle"
+            className="ml-auto shrink-0"
+            loading={filling}
             onClick={addMany}
-            disabled={filling}
-            className="ml-auto shrink-0 text-xs font-semibold text-blue-5"
           >
-            {filling ? 'Adding…' : `Add ${bulkCount}`}
-          </UnstyledButton>
+            Add {bulkCount}
+          </Button>
         )}
       </div>
       {items.slice(0, PREVIEW_ROWS).map((item) => (
@@ -166,12 +183,13 @@ function Group({
           key={`${item.type}-${item.targetId}`}
           item={item}
           added={isAdded(item)}
-          onAdd={() => onAdd(item)}
+          onToggle={() => (isAdded(item) ? onRemove(item) : onAdd(item))}
         />
       ))}
       {!!total && total > items.slice(0, PREVIEW_ROWS).length && (
-        <Text size="xs" c="dimmed" className="px-3 pb-2 pt-1">
-          and {total - Math.min(items.length, PREVIEW_ROWS)} more — start typing to find them
+        <Text size="xs" c="dimmed" className="px-3 pb-2 pt-1.5">
+          {abbreviateNumber(total - Math.min(items.length, PREVIEW_ROWS))} more — start typing to
+          find them
         </Text>
       )}
     </div>
@@ -191,6 +209,7 @@ export function HubSourceInput({
   placeholder = 'Search creators, models and tags — or paste a link',
   isAdded,
   onAdd,
+  onRemove,
   onAddMany,
   remaining,
   disabled,
@@ -200,6 +219,7 @@ export function HubSourceInput({
   placeholder?: string;
   isAdded: (source: { type: HubSourceValue['type']; targetId: number }) => boolean;
   onAdd: (source: Suggestion) => void;
+  onRemove: (source: { type: HubSourceValue['type']; targetId: number }) => void;
   onAddMany?: (sources: HubSourceValue[]) => void;
   remaining: number;
   disabled?: boolean;
@@ -285,7 +305,7 @@ export function HubSourceInput({
                   key={`${item.type}-${item.targetId}`}
                   item={item}
                   added={isAdded(item)}
-                  onAdd={() => add(item)}
+                  onToggle={() => (isAdded(item) ? onRemove(item) : add(item))}
                 />
               ))
             : (groups.data ?? []).map((group) => (
@@ -297,6 +317,7 @@ export function HubSourceInput({
                   items={named(group.items)}
                   isAdded={isAdded}
                   onAdd={add}
+                  onRemove={onRemove}
                   onAddMany={onAddMany}
                   remaining={remaining}
                 />

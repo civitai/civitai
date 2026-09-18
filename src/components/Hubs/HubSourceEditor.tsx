@@ -154,6 +154,11 @@ export function HubSourceEditor({
     onChange([...value, ...taken].map((source, index) => ({ ...source, index })));
   };
 
+  // A row in the list toggles, so taking something back out does not mean hunting
+  // down its chip.
+  const removeByTarget = (target: { type: UserHubSourceType; targetId: number }) =>
+    onChange(value.filter((s) => !(s.type === target.type && s.targetId === target.targetId)));
+
   const remove = (source: HubSourceValue) =>
     onChange(value.filter((s) => !(s.type === source.type && s.targetId === source.targetId)));
 
@@ -169,6 +174,7 @@ export function HubSourceEditor({
           remaining={maxSources - included.length}
           isAdded={(source) => !!held(source.type, source.targetId)}
           onAdd={(source) => addSource(source, false)}
+          onRemove={removeByTarget}
           onAddMany={addMany}
         />
       </div>
@@ -232,6 +238,7 @@ export function HubSourceEditor({
             remaining={maxExclusions - excluded.length}
             isAdded={(source) => !!held(source.type, source.targetId)}
             onAdd={(source) => addSource(source, true)}
+            onRemove={removeByTarget}
           />
         )}
       </div>
