@@ -7,6 +7,9 @@ vi.mock('~/server/meilisearch/util', async (importOriginal) => ({
   onSearchIndexDocumentsCleanup: vi.fn(),
 }));
 
+const { SearchIndexUpdateQueueAction } = await import('~/server/common/enums');
+const { onSearchIndexDocumentsCleanup } = await import('~/server/meilisearch/util');
+const cleanup = vi.mocked(onSearchIndexDocumentsCleanup);
 const { createSearchIndexUpdateProcessor } = await import(
   '~/server/search-index/base.search-index'
 );
@@ -33,6 +36,7 @@ const updateItems = (count: number) => Array.from({ length: count }, (_, i) => (
 let logSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
+  cleanup.mockClear();
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
   // Spied, not silenced: on `update()` and `processQueues()`, which return nothing, this line is
   // the ONLY report a drop ever gets. A test that silences it cannot tell it exists.
@@ -213,6 +217,12 @@ describe('updateSync :: drop reporting', () => {
     expect(result.handledWithoutDocument).toBe(3);
     expect(result.droppedIds).toBe(1);
     expect(result.droppedIdSample).toEqual([5]);
+    // The only case with BOTH halves nonzero, so it is the only one that can see the joined line.
+    // A log that emitted the handled part only when nothing dropped would pass every other case.
+    const lines = logSpy.mock.calls.map(String).filter((l) => l.includes('produced no document'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('1 ids produced no document');
+    expect(lines[0]).toContain('; 3 handled without a document');
   }, 30_000);
 
   // Consistency check, not a control: with no hook, `handled` IS the document list, so this
@@ -334,6 +344,31 @@ describe('updateSync :: drop reporting', () => {
 
     expect(result.droppedIds).toBe(1);
     expect(result.droppedIdSample).toEqual([9]);
+  }, 30_000);
+
+  it('dedupes per action, so a Delete is not swallowed by an Update for the same id', async () => {
+    // The dedupe key is `${action}:${id}`, not the bare id. Collapsing an Update and a Delete for
+    // one id would drop whichever arrived second — a lost deletion, which is worse than the
+    // miscount the dedupe exists to fix. The two Deletes still collapse into one cleanup call, and
+    // the `?? Update` normalisation means `{id}` and `{id, action: 'Update'}` are the same entry.
+    const pullData = vi.fn(async (_ctx: unknown, batch: any) =>
+      batch.type === 'update' ? batch.ids : []
+    );
+    const index = buildIndex({ pullData: pullData as unknown as Processor['pullData'] });
+
+    await index.updateSync([
+      { id: 9 },
+      { id: 9, action: SearchIndexUpdateQueueAction.Update },
+      { id: 9, action: SearchIndexUpdateQueueAction.Delete },
+      { id: 9, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
+
+    // The update for 9 still ran, exactly once...
+    expect(pullData).toHaveBeenCalledTimes(1);
+    expect((pullData.mock.calls[0][1] as any).ids).toEqual([9]);
+    // ...and so did its deletion, exactly once.
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(cleanup.mock.calls[0][0].ids).toEqual([9]);
   }, 30_000);
 
   it('counts a repeated id once even when the copies land in different chunks', async () => {

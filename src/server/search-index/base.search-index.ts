@@ -203,6 +203,14 @@ const logDroppedIds = (indexName: string, caller: string, queue: TaskQueue) => {
   );
 };
 
+/**
+ * One statement of "an item with no action is an Update". The dedupe key and both `updateSync`
+ * filters read it: stated separately, a third action added to the enum would get its own dedupe
+ * bucket while matching neither filter, and would vanish from the run with nothing saying so.
+ */
+const actionOf = (item: { action?: SearchIndexUpdateQueueAction }) =>
+  item.action ?? SearchIndexUpdateQueueAction.Update;
+
 const processSearchIndexTask = async (
   processor: SearchIndexProcessor,
   context: SearchIndexContext,
@@ -664,7 +672,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       // as a Delete, and collapsing that pair would change which one runs.
       const seen = new Set<string>();
       const dedupedItems = items.filter((item) => {
-        const key = `${item.action ?? SearchIndexUpdateQueueAction.Update}:${item.id}`;
+        const key = `${actionOf(item)}:${item.id}`;
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
@@ -674,10 +682,10 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
 
       for (const batch of batches) {
         const updateIds = batch
-          .filter((i) => !i.action || i.action === SearchIndexUpdateQueueAction.Update)
+          .filter((i) => actionOf(i) === SearchIndexUpdateQueueAction.Update)
           .map(({ id }) => id);
         const deleteIds = batch
-          .filter((i) => i.action === SearchIndexUpdateQueueAction.Delete)
+          .filter((i) => actionOf(i) === SearchIndexUpdateQueueAction.Delete)
           .map(({ id }) => id);
 
         if (deleteIds.length > 0 && !partial) {
