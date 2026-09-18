@@ -145,12 +145,12 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
               string,
               number
             >;
-            const num = (v: unknown) => (typeof v === 'number' ? v : 0);
-            return {
-              yellow: num(accounts.yellow),
-              green: num(accounts.green),
-              blue: num(accounts.blue),
-            };
+            const { yellow, green, blue } = accounts;
+            // A missing/non-numeric balance must stay UNKNOWN (null → the element's fail-safe
+            // "up to" confirmation), not read as a known zero — blue:0 would assert the whole
+            // price is non-Blue with certainty.
+            if ([yellow, green, blue].some((v) => typeof v !== 'number')) return null;
+            return { yellow, green, blue };
           } catch {
             return null;
           }

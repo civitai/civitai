@@ -289,7 +289,8 @@
         blobId: item.blobId,
         blobUrl: item.url,
         ...parseLabel(label, labelMode),
-        sourceLabel: label || undefined,
+        // Verbatim — the switch logic promises to restore the ARRIVAL text exactly.
+        sourceLabel: item.caption || undefined,
         labelTried: label ? true : undefined,
       };
     });
@@ -321,6 +322,10 @@
       }
       patch(t.id, { previewUrl: url, blobUrl: url });
     });
+    // Un-captioned reuse items only become labelable once `blobUrl` exists — the add-time drain
+    // saw nothing to do, so run it again now (a failed hydration leaves the manual-label editor
+    // as the fallback, same as before).
+    void ensureLabeling();
   }
 
   // Video models train on stills too (the on-site trainer has always accepted images for video
@@ -387,7 +392,8 @@
         status: 'uploading' as const,
         progress: 0,
         ...parseLabel(label, labelMode),
-        sourceLabel: label || undefined,
+        // Verbatim (untrimmed) — the switch logic promises to restore the file's text exactly.
+        sourceLabel: e.caption || undefined,
         labelTried: label ? true : undefined,
       };
     });
@@ -428,16 +434,28 @@
         const items = targets.map((t) => ({ key: String(t.id), mediaUrl: t.blobUrl! }));
         labelRun = { total: targets.length, done: 0, keys: new Set(items.map((i) => i.key)) };
         for (const t of targets) patch(t.id, { labeling: true });
-        await runAutoLabel(labelMode, media, items, applyLabel, controller.signal);
+        // A result that resolves between abort and delivery must be dropped — post-switch it
+        // would write an OLD-mode label into a freshly reset tile and mark it done.
+        await runAutoLabel(
+          labelMode,
+          media,
+          items,
+          (r) => {
+            if (!controller.signal.aborted) applyLabel(r);
+          },
+          controller.signal
+        );
       }
     } catch (err) {
       if (!isAbort(err)) for (const i of images) if (i.labeling) patch(i.id, { labeling: false });
     } finally {
-      // Only release the slot if it's still OURS — an aborted drain's finally runs after the
-      // aborter has already started a replacement, and nulling that one would let a third drain
-      // run concurrently with it.
-      if (labelController === controller) labelController = null;
-      labelRun = null;
+      // Only release the slot/progress if they're still OURS — an aborted drain's finally runs
+      // after the aborter has already started a replacement, and clearing that one's state would
+      // let a third drain start concurrently (or blank the live progress counter).
+      if (labelController === controller) {
+        labelController = null;
+        labelRun = null;
+      }
     }
   }
 
