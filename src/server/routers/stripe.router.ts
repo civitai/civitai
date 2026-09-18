@@ -4,7 +4,6 @@ import {
   createManageSubscriptionSessionHandler,
   createDonateSessionHandler,
   getBuzzPackagesHandler,
-  createBuzzSessionHandler,
   getPaymentIntentHandler,
   getSetupIntentHandler,
   createCancelSubscriptionSessionHandler,
@@ -39,10 +38,6 @@ export const stripeRouter = router({
   getBuzzPackages: publicProcedure
     .meta({ requiredScope: TokenScope.Full })
     .query(getBuzzPackagesHandler),
-  createBuzzSession: protectedProcedure
-    .meta({ requiredScope: TokenScope.Full })
-    .input(Schema.createBuzzSessionSchema)
-    .mutation(createBuzzSessionHandler),
   getPaymentIntent: protectedProcedure
     .meta({ requiredScope: TokenScope.Full })
     .input(Schema.paymentIntentCreationSchema)

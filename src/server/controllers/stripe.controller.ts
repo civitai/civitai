@@ -9,7 +9,6 @@ import {
   createManageSubscriptionSession,
   createDonateSession,
   getBuzzPackages,
-  createBuzzSession,
   getPaymentIntent,
   getSetupIntent,
   createCancelSubscriptionSession,
@@ -98,34 +97,6 @@ export const getBuzzPackagesHandler = async () => {
     return packages;
   } catch (error) {
     throw throwDbError(error);
-  }
-};
-
-export const createBuzzSessionHandler = async ({
-  input,
-  ctx,
-}: {
-  input: Schema.CreateBuzzSessionInput;
-  ctx: ProtectedContext;
-}) => {
-  try {
-    const { id, email, customerId } = ctx.user;
-    if (!email) throw throwAuthorizationError('email required');
-
-    const result = await createBuzzSession({
-      ...input,
-      customerId,
-      user: { id, email },
-    });
-
-    // await ctx.track.userActivity({
-    //   type: 'Buy',
-    //   targetUserId: id,
-    // });
-
-    return result;
-  } catch (error) {
-    throw getTRPCErrorFromUnknown(error);
   }
 };
 
