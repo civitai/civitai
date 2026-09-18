@@ -1788,10 +1788,13 @@ export async function generateFromGraph({
   // orchestrator blob before submit, so the URL route alone reports nothing for
   // the flow the Remix menu drives (measured: 98 on-site URLs survived out of
   // 2,526 on the engine that button picks).
-  const sourceImageIds = unionSourceImageIds({
+  const sourceImageIds = await unionSourceImageIds({
     urlSourceImageIds: await resolveSourceImageIds(inputImages),
     tokens: sourceProvenance,
     userId,
+    // The server's own copy, off the validated graph. A `prompt` token is spent
+    // against this and never against anything the client sent alongside it.
+    prompt: 'prompt' in data && typeof data.prompt === 'string' ? data.prompt : undefined,
   });
 
   // Audit prompt before generation

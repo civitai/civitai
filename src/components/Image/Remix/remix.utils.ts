@@ -213,7 +213,22 @@ export async function startRemix({ kind, image }: { kind: RemixKind; image: Remi
   });
 }
 
-/** The original path: reuse the source's prompt and resources. */
+/**
+ * Open the generator seeded from this image's prompt and resources.
+ *
+ * The mint is what makes the link knowable at all: this path seeds no media, so
+ * by submit time nothing in the graph names the image the user started from.
+ * Swallowed and not awaited for the same reason as `startRemix`'s — provenance is
+ * an enrichment, and a reuse whose token fails to mint must still open the
+ * generator.
+ */
 export function startPromptReuse(image: RemixSourceImage) {
+  trpcVanilla.orchestrator.mintPromptProvenance
+    .mutate({ imageId: image.id })
+    .then((r) => {
+      if (r.provenance) remixProvenanceStore.setPromptToken(r.provenance);
+    })
+    .catch(() => undefined);
+
   return generationGraphPanel.open({ type: image.type, id: image.id });
 }

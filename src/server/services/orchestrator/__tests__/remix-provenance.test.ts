@@ -266,23 +266,23 @@ describe('unionSourceImageIds', () => {
    * resolve nothing — so before the token route, a remix through the Animate
    * button recorded no derivation at all.
    */
-  it('recovers the link when the url route found nothing', () => {
-    const token = signProvenance({ userId: USER, sourceImageIds: [7], kind: 'mint' });
-
-    expect(unionSourceImageIds({ urlSourceImageIds: [], tokens: [token!], userId: USER })).toEqual([
-      7,
-    ]);
-  });
-
-  it('keeps url-derived ids when there is no token', () => {
-    expect(unionSourceImageIds({ urlSourceImageIds: [7, 8], userId: USER })).toEqual([7, 8]);
-  });
-
-  it('does not double-count an image both routes name', () => {
+  it('recovers the link when the url route found nothing', async () => {
     const token = signProvenance({ userId: USER, sourceImageIds: [7], kind: 'mint' });
 
     expect(
-      unionSourceImageIds({ urlSourceImageIds: [7, 9], tokens: [token!], userId: USER })
+      await unionSourceImageIds({ urlSourceImageIds: [], tokens: [token!], userId: USER })
+    ).toEqual([7]);
+  });
+
+  it('keeps url-derived ids when there is no token', async () => {
+    expect(await unionSourceImageIds({ urlSourceImageIds: [7, 8], userId: USER })).toEqual([7, 8]);
+  });
+
+  it('does not double-count an image both routes name', async () => {
+    const token = signProvenance({ userId: USER, sourceImageIds: [7], kind: 'mint' });
+
+    expect(
+      await unionSourceImageIds({ urlSourceImageIds: [7, 9], tokens: [token!], userId: USER })
     ).toEqual([7, 9]);
   });
 
@@ -290,7 +290,7 @@ describe('unionSourceImageIds', () => {
    * Each route caps itself at MAX_SOURCE_IMAGES, so a union of two full sets is
    * twice the bound unless the union re-applies it.
    */
-  it('bounds the union, not just each route', () => {
+  it('bounds the union, not just each route', async () => {
     // Six plus four is ten. Deliberately NOT eight-plus-anything: with a full url
     // set the cap is satisfied by the url ids alone, so the assertion would hold
     // even if tokens were ignored entirely and the test could not fail.
@@ -301,7 +301,7 @@ describe('unionSourceImageIds', () => {
       kind: 'mint',
     });
 
-    const ids = unionSourceImageIds({ urlSourceImageIds, tokens: [token!], userId: USER });
+    const ids = await unionSourceImageIds({ urlSourceImageIds, tokens: [token!], userId: USER });
 
     expect(ids).toHaveLength(8);
     expect(ids).toEqual([1, 2, 3, 4, 5, 6, 101, 102]);
@@ -312,22 +312,152 @@ describe('unionSourceImageIds', () => {
    * `sourceImageIds` gates the FREE remix-gallery submission, so a token minted
    * for someone else must buy nothing.
    */
-  it('ignores a token issued to a different user', () => {
+  it('ignores a token issued to a different user', async () => {
     const token = signProvenance({ userId: USER + 1, sourceImageIds: [7], kind: 'mint' });
 
-    expect(unionSourceImageIds({ urlSourceImageIds: [], tokens: [token!], userId: USER })).toEqual(
-      []
-    );
+    expect(
+      await unionSourceImageIds({ urlSourceImageIds: [], tokens: [token!], userId: USER })
+    ).toEqual([]);
   });
 
-  it('treats an unreadable token as no signal rather than an error', () => {
+  it('treats an unreadable token as no signal rather than an error', async () => {
     expect(
-      unionSourceImageIds({
+      await unionSourceImageIds({
         urlSourceImageIds: [9],
         tokens: ['not-a-token', '', 'p1.a.b.c'],
         userId: USER,
       })
     ).toEqual([9]);
+  });
+
+  /**
+   * The `prompt` kind, whose whole point is that it is CONDITIONAL. Every other
+   * token spends on presentation alone; this one spends only if the prompt the
+   * server validated still derives from the source's own prompt.
+   *
+   * The source prompt comes from `dbRead`, never from the request, so these mock
+   * the row rather than passing it in — a test that supplied both sides would be
+   * asserting over a value the submitter controls, which is the exact bug the
+   * implementation exists to avoid.
+   */
+  describe('the prompt kind is conditional', () => {
+    const SOURCE_PROMPT = 'a cat wearing a blue hat, oil painting, soft light, detailed fur';
+
+    const promptToken = () =>
+      signProvenance({ userId: USER, sourceImageIds: [7], kind: 'prompt' })!;
+
+    beforeEach(() => {
+      findMany.mockResolvedValue([{ id: 7, meta: { prompt: SOURCE_PROMPT } }]);
+    });
+
+    it('spends when the submitted prompt still derives from the source', async () => {
+      expect(
+        await unionSourceImageIds({
+          urlSourceImageIds: [],
+          tokens: [promptToken()],
+          userId: USER,
+          prompt: `${SOURCE_PROMPT}, warm tones`,
+        })
+      ).toEqual([7]);
+    });
+
+    /**
+     * The gate. A revert that spends the token unconditionally fails HERE and
+     * nowhere else — every other assertion in this describe passes under it.
+     */
+    it('does NOT spend when the prompt has drifted away from the source', async () => {
+      expect(
+        await unionSourceImageIds({
+          urlSourceImageIds: [],
+          tokens: [promptToken()],
+          userId: USER,
+          prompt: 'industrial machinery blueprint, technical schematic, monochrome',
+        })
+      ).toEqual([]);
+    });
+
+    /**
+     * Not a drift verdict: a workflow with no prompt has nothing to compare, and
+     * scoring the empty string would read as total drift by accident.
+     */
+    it('does not spend, or query, when the submission carries no prompt', async () => {
+      findMany.mockClear();
+
+      expect(
+        await unionSourceImageIds({
+          urlSourceImageIds: [9],
+          tokens: [promptToken()],
+          userId: USER,
+        })
+      ).toEqual([9]);
+      expect(findMany).not.toHaveBeenCalled();
+    });
+
+    /** A source whose own prompt is gone cannot vouch for anything. */
+    it('does not spend when the source row has no prompt', async () => {
+      findMany.mockResolvedValue([{ id: 7, meta: { prompt: '' } }]);
+
+      expect(
+        await unionSourceImageIds({
+          urlSourceImageIds: [],
+          tokens: [promptToken()],
+          userId: USER,
+          prompt: SOURCE_PROMPT,
+        })
+      ).toEqual([]);
+    });
+
+    /**
+     * The audience split, same as `mint`: a click costs no generation, so this
+     * must never be spendable where `sanitizeProvenance` writes the server's own
+     * answer for an uploaded file.
+     */
+    it('is refused on the upload path', async () => {
+      const token = promptToken();
+
+      expect(verifyProvenance(token, USER)).toBeNull();
+      expect(await resolveVerifiedSourceImageIds({ userId: USER, provenance: token })).toBeNull();
+    });
+
+    /**
+     * The audience check on the drift route specifically, which the `job`-token
+     * test above cannot reach: that one passes no prompt, so it never enters this
+     * branch at all. Dropping the `'prompt'` argument here would make a `job`
+     * token — the one baked into every public output file — spendable at submit
+     * whenever the prompt happens to match, which is the 41% population.
+     */
+    it('refuses a job token on the drift route even when the prompt matches', async () => {
+      const job = signProvenance({ userId: USER, sourceImageIds: [7] })!;
+
+      expect(
+        await unionSourceImageIds({
+          urlSourceImageIds: [],
+          tokens: [job],
+          userId: USER,
+          prompt: SOURCE_PROMPT,
+        })
+      ).toEqual([]);
+    });
+
+    /**
+     * The drift check reads the source prompt from the database. Passing a
+     * matching prompt while the row says something unrelated must still refuse —
+     * otherwise the comparison is happening against the request.
+     */
+    it('compares against the stored source prompt, not the request', async () => {
+      findMany.mockResolvedValue([
+        { id: 7, meta: { prompt: 'industrial machinery blueprint, monochrome' } },
+      ]);
+
+      expect(
+        await unionSourceImageIds({
+          urlSourceImageIds: [],
+          tokens: [promptToken()],
+          userId: USER,
+          prompt: SOURCE_PROMPT,
+        })
+      ).toEqual([]);
+    });
   });
 });
 
@@ -348,12 +478,12 @@ describe('provenance kind separates the mint from a real job', () => {
     expect(await resolveVerifiedSourceImageIds({ userId: USER, provenance: minted })).toBeNull();
   });
 
-  it('accepts a mint token on the submit path', () => {
+  it('accepts a mint token on the submit path', async () => {
     const minted = signProvenance({ userId: USER, sourceImageIds: [7], kind: 'mint' })!;
 
-    expect(unionSourceImageIds({ urlSourceImageIds: [], tokens: [minted], userId: USER })).toEqual([
-      7,
-    ]);
+    expect(
+      await unionSourceImageIds({ urlSourceImageIds: [], tokens: [minted], userId: USER })
+    ).toEqual([7]);
   });
 
   /**
@@ -362,10 +492,12 @@ describe('provenance kind separates the mint from a real job', () => {
    * re-signed with a fresh timestamp, renewing its own 30-day expiry for as long
    * as the holder keeps submitting.
    */
-  it('refuses a job token presented as a submit input', () => {
+  it('refuses a job token presented as a submit input', async () => {
     const job = signProvenance({ userId: USER, sourceImageIds: [7] })!;
 
-    expect(unionSourceImageIds({ urlSourceImageIds: [], tokens: [job], userId: USER })).toEqual([]);
+    expect(
+      await unionSourceImageIds({ urlSourceImageIds: [], tokens: [job], userId: USER })
+    ).toEqual([]);
   });
 
   /**
