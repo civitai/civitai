@@ -143,7 +143,7 @@
     "@civitai/orchestration-client": "0.2.0-beta.106",
     "@civitai/shared": "workspace:*",
     "@clavata/sdk": "^0.2.3",
-    "@clickhouse/client": "^0.2.2",
+    "@clickhouse/client": "^1.23.1",
     "@coinbase/cdp-sdk": "^1.13.0",
     "@discordjs/rest": "^2.6.0",
     "@dnd-kit/core": "^6.1.0",
