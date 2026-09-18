@@ -281,9 +281,49 @@ function clip(value: string, max: number): string {
  * one context where the long-opaque-token heuristic is safe to apply — the same routing
  * `deepRedact` uses for `message` / `stack` keys.
  */
+/**
+ * Drop unpaired surrogate code units.
+ *
+ * 🔴 THE OTHER HALF OF THE HAZARD `clip` GUARDS. `clip` can no longer MANUFACTURE a lone
+ * surrogate, but it never repaired one it was HANDED, and an input-borne one reaches the wire
+ * through both branches — including the early return, where the value is short enough that `clip`
+ * does nothing at all. The consequence is identical and is measured in `clip`'s docblock: Postgres
+ * rejects the `jsonb` insert with `invalid input syntax for type json`, so the reporter's whole
+ * submission is lost. Real sources are ordinary: a third-party formatter slicing a string across an
+ * astral character, a partial `TextDecoder` chunk, `String.fromCharCode` over binary.
+ *
+ * 🔴 DELIBERATELY NOT `String.prototype.toWellFormed()`, AND NOT A LOOKBEHIND REGEX. This runs
+ * inside the `console.error` wrapper, which must never throw — and this repo declares NO
+ * `browserslist`, so the supported floor is unstated rather than known to be recent. Both of those
+ * constructs are Safari 16.4+; a browser below that would throw a `TypeError` here and take out the
+ * page's console. The manual scan is ES5 and cannot.
+ *
+ * A dropped lone surrogate is not recoverable text — it is half of a character whose other half
+ * never arrived — so it is removed rather than replaced with U+FFFD, matching `clip`'s choice to
+ * drop a split character rather than keep a broken one.
+ */
+function dropLoneSurrogates(value: string): string {
+  if (!/[\ud800-\udfff]/.test(value)) return value;
+  let out = '';
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        out += value[i] + value[i + 1];
+        i += 1;
+      }
+      continue;
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) continue;
+    out += value[i];
+  }
+  return out;
+}
+
 export function sanitizeConsoleMessage(raw: string): string {
   if (typeof raw !== 'string') return '';
-  const redacted = redactText(raw).trim();
+  const redacted = dropLoneSurrogates(redactText(raw).trim());
   return clip(redacted, FEEDBACK_CONSOLE_ERROR_MAX_LENGTH);
 }
 

@@ -125,6 +125,40 @@ describe('browser error log — sanitizing', () => {
       expect(out.isWellFormed()).toBe(true);
     });
 
+    /**
+     * The half `clip` never covered: a lone surrogate the caller HANDED us. `clip` only guards the
+     * cut it makes itself, so a short message never reaches it at all — and the consequence is the
+     * one `clip`'s docblock measures, a rejected `jsonb` insert that loses the whole submission.
+     */
+    it('drops an input-borne lone surrogate that never reaches the clip boundary', () => {
+      const message = `\ud800${'x'.repeat(10)}`;
+
+      // 🔴 THE CONTROL: this input is short enough that clipping does nothing, so the old code
+      // returned it untouched and not well-formed.
+      expect(message.length).toBeLessThan(FEEDBACK_CONSOLE_ERROR_MAX_LENGTH);
+      expect(message.isWellFormed()).toBe(false);
+
+      const out = sanitizeConsoleMessage(message);
+      expect(out.isWellFormed()).toBe(true);
+      expect(out).toBe('x'.repeat(10));
+    });
+
+    it('drops an input-borne lone surrogate sitting away from the cut in a clipped message', () => {
+      const message = `\ud800${'a'.repeat(400)}`;
+
+      const out = sanitizeConsoleMessage(message);
+      expect(out.isWellFormed()).toBe(true);
+      expect(out.length).toBeLessThanOrEqual(FEEDBACK_CONSOLE_ERROR_MAX_LENGTH);
+    });
+
+    /**
+     * The over-drop control for the pass above — a well-formed astral character must survive it
+     * untouched, or the guard would quietly strip every emoji a reporter's console contains.
+     */
+    it('keeps a well-formed astral character that needs no clipping', () => {
+      expect(sanitizeConsoleMessage('ok 😀 done')).toBe('ok 😀 done');
+    });
+
     it('scrubs an email out of a message', () => {
       expect(sanitizeConsoleMessage('failed for someone@example.com')).toBe(
         'failed for [redacted-email]'
