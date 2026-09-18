@@ -83,77 +83,82 @@ const PARTIAL_PROMPT =
 const NEAR_PROMPT =
   'netorare, cuckold pov, 1girl, 1boy, creampie, bed, bedroom, day, plain background';
 
-describe('remixClaimState reasons', () => {
+describe('remixClaimState', () => {
   const state = (form: Parameters<typeof remixClaimState>[1]) =>
     remixClaimState(useRemixStore.getState().data, form);
 
-  it('reports no remix at all as none, carrying and scoring nothing', () => {
-    const none = remixClaimState(null, { prompt: SEEDED_PROMPT });
-    expect(none.reason).toBe('none');
-    expect(none.carrier).toBeNull();
-    expect(none.holds).toBe(false);
-    expect(none.score).toBeNull();
+  /**
+   * The WHOLE object on every branch, not the fields that seemed interesting.
+   * Three review rounds each found one more field nobody had asserted on one
+   * more branch — a different field each time — because assertions written
+   * per-branch pin what their author was thinking about. `toEqual` pins every
+   * field whether or not anyone thought about it.
+   *
+   * `score` is `expect.any(Number)` where the prompt carries the claim: its
+   * VALUE is pinned by the ordering test below, which is the only thing that
+   * survives a retuned similarity.
+   */
+  it.each([
+    {
+      when: 'there is no remix at all',
+      arrange: () => undefined,
+      form: { prompt: SEEDED_PROMPT },
+      then: { holds: false, carrier: null, reason: 'none', score: null },
+    },
+    {
+      when: 'the claim is older than its TTL',
+      arrange: () => seedRemix(SEEDED_PROMPT, Date.now() - REMIX_CLAIM_TTL - 1),
+      form: { prompt: SEEDED_PROMPT },
+      then: { holds: false, carrier: null, reason: 'expired', score: null },
+    },
+    {
+      when: 'the remix seeded no prompt to compare against',
+      arrange: () => seedRemix('   '),
+      form: { prompt: SEEDED_PROMPT },
+      then: { holds: false, carrier: null, reason: 'uncarried', score: null },
+    },
+    {
+      when: 'the person cleared the prompt box',
+      arrange: () => seedRemix(),
+      form: { prompt: '   ' },
+      then: { holds: false, carrier: 'prompt', reason: 'uncarried', score: null },
+    },
+    {
+      when: 'the prompt was rewritten past the cutoff',
+      arrange: () => seedRemix(),
+      form: { prompt: PARTIAL_PROMPT },
+      then: { holds: false, carrier: 'prompt', reason: 'drifted', score: expect.any(Number) },
+    },
+    {
+      when: 'the prompt changed but still scores above the cutoff',
+      arrange: () => seedRemix(),
+      form: { prompt: NEAR_PROMPT },
+      then: { holds: true, carrier: 'prompt', reason: null, score: expect.any(Number) },
+    },
+    {
+      when: 'the form still holds the source media',
+      arrange: () => seedRemix(),
+      form: { prompt: 'pan left', video: { url: 'https://x/1.mp4' } },
+      then: { holds: true, carrier: 'media', reason: null, score: null },
+    },
+  ])('$when', ({ arrange, form, then }) => {
+    arrange();
+    expect(state(form)).toEqual(then);
   });
 
-  it('reports a rewritten prompt as drifted, carried by the prompt', () => {
-    seedRemix();
-    const drifted = state({ prompt: PARTIAL_PROMPT });
-    expect(drifted.reason).toBe('drifted');
-    expect(drifted.carrier).toBe('prompt');
-    expect(drifted.holds).toBe(false);
-  });
-
-  it('reports a cleared prompt as uncarried, NOT drifted, and does not score it', () => {
-    seedRemix();
-    const cleared = state({ prompt: '   ' });
-    expect(cleared.reason).toBe('uncarried');
-    expect(cleared.carrier).toBe('prompt');
-    expect(cleared.holds).toBe(false);
-    expect(cleared.score).toBeNull();
-  });
-
-  it('reports a remix that seeded no prompt as uncarried, carrying nothing', () => {
-    seedRemix('   ');
-    const unseeded = state({ prompt: SEEDED_PROMPT });
-    expect(unseeded.reason).toBe('uncarried');
-    expect(unseeded.carrier).toBeNull();
-    expect(unseeded.holds).toBe(false);
-    expect(unseeded.score).toBeNull();
-  });
-
-  it('separates an expired claim from a drifted one, neither scored', () => {
-    seedRemix(SEEDED_PROMPT, Date.now() - REMIX_CLAIM_TTL - 1);
-    const expired = state({ prompt: SEEDED_PROMPT });
-    expect(expired.reason).toBe('expired');
-    expect(expired.carrier).toBeNull();
-    expect(expired.holds).toBe(false);
-    expect(expired.score).toBeNull();
-  });
-
-  it('leaves a media claim unscored and unreasoned', () => {
-    seedRemix();
-    const media = state({ prompt: 'pan left', video: { url: 'https://x/1.mp4' } });
-    expect(media.carrier).toBe('media');
-    expect(media.reason).toBeNull();
-    expect(media.holds).toBe(true);
-    expect(media.score).toBeNull();
-  });
-
-  it('keeps a prompt that changed a lot but not enough, and scores it', () => {
-    seedRemix();
-    const near = state({ prompt: NEAR_PROMPT });
-    expect(near.reason).toBeNull();
-    expect(near.carrier).toBe('prompt');
-    expect(near.holds).toBe(true);
-    expect(near.score).toBeGreaterThanOrEqual(0.75);
-  });
-
-  it('scores a nearer prompt above a further one, and a disjoint one at the floor', () => {
+  /**
+   * What the ordering closes and what it does not: it rules out a score that
+   * collapses to a constant or ranks the fixtures wrongly. A monotone-but-wrong
+   * score — raw cosine, any order-preserving scaling — still passes. That is the
+   * ceiling of an ordering property, not a gap in this instance.
+   */
+  it('ranks a nearer prompt above a further one, and a disjoint one at the floor', () => {
     seedRemix();
     const near = state({ prompt: NEAR_PROMPT }).score ?? -1;
     const partial = state({ prompt: PARTIAL_PROMPT }).score ?? -1;
     const disjoint = state({ prompt: UNRELATED_PROMPT }).score ?? -1;
 
+    expect(near).toBeGreaterThanOrEqual(0.75);
     expect(near).toBeGreaterThan(partial);
     expect(partial).toBeGreaterThan(disjoint);
     expect(partial).toBeLessThan(0.75);
