@@ -41,7 +41,7 @@ vi.mock('./lag', () => ({
   isWritePool: () => false,
 }));
 
-import { cleanupNotifications } from './operations';
+import { cleanupNotifications, CLEANUP_BATCH_SIZE } from './operations';
 import { notificationCache } from './cache';
 import { preventReplicationLag } from './lag';
 
@@ -71,8 +71,8 @@ describe('cleanupNotifications cache busting', () => {
       { userId: 1, viewed: false },
       { userId: 1, viewed: false }, // same user twice in a batch -> one bust
       { userId: 2, viewed: true }, // read-only: the unread hash never counted it
-      { userId: 3, viewed: false },
-      { userId: 3, viewed: true }, // both kinds: still busted, once
+      { userId: 3, viewed: true },
+      { userId: 3, viewed: false }, // read row FIRST: deduping before the filter would drop this user
     ]);
 
     const deleted = await cleanupNotifications(before);
@@ -109,6 +109,9 @@ describe('cleanupNotifications cache busting', () => {
     await cleanupNotifications(before);
 
     expect(bustedIds().sort((a, b) => a - b)).toEqual(userIds);
+    // Each user's OWN flag, not one flag for the batch: with a single user in the batch, flagging
+    // userIds[0] every time is indistinguishable from flagging the right one.
+    expect(markFresh.mock.calls.map(([id]) => id).sort((a, b) => a - b)).toEqual(userIds);
   });
 
   it('never has more than CLEANUP_BUST_CONCURRENCY busts in flight', async () => {
@@ -118,17 +121,36 @@ describe('cleanupNotifications cache busting', () => {
     // because the number looks arbitrary, the number is the point.
     let inFlight = 0;
     let peak = 0;
-    bustUser.mockImplementation(async () => {
+    const track = async () => {
       inFlight++;
       peak = Math.max(peak, inFlight);
       await new Promise((resolve) => setTimeout(resolve, 0));
       inFlight--;
-    });
+    };
+    // BOTH redis calls, because the cap's own comment prices a busted user at two round-trips: hoist
+    // the lag flags out of the pool and they go out 60-at-a-time while the DEL half stays capped.
+    bustUser.mockImplementation(track);
+    markFresh.mockImplementation(track);
+    // TWO batches, because the cap is per sweep, not per batch: drop the await on the bust pass and
+    // batch two's pool runs alongside batch one's while every other assertion here still passes.
     batches.push(Array.from({ length: 60 }, (_, i) => ({ userId: i + 200, viewed: false })));
+    batches.push(Array.from({ length: 60 }, (_, i) => ({ userId: i + 400, viewed: false })));
 
     await cleanupNotifications(before);
 
     expect(peak).toBe(25);
+  });
+
+  it('keeps busting after a batch that came back full', async () => {
+    // Every other batch here is a handful of rows, so anything gated on batch fullness — a sweep that
+    // busts the first batch and silently stops — is invisible to them.
+    batches.push(Array.from({ length: CLEANUP_BATCH_SIZE }, () => ({ userId: 1, viewed: false })));
+    batches.push([{ userId: 2, viewed: false }]);
+
+    const deleted = await cleanupNotifications(before);
+
+    expect(deleted).toBe(CLEANUP_BATCH_SIZE + 1);
+    expect(bustedIds().sort((a, b) => a - b)).toEqual([1, 2]);
   });
 
   it('deletes with RETURNING so the unread filter has something to filter on', async () => {
@@ -136,8 +158,14 @@ describe('cleanupNotifications cache busting', () => {
 
     await cleanupNotifications(before);
 
-    expect(captured[0].sql).toContain('RETURNING "userId", viewed');
+    // Anchored, not toContain: `RETURNING "userId", viewed IS FALSE AS viewed` CONTAINS the plain
+    // form, and would hand every row an inverted `viewed` — busting the read users and no one else.
+    expect(captured[0].sql.trimEnd()).toMatch(/RETURNING "userId", viewed$/);
     expect(captured[0].params).toEqual([before.toISOString()]);
+    // The fake pool answers every query identically, so without these the sweep could delete the
+    // NEWEST rows, or none at all, and every test here would still pass.
+    expect(captured[0].sql).toContain('"createdAt" < $1');
+    expect(captured[0].sql).toContain(`LIMIT ${CLEANUP_BATCH_SIZE}`);
   });
 
   it('stops on the first empty batch and sums the deleted rows across batches', async () => {
@@ -176,10 +204,13 @@ describe('cleanupNotifications cache busting', () => {
       { userId: 1, viewed: false },
       { userId: 2, viewed: false },
     ]);
+    // A second populated batch, because the count accumulates: with one batch, `bustsAcked =` and
+    // `bustsAcked +=` report the same number.
+    batches.push([{ userId: 3, viewed: false }]);
 
     await cleanupNotifications(before);
 
     expect(logged).toHaveLength(1);
-    expect(logged[0]).toMatchObject({ name: 'notification.cleanup', deleted: 2, bustsAcked: 1 });
+    expect(logged[0]).toMatchObject({ name: 'notification.cleanup', deleted: 3, bustsAcked: 2 });
   });
 });

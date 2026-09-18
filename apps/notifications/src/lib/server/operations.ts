@@ -221,7 +221,9 @@ export async function notificationExists(key: string): Promise<boolean> {
 }
 
 // --- cleanup: batched delete of old UserNotification rows -------------------------------------------
-const CLEANUP_BATCH_SIZE = 10000;
+// Exported for test visibility only (like userWriteQueues and countInFlight): a suite that cannot
+// build a FULL batch cannot see behaviour conditioned on batch fullness.
+export const CLEANUP_BATCH_SIZE = 10000;
 // Users busted in parallel per batch, at two redis round-trips each (lag flag + DEL). Most rows in a
 // batch belong to a different user, so this is the knob that decides whether the bust side dominates
 // the sweep's wall clock.
