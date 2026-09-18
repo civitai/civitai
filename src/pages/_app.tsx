@@ -1,5 +1,10 @@
 // src/pages/_app.tsx
 
+// Side-effect import: starts the bounded console/network snapshot a bug report attaches. FIRST,
+// and deliberately so — `console.error` leaves no buffer to replay, so anything React logs before
+// this module evaluates (a hydration mismatch above all, which is the case the feature exists for)
+// is unrecoverable. It is a no-op under SSR. See the file for the rest.
+import '~/utils/feedback/startBrowserErrorLog';
 import dynamic from 'next/dynamic';
 // Side-effect import: globally disables next/link route prefetching. Must run
 // before any <Link> mounts — see the file for rationale.
@@ -31,7 +36,6 @@ import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessi
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
 import { ErrorBoundary } from '~/components/ErrorBoundary/ErrorBoundary';
-import { BrowserErrorRecorder } from '~/components/Feedback/BrowserErrorRecorder';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 // import { RecaptchaWidgetProvider } from '~/components/Recaptcha/RecaptchaWidget';
@@ -260,9 +264,6 @@ function MyApp(props: CustomAppProps) {
                     `AppsPageLayout.chromeAlignment.browser.test.tsx` asserts the rail's
                     left edge and width are identical on all 12 routes. */}
                 <AppsRailProvider value={cookies.appsRail}>
-                  {/* Bounded console/network snapshot a bug report can attach. Mounted here, not in
-                      the prompt, because the errors worth reporting happen before anyone opens it. */}
-                  <BrowserErrorRecorder />
                   <ClientHistoryStore />
                   <RegisterCatchNavigation />
                   <RouterTransition />

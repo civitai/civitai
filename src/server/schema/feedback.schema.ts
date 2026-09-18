@@ -145,6 +145,13 @@ const feedbackContextSchema = z.object({
    * see the capture module for why. The producer has already run it through the Faro PII scrub
    * (`redactText`) and clipped it, so an over-long value here means the producer drifted from
    * the bound, which is a bug worth a rejection rather than a silent truncation.
+   *
+   * 🔴 DO NOT READ `networkErrors` BELOW AND ASSUME THE SAME RULE APPLIES HERE. A captured request
+   * URL has its query string removed outright; a URL written inside a console MESSAGE keeps its
+   * query string, and only params whose NAME substring-matches the Faro `SENSITIVE_PARAM_KEYS`
+   * list are redacted — so a benignly-named param (a search term, a prompt) is stored verbatim in
+   * this JSONB column. That asymmetry is a deliberate operator decision (2026-09-14) to keep the
+   * console text whole for triage; it is documented at length on the capture module.
    */
   consoleErrors: z
     .array(

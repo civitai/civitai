@@ -43,6 +43,22 @@ import { redactText, redactValue } from '~/utils/faro/redact';
  *   note below: they are indistinguishable from an ordinary opaque cross-origin success, so
  *   recording them would show a moderator "failures" that never happened.
  *
+ * ─── AND WHAT *IS* CAPTURED THAT THE LIST ABOVE MIGHT LEAD YOU TO ASSUME IS NOT ────────────────
+ * 🔴 THE TWO PATHS TREAT QUERY STRINGS DIFFERENTLY, AND THE DIFFERENCE IS DELIBERATE. It is worth
+ * stating because `recordConsoleError` and `recordNetworkError` sit next to each other and read as
+ * though one rule governs both.
+ *   · NETWORK path: `sanitizeNetworkUrl` removes the query string and fragment ENTIRELY. What is
+ *     stored is `origin + pathname`, whatever the param was called.
+ *   · CONSOLE path: the message is kept as text. A URL written inside it keeps its query string,
+ *     and only the VALUES of params whose NAME substring-matches `SENSITIVE_PARAM_KEYS` (`token`,
+ *     `code`, `key`, `signature`, …) are replaced by `redactText`. A param with a name that is not
+ *     on that list — a search term, a prompt, a filter — is stored verbatim in `Feedback.context`,
+ *     which is a JSONB column a moderator reads and which has no retention policy.
+ * That asymmetry is an operator decision taken on 2026-09-14 — keep the full console text, query
+ * strings included — not an oversight, and not something to "fix" by widening the redaction. What
+ * it means for a reader of this module: the console path's protection is the `SENSITIVE_PARAM_KEYS`
+ * / email / token heuristics in `redactText`, NOT the unconditional strip the network path gets.
+ *
  * ─── MECHANISM, AND THE ONE THING IT REFUSES TO DO ────────────────────────────────────────────
  * 🔴 `fetch` IS NOT PATCHED, AND THAT IS A DECISION, NOT AN OVERSIGHT. Wrapping global `fetch`
  * would give complete coverage — every 4xx/5xx plus the network-layer throws named above, in every
@@ -226,10 +242,31 @@ const TRUNCATION_MARKER = '…';
  * 🔴 A STRING OF EXACTLY `max` IS NOT TRUNCATED, so it gets no marker. `slice` is a no-op at the
  * boundary, so a `>=` here would stamp "there is more" onto a complete message AND spend one of its
  * characters saying so. The boundary is pinned from both sides by a test.
+ *
+ * 🔴 THE CUT NEVER LANDS INSIDE A SURROGATE PAIR, AND THAT IS A DATA-LOSS BUG, NOT A COSMETIC ONE.
+ * `length` and `slice` count UTF-16 code units, so a boundary falling between the two halves of an
+ * astral character (emoji, and most non-BMP scripts) keeps a LONE SURROGATE. The result is still
+ * `max` units long and still satisfies `feedbackContextSchema`'s `.max()` — which counts the same
+ * units — but it is not well-formed Unicode, and `JSON.stringify` preserves it as an unpaired
+ * `\uD83D` escape all the way to the server. `Feedback.context` is a `jsonb` column, and Postgres
+ * REJECTS that value: measured against a real engine, the insert fails with `invalid input syntax
+ * for type json` while the same string with its pair intact inserts cleanly. So the reporter's
+ * WHOLE submission is lost, on the surface that exists to collect reports — the same failure the
+ * length bound above exists to prevent, arriving through the other half of the encoding.
+ *
+ * When the boundary would split a pair the whole character is dropped, so a clipped result is
+ * occasionally one character SHORTER than `max` rather than one character broken. Never longer.
  */
 function clip(value: string, max: number): string {
   if (value.length <= max) return value;
-  return value.slice(0, max - TRUNCATION_MARKER.length) + TRUNCATION_MARKER;
+  let end = max - TRUNCATION_MARKER.length;
+  // A HIGH surrogate in the last KEPT position has its partner at `end`, i.e. in the part being
+  // cut off — that is the one case that manufactures a lone surrogate, so drop the pair entirely.
+  // A low surrogate there is the tail of a pair that is already fully inside the kept region.
+  // `charCodeAt` out of range gives `NaN`, which fails both comparisons, so `end <= 0` is safe.
+  const lastKept = value.charCodeAt(end - 1);
+  if (lastKept >= 0xd800 && lastKept <= 0xdbff) end -= 1;
+  return value.slice(0, end) + TRUNCATION_MARKER;
 }
 
 /**

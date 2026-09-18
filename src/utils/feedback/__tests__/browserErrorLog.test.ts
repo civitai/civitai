@@ -78,6 +78,53 @@ describe('browser error log — sanitizing', () => {
       expect(sanitizeConsoleMessage('short')).toBe('short');
     });
 
+    /**
+     * 🔴 A CLIP THAT CUTS AN EMOJI IN HALF LOSES THE REPORTER'S WHOLE SUBMISSION, NOT A CHARACTER.
+     * `length` and `slice` count UTF-16 code units, so a boundary landing between the two halves of
+     * an astral character leaves a LONE SURROGATE. That value is still 300 units long, so the
+     * schema's `.max(300)` passes it; `JSON.stringify` preserves it as an unpaired `\uD83D` escape
+     * across the wire; and `Feedback.context` is a `jsonb` column, where Postgres rejects it with
+     * `invalid input syntax for type json` — measured against a real engine, with the same string's
+     * pair-intact twin inserting cleanly as the control. The report is then lost with an error that
+     * names nothing about the snapshot.
+     *
+     * 🔴 THE FIXTURE IS THE HARD PART, AS IT WAS FOR THE REDACT-BEFORE-CLIP TEST ABOVE. An emoji
+     * anywhere else in the string is clipped away whole and proves nothing; the pair has to
+     * STRADDLE the cut. `NAIVE` below is the old implementation's output, computed rather than
+     * argued, and asserted to be ill-formed — that is the control proving this test CAN fail.
+     */
+    it('does not cut a surrogate pair in half when it clips', () => {
+      // 298 + the pair's first unit is exactly the 299 units the old `clip` kept before the marker.
+      const message = `${'a'.repeat(298)}😀${'b'.repeat(50)}`;
+
+      // 🔴 THE CONTROL. The old behaviour, actually evaluated.
+      const NAIVE = `${message.slice(0, FEEDBACK_CONSOLE_ERROR_MAX_LENGTH - 1)}…`;
+      expect(NAIVE).toHaveLength(FEEDBACK_CONSOLE_ERROR_MAX_LENGTH);
+      expect(NAIVE.isWellFormed()).toBe(false);
+
+      const out = sanitizeConsoleMessage(message);
+      expect(out.isWellFormed()).toBe(true);
+      // The whole character goes, rather than half of it staying: 298 `a`s and the marker, one
+      // short of the bound. Shorter than `max` is fine; longer is what the schema rejects.
+      expect(out).toBe(`${'a'.repeat(298)}…`);
+      expect(out.length).toBeLessThanOrEqual(FEEDBACK_CONSOLE_ERROR_MAX_LENGTH);
+    });
+
+    /**
+     * The other side of the same boundary, and it is what stops the fix from over-trimming. Here
+     * the pair ends exactly ON the cut, so it is entirely inside the kept region and must survive
+     * intact — a guard that dropped the last character whenever it saw a surrogate would shorten
+     * every clipped message containing one and would pass the test above.
+     */
+    it('keeps an astral character that ends exactly on the boundary', () => {
+      const message = `${'a'.repeat(297)}😀${'b'.repeat(50)}`;
+
+      const out = sanitizeConsoleMessage(message);
+      expect(out).toBe(`${'a'.repeat(297)}😀…`);
+      expect(out).toHaveLength(FEEDBACK_CONSOLE_ERROR_MAX_LENGTH);
+      expect(out.isWellFormed()).toBe(true);
+    });
+
     it('scrubs an email out of a message', () => {
       expect(sanitizeConsoleMessage('failed for someone@example.com')).toBe(
         'failed for [redacted-email]'
