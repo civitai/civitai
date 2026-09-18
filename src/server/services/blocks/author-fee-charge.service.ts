@@ -457,9 +457,31 @@ export type ReverseBlockAuthorFeeResult =
   | { reversed: true; feeBuzz: number }
   | {
       reversed: false;
-      reason:
-        | 'no-accrual'
-        /** The row's `status` column reads `settled` — the flip confirmed. */
+      reason: /**
+       * No row was claimed. TWO states share this reason and are deliberately
+       * not separated: the workflow never accrued a fee at all, and the
+       * boundary-guarded `deleteMany` matched nothing because a concurrent
+       * observer claimed the row first. Neither leaves money to recover, and
+       * neither is actionable differently.
+       */
+      | 'no-accrual'
+        /**
+         * The row's `status` column reads `settled` — the flip confirmed.
+         *
+         * 🔴 UNREACHABLE IN PRODUCTION AS THE TWO GUARDS ARE ORDERED TODAY, AND
+         * AN OPERATOR ALERTING ON ITS LOG LINE (`fee already settled — not
+         * reversed`) WOULD GET PERMANENT SILENCE. The eligibility guard runs
+         * FIRST, and the only writer of `status = 'settled'` is the settlement
+         * flip, which can only touch rows it scanned — rows with
+         * `accruedAt < utcDayStart(runClock)`, i.e. exactly the rows the
+         * eligibility guard has already refused. Reaching this arm therefore
+         * needs the settling app's clock to sit a whole UTC day ahead of the
+         * reversing app's (app-clock skew across midnight), or a manual
+         * `settleBlockAuthorFees({ date })` run with a date AHEAD of the
+         * reverser's clock — the precondition recorded on `settlementBoundary`.
+         * Kept as a second layer whose ordering-independence is pinned by test,
+         * not as an ordinary operational distinction.
+         */
         | 'already-settled'
         /**
          * 🔴 The row's accrual day is COMPLETE, so a mint may already have landed
@@ -519,9 +541,14 @@ export type ReverseBlockAuthorFeeResult =
  * change and every migration here is hand-applied per environment.
  *
  * ⚠️ REQUIREMENT 4 IS THEREFORE TIME-BOUNDED, AND NOTHING ELSE SAYS SO. A fee
- * accrued on day D is reversible until the settlement job runs at 02:30 UTC on
- * D+1; a terminal observation after that returns a refusal and does NOT refund.
- * A workflow that reaches a terminal state on the day it ran is always still
+ * accrued on day D stops being reversible at **00:00 UTC on D+1** — the instant
+ * the row's accrual day completes. NOT when the settlement job runs: that job's
+ * 02:30 UTC schedule is irrelevant to this guard, which is
+ * `accruedAt < utcDayStart(now)` and flips at midnight whether or not any run has
+ * happened or minted anything. Worked case: a fee accrued `2026-09-18T14:00Z`
+ * whose workflow is polled `failed` at `2026-09-19T01:00Z` is REFUSED — the job
+ * has not run, nothing has minted, and the fee is still not reversible. A
+ * workflow that reaches a terminal state on the UTC day it ran is always still
  * reversible, which is the overwhelming majority.
  *
  * ⚠️ WHAT THE BOUNDARY DOES NOT ELIMINATE: both sides read their own clock, so a
@@ -580,7 +607,10 @@ export async function reverseBlockAuthorFee(args: {
           // from "refused conservatively": the row still reads `accrued` in the
           // second case.
           rowStatus: row.status,
-          accruedAt: row.accruedAt instanceof Date ? row.accruedAt.toISOString() : row.accruedAt,
+          // No `instanceof Date` defence: `isSettlementEligible` on the line above
+          // already called `.getTime()` on this value unguarded, so a non-`Date`
+          // would have thrown into the catch before reaching here.
+          accruedAt: row.accruedAt.toISOString(),
         },
         'civitai-prod'
       ).catch(() => undefined);
@@ -602,11 +632,24 @@ export async function reverseBlockAuthorFee(args: {
       return { reversed: false, reason: 'already-settled' };
     }
 
-    // The atomic claim. Re-asserting BOTH conditions here rather than trusting
-    // the read above is what makes it a claim instead of a check — the row can
-    // settle between the two statements, and `accruedAt` is re-asserted for the
-    // same reason `status` is: the claim must carry the structural property, not
-    // merely be preceded by a check of it.
+    // The atomic claim, and the two clauses are NOT doing the same work.
+    //
+    // `status` closes a REAL race: a concurrent settlement flip (or a concurrent
+    // observer's own delete) can move it between the read above and this
+    // statement, so re-asserting it here is what makes exactly one caller see
+    // `count === 1` and issue the refund.
+    //
+    // ⚠️ `accruedAt` IS BELT-AND-BRACES, NOT A SECOND RACE CLOSED — AN EARLIER
+    // COMMENT HERE SAID IT WAS RE-ASSERTED "for the same reason `status` is", AND
+    // THAT WAS FALSE. `now` is frozen above, and `accrued_at` is written once by
+    // the column default and never updated by any writer, so
+    // `accruedAt < settlementBoundary(now)` evaluates identically at the check and
+    // at this claim: the clause cannot change any outcome reachable from here.
+    // What makes the row safe is the CHECK above — a row whose accrual day is
+    // still open is invisible to every settlement scan, so no mint can have been
+    // attempted for it. The clause is kept because it costs nothing and carries
+    // the structural property into the statement that acts on it, which is what a
+    // future caller recomputing the clock would need.
     const { count } = await dbWrite.blockAuthorFeeAccrual.deleteMany({
       where: {
         workflowId,
@@ -616,6 +659,11 @@ export async function reverseBlockAuthorFee(args: {
         accruedAt: { gte: settlementBoundary(now) },
       },
     });
+    // ⚠️ `no-accrual` HERE MEANS "THE CLAIM LOST", NOT "THERE WAS NO ROW" — the
+    // row was read moments ago. It shares the reason with the genuine
+    // never-accrued case on purpose (see the type): both leave nothing to recover
+    // and neither is actionable differently, and adding a third reason would put a
+    // distinction in the public result that no caller can act on.
     if (count < 1) return { reversed: false, reason: 'no-accrual' };
 
     const refunded = await refundBlockAuthorFee({

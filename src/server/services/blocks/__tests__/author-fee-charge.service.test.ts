@@ -503,11 +503,16 @@ describe('reverseBlockAuthorFee — the fee follows the refund', () => {
   it('🔴 the DELETE CLAIM carries the day boundary as well as the status', async () => {
     // 🔴 RED AT `1672a1e3cc`: the claim was `{ workflowId, status }` only.
     //
-    // The check above is not enough on its own — the row can become settleable
-    // between the read and the delete, and a check that is not also part of the
-    // CLAIM is exactly the "check, not claim" defect the status guard already
-    // learned. `gte` the settlement boundary means only a row whose accrual day is
-    // still OPEN can be claimed, which no settlement run can have minted.
+    // ⚠️ WHAT THIS PINS IS THE WHERE SHAPE, NOT A RACE THIS CLAUSE CLOSES — AN
+    // EARLIER VERSION OF THIS COMMENT SAID "the row can become settleable between
+    // the read and the delete", AND IT CANNOT. `reverseBlockAuthorFee` freezes
+    // `now` before the read and `accrued_at` is written once by the column default
+    // and never updated, so the boundary comparison has the same answer at the
+    // check and at the claim. `status` is the clause that closes a real race (a
+    // concurrent flip or a concurrent observer's delete can move it). The boundary
+    // is carried into the claim as defence-in-depth — it costs nothing and is what
+    // a future caller recomputing the clock would need — and this test pins that
+    // it is carried, which is the property a refactor would drop.
     mockDbWrite.blockAuthorFeeAccrual.findUnique.mockResolvedValue(accruedRow);
     mockDbWrite.blockAuthorFeeAccrual.deleteMany.mockResolvedValue({ count: 1 });
     await reverseBlockAuthorFee({ workflowId: WORKFLOW_ID, terminalStatus: 'failed', now: NOW });
@@ -519,9 +524,20 @@ describe('reverseBlockAuthorFee — the fee follows the refund', () => {
   });
 
   it('🔴 refuses a SETTLED row — the money is already the author’s', async () => {
-    // The second layer. A row can read `settled` while its accrual day is still
-    // open only if a settlement run is mid-flight, but the refusal must not depend
-    // on the day guard having caught it: they are different claims.
+    // The second layer, pinned as a UNIT property rather than as a production
+    // scenario.
+    //
+    // ⚠️ AN EARLIER VERSION OF THIS COMMENT NAMED THE WRONG MECHANISM — it said
+    // this state arises "if a settlement run is mid-flight", and mid-flight is NOT
+    // sufficient. The flip only ever writes rows the scan selected, i.e. rows
+    // whose accrual day is already COMPLETE, and the eligibility guard refuses
+    // those first. So `already-settled` is unreachable in production as the guards
+    // are ordered today: reaching it needs the settling app's clock a whole UTC
+    // day ahead of the reversing app's, or a manual `settleBlockAuthorFees({ date
+    // })` run with a future date. An operator alerting on its log line would get
+    // permanent silence. The refusal must still hold without the day guard having
+    // caught it — they are different claims — and that ordering-independence is
+    // what this test pins.
     mockDbWrite.blockAuthorFeeAccrual.findUnique.mockResolvedValue({
       ...accruedRow,
       status: 'settled',

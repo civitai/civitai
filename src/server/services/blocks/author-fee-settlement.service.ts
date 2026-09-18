@@ -103,7 +103,15 @@ export type SettleBlockAuthorFeesResult = {
  * in half, and that cut is exactly what revision 1 lost money to.
  */
 export async function settleBlockAuthorFees(args: {
-  /** Settle days strictly BEFORE this instant's UTC day. Defaults to now. */
+  /**
+   * Settle days strictly BEFORE this instant's UTC day. Defaults to now.
+   *
+   * 🔴 NEVER PASS A FUTURE INSTANT. `reverseBlockAuthorFee` refuses any row whose
+   * accrual day is complete *by its own clock*, so a run evaluating this boundary
+   * ahead of the reverser's clock mints rows the reversal path still treats as
+   * reversible — the double-pay window this boundary exists to close. See
+   * `settlementBoundary`.
+   */
   date?: Date;
   /** Max rows per accrual day. A day exceeding it is skipped whole, never cut. */
   limit?: number;
@@ -435,6 +443,19 @@ function utcDayStart(d: Date): Date {
  * wide at one instant a day, against the ~24h window it replaces; closing it
  * completely needs a claim COLUMN the reversal can read, which needs a schema
  * change (see `reverseBlockAuthorFee`).
+ *
+ * 🔴 PRECONDITION — `settleBlockAuthorFees({ date })` IS A DOCUMENTED PUBLIC
+ * PARAMETER, AND THE DISJOINTNESS ABOVE HOLDS ONLY WHILE NO RUN EVALUATES THIS
+ * BOUNDARY AGAINST A CLOCK AHEAD OF THE REVERSER'S. The property "a row the
+ * reversal may still claim is a row no settlement run can see" is a comparison
+ * between two clocks, not a fact about the row alone. The single production
+ * caller passes `new Date()` (`src/server/jobs/settle-block-author-fees.ts`), so
+ * it holds today. A manual catch-up run with a FUTURE `date` re-opens the
+ * double-pay window for every row accrued between the two clocks: that run scans
+ * and mints rows whose accrual day the reversal path still reads as open, so the
+ * same fee can be minted to the author and refunded to the viewer. Pass a past or
+ * present instant only. (It is also the one thing besides app-clock skew that
+ * makes `reverseBlockAuthorFee`'s `already-settled` arm reachable.)
  */
 export function settlementBoundary(now: Date): Date {
   return utcDayStart(now);

@@ -233,23 +233,51 @@ describe('author fee — the spend-attribution seam', () => {
  * was never reached. A ledger entry closes the population without putting dead
  * code on the hot path.
  */
-const NO_FEE_PATHS: Record<string, { charges: number; reason: string }> = {
-  submitCustomComfyWorkflow: {
-    charges: 0,
-    reason:
-      'POST-PAID. customComfy takes no whatIf quote at all — its ceiling IS the app’s declared ' +
-      '`maxBuzz`, stamped as the step timeout the orchestrator enforces — so there is no ' +
-      'pre-submit `cost.base` to price a fee from and nothing is reserved for one. Wiring a fee ' +
-      'here means giving the path a pre-submit base and dropping this entry in the same commit.',
-  },
-  submitPassThroughStepWorkflow: {
-    charges: 0,
-    reason:
-      'POST-PAID, same as customComfy. Its pre-submit quote goes through ' +
-      '`quotePassThroughStepBuzz`, which returns `cost.total` and nothing else, so there is no ' +
-      '`cost.base` at reservation time. Widening that helper is what would wire a fee here.',
-  },
-};
+/**
+ * The declaration every no-fee path must carry at its spend guard, verbatim.
+ *
+ * 🔴 IT IS PINNED AS A WHOLE NORMALISED SENTENCE, NOT AS KEYWORDS, because the
+ * artefact under test is prose: a guard on words is walkable by rewording, and
+ * this sentence exists precisely to stop the exclusion being re-described as a
+ * no-op by a later editor. A cosmetic reword fails this test — that is the price
+ * of a machine-checkable claim, and it is the price this arc has already paid
+ * twice by not charging it.
+ */
+const WHATIF_ATTRIBUTION_DECLARATION =
+  "SPEND ATTRIBUTION IS DELIBERATELY SKIPPED FOR THE 'whatif' SENTINEL ID ON THIS PATH, AND " +
+  'THAT IS A BEHAVIOUR CHANGE RATHER THAN A NO-OP.';
+
+const NO_FEE_PATHS: Record<string, { charges: number; reason: string; whatifAttribution: string }> =
+  {
+    submitCustomComfyWorkflow: {
+      charges: 0,
+      whatifAttribution:
+        'The fee’s reason for excluding the sentinel (one shared idempotency key, one UNIQUE ' +
+        'accrual row) does not apply to a path that charges no fee. What applies is that ' +
+        '`recordSpendAttribution` is idempotent on (workflowId, appBlockId), so one shared ' +
+        'sentinel id collapses every viewer’s submit into one row of a payout-relevant table. ' +
+        'The accepted cost: a real submit whose orchestrator response carried no workflow id ' +
+        'writes NO attribution row, where before this change it wrote one keyed on the sentinel.',
+      reason:
+        'POST-PAID. customComfy takes no whatIf quote at all — its ceiling IS the app’s declared ' +
+        '`maxBuzz`, stamped as the step timeout the orchestrator enforces — so there is no ' +
+        'pre-submit `cost.base` to price a fee from and nothing is reserved for one. Wiring a fee ' +
+        'here means giving the path a pre-submit base and dropping this entry in the same commit.',
+    },
+    submitPassThroughStepWorkflow: {
+      charges: 0,
+      whatifAttribution:
+        'Same as customComfy, and not the fee’s reasoning for the same reason: this path ' +
+        'charges no fee, so only `recordSpendAttribution`’s (workflowId, appBlockId) ' +
+        'idempotency is at stake, and one shared sentinel id collapses every viewer’s submit ' +
+        'into one row. Same accepted cost: a submit whose response carried no workflow id writes ' +
+        'NO attribution row.',
+      reason:
+        'POST-PAID, same as customComfy. Its pre-submit quote goes through ' +
+        '`quotePassThroughStepBuzz`, which returns `cost.total` and nothing else, so there is no ' +
+        '`cost.base` at reservation time. Widening that helper is what would wire a fee here.',
+    },
+  };
 
 describe('author fee — the viewer-charge seam', () => {
   const source = readFileSync(ROUTER, 'utf8');
@@ -399,6 +427,59 @@ describe('author fee — the viewer-charge seam', () => {
         "spendWorkflowId !== 'whatif'"
       );
       expect(guard).toContain("spendWorkflowId !== 'failed'");
+    }
+  });
+
+  it('🔴 the two NO-FEE paths DECLARE that the sentinel exclusion drops their attribution row', () => {
+    // 🔴 WHY A SECOND, PATH-SPECIFIC TEST WHEN THE LOOP ABOVE ALREADY COVERS ALL
+    // FOUR MARKERS. On the two priced paths the exclusion is a FEE argument: one
+    // shared sentinel id means one shared idempotency key and one UNIQUE accrual
+    // row across every viewer. On these two paths no fee is charged, so that
+    // argument does not apply and the clause's only effect is that
+    // `recordSpendAttribution` — a payout-relevant table — stops being written for
+    // a real submit whose orchestrator response carried no workflow id. That is a
+    // behaviour change against `dce428a492`, and the loop above cannot express it:
+    // it would follow silently if someone "fixed" the loop, because it holds these
+    // paths to the same clause for a reason that is not theirs.
+    //
+    // So the DECISION is pinned where it can be read: a verbatim declaration at
+    // the guard, tied to a ledger entry carrying its own reason, failing if either
+    // side is removed or reworded.
+    const declaration = WHATIF_ATTRIBUTION_DECLARATION.replace(/\s+/g, ' ').trim();
+
+    for (const [pathName, entry] of Object.entries(NO_FEE_PATHS)) {
+      const ledgered = entry.whatifAttribution?.trim() ?? '';
+      expect(ledgered, `${pathName}: no ledgered reason for the skip`).not.toBe('');
+
+      // The region between this path's own `async function` line and its spend
+      // marker — entirely inside the path, so a neighbour's declaration cannot
+      // satisfy it.
+      const fnAt = source.indexOf(`async function ${pathName}(`);
+      expect(fnAt, `${pathName}: submit helper not found`).toBeGreaterThan(-1);
+      const markerIndex = submitMarkers.findIndex((at) => at > fnAt);
+      const markerAt = submitMarkers[markerIndex];
+      expect(markerAt, `${pathName}: spend marker not found`).toBeGreaterThan(fnAt);
+
+      const preamble = source
+        .slice(fnAt, markerAt)
+        .replace(/^\s*\/\/ ?/gm, '')
+        .replace(/\s+/g, ' ');
+      expect(
+        preamble,
+        `${pathName} does not DECLARE the 'whatif' attribution skip at its spend guard. ` +
+          'This path charges no author fee, so the exclusion is not inherited from the fee ' +
+          'argument — it drops an attribution row, and that has to be stated, not implied.'
+      ).toContain(declaration);
+
+      // …and the clause it declares is actually there, guarding a block whose only
+      // money-relevant consumer is the attribution write. That is what makes the
+      // declaration a statement about this code rather than a comment: on these
+      // paths, excluding the sentinel and dropping the attribution row are the
+      // same act.
+      const guarded = source.slice(markerAt, submitMarkers[markerIndex + 1] ?? source.length);
+      expect(guarded).toContain("spendWorkflowId !== 'whatif'");
+      expect(guarded).toContain('recordSpendAttribution({');
+      expect(guarded).not.toContain('chargeBlockAuthorFee({');
     }
   });
 

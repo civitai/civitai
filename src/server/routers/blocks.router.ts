@@ -5925,15 +5925,31 @@ export const blocksRouter = router({
       //
       // The reason it is not `!== false`: an orchestrator that stopped sending the
       // field would then suppress the fee on EVERY generation, silently and
-      // globally, which is the failure nobody notices for weeks. Charging on
-      // unknown fails in the direction that is visible and refundable — a viewer
-      // charged for a cap-priced generation is one reversal, and the fee is
-      // bounded by the reservation the viewer's own consent budget was measured
-      // against. Requiring the field (the third option) makes a missing optional
-      // field a hard generation failure, which trades a money risk for an
-      // availability one. 🔴 The residue is real and belongs in slice 3's sizing:
-      // a cap-priced generation whose `variable` goes missing IS charged a fee on
-      // money the viewer may get refunded, and no skip counter moves.
+      // globally, which is the failure nobody notices for weeks. Requiring the
+      // field (the third option) makes a missing optional field a hard generation
+      // failure, which trades a money risk for an availability one. So this
+      // direction is chosen because it fails VISIBLY — a fee that is charged is
+      // observable in the ledger and in the viewer's balance, a fee that silently
+      // stops being charged is observable nowhere.
+      //
+      // 🔴 IT IS NOT CHOSEN BECAUSE THE MONEY COMES BACK, AND AN EARLIER VERSION
+      // OF THIS COMMENT SAID IT DID — "a viewer charged for a cap-priced
+      // generation is one reversal". That is false on exactly the case this
+      // tri-state is about. A CAP price is what the orchestrator PRORATES, and it
+      // prorates a workflow that SUCCEEDED; all three reversal observers gate on
+      // `status !== 'succeeded'`, so that generation is never reversed at all —
+      // `reverseBlockAuthorFee`'s own docblock states the same limit. And where a
+      // reversal does apply it is time-bounded: a row stops being reversible at
+      // 00:00 UTC of the day after it accrued, whatever the settlement job has or
+      // has not done.
+      //
+      // 🔴 So the residue, stated to match the money: a cap-priced generation
+      // whose `variable` goes missing IS charged a fee computed on a price the
+      // viewer may be partly refunded, that fee is NOT reversible when the
+      // generation succeeds, and no skip counter moves. What bounds it is the
+      // reservation the viewer's own consent budget was measured against, and how
+      // rare the case is — cap-priced generations were measured at 0.94% of App
+      // Blocks traffic (5 of 532, all one app). It belongs in slice 3's sizing.
       let realizedPriceIsCap: boolean | null = null;
       try {
         // Daily-boost autoclaim. Cost cleared the install's budget cap; check
@@ -8462,6 +8478,20 @@ async function submitCustomComfyWorkflow(opts: {
   //
   // Only on a REAL workflow id + non-failed status (a failed/whatif sentinel has
   // no generation to attribute), mirroring the txt2img guard.
+  //
+  // 🔴 SPEND ATTRIBUTION IS DELIBERATELY SKIPPED FOR THE 'whatif' SENTINEL ID ON
+  // THIS PATH, AND THAT IS A BEHAVIOUR CHANGE RATHER THAN A NO-OP. This path
+  // charges no author fee, so the fee's argument for the exclusion — one shared
+  // idempotency key and one UNIQUE accrual row across every viewer — does not
+  // apply here. What applies is the same collision one table over:
+  // `recordSpendAttribution` is idempotent on (workflowId, appBlockId), so under
+  // one shared sentinel the FIRST such submit takes the row and every later one
+  // FROM ANY VIEWER collapses into it — cross-viewer rows in a payout-relevant
+  // table. Skipping is the direction that writes no wrong row; the cost, stated
+  // rather than assumed away, is that a real submit whose orchestrator response
+  // carried no workflow id now writes NO attribution row at all where it
+  // previously wrote one keyed on the sentinel. Ledgered in `NO_FEE_PATHS` in
+  // `src/server/services/__tests__/no-divergent-author-fee-base.test.ts`.
   const spendWorkflowId = snapshot.workflowId;
   if (
     spendWorkflowId &&
@@ -10383,6 +10413,17 @@ async function submitPassThroughStepWorkflow(opts: {
     });
   }
 
+  // 🔴 SPEND ATTRIBUTION IS DELIBERATELY SKIPPED FOR THE 'whatif' SENTINEL ID ON
+  // THIS PATH, AND THAT IS A BEHAVIOUR CHANGE RATHER THAN A NO-OP. Same reasoning
+  // as customComfy, and for the same reason it is NOT the fee's reasoning: this
+  // path charges no author fee, so there is no shared idempotency key and no
+  // UNIQUE accrual row at stake — only `recordSpendAttribution`, which is
+  // idempotent on (workflowId, appBlockId) and would therefore collapse every
+  // sentinel-id submit FROM ANY VIEWER into one row of a payout-relevant table.
+  // The cost is the same and is equally deliberate: a real submit whose
+  // orchestrator response carried no workflow id now writes NO attribution row.
+  // Ledgered in `NO_FEE_PATHS` in
+  // `src/server/services/__tests__/no-divergent-author-fee-base.test.ts`.
   const spendWorkflowId = snapshot.workflowId;
   if (
     spendWorkflowId &&

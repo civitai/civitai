@@ -22,22 +22,29 @@ import type { BlockAuthorFeeComputation } from './author-fee';
 //      `author-fee-settlement.service.ts`, driven by the
 //      `settle-block-author-fees` job.
 //
-// 🔴 BOTH HOPS ARE STILL DARK, BUT "EVERY ENTRY POINT IS BEHIND THE FLAG" WOULD
-// BE FALSE AND AN EARLIER REVISION SAID IT. Every MONEY-MOVING entry point is
-// behind `app-blocks-author-fee-enabled`, which is `enabled: false`: the charge
-// path reads that flag before it prices anything, so with the flag off no fee is
+// 🔴 BOTH HOPS ARE STILL DARK, AND THE ACCURATE FORM OF THE CLAIM IS NARROWER
+// THAN "EVERY MONEY-MOVING ENTRY POINT" — AN EARLIER REVISION SAID THAT AND IT IS
+// FALSE. Every entry point that can CREATE AN OBLIGATION is behind
+// `app-blocks-author-fee-enabled`, which is `enabled: false`: the charge path
+// reads that flag before it prices anything, so with the flag off no fee is
 // quoted, no fee is reserved, no viewer is debited and this table stays empty —
 // which is also why the settlement rail has nothing to settle.
 //
-// The exception is `reverseBlockAuthorFee`, which reads NO flag and therefore
-// issues one `dbWrite` `findUnique` on every terminal poll and every cancel, flag
-// off, forever. Behaviourally inert today (the table is empty, so it returns
-// `no-accrual` and moves nothing), but it is a real query on a real path and the
-// claim has to say so. 🔴 IT IS DELIBERATELY NOT GATED: the flag exists to stop
-// the fee being CHARGED, and gating the reversal on it would strand refunds for
-// every accrual already written the moment the flag were turned off — which is
-// exactly when a reversal matters most. A gate that can only ever keep money the
-// viewer is owed is the wrong direction.
+// `reverseBlockAuthorFee` DOES move money — it refunds the viewer through
+// `createBuzzTransactionMany` — and reads NO flag, so it is not an exception to
+// the narrower claim by accident; it is outside it deliberately. 🔴 GATING IT
+// WOULD STRAND REFUNDS for every accrual already written the moment the flag were
+// turned off, which is exactly when a reversal matters most: a gate that can only
+// ever KEEP money the viewer is owed is the wrong direction. The flag exists to
+// stop a fee being CREATED, not to stop one being given back.
+//
+// Its cost with the flag off is one `dbWrite` `findUnique` per terminal
+// observation that is NOT `succeeded` — all three observers gate on
+// `TERMINAL_BLOCK_WORKFLOW_STATUSES.has(status) && status !== 'succeeded'`, so
+// the ordinary completing generation never reaches it — plus every cancel.
+// Behaviourally inert today (the table is empty, so it returns `no-accrual` and
+// moves nothing), but it is a real query on a real path and the claim has to say
+// so.
 //
 // The two-hop shape is exactly what `deliver-creator-compensation` does for the
 // model licensing fee: the orchestrator charges the viewer at generation time,
