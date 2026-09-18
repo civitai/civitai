@@ -256,7 +256,8 @@ const featureFlags = createFeatureFlags({
   trainingStudioUi: {
     toggleable: true,
     default: false,
-    displayName: 'Training Studio (new)',
+    displayName: 'Training Studio',
+    badge: 'Beta',
     description: `Try the new Training Studio experience for LoRA training — you can switch back at any time.`,
     availability: ['mod'],
     fliptKey: 'training-studio-ui',
@@ -1104,6 +1105,7 @@ export const toggleableFeatures = Object.entries(featureFlags)
     key: key as FeatureFlagKey,
     displayName: value.displayName,
     description: value.description,
+    badge: value.badge,
     default: value.default ?? true,
   }));
 
@@ -1218,6 +1220,8 @@ type FeatureFlag = {
   availability: FeatureAvailability[];
   toggleable: boolean;
   default?: boolean;
+  /** Chip rendered beside the settings toggle's label (e.g. 'Beta') — presentation only. */
+  badge?: string;
   regions?: GeoRestrictions; // Optional geo restrictions
   fliptKey?: string; // Optional Flipt flag key for remote toggling
 };

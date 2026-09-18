@@ -35,9 +35,11 @@ import {
   IconSearch,
   IconTrash,
   IconX,
+  IconBarbell,
   IconCurrencyDollar,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import React, { useMemo, useState } from 'react';
 import type { MRT_ColumnDef, MRT_SortingState } from 'mantine-react-table';
 import { MantineReactTable } from 'mantine-react-table';
@@ -207,6 +209,7 @@ export default function UserTrainingModels() {
   const queryUtils = trpc.useUtils();
   const router = useRouter();
   const { copied, copy } = useClipboard();
+  const features = useFeatureFlags();
 
   // Fetch moderator-editable announcement
   const { data: announcement } = trpc.training.getAnnouncement.useQuery();
@@ -808,6 +811,27 @@ export default function UserTrainingModels() {
           size="sm"
         >
           <CustomMarkdown>{announcement.message}</CustomMarkdown>
+        </AlertWithIcon>
+      )}
+
+      {/* Runs made in the new Training Studio never appear in this list (they live on the
+          orchestrator, not in this table) — without this pointer, anyone who tried the studio and
+          toggled it back off loses sight of those runs entirely. Flag-on users were routed to the
+          studio already; no banner needed. */}
+      {!features.trainingStudioUi && (
+        <AlertWithIcon icon={<IconBarbell size={16} />} iconColor="blue" color="blue" size="sm">
+          <Text size="sm">
+            We&rsquo;ve built a new training experience — <b>Training Studio</b> (Beta). Runs made
+            there (or on{' '}
+            <Anchor href="https://training.civitai.com" target="_blank" rel="noreferrer">
+              training.civitai.com
+            </Anchor>
+            ) don&rsquo;t appear in this list. You can turn it on under{' '}
+            <Anchor component={Link} href="/user/account/preferences">
+              Settings → Preferences
+            </Anchor>
+            .
+          </Text>
         </AlertWithIcon>
       )}
 
