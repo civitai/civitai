@@ -124,6 +124,24 @@ describe('hubViewerWhere', () => {
   });
 });
 
+describe('userHubSourceSchema.groupKey', () => {
+  const parse = (groupKey: number) =>
+    upsertUserHubSchema.safeParse({
+      id: 1,
+      sources: [{ type: UserHubSourceType.Tag, targetId: 77, groupKey }],
+    });
+
+  it('refuses a key past the most rows a hub can hold', () => {
+    // The column is a Postgres INTEGER. Unbounded, an out-of-range key passes zod and
+    // fails inside the replace transaction as a raw DB error with no message the owner
+    // can act on. The ceiling is the row cap, which is the most distinct keys a hub can
+    // ever need — `nextHubGroupKey` hands out the lowest free one so it cannot climb.
+    expect(parse(hubLimits.sourcesPerHub + hubLimits.exclusionsPerHub).success).toBe(true);
+    expect(parse(hubLimits.sourcesPerHub + hubLimits.exclusionsPerHub + 1).success).toBe(false);
+    expect(parse(2_147_483_648).success).toBe(false);
+  });
+});
+
 describe('resolveHubSources', () => {
   it('scopes a signed-in viewer to their own hubs plus public ones', async () => {
     findFirstHub.mockResolvedValue(null);
@@ -250,11 +268,12 @@ describe('resolveHubSources', () => {
       ]);
     });
 
-    it('scopes groupKey to one side of `exclude`', async () => {
-      // 🔴 Include group 0 and exclude group 0 are DIFFERENT groups. They are kept
-      // apart by grouping each polarity separately, not by the keys being distinct —
-      // the client does hand out distinct keys today, but a resolver that trusted
-      // that would fold a kept-out tag into the hub's own AND-set the day it stopped.
+    it('groups each side of `exclude` independently', async () => {
+      // What this pins is that grouping HAPPENS on both sides with a shared key — not
+      // the polarity scoping, which it cannot observe: `resolveHubSources` hands
+      // `groupTagIds` a list already split by polarity, so deleting `exclude` from the
+      // key leaves both arms here green. The scoping is asserted directly above, by
+      // calling `groupTagIds` with a mixed list. Do not re-add a 🔴 claim here.
       findFirstHub.mockResolvedValue({
         forcedBrowsingLevel: 0,
         sources: [
@@ -269,6 +288,29 @@ describe('resolveHubSources', () => {
 
       expect(result?.tagGroups).toEqual([[77, 78]]);
       expect(result?.excluded.tagGroups).toEqual([[90, 91]]);
+    });
+
+    it('lets a NON-TAG row carry a groupKey without pulling anything with it', async () => {
+      // Only tags are ANDed; every other kind is its own OR-arm, so a key on one is
+      // inert. Without the type check a toggled creator would sweep the tag group that
+      // happens to share its number — a widening by the same door the sweep closes.
+      findFirstHub.mockResolvedValue({
+        forcedBrowsingLevel: 0,
+        sources: [
+          { type: UserHubSourceType.User, targetId: 10, exclude: false, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 77, exclude: false, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 78, exclude: false, groupKey: 0 },
+        ],
+      });
+
+      const result = await resolveHubSources({
+        hubId: 1,
+        userId: 5,
+        excludedSources: [{ type: UserHubSourceType.User, targetId: 10 }],
+      });
+
+      expect(result?.userIds).toEqual([]);
+      expect(result?.tagGroups).toEqual([[77, 78]]);
     });
 
     it('drops the WHOLE group when a session toggle hits ONE member', async () => {

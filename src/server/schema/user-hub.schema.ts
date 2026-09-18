@@ -252,6 +252,19 @@ export type HubSourceExclusionInput = z.infer<typeof hubSourceExclusionSchema>;
 export const hubSourceKey = (source: HubSourceExclusionInput) =>
   `${source.type}:${source.targetId}`;
 
+/**
+ * The equivalence key for a tag AND-group: rows sharing it, within one hub, are ANDed.
+ *
+ * 🔴 `exclude` is part of the key, not merely a property of the list it is computed
+ * over. An include group 3 and an exclude group 3 are different groups, and a caller
+ * that keys on the bare `groupKey` is correct only for as long as it happens to be
+ * handed a polarity-uniform list — which is a fact about its caller, not about it.
+ * That exact divergence has already happened once here: the client carried the
+ * polarity and the server did not, and the two were fixed a round apart.
+ */
+export const hubTagGroupKey = (source: { exclude?: boolean | null; groupKey: number }) =>
+  `${source.exclude ? 'x' : 'i'}-${source.groupKey}`;
+
 // 🔴 Keyed, not int. `getFollowed` returns each hub's `key`, so an int-addressed
 // follow of a public hub handed that key to any signed-in caller for the price of
 // counting — defeating the URL encoding without touching the salt.

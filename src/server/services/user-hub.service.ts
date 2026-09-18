@@ -18,6 +18,7 @@ import {
   hubFeedFiltersSchema,
   hubLimits,
   hubSourceKey,
+  hubTagGroupKey,
 } from '~/server/schema/user-hub.schema';
 import {
   throwAuthorizationError,
@@ -659,6 +660,16 @@ export async function setUserHubOrder({ ids, userId }: SetUserHubOrderInput & { 
   );
 }
 
+/**
+ * A row's tag-group key, or undefined when it is not in a group. Only Tag rows group:
+ * every other kind is its own OR-arm in the feed filter, so a `groupKey` on one is
+ * inert and must not pull anything with it.
+ */
+const tagGroupKey = (source: HubSourceRow) =>
+  source.type === UserHubSourceType.Tag && source.groupKey != null
+    ? hubTagGroupKey({ exclude: source.exclude, groupKey: source.groupKey })
+    : undefined;
+
 /** The columns `resolveHubSources` reads off a hub's source rows. */
 type HubSourceRow = {
   type: UserHubSourceType;
@@ -711,6 +722,13 @@ export async function resolveHubSources({
     select: {
       forcedBrowsingLevel: true,
       sources: {
+        // ⚠️ Nothing constrains a GROUP's members to share `enabled`, so a half-enabled
+        // group resolves to an AND-set of only the enabled half — a WIDER feed than the
+        // card describes. Benign only because the editor's single control switches the
+        // whole group and only the owner can persist `enabled`. It stops being benign
+        // the day any non-owner surface can write that column, at which point it is the
+        // same widening the session-toggle sweep below exists to prevent, by another
+        // door. Constrain it there, not here.
         where: { enabled: true },
         select: { type: true, targetId: true, exclude: true, groupKey: true },
       },
@@ -738,18 +756,20 @@ export async function resolveHubSources({
   const sessionExcluded = new Set((excludedSources ?? []).map(hubSourceKey));
   const negativeSources = hub.sources.filter((s) => s.exclude);
   const positive = hub.sources.filter((s) => !s.exclude);
-  // Only tags group, so only a tag's key can pull its siblings out with it.
-  const groupOf = (source: { type: UserHubSourceType; groupKey: number | null }) =>
-    source.type === UserHubSourceType.Tag ? source.groupKey : null;
+  // Only tags group, so only a tag's key can pull its siblings out with it. Keyed
+  // through `hubTagGroupKey` rather than on the bare int: these rows are all positive
+  // today, so the polarity is constant — but that is a property of the filter three
+  // lines up, and keying on the int would make this correct only while that holds.
   const toggledOffGroups = new Set(
     positive
-      .filter((s) => groupOf(s) != null && sessionExcluded.has(hubSourceKey(s)))
-      .map((s) => groupOf(s) as number)
+      .filter((s) => sessionExcluded.has(hubSourceKey(s)))
+      .map(tagGroupKey)
+      .filter((key): key is string => !!key)
   );
   const positiveSources = positive.filter((s) => {
     if (sessionExcluded.has(hubSourceKey(s))) return false;
-    const group = groupOf(s);
-    return group == null || !toggledOffGroups.has(group);
+    const group = tagGroupKey(s);
+    return !group || !toggledOffGroups.has(group);
   });
 
   const byType = (type: UserHubSourceType) =>
@@ -873,7 +893,7 @@ export function groupTagIds(sources: HubSourceRow[]) {
       groups.push([source.targetId]);
       continue;
     }
-    const key = `${source.exclude ? 'x' : 'i'}-${source.groupKey}`;
+    const key = hubTagGroupKey({ ...source, groupKey: source.groupKey });
     const held = byKey.get(key);
     if (held) {
       held.push(source.targetId);

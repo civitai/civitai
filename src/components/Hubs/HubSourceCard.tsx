@@ -10,6 +10,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { groupRule } from '~/components/Hubs/hub.utils';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 
 export type HubSourceCardProps = {
@@ -26,7 +27,10 @@ export type HubSourceCardProps = {
    * kind of source, and for a tag that is a group of one.
    */
   extraTags?: { targetId: number; alias?: string | null }[];
-  /** Drop one tag out of the group. Absent when the group is not the viewer's to edit. */
+  /**
+   * Take one tag OUT of the group, leaving it in the hub. Absent when the group is not
+   * the viewer's to edit. NOT a delete — see `ungroupHubTag`.
+   */
   onRemoveTag?: (targetId: number) => void;
   /** The add-another-tag affordance. Rendered by the editor, which owns the picker. */
   addControl?: React.ReactNode;
@@ -47,19 +51,6 @@ const sourceMeta: Record<
   [UserHubSourceType.Collection]: { label: 'Collection', color: 'orange', Icon: IconFolder },
   [UserHubSourceType.Tag]: { label: 'Tag', color: 'grape', Icon: IconTag },
 };
-
-/**
- * 🔴 The two halves of a group mean OPPOSITE things, and the wording is the only place
- * that says so. Grouping tags you want NARROWS the feed; grouping tags you want gone
- * REMOVES LESS, because `NOT (x AND y)` keeps an image carrying only x. Justin approved
- * this asymmetry on 2026-09-17 — if the copy changes, keep it.
- *
- * Exported only so `hub-groups.test.ts` can pin both strings. That test is not
- * decoration: nothing else in the toolchain can tell that the two labels have been
- * made to agree, and two agreeing labels describe one of the two behaviours wrongly.
- */
-export const groupRule = (exclude?: boolean) =>
-  exclude ? 'Only block when all of these match' : 'Require all of these';
 
 export function HubSourceCard({
   source,
@@ -137,7 +128,7 @@ export function HubSourceCard({
                           variant="transparent"
                           color={on ? color : 'gray'}
                           disabled={disabled}
-                          aria-label={`Remove ${tag.alias ?? tag.targetId} from group`}
+                          aria-label={`Take ${tag.alias ?? tag.targetId} out of this group`}
                           onClick={() => onRemoveTag(tag.targetId)}
                         >
                           <IconX size={10} />

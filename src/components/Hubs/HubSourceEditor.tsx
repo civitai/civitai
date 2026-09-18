@@ -18,10 +18,12 @@ import { HubSourceUrlInput } from '~/components/Hubs/HubSourceUrlInput';
 import type { HubSourceGroup } from '~/components/Hubs/hub.utils';
 import {
   addTagToHubGroup,
+  findHubSource,
   groupHubSources,
+  groupMemberKeys,
   removeHubGroup,
-  removeTagFromHubGroup,
   setHubGroupEnabled,
+  ungroupHubTag,
 } from '~/components/Hubs/hub.utils';
 import { hubLimits, hubSourceKey } from '~/server/schema/user-hub.schema';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
@@ -139,7 +141,7 @@ export function HubSourceEditor({
   const excludedGroups = groupHubSources(excluded);
 
   const held = (target: { type: UserHubSourceType; targetId: number }) =>
-    value.find((source) => hubSourceKey(source) === hubSourceKey(target));
+    findHubSource(value, target);
 
   // Told, not silently dropped: either list can be long enough that the clashing row
   // is off screen, so the same click would otherwise appear to do nothing whether the
@@ -208,7 +210,7 @@ export function HubSourceEditor({
   const renderGroup = (group: HubSourceGroup) => {
     const [first, ...rest] = group.sources;
     const isTag = first.type === UserHubSourceType.Tag;
-    const members = new Set(group.sources.map(hubSourceKey));
+    const members = groupMemberKeys(group);
 
     return (
       <HubSourceCard
@@ -218,7 +220,7 @@ export function HubSourceEditor({
         onRemoveTag={
           readOnly || rest.length === 0
             ? undefined
-            : (targetId) => onChange(removeTagFromHubGroup(value, targetId))
+            : (targetId) => onChange(ungroupHubTag(value, targetId))
         }
         addControl={
           isTag && !readOnly ? (

@@ -1,6 +1,6 @@
 import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
 import type { HubPanelHub } from '~/components/Hubs/HubSourcePanel';
-import { hubLimits, hubSourceKey } from '~/server/schema/user-hub.schema';
+import { hubLimits, hubSourceKey, hubTagGroupKey } from '~/server/schema/user-hub.schema';
 import { Availability, UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 import { Flags } from '~/shared/utils/flags';
@@ -132,9 +132,15 @@ export type HubSourceGroup = { key: string; sources: HubSourceValue[] };
  * ONE card whose tags are ANDed, everything else stays one card per source.
  *
  * Mirrors `groupTagIds` in user-hub.service.ts, which states the same rule over DB
- * rows: tags only, keyed on `groupKey` AND on `exclude`, first-appearance order, a
- * null key meaning a group of one. The two are separate because this one also has to
- * emit a card for every non-tag source; a change to the grouping rule belongs in both.
+ * rows: tags only, keyed by `hubTagGroupKey`, first-appearance order, a null key
+ * meaning a group of one.
+ *
+ * They are separate for a MECHANICAL reason, not a taste one: this module imports
+ * `trpc` (for `useInvalidateHub`), so it is client-only and no server module can ever
+ * import from it. The part that genuinely must not diverge is the KEY, and that lives
+ * in `user-hub.schema.ts`, which both sides already import. Do not answer a future
+ * "why isn't this shared?" with anything else — a reason a reader can disprove invites
+ * the refactor it is trying to forestall.
  */
 export function groupHubSources(value: HubSourceValue[]): HubSourceGroup[] {
   const groups: HubSourceGroup[] = [];
@@ -144,7 +150,8 @@ export function groupHubSources(value: HubSourceValue[]): HubSourceGroup[] {
       groups.push({ key: hubSourceKey(source), sources: [source] });
       continue;
     }
-    const key = `tag-${source.exclude ? 'x' : 'i'}-${source.groupKey}`;
+    // Prefixed, because these keys share a list with `hubSourceKey` values above.
+    const key = `tag-${hubTagGroupKey({ ...source, groupKey: source.groupKey })}`;
     const held = byKey.get(key);
     if (held) {
       held.sources.push(source);
@@ -174,7 +181,40 @@ export function nextHubGroupKey(value: { groupKey?: number | null }[]) {
   return key;
 }
 
-const groupMemberKeys = (group: HubSourceGroup) => new Set(group.sources.map(hubSourceKey));
+/**
+ * The group's membership set. Exported because the picker's `isAdded` asks the same
+ * question the transforms below do, and membership is NOT row identity forever — the
+ * whole point of `groupKey` is that it is a separate axis. Two copies would part the
+ * day anyone makes it key-aware, and the picker would then grey out a tag the
+ * transform would happily move, with no error path.
+ */
+export const groupMemberKeys = (group: HubSourceGroup) => new Set(group.sources.map(hubSourceKey));
+
+/**
+ * The row a hub already holds for this target, if any. One spelling, because the
+ * caller decides refuse-vs-proceed from it and `addTagToHubGroup` decides
+ * move-vs-append from it, on the same click — and a pair that disagrees mutates a row
+ * the caller believed it had refused.
+ */
+export function findHubSource(
+  value: HubSourceValue[],
+  target: { type: UserHubSourceType; targetId: number }
+) {
+  const key = hubSourceKey(target);
+  return value.find((source) => hubSourceKey(source) === key);
+}
+
+/**
+ * 🔴 The two halves of a group mean OPPOSITE things, and this wording is the only
+ * place in the product that says so. Grouping tags you WANT narrows the feed; grouping
+ * tags you want GONE removes LESS, because `NOT (x AND y)` keeps an image carrying only
+ * x. Justin approved the asymmetry on 2026-09-17 — if the copy changes, keep it.
+ *
+ * Here rather than in `HubSourceCard` so the pin in `hub-groups.test.ts` does not drag
+ * a Mantine component's whole import graph into a pure unit test to read one string.
+ */
+export const groupRule = (exclude?: boolean) =>
+  exclude ? 'Only block when all of these match' : 'Require all of these';
 
 /**
  * Put a tag into a group, minting the group's key on the click that creates it.
@@ -182,8 +222,16 @@ const groupMemberKeys = (group: HubSourceGroup) => new Set(group.sources.map(hub
  * A tag the hub ALREADY holds on this side of `exclude` is MOVED in rather than added
  * again: the row's unique `(hubId, type, targetId)` means there is only ever one of
  * it, so re-adding is impossible and refusing left the owner with no way to group two
- * tags they already had. The caller owns the polarity check and the cap — a move
- * spends no cap, because it adds no row.
+ * tags they already had. A move spends no cap, because it adds no row — the CALLER
+ * owns the cap check, since only it can tell the user why an add was refused.
+ *
+ * 🔴 A CROSS-POLARITY target returns `value` untouched. The caller refuses it too and
+ * shows the message; this is the half that has a test. Without it, deleting the
+ * caller's one-line check moves a kept-out tag into an include group — and because the
+ * move branch does not rewrite `exclude`, the row keeps `exclude: true` while taking
+ * the include group's key, landing it in the server's exclude bucket and merging it
+ * into an unrelated AND-set. `NOT (a AND b)` removes strictly less than `NOT a OR
+ * NOT b`, so an exclusion the owner set quietly stops excluding.
  */
 export function addTagToHubGroup(
   value: HubSourceValue[],
@@ -191,14 +239,19 @@ export function addTagToHubGroup(
   item: { targetId: number; alias: string }
 ): HubSourceValue[] {
   const first = group.sources[0];
+  const target = { type: UserHubSourceType.Tag, targetId: item.targetId };
+  const held = findHubSource(value, target);
+  if (held && !!held.exclude !== !!first.exclude) return value;
+
   const groupKey = first.groupKey ?? nextHubGroupKey(value);
   const members = groupMemberKeys(group);
-  const target = { type: UserHubSourceType.Tag, targetId: item.targetId };
   const targetKey = hubSourceKey(target);
-  const held = value.some((source) => hubSourceKey(source) === targetKey);
 
   const next = value.map((source) => {
     const key = hubSourceKey(source);
+    // A MOVED row inherits `enabled` so the group stays switchable as one unit. It
+    // keeps its own `exclude`, `alias` and `index`, which the refusal above is what
+    // makes safe.
     if (key === targetKey) return { ...source, groupKey, enabled: first.enabled };
     return members.has(key) ? { ...source, groupKey } : source;
   });
@@ -221,10 +274,20 @@ export function addTagToHubGroup(
   ];
 }
 
-/** Drop one tag out of a group, leaving the rest of the group intact. */
-export function removeTagFromHubGroup(value: HubSourceValue[], targetId: number) {
+/**
+ * Take one tag OUT of its group, leaving it in the hub as an ordinary source.
+ *
+ * 🔴 It clears `groupKey`; it does NOT delete the row, and the difference is the whole
+ * point. Grouping can now pull in a tag source the owner has had all along, so the
+ * only per-tag control on a group card is also the only visible way to undo that — and
+ * a control labelled "remove from group" that destroys the source is a trap. The
+ * card's trash button is what deletes.
+ */
+export function ungroupHubTag(value: HubSourceValue[], targetId: number) {
   const targetKey = hubSourceKey({ type: UserHubSourceType.Tag, targetId });
-  return value.filter((source) => hubSourceKey(source) !== targetKey);
+  return value.map((source) =>
+    hubSourceKey(source) === targetKey ? { ...source, groupKey: null } : source
+  );
 }
 
 /** Drop every member of a group. What the card's trash button means. */
