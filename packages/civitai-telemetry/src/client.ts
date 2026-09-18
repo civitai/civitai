@@ -321,8 +321,15 @@ export const blockSpendAttributionWriteCounter = registerCounterWithLabels({
 // `coarse_type` is the COARSE generation key (`blockGenerationCoarseType`) or
 // the literal `unknown` — bounded by the step/recipe registries, so the label is
 // low-cardinality by construction and cannot be widened by traffic.
-// `outcome` is which leg governed (`flat` / `pct` / `none`) or `base_unavailable`
+// `outcome` is which leg governed (`flat` / `pct` / `none`) or `base-unavailable`
 // when the orchestrator surfaced no `WorkflowCost.base` to compute against.
+// 🔴 HYPHEN, not underscore, and this is the ONLY place in the repo that
+// enumerates the value set — so it is what an operator writing the slice-2
+// sizing join reads. It is deliberately the SAME string as the Axiom
+// `authorFeeSkipped` field (`BLOCK_AUTHOR_FEE_BASE_UNAVAILABLE` in
+// `~/server/services/blocks/author-fee`), because that join is the whole point:
+// querying `outcome="base_unavailable"` returns an empty series, which reads as
+// "no generation lacked a base" rather than "you spelled the label wrong".
 export const blockAuthorFeeObservedCounter = registerCounterWithLabels({
   name: 'block_author_fee_observed_total',
   help: 'App Blocks per-generation author-fee computations observed (dark — no money moves), by coarse generation type and governing leg',

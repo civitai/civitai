@@ -141,12 +141,38 @@ export const BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE = 1;
 export const BLOCK_AUTHOR_FEE_BASIS_POINTS_SCALE = 10_000;
 
 /**
+ * The ceiling's derivation, as a FUNCTION of the declared policy rather than an
+ * expression inlined into the constant below.
+ *
+ * 🔴 IT QUANTIZES WITH `toBasisPoints`, i.e. IT FLOORS. It used to be
+ * `Math.round(BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE * SCALE)`, which rounds the
+ * OPPOSITE way to the quantization it governs: `toBasisPoints` floors precisely
+ * because "every rounding in this module goes toward the viewer", and a rounded
+ * ceiling lands ABOVE the declared policy — a declared 12.3456% deriving to
+ * 1235 bp = 12.35% — the one direction this module says it never rounds.
+ *
+ * Inert at today's `BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE = 1`, where floor and round
+ * are both 10000; live the moment slice 3 or a policy change sets a ceiling
+ * finer than one basis point.
+ *
+ * ⚠️ DO NOT INLINE IT BACK INTO THE CONSTANT. It is a function so the rounding
+ * DIRECTION is reachable from a test at a ceiling the policy constant cannot
+ * express — at `1` no assertion about the constant can tell floor from round, so
+ * inlining makes the defect unkillable again rather than merely dormant.
+ */
+export function blockAuthorFeeCeilingBasisPoints(maxPctOfBase: number): number {
+  return toBasisPoints(maxPctOfBase);
+}
+
+/**
  * The percentage ceiling in the unit the clamp computes in. DERIVED, never
  * written by hand: this is `BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE` expressed in basis
- * points, so moving the declared policy moves the enforced bound with it.
+ * points, so moving the declared policy moves the enforced bound with it — and
+ * quantized by the SAME floor the clamp applies to an author's percentage, so
+ * the enforced bound can never sit above the policy it is enforcing.
  */
-export const BLOCK_AUTHOR_FEE_MAX_PCT_BASIS_POINTS = Math.round(
-  BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE * BLOCK_AUTHOR_FEE_BASIS_POINTS_SCALE
+export const BLOCK_AUTHOR_FEE_MAX_PCT_BASIS_POINTS = blockAuthorFeeCeilingBasisPoints(
+  BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE
 );
 
 /** The `coarse_type` metric label used when the generation type is unresolvable. */
@@ -245,6 +271,11 @@ export type ClampedBlockAuthorFeeParams = {
  * Normalising to 6 decimal places first — far finer than one basis point, so it
  * cannot mask a genuine sub-bp fraction — makes every exact basis-point input
  * exact (measured: 0 of 10,001 wrong) while still flooring `0.049999` to 499.
+ *
+ * TWO CALLERS, not one: the clamp below AND `blockAuthorFeeCeilingBasisPoints`,
+ * which derives `BLOCK_AUTHOR_FEE_MAX_PCT_BASIS_POINTS`. Changing the direction
+ * here moves the enforced ceiling with it, on purpose — that shared spelling is
+ * what keeps the bound from sitting above the policy it enforces.
  */
 function toBasisPoints(pct: number): number {
   return Math.floor(Number((pct * BLOCK_AUTHOR_FEE_BASIS_POINTS_SCALE).toFixed(6)));
@@ -473,9 +504,24 @@ export type BlockAuthorFeeObservation =
  * before the base is inspected and before any parameter is resolved. With
  * `app-blocks-author-fee-enabled` off, absent, or Flipt unreachable, `isFlipt`
  * answers `false` and this returns immediately, so the computation is
- * unreachable from every production path and emits no signal at all. The flag
- * does not exist in Flipt as this merges, which makes the as-merged behaviour
- * fully dark.
+ * unreachable from every production path and emits no signal at all.
+ *
+ * ⚠️ THE FLAG EXISTS IN FLIPT, AT BASE `enabled: false`. An earlier revision of
+ * this comment said it does NOT exist and that this is what makes the as-merged
+ * behaviour dark. That is no longer true: it was created after this branch's
+ * last commit, deliberately, because an ABSENT key makes the evaluation throw,
+ * bypass its cache and write a `console.error` on every App Blocks generation
+ * submit, indefinitely. Verified live in the `civitai-app` environment:
+ * `BOOLEAN_FLAG_TYPE`, `enabled: false`, no variants, no rules, no rollouts, and
+ * a global boolean evaluation returning
+ * `enabled:false, reason:DEFAULT_EVALUATION_REASON, segmentKeys:[]`.
+ *
+ * The conclusion survives — as-merged behaviour is dark — but the REASON, and
+ * the strength of it, do not. An absent key had to be CREATED by an operator
+ * before anyone could turn the fee on. A present base-`false` flag is one toggle
+ * away, with no deploy and no review. So this is dark because the flag is OFF,
+ * not because turning it on takes a second step. Slice 2 must not treat the
+ * off-state as structural.
  *
  * ⚠️ AN EARLIER REVISION ALSO CLAIMED THE FLAG IS READ "before the telemetry
  * module is even imported", and used `await import()` for both dependencies to
@@ -501,12 +547,12 @@ export type BlockAuthorFeeObservation =
  *     Slice 2 replaces "pure computation" with "moves money", at which point
  *     this is the guard that matters.
  *
- * OPERATOR NOTE: create `app-blocks-author-fee-enabled` as a PLAIN GLOBAL
- * BOOLEAN with no segment. This evaluates globally (entityId `'global'`, empty
- * context), so no segment can ever match and the answer is always the flag's
- * BASE value — a base-`false` flag decorated with a rollout stays dark for
- * everyone, and (the non-fail-safe direction) a base-`true` flag decorated with
- * one is ON for everyone. Set the base, do not decorate it.
+ * OPERATOR NOTE: `app-blocks-author-fee-enabled` EXISTS as a PLAIN GLOBAL
+ * BOOLEAN with no segment — keep it that way. This evaluates globally (entityId
+ * `'global'`, empty context), so no segment can ever match and the answer is
+ * always the flag's BASE value — a base-`false` flag decorated with a rollout
+ * stays dark for everyone, and (the non-fail-safe direction) a base-`true` flag
+ * decorated with one is ON for everyone. Set the base, do not decorate it.
  *
  * MAKES THE FEE OBSERVABLE WITHOUT STORING IT. Slice 2 has to be sized from real
  * traffic before anyone is charged, and nothing here persists a number: the

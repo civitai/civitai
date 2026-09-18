@@ -630,17 +630,31 @@ export async function isAppBlocksBackpayEnabled(): Promise<boolean> {
  * spend-attribution writer, which is machine-side and has no session to segment
  * on. The viewer identity is on the row, not in the gate.
  *
- * OPERATOR NOTE: create `app-blocks-author-fee-enabled` as a PLAIN GLOBAL
- * BOOLEAN — base `enabled`, NO segment. A global eval returns the flag's BASE
- * value, so a segment can neither match nor restrict: base `false` + a rollout
- * stays dark for everyone (safe but confusing), and base `true` + a rollout is
- * ON for everyone while looking restricted (not safe). See GLOBAL-EVAL SEMANTICS
- * at the top of this file.
+ * OPERATOR NOTE: `app-blocks-author-fee-enabled` EXISTS, as a PLAIN GLOBAL
+ * BOOLEAN — base `enabled: false`, NO segment, no variants, no rollouts. Keep it
+ * that shape. A global eval returns the flag's BASE value, so a segment can
+ * neither match nor restrict: base `false` + a rollout stays dark for everyone
+ * (safe but confusing), and base `true` + a rollout is ON for everyone while
+ * looking restricted (not safe). See GLOBAL-EVAL SEMANTICS at the top of this
+ * file.
  *
- * Fail-safe: the flag does NOT exist in Flipt as this merges, and an absent flag
- * — like an unreachable Flipt — evaluates `false` unconditionally. That half is
- * genuinely fail-closed, so the as-merged behaviour is fully dark and cannot
- * regress open.
+ * Fail-safe, code half: an unreachable Flipt — and an absent key — evaluates
+ * `false` unconditionally, so the computation cannot run by accident.
+ *
+ * ⚠️ FLAG STATE, AND IT IS WEAKER THAN AN EARLIER REVISION OF THIS COMMENT SAID.
+ * That revision claimed the flag does NOT exist as this merges and read the
+ * resulting dark posture as something that "cannot regress open". The key was
+ * created at base `false` after this branch's last commit, deliberately: an
+ * ABSENT key makes the evaluation throw, bypass its cache and log a
+ * `console.error` on every App Blocks generation submit, forever. Verified live
+ * in the `civitai-app` environment — `BOOLEAN_FLAG_TYPE`, `enabled: false`,
+ * empty `rules`/`rollouts`, global evaluation
+ * `enabled:false, reason:DEFAULT_EVALUATION_REASON, segmentKeys:[]`.
+ *
+ * So: still dark at merge, for a weaker reason. An absent flag had to be CREATED
+ * before the fee could be enabled at all; a present base-`false` flag is one
+ * toggle away, with no deploy and no review. The dark posture is flag state, not
+ * structure.
  */
 export const APP_BLOCKS_AUTHOR_FEE_FLAG = 'app-blocks-author-fee-enabled';
 

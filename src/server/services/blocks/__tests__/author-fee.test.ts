@@ -30,11 +30,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 import {
+  BLOCK_AUTHOR_FEE_BASIS_POINTS_SCALE,
   BLOCK_AUTHOR_FEE_DEFAULT_FLAT_BUZZ,
   BLOCK_AUTHOR_FEE_DEFAULT_PCT_OF_BASE,
   BLOCK_AUTHOR_FEE_MAX_FLAT_BUZZ,
+  BLOCK_AUTHOR_FEE_MAX_PCT_BASIS_POINTS,
   BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE,
   BLOCK_AUTHOR_FEE_PLATFORM_CONFIG,
+  blockAuthorFeeCeilingBasisPoints,
   clampBlockAuthorFeeParams,
   computeBlockAuthorFee,
   resolveBlockAuthorFeeParams,
@@ -95,6 +98,43 @@ describe('author fee — the platform defaults and ceilings', () => {
     expect(BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE).toBe(1); // (b)
     expect(overCeiling.pctLegBuzz).toBe(640); // (b), behaviourally
     expect(overCeiling.clamped).toBe(true);
+  });
+
+  it('the ceiling is quantized DOWN — the enforced bound never sits ABOVE the declared policy', () => {
+    // 🔴 DIRECTION GUARD, and it needs a ceiling the shipped policy constant
+    // cannot express. `BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE` is 1, where flooring
+    // and rounding are both 10000 — so NOTHING asserted about the shipped
+    // constant can tell the two apart, and the derivation shipped with
+    // `Math.round` for exactly that reason. Calling the derivation at a ceiling
+    // finer than a basis point is what makes the direction observable.
+    //
+    // `toBasisPoints` floors because the module promises "a stated 5% never
+    // charges more than 5%". Rounding the CEILING the other way enforces a bound
+    // ABOVE the declared policy: 12.3456% would derive to 1235 bp = 12.35%.
+    expect(
+      blockAuthorFeeCeilingBasisPoints(0.123456),
+      'the ceiling derivation ROUNDS — it must floor, like the quantization it governs'
+    ).toBe(1234);
+    // The mutant's answer, pinned so the two are visibly different numbers and
+    // this case cannot quietly stop discriminating.
+    expect(Math.round(0.123456 * BLOCK_AUTHOR_FEE_BASIS_POINTS_SCALE)).toBe(1235);
+
+    // The property, at four ceilings that each round UP: the enforced bound is
+    // never above the declared fraction expressed in basis points.
+    for (const pct of [0.123456, 0.049999, 0.00005, 0.9999999]) {
+      expect(
+        blockAuthorFeeCeilingBasisPoints(pct),
+        `a declared ceiling of ${pct} derived to an enforced bound ABOVE it`
+      ).toBeLessThanOrEqual(pct * BLOCK_AUTHOR_FEE_BASIS_POINTS_SCALE);
+    }
+
+    // …and the shipped constant IS that derivation applied to the shipped
+    // policy, so the guard above is about the constant and not about a helper
+    // nothing uses.
+    expect(BLOCK_AUTHOR_FEE_MAX_PCT_BASIS_POINTS).toBe(
+      blockAuthorFeeCeilingBasisPoints(BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE)
+    );
+    expect(BLOCK_AUTHOR_FEE_MAX_PCT_BASIS_POINTS).toBe(10_000);
   });
 
   it('seeds exactly ONE per-type override: chat-completion pays nothing', () => {
@@ -597,8 +637,26 @@ describe('observeBlockAuthorFee — fail-closed dark gate', () => {
     // nothing.
     mockIsFlipt.mockResolvedValue(true);
     await observeBlockAuthorFee(probe);
-    expect(generationTypeReads, 'probe wired to nothing — flag ON read nothing').toBe(1);
-    expect(configReads, 'probe wired to nothing — flag ON read nothing').toBe(1);
+    // The control proper is the ZERO case — it says only that the getters CAN
+    // fire, which is what licenses reading the two zeros above as a fact about
+    // the gate. It is asserted separately from exactness on purpose: this
+    // message used to sit on a `toBe(1)`, so an over-read (2) failed with
+    // "probe wired to nothing — flag ON read nothing: expected 2 to be 1",
+    // naming the one cause the number rules out and sending the reader into the
+    // probe when the change is downstream of the gate.
+    expect(generationTypeReads, 'probe wired to nothing — flag ON read nothing').toBeGreaterThan(0);
+    expect(configReads, 'probe wired to nothing — flag ON read nothing').toBeGreaterThan(0);
+
+    // Exactness is its own claim, with its own cause: each argument is read
+    // exactly once past the gate. A second read is not a probe failure.
+    expect(
+      generationTypeReads,
+      '`generationType` was read more than once past the gate — a change downstream of the flag, not a broken probe'
+    ).toBe(1);
+    expect(
+      configReads,
+      '`config` was read more than once past the gate — a change downstream of the flag, not a broken probe'
+    ).toBe(1);
   });
 
   it('a flag read that REJECTS is treated as off, never as on', async () => {
