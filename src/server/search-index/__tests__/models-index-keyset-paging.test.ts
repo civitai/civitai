@@ -168,6 +168,25 @@ describe('prepareModelsBatches paging', () => {
     expect(first).not.toMatch(/OFFSET/);
   });
 
+  /**
+   * The fake models membership as an opaque set of ids, so it cannot see WHICH rows the predicates
+   * select — delete any one of them and the four cases above stay green. Dropping the `updatedAt`
+   * bound turns the delta scan into a full scan of every published model, every 15 minutes;
+   * dropping the availability bound puts Unsearchable models into the public index. This file is
+   * the only test that reads this query, so the predicates are pinned textually. That pins one
+   * spelling: reword a predicate and this fails, which is the price of the guard.
+   */
+  it('keeps the eligibility predicates on the page query', async () => {
+    const fake = makeFake(new Set(range(1, 100)));
+
+    await prepareModelsBatches(fake.ctx, LAST_UPDATED_AT);
+
+    const [first] = fake.pageSql();
+    expect(first).toMatch(/WHERE status = /);
+    expect(first).toMatch(/AND availability != /);
+    expect(first).toMatch(/AND "updatedAt" >= /);
+  });
+
   it('issues no page query at all on a full rebuild', async () => {
     const fake = makeFake(new Set(range(1, 100)));
 
