@@ -275,19 +275,21 @@ export function addTagToHubGroup(
 }
 
 /**
- * Take one tag OUT of its group, leaving it in the hub as an ordinary source.
+ * Remove one tag from the hub, leaving the rest of its group intact.
  *
- * 🔴 It clears `groupKey`; it does NOT delete the row, and the difference is the whole
- * point. Grouping can now pull in a tag source the owner has had all along, so the
- * only per-tag control on a group card is also the only visible way to undo that — and
- * a control labelled "remove from group" that destroys the source is a trap. The
- * card's trash button is what deletes.
+ * It DELETES the row rather than clearing `groupKey`. That was tried the other way —
+ * ungrouping, so a tag pulled into a group could be pulled back out without losing it
+ * — and Justin called it weird on sight (2026-09-18): a ✕ on a chip reads as "get rid
+ * of this", and leaving the tag behind as a new card looks like the click did
+ * something else. The label says "from this hub" so the control and the copy agree.
+ *
+ * The cost, accepted knowingly: moving a tag the hub already had into a group has no
+ * one-click undo — you re-add it. Revisit by adding a separate ungroup affordance, not
+ * by overloading this one again.
  */
-export function ungroupHubTag(value: HubSourceValue[], targetId: number) {
+export function removeHubTag(value: HubSourceValue[], targetId: number) {
   const targetKey = hubSourceKey({ type: UserHubSourceType.Tag, targetId });
-  return value.map((source) =>
-    hubSourceKey(source) === targetKey ? { ...source, groupKey: null } : source
-  );
+  return value.filter((source) => hubSourceKey(source) !== targetKey);
 }
 
 /** Drop every member of a group. What the card's trash button means. */

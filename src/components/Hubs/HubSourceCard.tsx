@@ -1,4 +1,5 @@
 import { ActionIcon, Badge, Group, Paper, Stack, Switch, Text, Tooltip } from '@mantine/core';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import {
   IconBox,
   IconFolder,
@@ -27,10 +28,7 @@ export type HubSourceCardProps = {
    * kind of source, and for a tag that is a group of one.
    */
   extraTags?: { targetId: number; alias?: string | null }[];
-  /**
-   * Take one tag OUT of the group, leaving it in the hub. Absent when the group is not
-   * the viewer's to edit. NOT a delete — see `ungroupHubTag`.
-   */
+  /** Remove one tag from the hub. Absent when the group is not the viewer's to edit. */
   onRemoveTag?: (targetId: number) => void;
   /** The add-another-tag affordance. Rendered by the editor, which owns the picker. */
   addControl?: React.ReactNode;
@@ -121,18 +119,28 @@ export function HubSourceCard({
                     variant="light"
                     color={on ? color : 'gray'}
                     className="max-w-full normal-case"
+                    // `styles`, not a className: Mantine's own
+                    // `.section[data-position='right']` margin outranks a single
+                    // utility class, so the gap left of the X survives `ml-0`.
+                    // The button carries its own internal padding, so the chip needs
+                    // none of its own on that side.
+                    styles={{ root: { paddingRight: 0 }, section: { marginLeft: 0 } }}
                     rightSection={
                       onRemoveTag && (
-                        <ActionIcon
-                          size={14}
+                        <LegacyActionIcon
+                          size="xs"
+                          radius="xl"
                           variant="transparent"
                           color={on ? color : 'gray'}
-                          disabled={disabled}
-                          aria-label={`Take ${tag.alias ?? tag.targetId} out of this group`}
-                          onClick={() => onRemoveTag(tag.targetId)}
+                          aria-label={`Remove ${tag.alias ?? tag.targetId} from this hub`}
+                          // NOT `disabled` while a save is in flight: Mantine paints a
+                          // disabled ActionIcon with a solid grey block, which reads as
+                          // a rendering fault on a chip this small. Guarded in the
+                          // handler instead, so the double-submit is still refused.
+                          onClick={() => !disabled && onRemoveTag(tag.targetId)}
                         >
-                          <IconX size={10} />
-                        </ActionIcon>
+                          <IconX size={12} />
+                        </LegacyActionIcon>
                       )
                     }
                   >
@@ -140,9 +148,15 @@ export function HubSourceCard({
                   </Badge>
                 ))}
               </Group>
-              <Text size="10px" c="dimmed" lh={1.3}>
-                {groupRule(source.exclude)}
-              </Text>
+              {/* Include groups say nothing: a row of chips reads as "all of these"
+                  on its own, and Justin cut the label after seeing it rendered. The
+                  EXCLUDE line stays, because that side means the opposite of what it
+                  looks like — see `groupRule`. */}
+              {source.exclude && (
+                <Text size="10px" c="dimmed" lh={1.3}>
+                  {groupRule(true)}
+                </Text>
+              )}
             </>
           ) : (
             <Text size="sm" fw={500} lh={1.3} lineClamp={1} c={on ? undefined : 'dimmed'}>

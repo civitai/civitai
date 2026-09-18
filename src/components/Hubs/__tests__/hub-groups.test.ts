@@ -7,7 +7,7 @@ import {
   nextHubGroupKey,
   removeHubGroup,
   setHubGroupEnabled,
-  ungroupHubTag,
+  removeHubTag,
 } from '~/components/Hubs/hub.utils';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 
@@ -176,15 +176,18 @@ describe('group edits touch the whole group, or exactly one tag', () => {
     source({ targetId: 79, index: 2 }),
   ];
 
-  it('🔴 UNGROUPS one tag rather than deleting it', () => {
-    // The chip ✕ is the only per-tag control on a group card, and grouping can pull in
-    // a tag source the owner has had all along — so it is also the only visible way to
-    // undo that. Deleting the row there destroys a source they did not ask to lose,
-    // under a label that says "out of this group". The card's trash is what deletes.
-    const next = ungroupHubTag(value, 78);
+  it('removes ONE tag from the hub without taking its group with it', () => {
+    // The chip ✕ and the card's trash are one click apart. Swapping them deletes the
+    // whole AND-set, and the card simply vanishes — which reads exactly like the trash
+    // button having been pressed.
+    //
+    // It deletes rather than ungroups. That was tried the other way and Justin called
+    // it weird on sight: a ✕ that leaves the tag behind as a new card does not look
+    // like a removal. The label matches. See `removeHubTag`.
+    const next = removeHubTag(value, 78);
 
-    expect(next.map((s) => s.targetId)).toEqual([77, 78, 79]);
-    expect(next.map((s) => s.groupKey)).toEqual([0, null, null]);
+    expect(next.map((s) => s.targetId)).toEqual([77, 79]);
+    expect(next.map((s) => s.groupKey)).toEqual([0, null]);
   });
 
   it('removes every member when the group itself is removed', () => {

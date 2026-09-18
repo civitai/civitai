@@ -1,5 +1,15 @@
 -- Groups a hub's tag sources into AND-sets. Tags sharing a groupKey (within the same
 -- `exclude` polarity of one hub) must ALL match; NULL is a group of one, which is the
--- behaviour every existing row already has. Additive and nullable, so no backfill and
--- nothing to order against a deploy.
+-- behaviour every existing row already has, so there is no backfill.
+--
+-- 🔴 APPLY THIS BEFORE THE CODE DEPLOYS to the environment. Additive and nullable, so
+-- migrate-then-deploy is safe in every respect -- but the reverse is NOT: hubListSelect
+-- and resolveHubSources both select "groupKey" explicitly, so a deploy that lands first
+-- makes Postgres answer `column UserHubSource.groupKey does not exist` on every hub read
+-- until this runs. Observed on the dev server, 2026-09-18.
+--
+-- This is the MIRROR of the `ALTER TYPE ... ADD VALUE` rule in CLAUDE.md, not an
+-- exception to it. There the new writer outruns the old reader, so the deploy goes
+-- first; here the new reader demands a column the old database lacks, so the migration
+-- does.
 ALTER TABLE "UserHubSource" ADD COLUMN "groupKey" INTEGER;

@@ -23,7 +23,7 @@ import {
   groupMemberKeys,
   removeHubGroup,
   setHubGroupEnabled,
-  ungroupHubTag,
+  removeHubTag,
 } from '~/components/Hubs/hub.utils';
 import { hubLimits, hubSourceKey } from '~/server/schema/user-hub.schema';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
@@ -220,7 +220,7 @@ export function HubSourceEditor({
         onRemoveTag={
           readOnly || rest.length === 0
             ? undefined
-            : (targetId) => onChange(ungroupHubTag(value, targetId))
+            : (targetId) => onChange(removeHubTag(value, targetId))
         }
         addControl={
           isTag && !readOnly ? (
