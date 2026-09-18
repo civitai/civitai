@@ -1,10 +1,12 @@
-import { readFileSync } from 'fs';
-import path from 'path';
 import { describe, expect, it } from 'vitest';
-import { MODEL_SALE_IDS_PER_QUERY } from '~/server/schema/model-sale.schema';
+import { modelRouter } from '~/server/routers/model.router';
+import {
+  MODEL_SALE_IDS_PER_QUERY,
+  MODEL_SALE_IDS_PER_REQUEST,
+} from '~/server/schema/model-sale.schema';
 
 /**
- * The cap on `model.getActiveSales`'s `ids` and the size its callers chunk to are one contract
+ * The cap on `model.getActiveSales`'s `ids` and the size its card surfaces chunk to are one contract
  * across two files, and it cannot be stated once: the router validates, the card hook splits.
  *
  * 🔴 THIS IS THE SEAM THAT ACTUALLY BROKE. The procedure was rejecting every call from a scrolled
@@ -12,43 +14,62 @@ import { MODEL_SALE_IDS_PER_QUERY } from '~/server/schema/model-sale.schema';
  * simply vanished from the grid. Chunking fixed the caller; nothing stopped the router drifting
  * back to a private literal, and a literal lowered below the chunk reproduces the outage exactly.
  *
- * A TEXT guard, over a textual property (which symbol the `.input(...)` names) — the one kind a
- * text guard checks well. It does not prove the cap is the right number; it proves the two sides
- * cannot be given different ones. The behavioural half — that every request the hook builds parses
- * against this schema — lives in `src/components/Cards/__tests__/useModelSaleBadges.test.ts`.
+ * 🔴 ASSERTED AGAINST THE PARSER THE PROCEDURE ACTUALLY RUNS, never against the source text. A
+ * spelled version of this guard was written first and was walkable: declaring a local
+ * `const getActiveSalesSchema = z.object({ ids: z.number().array().max(50) })` at the top of the
+ * router leaves `.input(getActiveSalesSchema)` present and every string check green, while every
+ * request from a card surface 400s. Parsing real arrays through the real parser cannot be talked
+ * past — a cap wrong in either direction fails, wherever it was spelled.
  */
 
-const repoRoot = path.resolve(__dirname, '../../../..');
-const ROUTER = 'src/server/routers/model.router.ts';
+/** The one parser `model.getActiveSales` validates with. */
+function activeSalesParser() {
+  const procedures = (
+    modelRouter as unknown as {
+      _def: {
+        procedures: Record<
+          string,
+          { _def: { inputs: { safeParse: (value: unknown) => { success: boolean } }[] } }
+        >;
+      };
+    }
+  )._def.procedures;
 
-const routerSource = () => readFileSync(path.join(repoRoot, ROUTER), 'utf8');
+  const procedure = procedures.getActiveSales;
+  expect(procedure, 'model.getActiveSales no longer exists').toBeTruthy();
 
-/** The `getActiveSales:` procedure body, up to the next procedure key at the same indent. */
-function getActiveSalesBlock(source: string) {
-  const start = source.indexOf('\n  getActiveSales: ');
-  expect(start, `${ROUTER} no longer declares a getActiveSales procedure`).toBeGreaterThan(-1);
-  const rest = source.slice(start + 1);
-  const end = rest.search(/\n {2}[A-Za-z][A-Za-z0-9]*: /);
-  return end === -1 ? rest : rest.slice(0, end);
+  // Exactly one: tRPC INTERSECTS chained `.input()` parsers, so a second one could tighten the cap
+  // without touching the first — and reading `inputs[0]` alone would report the old bound.
+  const inputs = procedure._def.inputs;
+  expect(inputs).toHaveLength(1);
+  return inputs[0];
 }
 
+const idsOfLength = (length: number) => Array.from({ length }, (_, index) => index + 1);
+
 describe('model.getActiveSales input cap', () => {
-  it('is taken from the shared schema, not restated in the router', () => {
-    const block = getActiveSalesBlock(routerSource());
-
-    expect(block).toContain('.input(getActiveSalesSchema)');
+  it('accepts a full chunk from a card surface', () => {
+    // The regression, stated as behaviour: the client may never build a request the server refuses.
+    expect(
+      activeSalesParser().safeParse({ ids: idsOfLength(MODEL_SALE_IDS_PER_REQUEST) }).success
+    ).toBe(true);
   });
 
-  it('is not shadowed by an inline cap in that procedure', () => {
-    const block = getActiveSalesBlock(routerSource());
-
-    // The specific regression shape: `.input(z.object({ ids: z.number().array().max(<n>) }))`.
-    // Matching `.max(` anywhere in the block would also fire on a legitimate future field, so this
-    // pins the one construct that replaces the shared schema.
-    expect(block).not.toMatch(/\.input\(\s*z\./);
+  it('accepts exactly the documented cap', () => {
+    expect(
+      activeSalesParser().safeParse({ ids: idsOfLength(MODEL_SALE_IDS_PER_QUERY) }).success
+    ).toBe(true);
   });
 
-  it('is a positive bound, so an empty-only schema cannot pass for a cap', () => {
-    expect(MODEL_SALE_IDS_PER_QUERY).toBeGreaterThan(0);
+  it('refuses one id past the documented cap', () => {
+    // The other direction: the router must not quietly accept more than the constant advertises,
+    // or the bound the schema comment argues for is not the bound in force.
+    expect(
+      activeSalesParser().safeParse({ ids: idsOfLength(MODEL_SALE_IDS_PER_QUERY + 1) }).success
+    ).toBe(false);
+  });
+
+  it('leaves the client asking for no more than the server accepts', () => {
+    expect(MODEL_SALE_IDS_PER_REQUEST).toBeLessThanOrEqual(MODEL_SALE_IDS_PER_QUERY);
   });
 });

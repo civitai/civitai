@@ -32,13 +32,28 @@ const recorded = vi.hoisted(() => {
   const requests: number[][] = [];
   const options: Record<string, unknown>[] = [];
   const calls = { useQuery: 0, useQueries: 0 };
-  /** Per-id override, so a test can make one model's sale already over. */
-  const endsAtById = new Map<number, Date>();
+  /**
+   * Per-id override, so a test can make one model's sale already over — and it takes a STRING as
+   * well as a Date, because the wire carries either depending on the response serializer and the
+   * hook re-wraps for exactly that reason. A Date-only fake leaves the re-wrap unobserved.
+   */
+  const endsAtById = new Map<number, Date | string>();
   /** Ids whose chunk is deliberately still in flight. */
   const pending = new Set<number>();
   const RUNNING = new Date('2999-01-01T00:00:00.000Z');
-  /** Bumped per answered request, so the merge memo's `dataUpdatedAt` key actually moves. */
+  /**
+   * `dataUpdatedAt` is STABLE per id-set, as React Query's is: it stamps on resolve, not on read.
+   * A counter bumped per call moves the merge memo's key on every RENDER, which makes the memo
+   * never memoize and hides both a missing memo and an over-eager key.
+   */
+  const stamps = new Map<string, number>();
   let clock = 0;
+  const stampFor = (key: string) => {
+    const seen = stamps.get(key);
+    if (seen) return seen;
+    stamps.set(key, ++clock);
+    return clock;
+  };
 
   const salesFor = (ids: number[]) =>
     Object.fromEntries(
@@ -56,7 +71,7 @@ const recorded = vi.hoisted(() => {
     requests.push(input.ids);
     options.push(opts ?? {});
     if (input.ids.some((id) => pending.has(id))) return { data: undefined, dataUpdatedAt: 0 };
-    return { data: salesFor(input.ids), dataUpdatedAt: ++clock };
+    return { data: salesFor(input.ids), dataUpdatedAt: stampFor(input.ids.join(',')) };
   };
 
   return {
@@ -72,6 +87,7 @@ const recorded = vi.hoisted(() => {
       calls.useQueries = 0;
       endsAtById.clear();
       pending.clear();
+      stamps.clear();
       clock = 0;
     },
     useQuery: (input: { ids: number[] }, opts?: Record<string, unknown>) => {
@@ -93,7 +109,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   },
 }));
 
-import { useModelSaleBadges } from '~/components/Cards/ModelCardContext';
+import { useModelSaleBadge, useModelSaleBadges } from '~/components/Cards/ModelCardContext';
+import { isLargeQuery } from '~/utils/trpc';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 /** Renders, and can RE-render with new args — which is what the memo keys need to be observable. */
@@ -161,10 +178,28 @@ describe('useModelSaleBadges', () => {
     expect(rejected).toEqual([]);
   });
 
-  it('keeps the chunk at or under the cap the procedure enforces', () => {
-    // The relationship, stated independently of either value: the client may ask for less than the
-    // server accepts, never more. Two constants, so this can actually fail.
-    expect(MODEL_SALE_IDS_PER_REQUEST).toBeLessThanOrEqual(MODEL_SALE_IDS_PER_QUERY);
+  it('keeps a chunk small enough to stay a GET', () => {
+    // The second half of the sizing argument, asserted rather than only reasoned about in the
+    // schema comment: `isLargeQuery` is what rewrites a query into a body-carrying POST on the link
+    // ALL live traffic uses. 7-digit ids, because that is what a real model id costs.
+    const chunk = Array.from({ length: MODEL_SALE_IDS_PER_REQUEST }, (_, i) => 9000000 - i);
+
+    expect(isLargeQuery({ type: 'query', input: { ids: chunk } })).toBe(false);
+    // Positive control: the sizer does say yes to something, so the `false` above is a measurement
+    // and not a function that never fires. A chunk at the CAP is exactly what used to be a POST.
+    const atCap = Array.from({ length: MODEL_SALE_IDS_PER_QUERY }, (_, i) => 9000000 - i);
+    expect(isLargeQuery({ type: 'query', input: { ids: atCap } })).toBe(true);
+  });
+
+  it('hands out the same object when nothing has changed', () => {
+    const ids = feedIds(MODEL_SALE_IDS_PER_REQUEST);
+
+    const { result, rerender } = renderHook(useModelSaleBadges, ids);
+    const first = result.current;
+
+    // Referential stability is the consumer-visible property: `ModelCardContextProvider` memoises on
+    // this value, so a fresh object per render re-renders every memoised card in the grid.
+    expect(rerender([...ids])).toBe(first);
   });
 
   it('fans out through useQueries, never a useQuery per chunk', () => {
@@ -267,6 +302,32 @@ describe('useModelSaleBadges', () => {
     expect(during?.[ids[0]]).toMatchObject({ discountAmount: 25 });
   });
 
+  it('does not let the held map resurrect a sale that has since ended', () => {
+    // 🔴 The hole the keep-previous arm opened: the map was checked against the clock when it was
+    // BUILT, so holding it re-served a window that closed in the meantime. The gate has to sit on
+    // the map being handed out, not on the merge — a stamp is not a gate.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+      const ids = feedIds(MODEL_SALE_IDS_PER_REQUEST);
+      recorded.endsAtById.set(ids[0], new Date('2026-01-01T00:30:00.000Z'));
+
+      const { rerender } = renderHook(useModelSaleBadges, ids);
+
+      const next = ids.map((id) => id + 1);
+      next.forEach((id) => recorded.pending.add(id));
+      // The fallback is now in play AND that one sale has ended since the map was stored.
+      vi.setSystemTime(new Date('2026-01-01T01:00:00.000Z'));
+      const during = rerender(next);
+
+      expect(during?.[ids[0]]).toBeUndefined();
+      // The rest of the held map still badges — this drops the closed window, not the fallback.
+      expect(Object.keys(during ?? {})).toHaveLength(MODEL_SALE_IDS_PER_REQUEST - 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('drops a sale whose window has already closed', () => {
     const ids = feedIds(3);
     recorded.endsAtById.set(ids[1], new Date('2000-01-01T00:00:00.000Z'));
@@ -290,11 +351,51 @@ describe('useModelSaleBadges', () => {
     expect(sales).toBeUndefined();
   });
 
+  it('reads an endsAt that arrived as a string, not a Date', () => {
+    // 🔴 The response serializer decides which one lands, which is why the hook re-wraps and why
+    // `ModelVersionSaleBadge` types it `Date | string`. Asserted, because the obvious simplification
+    // — `sale.endsAt.getTime()` on the strength of the local type — throws inside a render on the
+    // string path, taking the card surface down.
+    const ids = feedIds(2);
+    recorded.endsAtById.set(ids[0], '2000-01-01T00:00:00.000Z');
+    recorded.endsAtById.set(ids[1], '2999-01-01T00:00:00.000Z');
+
+    const sales = renderHook(useModelSaleBadges, ids).result.current;
+
+    expect(sales?.[ids[0]]).toBeUndefined();
+    expect(sales?.[ids[1]]).toMatchObject({ discountAmount: 25 });
+  });
+
   it('asks about a duplicated model once', () => {
     // Non-monotonic, so the expected result cannot coincide with a sorted derivation.
     const sales = renderHook(useModelSaleBadges, [8, 7, 8, 7]).result.current;
 
     expect(recorded.requests).toEqual([[8, 7]]);
     expect(Object.keys(sales ?? {})).toHaveLength(2);
+  });
+});
+
+/**
+ * The card rendered OUTSIDE a provider — home blocks, collections, related models. It caches its
+ * answer for `staleTime` just as the batched hook does, so it needs the same end-edge re-check; the
+ * one suite that renders a card mocks this hook away, so nothing else in the repo can see it.
+ */
+describe('useModelSaleBadge', () => {
+  it('returns a running sale', () => {
+    const sale = renderHook(useModelSaleBadge, 7, false).result.current;
+
+    expect(sale).toMatchObject({ discountType: 'Percent', discountAmount: 25 });
+  });
+
+  it('drops a sale whose window has already closed', () => {
+    recorded.endsAtById.set(7, new Date('2000-01-01T00:00:00.000Z'));
+
+    expect(renderHook(useModelSaleBadge, 7, false).result.current).toBeUndefined();
+  });
+
+  it('asks nothing when a provider owns the lookup', () => {
+    // The skip flag is "a provider owns this", so a card inside a grid must not fire its own query.
+    expect(renderHook(useModelSaleBadge, 7, true).result.current).toBeUndefined();
+    expect(recorded.requests).toEqual([]);
   });
 });

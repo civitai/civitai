@@ -101,10 +101,11 @@ export const useModelSaleBadges = (modelIds: number[]) => {
   const merged = useMemo(() => {
     // A partly-loaded surface merges what it has, so badges appear per chunk instead of the whole
     // grid waiting on the slowest one. `undefined` — not `{}` — while nothing has arrived, so a
-    // consumer reads "no sale yet" rather than "no sale".
+    // consumer reads "no sale yet" rather than "no sale". Unfiltered on purpose: the end edge is
+    // applied on the way OUT, below.
     const loaded = queries.map((query) => query.data).filter((data) => !!data);
     if (!loaded.length) return undefined;
-    return runningSalesOnly(Object.assign({}, ...loaded) as SalesByModelId, Date.now());
+    return Object.assign({}, ...loaded) as SalesByModelId;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queries.map((query) => query.dataUpdatedAt).join(',')]);
 
@@ -117,7 +118,31 @@ export const useModelSaleBadges = (modelIds: number[]) => {
   // Without this the whole grid's badges blank for the round trip on every page of scroll.
   const lastLoaded = useRef<SalesByModelId | undefined>(undefined);
   if (merged) lastLoaded.current = merged;
-  return merged ?? lastLoaded.current;
+  const known = merged ?? lastLoaded.current;
+
+  // 🔴 ONE GATE, ON THE MAP BEING HANDED OUT — not on the merge. Filtering inside the merge stamped
+  // the answer at the moment the DATA arrived, so the kept-previous map escaped unchecked and could
+  // resurrect a window that had closed since it was stored.
+  //
+  // The clock is re-read on every event that changes WHICH map is being served: a chunk arriving
+  // (`known` identity moves) and falling back or recovering (`heldOver` flips) — the latter is the
+  // load-bearing one, because the fallback hands out the SAME object and an identity-keyed memo
+  // therefore would not re-check it. In between, the returned object stays referentially stable; a
+  // fresh object every render would churn the context and re-render every memoised card.
+  //
+  // ⚠️ RESIDUAL, and it is pre-existing rather than introduced here: a feed left mounted and IDLE
+  // re-reads nothing, so a window closing with no scroll and no refetch stays badged. That was
+  // equally true before this hook chunked — the map was never re-checked at all — and closing it
+  // needs the gate at the per-card read in `ModelCard`, not here.
+  const heldOver = !merged;
+  return useMemo(
+    () => (known ? runningSalesOnly(known, Date.now()) : undefined),
+    // `heldOver` is not read inside, so eslint calls it unnecessary — it is the point. The clock is
+    // an implicit input this memo has no other way to depend on, and this flag is the event that
+    // means "the same object is now being served for a different reason, re-read it".
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [known, heldOver]
+  );
 };
 
 export const ModelCardContextProvider = ({
