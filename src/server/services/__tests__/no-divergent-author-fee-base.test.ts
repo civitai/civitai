@@ -485,6 +485,18 @@ describe('author fee — the viewer-charge seam', () => {
       new Set(['pollWorkflow', 'cancelWorkflow', 'cancelAppWorkflow'])
     );
     expect(reversalOwners).toHaveLength(3);
+
+    // 🔴 EVERY reversal is keyed on the procedure's OWN input id. The reversal
+    // deletes a row and issues a refund, so a site keyed on some other id in
+    // scope would refund the wrong viewer — and all three procedures have a
+    // `snapshot`/`workflow` object in scope carrying a different workflow id.
+    // (`terminalStatus` is deliberately NOT pinned to one expression: the poll
+    // and `cancelWorkflow` read `snapshot.status`, `cancelAppWorkflow` reads its
+    // projection's.)
+    for (const site of callSites(source, 'reverseBlockAuthorFee({')) {
+      expect(site).toContain('workflowId: input.workflowId');
+      expect(site).toMatch(/terminalStatus: \w+\.status,/);
+    }
   });
 
   it('🔴 every reversal is guarded on TERMINAL-ness AND on not-succeeded', () => {
