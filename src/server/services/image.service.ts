@@ -2414,7 +2414,7 @@ const getAllImagesUncaptured = async (
 
   // Fetch all cache data in parallel
   const [
-    reactionsRaw,
+    userReactions,
     tagIdsVar,
     tagsVar,
     userVotes,
@@ -2428,12 +2428,7 @@ const getAllImagesUncaptured = async (
     imageResources,
   ] = await withSpan('image:getAllImages:parallelFetch', () =>
     Promise.all([
-      userId
-        ? dbRead.imageReaction.findMany({
-            where: { imageId: { in: imageIds }, userId },
-            select: { imageId: true, reaction: true },
-          })
-        : undefined,
+      userId ? getUserReactionsForImages({ imageIds, userId }) : undefined,
       include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
       include?.includes('tags') ? getImageTagsForImages(imageIds) : undefined,
       include?.includes('tags') && userId
@@ -2468,16 +2463,6 @@ const getAllImagesUncaptured = async (
     : undefined;
 
   const images = withSpan('image:getAllImages:transform', () => {
-    // Process reactions into lookup
-    let userReactions: Record<number, ReviewReactions[]> | undefined;
-    if (reactionsRaw) {
-      userReactions = reactionsRaw.reduce((acc, { imageId, reaction }) => {
-        acc[imageId] ??= [] as ReviewReactions[];
-        acc[imageId].push(reaction);
-        return acc;
-      }, {} as Record<number, ReviewReactions[]>);
-    }
-
     // Merge user votes into tags
     if (tagsVar && userVotes) {
       const voteMap = new Map(userVotes.map((v) => [`${v.imageId}:${v.tagId}`, v.vote]));
@@ -2643,6 +2628,34 @@ export const getAllImages = async (input: Parameters<typeof getAllImagesUncaptur
 };
 
 // TODO split this into image-index.service because this file is a giant
+
+/**
+ * The viewer's own reactions for a set of images, grouped by image id.
+ *
+ * Three callers: the two feed paths above and below, which fold the result into their own
+ * payloads, and `reaction.getMyImageReactions`, which exists because a home block's payload is
+ * served from a shared anonymous cache and so cannot carry it.
+ */
+export const getUserReactionsForImages = async ({
+  imageIds,
+  userId,
+}: {
+  imageIds: number[];
+  userId: number;
+}) => {
+  if (!imageIds.length) return {} as Record<number, ReviewReactions[]>;
+
+  const rows = await dbRead.imageReaction.findMany({
+    where: { imageId: { in: imageIds }, userId },
+    select: { imageId: true, reaction: true },
+  });
+
+  return rows.reduce((acc, { imageId, reaction }) => {
+    acc[imageId] ??= [] as ReviewReactions[];
+    acc[imageId].push(reaction);
+    return acc;
+  }, {} as Record<number, ReviewReactions[]>);
+};
 
 const getMetaForImages = async (imageIds: number[]) => {
   if (imageIds.length === 0) return {};
@@ -2853,18 +2866,9 @@ export const getAllImagesIndex = async (
   const videoIds = searchResults.filter((sr) => sr.type === MediaType.video).map((sr) => sr.id);
   const userIds = searchResults.map((sr) => sr.userId);
 
-  let userReactions: Record<number, ReviewReactions[]> | undefined;
-  if (currentUserId) {
-    const reactionsRaw = await dbRead.imageReaction.findMany({
-      where: { imageId: { in: imageIds }, userId: currentUserId },
-      select: { imageId: true, reaction: true },
-    });
-    userReactions = reactionsRaw.reduce((acc, { imageId, reaction }) => {
-      acc[imageId] ??= [] as ReviewReactions[];
-      acc[imageId].push(reaction);
-      return acc;
-    }, {} as Record<number, ReviewReactions[]>);
-  }
+  const userReactions = currentUserId
+    ? await getUserReactionsForImages({ imageIds, userId: currentUserId })
+    : undefined;
 
   const [
     userDatas,
