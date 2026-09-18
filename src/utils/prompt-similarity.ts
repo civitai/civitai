@@ -55,13 +55,26 @@ function harmonicMean(a: number, b: number): number {
   return a + b > 0 ? (2 * a * b) / (a + b) : 0;
 }
 
+/**
+ * The one number that decides whether a prompt is still the prompt it started
+ * from. `promptDerivationHolds` is the only reader; `promptSimilarity` keeps an
+ * overridable `upper` for exploratory callers, and the gate deliberately does
+ * not go through it.
+ *
+ * 🔴 It is not a similarity preference, it is a money gate: a submission that
+ * clears it enters a creator's review queue without paying. Do not tune it from
+ * a call site, and do not add a second copy — `no-divergent-prompt-derivation`
+ * pins this as the sole derivation.
+ */
+export const PROMPT_DERIVATION_THRESHOLD = 0.75;
+
 interface SimilarityOptions {
   /** `adjustedCosine` at or above this counts as similar. */
   upper?: number;
 }
 
 export function promptSimilarity(p1: string, p2: string, opt: SimilarityOptions = {}) {
-  const { upper = 0.75 } = opt;
+  const { upper = PROMPT_DERIVATION_THRESHOLD } = opt;
   const tokensA = cleanText(p1);
   const tokensB = cleanText(p2);
 
@@ -85,4 +98,24 @@ export function promptSimilarity(p1: string, p2: string, opt: SimilarityOptions 
     adjustedCosine,
     similar: adjustedCosine >= upper,
   };
+}
+
+/**
+ * Whether `current` is still derived from `source`.
+ *
+ * No options parameter, on purpose: this is the derivation the free-submission
+ * gate spends, and a caller that could pass its own `upper` would be a second
+ * threshold that nothing pins. Both readers — the client's `remixClaimState` and
+ * the server's submit-time check — come through here, so they cannot disagree.
+ *
+ * An empty side is not a drift verdict. `promptSimilarity` scores it 0, which
+ * would read as "they changed everything" when the truth is that there is nothing
+ * to compare; callers decide what an absent prompt means.
+ */
+export function promptDerivationHolds(
+  source: string,
+  current: string
+): { holds: boolean; score: number } {
+  const { similar, adjustedCosine } = promptSimilarity(source, current);
+  return { holds: similar, score: adjustedCosine };
 }

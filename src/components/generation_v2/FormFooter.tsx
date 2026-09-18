@@ -1318,9 +1318,14 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     // point, so reading the store for every image costs nothing when there is
     // none, and collecting by CURRENT url is what drops a token whose image the
     // user has since swapped out.
-    const sourceProvenance = (snapshot.images ?? [])
-      .map((img) => remixProvenanceStore.getToken(img.url))
-      .filter(isDefined);
+    const sourceProvenance = [
+      ...(snapshot.images ?? []).map((img) => remixProvenanceStore.getToken(img.url)),
+      // The reuse-prompt entry point's token, which is keyed to no image because
+      // that path seeds none. Sent unconditionally: the server spends it only if
+      // the prompt it validates still derives from the source's, so a form the
+      // user has since rewritten carries a token that buys nothing.
+      remixProvenanceStore.getPromptToken(),
+    ].filter(isDefined);
 
     // Calculate total cost including tips
     const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;
