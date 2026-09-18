@@ -94,7 +94,9 @@ export const postMetrics = createMetricProcessor({
   // },
 });
 
-async function getReactionTasks(ctx: MetricContext) {
+// Exported for the SQL-shape test: nothing in the suite executes these queries, so the
+// only way to assert the filter reaches the statement is to capture what is sent.
+export async function getReactionTasks(ctx: MetricContext) {
   log('getReactionTasks', ctx.lastUpdate);
   const excludedFilter = snippets.excludedReactorFilter(await getMetricExcludedUserIdsOrThrow());
   const affectedImages = await ctx.ch.$query<{ imageId: number }>`
@@ -107,8 +109,13 @@ async function getReactionTasks(ctx: MetricContext) {
   `;
 
   const affected = new Set<number>();
+  // Sorted for the same reason the post chunk below is: the query bounds each chunk with
+  // `BETWEEN ids[0] AND ids[ids.length - 1]`, and the ClickHouse query above has no
+  // ORDER BY, so an unsorted chunk whose first id exceeds its last matches nothing and
+  // those images never become affected posts. Sorted here rather than in ClickHouse so a
+  // future edit to that query cannot quietly re-break it.
   const postFetchTasks = chunk(
-    affectedImages.map((x) => x.imageId),
+    affectedImages.map((x) => x.imageId).sort((a, b) => a - b),
     30000
   ).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
@@ -205,7 +212,7 @@ async function getCollectionTasks(ctx: MetricContext) {
 }
 
 type MetricKey = keyof PostMetric;
-type MetricContext = MetricProcessorRunContext & {
+export type MetricContext = MetricProcessorRunContext & {
   updates: Record<number, Record<string, number>>;
   idKey: string;
 };

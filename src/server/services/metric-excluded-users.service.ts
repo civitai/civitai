@@ -46,6 +46,10 @@ export async function getMetricExcludedUserIds(): Promise<number[]> {
  * post is never. `createMetricProcessor` calls `setLastUpdate()` and `queue.commit()`
  * only after `update()` resolves, so rejecting leaves the cursor and the queue where
  * they were and the window is recomputed on the next run.
+ *
+ * What stops is the whole metric SET, not just the reaction part: `update-metrics.ts`
+ * runs each set's processors sequentially with no per-processor catch, so a throw here
+ * also skips the sibling processor and the rank refresh for that set.
  */
 export async function getMetricExcludedUserIdsOrThrow(): Promise<number[]> {
   if (!clickhouse) throw new Error('clickhouse client unavailable');
@@ -86,20 +90,26 @@ async function fetchExcludedUserIds(): Promise<number[]> {
   // the silent skip that design exists to avoid. Validate the shape rather than
   // trust the type.
   if (!Array.isArray(cached)) throw new Error('cached exclusion list was not an array');
-  unavailable = false;
+  reportedOutcomes.clear();
   return cached;
 }
 
 /**
- * Logged once per outage — on the first failure, and again only after a success has
- * reset the flag. This runs on every created reaction, so once an outage outlives the
- * cache entry every reaction would otherwise emit its own Axiom ingest, turning the
- * busiest write path into a log amplifier exactly when infrastructure is degraded.
+ * Logged once per outage PER OUTCOME, and again only after a success has cleared the set.
+ * The lenient reader runs on every created reaction, so once an outage outlives the cache
+ * entry every reaction would otherwise emit its own Axiom ingest, turning the busiest
+ * write path into a log amplifier exactly when infrastructure is degraded.
+ *
+ * Keyed by outcome rather than a single flag, because a single flag made the metric-job
+ * report unreachable: the lenient reader fails within milliseconds of an outage starting
+ * and would claim the one slot, so the only line for the whole incident said a
+ * notification had degraded, while the metric jobs stalled silently once a minute — which
+ * is the thing the reporting was added to make visible.
  */
-let unavailable = false;
+const reportedOutcomes = new Set<string>();
 function reportUnavailable(error: unknown, outcome: string) {
-  if (unavailable) return;
-  unavailable = true;
+  if (reportedOutcomes.has(outcome)) return;
+  reportedOutcomes.add(outcome);
   logToAxiom({
     type: 'warning',
     name: 'metric-excluded-users-unavailable',

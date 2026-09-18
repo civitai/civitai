@@ -128,9 +128,9 @@ function reactionTimeframes(reactionElementAlias = 'r', timeframeAlias = 'tf') {
 }
 
 /**
- * The metric columns a reaction aggregate writes. Exported because a job has to seed
- * them to zero for the entities the aggregate will not return a row for — see the
- * `seedZeroReactionCounts` comments at the call sites.
+ * The metric columns a reaction aggregate writes. Exported because a job has to seed them
+ * to zero for the entities the aggregate returns no row for, which the three post/article
+ * reaction tasks do inline before issuing their query.
  */
 export const reactionCountKeys = Object.keys(ReviewReactions).map(
   (reaction) => `${reaction.toLowerCase()}Count`

@@ -142,8 +142,11 @@ describe('no unfiltered reaction count', () => {
     ).toEqual(expected);
   });
 
-  it('the exemption list is two tables — widening it must be a visible change', () => {
+  it('the exemption lists are the size they are — widening either must be visible', () => {
+    // Both, not just the tables: EXEMPT_SITES carries the comment-milestone carve-out, so
+    // a line added there moves a real site out of `covered` with nothing else noticing.
     expect(EXEMPT_TABLES).toHaveLength(2);
+    expect(EXEMPT_SITES).toHaveLength(3);
   });
 
   it('every reaction count splices the exclusion filter', () => {
@@ -158,16 +161,18 @@ describe('no unfiltered reaction count', () => {
   });
 
   it('no splice is commented out', () => {
-    // `literal.includes(...)` is satisfied by `-- ${excludedFilter}`, which Postgres
-    // applies as nothing. Measured as a green mutation before this assertion existed.
+    // `literal.includes(...)` is satisfied by `-- ${excludedFilter}` and by
+    // `/* ${excludedFilter} */`, both of which Postgres applies as nothing. Both were
+    // measured green before this assertion covered them.
     const offenders = covered
-      .filter((s) =>
-        s.literal
-          .split('\n')
-          .some(
-            (line) =>
-              line.includes('${excludedFilter}') && /--[^\n]*\$\{excludedFilter\}/.test(line)
-          )
+      .filter(
+        (s) =>
+          s.literal
+            .split('\n')
+            .some(
+              (line) =>
+                line.includes('${excludedFilter}') && /--[^\n]*\$\{excludedFilter\}/.test(line)
+            ) || /\/\*[\s\S]*?\$\{excludedFilter\}[\s\S]*?\*\//.test(s.literal)
       )
       .map(key);
 
@@ -208,19 +213,60 @@ describe('no unfiltered reaction count', () => {
     ).toEqual([]);
   });
 
-  it('no file swallows the strict read', () => {
-    // `getMetricExcludedUserIdsOrThrow().catch(() => [])` restores the whole defect while
-    // satisfying every name-based assertion above. Measured as a green mutation before
-    // this existed.
-    const offenders = [...new Set(covered.map((s) => s.rel))].filter((rel) =>
-      /getMetricExcludedUserIdsOrThrow\s*\([^)]*\)\s*\.\s*catch/.test(fileText.get(rel)!)
-    );
+  it('builds the filter from a DIRECT await of the reader', () => {
+    // Prohibiting `.catch` was not enough: `.then(x => x).catch(() => [])` and a plain
+    // `try { … } catch { /* degrade */ }` around the call both restore the whole defect
+    // and were measured green against a name-based check. So require the exact
+    // expression instead of enumerating the ways to avoid it — anything that routes the
+    // read through a variable has somewhere to swallow the rejection.
+    const offenders = [...new Set(covered.map((s) => s.rel))].filter((rel) => {
+      const site = covered.find((s) => s.rel === rel)!;
+      return !fileText.get(rel)!.includes(`snippets.excludedReactorFilter(await ${site.reader}())`);
+    });
 
     expect(
       offenders,
-      'These files catch the strict read, which is the lenient reader written the long way. ' +
-        'If the list cannot be read, the run must fail so the cursor does not advance.'
+      'These files must build the filter as ' +
+        '`snippets.excludedReactorFilter(await <reader>())`, with no intermediate variable. ' +
+        'A try/catch or a .catch around the strict read is the lenient reader written the ' +
+        'long way: if the list cannot be read, the run must fail so the cursor does not advance.'
     ).toEqual([]);
+  });
+
+  it('aliases the reaction table `r`, and nothing else', () => {
+    // The emitted filter hardcodes `r."userId"`. Swapping the aliases so the REACTION
+    // table is `ir` and `Image` is `r` is valid SQL that filters by the post's owner
+    // instead of the reactor — measured green against every other assertion here.
+    const offenders = covered
+      .filter((s) => {
+        const wrongReactionAlias = [
+          ...s.literal.matchAll(/(?:FROM|JOIN)\s+"(\w+Reaction)"\s+(\w+)/g),
+        ].some(([, , alias]) => alias !== 'r' && !/^(ON|WHERE|GROUP|LEFT|CROSS)$/i.test(alias));
+        const rBoundElsewhere = [...s.literal.matchAll(/(?:FROM|JOIN)\s+"(\w+)"\s+r\b/g)].some(
+          ([, table]) => !table.endsWith('Reaction')
+        );
+        return wrongReactionAlias || rBoundElsewhere;
+      })
+      .map(key);
+
+    expect(
+      offenders,
+      'In these queries the alias `r` is not the reaction table. The exclusion filter is ' +
+        'emitted as `AND r."userId" NOT IN (...)`, so it would filter on whatever `r` is ' +
+        'bound to — valid SQL, wrong person, no error.'
+    ).toEqual([]);
+  });
+
+  it('keeps the bounty-entry filter in the LEFT JOIN, not a WHERE', () => {
+    // Moving it to a WHERE collapses the LEFT JOIN back to an inner join: for an entry
+    // whose remaining reactions are all excluded, `NULL NOT IN (...)` is NULL, the row is
+    // dropped, no row comes back, and the pre-exclusion total survives the recompute —
+    // which is the exact defect the rewrite exists to prevent. Pinned as a shape because
+    // nothing executes this SQL.
+    const text = fileText.get('src/server/metrics/bountyEntry.metrics.ts')!;
+    expect(text).toMatch(
+      /LEFT JOIN "BountyEntryReaction" r\s*\n\s*ON r\."bountyEntryId" = be\.id\s*\n\s*\$\{excludedFilter\}/
+    );
   });
 
   it('the strict reader still exists under that name', () => {

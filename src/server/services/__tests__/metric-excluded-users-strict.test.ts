@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
-// The lenient reader logs the outage it swallows; the canonical mock keeps that off
-// the wire without this file having to know the shape of the logging client.
-import '~/__tests__/mocks/logging.mock';
+// The lenient reader logs the outage it swallows; the canonical mock keeps that off the
+// wire and gives a stable spy to assert the strict reader's own report on.
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * The two readers of the exclusion list must fail in opposite directions.
@@ -68,6 +68,53 @@ describe('getMetricExcludedUserIdsOrThrow', () => {
 
     await expect(getMetricExcludedUserIdsOrThrow()).rejects.toThrow('not an array');
     await expect(getMetricExcludedUserIds()).resolves.toEqual([]);
+  });
+
+  it('still reports the stalled metric run after the lenient reader already reported', async () => {
+    // The report is deduped per outage so the reaction write path cannot amplify logs.
+    // Deduped on ONE flag it was unreachable: the lenient reader runs on every reaction
+    // toggle, so it fails first, claims the slot, and the only line for the whole incident
+    // says a notification degraded — while the metric jobs stall silently once a minute.
+    // The dedupe set is module scope and survives `clearAllMocks`, so an earlier failing
+    // test would otherwise leave it populated and these assertions would read a report
+    // that never happened. One successful read clears it.
+    cachePassthrough();
+    h.chQuery.mockResolvedValue([]);
+    await getMetricExcludedUserIds();
+    loggingMock.logToAxiom.mockClear();
+
+    h.fetchThroughCache.mockRejectedValue(new Error('clickhouse unreachable'));
+
+    await expect(getMetricExcludedUserIds()).resolves.toEqual([]);
+    await expect(getMetricExcludedUserIdsOrThrow()).rejects.toThrow();
+
+    const messages = loggingMock.logToAxiom.mock.calls.map(
+      ([arg]: [{ message: string }]) => arg.message
+    );
+    expect(messages).toContain('Exclusion list unavailable, falling back to an unfiltered count');
+    expect(messages).toContain('Exclusion list unavailable, skipping the metric run');
+  });
+
+  it('does not repeat the same outcome while the outage continues', async () => {
+    // The other half of the property: keyed per outcome, not per call.
+    // The dedupe set is module scope and survives `clearAllMocks`, so an earlier failing
+    // test would otherwise leave it populated and these assertions would read a report
+    // that never happened. One successful read clears it.
+    cachePassthrough();
+    h.chQuery.mockResolvedValue([]);
+    await getMetricExcludedUserIds();
+    loggingMock.logToAxiom.mockClear();
+
+    h.fetchThroughCache.mockRejectedValue(new Error('clickhouse unreachable'));
+
+    await expect(getMetricExcludedUserIds()).resolves.toEqual([]);
+    await expect(getMetricExcludedUserIds()).resolves.toEqual([]);
+
+    const lenient = loggingMock.logToAxiom.mock.calls.filter(
+      ([arg]: [{ message: string }]) =>
+        arg.message === 'Exclusion list unavailable, falling back to an unfiltered count'
+    );
+    expect(lenient).toHaveLength(1);
   });
 
   it('drops a null userId rather than suppressing user 0', async () => {
