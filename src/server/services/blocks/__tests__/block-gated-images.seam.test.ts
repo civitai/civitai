@@ -141,7 +141,7 @@ describe(`${SYMBOL} seam`, () => {
     expect(PRODUCTION_FILES.length).toBeGreaterThan(500);
   });
 
-  // Three assertions because the normalisation has two removable halves and they fail on
+  // Pinned three ways because the normalisation has two removable halves and they fail on
   // different hosts: the helper's body (caught on any host, hardcoded input), the call to it
   // inside `toRel` (caught on Windows, where `join` produces a separator to fold), and the
   // walk's real output (the only one observing what the guard actually keyed the ledger on).
@@ -150,7 +150,11 @@ describe(`${SYMBOL} seam`, () => {
     expect(toRel(join(SRC, 'server', 'services', 'blocks', 'block-gated-images.logic.ts'))).toBe(
       DEFINITION
     );
-    expect([...SOURCE.keys()].filter((rel) => rel.includes('\\'))).toEqual([]);
+    const rels = [...SOURCE.keys()];
+    // Without this the filter below is `[].filter()` and passes on an empty walk; the walk
+    // control that would rule that out is in another `it`, so this one cannot rely on it.
+    expect(rels.length).toBeGreaterThan(0);
+    expect(rels.filter((rel) => rel.includes('\\'))).toEqual([]);
   });
 
   // POSITIVE CONTROL for the DETECTOR, not just the walk. A ledger assertion that
