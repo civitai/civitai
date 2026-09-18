@@ -254,7 +254,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       if (!res.headersSent) {
         res.setHeader('Cache-Control', 'no-store');
         res.setHeader('Retry-After', '2');
-        res.status(503).json({ error: 'Image search is temporarily overloaded — please retry.' });
+        res
+          .status(503)
+          .json({ error: 'Image search is temporarily overloaded — please retry.' });
       }
       return;
     }

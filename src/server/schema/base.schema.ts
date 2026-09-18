@@ -39,7 +39,7 @@ export const infiniteQuerySchema = z.object({
   cursor: z.number().optional(),
 });
 
-/** Postgres `int4` upper bound — every keyset sort column in this app is an `int` id. */
+/** Postgres `int4` upper bound. */
 export const INT4_MAX = 2147483647;
 
 /**
@@ -47,9 +47,12 @@ export const INT4_MAX = 2147483647;
  * row's `cursorId`): either a single column value, for a single-field sort, or a
  * `CONCAT(col, '|', …)` string, for a multi-field sort.
  *
- * The numeric members are bounded to Postgres `int4` because every single-field
- * keyset sort here orders by an `int` id column (`i."id"`, `ci."id"`,
- * `ct."collectionItemId"`, …). A bare `z.number()` accepts arbitrarily large
+ * The numeric members are bounded to Postgres `int4` because the single-field
+ * keyset sorts here order by `int` columns — mostly ids (`i."id"`, `ci."id"`,
+ * `ct."collectionItemId"`, …), but NOT only ids: see the lower-bound note below
+ * for `i."index"`, an `int` column that is neither an id nor 1-based. The set was
+ * not exhaustively enumerated, so read this as the reason for the UPPER bound and
+ * not as a closed inventory. A bare `z.number()` accepts arbitrarily large
  * client input, which then binds straight into the SQL comparison and makes
  * Postgres throw `value out of range for type integer` — surfacing as a raw 500
  * for what is a client fault. Bounding here fails the input parse instead, so
@@ -57,9 +60,28 @@ export const INT4_MAX = 2147483647;
  * `/api/v1/models/[id]` id schema.
  *
  * `.int().gt(0)` is part of that bound and is strictly tighter than "fits in
- * int4": zero, negatives and non-integers are rejected too. Safe, because every
- * one of those columns is an autoincrement `Int` starting at 1, so no cursor
- * this server issues can be any of them.
+ * int4": zero, negatives and non-integers are rejected too.
+ *
+ * 🔴 THAT LOWER BOUND HAS NO ESTABLISHED JUSTIFICATION. This comment previously
+ * asserted one — "every one of those columns is an autoincrement `Int` starting
+ * at 1, so no cursor this server issues can be any of them" — and it is FALSE.
+ * `Image.index` (`packages/civitai-db-schema/prisma/schema.full.prisma:1866`) is
+ * `Int?`: nullable, NOT autoincrement, and 0-based. It is a single-field keyset
+ * sort column on the postId path — `src/server/services/image.service.ts:2092`,
+ * `orderBy = i."index"` — inside `getAllImagesUncaptured`, which
+ * `image.getInfinite` reaches through its DB branch, and `image.getInfinite` is
+ * one of the four call sites this schema bounds. The tree corroborates the
+ * 0-base one branch over, at `src/server/services/image.service.ts:2192`
+ * (`COALESCE(i."index", 0)`).
+ *
+ * No ISSUABLE `0` was constructed: a `nextCursor` is the row at 0-based offset
+ * `limit` under that ASC sort, so its `index` is >= `limit`. But index
+ * assignment was not exhaustively enumerated, so that is a failure to find a
+ * counter-example — not a proof. Read `.gt(0)` as UNJUSTIFIED rather than as
+ * safe: do not tighten anything else on the strength of it, and if a rejected
+ * `0` cursor is ever observed in the wild, the fix is `.gte(0)` here plus the
+ * bound tests. The int4 UPPER bound is the half this schema is actually for;
+ * the lower bound is inherited from the shape the four call sites already had.
  *
  * NOTE: this bound covers the MAGNITUDE half of the class only, and read the
  * next paragraph before treating the other half as closed. An *in-range* number

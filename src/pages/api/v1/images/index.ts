@@ -113,18 +113,8 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     const session = await getServerAuthSession({ req, res });
 
     // Handle pagination
-    const {
-      limit,
-      page,
-      cursor,
-      nsfw,
-      browsingLevel,
-      type,
-      withMeta,
-      flatMeta,
-      withTags,
-      ...data
-    } = reqParams.data;
+    const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, flatMeta, withTags, ...data } =
+      reqParams.data;
     let skip: number | undefined;
     const usingPaging = page && !cursor;
     if (usingPaging) {
