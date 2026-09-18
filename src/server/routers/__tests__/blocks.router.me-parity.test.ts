@@ -48,12 +48,16 @@ import type { BlockTokenClaims } from '~/server/middleware/block-scope.middlewar
  * `0340f692bf`, then RE-measured at `d7038c5aa8` after the base moved under the branch:
  * **7 failed | 3 passed** both times, same cases. (Quoting a matrix from a base the branch
  * no longer sits on is a stale citation, so it is re-run rather than argued from.)
+ * Case J was added later, after an audit mutant. The suite was RE-RUN at `d7038c5aa8` with
+ * it included rather than its colour being reasoned about: **8 failed | 3 passed of 11**.
+ * J is red at base for the same reason B and D are — the base has neither gate.
  *
  *   RED at base (7) — the regression coverage:
  *     A  non-mod IN the audience            REST 403 mod-literal      / tRPC 200
  *     B  moderator OUTSIDE the audience     REST 200 no-flag-gate     / tRPC 401
  *     C  non-mod IN the audience, banned    REST 403 'restricted…'    / tRPC 403 'banned'
  *     D  moderator, limiter refusing        REST 200 no limiter       / tRPC 429
+ *     J  flag AND limiter both refusing     REST 200 neither gate      / tRPC 401
  *     F  non-mod muted viewer               REST 403 mod-literal      / tRPC 200 muted
  *     I  non-tRPC error out of the gate     base never calls the gate, so nothing throws
  *        and the call resolves instead of rejecting
@@ -455,6 +459,38 @@ describe('/api/v1/blocks/me and blocks.getMyViewer return the SAME authorization
     expect(mockFindUnique).not.toHaveBeenCalled();
   });
 
+  it('J: flag REFUSING and limiter REFUSING at once — both doors answer the kill-switch', async () => {
+    // 🔴 THE ONLY CASE THAT OBSERVES THE ORDER OF THE TWO NEW GATES RELATIVE TO EACH OTHER,
+    // and it exists because an audit mutant proved the rest of this file cannot. Moving the
+    // limiter block ABOVE the kill-switch try/catch in `me.ts` left this file 10/10 green
+    // and 16 sibling suites 417/417 green: every other case sets at most ONE of the two
+    // refusals, and with only one armed the order is unobservable — whichever gate is armed
+    // answers, wherever it sits.
+    //
+    // Arm BOTH and the order becomes the whole verdict: the kill-switch runs first, so both
+    // doors must answer 401 `Apps are not enabled`. Under the swap the REST door answers
+    // 429 `Rate limit exceeded…` while the bridge still answers 401 — the two front doors
+    // disagreeing about which refusal a subject gets, which is this file's entire subject.
+    //
+    // ⚠️ Position relative to the PRIMARY READ was already pinned, by B and D's
+    // `expect(mockFindUnique).not.toHaveBeenCalled()` (that killed a gate-after-db mutant).
+    // Position relative to EACH OTHER is what was not, and it is what three docblocks claim
+    // ("same position", "same placement"). A docblock claiming coverage the test lacks is
+    // the defect this whole PR is about; it would have been one more instance of it.
+    mockGetSessionUser.mockResolvedValue(sessionUser({ isModerator: true }));
+    mockIsAppBlocksEnabled.mockResolvedValue(false);
+    mockCheckRateLimit.mockResolvedValue({ allowed: false, retryAfterSeconds: 7 });
+
+    const { rest, trpc } = await bothDoors(userRow({ isModerator: true }));
+
+    expect(rest).toEqual(trpc);
+    expect(rest).toEqual({ outcome: 'refuse', status: 401, message: 'Apps are not enabled' });
+    // The positive half of the same claim: because the kill-switch refuses first, NEITHER
+    // door ever reaches the limiter. A swapped door would have consulted it.
+    expect(mockCheckRateLimit).not.toHaveBeenCalled();
+    expect(mockFindUnique).not.toHaveBeenCalled();
+  });
+
   it('E (invariant guard, green before the change too): a vanished subject row is 404 on both doors', async () => {
     mockGetSessionUser.mockResolvedValue(sessionUser({ isModerator: true }));
 
@@ -536,7 +572,13 @@ describe('/api/v1/blocks/me and blocks.getMyViewer return the SAME authorization
     });
   });
 
-  it('G: a SOFT-DELETED subject (row present, `deletedAt` set) is 404 on both doors', async () => {
+  it('G (invariant guard, green before the change too): a SOFT-DELETED subject row is 404 on both doors', async () => {
+    // ⚠️ INVARIANT GUARD, NOT REGRESSION COVERAGE — green at base, like E and H. Labelled
+    // here in the title AND the body because the header claims all three greens are
+    // "labelled at their own assertion" and this one was the exception: its comment
+    // explained only how it differs from E, so a reader landing here from a failure got no
+    // in-place signal that it never diverged.
+    //
     // Distinct from case E, which serves a NULL row. Same sweep: dropping one door's
     // `deletedAt` check left case E green, because a null row never exercises it.
     const { rest, trpc } = await bothDoors(userRow({ deletedAt: new Date() }));
