@@ -2,6 +2,7 @@ import { env } from '~/env/server';
 import { registerCounterWithLabels, registerHistogram } from '~/server/prom/client';
 import type { CapturableSearchInput } from '~/server/services/feed-request-capture.service';
 import {
+  DEEP_OFFSET,
   encodeFeedCursor,
   fetchFeedAnswer,
   mapSearchInputToFeedQuery,
@@ -113,7 +114,7 @@ export async function serveFromFeed<T extends { id: number }>(
   }
   const mapping = mapSearchInputToFeedQuery(input, 'primary');
   if (!mapping.ok) {
-    count('unmapped', mapping.reason);
+    count(mapping.reason === DEEP_OFFSET ? 'rejected' : 'unmapped', mapping.reason);
     return { ok: false, reason: mapping.reason };
   }
   let answer: FeedAnswer;
