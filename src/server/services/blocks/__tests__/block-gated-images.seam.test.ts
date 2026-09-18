@@ -12,8 +12,9 @@ import { stripSourceComments } from '~/components/AppBlocks/stripSourceComments'
  * for everyone else. Every OTHER consumer must keep treating anything that is not
  * `visible` as a refusal, and must do so by spelling the test `!== 'visible'`: a
  * gate written `=== 'hidden'` was correct while the verdict had two members and
- * silently ADMITS a `pending` image now. Each file type-checks and each file's own
- * suite passes, so this is the class of defect no per-file suite can see.
+ * silently ADMITS a `pending` image now. Neither file is wrong on its own, so nothing
+ * fails until someone writes a per-consumer case for the new state: the two ledgered
+ * consumers have one, and a third would not.
  *
  * The BEHAVIOURAL half lives with each consumer and is deliberately not duplicated
  * here — see `block-post.service.test.ts` and `block-gated-images.service.test.ts`.
@@ -99,13 +100,12 @@ for (const full of PRODUCTION_FILES) {
 
 /**
  * A file is a call site if it IMPORTS the logic module or names the symbol in call
- * position. The import half covers every static `from '…logic'` clause — renamed,
- * namespace, re-export — so the symbol half's only contribution is a call in a file
- * carrying no such clause, such as one reached through a name-preserving barrel.
- * Escaping BOTH takes a file that gates while naming neither the module nor the symbol
- * in call position: reaching it renamed, or receiving it as a value. A renaming barrel
- * hop still reddens this suite at the barrel; a renaming `import()` or a helper handed
- * the function reddens nothing.
+ * position. Each half pins a SPELLING: a `from` clause in the forms listed on
+ * `LOGIC_MODULE_IMPORT`, and the literal `SYMBOL(`. Escaping both takes a file that
+ * writes neither — reaching the module some way that regex does not list (a barrel, an
+ * `import()`, an unlisted extension) AND reaching the function under another name. A
+ * barrel hop still reddens at the barrel. The rest redden nowhere, unless the file is
+ * already a ledgered consumer, which must still carry its `status !== 'visible'`.
  */
 function isCallSite(rel: string): boolean {
   if (rel === DEFINITION) return false;
