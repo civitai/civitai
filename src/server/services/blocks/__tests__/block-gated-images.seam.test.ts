@@ -159,6 +159,15 @@ describe(`${SYMBOL} seam`, () => {
   it('the file walk actually reaches the module under test', () => {
     const rels = [...SOURCE.keys()];
     expect(rels).toContain(DEFINITION);
+    // `verdictFor` writes straight into `SOURCE`, so no detector fixture can observe the corpus
+    // loop narrowing by path — and every real corpus member carries the token `blocks`, so no
+    // membership assertion can either. Re-derive the corpus from the same walk instead: any
+    // filter the loop grows, by path or otherwise, makes the two disagree.
+    const expectedCorpus = PRODUCTION_FILES.map(toRel)
+      .filter((rel) => couldBeCallSite(readFileSync(join(SRC, rel), 'utf8')))
+      .sort();
+    expect(expectedCorpus.length).toBeGreaterThan(0);
+    expect([...SOURCE.keys()].sort()).toEqual(expectedCorpus);
     expect(PRODUCTION_FILES.length).toBeGreaterThan(500);
 
     // Enumerated by a different mechanism than `walk`, with the test-path rule spelled out again
@@ -241,12 +250,14 @@ describe(`${SYMBOL} seam`, () => {
     expect(verdictFor('see block-gated-images.logic.ts for the clamp')).toBe(false);
     expect(verdictFor(`const doc = '${SYMBOL}';`)).toBe(false);
 
-    // The REL is an input to `isCallSite` too, and every fixture above uses one inside
-    // `server/services/blocks/` — as does every real corpus file, so the ledger cannot see it
-    // either. Without this, scoping the detector to that directory is green while a consumer
-    // added under `components/` or `pages/` never joins the ledger.
-    expect(verdictFor(aliased, 'components/AppBlocks/SomeGrid.tsx')).toBe(true);
-    expect(verdictFor(aliased, 'pages/api/v1/blocks/images.ts')).toBe(true);
+    // The REL is an input to `isCallSite` too, and every fixture above passes one inside
+    // `server/services/blocks/` — as are both ledgered call sites, so scoping the detector to
+    // that prefix stays green while a consumer added under `components/` or `pages/` never
+    // joins the ledger.
+    expect(verdictFor(aliased, 'components/ImageGuard2/__synthetic_consumer__.tsx')).toBe(true);
+    expect(verdictFor(aliased, 'server/services/__synthetic_consumer__.ts')).toBe(true);
+    // The occupancy throw is what stops the unconditional delete evicting a real corpus file.
+    expect(() => verdictFor(aliased, DEFINITION)).toThrow();
 
     expect(SOURCE.has(SYNTHETIC_REL), 'the synthetic source outlived its test').toBe(false);
   });
@@ -271,15 +282,14 @@ describe(`${SYMBOL} seam`, () => {
   });
 
   // The two derivations of the test-path rule are written from each other, so they can agree on
-  // the same mistake and the equality above stays green over both. This is the only thing that
-  // observes the rule itself — the `(^|\/)tests\//` anchor exists because `includes('/tests/')`
-  // matched nothing on a rel with no leading slash.
+  // the same mistake: editing only one copy reddens the equality above, a mistake made in BOTH
+  // is green there, and this case is the only thing that sees it. The `(^|\/)tests\//` anchor
+  // exists because `includes('/tests/')` matched nothing on a rel with no leading slash.
   it('classifies test paths', () => {
     expect(isTestPath('components/Foo/__tests__/Foo.test.tsx')).toBe(true);
     expect(isTestPath('tests/api/v1/download-url-seam.helper.ts')).toBe(true);
     expect(isTestPath('server/services/latest-tests.service.ts')).toBe(false);
-    // 'contests/' contains 'tests/', so an unanchored rule drops real route files — and both
-    // copies of it would drop them together, which the equality cannot see.
+    // 'contests/' contains 'tests/', so an unanchored rule would evict real route files.
     expect(isTestPath('pages/moderator/contests/index.tsx')).toBe(false);
     expect(isTestPath('server/services/blocks/block-post.service.ts')).toBe(false);
   });
