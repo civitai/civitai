@@ -19,12 +19,11 @@ import type { BlockAuthorFeeComputation } from './author-fee';
 //      `accrueBlockAuthorFee` today. An earlier revision of this comment named
 //      `chargeBlockAuthorFee` "in the router" as though it were there. It never
 //      was — the name appeared nowhere but in that sentence.
-//   2. DAILY the accrued rows would be summed per (owner × buzz type) and minted
-//      to the owner. 🔴 THAT HOP IS NOT IN THIS SLICE. `settleBlockAuthorFees`
-//      and its cron live on branch `zach/app-blocks-author-fee-slice2b`, held
-//      back because they have no consumer until hop 1 has a caller supplying
-//      rows. So today this table accrues nothing and settles nothing, and the
-//      only thing merging this slice changes is that the ledger EXISTS.
+//   2. DAILY the accrued rows are summed per (owner × buzz type) and minted to
+//      the owner. That hop is `settleBlockAuthorFees` in the sibling module
+//      `author-fee-settlement.service.ts`, which is slice 2b — a SEPARATE PR
+//      from the ledger, because it has no consumer until hop 1 has a caller
+//      supplying rows.
 //
 // The two-hop shape is exactly what `deliver-creator-compensation` does for the
 // model licensing fee: the orchestrator charges the viewer at generation time,

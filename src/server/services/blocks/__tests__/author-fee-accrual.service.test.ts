@@ -5,9 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *
  * 🔴 SCOPE, STATED BECAUSE THIS SUITE USED TO BE WIDER. It pins hop 1 only —
  * writing a row that records a debit already taken. It pins NOTHING about money
- * moving, because in this slice nothing does: `settleBlockAuthorFees`, its 25
- * tests and its cron went to `zach/app-blocks-author-fee-slice2b`, held back
- * until a charge path exists to supply rows. A reader looking here for the
+ * moving: `settleBlockAuthorFees` and its 25 tests are slice 2b, in
+ * `author-fee-settlement.service.test.ts`. A reader looking here for the
  * dedup-key or bucket-currency properties will not find them, and that is the
  * split, not a gap.
  *
