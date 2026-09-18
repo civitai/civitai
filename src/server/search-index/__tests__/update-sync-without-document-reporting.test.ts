@@ -50,22 +50,22 @@ afterEach(() => {
 const reportLines = () =>
   logSpy.mock.calls.map(String).filter((line) => line.includes('produced no document'));
 
-describe('updateSync :: drop reporting', () => {
+describe('updateSync :: without-document reporting', () => {
   it('reports the ids a transform dropped, which no failure counter can see', async () => {
     // 7 requested, 2 dropped: a number that is not the item count, not the batch count (1), and
     // not the number of documents written (5). Every "close enough" derivation lands elsewhere.
-    const DROPPED = [3, 6];
+    const UNWRITTEN = [3, 6];
     const pushData = vi.fn();
     const index = buildIndex({
       transformData: async (ids: number[]) =>
-        ids.filter((id) => !DROPPED.includes(id)).map((id) => ({ id })),
+        ids.filter((id) => !UNWRITTEN.includes(id)).map((id) => ({ id })),
       pushData,
     });
 
     const result = await index.updateSync(updateItems(7));
 
     expect(result.idsWithoutDocument).toBe(2);
-    expect(result.idsWithoutDocumentSample).toEqual(DROPPED);
+    expect(result.idsWithoutDocumentSample).toEqual(UNWRITTEN);
     // The run is a SUCCESS by every pre-existing measure — that is the failure mode this
     // reporting exists to end, so pin it rather than leaving it implied.
     expect(result.failedTasks).toBe(0);

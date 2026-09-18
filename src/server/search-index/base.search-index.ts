@@ -206,9 +206,12 @@ const logIdsWithoutDocument = (indexName: string, caller: string, queue: TaskQue
 };
 
 /**
- * One statement of "an item with no action is an Update". The dedupe key and both `updateSync`
- * filters read it: stated separately, a third action added to the enum would get its own dedupe
- * bucket while matching neither filter, and would vanish from the run with nothing saying so.
+ * One statement of "an item with no action is an Update", read by the dedupe key and both
+ * `updateSync` filters so they cannot disagree about an item that carries no action.
+ *
+ * It does NOT make the taxonomy exhaustive: a third enum member returns itself here, matches
+ * neither filter, and still vanishes from the run. Closing that is an else-branch or an
+ * exhaustive check, not this helper.
  */
 const actionOf = (item: { action?: SearchIndexUpdateQueueAction }) =>
   item.action ?? SearchIndexUpdateQueueAction.Update;

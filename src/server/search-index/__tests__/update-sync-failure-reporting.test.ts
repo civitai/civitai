@@ -21,7 +21,7 @@ const buildIndex = (overrides: Partial<Processor> = {}) =>
     prepareBatches: async () => ({ batchSize: 100, startId: 0, endId: 0 }),
     pullData: async (_ctx, batch) => (batch.type === 'update' ? batch.ids : []),
     // LOAD-BEARING: this returns the pulled value unchanged, and `pullData` above returns bare
-    // NUMBERS. That is what makes these batches an unreadable shape to the drop accounting in
+    // NUMBERS. That is what makes these batches an unreadable shape to the without-document accounting in
     // `base.search-index.ts`, so every result here reports `idsWithoutDocument: 0` and these cases stay
     // about failure reporting alone. Making it return documents "like the drop-reporting file"
     // would flip that and turn these assertions into drop assertions.
