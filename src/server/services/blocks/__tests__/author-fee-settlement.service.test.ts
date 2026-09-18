@@ -85,6 +85,12 @@ beforeEach(() => {
   // 'no-ops when there is nothing accrued' mint a transaction.
   mockDbWrite.blockAuthorFeeAccrual.findFirst.mockReset();
   mockDbWrite.blockAuthorFeeAccrual.findMany.mockReset();
+  mockDbWrite.blockAuthorFeeAccrual.updateMany.mockReset();
+  // `create` is fed mockRejectedValueOnce by two accrual tests. It was missing
+  // from this list while the comment above claimed EVERY `...Once` mock was here
+  // — latent, because both queues happen to be consumed by their own tests, but
+  // exactly the leak the comment says is closed.
+  mockDbWrite.blockAuthorFeeAccrual.create.mockReset();
   mockCreateMany.mockReset();
   mockDbRead.oauthClient.findUnique.mockResolvedValue({ id: APP_ID, userId: OWNER_ID });
   mockDbWrite.blockAuthorFeeAccrual.create.mockResolvedValue({});
@@ -489,6 +495,110 @@ describe('settleBlockAuthorFees', () => {
 
     expect(mockCreateMany).toHaveBeenCalledTimes(2);
     expect(result.buckets).toBe(2);
+  });
+
+  it('a THROWN flip does not abort the run, and is logged as money-moved-rows-not', async () => {
+    // The mint was wrapped; the flip one statement below it was not, so the very
+    // sentence justifying the wrap stayed true of the next call.
+    oneDay([
+      accrual({ id: 'bafa_1', appOwnerUserId: 111, feeBuzz: 10 }),
+      accrual({ id: 'bafa_2', appOwnerUserId: 222, feeBuzz: 4 }),
+    ]);
+    mockDbWrite.blockAuthorFeeAccrual.updateMany
+      .mockRejectedValueOnce(new Error('statement timeout'))
+      .mockResolvedValue({ count: 1 });
+
+    const result = await settleBlockAuthorFees({ date: RUN });
+
+    // Both buckets were minted; the second still flipped despite the first throwing.
+    expect(mockCreateMany).toHaveBeenCalledTimes(2);
+    expect(result.rowsSettled).toBe(1);
+    const logged = mockLog.mock.calls.map((c: any) => c[0].message);
+    expect(logged).toContain('settled rows could not be flipped — money moved, rows still accrued');
+  });
+
+  it('logs the buzz STATUS on a dropped mint, not just the mapped message', async () => {
+    // mapError collapses every non-2xx into one generic TRPCError message, so a
+    // permanent 400 and a transient 503 otherwise produce byte-identical lines
+    // forever. Unpinned, a mutant nulling this field SURVIVED the sweep.
+    const err = Object.assign(new Error('An unexpected error ocurred, please try again later'), {
+      status: 400,
+    });
+    oneDay([accrual()]);
+    mockCreateMany.mockRejectedValueOnce(err);
+
+    await settleBlockAuthorFees({ date: RUN });
+
+    const drop = mockLog.mock.calls
+      .map((c: any) => c[0])
+      .find((l: any) => l.message === 'bucket mint did not land — left accrued for retry');
+    expect(drop).toBeDefined();
+    expect(drop).toHaveProperty('threwStatus');
+  });
+
+  it('bounds the loop from maxDays when maxIterations is not supplied', async () => {
+    // The DEFAULT was unpinned: a mutant replacing it with MAX_SAFE_INTEGER
+    // survived the sweep.
+    //
+    // 🔴 THE DAY SUPPLY IS FINITE ON PURPOSE. An earlier version of this test fed
+    // the same stuck day forever, so the mutant was "killed" only by HANGING the
+    // suite — 43s, `tests 0ms`, no named failure, and indistinguishable from a
+    // CI timeout. It was also a mock artifact: in production the cursor is
+    // monotonic and bounded by `boundary`, so the loop always terminates and an
+    // unbounded default could never hang. With a finite supply the mutant fails
+    // an ASSERTION instead: 20 stuck days are available, the derived bound stops
+    // at 8, and MAX_SAFE_INTEGER would report 20.
+    const stuck = Array.from({ length: 20 }, (_, i) => [
+      new Date(Date.UTC(2026, 7, i + 1, 9)),
+      [accrual({ id: `s${i}a` }), accrual({ id: `s${i}b` })],
+    ]) as [Date, Record<string, unknown>[]][];
+    days(stuck);
+
+    const result = await settleBlockAuthorFees({ date: RUN, limit: 1, maxDays: 2 });
+
+    // Never productive, so maxDays cannot bind; the derived maxIterations (2 * 4)
+    // is the only thing that stops it short of all 20.
+    expect(result.daysTruncated).toBe(8);
+  });
+
+  it('🔴 accumulated STUCK days do not starve the productive ones', async () => {
+    // maxDays counts productive days only. With three permanently-oversized days
+    // ahead of a good one and maxDays: 1, the good day must still settle —
+    // otherwise N stuck days eventually consume the whole budget and settlement
+    // stops for everyone, which is what the cursor was added to prevent.
+    days([
+      [new Date('2026-09-13T09:00:00Z'), [accrual({ id: 'a' }), accrual({ id: 'b' })]],
+      [new Date('2026-09-14T09:00:00Z'), [accrual({ id: 'c' }), accrual({ id: 'd' })]],
+      [new Date('2026-09-15T09:00:00Z'), [accrual({ id: 'e' }), accrual({ id: 'f' })]],
+      [new Date('2026-09-16T09:00:00Z'), [accrual({ id: 'g', feeBuzz: 5 })]],
+    ]);
+
+    const result = await settleBlockAuthorFees({ date: RUN, limit: 1, maxDays: 1 });
+
+    expect(result.daysTruncated).toBe(3);
+    expect(mockCreateMany).toHaveBeenCalledTimes(1);
+    expect(mockCreateMany.mock.calls[0][0][0].externalTransactionId).toContain('2026-09-16');
+  });
+
+  it('maxIterations bounds the loop when every day is stuck', async () => {
+    mockDbWrite.blockAuthorFeeAccrual.findFirst.mockResolvedValue({
+      accruedAt: new Date('2026-09-15T09:00:00Z'),
+    });
+    mockDbWrite.blockAuthorFeeAccrual.findMany.mockResolvedValue([
+      accrual({ id: 'a' }),
+      accrual({ id: 'b' }),
+    ]);
+
+    const result = await settleBlockAuthorFees({
+      date: RUN,
+      limit: 1,
+      maxDays: 5,
+      maxIterations: 3,
+    });
+
+    // Never productive, so maxDays never binds — maxIterations is what stops it.
+    expect(result.daysTruncated).toBe(3);
+    expect(mockCreateMany).not.toHaveBeenCalled();
   });
 
   it('no-ops when there is nothing accrued', async () => {

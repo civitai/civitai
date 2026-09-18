@@ -4,6 +4,7 @@ import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import { newBlockAuthorFeeAccrualId } from '~/server/utils/app-block-ids';
+import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import type { BlockAuthorFeeComputation } from './author-fee';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -318,13 +319,18 @@ export async function settleBlockAuthorFees(args: {
   date?: Date;
   /** Max rows per accrual day. A day exceeding it is skipped whole, never cut. */
   limit?: number;
-  /** Max accrual days to settle in one run. */
+  /** Max PRODUCTIVE accrual days to settle in one run. Stuck days do not count. */
   maxDays?: number;
+  /** Absolute cap on loop iterations, so accumulated stuck days cannot spin. */
+  maxIterations?: number;
 }): Promise<SettleBlockAuthorFeesResult> {
   const now = args.date ?? new Date();
   const boundary = utcDayStart(now);
   const limit = args.limit ?? 50_000;
   const maxDays = args.maxDays ?? 30;
+  // A day that cannot settle still costs a round-trip; this keeps the loop finite
+  // when many of them have accumulated, without letting them starve the good ones.
+  const maxIterations = args.maxIterations ?? maxDays * 4;
 
   let buckets = 0;
   let rowsSettled = 0;
@@ -345,11 +351,22 @@ export async function settleBlockAuthorFees(args: {
   // Neither was a money defect — the row-derived key still makes a retry conflict
   // — but both halt settlement for everyone else, reported only as a log line.
   // The cursor advances past a day whether it settled, was skipped or failed, so
-  // a stuck day costs exactly one iteration and is retried on the NEXT run
-  // (the cursor is per-run, so nothing is abandoned permanently).
+  // within one run a stuck day costs exactly one iteration.
+  //
+  // ⚠️ THAT BOUNDS BLOCKING WITHIN A RUN, NOT ACROSS RUNS, AND AN EARLIER
+  // REVISION CLAIMED THE STRONGER PROPERTY ("nothing is abandoned permanently").
+  // Both stuck-day arms are PERMANENT, not transient: an oversized day is
+  // unsettleable until someone raises `limit` (the job passes none), and a
+  // persistently-rejected owner's rows stay `accrued` forever. Each such day is
+  // re-selected on EVERY later run. So `maxDays` counts only PRODUCTIVE days —
+  // otherwise N accumulated stuck days eventually consume the whole budget and
+  // settlement stops for everyone, which is the same end state the cursor was
+  // added to prevent, reached N days later. `maxIterations` is the absolute
+  // bound that keeps the loop finite when many days are stuck.
   let cursorFrom = new Date(0);
+  let productiveDays = 0;
 
-  for (let day = 0; day < maxDays; day += 1) {
+  for (let iteration = 0; iteration < maxIterations && productiveDays < maxDays; iteration += 1) {
     // The oldest unsettled day AT OR AFTER the cursor.
     const oldest = await dbWrite.blockAuthorFeeAccrual.findFirst({
       where: { status: STATUS_ACCRUED, accruedAt: { gte: cursorFrom, lt: boundary } },
@@ -413,6 +430,7 @@ export async function settleBlockAuthorFees(args: {
 
     const payable = [...byBucket.values()];
     buckets += payable.length;
+    productiveDays += 1;
 
     // 🔴 ONE BUCKET PER CALL, so a drop is ATTRIBUTABLE. `createBuzzTransactionMany`
     // reports only counts and opaque ids, so a batch that under-reconciles cannot
@@ -423,15 +441,24 @@ export async function settleBlockAuthorFees(args: {
     for (const bucket of payable) {
       const key = keyForBucket(bucket);
 
-      // 🔴 THE MINT IS WRAPPED, AND PER-BUCKET MINTING IS WHY IT HAS TO BE. The
-      // buzz client THROWS on any non-2xx (`BuzzApiError`), and its retry
-      // allowlist covers only connection-level errors — a 5xx or a 504 throws on
-      // the first response. Unwrapped, bucket 1 of N throwing aborts buckets
-      // 2..N, the day loop and the completion log. Splitting one batched call
-      // into N calls multiplied that exposure by N, so this round's own fix made
-      // wrapping necessary rather than optional. A throw is treated exactly like
-      // a drop: the rows stay `accrued` and the next run re-derives the same
-      // key, so money is never at risk — only this bucket's timeliness.
+      // 🔴 THE MINT IS WRAPPED, AND PER-BUCKET MINTING IS WHY IT HAS TO BE.
+      // Unwrapped, bucket 1 of N throwing aborts buckets 2..N, the day loop and
+      // the completion log. Splitting one batched call into N calls multiplied
+      // that exposure by N, so the per-bucket change made wrapping necessary
+      // rather than optional. A throw is treated exactly like a drop: the rows
+      // stay `accrued` and the next run re-derives the same key, so money is
+      // never at risk — only this bucket's timeliness.
+      //
+      // ⚠️ AN EARLIER REVISION SAID THE CLIENT'S "retry allowlist covers only
+      // connection-level errors — a 5xx or a 504 throws on the first response".
+      // THAT IS FALSE, and false in the reassuring direction. `createTransactions`
+      // calls `post` with no options, so `shouldRetry` is undefined, and the
+      // client's `withRetries` reads `shouldRetry ? predicate(...) : true` under a
+      // comment saying "Absent predicate keeps the historical behaviour: retry
+      // everything". `isSafeToRetry` is exported but never applied on this path.
+      // So a 5xx is retried at the client default (3), and a run with N payable
+      // buckets can issue up to 4N POSTs during an outage rather than N. Size any
+      // timeout or alert against that number, not against N.
       let mint: Awaited<ReturnType<typeof createBuzzTransactionMany>> | null = null;
       let threw: unknown = null;
       try {
@@ -464,8 +491,11 @@ export async function settleBlockAuthorFees(args: {
       // flipped for free. Anything that writes a non-`now()` accrual time must
       // settle that day again under a different key, or not write one at all. A DROP means no money moved: leave them `accrued` and let
       // the next run re-derive this same key.
-      const moved =
-        threw === null && (mint?.transactions?.length ?? 0) + (mint?.conflicts?.length ?? 0) > 0;
+      // `mint` is assigned only inside the `try`, so it is null on every throw
+      // path and this expression is already false there. An earlier revision
+      // also conjoined `threw === null`; it was measured UNKILLABLE (deleting it
+      // left the suite green) and removed rather than left to read as a guard.
+      const moved = (mint?.transactions?.length ?? 0) + (mint?.conflicts?.length ?? 0) > 0;
       if (!moved) {
         logToAxiom(
           {
@@ -476,6 +506,14 @@ export async function settleBlockAuthorFees(args: {
             appOwnerUserId: bucket.appOwnerUserId,
             buzzType: bucket.buzzType,
             buzz: bucket.totalBuzz,
+            // 🔴 THE STATUS, NOT JUST THE MESSAGE. `buzzService` is constructed with
+            // a `mapError`, so every non-2xx arrives here as a TRPCError whose
+            // message is the fixed string "An unexpected error ocurred, please try
+            // again later" — a permanent 400 and a transient 503 produce BYTE-
+            // IDENTICAL log lines, repeated daily forever, so the permanent one is
+            // indistinguishable from noise. `getBuzzApiStatus` reads the real
+            // status back through the wrapper.
+            threwStatus: getBuzzApiStatus(threw) ?? null,
             threw: threw instanceof Error ? threw.message : threw ? String(threw) : null,
           },
           'civitai-prod'
@@ -483,10 +521,36 @@ export async function settleBlockAuthorFees(args: {
         continue;
       }
 
-      const { count } = await dbWrite.blockAuthorFeeAccrual.updateMany({
-        where: { id: { in: bucket.rowIds }, status: STATUS_ACCRUED },
-        data: { status: STATUS_SETTLED, settlementKey: key, settledAt: new Date() },
-      });
+      // 🔴 THE FLIP IS WRAPPED FOR THE SAME REASON THE MINT IS. An earlier
+      // revision wrapped only the mint, and the sentence justifying that wrap —
+      // "bucket 1 of N throwing aborts buckets 2..N, the day loop and the
+      // completion log" — stayed true, verbatim, of this statement one line
+      // below it. `id: { in: rowIds }` can carry up to `limit` ids, so it is a
+      // genuinely heavy statement and a timeout here is not exotic. Money is
+      // safe either way (the rows stay `accrued` and the key conflicts on
+      // retry); what an unwrapped throw costs is every remaining bucket and
+      // every later day in the run.
+      let count = 0;
+      try {
+        ({ count } = await dbWrite.blockAuthorFeeAccrual.updateMany({
+          where: { id: { in: bucket.rowIds }, status: STATUS_ACCRUED },
+          data: { status: STATUS_SETTLED, settlementKey: key, settledAt: new Date() },
+        }));
+      } catch (error) {
+        logToAxiom(
+          {
+            name: BLOCK_AUTHOR_FEE_LOG_NAME,
+            type: 'error',
+            message: 'settled rows could not be flipped — money moved, rows still accrued',
+            accrualDay: bucket.accrualDay,
+            appOwnerUserId: bucket.appOwnerUserId,
+            settlementKey: key,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          'civitai-prod'
+        ).catch(() => undefined);
+        continue;
+      }
       rowsSettled += count;
       // Only for rows THIS run flipped — a concurrent run that got there first
       // returns 0, and counting it would log a payment this run did not make.
