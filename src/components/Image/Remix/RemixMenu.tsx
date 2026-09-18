@@ -23,11 +23,8 @@ type RemixOption = {
   /** A colour per option so the three read as distinct things, not a list. */
   color: string;
   /**
-   * Whether this option feeds the image itself to the job, which is what the
-   * server can later verify (`sourceImageIds`, via the token `startRemix`
-   * mints). Marked on the options that HAVE it rather than the one that lacks
-   * it: reusing a prompt is a legitimate way to remix and the menu should not
-   * read as warning someone off it.
+   * Set on the options that verify, not on the one that lacks it — so reusing a
+   * prompt doesn't read as a discouraged choice.
    */
   verifiable: boolean;
 };
@@ -58,12 +55,8 @@ const reuseOption: RemixOption = {
 };
 
 /**
- * Says what the option earns, not what the other one costs.
- *
- * Deliberately not a promise that the submission WILL be free: whether this
- * creator takes free submissions, whether a slot is left and whether the daily
- * allowance holds are all decided later by `freeSubmissionOffer`, and a menu
- * that promised free here would be overruled by that ladder at the modal.
+ * States what this earns, not a promise the submission will be free —
+ * `freeSubmissionOffer` decides that later and can override it.
  */
 function VerifiedHint() {
   return (

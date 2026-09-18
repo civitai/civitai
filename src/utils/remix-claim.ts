@@ -10,15 +10,9 @@ export type RemixClaimFormState = {
 };
 
 /**
- * Whether the claim holds, and what ended it when it doesn't.
- *
- * `score` is present only where the prompt is the carrier — a media-carried
- * claim is never scored, so `null` there means "not applicable", never "zero".
- *
- * `drifted` is the only reason a surface should say anything about: it is the
- * one the person caused and the one they can undo. `expired` and `uncarried`
- * describe a claim that was never going to survive this submit and are not
- * feedback on anything they did.
+ * `score` is set only on the prompt branch — `null` there means not applicable,
+ * never zero. `drifted` is the one reason caused by something the person did;
+ * `expired` and `uncarried` are not.
  */
 export type RemixClaimState = {
   holds: boolean;
@@ -41,11 +35,9 @@ export type RemixClaimState = {
  * most literal (see `track.schema.ts`) — it is reinstated here only on the
  * branch where the prompt IS the carrier.
  *
- * 🔴 This is the ONLY derivation of that rule. `remixClaimHolds` is a predicate
- * over it and the drift notice renders it, so what the footer submits and what
- * the person is told cannot disagree — a surface computing its own similarity
- * would be a second copy of the threshold, and the one that drifts is the one
- * that tells someone their remix still counts when the submit will drop it.
+ * 🔴 The only derivation of this rule — reuse it, don't recompute the threshold
+ * elsewhere (a server-side check is coming). A second copy that drifts from this
+ * one could tell someone their remix still counts when the submit drops it.
  */
 export function remixClaimState(
   data: RemixData | null,
