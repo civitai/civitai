@@ -118,3 +118,32 @@ describe('getPaymentIntent — buzz purchase currency', () => {
     expect(overrideLogs()).toHaveLength(0);
   });
 });
+
+describe('getPaymentIntent — amount-tamper guard is a 4xx, not a 500', () => {
+  it('rejects a buzzAmount that is not 10x unitAmount with BAD_REQUEST', async () => {
+    // The guard is correct and unchanged; what changed is its TYPE. It threw a bare `Error`,
+    // which `getTRPCErrorFromUnknown` maps to INTERNAL_SERVER_ERROR — so rejected input on
+    // this route answered with a 500, the same class of defect as the fractional amount that
+    // Stripe rejected. Unreachable through the purchase form, where both numbers derive from
+    // one field, but this is an exposed authenticated procedure.
+    await expect(
+      getPaymentIntent({
+        unitAmount: UNIT_AMOUNT,
+        currency: 'USD' as never,
+        recaptchaToken: 'token',
+        setupFuturePayment: true,
+        metadata: {
+          type: 'buzzPurchase',
+          buzzAmount: UNIT_AMOUNT * 20, // not 10x — the tampered pair
+          unitAmount: UNIT_AMOUNT,
+          userId: USER.id,
+        },
+        user: USER,
+        customerId: CUSTOMER_ID,
+        domain: 'green',
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    expect(mockPaymentIntentsCreate).not.toHaveBeenCalled();
+  });
+});
