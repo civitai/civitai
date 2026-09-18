@@ -29,6 +29,32 @@ import { StringDecoder } from 'string_decoder';
  */
 export const READ_WINDOW_BYTES = 64 * 1024;
 
+/**
+ * The kinds of run the queue serialises, and the npm script each one is.
+ *
+ * Separate lanes with separate limits rather than one pool, because they are not the same load: a
+ * unit run saturates every core, while `tsc` is effectively single-threaded and spends its budget
+ * on an 8 GB heap (see scripts/typecheck.mjs). One shared number would either starve the
+ * typechecks behind a suite or let several suites run at once; there is no value right for both.
+ *
+ * `capWorkers` says whether `--max-workers` means anything to that script. tsc has no worker pool,
+ * so handing it the flag would be an unknown argument rather than a smaller run.
+ */
+export const RUN_KINDS = {
+  unit: { script: 'test:unit:run', capWorkers: true, defaultConcurrency: 1 },
+  typecheck: { script: 'typecheck', capWorkers: false, defaultConcurrency: 1 },
+};
+
+export const DEFAULT_KIND = 'unit';
+
+export function normalizeKind(kind) {
+  if (kind === undefined || kind === null || kind === '') return DEFAULT_KIND;
+  if (!Object.prototype.hasOwnProperty.call(RUN_KINDS, kind)) {
+    throw new Error(`unknown run kind: ${kind} (want one of ${Object.keys(RUN_KINDS).join(', ')})`);
+  }
+  return kind;
+}
+
 export const DEFAULT_CONCURRENCY = 1;
 // null, not a number: no cap is not the same decision as a cap that happens to equal today's core
 // count, and only the first one keeps following the box when it changes.
@@ -178,15 +204,26 @@ export function createOutputCapture(onLine) {
  */
 export function workerCapArgv(maxWorkers, args) {
   if (!maxWorkers) return [];
-  if (args.some((a) => /^--max-workers(=|$)/.test(String(a)))) return [];
+  // Both spellings: vitest reads kebab and camel as one flag (see canonicalFlag in
+  // scripts/test-component-run.mjs), so matching only `--max-workers` would miss a caller's
+  // `--maxWorkers=3` and append a second, conflicting width after it.
+  if (args.some((a) => /^--max(?:-w|W)orkers(?:=|$)/.test(String(a)))) return [];
   return [`--max-workers=${maxWorkers}`];
 }
 
-export function defaultStartRun({ worktree, args, onLog, onExit, maxWorkers = null }) {
+export function defaultStartRun({
+  worktree,
+  args,
+  onLog,
+  onExit,
+  maxWorkers = null,
+  kind = DEFAULT_KIND,
+}) {
   const emitter = new EventEmitter();
   const isWindows = process.platform === 'win32';
   const pnpm = isWindows ? 'pnpm.cmd' : 'pnpm';
-  const argv = ['run', 'test:unit:run', ...args, ...workerCapArgv(maxWorkers, args)];
+  const { script, capWorkers } = RUN_KINDS[normalizeKind(kind)];
+  const argv = ['run', script, ...args, ...(capWorkers ? workerCapArgv(maxWorkers, args) : [])];
 
   onLog('info', `> ${pnpm} ${argv.join(' ')}`);
 
@@ -325,7 +362,7 @@ export class TestQueue {
       waitCommand = DEFAULT_WAIT_COMMAND,
     } = options;
 
-    this.concurrency = normalizeConcurrency(concurrency);
+    this.limits = normalizeLimits(concurrency);
     this.maxWorkers = normalizeMaxWorkers(maxWorkers);
     this.startRun = startRun;
     this.now = now;
@@ -339,17 +376,46 @@ export class TestQueue {
     this.running = new Set();
   }
 
+  /**
+   * The unit lane's limit. Kept under the bare name `concurrency` because the daemon, the CLI and
+   * the waiter all read it off a run view, and answering "which lane?" to that question would
+   * break every one of them over a setting most callers never touch.
+   */
+  get concurrency() {
+    return this.limits[DEFAULT_KIND];
+  }
+
+  concurrencyFor(kind) {
+    return this.limits[normalizeKind(kind)];
+  }
+
+  runningFor(kind) {
+    const want = normalizeKind(kind);
+    let n = 0;
+    for (const id of this.running) if (this.runs.get(id)?.kind === want) n += 1;
+    return n;
+  }
+
+  queuedFor(kind) {
+    const want = normalizeKind(kind);
+    return this.order.reduce((n, id) => n + (this.runs.get(id)?.kind === want ? 1 : 0), 0);
+  }
+
   get paused() {
     return this.concurrency === 0;
   }
 
-  request({ worktree, args = [] } = {}) {
+  request({ worktree, args = [], kind = DEFAULT_KIND } = {}) {
     if (!worktree) throw new Error('worktree is required');
+    // Rejected BEFORE anything is recorded: an unknown kind must not leave a run in the map that
+    // no lane will ever pump, which is an entry that waits forever while reporting position 1.
+    const runKind = normalizeKind(kind);
     const at = this.now();
     const run = {
       id: nextId(),
       worktree,
       args,
+      kind: runKind,
       status: 'queued',
       enqueuedAt: at,
       touchedAt: at,
@@ -412,10 +478,11 @@ export class TestQueue {
     return this.view(id);
   }
 
-  setConcurrency(value) {
-    this.concurrency = normalizeConcurrency(value);
+  setConcurrency(value, kind = DEFAULT_KIND) {
+    const lane = normalizeKind(kind);
+    this.limits[lane] = normalizeConcurrency(value);
     this.pump();
-    return this.concurrency;
+    return this.limits[lane];
   }
 
   /**
@@ -537,8 +604,15 @@ export class TestQueue {
   // --- internals ---
 
   pump() {
-    while (this.running.size < this.concurrency && this.order.length > 0) {
-      this.start(this.order.shift());
+    // Per lane, and each lane takes only ITS OWN head of the queue — a typecheck must not wait
+    // behind a suite it shares no budget with, which is the whole reason the limits are separate.
+    for (const kind of Object.keys(RUN_KINDS)) {
+      for (;;) {
+        if (this.runningFor(kind) >= this.limits[kind]) break;
+        const at = this.order.findIndex((id) => this.runs.get(id)?.kind === kind);
+        if (at === -1) break;
+        this.start(this.order.splice(at, 1)[0]);
+      }
     }
   }
 
@@ -576,6 +650,7 @@ export class TestQueue {
         onLog,
         onExit,
         maxWorkers: this.maxWorkers,
+        kind: run.kind,
       });
     } catch (err) {
       // A runner that reported an exit and then threw has already produced a verdict; overwriting
@@ -633,9 +708,21 @@ export class TestQueue {
     }
   }
 
+  /**
+   * Position within the run's OWN lane, not within `order`. A typecheck sitting behind four queued
+   * suites it will never wait for is at position 1, and reporting 5 there is a number the caller
+   * then budgets against for no reason.
+   */
   positionOf(id) {
-    const at = this.order.indexOf(id);
-    return at === -1 ? 0 : at + 1;
+    const run = this.runs.get(id);
+    if (!run) return 0;
+    let n = 0;
+    for (const queuedId of this.order) {
+      if (this.runs.get(queuedId)?.kind !== run.kind) continue;
+      n += 1;
+      if (queuedId === id) return n;
+    }
+    return 0;
   }
 
   view(id) {
@@ -647,12 +734,13 @@ export class TestQueue {
       worktree: run.worktree,
       args: run.args,
       // Exact, not estimated: the index in one ordered array. 0 means "not waiting behind anyone".
+      kind: run.kind,
       position: this.positionOf(id),
-      queueLength: this.order.length,
-      running: this.running.size,
-      concurrency: this.concurrency,
+      queueLength: this.queuedFor(run.kind),
+      running: this.runningFor(run.kind),
+      concurrency: this.limits[run.kind],
       maxWorkers: this.maxWorkers,
-      paused: this.paused,
+      paused: this.limits[run.kind] === 0,
       enqueuedAt: run.enqueuedAt,
       startedAt: run.startedAt,
       finishedAt: run.finishedAt,
@@ -680,6 +768,25 @@ function normalizeMaxWorkers(value) {
     throw new Error(`maxWorkers must be an integer >= 1, or null for no cap, got: ${value}`);
   }
   return parsed;
+}
+
+/**
+ * Accepts the old scalar as well as a per-lane object. The scalar sets the UNIT lane only and
+ * leaves the others at their defaults — reinterpreting it as "every lane" would silently raise the
+ * typecheck limit on every machine that had ever set TEST_CONCURRENCY for the suite.
+ */
+function normalizeLimits(value) {
+  const limits = {};
+  for (const [kind, spec] of Object.entries(RUN_KINDS)) limits[kind] = spec.defaultConcurrency;
+  if (value === undefined || value === null) return limits;
+  if (typeof value === 'object') {
+    for (const [kind, n] of Object.entries(value)) {
+      limits[normalizeKind(kind)] = normalizeConcurrency(n);
+    }
+    return limits;
+  }
+  limits[DEFAULT_KIND] = normalizeConcurrency(value);
+  return limits;
 }
 
 function normalizeConcurrency(value) {

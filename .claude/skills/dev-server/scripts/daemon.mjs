@@ -87,6 +87,7 @@ function loadSkillConfig() {
     prewarmRoutes: ['/api/user/settings'],
     prewarmTimeout: 300000,
     testConcurrency: 1,
+    typecheckConcurrency: 1,
     testMaxWorkers: null,
     prodGroups: [],
   };
@@ -167,6 +168,14 @@ function loadSkillConfig() {
           const parsed = parseInt(value, 10);
           if (Number.isInteger(parsed) && parsed >= 0) config.testConcurrency = parsed;
           else if (value) console.error(`Ignoring TEST_CONCURRENCY=${value} (want an integer >= 0)`);
+          break;
+        }
+        case 'TYPECHECK_CONCURRENCY': {
+          // Same guard as TEST_CONCURRENCY, for the same reason: the queue is built at module
+          // scope and its constructor throws, so a typo here must degrade, not stop the daemon.
+          const parsed = parseInt(value, 10);
+          if (Number.isInteger(parsed) && parsed >= 0) config.typecheckConcurrency = parsed;
+          else if (value) console.error(`Ignoring TYPECHECK_CONCURRENCY=${value} (want an integer >= 0)`);
           break;
         }
         case 'TEST_MAX_WORKERS': {
@@ -2002,7 +2011,10 @@ async function stopAppSessions() {
 const sessions = new Map();
 
 const testQueue = new TestQueue({
-  concurrency: skillConfig.testConcurrency,
+  concurrency: {
+    unit: skillConfig.testConcurrency,
+    typecheck: skillConfig.typecheckConcurrency,
+  },
   maxWorkers: skillConfig.testMaxWorkers,
 });
 
@@ -2584,11 +2596,22 @@ async function main() {
             }));
             return;
           }
+          // `request` throws on an unknown kind, and it does so inside a request handler: unguarded,
+          // that is a malformed body taking the handler down rather than a 400 to the caller.
+          let view;
+          try {
+            view = testQueue.request({
+              worktree: resolve(parsed.worktree),
+              args: Array.isArray(parsed.args) ? parsed.args : [],
+              kind: parsed.kind,
+            });
+          } catch (err) {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: err.message }));
+            return;
+          }
           res.writeHead(200);
-          res.end(JSON.stringify(testQueue.request({
-            worktree: resolve(parsed.worktree),
-            args: Array.isArray(parsed.args) ? parsed.args : [],
-          })));
+          res.end(JSON.stringify(view));
           return;
         }
 
@@ -2607,6 +2630,9 @@ async function main() {
               // not reset the other to its default — that is how a concurrency change would
               // silently drop the worker cap and hand the box an uncapped pair.
               if (parsed.concurrency !== undefined) testQueue.setConcurrency(parsed.concurrency);
+              if (parsed.typecheckConcurrency !== undefined) {
+                testQueue.setConcurrency(parsed.typecheckConcurrency, 'typecheck');
+              }
               if (parsed.maxWorkers !== undefined) testQueue.setMaxWorkers(parsed.maxWorkers);
             } catch (err) {
               res.writeHead(400);
@@ -2617,10 +2643,18 @@ async function main() {
           res.writeHead(200);
           res.end(JSON.stringify({
             concurrency: testQueue.concurrency,
+            typecheckConcurrency: testQueue.concurrencyFor('typecheck'),
             maxWorkers: testQueue.maxWorkers,
             paused: testQueue.paused,
             queued: testQueue.order.length,
             running: testQueue.running.size,
+            lanes: {
+              unit: { queued: testQueue.queuedFor('unit'), running: testQueue.runningFor('unit') },
+              typecheck: {
+                queued: testQueue.queuedFor('typecheck'),
+                running: testQueue.runningFor('typecheck'),
+              },
+            },
           }));
           return;
         }

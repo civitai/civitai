@@ -658,6 +658,11 @@ async function cmdTest(sub, rest) {
       if (rest[0] !== undefined && !rest[0].startsWith('--')) body.concurrency = Number(rest[0]);
       // Both spellings, because a caller who types the `=` form and silently gets no cap has no
       // way to tell that from a cap that was applied — the reply prints maxWorkers either way.
+      const typecheckAt = rest.findIndex((a) => /^--typecheck(=|$)/.test(a));
+      if (typecheckAt !== -1) {
+        const inline = rest[typecheckAt].split('=')[1];
+        body.typecheckConcurrency = Number(inline !== undefined ? inline : rest[typecheckAt + 1]);
+      }
       const capAt = rest.findIndex((a) => /^--max-workers(=|$)/.test(a));
       if (capAt !== -1) {
         const inline = rest[capAt].split('=')[1];
@@ -1056,6 +1061,7 @@ Commands:
   test cancel <id>    Cancel a queued or running run
   test config [n]     Show or set the concurrency limit (0 pauses the queue)
                       [--max-workers <n>|none] also caps each run's vitest pool
+                      [--typecheck <n>] sets the typecheck lane's limit
   wt stale            List worktrees whose PR merged (read-only)
   wt rm <path>        Remove a worktree safely (unlinks junctions first)
                       [--stop-server] [--force]

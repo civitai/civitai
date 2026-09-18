@@ -118,6 +118,20 @@ describe("the queue caps each run's vitest pool", () => {
     expect(argvOf(0)).toEqual(['run', 'test:unit:run', '--max-workers=3']);
   });
 
+  // vitest reads kebab and camel as one flag, so a caller's `--maxWorkers` is the same request as
+  // `--max-workers` and must suppress the queue's copy just the same.
+  it('honours the camelCase spelling of the caller flag too', () => {
+    start({ args: ['--maxWorkers=3'], maxWorkers: 15 });
+    expect(argvOf(0)).toEqual(['run', 'test:unit:run', '--maxWorkers=3']);
+  });
+
+  // tsc has no worker pool, so the flag would reach it as an unknown argument rather than a smaller
+  // run. Pinned because the cap is configured on the QUEUE, which now serves both lanes.
+  it('runs the typecheck script and never hands it the worker cap', () => {
+    start({ kind: 'typecheck', maxWorkers: 15 });
+    expect(argvOf(0)).toEqual(['run', 'typecheck']);
+  });
+
   it('honours the space-separated spelling of the caller flag too', () => {
     start({ args: ['--max-workers', '3'], maxWorkers: 15 });
     expect(argvOf(0)).toEqual(['run', 'test:unit:run', '--max-workers', '3']);
