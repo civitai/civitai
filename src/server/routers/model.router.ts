@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { getActiveSalesSchema } from '~/shared/zod/model-sale.schema';
 import { getActiveSalesForModels } from '~/server/services/paid-access.service';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
@@ -260,8 +261,9 @@ export const modelRouter = router({
   getActiveSales: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     // Bounded on its own schema: this is a public procedure reaching raw SQL, and the shared
-    // getByIdsSchema has no cap.
-    .input(z.object({ ids: z.number().array().max(500) }))
+    // getByIdsSchema has no cap. The cap and the client-side chunk size are one constant, so a
+    // surface that grows past it splits into more calls instead of 400ing on every one of them.
+    .input(getActiveSalesSchema)
     .query(({ input }) => getActiveSalesForModels(input.ids)),
   getResourceSelect: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })

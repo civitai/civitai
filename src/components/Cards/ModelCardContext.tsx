@@ -1,6 +1,13 @@
 import type { ReactNode } from 'react';
 import { createContext, useContext, useMemo } from 'react';
+import { MODEL_SALE_IDS_PER_QUERY } from '~/shared/zod/model-sale.schema';
+import { chunkIds } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
+
+type SalesByModelId = Record<
+  number,
+  { endsAt: Date; discountType: 'Fixed' | 'Percent'; discountAmount: number }
+>;
 
 type Context = {
   useModelVersionRedirect?: boolean;
@@ -8,10 +15,7 @@ type Context = {
   /** Set by a container that supplies the map, so cards do not each fetch their own. */
   hasSaleProvider?: boolean;
   /** modelId -> its running sale. Absent means no sale. */
-  salesByModelId?: Record<
-    number,
-    { endsAt: Date; discountType: 'Fixed' | 'Percent'; discountAmount: number }
-  >;
+  salesByModelId?: SalesByModelId;
 };
 
 const ModelCardContext = createContext<Context | null>(null);
@@ -43,13 +47,45 @@ export const useModelSaleBadge = (modelId: number, skip: boolean) => {
   return data?.[modelId];
 };
 
+/**
+ * The sales for a whole surface of cards.
+ *
+ * 🔴 CHUNKED, because the procedure caps `ids` at `MODEL_SALE_IDS_PER_QUERY` and an infinite feed
+ * does not stop growing. Asking for the accumulated list in one call worked until the fifth page
+ * of ~100 cards, and from there EVERY call 400d — so the badge silently vanished from the whole
+ * grid for anyone who scrolled, on a money surface, invisibly to anything watching 5xx.
+ *
+ * Chunking is the fix rather than a bigger cap: the resolver's work is per-id (one Redis GET each,
+ * plus a five-table `IN (…)` for the misses) on a PUBLIC procedure, so the cap is the only bound
+ * on it. See `~/shared/zod/model-sale.schema`.
+ *
+ * The shared chunker, not a third copy of it — its own tests pin the property this depends on and
+ * does not spell out in code: chunking in ARRIVAL order keeps an earlier chunk's key stable as the
+ * feed appends, where sorting would reshuffle every boundary and refetch the whole surface on each
+ * page. Growing by a page therefore costs ONE new request, not one per chunk.
+ */
 export const useModelSaleBadges = (modelIds: number[]) => {
-  const ids = useMemo(() => [...new Set(modelIds)].sort((a, b) => a - b), [modelIds]);
-  const { data } = trpc.model.getActiveSales.useQuery(
-    { ids },
-    { enabled: ids.length > 0, staleTime: 60_000, placeholderData: (prev) => prev }
+  const chunks = useMemo(
+    () => chunkIds(modelIds, MODEL_SALE_IDS_PER_QUERY),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [modelIds.join(',')]
   );
-  return data;
+
+  const queries = trpc.useQueries((t) =>
+    chunks.map((chunk) =>
+      t.model.getActiveSales({ ids: chunk }, { staleTime: 60_000, placeholderData: (prev) => prev })
+    )
+  );
+
+  return useMemo(() => {
+    // `undefined` while nothing has arrived, exactly as the single query returned — a consumer
+    // reads "no sale yet", not "no sale". A partly-loaded surface merges what it has, so badges
+    // appear per chunk instead of the whole grid waiting on the slowest one.
+    const loaded = queries.map((query) => query.data).filter((data) => !!data);
+    if (!loaded.length) return undefined;
+    return Object.assign({}, ...loaded) as SalesByModelId;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queries.map((query) => query.dataUpdatedAt).join(',')]);
 };
 
 export const ModelCardContextProvider = ({
