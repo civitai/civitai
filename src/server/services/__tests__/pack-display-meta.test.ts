@@ -55,6 +55,11 @@ describe('packDisplayMeta publishes exactly the pack card fields', () => {
   // names then say WHICH three. If you convert this arrow to a block body the
   // slice terminator changes and the whole fence needs rewriting — which is the
   // moment to ask whether the new field should be public.
+  //
+  // The one shape this cannot see is a field added by DELEGATING to another
+  // helper (`...packAudioMeta(meta)`): no extra spread of this form, no key
+  // named here. Nesting a whitelist inside this one puts it back outside its
+  // fence, which is the defect this test exists for.
   it('names those three fields in its source and no others', () => {
     const source = readFileSync(
       path.join(process.cwd(), 'src/server/services/creator-shop.data.ts'),

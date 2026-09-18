@@ -22,8 +22,9 @@ import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enum
 
 // The canonical client mock, per docs/testing/shared-module-mocks.md. It keeps
 // `dbRead` and `dbWrite` distinct, which matters here: the ownership read is on
-// the WRITER deliberately, so a reader-only declaration would leave it empty and
-// quietly quote the undiscounted price.
+// the WRITER deliberately, and the discount test below is what makes that
+// choice observable — declared against the reader it answers `[]` by default
+// and the quote loses its discount.
 const shopItemFindUnique = dbMock.dbRead.cosmeticShopItem.findUnique;
 const shopItemFindMany = dbMock.dbRead.cosmeticShopItem.findMany;
 const ownedFindMany = dbMock.dbWrite.userCosmetic.findMany;
@@ -133,6 +134,11 @@ const rejectedPack = (status = CosmeticShopItemStatus.Archived) => ({
   members: [{ cosmeticId: MEMBER, floorAmount: 2600 }],
 });
 
+// The canonical mock resets once per FILE, not per test, so these three
+// `mockResolvedValue` calls are what isolate the cases — they replace the
+// implementation, and a per-test override cannot leak forward. Call COUNTS do
+// accumulate across the file; nothing here asserts one, and the first test that
+// does has to clear them itself.
 beforeEach(() => {
   shopItemFindUnique.mockResolvedValue({
     id: PACK_ID,
@@ -207,6 +213,18 @@ describe('public pack detail returns named fields, not the meta column', () => {
       'unavailableCount',
       'unitAmount',
     ]);
+  });
+
+  it('discounts the quote by what this viewer already owns', async () => {
+    // The ownership read is on the WRITER, deliberately — a replica that has not
+    // caught up quotes a price above what the purchase charges. This is the
+    // assertion that makes that choice observable: pointed at the reader, the
+    // mock answers `[]` and the discount vanishes.
+    ownedFindMany.mockResolvedValue([{ cosmeticId: MEMBER }]);
+    const detail = await getPackDetail({ shopItemId: PACK_ID, userId: VISITOR });
+    expect(detail.discount).toBeGreaterThan(0);
+    expect(detail.amountDue).toBeLessThan(8800);
+    expect(detail.members[0].owned).toBe(true);
   });
 
   it('returns only the member fields the contents panel renders', async () => {
