@@ -236,6 +236,7 @@ export const upsertCosmeticShopItem = async ({
           id: true,
           cosmeticId: true,
           addedById: true,
+          meta: true,
           _count: {
             select: {
               purchases: true,
@@ -295,6 +296,17 @@ export const upsertCosmeticShopItem = async ({
     // Spread conditionally: `undefined` means "leave the column alone" to Prisma, and `null`
     // clears it — neither should be overwritten with the empty string expansion returns.
     ...(cosmeticShopItem.description != null && { description: expansion.html }),
+    // The editor seeds its form from a read, and reads now serve the row count in
+    // `meta.purchases`, so saving any unrelated field would write that derived
+    // value into the stored counter. Keep whatever is stored: only a purchase
+    // moves it. (Create has no stored value and sets its own `meta` below.)
+    ...(id &&
+      cosmeticShopItem.meta != null && {
+        meta: {
+          ...cosmeticShopItem.meta,
+          purchases: (existingItem?.meta as CosmeticShopItemMeta | null)?.purchases ?? 0,
+        },
+      }),
     availableQuantity,
     availableTo,
     availableFrom,
@@ -347,7 +359,7 @@ export const upsertCosmeticShopItem = async ({
     });
   }
 
-  return item;
+  return withSoldCount(item);
 };
 
 /**
@@ -473,6 +485,7 @@ export const getSectionById = async ({ id }: GetByIdInput) => {
 
   return {
     ...section,
+    items: section.items.map((i) => ({ ...i, shopItem: withSoldCount(i.shopItem) })),
     image: !!section.image
       ? {
           ...section.image,

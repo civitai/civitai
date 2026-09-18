@@ -27,7 +27,7 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 }));
 
 import { PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
-import { getShopSectionsWithItems } from '../cosmetic-shop.service';
+import { getSectionById, getShopSectionsWithItems } from '../cosmetic-shop.service';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 dbMock.dbRead.cosmeticShopSection.findMany.mockImplementation((...args: unknown[]) =>
@@ -215,5 +215,26 @@ describe('getShopSectionsWithItems viewer gating', () => {
       { items: { some: {} } },
       { meta: { path: ['communityHub'], equals: true } },
     ]);
+  });
+});
+
+/**
+ * The moderator section editor's read. It serves `cosmeticShopItemSelect` with
+ * `meta` as-is, exactly like /shop, so it needs the same overwrite — and its
+ * consumer renders no sold count today, which is precisely why nothing else
+ * would notice it being left out.
+ */
+describe('getSectionById serves the row count too', () => {
+  it('reports the rows, not the counter, on the items it returns', async () => {
+    dbMock.dbRead.cosmeticShopSection.findUniqueOrThrow.mockResolvedValue({
+      id: 5,
+      title: 'Badges',
+      image: null,
+      items: [{ shopItem: { id: 74, meta: { purchases: 2 }, _count: { purchases: 5 } } }],
+    });
+
+    const section = await getSectionById({ id: 5 });
+
+    expect(section.items[0].shopItem.meta.purchases).toBe(5);
   });
 });

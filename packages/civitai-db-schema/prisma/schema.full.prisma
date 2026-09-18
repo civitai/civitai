@@ -4561,10 +4561,10 @@ model UserCosmeticShopPurchases {
   meta              Json?
   components        UserCosmeticShopPurchaseCosmetic[]
 
-  // Every displayed sold count is a `_count` over this FK. Without the index it
-  // is a seq scan of the whole table per listing: 60 items cost 140 ms and
-  // 71,400 buffers on the replica, against 0.044 ms for the same query with no
-  // count. Applied by hand — see the migration beside this schema.
+  // Every displayed sold count is a `_count` over this FK, which Prisma resolves
+  // as one whole-table GROUP BY per query. Without the index a single-item read
+  // still scans the table to count one item's rows. Applied by hand — the
+  // migration beside this schema carries the plans and what the index does not fix.
   @@index([shopItemId])
 }
 

@@ -1,43 +1,60 @@
 -- ============================================================
--- Index the FK every displayed sold count now counts over
+-- Index the FK every displayed sold count now aggregates over
 -- ============================================================
 -- `UserCosmeticShopPurchases` has had exactly one index since it was created --
 -- the primary key on `buzzTransactionId`. Nothing indexes `shopItemId`, which is
--- the column every `_count: { purchases: true }` groups by. So each count is a
--- sequential scan of the whole table.
+-- the column every `_count: { select: { purchases: true } }` groups by.
 --
--- WHAT WAS MEASURED (production replica, 2026-09-18, 40,583 rows / 13 MB), over
--- the 60 items a shop page renders:
+-- WHAT PRISMA ACTUALLY EMITS, because the shape decides what the index is worth.
+-- A relation `_count` in a `select` is NOT a correlated per-row subquery. It is a
+-- LEFT JOIN to a subquery that aggregates the WHOLE related table once:
 --
---   EXPLAIN (ANALYZE, BUFFERS)
---   SELECT si.id,
---          (SELECT count(*) FROM "UserCosmeticShopPurchases" u
---            WHERE u."shopItemId" = si.id)
+--   SELECT ..., COALESCE(a."_aggr_count_purchases", 0)
 --     FROM "CosmeticShopItem" si
---    WHERE si.status = 'Published' AND si.listed LIMIT 60;
+--     LEFT JOIN (SELECT "shopItemId", COUNT(*) AS "_aggr_count_purchases"
+--                  FROM "UserCosmeticShopPurchases" GROUP BY "shopItemId") a
+--       ON a."shopItemId" = si.id
 --
---   =>  Seq Scan on "UserCosmeticShopPurchases" u
---         (actual time=0.212..2.222 rows=62.67 loops=60)
---         Rows Removed by Filter: 40520
---         Buffers: shared hit=71400
---       Execution Time: 140.144 ms
+-- So the cost is one full aggregate per QUERY and is independent of how many
+-- items the page renders.
 --
---   The same query without the count: Execution Time 0.044 ms, 3 buffers.
+-- MEASURED (production replica, 2026-09-18, 40,615 rows / 13 MB), over every
+-- published listed item:
 --
--- WHY NOW. The sold count shown on a listing used to come from `meta.purchases`,
--- a denormalised counter in the item's JSONB that drifts (47 of 1,902 listings
--- disagreed with the rows when this was measured). The reads now use the rows,
--- which is what the sold-out gate, the quantity floor, the delete guard and the
--- MostPopular sort have always used. This index is what makes that affordable.
+--   HashAggregate <- Seq Scan on "UserCosmeticShopPurchases" (rows=40615, loops=1)
+--     Buffers: shared hit=1190
+--   Execution Time: 13.701 ms
 --
--- It is also owed independently of that change: those existing row-count readers
--- are paying the same seq scan today, the MostPopular sort worst of all.
+-- 🔴 WHERE THIS INDEX ACTUALLY PAYS: the SINGLE-ITEM reads, not the shop page.
+-- With `WHERE si.id = $1` the planner pushes the qual into the subquery and then
+-- has nothing to use, so it still scans all 40,615 rows:
+--
+--   ->  Seq Scan on "UserCosmeticShopPurchases" u
+--         (cost=0.00..1693.50 rows=9) (actual time=0.012..3.605 rows=20.00)
+--         Buffers: shared hit=1190
+--
+-- ~3.6 ms and 1,190 buffers to count twenty rows. With the index that becomes an
+-- Index Only Scan. The public readers this fixes are `getPackDetail` and
+-- `getShopItemById`.
+--
+-- On the multi-row paths (/shop sections, creator storefront, community feed) the
+-- gain is smaller and is about IO rather than plan shape: the aggregate reads the
+-- index (~100 pages) instead of the heap (1,190 pages) and still visits every row.
+-- Do not expect it to move the wall clock much there.
+--
+-- WHAT THIS DOES NOT FIX, stated so it is a known decision rather than a later
+-- discovery: the aggregate is O(table), not O(page), so the cost grows with the
+-- purchases table no matter what is indexed. That table went from ~300 rows/month
+-- to ~8,000/month between June and September 2026. The durable fix is a `groupBy`
+-- restricted to the page's ids resolved alongside the `findMany` -- O(page), and
+-- it would genuinely use this index. Not worth doing at 13 ms; `withSoldCount` in
+-- src/server/selectors/cosmetic-shop.selector.ts is the seam to change when it is.
 --
 -- ORDER: APPLY THIS BEFORE THE DEPLOY. Not because a reader would 500 without it
 -- -- no column is added, which is exactly why this is an index and not a
--- `purchaseCount` column -- but so the first shop page served after the deploy is
--- not the one that discovers the seq scan. Stated explicitly because "apply
--- before deploy" without a reason gets reordered by whoever holds the release.
+-- `purchaseCount` column -- but so the single-item reads above are not served at
+-- 3.6 ms of pure scan each from the moment the deploy lands. It is a slowdown,
+-- not a brownout: the shop page barely notices.
 --
 -- Apply to DEV as well as production, or the next person to measure a shop query
 -- on a dev box finds the seq scan and reports a regression that isn't one.
@@ -62,10 +79,13 @@
 -- and run this file again.
 --
 -- 🔴 THEN CONFIRM THE PLAN CHANGED, not just that the statement returned. Re-run
--- the EXPLAIN above and require an Index Scan on this index. A remaining Seq Scan
--- across 60 correlated lookups of ~25 rows each means invalid or missing, not a
--- planner preference -- on a table this small the planner may legitimately prefer
--- a seq scan for a whole-table query, but not for that shape.
+-- the single-item EXPLAIN above and require an Index Only Scan on this index. A
+-- remaining Seq Scan there means invalid or missing.
+--
+-- SHAPE: plain single-column, deliberately. `refunded` exists on this table but is
+-- true on 40 of 40,615 rows and the counts carry no `refunded` predicate, so a
+-- partial index would not be used and would save nothing. `INCLUDE` buys nothing
+-- either -- the aggregate is COUNT(*), so this is already index-only.
 --
 -- The name is Prisma's own (`Table_column_idx`), matching `@@index([shopItemId])`
 -- in schema.full.prisma and the sibling `UserCosmeticShopPurchaseCosmetic_cosmeticId_idx`.

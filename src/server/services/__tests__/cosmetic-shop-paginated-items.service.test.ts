@@ -15,7 +15,7 @@ vi.mock('~/server/prom/client', async (importOriginal) => ({
   dbReadFallbackCounter: { inc: vi.fn() },
 }));
 
-import { getPaginatedCosmeticShopItems } from '../cosmetic-shop.service';
+import { getPaginatedCosmeticShopItems, getShopItemById } from '../cosmetic-shop.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const capturedWhere = () =>
@@ -63,5 +63,54 @@ describe('getPaginatedCosmeticShopItems archived filter', () => {
     const where = capturedWhere();
     expect(where.status).toBe('Published');
     expect(where.archivedAt).toBeNull();
+  });
+});
+
+/**
+ * Both of these return `meta` to the client as-is, so the row count is written
+ * onto `meta.purchases` by `withSoldCount` rather than by a whitelist. Nothing
+ * else executes those two call sites: removing either mapping leaves every other
+ * suite green.
+ *
+ * TO WHOEVER IS ABOUT TO DELETE THIS: the helper's own unit tests do not cover
+ * its wiring, which is the half that was missing the first time round.
+ */
+describe('the unsanitized read paths serve the row count', () => {
+  const drifted = {
+    id: 74,
+    title: 'Fairy Pony',
+    meta: { purchases: 0 },
+    _count: { purchases: 20 },
+  };
+
+  beforeEach(() => {
+    dbMock.dbRead.cosmeticShopItem.findMany.mockReset();
+    dbMock.dbRead.cosmeticShopItem.count.mockReset();
+    dbMock.dbRead.cosmeticShopItem.count.mockResolvedValue(1);
+    dbMock.dbRead.cosmeticShopItem.findUniqueOrThrow.mockReset();
+    dbMock.dbWrite.cosmeticShopItem.findUniqueOrThrow.mockReset();
+  });
+
+  it('getPaginatedCosmeticShopItems reports the rows, not the counter', async () => {
+    dbMock.dbRead.cosmeticShopItem.findMany.mockResolvedValue([drifted]);
+
+    const { items } = await getPaginatedCosmeticShopItems({ page: 1, limit: 60 });
+
+    expect(items[0].meta.purchases).toBe(20);
+  });
+
+  it('getShopItemById reports the rows, not the counter', async () => {
+    dbMock.dbRead.cosmeticShopItem.findUniqueOrThrow.mockResolvedValue(drifted);
+
+    expect((await getShopItemById({ id: 74 })).meta.purchases).toBe(20);
+  });
+
+  // The mapping sits AFTER the `.catch`, so the replica-fallback result is
+  // mapped too. Inside the catch it would not be, and nothing else would say so.
+  it('maps the writer-fallback result as well as the replica one', async () => {
+    dbMock.dbRead.cosmeticShopItem.findUniqueOrThrow.mockRejectedValue(new Error('replica down'));
+    dbMock.dbWrite.cosmeticShopItem.findUniqueOrThrow.mockResolvedValue(drifted);
+
+    expect((await getShopItemById({ id: 74 })).meta.purchases).toBe(20);
   });
 });

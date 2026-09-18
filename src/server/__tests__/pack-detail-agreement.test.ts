@@ -280,10 +280,22 @@ describe('the sold count is the purchase rows, not the meta counter', () => {
     expect(detail.meta.purchases).toBe(20);
   });
 
-  it('leaves no stock on an item the rows have sold out', async () => {
+  /**
+   * This select is hand-written rather than the shared `cosmeticShopItemSelect`,
+   * so the `_count` line has to be repeated here — and nothing else can see it
+   * go missing. Prisma mocks ignore `select` and every fixture hand-writes
+   * `_count`, so deleting the line leaves the whole suite green and throws on
+   * every pack page in production.
+   *
+   * TO WHOEVER IS ABOUT TO DELETE THIS: it asserts the query the code built, not
+   * a mock's shape, and it is the only thing holding that line in place.
+   */
+  it('asks the database for the count rather than relying on the fixture', async () => {
     soldOutWithStaleCounter();
-    const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
-    expect((detail.availableQuantity ?? 0) - detail.meta.purchases).toBe(0);
+    await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
+    expect(shopItemFindUnique.mock.calls[0][0].select._count).toEqual({
+      select: { purchases: true },
+    });
   });
 
   it('reports the row count when the counter overstates it', async () => {

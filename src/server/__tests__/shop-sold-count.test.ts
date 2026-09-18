@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { withSoldCount } from '~/server/selectors/cosmetic-shop.selector';
+import { cosmeticShopItemSelect, withSoldCount } from '~/server/selectors/cosmetic-shop.selector';
 
 /**
  * The read paths that hand `meta` to the client as-is — /shop's sections, the
@@ -27,16 +27,40 @@ describe('withSoldCount writes the row count onto the key clients read', () => {
     expect(out.meta.purchases).toBe(732);
   });
 
-  it('reports zero sold rather than dropping the key when meta is null', () => {
-    const out = withSoldCount({ meta: null, _count: { purchases: 0 } });
-    expect(out.meta.purchases).toBe(0);
+  it('writes the count onto a null meta rather than dropping the key', () => {
+    // Non-zero on purpose: with 0 here the case also passes under a reversed
+    // spread order, which is the mutation that silently restores the counter.
+    const out = withSoldCount({ meta: null, _count: { purchases: 4 } });
+    expect(out.meta.purchases).toBe(4);
   });
 
   it('keeps the rest of meta, which is what the card and checkout render', () => {
     const out = withSoldCount({
+      id: 74,
       meta: { purchases: 0, acceptsBlueBuzz: true, coverUrl: 'cover.png' },
       _count: { purchases: 3 },
     });
     expect(out.meta).toEqual({ purchases: 3, acceptsBlueBuzz: true, coverUrl: 'cover.png' });
+    // An impl returning only `{ meta }` and dropping `...item` passes every
+    // assertion above this one.
+    expect(out.id).toBe(74);
   });
+});
+
+/**
+ * The helper and the sanitizers read `item._count.purchases`. Nothing else in
+ * the suite checks that the QUERY asks for it: Prisma mocks ignore `select` and
+ * every fixture hand-writes `_count`, so deleting the select line leaves every
+ * test green and throws on six read paths in production.
+ *
+ * TO WHOEVER IS ABOUT TO DELETE THIS: it looks redundant beside the behaviour
+ * tests and is not. Reverting the select line without this reddens nothing.
+ */
+describe('the selects actually ask for the purchase count', () => {
+  it('is on the shared selector, which feeds every storefront and /shop read', () => {
+    expect(cosmeticShopItemSelect._count).toEqual({ select: { purchases: true } });
+  });
+
+  // getPackDetail's own select is pinned in pack-detail-agreement.test.ts, which
+  // already mocks the query it emits.
 });

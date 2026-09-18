@@ -37,6 +37,7 @@ const ITEM_ID = 31;
 const CREATED_ID = 32;
 const OWNER_ID = 7;
 const MODERATOR_ID = 9;
+const STORED_PURCHASES = 12;
 
 const CLIENT_HTML = '<div data-type="blurb" data-id="7">ATTACKER SUPPLIED</div>';
 const EXPANDED_HTML = '<div data-type="blurb" data-id="7">REAL</div>';
@@ -63,10 +64,21 @@ beforeEach(() => {
     id: ITEM_ID,
     cosmeticId: 4,
     addedById: OWNER_ID,
+    meta: { purchases: STORED_PURCHASES },
     _count: { purchases: 0 },
   });
-  dbMock.dbWrite.cosmeticShopItem.update.mockResolvedValue({ id: ITEM_ID, cosmeticId: null });
-  dbMock.dbWrite.cosmeticShopItem.create.mockResolvedValue({ id: CREATED_ID, cosmeticId: null });
+  dbMock.dbWrite.cosmeticShopItem.update.mockResolvedValue({
+    id: ITEM_ID,
+    cosmeticId: null,
+    meta: { purchases: STORED_PURCHASES },
+    _count: { purchases: 20 },
+  });
+  dbMock.dbWrite.cosmeticShopItem.create.mockResolvedValue({
+    id: CREATED_ID,
+    cosmeticId: null,
+    meta: { purchases: 0 },
+    _count: { purchases: 0 },
+  });
   dbMock.dbWrite.cosmeticShopItem.updateMany.mockResolvedValue({ count: 1 });
 });
 
@@ -191,5 +203,41 @@ describe('applyCosmeticShopItemContentChange', () => {
     await expect(
       applyCosmeticShopItemContentChange({ id: ITEM_ID, description: EXPANDED_HTML })
     ).rejects.toThrow(/No cosmetic shop item/);
+  });
+});
+
+/**
+ * Reads now serve the purchase-row count in `meta.purchases`, and this form
+ * seeds itself from a read and posts the whole meta object back. Without this
+ * the editor writes a derived number into the stored counter on every save — of
+ * a value that came from a React Query cache, so it can be older than the one it
+ * replaces.
+ *
+ * TO WHOEVER IS ABOUT TO DELETE THIS: it is what keeps the sold-count change a
+ * READ change. Only a purchase moves the stored counter.
+ */
+describe('upsertCosmeticShopItem — the stored purchase counter', () => {
+  it('keeps the stored value when the client posts a different one', async () => {
+    await upsert({ meta: { purchases: 99, acceptsBlueBuzz: true } });
+
+    const { data } = dbMock.dbWrite.cosmeticShopItem.update.mock.calls[0][0];
+    expect(data.meta.purchases).toBe(STORED_PURCHASES);
+  });
+
+  it('still saves the rest of the meta the moderator edited', async () => {
+    await upsert({ meta: { purchases: 99, acceptsBlueBuzz: true } });
+
+    const { data } = dbMock.dbWrite.cosmeticShopItem.update.mock.calls[0][0];
+    expect(data.meta.acceptsBlueBuzz).toBe(true);
+  });
+
+  // The value written and the value handed back are different questions: the
+  // write keeps the stored counter, the response reports the rows, like every
+  // other read. Without this the save's own response is the one surface still
+  // serving the counter.
+  it('answers with the row count even though it wrote the stored counter', async () => {
+    const saved = await upsert({ meta: { purchases: 99 } });
+
+    expect(saved.meta.purchases).toBe(20);
   });
 });
