@@ -35,6 +35,8 @@ export default function HubUpsertModal({
     description?: string | null;
     availability: Availability;
     isOwner: boolean;
+    forcedBrowsingLevel?: number;
+    sources?: HubSourceValue[];
   };
   /**
    * Creating a copy of someone else's hub. Prefills the name and the sources so the
@@ -52,13 +54,26 @@ export default function HubUpsertModal({
 
   const [name, setName] = useState(hub?.name ?? duplicateOf?.name ?? '');
   const [description, setDescription] = useState(hub?.description ?? '');
-  const [sources, setSources] = useState<HubSourceValue[]>(duplicateOf?.sources ?? []);
-  const [isPublic, setIsPublic] = useState(hub?.availability === Availability.Public);
-  // Creation only. Once a hub exists the level lives in its Sources panel, beside the
-  // sources it applies to — the edit modal deliberately does not carry it.
-  const [forcedBrowsingLevel, setForcedBrowsingLevel] = useState(
-    duplicateOf?.forcedBrowsingLevel ?? 0
+  const [sources, setSources] = useState<HubSourceValue[]>(
+    hub?.sources ?? duplicateOf?.sources ?? []
   );
+  const [isPublic, setIsPublic] = useState(hub?.availability === Availability.Public);
+  const [forcedBrowsingLevel, setForcedBrowsingLevel] = useState(
+    hub?.forcedBrowsingLevel ?? duplicateOf?.forcedBrowsingLevel ?? 0
+  );
+
+  // What arrived, to compare against on save. `sources` REPLACES the stored list, so
+  // sending it unchanged turns a rename into a full rewrite of rows another tab may
+  // have just edited — the reason the schema makes the field optional.
+  const [initial] = useState(() => ({
+    sources: JSON.stringify(hub?.sources ?? []),
+    forcedBrowsingLevel: hub?.forcedBrowsingLevel ?? 0,
+  }));
+
+  // Sources and the content cap are the owner's to set: the server refuses both from
+  // a moderator, so offering them would be a control that always errors.
+  const canEditSources = !editing || hub.isOwner;
+  const sourcesChanged = JSON.stringify(sources) !== initial.sources;
 
   const upsert = trpc.userHub.upsert.useMutation({
     onSuccess: async (saved) => {
@@ -88,17 +103,18 @@ export default function HubUpsertModal({
       ...(!editing || hub.isOwner
         ? { availability: isPublic ? Availability.Public : Availability.Private }
         : {}),
-      // Editing leaves the source list alone: the rail owns it, and resending an
-      // empty array here would wipe it. The sort goes with creation for the same
-      // reason it is resolved on read — storing one this viewer cannot pick would
-      // strand them on it.
-      ...(editing
-        ? {}
-        : {
-            sort: defaultSort,
-            forcedBrowsingLevel,
-            sources: sources.map((s, index) => ({ ...s, index })),
-          }),
+      // The sort goes with creation only: it is resolved on read, and storing one
+      // this viewer cannot pick would strand them on it.
+      ...(editing ? {} : { sort: defaultSort }),
+      // Sent only when they actually changed. `sources` replaces the stored list and
+      // the level is a single write, so resending either unchanged lets a rename
+      // clobber an edit made somewhere else since this modal opened.
+      ...(canEditSources && (!editing || sourcesChanged)
+        ? { sources: sources.map((source, index) => ({ ...source, index })) }
+        : {}),
+      ...(canEditSources && (!editing || forcedBrowsingLevel !== initial.forcedBrowsingLevel)
+        ? { forcedBrowsingLevel }
+        : {}),
     });
   };
 
@@ -146,7 +162,7 @@ export default function HubUpsertModal({
           />
         )}
 
-        {!editing && features.canViewNsfw && (
+        {canEditSources && features.canViewNsfw && (
           <BrowsingLevelsInput
             label="Content levels"
             description={
@@ -160,14 +176,14 @@ export default function HubUpsertModal({
           />
         )}
 
-        {!editing && (
+        {canEditSources && (
           <>
             <Divider label="Sources" labelPosition="left" />
             <HubSourceEditor
               value={sources}
               onChange={setSources}
               disabled={upsert.isPending}
-              emptyMessage="Add a creator or a model now, or leave it empty and fill it from the sidebar."
+              emptyMessage="Add a creator, model or tag to start filling this hub."
             />
           </>
         )}

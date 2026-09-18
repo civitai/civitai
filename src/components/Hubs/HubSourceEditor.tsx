@@ -1,9 +1,9 @@
-import { Button, Card, Collapse, SegmentedControl, Stack, Text } from '@mantine/core';
+import { Badge, Text, UnstyledButton } from '@mantine/core';
 import { IconPlus, IconX } from '@tabler/icons-react';
+import clsx from 'clsx';
 import { useState } from 'react';
-import { HubSourceCard } from '~/components/Hubs/HubSourceCard';
-import { HubSourceSearch } from '~/components/Hubs/HubSourceSearch';
-import { HubSourceUrlInput } from '~/components/Hubs/HubSourceUrlInput';
+import { HubSourceInput } from '~/components/Hubs/HubSourceInput';
+import { hubSourceKindLabel } from '~/components/Hubs/hub.utils';
 import { hubLimits } from '~/server/schema/user-hub.schema';
 import type { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
@@ -18,163 +18,200 @@ export type HubSourceValue = {
   index: number;
 };
 
-type AddMode = 'include' | 'exclude';
+function SourceChip({
+  source,
+  exclude,
+  disabled,
+  onRemove,
+}: {
+  source: HubSourceValue;
+  exclude?: boolean;
+  disabled?: boolean;
+  onRemove: VoidFunction;
+}) {
+  return (
+    <div
+      className={clsx(
+        'flex max-w-full items-center gap-1.5 rounded-full border py-1 pl-3 pr-1.5',
+        exclude
+          ? 'border-red-4 bg-red-0 dark:border-red-9 dark:bg-red-9/20'
+          : 'border-gray-3 dark:border-dark-4'
+      )}
+    >
+      <Text size="sm" lineClamp={1}>
+        {source.alias ?? `#${source.targetId}`}
+      </Text>
+      <Badge size="xs" variant="light" color={exclude ? 'red' : 'gray'} className="shrink-0">
+        {hubSourceKindLabel(source.type)}
+      </Badge>
+      <UnstyledButton
+        aria-label={`Remove ${source.alias ?? source.targetId}`}
+        disabled={disabled}
+        onClick={onRemove}
+        className="shrink-0 text-gray-6 hover:text-gray-9 dark:text-dark-2 dark:hover:text-white"
+      >
+        <IconX size={14} />
+      </UnstyledButton>
+    </div>
+  );
+}
 
+/**
+ * What goes in a hub, and what never does.
+ *
+ * One always-present search box per list rather than an "add source" mode with an
+ * include/exclude switch and type tabs: the mode, the switch and the tabs were three
+ * things to learn before anything could be added, and the exclusions are better said
+ * as their own short list than as a state of the same one.
+ *
+ * Sources carry an `enabled` flag that nothing here sets any more. A source is in the
+ * hub or removed from it; the flag stays true for everything this writes.
+ */
 export function HubSourceEditor({
   value,
   onChange,
   maxSources = hubLimits.sourcesPerHub,
   maxExclusions = hubLimits.exclusionsPerHub,
   disabled,
-  hideAdd,
-  readOnly,
-  emptyMessage = 'Nothing here yet. Add a creator or a model to start filling it.',
+  emptyMessage = 'Nothing here yet — search above to start filling it.',
 }: {
   value: HubSourceValue[];
   onChange: (next: HubSourceValue[]) => void;
   maxSources?: number;
   maxExclusions?: number;
   disabled?: boolean;
-  /** Drop the add affordance, for surfaces too small to hold it open. */
-  hideAdd?: boolean;
-  /**
-   * A hub you do not own: no add, no remove. Toggles stay live — the caller decides
-   * where they land, and on someone else's hub that is session state, not a write.
-   */
-  readOnly?: boolean;
   emptyMessage?: string;
 }) {
-  const [adding, setAdding] = useState(false);
-  const [addMode, setAddMode] = useState<AddMode>('include');
-  const exclude = addMode === 'exclude';
+  const [addingExclusion, setAddingExclusion] = useState(false);
 
   const included = value.filter((source) => !source.exclude);
   const excluded = value.filter((source) => source.exclude);
 
-  const addSource = (type: UserHubSourceType, targetId: number, rawAlias: string) => {
-    // Match what the server stores, so the optimistic row is not a different
-    // string from the one that comes back.
+  const held = (type: UserHubSourceType, targetId: number) =>
+    value.find((source) => source.type === type && source.targetId === targetId);
+
+  const addSource = (
+    {
+      type,
+      targetId,
+      alias: rawAlias,
+    }: { type: UserHubSourceType; targetId: number; alias: string },
+    exclude: boolean
+  ) => {
+    // Match what the server stores, so the optimistic chip is not a different string
+    // from the one that comes back.
     const alias = rawAlias.trim().slice(0, hubLimits.aliasLength);
+
     // Across BOTH lists, matching the row's unique key: a target the hub already
-    // collects cannot also be excluded. Told, not silently dropped — the same click
-    // did nothing whether the target was already collected or currently kept out, and
-    // either list can be long enough that neither is on screen.
-    const clash = value.find((s) => s.type === type && s.targetId === targetId);
+    // collects cannot also be excluded. Told, not silently dropped — either list can
+    // be long enough that the clash is off screen.
+    const clash = held(type, targetId);
     if (clash) {
       showErrorNotification({
         title: 'Already in this hub',
         error: new Error(
           clash.exclude
-            ? `"${
-                clash.alias ?? targetId
-              }" is currently kept out of this hub. Remove it from the kept-out list first.`
-            : `"${clash.alias ?? targetId}" is already one of this hub's sources.`
+            ? `"${clash.alias ?? targetId}" is on the never-show list. Remove it from there first.`
+            : `"${clash.alias ?? targetId}" is already in this hub.`
         ),
       });
       return;
     }
-    const held = exclude ? excluded.length : included.length;
+
+    const count = exclude ? excluded.length : included.length;
     const cap = exclude ? maxExclusions : maxSources;
-    if (held >= cap) {
+    if (count >= cap) {
       showErrorNotification({
-        title: exclude ? 'Exclusion list is full' : 'Hub is full',
+        title: exclude ? 'Never-show list is full' : 'Hub is full',
         error: new Error(
           exclude
-            ? `A hub can exclude at most ${cap} sources.`
-            : `A hub can hold at most ${cap} sources.`
+            ? `A hub can keep out at most ${cap} things.`
+            : `A hub can hold at most ${cap} things.`
         ),
       });
       return;
     }
+
     onChange([...value, { type, targetId, alias, enabled: true, exclude, index: value.length }]);
   };
 
-  const renderCard = (source: HubSourceValue) => (
-    <HubSourceCard
-      key={`${source.type}-${source.targetId}`}
-      source={source}
-      disabled={disabled}
-      onToggle={(enabled) =>
-        onChange(
-          value.map((s) =>
-            s.type === source.type && s.targetId === source.targetId ? { ...s, enabled } : s
-          )
-        )
-      }
-      hideRemove={readOnly}
-      onRemove={() =>
-        onChange(value.filter((s) => !(s.type === source.type && s.targetId === source.targetId)))
-      }
-    />
-  );
+  const remove = (source: HubSourceValue) =>
+    onChange(value.filter((s) => !(s.type === source.type && s.targetId === source.targetId)));
 
   return (
-    <Stack gap="sm">
-      {!hideAdd && !readOnly && (
-        <>
-          <Button
-            size="compact-sm"
-            variant={adding ? 'light' : 'filled'}
-            leftSection={adding ? <IconX size={14} /> : <IconPlus size={14} />}
-            disabled={disabled}
-            onClick={() => setAdding((open) => !open)}
-          >
-            {adding ? 'Done adding' : 'Add source'}
-          </Button>
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1.5">
+        <Text size="sm" fw={600}>
+          What goes in it
+        </Text>
+        <HubSourceInput
+          disabled={disabled}
+          isAdded={(source) => !!held(source.type, source.targetId)}
+          onAdd={(source) => addSource(source, false)}
+        />
+      </div>
 
-          <Collapse in={adding}>
-            {adding && (
-              <Card withBorder p="xs">
-                <Stack gap="xs">
-                  <SegmentedControl
-                    size="xs"
-                    fullWidth
-                    value={addMode}
-                    onChange={(next) => setAddMode(next as AddMode)}
-                    data={[
-                      { value: 'include', label: 'Include' },
-                      { value: 'exclude', label: 'Exclude' },
-                    ]}
-                  />
-                  <Text size="xs" c="dimmed">
-                    {exclude
-                      ? 'Content from what you pick is kept out of this hub.'
-                      : 'Content from what you pick fills this hub.'}
-                  </Text>
-                  <HubSourceSearch
-                    disabled={disabled}
-                    isAdded={(item) =>
-                      value.some((s) => s.type === item.type && s.targetId === item.targetId)
-                    }
-                    onSelect={(item) => addSource(item.type, item.targetId, item.alias)}
-                  />
-                  <HubSourceUrlInput
-                    disabled={disabled}
-                    onResolved={(source) => addSource(source.type, source.targetId, source.alias)}
-                  />
-                </Stack>
-              </Card>
-            )}
-          </Collapse>
-        </>
-      )}
-
-      {included.length === 0 ? (
+      {included.length ? (
+        <div className="flex flex-wrap gap-2">
+          {included.map((source) => (
+            <SourceChip
+              key={`${source.type}-${source.targetId}`}
+              source={source}
+              disabled={disabled}
+              onRemove={() => remove(source)}
+            />
+          ))}
+        </div>
+      ) : (
         <Text size="sm" c="dimmed">
           {emptyMessage}
         </Text>
-      ) : (
-        <Stack gap={6}>{included.map(renderCard)}</Stack>
       )}
 
-      {excluded.length > 0 && (
-        <Stack gap={6}>
-          <Text size="xs" fw={700} tt="uppercase" c="dimmed" className="tracking-wide">
-            Kept out
-          </Text>
-          {excluded.map(renderCard)}
-        </Stack>
+      {!!included.length && (
+        <Text size="xs" c="dimmed">
+          {included.length} of {maxSources}
+        </Text>
       )}
-    </Stack>
+
+      <div className="flex flex-col gap-2">
+        <Text size="xs" fw={700} tt="uppercase" c="dimmed">
+          Never show
+        </Text>
+
+        <div className="flex flex-wrap gap-2">
+          {excluded.map((source) => (
+            <SourceChip
+              key={`${source.type}-${source.targetId}`}
+              source={source}
+              exclude
+              disabled={disabled}
+              onRemove={() => remove(source)}
+            />
+          ))}
+
+          {!addingExclusion && (
+            <UnstyledButton
+              disabled={disabled}
+              onClick={() => setAddingExclusion(true)}
+              className="flex items-center gap-1 rounded-full border border-dashed border-gray-4 px-3 py-1 text-sm text-gray-6 hover:text-gray-9 dark:border-dark-4 dark:text-dark-2 dark:hover:text-white"
+            >
+              <IconPlus size={14} />
+              Keep something out
+            </UnstyledButton>
+          )}
+        </div>
+
+        {addingExclusion && (
+          <HubSourceInput
+            autoFocus
+            disabled={disabled}
+            placeholder="Search what to keep out — or paste a link"
+            isAdded={(source) => !!held(source.type, source.targetId)}
+            onAdd={(source) => addSource(source, true)}
+          />
+        )}
+      </div>
+    </div>
   );
 }

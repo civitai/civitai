@@ -13,8 +13,9 @@ import {
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
-import { IconDotsVertical, IconPencil, IconShare3, IconTrash } from '@tabler/icons-react';
+import { IconCopy, IconDotsVertical, IconPencil, IconShare3, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
+import { useEffect } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import {
   BrowsingLevelProviderOptional,
@@ -23,18 +24,22 @@ import {
 import { Page } from '~/components/AppLayout/Page';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { HubsLayout } from '~/components/Hubs/HubsLayout';
+import { HubsSidebar } from '~/components/Hubs/HubsSidebar';
+import { HubPageNav } from '~/components/Hubs/HubPageNav';
 import HubUpsertModal from '~/components/Hubs/HubUpsertModal';
 import {
-  useHubExcludedSources,
   useHubSessionBrowsingLevel,
   useHubSessionFeedFilters,
 } from '~/components/Hubs/hub-session.store';
 import { FollowHubButton } from '~/components/Hubs/FollowHubButton';
 import {
+  buildDuplicateHubInput,
   canPublishHub,
   hubEffectiveLevel,
   hubLocksViewerOut,
   hubUrl,
+  LAST_HUB_COOKIE,
+  toEditorSources,
   useInvalidateHub,
 } from '~/components/Hubs/hub.utils';
 import { useHubSort } from '~/components/Hubs/useHubSort';
@@ -59,6 +64,7 @@ import { Availability } from '~/shared/utils/prisma/enums';
 import { getCanonicalSlugDestination } from '~/utils/canonical-slug';
 import { buildPassthroughQuery } from '~/utils/query-string-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { setCookie } from '~/utils/cookies-helpers';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
@@ -199,7 +205,6 @@ export default Page(
     // slot.
     const hubId = hub?.id ?? 0;
 
-    const excludedSources = useHubExcludedSources(hubId);
     const sessionBrowsingLevel = useHubSessionBrowsingLevel(hubId);
     const sessionFilters = useHubSessionFeedFilters(hubId);
     const currentUser = useCurrentUser();
@@ -207,6 +212,13 @@ export default Page(
 
     // A viewer's sort and filter choices are session state; the owner's are the row.
     const isOwner = !!hub?.isOwner;
+
+    // Where /hubs sends this person next time. Own hubs only: landing on someone
+    // else's shared hub because you opened it once is not what "my hubs" means.
+    const ownedHubKey = isOwner ? hub?.key : undefined;
+    useEffect(() => {
+      if (ownedHubKey) setCookie(LAST_HUB_COOKIE, ownedHubKey);
+    }, [ownedHubKey]);
     const feed = {
       sort: isOwner ? hub?.sort : sessionFilters.sort ?? hub?.sort,
       period: isOwner ? hub?.period : sessionFilters.period ?? hub?.period,
@@ -264,6 +276,9 @@ export default Page(
     const hasSources = hub.sources.some((s) => s.enabled);
     const isPublic = hub.availability === Availability.Public;
     const canManage = hub.isOwner || !!currentUser?.isModerator;
+    // Copying someone else's curation is a write, so it stays off a private hub a
+    // moderator opened to look at — 868kwp5kc scopes that access to viewing.
+    const canDuplicate = !hub.isOwner && isPublic;
     // Only on a hub you do not own. The owner's own level is their account setting,
     // and the hub's stored cap is applied server-side for everyone regardless.
     const viewerBrowsingLevel = hub.isOwner ? undefined : sessionBrowsingLevel;
@@ -285,9 +300,12 @@ export default Page(
             the first card instead of hugging the rail. */}
         <MasonryContainer className="min-h-full">
           <div className="flex flex-col gap-3 py-3">
-            <Group justify="space-between" wrap="nowrap" align="flex-start">
-              <div className="min-w-0">
-                <Group gap="xs" wrap="nowrap">
+            <div className="flex flex-col gap-1">
+              {/* The actions sit on the TITLE's row rather than beside the whole
+                  block, so they stay centred on it however many lines the
+                  description and the owner's avatar add below. */}
+              <Group justify="space-between" wrap="nowrap" align="center">
+                <Group gap="xs" wrap="nowrap" className="min-w-0">
                   <Title order={1} lineClamp={2}>
                     {hub.name}
                   </Title>
@@ -297,117 +315,140 @@ export default Page(
                     </Badge>
                   )}
                 </Group>
-                {!!hub.description && (
-                  <Text c="dimmed" size="sm">
-                    {hub.description}
-                  </Text>
-                )}
-                {!hub.isOwner && !!hub.user && (
-                  <Group gap={8} wrap="nowrap" mt={4}>
-                    <UserAvatar user={hub.user} withUsername linkToProfile size="sm" />
-                  </Group>
-                )}
-              </div>
 
-              <Group gap={4} wrap="nowrap">
-                {/* ShareButton is given a PATH, not an absolute URL: it prefixes
+                <Group gap={4} wrap="nowrap" className="shrink-0">
+                  {/* ShareButton is given a PATH, not an absolute URL: it prefixes
                     `location.protocol//location.host` itself. */}
-                {isPublic ? (
-                  <ShareButton url={hubUrl(hub)} title={hub.name}>
-                    <Tooltip label="Share" withinPortal>
-                      <LegacyActionIcon variant="subtle" aria-label="Share hub">
-                        <IconShare3 size={18} />
-                      </LegacyActionIcon>
-                    </Tooltip>
-                  </ShareButton>
-                ) : (
-                  // Sharing is the point of the button, so it is here rather than
-                  // behind Edit. On a private hub it asks first, because pressing it
-                  // is what makes the hub readable by anyone holding the link.
-                  canPublishHub(hub) && (
-                    <Tooltip label="Share" withinPortal>
-                      <LegacyActionIcon
-                        variant="subtle"
-                        aria-label="Share hub"
-                        loading={shareMutation.isPending}
-                        onClick={() =>
-                          openConfirmModal({
-                            title: 'Share this hub?',
-                            children: (
-                              <Text size="sm">
-                                This hub is private. Sharing it makes it viewable by anyone you give
-                                the link to. You can turn sharing back off at any time, and every
-                                link you handed out stops working.
-                              </Text>
-                            ),
-                            labels: { cancel: 'Cancel', confirm: 'Turn on sharing' },
-                            onConfirm: () =>
-                              shareMutation.mutate({
-                                id: hub.id,
-                                availability: Availability.Public,
-                              }),
-                          })
-                        }
-                      >
-                        <IconShare3 size={18} />
-                      </LegacyActionIcon>
-                    </Tooltip>
-                  )
-                )}
+                  {isPublic ? (
+                    <ShareButton url={hubUrl(hub)} title={hub.name}>
+                      <Tooltip label="Share" withinPortal>
+                        <LegacyActionIcon variant="subtle" aria-label="Share hub">
+                          <IconShare3 size={18} />
+                        </LegacyActionIcon>
+                      </Tooltip>
+                    </ShareButton>
+                  ) : (
+                    // Sharing is the point of the button, so it is here rather than
+                    // behind Edit. On a private hub it asks first, because pressing it
+                    // is what makes the hub readable by anyone holding the link.
+                    canPublishHub(hub) && (
+                      <Tooltip label="Share" withinPortal>
+                        <LegacyActionIcon
+                          variant="subtle"
+                          aria-label="Share hub"
+                          loading={shareMutation.isPending}
+                          onClick={() =>
+                            openConfirmModal({
+                              title: 'Share this hub?',
+                              children: (
+                                <Text size="sm">
+                                  This hub is private. Sharing it makes it viewable by anyone you
+                                  give the link to. You can turn sharing back off at any time, and
+                                  every link you handed out stops working.
+                                </Text>
+                              ),
+                              labels: { cancel: 'Cancel', confirm: 'Turn on sharing' },
+                              onConfirm: () =>
+                                shareMutation.mutate({
+                                  id: hub.id,
+                                  availability: Availability.Public,
+                                }),
+                            })
+                          }
+                        >
+                          <IconShare3 size={18} />
+                        </LegacyActionIcon>
+                      </Tooltip>
+                    )
+                  )}
 
-                {/* Not on a private hub a moderator opened to look at it: copying
+                  {/* Not on a private hub a moderator opened to look at it: copying
                     someone's curation into your own account is a write, and 868kwp5kc
                     scopes moderator access to viewing. */}
-                {/* Following is the alternative to keeping the link somewhere: it
+                  {/* Following is the alternative to keeping the link somewhere: it
                     puts the hub in your own sidebar. Hidden for the owner, whose hubs
                     are already listed above it. */}
-                <FollowHubButton hub={hub} iconOnly />
+                  <FollowHubButton hub={hub} iconOnly />
 
-                {/* Moderators get the context menu on any hub — Justin's call, and it
+                  {/* Moderators get the context menu on any hub — Justin's call, and it
                     answers the question 868kwp5kc parked. Deliberate acts only: their
                     source toggles and level picks stay session state, so opening a
                     hub to look at it cannot quietly rewrite it. */}
-                {canManage && (
-                  <Menu withinPortal position="bottom-end">
-                    <Menu.Target>
-                      <LegacyActionIcon variant="subtle" aria-label="Hub options">
-                        <IconDotsVertical size={20} />
-                      </LegacyActionIcon>
-                    </Menu.Target>
-                    <Menu.Dropdown>
-                      <Menu.Item
-                        leftSection={<IconPencil size={16} />}
-                        onClick={() =>
-                          dialogStore.trigger({ component: HubUpsertModal, props: { hub } })
-                        }
-                      >
-                        Edit hub
-                      </Menu.Item>
-                      <Menu.Item
-                        color="red"
-                        leftSection={<IconTrash size={16} />}
-                        onClick={() =>
-                          openConfirmModal({
-                            title: `Delete "${hub.name}"?`,
-                            children: (
-                              <Text size="sm">
-                                Its sources go with it and this cannot be undone. The images stay
-                                where they are.
-                              </Text>
-                            ),
-                            labels: { cancel: 'Cancel', confirm: 'Delete hub' },
-                            confirmProps: { color: 'red' },
-                            onConfirm: () => deleteMutation.mutate({ id: hub.id }),
-                          })
-                        }
-                      >
-                        Delete hub
-                      </Menu.Item>
-                    </Menu.Dropdown>
-                  </Menu>
-                )}
+                  {(canManage || canDuplicate) && (
+                    <Menu withinPortal position="bottom-end">
+                      <Menu.Target>
+                        <LegacyActionIcon variant="subtle" aria-label="Hub options">
+                          <IconDotsVertical size={20} />
+                        </LegacyActionIcon>
+                      </Menu.Target>
+                      <Menu.Dropdown>
+                        {canDuplicate && (
+                          <LoginRedirect reason="duplicate-hub">
+                            <Menu.Item
+                              leftSection={<IconCopy size={16} />}
+                              onClick={() =>
+                                dialogStore.trigger({
+                                  component: HubUpsertModal,
+                                  props: { duplicateOf: buildDuplicateHubInput(hub) },
+                                })
+                              }
+                            >
+                              Duplicate this hub
+                            </Menu.Item>
+                          </LoginRedirect>
+                        )}
+                        {canManage && (
+                          <>
+                            <Menu.Item
+                              leftSection={<IconPencil size={16} />}
+                              onClick={() =>
+                                dialogStore.trigger({
+                                  component: HubUpsertModal,
+                                  props: { hub: { ...hub, sources: toEditorSources(hub.sources) } },
+                                })
+                              }
+                            >
+                              Edit hub
+                            </Menu.Item>
+                            <Menu.Item
+                              color="red"
+                              leftSection={<IconTrash size={16} />}
+                              onClick={() =>
+                                openConfirmModal({
+                                  title: `Delete "${hub.name}"?`,
+                                  children: (
+                                    <Text size="sm">
+                                      Its sources go with it and this cannot be undone. The images
+                                      stay where they are.
+                                    </Text>
+                                  ),
+                                  labels: { cancel: 'Cancel', confirm: 'Delete hub' },
+                                  confirmProps: { color: 'red' },
+                                  onConfirm: () => deleteMutation.mutate({ id: hub.id }),
+                                })
+                              }
+                            >
+                              Delete hub
+                            </Menu.Item>
+                          </>
+                        )}
+                      </Menu.Dropdown>
+                    </Menu>
+                  )}
+                </Group>
               </Group>
-            </Group>
+
+              {!!hub.description && (
+                <Text c="dimmed" size="sm">
+                  {hub.description}
+                </Text>
+              )}
+              {!hub.isOwner && !!hub.user && (
+                <Group gap={8} wrap="nowrap" mt={4}>
+                  <UserAvatar user={hub.user} withUsername linkToProfile size="sm" />
+                </Group>
+              )}
+            </div>
 
             {levelLocksViewerOut ? (
               <HubEmptyState message="Its owner limited this hub to content ratings you have not enabled.">
@@ -463,14 +504,6 @@ export default Page(
                     // Omitted rather than sent empty: the hub stores [] to mean
                     // "no restriction", and the feed's filter does not.
                     types: feed.types?.length ? feed.types : undefined,
-                    // This viewer's session state on a hub they do not own, which never
-                    // reaches the owner's row. Omitted for the owner, whose toggles are
-                    // writes. The session LEVEL is not here — `ImagesInfinite` computes
-                    // its own and spreads it over whatever a caller passes, so it goes
-                    // through `BrowsingLevelProvider` below instead.
-                    ...(hub.isOwner || !excludedSources.length
-                      ? {}
-                      : { hubExcludedSources: excludedSources }),
                   }}
                 />
               </BrowsingLevelProviderOptional>
@@ -480,5 +513,5 @@ export default Page(
       </>
     );
   },
-  { InnerLayout: HubsLayout }
+  { InnerLayout: HubsLayout, left: <HubsSidebar />, pageNav: <HubPageNav /> }
 );

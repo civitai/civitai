@@ -4,8 +4,10 @@ import { decodeHubId, encodeHubId } from '~/server/utils/hub-id';
 import { Prisma } from '@prisma/client';
 import type {
   AddUserHubSourceInput,
+  CreateHubFromTemplateInput,
   HubSourceExclusionInput,
   GetHubSourceSuggestionsInput,
+  HubTemplate,
   ResolveHubSourceInput,
   SetUserHubOrderInput,
   UpsertUserHubInput,
@@ -601,6 +603,127 @@ export async function getFollowedHubs({ userId }: { userId: number }) {
     take: hubLimits.followedHubs,
   });
   return follows.map((follow) => toHubDetail(follow.hub, userId));
+}
+
+const hubTemplateNames: Record<HubTemplate, string> = {
+  'my-models': 'Images on my models',
+  following: 'Creators I follow',
+};
+
+/**
+ * What a template gathers. Capped at `sourcesPerHub` here rather than left to
+ * `assertSourceCounts`, because overrunning the cap is the expected case for the
+ * users these templates are for — a prolific creator gets their newest 50 models and
+ * a hub, not a refusal.
+ */
+async function hubTemplateSources({
+  template,
+  userId,
+}: {
+  template: HubTemplate;
+  userId: number;
+}): Promise<UserHubSourceInput[]> {
+  if (template === 'my-models') {
+    const models = await dbRead.model.findMany({
+      where: { userId, status: ModelStatus.Published, deletedAt: null },
+      select: { id: true, name: true },
+      orderBy: { createdAt: 'desc' },
+      take: hubLimits.sourcesPerHub,
+    });
+    return models.map((model, index) => ({
+      type: UserHubSourceType.Model,
+      targetId: model.id,
+      alias: model.name,
+      enabled: true,
+      exclude: false,
+      index,
+    }));
+  }
+
+  // Read wider than the cap, because the deleted accounts are dropped AFTER this
+  // window: at exactly the cap, 50 dead follows report "you are not following
+  // anyone" to someone who follows hundreds.
+  const follows = await dbRead.userEngagement.findMany({
+    where: { userId, type: UserEngagementType.Follow },
+    select: { targetUserId: true },
+    orderBy: { createdAt: 'desc' },
+    take: hubLimits.sourcesPerHub * 3,
+  });
+
+  const users = await dbRead.user.findMany({
+    where: { id: { in: follows.map((follow) => follow.targetUserId) }, deletedAt: null },
+    select: { id: true, username: true },
+  });
+  const byId = new Map(users.map((user) => [user.id, user.username]));
+
+  return follows
+    .map((follow) => ({ id: follow.targetUserId, username: byId.get(follow.targetUserId) }))
+    .filter((user): user is { id: number; username: string } => !!user.username)
+    .slice(0, hubLimits.sourcesPerHub)
+    .map((user, index) => ({
+      type: UserHubSourceType.User,
+      targetId: user.id,
+      alias: user.username,
+      enabled: true,
+      exclude: false,
+      index,
+    }));
+}
+
+/**
+ * Drops the sources whose alias the content scan refuses, rather than letting one
+ * refuse the whole template.
+ *
+ * A template's aliases are OTHER people's usernames and the caller's stored model
+ * names — text this user did not write here and cannot edit from this screen. Passed
+ * straight to `upsertUserHub`, one match refuses the create outright, and the message
+ * names neither which of 50 follows caused it nor any way to drop it.
+ *
+ * Scanned as a batch first because that is the normal answer; the per-alias pass runs
+ * only to find the offenders. `userHubTemplate` rather than `userHub` so the staged
+ * enforcement rollout can tell text a user typed from text a template gathered.
+ */
+async function withoutBlockedAliases(sources: UserHubSourceInput[]) {
+  try {
+    await throwOnBlockedUserContent(
+      sources.map((source) => source.alias),
+      { surface: 'userHubTemplate' }
+    );
+    return sources;
+  } catch {
+    const kept: UserHubSourceInput[] = [];
+    for (const source of sources) {
+      try {
+        await throwOnBlockedUserContent(source.alias, { surface: 'userHubTemplate' });
+        kept.push(source);
+      } catch {
+        // The source is left out; the hub is still built from the rest.
+      }
+    }
+    return kept.map((source, index) => ({ ...source, index }));
+  }
+}
+
+export async function createHubFromTemplate({
+  template,
+  userId,
+}: CreateHubFromTemplateInput & { userId: number }) {
+  const gathered = await hubTemplateSources({ template, userId });
+  const sources = await withoutBlockedAliases(gathered);
+
+  // A hub with nothing in it is the state the templates exist to avoid, and the
+  // caller can say which template came up empty.
+  if (!sources.length)
+    throw throwBadRequestError(
+      template === 'my-models'
+        ? 'You have no published models to build a hub from yet'
+        : 'You are not following anyone yet'
+    );
+
+  // Through `upsertUserHub` rather than a create of its own: the hub cap, the
+  // blocklist and the source rules are enforced there, and a second create path
+  // would be a second place to keep them.
+  return upsertUserHub({ userId, name: hubTemplateNames[template], sources });
 }
 
 export async function followUserHub({ key, userId }: { key: string; userId: number }) {
@@ -1207,6 +1330,86 @@ function bySuggestionOrder<T extends { id: number }>(
  * adds the model to the viewer's bookmark collection at the same time, which is
  * why both are read here.
  */
+/**
+ * One box, every kind. The picker no longer asks which sort of thing you are adding,
+ * so the three arms run together and come back labelled.
+ *
+ * Tags only answer to a typed term: with none, the other arms are a list of what this
+ * viewer already follows and owns, and the most-used tags on the site are not that.
+ * They are queried through `hubTagWhere`, the same fragment the write path asserts
+ * with, so the picker cannot offer one the server would refuse — and replaced tags
+ * are dropped, since the index carries their replacement's id and they would match
+ * nothing.
+ */
+export async function searchHubSources({
+  userId,
+  query,
+  isModerator,
+}: {
+  query?: string;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  const trimmed = query?.trim();
+  const term = trimmed && trimmed.length >= MIN_SEARCH_TERM ? trimmed : undefined;
+
+  const [users, exact, models, tags] = await Promise.all([
+    getHubSourceSuggestions({ userId, type: UserHubSourceType.User, query, isModerator }),
+    term ? findCreatorByUsername(term) : Promise.resolve(undefined),
+    getHubSourceSuggestions({ userId, type: UserHubSourceType.Model, query, isModerator }),
+    term ? searchHubTags(term) : Promise.resolve([]),
+  ]);
+
+  // Creators and models first, because those are the viewer's own relationships and a
+  // tag matching the same letters is the broader, less likely answer.
+  const found = [...users, ...models, ...tags];
+  if (exact && !found.some((item) => item.type === exact.type && item.targetId === exact.targetId))
+    found.unshift(exact);
+
+  return found;
+}
+
+/**
+ * The whole-site escape hatch, and it is an EQUALITY match on purpose. The arms above
+ * search what this viewer follows and owns, so a creator they have never followed is
+ * invisible to them — which made typing an exact username find nothing.
+ *
+ * Pattern matching is not available here: `User.username` is `citext`, so neither
+ * `ILIKE '%x%'` nor even `ILIKE 'x%'` can use an index. Measured on the prod replica
+ * 2026-09-17 over 13.2M rows: both seq-scan, 5.7s and 4.6s. Equality uses the unique
+ * index and answers in 0.2ms.
+ *
+ * So typing a username in full finds anyone; typing part of one finds who you follow.
+ * Partial matching site-wide needs a trigram index on the column — a deliberate
+ * migration, not something to slip into a keystroke path.
+ */
+async function findCreatorByUsername(term: string) {
+  const user = await dbRead.user.findFirst({
+    where: { username: term, deletedAt: null },
+    select: { id: true, username: true },
+  });
+  if (!user?.username) return undefined;
+
+  return { type: UserHubSourceType.User, targetId: user.id, alias: user.username };
+}
+
+async function searchHubTags(term: string) {
+  const [tags, replacedTagIds] = await Promise.all([
+    dbRead.tag.findMany({
+      where: { name: { contains: term, mode: 'insensitive' }, ...hubTagWhere },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+      take: SUGGESTIONS_LIMIT,
+    }),
+    getReplacedTagIds(),
+  ]);
+
+  const replaced = new Set(replacedTagIds);
+  return tags
+    .filter((tag) => !replaced.has(tag.id))
+    .map((tag) => ({ type: UserHubSourceType.Tag, targetId: tag.id, alias: tag.name }));
+}
+
 export async function getHubSourceSuggestions({
   userId,
   type,

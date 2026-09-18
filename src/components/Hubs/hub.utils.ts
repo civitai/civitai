@@ -1,5 +1,4 @@
 import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
-import type { HubPanelHub } from '~/components/Hubs/HubSourcePanel';
 import { hubLimits } from '~/server/schema/user-hub.schema';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
@@ -37,6 +36,85 @@ export function useInvalidateHub() {
 export function hubUrl(hub: { key: string; name: string }) {
   const slug = slugit(hub.name);
   return slug ? `/hubs/${hub.key}/${slug}` : `/hubs/${hub.key}`;
+}
+
+/**
+ * Where /hubs sends someone who owns more than one: the hub they last opened.
+ *
+ * A cookie rather than a stored setting, because this is a navigation convenience,
+ * not a preference — it costs no write per hub view, and `/hubs` can read it in SSR
+ * with no query at all. Per browser is the right grain for "where I was"; a new
+ * device simply gets the page instead.
+ *
+ * The value is a hub KEY, and it is only ever trusted after being matched against
+ * the hubs the viewer actually owns — a stale key is a hub that was deleted, or one
+ * someone else's cookie named.
+ */
+export const LAST_HUB_COOKIE = 'hub-last-viewed';
+
+const sourceKindLabels: Record<string, string> = {
+  User: 'Creator',
+  Model: 'Model',
+  ModelVersion: 'Version',
+  Collection: 'Collection',
+  Tag: 'Tag',
+};
+
+/** What a source is called in front of a person: "Creator", not `User`. */
+export function hubSourceKindLabel(type: string) {
+  return sourceKindLabels[type] ?? 'Source';
+}
+
+const sourceNouns: Record<string, [string, string]> = {
+  User: ['creator', 'creators'],
+  Model: ['model', 'models'],
+  ModelVersion: ['version', 'versions'],
+  Collection: ['collection', 'collections'],
+  Tag: ['tag', 'tags'],
+};
+
+/**
+ * What a hub holds, for a card that shows no sources: "12 creators, 4 models". Counts
+ * only what fills the feed — a switched-off source contributes nothing, and the
+ * exclusions are the owner's keep-out list, which is never published as a number
+ * beside the things they collect.
+ */
+export function describeHubSources(
+  sources: { type: string; enabled: boolean; exclude: boolean }[]
+) {
+  const counts = new Map<string, number>();
+  for (const source of sources) {
+    if (!source.enabled || source.exclude) continue;
+    counts.set(source.type, (counts.get(source.type) ?? 0) + 1);
+  }
+
+  const parts = [...counts.entries()]
+    .sort(([, a], [, b]) => b - a)
+    .map(([type, count]) => {
+      const [singular, plural] = sourceNouns[type] ?? ['source', 'sources'];
+      return `${count} ${count === 1 ? singular : plural}`;
+    });
+
+  return parts.length ? parts.join(', ') : 'Nothing in it yet';
+}
+
+/**
+ * A `getById` row's sources as the editor takes them. The row `id` is dropped: it
+ * addresses the STORED row, and the list the modal saves replaces those rows
+ * wholesale — carrying it back would name rows the write has already deleted.
+ */
+export function toEditorSources(
+  sources: {
+    id: number;
+    type: HubSourceValue['type'];
+    targetId: number;
+    alias: string | null;
+    enabled: boolean;
+    exclude: boolean;
+    index: number;
+  }[]
+): HubSourceValue[] {
+  return sources.map(({ id: _id, ...source }) => source);
 }
 
 /**
@@ -118,35 +196,5 @@ export function buildDuplicateHubInput(hub: {
       exclude: !!source.exclude,
       index,
     })),
-  };
-}
-
-// The rail and the sub-nav popover both render the panel from a `getById` row, so
-// the one mapping between them lives here.
-export function toPanelHub(hub: {
-  id: number;
-  name: string;
-  forcedBrowsingLevel: number;
-  availability: Availability;
-  isOwner: boolean;
-  sources: {
-    id: number;
-    type: HubPanelHub['sources'][number]['type'];
-    targetId: number;
-    alias: string | null;
-    enabled: boolean;
-    exclude: boolean;
-    index: number;
-  }[];
-  excludedCount: number;
-}): HubPanelHub {
-  return {
-    id: hub.id,
-    name: hub.name,
-    forcedBrowsingLevel: hub.forcedBrowsingLevel,
-    availability: hub.availability,
-    isOwner: hub.isOwner,
-    sources: hub.sources.map(({ id: _id, ...source }) => source),
-    excludedCount: hub.excludedCount,
   };
 }

@@ -1,9 +1,11 @@
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addUserHubSourceSchema,
+  createHubFromTemplateSchema,
   getHubSourceSuggestionsSchema,
   getUserHubByKeySchema,
   resolveHubSourceSchema,
+  searchHubSourcesSchema,
   setUserHubOrderSchema,
   userHubFollowSchema,
   upsertUserHubSchema,
@@ -11,6 +13,7 @@ import {
 } from '~/server/schema/user-hub.schema';
 import {
   addUserHubSource,
+  createHubFromTemplate,
   deleteUserHub,
   followUserHub,
   getFollowedHubs,
@@ -19,6 +22,7 @@ import {
   getUserHubs,
   removeUserHubSource,
   resolveHubSourceFromUrl,
+  searchHubSources,
   setUserHubOrder,
   unfollowUserHub,
   upsertUserHub,
@@ -57,6 +61,10 @@ export const userHubRouter = router({
     .mutation(({ input, ctx }) =>
       upsertUserHub({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
+  createFromTemplate: userHubProcedure
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(createHubFromTemplateSchema)
+    .mutation(({ input, ctx }) => createHubFromTemplate({ ...input, userId: ctx.user.id })),
   addSource: userHubProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(addUserHubSourceSchema)
@@ -76,6 +84,16 @@ export const userHubRouter = router({
     .input(getHubSourceSuggestionsSchema)
     .query(({ input, ctx }) =>
       getHubSourceSuggestions({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
+  searchSources: userHubProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .input(searchHubSourcesSchema)
+    .query(({ input, ctx }) =>
+      searchHubSources({
         ...input,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,

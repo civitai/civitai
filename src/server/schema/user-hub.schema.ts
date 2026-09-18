@@ -232,6 +232,17 @@ export type UpsertUserHubInput = z.infer<typeof upsertUserHubSchema>;
 export type UserHubSourceInput = z.infer<typeof userHubSourceSchema>;
 export type SetUserHubOrderInput = z.infer<typeof setUserHubOrderSchema>;
 
+// A hub built from something the user already has, rather than from an empty one they
+// then have to fill. The template names WHAT to gather; the sources it resolves to are
+// a point-in-time copy, so a model published afterwards is not in the hub.
+export const hubTemplateSchema = z.enum(['my-models', 'following']);
+
+export type HubTemplate = z.infer<typeof hubTemplateSchema>;
+
+export const createHubFromTemplateSchema = z.object({ template: hubTemplateSchema });
+
+export type CreateHubFromTemplateInput = z.infer<typeof createHubFromTemplateSchema>;
+
 export const resolveHubSourceSchema = z.object({
   url: z.string().trim().min(1).max(500),
 });
@@ -255,6 +266,13 @@ export const getHubSourceSuggestionsSchema = z.object({
 export type HubSuggestionType = z.infer<typeof hubSuggestionTypeSchema>;
 
 export type GetHubSourceSuggestionsInput = z.infer<typeof getHubSourceSuggestionsSchema>;
+
+// The picker's one box: no type, because it no longer asks which kind you are adding.
+export const searchHubSourcesSchema = z.object({
+  query: z.string().trim().max(100).optional(),
+});
+
+export type SearchHubSourcesInput = z.infer<typeof searchHubSourcesSchema>;
 
 // One source at a time, addressed by what it points at rather than by row id: the
 // caller is a model or creator page that knows the target and nothing about the
