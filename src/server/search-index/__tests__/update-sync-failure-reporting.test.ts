@@ -53,6 +53,8 @@ describe('updateSync :: failure reporting', () => {
       totalTasks: 1,
       failedTasks: 1,
       failedIds: 3,
+      droppedIds: 0,
+      droppedIdSample: [],
     });
     // 1 attempt + the 3 retries the queue promises. Before the retry slot was held open across
     // the backoff, every worker exited during the first retry's sleep and the task was dropped
@@ -108,6 +110,8 @@ describe('updateSync :: failure reporting', () => {
       totalTasks: 4,
       failedTasks: 2,
       failedIds: 14,
+      droppedIds: 0,
+      droppedIdSample: [],
     });
     // A partial failure, not a total one: strictly fewer than every batch, and strictly fewer
     // than every id.
@@ -131,6 +135,8 @@ describe('updateSync :: failure reporting', () => {
       totalTasks: 1,
       failedTasks: 0,
       failedIds: 0,
+      droppedIds: 0,
+      droppedIdSample: [],
     });
     expect(pushData).toHaveBeenCalledTimes(1);
   });
@@ -142,6 +148,8 @@ describe('updateSync :: failure reporting', () => {
       totalTasks: 0,
       failedTasks: 0,
       failedIds: 0,
+      droppedIds: 0,
+      droppedIdSample: [],
     });
   });
 });

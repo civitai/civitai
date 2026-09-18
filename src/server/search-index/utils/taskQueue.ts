@@ -18,7 +18,27 @@ type BaseTask = {
    * failing can be attributed back to a number of documents that were never indexed.
    */
   idCount?: number;
+  /**
+   * Targeted tasks only: the ids this task was asked to index. Set on the transform task, where
+   * it is the only place the requested ids and the produced documents are both in hand — a pull
+   * task has no documents yet and a push task no longer knows what was asked for. Carried no
+   * further: the push task keeps `droppedIds` instead, which is bounded by the drop rather than
+   * by the batch.
+   */
+  requestedIds?: (number | string)[];
+  /**
+   * Ids that were pulled but produced no document, so nothing about them reached the index and
+   * nothing reports it as a failure. Set on the push task by the transform step.
+   */
+  droppedIds?: (number | string)[];
 };
+
+/**
+ * Dropped ids are retained as a SAMPLE, not a list: a transform that drops a whole batch would
+ * otherwise hold the batch's id list for the life of the queue, and the count is what a caller
+ * acts on. `droppedIdCount` is always the true total.
+ */
+export const DROPPED_ID_SAMPLE_LIMIT = 100;
 
 export type PullTask = BaseTask &
   (
@@ -87,6 +107,10 @@ export class TaskQueue {
    * indexed. Summaries rather than tasks — see `FailedTaskRecord`.
    */
   failedTasks: FailedTaskRecord[];
+  /** Ids pulled that produced no document, across every completed task. */
+  droppedIdCount: number;
+  /** Up to `DROPPED_ID_SAMPLE_LIMIT` of those ids, for naming them in a log line. */
+  droppedIdSample: (number | string)[];
   /**
    * Tasks that are between "failed" and "back on a queue" — see `failTask`. Counted by
    * `isQueueEmpty` so the workers cannot all exit during the retry backoff.
@@ -110,6 +134,8 @@ export class TaskQueue {
     };
     this.maxQueueSize = maxQueueSize;
     this.failedTasks = [];
+    this.droppedIdCount = 0;
+    this.droppedIdSample = [];
     this.retrying = 0;
   }
 
@@ -173,7 +199,20 @@ export class TaskQueue {
 
   completeTask(task: Task): void {
     this.processing.delete(task);
+    // Collected here rather than at the transform step so a batch that never reaches the index is
+    // not reported as dropped: a push that permanently fails goes through `failTask`, and its ids
+    // belong to `failedIdCount`. A retried push carries the same `droppedIds` and is counted on
+    // the attempt that succeeds, once.
+    if (task.droppedIds?.length) this.recordDroppedIds(task.droppedIds);
     this.updateTaskStatus(task, 'completed');
+  }
+
+  private recordDroppedIds(ids: (number | string)[]): void {
+    this.droppedIdCount += ids.length;
+    for (const id of ids) {
+      if (this.droppedIdSample.length >= DROPPED_ID_SAMPLE_LIMIT) break;
+      this.droppedIdSample.push(id);
+    }
   }
 
   async failTask(task: Task): Promise<void> {

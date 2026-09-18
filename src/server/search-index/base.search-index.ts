@@ -76,6 +76,13 @@ type SearchIndexProcessor = {
    */
   updateSyncChunkSize?: number;
   pullSteps?: number;
+  /**
+   * Ids a transformed batch ACCOUNTS FOR, when that is not the same as the ids of the documents
+   * in it. A processor needs this only when it handles an id by some means other than writing a
+   * document — `collections` deletes the ids it disqualifies, which is a handled id with no
+   * document. Without the override those ids would be reported as silently dropped.
+   */
+  getHandledIds?: (transformedData: any) => (number | string)[];
   client?: MeiliSearch | null;
   jobName?: string;
   partial?: boolean;
@@ -88,6 +95,88 @@ type SearchIndexProcessor = {
    * re-running a `reset` — the index is stale for as long as it is retired.
    */
   retired?: boolean;
+};
+
+/**
+ * Ids a transformed batch accounts for, read out of the batch itself.
+ *
+ * Handles the two shapes every processor in this directory returns today: a flat array of
+ * documents, and an object whose values are arrays of documents. Returns `undefined` — not an
+ * empty list — for any shape it does not recognise, because "I cannot see the documents" and
+ * "there are no documents" are the two answers this whole mechanism exists to tell apart.
+ */
+const readDocumentIds = (
+  transformedData: any,
+  primaryKey: string
+): (number | string)[] | undefined => {
+  const fromArray = (value: any): (number | string)[] | undefined => {
+    if (!Array.isArray(value)) return undefined;
+    const ids: (number | string)[] = [];
+    let sawDocument = false;
+    for (const entry of value) {
+      if (!entry || typeof entry !== 'object') continue;
+      sawDocument = true;
+      const id = entry[primaryKey];
+      if (typeof id === 'number' || typeof id === 'string') ids.push(id);
+    }
+    // A non-empty array holding no objects is not a batch of documents — it is a shape this
+    // cannot read, and saying "0 documents" about it would report every requested id as dropped.
+    // An EMPTY array is the opposite: it is a readable answer, and the answer is none.
+    if (value.length > 0 && !sawDocument) return undefined;
+    return ids;
+  };
+
+  const direct = fromArray(transformedData);
+  if (direct) return direct;
+  if (!transformedData || typeof transformedData !== 'object') return undefined;
+
+  const ids: (number | string)[] = [];
+  let sawArray = false;
+  for (const value of Object.values(transformedData)) {
+    const fromValue = fromArray(value);
+    if (!fromValue) continue;
+    sawArray = true;
+    ids.push(...fromValue);
+  }
+  return sawArray ? ids : undefined;
+};
+
+/**
+ * Which of the ids a targeted pull asked for produced nothing the index will ever see.
+ *
+ * A row that `pullData` returns and `transformData` then drops is written by nobody and reported
+ * by nobody: `pushData` is handed a batch that simply does not contain it, the task completes,
+ * and every counter above says success. Two published models with no versions sat stale in
+ * `models_v9` for weeks that way, through a bulk repair and a targeted re-enqueue (868m6jk7w).
+ */
+const findDroppedIds = (
+  processor: SearchIndexProcessor,
+  requestedIds: (number | string)[] | undefined,
+  transformedData: any
+): (number | string)[] | undefined => {
+  if (!requestedIds?.length) return undefined;
+  const handled = processor.getHandledIds
+    ? processor.getHandledIds(transformedData)
+    : readDocumentIds(transformedData, processor.primaryKey ?? 'id');
+  if (!handled) return undefined;
+  const handledSet = new Set(handled.map(String));
+  return requestedIds.filter((id) => !handledSet.has(String(id)));
+};
+
+/**
+ * The one line that says a repair did not repair everything it was asked to. Deliberately
+ * `console.error`, like the failed-task line beside it: a silent drop is what this reports, so it
+ * does not belong behind the debug logger.
+ */
+const logDroppedIds = (indexName: string, caller: string, queue: TaskQueue) => {
+  if (queue.droppedIdCount === 0) return;
+  console.error(
+    `createSearchIndexUpdateProcessor :: ${caller} :: ${indexName} :: ${
+      queue.droppedIdCount
+    } ids pulled but produced no document (sample: ${queue.droppedIdSample
+      .slice(0, 20)
+      .join(', ')})`
+  );
 };
 
 const processSearchIndexTask = async (
@@ -146,6 +235,7 @@ const processSearchIndexTask = async (
           index: task.index,
           total: task.total,
           idCount: task.idCount,
+          requestedIds: t.mode === 'targeted' ? t.ids : undefined,
           data: pulledData,
         } as TransformTask;
       }
@@ -153,14 +243,22 @@ const processSearchIndexTask = async (
       context.logger(
         `processSearchIndexTask :: transform :: ${processor.indexName} :: Processing task`
       );
-      const { data, start } = task as TransformTask;
+      const { data, start, requestedIds } = task as TransformTask;
       const transformedData = processor.transformData ? await processor.transformData(data) : data;
+      const droppedIds = findDroppedIds(processor, requestedIds, transformedData);
+      if (droppedIds?.length) {
+        context.logger(
+          `processSearchIndexTask :: transform :: ${processor.indexName} :: ${droppedIds.length} of ${requestedIds?.length} requested ids produced no document`,
+          droppedIds.slice(0, 10)
+        );
+      }
       return {
         start,
         type: 'push',
         index: task.index,
         total: task.total,
         idCount: task.idCount,
+        droppedIds,
         data: transformedData,
       } as PushTask;
     } else if (type === 'push') {
@@ -200,6 +298,17 @@ export type SearchIndexUpdateSyncResult = {
   totalTasks: number;
   failedTasks: number;
   failedIds: number;
+  /**
+   * Ids that were pulled but produced no document — nothing was written for them and nothing
+   * failed. A repair that reports `failedIds: 0` alongside a nonzero `droppedIds` did not repair
+   * those ids, and before this existed there was no number that said so.
+   */
+  droppedIds: number;
+  /**
+   * Up to `DROPPED_ID_SAMPLE_LIMIT` of those ids. A SAMPLE, deliberately: `droppedIds` is the
+   * count to act on, and a caller that needs all of them should read the log line per batch.
+   */
+  droppedIdSample: (number | string)[];
 };
 
 export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor) {
@@ -385,6 +494,8 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
 
       await Promise.all(workers);
 
+      logDroppedIds(indexName, 'update', queue);
+
       // Commit queues:
       await queuedUpdates.commit();
       await queuedDeletes.commit();
@@ -461,7 +572,14 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       jobContext?: JobContext
     ): Promise<SearchIndexUpdateSyncResult> {
       if (retired || !items.length) {
-        return { indexName, totalTasks: 0, failedTasks: 0, failedIds: 0 };
+        return {
+          indexName,
+          totalTasks: 0,
+          failedTasks: 0,
+          failedIds: 0,
+          droppedIds: 0,
+          droppedIdSample: [],
+        };
       }
 
       // TODO index.update shouldnt run
@@ -526,7 +644,11 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         totalTasks,
         failedTasks: queue.failedTasks.length,
         failedIds: queue.failedIdCount,
+        droppedIds: queue.droppedIdCount,
+        droppedIdSample: queue.droppedIdSample,
       };
+
+      logDroppedIds(indexName, 'updateSync', queue);
 
       if (result.failedTasks > 0) {
         console.error(
@@ -612,6 +734,9 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         });
 
         await Promise.all(workers);
+
+        logDroppedIds(indexName, 'processQueues', queue);
+
         await queuedUpdates.commit();
       }
     },
