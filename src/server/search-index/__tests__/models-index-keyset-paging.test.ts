@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
+// Pure string helpers, no module graph — safe to import statically above the vi.mock below.
+import { renderTag, whereClausesOf } from './sql-shape.test-utils';
+
+import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
+
 /**
  * THE MODELS DELTA SCAN MUST NOT LOSE A ROW TO A CONCURRENT EDIT.
  *
@@ -44,7 +49,10 @@ type PagingFake = {
   ctx: Parameters<typeof prepareModelsBatches>[0];
   /** Page queries only — the MIN/MAX bounds query is not counted. */
   pageQueries: () => number;
+  /** Rendered by {@link renderTag}, so bind VALUES appear as `?` — see `pageValues`. */
   pageSql: () => string[];
+  /** The bind values of each page query, in order. The half `pageSql` cannot show. */
+  pageValues: () => unknown[][];
 };
 
 /**
@@ -63,9 +71,10 @@ type PagingFake = {
 const makeFake = (members: Set<number>, onPage?: (page: number) => void): PagingFake => {
   let pages = 0;
   const sql: string[] = [];
+  const binds: unknown[][] = [];
 
   const $queryRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
-    const text = strings.join(' ? ');
+    const text = renderTag(strings, values);
     if (text.includes('MIN(id)')) return [{ startId: 1, endId: 1_000_000 }];
 
     pages += 1;
@@ -75,6 +84,7 @@ const makeFake = (members: Set<number>, onPage?: (page: number) => void): Paging
       );
     }
     sql.push(text);
+    binds.push(values);
 
     // strings[i] is the SQL immediately before values[i], so a fragment's trailing text names it.
     const valueBefore = (marker: RegExp) => {
@@ -110,6 +120,7 @@ const makeFake = (members: Set<number>, onPage?: (page: number) => void): Paging
     ctx: { db: { $queryRaw }, logger: () => undefined } as never,
     pageQueries: () => pages,
     pageSql: () => sql,
+    pageValues: () => binds,
   };
 };
 
@@ -170,21 +181,59 @@ describe('prepareModelsBatches paging', () => {
 
   /**
    * The fake models membership as an opaque set of ids, so it cannot see WHICH rows the predicates
-   * select — delete any one of them and the four cases above stay green. Dropping the `updatedAt`
-   * bound turns the delta scan into a full scan of every published model, every 15 minutes;
-   * dropping the availability bound puts Unsearchable models into the public index. This file is
-   * the only test that reads this query, so the predicates are pinned textually. That pins one
-   * spelling: reword a predicate and this fails, which is the price of the guard.
+   * select: the paging cases above stay green under any change to the WHERE clause. Dropping the
+   * `updatedAt` bound turns the delta scan into a full scan of every published model, every 15
+   * minutes; dropping the availability bound puts Unsearchable models into the public index.
+   *
+   * 🔴 THE WHOLE CLAUSE, WITH `toBe`, NOT SUBSTRINGS. A substring assertion is satisfied by a
+   * statement that merely mentions the predicate, so a WIDENING mutation passes it: appending
+   * `OR availability = 'Unsearchable'` leaves every fragment present while `AND` binding tighter
+   * than `OR` returns every Unsearchable model on every page. The sibling file next door carries
+   * the same rule for the same reason — see `sql-shape.test-utils`.
+   *
+   * The price is that a reword of the clause fails here and must be updated in the same commit.
    */
-  it('keeps the eligibility predicates on the page query', async () => {
+  it('scopes the page query to exactly the eligible set', async () => {
     const fake = makeFake(new Set(range(1, 100)));
 
     await prepareModelsBatches(fake.ctx, LAST_UPDATED_AT);
 
     const [first] = fake.pageSql();
-    expect(first).toMatch(/WHERE status = /);
-    expect(first).toMatch(/AND availability != /);
-    expect(first).toMatch(/AND "updatedAt" >= /);
+    expect(whereClausesOf(first)).toEqual([
+      'status = ?::"ModelStatus" AND availability != ?::"Availability" AND "updatedAt" >= ? AND id > ?',
+    ]);
+  });
+
+  /**
+   * `renderTag` renders a bind param as `?`, so the clause pinned above is blind to the VALUES —
+   * `availability != ${Availability.Private}` is byte-identical to the Unsearchable form there,
+   * and would put Unsearchable models into the public index with the case above still green.
+   * Corruption of a predicate is a cheaper typo than deletion of one, so the values are pinned too.
+   */
+  it('binds the page query to Published, not-Unsearchable, and the caller watermark', async () => {
+    const fake = makeFake(new Set(range(1, 100)));
+
+    await prepareModelsBatches(fake.ctx, LAST_UPDATED_AT);
+
+    expect(fake.pageValues()).toEqual([
+      [ModelStatus.Published, Availability.Unsearchable, LAST_UPDATED_AT, 0, READ_BATCH_SIZE],
+    ]);
+  });
+
+  /**
+   * Reaches the EMPTY-page break, which every other case here shadows: they all end on a short
+   * page, so the `if (!ids.length) break` above it is unreachable and deleting it leaves them
+   * green. In production that deletion reads `ids[ids.length - 1].id` off an empty array and
+   * throws out of `prepareBatches`, killing the whole index job — on any run where the eligible
+   * set is an exact multiple of the page size, or empty.
+   */
+  it('stops on an empty page when the set is an exact multiple of the page size', async () => {
+    const fake = makeFake(new Set(range(1, READ_BATCH_SIZE)));
+
+    const { updateIds } = await prepareModelsBatches(fake.ctx, LAST_UPDATED_AT);
+
+    expect(updateIds).toHaveLength(READ_BATCH_SIZE);
+    expect(fake.pageQueries()).toBe(2);
   });
 
   it('issues no page query at all on a full rebuild', async () => {
