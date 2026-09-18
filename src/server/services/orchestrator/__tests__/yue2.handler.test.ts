@@ -18,7 +18,7 @@ import type { GenerationResource } from '~/shared/types/generation.types';
 const ext: GenerationCtx = {
   limits: { maxQuantity: 4, maxResources: 9, vidQuantity: 1 },
   user: { isMember: true, tier: 'gold' },
-  flags: { yue2Generator: true },
+  flags: {},
   gateRules: [],
 };
 const ctx = {
@@ -214,11 +214,12 @@ describe.each([
 });
 
 describe.each([getEcosystemStates, getFormEcosystemStates])('YuE2 visibility', (getStates) => {
-  it('requires its feature flag and preserves the other music generators', () => {
-    const hidden = getStates('txt2music', { ...ext, flags: {} });
-    expect(hidden.hiddenEcosystems).toContain('YuE2');
-    expect(hidden.compatibleEcosystems).toEqual(expect.arrayContaining(['Ace', 'MiniMaxMusic3']));
-    expect(getStates('txt2music', ext).compatibleEcosystems).toContain('YuE2');
+  it('is offered without a feature flag alongside the other music generators', () => {
+    const states = getStates('txt2music', { ...ext, flags: {} });
+    expect(states.hiddenEcosystems).not.toContain('YuE2');
+    expect(states.compatibleEcosystems).toEqual(
+      expect.arrayContaining(['Ace', 'MiniMaxMusic3', 'YuE2'])
+    );
   });
 });
 
