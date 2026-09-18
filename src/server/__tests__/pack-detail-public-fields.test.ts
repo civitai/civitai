@@ -364,12 +364,12 @@ describe('the rejection verdict is derived once, on the server', () => {
     ).not.toMatch(/(===?|!==?)\s*'reject'/);
   });
 
-  // The whitelist is shared with the storefront sanitizers. Two lists over one
-  // column is how a field ends up published on one path and not the other.
-  it('spreads the shared pack display whitelist', () => {
+  // The list is shared with every other shop surface. Two lists over one column
+  // is how a field ends up published on one path and not the other.
+  it('publishes through the shared item display list', () => {
     expect(
       serviceSource,
-      'The pack display fields must come from packDisplayMeta, not a second hand-written list.'
-    ).toContain('...packDisplayMeta(packMeta)');
+      'The pack display fields must come from shopItemDisplayMeta, not a second hand-written list.'
+    ).toContain('shopItemDisplayMeta(packMeta)');
   });
 });

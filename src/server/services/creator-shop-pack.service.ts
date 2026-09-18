@@ -23,7 +23,7 @@ import { assertQuotedFee, getCreatorShopFees } from '~/server/services/creator-s
 import { getCosmeticArtworkUrl } from '~/server/services/cosmetic-phash.service';
 import {
   REJECTED_IS_FINAL,
-  packDisplayMeta,
+  shopItemDisplayMeta,
   wasLastReviewARejection,
 } from '~/server/services/creator-shop.data';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';

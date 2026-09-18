@@ -475,6 +475,39 @@ describe('getCreatorShop resold section', () => {
     expect(resoldWhere().listed).toBe(true);
   });
 
+  // The share assertion above is `objectContaining`, which cannot see an extra
+  // key. This one is an exact key set on both sections, so widening the list
+  // the storefront publishes fails here rather than shipping.
+  it('publishes exactly the shared display keys, plus the buyer’s share on a resold item', async () => {
+    mocks.resaleFindMany.mockResolvedValue([{ shopItemId: SHOP_ITEM_ID, sellerShare: 50 }]);
+    const row = shopItemRow(SHOP_ITEM_ID);
+    const wideMeta = {
+      ...row.meta,
+      purchases: 3,
+      acceptsBlueBuzz: true,
+      creatorId: 77,
+      submissionFee: 250,
+      imageHash: 'a1b2c3',
+      history: [],
+    };
+    mocks.shopItemFindMany
+      .mockResolvedValueOnce([{ ...row, meta: wideMeta }])
+      .mockResolvedValueOnce([{ ...row, meta: wideMeta }]);
+
+    const { cosmetics, resold } = await getCreatorShop({
+      userId: RESELLER_ID,
+      viewerId: RESELLER_ID,
+    });
+
+    expect(Object.keys(cosmetics[0].meta).sort()).toEqual(['acceptsBlueBuzz', 'purchases']);
+    expect(Object.keys(resold[0].meta).sort()).toEqual([
+      'acceptsBlueBuzz',
+      'purchases',
+      'sellerShare',
+    ]);
+    expect(resold[0].meta.sellerShare).toBe(50);
+  });
+
   // Preview is a moderator design aid with no resale rows behind it, so it must
   // keep showing only what's genuinely on offer.
   it('preview still requires a live, resellable item', async () => {

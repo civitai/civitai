@@ -51,8 +51,9 @@ export const packDisplayMeta = (meta: CosmeticShopItemMeta | null) => ({
   ...(meta?.packMemberCount ? { packMemberCount: meta.packMemberCount } : {}),
 });
 
-// The item meta a shop card and its checkout read. One list for every shop
-// surface: a field published on one path and not another is how the two drift.
+// The item meta a shop card and its checkout read. Every surface that publishes
+// an item to a buyer goes through this one list — the owner/moderator editors
+// read the column itself, because they write it back.
 export const shopItemDisplayMeta = (meta: CosmeticShopItemMeta | null) => ({
   purchases: meta?.purchases ?? 0,
   acceptsBlueBuzz: meta?.acceptsBlueBuzz ?? false,
