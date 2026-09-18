@@ -25,7 +25,10 @@ import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { paired } from '~/utils/type-guards';
 import { searchClient } from '~/components/Search/search.client';
 import { quickSearchClient } from '~/components/Search/quick-search.client';
-import { useCarriedSearchText } from '~/components/Search/useCarriedSearchText';
+import {
+  shouldRefineSearchQuery,
+  useCarriedSearchText,
+} from '~/components/Search/useCarriedSearchText';
 import { BrowsingLevelFilter } from './CustomSearchComponents';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
@@ -140,7 +143,14 @@ export const QuickSearchDropdown = ({
   disableInitialSearch,
   ...props
 }: QuickSearchDropdownProps) => {
-  const [targetIndex, setTargetIndex] = useState<SearchIndexKey>(startingIndex ?? 'models');
+  // Falling back to the first SUPPORTED index rather than to `models`: the selector's options are
+  // `supportedIndexes`, so a caller that supplies `['users']` and no `startingIndex` used to
+  // display "Users" while the provider really targeted `models`. Now that the selector is
+  // controlled by this value, that disagreement would show as an empty selector instead of being
+  // invisible — so the two are made to agree at the source.
+  const [targetIndex, setTargetIndex] = useState<SearchIndexKey>(
+    startingIndex ?? props.supportedIndexes?.[0] ?? 'models'
+  );
   const handleTargetChange = (value: SearchIndexKey | null) => {
     setTargetIndex(value ?? 'models');
   };
@@ -272,7 +282,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   useEffect(() => {
     // Only set the query when the debounced search changes
     // and user didn't select from the list
-    if (debouncedSearch === query) return;
+    if (!shouldRefineSearchQuery(debouncedSearch, query)) return;
 
     setQuery(debouncedSearch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -293,7 +303,10 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
             section: classes.targetSelectorRightSection,
           }}
           maxDropdownHeight={280}
-          defaultValue={availableIndexes[0]}
+          // CONTROLLED. Uncontrolled, its displayed label is internal state inside the keyed
+          // provider, so a target switch would remount it back to the first supported index
+          // while the search really did move — a selector that lies about what it is searching.
+          value={indexNameProp}
           // Ensure we disable search targets if they are not enabled
           data={availableIndexes
             .filter(

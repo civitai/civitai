@@ -49,3 +49,23 @@ export function useCarriedSearchText(
 export function seedCarriedSearchText(carried: string | undefined, refinedQuery: string): string {
   return carried ? carried : refinedQuery;
 }
+
+/**
+ * Whether the mounted tree still owes its text to the search helper — the decision both dropdowns'
+ * "push the text into the helper" effects make.
+ *
+ * This is what turns a remount into a re-RUN of the search rather than a re-display of the text: a
+ * rebuilt helper reports an empty query, so carried text differs from it and gets pushed.
+ *
+ * @param blocked reasons not to refine at all — a hit was picked from the list, or search is
+ *   unavailable. Every input here must appear in the calling effect's dependency array, `blocked`
+ *   included: one of its sources outlives the remount, so an effect that cannot re-run when it
+ *   clears leaves a populated input over an empty helper query.
+ */
+export function shouldRefineSearchQuery(
+  typed: string,
+  refinedQuery: string,
+  blocked = false
+): boolean {
+  return !blocked && typed !== refinedQuery;
+}

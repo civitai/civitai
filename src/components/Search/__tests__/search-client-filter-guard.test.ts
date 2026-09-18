@@ -7,11 +7,19 @@ import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 /**
  * The defect this pins, on the SHIPPED clients rather than on the guard in isolation.
  *
- * `<InstantSearch>` in the dropdown surfaces carries no `key={indexName}` — it cannot, because
- * remounting would clear the query the user is typing — so a target switch can issue a search
- * with the previous target's `<Configure filters>`. Measured in production as a run of backend
- * 400s: a models filter set arriving at the images index (`user.id`, `availability`), and `poi`
- * at indexes that never intend it.
+ * An `<InstantSearch>` that is UPDATED rather than rebuilt on a target switch can issue a search
+ * with the previous target's `<Configure filters>`: react-instantsearch sets the new index and
+ * searches in its render body, before the children that own `filters` re-render. Measured in
+ * production as a run of backend 400s: a models filter set arriving at the images index
+ * (`user.id`, `availability`), and `poi` at indexes that never intend it.
+ *
+ * The dropdown surfaces now also carry `key={indexName}`, so they are rebuilt and there is no
+ * stale filter set left to send — see `dropdown-index-remount.test.ts`, and `useCarriedSearchText`
+ * for how the typed query survives that remount. (An earlier revision of this header said the
+ * dropdowns *could not* be keyed, because remounting would clear what the user is typing. That is
+ * what the carrier fixes.) This guard stays as the request-level backstop: it does not depend on
+ * any component keeping its key, and it covers any future path that assembles a filter set for one
+ * index and sends it to another.
  *
  * The assertion that matters is the NEGATIVE one — the doomed request must not be SENT. A test
  * that only checked the response shape would pass on the pre-change code, which already degrades
@@ -83,8 +91,11 @@ const request = (filters: string) => [
 ];
 
 /**
- * Every browser search client whose `<InstantSearch>` takes its `indexName` from component
- * state and has no `key={indexName}` — i.e. every surface the swap can leak on.
+ * Every browser search client built by the shared factory — i.e. every surface whose
+ * `<InstantSearch>` takes its `indexName` from component state, and which therefore assembles a
+ * filter set per target. Their roots are keyed as well, so in practice the stale set is never
+ * built; this asserts the backstop independently of that, because a client is guarded or not
+ * regardless of what any component does with it.
  */
 const GUARDED_CLIENTS: [label: string, load: () => Promise<{ client: unknown }>][] = [
   [
@@ -141,7 +152,13 @@ describe.each(GUARDED_CLIENTS)('%s', (_label, load) => {
  */
 const GUARDED_CLIENT_FACTORY = 'src/components/Search/search-client-factory.ts';
 
-/** Construction sites that do not need the guard, each with the reason asserted below. */
+/**
+ * Construction sites that do not need the guard, each with the reason asserted below.
+ *
+ * The discriminator is that these build their own client instead of going through the factory —
+ * NOT that they are the only keyed roots. Every dropdown root is keyed too; these two are listed
+ * because they never reach `createSearchClient`, and each still has to say why it cannot leak.
+ */
 const EXCLUDED_CLIENT_SITES: Record<string, { reason: string; mustMatch: RegExp }> = {
   // Remounts on every index change, so the helper can never carry the previous index's filters.
   'src/components/Search/SearchLayout.tsx': {
