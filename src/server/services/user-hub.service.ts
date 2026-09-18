@@ -6,6 +6,7 @@ import type {
   AddUserHubSourceInput,
   CreateHubFromTemplateInput,
   HubSourceExclusionInput,
+  HubSourceTargetInput,
   GetHubSourceSuggestionsInput,
   HubTemplate,
   ResolveHubSourceInput,
@@ -199,18 +200,102 @@ function toHubDetail<T extends HubRow>({ metadata, ...hub }: T, viewerId?: numbe
   };
 }
 
-export type UserHubDetail = Awaited<ReturnType<typeof getUserHubs>>[number];
+export type UserHubDetail = Awaited<ReturnType<typeof getUserHubById>>;
+export type UserHubSummary = Awaited<ReturnType<typeof getUserHubs>>[number];
+
+// Everything but the sources. A nav row needs how MANY of each kind a hub holds, not
+// which ones — and the full lists are the whole payload: 20 hubs of 50 sources is a
+// thousand rows with their aliases on every render of every hub page.
+const hubSummarySelect = {
+  id: true,
+  userId: true,
+  name: true,
+  index: true,
+  sort: true,
+  period: true,
+  mediaTypes: true,
+  availability: true,
+  forcedBrowsingLevel: true,
+  metadata: true,
+} as const;
+
+type HubSourceCountRow = {
+  type: UserHubSourceType;
+  enabled: boolean;
+  exclude: boolean;
+  count: number;
+};
+
+async function hubSourceCounts(hubIds: number[]) {
+  const counts = new Map<number, HubSourceCountRow[]>();
+  if (!hubIds.length) return counts;
+
+  const rows = await dbRead.userHubSource.groupBy({
+    by: ['hubId', 'type', 'enabled', 'exclude'],
+    where: { hubId: { in: hubIds } },
+    _count: { _all: true },
+  });
+
+  for (const row of rows) {
+    const held = counts.get(row.hubId) ?? [];
+    held.push({
+      type: row.type,
+      enabled: row.enabled,
+      exclude: row.exclude,
+      count: row._count._all,
+    });
+    counts.set(row.hubId, held);
+  }
+  return counts;
+}
+
+/**
+ * The list row. Carries the same visibility rule as `toHubDetail` — a non-owner is
+ * told about the sources that fill the feed and nothing else — expressed over counts
+ * rather than rows, since that is all this shape ships.
+ */
+function toHubSummary<T extends { id: number; userId: number; metadata: Prisma.JsonValue }>(
+  { metadata, ...hub }: T,
+  counts: HubSourceCountRow[] = [],
+  viewerId?: number
+) {
+  const stored = readMetadata(metadata);
+  const isOwner = !!viewerId && hub.userId === viewerId;
+  const sum = (rows: HubSourceCountRow[]) => rows.reduce((total, row) => total + row.count, 0);
+
+  const filling = counts.filter((row) => row.enabled && !row.exclude);
+  const sourceCounts = filling.reduce<Partial<Record<UserHubSourceType, number>>>((acc, row) => {
+    acc[row.type] = (acc[row.type] ?? 0) + row.count;
+    return acc;
+  }, {});
+
+  return {
+    ...hub,
+    key: encodeHubId(hub.id),
+    isOwner,
+    sourceCounts,
+    // What the source cap is measured against, so it counts a switched-off source the
+    // way `addUserHubSource` does. A non-owner is shown only what fills the feed,
+    // matching the list they would have been given before.
+    sourceCount: isOwner ? sum(counts.filter((row) => !row.exclude)) : sum(filling),
+    excludedCount: sum(counts.filter((row) => row.enabled && row.exclude)),
+    description: readDescription(metadata),
+    filters: hubFeedFiltersSchema.catch({}).parse(stored.filters ?? {}),
+  };
+}
 
 export async function getUserHubs({ userId }: { userId: number }) {
   const hubs = await dbRead.userHub.findMany({
     where: { userId },
-    select: hubListSelect,
+    select: hubSummarySelect,
     // Alphabetical, not by `index` — subtask 868kwp5m9. `index` is still written by
     // `setUserHubOrder` and still what a hub is created with; nothing reads it for
     // display any more.
     orderBy: { name: 'asc' },
   });
-  return hubs.map((hub) => toHubDetail(hub, userId));
+
+  const counts = await hubSourceCounts(hubs.map((hub) => hub.id));
+  return hubs.map((hub) => toHubSummary(hub, counts.get(hub.id), userId));
 }
 
 // Scoped in the `where` rather than checked after the fetch, so a hub this viewer
@@ -595,14 +680,36 @@ export async function deleteUserHub({
 export async function getFollowedHubs({ userId }: { userId: number }) {
   const follows = await dbRead.userHubFollow.findMany({
     where: { userId, hub: hubViewerWhere({ userId }) },
-    // `hubListSelect`, not `hubSelect`: the rail renders a name and a source count,
-    // and joining the owner costs two extra round trips per render for a field
-    // nothing reads.
-    select: { hub: { select: hubListSelect } },
+    // The summary shape, not the detail one: the rail renders a name and what the hub
+    // holds, and joining the owner — or the sources themselves — costs a payload
+    // nothing on this surface reads.
+    select: { hub: { select: hubSummarySelect } },
     orderBy: { hub: { name: 'asc' } },
     take: hubLimits.followedHubs,
   });
-  return follows.map((follow) => toHubDetail(follow.hub, userId));
+
+  const counts = await hubSourceCounts(follows.map((follow) => follow.hub.id));
+  return follows.map((follow) => toHubSummary(follow.hub, counts.get(follow.hub.id), userId));
+}
+
+/**
+ * Where one target already sits across the caller's own hubs. The "add to hub" modal
+ * used to derive this from every hub's full source list; it needs three facts per hub
+ * and this ships exactly those.
+ *
+ * `exclude` is the one that cannot be dropped: a hub that keeps this target OUT must
+ * render locked rather than unticked, or ticking it deletes the owner's keep-out from
+ * a modal that never showed the exclusion existed.
+ */
+export async function getHubSourceState({
+  type,
+  targetId,
+  userId,
+}: HubSourceTargetInput & { userId: number }) {
+  return dbRead.userHubSource.findMany({
+    where: { type, targetId, hub: { userId } },
+    select: { hubId: true, enabled: true, exclude: true },
+  });
 }
 
 const hubTemplateNames: Record<HubTemplate, string> = {

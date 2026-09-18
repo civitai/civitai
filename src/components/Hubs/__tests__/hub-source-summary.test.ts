@@ -1,35 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import { describeHubSources } from '~/components/Hubs/hub.utils';
 
-const source = (type: string, over: { enabled?: boolean; exclude?: boolean } = {}) => ({
-  type,
-  enabled: over.enabled ?? true,
-  exclude: over.exclude ?? false,
-});
+// The counts arrive already narrowed by the server — `toHubSummary` is what drops the
+// switched-off sources and the keep-out list, and `user-hub.service.test.ts` pins that.
+// What is left here is the sentence built from them.
 
 describe('describeHubSources', () => {
-  it('counts each kind, largest first', () => {
-    expect(
-      describeHubSources([source('Model'), source('User'), source('User'), source('Tag')])
-    ).toBe('2 creators, 1 model, 1 tag');
+  it('names each kind, largest first', () => {
+    expect(describeHubSources({ Model: 1, User: 2, Tag: 1 })).toBe('2 creators, 1 model, 1 tag');
   });
 
-  it('leaves out the exclusions', () => {
-    // The keep-out list is withheld from everyone but the owner, and a card sits on a
-    // page a non-owner can open. A count of it publishes by subtraction the one number
-    // the service deliberately does not return.
-    expect(describeHubSources([source('User'), source('User', { exclude: true })])).toBe(
-      '1 creator'
-    );
+  it('says creator rather than user — the noun the site uses', () => {
+    expect(describeHubSources({ User: 1 })).toBe('1 creator');
   });
 
-  it('leaves out sources that are switched off, which fill nothing', () => {
-    expect(describeHubSources([source('Model'), source('Model', { enabled: false })])).toBe(
-      '1 model'
-    );
+  it('skips a kind the hub holds none of', () => {
+    // A zero from the server means "no sources of this kind", not "a kind worth
+    // mentioning" — "0 tags" in a nav row reads as a broken count.
+    expect(describeHubSources({ Model: 3, Tag: 0 })).toBe('3 models');
   });
 
   it('says so when nothing fills the hub', () => {
-    expect(describeHubSources([source('User', { exclude: true })])).toBe('Nothing in it yet');
+    expect(describeHubSources({})).toBe('Nothing in it yet');
   });
 });

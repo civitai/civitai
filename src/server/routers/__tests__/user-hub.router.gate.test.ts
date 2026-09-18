@@ -33,6 +33,7 @@ vi.mock('~/server/services/user-hub.service', () => ({
   addUserHubSource: vi.fn().mockResolvedValue({ hubId: 1, added: true }),
   removeUserHubSource: vi.fn().mockResolvedValue({ hubId: 1, removed: true }),
   getFollowedHubs: vi.fn().mockResolvedValue([]),
+  getHubSourceState: vi.fn().mockResolvedValue([]),
   followUserHub: vi.fn().mockResolvedValue({ hubId: 1, followed: true }),
   unfollowUserHub: vi.fn().mockResolvedValue({ hubId: 1, followed: false }),
 }));
@@ -57,6 +58,7 @@ const inputs: Record<string, unknown> = {
   addSource: { hubId: 1, type: 'User', targetId: 2 },
   removeSource: { hubId: 1, type: 'User', targetId: 2 },
   getFollowed: undefined,
+  sourceState: { type: 'User', targetId: 2 },
   follow: { key: 'Xk3p9aBc' },
   unfollow: { key: 'Xk3p9aBc' },
 };
@@ -185,6 +187,7 @@ const requiredScopes: Record<string, number> = {
   delete: TokenScope.UserWrite,
   setOrder: TokenScope.UserWrite,
   getFollowed: TokenScope.UserRead,
+  sourceState: TokenScope.UserRead,
   follow: TokenScope.UserWrite,
   unfollow: TokenScope.UserWrite,
 };

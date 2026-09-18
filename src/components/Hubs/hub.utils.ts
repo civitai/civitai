@@ -20,6 +20,10 @@ export function useInvalidateHub() {
       // filter costs a refetch of those and removes a key/id mismatch that would
       // silently invalidate nothing.
       utils.userHub.getById.invalidate(),
+      // Unfiltered for the same reason: a source write changes one target's state, and
+      // the caller holds the hub rather than the target. Without this the "add to hub"
+      // boxes keep the state they were rendered with.
+      utils.userHub.sourceState.invalidate(),
       utils.image.getInfinite.invalidate({ hubId }),
     ]);
   };
@@ -74,21 +78,14 @@ const sourceNouns: Record<string, [string, string]> = {
 };
 
 /**
- * What a hub holds, for a card that shows no sources: "12 creators, 4 models". Counts
- * only what fills the feed — a switched-off source contributes nothing, and the
- * exclusions are the owner's keep-out list, which is never published as a number
- * beside the things they collect.
+ * What a hub holds, for a card that shows no sources: "12 creators, 4 models". The
+ * counts come from the server already narrowed to what fills the feed — a switched-off
+ * source contributes nothing, and the keep-out list is never published as a number
+ * beside the things a hub collects.
  */
-export function describeHubSources(
-  sources: { type: string; enabled: boolean; exclude: boolean }[]
-) {
-  const counts = new Map<string, number>();
-  for (const source of sources) {
-    if (!source.enabled || source.exclude) continue;
-    counts.set(source.type, (counts.get(source.type) ?? 0) + 1);
-  }
-
-  const parts = [...counts.entries()]
+export function describeHubSources(counts: Partial<Record<string, number>>) {
+  const parts = Object.entries(counts)
+    .filter((entry): entry is [string, number] => !!entry[1])
     .sort(([, a], [, b]) => b - a)
     .map(([type, count]) => {
       const [singular, plural] = sourceNouns[type] ?? ['source', 'sources'];

@@ -3,6 +3,7 @@ import {
   addUserHubSourceSchema,
   createHubFromTemplateSchema,
   getHubSourceSuggestionsSchema,
+  hubSourceTargetSchema,
   getUserHubByKeySchema,
   resolveHubSourceSchema,
   searchHubSourcesSchema,
@@ -19,6 +20,7 @@ import {
   getFollowedHubs,
   getUserHubByKey,
   getHubSourceSuggestions,
+  getHubSourceState,
   getUserHubs,
   removeUserHubSource,
   resolveHubSourceFromUrl,
@@ -34,6 +36,10 @@ export const userHubRouter = router({
   getAll: userHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .query(({ ctx }) => getUserHubs({ userId: ctx.user.id })),
+  sourceState: userHubProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .input(hubSourceTargetSchema)
+    .query(({ input, ctx }) => getHubSourceState({ ...input, userId: ctx.user.id })),
   getFollowed: userHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .query(({ ctx }) => getFollowedHubs({ userId: ctx.user.id })),

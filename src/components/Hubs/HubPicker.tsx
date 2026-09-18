@@ -7,7 +7,7 @@ import { FilterButton } from '~/components/Buttons/FilterButton';
 import { MobileMenuDrawer } from '~/components/Drawer/MobileMenuDrawer';
 import { useHubNav } from '~/components/Hubs/HubsSidebar';
 import { describeHubSources, hubUrl } from '~/components/Hubs/hub.utils';
-import type { UserHubDetail } from '~/server/services/user-hub.service';
+import type { UserHubSummary } from '~/server/services/user-hub.service';
 
 function HubList({
   label,
@@ -16,7 +16,7 @@ function HubList({
   onNavigate,
 }: {
   label: string;
-  hubs: UserHubDetail[];
+  hubs: UserHubSummary[];
   activeHubKey?: string;
   onNavigate: VoidFunction;
 }) {
@@ -43,7 +43,7 @@ function HubList({
             {hub.name}
           </Text>
           <Text size="xs" c="dimmed" lineClamp={1}>
-            {describeHubSources(hub.sources)}
+            {describeHubSources(hub.sourceCounts)}
           </Text>
         </Link>
       ))}

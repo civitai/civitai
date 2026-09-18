@@ -152,7 +152,7 @@ export function HubsSidebarContent({
                       {hub.name}
                     </Text>
                     <Text size="xs" c="dimmed">
-                      {describeHubSources(hub.sources)}
+                      {describeHubSources(hub.sourceCounts)}
                     </Text>
                   </Link>
                 ))}

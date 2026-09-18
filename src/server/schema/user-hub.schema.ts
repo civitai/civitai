@@ -284,6 +284,11 @@ export const userHubSourceRefSchema = z.object({
   targetId: z.number().int().positive(),
 });
 
+// One target, no hub: "where does this already sit across my hubs".
+export const hubSourceTargetSchema = userHubSourceRefSchema.omit({ hubId: true });
+
+export type HubSourceTargetInput = z.infer<typeof hubSourceTargetSchema>;
+
 export const addUserHubSourceSchema = userHubSourceRefSchema.extend({
   alias: userHubSourceSchema.shape.alias,
   exclude: z.boolean().default(false),

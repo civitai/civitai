@@ -16,7 +16,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { HubTemplate } from '~/server/schema/user-hub.schema';
 import { hubLimits } from '~/server/schema/user-hub.schema';
-import type { UserHubDetail } from '~/server/services/user-hub.service';
+import type { UserHubSummary } from '~/server/services/user-hub.service';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -77,7 +77,7 @@ function TemplateCard({
   );
 }
 
-function HubCard({ hub }: { hub: UserHubDetail }) {
+function HubCard({ hub }: { hub: UserHubSummary }) {
   const shared = hub.availability === Availability.Public;
 
   return (
@@ -104,7 +104,7 @@ function HubCard({ hub }: { hub: UserHubDetail }) {
         </Badge>
       </div>
       <Text size="sm" c="dimmed" lineClamp={1}>
-        {describeHubSources(hub.sources)}
+        {describeHubSources(hub.sourceCounts)}
       </Text>
       {hub.description && (
         <Text size="sm" c="dimmed" lineClamp={2} className="leading-snug">

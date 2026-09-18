@@ -1822,6 +1822,71 @@ describe('getUserHubs', () => {
 
     expect(hub.isOwner).toBe(true);
   });
+
+  it('never asks for the sources themselves', async () => {
+    // The whole point of the summary: 20 hubs of 50 sources is a thousand rows with
+    // their aliases, shipped on every render of every hub page. A `select` that grows
+    // `sources` back reads as a working list everywhere else.
+    dbMock.dbRead.userHub.findMany.mockResolvedValue([]);
+
+    await getUserHubs({ userId: 5 });
+
+    expect(dbMock.dbRead.userHub.findMany.mock.calls[0][0].select.sources).toBeUndefined();
+  });
+
+  it('counts only what fills the feed, per kind', async () => {
+    dbMock.dbRead.userHub.findMany.mockResolvedValue([{ id: 1, userId: 5, metadata: {} }]);
+    dbMock.dbRead.userHubSource.groupBy.mockResolvedValue([
+      {
+        hubId: 1,
+        type: UserHubSourceType.User,
+        enabled: true,
+        exclude: false,
+        _count: { _all: 2 },
+      },
+      { hubId: 1, type: UserHubSourceType.Tag, enabled: true, exclude: false, _count: { _all: 1 } },
+      // Switched off: it contributes nothing to the feed, so it is not in the sentence
+      // the card renders — but it still occupies a slot against the source cap.
+      {
+        hubId: 1,
+        type: UserHubSourceType.Model,
+        enabled: false,
+        exclude: false,
+        _count: { _all: 3 },
+      },
+      // The keep-out list is counted on its own, never mixed into what the hub holds.
+      { hubId: 1, type: UserHubSourceType.User, enabled: true, exclude: true, _count: { _all: 4 } },
+    ]);
+
+    const [hub] = await getUserHubs({ userId: 5 });
+
+    expect(hub.sourceCounts).toStrictEqual({ User: 2, Tag: 1 });
+    expect(hub.sourceCount).toBe(6);
+    expect(hub.excludedCount).toBe(4);
+  });
+
+  it('asks for the counts of the hubs it actually returned', async () => {
+    // An unscoped groupBy would count every hub on the site and then be filtered in
+    // memory — a table scan that reads as a correct number.
+    dbMock.dbRead.userHub.findMany.mockResolvedValue([
+      { id: 1, userId: 5, metadata: {} },
+      { id: 2, userId: 5, metadata: {} },
+    ]);
+
+    await getUserHubs({ userId: 5 });
+
+    expect(dbMock.dbRead.userHubSource.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { hubId: { in: [1, 2] } } })
+    );
+  });
+
+  it('asks for no counts at all when the caller has no hubs', async () => {
+    dbMock.dbRead.userHub.findMany.mockResolvedValue([]);
+
+    await getUserHubs({ userId: 5 });
+
+    expect(dbMock.dbRead.userHubSource.groupBy).not.toHaveBeenCalled();
+  });
 });
 
 describe('getUserHubById', () => {
