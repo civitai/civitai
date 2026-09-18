@@ -389,6 +389,23 @@ describe('createModelFileScanRequest', () => {
       expect(mockSubmitWorkflow).toHaveBeenCalled();
     });
 
+    it('gives the submit a deadline of its own', async () => {
+      // No `wait` is passed, so this is an enqueue: without a signal it inherits undici's 300s
+      // default while the upload response and the import job's lock both wait on it.
+      mockResolveDownloadUrl.mockResolvedValueOnce({ url: 'https://cdn/x' });
+      mockSubmitWorkflow.mockResolvedValue({
+        data: { id: 'wf-1' },
+        error: undefined,
+        response: { status: 200 },
+      });
+
+      await createModelFileScanRequest(baseInput);
+
+      const [submitted] = mockSubmitWorkflow.mock.calls[0];
+      expect(submitted.signal).toBeInstanceOf(AbortSignal);
+      expect(submitted.query?.wait).toBeUndefined();
+    });
+
     it('retries pre-flight once after a 60s wait when the first attempt fails (sync-lag tolerance)', async () => {
       mockResolveDownloadUrl
         .mockRejectedValueOnce(new Error('not in resolver yet'))
