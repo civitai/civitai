@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   attachEstimatedPreparation,
+  isEtaSettled,
   normalizePreparation,
+  settledBoostedEtaSeconds,
+  settledEtaSeconds,
 } from '~/shared/orchestrator/download-preparation';
 
 const checkpoint = 'urn:air:flux1:checkpoint:civitai:978314@1413133';
@@ -149,5 +152,69 @@ describe('attachEstimatedPreparation', () => {
       rateLimitBytesPerSecond: null,
     });
     expect(steps[0].preparation?.resources[0]).toMatchObject({ lane: 'high' });
+  });
+});
+
+describe('warm-up suppression', () => {
+  it('drops the ETA of a transfer that has barely started', () => {
+    const result = normalizePreparation([
+      { resource: checkpoint, sizeBytes: 1, lane: 'low', progress: 0.001, etaSeconds: 7_200 },
+    ]);
+
+    expect(result).toMatchObject({ progress: 0.001, etaSeconds: null });
+  });
+
+  it('believes it again once the transfer is under way', () => {
+    const result = normalizePreparation([
+      { resource: checkpoint, sizeBytes: 1, lane: 'low', progress: 0.2, etaSeconds: 600 },
+    ]);
+
+    expect(result?.etaSeconds).toBe(600);
+  });
+
+  it('leaves a queued resource’s ETA alone while another warms up', () => {
+    const result = normalizePreparation([
+      { resource: checkpoint, sizeBytes: 1, lane: 'low', progress: 0.001, etaSeconds: 7_200 },
+      { resource: vae, sizeBytes: 1, lane: 'low', queuePosition: 2, etaSeconds: 600 },
+    ]);
+
+    expect(result?.etaSeconds).toBe(600);
+  });
+});
+
+describe('isEtaSettled', () => {
+  // A model waiting behind other downloads was given a projection nothing has distorted; only a
+  // transfer in progress can be too young to believe.
+  it('believes a resource that has not started downloading', () => {
+    expect(isEtaSettled({ sizeBytes: 20_000_000_000 })).toBe(true);
+    expect(isEtaSettled({ progress: null, sizeBytes: 20_000_000_000 })).toBe(true);
+  });
+
+  it('does not believe a transfer under both thresholds', () => {
+    expect(isEtaSettled({ progress: 0.001, sizeBytes: 1_000_000_000 })).toBe(false);
+  });
+
+  it('believes one past the progress threshold', () => {
+    expect(isEtaSettled({ progress: 0.05, sizeBytes: 1_000_000_000 })).toBe(true);
+  });
+
+  // 0.5% of 20GB is 100MB — a large enough sample to trust, and the fraction alone would stay quiet
+  // for minutes on a rate-capped lane.
+  it('believes one that has moved enough bytes to sample, whatever the fraction', () => {
+    expect(isEtaSettled({ progress: 0.005, sizeBytes: 20_000_000_000 })).toBe(true);
+  });
+});
+
+describe('settledBoostedEtaSeconds', () => {
+  // Offering a paid boost while refusing to show the wait it shortens is a charge with no benefit on
+  // screen, so both ETAs are withheld on the same terms.
+  it('withholds the boosted ETA on the same terms as the plain one', () => {
+    const warming = { progress: 0.001, sizeBytes: 1_000, etaSeconds: 7_200, boostedEtaSeconds: 60 };
+    expect(settledBoostedEtaSeconds(warming)).toBeNull();
+    expect(settledEtaSeconds(warming)).toBeNull();
+  });
+
+  it('keeps it for a model that has not started downloading', () => {
+    expect(settledBoostedEtaSeconds({ etaSeconds: 600, boostedEtaSeconds: 60 })).toBe(60);
   });
 });

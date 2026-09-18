@@ -1,5 +1,12 @@
 import type { ResourceLoadAvailability } from '~/server/schema/resource-load.schema';
-import { formatDownloadEtaShort } from '~/components/ResourceLoad/download-eta';
+import {
+  boostBuysVisibleTime,
+  formatDownloadEtaShort,
+} from '~/components/ResourceLoad/download-eta';
+import {
+  settledBoostedEtaSeconds,
+  settledEtaSeconds,
+} from '~/shared/orchestrator/download-preparation';
 import { parseAIRSafe } from '~/shared/utils/air';
 
 /** One model's download, as the queue card shows it. */
@@ -23,6 +30,7 @@ export type DownloadSummary = {
   /** Downloads ahead of the slowest model; null before it is queued. */
   queuePosition: number | null;
   etaSeconds: number | null;
+  /** From the workflow's preparation at queue time; `etaSeconds` is live, so this is the staler of the two. */
   boostedEtaSeconds: number | null;
   rateLimitBytesPerSecond?: number | null;
   totalBytes: number;
@@ -101,39 +109,37 @@ const maxKnown = (values: (number | null | undefined)[]) => {
  */
 export function summarizeDownloads(rows: DownloadRow[]): DownloadSummary | undefined {
   if (!rows.length) return undefined;
-  const etaSeconds = maxKnown(rows.map((r) => r.etaSeconds));
+  const etaSeconds = maxKnown(rows.map(settledEtaSeconds));
   const gating =
-    rows.find((r) => etaSeconds != null && r.etaSeconds === etaSeconds) ??
+    rows.find((r) => etaSeconds != null && settledEtaSeconds(r) === etaSeconds) ??
+    rows.find((r) => r.progress != null) ??
     rows.find((r) => r.lane) ??
     rows[0];
-  const transferring = gating.progress != null;
+  // Any transfer under way means the generation is not queued, whichever row ended up gating — a
+  // warming resource loses gating to a settled one, and "#3 in queue" above "Downloading 1%" is a
+  // card contradicting itself.
+  const transferring = rows.some((r) => r.progress != null);
   return {
     lane: gating.lane,
     transferring,
     queuePosition: transferring ? 0 : gating.queuePosition ?? null,
     etaSeconds,
-    boostedEtaSeconds: maxKnown(rows.map((r) => r.boostedEtaSeconds)),
+    boostedEtaSeconds: maxKnown(rows.map(settledBoostedEtaSeconds)),
     rateLimitBytesPerSecond: gating.rateLimitBytesPerSecond,
     totalBytes: rows.reduce((sum, r) => sum + (r.sizeBytes ?? 0), 0),
     count: rows.length,
   };
 }
 
-/**
- * Whether a boost is worth offering. The two ETAs are measured at different moments — the boosted one
- * when the workflow queued, the plain one live — so a download that has since sped up can quote a
- * "boost" that is slower than the current wait.
- */
 export function isWorthBoosting(
   summary: DownloadSummary | undefined
 ): summary is DownloadSummary & { boostedEtaSeconds: number } {
-  return (
-    !!summary?.boostedEtaSeconds &&
-    (summary.etaSeconds == null || summary.boostedEtaSeconds < summary.etaSeconds)
-  );
+  return !!summary && boostBuysVisibleTime(summary.etaSeconds, summary.boostedEtaSeconds);
 }
 
-export function describeDownload({ progress, queuePosition, etaSeconds }: DownloadRow) {
+export function describeDownload(row: DownloadRow) {
+  const { progress, queuePosition } = row;
+  const etaSeconds = settledEtaSeconds(row);
   const eta = etaSeconds != null ? ` · ~${formatDownloadEtaShort(etaSeconds)}` : '';
   if (progress != null) return `Downloading ${Math.round(progress * 100)}%${eta}`;
   if (queuePosition != null) return `#${queuePosition + 1} in queue${eta}`;

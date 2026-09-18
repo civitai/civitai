@@ -66,19 +66,25 @@ transfer progress, ETA and when a model lands; never for lane (`mergeDownloadRow
 
 While a model is not loaded, the pending image tile gives way to a panel: the lane, position (from 1),
 lane speed and ETA of the slowest download, then each unloaded model with its position and ETA,
-progress, or "waiting to start". Its resource chips spin with their size. When a boosted ETA is
-reported, the panel adds the "Skip the free lane" pitch, a "Normally → Boosted" comparison and a
-**Boost this download** Buzz button with its price, fetched when the panel renders (`getBoostCost`, 30s
-stale), so **each boostable card costs one whatIf PUT**. For a boost bought on this page, the panel keeps
-the ETA it would have been. The rules are pure functions in `download-status.ts`. There is no site-wide
+progress, or "waiting to start". Its resource chips spin with their size. **A transfer that has just
+started shows progress with no time at all** — until 2% or 64 MB has moved, whichever comes first
+(`ETA_WARMUP_PROGRESS` / `ETA_WARMUP_BYTES`), a stream still ramping up projects from a throughput it
+will not hold, which is how a ten-minute download comes to claim two hours. A model merely *queued*
+behind other downloads is unaffected: nothing has distorted the projection it was given, so it keeps
+its ETA and its offer. When a boost would read as faster, the panel adds the "Skip the free lane"
+pitch, a "Normally → Boosted" comparison and a **Boost this download** Buzz button with its price,
+fetched when the panel renders (`getBoostCost`, 30s stale), so **each boostable card costs one whatIf
+PUT**. For a boost bought on this page, the panel keeps the ETA it would have been. The rules are pure functions in `download-status.ts`. There is no site-wide
 download queue page.
 
 **Generator — both forms** (`generation_v2` data-graph and form-graph): when the whatIf reports
-downloads, `DownloadReadyAlert` shows the resource count and size, the "Normally → Boosted"
-comparison, and a **Boost download** switch with its price. While downloads are pending the whatIf is
-also run at `downloadPriority: "high"`, so the price shows before the switch is on and flipping it
-swaps to the already-priced response. The switch is pinned to the form revision, so it never carries
-over to a selection the user has not re-priced, and it clears after a submit (`usePreBoostWhatIf`).
+downloads, `DownloadReadyAlert` shows the resource count and size, and — when the boost would read as
+a different number (`isBoostable`) — the "Normally → Boosted" comparison and a **Boost download**
+switch with its price. That same test gates the second whatIf at `downloadPriority: "high"`, so a
+pending download with nothing visible to sell costs no extra whatIf; where it is offered, the price
+shows before the switch is on and flipping it swaps to the already-priced response. The switch is
+pinned to the form revision, so it never carries over to a selection the user has not re-priced, and
+it clears after a submit (`usePreBoostWhatIf`).
 
 Both render it in the footer, beside the other pre-submit warnings.
 
@@ -108,10 +114,21 @@ plus the raw-SQL queries), which is what lets a normal user pick a checkpoint th
   cannot pay twice.
 - A pre-boosted submit sends `downloadPriority` only when a whatIf shows something waiting to
   download.
-- ETAs shown to users are approximate (`formatDownloadEta`); the moderator page keeps exact figures.
-- A boost is only offered when it is actually faster (`isWorthBoosting`): the plain ETA is live and the
-  boosted one was measured when the workflow queued, so a download that has since sped up can otherwise
-  quote a "boost" slower than the current wait.
+- ETAs shown to users are approximate (`formatDownloadEta`) and never sooner than `ETA_FLOOR_SECONDS`
+  — 2 minutes, in `download-eta.ts`. A wait that runs over reads as a broken promise where one that
+  lands early does not; the cost is that the fastest boosts show no visible gain. The floor is
+  display-only — the raw seconds in `preparation` are untouched — and the moderator page keeps exact
+  figures. One rounding ladder (`etaBucket`) serves both formatters and every comparison, so
+  `downloadSpeedup` can never print a multiple the two numbers beside it do not show.
+- A boost is only offered when it buys time the user can **see**, on two rules that differ because
+  their inputs do. The queue card (`isWorthBoosting` → `boostBuysVisibleTime`) also requires the boost
+  to be faster: its plain ETA is live and its boosted one was measured when the workflow queued, so a
+  download that has since sped up can otherwise quote a "boost" slower than the current wait. The
+  pre-submit offer (`isBoostable`) takes both figures from one whatIf, so it refuses only what the
+  rendered buckets have swallowed — charging for two identical printed numbers.
+- A transfer's ETA is withheld until it has moved enough to be believed, and its boosted ETA with it
+  (`isEtaSettled`, `download-preparation.ts`). Offering a paid boost while refusing to show the wait
+  it shortens would be a charge with no benefit on screen.
 - The mobile confirm's fee is added to the balance check before it runs, since the dialog is answered
   after the generation's own total was read.
 
@@ -331,7 +348,6 @@ The rules are in [Coverage, in one paragraph](#coverage-in-one-paragraph) and ev
 Three that are not stated there: loading is for checkpoints (size is why the loader exists); only base
 models in `GenerationBaseModel` are loadable; and coverage means *allowed to generate*, while residency
 is the orchestrator's axis.
-- Coverage means *allowed to generate*; residency is the orchestrator's axis.
 
 ### Surfaces and delivery
 

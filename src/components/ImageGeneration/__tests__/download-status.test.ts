@@ -2,11 +2,13 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { Air } from '@civitai/client';
 import {
   describeDownload,
+  isWorthBoosting,
   mergeDownloadRow,
   summarizeDownloads,
   toDownloadRow,
   versionIdFromAir,
 } from '~/components/ImageGeneration/download-status';
+import { ETA_FLOOR_SECONDS } from '~/components/ResourceLoad/download-eta';
 
 describe('toDownloadRow', () => {
   it.each([
@@ -123,6 +125,8 @@ describe('describeDownload', () => {
     [{ queuePosition: 0, etaSeconds: 600 }, '#1 in queue · ~10 min'],
     [{ queuePosition: 2 }, '#3 in queue'],
     [{}, 'Waiting to start'],
+    // Its own ETA is not believed yet, but the progress is real and worth showing.
+    [{ progress: 0.005, etaSeconds: 7_200 }, 'Downloading 1%'],
   ])('%o reads as "%s"', (row, expected) => {
     expect(describeDownload(row)).toBe(expected);
   });
@@ -226,5 +230,66 @@ describe('mergeDownloadRow', () => {
     expect(row?.etaSeconds).toBeUndefined();
     // The one that costs money: this is what makes the Boost offer appear and fills its comparison.
     expect(row?.boostedEtaSeconds).toBeUndefined();
+  });
+});
+
+describe('summarizeDownloads — warm-up', () => {
+  it('reports no ETA while the only transfer is still ramping up', () => {
+    expect(summarizeDownloads([{ lane: 'low', progress: 0.001, etaSeconds: 7_200 }])).toMatchObject(
+      {
+        transferring: true,
+        etaSeconds: null,
+      }
+    );
+  });
+
+  it('is told by a settled resource rather than a warming one', () => {
+    expect(
+      summarizeDownloads([
+        { lane: 'low', progress: 0.001, sizeBytes: 1_000, etaSeconds: 7_200 },
+        { lane: 'low', queuePosition: 2, etaSeconds: 600 },
+      ])
+      // Gating moved to the queued row, but a transfer IS under way — reporting a queue position
+      // here put '#3 in queue' three lines above 'Downloading 1%' on the same card.
+    ).toMatchObject({ etaSeconds: 600, transferring: true, queuePosition: 0 });
+  });
+
+  it('withholds the boosted ETA too while the only transfer is warming', () => {
+    expect(
+      summarizeDownloads([
+        {
+          lane: 'low',
+          progress: 0.001,
+          sizeBytes: 1_000,
+          etaSeconds: 7_200,
+          boostedEtaSeconds: 60,
+        },
+      ])
+    ).toMatchObject({ etaSeconds: null, boostedEtaSeconds: null });
+  });
+});
+
+describe('isWorthBoosting', () => {
+  it('offers a boost that reads as faster', () => {
+    expect(
+      isWorthBoosting(summarizeDownloads([{ etaSeconds: 3_900, boostedEtaSeconds: 300 }]))
+    ).toBe(true);
+  });
+
+  // Both print as the floor label, so the offer would be a charge for two identical numbers.
+  it('withholds one the floor has collapsed', () => {
+    expect(
+      isWorthBoosting(
+        summarizeDownloads([{ etaSeconds: ETA_FLOOR_SECONDS - 1, boostedEtaSeconds: 1 }])
+      )
+    ).toBe(false);
+  });
+
+  it('withholds one with no summary at all', () => {
+    expect(isWorthBoosting(summarizeDownloads([]))).toBe(false);
+  });
+
+  it('withholds one with no boosted ETA', () => {
+    expect(isWorthBoosting(summarizeDownloads([{ etaSeconds: 600 }]))).toBe(false);
   });
 });

@@ -7,7 +7,10 @@ vi.mock('~/components/generation_v2/DownloadBoostConfirm', async (importOriginal
   confirmDownloadBoost: (...args: unknown[]) => confirmDownloadBoost(...args),
 }));
 
-import { resolveBoostSubmitFields } from '~/components/generation_v2/hooks/usePreBoost';
+import {
+  isBoostable,
+  resolveBoostSubmitFields,
+} from '~/components/generation_v2/hooks/usePreBoost';
 
 const download = {
   preparation: {
@@ -69,5 +72,46 @@ describe('resolveBoostSubmitFields', () => {
     await expect(
       resolveBoostSubmitFields({ preBoost: false, download, askFirst: true })
     ).resolves.toBeNull();
+  });
+});
+
+describe('isBoostable', () => {
+  const preparation = {
+    resource: 'urn:air:flux1:checkpoint:civitai:1@2',
+    queuePosition: 2,
+    lane: 'low',
+    etaSeconds: 3_900,
+    boostedEtaSeconds: 300,
+    resources: [],
+  };
+
+  it('offers a boost that would print as faster', () => {
+    expect(isBoostable(preparation)).toBe(true);
+  });
+
+  it('withholds it with no preparation at all', () => {
+    expect(isBoostable(undefined)).toBe(false);
+  });
+
+  // Already express — there is no higher lane to sell.
+  it('withholds it on a workflow already in the high lane', () => {
+    expect(isBoostable({ ...preparation, lane: 'high' })).toBe(false);
+  });
+
+  it('withholds it with no boosted ETA', () => {
+    expect(isBoostable({ ...preparation, boostedEtaSeconds: null })).toBe(false);
+  });
+
+  // Both render "25 min", so the offer would be a charge for two identical printed numbers.
+  it('withholds it when the rendered numbers would match', () => {
+    expect(isBoostable({ ...preparation, etaSeconds: 1_400, boostedEtaSeconds: 1_360 })).toBe(
+      false
+    );
+  });
+
+  // Both ETAs come from one whatIf, so unlike the queue card there is no staleness to guard against
+  // — and swapping these arguments must not read as a reason to offer.
+  it('still offers when the boosted figure is the larger of the two', () => {
+    expect(isBoostable({ ...preparation, etaSeconds: 300, boostedEtaSeconds: 3_900 })).toBe(true);
   });
 });

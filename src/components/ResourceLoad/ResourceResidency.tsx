@@ -6,6 +6,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ResourceLoadAvailability } from '~/server/schema/resource-load.schema';
 import { isQueuedAvailability } from '~/server/schema/resource-load.schema';
 import { formatDownloadEta } from '~/components/ResourceLoad/download-eta';
+import { settledEtaSeconds } from '~/shared/orchestrator/download-preparation';
 import { trpc } from '~/utils/trpc';
 
 export function useResourceResidency(modelVersionId: number | undefined) {
@@ -23,8 +24,10 @@ const WAIT_NOTE =
   'You can still generate with it — the job waits in your queue until the download finishes, and you can boost it from there.';
 
 export function describeResidency(availability: ResourceLoadAvailability): Residency | null {
-  const eta = (seconds: number | null | undefined) =>
-    seconds != null ? ` Ready in ${formatDownloadEta(seconds)}.` : '';
+  const eta = (source: { progress?: number | null; etaSeconds?: number | null }) => {
+    const seconds = settledEtaSeconds(source);
+    return seconds != null ? ` Ready in ${formatDownloadEta(seconds)}.` : '';
+  };
 
   switch (availability.status) {
     case 'available':
@@ -40,7 +43,7 @@ export function describeResidency(availability: ResourceLoadAvailability): Resid
         loaded: false,
         label: `Downloading ${pct}%`,
         color: 'blue',
-        description: `Downloading to the generator.${eta(availability.etaSeconds)} ${WAIT_NOTE}`,
+        description: `Downloading to the generator.${eta(availability)} ${WAIT_NOTE}`,
       };
     }
     case 'queued':
@@ -48,9 +51,7 @@ export function describeResidency(availability: ResourceLoadAvailability): Resid
         loaded: false,
         label: 'Queued to download',
         color: 'yellow',
-        description: `Waiting to download to the generator.${eta(
-          availability.etaSeconds
-        )} ${WAIT_NOTE}`,
+        description: `Waiting to download to the generator.${eta(availability)} ${WAIT_NOTE}`,
       };
     case 'unavailable':
       return isQueuedAvailability(availability)

@@ -1,7 +1,20 @@
 import { useMemo, useState } from 'react';
 import { confirmDownloadBoost } from '~/components/generation_v2/DownloadBoostConfirm';
+import { etasPrintTheSame } from '~/components/ResourceLoad/download-eta';
 import type { DownloadPreparation } from '~/shared/orchestrator/download-preparation';
 import { trpc } from '~/utils/trpc';
+
+/**
+ * Whether the pre-submit offer is shown, which also gates the high-lane whatIf that prices it, the
+ * desktop switch and the mobile confirm. Unlike the queue card's rule, both ETAs here come from the
+ * same whatIf, so the only thing worth refusing is a gain the rendered buckets have swallowed —
+ * charging for two identical printed numbers.
+ */
+export const isBoostable = (preparation?: DownloadPreparation) =>
+  !!preparation &&
+  preparation.lane !== 'high' &&
+  preparation.boostedEtaSeconds != null &&
+  !etasPrintTheSame(preparation.etaSeconds, preparation.boostedEtaSeconds);
 
 /**
  * The generator's whatIf, plus the pre-boost switch, shared by both generation forms.
@@ -27,8 +40,7 @@ export function usePreBoostWhatIf<T extends Record<string, unknown> | null>({
   });
 
   const preparation = base.data?.preparation;
-  const boostable =
-    !!preparation && preparation.lane !== 'high' && preparation.boostedEtaSeconds != null;
+  const boostable = isBoostable(preparation);
 
   const boostedPayload = useMemo(
     () => (queryPayload ? { ...queryPayload, downloadPriority: 'high' } : null),

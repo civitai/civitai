@@ -40,6 +40,46 @@ const maxKnown = (values: (number | null | undefined)[]) => {
 };
 
 /**
+ * How much of a transfer must have moved before its own ETA is believed: a stream still ramping up
+ * projects from a throughput it will not hold, which reads as hours on a ten-minute download.
+ * Whichever comes first — the fraction alone would stay quiet for minutes on a rate-capped lane,
+ * which is the lane the boost is sold against.
+ */
+export const ETA_WARMUP_PROGRESS = 0.02;
+export const ETA_WARMUP_BYTES = 64 * 1024 * 1024;
+
+type WarmupSource = {
+  progress?: number | null;
+  sizeBytes?: number | null;
+  etaSeconds?: number | null;
+};
+
+/**
+ * A resource that has not started downloading is settled: it is waiting behind other downloads, and
+ * nothing has distorted the projection it was given. Only a transfer in progress can be too young to
+ * believe.
+ */
+export function isEtaSettled(resource: WarmupSource) {
+  if (resource.progress == null || resource.progress >= ETA_WARMUP_PROGRESS) return true;
+  return (resource.sizeBytes ?? 0) * resource.progress >= ETA_WARMUP_BYTES;
+}
+
+/** A resource's ETA once it is worth showing; null while its transfer is still ramping up. */
+export function settledEtaSeconds(resource: WarmupSource) {
+  return isEtaSettled(resource) ? resource.etaSeconds ?? null : null;
+}
+
+/**
+ * The boosted ETA is withheld on the same terms as the plain one. Offering a paid boost while
+ * refusing to show the wait it shortens is a charge with no stated benefit.
+ */
+export function settledBoostedEtaSeconds(
+  resource: WarmupSource & { boostedEtaSeconds?: number | null }
+) {
+  return isEtaSettled(resource) ? resource.boostedEtaSeconds ?? null : null;
+}
+
+/**
  * An empty list means nothing is waiting to download, and reads as undefined — a `[]` left as-is is
  * truthy, and would put a download panel and a paid Boost on a step with nothing to boost.
  */
@@ -54,9 +94,9 @@ export function summarizePreparation(
     resource: gating.resource,
     queuePosition: gating.queuePosition ?? null,
     progress: gating.progress,
-    etaSeconds: maxKnown(resources.map((r) => r.etaSeconds)),
+    etaSeconds: maxKnown(resources.map(settledEtaSeconds)),
     lane: gating.lane,
-    boostedEtaSeconds: maxKnown(resources.map((r) => r.boostedEtaSeconds)),
+    boostedEtaSeconds: maxKnown(resources.map(settledBoostedEtaSeconds)),
     rateLimitBytesPerSecond: gating.rateLimitBytesPerSecond,
     resources,
   };
