@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'fs';
-import { join, relative, resolve } from 'path';
+import { join, relative, resolve, sep } from 'path';
 import { stripSourceComments } from '~/components/AppBlocks/stripSourceComments';
 
 /**
@@ -76,6 +76,15 @@ const EXPECTED_CALL_SITES = [
  *  every state explicitly rather than by a binary refusal). */
 const MAY_BRANCH_ON_HIDDEN = new Set(['server/services/blocks/block-gated-images.service.ts']);
 
+/**
+ * Every literal in this file — the ledger, {@link DEFINITION}, {@link MAY_BRANCH_ON_HIDDEN} —
+ * is POSIX, and `relative()` answers in the host's separator. Normalising HERE, at the one
+ * place a rel is produced, is what keeps the ledger a list of paths rather than a list of
+ * paths-on-Linux: on Windows the un-normalised form made every literal comparison miss, so the
+ * walk's own positive control failed and the two real assertions read the empty string.
+ */
+const toRel = (full: string) => relative(SRC, full).split(sep).join('/');
+
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     if (entry === 'node_modules' || entry === '.next') continue;
@@ -90,7 +99,7 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 const PRODUCTION_FILES = walk(SRC).filter((f) => {
-  const rel = relative(SRC, f);
+  const rel = toRel(f);
   return !rel.includes('__tests__') && !/\.test\.tsx?$/.test(rel) && !rel.includes('/tests/');
 });
 
@@ -109,7 +118,7 @@ const SOURCE = new Map<string, string>();
 for (const full of PRODUCTION_FILES) {
   const raw = readFileSync(full, 'utf8');
   if (!raw.includes('block-gated-images.logic') && !raw.includes(SYMBOL)) continue;
-  SOURCE.set(relative(SRC, full), stripSourceComments(raw));
+  SOURCE.set(toRel(full), stripSourceComments(raw));
 }
 
 /**
@@ -131,6 +140,17 @@ describe(`${SYMBOL} seam`, () => {
     const rels = [...SOURCE.keys()];
     expect(rels).toContain(DEFINITION);
     expect(PRODUCTION_FILES.length).toBeGreaterThan(500);
+  });
+
+  // Pins the normalisation in `toRel`, which is deliberate and looks removable: the ledger
+  // literals are POSIX and `relative()` is not, so a rel carrying the host separator makes
+  // EVERY literal comparison in this file miss — including the control above — and the two
+  // real assertions then pass or fail on the empty string. Deleting the `.split(sep).join('/')`
+  // is invisible on CI (ubuntu) and red for everyone on Windows.
+  it('keys the ledger in POSIX separators whatever the host uses', () => {
+    const rels = [...SOURCE.keys()];
+    expect(rels.length).toBeGreaterThan(0);
+    expect(rels.filter((rel) => rel.includes('\\'))).toEqual([]);
   });
 
   // POSITIVE CONTROL for the DETECTOR, not just the walk. A ledger assertion that
