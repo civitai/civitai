@@ -11,7 +11,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { groupRule } from '~/components/Hubs/hub.utils';
+import { excludeGroupRule } from '~/components/Hubs/hub.utils';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 
 export type HubSourceCardProps = {
@@ -148,13 +148,11 @@ export function HubSourceCard({
                   </Badge>
                 ))}
               </Group>
-              {/* Include groups say nothing: a row of chips reads as "all of these"
-                  on its own, and Justin cut the label after seeing it rendered. The
-                  EXCLUDE line stays, because that side means the opposite of what it
-                  looks like — see `groupRule`. */}
+              {/* Exclude only. That side means the opposite of what it looks like —
+                  see `excludeGroupRule`. */}
               {source.exclude && (
                 <Text size="10px" c="dimmed" lh={1.3}>
-                  {groupRule(true)}
+                  {excludeGroupRule}
                 </Text>
               )}
             </>

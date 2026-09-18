@@ -3,7 +3,8 @@ import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
 import {
   addTagToHubGroup,
   groupHubSources,
-  groupRule,
+  excludeGroupRule,
+  groupAddHint,
   nextHubGroupKey,
   removeHubGroup,
   setHubGroupEnabled,
@@ -122,7 +123,15 @@ describe('addTagToHubGroup', () => {
     const value = [source({ targetId: 77 }), source({ targetId: 90, exclude: true, index: 1 })];
     const next = addTagToHubGroup(value, groupOf(value), { targetId: 90, alias: 'violence' });
 
-    expect(next).toEqual(value);
+    // The literal rows, not `toEqual(value)`: the refusal returns `value` itself, so
+    // comparing against it is a value compared with itself and would survive a future
+    // edit that mutated rows in place instead of mapping to new ones.
+    expect(next[1].exclude).toBe(true);
+    expect(next[1].groupKey).toBeNull();
+    expect(next.map((s) => [s.targetId, s.groupKey])).toEqual([
+      [77, null],
+      [90, null],
+    ]);
   });
 
   it('MOVES a tag the hub already holds, keeping everything but its group', () => {
@@ -131,8 +140,8 @@ describe('addTagToHubGroup', () => {
     // showed the second greyed out as "Added", with no way forward.
     //
     // The whole row is asserted, against a fixture that differs from the group on
-    // `alias`, `enabled`, `index` and `groupKey` — a moved row keeps the first three
-    // and takes only the key and the enabled state.
+    // `alias`, `enabled`, `index` and `groupKey` — a moved row keeps its own `alias`
+    // and `index`, and takes the group's key AND its enabled state.
     //
     // ⚠️ It does NOT cover `exclude`, and cannot: the move is refused outright when the
     // polarities differ (the case above), so by the time this branch runs the two are
@@ -211,14 +220,21 @@ describe('group edits touch the whole group, or exactly one tag', () => {
   });
 });
 
-describe('the group rule copy', () => {
+describe('the group copy', () => {
   it('🔴 says OPPOSITE things on the two sides, on purpose', () => {
     // Named for the decision, because the next competent review will correctly
     // recommend making these agree. Do not. Grouping tags you WANT narrows the feed;
     // grouping tags you want GONE removes less, because `NOT (x AND y)` keeps an image
-    // carrying only x. Justin approved the asymmetry on 2026-09-17, and this wording is
-    // the only place in the product that states it.
-    expect(groupRule(false)).toBe('Require all of these');
-    expect(groupRule(true)).toBe('Only block when all of these match');
+    // carrying only x. Justin approved the asymmetry on 2026-09-17.
+    //
+    // The TOOLTIP is pinned rather than the rule line, because it is the copy that
+    // renders on both sides. The rule line is exclude-only — an include-side string
+    // would be pinned here and shown nowhere, which is a test guarding dead code.
+    expect(groupAddHint(false)).toBe('Require another tag');
+    expect(groupAddHint(true)).toBe('Only block when another tag matches too');
+  });
+
+  it('states the exclude rule under the chips, and has no include counterpart', () => {
+    expect(excludeGroupRule).toBe('Only block when all of these match');
   });
 });

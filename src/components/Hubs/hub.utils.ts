@@ -205,16 +205,25 @@ export function findHubSource(
 }
 
 /**
- * 🔴 The two halves of a group mean OPPOSITE things, and this wording is the only
+ * 🔴 The two halves of a group mean OPPOSITE things, and these two strings are the only
  * place in the product that says so. Grouping tags you WANT narrows the feed; grouping
  * tags you want GONE removes LESS, because `NOT (x AND y)` keeps an image carrying only
  * x. Justin approved the asymmetry on 2026-09-17 — if the copy changes, keep it.
  *
- * Here rather than in `HubSourceCard` so the pin in `hub-groups.test.ts` does not drag
- * a Mantine component's whole import graph into a pure unit test to read one string.
+ * The `+` tooltip is where BOTH sides are stated, because it is the only copy that
+ * renders on both. Here rather than in the components so the pin in `hub-groups.test.ts`
+ * does not drag a Mantine import graph into a pure unit test.
  */
-export const groupRule = (exclude?: boolean) =>
-  exclude ? 'Only block when all of these match' : 'Require all of these';
+export const groupAddHint = (exclude?: boolean) =>
+  exclude ? 'Only block when another tag matches too' : 'Require another tag';
+
+/**
+ * The rule line under a group's chips. EXCLUDE ONLY — Justin cut the include-side line
+ * after seeing it rendered, on the grounds that a row of chips reads as "all of these"
+ * unaided. There is deliberately no include counterpart here: a string nothing renders
+ * is a string a test would pin for nothing.
+ */
+export const excludeGroupRule = 'Only block when all of these match';
 
 /**
  * Put a tag into a group, minting the group's key on the click that creates it.

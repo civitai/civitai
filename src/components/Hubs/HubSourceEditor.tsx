@@ -19,6 +19,7 @@ import type { HubSourceGroup } from '~/components/Hubs/hub.utils';
 import {
   addTagToHubGroup,
   findHubSource,
+  groupAddHint,
   groupHubSources,
   groupMemberKeys,
   removeHubGroup,
@@ -66,7 +67,7 @@ function AddTagToGroup({
   const [opened, setOpened] = useState(false);
 
   return (
-    <Tooltip label={exclude ? 'Only block when another tag matches too' : 'Require another tag'}>
+    <Tooltip label={groupAddHint(exclude)}>
       <div className="flex">
         <Popover
           opened={opened}
