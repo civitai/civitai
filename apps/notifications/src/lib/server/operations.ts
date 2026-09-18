@@ -221,21 +221,77 @@ export async function notificationExists(key: string): Promise<boolean> {
 }
 
 // --- cleanup: batched delete of old UserNotification rows -------------------------------------------
+const CLEANUP_BATCH_SIZE = 10000;
+// Redis DELs issued in parallel per batch. Measured on prod: a 10k-row batch carries ~5.5k distinct
+// users with an unread row, so this is the knob that decides whether the bust side dominates a sweep.
+const CLEANUP_BUST_CONCURRENCY = 25;
+
+type DeletedRow = { userId: number; viewed: boolean };
+
 export async function cleanupNotifications(before: Date): Promise<number> {
   const write = notifDbWrite();
   let deleted = 0;
+  let busted = 0;
   // Batch so a single DELETE can't hold a long lock / bloat WAL on a large sweep.
   for (;;) {
-    const resp = await write.query(
+    const resp = await write.query<DeletedRow>(
       `DELETE FROM "UserNotification"
-       WHERE id IN (SELECT id FROM "UserNotification" WHERE "createdAt" < $1 LIMIT 10000)`,
+       WHERE id IN (SELECT id FROM "UserNotification" WHERE "createdAt" < $1 LIMIT ${CLEANUP_BATCH_SIZE})
+       RETURNING "userId", viewed`,
       [before.toISOString()]
     );
-    const rows = resp.rowCount ?? 0;
-    deleted += rows;
-    if (rows === 0) break;
+    const rows = resp.rows ?? [];
+    deleted += rows.length;
+    if (rows.length === 0) break;
+    busted += await bustDeletedUnreadCounts(rows);
   }
+  logToAxiom({
+    type: 'info',
+    name: 'notification.cleanup',
+    message: `Cleaned up notifications older than ${before.toISOString()}`,
+    deleted,
+    busted,
+  }).catch(() => null);
   return deleted;
+}
+
+/**
+ * Drop the cached unread counts of every user this batch deleted an UNREAD row from. Without it the
+ * count cache outlives its rows: the counts are a redis hash with a one-week TTL while the list is a
+ * live query, so a swept-away unread row keeps its badge for up to a week (the "Updates 2" over an
+ * empty list report).
+ *
+ * Only unread rows matter — the hash counts `viewed IS FALSE` rows ONLY (see countNotificationsImpl),
+ * so deleting a read row cannot make it wrong, and skipping those is ~35% of the batch on prod data.
+ * bustUser rather than decrementUser: the next count re-derives from the DB, so a bust cannot drift
+ * the way an arithmetic adjustment can, and it needs no category join.
+ *
+ * Flag the lag window BEFORE busting, exactly as markReadImpl does, and for the same reason: a count
+ * landing between the bust and the replica catching up would read the not-yet-deleted rows and cache
+ * that stale number for the full week, re-creating this bug in a narrower window. The flag costs
+ * nothing when REPLICATION_LAG_DELAY is unset — createLagTracker no-ops a non-positive delay.
+ */
+async function bustDeletedUnreadCounts(rows: DeletedRow[]): Promise<number> {
+  const userIds: number[] = [];
+  const seen = new Set<number>();
+  for (const { userId, viewed } of rows) {
+    if (viewed || seen.has(userId)) continue;
+    seen.add(userId);
+    userIds.push(userId);
+  }
+
+  let next = 0;
+  const workers = Array.from({ length: Math.min(CLEANUP_BUST_CONCURRENCY, userIds.length) }, () =>
+    (async () => {
+      for (let i = next++; i < userIds.length; i = next++) {
+        const userId = userIds[i];
+        await preventReplicationLag(userId).catch(() => null);
+        await notificationCache.bustUser(userId).catch(() => null);
+      }
+    })()
+  );
+  await Promise.all(workers);
+  return userIds.length;
 }
 
 // --- mark read: per-user serialized + retried on transient pool-acquire errors ----------------------
