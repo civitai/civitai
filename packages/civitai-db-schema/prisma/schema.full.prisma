@@ -596,6 +596,8 @@ model User {
   blockSpendAttributionsAsSpender  BlockSpendAttribution[]   @relation("BlockSpendAttributionSpender")
   blockSpendAttributionsAsAppOwner BlockSpendAttribution[]   @relation("BlockSpendAttributionAppOwner")
   blockSpendAttributionsAsContentAuthor BlockSpendAttribution[] @relation("BlockSpendAttributionContentAuthor")
+  blockAuthorFeeAccrualsAsAppOwner BlockAuthorFeeAccrual[]  @relation("BlockAuthorFeeAccrualAppOwner")
+  blockAuthorFeeAccrualsAsViewer   BlockAuthorFeeAccrual[]  @relation("BlockAuthorFeeAccrualViewer")
   blockSubscriptionAttributionsAsPurchaser BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionPurchaser")
   blockSubscriptionAttributionsAsAppOwner  BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionAppOwner")
   publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
@@ -2491,6 +2493,7 @@ model OauthClient {
   appBlocks      AppBlock[]
   buzzAttributions BlockBuzzAttribution[]
   spendAttributions BlockSpendAttribution[] @relation("BlockSpendAttributionApp")
+  authorFeeAccruals BlockAuthorFeeAccrual[] @relation("BlockAuthorFeeAccrualApp")
   subscriptionAttributions BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionApp")
   connectListings          AppListing[]
 
@@ -2648,6 +2651,7 @@ model AppBlock {
   userSubscriptions  BlockUserSubscription[]
   buzzAttributions   BlockBuzzAttribution[]
   spendAttributions  BlockSpendAttribution[] @relation("BlockSpendAttributionAppBlock")
+  authorFeeAccruals  BlockAuthorFeeAccrual[] @relation("BlockAuthorFeeAccrualAppBlock")
   subscriptionAttributions BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionAppBlock")
   publishRequests    AppBlockPublishRequest[]
   scopeInvocations   BlockScopeInvocation[]
@@ -3707,6 +3711,104 @@ model BlockSpendAttribution {
   @@index([appBlockId, attributedAt(sort: Desc)], map: "bsa_app_block_dashboard_idx")
   @@index([contentAuthorUserId, attributedAt(sort: Desc)], map: "bsa_content_author_idx")
   @@map("block_spend_attribution")
+}
+
+/// App Blocks per-generation AUTHOR FEE — the accrual ledger (slice 2).
+///
+/// One row = one generation on which an app charged its author fee. The viewer
+/// has ALREADY been debited `feeBuzz` at submit; this row is the platform's
+/// obligation to pay it onward to the app owner, settled in a daily batch.
+/// Mirrors the model licensing fee: the orchestrator charges the viewer at
+/// generation time and writes a per-resource fee row, and a daily job mints to
+/// the creator. Same two hops, same dedup discipline, civitai-owned table.
+///
+/// 🔴 SEPARATE FROM BlockSpendAttribution ON PURPOSE. That row is IMMUTABLE —
+/// written fire-and-forget off an already-billed submit, never re-stamped. An
+/// accrual has a LIFECYCLE (accrued → settled, or accrued → clawed_back), and a
+/// mutable status on the immutable row would break what its readers rely on.
+///
+/// 🔴 `feeBuzz` IS AN INTEGER, NOT NUMERIC, AND THAT REVERSES THE "FRACTIONAL
+/// ACCRUAL" THE DESIGN INHERITED FROM THE LICENSING RAIL. The licensing fee is
+/// fractional because it is priced per-IMAGE at 0.01 buzz and the viewer pays
+/// the CEILING of the sum, so the creator's share genuinely has sub-buzz
+/// resolution. This fee does not: `max(flatBuzz, pct × base)` is FLOORED TO
+/// WHOLE BUZZ before the viewer is shown or charged it (D7 requires the viewer
+/// see the exact number before the run, and Buzz cannot express a fraction). The
+/// author is credited exactly what the viewer paid — no more, because the
+/// platform takes no cut; no less, because the platform funds nothing.
+///
+/// ⚠️ Consequence, and it is real: an author who sets a 0 flat leg and a low
+/// percentage earns NOTHING on cheap generations, permanently —
+/// `floor(4 × 500/10000) = 0` every time. Same shape as the $0.00 spend bounty
+/// this arc replaced; the difference is that it is now the author's explicit
+/// choice, and the platform default (flat 1 ⚡) avoids it. Slice 3's config UI
+/// must say so at the point of setting it.
+model BlockAuthorFeeAccrual {
+  id                 String   @id
+
+  /// Orchestrator workflow id — the idempotency anchor. A resubmit of the same
+  /// workflow must never charge or accrue twice.
+  workflowId         String   @map("workflow_id")
+
+  /// 'accrual' (positive, the charge) or 'clawback' (negative, the
+  /// carry-forward reversal of an already-settled accrual).
+  entryType          String   @default("accrual") @map("entry_type")
+
+  appId              String   @map("app_id")
+  app                OauthClient @relation("BlockAuthorFeeAccrualApp", fields: [appId], references: [id], onDelete: Restrict)
+  appBlockId         String   @map("app_block_id")
+  appBlock           AppBlock @relation("BlockAuthorFeeAccrualAppBlock", fields: [appBlockId], references: [id], onDelete: Restrict)
+
+  /// 🔴 Resolved at WRITE time, never at settlement. An app that changes hands
+  /// must not retroactively move earnings already accrued to the previous owner
+  /// (`app-ownership-transfer.service.ts` is the precedent). Resolving the owner
+  /// in the settlement query would do exactly that.
+  appOwnerUserId     Int      @map("app_owner_user_id")
+  appOwner           User     @relation("BlockAuthorFeeAccrualAppOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
+
+  /// The viewer who paid. Needed for clawback and abuse review, and it is what
+  /// the self-dealing exclusion is measured against.
+  viewerUserId       Int      @map("viewer_user_id")
+  viewer             User     @relation("BlockAuthorFeeAccrualViewer", fields: [viewerUserId], references: [id], onDelete: Restrict)
+
+  /// 🔴 D6 — a viewer spending blue Buzz pays in blue and the author receives
+  /// blue (non-withdrawable). The settlement job groups by this and never
+  /// coerces to yellow; defaulting it would silently convert non-withdrawable
+  /// Buzz into withdrawable earnings. No `@default` for that reason.
+  buzzType           String   @map("buzz_type")
+
+  /// Whole Buzz. Positive on an 'accrual' row, negative on a 'clawback' row —
+  /// pinned by a CHECK, so a sign error cannot quietly pay an author on a
+  /// reversal.
+  feeBuzz            Int      @map("fee_buzz")
+
+  /// The pricing inputs, kept so a disputed charge can be explained without
+  /// re-deriving it from a workflow that may no longer exist.
+  baseGenerationBuzz Int      @map("base_generation_buzz")
+  flatLegBuzz        Int      @map("flat_leg_buzz")
+  pctLegBuzz         Int      @map("pct_leg_buzz")
+  governingLeg       String   @map("governing_leg")
+
+  /// The resolved '<coarse>' or '<coarse>:<subtype>' the fee was priced under.
+  /// NULL when the type could not be resolved — the fee still applies, falling
+  /// to the app's default (see `resolveBlockAuthorFeeParams`).
+  generationType     String?  @map("generation_type")
+
+  /// 'accrued' | 'settled' | 'clawed_back'.
+  status             String   @default("accrued")
+
+  /// The externalTransactionId this row settled under, so a row traces to the
+  /// exact mint. NULL until settled; a CHECK keeps it and `settledAt` in step
+  /// with `status`.
+  settlementKey      String?  @map("settlement_key")
+
+  accruedAt          DateTime @default(now()) @map("accrued_at") @db.Timestamptz(6)
+  settledAt          DateTime? @map("settled_at") @db.Timestamptz(6)
+
+  @@unique([workflowId, entryType], map: "block_author_fee_accrual_workflow_entry_key")
+  @@index([status, accruedAt], map: "block_author_fee_accrual_settlement_idx")
+  @@index([appOwnerUserId, accruedAt], map: "block_author_fee_accrual_owner_idx")
+  @@map("block_author_fee_accrual")
 }
 
 /// W3 flow C — App Blocks MEMBERSHIP / subscription attribution.
