@@ -1,4 +1,3 @@
-import dayjs from '~/shared/utils/dayjs';
 import * as z from 'zod';
 import { imageSelectProfileFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
@@ -6,6 +5,7 @@ import { constants } from '~/server/common/constants';
 import {
   baseQuerySchema,
   infiniteQuerySchema,
+  keysetCursorSchema,
   paginationSchema,
   periodModeSchema,
 } from '~/server/schema/base.schema';
@@ -482,14 +482,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     requiringMeta: z.boolean().optional(),
 
     // - additional
-    cursor: z
-      .union([z.bigint(), z.number(), z.string(), z.date()])
-      .transform((val) =>
-        typeof val === 'string' && dayjs(val, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]', true).isValid()
-          ? new Date(val)
-          : val
-      )
-      .optional(),
+    cursor: keysetCursorSchema.optional(),
     excludedTagIds: z.array(z.number()).optional(),
     excludedUserIds: z.array(z.number()).optional(),
     // excludedImageIds: z.array(z.number()).optional(),

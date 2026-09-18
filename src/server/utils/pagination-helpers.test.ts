@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { describe, expect, it } from 'vitest';
-import { getCursor, getPagingData } from '~/server/utils/pagination-helpers';
+import { getCursor, getCursorClauses, getPagingData } from '~/server/utils/pagination-helpers';
 
 // `parseCursor` is not exported; it is exercised here through `getCursor`, the
 // public helper every keyset-paginated endpoint uses to turn a `nextCursor`
@@ -45,6 +45,92 @@ describe('parseCursor (via getCursor) — malformed-token rejection', () => {
 
   it('rejects an empty trailing numeric token: "<date>|" → 400', () => {
     expectBadRequest(() => getCursor('createdAt DESC, id DESC', '2024-01-15|'));
+  });
+});
+
+/**
+ * Regression: `model.getAll` 500'd with the raw Postgres error
+ * `date/time field value out of range: "165997"` / `"493785"`.
+ *
+ * `model.getAll` takes its cursor as JSON, so a client can send a bare NUMBER.
+ * `parseCursor`'s scalar branch bound that number to `fields[0]` without any
+ * arity check — and for the Newest/Oldest sorts `fields[0]` is the TIMESTAMP
+ * column `mm."lastVersionAt"`. Postgres then had to read `165997` as a
+ * timestamp and threw, surfacing as an INTERNAL_SERVER_ERROR for what is a
+ * malformed client input.
+ *
+ * Note the offending values are ordinary in-range integers, so no magnitude
+ * bound on the cursor input can catch this — the guard has to be the arity one.
+ */
+describe('parseCursor (via getCursor) — scalar cursor on a multi-field sort', () => {
+  const NEWEST = 'lastVersionAt DESC NULLS LAST, modelId DESC';
+
+  it('rejects the production value 165997 as a number on a date-headed 2-field sort → 400', () => {
+    expectBadRequest(() => getCursor(NEWEST, 165997));
+  });
+
+  it('rejects the production value 493785 as a number on a date-headed 2-field sort → 400', () => {
+    expectBadRequest(() => getCursor(NEWEST, 493785));
+  });
+
+  it('never binds a bare number to a timestamp sort column (the actual PG fault)', () => {
+    // The pre-fix behaviour: `where` came back holding 165997 as the bound value
+    // for `lastVersionAt`, which is what Postgres choked on. Post-fix the call
+    // cannot return at all.
+    let where: unknown;
+    expect(() => {
+      where = getCursor(NEWEST, 165997).where;
+    }).toThrow();
+    expect(where).toBeUndefined();
+  });
+
+  it('rejects a scalar cursor on the 3-field metric sorts too (HighestRated/MostDownloaded shape)', () => {
+    expectBadRequest(() => getCursor('thumbsUpCount DESC, downloadCount DESC, modelId', 165997));
+  });
+
+  it('rejects a bigint scalar cursor on a multi-field sort → 400', () => {
+    expectBadRequest(() => getCursor(NEWEST, BigInt(165997)));
+  });
+
+  it('rejects a Date scalar cursor on a multi-field sort → 400', () => {
+    expectBadRequest(() => getCursor(NEWEST, new Date('2024-01-15T00:00:00.000Z')));
+  });
+
+  it('reports the arity in the message, matching the string-cursor guard', () => {
+    let thrown: unknown;
+    try {
+      getCursor(NEWEST, 165997);
+    } catch (e) {
+      thrown = e;
+    }
+    expect((thrown as TRPCError).message).toBe(
+      'Invalid cursor: expected 2 value(s) for this sort, received 1'
+    );
+  });
+
+  it('still accepts a scalar cursor on a SINGLE-field sort (RecentlyAdded: ci."id" DESC)', () => {
+    // Not over-tightened: a single-field sort genuinely issues a bare column
+    // value as its nextCursor, so a number is well-formed there.
+    const { where } = getCursor('ci."id" DESC', 165997);
+    expect(where).toBeDefined();
+    expect((where as unknown as { values: unknown[] }).values).toContain(165997);
+  });
+});
+
+describe('parseCursorClauses — scalar cursor on a multi-field sort (the model.getAll caller)', () => {
+  // getModelsRaw uses getCursorClauses, not getCursor. Same parseCursor inside,
+  // but pin it separately so a future divergence can't reopen the hole.
+  const NEWEST = 'mm."lastVersionAt" DESC NULLS LAST, p."modelId" DESC';
+
+  it('rejects 165997 as a number → 400', () => {
+    expectBadRequest(() => getCursorClauses(NEWEST, 165997));
+  });
+
+  it('accepts a well-formed composite cursor unchanged', () => {
+    const { strict, equality, splittable } = getCursorClauses(NEWEST, '2024-01-15|2686725');
+    expect(splittable).toBe(true);
+    expect(strict).toBeDefined();
+    expect(equality).toBeDefined();
   });
 });
 

@@ -2,7 +2,6 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { withAxiom } from '@civitai/next-axiom';
 import type { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
-import dayjs from '~/shared/utils/dayjs';
 import * as z from 'zod';
 
 import {
@@ -13,6 +12,7 @@ import { runImageSearch } from '~/server/services/image-search.service';
 import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import { keysetCursorSchema } from '~/server/schema/base.schema';
 import { getNextPage, getPagination } from '~/server/utils/pagination-helpers';
 import { isTransientMeiliError } from '~/server/meilisearch/client';
 import { isClientAbortError } from '~/server/utils/errorHandling';
@@ -101,14 +101,7 @@ const blockImagesSchema = z.object({
   period: z.enum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
   sort: z.enum(ImageSort).default(constants.galleryFilterDefaults.sort),
   tags: commaDelimitedNumberArray().optional(),
-  cursor: z
-    .union([z.bigint(), z.number(), z.string(), z.date()])
-    .transform((val) =>
-      typeof val === 'string' && dayjs(val, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]', true).isValid()
-        ? new Date(val)
-        : val
-    )
-    .optional(),
+  cursor: keysetCursorSchema.optional(),
   type: z.enum(MediaType).optional(),
   baseModels: commaDelimitedEnumArray([...baseModels]).optional(),
   withMeta: booleanString().default(false),

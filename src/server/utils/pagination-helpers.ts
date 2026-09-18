@@ -116,8 +116,33 @@ function parseSortString(sortString: string): SortField[] {
 }
 
 function parseCursor(fields: SortField[], cursor: string | number | Date | bigint) {
-  if (typeof cursor === 'number' || typeof cursor === 'bigint' || cursor instanceof Date)
+  if (typeof cursor === 'number' || typeof cursor === 'bigint' || cursor instanceof Date) {
+    // A scalar cursor carries exactly ONE value, so it is only well-formed for a
+    // single-field sort. The arity guard below covers the string form; without
+    // the same guard here, a scalar silently bound to `fields[0]` and the
+    // remaining fields resolved to `undefined`.
+    //
+    // That was a live 500: `model.getAll` takes a JSON cursor, so a client can
+    // send a bare number (a model id, say) where the sort is Newest/Oldest —
+    // `mm."lastVersionAt" DESC NULLS LAST, p."modelId" DESC`, two fields. The
+    // number bound to the TIMESTAMP head field and Postgres threw
+    // `date/time field value out of range: "165997"`, which surfaced as an
+    // INTERNAL_SERVER_ERROR for what is a malformed client input. Note the
+    // magnitude bound on the cursor schema cannot catch this — 165997 is a
+    // perfectly ordinary int; the value is simply not a timestamp.
+    //
+    // Rejecting it as a 400 matches how the string form has been handled since
+    // the `"|<id>"` NULL-token fix below. A legitimate cursor is always a value
+    // this server issued as `nextCursor`: a bare column value for a single-field
+    // sort, a `CONCAT(col, '|', …)` string otherwise — so no well-formed cursor
+    // reaches this branch with a multi-field sort.
+    if (fields.length !== 1) {
+      throwBadRequestError(
+        `Invalid cursor: expected ${fields.length} value(s) for this sort, received 1`
+      );
+    }
     return { [fields[0].field]: cursor };
+  }
 
   const values = cursor.split('|');
   // A cursor whose token count doesn't match the sort's field arity is
