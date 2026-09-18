@@ -12,8 +12,12 @@ import { getAllModelsSchema } from '~/server/schema/model.schema';
  * bound and not as a closed inventory. A numeric cursor above Postgres `int4`
  * can only be client garbage. Unbounded, it bound straight into the SQL
  * comparison and Postgres threw `value out of range for type integer` — a raw
- * 500 for a client fault. Same class and same bound as the
- * `/api/v1/models/[id]` id schema.
+ * 500 for a client fault. Same class as the `/api/v1/models/[id]` id schema —
+ * but NOT the identical bound: that one is `.int().gt(0)`, because an id of `0`
+ * is not a value it issues. Both numeric members here are floored at `.gte(0)`,
+ * because `0` IS issuable — see the cases below and the note in
+ * `src/server/schema/base.schema.ts`, which also records that the floor itself
+ * has no established justification.
  *
  * The companion arity guard (a bare number where the sort needs N values, which
  * is what produced the `date/time field value out of range` 500 on
