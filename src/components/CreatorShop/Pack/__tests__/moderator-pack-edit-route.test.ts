@@ -490,16 +490,35 @@ describe('the moderator cosmetic-store pack edit route', () => {
         'exactly the condition the payload and the server use.'
     ).toContain('const blueChanged = acceptsBlueBuzz !== !!existing?.meta.acceptsBlueBuzz;');
 
-    // Archiving OVERWRITES status, so the history is the only thing that separates
-    // a rejected pack from an ordinary archived one. Without the history term the
-    // alert tells a moderator to restore a pack whose restore the server refuses
-    // as REJECTED_IS_FINAL — the dead end this derivation exists to remove, and it
-    // was pinned by nothing.
+    // Archiving OVERWRITES status, so the review verdict is the only thing that
+    // separates a rejected pack from an ordinary archived one. Without this term
+    // the alert tells a moderator to restore a pack whose restore the server
+    // refuses as REJECTED_IS_FINAL — the dead end this derivation exists to
+    // remove, and it was pinned by nothing.
+    //
+    // The derivation MOVED to the server (getPackDetail) rather than being
+    // dropped — the endpoint now returns named fields, and the verdict is one
+    // of them. Restating the rule from the history client-side, the shape this
+    // pinned before, would undo that. If you are deleting this, read
+    // `pack-detail-public-fields.test.ts` first: it is the other half.
+    //
+    // The OPERATOR, as with canSubmit above: an `||` here keeps the term, keeps
+    // the guard green, and makes a Published pack with an old rejection in its
+    // history uneditable.
     expect(
       modalSource,
-      'The rejected-vs-archived split must use wasLastReviewARejection, not restate ' +
+      'The rejected-vs-archived split must use the server-derived verdict, not restate ' +
         'the rule — an archived-after-rejection pack is NOT restorable.'
-    ).toContain('wasLastReviewARejection(existing.meta.history)');
+      // Whitespace-tolerant: the line is four characters under prettier's width,
+      // so a longer identifier anywhere in it wraps the `&&` and a literal
+      // substring would report a dropped operator that nobody dropped.
+    ).toMatch(/Archived\s*&&\s*!!existing\.lastReviewWasRejection/);
+    // Optional-chained, because `existing.meta?.history` is the spelling this
+    // file's own idiom would reach for and it does not contain `meta.history`.
+    expect(
+      modalSource,
+      'The editor must derive this from what the endpoint returns, not from the review history.'
+    ).not.toMatch(/meta\??\.history/);
     expect(
       modalSource,
       'The alert must choose its copy from wasRejected, or the two arms can be swapped back.'

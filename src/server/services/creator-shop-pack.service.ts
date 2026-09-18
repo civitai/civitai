@@ -21,7 +21,11 @@ import {
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
 import { assertQuotedFee, getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
 import { getCosmeticArtworkUrl } from '~/server/services/cosmetic-phash.service';
-import { REJECTED_IS_FINAL } from '~/server/services/creator-shop.data';
+import {
+  REJECTED_IS_FINAL,
+  packDisplayMeta,
+  wasLastReviewARejection,
+} from '~/server/services/creator-shop.data';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
@@ -491,14 +495,16 @@ export const getPackDetail = async ({
   });
   if (!item) throw throwNotFoundError('Pack not found');
   if (item.cosmeticId != null) throw throwBadRequestError('This listing is not a pack');
+  // Named once: this decides both who may read a pack that is not on sale and
+  // who is answered about its review state. Two spellings of it drift apart on
+  // the first tightening.
+  const canReadPrivateState = !!isModerator || (!!userId && userId === item.addedById);
   // Every other read path in the shop gates on Published. Without this, an id is
   // enough to read an unreviewed or rejected pack's contents and pricing.
-  if (
-    item.status !== CosmeticShopItemStatus.Published &&
-    !isModerator &&
-    (!userId || userId !== item.addedById)
-  )
+  if (item.status !== CosmeticShopItemStatus.Published && !canReadPrivateState)
     throw throwNotFoundError('Pack not found');
+
+  const packMeta = (item.meta ?? {}) as CosmeticShopItemMeta;
 
   const snapshotByCosmetic = new Map(item.members.map((m) => [m.cosmeticId, m.floorAmount]));
   const resolved = await resolvePackMembers(item.members.map((m) => m.cosmeticId));
@@ -540,7 +546,20 @@ export const getPackDetail = async ({
     status: item.status,
     listed: item.listed,
     availableQuantity: item.availableQuantity,
-    meta: (item.meta ?? {}) as CosmeticShopItemMeta,
+    // Named fields, not the column, and the same whitelist the storefront
+    // sanitizers spread — a second list here is a list that stops agreeing.
+    meta: {
+      purchases: packMeta.purchases ?? 0,
+      acceptsBlueBuzz: packMeta.acceptsBlueBuzz ?? false,
+      ...packDisplayMeta(packMeta),
+    },
+    // Archiving overwrites `status`, so this is the only thing that tells a
+    // rejected pack from an ordinary archived one. Derived here rather than
+    // client-side, and answered only for the two viewers whose editor asks the
+    // question — everyone else gets no answer rather than a false one.
+    lastReviewWasRejection: canReadPrivateState
+      ? wasLastReviewARejection(packMeta.history)
+      : undefined,
     // A member the pack no longer resolves is a member that can't be sold; the
     // purchase refuses on the same condition, so say so before they try.
     unavailableCount: item.members.length - members.length,

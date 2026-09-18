@@ -16,6 +16,7 @@ import {
   appendItemHistory,
   buildCosmeticData,
   creatorGrantRemaining,
+  packDisplayMeta,
   patchCosmeticData,
   wasLastReviewARejection,
 } from '~/server/services/creator-shop.data';
@@ -80,13 +81,6 @@ const creatorStorefrontItemSelect = Prisma.validator<Prisma.CosmeticShopItemSele
   },
 });
 
-// A pack's card art and size live in meta rather than on a cosmetic, so every
-// meta whitelist has to carry them or the card renders empty and "Pack of 0".
-const packDisplayMeta = (meta: CosmeticShopItemMeta | null) => ({
-  ...(meta?.coverUrl ? { coverUrl: meta.coverUrl } : {}),
-  ...(meta?.coverTiles?.length ? { coverTiles: meta.coverTiles } : {}),
-  ...(meta?.packMemberCount ? { packMemberCount: meta.packMemberCount } : {}),
-});
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import { bustUserSettings, patchUserSettings } from '~/server/services/user.service';
 import {
