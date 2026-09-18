@@ -88,6 +88,10 @@ describe('cleanupNotifications cache busting', () => {
     await cleanupNotifications(before);
 
     expect(bustedIds()).toEqual([7, 7]);
+    // The FLAG repeats too. Its TTL is REPLICATION_LAG_DELAY seconds while a sweep runs for minutes,
+    // so a sweep-wide "already flagged this user" cache would leave every later batch of theirs
+    // reading the replica — which is the window the flag exists to narrow.
+    expect(markFresh.mock.calls.map(([id]) => id)).toEqual([7, 7]);
   });
 
   it('flags the replication-lag window BEFORE busting each user', async () => {
@@ -144,13 +148,18 @@ describe('cleanupNotifications cache busting', () => {
   it('keeps busting after a batch that came back full', async () => {
     // Every other batch here is a handful of rows, so anything gated on batch fullness — a sweep that
     // busts the first batch and silently stops — is invisible to them.
-    batches.push(Array.from({ length: CLEANUP_BATCH_SIZE }, () => ({ userId: 1, viewed: false })));
-    batches.push([{ userId: 2, viewed: false }]);
+    // DISTINCT users, not one user repeated: a full batch in production carries thousands of them,
+    // and a bust list truncated to some "reasonable" cap would pass a fixture that dedupes to one.
+    batches.push(
+      Array.from({ length: CLEANUP_BATCH_SIZE }, (_, i) => ({ userId: i + 1, viewed: false }))
+    );
+    batches.push([{ userId: CLEANUP_BATCH_SIZE + 1, viewed: false }]);
 
     const deleted = await cleanupNotifications(before);
 
     expect(deleted).toBe(CLEANUP_BATCH_SIZE + 1);
-    expect(bustedIds().sort((a, b) => a - b)).toEqual([1, 2]);
+    expect(bustUser).toHaveBeenCalledTimes(CLEANUP_BATCH_SIZE + 1);
+    expect(bustedIds()).toContain(CLEANUP_BATCH_SIZE + 1);
   });
 
   it('deletes with RETURNING so the unread filter has something to filter on', async () => {
@@ -158,14 +167,16 @@ describe('cleanupNotifications cache busting', () => {
 
     await cleanupNotifications(before);
 
-    // Anchored, not toContain: `RETURNING "userId", viewed IS FALSE AS viewed` CONTAINS the plain
-    // form, and would hand every row an inverted `viewed` — busting the read users and no one else.
-    expect(captured[0].sql.trimEnd()).toMatch(/RETURNING "userId", viewed$/);
+    // The WHOLE statement, by equality, and every literal spelled out rather than interpolated from
+    // the constants the SQL itself uses. The fake pool never executes SQL, so this assertion is the
+    // only thing standing between the suite and a sweep that deletes the newest rows, deletes from
+    // the wrong table, deletes without a limit, or returns an inverted `viewed`. Fragment guards were
+    // tried first and each one left a green mutation beside it; `toContain` cannot see an insertion,
+    // and a limit derived from CLEANUP_BATCH_SIZE moves with the constant it is meant to pin.
+    expect(captured[0].sql.replace(/\s+/g, ' ').trim()).toBe(
+      'DELETE FROM "UserNotification" WHERE id IN (SELECT id FROM "UserNotification" WHERE "createdAt" < $1 LIMIT 10000) RETURNING "userId", viewed'
+    );
     expect(captured[0].params).toEqual([before.toISOString()]);
-    // The fake pool answers every query identically, so without these the sweep could delete the
-    // NEWEST rows, or none at all, and every test here would still pass.
-    expect(captured[0].sql).toContain('"createdAt" < $1');
-    expect(captured[0].sql).toContain(`LIMIT ${CLEANUP_BATCH_SIZE}`);
   });
 
   it('stops on the first empty batch and sums the deleted rows across batches', async () => {
@@ -194,6 +205,21 @@ describe('cleanupNotifications cache busting', () => {
 
     expect(deleted).toBe(2);
     expect(bustedIds().sort((a, b) => a - b)).toEqual([1, 2]);
+  });
+
+  it('attempts every user in the batch even when redis is down for all of them', async () => {
+    // MORE users than workers, and EVERY bust rejecting. Workers pull from a shared cursor, so a
+    // worker that gave up on an error would not strand a queue of its own — it would retire, and the
+    // users past the 25th would simply never be reached. With one rejection that is invisible,
+    // because the other 24 workers drain the cursor between them.
+    const userIds = Array.from({ length: 30 }, (_, i) => i + 500);
+    bustUser.mockRejectedValue(new Error('redis down'));
+    batches.push(userIds.map((userId) => ({ userId, viewed: false })));
+
+    await cleanupNotifications(before);
+
+    expect(bustedIds().sort((a, b) => a - b)).toEqual(userIds);
+    expect(logged[0]).toMatchObject({ bustsAcked: 0 });
   });
 
   it('reports the busts redis acknowledged, not the ones attempted', async () => {
