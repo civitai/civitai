@@ -122,7 +122,9 @@ describe('cleanupNotifications cache busting', () => {
     // The width cap is the only thing between one batch and thousands of simultaneous redis
     // round-trips, and it is invisible to every other assertion here: replace the pool with an
     // unbounded `Promise.all(userIds.map(...))` and they all still pass. If you are deleting this
-    // because the number looks arbitrary, the number is the point.
+    // because the number looks arbitrary, the number is the point. Leave the 25 as a literal too:
+    // asserting toBe(CLEANUP_BUST_CONCURRENCY) would agree with the source at every width, including
+    // no cap at all.
     let inFlight = 0;
     let peak = 0;
     const track = async () => {
@@ -148,6 +150,8 @@ describe('cleanupNotifications cache busting', () => {
   it('keeps busting after a batch that came back full', async () => {
     // Every other batch here is a handful of rows, so anything gated on batch fullness — a sweep that
     // busts the first batch and silently stops — is invisible to them.
+    // Covers the fullness gate that stops on a FULL batch; the two-batch test above covers the one
+    // that stops on a short batch. Neither is redundant with the other.
     // DISTINCT users, not one user repeated: a full batch in production carries thousands of them,
     // and a bust list truncated to some "reasonable" cap would pass a fixture that dedupes to one.
     batches.push(
