@@ -59,29 +59,55 @@ export const INT4_MAX = 2147483647;
  * the caller gets a 400. Same class, and the same bound, as the
  * `/api/v1/models/[id]` id schema.
  *
- * `.int().gt(0)` is part of that bound and is strictly tighter than "fits in
- * int4": zero, negatives and non-integers are rejected too.
+ * `.int().gte(0)` is part of that bound and is tighter than "fits in int4":
+ * negatives and non-integers are rejected too. `0` is NOT rejected — see below.
  *
- * 🔴 THAT LOWER BOUND HAS NO ESTABLISHED JUSTIFICATION. This comment previously
- * asserted one — "every one of those columns is an autoincrement `Int` starting
- * at 1, so no cursor this server issues can be any of them" — and it is FALSE.
+ * 🔴 THE LOWER BOUND HAS NO ESTABLISHED JUSTIFICATION, and two attempts to give
+ * it one have now been falsified. Do not compose a third; if you cannot
+ * establish it, write that it is not established.
+ *
+ * The first attempt was "every one of those columns is an autoincrement `Int`
+ * starting at 1, so no cursor this server issues can be any of them". FALSE:
  * `Image.index` (`packages/civitai-db-schema/prisma/schema.full.prisma:1866`) is
- * `Int?`: nullable, NOT autoincrement, and 0-based. It is a single-field keyset
- * sort column on the postId path — `src/server/services/image.service.ts:2092`,
- * `orderBy = i."index"` — inside `getAllImagesUncaptured`, which
- * `image.getInfinite` reaches through its DB branch, and `image.getInfinite` is
- * one of the four call sites this schema bounds. The tree corroborates the
- * 0-base one branch over, at `src/server/services/image.service.ts:2192`
- * (`COALESCE(i."index", 0)`).
+ * `Int?` — nullable, NOT autoincrement, and not 1-based. It is a single-field
+ * keyset sort column on the postId path (`src/server/services/image.service.ts`,
+ * `orderBy = i."index"`) inside `getAllImagesUncaptured`, which
+ * `image.getInfinite` reaches through its DB branch — one of the four call sites
+ * this schema bounds. `reorderPostImages` (`src/server/services/post.service.ts`)
+ * writes `imageIds.map((id, index) => … data: { index })`, so on a reordered post
+ * the smallest index is `0`. (Other writers number differently, e.g.
+ * `src/components/Post/EditV2/PostReorderImages.tsx` uses `index + 1`; the point
+ * that survives either convention is that `0` is reachable, not that every post
+ * is 0-based.)
  *
- * No ISSUABLE `0` was constructed: a `nextCursor` is the row at 0-based offset
- * `limit` under that ASC sort, so its `index` is >= `limit`. But index
- * assignment was not exhaustively enumerated, so that is a failure to find a
- * counter-example — not a proof. Read `.gt(0)` as UNJUSTIFIED rather than as
- * safe: do not tighten anything else on the strength of it, and if a rejected
- * `0` cursor is ever observed in the wild, the fix is `.gte(0)` here plus the
- * bound tests. The int4 UPPER bound is the half this schema is actually for;
- * the lower bound is inherited from the shape the four call sites already had.
+ * The second attempt was "no ISSUABLE `0` exists: a `nextCursor` is the row at
+ * 0-based offset `limit` under that ASC sort, so its `index` is >= `limit`".
+ * FALSE at `limit = 0`, which needs no malformed input: `getInfiniteImagesSchema`
+ * declares `limit: z.number().min(0).max(200)`, so `image.getInfinite({ postId,
+ * limit: 0 })` parses. `postId` makes `requiresImageDbPath` true, the sort is
+ * `i."index"` ASC, the query runs `LIMIT limit + 1` = 1, and
+ * `rawImages.length (1) > limit (0)` promotes that first row to `nextCursor`
+ * with `cursorId` = `i."index"`. On a reordered post that value is `0`. Under
+ * the previous `.gt(0)` the client's own follow-up cursor came back 400.
+ *
+ * So the floor is `.gte(0)`. That is the change, not a justification: rejecting
+ * `0` was falsifiable and was falsified, and a bound whose only argument has
+ * been withdrawn twice should not be the tighter one.
+ *
+ * WHAT IS STILL NOT ESTABLISHED, stated so the next reader need not rediscover
+ * it: that `0` is the correct FLOOR. Nothing shown here rules out a negative
+ * cursor — `addPostImageSchema.index` (`src/server/schema/post.schema.ts`) is a
+ * bare `z.number()`, so negative and non-integer indices are permitted into
+ * `createImage` unfiltered, and a negative `i."index"` would be issuable as a
+ * `nextCursor` the same way `0` is. No such row was looked for, in the database
+ * or anywhere else. If a rejected negative cursor is ever observed, the floor
+ * belongs at the int4 minimum, not at `0`. Do not tighten anything else on the
+ * strength of this floor.
+ *
+ * The int4 UPPER bound is the half this schema is actually for. The lower bound
+ * is NOT inherited: at the merge base all four call sites declared a bare
+ * `z.union([z.bigint(), z.number(), z.string(), z.date()])` with no bounds at
+ * all, so every part of this bound is introduced here.
  *
  * NOTE: this bound covers the MAGNITUDE half of the class only, and read the
  * next paragraph before treating the other half as closed. An *in-range* number
@@ -109,7 +135,7 @@ export const INT4_MAX = 2147483647;
 export const keysetCursorSchema = z
   .union([
     z.bigint().gt(BigInt(0)).lte(BigInt(INT4_MAX)),
-    z.number().int().gt(0).lte(INT4_MAX),
+    z.number().int().gte(0).lte(INT4_MAX),
     z.string(),
     z.date(),
   ])

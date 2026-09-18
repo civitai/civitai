@@ -5,8 +5,11 @@ import { getAllModelsSchema } from '~/server/schema/model.schema';
 /**
  * A keyset cursor is always a value THIS server issued as the previous page's
  * `nextCursor` — a bare column value for a single-field sort, or a
- * `CONCAT(col, '|', …)` string otherwise. Every single-field keyset sort in the
- * app orders by an `int` id column, so a numeric cursor above Postgres `int4`
+ * `CONCAT(col, '|', …)` string otherwise. The single-field keyset sorts here
+ * order by `int` columns — mostly ids (`i."id"`, `ci."id"`, …), but NOT only
+ * ids: `i."index"` is an `int` column that is neither an id nor 1-based. The set
+ * was not exhaustively enumerated, so read this as the reason for the UPPER
+ * bound and not as a closed inventory. A numeric cursor above Postgres `int4`
  * can only be client garbage. Unbounded, it bound straight into the SQL
  * comparison and Postgres threw `value out of range for type integer` — a raw
  * 500 for a client fault. Same class and same bound as the
@@ -34,11 +37,22 @@ describe('keysetCursorSchema — numeric bound', () => {
   });
 
   it.each([
-    ['zero', 0],
     ['a negative id', -5],
     ['a non-integer', 1.5],
   ])('rejects %s', (_label, value) => {
     expect(keysetCursorSchema.safeParse(value).success).toBe(false);
+  });
+
+  // 0 is a value this server can ISSUE, so the floor is `.gte(0)`, not `.gt(0)`.
+  // `getInfiniteImagesSchema.limit` is `z.number().min(0)`, so `limit: 0` parses;
+  // with a `postId` that routes to the DB path (`requiresImageDbPath`), whose
+  // sort is `orderBy = i."index"` ASC (`image.service.ts`). The query runs
+  // `LIMIT limit + 1` = 1, and `rawImages.length (1) > limit (0)` makes the
+  // first row the `nextCursor` — its `cursorId` being `i."index"` itself.
+  // `reorderPostImages` (`post.service.ts`) writes `imageIds.map((id, index) =>
+  // … data: { index })`, so on a reordered post the first row's index is 0.
+  it('accepts zero, which the limit:0 postId path can issue as a nextCursor', () => {
+    expect(keysetCursorSchema.safeParse(0).success).toBe(true);
   });
 
   it.each([
