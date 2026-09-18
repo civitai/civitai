@@ -54,6 +54,12 @@ export enum FLIPT_FEATURE_FLAGS {
   AI_TOOLKIT_DEFAULT_SD = 'ai-toolkit-default-sd',
   WAN22_MULTI_STEP = 'wan22-multi-step',
   ENHANCED_COMPATIBILITY_SDCPP = 'enhanced-compatibility-sdcpp',
+  // Routes the SD/Flux/HiDream/PonyV7 families off the engineless `textToImage` step and onto
+  // their specialised `imageGen` endpoints, which name their engine. DEFAULT-OFF — isFlipt
+  // returns false for an unknown flag or an unreachable Flipt, which keeps textToImage in
+  // charge. Evaluated once per submission so a mid-request flip cannot split one workflow
+  // across both step types.
+  IMAGE_GEN_SPECIALIZED = 'image-gen-specialized',
   IMAGE_INDEX_FEED = 'image-index-feed',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
