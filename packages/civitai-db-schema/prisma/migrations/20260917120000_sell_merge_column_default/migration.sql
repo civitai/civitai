@@ -1,4 +1,10 @@
--- NOT YET APPLIED.
+-- APPLIED to prod 2026-09-17, prefixed at apply time with `SET lock_timeout = '3s'`.
+--
+-- Apply DDL to "Model" behind a lock_timeout. The change here is catalog-only and instant, but
+-- ALTER TABLE takes ACCESS EXCLUSIVE, and the ACQUISITION can queue behind a long transaction and
+-- park every reader of the hottest table in the product behind it. A timeout makes that a clean
+-- failure you retry rather than an incident. It is an apply-time property, not part of the
+-- migration, which is why it is recorded here instead of in the statement.
 --
 -- Apply after 20260915120000_add_sell_merge_commercial_use -- the label must exist before a
 -- default can name it. Rewrites no row.

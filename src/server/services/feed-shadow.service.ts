@@ -71,9 +71,10 @@ const PERIOD_DAYS: Record<string, number | undefined> = {
 };
 const LEVELS = [1, 2, 4, 8, 16, 32];
 // The feed service's own ceiling on userIds.
-const MAX_FOLLOWED = 1000;
+const MAX_USER_IDS = 1000;
+const MAX_FOLLOWED = MAX_USER_IDS;
 // Filters the candidate has no dimension for; the app resolves the server-side lists
-// (followed, hidden, newCreators) inside the search functions, out of this hook's reach.
+// (hidden) inside the search functions, out of this hook's reach.
 const UNSUPPORTED_KEYS = [
   'postId',
   'postIds',
@@ -89,7 +90,6 @@ const UNSUPPORTED_KEYS = [
   'remixOfId',
 ] as const;
 const UNSUPPORTED_FLAGS = [
-  'newCreators',
   'hidden',
   'withMeta',
   'requiringMeta',
@@ -145,6 +145,12 @@ export function mapSearchInputToFeedQuery(
     if (!Array.isArray(followed)) return skip('flag:followed');
     if (followed.length > MAX_FOLLOWED) return skip(`followed>${MAX_FOLLOWED}`);
     if (present(input.userId)) return skip('flag:followed:userId');
+  }
+  const newCreators = input.newCreators === true ? input.newCreatorUserIds : undefined;
+  if (input.newCreators === true) {
+    if (!Array.isArray(newCreators)) return skip('flag:newCreators');
+    if (newCreators.length > MAX_USER_IDS) return skip(`newCreators>${MAX_USER_IDS}`);
+    if (present(input.userId) || input.followed === true) return skip('flag:newCreators:userId');
   }
 
   let offset = 0;
@@ -202,6 +208,8 @@ export function mapSearchInputToFeedQuery(
   if (userId) params.set('userIds', String(userId));
   const followedIds = ints(followed);
   if (followedIds.length) params.set('userIds', followedIds.join(','));
+  const newCreatorIds = ints(newCreators);
+  if (newCreatorIds.length) params.set('userIds', newCreatorIds.join(','));
   if (types.length) params.set('types', types.join(','));
   const baseModels = Array.isArray(input.baseModels)
     ? input.baseModels.map(String).filter(Boolean)

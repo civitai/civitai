@@ -1,4 +1,15 @@
-import { Alert, Button, Card, Group, NumberInput, Stack, Switch, Text, Title } from '@mantine/core';
+import {
+  Alert,
+  Button,
+  Card,
+  Group,
+  NumberInput,
+  SimpleGrid,
+  Stack,
+  Switch,
+  Text,
+  Title,
+} from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { formatBytes } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -80,7 +91,7 @@ export function ImportConfigSection() {
           />
         </Group>
 
-        <Group grow align="flex-start">
+        <SimpleGrid cols={{ base: 1, sm: 3, lg: 1 }}>
           <NumberInput
             label="Files at once"
             description="Across the whole fleet"
@@ -111,7 +122,7 @@ export function ImportConfigSection() {
               setDraft({ ...draft, workBudgetSeconds: typeof value === 'number' ? value : 120 })
             }
           />
-        </Group>
+        </SimpleGrid>
 
         {/* The number these three knobs actually buy. Without it they read as speed dials, and the
             one that matters is memory on a pod that is also serving traffic. */}

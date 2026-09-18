@@ -2694,6 +2694,73 @@ describe('blocks.submitWorkflow', () => {
     expect(arg.buzzAmount).toBe(25);
   });
 
+  it('A-flow: stamps the APP-FACING generation type "textToImage:txt2img" on the spend attribution', async () => {
+    // The spend row records WHICH capability the Buzz paid for, so a
+    // per-generation-type author fee has data to reason about. Literal
+    // expectation — never derived from the resolver under test.
+    //
+    // 🔴 THE SUBTYPE IS THE POINT, and it is why this is an END-TO-END
+    // assertion rather than a resolver unit test. The image workflow CLASS is
+    // not on the body — it is resolved from the checkpoint's ecosystem deep
+    // inside `buildTextToImageInput` — so the only thing that proves the class
+    // reaches the column is driving the real handler and reading what it passed.
+    // A bare `textToImage` here means the wiring is dead.
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    happySubmitWithWorkflow(25, 'wf_real');
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    await flushMicrotasks();
+
+    expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+    const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
+    expect(stamped).toBe('textToImage:txt2img');
+    // The coarse key survives the widening — a per-type fee keys on it.
+    expect(String(stamped).split(':')[0]).toBe('textToImage');
+    // And it is NOT the bare subtype, which would destroy that key.
+    expect(stamped).not.toBe('txt2img');
+  });
+
+  it('A-flow: an img2img submit is distinguishable from a txt2img one — "textToImage:img2img"', async () => {
+    // 🔴 THE REGRESSION THIS WIDENING EXISTS FOR. Before it, this submit and the
+    // one above wrote the SAME value, and the difference — which the body
+    // carries and nothing else records — was permanently lost. img2img is
+    // PAGE-only in this phase, so the token is page-bound.
+    //
+    // The class is `img2img` rather than `img2img:edit` because the fixture
+    // checkpoint is SD-family (`SDXL 1.0`); on an edit-capable ecosystem the
+    // SAME body resolves to the edit class. That is precisely why the class
+    // cannot be read off the body.
+    mockVerifyBlockToken.mockResolvedValue(
+      validClaims({
+        buzzBudget: 1000,
+        blockInstanceId: 'page_apb_page',
+        ctx: { slotId: 'app.page', entityType: 'none' },
+      })
+    );
+    happyVersionLookup();
+    happyUser();
+    happySubmitWithWorkflow(25, 'wf_real');
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({
+      blockToken: 'tok',
+      body: validBody({
+        sourceImage: { url: 'https://image.civitai.com/abc/def.jpeg', width: 768, height: 1024 },
+      }),
+    });
+    await flushMicrotasks();
+
+    expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+    const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
+    expect(stamped).toBe('textToImage:img2img');
+    expect(stamped).not.toBe('textToImage:txt2img');
+    expect(stamped).not.toBe('textToImage');
+    expect(String(stamped).split(':')[0]).toBe('textToImage');
+  });
+
   it('G5: threads the body sharedContentKey (opaque) through to the spend attribution', async () => {
     // The published-content-author key is app-supplied on the BODY and passed
     // OPAQUE to the service (which resolves the author server-side). Assert it
@@ -6406,7 +6473,15 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         buzzType: 'blue', // free-first floor when no paid debit is surfaced → 0 payout
         modelId: null, // recipe-based, no single user-picked model
         sharedContentKey: null, // customComfy body has no sharedContentKey field
+        // The app-facing key for this kind, carrying WHICH registered recipe
+        // ran. The coarse key (before the first colon) is still `customComfy`.
+        generationType: 'customComfy:seamless-pano-360',
       });
+      // 🔴 Not the bare kind — that is what this widening replaced, and it is
+      // the value a regressed resolver would fall back to.
+      const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
+      expect(stamped).not.toBe('customComfy');
+      expect(String(stamped).split(':')[0]).toBe('customComfy');
     });
 
     it('derives the PAID currency basis (green debit) off the REALIZED transactions', async () => {
@@ -6939,6 +7014,25 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(step.$type).toBe('customComfy');
       // maxBuzz === stepTimeoutSeconds, BY CONSTRUCTION: 90s → '00:01:30'.
       expect(step.timeout).toBe('00:01:30');
+    });
+
+    it('stamps "customComfy:inline" — the ARM is distinguishable from a recipe submit', async () => {
+      // 🔴 The second sub-axis this widening captures. Both arms carry
+      // `kind: 'customComfy'`, so before this they wrote the SAME value and the
+      // arm — an app-authored graph vs a code-reviewed server recipe, which is
+      // exactly the distinction a per-type fee would want — was lost. Inline is
+      // ONE bucket by design: an inline graph has no stable server-side identity
+      // to key a fee on, which is the whole difference from a recipe.
+      mockRecordSpendAttribution.mockClear();
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyInline();
+      await caller().submitWorkflow({ blockToken: 'tok', body: inlineBody() });
+      await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
+      const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
+      expect(stamped).toBe('customComfy:inline');
+      expect(stamped).not.toBe('customComfy');
+      expect(stamped).not.toBe('customComfy:seamless-pano-360');
+      expect(String(stamped).split(':')[0]).toBe('customComfy');
     });
 
     it('🔴 the emitted step input carries ONLY resources/trace/workflow — the body is never spread', async () => {
@@ -8293,6 +8387,28 @@ describe("step-type registry bridge (kind: 'step')", () => {
           sharedContentKey: null,
         })
       );
+    });
+
+    it('stamps the REGISTERED STEP ID as the generation type — not the orchestrator $type', async () => {
+      // 🔴 The design risk, pinned at the call site. The orchestrator returns
+      // `$type: 'convertImage'` for this submit (see happyStepSubmit), so a
+      // resolver reading the wrong side would produce a value that still looks
+      // plausible. The column must carry the registry id.
+      mockRecordSpendAttribution.mockClear();
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      happyStepSubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: stepBody() });
+      await new Promise((r) => setTimeout(r, 0)); // fire-and-forget writes
+
+      expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+      const arg = mockRecordSpendAttribution.mock.calls[0][0];
+      expect(arg.generationType).toBe('convert-image');
+      expect(arg.generationType).not.toBe('convertImage');
+      // ...and it is NOT the `kind` — a step submit must be distinguishable from
+      // an image generation, which is the whole reason the column exists.
+      expect(arg.generationType).not.toBe('step');
+      expect(arg.generationType).not.toBe('textToImage');
     });
 
     // 🔴 THE USAGE DIMENSIONS. Every OTHER field on this row is identical to the

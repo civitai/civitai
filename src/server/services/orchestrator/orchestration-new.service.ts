@@ -31,6 +31,7 @@ import type {
 import type { PreprocessVideoStepTemplate } from '@civitai/orchestration-client';
 import { TimeSpan } from '@civitai/client';
 import { createVideoPreprocessStep } from './ecosystems/video-preprocess.handler';
+import { collectStepWarnings } from './step-warnings';
 import {
   generationGraph,
   type GenerationGraphTypes,
@@ -2064,17 +2065,20 @@ export async function whatIfFromGraph({
   // Nothing is persisted on this path, so unlike the submit path the reply is
   // the only carrier; there is no metadata round-trip to fall back on.
   const modelSubstitutions = projectModelSubstitutions(externalCtx.modelSubstitutions);
+  const warnings = collectStepWarnings(workflow.steps);
 
   return {
     allowMatureContent: workflow.allowMatureContent,
     transactions: workflow.transactions?.list,
     cost: workflow.cost,
     ready,
-    // Additive and OMITTED when empty, matching the App Blocks snapshot contract.
-    // 🔴 Consequence a client must know: absence means "no substitution" OR "a
-    // server that predates this field" — the two are indistinguishable. Callers
-    // that need to tell them apart should probe a known-bad version id once.
+    // Both additive and OMITTED when empty, matching the App Blocks snapshot contract.
+    // 🔴 Consequence a client must know: an absent `modelSubstitutions` means "no
+    // substitution" OR "a server that predates this field" — the two are
+    // indistinguishable. Callers that need to tell them apart should probe a
+    // known-bad version id once.
     ...(modelSubstitutions?.length ? { modelSubstitutions } : {}),
+    ...(warnings.length ? { warnings } : {}),
   };
 }
 

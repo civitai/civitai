@@ -80,6 +80,14 @@ type SearchIndexProcessor = {
   jobName?: string;
   partial?: boolean;
   queues?: ('delete' | 'update')[];
+  /**
+   * Retire the index: every write and sync path becomes a no-op. Queue writes are dropped,
+   * `update`/`updateSync`/`reset`/`processQueues` return without touching Meilisearch. Used to
+   * stop feeding a Meilisearch index we no longer serve, without editing the many call sites
+   * that still call `queueUpdate`. Re-enabling the index requires flipping this back and
+   * re-running a `reset` — the index is stale for as long as it is retired.
+   */
+  retired?: boolean;
 };
 
 const processSearchIndexTask = async (
@@ -207,6 +215,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     partial,
     queues,
     updateSyncChunkSize: configuredUpdateSyncChunkSize = DEFAULT_UPDATE_SYNC_CHUNK_SIZE,
+    retired = false,
   } = processor;
 
   // `chunk(xs, 0)`, `chunk(xs, -1)`, `chunk(xs, NaN)` and `chunk(xs, -Infinity)` all return `[]`
@@ -243,6 +252,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       return processor.transformData ? await processor.transformData(baseData) : baseData;
     },
     async update(jobContext: JobContext) {
+      if (retired) return;
       const [lastUpdatedAt, setLastUpdate] = await getJobDate(
         `searchIndex:${(jobName ?? indexName).toLowerCase()}`
       );
@@ -393,6 +403,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
      * reset process.
      */
     async reset(jobContext: JobContext) {
+      if (retired) return;
       // First, setup and init both indexes - Swap requires both indexes to be created:
       // In order to swap, the base index must exist. because of this, we need to create or get it.
       await getOrCreateIndex(indexName, { primaryKey }, processor.client);
@@ -449,7 +460,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>,
       jobContext?: JobContext
     ): Promise<SearchIndexUpdateSyncResult> {
-      if (!items.length) {
+      if (retired || !items.length) {
         return { indexName, totalTasks: 0, failedTasks: 0, failedIds: 0 };
       }
 
@@ -526,12 +537,14 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       return result;
     },
     async queueUpdate(items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>) {
+      if (retired) return;
       await SearchIndexUpdate.queueUpdate({ indexName, items });
     },
     async processQueues(
       opts: { processUpdates?: boolean; processDeletes?: boolean } = {},
       jobContext: JobContext
     ) {
+      if (retired) return;
       const ctx = {
         db: dbRead,
         pg: pgDbRead,

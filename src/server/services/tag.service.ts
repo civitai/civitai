@@ -60,7 +60,13 @@ export const GET_TAGS_CACHE_TAG = 'getTags';
 const getTagsListingCache = queryCache(dbRead, 'getTags', 'v1');
 export const bustGetTagsCache = () => bustCacheTag(GET_TAGS_CACHE_TAG);
 
-type TagWithModelCount = { id: number; name: string; unfeatured: boolean; count: number };
+type TagWithModelCount = {
+  id: number;
+  name: string;
+  displayName: string | null;
+  unfeatured: boolean;
+  count: number;
+};
 
 // Cache key for `getTagWithModelCount`. `Tag.name` is `citext` (case-insensitive), so
 // `WHERE "name" = $1` matches case-insensitively in the DB. We normalize the key to
@@ -81,11 +87,12 @@ const queryTagWithModelCount = ({ name }: { name: string }) =>
   dbRead.$queryRaw<[TagWithModelCount]>`
     SELECT "id",
            "name",
+           "displayName",
            "unfeatured",
            0 as count
     FROM "Tag"
     WHERE "name" = ${name}
-    GROUP BY "id", "name"
+    GROUP BY "id", "name", "displayName"
     LIMIT 1 OFFSET 0;
   `;
 

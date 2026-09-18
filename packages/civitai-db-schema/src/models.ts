@@ -1535,6 +1535,12 @@ export interface ImageTagForReview {
   tagId: number;
 }
 
+export interface ImageMetaFlags {
+  imageId: number;
+  hasMeta: boolean;
+  onSite: boolean;
+}
+
 export interface ImageFlag {
   imageId: number;
   image?: Image;
@@ -1649,6 +1655,7 @@ export interface CollectionMetric {
 export interface Tag {
   id: number;
   name: string;
+  displayName: string | null;
   color: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -2324,6 +2331,7 @@ export interface BlockSpendAttribution {
   contentAuthorUserId: number | null;
   contentAuthor?: User | null;
   sharedContentKey: string | null;
+  generationType: string | null;
   status: string;
   voidedReason: string | null;
   attributedAt: Date;

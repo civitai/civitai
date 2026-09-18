@@ -308,7 +308,10 @@ const featureFlags = createFeatureFlags({
     availability: ['user'],
   },
   profileCollections: ['public'],
-  imageSearch: ['public'],
+  // Retired by default (see 868m4c2dn): the `images_v6` search index is no longer fed or served.
+  // Static availability is empty so image search is off for everyone; re-enable without a deploy
+  // by turning on the `image-search` Flipt flag, which is authoritative when it exists.
+  imageSearch: { availability: [], fliptKey: 'image-search' },
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
