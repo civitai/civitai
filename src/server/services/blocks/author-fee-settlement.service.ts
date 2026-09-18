@@ -46,9 +46,10 @@ import type { BlockAuthorFeeComputation } from './author-fee';
 // or charged it — D7 requires the viewer see the exact number before the run,
 // and Buzz cannot express a fraction. There is no sub-buzz residue to carry.
 // The daily batch therefore exists for LEDGER VOLUME (one mint per author per
-// day instead of one per generation), not for rounding, and its `Math.floor` is
-// a no-op on integer inputs kept only so the arithmetic states its own
-// direction.
+// day instead of one per generation), not for rounding. (An earlier revision
+// carried a defensive `Math.floor` here and a sentence explaining it; the floor
+// was removed and the sentence outlived it by one commit. `fee_buzz` is an
+// INTEGER column, so there is nothing to round.)
 //
 // ⚠️ THE CONSEQUENCE IS REAL AND SLICE 3 MUST SURFACE IT: an author who sets a 0
 // flat leg and a low percentage earns NOTHING on cheap generations, forever —
@@ -330,11 +331,28 @@ export async function settleBlockAuthorFees(args: {
   let buzzMinted = 0;
   let daysTruncated = 0;
 
+  // 🔴 A MONOTONIC CURSOR, AND IT IS WHAT MAKES THE LOOP TERMINATE. An earlier
+  // revision re-selected "the oldest unsettled day" every iteration with nothing
+  // to advance past a day that did not finish, which meant a day the loop could
+  // not complete was selected again forever:
+  //   * an OVERSIZED day broke the run and stayed the oldest, so it blocked EVERY
+  //     later day permanently — and since the job passes no `limit`, the only
+  //     recovery was a code change and a deploy;
+  //   * a bucket the Buzz service keeps rejecting left its rows `accrued`, so the
+  //     next iteration re-selected the same day and re-minted it, burning all
+  //     `maxDays` iterations on one stuck owner while every other author stopped
+  //     being paid.
+  // Neither was a money defect — the row-derived key still makes a retry conflict
+  // — but both halt settlement for everyone else, reported only as a log line.
+  // The cursor advances past a day whether it settled, was skipped or failed, so
+  // a stuck day costs exactly one iteration and is retried on the NEXT run
+  // (the cursor is per-run, so nothing is abandoned permanently).
+  let cursorFrom = new Date(0);
+
   for (let day = 0; day < maxDays; day += 1) {
-    // The OLDEST unsettled accrual day still below the boundary. Re-read each
-    // iteration so a day this loop just settled is not seen again.
+    // The oldest unsettled day AT OR AFTER the cursor.
     const oldest = await dbWrite.blockAuthorFeeAccrual.findFirst({
-      where: { status: STATUS_ACCRUED, accruedAt: { lt: boundary } },
+      where: { status: STATUS_ACCRUED, accruedAt: { gte: cursorFrom, lt: boundary } },
       select: { accruedAt: true },
       orderBy: { accruedAt: 'asc' },
     });
@@ -343,6 +361,8 @@ export async function settleBlockAuthorFees(args: {
     const dayStart = utcDayStart(oldest.accruedAt);
     const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
     const accrualDay = dayStart.toISOString().slice(0, 10);
+    // Advance BEFORE any early exit below, so every path leaves this day behind.
+    cursorFrom = dayEnd;
 
     // 🔴 READ THE PRIMARY. This scan decides who gets paid and the flip writes to
     // the primary; a lagging replica would re-offer a row another run just settled.
@@ -356,9 +376,9 @@ export async function settleBlockAuthorFees(args: {
 
     if (rows.length > limit) {
       // Settling part of this day would mint a partial bucket, and the next run
-      // would flip the remainder on a conflict without paying for it. Skip the day
-      // whole and shout. 🔴 This RETURNS rather than continuing: the day is still
-      // the oldest, so the next iteration would select it again and spin.
+      // would flip the remainder on a conflict without ever paying for it. Skip
+      // the day WHOLE and shout — then CONTINUE, because the cursor has already
+      // moved past it and later days must not be held hostage to this one.
       daysTruncated += 1;
       logToAxiom(
         {
@@ -370,9 +390,11 @@ export async function settleBlockAuthorFees(args: {
         },
         'civitai-prod'
       ).catch(() => undefined);
-      break;
+      continue;
     }
-    if (!rows.length) break;
+    // The day emptied under us — a concurrent run settled it between the two
+    // reads. Move on rather than ending the run; the cursor guarantees no spin.
+    if (!rows.length) continue;
 
     const byBucket = new Map<string, SettlementBucket>();
     for (const row of rows) {
@@ -400,24 +422,50 @@ export async function settleBlockAuthorFees(args: {
     // answerable: this bucket moved, or it did not.
     for (const bucket of payable) {
       const key = keyForBucket(bucket);
-      const mint = await createBuzzTransactionMany([
-        {
-          fromAccountId: 0,
-          toAccountId: bucket.appOwnerUserId,
-          fromAccountType: bucket.buzzType as BuzzAccountType,
-          toAccountType: bucket.buzzType as BuzzAccountType,
-          amount: bucket.totalBuzz,
-          description: `App author fee (${bucket.accrualDay})`,
-          type: TransactionType.Fee,
-          externalTransactionId: key,
-        },
-      ]);
+
+      // 🔴 THE MINT IS WRAPPED, AND PER-BUCKET MINTING IS WHY IT HAS TO BE. The
+      // buzz client THROWS on any non-2xx (`BuzzApiError`), and its retry
+      // allowlist covers only connection-level errors — a 5xx or a 504 throws on
+      // the first response. Unwrapped, bucket 1 of N throwing aborts buckets
+      // 2..N, the day loop and the completion log. Splitting one batched call
+      // into N calls multiplied that exposure by N, so this round's own fix made
+      // wrapping necessary rather than optional. A throw is treated exactly like
+      // a drop: the rows stay `accrued` and the next run re-derives the same
+      // key, so money is never at risk — only this bucket's timeliness.
+      let mint: Awaited<ReturnType<typeof createBuzzTransactionMany>> | null = null;
+      let threw: unknown = null;
+      try {
+        mint = await createBuzzTransactionMany([
+          {
+            fromAccountId: 0,
+            toAccountId: bucket.appOwnerUserId,
+            fromAccountType: bucket.buzzType as BuzzAccountType,
+            toAccountType: bucket.buzzType as BuzzAccountType,
+            amount: bucket.totalBuzz,
+            description: `App author fee (${bucket.accrualDay})`,
+            type: TransactionType.Fee,
+            externalTransactionId: key,
+          },
+        ]);
+      } catch (error) {
+        threw = error;
+      }
 
       // A CONFLICT means this exact key already minted — and because the key is
       // row-derived and the bucket is whole, that is the same payment, so the rows
-      // may be flipped. A DROP means no money moved: leave them `accrued` and let
+      // may be flipped.
+      //
+      // ⚠️ THE PRECONDITION, stated because it is an invariant nothing enforces:
+      // this holds only while no row can JOIN a (day, owner, currency) group that
+      // has already minted. Today that is safe because `accrued_at` defaults to
+      // `now()`, so rows only ever leave the set. A backfill or import writing a
+      // historical `accrued_at` would break it, and the break is a SILENT
+      // UNDERPAYMENT — the mint conflicts on the old total and the newcomer is
+      // flipped for free. Anything that writes a non-`now()` accrual time must
+      // settle that day again under a different key, or not write one at all. A DROP means no money moved: leave them `accrued` and let
       // the next run re-derive this same key.
-      const moved = (mint?.transactions?.length ?? 0) + (mint?.conflicts?.length ?? 0) > 0;
+      const moved =
+        threw === null && (mint?.transactions?.length ?? 0) + (mint?.conflicts?.length ?? 0) > 0;
       if (!moved) {
         logToAxiom(
           {
@@ -428,6 +476,7 @@ export async function settleBlockAuthorFees(args: {
             appOwnerUserId: bucket.appOwnerUserId,
             buzzType: bucket.buzzType,
             buzz: bucket.totalBuzz,
+            threw: threw instanceof Error ? threw.message : threw ? String(threw) : null,
           },
           'civitai-prod'
         ).catch(() => undefined);

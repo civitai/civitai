@@ -77,6 +77,15 @@ class FakePrismaKnownError extends Error {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 🔴 clearAllMocks CLEARS CALL HISTORY BUT NOT `mockResolvedValueOnce` QUEUES —
+  // those are implementations, and only a reset drops them. Every mock this suite
+  // feeds with `...Once` must therefore be reset explicitly, or a queue left over
+  // by one test is consumed by the next and the suite becomes order-dependent.
+  // Found the moment the multi-day tests landed: a leftover day queue made
+  // 'no-ops when there is nothing accrued' mint a transaction.
+  mockDbWrite.blockAuthorFeeAccrual.findFirst.mockReset();
+  mockDbWrite.blockAuthorFeeAccrual.findMany.mockReset();
+  mockCreateMany.mockReset();
   mockDbRead.oauthClient.findUnique.mockResolvedValue({ id: APP_ID, userId: OWNER_ID });
   mockDbWrite.blockAuthorFeeAccrual.create.mockResolvedValue({});
   mockDbWrite.blockAuthorFeeAccrual.updateMany.mockResolvedValue({ count: 1 });
@@ -205,10 +214,29 @@ describe('settleBlockAuthorFees', () => {
 
   /** One accrual day, then exhausted — the shape the day loop walks. */
   function oneDay(rows: Record<string, unknown>[], day: Date = DAY) {
-    mockDbWrite.blockAuthorFeeAccrual.findFirst
-      .mockResolvedValueOnce({ accruedAt: day })
-      .mockResolvedValue(null);
-    mockDbWrite.blockAuthorFeeAccrual.findMany.mockResolvedValueOnce(rows).mockResolvedValue([]);
+    days([[day, rows]]);
+  }
+
+  /**
+   * N accrual days in order, then exhausted.
+   *
+   * 🔴 THIS EXISTS BECAUSE `oneDay` ALONE MADE THE LOOP STRUCTURALLY UNTESTED. An
+   * audit round found that every settlement test used the single-day helper, so
+   * the loop body ran exactly once in every test — the multi-day walk, the cursor,
+   * `maxDays` and the continue-vs-break semantics were all unexercised, and a
+   * mutation sweep over them would have killed nothing. The defect that shipped
+   * under that blind spot was a day the loop could never advance past, which
+   * blocked every later day forever.
+   */
+  function days(plan: [Date, Record<string, unknown>[]][]) {
+    let ff = mockDbWrite.blockAuthorFeeAccrual.findFirst;
+    let fm = mockDbWrite.blockAuthorFeeAccrual.findMany;
+    for (const [day, rows] of plan) {
+      ff = ff.mockResolvedValueOnce({ accruedAt: day });
+      fm = fm.mockResolvedValueOnce(rows);
+    }
+    ff.mockResolvedValue(null);
+    fm.mockResolvedValue([]);
   }
 
   it('mints the SUM per owner and flips the contributing rows', async () => {
@@ -348,6 +376,119 @@ describe('settleBlockAuthorFees', () => {
     const stamped =
       mockDbWrite.blockAuthorFeeAccrual.updateMany.mock.calls[0][0].data.settlementKey;
     expect(stamped).toBe(minted);
+  });
+
+  it('walks MULTIPLE accrual days in one run, keying each on its own day', async () => {
+    days([
+      [new Date('2026-09-15T09:00:00Z'), [accrual({ id: 'a', feeBuzz: 3 })]],
+      [new Date('2026-09-16T09:00:00Z'), [accrual({ id: 'b', feeBuzz: 5 })]],
+    ]);
+
+    const result = await settleBlockAuthorFees({ date: RUN });
+
+    expect(mockCreateMany).toHaveBeenCalledTimes(2);
+    const keys = mockCreateMany.mock.calls.map((c: any) => c[0][0].externalTransactionId);
+    expect(keys).toEqual([
+      `block-author-fee-2026-09-15-${OWNER_ID}-yellow`,
+      `block-author-fee-2026-09-16-${OWNER_ID}-yellow`,
+    ]);
+    expect(result.buckets).toBe(2);
+  });
+
+  it('🔴 an OVERSIZED day does not block the days behind it', async () => {
+    // The defect this pins: with no cursor the oversized day stayed "the oldest"
+    // forever, so every later day was blocked permanently and the only recovery
+    // was a code change and a deploy.
+    days([
+      [new Date('2026-09-15T09:00:00Z'), [accrual({ id: 'x' }), accrual({ id: 'y' })]],
+      [new Date('2026-09-16T09:00:00Z'), [accrual({ id: 'z', feeBuzz: 5 })]],
+    ]);
+
+    const result = await settleBlockAuthorFees({ date: RUN, limit: 1 });
+
+    expect(result.daysTruncated).toBe(1);
+    expect(mockCreateMany).toHaveBeenCalledTimes(1);
+    expect(mockCreateMany.mock.calls[0][0][0].externalTransactionId).toContain('2026-09-16');
+  });
+
+  it('🔴 a persistently DROPPED bucket does not block the days behind it', async () => {
+    days([
+      [new Date('2026-09-15T09:00:00Z'), [accrual({ id: 'x', appOwnerUserId: 111 })]],
+      [new Date('2026-09-16T09:00:00Z'), [accrual({ id: 'z', appOwnerUserId: 222, feeBuzz: 5 })]],
+    ]);
+    mockCreateMany
+      .mockResolvedValueOnce({ transactions: [], conflicts: [] })
+      .mockResolvedValueOnce({ transactions: [{ id: 'tx' }], conflicts: [] });
+
+    const result = await settleBlockAuthorFees({ date: RUN });
+
+    expect(mockCreateMany).toHaveBeenCalledTimes(2);
+    expect(result.rowsSettled).toBe(1);
+  });
+
+  it('a THROWN mint is treated as a drop, and its peers still settle', async () => {
+    // The buzz client throws on any non-2xx and does not retry a 5xx. Unwrapped,
+    // bucket 1 would abort buckets 2..N, the day loop and the completion log.
+    oneDay([
+      accrual({ id: 'bafa_1', appOwnerUserId: 111, feeBuzz: 10 }),
+      accrual({ id: 'bafa_2', appOwnerUserId: 222, feeBuzz: 4 }),
+    ]);
+    mockCreateMany
+      .mockRejectedValueOnce(new Error('BuzzApiError: 503'))
+      .mockResolvedValueOnce({ transactions: [{ id: 'tx' }], conflicts: [] });
+
+    const result = await settleBlockAuthorFees({ date: RUN });
+
+    expect(result.rowsSettled).toBe(1);
+    expect(mockDbWrite.blockAuthorFeeAccrual.updateMany.mock.calls[0][0].where.id.in).toEqual([
+      'bafa_2',
+    ]);
+  });
+
+  it('advances the cursor past each day rather than re-selecting it', async () => {
+    days([
+      [new Date('2026-09-15T09:00:00Z'), [accrual({ id: 'a' })]],
+      [new Date('2026-09-16T09:00:00Z'), [accrual({ id: 'b' })]],
+    ]);
+
+    await settleBlockAuthorFees({ date: RUN });
+
+    const gte = mockDbWrite.blockAuthorFeeAccrual.findFirst.mock.calls.map((c: any) =>
+      c[0].where.accruedAt.gte.toISOString()
+    );
+    expect(gte[0]).toBe('1970-01-01T00:00:00.000Z');
+    expect(gte[1]).toBe('2026-09-16T00:00:00.000Z');
+    expect(gte[2]).toBe('2026-09-17T00:00:00.000Z');
+  });
+
+  it('a day that EMPTIES under the loop does not end the run', async () => {
+    // findFirst reports a day, a concurrent run settles it before findMany, and
+    // this run sees 0 rows. `break` there would abandon every later day for the
+    // rest of the run; the cursor has already moved past it, so `continue` cannot
+    // spin.
+    days([
+      [new Date('2026-09-15T09:00:00Z'), []],
+      [new Date('2026-09-16T09:00:00Z'), [accrual({ id: 'z', feeBuzz: 5 })]],
+    ]);
+
+    const result = await settleBlockAuthorFees({ date: RUN });
+
+    expect(mockCreateMany).toHaveBeenCalledTimes(1);
+    expect(mockCreateMany.mock.calls[0][0][0].externalTransactionId).toContain('2026-09-16');
+    expect(result.rowsSettled).toBe(1);
+  });
+
+  it('stops after maxDays even with more days outstanding', async () => {
+    days([
+      [new Date('2026-09-13T09:00:00Z'), [accrual({ id: 'a' })]],
+      [new Date('2026-09-14T09:00:00Z'), [accrual({ id: 'b' })]],
+      [new Date('2026-09-15T09:00:00Z'), [accrual({ id: 'c' })]],
+    ]);
+
+    const result = await settleBlockAuthorFees({ date: RUN, maxDays: 2 });
+
+    expect(mockCreateMany).toHaveBeenCalledTimes(2);
+    expect(result.buckets).toBe(2);
   });
 
   it('no-ops when there is nothing accrued', async () => {
