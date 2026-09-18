@@ -237,6 +237,28 @@ describe('settleBlockAuthorFees', () => {
     expect(result.buzzMinted).toBe(0);
   });
 
+  it('🔴 the FLIP is guarded on `status: accrued`, and the guard is asserted on the WHERE', async () => {
+    // ⚠️ THE TEST ABOVE NAMES THIS SCENARIO AND CANNOT SEE THE GUARD. It simulates
+    // "a concurrent run already flipped these rows" with
+    // `updateMany.mockResolvedValue({ count: 0 })`, which is a fact about the MOCK
+    // and is true whatever the WHERE clause says. Measured: deleting
+    // `status: STATUS_ACCRUED` from the flip's `where` left the entire suite
+    // green — a guard whose description covered a relationship while its body
+    // inspected nothing.
+    //
+    // Without the clause the flip is `id IN (…)` alone, so a run whose rows were
+    // settled by a concurrent run between the scan and the flip re-stamps them
+    // with THIS run's `settlementKey` and `settledAt`, overwriting the key that
+    // records which mint actually paid them. Row→mint traceability is the only
+    // way to answer "was this fee paid, and by which transaction".
+    oneDay([accrual()]);
+    await settleBlockAuthorFees({ date: RUN });
+
+    const call = mockDbWrite.blockAuthorFeeAccrual.updateMany.mock.calls[0][0];
+    expect(call.where).toEqual({ id: { in: expect.any(Array) }, status: 'accrued' });
+    expect(call.where.id.in.length).toBeGreaterThan(0);
+  });
+
   it('uses ONE key for both the mint and the row stamp', async () => {
     oneDay([accrual()]);
     await settleBlockAuthorFees({ date: RUN });

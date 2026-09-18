@@ -60,6 +60,29 @@ function spendAttributionCallSites(source: string): string[] {
   return callSites(source, 'recordSpendAttribution({');
 }
 
+/**
+ * The nearest enclosing SUBMIT PATH name for an offset in the router source —
+ * either a tRPC procedure (`  submitWorkflow: publicProcedure`) or a module-level
+ * helper (`async function submitStepWorkflow(`).
+ *
+ * Used to key the charge ledger below by PATH rather than by file: every submit
+ * path in this repo lives in this one file, so the per-file count that
+ * `no-unguarded-billable-submit.test.ts` keys on cannot discriminate between
+ * them.
+ */
+const PATH_DECL = /^(?:async function (\w+)\(| {2}(\w+): (?:public|protected)Procedure)/gm;
+
+function enclosingSubmitPath(source: string, offset: number): string {
+  PATH_DECL.lastIndex = 0;
+  let name = '<module scope>';
+  for (;;) {
+    const m = PATH_DECL.exec(source);
+    if (!m || m.index >= offset) break;
+    name = m[1] ?? m[2];
+  }
+  return name;
+}
+
 /** Every `<fn>({ … })` argument object in the router source, braces balanced. */
 function callSites(source: string, opener: string): string[] {
   const sites: string[] = [];
@@ -179,15 +202,67 @@ describe('author fee — the spend-attribution seam', () => {
  * taken against must LITERALLY be the generation price PLUS the quoted fee, and
  * every submit path must hand the charge the amount it reserved.
  *
+ * ⚠️ THE HEADLINE SENTENCE ABOVE USED TO BE WIDER THAN THE BODY, WHICH IS THE
+ * DEFECT CLASS THIS FILE EXISTS TO CATCH. It claimed the folded number was what
+ * "every gate and every reservation is taken against", and asserted only that two
+ * `… + reservedAuthorFeeBuzz` assignments existed — satisfiable by two folded
+ * locals that no reservation ever reads. `the fee is inside the number every
+ * RESERVATION reads` below now ties each folded name to the three reservation
+ * call sites that must consume it, so the implementation is as wide as the claim.
+ *
  * The behavioural half lives in
  * `src/server/services/blocks/__tests__/author-fee-charge.service.test.ts` — a
  * structural check alone would type-check past a wrong argument, and a
  * behavioural check alone cannot see a path that forgot to call at all.
  */
+
+/**
+ * SUBMIT PATHS THAT CHARGE NO AUTHOR FEE, keyed by path, with the number of
+ * charge call sites in that path (0) and why — the shape
+ * `no-unguarded-billable-submit.test.ts` uses, and for the same reason: it fails
+ * on GROWTH (a path silently grows a charge) and on SHRINK (a path is wired up
+ * and its exemption outlives it, or the path is deleted and the entry rots).
+ *
+ * 🔴 AN EXEMPTION, NOT A NO-OP CALL. An earlier revision kept these two paths in
+ * the population by calling `chargeBlockAuthorFee({ …, reservedAuthorFeeBuzz: 0 })`
+ * from each, and pinned a 2/2 split. That call returned
+ * `{charged:false, reason:'not-reserved'}` at the callee's FIRST statement — before
+ * the flag read, before the payee query, before any debit — on every request,
+ * forever, and paying for it meant hoisting `deriveBlockSpendBasis` out of a
+ * fire-and-forget closure onto the awaited request path to feed an argument that
+ * was never reached. A ledger entry closes the population without putting dead
+ * code on the hot path.
+ */
+const NO_FEE_PATHS: Record<string, { charges: number; reason: string }> = {
+  submitCustomComfyWorkflow: {
+    charges: 0,
+    reason:
+      'POST-PAID. customComfy takes no whatIf quote at all — its ceiling IS the app’s declared ' +
+      '`maxBuzz`, stamped as the step timeout the orchestrator enforces — so there is no ' +
+      'pre-submit `cost.base` to price a fee from and nothing is reserved for one. Wiring a fee ' +
+      'here means giving the path a pre-submit base and dropping this entry in the same commit.',
+  },
+  submitPassThroughStepWorkflow: {
+    charges: 0,
+    reason:
+      'POST-PAID, same as customComfy. Its pre-submit quote goes through ' +
+      '`quotePassThroughStepBuzz`, which returns `cost.total` and nothing else, so there is no ' +
+      '`cost.base` at reservation time. Widening that helper is what would wire a fee here.',
+  },
+};
+
 describe('author fee — the viewer-charge seam', () => {
   const source = readFileSync(ROUTER, 'utf8');
   const charges = callSites(source, 'chargeBlockAuthorFee({');
   const quotes = callSites(source, 'quoteBlockAuthorFee({');
+
+  /** Each submit path, by the `const spendWorkflowId` marker every one carries. */
+  const submitMarkers: number[] = [];
+  for (let at = source.indexOf('const spendWorkflowId = snapshot.workflowId;'); at !== -1; ) {
+    submitMarkers.push(at);
+    at = source.indexOf('const spendWorkflowId = snapshot.workflowId;', at + 1);
+  }
+  const submitPaths = submitMarkers.map((at) => enclosingSubmitPath(source, at));
 
   it('the extractor finds charge and quote call sites (positive control)', () => {
     // Without this, an extractor that silently matched nothing would make every
@@ -197,31 +272,100 @@ describe('author fee — the viewer-charge seam', () => {
     expect(charges[0]).toContain('workflowId');
   });
 
-  it('there are exactly FOUR charge call sites — one per submit path', () => {
-    // textToImage, customComfy, the registry-step bridge, and the pass-through
-    // step. A new submit path is a deliberate decision about whether it charges
-    // an author fee, so it must land here rather than silently inherit a skip.
-    expect(charges).toHaveLength(4);
+  it('the submit-path locator names all four paths (positive control)', () => {
+    // The ledger below is keyed on these names, so a locator that resolved every
+    // offset to `<module scope>` would make the ledger vacuous rather than red.
+    expect(submitPaths).toEqual([
+      'submitWorkflow',
+      'submitCustomComfyWorkflow',
+      'submitStepWorkflow',
+      'submitPassThroughStepWorkflow',
+    ]);
+  });
+
+  it('🔴 every submit path either charges an author fee or is a LEDGERED exemption', () => {
+    // A new submit path is a deliberate decision about whether it charges an
+    // author fee, so it has to land here rather than silently inherit a skip.
+    const unexplained: string[] = [];
+    let attributed = 0;
+    for (let i = 0; i < submitMarkers.length; i += 1) {
+      const end = submitMarkers[i + 1] ?? source.length;
+      const region = source.slice(submitMarkers[i], end);
+      const found = callSites(region, 'chargeBlockAuthorFee({').length;
+      attributed += found;
+      const expected = NO_FEE_PATHS[submitPaths[i]]?.charges ?? 1;
+      if (found !== expected) {
+        unexplained.push(
+          `${submitPaths[i]}: ${found} charge site(s), ${expected} expected` +
+            (NO_FEE_PATHS[submitPaths[i]] ? ' (ledgered as charging none)' : '')
+        );
+      }
+    }
+
+    expect(
+      unexplained,
+      'A submit path must call chargeBlockAuthorFee with the amount it reserved, or be added ' +
+        'to NO_FEE_PATHS in this file with a reason. If you WIRED one up, drop its entry in the ' +
+        'same commit — this ledger fails in both directions on purpose.'
+    ).toEqual([]);
+
+    // Every charge in the file is attributable to a submit path — otherwise a
+    // charge added outside one would be invisible to the per-path counts above.
+    expect(attributed).toBe(charges.length);
+  });
+
+  it('keeps no exemption for a submit path that no longer exists', () => {
+    const stale = Object.keys(NO_FEE_PATHS).filter((p) => !submitPaths.includes(p));
+    expect(stale, 'These paths are gone; drop their NO_FEE_PATHS entry.').toEqual([]);
+  });
+
+  it('requires a reason on every exemption', () => {
+    const missing = Object.entries(NO_FEE_PATHS)
+      .filter(([, e]) => !e.reason?.trim())
+      .map(([p]) => p);
+    expect(missing).toEqual([]);
   });
 
   it('🔴 every charge site passes the amount ITS OWN path reserved', () => {
     // The ceiling is what makes "priced into the reservation" structural rather
-    // than conventional: a path that reserved nothing passes 0 and can then
-    // charge nothing, whatever the realized base says.
-    for (const site of charges) expect(site).toContain('reservedAuthorFeeBuzz');
+    // than conventional: the charge is clamped to `min(reserved, realized)`, so a
+    // path can never bill past the number its own gates were measured against.
+    for (const site of charges) expect(site).toMatch(/reservedAuthorFeeBuzz,/);
   });
 
-  it('🔴 exactly TWO paths reserve a fee and exactly TWO reserve none', () => {
-    // The two that reserve none are POST-PAID and take no pre-submit `cost.base`
-    // to price from (customComfy makes no whatIf quote at all; the pass-through
-    // quote helper returns a total only). Asserting the SPLIT rather than just
-    // the total is what makes a silent regression visible in either direction: a
-    // priced path degraded to 0 stops charging, and a post-paid path handed a
-    // live reserve starts charging off a ceiling.
-    const zeroed = charges.filter((s) => /reservedAuthorFeeBuzz:\s*0\b/.test(s));
-    const priced = charges.filter((s) => /reservedAuthorFeeBuzz,/.test(s));
-    expect(zeroed).toHaveLength(2);
-    expect(priced).toHaveLength(2);
+  it('🔴 every charge site is AWAITED, never fire-and-forget', () => {
+    // MUTANT (c): `await chargeBlockAuthorFee(` → `void chargeBlockAuthorFee(`.
+    // It type-checks, every behavioural test stays green, and the debit becomes a
+    // floating promise: a rejection is unhandled, the refund-on-accrual-failure
+    // branch races the response, and the submit returns before the viewer has
+    // been charged. The attribution write beside it IS deliberately
+    // fire-and-forget, which is exactly why a reader could "make them consistent".
+    let from = 0;
+    let awaited = 0;
+    for (;;) {
+      const at = source.indexOf('chargeBlockAuthorFee({', from);
+      if (at === -1) break;
+      // The call is `await chargeBlockAuthorFee({` — assert on the token
+      // immediately before it, so an `await` elsewhere in the file cannot satisfy
+      // this.
+      expect(source.slice(at - 6, at)).toBe('await ');
+      awaited += 1;
+      from = at + 1;
+    }
+    expect(awaited).toBe(charges.length);
+  });
+
+  it('🔴 every charge site carries the currency the GENERATION drained (D6)', () => {
+    // MUTANT (a): `buzzType: spendBasis.buzzType` → `buzzType: 'yellow'`.
+    // `'yellow'` is a valid `BuzzAccountType`, so it type-checks and no
+    // behavioural test in the repo can see it — and it debits WITHDRAWABLE Buzz
+    // for a generation paid in blue, then mints the author yellow, which is the
+    // one coercion D6 forbids in both directions. Pinned as the derived name, and
+    // as the ABSENCE of any literal.
+    for (const site of charges) {
+      expect(site).toContain('buzzType: spendBasis.buzzType');
+      expect(site).not.toMatch(/buzzType:\s*['"]/);
+    }
   });
 
   it('every charge site prices off the RAW orchestrator response, never `snapshot`', () => {
@@ -236,15 +380,64 @@ describe('author fee — the viewer-charge seam', () => {
     }
   });
 
-  it('🔴 THE FEE IS INSIDE THE RESERVED NUMBER, on both priced paths', () => {
-    // The whole point of the slice, as source text. `cost` (txt2img) and
-    // `reserveBuzz` (registry step) are the numbers the per-call `buzzBudget`
-    // gate, the per-user daily cap, the viewer's OWN per-app CONSENT BUDGET, the
-    // per-app aggregate cap and the dev-session backstop are each taken against.
-    // Delete either `+ reservedAuthorFeeBuzz` and the fee escapes all five while
-    // every other test in this repo stays green.
-    const folded = source.match(/=\s*\w+\s*\+\s*reservedAuthorFeeBuzz;/g);
-    expect(folded).toHaveLength(2);
+  it('🔴 no charge or attribution runs under the `whatif` SENTINEL id', () => {
+    // `snapshotFromWorkflow` emits `workflow.id ?? 'whatif'`, so a real submit
+    // whose response carries no id arrives with that literal. The fee's
+    // idempotency key is DERIVED from the workflow id and the accrual's
+    // `workflow_id` is UNIQUE, so one shared sentinel means one shared key and
+    // one shared row ACROSS EVERY VIEWER: the second such generation conflicts on
+    // the charge key (counted as "the money moved", by design), hits the unique
+    // index, and reports `charged: true` having debited nothing — and a later
+    // reversal keyed on `'whatif'` refunds whichever viewer owns the shared row.
+    // Pinned per submit path, on the guard that wraps the spend block.
+    for (let i = 0; i < submitMarkers.length; i += 1) {
+      const end = submitMarkers[i + 1] ?? source.length;
+      // The guard sits immediately after the marker; 400 chars covers the
+      // multi-line `if (…)` without reaching the body's own comparisons.
+      const guard = source.slice(submitMarkers[i], Math.min(end, submitMarkers[i] + 400));
+      expect(guard, `${submitPaths[i]} does not exclude the 'whatif' sentinel`).toContain(
+        "spendWorkflowId !== 'whatif'"
+      );
+      expect(guard).toContain("spendWorkflowId !== 'failed'");
+    }
+  });
+
+  it('🔴 THE FEE IS INSIDE THE NUMBER EVERY RESERVATION READS, on both priced paths', () => {
+    // 🔴 THIS IS THE WHOLE POINT OF THE SLICE, AND THE PREVIOUS VERSION OF THIS
+    // TEST DID NOT CHECK IT. It asserted only that two `… + reservedAuthorFeeBuzz`
+    // assignments existed — true of two folded locals nothing reads. What makes
+    // the fee unable to escape the per-call `buzzBudget` gate, the per-user daily
+    // cap, the viewer's OWN per-app CONSENT BUDGET, the per-app aggregate cap and
+    // the dev-session backstop is that the folded NAME is the argument each
+    // reservation is taken with.
+    const folded = [...source.matchAll(/const (\w+) = \w+ \+ reservedAuthorFeeBuzz;/g)].map(
+      (m) => m[1]
+    );
+    // txt2img folds into `cost`; the registry-step bridge folds into `reserveBuzz`.
+    expect(folded).toEqual(['cost', 'reserveBuzz']);
+
+    for (const name of folded) {
+      // The three reservations, each taken against the FOLDED number.
+      expect(source).toContain(`reserveBlockBuzzSpendForClaims(claims, userId, ${name})`);
+      expect(source).toContain(`reserveAppSpend(claims.appBlockId, ${name})`);
+      expect(source).toMatch(
+        new RegExp(`reserveDevSessionBuzz\\(\\s*devTunnel\\.sessionId,\\s*${name},`)
+      );
+    }
+
+    // MUTANT (b): `capOverage = billed - reserveGenerationBuzz` → `- reserveBuzz`.
+    // `billed` is the orchestrator's GENERATION cost; `reserveBuzz` also carries
+    // the fee leg, which is charged at exactly the reserved amount and can never
+    // leave a counter short — so comparing against it understates every real
+    // overage by the fee, which is the drift the code beside it says must not
+    // happen. Both names are in scope and both type-check.
+    expect(source).toContain('const capOverage = billed - reserveGenerationBuzz;');
+    expect(source).not.toMatch(/capOverage\s*=\s*billed\s*-\s*reserveBuzz\b/);
+    // The post-paid settle ceiling is the same one-word question: it is refunded
+    // down to the GENERATION's realized `cost.total`, so a fee-inclusive ceiling
+    // would refund the whole fee leg back into every cap while the fee stands.
+    expect(source).toContain('ceiling: reserveGenerationBuzz,');
+    expect(source).not.toMatch(/ceiling:\s*reserveBuzz\b/);
   });
 
   it('🔴 both quotes are priced off the WHATIF response, before anything is reserved', () => {
@@ -264,39 +457,62 @@ describe('author fee — the viewer-charge seam', () => {
     expect(firstReserve).toBeLessThan(firstCharge);
   });
 
-  it('🔴 the fee is REVERSED where the generation reaches a non-succeeded terminal state', () => {
-    // Two observers reach a terminal workflow: `pollWorkflow` (every poll after
-    // the workflow settles) and `cancelAppWorkflow`. Both must reverse, or a
-    // refunded generation leaves an accrual standing and the author is paid out
-    // of money the viewer got back. Pinned as a COUNT so removing one is visible.
-    const reversals = callSites(source, 'reverseBlockAuthorFee({');
-    expect(reversals).toHaveLength(2);
-    for (const site of reversals) {
-      expect(site).toContain('workflowId: input.workflowId');
-      expect(site).toContain('terminalStatus: snapshot.status');
-    }
+  it('🔴 EVERY procedure that cancels a workflow also reverses the fee', () => {
+    // 🔴 THE PREVIOUS VERSION OF THIS GUARD COUNTED THE WRONG POPULATION, AND
+    // THAT IS WHY IT WAS GREEN OVER A REAL HOLE. It asserted
+    // `reversals.toHaveLength(2)` — a count of REVERSAL sites, i.e. the population
+    // that exists rather than the one that should — while naming
+    // `cancelAppWorkflow` as one of the two. It was not: the two sites were
+    // `pollWorkflow` and `cancelWorkflow`, and `cancelAppWorkflow` issued a real
+    // orchestrator cancel and reversed nothing, so a block cancelling through it
+    // got its generation refunded while the accrual stood and the nightly job
+    // minted the fee to the author.
+    //
+    // So the population is derived from the CANCEL sites, not the reversal sites.
+    const cancelSites = [...source.matchAll(/await cancelWorkflow\(\{/g)].map((m) =>
+      enclosingSubmitPath(source, m.index)
+    );
+    expect(cancelSites.length, 'no cancel sites found — the matcher is wrong').toBeGreaterThan(0);
+    expect(new Set(cancelSites)).toEqual(new Set(['cancelWorkflow', 'cancelAppWorkflow']));
+
+    const reversalOwners = [...source.matchAll(/await reverseBlockAuthorFee\(\{/g)].map((m) =>
+      enclosingSubmitPath(source, m.index)
+    );
+    // Every cancel-capable procedure reverses …
+    for (const proc of cancelSites) expect(reversalOwners).toContain(proc);
+    // … and so does the terminal poll, which is the third and only other observer.
+    expect(new Set(reversalOwners)).toEqual(
+      new Set(['pollWorkflow', 'cancelWorkflow', 'cancelAppWorkflow'])
+    );
+    expect(reversalOwners).toHaveLength(3);
   });
 
-  it('🔴 neither reversal fires on a SUCCEEDED workflow', () => {
-    // The direction of this reversal that costs the AUTHOR rather than
-    // protecting the viewer. `cancelAppWorkflow` is where it bites: a cancel
-    // RACES completion, so the re-read after `cancelWorkflow` can report
-    // `succeeded` — the viewer got their generation, the orchestrator refunds
-    // nothing, and a reversal would hand back money for delivered work.
+  it('🔴 every reversal is guarded on TERMINAL-ness AND on not-succeeded', () => {
+    // TWO conditions, and dropping either is a money defect in a different
+    // direction.
     //
-    // Pinned on the text immediately PRECEDING each call rather than on a bare
-    // substring count, so a guard that exists somewhere else in the file cannot
-    // satisfy it.
+    // `!== 'succeeded'`: a cancel RACES completion, so the re-read can report
+    // `succeeded` — the viewer got their generation, the orchestrator refunds
+    // nothing, and reversing would hand back money for delivered work.
+    //
+    // TERMINAL: `cancelWorkflow` passes no `throwOnError`, so a non-2xx PATCH
+    // RESOLVES and the re-read returns the workflow's real, still-RUNNING status.
+    // `'processing' !== 'succeeded'` is true, so a `succeeded`-only guard reverses
+    // on a cancel that did not take — the viewer keeps the generation AND gets the
+    // fee back, and the author is paid nothing. The poll site used to get this
+    // right by ENCLOSURE (it sat inside a terminal block) which was correct and
+    // not checkable; all three now spell the same compound guard.
     let from = 0;
     let guarded = 0;
     for (;;) {
       const at = source.indexOf('reverseBlockAuthorFee({', from);
       if (at === -1) break;
-      if (source.slice(Math.max(0, at - 200), at).includes("snapshot.status !== 'succeeded'")) {
-        guarded += 1;
-      }
+      const before = source.slice(Math.max(0, at - 300), at);
+      expect(before).toMatch(/TERMINAL_BLOCK_WORKFLOW_STATUSES\.has\(\w+(?:\.\w+)*\)/);
+      expect(before).toMatch(/\w+(?:\.\w+)*\.status !== 'succeeded'|\w+\.status !== 'succeeded'/);
+      guarded += 1;
       from = at + 1;
     }
-    expect(guarded).toBe(2);
+    expect(guarded).toBe(3);
   });
 });

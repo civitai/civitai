@@ -22,11 +22,22 @@ import type { BlockAuthorFeeComputation } from './author-fee';
 //      `author-fee-settlement.service.ts`, driven by the
 //      `settle-block-author-fees` job.
 //
-// 🔴 BOTH HOPS ARE STILL DARK. Every entry point is behind
-// `app-blocks-author-fee-enabled`, which is `enabled: false`. The charge path
-// reads that flag before it prices anything, so with the flag off no fee is
+// 🔴 BOTH HOPS ARE STILL DARK, BUT "EVERY ENTRY POINT IS BEHIND THE FLAG" WOULD
+// BE FALSE AND AN EARLIER REVISION SAID IT. Every MONEY-MOVING entry point is
+// behind `app-blocks-author-fee-enabled`, which is `enabled: false`: the charge
+// path reads that flag before it prices anything, so with the flag off no fee is
 // quoted, no fee is reserved, no viewer is debited and this table stays empty —
 // which is also why the settlement rail has nothing to settle.
+//
+// The exception is `reverseBlockAuthorFee`, which reads NO flag and therefore
+// issues one `dbWrite` `findUnique` on every terminal poll and every cancel, flag
+// off, forever. Behaviourally inert today (the table is empty, so it returns
+// `no-accrual` and moves nothing), but it is a real query on a real path and the
+// claim has to say so. 🔴 IT IS DELIBERATELY NOT GATED: the flag exists to stop
+// the fee being CHARGED, and gating the reversal on it would strand refunds for
+// every accrual already written the moment the flag were turned off — which is
+// exactly when a reversal matters most. A gate that can only ever keep money the
+// viewer is owed is the wrong direction.
 //
 // The two-hop shape is exactly what `deliver-creator-compensation` does for the
 // model licensing fee: the orchestrator charges the viewer at generation time,

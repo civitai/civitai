@@ -113,7 +113,9 @@ export async function settleBlockAuthorFees(args: {
   maxIterations?: number;
 }): Promise<SettleBlockAuthorFeesResult> {
   const now = args.date ?? new Date();
-  const boundary = utcDayStart(now);
+  // 🔴 THE SAME PREDICATE THE REVERSAL PATH REFUSES ON — one spelling, two
+  // readers. See `settlementBoundary`.
+  const boundary = settlementBoundary(now);
   const limit = args.limit ?? 50_000;
   const maxDays = args.maxDays ?? 30;
   // A day that cannot settle still costs a round-trip; this keeps the loop finite
@@ -403,6 +405,47 @@ export async function settleBlockAuthorFees(args: {
 /** Midnight UTC of the day `d` falls in. */
 function utcDayStart(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+}
+
+/**
+ * The instant this rail will not scan at or after: `settleBlockAuthorFees` only
+ * ever considers rows accrued STRICTLY BEFORE midnight UTC of the run's own day,
+ * because a day still in progress cannot be settled whole.
+ *
+ * 🔴 EXPORTED BECAUSE THE REVERSAL PATH REFUSES ON IT, AND THAT IS THE WHOLE
+ * POINT. `reverseBlockAuthorFee` must answer "can a mint have landed for this
+ * row?" and `status` cannot answer it: the mint happens at the
+ * `createBuzzTransactionMany` above and the status only moves at the `updateMany`
+ * after it, so between those two statements the money is already the author's
+ * while the row still reads `accrued`. Worse, that window is not a race — when
+ * the flip throws, `flipFailures` is incremented and the rows stay `accrued`
+ * until the next nightly run, so it is ~24h wide and deterministic.
+ *
+ * This boundary is the structural answer, and it is a property of THE ROW plus
+ * the clock rather than a word another code path can write: a row accrued in the
+ * CURRENT UTC day is not visible to any settlement run, so no mint can have been
+ * attempted for it; a row accrued before it may have minted at any moment,
+ * whatever its status says. One spelling, read by the scan that decides who gets
+ * paid and by the guard that decides who may be refunded, so the two cannot
+ * disagree.
+ *
+ * ⚠️ WHAT IT DOES NOT ELIMINATE. Both sides compare against their OWN clock, so
+ * a reversal evaluating just before midnight and a settlement run starting just
+ * after it are separated by clock skew, not by a lock. That residue is seconds
+ * wide at one instant a day, against the ~24h window it replaces; closing it
+ * completely needs a claim COLUMN the reversal can read, which needs a schema
+ * change (see `reverseBlockAuthorFee`).
+ */
+export function settlementBoundary(now: Date): Date {
+  return utcDayStart(now);
+}
+
+/**
+ * True when this row's accrual day is COMPLETE — i.e. a settlement run may
+ * already have minted it, whatever its `status` column says.
+ */
+export function isSettlementEligible(accruedAt: Date, now: Date): boolean {
+  return accruedAt.getTime() < settlementBoundary(now).getTime();
 }
 
 /**

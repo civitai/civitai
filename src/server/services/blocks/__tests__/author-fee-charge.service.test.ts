@@ -28,10 +28,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *   - a debit is reconciled BY COUNT: `createBuzzTransactionMany` drops an
  *     `insufficientFunds` result from BOTH arrays without throwing, so "it did
  *     not throw" says nothing about whether money moved
- *   - a landed debit whose accrual failed is REFUNDED, or the platform silently
- *     keeps money it is only a conduit for (D1)
- *   - a reversal deletes only an UNSETTLED row, and only the caller whose
- *     status-guarded DELETE matched issues the refund
+ *   - a landed debit whose accrual failed is REFUNDED — including when the accrual
+ *     THREW rather than returning a reason — or the platform silently keeps money
+ *     it is only a conduit for (D1)
+ *   - a reversal deletes only a row whose accrual day is still OPEN, and only the
+ *     caller whose guarded DELETE matched issues the refund
  *
  * ── WHAT IS AND IS NOT MOCKED ───────────────────────────────────────────────
  * The Buzz service, the Flipt flag, Prisma and the logger are mocked at the
@@ -350,6 +351,40 @@ describe('chargeBlockAuthorFee — the debit', () => {
     expect(refund.externalTransactionId).toBe(blockAuthorFeeReversalKey(WORKFLOW_ID));
   });
 
+  it('🔴 REFUNDS the viewer when the accrual THREW after the debit landed', async () => {
+    // 🔴 RED AT `1672a1e3cc`: the `accrueBlockAuthorFee` call sat outside every
+    // `try`, so this rejection escaped `chargeBlockAuthorFee` entirely and this
+    // test failed by the awaited call rejecting rather than by an assertion.
+    //
+    // The mechanism is not exotic. `accrueBlockAuthorFee` re-resolves the payee
+    // through `resolveBlockAuthorFeePayee`, whose `dbRead.oauthClient.findUnique`
+    // is documented to PROPAGATE on a database failure — deliberately, so a
+    // charge path that cannot establish a payee does not proceed as though it
+    // had. By the time it runs, the debit has already landed. So: the FIRST
+    // lookup (the quote's) resolves and the SECOND (the accrual's) rejects.
+    mockDbRead.oauthClient.findUnique
+      .mockResolvedValueOnce({ id: APP_ID, userId: OWNER_ID })
+      .mockRejectedValueOnce(new Error('connection lost'));
+
+    const result = await chargeBlockAuthorFee(chargeArgs());
+    expect(result).toEqual({ charged: false, reason: 'accrual-failed' });
+
+    // The debit landed …
+    expect(debitTx().amount).toBe(EXPECTED_FEE);
+    // … and the viewer got it back, under the REVERSAL key so a later terminal
+    // reversal of the same workflow conflicts instead of refunding twice.
+    const refund = refundTx();
+    expect(refund.fromAccountId).toBe(0);
+    expect(refund.toAccountId).toBe(VIEWER_ID);
+    expect(refund.amount).toBe(EXPECTED_FEE);
+    expect(refund.externalTransactionId).toBe(blockAuthorFeeReversalKey(WORKFLOW_ID));
+
+    const line = mockLog.mock.calls
+      .map((c) => c[0] as Record<string, unknown>)
+      .find((l) => l.message === 'accrual threw after the debit landed — refunding the viewer');
+    expect(line).toMatchObject({ viewerUserId: VIEWER_ID, feeBuzz: EXPECTED_FEE });
+  });
+
   it('a DUPLICATE accrual is the same state as a conflict — no refund', async () => {
     const dup = Object.assign(new Error('P2002'), { code: 'P2002' });
     mockDbWrite.blockAuthorFeeAccrual.create.mockRejectedValue(dup);
@@ -369,14 +404,37 @@ describe('chargeBlockAuthorFee — the debit', () => {
 });
 
 describe('reverseBlockAuthorFee — the fee follows the refund', () => {
+  /**
+   * 🔴 A FIXED CLOCK, BECAUSE THE GUARD IS A DAY BOUNDARY. `reverseBlockAuthorFee`
+   * refuses any row whose ACCRUAL DAY is complete — that is the structural
+   * statement of "a mint may already have landed for this row's bucket", since the
+   * settlement rail only ever scans rows accrued strictly before midnight UTC of
+   * its own run day. Reading the real clock here would make every test below flip
+   * at 00:00 UTC.
+   *
+   * `NOW` is mid-morning; `SAME_DAY` is half an hour after the midnight that
+   * precedes it, and `PRIOR_DAY` an hour before that midnight. Neither is a
+   * boundary value, so a mutant that swaps `<` for `<=` is not what these catch —
+   * they catch the guard being absent.
+   */
+  const NOW = new Date('2026-09-18T10:00:00.000Z');
+  const DAY_START = new Date('2026-09-18T00:00:00.000Z');
+  const SAME_DAY = new Date('2026-09-18T00:30:00.000Z');
+  const PRIOR_DAY = new Date('2026-09-17T23:00:00.000Z');
+
   const accruedRow = {
     id: 'bafa_1',
     status: 'accrued',
     viewerUserId: VIEWER_ID,
     buzzType: 'blue',
     feeBuzz: 13,
+    accruedAt: SAME_DAY,
   };
 
+  // The common case, and the one the conservative day guard must NOT over-reach
+  // into: a workflow that reaches a terminal state on the day it ran. `SAME_DAY`
+  // is half an hour past midnight, so it exercises the guard's OPEN side rather
+  // than sitting comfortably mid-afternoon.
   it('refunds the viewer and deletes the unsettled row', async () => {
     mockDbWrite.blockAuthorFeeAccrual.findUnique.mockResolvedValue(accruedRow);
     mockDbWrite.blockAuthorFeeAccrual.deleteMany.mockResolvedValue({ count: 1 });
@@ -384,6 +442,7 @@ describe('reverseBlockAuthorFee — the fee follows the refund', () => {
     const result = await reverseBlockAuthorFee({
       workflowId: WORKFLOW_ID,
       terminalStatus: 'failed',
+      now: NOW,
     });
 
     expect(result).toEqual({ reversed: true, feeBuzz: 13 });
@@ -397,24 +456,81 @@ describe('reverseBlockAuthorFee — the fee follows the refund', () => {
     expect(refund.externalTransactionId).toBe(blockAuthorFeeReversalKey(WORKFLOW_ID));
   });
 
-  it('🔴 the DELETE is status-guarded, so a settled row cannot be swept up', async () => {
+  it('🔴 REFUSES a row whose ACCRUAL DAY IS COMPLETE, even though its status reads `accrued`', async () => {
+    // 🔴 RED AT `1672a1e3cc`, WHERE THIS RETURNED `{reversed:true, feeBuzz:13}`
+    // AND ISSUED A REFUND.
+    //
+    // The guard used to be spelled on `status`, and `status` cannot answer the
+    // question. The settlement rail MINTS at its `createBuzzTransactionMany` and
+    // only flips the status at the `updateMany` after it, so between those two
+    // statements the money is already the author's while the row still reads
+    // `accrued`. And the reachable arm is not that race: when the flip THROWS,
+    // settlement increments `flipFailures` and leaves the rows `accrued` until the
+    // next nightly run — so a status-only guard deterministically double-pays for
+    // ~24h (author minted, viewer refunded, platform funding the gap, which D1
+    // forbids).
+    //
+    // This row is exactly that state: minted-or-mintable, status still `accrued`.
+    mockDbWrite.blockAuthorFeeAccrual.findUnique.mockResolvedValue({
+      ...accruedRow,
+      status: 'accrued',
+      accruedAt: PRIOR_DAY,
+    });
+    // 🔴 THE DELETE IS ARMED TO SUCCEED ON PURPOSE. Leaving it unconfigured would
+    // make this test red at the base for the wrong reason — the destructure of an
+    // undefined result throwing into the catch — rather than because the base
+    // DELETED THE ROW AND REFUNDED THE VIEWER on a fee the author may already have
+    // been minted. Armed, the base reaches `{reversed:true, feeBuzz:13}` and the
+    // refund transaction is actually issued, which is the defect.
+    mockDbWrite.blockAuthorFeeAccrual.deleteMany.mockResolvedValue({ count: 1 });
+    const result = await reverseBlockAuthorFee({
+      workflowId: WORKFLOW_ID,
+      terminalStatus: 'failed',
+      now: NOW,
+    });
+    expect(result).toEqual({ reversed: false, reason: 'settlement-eligible' });
+    expect(mockDbWrite.blockAuthorFeeAccrual.deleteMany).not.toHaveBeenCalled();
+    expect(mockCreateMany).not.toHaveBeenCalled();
+
+    // The log has to carry the pair that separates "already minted" from
+    // "refused conservatively" — the row's own status.
+    const line = mockLog.mock.calls
+      .map((c) => c[0] as Record<string, unknown>)
+      .find((l) => l.message === 'fee accrual day is settleable — not reversed');
+    expect(line).toMatchObject({ rowStatus: 'accrued', feeBuzz: 13, viewerUserId: VIEWER_ID });
+  });
+
+  it('🔴 the DELETE CLAIM carries the day boundary as well as the status', async () => {
+    // 🔴 RED AT `1672a1e3cc`: the claim was `{ workflowId, status }` only.
+    //
+    // The check above is not enough on its own — the row can become settleable
+    // between the read and the delete, and a check that is not also part of the
+    // CLAIM is exactly the "check, not claim" defect the status guard already
+    // learned. `gte` the settlement boundary means only a row whose accrual day is
+    // still OPEN can be claimed, which no settlement run can have minted.
     mockDbWrite.blockAuthorFeeAccrual.findUnique.mockResolvedValue(accruedRow);
     mockDbWrite.blockAuthorFeeAccrual.deleteMany.mockResolvedValue({ count: 1 });
-    await reverseBlockAuthorFee({ workflowId: WORKFLOW_ID, terminalStatus: 'failed' });
+    await reverseBlockAuthorFee({ workflowId: WORKFLOW_ID, terminalStatus: 'failed', now: NOW });
     expect(mockDbWrite.blockAuthorFeeAccrual.deleteMany.mock.calls[0][0].where).toEqual({
       workflowId: WORKFLOW_ID,
       status: 'accrued',
+      accruedAt: { gte: DAY_START },
     });
   });
 
   it('🔴 refuses a SETTLED row — the money is already the author’s', async () => {
+    // The second layer. A row can read `settled` while its accrual day is still
+    // open only if a settlement run is mid-flight, but the refusal must not depend
+    // on the day guard having caught it: they are different claims.
     mockDbWrite.blockAuthorFeeAccrual.findUnique.mockResolvedValue({
       ...accruedRow,
       status: 'settled',
+      accruedAt: SAME_DAY,
     });
     const result = await reverseBlockAuthorFee({
       workflowId: WORKFLOW_ID,
       terminalStatus: 'canceled',
+      now: NOW,
     });
     expect(result).toEqual({ reversed: false, reason: 'already-settled' });
     expect(mockDbWrite.blockAuthorFeeAccrual.deleteMany).not.toHaveBeenCalled();
@@ -430,6 +546,7 @@ describe('reverseBlockAuthorFee — the fee follows the refund', () => {
     const result = await reverseBlockAuthorFee({
       workflowId: WORKFLOW_ID,
       terminalStatus: 'failed',
+      now: NOW,
     });
     expect(result).toEqual({ reversed: false, reason: 'no-accrual' });
     expect(mockCreateMany).not.toHaveBeenCalled();
@@ -440,6 +557,7 @@ describe('reverseBlockAuthorFee — the fee follows the refund', () => {
     const result = await reverseBlockAuthorFee({
       workflowId: WORKFLOW_ID,
       terminalStatus: 'expired',
+      now: NOW,
     });
     expect(result).toEqual({ reversed: false, reason: 'no-accrual' });
     expect(mockDbWrite.blockAuthorFeeAccrual.deleteMany).not.toHaveBeenCalled();
@@ -453,6 +571,7 @@ describe('reverseBlockAuthorFee — the fee follows the refund', () => {
     const result = await reverseBlockAuthorFee({
       workflowId: WORKFLOW_ID,
       terminalStatus: 'failed',
+      now: NOW,
     });
     expect(result).toEqual({ reversed: false, reason: 'refund-failed' });
     // The row is already gone, so this log line is the ONLY recovery handle —
@@ -468,6 +587,7 @@ describe('reverseBlockAuthorFee — the fee follows the refund', () => {
     const result = await reverseBlockAuthorFee({
       workflowId: WORKFLOW_ID,
       terminalStatus: 'failed',
+      now: NOW,
     });
     expect(result).toEqual({ reversed: false, reason: 'refund-failed' });
   });

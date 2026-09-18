@@ -11,6 +11,7 @@ import {
   BLOCK_AUTHOR_FEE_LOG_NAME,
   STATUS_ACCRUED,
 } from './author-fee-accrual.service';
+import { isSettlementEligible, settlementBoundary } from './author-fee-settlement.service';
 import {
   computeBlockAuthorFee,
   BLOCK_AUTHOR_FEE_PRICE_IS_CAP,
@@ -21,11 +22,12 @@ import type { BlockAuthorFeeComputation, BlockAuthorFeeConfig } from './author-f
 // ─────────────────────────────────────────────────────────────────────────────
 // App Blocks PER-GENERATION AUTHOR FEE — slice 2b, THE VIEWER-CHARGE PATH.
 //
-// Slice 1 computed the fee and threw it away. Slice 2a persisted an accrual and
-// a settlement rail with NO caller. This file is the caller: it prices the fee
-// before the spend guardrails run, debits the viewer after the orchestrator has
-// accepted the work, writes the accrual row, and reverses both when the
-// generation does not survive.
+// Slice 1 computed the fee and threw it away. Slice 2a (#4944) persisted the
+// ACCRUAL LEDGER — and only that; the settlement rail ships in THIS change, in
+// `author-fee-settlement.service.ts`, alongside the caller that gives it rows.
+// This file is that caller: it prices the fee before the spend guardrails run,
+// debits the viewer after the orchestrator has accepted the work, writes the
+// accrual row, and reverses both when the generation does not survive.
 //
 // ── 🔴 THE FEE IS PRICED INTO THE RESERVATION, NEVER DEBITED OUTSIDE IT ──────
 // This is the one safety property the design review found missing, and it is
@@ -242,15 +244,34 @@ export type ChargeBlockAuthorFeeResult =
  * here, not an exotic one — they just paid for a generation. So the accrual is
  * written only when `transactions.length + conflicts.length === 1`.
  *
- * 🔴 A LANDED DEBIT WITH A FAILED ACCRUAL IS REFUNDED, IMMEDIATELY. That pair
- * means the viewer paid and nobody is owed, i.e. the platform silently keeps the
- * money — the one outcome D1 forbids in both directions. The refund reuses the
- * reversal key, so a later terminal reversal of the same workflow conflicts
- * instead of refunding twice.
+ * 🔴 A LANDED DEBIT WITH A FAILED ACCRUAL IS REFUNDED, IMMEDIATELY — AND THAT
+ * INCLUDES AN ACCRUAL THAT THREW. That pair means the viewer paid and nobody is
+ * owed, i.e. the platform silently keeps the money — the one outcome D1 forbids
+ * in both directions. The refund reuses the reversal key, so a later terminal
+ * reversal of the same workflow conflicts instead of refunding twice.
  *
- * TOTAL AND NON-THROWING. The submit has already succeeded and its response is
- * owed to the block; a fee failure must never turn a completed generation into an
- * error.
+ * 🔴 THE THROWN ARM IS NOT HYPOTHETICAL, AND AN EARLIER REVISION LEFT IT OUTSIDE
+ * EVERY `try`. `accrueBlockAuthorFee` calls `resolveBlockAuthorFeePayee`, whose
+ * `dbRead.oauthClient.findUnique` is documented to PROPAGATE — deliberately, so a
+ * charge path that cannot establish the payee does not proceed as though it had.
+ * By the time it runs here the debit has already landed, so an escaping rejection
+ * charged the viewer, wrote no accrual, issued no refund, and surfaced in the
+ * router as a failed generation the viewer had nonetheless paid for. It is routed
+ * into the same refund branch `accrual.reason === 'error'` takes.
+ *
+ * ⚠️ AND THE DIRECTION THIS PAIR OPENS, STATED BECAUSE THE REFUND DOES NOT CLOSE
+ * IT. The refund goes out under the REVERSAL key while the debit stands under the
+ * CHARGE key, so a re-submit of the SAME `workflowId` conflicts on the charge key
+ * — which counts as `landed` by design — and can then accrue successfully. The
+ * viewer is net square (debited once, refunded once, debited zero more times) but
+ * an accrual now exists, and settling it pays the author out of platform funds.
+ * Reaching it needs a retry under an identical orchestrator workflow id after an
+ * accrual failure; it is not closed here because closing it means reading the
+ * refund's own conflict state back, which the client does not report.
+ *
+ * TOTAL AND NON-THROWING, INCLUDING THE ACCRUAL. The submit has already succeeded
+ * and its response is owed to the block; a fee failure must never turn a completed
+ * generation into an error.
  */
 export async function chargeBlockAuthorFee(args: {
   /** The orchestrator workflow id — the idempotency anchor for the whole fee. */
@@ -369,16 +390,42 @@ export async function chargeBlockAuthorFee(args: {
     ).catch(() => undefined);
   }
 
-  const accrual = await accrueBlockAuthorFee({
-    workflowId,
-    appId,
-    appBlockId,
-    viewerUserId,
-    buzzType,
-    // 🔴 THE CHARGED AMOUNT, not the computed one — see the clamp note above.
-    computation: { ...quote.computation, feeBuzz },
-    generationType: args.generationType,
-  });
+  // 🔴 WRAPPED, AND THE DEBIT ABOVE IS WHY. `accrueBlockAuthorFee` re-resolves
+  // the payee through a read that PROPAGATES on a database failure (its own
+  // docblock says so), and every statement from here down runs with the viewer's
+  // money already taken. An unwrapped rejection therefore escapes to the router
+  // with the viewer charged, no accrual row and no refund. A throw is treated
+  // exactly like `reason: 'error'` — the refund branch below — because it
+  // describes the same state.
+  let accrual: Awaited<ReturnType<typeof accrueBlockAuthorFee>>;
+  try {
+    accrual = await accrueBlockAuthorFee({
+      workflowId,
+      appId,
+      appBlockId,
+      viewerUserId,
+      buzzType,
+      // 🔴 THE CHARGED AMOUNT, not the computed one — see the clamp note above.
+      computation: { ...quote.computation, feeBuzz },
+      generationType: args.generationType,
+    });
+  } catch (error) {
+    logToAxiom(
+      {
+        name: BLOCK_AUTHOR_FEE_LOG_NAME,
+        type: 'error',
+        message: 'accrual threw after the debit landed — refunding the viewer',
+        workflowId,
+        appId,
+        viewerUserId,
+        feeBuzz,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      'civitai-prod'
+    ).catch(() => undefined);
+    await refundBlockAuthorFee({ workflowId, viewerUserId, buzzType, feeBuzz });
+    return { charged: false, reason: 'accrual-failed' };
+  }
 
   if (accrual.accrued) return { charged: true, feeBuzz, accrualId: accrual.id };
 
@@ -408,7 +455,21 @@ export async function chargeBlockAuthorFee(args: {
 
 export type ReverseBlockAuthorFeeResult =
   | { reversed: true; feeBuzz: number }
-  | { reversed: false; reason: 'no-accrual' | 'already-settled' | 'refund-failed' };
+  | {
+      reversed: false;
+      reason:
+        | 'no-accrual'
+        /** The row's `status` column reads `settled` — the flip confirmed. */
+        | 'already-settled'
+        /**
+         * 🔴 The row's accrual day is COMPLETE, so a mint may already have landed
+         * for it whatever its status says. Counted separately from
+         * `already-settled` on purpose: that one is "the flip confirmed", this one
+         * is "the flip is not evidence either way".
+         */
+        | 'settlement-eligible'
+        | 'refund-failed';
+    };
 
 /**
  * Give an author fee back when the generation it was charged for did not survive.
@@ -420,19 +481,53 @@ export type ReverseBlockAuthorFeeResult =
  * receive, and would pay the author out of it on the next settlement run.
  *
  * 🔴 THE DELETE IS THE LOCK. `pollWorkflow` reaches a terminal status on every
- * subsequent poll, and `cancelAppWorkflow` can run alongside it, so this is called
- * repeatedly and concurrently for one workflow. The `deleteMany` is guarded on
- * `status = 'accrued'`, so exactly one caller can ever see `count === 1`, and only
- * that caller issues the refund. The refund's `externalTransactionId` is a second
- * layer, not the first.
+ * subsequent poll, and both cancel procedures (`cancelWorkflow` and
+ * `cancelAppWorkflow`) can run alongside it, so this is called repeatedly and
+ * concurrently for one workflow. The `deleteMany` is guarded on `status =
+ * 'accrued'` AND on the mint-eligibility boundary below, so exactly one caller can
+ * ever see `count === 1`, and only that caller issues the refund. The refund's
+ * `externalTransactionId` is a second layer, not the first.
  *
- * 🔴 A SETTLED ROW IS NOT REVERSED. The money has already been minted to the
- * author; taking it back is a CLAWBACK, which slice 2a retired deliberately and
- * which needs a negative-row shape the `fee_buzz > 0` CHECK forbids. The row is
- * left alone and the refusal is logged with the amount, so the population is a
- * number an operator can read rather than an absence. In practice the window is
- * wide — settlement only ever processes COMPLETE past UTC days — so a workflow
- * that reaches a terminal state on the day it ran is always still reversible.
+ * 🔴 A ROW WHOSE ACCRUAL DAY IS COMPLETE IS NOT REVERSED, AND THE GUARD IS THE
+ * DAY — NOT THE `status` WORD. Taking back money already minted to the author is a
+ * CLAWBACK, which slice 2a retired deliberately and which needs a negative-row
+ * shape the `fee_buzz > 0` CHECK forbids. But `status` cannot decide it: the
+ * settlement rail MINTS at its `createBuzzTransactionMany` and only flips the
+ * status at the `updateMany` after it, so between those two statements the money
+ * is the author's while the row still reads `accrued`.
+ *
+ * ⚠️ AND THE REACHABLE ARM IS NOT THAT RACE. When the flip throws, settlement
+ * increments `flipFailures` and leaves the rows `accrued` UNTIL THE NEXT NIGHTLY
+ * RUN — so a status-only guard would let every reversal in that ~24h window refund
+ * a viewer for a fee the author had already been minted, with the platform funding
+ * the gap. D1 forbids exactly that.
+ *
+ * So the refusal is `isSettlementEligible(row.accruedAt, now)`: the rail only ever
+ * scans rows accrued STRICTLY BEFORE midnight UTC of its own run day, so a row
+ * accrued in the CURRENT UTC day is invisible to every settlement run and no mint
+ * can have been attempted for it. That is a structural property of the row, taken
+ * from the settlement rail's own boundary function rather than re-spelled here.
+ * `status !== 'accrued'` is kept as a second layer, not the first.
+ *
+ * ⚠️ IT IS DELIBERATELY CONSERVATIVE, AND THAT COSTS SOMETHING. A row accrued at
+ * 23:59 UTC whose workflow terminates at 00:01 is refused even though nothing has
+ * minted: the viewer stays charged for a generation the orchestrator refunded.
+ * That is the direction that cannot double-pay, and it is the only one available
+ * without a claim COLUMN the reversal can read — the obvious candidate,
+ * `settlement_key`, is forbidden on an unsettled row by
+ * `block_author_fee_accrual_settled_key_check`, so a pre-mint claim needs a schema
+ * change and every migration here is hand-applied per environment.
+ *
+ * ⚠️ REQUIREMENT 4 IS THEREFORE TIME-BOUNDED, AND NOTHING ELSE SAYS SO. A fee
+ * accrued on day D is reversible until the settlement job runs at 02:30 UTC on
+ * D+1; a terminal observation after that returns a refusal and does NOT refund.
+ * A workflow that reaches a terminal state on the day it ran is always still
+ * reversible, which is the overwhelming majority.
+ *
+ * ⚠️ WHAT THE BOUNDARY DOES NOT ELIMINATE: both sides read their own clock, so a
+ * reversal evaluating just before midnight and a settlement run starting just
+ * after it are separated by skew rather than by a lock. Seconds at one instant a
+ * day, against the ~24h window it replaces.
  *
  * ⚠️ WHAT THIS DOES NOT COVER, SO IT IS NOT MISTAKEN FOR COVERAGE: a SUCCEEDED
  * workflow that the orchestrator prorates for partially-undelivered output. Its
@@ -447,14 +542,50 @@ export async function reverseBlockAuthorFee(args: {
   workflowId: string;
   /** The terminal status that drove the reversal. Log-only. */
   terminalStatus: string;
+  /** Injectable clock, so the mint-eligibility boundary is testable. */
+  now?: Date;
 }): Promise<ReverseBlockAuthorFeeResult> {
   const { workflowId, terminalStatus } = args;
+  // 🔴 READ ONCE, USED BY BOTH THE CHECK AND THE CLAIM. Recomputing it at the
+  // `deleteMany` would let the boundary move between the two statements, which is
+  // the whole class of defect this guard exists to close.
+  const now = args.now ?? new Date();
   try {
     const row = await dbWrite.blockAuthorFeeAccrual.findUnique({
       where: { workflowId },
-      select: { id: true, status: true, viewerUserId: true, buzzType: true, feeBuzz: true },
+      select: {
+        id: true,
+        status: true,
+        viewerUserId: true,
+        buzzType: true,
+        feeBuzz: true,
+        accruedAt: true,
+      },
     });
     if (!row) return { reversed: false, reason: 'no-accrual' };
+    // 🔴 THE STRUCTURAL GUARD, AND IT PRECEDES THE STATUS ONE. A complete accrual
+    // day means the settlement rail may already have minted this row's bucket,
+    // whether or not the flip that records it has run. See the docblock.
+    if (isSettlementEligible(row.accruedAt, now)) {
+      logToAxiom(
+        {
+          name: BLOCK_AUTHOR_FEE_LOG_NAME,
+          type: 'warning',
+          message: 'fee accrual day is settleable — not reversed',
+          workflowId,
+          terminalStatus,
+          feeBuzz: row.feeBuzz,
+          viewerUserId: row.viewerUserId,
+          // The distinguishing pair an operator needs to tell "already minted"
+          // from "refused conservatively": the row still reads `accrued` in the
+          // second case.
+          rowStatus: row.status,
+          accruedAt: row.accruedAt instanceof Date ? row.accruedAt.toISOString() : row.accruedAt,
+        },
+        'civitai-prod'
+      ).catch(() => undefined);
+      return { reversed: false, reason: 'settlement-eligible' };
+    }
     if (row.status !== STATUS_ACCRUED) {
       logToAxiom(
         {
@@ -471,11 +602,19 @@ export async function reverseBlockAuthorFee(args: {
       return { reversed: false, reason: 'already-settled' };
     }
 
-    // The atomic claim. Re-asserting `status` here rather than trusting the read
-    // above is what makes it a claim instead of a check — the row can settle
-    // between the two statements.
+    // The atomic claim. Re-asserting BOTH conditions here rather than trusting
+    // the read above is what makes it a claim instead of a check — the row can
+    // settle between the two statements, and `accruedAt` is re-asserted for the
+    // same reason `status` is: the claim must carry the structural property, not
+    // merely be preceded by a check of it.
     const { count } = await dbWrite.blockAuthorFeeAccrual.deleteMany({
-      where: { workflowId, status: STATUS_ACCRUED },
+      where: {
+        workflowId,
+        status: STATUS_ACCRUED,
+        // 🔴 Only a row whose accrual day is still OPEN may be claimed — no
+        // settlement run can have minted it. Same boundary the rail scans on.
+        accruedAt: { gte: settlementBoundary(now) },
+      },
     });
     if (count < 1) return { reversed: false, reason: 'no-accrual' };
 
