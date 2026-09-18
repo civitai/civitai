@@ -129,17 +129,18 @@ export async function getGrantedScopes(opts: {
  *    the middle term), then that no call site's purpose was revocation (true
  *    until clawgate #618). What the tree shows now:
  *
- *    `revokeInstance` has three production call sites. Two are in
+ *    The INSTALL writer `revokeInstance` has two production call sites, both in
  *    `block-registry.service.ts` — `uninstallFromModel` and
  *    `toggleEnabled(false)` — and in both the marker is a SIDE EFFECT of a
  *    different operation. Both are reachable over tRPC (`blocks.router.ts`,
  *    `protectedProcedure`), and `assertCanManageBlocks` early-returns for
  *    moderators, so a moderator CAN cause a marker deliberately, against any
- *    user's install on any model. The third —
- *    `revokeBlockInstancesForPublisher`
- *    (`blocks/publisher-ban-revocation.service.ts`, called from `toggleBan`) —
+ *    user's install on any model. A SEPARATE writer, `revokeInstanceForBan`, has
+ *    one call site — `revokeBlockInstancesForPublisher`
+ *    (`blocks/publisher-ban-revocation.service.ts`, called from `toggleBan`) — and
  *    IS there to revoke: it marks every live instance of every block the banned
- *    user owns, and leaves the installs themselves alone.
+ *    user canonically owns, and leaves the installs themselves alone. The two use
+ *    different Redis keyspaces so an install write can never overwrite a ban.
  *
  *    So: two routes to a marker carry a separate, user-visible outcome
  *    (uninstall / disable); the third is a moderation action against the

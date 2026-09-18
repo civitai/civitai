@@ -133,7 +133,10 @@ import type {
 } from './../schema/user.schema';
 import { removeUserContentFromSearchIndex } from '~/server/meilisearch/util';
 import { cancelSubscription, reinstateSubscription } from '~/server/services/stripe.service';
-import { revokeBlockInstancesForPublisher } from '~/server/services/blocks/publisher-ban-revocation.service';
+import {
+  clearBlockInstancesForPublisher,
+  revokeBlockInstancesForPublisher,
+} from '~/server/services/blocks/publisher-ban-revocation.service';
 export const getUsersByIds = async (userIds: number[]) => {
   const users = await dbRead.user.findMany({
     where: { id: { in: userIds } },
@@ -2250,6 +2253,38 @@ export const toggleBan = async ({
     await reinstateSubscription({ userId: id }).catch((error) =>
       logToAxiom({ name: 'reinstate-stripe-subscription', type: 'error', message: error.message })
     );
+
+    // 🔴 GIVE THE PUBLISHER'S BLOCKS BACK. Without this a lifted ban left every one of
+    // their block instances 403ing for up to MAX_BLOCK_TOKEN_LIFETIME_SECONDS — 4h where a
+    // dev token is involved — and re-minting did NOT help: `isRevoked` keys on
+    // `claims.blockInstanceId`, and every namespace's id is stable across a re-mint, so a
+    // fresh token carries the same id the marker names. The only remedy was a moderator
+    // deleting Redis keys by hand. (This card's own AC-3 asserted the opposite; it was
+    // wrong, and `blocks/publisher-ban-revocation.service.ts` carries the measurement.)
+    //
+    // Clears the BAN keyspace only — an INSTALL marker from a genuine uninstall or
+    // toggle-off is a different key and survives, so lifting a ban cannot silently
+    // re-enable an install its own consumer switched off.
+    //
+    // Isolated for the same reason as the search re-index below: the unban has already
+    // committed, and an unguarded throw here would skip the `account-unbanned` email and
+    // hand the moderator a 500 for an action that succeeded.
+    await clearBlockInstancesForPublisher({ userId: id })
+      .then((cleared) =>
+        logToAxiom({
+          type: 'info',
+          name: 'unban-user-clear-block-instances',
+          message: `cleared ${cleared} block-instance ban marker(s) for unbanned publisher ${id}`,
+        })
+      )
+      .catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'unban-user-clear-block-instances',
+          message: (error as Error).message,
+          error,
+        })
+      );
 
     // 🔴 Put the account BACK in user search. Ban removes the document, and nothing else ever
     // re-adds it: the incremental sync's range scan keys on `createdAt`, so an existing row is

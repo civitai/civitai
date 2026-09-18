@@ -2,6 +2,8 @@ import { readdirSync, readFileSync } from 'fs';
 import { join, relative, sep } from 'path';
 import { describe, expect, it } from 'vitest';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
+import { resolveCanonicalListingOwner } from '~/server/services/blocks/app-access.service';
+import { canonicallyOwnedAppBlock } from '../publisher-ban-revocation.service';
 
 /**
  * 🔴 SEAM GUARD: the set of blockInstanceId NAMESPACES a publisher ban must reach.
@@ -60,10 +62,10 @@ describe('the ban writer is closed over every blockInstanceId namespace', () => 
     // Without this, every "emits X" assertion below could pass vacuously on an empty
     // string, or fail vacuously on a stripper that ate the file.
     expect(CODE).toContain('revokeBlockInstancesForPublisher');
-    expect(CODE).toContain('BlockRevocation.revokeInstance');
+    expect(CODE).toContain('BlockRevocation.revokeInstanceForBan');
     // …and it really did remove the prose, so the checks below are about code.
-    expect(SOURCE).toContain('THE THIRD `revokeInstance` WRITER');
-    expect(CODE).not.toContain('THE THIRD');
+    expect(SOURCE).toContain('THE BAN WRITER');
+    expect(CODE).not.toContain('THE BAN WRITER');
   });
 
   it('NEGATIVE CONTROL: a prefix that exists nowhere is not claimed as emitted', () => {
@@ -103,24 +105,100 @@ describe('the ban writer is closed over every blockInstanceId namespace', () => 
   });
 
   /**
-   * 🔴 GROWTH, the direction that shipped the defect. The parser is the surface that
-   * learns about a new install shape first — `resolveBlockInstance` and
-   * `deriveScopeFromInstanceId` move together — so a sixth prefix appearing there with
-   * no entry here means a ban has a hole nobody wrote down.
+   * 🔴 GROWTH — AND IT MUST WATCH THE *SERVER* RESOLVER, WHICH IS WHAT THE MINT USES.
+   *
+   * This guard originally pinned only `deriveScopeFromInstanceId`
+   * (`attribution.schema.ts`), whose own docblock calls it *"the only client-side code
+   * path"*. The mint and the attribution re-derivation dispatch on
+   * `BlockRegistry.resolveBlockInstance` instead. Measured: adding a sixth prefix branch
+   * to the RESOLVER alone left this file green 18/18 — the guard held its stated growth
+   * property only for whichever of the two surfaces happened to learn second, which is
+   * the surface you cannot predict.
+   *
+   * So both are read, and they are pinned against EACH OTHER as well as against the
+   * ledger. Three-way equality is the point: a prefix added to either one, or dropped
+   * from either one, fails here.
    */
-  it('the parser knows no prefix this ledger has not enumerated', () => {
-    const parser = readFileSync(
-      join(process.cwd(), 'src/server/schema/blocks/attribution.schema.ts'),
-      'utf8'
+  const RESOLVER_FILE = 'src/server/services/block-registry.service.ts';
+  const CLIENT_PARSER_FILE = 'src/server/schema/blocks/attribution.schema.ts';
+
+  /** Prefixes a `startsWith('…')` in the given source region dispatches on. */
+  function dispatchedPrefixes(source: string, startMarker: string, endMarker?: string): string[] {
+    const from = source.indexOf(startMarker);
+    expect(from, `could not find "${startMarker}" — this guard is reading nothing`).toBeGreaterThan(
+      -1
     );
-    const body = parser.slice(parser.indexOf('export function deriveScopeFromInstanceId'));
-    const found = [...body.matchAll(/startsWith\(\s*'([^']+)'\s*\)/g)].map((m) => m[1]).sort();
+    let body = source.slice(from);
+    if (endMarker) {
+      const to = body.indexOf(endMarker, startMarker.length);
+      if (to > -1) body = body.slice(0, to);
+    }
+    return [
+      ...new Set(
+        [...body.matchAll(/blockInstanceId\.startsWith\(\s*'([^']+)'\s*\)/g)].map((m) => m[1])
+      ),
+    ].sort();
+  }
+
+  it('POSITIVE CONTROL: both dispatch sites are found and non-empty', () => {
+    // Without this, a moved function or a renamed marker would make every equality below
+    // compare two empty arrays and pass while checking nothing.
+    const resolver = dispatchedPrefixes(
+      readFileSync(join(process.cwd(), RESOLVER_FILE), 'utf8'),
+      'static async resolveBlockInstance(',
+      '\n  static '
+    );
+    const clientParser = dispatchedPrefixes(
+      readFileSync(join(process.cwd(), CLIENT_PARSER_FILE), 'utf8'),
+      'export function deriveScopeFromInstanceId'
+    );
+    expect(resolver.length).toBeGreaterThan(3);
+    expect(clientParser.length).toBeGreaterThan(3);
+  });
+
+  it('the SERVER resolver knows no prefix this ledger has not enumerated', () => {
+    const found = dispatchedPrefixes(
+      readFileSync(join(process.cwd(), RESOLVER_FILE), 'utf8'),
+      'static async resolveBlockInstance(',
+      '\n  static '
+    );
     expect(
       found,
-      'deriveScopeFromInstanceId dispatches on a prefix set this guard does not know. A ' +
-        'new install surface mints tokens the ban writer cannot revoke until it is ' +
-        'added to NAMESPACES and emitted.'
+      `${RESOLVER_FILE}'s resolveBlockInstance dispatches on a prefix set this guard does ` +
+        'not know. This is the surface the MINT uses, so a new shape here mints tokens ' +
+        'the ban writer cannot revoke until it is added to NAMESPACES and emitted.'
     ).toEqual(NAMESPACES.map((n) => n.prefix).sort());
+  });
+
+  it('the client parser knows no prefix this ledger has not enumerated', () => {
+    const found = dispatchedPrefixes(
+      readFileSync(join(process.cwd(), CLIENT_PARSER_FILE), 'utf8'),
+      'export function deriveScopeFromInstanceId'
+    );
+    expect(
+      found,
+      'deriveScopeFromInstanceId dispatches on a prefix set this guard does not know.'
+    ).toEqual(NAMESPACES.map((n) => n.prefix).sort());
+  });
+
+  it('🔴 the two dispatch surfaces agree with EACH OTHER', () => {
+    // The ledger comparisons above would both have to be edited to drift; this one fails
+    // the moment the two surfaces disagree, which is the state that actually ships.
+    const resolver = dispatchedPrefixes(
+      readFileSync(join(process.cwd(), RESOLVER_FILE), 'utf8'),
+      'static async resolveBlockInstance(',
+      '\n  static '
+    );
+    const clientParser = dispatchedPrefixes(
+      readFileSync(join(process.cwd(), CLIENT_PARSER_FILE), 'utf8'),
+      'export function deriveScopeFromInstanceId'
+    );
+    expect(
+      resolver,
+      'the server resolver and the client parser dispatch on different prefix sets — one ' +
+        'of them has learned an install shape the other has not, and the ban writer is ' +
+        'pinned to whichever this guard happens to read'
+    ).toEqual(clientParser);
   });
 
   /**
@@ -157,16 +235,26 @@ describe('the ban writer is closed over every blockInstanceId namespace', () => 
  * claim a reader acts on.
  */
 describe('the revokeInstance call-site ledger', () => {
-  const CALL_SITE_LEDGER: Record<string, string> = {
+  /**
+   * 🔴 LEDGERED PER METHOD, BECAUSE THE TWO KEYSPACES ARE THE SECURITY BOUNDARY. A single
+   * combined ledger would go green if a ban site were rewritten to call the INSTALL
+   * writer — which is the exact defect that shipped in this PR's first cut: the install
+   * writer's unguarded SET overwrote a ban marker, and `toggleEnabled(true)` then cleared
+   * it. Keeping the two sets separate makes that rewrite a red test.
+   */
+  const INSTALL_WRITER_LEDGER: Record<string, string> = {
     'src/server/services/block-registry.service.ts':
       'TWO sites — uninstallFromModel and toggleEnabled(false). In both the marker is a ' +
       'SIDE EFFECT of a different, user-visible operation (the install goes away or is ' +
-      'switched off), and both write the default `install` cause, which clearInstance is ' +
-      'allowed to clear.',
+      'switched off), and both are clearable by the install CONSUMER via clearInstance. ' +
+      'Neither can address the ban keyspace.',
+  };
+
+  const BAN_WRITER_LEDGER: Record<string, string> = {
     'src/server/services/blocks/publisher-ban-revocation.service.ts':
       'ONE site — revokeBlockInstancesForPublisher, reached from toggleBan. The only ' +
-      'caller whose PURPOSE is revocation, the only one that writes the `ban` cause, and ' +
-      'the only one that leaves the installs themselves untouched.',
+      'caller whose PURPOSE is revocation, and the only one that can write the ban ' +
+      'keyspace. Its mirror clearBlockInstancesForPublisher (unban) is the only clearer.',
   };
 
   const SCAN_ROOTS = ['src/server', 'src/pages'];
@@ -186,16 +274,25 @@ describe('the revokeInstance call-site ledger', () => {
   }
 
   const FILES = SCAN_ROOTS.flatMap((r) => walk(join(process.cwd(), r)));
-  const CALLERS = FILES.filter((f) =>
-    /BlockRevocation\.revokeInstance\s*\(/.test(readFileSync(f, 'utf8'))
-  )
-    .map((f) => relative(process.cwd(), f).split(sep).join('/'))
-    .sort();
+  const callersOf = (re: RegExp) =>
+    FILES.filter((f) => re.test(readFileSync(f, 'utf8')))
+      .map((f) => relative(process.cwd(), f).split(sep).join('/'))
+      .sort();
+  // `revokeInstance` must NOT match `revokeInstanceForBan` — hence the explicit `(`.
+  const INSTALL_CALLERS = callersOf(/BlockRevocation\.revokeInstance\s*\(/);
+  const BAN_CALLERS = callersOf(/BlockRevocation\.revokeInstanceForBan\s*\(/);
 
   it('POSITIVE CONTROL: the walk enumerates a real population and the pattern can match', () => {
     // A broken walk or a pattern that matches nothing makes the equality below vacuous.
     expect(FILES.length).toBeGreaterThan(300);
-    expect(CALLERS.length).toBeGreaterThan(0);
+    expect(INSTALL_CALLERS.length).toBeGreaterThan(0);
+    expect(BAN_CALLERS.length).toBeGreaterThan(0);
+  });
+
+  it('🔴 the two writers have DISJOINT call sites', () => {
+    // A file calling both is the shape in which a ban site quietly becomes an install
+    // site — the defect this PR's first cut shipped — so it gets looked at.
+    expect(INSTALL_CALLERS.filter((f) => BAN_CALLERS.includes(f))).toEqual([]);
   });
 
   it('NEGATIVE CONTROL: a definitely-absent call does not match', () => {
@@ -205,13 +302,123 @@ describe('the revokeInstance call-site ledger', () => {
     expect(bogus).toEqual([]);
   });
 
-  it('every production caller is ledgered, with its cause decision (fails on GROWTH and SHRINK)', () => {
+  it('every INSTALL-writer caller is ledgered (fails on GROWTH and SHRINK)', () => {
     expect(
-      CALLERS,
-      'the set of files calling BlockRevocation.revokeInstance changed. Five files state ' +
-        'this enumeration in prose and are cited as the authority on it — update the ' +
-        'ledger here AND those comments in the same commit, or the next reader acts on a ' +
-        'claim that is false.'
-    ).toEqual(Object.keys(CALL_SITE_LEDGER).sort());
+      INSTALL_CALLERS,
+      'the set of files calling BlockRevocation.revokeInstance changed. Several files ' +
+        'state this enumeration in prose and are cited as the authority on it — update ' +
+        'the ledger here AND those comments in the same commit, or the next reader acts ' +
+        'on a claim that is false.'
+    ).toEqual(Object.keys(INSTALL_WRITER_LEDGER).sort());
+  });
+
+  it('every BAN-writer caller is ledgered (fails on GROWTH and SHRINK)', () => {
+    expect(
+      BAN_CALLERS,
+      'the set of files calling BlockRevocation.revokeInstanceForBan changed. This is the ' +
+        'keyspace an ordinary install path must never be able to write — a new caller ' +
+        'here needs a deliberate decision, not a review nod.'
+    ).toEqual(Object.keys(BAN_WRITER_LEDGER).sort());
+  });
+});
+
+/**
+ * 🔴 THE CANONICAL-OWNER PREDICATE, PINNED AGAINST THE RESOLVER IT CLAIMS TO BE.
+ *
+ * `canonicallyOwnedAppBlock` is a Prisma `where` — three OR branches standing in for
+ * `resolveCanonicalListingOwner`. Nothing in the type system says those agree, and the
+ * cost of a disagreement is asymmetric and silent: if branch 1 stopped matching, every
+ * app block with no listing row — which is most of the fleet — would go unrevoked on a
+ * ban, and every fixture that creates a listing would still pass.
+ *
+ * So this evaluates the predicate's branches AS PREDICATES over a matrix of rows and
+ * compares, row by row, against the REAL resolver's answer. No database: the question is
+ * whether the branch logic is the resolver's logic.
+ *
+ * ⚠️ WHAT IT STILL DOES NOT COVER, stated so the green is not read wider than it is:
+ * whether Prisma TRANSLATES `appListing: { is: null }` into the `NOT EXISTS` branch 1
+ * needs on a to-one back-relation. That needs a real database and is on this PR's
+ * NOT-VERIFIED list.
+ */
+describe('canonicallyOwnedAppBlock is resolveCanonicalListingOwner, branch for branch', () => {
+  const ME = 4242;
+  const OTHER = 9999;
+
+  type Row = {
+    label: string;
+    appUserId: number;
+    listing: { kind: string; userId: number } | null;
+  };
+
+  const ROWS: Row[] = [
+    { label: 'no listing, my app', appUserId: ME, listing: null },
+    { label: 'no listing, someone else’s app', appUserId: OTHER, listing: null },
+    { label: 'onsite listing, my app', appUserId: ME, listing: { kind: 'onsite', userId: ME } },
+    {
+      label: 'onsite listing whose stale column names someone else — the block wins',
+      appUserId: ME,
+      listing: { kind: 'onsite', userId: OTHER },
+    },
+    {
+      label: 'onsite listing, someone else’s app',
+      appUserId: OTHER,
+      listing: { kind: 'onsite', userId: ME },
+    },
+    {
+      label: '🔴 CLAIMED offsite: impersonator still on the app, victim on the listing',
+      appUserId: OTHER,
+      listing: { kind: 'offsite', userId: ME },
+    },
+    {
+      label: '🔴 the inverse — I am the impersonator, victim owns the listing',
+      appUserId: ME,
+      listing: { kind: 'offsite', userId: OTHER },
+    },
+    {
+      label: 'an unknown future kind falls to the listing column (fail-closed)',
+      appUserId: ME,
+      listing: { kind: 'some_future_kind', userId: OTHER },
+    },
+  ];
+
+  /** Evaluate the generated Prisma `where` against a row, branch by branch. */
+  function predicateSelects(where: ReturnType<typeof canonicallyOwnedAppBlock>, row: Row) {
+    return (where.OR as Array<Record<string, any>>).some((branch) => {
+      if (branch.app && branch.app.userId !== row.appUserId) return false;
+      const listingFilter = branch.appListing?.is;
+      if (listingFilter === null) return row.listing === null;
+      if (listingFilter !== undefined) {
+        if (!row.listing) return false;
+        const kindFilter = listingFilter.kind;
+        if (typeof kindFilter === 'string' && row.listing.kind !== kindFilter) return false;
+        if (kindFilter && typeof kindFilter === 'object' && row.listing.kind === kindFilter.not) {
+          return false;
+        }
+        if (listingFilter.userId !== undefined && listingFilter.userId !== row.listing.userId) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  it('POSITIVE CONTROL: the matrix contains rows on BOTH sides of the answer', () => {
+    // A matrix that was all-true or all-false would make the equality below vacuous.
+    const owned = ROWS.filter((r) => predicateSelects(canonicallyOwnedAppBlock(ME), r));
+    expect(owned.length).toBeGreaterThan(0);
+    expect(owned.length).toBeLessThan(ROWS.length);
+  });
+
+  it.each(ROWS.map((r) => [r.label, r] as const))('%s', (_label, row) => {
+    const canonicalOwner = resolveCanonicalListingOwner({
+      kind: row.listing?.kind ?? 'onsite',
+      blockOwnerUserId: row.appUserId,
+      listingUserId: row.listing?.userId ?? row.appUserId,
+    });
+    expect(
+      predicateSelects(canonicallyOwnedAppBlock(ME), row),
+      'the ban writer’s where-clause and resolveCanonicalListingOwner disagree about who ' +
+        'owns this block — one of them is revoking (or sparing) the wrong account'
+    ).toBe(canonicalOwner === ME);
   });
 });

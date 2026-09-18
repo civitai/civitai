@@ -3,6 +3,7 @@ import {
   verifyBlockToken,
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
+import { recordBlockRevocationRefusal } from '~/server/metrics/app-block-runtime.metrics';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-approval.service';
 
@@ -117,6 +118,11 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
   // anything the caller sent. Dev and review-sandbox tokens carry a synthetic but stable
   // instance id minted for exactly this purpose, so they are covered too.
   if (await BlockRevocation.isRevoked(claims.blockInstanceId)) {
+    // Same counter the REST wrapper emits, different `surface` label — both guards read
+    // the same primitive, and a series that could not tell them apart would leave you
+    // unable to say which half of the surface refused. See the counter's own comment for
+    // why this mechanism had no signal at all before clawgate #618.
+    recordBlockRevocationRefusal('bridge', claims.blockInstanceId);
     throw new TRPCError({ code: 'FORBIDDEN', message: 'block instance revoked' });
   }
 

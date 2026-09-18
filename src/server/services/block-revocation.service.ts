@@ -7,8 +7,14 @@ import { MAX_BLOCK_TOKEN_LIFETIME_SECONDS } from '~/server/services/block-token-
 // in block-token.service.ts; deriving it is what stops the two drifting again.
 const REVOCATION_TTL_SECONDS = MAX_BLOCK_TOKEN_LIFETIME_SECONDS;
 
+/** The INSTALL keyspace: uninstall and toggle-off. Clearable by the install's consumer. */
 function revokedKey(blockInstanceId: string) {
   return `${REDIS_KEYS.BLOCKS.REVOKED_INSTANCE}:${blockInstanceId}` as const;
+}
+
+/** The BAN keyspace. Only the ban writer and the unban clearer can address it. */
+function bannedKey(blockInstanceId: string) {
+  return `${REDIS_KEYS.BLOCKS.REVOKED_INSTANCE_BAN}:${blockInstanceId}` as const;
 }
 
 /**
@@ -16,13 +22,27 @@ function revokedKey(blockInstanceId: string) {
  * toggled off, or its publisher is banned. Tokens for the revoked instance are
  * rejected by the block-scope middleware until the marker's TTL elapses.
  *
+ * 🔴 TWO KEYSPACES, AND THE SEPARATION IS THE SECURITY CONTROL. An INSTALL marker
+ * (`uninstallFromModel`, `toggleEnabled(false)`) and a BAN marker
+ * (`revokeBlockInstancesForPublisher`, from `toggleBan`) are written by different
+ * methods to different keys, and `isRevoked` refuses if EITHER is present.
+ *
+ * This replaced a single key carrying its cause as its VALUE, which did not hold:
+ * `toggleEnabled(false)` calls `revokeInstance` with no cause, so an ordinary
+ * un-banned model owner disabling a banned publisher's install rewrote the ban
+ * marker's value to `install`, and `toggleEnabled(true)` then cleared it — the
+ * publisher's pre-ban token was accepted again. Measured end-to-end on the real
+ * `BlockRegistry.toggleEnabled` pair. A value-guarded write would have been a
+ * read-modify-write with a race in it; separate keys make the downgrade
+ * UNREPRESENTABLE, because the install path has no way to name this key.
+ *
  * 🔴 THE BAN LEG IS REAL NOW — AND THIS DOCBLOCK HAS CLAIMED IT BEFORE IT WAS.
  * It once listed "or the publisher is banned" with no such writer in the tree,
  * and was then corrected to say no ban path writes a marker. As of clawgate #618
- * a writer exists, so the correction is stale in turn. `revokeInstance` has
- * exactly THREE production call sites: `uninstallFromModel` and
- * `toggleEnabled(false)` (both `block-registry.service.ts`), and
- * `revokeBlockInstancesForPublisher`
+ * a writer exists, so the correction is stale in turn. The INSTALL writer
+ * `revokeInstance` has exactly two production call sites, `uninstallFromModel`
+ * and `toggleEnabled(false)` (both `block-registry.service.ts`); the BAN writer
+ * `revokeInstanceForBan` has exactly one, `revokeBlockInstancesForPublisher`
  * (`blocks/publisher-ban-revocation.service.ts`), reached from `toggleBan`.
  * Read that writer's docblock before reasoning about the ban path: it covers
  * blocks the banned user OWNS, not ones they hold a collaborator seat on.
@@ -31,34 +51,14 @@ function revokedKey(blockInstanceId: string) {
  * not per-jti). A per-jti denylist is heavier infra and gains little for v1
  * volumes — the same outcome at lower cost.
  */
-/**
- * Why a marker exists, stored AS the marker's value.
- *
- * 🔴 THIS IS A SECURITY DISTINCTION, NOT BOOKKEEPING. The marker used to be one
- * opaque bit with three writers and two clearers, and `clearInstance` is reachable by
- * the install's CONSUMER — `toggleEnabled(true)` and `installOnModel` on an existing
- * row both call it, and `blockInstanceId` survives a disable. So an ordinary,
- * un-banned model owner toggling a banned publisher's install off and on again
- * cleared the BAN's marker and put the publisher's tokens straight back into service.
- * Recording the cause is what lets `clearInstance` refuse that one case while staying
- * unconditional for the case it was written for.
- *
- * The legacy value `'1'` predates this and is treated as `install` — correct, because
- * every marker written before the ban writer existed came from an uninstall or a
- * toggle-off.
- */
-const REVOCATION_CAUSES = ['install', 'ban'] as const;
-export type RevocationCause = (typeof REVOCATION_CAUSES)[number];
-
 export class BlockRevocation {
-  static async revokeInstance(
-    blockInstanceId: string,
-    opts: { cause?: RevocationCause } = {}
-  ): Promise<void> {
+  /**
+   * INSTALL-cause revocation: the install went away or was switched off. Clearable by
+   * `clearInstance`, which the re-enable path calls. Cannot address the ban keyspace.
+   */
+  static async revokeInstance(blockInstanceId: string): Promise<void> {
     try {
-      await redis.set(revokedKey(blockInstanceId), opts.cause ?? 'install', {
-        EX: REVOCATION_TTL_SECONDS,
-      });
+      await redis.set(revokedKey(blockInstanceId), '1', { EX: REVOCATION_TTL_SECONDS });
     } catch {
       // Fail open: an uninstall/toggle write path must not block on a
       // Redis incident. If the marker isn't written, tokens for this
@@ -67,10 +67,35 @@ export class BlockRevocation {
     }
   }
 
+  /**
+   * BAN-cause revocation. Separate key, so no install-path write can overwrite it and
+   * no install-path clear can delete it. Cleared only by {@link clearBanInstance}, which
+   * only `toggleBan`'s unban branch calls.
+   */
+  static async revokeInstanceForBan(blockInstanceId: string): Promise<void> {
+    try {
+      await redis.set(bannedKey(blockInstanceId), '1', { EX: REVOCATION_TTL_SECONDS });
+    } catch {
+      // Fail open, for the same reason as the install path: a Redis incident must not
+      // be able to fail a ban. Exposure stays bounded by the token lifetime.
+    }
+  }
+
+  /**
+   * True when EITHER keyspace holds a marker.
+   *
+   * 🔴 ONE ROUND TRIP, NOT TWO. This runs on every REST and bridge request including the
+   * polling ones, so the second keyspace is read with `mGet` rather than a second `get` —
+   * the cost claim in `block-bridge-auth.service.ts` ("one Redis GET") stays true by
+   * round trips, which is the number that matters on that path.
+   */
   static async isRevoked(blockInstanceId: string): Promise<boolean> {
     try {
-      const v = await redis.get<string>(revokedKey(blockInstanceId));
-      return v != null;
+      const values = await redis.mGet<string>([
+        revokedKey(blockInstanceId),
+        bannedKey(blockInstanceId),
+      ]);
+      return values.some((v) => v != null);
     } catch {
       // Fail open — never block legitimate traffic on a Redis incident.
       return false;
@@ -78,36 +103,48 @@ export class BlockRevocation {
   }
 
   /**
-   * Clears a revocation marker. Every path that brings an install back — both
+   * Clears an INSTALL revocation marker. Every path that brings an install back — both
    * `toggleEnabled(true)` and `installOnModel` on an existing row — must call
    * it: blockInstanceId is preserved across disable, so the marker written
    * then otherwise survives, and 403s the revived install's tokens for the
    * rest of REVOCATION_TTL_SECONDS (audit B1).
    *
-   * 🔴 EXCEPT A `ban` MARKER, WHICH IT REFUSES TO CLEAR. Both callers are reachable
-   * by the install's CONSUMER — a model owner, who is a different and un-banned
-   * account — so without this check, toggling a banned publisher's install off and on
-   * again undoes the moderation action. Lifting the ban is deliberately NOT a clear
-   * path either: the markers expire after one token lifetime and re-minting is the
-   * recovery, which is the same posture `toggleBan`'s unban branch takes.
-   *
-   * Costs one extra `GET` on the re-enable path, which is rare and un-hot.
-   *
-   * 🔴 FAILS CLOSED ON A READ ERROR — the opposite of `isRevoked`, on purpose. Here
-   * the two directions are not symmetric: an un-cleared marker expires on its own
-   * within one token lifetime, while a wrongly-cleared ban marker is unrecoverable
-   * without a second moderator action. `isRevoked`'s fail-OPEN is about not refusing
-   * live traffic during a Redis incident and is untouched by this.
+   * 🔴 IT CANNOT REACH A BAN MARKER, AND THAT IS STRUCTURAL RATHER THAN CHECKED. Both
+   * callers are reachable by the install's CONSUMER — a model owner, a different and
+   * un-banned account — so a shared key let them undo a moderation action. This function
+   * addresses the install keyspace only; there is no branch to get wrong and no
+   * read-modify-write to race. The earlier value-guard here is gone because the guard was
+   * the wrong half of the problem: the unguarded WRITE in front of it did the damage.
    */
   static async clearInstance(blockInstanceId: string): Promise<void> {
-    const key = revokedKey(blockInstanceId);
     try {
-      const cause = await redis.get<string>(key);
-      if (cause === 'ban') return;
-      await redis.del(key);
+      await redis.del(revokedKey(blockInstanceId));
     } catch {
-      // fail closed — see the docblock. Leaving a marker in place costs at most one
-      // token lifetime; clearing one we could not read could undo a ban.
+      // fail open
+    }
+  }
+
+  /**
+   * Clears a BAN revocation marker. Called ONLY by `toggleBan`'s unban branch, via
+   * `clearBlockInstancesForPublisher`.
+   *
+   * 🔴 THIS EXISTS BECAUSE "re-minting is the recovery path" WAS FALSE. That sentence
+   * sat in this file, in the ban writer and in clawgate #618's own AC-3, and measurement
+   * refuted all three: `isRevoked` keys on `claims.blockInstanceId`, and every namespace's
+   * instance id is STABLE across a re-mint (`bki_*` is a stored column; `bus_pub_*`,
+   * `bus_view_*`, `pdb_*` and `page_*` are derived from row ids that do not change). So a
+   * freshly minted token carries the same id the marker names and is refused just the
+   * same. Without a clear, a mis-ban that is immediately lifted still killed the
+   * publisher's entire block surface for up to MAX_BLOCK_TOKEN_LIFETIME_SECONDS with no
+   * product-level remedy at all — a moderator would have had to delete Redis keys by
+   * hand. `block-registry.service.ts`'s re-enable comment stated this correctly for the
+   * install marker the whole time; these two now agree.
+   */
+  static async clearBanInstance(blockInstanceId: string): Promise<void> {
+    try {
+      await redis.del(bannedKey(blockInstanceId));
+    } catch {
+      // fail open — the marker expires on its own within one token lifetime.
     }
   }
 }

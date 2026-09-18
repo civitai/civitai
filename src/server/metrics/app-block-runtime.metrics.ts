@@ -231,6 +231,57 @@ export type AppSpendCapRejectionReason = (typeof APP_SPEND_CAP_REJECTION_REASONS
  * 🔴 TWO OF THESE REFUSE AND ONE DOES NOT, which is why this is not called `…REFUSALS`:
  * `not_found` is counted and then SERVED. See the counter's own comment for the argument.
  */
+/**
+ * Which guard refused: the REST wrapper (`withBlockScope`) or the tRPC bridge
+ * (`authorizeBlockBridgeToken`). Both read the SAME `BlockRevocation.isRevoked`, so a
+ * series that could not tell them apart would leave you unable to say which half of the
+ * surface a refusal came from.
+ */
+export const APP_BLOCK_REVOCATION_SURFACES = ['rest', 'bridge'] as const;
+export type AppBlockRevocationSurface = (typeof APP_BLOCK_REVOCATION_SURFACES)[number];
+
+/**
+ * The blockInstanceId NAMESPACES a revocation refusal can name. Bounded on purpose — the
+ * instance id itself is unbounded and must never become a label.
+ *
+ * 🔴 THE NAMESPACE IS THE LABEL THAT EARNS ITS KEEP. A revocation gap is always
+ * namespace-shaped: clawgate #618 shipped a writer covering one namespace of five while
+ * every comment claimed all of them, and a later round found `page_` was really three
+ * mint shapes. A refusal counter split this way makes "this surface has never once
+ * refused" a readable, falsifiable statement per namespace instead of one flat number.
+ */
+export const APP_BLOCK_REVOCATION_NAMESPACES = [
+  'bki',
+  'mbi',
+  'bus_pub',
+  'bus_view',
+  'pdb',
+  'page',
+  'page_pubreq',
+  'page_local',
+  'other',
+] as const;
+export type AppBlockRevocationNamespace = (typeof APP_BLOCK_REVOCATION_NAMESPACES)[number];
+
+/**
+ * Bucket a blockInstanceId to its namespace. ORDER MATTERS: the `page_pubreq_` and
+ * `page_local_` shapes are prefixed by `page_`, so they must be tested BEFORE it or they
+ * collapse into it — which is exactly the collapse that hid the two uncovered dev-token
+ * shapes from a prefix-granular guard.
+ */
+export function revocationNamespaceLabel(blockInstanceId: unknown): AppBlockRevocationNamespace {
+  if (typeof blockInstanceId !== 'string') return 'other';
+  if (blockInstanceId.startsWith('page_pubreq_')) return 'page_pubreq';
+  if (blockInstanceId.startsWith('page_local_')) return 'page_local';
+  if (blockInstanceId.startsWith('page_')) return 'page';
+  if (blockInstanceId.startsWith('bus_pub_')) return 'bus_pub';
+  if (blockInstanceId.startsWith('bus_view_')) return 'bus_view';
+  if (blockInstanceId.startsWith('pdb_')) return 'pdb';
+  if (blockInstanceId.startsWith('bki_')) return 'bki';
+  if (blockInstanceId.startsWith('mbi_')) return 'mbi';
+  return 'other';
+}
+
 export const APP_BLOCK_REST_APPROVAL_VERDICT_REASONS = [
   'not_approved',
   'not_found',
@@ -412,6 +463,7 @@ type Bundle = {
   capLimitsDegradedTotal: Counter<string>;
   spendCapRejectionsTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
+  revocationRefusalsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
   launchTotalSeconds: Histogram<string>;
   launchPhaseSeconds: Histogram<string>;
@@ -713,6 +765,22 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['reason']
   );
 
+  // ── REVOCATION REFUSALS ──────────────────────────────────────────────────────
+  // 🔴 THIS MECHANISM WAS ENTIRELY UNOBSERVABLE UNTIL NOW, AND NOT BY DESIGN. The REST
+  // revocation branch 403s and RETURNS before `recordScopeInvocation` registers its
+  // `res.on('finish')` handler, so a revocation refusal could never write a
+  // `block_scope_invocations` row — the audit surface everyone assumed covered it. The
+  // result: no signal anywhere distinguished "revocation has never fired" from
+  // "revocation is broken and silently serving", while three separate writers were added
+  // to it across clawgate #618. A control nobody can tell has ever fired is a control
+  // nobody can defend.
+  const revocationRefusalsTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_revocation_refusals_total',
+    'Block-token requests refused because BlockRevocation.isRevoked returned true, by guard surface and blockInstanceId namespace. surface: rest = withBlockScope (403), bridge = authorizeBlockBridgeToken (tRPC FORBIDDEN). namespace buckets the instance id (bki/mbi/bus_pub/bus_view/pdb/page/page_pubreq/page_local/other) — the id itself is unbounded and is deliberately NOT a label; attribute individual refusals from the logs. A flat zero on a namespace means either nothing has been revoked there or that namespace is not reached by any revocation writer, and those are different bugs — read it against the writer in blocks/publisher-ban-revocation.service.ts. isRevoked FAILS OPEN on a Redis error, so this counter cannot see a refusal that a Redis incident suppressed',
+    ['surface', 'namespace']
+  );
+
   // ── `kind: 'step'` prepaidFixed PRICE CHECK ──────────────────────────────────
   // 🔴 Instruments whether the registry's DECLARED price still matches what the
   // orchestrator actually bills for a `prepaidFixed` step type. A declared price
@@ -878,6 +946,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     capLimitsDegradedTotal,
     spendCapRejectionsTotal,
     restApprovalVerdictsTotal,
+    revocationRefusalsTotal,
     stepPriceCheckTotal,
     launchTotalSeconds,
     launchPhaseSeconds,
@@ -1097,6 +1166,32 @@ export function recordAppSpendCapRejection(reason: AppSpendCapRejectionReason): 
     spendCapRejectionsTotal.inc({ reason });
   } catch {
     /* instrument-only — never let a metrics error touch the spend guardrail */
+  }
+}
+
+/**
+ * Fail-soft emit of one revocation refusal. Called from BOTH guards that read
+ * `BlockRevocation.isRevoked` — `withBlockScope` (`block-scope.middleware.ts`) and
+ * `authorizeBlockBridgeToken` (`blocks/block-bridge-auth.service.ts`).
+ *
+ * 🔴 TOTAL, like every emitter here: the refusal has already been decided by the time
+ * this runs, and a metrics error must not convert a chosen 403 into an uncaught 500.
+ *
+ * COST: one in-heap counter increment, only on the refusal path. A fleet with nothing
+ * revoked emits zero.
+ */
+export function recordBlockRevocationRefusal(
+  surface: AppBlockRevocationSurface,
+  blockInstanceId: unknown
+): void {
+  try {
+    const { revocationRefusalsTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    revocationRefusalsTotal.inc({
+      surface,
+      namespace: revocationNamespaceLabel(blockInstanceId),
+    });
+  } catch {
+    /* instrument-only — never let a metrics error change a refusal into a 500 */
   }
 }
 

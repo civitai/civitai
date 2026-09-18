@@ -297,12 +297,13 @@ async function resolveStorageContext(blockToken: string, op: StorageOp): Promise
   // Per-instance revocation. `verifyBlockToken` checks the signature and expiry
   // and nothing else, so without this an uninstall or a mod toggling the instance
   // off leaves every already-minted token reading and writing until natural
-  // expiry. A publisher ban writes one too, as of clawgate #618:
-  // `revokeInstance` has three production call sites — `uninstallFromModel` and
-  // `toggleEnabled(false)` (both `block-registry.service.ts`) and
-  // `revokeBlockInstancesForPublisher` (`blocks/publisher-ban-revocation.service.ts`,
-  // called from `toggleBan`). See `block-scope.middleware.ts` for the same
-  // enumeration and for what the ban leg does and does not cover.
+  // expiry. A publisher ban writes one too, as of clawgate #618 — into a SEPARATE
+  // keyspace, which `isRevoked` checks alongside the install one. The install writer
+  // `revokeInstance` has two call sites (`uninstallFromModel`, `toggleEnabled(false)`,
+  // both `block-registry.service.ts`); the ban writer `revokeInstanceForBan` has one
+  // (`revokeBlockInstancesForPublisher`, called from `toggleBan`). See
+  // `block-scope.middleware.ts` for why the keyspaces are split and for what the ban leg
+  // does and does not cover.
   // The REST `withBlockScope` middleware and
   // `resolveSharedContext` both enforce it; this path was the remaining gap.
   // Placed before the run-for-real branch so it binds EVERY storage op, not only

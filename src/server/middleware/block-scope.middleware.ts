@@ -4,6 +4,7 @@ import { env } from '~/env/server';
 import {
   ensureRegisterAppBlockRuntimeMetrics,
   recordBlockRestApprovalVerdict,
+  recordBlockRevocationRefusal,
   statusToRequestResult,
   type AppBlockEndpoint,
 } from '~/server/metrics/app-block-runtime.metrics';
@@ -912,18 +913,32 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // "and (Phase 2) publisher-ban all write a marker" while NO ban writer existed,
     // and was then corrected to say a ban writes none of the three. As of
     // clawgate #618 the writer exists, so the correction is itself now stale.
-    // By enumeration, `revokeInstance` has exactly THREE production call sites:
-    // `uninstallFromModel` and `toggleEnabled(false)` (both
-    // `block-registry.service.ts`), and `revokeBlockInstancesForPublisher`
-    // (`blocks/publisher-ban-revocation.service.ts`), which `toggleBan`
-    // (`user.service.ts`) calls in its ban fan-out.
+    // By enumeration, there are now TWO WRITERS over TWO KEYSPACES, and `isRevoked`
+    // refuses if either holds a marker. The INSTALL writer `revokeInstance` has two
+    // production call sites — `uninstallFromModel` and `toggleEnabled(false)`, both
+    // `block-registry.service.ts`. The BAN writer `revokeInstanceForBan` has one,
+    // `revokeBlockInstancesForPublisher` (`blocks/publisher-ban-revocation.service.ts`),
+    // which `toggleBan` (`user.service.ts`) calls in its ban fan-out.
+    //
+    // 🔴 THE SPLIT IS THE CONTROL. With one shared key, `toggleEnabled(false)` — an
+    // ordinary model owner, reachable over tRPC — overwrote a ban marker and
+    // `toggleEnabled(true)` then cleared it, putting a banned publisher's live token back
+    // into service. Separate keyspaces make that unrepresentable. Both ledgers are pinned
+    // by `blocks/__tests__/publisher-ban-revocation.namespaces.test.ts`.
     //
     // 🔴 WHAT THE BAN LEG COVERS IS NARROWER THAN "a banned user's tokens stop
-    // working". It marks every live instance of every block the banned user OWNS
-    // (`app.userId`) — deliberately not apps they merely hold a collaborator seat
-    // on, which would take down another account's product. And it is asynchronous
-    // with respect to a request already in flight: a token minted before the ban is
-    // refused on its NEXT call here, not mid-call.
+    // working". It marks every live instance of every block the banned user
+    // CANONICALLY owns — `resolveCanonicalListingOwner`, which is `AppListing.userId`
+    // for an offsite listing and NOT `app.userId`; deliberately not apps they merely
+    // hold a collaborator seat on, which would take down another account's product. It
+    // is asynchronous with respect to a request already in flight: a token minted
+    // before the ban is refused on its NEXT call here, not mid-call. And it is
+    // TIME-BOXED — the markers expire after one token lifetime; durability beyond that
+    // is clawgate #620, layered on top of this rather than replacing it.
+    //
+    // 🔴 ONE SHAPE IS KNOWN-UNCOVERED: `page_local_<slug>`, the dev mint's no-server-row
+    // path. There is nothing to enumerate at ban time, so that 4h token runs to its
+    // natural `exp`. Documented in the ban writer; do not read this guard as closing it.
     //
     // `block-approval.service.ts` still never consults owner ban state — the
     // approved-status gate below is a separate signal, and a ban does not flip
@@ -931,6 +946,12 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     //
     // Do not re-add a fourth cause to this list without adding its writer.
     if (await BlockRevocation.isRevoked(claims.blockInstanceId)) {
+      // 🔴 THE ONLY SIGNAL THIS REFUSAL EMITS. `recordScopeInvocation` registers its
+      // `res.on('finish')` handler further down, AFTER this early return, so a revocation
+      // 403 has never been able to write a `block_scope_invocations` row — the audit
+      // surface a reader would assume covers it. Without this counter, "revocation fired"
+      // and "revocation is broken and silently serving" are the same observation.
+      recordBlockRevocationRefusal('rest', claims.blockInstanceId);
       res.status(403).json({ error: 'block instance revoked' });
       return;
     }
