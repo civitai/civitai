@@ -15,8 +15,12 @@ import type { BlockAuthorFeeComputation } from './author-fee';
 //
 // ── TWO HOPS, MIRRORING THE MODEL LICENSING FEE ────────────────────────────
 //   1. AT SUBMIT the viewer is debited the fee, and one `accrued` row is written
-//      naming the app owner it is owed to. That debit is the CALLER's job (see
-//      `chargeBlockAuthorFee` in the router) — this module records it.
+//      naming the app owner it is owed to. That debit is the CALLER's job — this
+//      module only records it.
+//      🔴 THAT CALLER DOES NOT EXIST YET. Slice 2b adds it; nothing in this repo
+//      calls `accrueBlockAuthorFee` today. An earlier revision of this comment
+//      named `chargeBlockAuthorFee` "in the router" as though it were there. It
+//      never was — the name appeared nowhere but in that sentence.
 //   2. DAILY the accrued rows are summed per (owner × buzz type) and minted to
 //      the owner in one transaction per bucket.
 //
@@ -53,13 +57,46 @@ import type { BlockAuthorFeeComputation } from './author-fee';
 // AUTHOR'S explicit choice and the platform default (flat 1 ⚡) avoids it.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── THE `D<n>` LABELS USED BELOW, STATED SO THEY RESOLVE HERE ──────────────
+// They index an internal decision memo that is NOT in this repository, so a bare
+// `D6` is authority with no referent for anyone reading this file. Each is
+// therefore stated in full at least once:
+//
+//   D1  The fee is additive, author-set and viewer-paid. The platform takes NO
+//       cut and funds NOTHING — so the author is credited exactly the amount the
+//       viewer was debited.
+//   D6  A viewer spending blue Buzz pays the fee in blue, and the author receives
+//       blue (non-withdrawable). Currency is carried end to end, never coerced.
+//   D7  The resolved fee must be shown to the viewer BEFORE the run. That is what
+//       forces the fee to be a whole number the viewer can be quoted, which is
+//       why the accrual amount is an integer rather than a fraction.
+//
+// ⚠️ `D8` and `D10` appear in this PR's description but implement nothing here —
+// D8 is a process decision (build in three audited slices) and D10 records that
+// the percent leg prices off `base` only, which slice 1 already did and which
+// needed no code change. Do not go looking for them in this file.
+
 export const BLOCK_AUTHOR_FEE_LOG_NAME = 'block-author-fee' as const;
 
-/** Lifecycle of one accrual row. */
+/**
+ * Lifecycle of one accrual row.
+ *
+ * ⚠️ USED, not decorative — every status literal written or compared below is
+ * annotated with this type. An earlier revision exported both of these and then
+ * wrote bare string literals everywhere, so neither was referenced even inside
+ * this file and a typo'd `'setled'` would have compiled and silently matched
+ * nothing.
+ */
 export type BlockAuthorFeeAccrualStatus = 'accrued' | 'settled' | 'clawed_back';
 
 /** Which kind of row: the charge, or its carry-forward reversal. */
 export type BlockAuthorFeeEntryType = 'accrual' | 'clawback';
+
+const STATUS_ACCRUED: BlockAuthorFeeAccrualStatus = 'accrued';
+const STATUS_SETTLED: BlockAuthorFeeAccrualStatus = 'settled';
+const STATUS_CLAWED_BACK: BlockAuthorFeeAccrualStatus = 'clawed_back';
+const ENTRY_ACCRUAL: BlockAuthorFeeEntryType = 'accrual';
+const ENTRY_CLAWBACK: BlockAuthorFeeEntryType = 'clawback';
 
 export type AccrueBlockAuthorFeeInput = {
   /** Orchestrator workflow id — the idempotency anchor. */
@@ -132,8 +169,15 @@ export async function accrueBlockAuthorFee(
   // app would otherwise pay themself, which is a round trip that inflates every
   // earnings number while moving no real money — and is the cheapest possible
   // way to fake traction on an app. Excluded at ACCRUAL rather than at
-  // settlement so the viewer is never debited for it either: the charge path
-  // reads this same predicate before taking the money.
+  // settlement, so a self-run generation never enters the ledger at all.
+  //
+  // ⚠️ IT IS IMPLEMENTED ONCE, HERE, AND NOTHING SHARES IT. An earlier revision
+  // claimed "the charge path reads this same predicate before taking the money".
+  // There is no charge path (slice 2b) and no shared predicate — slice 1 has no
+  // self-dealing check of any kind. So today a self-dealing viewer would still be
+  // DEBITED by a charge path that does not consult this, and only the accrual
+  // would be skipped. 🔴 Slice 2b must call this predicate BEFORE the debit, or
+  // extract it; do not assume the exclusion is already enforced upstream.
   //
   // It is COUNTED, not silently dropped, so the exclusion is a number rather
   // than an absence — 91% of the spend population to date is operator
@@ -161,7 +205,7 @@ export async function accrueBlockAuthorFee(
       data: {
         id,
         workflowId,
-        entryType: 'accrual',
+        entryType: ENTRY_ACCRUAL,
         appId,
         appBlockId,
         appOwnerUserId: app.userId,
@@ -173,7 +217,7 @@ export async function accrueBlockAuthorFee(
         pctLegBuzz: computation.pctLegBuzz,
         governingLeg: computation.governingLeg,
         generationType,
-        status: 'accrued',
+        status: STATUS_ACCRUED,
       },
     });
   } catch (error) {
@@ -254,21 +298,21 @@ export async function clawbackBlockAuthorFee(args: {
 
   try {
     const accrual = await dbRead.blockAuthorFeeAccrual.findUnique({
-      where: { workflowId_entryType: { workflowId, entryType: 'accrual' } },
+      where: { workflowId_entryType: { workflowId, entryType: ENTRY_ACCRUAL } },
     });
     if (!accrual) return { clawedBack: false, reason: 'not-found' };
-    if (accrual.status === 'clawed_back') {
+    if (accrual.status === STATUS_CLAWED_BACK) {
       return { clawedBack: false, reason: 'already-clawed-back' };
     }
 
-    if (accrual.status === 'accrued') {
+    if (accrual.status === STATUS_ACCRUED) {
       // Not yet paid — void it in place. Conditioned on the status so a
       // settlement running concurrently cannot be overwritten: if the row moved
       // to `settled` between the read and this write, zero rows match and we
       // fall through to the carry-forward below.
       const { count } = await dbWrite.blockAuthorFeeAccrual.updateMany({
-        where: { id: accrual.id, status: 'accrued' },
-        data: { status: 'clawed_back' },
+        where: { id: accrual.id, status: STATUS_ACCRUED },
+        data: { status: STATUS_CLAWED_BACK },
       });
       if (count > 0) {
         return { clawedBack: true, mode: 'voided', feeBuzz: accrual.feeBuzz };
@@ -280,7 +324,7 @@ export async function clawbackBlockAuthorFee(args: {
       data: {
         id: newBlockAuthorFeeAccrualId(),
         workflowId,
-        entryType: 'clawback',
+        entryType: ENTRY_CLAWBACK,
         appId: accrual.appId,
         appBlockId: accrual.appBlockId,
         appOwnerUserId: accrual.appOwnerUserId,
@@ -292,7 +336,7 @@ export async function clawbackBlockAuthorFee(args: {
         pctLegBuzz: accrual.pctLegBuzz,
         governingLeg: accrual.governingLeg,
         generationType: accrual.generationType,
-        status: 'accrued',
+        status: STATUS_ACCRUED,
       },
     });
 
@@ -369,7 +413,7 @@ export async function settleBlockAuthorFees(args: {
   const limit = args.limit ?? 50_000;
 
   const rows = await dbRead.blockAuthorFeeAccrual.findMany({
-    where: { status: 'accrued' },
+    where: { status: STATUS_ACCRUED },
     select: { id: true, appOwnerUserId: true, buzzType: true, feeBuzz: true },
     orderBy: { accruedAt: 'asc' },
     take: limit,
@@ -438,8 +482,8 @@ export async function settleBlockAuthorFees(args: {
   for (const bucket of payable) {
     const settlementKey = `block-author-fee-${dateStr}-${bucket.appOwnerUserId}-${bucket.buzzType}`;
     const { count } = await dbWrite.blockAuthorFeeAccrual.updateMany({
-      where: { id: { in: bucket.rowIds }, status: 'accrued' },
-      data: { status: 'settled', settlementKey, settledAt },
+      where: { id: { in: bucket.rowIds }, status: STATUS_ACCRUED },
+      data: { status: STATUS_SETTLED, settlementKey, settledAt },
     });
     rowsSettled += count;
     buzzMinted += bucket.totalBuzz;

@@ -1,4 +1,4 @@
-import { createJob, getJobDate } from './job';
+import { createJob } from './job';
 import { isAppBlocksAuthorFeeEnabled } from '~/server/services/app-blocks-flag';
 import { settleBlockAuthorFees } from '~/server/services/blocks/author-fee-settlement.service';
 import { createLogger } from '~/utils/logging';
@@ -12,6 +12,12 @@ const log = createLogger('block-author-fee-settlement', 'green');
  * last run, one Buzz transaction per (owner × buzz type). The charge already
  * happened at submit; this is the second hop, mirroring
  * `deliver-creator-compensation` for the model licensing fee.
+ *
+ * 🔴 A NEWLY ADDED CRON IS NOT PICKED UP BY A DEPLOY. Jobs are discovered
+ * through `/api/internal/get-jobs` and the external scheduler needs an explicit
+ * refresh, so this will not be dispatched at all until someone performs that
+ * out-of-band step. Nobody has scheduled it — and that is correct for now, since
+ * the flag is off and there is nothing to settle. Do not read "merged" as "running".
  *
  * Scheduled at 02:30 UTC — thirty minutes after the creator-compensation job at
  * 02:00, deliberately. Both mint Buzz in batches through the same service, and
@@ -51,17 +57,20 @@ export const settleBlockAuthorFeesJob = createJob(
       return;
     }
 
-    const [lastRun, setLastRun] = await getJobDate('settle-block-author-fees', new Date());
-
+    // ⚠️ NO getJobDate/setLastRun CURSOR, DELIBERATELY. An earlier revision kept
+    // one. It gated nothing: `settleBlockAuthorFees` scans `status: 'accrued'`
+    // with no date filter, so the cursor was read only to interpolate into the
+    // log line below and then written back — two DB round-trips and a persisted
+    // KeyValue row that no branch consulted. The real idempotency mechanism is
+    // the deterministic `externalTransactionId`, which does not consult a cursor:
+    // a re-run of the same day conflicts on the key and mints nothing. A cursor
+    // that looks like a run-once guard while guarding nothing is worse than none.
     const result = await settleBlockAuthorFees({ date: new Date() });
 
     log(
       `Settled ${result.rowsSettled} row(s) across ${result.buckets} bucket(s), ` +
         `${result.buzzMinted} buzz minted, ` +
-        `${result.bucketsSkippedNonPositive} bucket(s) held at non-positive net ` +
-        `(last run ${lastRun.toISOString()})`
+        `${result.bucketsSkippedNonPositive} bucket(s) held at non-positive net`
     );
-
-    await setLastRun();
   }
 );

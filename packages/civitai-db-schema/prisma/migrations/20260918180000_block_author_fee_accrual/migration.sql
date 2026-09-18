@@ -12,13 +12,26 @@
 -- `deliver-creator-compensation` mints to the creator daily. Same two hops, same
 -- dedup discipline, in a civitai-owned table.
 --
--- 🔴 WHY A NEW TABLE RATHER THAN COLUMNS ON block_spend_attribution. That row is
---    IMMUTABLE by design — it is written fire-and-forget off an already-billed
---    submit and nothing re-stamps it (which is why `rate_card_version` is still
---    the 'unrated' sentinel on every row in production). An accrual has a
---    LIFECYCLE: accrued -> settled, or accrued -> clawed_back. Putting a mutable
---    status on the immutable row would break the property the other table's
---    readers depend on.
+-- 🔴 WHY A NEW TABLE RATHER THAN COLUMNS ON block_spend_attribution.
+--
+--    ⚠️ NOT THE REASON AN EARLIER REVISION GAVE, WHICH WAS FALSE. It argued that
+--    block_spend_attribution is "IMMUTABLE by design" and that a mutable status
+--    would break what its readers depend on. It is not immutable: that model
+--    already carries status, voided_reason, confirmed_at, voided_at, paid_out_at
+--    and payout_id — the same accrued/settled/voided shape plus a payout key.
+--    Those columns are merely DEAD today, because the rail that re-stamped them
+--    was removed. "Nothing re-stamps it right now" is not "it is immutable", and
+--    a reader who checks the schema finds the lifecycle columns and concludes the
+--    rationale is wrong.
+--
+--    THE REAL REASON IS THE WRITE SEAM, not the row shape. recordSpendAttribution
+--    is invoked inside `void (async () => { … })()` with its own try/catch
+--    (src/server/routers/blocks.router.ts), explicitly so that "a failed
+--    attribution write must NEVER break the generation" — it is droppable
+--    telemetry off an already-billed submit. An accrual is a money obligation and
+--    must be AWAITED: a viewer debited whose accrual did not land is a real loss
+--    to a real author. Hanging an awaited financial write onto a deliberately
+--    fire-and-forget path is the thing to avoid, and that is what separates them.
 --
 -- 🔴 WHY THE AMOUNT IS AN INTEGER, NOT NUMERIC — this reverses the "fractional
 --    accrual" the design carried over from the licensing rail, and the reversal

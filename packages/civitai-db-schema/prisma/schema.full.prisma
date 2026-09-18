@@ -3722,10 +3722,18 @@ model BlockSpendAttribution {
 /// generation time and writes a per-resource fee row, and a daily job mints to
 /// the creator. Same two hops, same dedup discipline, civitai-owned table.
 ///
-/// 🔴 SEPARATE FROM BlockSpendAttribution ON PURPOSE. That row is IMMUTABLE —
-/// written fire-and-forget off an already-billed submit, never re-stamped. An
-/// accrual has a LIFECYCLE (accrued → settled, or accrued → clawed_back), and a
-/// mutable status on the immutable row would break what its readers rely on.
+/// 🔴 SEPARATE FROM BlockSpendAttribution ON PURPOSE — because of the WRITE
+/// SEAM, not the row shape. `recordSpendAttribution` is invoked inside
+/// `void (async () => { … })()` so that a failed attribution write can never
+/// break the generation; it is droppable telemetry. An accrual is a money
+/// obligation and must be AWAITED. Do not hang an awaited financial write onto a
+/// deliberately fire-and-forget path.
+///
+/// ⚠️ An earlier revision said BlockSpendAttribution is "IMMUTABLE by design".
+/// That is false — it carries `status`, `voidedReason`, `confirmedAt`,
+/// `voidedAt`, `paidOutAt` and `payoutId`, the same lifecycle shape. Those
+/// columns are dead today because the rail that wrote them was removed, which is
+/// a different statement.
 ///
 /// 🔴 `feeBuzz` IS AN INTEGER, NOT NUMERIC, AND THAT REVERSES THE "FRACTIONAL
 /// ACCRUAL" THE DESIGN INHERITED FROM THE LICENSING RAIL. The licensing fee is
