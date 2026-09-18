@@ -144,6 +144,7 @@ import {
 } from '~/server/services/blocks/block-workflow-access';
 import {
   appBlockTag,
+  BLOCK_STEP_NAME,
   buildCustomComfyWorkflowInput,
   buildTextToImageInput,
   createBlockCustomComfyStep,
@@ -182,6 +183,10 @@ import {
   planStepSpend,
   resolveStepVariant,
 } from '~/server/services/blocks/steps';
+import {
+  assertStepTypeAllowed,
+  PlatformInternalStepTypeError,
+} from '~/server/services/blocks/steps/orchestrator-denylist';
 // APP-FACING generation type for the spend-attribution row, resolved from the
 // submitted body. Imported (not open-coded at each of the three submit paths) so
 // the `kind` → key and step-id → key mapping has exactly one definition — and so
@@ -3941,10 +3946,11 @@ export const blocksRouter = router({
         } catch {
           /* best-effort: a read-model write failure never breaks the poll */
         }
-        // customComfy post-paid SETTLE-TO-ACTUAL (plan §5.3): refund the reserved
-        // CEILING down to the workflow's REAL accrued cost on BOTH reservation
-        // keys. Self-scoping + idempotent (a settle record exists ONLY for a
-        // customComfy submit and is consumed once via GET+DEL), and best-effort
+        // Post-paid SETTLE-TO-ACTUAL (plan §5.3): refund the reserved CEILING
+        // down to the workflow's REAL accrued cost on every reservation key.
+        // Self-scoping + idempotent (a settle record is written only by a submit
+        // that reserved a ceiling — customComfy, a post-paid registry step, or a
+        // pass-through step — and is consumed once via GET+DEL), and best-effort
         // (never throws) — so it is safe to call for ANY terminal workflow; a
         // txt2img / already-settled workflow simply no-ops.
         await settleCustomComfySpend({
@@ -4187,11 +4193,20 @@ export const blocksRouter = router({
       //      `textOutputs`/`textOutputWithheld` to populate, so wrapping would
       //      have nowhere to put a verdict. A block that wants a text step's
       //      output polls `pollWorkflow`, which is wrapped.
-      //   2. `images` IS POSTURE-GATED. `projectAppWorkflow` calls a registered
-      //      entry's `extractOutput` only when `postureProducesMedia(...)`, and a
-      //      text-posture entry cannot declare one at all
-      //      (`TextOutputSurface.extractOutput?: never`, registry clause 8-ii).
-      //      So a text step contributes NOTHING here — not even a url.
+      //   2. `images` IS POSTURE-GATED FOR A REGISTERED STEP. `projectAppWorkflow`
+      //      calls a registered entry's `extractOutput` only when
+      //      `postureProducesMedia(...)`, and a text-posture entry cannot declare
+      //      one at all (`TextOutputSurface.extractOutput?: never`, registry
+      //      clause 8-ii). So a registered text step contributes NOTHING here —
+      //      not even a url.
+      //
+      //      ⚠️ THAT NO LONGER COVERS THE WHOLE ARRAY, and saying so is the point
+      //      of restating it: the PASS-THROUGH arm's branch pushes media into
+      //      `images` with no registry entry and no posture at all. What bounds
+      //      that branch is different and narrower — it fires only for a step
+      //      carrying the server-stamped `BLOCK_STEP_NAME`, and it lifts only
+      //      values with the orchestrator `Blob` shape. Do not read "posture-
+      //      gated" as a property of `images`.
       //
       // 🔴 AND THE COST ARGUMENT, because it is the reason not to "just wrap it
       // for symmetry": this returns up to 50 workflows per call, so wrapping
@@ -4385,9 +4400,16 @@ export const blocksRouter = router({
       // HIGHEST-CONSEQUENCE of the three unwrapped `projectAppWorkflow`
       // consumers (see the enumeration at `pollWorkflow`): the urls below are
       // not merely returned, they are FETCHED and re-uploaded into public
-      // civitai `Image` rows. What makes it safe is the same posture gate the
-      // others rely on — `projectAppWorkflow` calls a registered entry's
-      // `extractOutput` only when `postureProducesMedia(...)`, and a
+      // civitai `Image` rows. ⚠️ THE POSTURE GATE IS NO LONGER THE WHOLE ANSWER
+      // HERE — the PASS-THROUGH arm contributes to `images` with no registry
+      // entry and no posture (see the enumeration at `pollWorkflow`). What holds
+      // for EVERY url on this path, registered or not, is the ingestion belt
+      // below: `persistBlockWorkflowOutputImage` host-allowlists each url
+      // (`isAllowedOutputHost`, re-validated per redirect hop), sniffs magic
+      // bytes, and creates the row at default ingestion so it meets a REAL scan.
+      // For a registered step the posture gate still applies on top —
+      // `projectAppWorkflow` calls a registered entry's `extractOutput` only when
+      // `postureProducesMedia(...)`, and a
       // text-posture entry may not declare one at all
       // (`TextOutputSurface.extractOutput?: never`, registry clause 8-ii) — so a
       // `'textOutput'` step contributes NO url here to be ingested. If that gate
@@ -4978,7 +5000,9 @@ export const blocksRouter = router({
       // whatIf", which was the defect, not the design. The textToImage path
       // below stays byte-identical (we only ADD a branch).
       if (input.body.kind === 'step') {
-        return await estimateStepWorkflow({ ctx, claims, body: input.body });
+        return isPassThroughStepBody(input.body)
+          ? await estimatePassThroughStepWorkflow({ ctx, claims, body: input.body })
+          : await estimateStepWorkflow({ ctx, claims, body: input.body });
       }
       // Context binding. A MODEL token pins `ctx.modelId`; the body must match
       // it. A PAGE token (ctx.entityType==='none') has NO model binding — it
@@ -5196,12 +5220,19 @@ export const blocksRouter = router({
       // `reserveAppSpend` per-app aggregate + dev-session) the other kinds use.
       // The textToImage path below stays byte-identical (we only ADD a branch).
       if (input.body.kind === 'step') {
-        return await submitStepWorkflow({
-          ctx,
-          claims,
-          body: input.body,
-          idempotencyKey: input.idempotencyKey,
-        });
+        return isPassThroughStepBody(input.body)
+          ? await submitPassThroughStepWorkflow({
+              ctx,
+              claims,
+              body: input.body,
+              idempotencyKey: input.idempotencyKey,
+            })
+          : await submitStepWorkflow({
+              ctx,
+              claims,
+              body: input.body,
+              idempotencyKey: input.idempotencyKey,
+            });
       }
       // Namespaced idempotency externalId for the orchestrator dedupe (item 2, gen
       // half). Per-app + per-user-scoped (the orchestrator additionally prefixes
@@ -8251,9 +8282,89 @@ async function submitCustomComfyWorkflow(opts: {
 // ─────────────────────────────────────────────────────────────────────────────
 
 type StepBody = Extract<BlockWorkflowBody, { kind: 'step' }>;
+/** The PASS-THROUGH arm — carries an orchestrator `$type` + its native input. */
+type PassThroughStepBody = Extract<StepBody, { $type: string }>;
+/** The REGISTRY arm — names a registered capability by id. Unchanged. */
+type RegistryStepBody = Exclude<StepBody, PassThroughStepBody>;
 
-/** Orchestrator step name stamped on a block step submission. */
-const BLOCK_STEP_NAME = 'block-step';
+/**
+ * Narrow a `kind:'step'` body to its PASS-THROUGH arm.
+ *
+ * 🔴 KEYED ON THE VALUE OF `step`, NOT `'step' in body`. The pass-through arm
+ * declares `step: z.undefined()`, so a body carrying `step` as an own key is a
+ * LEGAL pass-through body (an SDK spreading an optional variable produces one,
+ * and `undefined` survives superjson); a presence test routes it to
+ * `resolveBlockStep`, which answers BAD_REQUEST. Same rule as
+ * `isInlineComfyBody`.
+ */
+function isPassThroughStepBody(body: StepBody): body is PassThroughStepBody {
+  return body.step === undefined;
+}
+
+/**
+ * Settle-time observability labels for a pass-through submit.
+ *
+ * CONSTANT, never the submitted `$type` — `civitai_app_block_customcomfy_*` is
+ * labelled by these and the `$type` set is open by construction on this arm, so
+ * labelling by it would let an app grow the metric's cardinality at will. Same
+ * reasoning (and same shape) as `INLINE_ENGINE_LABEL` / `INLINE_RECIPE_LABEL`.
+ */
+const PASS_THROUGH_ENGINE_LABEL = 'passthrough';
+const PASS_THROUGH_RECIPE_LABEL = '__passthrough__';
+
+/**
+ * THE denylist call for the pass-through arm, shared by the estimate and the
+ * submit so a caller can never probe a `$type` it may not run.
+ *
+ * 🔴 RE-THROWN AS `FORBIDDEN` WITH THE ORIGINAL AS `cause`, not swallowed and not
+ * left raw. Raw, tRPC's `getTRPCErrorFromUnknown` maps an unrecognized throw to
+ * INTERNAL_SERVER_ERROR (see `parseStepParams` for the same measurement), so a
+ * correct refusal would read as a platform fault. Converted without `cause`, the
+ * refusal becomes indistinguishable from every other FORBIDDEN on this path —
+ * and a test asserting "the denylist refused it" would really be asserting
+ * "something refused it", which stays green after the denylist is deleted. The
+ * `cause` is what keeps that test honest; it is the reason
+ * `PlatformInternalStepTypeError` is its own class.
+ */
+function assertPassThroughStepTypeAllowed($type: string): void {
+  try {
+    assertStepTypeAllowed($type, 'block pass-through step');
+  } catch (e) {
+    if (e instanceof PlatformInternalStepTypeError) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: e.message, cause: e });
+    }
+    throw e;
+  }
+}
+
+/**
+ * Build the orchestrator step a pass-through body submits.
+ *
+ * 🔴 `input` IS FORWARDED UNMODIFIED — no merge, no defaulting, no server-owned
+ * key. Pinned byte-for-byte on BOTH the quote and the submit in
+ * `src/server/routers/__tests__/blocks.router.workflow.test.ts`.
+ *
+ * ⚠️ A DRAFT OF THIS LINE CLAIMED THE TEST PINS IT "BY REFERENCE IDENTITY, so a
+ * spread cannot pass". It does not, and a `{ ...body.input }` mutant SURVIVED
+ * the whole suite — correctly, because a shallow spread of this object is
+ * observationally identical (same keys, same nested references, same JSON). Do
+ * not re-add that claim. What the identity assertion in that suite DOES pin is
+ * that the quote and the submit hold ONE step object, which is what makes
+ * "the quote priced the same work" true; building the step twice kills it.
+ *
+ * `timeout` is the PHYSICAL Buzz ceiling, derived from the single declared
+ * `maxBuzz` exactly as the inline-comfy arm derives it: `stepTimeoutSeconds =
+ * maxBuzz`, so `maxBuzz === ceil(stepTimeoutSeconds)` is not asserted, it is
+ * unrepresentable.
+ */
+function buildPassThroughOrchestratorStep(body: PassThroughStepBody) {
+  return {
+    $type: body.$type,
+    name: BLOCK_STEP_NAME,
+    timeout: formatStepTimeout(body.maxBuzz),
+    input: body.input,
+  };
+}
 
 /**
  * Resolve the registry entry from the (schema-gated) `step` id. The wire
@@ -8261,7 +8372,7 @@ const BLOCK_STEP_NAME = 'block-step';
  * the union, so this never returns undefined for a schema-valid body — the
  * guard is defense-in-depth against a registry/schema desync. Fail closed.
  */
-function resolveBlockStep(body: StepBody) {
+function resolveBlockStep(body: RegistryStepBody) {
   const step = getStep(body.step);
   if (!step) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'unknown step type' });
@@ -8510,7 +8621,11 @@ function buildStepOrchestratorStep(
  * `assertStepRequestAllowed`; that call is bounded by the orchestrator client's
  * own whatIf attempt timeout and retry budget.
  */
-async function estimateStepWorkflow(opts: { ctx: Context; claims: BlockClaims; body: StepBody }) {
+async function estimateStepWorkflow(opts: {
+  ctx: Context;
+  claims: BlockClaims;
+  body: RegistryStepBody;
+}) {
   const { ctx, claims, body } = opts;
   const userId = await assertStepRequestAllowed(claims);
   const step = resolveBlockStep(body);
@@ -8672,7 +8787,7 @@ async function quoteStepBuzz(opts: {
 async function submitStepWorkflow(opts: {
   ctx: Context;
   claims: BlockClaims;
-  body: StepBody;
+  body: RegistryStepBody;
   /** OPTIONAL client idempotency key → orchestrator externalId. */
   idempotencyKey?: string;
 }) {
@@ -9366,6 +9481,542 @@ async function submitStepWorkflow(opts: {
   }
 
   // Same object already cached under the idempotency key (see genResult above).
+  return genResult;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// App Blocks PASS-THROUGH bridge (`kind: 'step'` with a bare `$type`).
+//
+// A pass-through body carries `{ kind, $type, input, maxBuzz }`. The server
+// translates NOTHING: `input` is forwarded to the orchestrator byte-for-byte,
+// and the only thing standing between an app and a `$type` is
+// `PLATFORM_INTERNAL_STEP_TYPES`.
+//
+// 🔴 WHAT THIS ARM DOES NOT DO, and why, is on `blockPassThroughStepBodySchema`
+// in `schema/blocks/workflow.schema` — the wire shape that admits the gap. One
+// copy, because four operator decisions stated twice disagree the first time one
+// of them changes.
+//
+// 🔴 THE SPEND SHAPE IS THE INLINE-COMFY ONE, REUSED RATHER THAN REINVENTED. The
+// app declares ONE number; the server derives `stepTimeoutSeconds = maxBuzz` and
+// stamps it as the step timeout, which is the physical per-job Buzz cap. The
+// reservation is `max(maxBuzz, whatIf quote)` — the quote is what makes a cap
+// counter honest when the orchestrator prices a `$type` above the declared
+// ceiling — and the whole post-paid belt (static gate, three reservations,
+// settle-to-actual at terminal) is the one `customComfy` already runs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * PASS-THROUGH ESTIMATE. Quotes the orchestrator, floored at the declared
+ * `maxBuzz`.
+ *
+ * 🔴 THE DENYLIST RUNS HERE TOO — an estimate makes a real `whatif:true` submit.
+ *
+ * 🔴 NEVER SHOW LESS THAN THE SUBMIT WILL RESERVE, same rule as the registry
+ * arm's estimate: the submit reserves `max(maxBuzz, quoted)`, so the estimate
+ * computes that same expression rather than preferring the quote.
+ *
+ * The no-quote FALLBACK is `maxBuzz`, NOT an error — and unlike the registry
+ * arm's submit, the pass-through SUBMIT does not fail closed on a missing quote
+ * either. That is an operator decision ("say so rather than silently refusing
+ * those types"), not a derivation, and the honest statement of what it costs is
+ * at the `ceiling` in `submitPassThroughStepWorkflow`: the stamped `timeout`
+ * bounds a GPU-second-metered step and nothing else, so for a per-unit-priced
+ * `$type` an unquotable submit reserves `maxBuzz` and may bill more.
+ */
+async function estimatePassThroughStepWorkflow(opts: {
+  ctx: Context;
+  claims: BlockClaims;
+  body: PassThroughStepBody;
+}) {
+  const { ctx, claims, body } = opts;
+  const userId = await assertStepRequestAllowed(claims);
+  assertPassThroughStepTypeAllowed(body.$type);
+
+  const orchestratorStep = buildPassThroughOrchestratorStep(body);
+  // The token mint is INSIDE the quote's catch on this path and outside it on
+  // the submit's, which is why it is threaded in rather than minted by the quote:
+  // an estimate must degrade to the declared ceiling when the mint fails, while a
+  // submit that cannot mint must throw before it reserves anything.
+  const token = await getOrchestratorToken(userId, ctx).catch(() => null);
+  let quotedBuzz: number | null = null;
+  if (token) {
+    quotedBuzz = await quotePassThroughBuzz({
+      claims,
+      body,
+      orchestratorStep,
+      token,
+      phase: 'estimate',
+    });
+  } else {
+    recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, 'estimate_absent');
+  }
+
+  return {
+    snapshot: {
+      // Non-empty sentinel: the SDK's inbound validator drops empty-workflowId
+      // snapshots. The block treats estimate as a cost quote and never polls it.
+      workflowId: 'wf_estimate',
+      status: 'pending' as const,
+      cost: { total: Math.max(body.maxBuzz, quotedBuzz ?? body.maxBuzz) },
+    },
+  };
+}
+
+/**
+ * The orchestrator's live price for an already-built pass-through step, or
+ * `null` if it could not be had.
+ *
+ * Only the orchestrator ROUND-TRIP is swallowed. The `$type` refusal is
+ * deliberately outside this, at both call sites, so a deterministic denial can
+ * never degrade into "no quote" and then into a price. (The registry arm learned
+ * that the expensive way; see the note at `estimateStepWorkflow`'s build site.)
+ *
+ * 🔴 EVERY OUTCOME IS COUNTED, and it matters MORE here than on the registry arm
+ * it borrows the counter from. There a missing quote fails the submit closed, so
+ * the outage is loud; here the arm deliberately falls back to the declared
+ * `maxBuzz` and proceeds — so without this pair, an orchestrator that stopped
+ * pricing would move every pass-through job onto its declared ceiling with
+ * nothing anywhere moving. Read the ratio, not `estimate_absent` alone.
+ *
+ * 🔴 LABELLED WITH A CONSTANT, never the submitted `$type` — `step` is a metric
+ * label and the `$type` set is open by construction on this arm. Same reasoning
+ * as `PASS_THROUGH_ENGINE_LABEL`.
+ */
+async function quotePassThroughBuzz(opts: {
+  claims: BlockClaims;
+  body: PassThroughStepBody;
+  orchestratorStep: ReturnType<typeof buildPassThroughOrchestratorStep>;
+  token: string;
+  /**
+   * 🔴 THE PHASE, THREADED, NOT ASSUMED. `estimate_*` is defined by the counter
+   * as "one emit per estimate, BEFORE any spend exists". This helper serves both
+   * call sites, so a fixed label would file the one event that precedes a
+   * reservation — a submit proceeding at the declared ceiling because no quote
+   * was had — into the estimate bucket, blended with estimate traffic under one
+   * constant `step` label.
+   *
+   * 🔴 BOTH PHASES EMIT A PAIR. Without a success-side emit, `absent` has no
+   * denominator and falls when submit volume falls, which reads as healthy.
+   */
+  phase: 'estimate' | 'submit';
+}): Promise<number | null> {
+  const { claims, body, orchestratorStep, token, phase } = opts;
+  const [quoted, absent] =
+    phase === 'estimate'
+      ? (['estimate_quoted', 'estimate_absent'] as const)
+      : (['quoted', 'absent'] as const);
+  try {
+    const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+    const quote = await submitWorkflow({
+      token,
+      body: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        steps: [orchestratorStep as any],
+        tags: buildWorkflowTags(claims, PASS_THROUGH_ENGINE_LABEL, 'step'),
+        currencies: resolveBlockCurrenciesForAccount(isGreen, undefined),
+        ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+      },
+      query: { whatif: true },
+    });
+    const total = quote.cost?.total;
+    if (typeof total !== 'number' || !Number.isFinite(total)) {
+      recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, absent);
+      return null;
+    }
+    recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, quoted);
+    return Math.ceil(total);
+  } catch {
+    recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, absent);
+    return null;
+  }
+}
+
+/**
+ * PASS-THROUGH SUBMIT. Post-paid, sharing `submitCustomComfyWorkflow`'s
+ * reservation order, refund rules and settle machinery — the two must not drift.
+ *
+ * 🔴 IT DIFFERS FROM THAT SIBLING IN ONE PLACE: it takes a `whatif` quote before
+ * reserving, because the app's declared `maxBuzz` is not the only price this arm
+ * can face. `submitCustomComfyWorkflow` makes no quote at all — its ceiling IS
+ * the declared number.
+ */
+async function submitPassThroughStepWorkflow(opts: {
+  ctx: Context;
+  claims: BlockClaims;
+  body: PassThroughStepBody;
+  /** OPTIONAL client idempotency key → orchestrator externalId. */
+  idempotencyKey?: string;
+}) {
+  const { ctx, claims, body, idempotencyKey } = opts;
+
+  const blockExternalId = idempotencyKey
+    ? composeBlockExternalId(claims.appBlockId, idempotencyKey)
+    : mintServerBlockExternalId();
+
+  const userId = await assertStepRequestAllowed(claims);
+  // DEFENSE-IN-DEPTH, AND NOT REACHABLE TODAY — say so rather than counting it as
+  // coverage. The `submitWorkflow` procedure rejects a token without a positive
+  // `buzzBudget` before it dispatches here, so no request arrives with one
+  // missing; a mutation of THIS line survives the suite, measured. It re-narrows
+  // the claim to a number the static gate below can compare against, and keeps
+  // the helper safe on its own terms if it ever gains a caller that does not
+  // pre-check — the same belt, for the same reason, as the customComfy sibling.
+  if (typeof claims.buzzBudget !== 'number' || claims.buzzBudget <= 0) {
+    // A DISTINCT message on purpose: the outer gate's is byte-identical, so a
+    // test matching the shared text cannot say which one fired — which is how
+    // "this copy is unreachable" became a claim resting on a comment.
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'pass-through step: block token missing budget',
+    });
+  }
+
+  // 🔴 THE ONE CONTROL, AND IT RUNS BEFORE EVERYTHING THAT COSTS SOMETHING —
+  // before the orchestrator token, before the quote, before every reservation.
+  // A refusal here therefore costs no orchestrator call and has nothing to
+  // refund. A denylist the wire does not consult is decoration.
+  assertPassThroughStepTypeAllowed(body.$type);
+
+  const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+  // A pass-through body carries no `accountType` (its `.strict()` wire shape has
+  // no such field), so currency selection is Auto — the domain-allowed set,
+  // drained blue-first.
+  const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
+
+  const orchestratorStep = buildPassThroughOrchestratorStep(body);
+  // 🔴 A CONSTANT IN THE `baseModel` SLOT, NOT THE SUBMITTED `$type`. The other
+  // arms pass a bounded server-side id there (a registry step id, a recipe id);
+  // `$type` is app-supplied free text, and `buildWorkflowTags` emits that slot
+  // verbatim into the same array as `app-block:<appId>` — the tag
+  // `assertBlockWorkflowTaggedForApp` and `queryAppWorkflows` treat as the
+  // app-scoping boundary. The argument that it is safe anyway (an unknown
+  // `$type` fails the submit, so no workflow persists the forged tag) delegates
+  // the control to an orchestrator behaviour this repo does not own and has not
+  // measured. A constant needs no such argument. The per-`$type` dimension is
+  // kept on the audit row's `detail` JSON, which has no scoping meaning and no
+  // cardinality budget.
+  const tags = buildWorkflowTags(claims, PASS_THROUGH_ENGINE_LABEL, 'step');
+
+  const token = await getOrchestratorToken(userId, ctx);
+  const quotedBuzz = await quotePassThroughBuzz({
+    claims,
+    body,
+    orchestratorStep,
+    token,
+    phase: 'submit',
+  });
+
+  // 🔴 THE RESERVATION IS THE LARGER OF THE TWO, AND THE TIMEOUT IS STILL
+  // `maxBuzz`. The declared ceiling is the floor because the job may accrue up
+  // to it; the quote raises the reservation when the orchestrator prices this
+  // `$type` above it. Over-reserving only makes a cap stricter, and the terminal
+  // settle refunds `ceiling - actual` back down.
+  //
+  // 🔴 WHAT THIS DOES NOT DO, because the obvious reading is wrong and expensive:
+  // it does NOT make the caps an upper bound on real spend. The settle clamps the
+  // refund at 0 and nothing raises a counter, so a job billed ABOVE the
+  // reservation leaves every counter the submit reserved short by the overage,
+  // permanently. The
+  // thing that would prevent that is the quote, and this arm deliberately does
+  // not fail closed when there is none (see `quotePassThroughBuzz`) — for a
+  // GPU-second-metered `$type` the stamped `timeout` still bounds it, but most
+  // reachable types are priced per unit at submit, where a timeout bounds
+  // wall-clock and nothing else. Operator decision, recorded in the PR.
+  const ceiling = Math.max(body.maxBuzz, quotedBuzz ?? body.maxBuzz);
+
+  // (1) STATIC pre-submit gate against the token's per-call budget.
+  if (ceiling > claims.buzzBudget) {
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: ceiling },
+        error: `insufficient buzz budget: step ceiling ${ceiling} exceeds budget ${claims.buzzBudget}`,
+      },
+    };
+  }
+
+  // ── GEN IDEMPOTENCY CLAIM — taken BEFORE the cap reservations + orchestrator
+  //    submit so two CONCURRENT same-key submits can't BOTH reserve + BOTH
+  //    charge. Fail-CLOSED on a redis error; every non-committed exit RELEASEs.
+  let genClaimKey: string | null = null;
+  if (idempotencyKey) {
+    let claim: BlockGenIdempotencyClaim<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>;
+    try {
+      claim = await claimGenIdempotency<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>(
+        userId,
+        claims.appBlockId,
+        idempotencyKey
+      );
+    } catch {
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'generation idempotency unavailable; please retry',
+      });
+    }
+    if (claim.state === 'replay') return claim.result;
+    if (claim.state === 'in_progress') {
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'a generation with this idempotency key is already in progress',
+      });
+    }
+    genClaimKey = claim.key;
+  }
+
+  // (2) Reserve the CEILING against the per-user cumulative cap.
+  let reservation: Awaited<ReturnType<typeof reserveBlockBuzzSpendForClaims>>;
+  try {
+    reservation = await reserveBlockBuzzSpendForClaims(claims, userId, ceiling);
+  } catch (e) {
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    throw e;
+  }
+  const { total, key: buzzCapKey, cap: buzzCap } = reservation;
+  if (total > buzzCap) {
+    await refundBlockBuzzReservation(reservation, ceiling);
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: ceiling },
+        error:
+          claims.reviewRunForReal === true
+            ? `review run-for-real Buzz cap reached: ${total - ceiling} already ` +
+              `spent this review session, this step may cost up to ${ceiling}, ` +
+              `session cap is ${buzzCap}`
+            : `daily Buzz cap reached: ${total - ceiling} already spent today ` +
+              `across your installed apps, this step may cost up to ${ceiling}, ` +
+              `daily cap is ${buzzCap}`,
+      },
+    };
+  }
+
+  // ── CONSENT BUDGET — post-paid, so the CEILING is what is reserved and
+  // therefore what is judged.
+  if (consentBudgetExceeded(reservation)) {
+    await refundBlockBuzzReservation(reservation, ceiling);
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: ceiling },
+        error: consentBudgetRejection(
+          reservation.consent,
+          ceiling,
+          `this step may cost up to ${ceiling}`
+        ),
+      },
+    };
+  }
+
+  // 🔴 (3) Reserve the CEILING against the PER-APP aggregate cap (daily Buzz +
+  // velocity) — the guardrail the per-user cap structurally cannot provide,
+  // since it is keyed on `appBlockId` with the spender absent from the key.
+  // Skipped ONLY for DEV tokens (synthetic non-FK appBlockId), as every kind does.
+  let appSpendReserve: { key: AppSpendDailyKey; cost: number } | null = null;
+  if (claims.dev !== true) {
+    const { reserveAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+    const appSpend = await reserveAppSpend(claims.appBlockId, ceiling);
+    if (!appSpend.allowed) {
+      await refundBlockBuzzReservation(reservation, ceiling);
+      if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+      return {
+        snapshot: {
+          workflowId: 'failed',
+          status: 'failed' as const,
+          cost: { total: ceiling },
+          error:
+            appSpend.reason === 'velocity'
+              ? 'app generation rate limit reached: this app has run too many generations in a short window — please retry shortly'
+              : appSpend.reason === 'unavailable'
+              ? 'generation temporarily unavailable — please retry shortly'
+              : 'app daily spend cap reached: this app has hit its aggregate daily generation-spend ceiling — please try again later',
+        },
+      };
+    }
+    if (appSpend.dailyKey) appSpendReserve = { key: appSpend.dailyKey, cost: ceiling };
+  }
+
+  // (4) APP DEV TUNNEL per-session spend backstop.
+  let devSessionReserve: { sessionId: string; cost: number } | null = null;
+  {
+    const { getActiveDevTunnel, reserveDevSessionBuzz } = await import(
+      '~/server/services/blocks/dev-tunnel.service'
+    );
+    const devTunnel = await getActiveDevTunnel(userId, claims.blockId).catch(() => null);
+    if (devTunnel) {
+      const reserved = await reserveDevSessionBuzz(
+        devTunnel.sessionId,
+        ceiling,
+        devTunnel.spendCapBuzz
+      );
+      if (!reserved.allowed) {
+        await refundBlockBuzzReservation(reservation, ceiling);
+        if (appSpendReserve) {
+          const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+          await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+        }
+        if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+        return {
+          snapshot: {
+            workflowId: 'failed',
+            status: 'failed' as const,
+            cost: { total: ceiling },
+            error:
+              `dev tunnel session Buzz cap reached: ${reserved.total} already spent ` +
+              `this dev session, this step may cost up to ${ceiling}, ` +
+              `session cap is ${devTunnel.spendCapBuzz}`,
+          },
+        };
+      }
+      devSessionReserve = { sessionId: devTunnel.sessionId, cost: ceiling };
+    }
+  }
+
+  // ── Submit. On ANY throw AFTER reserving, refund the CEILING on ALL keys.
+  let snapshot: ReturnType<typeof snapshotFromWorkflow>;
+  let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
+  const submittedAt = Date.now();
+  try {
+    const submitted = await submitWorkflow({
+      token,
+      body: {
+        // The SAME object the quote priced — so the quote and the charge can
+        // never describe different work.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        steps: [orchestratorStep as any],
+        tags,
+        currencies,
+        ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+        externalId: blockExternalId,
+      },
+    });
+    snapshot = snapshotFromWorkflow(submitted);
+    realizedTransactions = submitted.transactions;
+  } catch (e) {
+    await refundBlockBuzzReservation(reservation, ceiling);
+    if (appSpendReserve) {
+      const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+      await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+    }
+    if (devSessionReserve) {
+      const { refundDevSessionBuzz } = await import('~/server/services/blocks/dev-tunnel.service');
+      await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
+    }
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    throw e;
+  }
+
+  const genResult = { snapshot };
+  if (genClaimKey) await finalizeGenIdempotency(genClaimKey, genResult);
+
+  // ── Persist the settle record. The terminal poll/cancel hook reads it and
+  // refunds `ceiling - actual` on every reservation key. The refund is clamped at
+  // 0, so a job that accrues MORE than the ceiling gives nothing back and every
+  // cap counter stays at what was reserved — never below it.
+  if (snapshot.workflowId && snapshot.workflowId !== 'failed' && snapshot.workflowId !== 'whatif') {
+    await persistCustomComfySettle({
+      workflowId: snapshot.workflowId,
+      buzzCapKey,
+      consentBudgetKey: reservation.consent?.key ?? null,
+      appSpendKey: appSpendReserve?.key ?? null,
+      ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
+      ceiling,
+      engine: PASS_THROUGH_ENGINE_LABEL,
+      recipe: PASS_THROUGH_RECIPE_LABEL,
+      submittedAt,
+    });
+    // G6 — persistent output queue (best-effort, non-dev), so a pass-through gen
+    // rebuilds in listMyWorkflows on reload. Same posture as every other kind.
+    if (claims.dev !== true) {
+      const realWorkflowId = snapshot.workflowId;
+      void (async () => {
+        const { upsertBlockWorkflowOnSubmit } = await import(
+          '~/server/services/blocks/block-workflows.service'
+        );
+        await upsertBlockWorkflowOnSubmit({
+          workflowId: realWorkflowId,
+          appBlockId: claims.appBlockId,
+          blockInstanceId: claims.blockInstanceId,
+          userId,
+          status: snapshot.status,
+        });
+      })().catch(() => {
+        /* best-effort: a failed queue write never breaks (or slows) submit */
+      });
+    }
+  }
+
+  // ── Durable audit + attribution (parity with every other kind). Both are
+  // server-derived from the VERIFIED token claims and fire-and-forget.
+  {
+    const invocationCost = snapshot.cost?.total ?? ceiling;
+    void (async () => {
+      const { recordScopeInvocation } = await import(
+        '~/server/services/blocks/user-app-surface.service'
+      );
+      await recordScopeInvocation({
+        userId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        scope: 'ai:write:budgeted',
+        endpoint: 'workflow:submit',
+        statusCode: snapshot.status === 'failed' ? 500 : 200,
+        detail: {
+          action: 'workflow.submit',
+          amount: typeof invocationCost === 'number' ? -Math.abs(invocationCost) : undefined,
+          outcome: snapshot.status === 'failed' ? 'failed' : 'ok',
+          // 🔴 THE SUBMITTED `$type` IS THE DIMENSION HERE, where the registry
+          // arm writes its `step` id — without it every pass-through submit is
+          // indistinguishable from every other in `block_scope_invocations`, on
+          // the arm whose whole point is that the type set is open. `detail` is a
+          // nullable JSON column, so this is additive; unlike a METRIC LABEL
+          // (see `PASS_THROUGH_ENGINE_LABEL`) a JSON column has no cardinality
+          // budget to blow.
+          step: body.$type,
+          variant: PASS_THROUGH_ENGINE_LABEL,
+          ...(snapshot.workflowId ? { workflowId: snapshot.workflowId } : {}),
+        },
+        dev: claims.dev === true,
+      });
+    })().catch(() => {
+      /* swallowed inside helper */
+    });
+  }
+
+  const spendWorkflowId = snapshot.workflowId;
+  if (spendWorkflowId && spendWorkflowId !== 'failed' && snapshot.status !== 'failed') {
+    void (async () => {
+      const { recordSpendAttribution } = await import(
+        '~/server/services/blocks/buzz-attribution.service'
+      );
+      const { buzzType, buzzAmount } = deriveBlockSpendBasis(
+        realizedTransactions,
+        isGreen,
+        snapshot.cost?.total ?? ceiling
+      );
+      await recordSpendAttribution({
+        userId,
+        buzzAmount,
+        buzzType,
+        workflowId: spendWorkflowId,
+        appId: claims.appId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        // A pass-through step carries no model binding and no sharedContentKey
+        // (its `.strict()` wire shape has neither).
+        modelId: null,
+        sharedContentKey: null,
+      });
+    })().catch(() => {
+      /* best-effort: a failed attribution write never breaks submit */
+    });
+  }
+
   return genResult;
 }
 

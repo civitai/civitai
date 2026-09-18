@@ -628,9 +628,21 @@ export async function attachModeratedStepTextOutputs<T extends ModeratedTextOutp
   let unpublishableReason: string | undefined;
 
   for (const step of workflow.steps ?? []) {
-    // Only REGISTERED step types have a declared posture. Everything else —
-    // textToImage, customComfy, comfy, imageGen — is media-only on this bridge
-    // and has no text surface to publish, so there is nothing here to withhold.
+    // Only REGISTERED step types have a declared posture. textToImage,
+    // customComfy, comfy and imageGen are media-only on this bridge, so there is
+    // nothing here to withhold.
+    //
+    // 🔴 THIS LOOKUP IS BY `$type`, NOT BY WHICH ARM SUBMITTED THE STEP, and that
+    // is load-bearing now that a block may name a `$type` directly: a
+    // pass-through step whose `$type` COLLIDES with a registry entry's
+    // `orchestratorType` is found here and IS scanned. `chat-completion` declares
+    // `'chatCompletion'`, so that case is covered rather than bypassed.
+    //
+    // A pass-through `$type` that collides with NOTHING has no posture and no
+    // scan — its output reaches the block verbatim on `stepOutputs`. That is the
+    // operator decision recorded on `stepOutputs` in
+    // `schema/blocks/workflow.schema`, not an oversight here; stated so the
+    // `continue` is not read as "there is no text on those types".
     const entry = getStepByOrchestratorType(step.$type);
     if (!entry) continue;
     // 🔴 NO PER-POSTURE BRANCH HERE. The dispatch owns that table; this loop

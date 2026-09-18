@@ -587,6 +587,18 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // the series count grows by a handful with each new recipe/engine — always trivially
   // bounded regardless of the wire (labels are free-form + fail-soft, but the values
   // are enum-resolved from the registry, so they can't blow up).
+  //
+  // 🔴 NOT ONLY THE customComfy BRIDGE ANY MORE, AND NOT ONLY REGISTRY-DERIVED
+  // LABELS. Every arm that reserves a post-paid CEILING settles through the same
+  // record, so these also carry the inline arm ({inline, __inline__}) and the
+  // denylist-only PASS-THROUGH `kind:'step'` arm ({passthrough, __passthrough__}).
+  // Both are CONSTANTS chosen precisely because those arms have no registry to
+  // resolve an enum from — the pass-through `$type` set is open by construction —
+  // so the bound holds, but "enum-resolved from the registry" is no longer the
+  // reason it does. A new post-paid arm with constant labels adds one pair;
+  // flipping `postPaidSettle` on a REGISTRY step entry instead adds one pair per
+  // (step id × variant), because that persist site passes the resolved variant
+  // and the step id rather than constants.
   const customComfyActualBuzz = getOrCreateHistogram(
     reg,
     'civitai_app_block_customcomfy_actual_buzz',
@@ -764,15 +776,19 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // ignore it. `over` is a REPORT that a declared constant does not describe
   // reality; `over_reserved` is the thing that costs money. Read
   // `outcome="exact"` to confirm the check runs at all; investigate a rising
-  // `absent` or a falling `estimate_quoted`/`estimate_absent` ratio.
+  // `absent` or a falling `estimate_quoted`/`estimate_absent` ratio — and read
+  // `absent` per `step` label, because its meaning inverts on `__passthrough__`
+  // (see the help text).
   //
   // Cardinality: `step` is drawn from the code-owned registry keys (never client
   // input — the wire enum derives from those same keys, so an unregistered id
-  // cannot reach here); `outcome` is a closed 6-value set. Bounded and small.
+  // cannot reach here) PLUS the single constant `__passthrough__`, which the
+  // pass-through `kind:'step'` arm emits under precisely because ITS `$type` set
+  // is open by construction; `outcome` is a closed 7-value set. Bounded and small.
   const stepPriceCheckTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_step_price_check_total',
-    "App Block `kind:'step'` price checks, by step id and outcome. Only the post-billing submit outcomes are prepaidFixed-gated; the fail-closed absent and the estimate-phase outcomes fire for any kind:'step' request. Submit phase: exact = billed within both the declared price and the reservation; over = billed above the DECLARED price but within the quote-backed reservation (the declared constant is wrong; no money or cap impact — expected to be ~100% for a usage-priced step, do NOT alert on it); over_reserved = billed above the RESERVATION, so every cap counter was short until corrected (ALERT ON THIS); absent = EITHER the submit was refused because the orchestrator returned no price quote (no spend, no generation - triage as availability) OR a billed submit carried no numeric cost. Estimate phase: estimate_quoted = the block was shown a live orchestrator quote; estimate_absent = the quote failed and it was shown the declared price instead (read as a ratio against estimate_quoted, never alone)",
+    "App Block `kind:'step'` price checks, by step id and outcome. Only the post-billing submit outcomes are prepaidFixed-gated; the fail-closed absent and the estimate-phase outcomes fire for any kind:'step' request. Submit phase: exact = billed within both the declared price and the reservation; over = billed above the DECLARED price but within the quote-backed reservation (the declared constant is wrong; no money or cap impact — expected to be ~100% for a usage-priced step, do NOT alert on it); over_reserved = billed above the RESERVATION, so every cap counter was short until corrected (ALERT ON THIS); absent = READ THE step LABEL FIRST, THE TWO MEANINGS ARE OPPOSITE: on a REGISTRY step id, either the submit was refused because the orchestrator returned no price quote (no spend, no generation - triage as availability) or a billed submit carried no numeric cost; on step=\"__passthrough__\" it means only that the submit was not refused FOR LACK OF A QUOTE - that arm falls back to the app's own declared maxBuzz and CARRIES ON, so a generation MAY have run with its Buzz ceiling resting on a number the app supplied. It fires before every cap and before the real submit, so the same `$type` being rejected outright by the orchestrator also lands here. Read it against quoted; this counter cannot separate the two causes - only whether a submit produced a workflow does, and the nearest series for that is civitai_app_block_customcomfy_wallclock_seconds{engine=\"passthrough\"} (one sample per pass-through workflow that reached terminal - a lower bound, not joinable to this counter per event). quoted = the pass-through submit got a live orchestrator quote; it is absent's denominator and exists so absent cannot be read alone, since a bare count falls when submit volume falls. Estimate phase: estimate_quoted = the block was shown a live orchestrator quote; estimate_absent = the quote failed and it was shown the declared price instead (read as a ratio against estimate_quoted, never alone)",
     ['step', 'outcome']
   );
 
@@ -944,13 +960,14 @@ export function observeAppBlockLaunch(
 /**
  * The closed outcome set for `civitai_app_block_step_price_check_total`. Keeping
  * it a union (rather than a bare string) is what bounds the label cardinality at
- * the type level — a caller cannot invent a fourth value.
+ * the type level — a caller cannot invent an eighth value.
  */
 export type StepPriceCheckOutcome =
   | 'exact'
   | 'over'
   | 'over_reserved'
   | 'absent'
+  | 'quoted'
   | 'estimate_quoted'
   | 'estimate_absent';
 
@@ -980,6 +997,30 @@ export type StepPriceCheckOutcome =
  *     `correctReservationOverage` block — so the same caveat as the estimate
  *     bullet applies: it is `prepaidFixed`-only today because registry load
  *     rejects every other mode, not because this site checks.
+ *   - 🔴 SUBMIT, PRE-BILLING, ON THE PASS-THROUGH ARM (`quoted` / `absent`,
+ *     always with `step: '__passthrough__'`) — A THIRD SITE, AND ITS `absent`
+ *     HAS THE OPPOSITE POLARITY TO THE FAIL-CLOSED ONE ABOVE. The pass-through
+ *     `kind:'step'` arm does NOT refuse on a missing quote: it reserves the
+ *     app's declared `maxBuzz` and proceeds. So there `absent` means only that
+ *     the submit was not refused FOR LACK OF A QUOTE — a generation MAY have run
+ *     with its ceiling resting on the app's own number. ⚠️ It is NOT a statement
+ *     that one did: the emit sits inside the quote, ahead of the static gate,
+ *     every reservation leg and the real submit, so an orchestrator that
+ *     rejects the `$type` outright lands here too with nothing having run. The
+ *     triage instruction in the bullet above is wrong for this arm, and the
+ *     `step` label is what tells the two sites apart. 🔴 THIS COUNTER CANNOT
+ *     SEPARATE THE TWO CAUSES — only whether a submit produced a workflow does,
+ *     and the nearest series for that is
+ *     `civitai_app_block_customcomfy_wallclock_seconds{engine="passthrough"}`:
+ *     one sample per pass-through workflow that reached terminal, because the
+ *     record it settles from is persisted only after a workflow exists. A LOWER
+ *     BOUND, not a join — it needs a terminal observation, drops a sample above
+ *     `MAX_CUSTOMCOMFY_WALLCLOCK_SECONDS` (600s, well past its 240s top bucket,
+ *     so a slow gen IS still observed), and carries no label tying it to an
+ *     individual `absent`. `quoted` is its success half and
+ *     exists so `absent` has a denominator: without a pair, `absent` falls when
+ *     submit volume falls, which reads as healthy. Not gated on billing mode
+ *     (that arm has none).
  *   - ESTIMATE (`estimate_quoted` / `estimate_absent`) — one emit per estimate,
  *     BEFORE any spend exists, and NOT gated on billing mode: it fires for any
  *     `kind:'step'` estimate. Unreachable for a non-`prepaidFixed` entry today
@@ -992,7 +1033,8 @@ export type StepPriceCheckOutcome =
  *
  * 🔴 DO NOT ADD A POST-BILLING SIDE EFFECT BESIDE THIS CALL. Only the three
  * outcomes in the first bullet are reached with money behind them; the estimate
- * phase and the fail-closed `absent` both run with no spend at all.
+ * phase, the fail-closed `absent` and the pass-through pair all run before any
+ * spend exists.
  *
  * 🔴 Emitted unconditionally within each phase — including `outcome: 'exact'` —
  * so a flat divergence line can be told apart from a detector that never ran.
