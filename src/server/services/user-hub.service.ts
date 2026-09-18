@@ -734,9 +734,11 @@ const hubTemplateNames: Record<HubTemplate, string> = {
 async function hubTemplateSources({
   template,
   userId,
+  isModerator,
 }: {
   template: HubTemplate;
   userId: number;
+  isModerator?: boolean;
 }): Promise<UserHubSourceInput[]> {
   if (template === 'my-models') {
     const models = await dbRead.model.findMany({
@@ -756,7 +758,13 @@ async function hubTemplateSources({
   }
 
   if (template === 'bookmarks') {
-    const models = await bookmarkedModels({ userId, take: hubLimits.sourcesPerHub });
+    // Same flag as the Bookmarked tab reads with, so "Add 50" collects what the rows
+    // above it are showing.
+    const models = await bookmarkedModels({
+      userId,
+      isModerator,
+      take: hubLimits.sourcesPerHub,
+    });
     return models.map((model, index) => ({
       type: UserHubSourceType.Model,
       targetId: model.id,
@@ -864,9 +872,10 @@ function isBlockedContentError(error: unknown) {
 export async function getHubSourceCandidates({
   template,
   userId,
-}: GetHubSourceCandidatesInput & { userId: number }) {
+  isModerator,
+}: GetHubSourceCandidatesInput & { userId: number; isModerator?: boolean }) {
   const [gathered, total] = await Promise.all([
-    hubTemplateSources({ template, userId }),
+    hubTemplateSources({ template, userId, isModerator }),
     countHubTemplateCandidates({ template, userId }),
   ]);
 
@@ -944,12 +953,20 @@ async function bookmarkedModels({
   userId,
   take,
   term,
+  isModerator,
 }: {
   userId: number;
   take: number;
   term?: string;
+  isModerator?: boolean;
 }) {
-  return bookmarkedModelsByIds({ ids: await bookmarkedModelIds(userId), userId, term, take });
+  return bookmarkedModelsByIds({
+    ids: await bookmarkedModelIds(userId),
+    userId,
+    term,
+    take,
+    isModerator,
+  });
 }
 
 async function bookmarkedModelsByIds({
@@ -957,21 +974,29 @@ async function bookmarkedModelsByIds({
   userId,
   take,
   term,
+  isModerator,
 }: {
   ids: number[];
   userId: number;
   take: number;
   term?: string;
+  isModerator?: boolean;
 }) {
   if (!ids.length) return [];
 
   const models = await dbRead.model.findMany({
     // A bookmark or a bell outlives the model going private or back to draft, and the
     // owner's own models belong to the group above this one.
+    //
+    // `isModerator` because this list and the paste-a-link path have to answer the
+    // same question the same way: a moderator who can resolve a model by URL but
+    // cannot see it in their own bookmarks is reading one rule from two places. The
+    // write path gates neither — it validates tags and collections only — so this is
+    // the browse half of that pair, not a permission.
     where: {
       id: { in: ids },
       userId: { not: userId },
-      ...visibleModel(userId),
+      ...visibleModel(userId, isModerator),
       ...(term ? { name: { contains: term, mode: 'insensitive' as const } } : {}),
     },
     select: modelRowSelect,
@@ -1151,7 +1176,13 @@ async function readHubSourceScope({
     // this twice, and at the top of the distribution one call is ~390ms and 1.3GB of
     // buffers — see the cap on the read itself.
     const ids = await bookmarkedModelIds(userId);
-    const models = await bookmarkedModelsByIds({ ids, userId, term, take: SUGGESTIONS_LIMIT });
+    const models = await bookmarkedModelsByIds({
+      ids,
+      userId,
+      term,
+      isModerator,
+      take: SUGGESTIONS_LIMIT,
+    });
     return { items: asModelSources(models), total: term ? 0 : ids.length };
   }
 
@@ -1885,10 +1916,8 @@ async function searchHubTags(term: string) {
  * Creators this viewer follows, optionally narrowed by name.
  *
  * Models and collections used to be arms of this same function, reachable only
- * through a tRPC procedure no client called — and their model arm resolved through
- * `visibleModel(userId, isModerator)` where the live tab passes no moderator flag, so
- * a moderator saw a different set through the dead route than through the picker.
- * Both are gone; the scopes in `readHubSourceScope` are the only way in.
+ * through a tRPC procedure no client called. Both are gone; the scopes in
+ * `readHubSourceScope` are the only way in.
  */
 async function followedCreatorSuggestions({ userId, query }: { userId: number; query?: string }) {
   const trimmed = query?.trim();

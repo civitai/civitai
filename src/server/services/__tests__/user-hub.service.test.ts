@@ -1291,6 +1291,24 @@ describe('the bookmarked scope', () => {
     ]);
   });
 
+  it('lifts the visibility filter for a moderator, as the link path does', async () => {
+    // The browse list and the paste-a-link path answer the same question, so they
+    // lift for the same viewer. The write path gates neither, so a moderator who
+    // could resolve a model by URL but not see it in their own bookmarks was reading
+    // one rule from two places.
+    dbMock.dbRead.collection.findFirst.mockResolvedValue({ id: 77 });
+    dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([{ modelId: 2 }]);
+    dbMock.dbRead.collectionItem.findMany.mockResolvedValue([]);
+
+    await getHubSourceScope({ scope: 'bookmarks', userId: 5, isModerator: true });
+
+    const suggested = dbMock.dbRead.model.findMany.mock.calls[0][0].where;
+    expect(suggested.OR).toBeUndefined();
+    expect(suggested.deletedAt).toBeNull();
+    // Still not their own catalogue: the lift is about visibility, not about which
+    // tab a model belongs in.
+    expect(suggested.userId).toEqual({ not: 5 });
+  });
   it('scopes every relationship read to the viewer', async () => {
     dbMock.dbRead.collection.findFirst.mockResolvedValue({ id: 77 });
     dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([{ modelId: 2 }]);
