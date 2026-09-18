@@ -1,6 +1,6 @@
 import { Menu, Text, ThemeIcon } from '@mantine/core';
 import { useEffect, useRef } from 'react';
-import { IconBrush, IconMovie, IconWand } from '@tabler/icons-react';
+import { IconBrush, IconMovie, IconRosetteDiscountCheck, IconWand } from '@tabler/icons-react';
 import type { RemixKind } from '~/shared/constants/remix.constants';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import {
@@ -22,6 +22,14 @@ type RemixOption = {
   icon: typeof IconWand;
   /** A colour per option so the three read as distinct things, not a list. */
   color: string;
+  /**
+   * Whether this option feeds the image itself to the job, which is what the
+   * server can later verify (`sourceImageIds`, via the token `startRemix`
+   * mints). Marked on the options that HAVE it rather than the one that lacks
+   * it: reusing a prompt is a legitimate way to remix and the menu should not
+   * read as warning someone off it.
+   */
+  verifiable: boolean;
 };
 
 const kindLabels: Record<RemixKind, RemixOption> = {
@@ -30,12 +38,14 @@ const kindLabels: Record<RemixKind, RemixOption> = {
     description: 'Change this image with a prompt',
     icon: IconWand,
     color: 'violet',
+    verifiable: true,
   },
   video: {
     label: 'Animate',
     description: 'Turn this image into a video',
     icon: IconMovie,
     color: 'blue',
+    verifiable: true,
   },
 };
 
@@ -44,7 +54,25 @@ const reuseOption: RemixOption = {
   description: "Start from this image's settings",
   icon: IconBrush,
   color: 'teal',
+  verifiable: false,
 };
+
+/**
+ * Says what the option earns, not what the other one costs.
+ *
+ * Deliberately not a promise that the submission WILL be free: whether this
+ * creator takes free submissions, whether a slot is left and whether the daily
+ * allowance holds are all decided later by `freeSubmissionOffer`, and a menu
+ * that promised free here would be overruled by that ladder at the modal.
+ */
+function VerifiedHint() {
+  return (
+    <Text size="xs" c="green.6" lh={1.2} className="mt-1 flex items-center gap-1">
+      <IconRosetteDiscountCheck size={13} stroke={1.9} />
+      Uses this image, so we can verify the remix
+    </Text>
+  );
+}
 
 function OptionIcon({ option }: { option: RemixOption }) {
   return (
@@ -63,6 +91,7 @@ function OptionLabel({ option }: { option: RemixOption }) {
       <Text size="xs" c="dimmed" lh={1.2}>
         {option.description}
       </Text>
+      {option.verifiable && <VerifiedHint />}
     </div>
   );
 }
