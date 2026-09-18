@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import path from 'path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 
 /**
@@ -19,26 +20,13 @@ import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enum
  * was wrong.
  */
 
-const shopItemFindUnique = vi.fn();
-const shopItemFindMany = vi.fn();
-const ownedFindMany = vi.fn();
-const purchaseGroupBy = vi.fn();
-const resaleFindMany = vi.fn();
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    cosmeticShopItem: {
-      findUnique: (...a: unknown[]) => shopItemFindUnique(...a),
-      findMany: (...a: unknown[]) => shopItemFindMany(...a),
-    },
-    userCosmeticShopPurchaseCosmetic: { groupBy: (...a: unknown[]) => purchaseGroupBy(...a) },
-    userCosmetic: { findMany: (...a: unknown[]) => ownedFindMany(...a) },
-    userCosmeticShopItemResale: { findMany: (...a: unknown[]) => resaleFindMany(...a) },
-  },
-  dbWrite: {
-    userCosmetic: { findMany: (...a: unknown[]) => ownedFindMany(...a) },
-  },
-}));
+// The canonical client mock, per docs/testing/shared-module-mocks.md. It keeps
+// `dbRead` and `dbWrite` distinct, which matters here: the ownership read is on
+// the WRITER deliberately, so a reader-only declaration would leave it empty and
+// quietly quote the undiscounted price.
+const shopItemFindUnique = dbMock.dbRead.cosmeticShopItem.findUnique;
+const shopItemFindMany = dbMock.dbRead.cosmeticShopItem.findMany;
+const ownedFindMany = dbMock.dbWrite.userCosmetic.findMany;
 
 const { getPackDetail } = await import('~/server/services/creator-shop-pack.service');
 
@@ -146,7 +134,6 @@ const rejectedPack = (status = CosmeticShopItemStatus.Archived) => ({
 });
 
 beforeEach(() => {
-  vi.clearAllMocks();
   shopItemFindUnique.mockResolvedValue({
     id: PACK_ID,
     cosmeticId: null,
@@ -178,8 +165,6 @@ beforeEach(() => {
     },
   ]);
   ownedFindMany.mockResolvedValue([]);
-  purchaseGroupBy.mockResolvedValue([]);
-  resaleFindMany.mockResolvedValue([]);
 });
 
 describe('public pack detail returns named fields, not the meta column', () => {
