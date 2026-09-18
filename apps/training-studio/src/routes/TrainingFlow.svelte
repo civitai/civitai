@@ -17,6 +17,7 @@
     type Selection,
   } from './trainingFlow';
   import type { FromPrices, LabelType } from '$lib/data/trainingModels';
+  import type { ReuseItem } from '$lib/reuse';
 
   let { prices, onExit }: { prices: FromPrices; onExit: () => void } = $props();
 
@@ -37,7 +38,7 @@
   // A "Train again with this data" hand-off from a run's detail page: reuse its blob airs (already
   // uploaded + scanned) rather than re-uploading. Read once, then cleared so a refresh doesn't re-import.
   // DataStep materializes these once a model is picked (the label type depends on the selection).
-  let reuseItems = $state<{ air: string; caption: string; name: string; previewUrl: string }[]>([]);
+  let reuseItems = $state<ReuseItem[]>([]);
   onMount(() => {
     try {
       const raw = sessionStorage.getItem('ts:reuse-dataset');
@@ -63,9 +64,12 @@
 
   // Free the dataset preview object URLs when the flow unmounts (leaving to My-trainings). Reads
   // nothing reactive, so it's mount-only — not per-step; images and their previews live here and must
-  // survive Back/Continue, so DataStep must not do this on its own unmount.
+  // survive Back/Continue, so DataStep must not do this on its own unmount. Emptying the array is
+  // load-bearing: a preview hydration resolving after teardown checks membership and revokes its
+  // fresh URL instead of leaking it.
   $effect(() => () => {
     for (const img of images) URL.revokeObjectURL(img.previewUrl);
+    images = [];
   });
 
   function jump(n: number) {
