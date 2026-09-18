@@ -27,6 +27,7 @@ import { InstantSearch, useInstantSearch, useSearchBox } from 'react-instantsear
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { slugit } from '~/utils/string-helpers';
 import { autocompleteSearchClient } from '~/components/Search/autocomplete.client';
+import { useCarriedSearchText } from '~/components/Search/useCarriedSearchText';
 import { quoteMeiliValue } from '~/components/Search/meili-filter';
 import { useAutocompleteAvailabilityStore } from '~/components/Search/search-availability.store';
 import { ModelSearchItem } from '~/components/AutocompleteSearch/renderItems/models';
@@ -91,6 +92,9 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
     setTargetIndex(value);
   };
   const currentUser = useCurrentUser();
+  // Owned above the keyed search provider below, so it outlives the remount an index switch
+  // causes.
+  const carriedSearchText = useRef('');
 
   const isModels = targetIndex === 'models';
   const isImages = targetIndex === 'images';
@@ -115,10 +119,16 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
       : null,
   ].filter(isDefined);
 
+  const resolvedIndexName = searchIndexMap[targetIndex as keyof typeof searchIndexMap];
+
   return (
     <InstantSearch
+      // Needs re-render, the same way `SearchLayout` does it. Otherwise the search fires with the
+      // previous index's parameters: react-instantsearch sets the new index and searches in its
+      // render body, before the children that own `filters` have re-rendered.
+      key={resolvedIndexName}
       searchClient={autocompleteSearchClient}
-      indexName={searchIndexMap[targetIndex as keyof typeof searchIndexMap]}
+      indexName={resolvedIndexName}
       future={{ preserveSharedStateOnUnmount: false }}
     >
       <AutocompleteSearchContent
@@ -127,6 +137,7 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
         ref={ref}
         onTargetChange={handleTargetChange}
         baseFilters={filters}
+        carriedSearchText={carriedSearchText}
       />
     </InstantSearch>
   );
@@ -138,6 +149,7 @@ type AutocompleteSearchProps<T extends SearchIndexKey> = Props & {
   indexName: T;
   onTargetChange: (target: T) => void;
   baseFilters: string[];
+  carriedSearchText: React.MutableRefObject<string>;
 };
 
 function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
@@ -149,6 +161,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     indexName: indexNameProp,
     onTargetChange,
     baseFilters,
+    carriedSearchText,
     ...autocompleteProps
   }: AutocompleteSearchProps<TKey>,
   ref: React.ForwardedRef<{ focus: () => void }>
@@ -177,7 +190,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     : indexNameProp;
 
   const [selectedItem, setSelectedItem] = useState<ComboboxData[number] | null>(null);
-  const [search, setSearch] = useState(query);
+  const [search, setSearch] = useCarriedSearchText(carriedSearchText, query);
   const [queryFilters, setQueryFilters] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 

@@ -25,6 +25,7 @@ import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { paired } from '~/utils/type-guards';
 import { searchClient } from '~/components/Search/search.client';
 import { quickSearchClient } from '~/components/Search/quick-search.client';
+import { useCarriedSearchText } from '~/components/Search/useCarriedSearchText';
 import { BrowsingLevelFilter } from './CustomSearchComponents';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
@@ -143,11 +144,18 @@ export const QuickSearchDropdown = ({
   const handleTargetChange = (value: SearchIndexKey | null) => {
     setTargetIndex(value ?? 'models');
   };
+  // Owned above the keyed search provider below, so it outlives the remount an index switch
+  // causes.
+  const carriedSearchText = useRef('');
 
   const indexName = searchIndexMap[targetIndex];
 
   return (
     <InstantSearch
+      // Needs re-render, the same way `SearchLayout` does it. Otherwise the search fires with the
+      // previous index's parameters: react-instantsearch sets the new index and searches in its
+      // render body, before the children that own `filters` have re-rendered.
+      key={indexName}
       searchClient={disableInitialSearch ? searchClient : quickSearchClient}
       indexName={indexName}
       future={{ preserveSharedStateOnUnmount: true }}
@@ -163,6 +171,7 @@ export const QuickSearchDropdown = ({
         indexName={targetIndex}
         onIndexNameChange={handleTargetChange}
         dropdownItemLimit={dropdownItemLimit}
+        carriedSearchText={carriedSearchText}
       />
     </InstantSearch>
   );
@@ -178,16 +187,18 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   showIndexSelect = true,
   placeholder,
   onHits,
+  carriedSearchText,
   ...autocompleteProps
 }: QuickSearchDropdownProps & {
   indexName: TIndex;
   onIndexNameChange: (indexName: TIndex) => void;
+  carriedSearchText: React.MutableRefObject<string>;
 }) {
   // const currentUser = useCurrentUser();
   const { query, refine: setQuery, isSearchStalled } = useSearchBox();
   const { hits, results } = useHitsTransformed<TIndex>();
   const features = useFeatureFlags();
-  const [search, setSearch] = useState(query);
+  const [search, setSearch] = useCarriedSearchText(carriedSearchText, query);
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const isSubmittingOptionRef = useRef(false);
   const availableIndexes = supportedIndexes ?? [];
