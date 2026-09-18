@@ -12,7 +12,8 @@ import { stripSourceComments } from '~/components/AppBlocks/stripSourceComments'
  * for everyone else. Every OTHER consumer must keep treating anything that is not
  * `visible` as a refusal, and must do so by spelling the test `!== 'visible'`: a
  * gate written `=== 'hidden'` was correct while the verdict had two members and
- * silently ADMITS a `pending` image now.
+ * silently ADMITS a `pending` image now. Each file type-checks and each file's own
+ * suite passes, so this is the class of defect no per-file suite can see.
  *
  * The BEHAVIOURAL half lives with each consumer and is deliberately not duplicated
  * here — see `block-post.service.test.ts` and `block-gated-images.service.test.ts`.
@@ -98,12 +99,13 @@ for (const full of PRODUCTION_FILES) {
 
 /**
  * A file is a call site if it IMPORTS the logic module or names the symbol in call
- * position. The import half covers every shape that carries a `from '…logic'` clause —
- * a renamed import, a namespace import, a re-export — so the symbol half's own
- * contribution is the call whose file carries no such clause: one reached through a
- * name-preserving barrel. Only a barrel hop that ALSO renames escapes both, and the
- * barrel itself joins the ledger, so that hop fails this suite one file away from the
- * consumer that gates.
+ * position. The import half covers every static `from '…logic'` clause — renamed,
+ * namespace, re-export — so the symbol half's only contribution is a call in a file
+ * carrying no such clause, such as one reached through a name-preserving barrel.
+ * Escaping BOTH takes a file that gates while naming neither the module nor the symbol
+ * in call position: reaching it renamed, or receiving it as a value. A renaming barrel
+ * hop still reddens this suite at the barrel; a renaming `import()` or a helper handed
+ * the function reddens nothing.
  */
 function isCallSite(rel: string): boolean {
   if (rel === DEFINITION) return false;
