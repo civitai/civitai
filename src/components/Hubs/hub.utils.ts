@@ -64,6 +64,18 @@ const sourceKindLabels: Record<string, string> = {
   Tag: 'Tag',
 };
 
+/**
+ * A colour per kind. Three kinds share one search box and one list of chips, so the
+ * kind is what a row is read for — one neutral badge makes them all look alike.
+ */
+export const kindColor: Record<string, string> = {
+  User: 'blue',
+  Model: 'green',
+  ModelVersion: 'teal',
+  Collection: 'orange',
+  Tag: 'yellow',
+};
+
 /** What a source is called in front of a person: "Creator", not `User`. */
 export function hubSourceKindLabel(type: string) {
   return sourceKindLabels[type] ?? 'Source';

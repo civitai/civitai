@@ -45,6 +45,7 @@ import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import { getUserCollectionPermissionsByIds } from '~/server/services/collection.service';
 import { getReplacedTagIds } from '~/server/services/system-cache';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { profileImageSelect } from '~/server/selectors/image.selector';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import { parseCivitaiUrlSafe } from '~/utils/civitai-url';
@@ -916,13 +917,23 @@ async function bookmarkedModels({ userId, take }: { userId: number; take: number
     // A bookmark or a bell outlives the model going private or back to draft, and the
     // owner's own models belong to the group above this one.
     where: { id: { in: ids }, userId: { not: userId }, ...visibleModel(userId) },
-    select: { id: true, name: true },
+    select: modelRowSelect,
     take,
   });
 
   const position = new Map(ids.map((id, index) => [id, index]));
   return models.sort((a, b) => (position.get(a.id) ?? 0) - (position.get(b.id) ?? 0));
 }
+
+// `ModelMetric` is keyed on `modelId` alone in the generated client — one row per
+// model, already the all-time rollup — so there is no timeframe to ask for.
+const modelRowSelect = Prisma.validator<Prisma.ModelSelect>()({
+  id: true,
+  name: true,
+  metrics: { select: { imageCount: true }, take: 1 },
+});
+
+type ModelRow = Prisma.ModelGetPayload<{ select: typeof modelRowSelect }>;
 
 /**
  * What the picker offers before anything is typed, in the three groups a person
@@ -943,7 +954,7 @@ export async function getHubSourceGroups({
       getHubSourceSuggestions({ userId, type: UserHubSourceType.User, isModerator }),
       dbRead.model.findMany({
         where: { userId, status: ModelStatus.Published, deletedAt: null },
-        select: { id: true, name: true },
+        select: modelRowSelect,
         orderBy: { createdAt: 'desc' },
         take: SUGGESTIONS_LIMIT,
       }),
@@ -954,15 +965,35 @@ export async function getHubSourceGroups({
     ]
   );
 
-  const asModels = (models: { id: number; name: string }[]) =>
+  // A creator's face, so a row reads as a person rather than a string. Their images
+  // are NOT counted: nothing stores that per user — `UserMetric.uploadCount` is
+  // models, not images — and a plausible wrong number is worse than none.
+  const faces = await dbRead.user.findMany({
+    where: { id: { in: followed.map((item) => item.targetId) } },
+    select: { id: true, image: true, profilePicture: { select: profileImageSelect } },
+  });
+  const faceById = new Map(faces.map((face) => [face.id, face]));
+
+  const asModels = (models: ModelRow[]) =>
     models.map((model) => ({
       type: UserHubSourceType.Model,
       targetId: model.id,
       alias: model.name,
+      // All-time, because the row answers "is this worth adding", not "what is it
+      // doing this week".
+      imageCount: model.metrics[0]?.imageCount,
     }));
 
   return [
-    { template: 'following' as const, items: followed, total: followedTotal },
+    {
+      template: 'following' as const,
+      items: followed.map((item) => ({
+        ...item,
+        image: faceById.get(item.targetId)?.image ?? null,
+        profilePicture: faceById.get(item.targetId)?.profilePicture ?? null,
+      })),
+      total: followedTotal,
+    },
     { template: 'my-models' as const, items: asModels(owned), total: ownedTotal },
     { template: 'bookmarks' as const, items: asModels(bookmarked), total: bookmarkedIds.length },
   ];

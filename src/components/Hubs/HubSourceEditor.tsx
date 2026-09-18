@@ -3,7 +3,7 @@ import { IconPlus, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
 import { HubSourceInput } from '~/components/Hubs/HubSourceInput';
-import { hubSourceKindLabel } from '~/components/Hubs/hub.utils';
+import { hubSourceKindLabel, kindColor } from '~/components/Hubs/hub.utils';
 import { hubLimits } from '~/server/schema/user-hub.schema';
 import type { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
@@ -41,7 +41,12 @@ function SourceChip({
       <Text size="sm" lineClamp={1}>
         {source.alias ?? `#${source.targetId}`}
       </Text>
-      <Badge size="xs" variant="light" color={exclude ? 'red' : 'gray'} className="shrink-0">
+      <Badge
+        size="xs"
+        variant="light"
+        color={exclude ? 'red' : kindColor[source.type] ?? 'gray'}
+        className="shrink-0"
+      >
         {hubSourceKindLabel(source.type)}
       </Badge>
       <UnstyledButton

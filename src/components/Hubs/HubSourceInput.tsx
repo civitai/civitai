@@ -1,17 +1,54 @@
-import { Loader, Text, TextInput, UnstyledButton } from '@mantine/core';
+import { Badge, Loader, Text, TextInput, UnstyledButton } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { IconSearch } from '@tabler/icons-react';
+import { IconCheck, IconPlus, IconSearch } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
 import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
-import { hubSourceKindLabel } from '~/components/Hubs/hub.utils';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { hubSourceKindLabel, kindColor } from '~/components/Hubs/hub.utils';
+import { abbreviateNumber } from '~/utils/number-helpers';
 import type { HubTemplate } from '~/server/schema/user-hub.schema';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { parseCivitaiUrlSafe } from '~/utils/civitai-url';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-type Suggestion = { type: HubSourceValue['type']; targetId: number; alias: string };
+type Suggestion = {
+  type: HubSourceValue['type'];
+  targetId: number;
+  alias: string;
+  image?: string | null;
+  profilePicture?: { url: string } | null;
+  imageCount?: number | null;
+};
+
+// A face for a person, an initial for a thing. Both square up at the same size so the
+// names in a mixed list still form a column.
+function RowAvatar({ item }: { item: Suggestion }) {
+  const url = item.profilePicture?.url ?? item.image;
+  const person = item.type === 'User';
+
+  if (url)
+    return (
+      <EdgeMedia
+        src={url}
+        width={96}
+        className={clsx('size-6 shrink-0 object-cover', person ? 'rounded-full' : 'rounded')}
+        alt=""
+      />
+    );
+
+  return (
+    <div
+      className={clsx(
+        'grid size-6 shrink-0 place-items-center bg-gray-3 text-[10px] font-bold uppercase text-gray-7 dark:bg-dark-4 dark:text-dark-0',
+        person ? 'rounded-full' : 'rounded'
+      )}
+    >
+      {item.alias.slice(0, 1)}
+    </div>
+  );
+}
 
 type Kind = 'all' | HubSourceValue['type'];
 
@@ -41,16 +78,27 @@ function Row({ item, added, onAdd }: { item: Suggestion; added: boolean; onAdd: 
       disabled={added}
       onClick={onAdd}
       className={clsx(
-        'flex w-full items-center gap-2 px-3 py-2',
+        'flex w-full items-center gap-2.5 px-3 py-2',
         added ? 'opacity-60' : 'hover:bg-gray-1 dark:hover:bg-dark-6'
       )}
     >
-      <Text size="sm" lineClamp={1} className="flex-1 text-left">
+      {added ? (
+        <IconCheck size={16} className="shrink-0 text-green-6" />
+      ) : (
+        <IconPlus size={16} className="shrink-0 text-gray-6 dark:text-dark-2" />
+      )}
+      <RowAvatar item={item} />
+      <Text size="sm" lineClamp={1} className="min-w-0 flex-1 text-left">
         {item.alias}
       </Text>
-      <Text size="xs" c="dimmed" className="shrink-0">
-        {added ? 'Added' : hubSourceKindLabel(item.type)}
-      </Text>
+      <Badge size="xs" variant="light" color={kindColor[item.type] ?? 'gray'} className="shrink-0">
+        {hubSourceKindLabel(item.type)}
+      </Badge>
+      {typeof item.imageCount === 'number' && (
+        <Text size="xs" c="dimmed" className="w-16 shrink-0 text-right">
+          {abbreviateNumber(item.imageCount)} images
+        </Text>
+      )}
     </UnstyledButton>
   );
 }
@@ -180,9 +228,7 @@ export function HubSourceInput({
     enabled: !disabled && !!showSuggestions && !term,
   });
 
-  const named = (
-    items: { type: HubSourceValue['type']; targetId: number; alias: string | null }[]
-  ) =>
+  const named = (items: (Omit<Suggestion, 'alias'> & { alias: string | null })[]) =>
     items
       .filter((item) => (kind === 'all' ? true : item.type === kind))
       .map((item) => ({ ...item, alias: item.alias ?? '' }));
