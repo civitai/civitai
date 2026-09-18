@@ -150,7 +150,11 @@ describe(`${SYMBOL} seam`, () => {
     expect(toRel(join(SRC, 'server', 'services', 'blocks', 'block-gated-images.logic.ts'))).toBe(
       DEFINITION
     );
-    expect([...SOURCE.keys()].filter((rel) => rel.includes('\\'))).toEqual([]);
+    const rels = [...SOURCE.keys()];
+    // Local non-vacuity: without it the filter below is `[].filter()` and passes on an empty
+    // walk. The walk control answers a different question and lives in another `it`.
+    expect(rels.length).toBeGreaterThan(0);
+    expect(rels.filter((rel) => rel.includes('\\'))).toEqual([]);
   });
 
   // POSITIVE CONTROL for the DETECTOR, not just the walk. A ledger assertion that
