@@ -260,7 +260,6 @@ function isUniqueViolation(error: unknown): boolean {
   );
 }
 
-
 export type SettlementBucket = {
   appOwnerUserId: number;
   buzzType: string;
@@ -284,33 +283,61 @@ export type SettleBlockAuthorFeesResult = {
  * would convert non-withdrawable Buzz into withdrawable earnings, which is a
  * money bug that no test of the totals would catch.
  *
- * 🔴 THE `externalTransactionId` IS THE IDEMPOTENCY GUARD, and it must be
- * deterministic from (date, owner, account) alone — the same shape the licensing
- * rail uses. A re-run of the same day mints nothing new: the Buzz service
- * reports a `conflict`, which is benign. Do NOT include a row count or a row id
- * in the key, or a partially-failed run would mint a SECOND transaction on
- * retry because the key changed.
+ * 🔴 THE SCAN IS BOUNDED BY A DAY BOUNDARY, AND THE DEDUP KEY NAMES THAT SAME
+ * DAY. This pairing is the whole idempotency story and neither half works alone.
+ * A run for day D settles only rows accrued STRICTLY BEFORE the start of day D,
+ * and mints them under `…-<D>-<owner>-<account>`. So every row belongs to
+ * exactly one settlement day, and that day is derivable from the row itself.
  *
- * ⚠️ NOT TRANSACTIONAL ACROSS THE MINT. The mint is an external service call and
- * the status flip is a local write, so a crash between them leaves rows
- * `accrued` whose Buzz has moved. The dedup key is what makes that recoverable:
- * the next run re-derives the same key, the mint conflicts (no double pay), and
- * the flip completes. The failure mode is therefore "settled late", never "paid
- * twice" — chosen deliberately over flipping first, which would fail the other
- * way and silently lose an author's money.
+ * ⚠️ AN EARLIER REVISION KEYED ON THE DATE BUT SCANNED EVERY `accrued` ROW, AND
+ * IT WAS WRONG IN BOTH DIRECTIONS — recorded because the comment it replaced
+ * confidently asserted the opposite:
+ *   (a) SILENT LOSS. A second invocation on the same day (an operator draining a
+ *       `take` truncation, a manual run, a scheduler retry) swept up rows that
+ *       had accrued since the first run and minted them under the SAME key. The
+ *       Buzz service reports a conflict, no money moves, and those rows were
+ *       flipped `settled` anyway. Permanent loss.
+ *   (b) DOUBLE PAY. If the flip failed after a successful mint, the rows stayed
+ *       `accrued` until the next run — 24h later, under a DIFFERENT date key —
+ *       and were minted a second time. The old comment claimed "the next run
+ *       re-derives the same key"; on a daily cron it never does.
+ * The boundary fixes both: rows accrued today are not eligible today, so (a)
+ * cannot sweep them; and an unflipped row still belongs to its original day, so
+ * its key is unchanged and (b) conflicts instead of paying twice.
+ *
+ * ⚠️ STILL NOT TRANSACTIONAL ACROSS THE MINT — that part was true. The mint is an
+ * external call and the flip is a local write, so a crash between them leaves
+ * rows `accrued` whose Buzz has moved. With the boundary in place the next run
+ * re-derives the same key, the mint conflicts, and the flip completes: the
+ * failure mode is "settled late", never "paid twice".
  */
 export async function settleBlockAuthorFees(args: {
-  /** The settlement date, used to build the dedup key. Defaults to today (UTC). */
+  /**
+   * The day being settled (UTC). Rows accrued strictly BEFORE the start of this
+   * day are eligible; the same day names the dedup key. Defaults to now.
+   */
   date?: Date;
   /** Cap on rows scanned in one run. */
   limit?: number;
 }): Promise<SettleBlockAuthorFeesResult> {
   const date = args.date ?? new Date();
-  const dateStr = date.toISOString().slice(0, 10);
+  const boundary = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  // ⚠️ `boundary` and `date` give the SAME string here — `toISOString()` is always
+  // UTC and `boundary` is midnight of that same UTC day, so the slice is equal for
+  // every input (checked across a day's edges and a year boundary). Spelling it
+  // off `boundary` is a readability choice, not a correctness one: a mutation
+  // sweep flagged the swap as a SURVIVOR, and it survives because it is an
+  // EQUIVALENT MUTANT, not because the key is untested. Recorded so nobody writes
+  // a test asserting a difference that cannot exist.
+  const dateStr = boundary.toISOString().slice(0, 10);
   const limit = args.limit ?? 50_000;
 
-  const rows = await dbRead.blockAuthorFeeAccrual.findMany({
-    where: { status: STATUS_ACCRUED },
+  // 🔴 READ THE PRIMARY, NOT THE REPLICA. This scan decides who gets paid, and the
+  // flip below writes to the primary. Under replica lag a row another run already
+  // settled still reads `accrued` here, gets re-bucketed, and inflates a bucket
+  // whose key has already minted — which the conflict then silently swallows.
+  const rows = await dbWrite.blockAuthorFeeAccrual.findMany({
+    where: { status: STATUS_ACCRUED, accruedAt: { lt: boundary } },
     select: { id: true, appOwnerUserId: true, buzzType: true, feeBuzz: true },
     orderBy: { accruedAt: 'asc' },
     take: limit,
@@ -344,6 +371,12 @@ export async function settleBlockAuthorFees(args: {
   // actually be violated — at the write, and in the schema.
   const payable = [...byBucket.values()];
 
+  // One key, built ONCE and reused for both the mint and the row stamp. Two
+  // independent spellings of the same money-critical string is how row->mint
+  // traceability breaks with no error.
+  const keyFor = (bucket: SettlementBucket) =>
+    `block-author-fee-${dateStr}-${bucket.appOwnerUserId}-${bucket.buzzType}`;
+
   const transactions = payable.map((bucket) => ({
     fromAccountId: 0,
     toAccountId: bucket.appOwnerUserId,
@@ -355,22 +388,60 @@ export async function settleBlockAuthorFees(args: {
     amount: Math.floor(bucket.totalBuzz),
     description: `App author fee (${dateStr})`,
     type: TransactionType.Fee,
-    externalTransactionId: `block-author-fee-${dateStr}-${bucket.appOwnerUserId}-${bucket.buzzType}`,
+    externalTransactionId: keyFor(bucket),
   }));
 
-  await createBuzzTransactionMany(transactions);
+  // 🔴 THE RESULT IS RECONCILED, NOT DISCARDED. `createBuzzTransactionMany` DOES
+  // NOT THROW on a per-transaction failure — its own comment says an
+  // `insufficientFunds` (or any other non-success) result "is dropped from BOTH
+  // arrays: the money did NOT move and it is otherwise invisible". It also
+  // silently filters out transactions failing `fromAccountId !== toAccountId &&
+  // amount > 0` before the service is ever called.
+  //
+  // An earlier revision awaited this and ignored the return, then flipped every
+  // row to `settled` regardless. A dropped bucket meant the author was never paid
+  // while the ledger asserted they were — and `status='accrued'` was the only
+  // handle that could have found it afterwards, so the loss was unrecoverable.
+  //
+  // Successes come back as opaque ids rather than externalTransactionIds, so the
+  // only thing that reconciles is the COUNT. A `conflict` is benign (the money
+  // already moved under this key), so settled = transactions + conflicts. If that
+  // does not account for every bucket we cannot tell WHICH dropped, so nothing is
+  // flipped: the rows stay `accrued` and the next run retries them under the same
+  // key. Leaving money owed is recoverable; asserting a payment that never
+  // happened is not.
+  const mint = await createBuzzTransactionMany(transactions);
+  const accountedFor = (mint?.transactions?.length ?? 0) + (mint?.conflicts?.length ?? 0);
+  const allAccountedFor = accountedFor >= transactions.length;
 
   let rowsSettled = 0;
   let buzzMinted = 0;
   const settledAt = new Date();
-  for (const bucket of payable) {
-    const settlementKey = `block-author-fee-${dateStr}-${bucket.appOwnerUserId}-${bucket.buzzType}`;
-    const { count } = await dbWrite.blockAuthorFeeAccrual.updateMany({
-      where: { id: { in: bucket.rowIds }, status: STATUS_ACCRUED },
-      data: { status: STATUS_SETTLED, settlementKey, settledAt },
-    });
-    rowsSettled += count;
-    buzzMinted += bucket.totalBuzz;
+
+  if (!allAccountedFor) {
+    logToAxiom(
+      {
+        name: BLOCK_AUTHOR_FEE_LOG_NAME,
+        type: 'error',
+        message: 'settlement mint did not reconcile — no rows flipped, will retry',
+        date: dateStr,
+        buckets: transactions.length,
+        accountedFor,
+      },
+      'civitai-prod'
+    ).catch(() => undefined);
+  } else {
+    for (const bucket of payable) {
+      const { count } = await dbWrite.blockAuthorFeeAccrual.updateMany({
+        where: { id: { in: bucket.rowIds }, status: STATUS_ACCRUED },
+        data: { status: STATUS_SETTLED, settlementKey: keyFor(bucket), settledAt },
+      });
+      rowsSettled += count;
+      // Only count Buzz for rows THIS run actually flipped. A concurrent run that
+      // got there first returns count 0, and claiming its buzz here would make the
+      // job log an affirmative "minted" for money this run did not move.
+      if (count > 0) buzzMinted += bucket.totalBuzz;
+    }
   }
 
   logToAxiom(

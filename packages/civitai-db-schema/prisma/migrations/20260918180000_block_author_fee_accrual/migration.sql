@@ -164,6 +164,18 @@ ALTER TABLE "block_author_fee_accrual"
   ADD CONSTRAINT "block_author_fee_accrual_status_check"
   CHECK ("status" IN ('accrued', 'settled'));
 
+-- 🔴 D6's LAST LINE OF DEFENCE. The settlement job groups by this column and
+-- casts it to BuzzAccountType unchecked, and that union also contains BANK
+-- account types (creatorProgramBank, cashPending, cashSettled, club). Without
+-- this, a future writer could put a bank account type — or junk — in the column
+-- and the only symptom would be a transaction the Buzz service silently DROPS,
+-- which is invisible by construction. The two spend accounts a viewer can pay a
+-- block generation from are blue and yellow; green and red are included because
+-- they are spend types a viewer can hold.
+ALTER TABLE "block_author_fee_accrual"
+  ADD CONSTRAINT "block_author_fee_accrual_buzz_type_check"
+  CHECK ("buzz_type" IN ('blue', 'green', 'yellow', 'red'));
+
 ALTER TABLE "block_author_fee_accrual"
   ADD CONSTRAINT "block_author_fee_accrual_governing_leg_check"
   CHECK ("governing_leg" IN ('flat', 'pct', 'none'));

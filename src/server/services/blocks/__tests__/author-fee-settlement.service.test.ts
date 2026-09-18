@@ -20,34 +20,25 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * Prisma, the Buzz service and the logger are mocked at the module boundary.
  */
 
-const { mockDbRead, mockDbWrite, mockLog, mockCreateMany } = vi.hoisted(() => ({
-  mockDbRead: {
-    oauthClient: { findUnique: vi.fn() },
-    blockAuthorFeeAccrual: { findMany: vi.fn() },
-  },
-  mockDbWrite: {
-    blockAuthorFeeAccrual: { create: vi.fn(), updateMany: vi.fn() },
-  },
+const { mockLog, mockCreateMany } = vi.hoisted(() => ({
   mockLog: vi.fn(),
   mockCreateMany: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...args: unknown[]) => {
-    mockLog(...args);
-    return Promise.resolve(null);
-  },
-}));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransactionMany: (...args: unknown[]) => mockCreateMany(...args),
 }));
 
-import {
-  accrueBlockAuthorFee,
-  settleBlockAuthorFees,
-} from '../author-fee-settlement.service';
+import { accrueBlockAuthorFee, settleBlockAuthorFees } from '../author-fee-settlement.service';
 import type { BlockAuthorFeeComputation } from '../author-fee';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+loggingMock.logToAxiom.mockImplementation((...args: unknown[]) => {
+  mockLog(...args);
+  return Promise.resolve(null);
+});
 
 const APP_ID = 'app_test';
 const APP_BLOCK_ID = 'apb_test';
@@ -89,7 +80,16 @@ beforeEach(() => {
   mockDbRead.oauthClient.findUnique.mockResolvedValue({ id: APP_ID, userId: OWNER_ID });
   mockDbWrite.blockAuthorFeeAccrual.create.mockResolvedValue({});
   mockDbWrite.blockAuthorFeeAccrual.updateMany.mockResolvedValue({ count: 1 });
-  mockCreateMany.mockResolvedValue(undefined);
+  // 🔴 THE FAKE MATCHES THE REAL CONTRACT. `createBuzzTransactionMany` returns
+  // `{ transactions, conflicts }` and does NOT throw on a per-transaction
+  // failure. An earlier revision resolved it to `undefined`, which could express
+  // neither a conflict nor a silent drop — and that is structurally why the two
+  // most expensive defects on this path had no test at all. By default every
+  // submitted transaction succeeds; a test that wants a drop says so explicitly.
+  mockCreateMany.mockImplementation(async (txs: unknown[]) => ({
+    transactions: txs.map((_, i) => ({ id: `tx_${i}` })),
+    conflicts: [],
+  }));
 });
 
 describe('accrueBlockAuthorFee', () => {
@@ -201,7 +201,7 @@ describe('settleBlockAuthorFees', () => {
   });
 
   it('mints the SUM per owner and flips the contributing rows', async () => {
-    mockDbRead.blockAuthorFeeAccrual.findMany.mockResolvedValue([
+    mockDbWrite.blockAuthorFeeAccrual.findMany.mockResolvedValue([
       accrual({ id: 'bafa_1', feeBuzz: 10 }),
       accrual({ id: 'bafa_2', feeBuzz: 7 }),
     ]);
@@ -219,7 +219,7 @@ describe('settleBlockAuthorFees', () => {
   });
 
   it('keeps blue and yellow in SEPARATE buckets and never coerces (D6)', async () => {
-    mockDbRead.blockAuthorFeeAccrual.findMany.mockResolvedValue([
+    mockDbWrite.blockAuthorFeeAccrual.findMany.mockResolvedValue([
       accrual({ id: 'bafa_1', buzzType: 'yellow', feeBuzz: 10 }),
       accrual({ id: 'bafa_2', buzzType: 'blue', feeBuzz: 4 }),
     ]);
@@ -238,14 +238,14 @@ describe('settleBlockAuthorFees', () => {
   it('builds a dedup key from (date, owner, account) ONLY — not from the rows', async () => {
     // Two runs over DIFFERENT row sets for the same owner/day must produce the
     // SAME externalTransactionId, or a partially-failed run mints twice on retry.
-    mockDbRead.blockAuthorFeeAccrual.findMany.mockResolvedValueOnce([
+    mockDbWrite.blockAuthorFeeAccrual.findMany.mockResolvedValueOnce([
       accrual({ id: 'bafa_1', feeBuzz: 10 }),
     ]);
     await settleBlockAuthorFees({ date: new Date('2026-09-18T00:00:00Z') });
     const firstKey = mockCreateMany.mock.calls[0][0][0].externalTransactionId;
 
     mockCreateMany.mockClear();
-    mockDbRead.blockAuthorFeeAccrual.findMany.mockResolvedValueOnce([
+    mockDbWrite.blockAuthorFeeAccrual.findMany.mockResolvedValueOnce([
       accrual({ id: 'bafa_9', feeBuzz: 10 }),
       accrual({ id: 'bafa_8', feeBuzz: 3 }),
     ]);
@@ -256,8 +256,74 @@ describe('settleBlockAuthorFees', () => {
     expect(firstKey).toBe(`block-author-fee-2026-09-18-${OWNER_ID}-yellow`);
   });
 
+  it('flips NOTHING when the mint did not reconcile — a drop must not read as paid', async () => {
+    // createBuzzTransactionMany does not throw on a per-transaction failure: an
+    // insufficient-funds or otherwise-rejected bucket is dropped from BOTH
+    // arrays. If we flipped anyway the author would never be paid while the
+    // ledger asserted they were, and `accrued` was the only handle left.
+    mockDbWrite.blockAuthorFeeAccrual.findMany.mockResolvedValue([
+      accrual({ id: 'bafa_1', appOwnerUserId: 111, feeBuzz: 10 }),
+      accrual({ id: 'bafa_2', appOwnerUserId: 222, feeBuzz: 4 }),
+    ]);
+    mockCreateMany.mockResolvedValueOnce({ transactions: [{ id: 'tx_0' }], conflicts: [] }); // 1 of 2
+
+    const result = await settleBlockAuthorFees({ date: new Date('2026-09-18T00:00:00Z') });
+
+    expect(mockDbWrite.blockAuthorFeeAccrual.updateMany).not.toHaveBeenCalled();
+    expect(result.rowsSettled).toBe(0);
+    expect(result.buzzMinted).toBe(0);
+  });
+
+  it('counts a CONFLICT as settled — the money already moved under that key', async () => {
+    mockDbWrite.blockAuthorFeeAccrual.findMany.mockResolvedValue([accrual({ feeBuzz: 10 })]);
+    mockCreateMany.mockResolvedValueOnce({ transactions: [], conflicts: [{ id: 'c0' }] });
+
+    const result = await settleBlockAuthorFees({ date: new Date('2026-09-18T00:00:00Z') });
+
+    expect(mockDbWrite.blockAuthorFeeAccrual.updateMany).toHaveBeenCalledTimes(1);
+    expect(result.rowsSettled).toBe(1);
+  });
+
+  it('only settles rows accrued BEFORE the day boundary', async () => {
+    // This is the half that makes the date-scoped dedup key correct. Without it a
+    // second run on the same day sweeps up rows accrued since the first run and
+    // mints them under a key that already conflicted — money silently lost.
+    mockDbWrite.blockAuthorFeeAccrual.findMany.mockResolvedValue([accrual()]);
+
+    await settleBlockAuthorFees({ date: new Date('2026-09-18T14:37:00Z') });
+
+    const where = mockDbWrite.blockAuthorFeeAccrual.findMany.mock.calls[0][0].where;
+    expect(where.status).toBe('accrued');
+    // Midnight UTC of the settled day — NOT the call time, or rows accruing
+    // during the run would be swept in.
+    expect(where.accruedAt.lt.toISOString()).toBe('2026-09-18T00:00:00.000Z');
+  });
+
+  it('does not claim buzz for a bucket a concurrent run already flipped', async () => {
+    mockDbWrite.blockAuthorFeeAccrual.findMany.mockResolvedValue([accrual({ feeBuzz: 10 })]);
+    mockDbWrite.blockAuthorFeeAccrual.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await settleBlockAuthorFees({ date: new Date('2026-09-18T00:00:00Z') });
+
+    expect(result.rowsSettled).toBe(0);
+    // The job logs this as "buzz minted"; counting it here would assert a payment
+    // this run did not make.
+    expect(result.buzzMinted).toBe(0);
+  });
+
+  it('uses ONE key for both the mint and the row stamp', async () => {
+    mockDbWrite.blockAuthorFeeAccrual.findMany.mockResolvedValue([accrual({ feeBuzz: 10 })]);
+
+    await settleBlockAuthorFees({ date: new Date('2026-09-18T00:00:00Z') });
+
+    const minted = mockCreateMany.mock.calls[0][0][0].externalTransactionId;
+    const stamped =
+      mockDbWrite.blockAuthorFeeAccrual.updateMany.mock.calls[0][0].data.settlementKey;
+    expect(stamped).toBe(minted);
+  });
+
   it('no-ops on an empty scan', async () => {
-    mockDbRead.blockAuthorFeeAccrual.findMany.mockResolvedValue([]);
+    mockDbWrite.blockAuthorFeeAccrual.findMany.mockResolvedValue([]);
     const result = await settleBlockAuthorFees({});
     expect(mockCreateMany).not.toHaveBeenCalled();
     expect(result).toEqual({ buckets: 0, rowsSettled: 0, buzzMinted: 0 });
@@ -265,14 +331,15 @@ describe('settleBlockAuthorFees', () => {
 
   it('mints BEFORE flipping status, so a crash settles late rather than paying twice', async () => {
     const order: string[] = [];
-    mockCreateMany.mockImplementationOnce(async () => {
+    mockCreateMany.mockImplementationOnce(async (txs: unknown[]) => {
       order.push('mint');
+      return { transactions: txs.map((_, i) => ({ id: `tx_${i}` })), conflicts: [] };
     });
     mockDbWrite.blockAuthorFeeAccrual.updateMany.mockImplementationOnce(async () => {
       order.push('flip');
       return { count: 1 };
     });
-    mockDbRead.blockAuthorFeeAccrual.findMany.mockResolvedValue([accrual()]);
+    mockDbWrite.blockAuthorFeeAccrual.findMany.mockResolvedValue([accrual()]);
 
     await settleBlockAuthorFees({ date: new Date('2026-09-18T00:00:00Z') });
 
