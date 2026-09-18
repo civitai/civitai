@@ -10556,14 +10556,14 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       // file — a bare `setTimeout(0)` races the fire-and-forget write on a busy box.
       await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
       const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
-      // Literal, never re-derived from the resolver under test.
+      // 🔴 THE ONE LOAD-BEARING LINE, and a literal — never re-derived from the
+      // resolver under test. Two companions were written and DELETED: a
+      // `.not.toBeNull()` that CANNOT see this defect (the pre-change code omitted
+      // the field, so the value was `undefined`, and `expect(undefined)
+      // .not.toBeNull()` passes), and a `.not.toBeUndefined()` that is strictly
+      // implied by this equality. Neither added coverage; the first actively
+      // misdirected, which is worse.
       expect(stamped).toBe('step:imageBackgroundRemoval');
-      // 🔴 `toBeUndefined`, NOT `toBeNull`. The pre-change code OMITTED the field,
-      // so it arrived here as `undefined` — and `expect(undefined).not.toBeNull()`
-      // PASSES, i.e. the one assertion written to name the defect was the one that
-      // could not see it. (NULL is what the column then held, because the writer
-      // re-checks and degrades; that is a different value one layer down.)
-      expect(stamped).not.toBeUndefined();
     });
 
     it('NAMESPACES a $type that collides with a kind key — never bare `textToImage`', async () => {

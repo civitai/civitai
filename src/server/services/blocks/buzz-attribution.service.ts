@@ -765,11 +765,20 @@ export async function recordSpendAttribution(
         // line used to claim and is no longer true of one arm. A `step:` value's
         // subtype is a caller-supplied orchestrator `$type`, bounded by
         // `isBlockGenerationType` to ≤64 chars of `[A-Za-z0-9._-]` and nothing
-        // else. Safe as a log FIELD for the reason that bound excludes newlines,
-        // control bytes, quotes and whitespace — but do NOT read this as licence
-        // to make it a metric LABEL or an object KEY: the subtype is app-chosen
-        // and open-ended, so it has no cardinality budget and admits prototype
-        // key names.
+        // else.
+        //
+        // ⚠️ THE SHAPE BOUND IS NOT WHAT MAKES IT SAFE HERE, and a draft of this
+        // comment said it was. `logToAxiom` builds the line with a single
+        // `JSON.stringify` (`@civitai/axiom`'s client, measured), so this value is
+        // an escaped JSON string VALUE and a newline or a quote in it could not
+        // break the line whatever the class admitted. What the bound actually buys
+        // downstream is bounded WIDTH and no unicode/control junk in a column
+        // future consumers will group and display.
+        //
+        // What does NOT follow, and is the reason this note exists: do not make it
+        // a metric LABEL or an object KEY. The subtype is app-chosen and
+        // open-ended, so it has no cardinality budget, and it admits prototype key
+        // names (`step:__proto__` is an accepted value).
         generationType,
         status,
         voidedReason,

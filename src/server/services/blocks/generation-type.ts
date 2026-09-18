@@ -248,7 +248,9 @@ export const CUSTOM_COMFY_GENERATION_SUBTYPES: readonly string[] = [
  *
  * 🔴 MUST EQUAL the wire bound `PASS_THROUGH_TYPE_MAX_CHARS` in
  * `~/server/schema/blocks/workflow.schema`. `generation-type.test.ts` imports
- * both and pins them equal in BOTH directions — a wire cap that grows past this
+ * both and pins them equal — one equality plus a LITERAL, which is what catches
+ * growth, shrinkage AND the pair drifting together; a reversed second equality
+ * would state nothing, `toBe` being symmetric. A wire cap that grows past this
  * one would silently degrade every long `$type` to a bare `step`, which is a
  * depth loss no error reports.
  *
@@ -295,11 +297,18 @@ export const BLOCK_PASS_THROUGH_SUBTYPE_MAX_CHARS = 64;
  * of the upstream population (`generation-type.test.ts` asserts the 50 measured
  * `$type` keys all match it), never against upstream itself. So: if the
  * orchestrator ever ships a `$type` containing a character outside this class,
- * every submit of it records the bare `step` and NOTHING REPORTS IT. That is the
- * same failure mode the cap's seam test exists to prevent, accepted here because
- * no in-repo signal can see it (the same reason there is no membership bound) and
- * because a JSON discriminator outside `[A-Za-z0-9._-]` would be extraordinary.
- * Revisit the class before the population does.
+ * every submit of it records the bare `step` and nothing ALERTS on it. That is
+ * the same failure mode the cap's seam test exists to prevent, accepted here
+ * because no in-repo signal can see it (the same reason there is no membership
+ * bound) and because a JSON discriminator outside `[A-Za-z0-9._-]` would be
+ * extraordinary. Revisit the class before the population does.
+ *
+ * ⚠️ IT IS NOT INVISIBLE, THOUGH, AND AN EARLIER DRAFT SAID "NOTHING REPORTS IT".
+ * The DETECTOR is `WHERE generation_type = 'step'`, and it is exact rather than
+ * approximate: `composeBlockGenerationType(BLOCK_PASS_THROUGH_COARSE_TYPE, …)` is
+ * the only producer of a bare `step`, it is called from one place, and the wire
+ * guarantees `$type` is a non-empty string — so every bare-`step` row IS a
+ * shape-refused `$type` and nothing else is. No alert, one query.
  *
  * ⚠️ CASE IS PRESERVED, NOT FOLDED, and that differs from the denylist one module
  * over (`isPlatformInternalStepType` lowercases, deliberately). Right for this

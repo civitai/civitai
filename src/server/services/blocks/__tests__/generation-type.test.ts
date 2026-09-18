@@ -30,14 +30,12 @@ import { BLOCK_IMAGE_WORKFLOW_TYPES } from '../workflow.service';
  *   - The PASS-THROUGH assertions (`step:<$type>`, and the shape bound on the one
  *     open axis) are REGRESSION coverage for a SECOND widening: a pass-through
  *     submit used to resolve to `null` and record nothing. They are marked out in
- *     their own two describes. ⚠️ NOT ALL OF THEM ARE REGRESSION COVERAGE, and an
- *     earlier draft of this line over-claimed that they all were: three of them —
- *     "refuses a SECOND colon", "refuses whitespace, control characters and
- *     non-ASCII", and "is CASE-SENSITIVE on the coarse key" — hold on the
- *     pre-change semantics too, because there `step` was not a coarse key at all
- *     and every `step:` value was refused for that reason instead. They are kept
- *     as BOUNDS (each one kills a distinct mutation of the shape test), not
- *     counted as evidence the widening works.
+ *     their own two describes — but NOT ALL OF THEM ARE REGRESSION COVERAGE, and
+ *     rather than enumerate the exceptions here (a central list of them has now
+ *     been wrong TWICE: first claiming all of them were red at base, then naming
+ *     three when the answer was five), each such test says so AT ITS OWN `it(`,
+ *     the way the two `INVARIANT GUARD` tests below already do. Grep
+ *     `HOLDS AT BASE` for the population.
  *
  *   - The SUBTYPE assertions (everything asserting a value with a colon in it,
  *     plus the shape bounds on `isBlockGenerationType`) are REGRESSION coverage
@@ -532,6 +530,9 @@ describe('resolveBlockGenerationType — the pass-through arm records step:<$typ
     expect(resolveBlockGenerationType(ptBody({ $type: atCap }))).toBe(`step:${atCap}`);
   });
 
+  // HOLDS AT BASE (a bound, not regression coverage): the pre-change resolver
+  // never read `$type` at all, so every fixture here already returned `null`
+  // there. It is kept because this arm's own guard is what has to keep it true.
   it('a body with NEITHER a step id NOR a string $type stays NULL, not a bare "step"', () => {
     // 🔴 THE CONTRACT THIS ARM MUST NOT WEAKEN. `step === undefined` is the
     // pass-through DISCRIMINATOR, but a body carrying neither field matches
@@ -568,6 +569,9 @@ describe('resolveBlockGenerationType — the pass-through arm records step:<$typ
     ).toBe('step:imageGen');
   });
 
+  // HOLDS AT BASE (a bound, not regression coverage): the pre-change resolver had
+  // only the registry arm, so this was true for free. It pins arm PRECEDENCE now
+  // that there are two arms to get the wrong way round.
   it('a REGISTRY body carrying a stray $type still resolves to its STEP ID', () => {
     // Arm precedence, pinned: the registry id wins. Unreachable through the wire
     // (both arms are `.strict()`, so a body naming both is rejected by both), but
@@ -626,9 +630,11 @@ describe('the pass-through SHAPE bound is the only bound on that axis', () => {
 
   it('admits EVERY character of the class and NO other printable ASCII', () => {
     // 🔴 THE CLASS AS A WHITELIST, ENUMERATED — because sampling its complement
-    // leaves the whole widening family alive: adding `+ ~ % @ # * , ; " ( ) [ ] |`
-    // (or anything else) to the class turns no other test in this file red. Both
-    // directions, mechanically, so the guard is as wide as its own name.
+    // leaves most of the widening family alive: adding `+ ~ % @ # * , ; " ( ) [ ] |`
+    // to the class turns no other test in this file red. (NOT "anything else": a
+    // space, `\t`, `\n`, `/`, `\` are pinned in the next test and `:` in the one
+    // above. An earlier draft of this line over-claimed by saying "or anything
+    // else".) Both directions, mechanically, so the guard is as wide as its name.
     const allowed = new Set(
       'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-'.split('')
     );
@@ -643,8 +649,38 @@ describe('the pass-through SHAPE bound is the only bound on that axis', () => {
     // as a number rather than only as a set difference.
     expect(admitted.length).toBe(65);
     expect(refused.length).toBe(30);
+    // The set equality is the whole claim. A per-character loop over `refused`
+    // asserting it is not in `allowed` was written and DELETED: `admitted` and
+    // `refused` partition the 95 code points, so no mutant can fail that loop
+    // while this line passes — the "same assertion twice" shape this file's cap
+    // seam also had.
     expect(new Set(admitted)).toEqual(allowed);
-    for (const ch of refused) expect(allowed.has(ch)).toBe(false);
+  });
+
+  it('refuses NON-ASCII and DEL — the half the printable-ASCII sweep cannot see', () => {
+    // 🔴 THE ENUMERATION ABOVE STOPS AT 0x7E, so a class widened into a non-Latin
+    // RANGE (Cyrillic, any CJK block) or by DEL survives it. The class claims to
+    // exclude non-ASCII, and without these fixtures that claim is sampled at
+    // exactly one code point.
+    //
+    // 🔴 EVERY INVISIBLE CHARACTER IS A `\u` ESCAPE, NEVER A PASTED LITERAL. A
+    // zero-width space, a BOM, an NBSP and DEL are invisible in a diff and in most
+    // greps, so a fixture spelled literally cannot be reviewed — and one of them
+    // arrived in this file as a stray NUL byte the first time it was written,
+    // which made the whole file read as binary to `grep`.
+    for (const subtype of [
+      'unicode-with-\u00fc',
+      '\u0430\u0431\u0432', // Cyrillic
+      '\u65e5\u672c\u8a9e', // CJK
+      '\u00e9',
+      '\u200b', // zero-width space
+      '\ufeff', // BOM
+      '\u007f', // DEL, one past the printable sweep's top
+      'imageGen\u00a0', // NBSP, which is NOT the space the sweep covers
+      'imageGen\u0000', // NUL
+    ]) {
+      expect(isBlockGenerationType(`step:${subtype}`)).toBe(false);
+    }
   });
 
   it('admits every ORCHESTRATOR $type we measured — the class costs no fidelity', () => {
@@ -725,6 +761,8 @@ describe('the pass-through SHAPE bound is the only bound on that axis', () => {
     );
   });
 
+  // HOLDS AT BASE (a bound, not regression coverage): at base `step` was not a
+  // coarse key, so every `step:` value was refused for a different reason.
   it('refuses a SECOND colon — the value stays a two-field record', () => {
     // Structural, not a separate check: `:` is not in the character class.
     expect(isBlockGenerationType('step:a:b')).toBe(false);
@@ -737,6 +775,8 @@ describe('the pass-through SHAPE bound is the only bound on that axis', () => {
     expect(isBlockGenerationType(`step:${'a'.repeat(65)}`)).toBe(false);
   });
 
+  // HOLDS AT BASE (a bound, not regression coverage): same reason — at base these
+  // were refused by the unknown coarse key, not by the shape test.
   it('refuses whitespace, control characters and non-ASCII', () => {
     // 🔴 THE ANCHOR ASSERTIONS. An unanchored pattern would accept every one of
     // these (each CONTAINS a matching run), so these are what kill a mutant that
@@ -767,6 +807,8 @@ describe('the pass-through SHAPE bound is the only bound on that axis', () => {
     expect(isBlockGenerationType('step:notInAnyClosedSet')).toBe(true);
   });
 
+  // HOLDS AT BASE (a bound, not regression coverage): at base no `step`-prefixed
+  // value was accepted in any casing.
   it('is CASE-SENSITIVE on the coarse key and does not accept a near-miss key', () => {
     expect(isBlockGenerationType('Step:imageGen')).toBe(false);
     expect(isBlockGenerationType('STEP:imageGen')).toBe(false);
@@ -788,6 +830,9 @@ describe('the pass-through SHAPE bound is the only bound on that axis', () => {
     // is what made it reachable. Off-type on purpose: the signature says
     // `string | null`, and the point is that a `as never` caller cannot mint it.
     expect(composeBlockGenerationType('step', undefined as never)).toBe('step');
+    // The closed-arm half HOLDS AT BASE (a bound, not regression coverage):
+    // `textToImage:undefined` was in no closed set, so it degraded there too. It
+    // is kept so the fix is pinned for BOTH arms rather than only the open one.
     expect(composeBlockGenerationType('textToImage', undefined as never)).toBe('textToImage');
   });
 

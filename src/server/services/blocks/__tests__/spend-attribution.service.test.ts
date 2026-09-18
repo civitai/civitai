@@ -656,10 +656,11 @@ describe('recordSpendAttribution — generation type', () => {
   });
 
   it('persists NULL — not the raw value, and without throwing — for an UNRECOGNISED type', async () => {
-    // Re-checked at the write against the same registry-derived list, so a
-    // caller that bypasses the type (a cast, a future writer) still cannot stamp
-    // an arbitrary string on a money/audit row. A wrong type is worse than a
-    // missing one.
+    // Re-checked at the write against the same SHAPE bound the producer runs —
+    // not against a list, which is what this line used to say and is exactly the
+    // narrowing the `step:` test above exists to forbid. So a caller that
+    // bypasses the type (a cast, a future writer) still cannot stamp an arbitrary
+    // string on a money/audit row. A wrong type is worse than a missing one.
     const hostile = {
       ...fakeInput(),
       generationType: 'chatCompletion', // the orchestrator spelling — not an app-facing key
