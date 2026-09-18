@@ -111,9 +111,15 @@ describe('reactionQueryChunks', () => {
     // control that is only almost-surely red is not a control.
     const reversed = [...ids].reverse();
 
-    expect(reactionQueryChunks(reversed, VIEWER, 'image')).toEqual(
-      reactionQueryChunks(ids, VIEWER, 'image')
-    );
+    const chunks = reactionQueryChunks(reversed, VIEWER, 'image');
+
+    expect(chunks).toEqual(reactionQueryChunks(ids, VIEWER, 'image'));
+    // The line above is a PARITY assertion: both sides sort, so any total order satisfies it and
+    // it is blind to direction. `.sort()` with no comparator — lexicographic, the usual way to get
+    // a numeric sort wrong — needs its own oracle.
+    // Not `chunks[0][0]`, which is 1 under a lexicographic sort too — measured, it did not fire.
+    // The orders first disagree at the second element: 2 numerically, 10 lexicographically.
+    expect(chunks[0].slice(0, 3)).toEqual([1, 2, 3]);
   });
 
   it('does not sort the caller array in place', () => {
