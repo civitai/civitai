@@ -147,9 +147,11 @@ describe(`${SYMBOL} seam`, () => {
   it('the file walk actually reaches the module under test', () => {
     const rels = [...SOURCE.keys()];
     expect(rels).toContain(DEFINITION);
-    // `verdictFor` writes straight into `SOURCE`, so no detector fixture can observe the corpus
-    // loop narrowing by path — and every real corpus member carries the token `blocks`, so no
-    // Re-derive from the same walk instead: a filter added to the LOOP makes the two disagree.
+    // `verdictFor` seeds `SOURCE` directly, so every detector fixture runs PAST the corpus loop
+    // and none can observe it narrowing. Scoping that loop by the substring `blocks` is green
+    // for a second reason worth keeping separate: every corpus member already carries that
+    // token, so the filter excludes nothing — inert rather than caught. Re-derive from the same
+    // walk instead: a filter added to the LOOP makes the two disagree.
     // Both shared inputs are pinned elsewhere — `PRODUCTION_FILES` by the enumeration equality
     // above, `couldBeCallSite` by its own case — so deleting either makes this one vacuous.
     const expectedCorpus = PRODUCTION_FILES.filter((full) =>
