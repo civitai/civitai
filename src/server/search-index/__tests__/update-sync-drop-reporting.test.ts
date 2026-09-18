@@ -361,11 +361,17 @@ describe('updateSync :: drop reporting', () => {
       { id: 9, action: SearchIndexUpdateQueueAction.Update },
       { id: 9, action: SearchIndexUpdateQueueAction.Delete },
       { id: 9, action: SearchIndexUpdateQueueAction.Delete },
+      // Bare, and the ONLY id with no explicit action, so it is the one input where `actionOf`
+      // disagrees with identity. Without it every id here carries an action and a mutation inside
+      // `actionOf` would move the dedupe key and both filters together — the parity blind spot of
+      // having one derivation. If `undefined` stopped mapping to Update, 10 would match neither
+      // filter and vanish, and this line prints [ 9 ].
+      { id: 10 },
     ]);
 
-    // The update for 9 still ran, exactly once...
+    // The update for 9 still ran, exactly once, and the action-less 10 is an update too...
     expect(pullData).toHaveBeenCalledTimes(1);
-    expect((pullData.mock.calls[0][1] as any).ids).toEqual([9]);
+    expect((pullData.mock.calls[0][1] as any).ids).toEqual([9, 10]);
     // ...and so did its deletion, exactly once.
     expect(cleanup).toHaveBeenCalledTimes(1);
     expect(cleanup.mock.calls[0][0].ids).toEqual([9]);
