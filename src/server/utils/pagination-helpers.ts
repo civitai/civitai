@@ -322,7 +322,9 @@ export function getCursorClauses(
   );
   const lastOperator = lastField.order === 'DESC' ? '<' : '>=';
   equalityParts.push(
-    Prisma.sql`${Prisma.raw(lastField.field)} ${Prisma.raw(lastOperator)} ${cursors[lastField.field]}`
+    Prisma.sql`${Prisma.raw(lastField.field)} ${Prisma.raw(lastOperator)} ${
+      cursors[lastField.field]
+    }`
   );
   const equality = Prisma.sql`(${Prisma.join(equalityParts, ' AND ')})`;
 

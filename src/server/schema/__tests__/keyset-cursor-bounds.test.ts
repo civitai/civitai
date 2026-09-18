@@ -23,7 +23,8 @@ describe('keysetCursorSchema — numeric bound', () => {
   it.each([
     ['int4 max + 1', INT4_MAX + 1],
     ['a 12-digit value', 999999999999],
-    ['an 18-digit scraper value', 853267723675816615],
+    ['a 13-digit value', 3086153086153],
+    ['the largest exactly-representable JS integer', Number.MAX_SAFE_INTEGER],
   ])('rejects %s', (_label, value) => {
     expect(keysetCursorSchema.safeParse(value).success).toBe(false);
   });
@@ -47,11 +48,11 @@ describe('keysetCursorSchema — numeric bound', () => {
   });
 
   it('rejects an out-of-range bigint', () => {
-    expect(keysetCursorSchema.safeParse(BigInt(INT4_MAX) + 1n).success).toBe(false);
+    expect(keysetCursorSchema.safeParse(BigInt(INT4_MAX) + BigInt(1)).success).toBe(false);
   });
 
   it('accepts an in-range bigint', () => {
-    expect(keysetCursorSchema.safeParse(2686725n).success).toBe(true);
+    expect(keysetCursorSchema.safeParse(BigInt(2686725)).success).toBe(true);
   });
 
   it('leaves a composite string cursor untouched (tokens are validated per-field downstream)', () => {
@@ -77,7 +78,7 @@ describe('keysetCursorSchema — numeric bound', () => {
 
 describe('getAllModelsSchema.cursor — bound end to end', () => {
   it('rejects an out-of-range numeric cursor at the procedure input boundary', () => {
-    const result = getAllModelsSchema.safeParse({ cursor: 853267723675816615 });
+    const result = getAllModelsSchema.safeParse({ cursor: Number.MAX_SAFE_INTEGER });
     expect(result.success).toBe(false);
     // The failure has to be attributed to `cursor`, not some other field, or the
     // 400 message is useless to the caller.

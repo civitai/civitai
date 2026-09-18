@@ -69,7 +69,7 @@ export const INT4_MAX = 2147483647;
  */
 export const keysetCursorSchema = z
   .union([
-    z.bigint().gt(0n).lte(BigInt(INT4_MAX)),
+    z.bigint().gt(BigInt(0)).lte(BigInt(INT4_MAX)),
     z.number().int().gt(0).lte(INT4_MAX),
     z.string(),
     z.date(),
