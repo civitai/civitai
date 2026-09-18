@@ -14,9 +14,7 @@ export const getBuzzBulkMultiplier = ({
   // `buzzAmount * m - buzzAmount` zero/negative, and the caller's `metadata.transactionId`
   // idempotency marker makes that zero-credit unrepairable by retry. See ClickUp 868m0axkg.
   const parsedMultiplier = Number(_purchasesMultiplier);
-  const purchasesMultiplier = Number.isFinite(parsedMultiplier)
-    ? Math.max(parsedMultiplier, 1)
-    : 1;
+  const purchasesMultiplier = Number.isFinite(parsedMultiplier) ? Math.max(parsedMultiplier, 1) : 1;
   const bulkBuzzMultiplier = buzzBulkBonusMultipliers.reduce((acc, [amount, multiplier]) => {
     if (buzzAmount >= amount) {
       return multiplier;
@@ -180,12 +178,11 @@ export function orderBlockCurrencyTypes(
 /**
  * PAYOUT-SAFETY GATE (App Blocks Sybil / payout review).
  *
- * Which Buzz account types are eligible to accrue an app-author payout
- * (`spendSharePct` > 0 / the dark #2605 rev-share rail) when spent inside a
- * block. This is the load-bearing rule that lets block currencies widen to
- * on-site parity (blue/green/yellow) WITHOUT ever turning into a
- * platform-funded farming loop: FREE Buzz is EXCLUDED so a Sybil ring can
- * never mint platform-funded bounty out of free daily Buzz.
+ * Which Buzz account types are eligible to accrue an app-author payout (the
+ * dark #2605 rev-share rail) when spent inside a block. This is the
+ * load-bearing rule that lets block currencies widen to on-site parity
+ * (blue/green/yellow) WITHOUT ever turning into a farming loop: FREE Buzz is
+ * EXCLUDED so a Sybil ring can never mint a payout out of free daily Buzz.
  *
  * Determination (from `src/shared/constants/buzz.constants.ts` buzzTypeConfig;
  * PAID vs FREE confirmed by product 2026-06-30 — "green buzz is paid, only
@@ -201,8 +198,7 @@ export function orderBlockCurrencyTypes(
  *
  * Rule: PAID (purchasable) types are payout-eligible; the free type (blue) is
  * not. The payout rail (#2605) MUST route every tracked spend row through this
- * predicate before paying — see `computeSpendShare`, which zeroes the share
- * for any non-eligible type. DO NOT widen this set without monetization +
+ * predicate before paying. DO NOT widen this set without monetization +
  * Sybil-economics sign-off.
  */
 export const PAYOUT_ELIGIBLE_BUZZ_TYPES: ReadonlySet<string> = new Set<BuzzSpendType>([

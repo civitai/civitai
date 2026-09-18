@@ -50,8 +50,9 @@ import { blockGenerationCoarseType, isBlockGenerationType } from './generation-t
 //      spend's USD value), and a flat BUZZ leg has no expression in that unit at
 //      all. Worse, the card's per-row CENT FLOORING is precisely the defect that
 //      made the bounty pay $0.00: at 10 Buzz per cent (`buzzSpendToUsdCents`)
-//      and `spendSharePct: 5`, `computeSpendShare` returns **0 cents for every
-//      generation under 200 ⚡** — i.e. for most of them. Computing in Buzz and
+//      and `spendSharePct: 5`, a per-row `floor(cents × pct / 100)` yields
+//      **0 cents for every generation under 200 ⚡** — i.e. for most of them.
+//      That bounty rail has since been removed. Computing in Buzz and
 //      flooring ONCE, at the end, is what the basis-point arithmetic below
 //      exists for.
 //

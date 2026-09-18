@@ -4,16 +4,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * W3 flow A — buzz SPEND attribution service coverage. TRACK-ONLY (mirrors
  * #2629's membership rework): the write records the EVENT + the money BASIS
  * (gross USD value of the Buzz burned) only — NO rate card is applied at write
- * time. The author bounty is deferred to a payout-time backpay over
- * status='tracked' rows. The interesting surface is:
+ * time, and the percentage author bounty those columns once fed no longer
+ * exists. The interesting surface is:
  *   - track-only row shape: status='tracked', author_share=0,
  *     spend_share_pct=0, rate_card_version='unrated', gross recorded
- *   - the write NEVER calls computeSpendShare (the share is deferred)
  *   - self-spend wash (spender == app owner → voided + 0 share)
  *   - internal-owner wash (app owner ∈ internalAppOwnerUserIds → voided)
  *   - idempotency via the (workflow_id, app_block_id) UNIQUE (P2002)
  *   - missing-app guard
- *   - the platform-funded-bounty ledger invariant (0 ≤ share ≤ gross)
+ *   - the ledger invariant on the retained columns (0 ≤ share ≤ gross)
  *
  * Prisma + logger are mocked at the module boundary so the test stays
  * in-process and deterministic. The Prom counter is real (the service
@@ -76,49 +75,6 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
   return { ...actual, isFlipt: (...args: unknown[]) => mockIsFlipt(...args) };
 });
 
-// Spy on computeSpendShare so the track-only contract is testable: the write
-// must NEVER call it (the bounty is deferred to payout). Everything else from
-// rate-card stays real.
-const computeSpendShareSpy = vi.hoisted(() => vi.fn());
-vi.mock('../rate-card', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../rate-card')>();
-  return {
-    ...actual,
-    computeSpendShare: (...args: Parameters<typeof actual.computeSpendShare>) => {
-      computeSpendShareSpy(...args);
-      return actual.computeSpendShare(...args);
-    },
-  };
-});
-
-// Spy on the per-APP bounty cap. `recordSpendAttribution` dynamic-imports it to
-// reserve/clamp the row's accrued share. The cap has its own dedicated unit
-// suite (app-bounty-cap.service.test.ts) exercising Redis; here we only assert
-// the WIRING: the write reserves the share it is about to accrue, and applies
-// the granted amount. The default fake grants exactly what is requested (no
-// clamp) so the dormant 0→0 path is faithful.
-const { reserveAppBountySpy, refundAppBountySpy } = vi.hoisted(() => ({
-  reserveAppBountySpy: vi.fn(),
-  refundAppBountySpy: vi.fn(),
-}));
-vi.mock('../app-bounty-cap.service', () => ({
-  reserveAppBountyAccrual: (appBlockId: string, shareCents: number) => {
-    reserveAppBountySpy(appBlockId, shareCents);
-    // Faithful default: grant exactly the requested share (no clamp). The
-    // clamp behaviour itself is covered in the cap's own suite.
-    return Promise.resolve({
-      grantedCents: Math.max(0, Math.floor(shareCents)),
-      clamped: false,
-      total: Math.max(0, Math.floor(shareCents)),
-      key: `system:blocks:bounty-cap:${appBlockId}:test`,
-    });
-  },
-  refundAppBountyAccrual: (...args: unknown[]) => {
-    refundAppBountySpy(...args);
-    return Promise.resolve();
-  },
-}));
-
 import {
   AttributionAppMissingError,
   buzzSpendToUsdCents,
@@ -170,9 +126,6 @@ beforeEach(() => {
   mockDbRead.appBlock.findUnique.mockReset();
   mockDbWrite.blockSpendAttribution.create.mockReset();
   mockLog.mockReset();
-  computeSpendShareSpy.mockReset();
-  reserveAppBountySpy.mockReset();
-  refundAppBountySpy.mockReset();
   mockAppsQuery.mockReset();
   mockRequireAppsDb.mockReset();
   // Default: every flag OFF — the as-merged production state for the author fee.
@@ -225,8 +178,6 @@ describe('recordSpendAttribution', () => {
     expect(data.spendSharePct).toBe(0);
     expect(data.rateCardVersion).toBe(UNRATED_RATE_CARD_VERSION);
     expect(data.rateCardVersion).not.toBe(ACTIVE_RATE_CARD.version);
-    // The write must NOT consult the spend rate card — the bounty is deferred.
-    expect(computeSpendShareSpy).not.toHaveBeenCalled();
     // Not self/internal → tracked (share-pending), not voided.
     expect(data.status).toBe('tracked');
     expect(data.voidedReason).toBeNull();
@@ -238,7 +189,7 @@ describe('recordSpendAttribution', () => {
     expect(res.row.status).toBe('tracked');
   });
 
-  it('ledger invariant: 0 ≤ author_share ≤ gross — and author is always 0 at write (track-only)', async () => {
+  it('ledger invariant: 0 ≤ author_share ≤ gross — and author is always 0 at write', async () => {
     await recordSpendAttribution(fakeInput({ buzzAmount: 123456 }));
     const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
     expect(data.grossValueCents).toBeGreaterThan(0);
@@ -250,11 +201,10 @@ describe('recordSpendAttribution', () => {
   });
 
   it('MUTATION-CHECK: author share + pct are 0 regardless of the active rate card (no rate applied)', async () => {
-    // Active card defines spendSharePct=5 (a non-zero placeholder). A
-    // track-only write must NOT apply it — author stays 0 and version stays
-    // 'unrated' even though the card carries a real rate. If the write
-    // regressed to applying computeSpendShare/the 5% card, these assertions
-    // (and the not-called spy) would fail.
+    // The card still carries spendSharePct=5 (a retired placeholder). The write
+    // must NOT apply it — author stays 0 and version stays 'unrated' even
+    // though the card carries a non-zero rate. If the write regressed to
+    // applying that rate, these assertions would fail.
     expect(ACTIVE_RATE_CARD.spendSharePct).toBe(5);
     await recordSpendAttribution(fakeInput({ buzzAmount: 100000 })); // $100 gross
     const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
@@ -262,44 +212,6 @@ describe('recordSpendAttribution', () => {
     expect(data.appOwnerShareCents).toBe(0);
     expect(data.spendSharePct).toBe(0);
     expect(data.rateCardVersion).toBe(UNRATED_RATE_CARD_VERSION);
-    expect(computeSpendShareSpy).not.toHaveBeenCalled();
-  });
-
-  it("DORMANT per-app cap: reserves the row's accrued share (0 today) → no clamp, no behaviour change", async () => {
-    // The per-app bounty cap is wired into the write, but while the spend flow
-    // is TRACK-ONLY the accrued share is identically 0 — so the cap reserves 0,
-    // grants 0, and changes nothing. This is the "dormant by construction"
-    // proof at the integration point (the cap's own atomic/clamp behaviour is
-    // covered in app-bounty-cap.service.test.ts).
-    const res = await recordSpendAttribution(fakeInput({ buzzAmount: 100000 }));
-    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
-
-    // The write reserved against the per-app cap, keyed by appBlockId, with the
-    // share it is about to accrue — which is 0 today (not the raw user spend).
-    expect(reserveAppBountySpy).toHaveBeenCalledTimes(1);
-    expect(reserveAppBountySpy).toHaveBeenCalledWith(APP_BLOCK_ID, 0);
-    // Granted 0 → row's accrued share stays 0 → identical to pre-cap behaviour.
-    expect(data.appOwnerShareCents).toBe(0);
-    expect(res.row.appOwnerShareCents).toBe(0);
-    // Successful write → no refund.
-    expect(refundAppBountySpy).not.toHaveBeenCalled();
-  });
-
-  it('per-app cap reserves the BOUNTY (appOwnerShareCents), NOT the raw user spend', async () => {
-    // The property that makes the cap dormant today: it reserves the row's
-    // accrued share — which is 0 — and writes back the granted amount, so a
-    // large user spend (here $100 of Buzz) does NOT advance the per-app counter.
-    // This is what distinguishes it from the per-USER cap (which reserves raw
-    // spend). If the write ever regressed to reserving `buzzAmount`/`gross`,
-    // this asserts the contract breaks.
-    await recordSpendAttribution(fakeInput({ buzzAmount: 100000 })); // $100 gross
-    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls.at(-1)![0];
-    const [reservedAppBlockId, reservedShare] = reserveAppBountySpy.mock.calls.at(-1)!;
-    expect(reservedAppBlockId).toBe(APP_BLOCK_ID);
-    // Reserved == the bounty being written (0), NOT the gross (10000) or spend.
-    expect(reservedShare).toBe(data.appOwnerShareCents);
-    expect(reservedShare).toBe(0);
-    expect(reservedShare).not.toBe(data.grossValueCents);
   });
 
   it('self-spend (spender == app owner) → voided, zero share', async () => {
@@ -840,10 +752,9 @@ describe('recordSpendAttribution — the author-fee log ledger', () => {
 
   it('a SELF-SPEND row IS charged a fee — the deliberate divergence from attribution', async () => {
     // 🔴 THE DIVERGENCE, PINNED. Two lines up in the service, `isSelfSpend` VOIDS
-    // the attribution row and zeroes its share: a bounty is the platform paying
-    // an author out of platform money, so paying them for their own spend is a
-    // wash. The author fee is the VIEWER paying the author, and an author using
-    // their own app is a viewer like any other — so it is charged. That
+    // the attribution row. The author fee is the VIEWER paying the author, and
+    // an author using their own app is a viewer like any other — so it is
+    // charged even when the attribution row is voided. That
     // divergence was argued in ~15 lines of comment and asserted by nothing:
     // routing self-spend to a null base left every test green (measured at
     // 92646e0: this file + author-fee.test.ts, 84/84, mutant SURVIVED).

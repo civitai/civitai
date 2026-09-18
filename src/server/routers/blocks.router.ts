@@ -5966,9 +5966,9 @@ export const blocksRouter = router({
         });
       }
 
-      // W3 flow A — buzz SPEND attribution (author bounty). The block
-      // burned the viewer's own Buzz on this generation; accrue the app
-      // author's platform-funded bounty share. EVERYTHING is server-derived
+      // W3 flow A — buzz SPEND attribution. The block burned the viewer's own
+      // Buzz on this generation; record the event and its money basis.
+      // EVERYTHING is server-derived
       // from the VERIFIED token claims (appId/appBlockId/blockInstanceId
       // from the JWT, spender from `sub`, author looked up from the app's
       // OauthClient) — there is NO client-supplied attribution, so spend is
@@ -6003,14 +6003,11 @@ export const blocksRouter = router({
           // estimate ONLY when the realized value is absent on the
           // snapshot (e.g. a snapshot that carries no cost).
           //
-          // SYBIL CAP NOTE (audit 🟡-2): there is NO per-APP aggregate
-          // accrual cap here — only the per-(USER, UTC-day) Buzz SPEND
-          // reservation above. A Sybil ring of many viewers could mint
-          // unbounded platform-funded bounty toward ONE app. This is
-          // accrual-only + mod-gated today, so it is not a merge blocker,
-          // but a per-app earnings cap / velocity check is a HARD
-          // prerequisite before the spend flow opens to non-mods (track
-          // alongside the Slice-4 payout gate + the rate sign-off).
+          // SYBIL CAP NOTE (audit 🟡-2): the per-APP aggregate ceiling this
+          // note used to ask for is `reserveAppSpend` (G8), taken above on
+          // the submit path. The platform-funded bounty it was originally
+          // written about no longer exists — nothing on this path accrues a
+          // payable share.
           // Record a PAYOUT-SAFE currency basis for this spend off the REAL
           // per-account debit. The orchestrator drains the offered currencies
           // in spend order (blue-FIRST — blue is the free generation Buzz) and
@@ -6022,8 +6019,8 @@ export const blocksRouter = router({
           //
           // Rule: a generation can split across FREE (blue) and PAID
           // (green/yellow) Buzz. ONLY the PAID portion earns — stamp the paid
-          // account and the SUMMED paid debit amount, so the author bounty
-          // accrues off what the user actually paid, never the free blue
+          // account and the SUMMED paid debit amount, so any future payout is
+          // based on what the user actually paid, never the free blue
           // portion. The offered currencies are ['blue', green|yellow] (never
           // both green and yellow), so at most ONE paid account is ever
           // drained; we NET that paid account's debits against any same-submit
@@ -6035,9 +6032,9 @@ export const blocksRouter = router({
           // 0-cost gen, OR a snapshot the orchestrator returned WITHOUT
           // transactions — we fall back to the conservative FREE floor (blue +
           // the realized/estimated cost), which `isPayoutEligibleBuzz`
-          // (computeSpendShare) EXCLUDES → ZERO bounty. This preserves the
-          // anti-farming guarantee: free-Buzz spend can never accrue a bounty,
-          // and an absent/unknown debit signal never pays. Forge-safe:
+          // EXCLUDES from payout eligibility. This preserves the anti-farming
+          // guarantee: free-Buzz spend can never become payable, and an
+          // absent/unknown debit signal never pays. Forge-safe:
           // `submitted` is the orchestrator's authoritative response, not
           // client input.
           // ALL paid-account (green/yellow) entries — debits AND credits — so we
@@ -7493,10 +7490,9 @@ function compareSemver(a: string, b: string): number {
 // regardless of which account type pays.
 //
 // PAYOUT-SAFETY: widening the SPENDABLE currencies here is decoupled from
-// payout eligibility. The author-bounty rail (#2605) excludes only free
-// (blue) Buzz via `isPayoutEligibleBuzz` at the payout boundary
-// (`computeSpendShare`); green and yellow are PAID and payout-eligible. So
-// this widening can NEVER make free Buzz become platform-funded farming.
+// payout eligibility. The payout rail (#2605) excludes free (blue) Buzz via
+// `isPayoutEligibleBuzz` at the payout boundary; green and yellow are PAID and
+// payout-eligible. So this widening can NEVER make free Buzz payable.
 // See buzz-helpers.ts.
 function resolveBlockCurrencies(isGreen: boolean) {
   return BuzzTypes.toOrchestratorType(getBlockAllowedAccountTypes(isGreen));

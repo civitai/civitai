@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   ACTIVE_RATE_CARD,
   computeRateCardSplit,
-  computeSpendShare,
   computeSubscriptionShare,
   RATE_CARD_V1,
   RATE_CARD_V2,
@@ -51,9 +50,7 @@ describe('computeRateCardSplit', () => {
     expect(split.appOwnerShareCents).toBe(190);
     expect(split.platformShareCents).toBe(760);
     // Invariant: sum equals gross (matches the SQL CHECK constraint).
-    expect(
-      split.providerFeeCents + split.platformShareCents + split.appOwnerShareCents
-    ).toBe(1000);
+    expect(split.providerFeeCents + split.platformShareCents + split.appOwnerShareCents).toBe(1000);
     expect(split.rateCardVersion).toBe('test');
   });
 
@@ -154,9 +151,7 @@ describe('computeRateCardSplit', () => {
     expect(split.providerFeeCents).toBe(100);
     expect(split.appOwnerShareCents).toBe(0);
     expect(split.platformShareCents).toBe(0);
-    expect(
-      split.providerFeeCents + split.platformShareCents + split.appOwnerShareCents
-    ).toBe(100);
+    expect(split.providerFeeCents + split.platformShareCents + split.appOwnerShareCents).toBe(100);
   });
 
   it('rounds fractional percentages safely on the active rate card', () => {
@@ -178,9 +173,9 @@ describe('computeRateCardSplit', () => {
         isSelfPurchase: false,
         appOwnerUserId: 1,
       });
-      expect(
-        split.providerFeeCents + split.platformShareCents + split.appOwnerShareCents
-      ).toBe(grossCents);
+      expect(split.providerFeeCents + split.platformShareCents + split.appOwnerShareCents).toBe(
+        grossCents
+      );
       expect(split.appOwnerShareCents).toBeGreaterThanOrEqual(0);
       expect(split.platformShareCents).toBeGreaterThanOrEqual(0);
     }
@@ -217,9 +212,7 @@ describe('computeRateCardSplit', () => {
     expect(split.platformShareCents).toBe(950);
     expect(split.providerFeeCents).toBe(50);
     // Conservation: fee + platform + author == gross (the SQL CHECK).
-    expect(
-      split.providerFeeCents + split.platformShareCents + split.appOwnerShareCents
-    ).toBe(1000);
+    expect(split.providerFeeCents + split.platformShareCents + split.appOwnerShareCents).toBe(1000);
   });
 
   it('viewer_global on the ACTIVE card (V5) also pays 0% with conservation', () => {
@@ -232,9 +225,7 @@ describe('computeRateCardSplit', () => {
     });
     expect(split.rateCardVersion).toBe('v5');
     expect(split.appOwnerShareCents).toBe(0);
-    expect(
-      split.providerFeeCents + split.platformShareCents + split.appOwnerShareCents
-    ).toBe(4999);
+    expect(split.providerFeeCents + split.platformShareCents + split.appOwnerShareCents).toBe(4999);
   });
 
   // --- Immutability: every card carries its stamped percentages ----------
@@ -301,212 +292,6 @@ describe('computeRateCardSplit', () => {
 });
 
 /**
- * W3 flow A — buzz SPEND author-bounty math. The bounty is a
- * platform-funded percentage of the spend's USD value, NOT a split of a
- * pool. The invariants asserted here mirror the migration's CHECKs:
- *   - share >= 0, share <= gross
- *   - share = floor(gross * pct / 100)
- *   - self-spend / internal-owner -> 0
- */
-describe('computeSpendShare', () => {
-  // Fixed 10% card so the test is stable when the live placeholder moves.
-  const fixedCard: RateCard = {
-    version: 'spend-test',
-    publisherSharePctByScope: {
-      per_model_install: 0,
-      publisher_all_my_models: 0,
-      viewer_personal: 0,
-      platform_default: 0,
-      viewer_global: 0,
-    },
-    spendSharePct: 10,
-    subscriptionSharePct: 0,
-    internalAppOwnerUserIds: [42],
-    effectiveFrom: '2026-01-01',
-  };
-
-  it('pays the placeholder spend rate of the gross USD value, floored', () => {
-    // 1234 cents gross @ 10% = 123.4 -> 123 (platform absorbs the .4).
-    const res = computeSpendShare({
-      rateCard: fixedCard,
-      grossValueCents: 1234,
-      isSelfSpend: false,
-      appOwnerUserId: 1,
-    });
-    expect(res.rateCardVersion).toBe('spend-test');
-    expect(res.spendSharePct).toBe(10);
-    expect(res.appOwnerShareCents).toBe(123);
-    // Invariant: 0 <= share <= gross.
-    expect(res.appOwnerShareCents).toBeGreaterThanOrEqual(0);
-    expect(res.appOwnerShareCents).toBeLessThanOrEqual(1234);
-    // Invariant: share == floor(gross * pct / 100).
-    expect(res.appOwnerShareCents).toBe(Math.floor((1234 * 10) / 100));
-  });
-
-  it('zeroes the bounty on self-spend (author generating in own app)', () => {
-    const res = computeSpendShare({
-      rateCard: fixedCard,
-      grossValueCents: 1000,
-      isSelfSpend: true,
-      appOwnerUserId: 7,
-    });
-    expect(res.appOwnerShareCents).toBe(0);
-    expect(res.spendSharePct).toBe(0);
-  });
-
-  it('zeroes the bounty for an internal civitai-owned app', () => {
-    const res = computeSpendShare({
-      rateCard: fixedCard,
-      grossValueCents: 1000,
-      isSelfSpend: false,
-      appOwnerUserId: 42, // ∈ internalAppOwnerUserIds
-    });
-    expect(res.appOwnerShareCents).toBe(0);
-    expect(res.spendSharePct).toBe(0);
-  });
-
-  it('clamps a never-exceed-gross ceiling even with a runaway rate', () => {
-    const runaway: RateCard = { ...fixedCard, spendSharePct: 250 };
-    const res = computeSpendShare({
-      rateCard: runaway,
-      grossValueCents: 100,
-      isSelfSpend: false,
-      appOwnerUserId: 1,
-    });
-    // 100 * 250% = 250, clamped to gross (100) — a bounty can never exceed
-    // the revenue it rewards (matches the migration's share_le_gross CHECK).
-    expect(res.appOwnerShareCents).toBe(100);
-    expect(res.appOwnerShareCents).toBeLessThanOrEqual(100);
-  });
-
-  it('floors a negative/garbage gross to 0', () => {
-    const res = computeSpendShare({
-      rateCard: fixedCard,
-      grossValueCents: -500,
-      isSelfSpend: false,
-      appOwnerUserId: 1,
-    });
-    expect(res.appOwnerShareCents).toBe(0);
-  });
-
-  it('V5 is the active card; V4/V5 carry the placeholder spend rate', () => {
-    expect(ACTIVE_RATE_CARD.version).toBe('v5');
-    expect(ACTIVE_RATE_CARD).toBe(RATE_CARD_V5);
-    // The spend placeholder (non-zero, conservative) was introduced in V4
-    // and carried into V5 verbatim. If this number changes, it's a
-    // deliberate sign-off decision — update the test alongside the new card.
-    expect(RATE_CARD_V4.spendSharePct).toBe(5);
-    expect(RATE_CARD_V5.spendSharePct).toBe(5);
-    expect(ACTIVE_RATE_CARD.spendSharePct).toBeGreaterThan(0);
-    // Purchase percentages carried from V3 unchanged through V4 and V5.
-    expect(RATE_CARD_V4.publisherSharePctByScope).toEqual(
-      RATE_CARD_V3.publisherSharePctByScope
-    );
-    expect(RATE_CARD_V5.publisherSharePctByScope).toEqual(
-      RATE_CARD_V4.publisherSharePctByScope
-    );
-  });
-
-  it('older cards (V1-V3) carry a 0% spend rate (spend is net-new in V4)', () => {
-    expect(RATE_CARD_V1.spendSharePct).toBe(0);
-    expect(RATE_CARD_V2.spendSharePct).toBe(0);
-    expect(RATE_CARD_V3.spendSharePct).toBe(0);
-  });
-
-  // ---------------------------------------------------------------
-  // PAYOUT-SAFETY GATE (App Blocks Sybil / payout review). Block currencies
-  // were widened to on-site parity (blue/green/yellow); the bounty must only
-  // accrue on PAID Buzz (green + yellow), never on the free type (blue), so the
-  // widening can never become platform-funded farming. (green is PAID — product
-  // confirmed 2026-06-30: "green buzz is paid, only blue is free".)
-  // ---------------------------------------------------------------
-  describe('payout-eligibility by buzzType', () => {
-    it('defaults to yellow (legacy/pre-parity) → pays the bounty (behavior-preserving)', () => {
-      const res = computeSpendShare({
-        rateCard: fixedCard,
-        grossValueCents: 1000,
-        isSelfSpend: false,
-        appOwnerUserId: 1,
-        // buzzType omitted → defaults to 'yellow'
-      });
-      expect(res.spendSharePct).toBe(10);
-      expect(res.appOwnerShareCents).toBe(100);
-    });
-
-    it('yellow (purchased/earned) → pays the bounty', () => {
-      const res = computeSpendShare({
-        rateCard: fixedCard,
-        grossValueCents: 1000,
-        isSelfSpend: false,
-        appOwnerUserId: 1,
-        buzzType: 'yellow',
-      });
-      expect(res.spendSharePct).toBe(10);
-      expect(res.appOwnerShareCents).toBe(100);
-    });
-
-    it('blue (free generation Buzz) → ZERO bounty (excluded)', () => {
-      const res = computeSpendShare({
-        rateCard: fixedCard,
-        grossValueCents: 1000,
-        isSelfSpend: false,
-        appOwnerUserId: 1,
-        buzzType: 'blue',
-      });
-      expect(res.spendSharePct).toBe(0);
-      expect(res.appOwnerShareCents).toBe(0);
-    });
-
-    it('green (paid/purchasable) → pays the bounty', () => {
-      const res = computeSpendShare({
-        rateCard: fixedCard,
-        grossValueCents: 1000,
-        isSelfSpend: false,
-        appOwnerUserId: 1,
-        buzzType: 'green',
-      });
-      expect(res.spendSharePct).toBe(10);
-      expect(res.appOwnerShareCents).toBe(100);
-    });
-
-    it('unknown / garbage buzzType → ZERO bounty (fail-closed)', () => {
-      const res = computeSpendShare({
-        rateCard: fixedCard,
-        grossValueCents: 1000,
-        isSelfSpend: false,
-        appOwnerUserId: 1,
-        buzzType: 'totally-bogus',
-      });
-      expect(res.spendSharePct).toBe(0);
-      expect(res.appOwnerShareCents).toBe(0);
-    });
-
-    it('the gate is independent of self-spend / internal (any one zeroes the bounty)', () => {
-      // yellow + self-spend still 0 (self-spend wash dominates).
-      expect(
-        computeSpendShare({
-          rateCard: fixedCard,
-          grossValueCents: 1000,
-          isSelfSpend: true,
-          appOwnerUserId: 1,
-          buzzType: 'yellow',
-        }).appOwnerShareCents
-      ).toBe(0);
-      // blue + non-self / non-internal still 0 (payout-gate dominates).
-      expect(
-        computeSpendShare({
-          rateCard: fixedCard,
-          grossValueCents: 1000,
-          isSelfSpend: false,
-          appOwnerUserId: 1,
-          buzzType: 'blue',
-        }).appOwnerShareCents
-      ).toBe(0);
-    });
-  });
-});
-
-/**
  * W3 flow C — MEMBERSHIP / subscription rev-share math. A membership
  * payment is a real card transaction split THREE ways (NOT the
  * platform-funded bounty model of spend), so the invariants mirror
@@ -545,9 +330,7 @@ describe('computeSubscriptionShare', () => {
     expect(split.appOwnerShareCents).toBe(190);
     expect(split.platformShareCents).toBe(760);
     expect(split.subscriptionSharePct).toBe(20);
-    expect(
-      split.providerFeeCents + split.platformShareCents + split.appOwnerShareCents
-    ).toBe(1000);
+    expect(split.providerFeeCents + split.platformShareCents + split.appOwnerShareCents).toBe(1000);
     expect(split.rateCardVersion).toBe('sub-test');
   });
 
@@ -601,9 +384,7 @@ describe('computeSubscriptionShare', () => {
     expect(split.providerFeeCents).toBe(100);
     expect(split.appOwnerShareCents).toBe(0);
     expect(split.platformShareCents).toBe(0);
-    expect(
-      split.providerFeeCents + split.platformShareCents + split.appOwnerShareCents
-    ).toBe(100);
+    expect(split.providerFeeCents + split.platformShareCents + split.appOwnerShareCents).toBe(100);
   });
 
   it('V5 is the active card and carries the placeholder subscription rate', () => {
@@ -631,9 +412,7 @@ describe('computeSubscriptionShare', () => {
 
   it('V5 carries V4 verbatim (purchase + spend) and only adds the subscription rate', () => {
     // Immutability: V5 must not silently drift V4's stamped values.
-    expect(RATE_CARD_V5.publisherSharePctByScope).toEqual(
-      RATE_CARD_V4.publisherSharePctByScope
-    );
+    expect(RATE_CARD_V5.publisherSharePctByScope).toEqual(RATE_CARD_V4.publisherSharePctByScope);
     expect(RATE_CARD_V5.spendSharePct).toBe(RATE_CARD_V4.spendSharePct);
     // Sanity on the carried V4 numbers (15/15/25/0/0, spend 5) so a future
     // edit to V4 can't silently change V5's "carried" assertion.

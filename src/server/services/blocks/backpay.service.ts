@@ -1,32 +1,33 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { isAppBlocksBackpayEnabled } from '~/server/services/app-blocks-flag';
-import {
-  ACTIVE_RATE_CARD,
-  computeSpendShare,
-  computeSubscriptionShare,
-} from './rate-card';
+import { ACTIVE_RATE_CARD, computeSubscriptionShare } from './rate-card';
 
 /**
- * App Blocks BACKPAY reader (W3 attribution back-half — Slice 4 read leg).
+ * App Blocks MEMBERSHIP BACKPAY reader (W3 attribution back-half — flow C).
  *
  * ## What this is
  *
- * Two attribution tables now write TRACK-ONLY rows (PR #2629 membership,
- * PR #2635 buzz-spend): `block_subscription_attribution` and
- * `block_spend_attribution`. A track-only row records the EVENT + the MONEY
- * BASIS (gross_value_cents [+ provider_fee_cents for subscription]) with
- * `status='tracked'`, `app_owner_share_cents=0`, share-pct 0, and
- * `rate_card_version='unrated'` (the `UNRATED_RATE_CARD_VERSION` sentinel).
- * NO rate is applied at write time — deliberately, so immutable rows are never
- * locked to an unsigned placeholder rate.
+ * `block_subscription_attribution` writes TRACK-ONLY rows (PR #2629). A
+ * track-only row records the EVENT + the MONEY BASIS (gross_value_cents +
+ * provider_fee_cents) with `status='tracked'`, `app_owner_share_cents=0`,
+ * share-pct 0, and `rate_card_version='unrated'` (the
+ * `UNRATED_RATE_CARD_VERSION` sentinel). NO rate is applied at write time —
+ * deliberately, so immutable rows are never locked to an unsigned placeholder
+ * rate.
  *
  * This module is the BACKPAY: when (and ONLY when) a rate is signed off by
  * monetization leadership, it reads `status='tracked'` rows, computes the
- * author share at the signed-off rate (via the SAME `computeSpendShare` /
- * `computeSubscriptionShare` helpers in rate-card.ts), stamps it, and
- * transitions the row to `confirmed`. A SEPARATE payout rail (PR #2605) later
- * disburses `confirmed` rows.
+ * author share at the signed-off rate (via `computeSubscriptionShare` in
+ * rate-card.ts), stamps it, and transitions the row to `confirmed`. A SEPARATE
+ * payout rail (PR #2605) later disburses `confirmed` rows.
+ *
+ * ## Membership only
+ *
+ * The buzz-SPEND leg (flow A) is NOT backpaid. Its platform-funded percentage
+ * bounty was superseded by the additive, author-set, viewer-paid per-generation
+ * author fee, and the bounty rail was removed — `block_spend_attribution` rows
+ * stay `status='tracked'` and are never confirmed here.
  *
  * ## What this is NOT
  *
@@ -122,8 +123,8 @@ export type BackpaySummary = {
   dryRun: boolean;
   /** The version the gate resolved (null when not signed off). */
   signedOffVersion: string | null;
-  /** Rows examined (status='tracked', entry_type='charge') per table. */
-  processed: { subscription: number; spend: number };
+  /** Subscription rows examined (status='tracked', entry_type='charge'). */
+  processed: { subscription: number };
   /** Rows transitioned tracked → confirmed (0 in dryRun; "would confirm" count). */
   confirmedCount: number;
   /** Sum of confirmed author share, in cents (the "would confirm" total in dryRun). */
@@ -141,7 +142,7 @@ type BackpayOpts = { dryRun?: boolean; limit?: number };
 const DEFAULT_LIMIT = 1000;
 
 /**
- * Read `status='tracked'` attribution rows in both tables, compute the author
+ * Read `status='tracked'` subscription attribution rows, compute the author
  * share at the SIGNED-OFF rate, and transition them `tracked → confirmed`
  * (or `tracked → held` when an app exceeds the per-run Sybil cap). Moves no
  * money. Idempotent — only ever acts on `status='tracked'`, and the update is
@@ -149,12 +150,10 @@ const DEFAULT_LIMIT = 1000;
  *
  * @param opts.dryRun  Compute the full summary but write nothing. The eventual
  *   job caller defaults to dryRun.
- * @param opts.limit   Max rows to process PER TABLE per run, for safe
- *   incremental rollout. Defaults to {@link DEFAULT_LIMIT}.
+ * @param opts.limit   Max rows to process per run, for safe incremental
+ *   rollout. Defaults to {@link DEFAULT_LIMIT}.
  */
-export async function backpayTrackedAttributions(
-  opts: BackpayOpts = {}
-): Promise<BackpaySummary> {
+export async function backpayTrackedAttributions(opts: BackpayOpts = {}): Promise<BackpaySummary> {
   const dryRun = opts.dryRun ?? false;
   const limit = Math.max(1, Math.floor(opts.limit ?? DEFAULT_LIMIT));
 
@@ -163,7 +162,7 @@ export async function backpayTrackedAttributions(
   const empty: Omit<BackpaySummary, 'skipped' | 'enabled'> = {
     dryRun,
     signedOffVersion,
-    processed: { subscription: 0, spend: 0 },
+    processed: { subscription: 0 },
     confirmedCount: 0,
     confirmedShareCents: 0,
     heldCount: 0,
@@ -280,12 +279,7 @@ export async function backpayTrackedAttributions(
       continue;
     }
 
-    const decision = applyCap(
-      accrualByApp,
-      cappedByApp,
-      row.appBlockId,
-      share.appOwnerShareCents
-    );
+    const decision = applyCap(accrualByApp, cappedByApp, row.appBlockId, share.appOwnerShareCents);
 
     if (decision === 'held') {
       heldCount += 1;
@@ -320,106 +314,6 @@ export async function backpayTrackedAttributions(
     }
   }
 
-  // ── Spend (block_spend_attribution) ──────────────────────────────────────
-  const spendRows = await dbRead.blockSpendAttribution.findMany({
-    where: { status: 'tracked' },
-    select: {
-      id: true,
-      grossValueCents: true,
-      appBlockId: true,
-      appOwnerUserId: true,
-      // PAYOUT-SAFETY: the currency the spend was drained from. Threaded into
-      // computeSpendShare so the free Buzz type (blue) accrues 0 bounty even at
-      // payout time — the parity widening can never become platform-funded
-      // farming. (green is PAID, eligible.) See isPayoutEligibleBuzz in buzz-helpers.ts.
-      buzzType: true,
-    },
-    orderBy: { attributedAt: 'asc' },
-    take: limit,
-  });
-
-  for (const row of spendRows) {
-    // tracked spend rows are never self/internal (those are written 'voided');
-    // skip internal owners defensively all the same.
-    if (internalOwnerIds.has(row.appOwnerUserId)) continue;
-
-    const share = computeSpendShare({
-      rateCard: ACTIVE_RATE_CARD,
-      grossValueCents: row.grossValueCents,
-      isSelfSpend: false,
-      appOwnerUserId: row.appOwnerUserId,
-      // LOAD-BEARING: the free currency (blue) is non-payout-eligible → 0 bounty.
-      buzzType: row.buzzType,
-    });
-
-    // INDEPENDENT re-derivation (parallels the subscription belt): the
-    // platform-funded bounty must equal min(gross, floor(gross × pct / 100))
-    // AND never exceed gross. Re-derive from the SAME effective rate the
-    // compute used — which is 0 for a non-payout-eligible currency — so the
-    // belt agrees with the payout-safety gate instead of flagging it as a
-    // mismatch. Re-derives from `share.spendSharePct` (already gated by
-    // buzzType) and skips+logs on any mismatch; this catches a
-    // computeSpendShare floor/clamp bug that the bare `> gross` ceiling alone
-    // would miss. Bit-identical to compute for a legit row (gross is a clean
-    // non-negative int from the track-time write), so it carries no
-    // false-positive risk on valid data.
-    const expectedShareCents = Math.min(
-      row.grossValueCents,
-      Math.floor((row.grossValueCents * share.spendSharePct) / 100)
-    );
-    if (
-      share.appOwnerShareCents !== expectedShareCents ||
-      share.appOwnerShareCents > row.grossValueCents
-    ) {
-      logToAxiom(
-        {
-          name: BACKPAY_LOG_NAME,
-          type: 'error',
-          message: `spend share failed an independent invariant; skipping ${row.id}`,
-          attributionId: row.id,
-          grossValueCents: row.grossValueCents,
-          appOwnerShareCents: share.appOwnerShareCents,
-          expectedShareCents,
-        },
-        'webhooks'
-      ).catch(() => null);
-      continue;
-    }
-
-    const decision = applyCap(
-      accrualByApp,
-      cappedByApp,
-      row.appBlockId,
-      share.appOwnerShareCents
-    );
-
-    if (decision === 'held') {
-      heldCount += 1;
-      if (!dryRun) {
-        await dbWrite.blockSpendAttribution.updateMany({
-          where: { id: row.id, status: 'tracked' },
-          data: { status: 'held', voidedReason: 'manual_review' },
-        });
-      }
-      continue;
-    }
-
-    confirmedCount += 1;
-    confirmedShareCents += share.appOwnerShareCents;
-    if (!dryRun) {
-      await dbWrite.blockSpendAttribution.updateMany({
-        where: { id: row.id, status: 'tracked' },
-        data: {
-          status: 'confirmed',
-          confirmedAt: new Date(),
-          rateCardVersion: signedOffVersion,
-          spendSharePct: share.spendSharePct,
-          appOwnerShareCents: share.appOwnerShareCents,
-        },
-      });
-    }
-  }
-
   const cappedApps = Array.from(cappedByApp.entries()).map(([appBlockId, v]) => ({
     appBlockId,
     confirmedShareCents: v.confirmedShareCents,
@@ -430,7 +324,7 @@ export async function backpayTrackedAttributions(
     enabled: true,
     dryRun,
     signedOffVersion,
-    processed: { subscription: subRows.length, spend: spendRows.length },
+    processed: { subscription: subRows.length },
     confirmedCount,
     confirmedShareCents,
     heldCount,
@@ -461,7 +355,6 @@ export async function backpayTrackedAttributions(
       dryRun,
       signedOffVersion,
       processedSubscription: summary.processed.subscription,
-      processedSpend: summary.processed.spend,
       confirmedCount,
       confirmedShareCents,
       heldCount,
