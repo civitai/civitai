@@ -10,6 +10,7 @@ vi.mock('~/server/meilisearch/util', async (importOriginal) => ({
 const { createSearchIndexUpdateProcessor } = await import(
   '~/server/search-index/base.search-index'
 );
+const { collectionsSearchIndex } = await import('~/server/search-index/collections.search-index');
 
 type Processor = Parameters<typeof createSearchIndexUpdateProcessor>[0];
 
@@ -29,14 +30,21 @@ const buildIndex = (overrides: Partial<Processor> = {}) =>
 
 const updateItems = (count: number) => Array.from({ length: count }, (_, i) => ({ id: i + 1 }));
 
+let logSpy: ReturnType<typeof vi.spyOn>;
+
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
-  vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  // Spied, not silenced: on `update()` and `processQueues()`, which return nothing, this line is
+  // the ONLY report a drop ever gets. A test that silences it cannot tell it exists.
+  logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+const dropLines = () =>
+  logSpy.mock.calls.map(String).filter((line) => line.includes('produced no document'));
 
 describe('updateSync :: drop reporting', () => {
   it('reports the ids a transform dropped, which no failure counter can see', async () => {
@@ -62,6 +70,27 @@ describe('updateSync :: drop reporting', () => {
     expect(pushData.mock.calls[0][1]).toEqual([1, 2, 4, 5, 7].map((id) => ({ id })));
   }, 30_000);
 
+  it('logs the drop count and a sample, which is the only report the void paths get', async () => {
+    const index = buildIndex({
+      transformData: async (ids: number[]) => ids.filter((id) => id !== 4).map((id) => ({ id })),
+    });
+
+    await index.updateSync(updateItems(5));
+
+    expect(dropLines()).toHaveLength(1);
+    expect(dropLines()[0]).toContain('1 ids produced no document');
+    expect(dropLines()[0]).toContain('sample: 4');
+  }, 30_000);
+
+  it('logs nothing when nothing dropped, so the line stays worth reading', async () => {
+    const index = buildIndex();
+
+    const result = await index.updateSync(updateItems(5));
+
+    expect(result.droppedIds).toBe(0);
+    expect(dropLines()).toHaveLength(0);
+  }, 30_000);
+
   it('reports every id when the transform produces no documents at all', async () => {
     // The shape of 868m6jk7w: `pullData` returns the rows, the transform drops all of them, and
     // `pushData` is handed an empty batch it then skips entirely.
@@ -75,24 +104,69 @@ describe('updateSync :: drop reporting', () => {
     expect(result.failedIds).toBe(0);
   }, 30_000);
 
-  it('reads documents out of an object of arrays, as the models index returns them', async () => {
-    // models.search-index returns { indexReadyRecords, indexRecordsWithImages } and drops a model
-    // with no eligible version from BOTH. Pinned with the real shape so a change to that return
-    // value cannot quietly stop being readable here.
+  it('reports an id that never came back from the pull, not only one the transform dropped', async () => {
+    // The production shape: a row the index WHERE clause excludes never reaches the transform at
+    // all. Also kills the mutant that sources `requestedIds` from the PULLED rows instead of the
+    // requested ones — under it this test reports 0.
     const index = buildIndex({
-      transformData: async (ids: number[]) => {
-        const kept = ids.filter((id) => id !== 2869929);
-        return {
-          indexReadyRecords: kept.map((id) => ({ id, name: `model ${id}` })),
-          indexRecordsWithImages: kept.map((id) => ({ id, images: [] })),
-        };
-      },
+      pullData: async (_ctx, batch) =>
+        batch.type === 'update' ? batch.ids.filter((id) => id !== 2) : [],
     });
 
-    const result = await index.updateSync([{ id: 2810329 }, { id: 2869929 }]);
+    const result = await index.updateSync(updateItems(3));
 
     expect(result.droppedIds).toBe(1);
-    expect(result.droppedIdSample).toEqual([2869929]);
+    expect(result.droppedIdSample).toEqual([2]);
+  }, 30_000);
+
+  it('reports every id when a targeted pull comes back empty at step 0', async () => {
+    // `users`, `comics`, `tools` and `metrics-images` return null from `pullData` on an empty
+    // batch. The base treats a falsy pull as done before any transform task exists, so without
+    // pull-side accounting the WORST case — every id dropped — is the one that reports zero.
+    const index = buildIndex({ pullData: async () => null });
+
+    const result = await index.updateSync(updateItems(6));
+
+    expect(result.droppedIds).toBe(6);
+    expect(result.droppedIdSample).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(result.failedIds).toBe(0);
+  }, 30_000);
+
+  it('reports nothing when a LATER pull step returns falsy, because that is not provably a drop', async () => {
+    // Negative arm of the case above, and the reason the gate is `activeStep === 0`. A falsy
+    // return at a later step can mean "the step sequence ran out" rather than "no rows"
+    // (metrics-images, images), so counting it would cry wolf on every such batch.
+    const pullData = vi.fn(async (_ctx: unknown, batch: any, step?: number) =>
+      step === 0 ? (batch.type === 'update' ? batch.ids : []) : null
+    );
+    const index = buildIndex({
+      pullData: pullData as unknown as Processor['pullData'],
+      pullSteps: 2,
+    });
+
+    const result = await index.updateSync(updateItems(3));
+
+    expect(pullData).toHaveBeenCalledTimes(2);
+    expect(result.droppedIds).toBe(0);
+  }, 30_000);
+
+  it('reads documents out of an object of arrays, as the models index returns them', async () => {
+    // models.search-index returns { indexReadyRecords, indexRecordsWithImages } and the two are
+    // NOT the same id set — one is filtered on `isDefined`, the other on `modelVersions.length`.
+    // So the arrays here diverge deliberately: id 11 is only in the first, id 12 only in the
+    // second, and only id 13 is genuinely dropped. A reader that took just the first array would
+    // report 12 as dropped; one that took just the second would report 11.
+    const index = buildIndex({
+      transformData: async () => ({
+        indexReadyRecords: [{ id: 11, name: 'model 11' }],
+        indexRecordsWithImages: [{ id: 12, images: [] }],
+      }),
+    });
+
+    const result = await index.updateSync([{ id: 11 }, { id: 12 }, { id: 13 }]);
+
+    expect(result.droppedIds).toBe(1);
+    expect(result.droppedIdSample).toEqual([13]);
   }, 30_000);
 
   it('does not report an id the processor handled without writing a document', async () => {
@@ -104,16 +178,43 @@ describe('updateSync :: drop reporting', () => {
         records: ids.filter((id) => id !== 2).map((id) => ({ id })),
         disqualifiedIds: ids.filter((id) => id === 2),
       }),
-      getHandledIds: ({ records, disqualifiedIds }: any) => [
-        ...records.map((r: any) => r.id),
-        ...disqualifiedIds,
-      ],
+      getHandledIds: collectionsSearchIndex.getHandledIds,
     });
 
     const result = await index.updateSync(updateItems(3));
 
     expect(result.droppedIds).toBe(0);
     expect(result.droppedIdSample).toEqual([]);
+  }, 30_000);
+
+  it('counts what the hook subtracted, so a wrong prune cannot hide behind it', async () => {
+    // 5 requested, 3 pruned, 1 dropped, 1 written — four distinct numbers. `handledWithoutDocument`
+    // is the ONLY number that would ever show `collections` pruning ids it should not have, since
+    // the hook removes them from the drop count by design.
+    const index = buildIndex({
+      transformData: async (ids: number[]) => ({
+        records: ids.filter((id) => id === 1).map((id) => ({ id })),
+        disqualifiedIds: ids.filter((id) => [2, 3, 4].includes(id)),
+      }),
+      getHandledIds: collectionsSearchIndex.getHandledIds,
+    });
+
+    const result = await index.updateSync(updateItems(5));
+
+    expect(result.handledWithoutDocument).toBe(3);
+    expect(result.droppedIds).toBe(1);
+    expect(result.droppedIdSample).toEqual([5]);
+  }, 30_000);
+
+  it('reports no handled-without-document for a processor that has no hook', async () => {
+    const index = buildIndex({
+      transformData: async (ids: number[]) => ids.filter((id) => id !== 2).map((id) => ({ id })),
+    });
+
+    const result = await index.updateSync(updateItems(3));
+
+    expect(result.handledWithoutDocument).toBe(0);
+    expect(result.droppedIds).toBe(1);
   }, 30_000);
 
   // DECISION, pinned deliberately — do not "fix" this into reporting 3 dropped ids.
@@ -127,6 +228,36 @@ describe('updateSync :: drop reporting', () => {
     const result = await index.updateSync(updateItems(3));
 
     expect(result.droppedIds).toBe(0);
+  }, 30_000);
+
+  it('caps the sample without capping the count', async () => {
+    // 150 and 100 are deliberately different: a mutant reporting `droppedIdSample.length` as the
+    // count passes every other case in this file, where the two numbers are equal.
+    const index = buildIndex({ transformData: async () => [], updateSyncChunkSize: 500 });
+
+    const result = await index.updateSync(updateItems(150));
+
+    expect(result.droppedIds).toBe(150);
+    expect(result.droppedIdSample).toHaveLength(100);
+  }, 30_000);
+
+  it('counts a drop once when the push is retried', async () => {
+    // The queue accumulates on completion, so a push that throws once and then succeeds must not
+    // report its drop twice. Accumulating at the transform step instead would give 2.
+    let attempts = 0;
+    const index = buildIndex({
+      transformData: async (ids: number[]) => ids.filter((id) => id !== 1).map((id) => ({ id })),
+      pushData: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('meilisearch rejected the batch, once');
+      },
+    });
+
+    const result = await index.updateSync(updateItems(3));
+
+    expect(attempts).toBe(2);
+    expect(result.failedIds).toBe(0);
+    expect(result.droppedIds).toBe(1);
   }, 30_000);
 
   it('does not attribute a drop to a batch that failed outright', async () => {
@@ -144,4 +275,46 @@ describe('updateSync :: drop reporting', () => {
     expect(result.failedIds).toBe(3);
     expect(result.droppedIds).toBe(0);
   }, 30_000);
+
+  it('counts a repeated id once, whatever the caller passed', async () => {
+    // `updateSync` takes an arbitrary caller array. `droppedIds` is documented as the true total,
+    // so it must not depend on the caller having deduped first.
+    const index = buildIndex({ transformData: async () => [] });
+
+    const result = await index.updateSync([{ id: 9 }, { id: 9 }, { id: 9 }]);
+
+    expect(result.droppedIds).toBe(1);
+    expect(result.droppedIdSample).toEqual([9]);
+  }, 30_000);
+
+  it('never fails a batch because the accounting threw', async () => {
+    // Observation must not be able to destroy the write it watches: `getHandledIds` is
+    // processor-supplied, and a throw inside the task's try would retry and then fail the batch.
+    const pushData = vi.fn();
+    const index = buildIndex({
+      getHandledIds: () => {
+        throw new Error('a processor hook that is not total');
+      },
+      pushData,
+    });
+
+    const result = await index.updateSync(updateItems(3));
+
+    expect(result.failedTasks).toBe(0);
+    expect(result.failedIds).toBe(0);
+    expect(pushData).toHaveBeenCalledTimes(1);
+  }, 30_000);
+});
+
+describe('collectionsSearchIndex.getHandledIds', () => {
+  it('claims both the written records and the pruned ids', () => {
+    // The production hook, not a copy of it in a fixture. Deleting it from the processor would
+    // otherwise redden nothing while producing a drop report on every collections prune.
+    expect(
+      collectionsSearchIndex.getHandledIds?.({
+        records: [{ id: 1 }, { id: 3 }],
+        disqualifiedIds: [2],
+      })
+    ).toEqual([1, 3, 2]);
+  });
 });

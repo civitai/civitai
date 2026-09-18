@@ -27,10 +27,18 @@ type BaseTask = {
    */
   requestedIds?: (number | string)[];
   /**
-   * Ids that were pulled but produced no document, so nothing about them reached the index and
-   * nothing reports it as a failure. Set on the push task by the transform step.
+   * Requested ids that produced no document, so nothing about them reached the index and nothing
+   * reports it as a failure. Set on the push task by the transform step, or on the pull task
+   * itself when a targeted pull comes back empty at step 0. Usually far smaller than the batch,
+   * but it CAN equal it — a batch every one of whose ids dropped is the case this exists for.
    */
   droppedIds?: (number | string)[];
+  /**
+   * Requested ids a processor's `getHandledIds` accounted for although no document carries them —
+   * `collections` deleting a pruned document, today. Carried so the count stays VISIBLE rather
+   * than being subtracted into the silence `droppedIds` exists to break.
+   */
+  handledWithoutDocumentIds?: (number | string)[];
 };
 
 /**
@@ -111,6 +119,8 @@ export class TaskQueue {
   droppedIdCount: number;
   /** Up to `DROPPED_ID_SAMPLE_LIMIT` of those ids, for naming them in a log line. */
   droppedIdSample: (number | string)[];
+  /** Ids a processor hook accounted for with no document, across every completed task. */
+  handledWithoutDocumentIdCount: number;
   /**
    * Tasks that are between "failed" and "back on a queue" — see `failTask`. Counted by
    * `isQueueEmpty` so the workers cannot all exit during the retry backoff.
@@ -136,6 +146,7 @@ export class TaskQueue {
     this.failedTasks = [];
     this.droppedIdCount = 0;
     this.droppedIdSample = [];
+    this.handledWithoutDocumentIdCount = 0;
     this.retrying = 0;
   }
 
@@ -204,6 +215,8 @@ export class TaskQueue {
     // belong to `failedIdCount`. A retried push carries the same `droppedIds` and is counted on
     // the attempt that succeeds, once.
     if (task.droppedIds?.length) this.recordDroppedIds(task.droppedIds);
+    if (task.handledWithoutDocumentIds?.length)
+      this.handledWithoutDocumentIdCount += task.handledWithoutDocumentIds.length;
     this.updateTaskStatus(task, 'completed');
   }
 
