@@ -39,16 +39,17 @@ import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 // 🔴 BOUNDED IS NOT THE SAME AS SMALL — READ THE PRODUCT BEFORE ADDING A LABEL.
 // The domain is (approved apps + 1) x 47 x 2 x 5: ~24k series per pod at 50
 // approved apps, roughly 7x the existing `renders_total` product and the largest
-// App Block label set in the module. It is bounded, and that is the property this
-// route exists to enforce — but it is not small, so a FIFTH label is not a free
-// addition, and neither is a laxer clamp. `BRIDGE_MESSAGE_COUNT_MAX` is the
-// matching bound in the other axis: it caps what one request can add to a single
-// series, derived from what the bridge's own 30 msg/sec inbound limit can produce
-// in one flush window (see `bridgeLabels.ts`).
+// App Block label set in the module. It is bounded, and CARDINALITY is the property
+// this route enforces — that is the prom-heap axis, and it is genuinely closed. So
+// a fifth label is not a free addition, and neither is a laxer clamp.
 //
-// This route carries no rate limit, in common with every sibling /api/track/*
-// beacon. That is a property of the family, not of this file, and it is the reason
-// both clamps above are written as hard ceilings rather than as sanity checks.
+// 🔴 MAGNITUDE IS NOT BOUNDED HERE, AND NO CONSTANT IN THIS FILE CAN BOUND IT.
+// Nothing enforces row uniqueness, so one body may repeat a label set:
+// `BRIDGE_MESSAGE_COUNT_MAX` caps a single ROW, never a series. Read the counter's
+// VALUES accordingly, and do not read either constant as a control on volume — a
+// rate limit is that control, and no /api/track/* beacon has one. Both clamps are
+// written as hard ceilings because they keep one malformed row from rejecting a
+// whole batch, which is a different job.
 export default PublicEndpoint(
   async (req, res) => {
     if (isDev) return res.status(200).end();

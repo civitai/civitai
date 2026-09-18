@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import client from 'prom-client';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { BRIDGE_MESSAGE_COUNT_MAX } from '~/components/AppBlocks/bridgeLabels';
 
 /**
  * POST /api/track/block-message — the App Blocks postMessage BRIDGE beacon, and
@@ -245,7 +246,11 @@ describe('POST /api/track/block-message — the bridge outcome counter', () => {
   });
 
   it('rejects a non-positive, fractional or oversized count', async () => {
-    for (const count of [0, -1, 1.5, 10_001]) {
+    // 🔴 THE BOUNDARY IS THE CONSTANT, NOT A LITERAL. A hard-coded number goes
+    // stale the moment the cap moves and then pins nothing — this arm carried
+    // `10_001` after the cap dropped to 2,000, so reverting the constant would
+    // have left it green.
+    for (const count of [0, -1, 1.5, BRIDGE_MESSAGE_COUNT_MAX + 1]) {
       const res = await post({ events: [event({ count })] });
       expect(res.status).toHaveBeenCalledWith(400);
     }

@@ -224,6 +224,42 @@ describe('bridgeMessageBeacon coalescing', () => {
     }
   });
 
+  test('`visibilitychange: hidden` flushes — the ONLY path a mobile tab-switch takes', async () => {
+    // 🔴 THE SIBLING OF `pagehide`, AND IT WAS UNTESTED. Deleting the
+    // `visibilitychange` listener left the whole suite green while the module
+    // header's "NO LOSS ON NAVIGATION" claim and the flush-window reasoning behind
+    // `BRIDGE_MESSAGE_COUNT_MAX` both rest on it — and on mobile Safari a tab
+    // switch fires ONLY this event.
+    recordBridgeMessage({
+      appBlockId: 'apb_1',
+      type: 'GET_VIEWER',
+      host: 'IframeHost',
+      outcome: 'handled',
+    });
+    const spy = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    document.dispatchEvent(new Event('visibilitychange'));
+    spy.mockRestore();
+    expect(beaconSpy).toHaveBeenCalledTimes(1);
+    expect(_internalsForTests.buffered()).toEqual([]);
+  });
+
+  test('a visibilitychange to VISIBLE does not flush — the guard is on `hidden`', async () => {
+    // The negative arm: without it, a listener that flushed on every
+    // visibilitychange would satisfy the test above and quietly triple the request
+    // rate on ordinary tab focus.
+    recordBridgeMessage({
+      appBlockId: 'apb_1',
+      type: 'GET_VIEWER',
+      host: 'IframeHost',
+      outcome: 'handled',
+    });
+    const spy = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    document.dispatchEvent(new Event('visibilitychange'));
+    spy.mockRestore();
+    expect(beaconSpy).not.toHaveBeenCalled();
+    expect(_internalsForTests.buffered()).toHaveLength(1);
+  });
+
   test('`pagehide` flushes — the navigation path a plain fetch would lose', async () => {
     recordBridgeMessage({
       appBlockId: 'apb_1',

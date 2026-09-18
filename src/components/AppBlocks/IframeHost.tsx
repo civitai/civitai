@@ -1324,7 +1324,7 @@ export function IframeHost({
     [effectiveSandbox]
   );
 
-  const { send, onMessage, nack } = usePostMessage({
+  const { send, onMessage, reportNoToken } = usePostMessage({
     iframeRef,
     expectedOrigin,
     opaqueOrigin,
@@ -1637,15 +1637,20 @@ export function IframeHost({
           : undefined;
       if (!token || !initSentRef.current) {
         // 🔴 COUNTED, BUT DELIBERATELY NOT ANSWERED — and the asymmetry is the
-        // protocol's, not an oversight here. `nack` records `no_token` on the
-        // bridge counter and returns false: `REQUEST_TOKEN` is in
+        // protocol's, not an oversight here. `REQUEST_TOKEN` is in
         // `BRIDGE_NACK_EXEMPT` because `isValidTokenRefreshResponse` requires a
         // valid `WrappedToken`, so an error-only `TOKEN_REFRESH_RESPONSE` is
         // dropped at the block's own trust boundary and the block would hang
-        // exactly as before while we believed we had fixed it. Closing this needs
-        // a failure variant in the SDK message union. Until then the operator
-        // half lands and the block half is honestly absent.
-        if (requestId !== undefined) nack('REQUEST_TOKEN', requestId);
+        // exactly as before while we believed we had fixed it. Closing the
+        // block-facing half needs a failure variant in the SDK message union.
+        //
+        // 🔴 UNCONDITIONAL, AND NOT GATED ON `requestId`. A `REQUEST_TOKEN`
+        // carrying no `requestId` is an explicitly documented protocol shape (the
+        // success path below answers it with a `TOKEN_REFRESH` push), so gating
+        // the count on one would report NOTHING for it — and the count is this
+        // branch's only observable. `PageBlockHost` does the identical thing;
+        // `noSilentTokenDrop.test.ts` asserts both hosts, unconditionally.
+        reportNoToken('REQUEST_TOKEN');
         return;
       }
       const wrapped = {
@@ -1661,7 +1666,7 @@ export function IframeHost({
       send('TOKEN_REFRESH_RESPONSE', { requestId, token: wrapped });
     });
     return off;
-  }, [token, expiresAt, buzzBudget, grantedScopes, send, onMessage, nack]);
+  }, [token, expiresAt, buzzBudget, grantedScopes, send, onMessage, reportNoToken]);
 
   // Init handshake. Start the moment we're ALLOWED to init — token present and
   // the effective-checkpoint query resolved (`isLoading` false; the error path

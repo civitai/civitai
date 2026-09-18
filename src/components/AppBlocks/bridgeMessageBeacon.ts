@@ -142,7 +142,17 @@ export function recordBridgeMessage(raw: Omit<BridgeMessageEvent, 'count'>): voi
   // batch, destroying every legitimate count flushed with it. Clamping here
   // collapses all junk onto the single `other` key that prom would have bucketed
   // it into anyway, so nothing observable is lost.
-  const event = { ...raw, type: boundBridgeMessageType(raw.type) };
+  // …and bound `appBlockId`'s LENGTH for the same all-or-nothing reason. It is
+  // host-supplied rather than block-supplied, so this is a belt rather than the
+  // clamp above — but it is the only field left that could exceed its server-side
+  // cap (`max(256)`) and take a whole batch's worth of good counts down with it.
+  // The server clamps its VALUE to the approved-app set; only the length can fail
+  // the schema, and only the schema failure is destructive.
+  const event = {
+    ...raw,
+    appBlockId: raw.appBlockId.slice(0, 256) || 'other',
+    type: boundBridgeMessageType(raw.type),
+  };
   const key = keyOf(event);
   const existing = counts.get(key);
   if (existing) existing.count += 1;

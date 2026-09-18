@@ -7,8 +7,12 @@
  * the label ENUMS so the beacon's zod schema and the emitter cannot drift — and
  * `track.schema` is imported by `TrackView` on pages that mount no block at all,
  * so importing the INVENTORY-bearing module there would put that payload into
- * bundles that can never use it. Splitting keeps the single-sourcing without the
- * weight.
+ * bundles that can never use it. Splitting keeps the single-sourcing without that
+ * cost — specifically in the `track.schema`/`TrackView` graph. It is NOT a claim
+ * that the INVENTORY stays out of the browser generally: a page that mounts a
+ * block pulls it in through `usePostMessage` -> `bridgeMessageBeacon` ->
+ * `bridgeTelemetry`, which is the price of clamping the `type` label client-side
+ * and is paid only where a bridge actually exists.
  *
  * So: nothing in this file may import anything. If a constant here grows a
  * dependency, it belongs next door.
@@ -68,17 +72,39 @@ export const BRIDGE_MESSAGE_BATCH_MAX = 200;
  * Largest `count` one row may carry — a CLAMP on the client and a REJECT on the
  * server.
  *
- * 🔴 DERIVED, NOT PICKED. A single key can accumulate at most the bridge's own
- * inbound limit for the length of one flush window: 30 msg/sec × 10 s = 300. The
- * window does not stretch in a backgrounded tab either, because `visibilitychange:
- * hidden` flushes immediately. 2,000 is ~6.6× that ceiling, so no legitimate
- * client can reach it — and because the beacon route is public and carries no rate
- * limit (in common with every sibling `/api/track/*` beacon), the multiplier is
- * also the only ceiling a schema can put on what one request contributes to a
- * single series. Keep it derived from the bridge's own limit rather than rounded
- * up for comfort.
+ * 🔴 IT IS A SANITY CEILING, NOT A RATE CONTROL, AND THE DIFFERENCE MATTERS. An
+ * earlier revision of this comment derived it as "30 msg/sec × a 10 s flush window
+ * = 300 legitimate max, so nothing real can reach it". That derivation is wrong
+ * for THREE of the five outcomes and was cited as justification in two other
+ * files, so it is corrected here rather than quietly dropped:
+ *
+ *   - `handled` and `no_token` ARE bounded by the bridge's 30 msg/sec inbound
+ *     limiter — ~300 per key per window.
+ *   - `no_handler` and `deduped` are reported ABOVE that limiter, deliberately (a
+ *     flood of unhandled junk must not burn the budget that legitimate
+ *     BLOCK_ERROR reporting needs — see `usePostMessage`).
+ *   - `rate_limited` is by construction only recorded for messages that exceeded
+ *     the budget.
+ *
+ * So on those three a block in a postMessage loop — a buggy render loop calling an
+ * SDK method is the ordinary, non-malicious case — can drive one key far past any
+ * cap. The window is not a hard 10 s either: after the first flush a backgrounded
+ * tab's `setTimeout` is throttled to 1/s or 1/min.
+ *
+ * The cap is therefore chosen so that a real flood is still VISIBLE rather than
+ * exactly counted: above it the client CLAMPS (never drops the batch, never 400s
+ * it), so the series reads "enormous" instead of "wrong". 100,000 is ~333× the
+ * bounded-path ceiling and above a 10 s window of realistic browser postMessage
+ * throughput, so the truncation is reachable only in the flood case it is meant to
+ * survive.
+ *
+ * 🔴 IT DOES NOT BOUND WHAT ONE REQUEST CAN ADD TO A SERIES. Nothing enforces row
+ * uniqueness, so a batch may repeat the same label set; the per-request magnitude
+ * is `BRIDGE_MESSAGE_BATCH_MAX × this`. The property the beacon route does enforce
+ * is CARDINALITY — bounded label values, which is the prom-heap axis. Magnitude is
+ * a rate-limit question, and no `/api/track/*` beacon has one.
  */
-export const BRIDGE_MESSAGE_COUNT_MAX = 2000;
+export const BRIDGE_MESSAGE_COUNT_MAX = 100_000;
 
 /** Copy for the NACK a host sends when it registers no handler for a type. */
 export const BRIDGE_NACK_NO_HANDLER = 'unsupported on this host';

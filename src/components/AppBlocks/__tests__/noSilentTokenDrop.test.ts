@@ -8,32 +8,40 @@ import { BRIDGE_NACK_EXEMPT } from '~/components/AppBlocks/bridgeTelemetry';
  *
  * 🔴 WHY A STRUCTURAL GUARD AND NOT ONLY THE BEHAVIOURAL TESTS. The behavioural
  * suites (`PageBlockHostNoTokenNack.browser.test.tsx`) pin the handlers that exist
- * TODAY. The realistic regression is the THIRTY-FOURTH handler, written by copying
- * the thirty-third's opening lines, whose reviewer has no reason to know that
+ * TODAY. The realistic regression is the THIRTY-SECOND handler, written by copying
+ * the thirty-first's opening lines, whose reviewer has no reason to know that
  * `if (!token) return;` is the one shape that must not appear in a message handler
  * — and whose defect is INVISIBLE by construction: nothing errors, nothing logs,
  * the block simply hangs to its SDK timeout class (30s default, 120s workflow,
  * 600s human-in-the-loop). That is the exact class this whole change exists to
  * close, and a per-handler test cannot cover a handler nobody has written yet.
  *
- * 🔴 IT IS A RELATIONSHIP, NOT A COUNT. Two checks over a DERIVED population, each
- * failing in both directions:
+ * 🔴 THE POPULATION IS EVERY `if` GUARD WHOSE CONDITION TESTS `!token`, AND THE
+ * ASSERTION IS ABOUT ITS OWN CONSEQUENT. An earlier revision of this file tested
+ * for a response ANYWHERE IN THE ENCLOSING `onMessage` CHUNK, and that was
+ * satisfied for the wrong reason by every handler on earth: a handler's SUCCESS
+ * path always contains a `send('<X>_RESULT', …)`. Measured against a replication
+ * of that parse, a planted new handler with a bare `if (!token) return;` plus a
+ * normal success path scored `silentChunks: []` and left all four ledger numbers
+ * unmoved — i.e. the guard could not see the exact regression it exists for.
  *
- *   1. BRANCH LEVEL — every `if (!token) { … }` body in either host must RESPOND
- *      (`nack(`, `send(`, or a settlement `.reply(`). A body that only `return`s is
- *      the defect.
- *   2. CHUNK LEVEL — every `onMessage` handler that TESTS `!token` at all must
- *      contain one of those calls somewhere. This is the wider net: it also sees a
- *      one-line `if (!token) return;`, which check 1 cannot.
+ * So the walk is a real paren/brace match: find each `if (`, match its condition,
+ * and take its CONSEQUENT — the braced block, or the single statement when there
+ * are no braces. A one-line `if (!token) return;` is therefore IN the population
+ * and fails, which is what closes that mutant.
+ *
+ * Guards OUTSIDE any `onMessage` handler are excluded: the hosts legitimately test
+ * `!token` in lifecycle effects (init gating, status escalation), where there is no
+ * request to answer.
  *
  * Plus a MINIMUM population size, because a parse that silently matched nothing
  * would satisfy every "all of them respond" assertion vacuously — a reassuring zero
  * is indistinguishable from a probe wired to nothing.
  *
  * 🔴 WHAT IT DOES NOT CLAIM. It checks that a RESPONSE CALL is present in the
- * branch, not that the response is correct, correlated, or accepted by the SDK's
- * inbound validator. Those are behavioural claims and they live in the browser
- * suites. Read this guard as exactly as wide as that sentence.
+ * consequent, not that the response is correct, correlated, or accepted by the
+ * SDK's inbound validator. Those are behavioural claims and they live in the
+ * browser suites. Read this guard as exactly as wide as that sentence.
  */
 
 const REPO_ROOT = resolve(__dirname, '..', '..', '..', '..');
@@ -58,8 +66,8 @@ const RESPONDS = /\bnack\s*\(|\bsend\s*\(|\.reply\s*\(/;
  * whose failure reply the SDK's own validator would drop.
  *
  * 🔴 IT IS KEYED ON THE EXEMPTION LEDGER, NOT ON THE WORD `reportNoToken`. A
- * branch that merely counts is exactly the silent drop this file exists to stop,
- * so it is only acceptable where `BRIDGE_NACK_EXEMPT` already records that no
+ * consequent that merely counts is exactly the silent drop this file exists to
+ * stop, so it is only acceptable where `BRIDGE_NACK_EXEMPT` already records that no
  * reply is sendable — which today is `REQUEST_TOKEN`
  * (`isValidTokenRefreshResponse` requires a valid `WrappedToken`; the protocol has
  * no failure variant). A new handler cannot buy silence by calling
@@ -70,71 +78,138 @@ const COUNTS_ONLY_FOR_EXEMPT = new RegExp(
   `\\breportNoToken\\s*\\(\\s*'(${Object.keys(BRIDGE_NACK_EXEMPT).join('|')})'`
 );
 
-function answersOrIsExempt(body: string): boolean {
-  return RESPONDS.test(body) || COUNTS_ONLY_FOR_EXEMPT.test(body);
+function answersOrIsExempt(consequent: string): boolean {
+  return RESPONDS.test(consequent) || COUNTS_ONLY_FOR_EXEMPT.test(consequent);
 }
 
-/**
- * Bodies of every `if (!token …) { … }` in `src`, by brace matching.
- *
- * 🔴 THE OPENER DELIBERATELY ALLOWS EXTRA CONDITIONS. `IframeHost`'s REQUEST_TOKEN
- * guard is `if (!token || !initSentRef.current)`, and an opener pinned to a bare
- * `if (!token)` matched it ZERO times — which made this file's own `every branch
- * responds` assertion pass VACUOUSLY on that host. Measured, not reasoned: the
- * minimum-population assertion is what surfaced it.
- */
-function noTokenBranchBodies(src: string): string[] {
-  const bodies: string[] = [];
-  const opener = /if\s*\(\s*!token\b[^)]*\)\s*\{/g;
-  let m: RegExpExecArray | null;
-  while ((m = opener.exec(src)) !== null) {
-    let depth = 1;
-    let i = m.index + m[0].length;
-    const start = i;
-    while (i < src.length && depth > 0) {
-      if (src[i] === '{') depth++;
-      else if (src[i] === '}') depth--;
-      i++;
+/** Index just past the `)` that closes the `(` at `open`. */
+function matchParen(src: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '(') depth++;
+    else if (src[i] === ')') {
+      depth--;
+      if (depth === 0) return i + 1;
     }
-    bodies.push(src.slice(start, i - 1));
   }
-  return bodies;
+  return src.length;
 }
 
-/** `onMessage`-delimited chunks that TEST `!token`, with the first message type seen in each. */
-function noTokenHandlerChunks(src: string): Array<{ type: string; chunk: string }> {
-  const starts = [...src.matchAll(/\bonMessage[<(]/g)].map((m) => m.index as number);
-  const bounds = [...starts, src.length];
-  const out: Array<{ type: string; chunk: string }> = [];
-  for (let i = 0; i < bounds.length - 1; i++) {
-    const chunk = src.slice(bounds[i], bounds[i + 1]);
-    if (!/!token\b/.test(chunk)) continue;
-    const t = /'([A-Z][A-Z_0-9]*)'/.exec(chunk);
-    out.push({ type: t ? t[1] : '<unnamed>', chunk });
+/** Index just past the `}` that closes the `{` at `open`. */
+function matchBrace(src: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}') {
+      depth--;
+      if (depth === 0) return i + 1;
+    }
+  }
+  return src.length;
+}
+
+type TokenGuard = { index: number; condition: string; consequent: string; braced: boolean };
+
+/** Every `if (…!token…) …` guard in `src`, with its own consequent. */
+function tokenGuards(src: string): TokenGuard[] {
+  const out: TokenGuard[] = [];
+  for (const m of src.matchAll(/\bif\s*\(/g)) {
+    const open = (m.index as number) + m[0].length - 1;
+    const afterCond = matchParen(src, open);
+    const condition = src.slice(open, afterCond);
+    // 🔴 THE `[^!]` IS LOAD-BEARING. Without it `hasToken: !!token` — a real
+    // argument in `IframeHost`'s init gate — matches as a `!token` test, dragging
+    // a lifecycle effect into the population and failing for a reason that has
+    // nothing to do with a dropped request. Measured, not anticipated.
+    if (!/(^|[^A-Za-z0-9_$!])!token\b/.test(condition)) continue;
+    let rest = afterCond;
+    while (rest < src.length && /\s/.test(src[rest])) rest++;
+    if (src[rest] === '{') {
+      out.push({
+        index: m.index as number,
+        condition,
+        consequent: src.slice(rest, matchBrace(src, rest)),
+        braced: true,
+      });
+    } else {
+      // Unbraced single statement — `if (!token) return;`. This is the shape the
+      // previous revision could not see.
+      const end = src.indexOf(';', rest);
+      out.push({
+        index: m.index as number,
+        condition,
+        consequent: src.slice(rest, end === -1 ? src.length : end + 1),
+        braced: false,
+      });
+    }
   }
   return out;
 }
 
+/**
+ * [start, end) byte ranges of every `onMessage(...)` CALL.
+ *
+ * 🔴 EACH RANGE IS THE CALL'S OWN PARENTHESES, not "from this `onMessage` to the
+ * next". The next-match spelling bleeds: everything after the FINAL registration
+ * runs to EOF, so lifecycle effects far below it were classified as handler code.
+ * Paren-matching the call bounds each handler to its actual body.
+ *
+ * The generic argument (`onMessage<{ requestId?: unknown }>(`) is skipped by
+ * tracking angle depth, so the `(` found is the call's, never one inside the type.
+ */
+function handlerRanges(src: string): Array<[number, number]> {
+  const bounds: Array<[number, number]> = [];
+  for (const m of src.matchAll(/\bonMessage\s*[<(]/g)) {
+    let i = (m.index as number) + 'onMessage'.length;
+    let angle = 0;
+    while (i < src.length) {
+      const c = src[i];
+      if (c === '<') angle++;
+      else if (c === '>') angle--;
+      else if (c === '(' && angle === 0) break;
+      i++;
+    }
+    if (i >= src.length) continue;
+    bounds.push([i, matchParen(src, i)]);
+  }
+  return bounds;
+}
+
+function guardsInsideHandlers(src: string): TokenGuard[] {
+  const ranges = handlerRanges(src);
+  return tokenGuards(src).filter((g) => ranges.some(([a, b]) => g.index >= a && g.index < b));
+}
+
 describe('no host handler drops a credential-less request silently', () => {
-  test.each(HOSTS)('%s: every `if (!token) { … }` branch RESPONDS', (file) => {
-    const bodies = noTokenBranchBodies(hostSource(file));
-    // POSITIVE CONTROL for the parse. A regex that matched nothing would make the
+  test.each(HOSTS)('%s: every in-handler `!token` guard ANSWERS in its own consequent', (file) => {
+    const guards = guardsInsideHandlers(hostSource(file));
+    // POSITIVE CONTROL for the parse. A walk that matched nothing would make the
     // `every` below vacuously true, and the guard would read as coverage while
     // providing none.
-    expect(bodies.length).toBeGreaterThan(0);
-    const silent = bodies.filter((b) => !answersOrIsExempt(b));
+    expect(guards.length).toBeGreaterThan(0);
+    const silent = guards
+      .filter((g) => !answersOrIsExempt(g.consequent))
+      .map((g) => g.condition.replace(/\s+/g, ' ').slice(0, 80));
     expect(silent).toEqual([]);
   });
 
-  test.each(HOSTS)(
-    '%s: every `onMessage` handler that tests `!token` RESPONDS somewhere',
-    (file) => {
-      const chunks = noTokenHandlerChunks(hostSource(file));
-      expect(chunks.length).toBeGreaterThan(0);
-      const silent = chunks.filter((c) => !answersOrIsExempt(c.chunk)).map((c) => c.type);
-      expect(silent).toEqual([]);
-    }
-  );
+  test.each(HOSTS)('%s: no in-handler `!token` guard is an UNBRACED one-liner', (file) => {
+    // Belt to the braces the population walk already handles: the unbraced shape is
+    // how the original nineteen silent drops were written, and forbidding it keeps
+    // the consequent a block a future reader has to look inside.
+    const unbraced = guardsInsideHandlers(hostSource(file))
+      .filter((g) => !g.braced)
+      .map((g) => g.condition.replace(/\s+/g, ' ').slice(0, 80));
+    expect(unbraced).toEqual([]);
+  });
+
+  test('lifecycle `!token` guards OUTSIDE a handler exist and are deliberately excluded', () => {
+    // The exclusion is real, so it is asserted rather than assumed: if this set
+    // ever empties, the filter has stopped discriminating and the in-handler
+    // assertions above are being applied to the whole file by accident.
+    const src = hostSource('PageBlockHost.tsx');
+    expect(tokenGuards(src).length).toBeGreaterThan(guardsInsideHandlers(src).length);
+  });
 
   test('the PageBlockHost population is the size the behavioural suites believe it is', () => {
     // 🔴 A LEDGER, NOT A TASTE CHECK. It fails when the set GROWS (a new handler
@@ -142,31 +217,41 @@ describe('no host handler drops a credential-less request silently', () => {
     // quietly moved somewhere this parse cannot see). Either direction means the
     // behavioural coverage and the code have drifted, and the point is that a
     // human reads this line again before changing the number.
-    const bodies = noTokenBranchBodies(hostSource('PageBlockHost.tsx'));
-    expect(bodies).toHaveLength(31);
+    const guards = guardsInsideHandlers(hostSource('PageBlockHost.tsx'));
+    expect(guards).toHaveLength(31);
     // 19 route through the shared `nack` helper added with the bridge counter
     // (reply + count in one call); 11 keep a bespoke error variant that predates
     // it (the `{ok,error}` and `settlement.reply` shapes) and call
     // `reportNoToken` alongside it; 1 — REQUEST_TOKEN — counts only, because the
     // protocol has no sendable failure reply for it.
-    expect(bodies.filter((b) => /\bnack\s*\(/.test(b))).toHaveLength(19);
-    expect(bodies.filter((b) => /\breportNoToken\s*\(/.test(b))).toHaveLength(12);
+    expect(guards.filter((g) => /\bnack\s*\(/.test(g.consequent))).toHaveLength(19);
+    expect(guards.filter((g) => /\breportNoToken\s*\(/.test(g.consequent))).toHaveLength(12);
     // 🔴 EVERY refusal reaches the counter — this is the relationship the metric's
     // own help text asserts ("a handler ran and refused because the block
     // credential was falsy") and the one a partial migration silently breaks.
-    expect(bodies.filter((b) => /\bnack\s*\(|\breportNoToken\s*\(/.test(b))).toHaveLength(31);
+    expect(
+      guards.filter((g) => /\bnack\s*\(|\breportNoToken\s*\(/.test(g.consequent))
+    ).toHaveLength(31);
   });
 
-  test('IframeHost REQUEST_TOKEN is COUNTED even though it cannot be answered', () => {
-    // The one genuine dead end left, and it is the protocol's rather than this
-    // host's: `isValidTokenRefreshResponse` requires a valid `WrappedToken`, so an
-    // error-only `TOKEN_REFRESH_RESPONSE` is dropped at the block's own trust
-    // boundary, and the union carries no failure variant. `nack` still records the
-    // `no_token` outcome, so an operator can SEE it — which is the half that was
-    // reachable without an SDK change. Pinned here so that if the SDK ever gains a
-    // failure variant, whoever adds it finds this note.
-    const bodies = noTokenBranchBodies(hostSource('IframeHost.tsx'));
-    expect(bodies).toHaveLength(1);
-    expect(bodies[0]).toMatch(/nack\('REQUEST_TOKEN'/);
+  test('BOTH hosts count a credential-less REQUEST_TOKEN, unconditionally', () => {
+    // 🔴 THE TWO HOSTS REGISTER THEIR HANDLERS BY HAND AND SHARE NO BRIDGE, and
+    // `PageBlockHost`'s own comment says they "MUST STAY IN STEP" — so the step is
+    // asserted rather than described. `REQUEST_TOKEN` is the one type whose failure
+    // reply the SDK validator would drop, so the count is its ONLY observable; a
+    // host that counts it only when a `requestId` happens to be present reports
+    // nothing on the requestId-less shape the protocol explicitly allows.
+    for (const file of HOSTS) {
+      const guard = guardsInsideHandlers(hostSource(file)).find((g) =>
+        /REQUEST_TOKEN/.test(g.consequent)
+      );
+      expect(guard, `${file} has no REQUEST_TOKEN !token guard`).toBeDefined();
+      expect(guard!.consequent).toMatch(/reportNoToken\('REQUEST_TOKEN'\)/);
+      // No `if` between the guard's opening brace and the report — the count is
+      // unconditional.
+      expect(guard!.consequent.slice(0, guard!.consequent.indexOf('reportNoToken'))).not.toMatch(
+        /\bif\s*\(/
+      );
+    }
   });
 });
