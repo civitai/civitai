@@ -2795,8 +2795,11 @@ describe('blocks.submitWorkflow', () => {
     expect(mockRecordSpendAttribution.mock.calls[0][0].sharedContentKey).toBeNull();
   });
 
-  // 🟡-1: the bounty must accrue off the REALIZED debit on the submit
-  // snapshot, not the whatif preflight ESTIMATE. Drive the whatif and the
+  // 🟡-1: the attribution's money BASIS must be taken from the REALIZED debit
+  // on the submit snapshot, not the whatif preflight ESTIMATE. (The rail this
+  // note used to say "accrues a bounty" is the removed platform-funded one; the
+  // row accrues nothing now — what these cases pin is the recorded basis.)
+  // Drive the whatif and the
   // real submit to DIFFERENT costs so a regression to `Math.ceil(cost)`
   // (the estimate) is caught.
   function submitWithEstimateAndRealized(
@@ -2817,7 +2820,7 @@ describe('blocks.submitWorkflow', () => {
       });
   }
 
-  it('🟡-1: accrues the bounty off the REALIZED debit (estimate 100, realized 40 → 40)', async () => {
+  it('🟡-1: records the money basis from the REALIZED debit (estimate 100, realized 40 → 40)', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
     happyVersionLookup();
     happyUser();
@@ -2871,11 +2874,14 @@ describe('blocks.submitWorkflow', () => {
 
   // #2833 — block payout EARN parity. The submit snapshot surfaces the REAL
   // per-account debit on `transactions.list` (the same signal on-site earns
-  // off). The PAID portion (green/yellow) must be recorded as the attribution's
-  // money BASIS; the FREE portion (blue) must never be. These drive the
-  // real-debit branch. (The "must accrue the author bounty" this note used to
-  // name is the removed platform-funded rail — the row accrues nothing now, and
-  // what these cases pin is the recorded basis.)
+  // off). When a PAID portion (green/yellow) is present, IT is what gets
+  // recorded as the attribution's money BASIS. When there is none, the FREE
+  // portion (blue) IS still recorded as the basis — it is simply never
+  // payout-eligible (`isPayoutEligibleBuzz` excludes blue), which is what the
+  // BLUE-ONLY case below asserts. These drive the real-debit branch. (The "must
+  // accrue the author bounty" this note used to name is the removed
+  // platform-funded rail — the row accrues nothing now, and what these cases
+  // pin is the recorded basis.)
   function submitWithTransactions(
     realizedCost: number | undefined,
     transactions:
@@ -2912,7 +2918,7 @@ describe('blocks.submitWorkflow', () => {
 
     expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
     const arg = mockRecordSpendAttribution.mock.calls[0][0];
-    expect(arg.buzzType).toBe('green'); // payout-eligible → bounty accrues
+    expect(arg.buzzType).toBe('green'); // the paid account → payout-eligible basis
     expect(arg.buzzAmount).toBe(10); // ONLY the paid portion, not 100
   });
 
@@ -3012,7 +3018,7 @@ describe('blocks.submitWorkflow', () => {
     expect(arg.buzzAmount).toBe(12);
   });
 
-  it('#2833: a BLUE-ONLY debit stays on the free floor — blue + realized cost, ZERO-bounty', async () => {
+  it('#2833: a BLUE-ONLY debit stays on the free floor — blue + realized cost, payout-EXCLUDED', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
     happyVersionLookup();
     happyUser();
@@ -3034,7 +3040,8 @@ describe('blocks.submitWorkflow', () => {
     happyVersionLookup();
     happyUser();
     // Orchestrator omitted transactions (e.g. cache path). We CANNOT see a
-    // paid debit → fall back to blue + cost, so nothing farms a bounty.
+    // paid debit → fall back to blue + cost, which `isPayoutEligibleBuzz`
+    // excludes, so nothing farms a payout.
     submitWithTransactions(40, undefined);
 
     const caller = blocksRouter.createCaller(fakeCtx() as never);
@@ -6352,7 +6359,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
   // ── Durable audit + attribution (dogfood follow-up). Before this fix a
   // successful customComfy generation billed real Buzz but wrote NO
   // block_scope_invocations row (per-user activity trail) and NO
-  // block_spend_attribution row (author-bounty basis) — the branch early-returned
+  // block_spend_attribution row (the spend attribution's money basis) — the branch early-returned
   // before both writes. Parity with the txt2img path.
   describe('submitWorkflow — durable audit + attribution', () => {
     it('writes a block_scope_invocations row mirroring txt2img (scope + workflow:submit endpoint + ok detail)', async () => {

@@ -31,8 +31,9 @@ export type RateCard = {
    * ⚠️ AN EARLIER REVISION JUSTIFIED IT WITH "`block_spend_attribution` rows
    * stamp a card version", which is misleading: the spend write path hardcodes
    * `UNRATED_RATE_CARD_VERSION`, so those rows stamp 'unrated' and carry
-   * `spend_share_pct = 0`. Measured in production 2026-09-18 — all 601 rows in
-   * that table stamp 'unrated' and none references a real card version. See the
+   * `spend_share_pct = 0`. Measured in production 2026-09-18 — a
+   * `GROUP BY rate_card_version` over that whole table returned a single
+   * 'unrated' group, so no row references a real card version. See the
    * retirement note at `RATE_CARD_V5`'s declaration for the full accounting.
    */
   spendSharePct: number;
@@ -374,9 +375,11 @@ export const RATE_CARD_V5: RateCard = {
   // "no KNOWN referent" precisely because the code history above was never
   // re-confirmed against the database. It has been now: a
   // `GROUP BY rate_card_version` over the whole of `block_spend_attribution`
-  // returned ONE row — `'unrated'`, count 601. The grouping is
+  // returned exactly ONE group — `'unrated'`. The grouping is
   // self-discriminating, so any other stamped version would have come back as a
-  // second row; none did. NO spend row references 'v4' or 'v5'.
+  // second row; none did. NO spend row references 'v4' or 'v5'. (The row count
+  // is deliberately not published here — this repo is public and that figure is
+  // product usage. Re-run the query to recover it.)
   //
   // Read that at its real scope: it is a statement about that table at that
   // moment, NOT a guarantee about the future. It holds as long as

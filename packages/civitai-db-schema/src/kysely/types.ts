@@ -996,7 +996,10 @@ export type BlockSpendAttribution = {
   /**
    * Always the 'unrated' sentinel — the write path hardcodes it. No rate card
    * is applied to a spend row, and nothing re-stamps it (the backpay that would
-   * have is removed). Measured in production 2026-09-18: 601/601 rows 'unrated'.
+   * have is removed). Measured in production 2026-09-18: a
+   * `GROUP BY rate_card_version` over the whole table returned a single
+   * 'unrated' group — self-discriminating, since any other stamped version
+   * would have been a second group. Re-measure before relying on it.
    */
   rate_card_version: string;
   /**

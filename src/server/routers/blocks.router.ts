@@ -6033,8 +6033,8 @@ export const blocksRouter = router({
           // both green and yellow), so at most ONE paid account is ever
           // drained; we NET that paid account's debits against any same-submit
           // credits (a partial refund / charge correction the orchestrator may
-          // emit in the SAME transactions.list) so the bounty accrues off what
-          // the user NET paid, not a gross debit that was partly refunded.
+          // emit in the SAME transactions.list) so the recorded money basis is
+          // what the user NET paid, not a gross debit that was partly refunded.
           //
           // When NO paid debit is present — a blue-only spend, OR a cache-hit /
           // 0-cost gen, OR a snapshot the orchestrator returned WITHOUT
