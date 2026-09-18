@@ -226,14 +226,22 @@ describe('the SPEND leg is gone — no block_spend_attribution access at all', (
   it('a fully open gate never reaches the spend table', async () => {
     mockFlag.mockResolvedValue(true);
     signOff();
-    // The prisma mock exposes ONLY the subscription delegate. If the reader
-    // still touched `dbRead.blockSpendAttribution`, this would throw rather
-    // than return a summary — which is the assertion.
+    // 🔴 THE GUARD HERE IS THE MOCK'S SHAPE, NOT AN `expect` LINE. The hoisted
+    // `mockDbRead` exposes ONLY `blockSubscriptionAttribution` (see its
+    // declaration at the top of this file), so a reader that reinstated
+    // `dbRead.blockSpendAttribution.findMany(...)` would throw on the undefined
+    // delegate. The two assertions below therefore only hold if no spend read
+    // was attempted: reaching a resolved summary at all IS the proof.
+    //
+    // An earlier revision added `expect(mockDbRead).not.toHaveProperty(
+    // 'blockSpendAttribution')` here. It was DELETED rather than kept: it
+    // asserted a property of this file's own mock literal, so it could only ever
+    // fail if someone edited that literal — it said nothing about the service,
+    // while reading like coverage of it.
     const out = await backpayTrackedAttributions();
 
     expect(out.enabled).toBe(true);
     expect(out.processed).toEqual({ subscription: 0 });
-    expect(mockDbRead).not.toHaveProperty('blockSpendAttribution');
   });
 });
 

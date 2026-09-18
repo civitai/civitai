@@ -31,8 +31,9 @@ export type RateCard = {
    * ⚠️ AN EARLIER REVISION JUSTIFIED IT WITH "`block_spend_attribution` rows
    * stamp a card version", which is misleading: the spend write path hardcodes
    * `UNRATED_RATE_CARD_VERSION`, so those rows stamp 'unrated' and carry
-   * `spend_share_pct = 0`. See the retirement note at `RATE_CARD_V5`'s
-   * declaration for the full accounting, including the one historical caveat.
+   * `spend_share_pct = 0`. Measured in production 2026-09-18 — all 601 rows in
+   * that table stamp 'unrated' and none references a real card version. See the
+   * retirement note at `RATE_CARD_V5`'s declaration for the full accounting.
    */
   spendSharePct: number;
   /**
@@ -363,14 +364,27 @@ export const RATE_CARD_V5: RateCard = {
   // `recordSpendAttribution` hardcodes `rateCardVersion = UNRATED_RATE_CARD_VERSION`,
   // so every spend row it writes stamps 'unrated', never 'v4' or 'v5'. The only
   // code that would have stamped a real version onto a spend row is the backpay
-  // that never ran. (One caveat, and it is why this says "no KNOWN referent"
-  // rather than "none": the pre-track-only write path shipped in #2627 DID stamp
-  // `share.rateCardVersion`, and #2635 retrofitted it to 'unrated' the SAME DAY —
-  // 2026-06-18. That retrofit's migration records, contemporaneously, that prod
-  // held 0 spend rows at the time. No row is known to reference v4 or v5; that
-  // was not re-confirmed against the database here.)
+  // that never ran. (The code-history caveat that made an earlier revision hedge:
+  // the pre-track-only write path shipped in #2627 DID stamp `share.rateCardVersion`,
+  // and #2635 retrofitted it to 'unrated' the SAME DAY — 2026-06-18. That
+  // retrofit's migration records, contemporaneously, that prod held 0 spend rows
+  // at the time.)
   //
-  // So the field is retained WITHOUT a known historical referent — for shape
+  // ✅ MEASURED, NOT INFERRED (production, 2026-09-18). An earlier revision said
+  // "no KNOWN referent" precisely because the code history above was never
+  // re-confirmed against the database. It has been now: a
+  // `GROUP BY rate_card_version` over the whole of `block_spend_attribution`
+  // returned ONE row — `'unrated'`, count 601. The grouping is
+  // self-discriminating, so any other stamped version would have come back as a
+  // second row; none did. NO spend row references 'v4' or 'v5'.
+  //
+  // Read that at its real scope: it is a statement about that table at that
+  // moment, NOT a guarantee about the future. It holds as long as
+  // `recordSpendAttribution` remains the only writer and keeps hardcoding the
+  // sentinel. A future writer that stamps a real version would create the
+  // referent this note says does not exist — re-measure before relying on it.
+  //
+  // So the field is retained with NO historical referent — for shape
   // stability of the published `RateCard` snapshots and to avoid a type change
   // rippling through every card, NOT because a row depends on it. Removing it is
   // a larger act than the rail removal took on; if you are authoring a V6 and

@@ -63,6 +63,16 @@ import { blockGenerationCoarseType, isBlockGenerationType } from './generation-t
 // production entry point and it is fail-closed behind
 // `app-blocks-author-fee-enabled`.
 //
+// 🔴 SLICE 2, READ THIS BEFORE YOU DERIVE A RECIPIENT: an OPEN SECURITY GATE in
+// `src/pages/api/v1/blocks/dev-token.ts` (the APPID MISATTRIBUTION block) is
+// addressed to you by name. Slice 1 carries no recipient, so a mis-resolved
+// `appId` cannot misdirect a fee today; slice 2 is where that stops being true,
+// because the recipient comes from the same spend-attribution app resolution.
+// The gate names what re-confirms it (an existing S1 case in
+// `src/tests/api/v1/blocks/dev-token.test.ts`) and closes when the settlement
+// PR merges with that assertion green. It is pointed at from here because
+// nothing else on this surface would send you to a dev-token mint handler.
+//
 // ── NO MIGRATION IN THIS SLICE, ON PURPOSE ──────────────────────────────────
 // The defaults apply to EVERY app including the ones that already exist, so
 // ABSENCE OF PER-APP CONFIGURATION MEANS THE DEFAULT APPLIES and there is

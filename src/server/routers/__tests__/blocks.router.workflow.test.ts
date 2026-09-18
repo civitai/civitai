@@ -2871,8 +2871,11 @@ describe('blocks.submitWorkflow', () => {
 
   // #2833 — block payout EARN parity. The submit snapshot surfaces the REAL
   // per-account debit on `transactions.list` (the same signal on-site earns
-  // off). The PAID portion (green/yellow) must accrue the author bounty; the
-  // FREE portion (blue) must never. These drive the real-debit branch.
+  // off). The PAID portion (green/yellow) must be recorded as the attribution's
+  // money BASIS; the FREE portion (blue) must never be. These drive the
+  // real-debit branch. (The "must accrue the author bounty" this note used to
+  // name is the removed platform-funded rail — the row accrues nothing now, and
+  // what these cases pin is the recorded basis.)
   function submitWithTransactions(
     realizedCost: number | undefined,
     transactions:
@@ -2974,8 +2977,8 @@ describe('blocks.submitWorkflow', () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
     happyVersionLookup();
     happyUser();
-    // A same-submit partial refund: the author bounty must accrue off what the
-    // user NET paid (7), not the gross debit (10).
+    // A same-submit partial refund: the attribution's money basis must be what
+    // the user NET paid (7), not the gross debit (10).
     submitWithTransactions(10, [
       { type: 'debit', amount: 10, accountType: 'green' },
       { type: 'credit', amount: 3, accountType: 'green' },
@@ -3094,7 +3097,7 @@ describe('blocks.submitWorkflow', () => {
     happyUser();
     // whatif resolves; real submit RESOLVES with a failed status + a
     // (non-sentinel) id. The reservation is kept, but no generation ran, so
-    // no author bounty accrues.
+    // there is nothing to attribute and no row is written.
     mockSubmitWorkflow
       .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
       .mockResolvedValueOnce({ id: 'wf_real', status: 'failed', cost: { total: 25 }, steps: [] });

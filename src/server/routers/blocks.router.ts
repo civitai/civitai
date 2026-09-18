@@ -5988,19 +5988,27 @@ export const blocksRouter = router({
           const { recordSpendAttribution } = await import(
             '~/server/services/blocks/buzz-attribution.service'
           );
-          // Accrue the author bounty off the REALIZED debit, not the
-          // whatif preflight ESTIMATE (`cost`). `snapshotFromWorkflow`
-          // surfaces the REAL submit's `workflow.cost.total` onto
-          // `snapshot.cost.total` (see workflow.service.ts:~49,61), read
-          // from the SAME resolved `submitted` snapshot this handler
-          // already holds (no re-fetch). The realized value is what the
-          // platform actually took, so the bounty matches the spend
-          // (the `share_le_gross` intent). This closes: (a) estimate >
-          // realized over-accrual; (b) a cache-hit / 0-realized that
-          // would otherwise still accrue off a non-zero estimate (author
-          // paid for a gen that cost nothing); (c) queue/surge/tier drift
-          // landing on platform bounty liability. Fall back to the
-          // estimate ONLY when the realized value is absent on the
+          // Record the attribution off the REALIZED debit, not the whatif
+          // preflight ESTIMATE (`cost`). ⚠️ This used to read "accrue the author
+          // bounty off the realized debit" — that platform-funded percentage
+          // rail is REMOVED and this row accrues nothing (`spend_share_pct = 0`,
+          // `app_owner_share_cents = 0`). The realized-vs-estimate choice
+          // survives the removal on its own terms: the row is the durable
+          // MONEY BASIS (`gross_value_cents`) for reporting today and for
+          // anything sized off it later, so a basis that overstates what the
+          // platform took is simply wrong.
+          //
+          // `snapshotFromWorkflow` surfaces the REAL submit's
+          // `workflow.cost.total` onto `snapshot.cost.total` (see
+          // workflow.service.ts:~49,61), read from the SAME resolved
+          // `submitted` snapshot this handler already holds (no re-fetch). The
+          // realized value is what the platform actually took, so the recorded
+          // basis matches the spend (the `share_le_gross` intent, still a live
+          // CHECK constraint). This closes: (a) estimate > realized
+          // overstatement; (b) a cache-hit / 0-realized that would otherwise
+          // record a non-zero basis for a generation that cost nothing; (c)
+          // queue/surge/tier drift inflating the recorded figure. Fall back to
+          // the estimate ONLY when the realized value is absent on the
           // snapshot (e.g. a snapshot that carries no cost).
           //
           // SYBIL CAP NOTE (audit 🟡-2): the per-APP aggregate ceiling this

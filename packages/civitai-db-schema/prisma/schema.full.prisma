@@ -3545,19 +3545,34 @@ model BlockAttributionPayout {
   @@map("block_attribution_payout")
 }
 
-/// W3 flow A — App Blocks buzz SPEND attribution (author bounty).
+/// W3 flow A — App Blocks buzz SPEND attribution. TRACK-ONLY: an audit
+/// trail of the generation EVENT and its money BASIS. It pays nobody.
 ///
 /// One row per block-initiated generation that spends the VIEWER's own
 /// Buzz balance. Distinct from BlockBuzzAttribution (which covers card
 /// PURCHASES from inside a block): a spend has no payment provider, no
 /// provider fee, no refund/clawback lifecycle.
 ///
-/// ACCOUNTING: the author share is a PLATFORM-FUNDED BOUNTY paid on top
-/// of the spend, NOT a slice carved out of the viewer's Buzz. The viewer
-/// burned 100% of their Buzz on the generation (platform revenue); the
-/// author bounty is a separate platform expense sized as a percentage of
-/// the spend's USD value. There is therefore NO three-way conservation
-/// invariant (unlike the purchase table) — see the migration for detail.
+/// 🔴 THE AUTHOR BOUNTY THIS TABLE WAS BUILT FOR IS REMOVED. It was a
+/// PLATFORM-FUNDED percentage bounty (`gross_value_cents × spend_share_pct`)
+/// paid on top of the spend — never a slice of the viewer's Buzz — and it was
+/// superseded by the additive, author-set, viewer-paid per-generation author
+/// fee (`src/server/services/blocks/author-fee.ts`). Its compute and backpay
+/// rails were deleted; nothing reads a rate card's `spendSharePct` any more.
+///
+/// WHAT THE ROWS CARRY NOW: `app_owner_share_cents = 0`, `spend_share_pct = 0`,
+/// `rate_card_version = 'unrated'`, `status = 'tracked'`. Measured in production
+/// 2026-09-18, all 601 rows stamp 'unrated'. The money columns are retained at
+/// zero so the row shape and its CHECK constraints are unchanged, NOT because
+/// anything computes them.
+///
+/// The LIVE consumer is reporting, not payout: `app-analytics.service.ts`
+/// aggregates these rows for the app-owner dashboard.
+///
+/// ACCOUNTING (historical, for reading the constraints): because the bounty was
+/// platform-funded rather than carved out of the spend, there is NO three-way
+/// conservation invariant here (unlike the purchase table) — see the migration
+/// for detail. That asymmetry is why the constraints look the way they do.
 ///
 /// Idempotent on (workflow_id, app_block_id): a re-poll / retry /
 /// re-submit of the same workflow is a no-op.
@@ -3583,8 +3598,13 @@ model BlockSpendAttribution {
   blockInstanceId    String   @map("block_instance_id")
   modelId            Int?     @map("model_id")
 
+  /// Always the 'unrated' sentinel — the write path hardcodes it. No rate card
+  /// is applied to a spend row, and nothing re-stamps it (the backpay that would
+  /// have is removed). Measured in production 2026-09-18: 601/601 rows 'unrated'.
   rateCardVersion    String   @map("rate_card_version")
-  /// The spend rev-share percentage stamped at write time.
+  /// Always 0. This was the spend rev-share percentage stamped at write time,
+  /// for the removed platform-funded bounty; the write path now hardcodes 0 and
+  /// the column is retained only to keep the row shape + CHECK constraints.
   spendSharePct      Int      @map("spend_share_pct")
   appOwnerShareCents Int      @map("app_owner_share_cents")
   appOwnerUserId     Int      @map("app_owner_user_id")

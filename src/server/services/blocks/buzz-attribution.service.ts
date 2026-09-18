@@ -266,7 +266,8 @@ export class AttributionAppMissingError extends Error {
 export const UNRATED_RATE_CARD_VERSION = 'unrated' as const;
 
 // ---------------------------------------------------------------
-// W3 flow A — buzz SPEND attribution (author bounty)
+// W3 flow A — buzz SPEND attribution (TRACK-ONLY audit trail; the author
+// bounty it was built for is removed — see `recordSpendAttribution`)
 // ---------------------------------------------------------------
 
 const SPEND_ATTRIBUTION_LOG_NAME = 'block-spend-attribution';
@@ -457,8 +458,10 @@ export async function resolvePublishedContentAuthorUserId(args: {
 }
 
 /**
- * Record an author bounty for a block-initiated generation that SPENT the
- * viewer's own Buzz. Idempotent on `(workflow_id, app_block_id)` — a
+ * Record a TRACK-ONLY attribution row for a block-initiated generation that
+ * SPENT the viewer's own Buzz. It accrues nothing and pays nobody — the
+ * percentage author bounty it was named for is GONE (see the ⚠️ TRACK-ONLY
+ * paragraph below). Idempotent on `(workflow_id, app_block_id)` — a
  * re-poll / retry / re-submit of the same workflow is a no-op.
  *
  * EVERYTHING is server-derived from the verified block-token claims by
