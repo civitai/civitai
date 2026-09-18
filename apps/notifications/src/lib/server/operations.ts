@@ -232,7 +232,7 @@ type DeletedRow = { userId: number; viewed: boolean };
 export async function cleanupNotifications(before: Date): Promise<number> {
   const write = notifDbWrite();
   let deleted = 0;
-  let busted = 0;
+  let bustsAcked = 0;
   // Batch so a single DELETE can't hold a long lock / bloat WAL on a large sweep.
   for (;;) {
     const resp = await write.query<DeletedRow>(
@@ -243,14 +243,14 @@ export async function cleanupNotifications(before: Date): Promise<number> {
     );
     deleted += resp.rows.length;
     if (resp.rows.length === 0) break;
-    busted += await bustDeletedUnreadCounts(resp.rows);
+    bustsAcked += await bustDeletedUnreadCounts(resp.rows);
   }
   logToAxiom({
     type: 'info',
     name: 'notification.cleanup',
     message: `Cleaned up notifications older than ${before.toISOString()}`,
     deleted,
-    busted,
+    bustsAcked,
   }).catch(() => null);
   return deleted;
 }
@@ -264,15 +264,17 @@ export async function cleanupNotifications(before: Date): Promise<number> {
  * re-derives from the DB, so a bust cannot drift the way an arithmetic adjustment can.
  *
  * Both redis calls swallow their errors: a redis outage must not abort a delete sweep that is doing
- * its real work against postgres. The sweep log carries the attempted/succeeded split so the swallow
- * is visible afterwards.
+ * its real work against postgres. What comes back is the number of DELs redis acknowledged, which the
+ * sweep logs so the swallow is visible afterwards.
  *
  * Flag the lag window BEFORE busting, exactly as markReadImpl does. A count that picks its pool AFTER
  * the flag reads the primary, so it cannot re-cache the rows this batch just deleted. It does NOT save
  * a count already in flight against the replica: that one selected its pool before the flag existed and
- * will still setUser a pre-delete number for the full week — the same exposure mark-read carries, and
- * the reason this is a narrowing rather than a closure. The flag costs nothing when
- * REPLICATION_LAG_DELAY is unset — createLagTracker no-ops a non-positive delay.
+ * will still setUser a pre-delete number for up to a week — the same exposure mark-read carries, and
+ * the reason this is a narrowing rather than a closure. When REPLICATION_LAG_DELAY is unset the
+ * tracker is disabled outright, so the flag costs nothing AND narrows nothing — every count reads the
+ * replica and the exposure is bounded by replica lag instead. See L5 in
+ * docs/plans/notifications-review-action-items.md, which owns deciding that value.
  */
 async function bustDeletedUnreadCounts(rows: DeletedRow[]): Promise<number> {
   const userIds: number[] = [];
@@ -284,9 +286,10 @@ async function bustDeletedUnreadCounts(rows: DeletedRow[]): Promise<number> {
   }
 
   let next = 0;
-  // Counts keys actually dropped, not users attempted: both redis calls swallow their errors, so an
-  // attempt count would report a full sweep's worth of busts through a redis outage that dropped none.
-  let busted = 0;
+  // Acknowledged DELs, not users attempted — a swallowed error would otherwise report a full sweep's
+  // worth of busts through an outage that dropped nothing. NOT a count of keys that existed: redis acks
+  // a DEL for an absent key, and most swept users have no cached count to drop.
+  let acked = 0;
   const workers = Array.from({ length: Math.min(CLEANUP_BUST_CONCURRENCY, userIds.length) }, () =>
     (async () => {
       for (let i = next++; i < userIds.length; i = next++) {
@@ -296,12 +299,12 @@ async function bustDeletedUnreadCounts(rows: DeletedRow[]): Promise<number> {
           .bustUser(userId)
           .then(() => true)
           .catch(() => false);
-        if (ok) busted++;
+        if (ok) acked++;
       }
     })()
   );
   await Promise.all(workers);
-  return busted;
+  return acked;
 }
 
 // --- mark read: per-user serialized + retried on transient pool-acquire errors ----------------------

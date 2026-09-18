@@ -26,13 +26,13 @@ vi.mock('./clients/axiom', () => ({
   },
   safeError: (e: unknown) => e,
 }));
-// Every export of ./cache and ./lag that this module can reach is stubbed, so a call to one cleanup
-// does not make today shows up in `calls` rather than dying as "not a function".
+// Only the cache calls the cleanup path itself makes. A test for another operation added to this file
+// will need more of notificationCache — countNotificationsImpl reaches getUser and setUser.
 vi.mock('./cache', () => ({
   notificationCache: {
-    bustUser: vi.fn(),
-    clearCategory: vi.fn(),
-    decrementUser: vi.fn(),
+    bustUser: vi.fn(async () => undefined),
+    clearCategory: vi.fn(async () => undefined),
+    decrementUser: vi.fn(async () => undefined),
   },
 }));
 vi.mock('./lag', () => ({
@@ -111,6 +111,26 @@ describe('cleanupNotifications cache busting', () => {
     expect(bustedIds().sort((a, b) => a - b)).toEqual(userIds);
   });
 
+  it('never has more than CLEANUP_BUST_CONCURRENCY busts in flight', async () => {
+    // The width cap is the only thing between one batch and thousands of simultaneous redis
+    // round-trips, and it is invisible to every other assertion here: replace the pool with an
+    // unbounded `Promise.all(userIds.map(...))` and they all still pass. If you are deleting this
+    // because the number looks arbitrary, the number is the point.
+    let inFlight = 0;
+    let peak = 0;
+    bustUser.mockImplementation(async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      inFlight--;
+    });
+    batches.push(Array.from({ length: 60 }, (_, i) => ({ userId: i + 200, viewed: false })));
+
+    await cleanupNotifications(before);
+
+    expect(peak).toBe(25);
+  });
+
   it('deletes with RETURNING so the unread filter has something to filter on', async () => {
     batches.push([{ userId: 9, viewed: false }]);
 
@@ -145,10 +165,10 @@ describe('cleanupNotifications cache busting', () => {
     const deleted = await cleanupNotifications(before);
 
     expect(deleted).toBe(2);
-    expect(bustedIds()).toEqual([1, 2]);
+    expect(bustedIds().sort((a, b) => a - b)).toEqual([1, 2]);
   });
 
-  it('reports the busts that landed, not the ones attempted', async () => {
+  it('reports the busts redis acknowledged, not the ones attempted', async () => {
     // A sweep log that reads full while redis is dropping every DEL is the wrong tell to leave for
     // whoever reads it during the next incident.
     bustUser.mockRejectedValueOnce(new Error('redis down'));
@@ -160,6 +180,6 @@ describe('cleanupNotifications cache busting', () => {
     await cleanupNotifications(before);
 
     expect(logged).toHaveLength(1);
-    expect(logged[0]).toMatchObject({ name: 'notification.cleanup', deleted: 2, busted: 1 });
+    expect(logged[0]).toMatchObject({ name: 'notification.cleanup', deleted: 2, bustsAcked: 1 });
   });
 });
