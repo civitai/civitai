@@ -142,15 +142,19 @@ export function recordBridgeMessage(raw: Omit<BridgeMessageEvent, 'count'>): voi
   // batch, destroying every legitimate count flushed with it. Clamping here
   // collapses all junk onto the single `other` key that prom would have bucketed
   // it into anyway, so nothing observable is lost.
-  // …and bound `appBlockId`'s LENGTH for the same all-or-nothing reason. It is
+  // …and bound `appBlockId` the same way, for the same all-or-nothing reason. It is
   // host-supplied rather than block-supplied, so this is a belt rather than the
-  // clamp above — but it is the only field left that could exceed its server-side
-  // cap (`max(256)`) and take a whole batch's worth of good counts down with it.
-  // The server clamps its VALUE to the approved-app set; only the length can fail
-  // the schema, and only the schema failure is destructive.
+  // clamp above — but it is the only field left that could fail its server-side
+  // schema (`z.string().trim().min(1).max(256)`) and take a whole batch's worth of
+  // good counts down with it. 🔴 TWO WAYS, not one: over-length, and — because
+  // zod's `.trim()` runs BEFORE `.min(1)` — whitespace-only, which is truthy here
+  // and so would sail past a bare `|| 'other'`. Hence `.trim()` first. The server
+  // clamps the VALUE to the approved-app set anyway, so a clamped and an unclamped
+  // unknown id produce the same `other` label; only the schema failure is
+  // destructive.
   const event = {
     ...raw,
-    appBlockId: raw.appBlockId.slice(0, 256) || 'other',
+    appBlockId: raw.appBlockId.trim().slice(0, 256) || 'other',
     type: boundBridgeMessageType(raw.type),
   };
   const key = keyOf(event);
@@ -172,10 +176,12 @@ export function flushBridgeMessages(): void {
   }
   if (counts.size === 0) return;
   // 🔴 CLAMP `count` TOO, for the same all-or-nothing reason: a row above the
-  // schema's ceiling 400s the whole batch. The ceiling is ~6.6x what one key can
-  // legitimately accrue in a flush window (see BRIDGE_MESSAGE_COUNT_MAX), so this
-  // clamp is unreachable by a real client — and where it does fire, under-counting
-  // one series beats losing every series in the batch.
+  // schema's ceiling 400s the whole batch, taking every good row with it. Where it
+  // fires the series reads "enormous" instead of "rejected" — see
+  // `BRIDGE_MESSAGE_COUNT_MAX` for why the ceiling is a SANITY bound and not, as
+  // an earlier revision of this comment claimed, a figure no real client can
+  // reach: three of the five outcomes are reported above the bridge's inbound
+  // limiter and are not bounded by it at all.
   const events = [...counts.values()]
     .slice(0, BRIDGE_MESSAGE_BATCH_MAX)
     .map((e) =>

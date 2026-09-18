@@ -179,6 +179,28 @@ describe('bridgeMessageBeacon coalescing', () => {
     ]);
   });
 
+  test('a whitespace-only appBlockId becomes `other`, not a row the schema rejects', async () => {
+    // 🔴 THE NON-OBVIOUS HALF OF THAT CLAMP. zod runs `.trim()` BEFORE `.min(1)`,
+    // so `'   '` is truthy here (a bare `|| 'other'` never fires), trims to `''`
+    // server-side, fails `min(1)`, and 400s the WHOLE batch — the exact
+    // all-or-nothing loss the clamp exists to prevent, arrived at from the one
+    // direction a length check cannot see.
+    recordBridgeMessage({
+      appBlockId: '   ',
+      type: 'GET_VIEWER',
+      host: 'IframeHost',
+      outcome: 'handled',
+    });
+    recordBridgeMessage({
+      appBlockId: 'a'.repeat(300),
+      type: 'GET_VIEWER',
+      host: 'IframeHost',
+      outcome: 'handled',
+    });
+    const rows = _internalsForTests.buffered();
+    expect(rows.map((r) => r.appBlockId).sort()).toEqual(['a'.repeat(256), 'other']);
+  });
+
   test('a count above the schema ceiling is CLAMPED, not left to 400 the whole batch', async () => {
     beaconSpy.mockReturnValue(false);
     const fetchSpy = vi

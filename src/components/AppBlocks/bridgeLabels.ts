@@ -78,8 +78,9 @@ export const BRIDGE_MESSAGE_BATCH_MAX = 200;
  * for THREE of the five outcomes and was cited as justification in two other
  * files, so it is corrected here rather than quietly dropped:
  *
- *   - `handled` and `no_token` ARE bounded by the bridge's 30 msg/sec inbound
- *     limiter — ~300 per key per window.
+ *   - `handled` and `no_token` are the only two the bridge's 30 msg/sec inbound
+ *     limiter bounds at all — ~300 per key per 10 s window, and higher than that
+ *     whenever the window stretches (see below).
  *   - `no_handler` and `deduped` are reported ABOVE that limiter, deliberately (a
  *     flood of unhandled junk must not burn the budget that legitimate
  *     BLOCK_ERROR reporting needs — see `usePostMessage`).
@@ -94,9 +95,13 @@ export const BRIDGE_MESSAGE_BATCH_MAX = 200;
  * The cap is therefore chosen so that a real flood is still VISIBLE rather than
  * exactly counted: above it the client CLAMPS (never drops the batch, never 400s
  * it), so the series reads "enormous" instead of "wrong". 100,000 is ~333× the
- * bounded-path ceiling and above a 10 s window of realistic browser postMessage
- * throughput, so the truncation is reachable only in the flood case it is meant to
- * survive.
+ * limiter-bounded ceiling and well clear of a throttled tab's stretched window, so
+ * on the two bounded outcomes it cannot fire at all. On the other three it can, by
+ * construction — a block in a `postMessage` loop is exactly the case those
+ * outcomes exist to reveal, and truncating a flood to a huge number is the
+ * intended outcome rather than a limitation. Do not read the value as a claim
+ * about browser throughput; it is a claim about which shape of wrongness we
+ * prefer.
  *
  * 🔴 IT DOES NOT BOUND WHAT ONE REQUEST CAN ADD TO A SERIES. Nothing enforces row
  * uniqueness, so a batch may repeat the same label set; the per-request magnitude
