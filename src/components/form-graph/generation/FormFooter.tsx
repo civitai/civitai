@@ -858,9 +858,14 @@ export function FormFooter({
 
     // Collected by CURRENT url, outside the `needsSourceMetadata` gate — see
     // generation_v2/FormFooter.tsx for why both of those matter.
-    const sourceProvenance = (snapshot.images ?? [])
-      .map((img) => remixProvenanceStore.getToken(img.url))
-      .filter(isDefined);
+    const sourceProvenance = [
+      ...(snapshot.images ?? []).map((img) => remixProvenanceStore.getToken(img.url)),
+      // The reuse-prompt entry point's token, which is keyed to no image because
+      // that path seeds none. Sent unconditionally: the server spends it only if
+      // the prompt it validates still derives from the source's, so a form the
+      // user has since rewritten carries a token that buys nothing.
+      remixProvenanceStore.getPromptToken(),
+    ].filter(isDefined);
 
     const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;
     const civitaiTipRate = features.creatorComp ? civitaiTip : 0;

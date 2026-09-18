@@ -1,6 +1,6 @@
 import type { RemixData } from '~/store/remix.store';
 import { isRemixDataFresh, useRemixStore } from '~/store/remix.store';
-import { promptSimilarity } from '~/utils/prompt-similarity';
+import { promptDerivationHolds } from '~/utils/prompt-similarity';
 
 /** The parts of a generation-form snapshot that can still carry a remix. */
 export type RemixClaimFormState = {
@@ -28,15 +28,17 @@ export type RemixClaimState = {
  * to do with the image — which is what put a stranger's XXX image in front of a
  * moderator ruling on an unrelated restriction (ClickUp 868m5acdq).
  *
- * The prompt threshold is the >=0.75 gate the old form ran. It was removed
- * wholesale in the v2 form because an image edit or an image-to-video shares no
- * prompt with its source, so it broke the link exactly where the derivation was
- * most literal (see `track.schema.ts`) — it is reinstated here only on the
- * branch where the prompt IS the carrier.
+ * The prompt threshold is `promptDerivationHolds`, the gate the old form ran. It
+ * was removed wholesale in the v2 form because an image edit or an image-to-video
+ * shares no prompt with its source, so it broke the link exactly where the
+ * derivation was most literal (see `track.schema.ts`) — it is reinstated here only
+ * on the branch where the prompt IS the carrier.
  *
- * 🔴 The only derivation of this rule — reuse it, don't recompute the threshold
- * elsewhere. A second copy that drifts from this one could tell someone their
- * remix still counts when the submit drops it.
+ * 🔴 Measured 2026-09-18 over 30 days, on the 1,683 remix-gallery submissions
+ * whose placer never clicked Remix on the host image: 41% clear the threshold
+ * anyway. Similarity alone is not evidence of derivation
+ * and this must never become the whole free-submission gate — it bounds drift
+ * AFTER a minted click, which is what carries the trust.
  */
 export function remixClaimState(
   data: RemixData | null,
@@ -60,10 +62,10 @@ export function remixClaimState(
   if (!form.prompt?.trim())
     return { holds: false, carrier: 'prompt', reason: 'uncarried', score: null };
 
-  const { similar, adjustedCosine } = promptSimilarity(seeded, form.prompt);
-  return similar
-    ? { holds: true, carrier: 'prompt', reason: null, score: adjustedCosine }
-    : { holds: false, carrier: 'prompt', reason: 'drifted', score: adjustedCosine };
+  const { holds, score } = promptDerivationHolds(seeded, form.prompt);
+  return holds
+    ? { holds: true, carrier: 'prompt', reason: null, score }
+    : { holds: false, carrier: 'prompt', reason: 'drifted', score };
 }
 
 export function remixClaimHolds(

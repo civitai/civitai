@@ -42,8 +42,21 @@ type Entry = {
 
 interface RemixProvenanceState {
   tokensByUrl: Record<string, Entry>;
+  /**
+   * The token for a source whose PROMPT was reused. One, not a map: reusing a
+   * prompt replaces the whole form, so a second reuse supersedes the first
+   * rather than joining it.
+   *
+   * It is not keyed, and nothing clears it when the user edits the prompt away.
+   * That is deliberate and safe — the server spends this token only if the prompt
+   * it validates still derives from the source's, so a drifted form makes a stale
+   * token inert without the client having to notice.
+   */
+  promptToken?: Entry;
   setToken: (url: string, token: string) => void;
   getToken: (url: string) => string | undefined;
+  setPromptToken: (token: string) => void;
+  getPromptToken: () => string | undefined;
   /**
    * Move a token from the URL it was minted against to the URL that replaced it.
    * No-op when there is nothing to move, so the upload path can call it
@@ -74,6 +87,10 @@ export const useRemixProvenanceStore = create<RemixProvenanceState>()(
 
       getToken: (url) => get().tokensByUrl[url]?.token,
 
+      setPromptToken: (token) => set({ promptToken: { token, storedAt: Date.now() } }),
+
+      getPromptToken: () => get().promptToken?.token,
+
       transfer: (fromUrl, toUrl) => {
         set((state) => {
           const existing = state.tokensByUrl[fromUrl];
@@ -90,7 +107,7 @@ export const useRemixProvenanceStore = create<RemixProvenanceState>()(
         });
       },
 
-      clearAll: () => set({ tokensByUrl: {} }),
+      clearAll: () => set({ tokensByUrl: {}, promptToken: undefined }),
     }),
     {
       name: 'remix-provenance',
@@ -104,6 +121,8 @@ export const useRemixProvenanceStore = create<RemixProvenanceState>()(
 export const remixProvenanceStore = {
   setToken: (url: string, token: string) => useRemixProvenanceStore.getState().setToken(url, token),
   getToken: (url: string) => useRemixProvenanceStore.getState().getToken(url),
+  setPromptToken: (token: string) => useRemixProvenanceStore.getState().setPromptToken(token),
+  getPromptToken: () => useRemixProvenanceStore.getState().getPromptToken(),
   transfer: (fromUrl: string, toUrl: string) =>
     useRemixProvenanceStore.getState().transfer(fromUrl, toUrl),
   removeToken: (url: string) => useRemixProvenanceStore.getState().removeToken(url),
