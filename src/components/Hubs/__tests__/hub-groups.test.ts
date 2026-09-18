@@ -130,9 +130,15 @@ describe('addTagToHubGroup', () => {
     // Refusing this left an owner unable to group two tags they already had: the picker
     // showed the second greyed out as "Added", with no way forward.
     //
-    // The whole row is asserted, and the fixture differs from the group on every field
-    // a broken move could clobber — a moved row must keep its own alias, exclude and
-    // index, and take ONLY the group's key and enabled state.
+    // The whole row is asserted, against a fixture that differs from the group on
+    // `alias`, `enabled`, `index` and `groupKey` — a moved row keeps the first three
+    // and takes only the key and the enabled state.
+    //
+    // ⚠️ It does NOT cover `exclude`, and cannot: the move is refused outright when the
+    // polarities differ (the case above), so by the time this branch runs the two are
+    // already equal and rewriting `exclude` here is unobservable. Measured — adding
+    // `exclude: !!first.exclude` to the move branch leaves this file green. If the
+    // refusal is ever relaxed, this stops being a no-op and needs its own case.
     const value = [
       source({ targetId: 77, enabled: false, groupKey: 2 }),
       source({ targetId: 78, alias: 'cyberpunk', enabled: true, index: 5 }),
