@@ -563,7 +563,19 @@ export const blockStepBodySchema = makeBlockStepBodySchema(REGISTERED_STEP_IDS);
  */
 export const PASS_THROUGH_MAX_BUZZ = INLINE_MAX_BUZZ;
 
-const PASS_THROUGH_TYPE_MAX_CHARS = 64;
+/**
+ * Max characters of a pass-through `$type`.
+ *
+ * 🔴 EXPORTED so the SEAM can be pinned, not for reuse. The submitted `$type`
+ * becomes the SUBTYPE of the recorded generation type (`step:<$type>`), and
+ * `generation-type.ts` carries its own literal copy of this cap because it must
+ * stay import-light on the fire-and-forget spend path. `generation-type.test.ts`
+ * imports both and asserts them equal, plus equal to a LITERAL — the pair that
+ * catches growth, shrinkage and joint drift: a wire cap raised past that copy
+ * would silently degrade every long `$type` to a bare `step`, a depth loss in an
+ * unbackfillable column that nothing else reports.
+ */
+export const PASS_THROUGH_TYPE_MAX_CHARS = 64;
 
 /**
  * Max serialized bytes of a pass-through `input`.

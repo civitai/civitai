@@ -3606,16 +3606,29 @@ model BlockSpendAttribution {
 
   /// The APP-FACING generation type this spend paid for, as `<coarse>` or
   /// `<coarse>:<subtype>` — e.g. `textToImage:img2img-edit`,
-  /// `customComfy:seamless-pano-360`, `customComfy:inline`, or a bare
-  /// registered STEP ID (`convert-image`, `chat-completion`). NEVER the
-  /// orchestrator's internal `$type` (`convertImage` / `chatCompletion`), which
-  /// is free to change without a wire-contract decision.
+  /// `customComfy:seamless-pano-360`, `customComfy:inline`, a bare registered
+  /// STEP ID (`convert-image`, `chat-completion`), or `step:<orchestrator $type>`
+  /// on the PASS-THROUGH step arm.
+  ///
+  /// 🔴 EVERY VALUE IS AN APP-FACING ID AND NEVER THE ORCHESTRATOR'S INTERNAL
+  /// `$type` — EXCEPT UNDER THE `step` COARSE KEY, WHICH IS EXACTLY THAT, AND IS
+  /// CALLER-SUPPLIED. The pass-through arm (`kind:'step'` with a bare `$type` and
+  /// no registry id) has no app-facing id at all: the `$type` IS the contract the
+  /// app wrote, it is validated against nothing but the platform-internal
+  /// denylist, and it is bounded here only by SHAPE (≤64 chars of
+  /// `[A-Za-z0-9._-]`). The `step:` prefix is what keeps that visible and keeps it
+  /// out of the other keys' namespaces — `textToImage` and `customComfy` are
+  /// themselves real orchestrator `$type`s, so a bare one would be indistinguishable
+  /// from a genuine image submit. Every other arm's value is server-owned.
   ///
   /// 🔴 THE COARSE KEY IS EVERYTHING BEFORE THE FIRST COLON, and a value carries
   /// at most one. A per-generation-type author fee keys on the coarse key, so
   /// `split_part(generation_type, ':', 1)` is the stable grouping no matter how
-  /// the subtype axis grows. A step id implies `kind: 'step'` and carries no
-  /// subtype, so one column covers the whole axis with no companion `kind`.
+  /// the subtype axis grows — and on `step:` rows it is also the ONLY safe
+  /// grouping, because the subtype is app-chosen. Do not key a fee, a rate or a
+  /// payout on the full value. A registry step id implies `kind: 'step'` and
+  /// carries no subtype, so one column still covers the whole axis with no
+  /// companion `kind`.
   ///
   /// Deliberately unconstrained TEXT — no CHECK, no enum. Both the step and
   /// recipe registries are designed to grow additively (register an entry, not

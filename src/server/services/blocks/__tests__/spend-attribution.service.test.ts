@@ -609,6 +609,36 @@ describe('recordSpendAttribution — generation type', () => {
     }
   });
 
+  it('persists a PASS-THROUGH `step:<$type>` value — the re-check must not be a LEDGER check', async () => {
+    // 🔴 THE MUTATION THIS EXISTS FOR, and it is the one that reinstates the
+    // original defect while every other test in the repo stays green: narrowing
+    // the write-side re-check from `isBlockGenerationType` (the SHAPE bound) to
+    // `BLOCK_GENERATION_TYPES.includes(...)` (the LEDGER). The ledger deliberately
+    // contains no `step:` value — the arm is open and infinite — so that swap
+    // sends every pass-through row back to `generation_type = NULL`. The router
+    // tests cannot see it: they assert what was PASSED to this service, and this
+    // is the one place that decides what is PERSISTED.
+    for (const value of ['step:imageBackgroundRemoval', 'step:imageGen', 'step']) {
+      mockDbWrite.blockSpendAttribution.create.mockClear();
+      await recordSpendAttribution(fakeInput({ generationType: value as never }));
+      const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+      expect(data.generationType).toBe(value);
+    }
+  });
+
+  it('persists NULL for a `step:` value the SHAPE bound refuses — bounded, not waved through', async () => {
+    // The open arm is bounded by shape, and that bound is re-run HERE. A caller
+    // assembling a value by hand (a cast, a future writer) cannot stamp a
+    // colon-bearing, over-long or whitespace-bearing subtype on a money row —
+    // and the type cannot stop them, because `step:${string}` admits all three.
+    for (const value of ['step:a:b', `step:${'a'.repeat(65)}`, 'step:foo bar', 'step:']) {
+      mockDbWrite.blockSpendAttribution.create.mockClear();
+      await recordSpendAttribution(fakeInput({ generationType: value as never }));
+      const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+      expect(data.generationType).toBeNull();
+    }
+  });
+
   it('persists the REGISTERED STEP ID, and does not rewrite it to the orchestrator type', async () => {
     // 🔴 The design risk. The column must carry `chat-completion` (the permanent
     // public wire id), never `chatCompletion` (the orchestrator's spelling).
@@ -626,10 +656,11 @@ describe('recordSpendAttribution — generation type', () => {
   });
 
   it('persists NULL — not the raw value, and without throwing — for an UNRECOGNISED type', async () => {
-    // Re-checked at the write against the same registry-derived list, so a
-    // caller that bypasses the type (a cast, a future writer) still cannot stamp
-    // an arbitrary string on a money/audit row. A wrong type is worse than a
-    // missing one.
+    // Re-checked at the write against the same SHAPE bound the producer runs —
+    // not against a list, which is what this line used to say and is exactly the
+    // narrowing the `step:` test above exists to forbid. So a caller that
+    // bypasses the type (a cast, a future writer) still cannot stamp an arbitrary
+    // string on a money/audit row. A wrong type is worse than a missing one.
     const hostile = {
       ...fakeInput(),
       generationType: 'chatCompletion', // the orchestrator spelling — not an app-facing key

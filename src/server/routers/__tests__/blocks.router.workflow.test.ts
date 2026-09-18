@@ -10540,6 +10540,66 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       );
     });
 
+    // 🔴 THE GENERATION TYPE. Until this arm passed one, EVERY pass-through
+    // generation recorded `generation_type: NULL` — the value was simply not
+    // handed to the writer, and NULL is a legitimate value in that column, so
+    // nothing surfaced it. An untyped spend event can never be typed
+    // retrospectively, and the per-generation-type author fee keys on this.
+    // End-to-end rather than a resolver unit test: what proves the wiring is
+    // live is reading what the real handler actually passed.
+    it('stamps the generation type as `step:<submitted $type>` on the spend attribution', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      // `vi.waitFor`, matching every other spend-attribution assertion in this
+      // file — a bare `setTimeout(0)` races the fire-and-forget write on a busy box.
+      await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
+      const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
+      // 🔴 THE ONE LOAD-BEARING LINE, and a literal — never re-derived from the
+      // resolver under test. Two companions were written and DELETED: a
+      // `.not.toBeNull()` that CANNOT see this defect (the pre-change code omitted
+      // the field, so the value was `undefined`, and `expect(undefined)
+      // .not.toBeNull()` passes), and a `.not.toBeUndefined()` that is strictly
+      // implied by this equality. Neither added coverage; the first actively
+      // misdirected, which is worse.
+      expect(stamped).toBe('step:imageBackgroundRemoval');
+    });
+
+    it('NAMESPACES a $type that collides with a kind key — never bare `textToImage`', async () => {
+      // 🔴 THE REASON THE VALUE IS PREFIXED, asserted at the call site the money
+      // flows through. `textToImage` is itself a live orchestrator `$type`
+      // (measured against `WorkflowStepTemplate.discriminator.mapping`), so a bare
+      // `$type` here would be indistinguishable from a genuine
+      // `kind:'textToImage'` submit — and priced as one.
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ptBody({ $type: 'textToImage' }),
+      });
+      await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
+      const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
+      expect(stamped).toBe('step:textToImage');
+      expect(stamped).not.toBe('textToImage');
+    });
+
+    it('DEGRADES to the bare `step` for a wire-legal but unusable $type', async () => {
+      // `$type` is `z.string().min(1).max(64)` with no character class, so `a:b`
+      // PARSES and reaches this submit. A second colon would break the value
+      // grammar, so the subtype is dropped — the row still records that a
+      // pass-through submit happened, which is shallower and never wrong. The
+      // write is fire-and-forget off an already-billed submit, so this must
+      // degrade rather than throw.
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: 'a:b' }) });
+      await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
+      expect(mockRecordSpendAttribution.mock.calls[0][0].generationType).toBe('step');
+    });
+
     it('IDEMPOTENCY: a replayed submit does not double-charge', async () => {
       mockVerifyBlockToken.mockResolvedValue(ptClaims());
       happyUser();

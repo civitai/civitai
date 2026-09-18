@@ -10120,6 +10120,26 @@ async function submitPassThroughStepWorkflow(opts: {
         // COUNTED skip (`price-is-cap`), never folded into `base-unavailable`,
         // and slice 2 owns the question of what a cap-priced path should charge.
         generationPriceIsCap: realizedPriceIsCap,
+        // APP-FACING generation type = `step:<submitted $type>`. 🔴 NAMESPACED,
+        // AND THE NAMESPACE IS THE WHOLE POINT: `textToImage` and `customComfy`
+        // are THEMSELVES live orchestrator `$type`s, so recording a bare `$type`
+        // here would stamp `{kind:'step', $type:'textToImage'}` as an image
+        // generation and the per-generation-type author fee would price it as one.
+        // Under `step:` the COARSE key of every pass-through row is `step`,
+        // which is the key that fee looks up.
+        //
+        // 🔴 THE SUBTYPE IS CALLER-INFLUENCED — unlike every other value this
+        // column holds, it is not drawn from a server-owned set. This arm
+        // validates `$type` against nothing but the denylist, so the string is the
+        // app's; `resolveBlockGenerationType` bounds it by SHAPE (non-empty,
+        // colon-free, length-capped) and degrades anything else to the bare
+        // `step`. Same reasoning as `detail.step` on the invocation row above: a
+        // TEXT column has no cardinality budget to blow, unlike a metric label.
+        //
+        // Without this the arm recorded NULL on every generation — the value was
+        // simply not passed, and `null` is a legitimate value here, so nothing
+        // surfaced it. An untyped spend event can never be typed retrospectively.
+        generationType: resolveBlockGenerationType(body),
       });
     })().catch(() => {
       /* best-effort: a failed attribution write never breaks submit */
