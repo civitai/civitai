@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * The hook BODY, not its two pure halves.
@@ -26,6 +26,7 @@ const VIEWER = 9266475;
 const queryResults = vi.hoisted(() => ({
   current: [] as { data?: Record<number, string[]>; dataUpdatedAt: number }[],
 }));
+const asked = vi.hoisted(() => ({ current: [] as { imageIds: number[] }[] }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: VIEWER }) }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
@@ -36,8 +37,20 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       // regardless of what the hook asked for would hand data to a surface that issued no query
       // at all — which is how the non-image case below passed against a broken stub the first
       // time it ran.
-      const descriptors = build({ reaction: { getMyImageReactions: () => undefined } });
-      return queryResults.current.slice(0, descriptors.length);
+      // The descriptors are KEPT, not just counted. Counting alone leaves the stub blind to what
+      // the hook actually asked for: `{ imageIds: chunk }` -> `{ imageIds: chunks[0] }` is green
+      // against a counting stub, and in production it makes every chunk after the first ask about
+      // the first one's ids, so the back half of a large grid never hydrates.
+      const descriptors = build({
+        reaction: { getMyImageReactions: (input: unknown) => input },
+      }) as { imageIds: number[] }[];
+      asked.current = descriptors;
+      // Mapped, not sliced: a `queryResults` shorter than the descriptor list would silently hand
+      // the hook fewer results than `useQueries` can ever return, which is a shape production
+      // cannot produce. One result per descriptor, always.
+      return descriptors.map(
+        (_, i) => queryResults.current[i] ?? { data: undefined, dataUpdatedAt: 0 }
+      );
     },
   },
 }));
@@ -64,7 +77,17 @@ function renderHook<T>(useHook: () => T) {
 }
 
 describe('useHydratedImageReactions wiring', () => {
+  beforeEach(() => {
+    // Reset explicitly. Inheriting the previous test's value would inherit it as HYDRATED data,
+    // which is the direction that produces a false green.
+    queryResults.current = [];
+    asked.current = [];
+  });
+
   it('merges a reaction that arrives after the first render', () => {
+    // Hoisted out of the probe deliberately: a fresh `images` identity on every render would make
+    // the final memo recompute regardless of its dep list, and the control for that dep list would
+    // silently stop catching anything.
     const images = [{ id: 142799705, reactions: [] }];
     queryResults.current = [{ data: undefined, dataUpdatedAt: 0 }];
 
@@ -90,9 +113,28 @@ describe('useHydratedImageReactions wiring', () => {
       useHydratedImageReactions(images, { entity: 'model' })
     );
 
-    // The data is present and must still not be applied: the gate is in the chunking, so a
-    // non-image surface never asked for it and must not consume someone else's answer either.
+    // What this proves is narrower than it looks, and the narrow thing is the point: the stub is
+    // what withholds the answer, so this cannot tell a hook that filters from one that never
+    // asked. It proves the gate survives the WHOLE BODY — chunking, `useQueries`, `byImageId`,
+    // merge — which the pure `it.each` next door cannot, and it is the only test that would catch
+    // `byImageId` being sourced from anything other than `queries`.
     expect(result.current[0].reactions).toEqual([]);
+    unmount();
+  });
+});
+
+describe('useHydratedImageReactions chunking, through the hook', () => {
+  it('asks each chunk about its own ids', () => {
+    // Unreachable on today's config — `FEED_FETCH_CEILING` and the collection limit are both 100,
+    // which is `REACTION_FETCH_CHUNK`, so a block's pool is always one chunk. This covers the day
+    // one of those numbers goes up, which is a one-token edit nothing else would connect to this.
+    const images = Array.from({ length: 150 }, (_, i) => ({ id: i + 1, reactions: [] }));
+    queryResults.current = [];
+
+    const { unmount } = renderHook(() => useHydratedImageReactions(images, { entity: 'image' }));
+
+    expect(asked.current.map((input) => input.imageIds.length)).toEqual([100, 50]);
+    expect(asked.current[1].imageIds[0]).toBe(101);
     unmount();
   });
 });
