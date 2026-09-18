@@ -64,10 +64,11 @@ function SourceChip({
 /**
  * What goes in a hub, and what never does.
  *
- * One always-present search box per list rather than an "add source" mode with an
- * include/exclude switch and type tabs: the mode, the switch and the tabs were three
- * things to learn before anything could be added, and the exclusions are better said
- * as their own short list than as a state of the same one.
+ * An always-present picker per list rather than an "add source" mode with an
+ * include/exclude switch: both were things to learn before anything could be added,
+ * and the exclusions are better said as their own short list than as a state of the
+ * same one. The picker's tabs are not the old type tabs — those gated adding until you
+ * declared a kind; these only choose which shelf you browse.
  *
  * Sources carry an `enabled` flag that nothing here sets any more. A source is in the
  * hub or removed from it; the flag stays true for everything this writes.
@@ -75,15 +76,11 @@ function SourceChip({
 export function HubSourceEditor({
   value,
   onChange,
-  maxSources = hubLimits.sourcesPerHub,
-  maxExclusions = hubLimits.exclusionsPerHub,
   disabled,
   emptyMessage = 'Nothing here yet — search above to start filling it.',
 }: {
   value: HubSourceValue[];
   onChange: (next: HubSourceValue[]) => void;
-  maxSources?: number;
-  maxExclusions?: number;
   disabled?: boolean;
   emptyMessage?: string;
 }) {
@@ -124,7 +121,7 @@ export function HubSourceEditor({
     }
 
     const count = exclude ? excluded.length : included.length;
-    const cap = exclude ? maxExclusions : maxSources;
+    const cap = exclude ? hubLimits.exclusionsPerHub : hubLimits.sourcesPerHub;
     if (count >= cap) {
       showErrorNotification({
         title: exclude ? 'Never-show list is full' : 'Hub is full',
@@ -144,7 +141,7 @@ export function HubSourceEditor({
   // Capped here rather than refused, because overrunning is the expected case for the
   // people these actions are for: 568 follows, 50 slots.
   const addMany = (incoming: HubSourceValue[]) => {
-    const room = maxSources - included.length;
+    const room = hubLimits.sourcesPerHub - included.length;
     if (room <= 0) return;
 
     const fresh = incoming.filter((source) => !held(source.type, source.targetId));
@@ -169,9 +166,8 @@ export function HubSourceEditor({
           What goes in it
         </Text>
         <HubSourceInput
-          showSuggestions
           disabled={disabled}
-          remaining={maxSources - included.length}
+          remaining={hubLimits.sourcesPerHub - included.length}
           isAdded={(source) => !!held(source.type, source.targetId)}
           onAdd={(source) => addSource(source, false)}
           onRemove={removeByTarget}
@@ -198,7 +194,8 @@ export function HubSourceEditor({
 
       {!!included.length && (
         <Text size="xs" c="dimmed">
-          {included.length} of {maxSources} — creators, models and tags share one budget
+          {included.length} of {hubLimits.sourcesPerHub} — creators, models and tags share one
+          budget
         </Text>
       )}
 
@@ -233,9 +230,9 @@ export function HubSourceEditor({
         {addingExclusion && (
           <HubSourceInput
             autoFocus
+            exclude
             disabled={disabled}
-            placeholder="Search what to keep out — or paste a link"
-            remaining={maxExclusions - excluded.length}
+            remaining={hubLimits.exclusionsPerHub - excluded.length}
             isAdded={(source) => !!held(source.type, source.targetId)}
             onAdd={(source) => addSource(source, true)}
             onRemove={removeByTarget}

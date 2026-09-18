@@ -1,12 +1,11 @@
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addUserHubSourceSchema,
-  createHubFromTemplateSchema,
-  getHubSourceSuggestionsSchema,
+  getHubSourceCandidatesSchema,
   hubSourceTargetSchema,
   getUserHubByKeySchema,
   resolveHubSourceSchema,
-  searchHubSourcesSchema,
+  getHubSourceScopeSchema,
   setUserHubOrderSchema,
   userHubFollowSchema,
   upsertUserHubSchema,
@@ -15,17 +14,15 @@ import {
 import {
   addUserHubSource,
   getHubSourceCandidates,
-  getHubSourceGroups,
   deleteUserHub,
   followUserHub,
   getFollowedHubs,
   getUserHubByKey,
-  getHubSourceSuggestions,
   getHubSourceState,
   getUserHubs,
   removeUserHubSource,
   resolveHubSourceFromUrl,
-  searchHubSources,
+  getHubSourceScope,
   setUserHubOrder,
   unfollowUserHub,
   upsertUserHub,
@@ -68,14 +65,15 @@ export const userHubRouter = router({
     .mutation(({ input, ctx }) =>
       upsertUserHub({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
-  sourceGroups: userHubProcedure
+  sourceScope: userHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })
-    .query(({ ctx }) =>
-      getHubSourceGroups({ userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    .input(getHubSourceScopeSchema)
+    .query(({ input, ctx }) =>
+      getHubSourceScope({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
   sourceCandidates: userHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })
-    .input(createHubFromTemplateSchema)
+    .input(getHubSourceCandidatesSchema)
     .query(({ input, ctx }) => getHubSourceCandidates({ ...input, userId: ctx.user.id })),
   addSource: userHubProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
@@ -90,26 +88,6 @@ export const userHubRouter = router({
     .input(getByIdSchema)
     .mutation(({ input, ctx }) =>
       deleteUserHub({ id: input.id, userId: ctx.user.id, isModerator: ctx.user.isModerator })
-    ),
-  sourceSuggestions: userHubProcedure
-    .meta({ requiredScope: TokenScope.UserRead })
-    .input(getHubSourceSuggestionsSchema)
-    .query(({ input, ctx }) =>
-      getHubSourceSuggestions({
-        ...input,
-        userId: ctx.user.id,
-        isModerator: ctx.user.isModerator,
-      })
-    ),
-  searchSources: userHubProcedure
-    .meta({ requiredScope: TokenScope.UserRead })
-    .input(searchHubSourcesSchema)
-    .query(({ input, ctx }) =>
-      searchHubSources({
-        ...input,
-        userId: ctx.user.id,
-        isModerator: ctx.user.isModerator,
-      })
     ),
   resolveSource: userHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })

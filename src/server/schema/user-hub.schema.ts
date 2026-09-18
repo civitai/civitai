@@ -239,9 +239,9 @@ export const hubTemplateSchema = z.enum(['my-models', 'following', 'bookmarks'])
 
 export type HubTemplate = z.infer<typeof hubTemplateSchema>;
 
-export const createHubFromTemplateSchema = z.object({ template: hubTemplateSchema });
+export const getHubSourceCandidatesSchema = z.object({ template: hubTemplateSchema });
 
-export type CreateHubFromTemplateInput = z.infer<typeof createHubFromTemplateSchema>;
+export type GetHubSourceCandidatesInput = z.infer<typeof getHubSourceCandidatesSchema>;
 
 export const resolveHubSourceSchema = z.object({
   url: z.string().trim().min(1).max(500),
@@ -249,30 +249,23 @@ export const resolveHubSourceSchema = z.object({
 
 export type ResolveHubSourceInput = z.infer<typeof resolveHubSourceSchema>;
 
-// One type per request: each arm is a multi-query fan-out over sets that scale
-// with how much the viewer follows, so searching all three per keystroke does not
-// pay for itself.
-export const hubSuggestionTypeSchema = z.enum([
-  UserHubSourceType.User,
-  UserHubSourceType.Model,
-  UserHubSourceType.Collection,
-]);
+/**
+ * What the picker is looking through. A tab, not a filter: the search box under it
+ * searches WITHIN the chosen scope, so "no results" means no results of that kind —
+ * which is why the server also reports where the matches actually were.
+ *
+ * `tags` is the odd one: nothing of yours to browse, so it holds nothing until typed.
+ */
+export const hubSourceScopeSchema = z.enum(['all', 'following', 'my-models', 'bookmarks', 'tags']);
 
-export const getHubSourceSuggestionsSchema = z.object({
-  type: hubSuggestionTypeSchema.default(UserHubSourceType.User),
+export type HubSourceScope = z.infer<typeof hubSourceScopeSchema>;
+
+export const getHubSourceScopeSchema = z.object({
+  scope: hubSourceScopeSchema,
   query: z.string().trim().max(100).optional(),
 });
 
-export type HubSuggestionType = z.infer<typeof hubSuggestionTypeSchema>;
-
-export type GetHubSourceSuggestionsInput = z.infer<typeof getHubSourceSuggestionsSchema>;
-
-// The picker's one box: no type, because it no longer asks which kind you are adding.
-export const searchHubSourcesSchema = z.object({
-  query: z.string().trim().max(100).optional(),
-});
-
-export type SearchHubSourcesInput = z.infer<typeof searchHubSourcesSchema>;
+export type GetHubSourceScopeInput = z.infer<typeof getHubSourceScopeSchema>;
 
 // One source at a time, addressed by what it points at rather than by row id: the
 // caller is a model or creator page that knows the target and nothing about the

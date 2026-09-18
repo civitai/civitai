@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { TRPCError } from '@trpc/server';
 import type * as Blocklist from '~/server/services/blocklist.service';
 
 // The scan is the real one everywhere else; here it stands in for "this exact text is
@@ -11,9 +12,9 @@ vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   throwOnBlockedUserContent: blockedTextMock,
 }));
 
-import { getHubSourceCandidates, getHubSourceGroups } from '~/server/services/user-hub.service';
+import { getHubSourceCandidates } from '~/server/services/user-hub.service';
 import { hubLimits } from '~/server/schema/user-hub.schema';
-import { ModelStatus, UserHubSourceType } from '~/shared/utils/prisma/enums';
+import { ModelStatus, UserEngagementType, UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // A starting point is the only thing that fills a hub with sources nobody picked one
@@ -42,10 +43,13 @@ beforeEach(() => {
 // Refuses any call whose content includes `blocked`, the way the real scan refuses a
 // matched pattern — batch calls included, since that is the call the service makes
 // first.
+//
+// 🔴 A TRPCError, not an Error: the service tells a refusal from a scan that could not
+// RUN by the error's type, so a fake throwing anything else is testing the other branch.
 const refuse = (blocked: string) =>
   blockedTextMock.mockImplementation(async (content: unknown) => {
     const values = Array.isArray(content) ? content : [content];
-    if (values.includes(blocked)) throw new Error('blocked');
+    if (values.includes(blocked)) throw new TRPCError({ code: 'BAD_REQUEST', message: 'blocked' });
   });
 
 describe('getHubSourceCandidates', () => {
@@ -106,6 +110,11 @@ describe('getHubSourceCandidates', () => {
 
     expect(result.total).toBe(312);
     expect(result.sources).toHaveLength(1);
+    // Same filters as the gather above, for the same reason: this number is what the
+    // shortfall line and the "Add N" label are computed from.
+    expect(countModels.mock.calls[0][0]).toMatchObject({
+      where: { userId: 5, status: ModelStatus.Published, deletedAt: null },
+    });
   });
 
   it('returns an empty list rather than throwing when there is nothing to gather', async () => {
@@ -159,6 +168,9 @@ describe('getHubSourceCandidates', () => {
 
     expect(findFollows.mock.calls[0][0]).toMatchObject({ take: hubLimits.sourcesPerHub * 3 });
     expect(result.sources).toHaveLength(1);
+    expect(countFollows.mock.calls[0][0]).toMatchObject({
+      where: { userId: 5, type: UserEngagementType.Follow },
+    });
   });
 
   it('keeps a creator whose name the scan refuses, without its label', async () => {
@@ -179,43 +191,18 @@ describe('getHubSourceCandidates', () => {
       [4, null],
     ]);
   });
-});
 
-describe('getHubSourceGroups', () => {
-  it('keeps the viewer own models out of the bookmarked group', async () => {
-    // Asserted on the QUERY: a mocked Prisma returns the rows either way, and a
-    // creator seeing their own catalogue listed twice — once as theirs, once as
-    // something they saved — is what the split exists to stop.
-    dbMock.dbRead.collection.findFirst.mockResolvedValue({ id: 3 });
-    dbMock.dbRead.collectionItem.findMany.mockResolvedValue([{ modelId: 8 }]);
-    dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([]);
-    findModels.mockResolvedValue([]);
+  it('raises a scan that could not run rather than stripping every label', async () => {
+    // `getBlocklistDTO` reads Redis and the replica. A blip there throws from inside the
+    // scan, and the branch above would read it as "blocked" — handing back a list with
+    // every alias nulled and no error, which is a silent success at the moment the
+    // control is not running.
+    blockedTextMock.mockRejectedValue(new Error('ECONNRESET'));
+    findFollows.mockResolvedValue([{ targetUserId: 3 }]);
+    findUsers.mockResolvedValue([{ id: 3, username: 'fine' }]);
 
-    await getHubSourceGroups({ userId: 5 });
-
-    const bookmarkedQuery = findModels.mock.calls
-      .map((call) => call[0] as { where?: { userId?: unknown } })
-      .find((call) => typeof call.where?.userId === 'object');
-
-    expect(bookmarkedQuery?.where?.userId).toEqual({ not: 5 });
-  });
-
-  it('returns the three groups the picker renders, each with what there was', async () => {
-    countModels.mockResolvedValue(312);
-    countFollows.mockResolvedValue(568);
-    dbMock.dbRead.collection.findFirst.mockResolvedValue(null);
-    dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([]);
-    findModels.mockResolvedValue([]);
-
-    const groups = await getHubSourceGroups({ userId: 5 });
-
-    // The totals are what the group headers and the bulk actions are drawn from —
-    // "Creators you follow · 568 · Add 50" is a lie the moment they come from the
-    // preview instead.
-    expect(groups.map((group) => [group.template, group.total])).toEqual([
-      ['following', 568],
-      ['my-models', 312],
-      ['bookmarks', 0],
-    ]);
+    await expect(getHubSourceCandidates({ template: 'following', userId: 5 })).rejects.toThrow(
+      'ECONNRESET'
+    );
   });
 });

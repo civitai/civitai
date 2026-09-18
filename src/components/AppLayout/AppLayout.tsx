@@ -43,6 +43,11 @@ export function AppLayout({
   children: React.ReactNode;
   renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement;
   subNav?: React.ReactNode | null;
+  /**
+   * The page's OWN navigation, on its own row inside the same sticky bar: beside the
+   * site tabs it reads as another one of them. Rendered bare — the row styles itself,
+   * so one that hides at a breakpoint leaves no empty bar behind.
+   */
   pageNav?: React.ReactNode;
   left?: React.ReactNode;
   right?: React.ReactNode;
@@ -137,10 +142,6 @@ export function MainContent({
             <VerifyEmailBanner />
             <RewardsBonusBanner />
             {subNav}
-            {/* The page's OWN navigation, on its own row inside the same sticky bar:
-                beside the site tabs it reads as another one of them. Rendered bare —
-                the row styles itself, so one that hides at a breakpoint leaves no
-                empty bar behind. */}
             {pageNav}
           </SubNav>
         ) : (
@@ -162,10 +163,6 @@ export function MainContent({
             <VerifyEmailBanner />
             <RewardsBonusBanner />
             {subNav}
-            {/* The page's OWN navigation, on its own row inside the same sticky bar:
-                beside the site tabs it reads as another one of them. Rendered bare —
-                the row styles itself, so one that hides at a breakpoint leaves no
-                empty bar behind. */}
             {pageNav}
           </SubNav>
         ) : (

@@ -65,8 +65,9 @@ const sourceKindLabels: Record<string, string> = {
 };
 
 /**
- * A colour per kind. Three kinds share one search box and one list of chips, so the
- * kind is what a row is read for — one neutral badge makes them all look alike.
+ * A colour per kind. Picker rows and the chips below them mix creators, models and
+ * tags, so the kind is what a row is read for — one neutral badge makes them all look
+ * alike.
  */
 export const kindColor: Record<string, string> = {
   User: 'blue',

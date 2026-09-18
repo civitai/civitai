@@ -167,7 +167,7 @@ export function HubsLanding() {
           title="Start with one of these"
           aside={
             <Text size="sm" c="dimmed">
-              One click. You can change what is in it afterwards.
+              We fill the list — nothing is saved until you have looked at it.
             </Text>
           }
         />

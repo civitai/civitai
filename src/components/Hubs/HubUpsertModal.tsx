@@ -122,13 +122,25 @@ export default function HubUpsertModal({
       }),
   });
 
-  // A starting point that found nothing explains itself here, where the search box
-  // to fix it by hand is already on screen.
-  const emptyMessage = !template
+  // A starting point that found nothing explains itself here, where the search box to
+  // fix it by hand is already on screen. A FAILED fetch must not borrow that wording:
+  // "you are not following anyone" is a claim about someone's account, and a request
+  // that never answered has not earned it.
+  const emptyMessage = candidates.isError
+    ? 'Could not load those — search below, or close and try again.'
+    : !template
     ? 'Add a creator, model or tag to start filling this hub.'
     : template === 'my-models'
     ? 'You have no published models yet — search for anything else you want in here.'
+    : template === 'bookmarks'
+    ? 'You have not bookmarked any models yet — search for anything else you want in here.'
     : 'You are not following anyone yet — search for the creators you want in here.';
+
+  const gathering = {
+    'my-models': 'your models',
+    following: 'the creators you follow',
+    bookmarks: 'your bookmarked models',
+  } as const;
 
   const trimmed = name.trim();
 
@@ -202,13 +214,17 @@ export default function HubUpsertModal({
           />
         )}
 
-        {canEditSources && features.canViewNsfw && (
+        {/* A cap on what OTHER people see, so it belongs to sharing: on a private hub
+            the only viewer is its owner, whose own browsing settings already decide.
+            Shown whenever the switch above is on, and gone when it is off. */}
+        {canEditSources && features.canViewNsfw && isPublic && (
           <BrowsingLevelsInput
+            compact
             label="Content levels"
             description={
               forcedBrowsingLevel
                 ? 'Only these levels show in this hub.'
-                : 'No limit — the browsing settings of whoever is looking decide.'
+                : 'No limit — each viewer’s own settings decide.'
             }
             value={forcedBrowsingLevel}
             allowEmpty
@@ -223,7 +239,7 @@ export default function HubUpsertModal({
               <Group gap="xs">
                 <Loader size="sm" />
                 <Text size="sm" c="dimmed">
-                  Gathering {template === 'my-models' ? 'your models' : 'the creators you follow'}…
+                  Gathering {template ? gathering[template] : 'sources'}…
                 </Text>
               </Group>
             ) : (

@@ -8,6 +8,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import HubUpsertModal from '~/components/Hubs/HubUpsertModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useSubnavHeight } from '~/hooks/useSubnavHeight';
 import { FollowedHubsSection } from '~/components/Hubs/FollowedHubsSection';
 import { describeHubSources, hubUrl } from '~/components/Hubs/hub.utils';
 import { trpc } from '~/utils/trpc';
@@ -76,6 +77,7 @@ export function HubsSidebarContent({
   onNewHub: () => void;
 }) {
   const currentUser = useCurrentUser();
+  const subnavHeight = useSubnavHeight();
   const [search, setSearch] = useState('');
 
   const { data: hubs = [] } = trpc.userHub.getAll.useQuery(undefined, { enabled: !!currentUser });
@@ -85,9 +87,20 @@ export function HubsSidebarContent({
 
   return (
     <Stack gap={0}>
-      {/* `?all`, because /hubs sends someone with a single hub straight to it — this
-          is how they reach the templates and the explainer. */}
-      <Text component={Link} href="/hubs?all" fw={600} px="sm" py="xs">
+      {/* Height matched to the sub-nav beside it so the rule under this header lands
+          on the same line as the one under the bar — they read as one row, and the
+          bar's height moves with whichever banners are showing.
+
+          `?all`, because /hubs sends someone with a single hub straight to it, and
+          this is how they reach the templates and the explainer. */}
+      <Text
+        component={Link}
+        href="/hubs?all"
+        fw={600}
+        px="sm"
+        className="flex items-center"
+        style={{ minHeight: subnavHeight }}
+      >
         Civitai Hubs
       </Text>
       <Divider />
