@@ -144,7 +144,11 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2026-09-20'),
         },
         {
-          href: `/user/${currentUser?.username as string}/models?section=training`,
+          // Same flag swap as the trainer entry below: with the Training Studio on, "my trainings"
+          // IS the studio's run list — the old DB-backed list stays reachable via the banner there.
+          href: features.trainingStudioUi
+            ? '/training-studio'
+            : `/user/${currentUser?.username as string}/models?section=training`,
           visible: !!currentUser && features.imageTrainingResults,
           icon: IconBarbell,
           color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
