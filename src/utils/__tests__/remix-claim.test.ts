@@ -75,11 +75,11 @@ describe('remixClaimHolds', () => {
   });
 });
 
-/** Four of the seed's eleven tags survive — a real remix that moved on, scoring below the 0.75 cutoff. */
+/** Four of the seed's nine tags survive — a real remix that moved on, scoring below the 0.75 cutoff. */
 const PARTIAL_PROMPT =
   '1girl, 1boy, creampie, bed, forest, waterfall, sunlight, castle, epic fantasy';
 
-/** Two of the seed's eleven tags changed — a real edit that still scores at or above the 0.75 cutoff. */
+/** Two of the seed's nine tags changed — a real edit that still scores at or above the 0.75 cutoff. */
 const NEAR_PROMPT =
   'netorare, cuckold pov, 1girl, 1boy, creampie, bed, bedroom, day, plain background';
 
@@ -125,6 +125,7 @@ describe('remixClaimState reasons', () => {
     seedRemix(SEEDED_PROMPT, Date.now() - REMIX_CLAIM_TTL - 1);
     const expired = state({ prompt: SEEDED_PROMPT });
     expect(expired.reason).toBe('expired');
+    expect(expired.carrier).toBeNull();
     expect(expired.holds).toBe(false);
     expect(expired.score).toBeNull();
   });

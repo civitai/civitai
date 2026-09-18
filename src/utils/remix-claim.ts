@@ -11,8 +11,7 @@ export type RemixClaimFormState = {
 
 /**
  * `score` is set only on the prompt branch — `null` there means not applicable,
- * never zero. `drifted` is the one reason caused by something the person did;
- * `expired` and `uncarried` are not.
+ * never zero.
  */
 export type RemixClaimState = {
   holds: boolean;
@@ -67,7 +66,6 @@ export function remixClaimState(
     : { holds: false, carrier: 'prompt', reason: 'drifted', score: adjustedCosine };
 }
 
-/** Narrowing predicate over `remixClaimState`, for callers that only need yes/no. */
 export function remixClaimHolds(
   data: RemixData | null,
   form: RemixClaimFormState
