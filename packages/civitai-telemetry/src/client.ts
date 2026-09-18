@@ -313,6 +313,60 @@ export const blockSpendAttributionWriteCounter = registerCounterWithLabels({
   labelNames: ['status'] as const,
 });
 
+// App Blocks PER-GENERATION AUTHOR FEE — DARK. These three count what the fee
+// WOULD be; slice 1 charges nobody and stores nothing, so this counter trio is
+// the only record that the computation ran, and the only way to size the
+// settlement slice from real traffic before anyone is billed.
+//
+// `coarse_type` is the COARSE generation key (`blockGenerationCoarseType`) or
+// the literal `unknown` — bounded by the step/recipe registries, so the label is
+// low-cardinality by construction and cannot be widened by traffic.
+// `outcome` is which leg governed (`flat` / `pct` / `none`), or one of two
+// counted SKIPS:
+//   `base-unavailable`  the orchestrator surfaced no `WorkflowCost.base` to
+//                       compute against — the RECOVERABLE blind spot.
+//   `price-is-cap`      `WorkflowCost.variable` was true, i.e. the price is a
+//                       CAP that may settle lower (a post-billed step charged
+//                       up front at its maximum and refunded down). No fee is
+//                       computed on one: a percentage of a number the viewer is
+//                       partly refunded is a fee on money they did not spend.
+//                       Kept SEPARATE from `base-unavailable` on purpose — that
+//                       one is a denominator the slice-2 sizing read divides by,
+//                       and a cap-priced generation would not have charged even
+//                       with a base in hand.
+// The `flag-disabled` skip is NOT here: it emits no counter at all by design and
+// is visible only as the Axiom `authorFeeSkipped` field.
+// 🔴 HYPHEN, not underscore, and this is the ONLY place in the repo that
+// enumerates the value set — so it is what an operator writing the slice-2
+// sizing join reads. Each skip is deliberately the SAME string as the Axiom
+// `authorFeeSkipped` field (`BLOCK_AUTHOR_FEE_BASE_UNAVAILABLE` /
+// `BLOCK_AUTHOR_FEE_PRICE_IS_CAP` in
+// `~/server/services/blocks/author-fee`), because that join is the whole point:
+// querying `outcome="base_unavailable"` returns an empty series, which reads as
+// "no generation lacked a base" rather than "you spelled the label wrong".
+export const blockAuthorFeeObservedCounter = registerCounterWithLabels({
+  name: 'block_author_fee_observed_total',
+  help: 'App Blocks per-generation author-fee computations observed (dark — no money moves), by coarse generation type and governing leg',
+  labelNames: ['coarse_type', 'outcome'] as const,
+});
+
+// Sum of the fee that WOULD have been charged. Divide by the base counter below
+// for the realized effective rate per coarse type; on its own it is the Buzz
+// volume slice 2 would have to settle.
+export const blockAuthorFeeBuzzCounter = registerCounterWithLabels({
+  name: 'block_author_fee_buzz_total',
+  help: 'Buzz the App Blocks per-generation author fee would have charged (dark), by coarse generation type',
+  labelNames: ['coarse_type'] as const,
+});
+
+// The denominator: sum of `WorkflowCost.base` the fee was computed against.
+// NOT the workflow total — that already carries licensing fees and tips.
+export const blockAuthorFeeBaseBuzzCounter = registerCounterWithLabels({
+  name: 'block_author_fee_base_buzz_total',
+  help: 'Base generation Buzz the App Blocks author fee was computed against, by coarse generation type',
+  labelNames: ['coarse_type'] as const,
+});
+
 // App Blocks MEMBERSHIP / subscription attribution (one row per paid invoice of a
 // block-initiated membership purchase).
 export const blockSubscriptionAttributionWriteCounter = registerCounterWithLabels({

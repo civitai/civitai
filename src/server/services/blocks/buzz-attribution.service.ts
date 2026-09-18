@@ -16,6 +16,7 @@ import {
   newBlockSpendAttributionId,
   newBlockSubscriptionAttributionId,
 } from '~/server/utils/app-block-ids';
+import { observeBlockAuthorFee } from './author-fee';
 import { isBlockGenerationType, type BlockGenerationType } from './generation-type';
 import {
   computeRateCardSplit,
@@ -322,6 +323,49 @@ export type RecordSpendAttributionInput = {
    * money/audit row.
    */
   generationType?: BlockGenerationType | null;
+  /**
+   * Optional BASE generation cost in Buzz — the orchestrator's
+   * `WorkflowCost.base` for this workflow.
+   *
+   * 🔴 THIS IS NOT `buzzAmount`, AND THE DIFFERENCE IS THE WHOLE POINT OF THE
+   * FIELD. `buzzAmount` above is the realized PAID DEBIT, a gross that already
+   * carries the per-resource model LICENSING fees (`WorkflowCost.fees`), the
+   * lineage fee and the viewer's tips — the orchestrator charges the sum and
+   * settles each component to its own recipient. The per-generation AUTHOR FEE
+   * is additive on top of the BASE and stacks alongside those components, so a
+   * percentage of `buzzAmount` would take a cut of another creator's licensing
+   * fee and of the viewer's tip, and would compound as more fee-charging
+   * resources are stacked onto one generation.
+   *
+   * Nothing downstream can tell the two apart — both are plain positive Buzz
+   * numbers — so the distinction has to be made by the CALLER, which reads
+   * `cost.base` off the raw orchestrator submit response. It is not reachable
+   * from the block-facing snapshot: `BlockWorkflowSnapshot.cost` is
+   * deliberately `{ total }` only, and widening that wire shape would publish
+   * the platform's cost breakdown to every third-party app.
+   *
+   * Used ONLY by the dark author-fee OBSERVATION below. It is never persisted:
+   * omit it, or pass null, and the observation records a `base-unavailable` skip
+   * instead of computing against a number that means something else.
+   */
+  baseGenerationBuzz?: number | null;
+  /**
+   * Optional: the orchestrator's `WorkflowCost.variable` for this workflow —
+   * TRUE when the quoted price is a CAP that may settle lower (at least one step
+   * is post-billed and charged up front at its maximum, with the difference
+   * refunded once the provider reports the actual work delivered).
+   *
+   * 🔴 A CAP-PRICED GENERATION IS OBSERVED AS A SKIP, NOT AS A FEE. A percentage
+   * of a number the viewer will be partly refunded is a fee on money they did
+   * not spend. It gets its OWN skip reason (`price-is-cap`) rather than being
+   * folded into `base-unavailable` — see `BLOCK_AUTHOR_FEE_PRICE_IS_CAP`.
+   *
+   * Like `baseGenerationBuzz` this is read off the RAW orchestrator submit
+   * response, never off `BlockWorkflowSnapshot` (whose `cost` is deliberately
+   * `{ total }` only). Omit it, or pass null/false, and the price is treated as
+   * final. Never persisted.
+   */
+  generationPriceIsCap?: boolean | null;
 };
 
 export type RecordSpendAttributionResult = {
@@ -608,6 +652,80 @@ export async function recordSpendAttribution(
       },
     });
 
+    // PER-GENERATION AUTHOR FEE — DARK OBSERVATION ONLY (slice 1). Computes
+    // what the additive, author-set, viewer-paid fee WOULD be for this
+    // generation and reports it to the counters + the log line below. It moves
+    // no money, writes no column, and is unreachable unless
+    // `app-blocks-author-fee-enabled` is on. Settlement onto the licensing-fee
+    // rail is a later slice; this exists so that slice can be sized from real
+    // traffic before anyone is charged.
+    //
+    // 🔴 OBSERVED AFTER THE SUCCESSFUL WRITE, NOT BEFORE IT. This row is
+    // idempotent on (workflowId, appBlockId); a re-poll / retry lands in the
+    // P2002 branch below and must NOT observe a second fee for one generation,
+    // or the sizing number is inflated by exactly the retry rate.
+    //
+    // 🔴 SELF-SPEND IS OBSERVED LIKE ANY OTHER GENERATION — deliberately, and
+    // this is a DIVERGENCE from how attribution behaves two lines up, where
+    // `isSelfSpend` voids the row and `computeSpendShare` zeroes the share. A
+    // bounty is the platform paying an author out of platform money, so paying
+    // an author for their own spend is a wash. The author fee is the VIEWER
+    // paying the author, and an author using their own app is a viewer like any
+    // other. ⚠️ FLAGGED FOR SLICE 2: at settlement that becomes a Buzz
+    // transaction from an account to ITSELF, which is at best a no-op and may be
+    // rejected outright. Slice 1's shape does not make that harder — the
+    // observation carries no recipient, and `isSelfSpend` is already on this
+    // log line beside the fee — but the settlement writer has to decide
+    // explicitly whether a self-transfer is skipped or netted, rather than
+    // discovering it from a rejected transaction.
+    //
+    // 🔴 NO `.catch` HERE, DELIBERATELY. `observeBlockAuthorFee` is TOTAL by
+    // contract — every throwing surface inside it (the flag read, each counter
+    // `inc`) is caught at its own site and degrades to a named skip. A
+    // belt-and-braces `.catch(() => ({ reason: 'flag-disabled' }))` was written
+    // here and REMOVED: it is unreachable given that contract, and were it ever
+    // reachable it would file a THROW into the `flag-disabled` population —
+    // which is one of the two denominators the slice-2 sizing read depends on.
+    // A rejection here is a contract violation and must surface as one rather
+    // than be laundered into a gate-is-off count.
+    //
+    // ⚠️ WHERE IT WOULD SURFACE — stated precisely, because an earlier revision
+    // of this comment called the enclosing `catch` merely "loud" and that
+    // UNDERSTATES IT BY THREE EFFECTS. A rejection here unwinds past everything
+    // between this line and the `catch` below, for a row that WAS persisted:
+    //   1. the success Axiom line is never written — the row exists with no
+    //      `block-spend-attribution` record of it;
+    //   2. `blockSpendAttributionWriteCounter.inc({ status })` never fires, so
+    //      the written-row counter undercounts;
+    //   3. the `catch` runs `refundAppBountyAccrual` against a row that was NOT
+    //      rolled back, double-releasing its reservation. Inert only while
+    //      `appOwnerShareCents` is identically 0 — i.e. until #2605.
+    // Then it rethrows (not a P2002) and reaches the caller's fire-and-forget
+    // `.catch`. That is still the correct destination for a broken contract —
+    // `authorFee.reason` is not — but it is not a free "loud" either, so the
+    // unreachability argument above is what carries this, and it holds for
+    // today's one caller.
+    //
+    // 🔴 IF A `.catch` IS EVER REINSTATED it needs a NEW skip reason of its own
+    // (`observe-failed`, say) — never ANY existing member of
+    // `BlockAuthorFeeSkipReason`. Every reason in that union is a live
+    // population the slice-2 sizing read divides by or reasons about, and
+    // folding a contract violation into any of them is how a denominator
+    // acquires a silent bias. Stated against the union rather than a list of
+    // names on purpose: this comment previously said "a THIRD reason … never
+    // `flag-disabled` and never `base-unavailable`", and went stale the moment
+    // `price-is-cap` was added — it would now be the FOURTH, and the "never"
+    // list had a hole in it exactly where the newest reason sat.
+    const authorFee = await observeBlockAuthorFee({
+      // 🔴 NOT `buzzAmount` — see the field docs on RecordSpendAttributionInput.
+      baseGenerationBuzz: input.baseGenerationBuzz ?? null,
+      // 🔴 A CAP PRICE SUPPRESSES THE FEE, under its own skip reason. Threaded
+      // rather than inferred: nothing downstream of the orchestrator response
+      // can tell a cap apart from a final price.
+      priceIsCap: input.generationPriceIsCap ?? null,
+      generationType,
+    });
+
     logToAxiom(
       {
         name: SPEND_ATTRIBUTION_LOG_NAME,
@@ -635,6 +753,51 @@ export async function recordSpendAttribution(
         // appBountyDailyTotal=0). Surfaces a clamp the moment the cap bites.
         appBountyClamped: bountyReservation.clamped,
         appBountyDailyTotal: bountyReservation.total,
+        // DARK author-fee observability — FOUR fields, and the set is chosen by
+        // ONE rule: a property gets exactly one instrument, and this row is the
+        // instrument only where the counters cannot reach. The counters carry a
+        // single `coarse_type` label (deliberately — `appBlockId` would be
+        // unbounded cardinality), so anything needing a per-APP, per-`isSelfSpend`
+        // or per-full-`generationType` cut has to live here, beside those three
+        // fields, which are already on this line.
+        //
+        //   `authorFeeSkipped`   the ONLY instrument for the flag-disabled
+        //                        population — `observeBlockAuthorFee` emits no
+        //                        counter at all on that path, by design, and it
+        //                        is one of the two denominators the slice-2
+        //                        sizing read divides by. Also encodes "observed":
+        //                        null ⇔ the fee was computed.
+        //   `authorFeeBuzz`      the fee, per row. The counter gives the total
+        //                        by coarse type; only this gives "which apps
+        //                        would earn what, and how much is self-spend".
+        //   `authorFeeBaseBuzz`  its denominator, for the same per-app cut. Not
+        //                        recoverable from `buzzAmount` above — that is
+        //                        the gross, which already carries licensing
+        //                        fees, the lineage fee and tips.
+        //   `authorFeeParamsSource`  which level of the config answered. NO
+        //                        counter carries it, and it is genuinely
+        //                        variable in production now that
+        //                        `BLOCK_AUTHOR_FEE_PLATFORM_CONFIG.byType` is
+        //                        seeded (`chat-completion` → 'type', everything
+        //                        else → 'default').
+        //
+        // DROPPED, and why — a field that cannot vary is not observability:
+        //   `authorFeeObserved`       derivable: `authorFeeSkipped === null`.
+        //   `authorFeeLeg`            exactly the `outcome` label of
+        //                             `block_author_fee_observed_total`, and
+        //                             re-derivable from fee + base + source.
+        //   `authorFeeParamsClamped`  a COMPILE-TIME CONSTANT `false` in slice
+        //                             1 — re-derived after seeding `byType`, and
+        //                             it is still constant: the only production
+        //                             config is a module constant whose every
+        //                             leg is inside the ceiling, and no caller
+        //                             passes `config`. It becomes worth logging
+        //                             in slice 3, when an author can type a
+        //                             number; add it back then.
+        authorFeeSkipped: authorFee.observed ? null : authorFee.reason,
+        authorFeeBuzz: authorFee.observed ? authorFee.computation.feeBuzz : null,
+        authorFeeBaseBuzz: authorFee.observed ? authorFee.computation.baseGenerationBuzz : null,
+        authorFeeParamsSource: authorFee.observed ? authorFee.computation.source : null,
       },
       'webhooks'
     ).catch(() => null);
