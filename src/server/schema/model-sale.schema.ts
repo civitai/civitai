@@ -6,8 +6,10 @@ import * as z from 'zod';
  * 🔴 THE BOUND IS REAL WORK, NOT AN ARBITRARY NUMBER, so raising it is not the way to fix a
  * caller that overflows it. `getActiveSalesForModels` resolves every id through the per-id cache,
  * whose `packed.mGet` is `Promise.all(keys.map(get))` — one Redis GET per id, plus a write-back
- * SET per miss. The procedure is PUBLIC, so the length of this array is the only thing standing
- * between an anonymous caller and that fan-out. The cap stays; callers chunk.
+ * SET per miss. What this constant does is bound the WIDTH of one call: it keeps a single request's
+ * fan-out proportional to a page of cards rather than to an accumulated feed. It is a per-request
+ * bound and nothing more: how many requests arrive is a separate question, which this number does
+ * not answer and should not be read as answering. The cap stays; callers chunk.
  *
  * ⚠️ The SQL half is NOT what this is protecting. Measured on the read replica, the planner
  * post-filters `mv."modelId" = ANY(...)` over a small scan: execution time is flat from 100 to

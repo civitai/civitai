@@ -78,11 +78,12 @@ export const useModelSaleBadge = (modelId: number, skip: boolean) => {
  * grid for anyone who scrolled, on a money surface, invisibly to anything watching 5xx.
  *
  * Chunking is the fix rather than a bigger cap: the resolver's work is per-id — one Redis GET each
- * — on a PUBLIC procedure, so the cap is the only bound on it. The chunk is deliberately SMALLER
- * than the cap and matched to the feed's page size; `~/server/schema/model-sale.schema` has the
- * arithmetic for why, and it is not "as big as allowed".
+ * — so the cap is what keeps a single request's fan-out proportional to a page of cards rather than
+ * to the whole accumulated feed. The chunk is deliberately SMALLER than the cap and matched to the
+ * feed's page size; `~/server/schema/model-sale.schema` has the arithmetic for why, and it is not
+ * "as big as allowed".
  *
- * The shared chunker, not a third copy of it — its own tests pin the property this depends on and
+ * The shared chunker, not a copy of it — its own tests pin the property this depends on and
  * does not spell out in code: chunking in ARRIVAL order keeps an earlier chunk's key stable as the
  * feed appends, where sorting would reshuffle every boundary and refetch the whole surface on each
  * page. Growing by a page therefore costs ONE new request, not one per chunk.
