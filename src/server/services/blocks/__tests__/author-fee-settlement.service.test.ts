@@ -12,9 +12,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *   - the dedup key is deterministic from (date, owner, account) alone, so a
  *     re-run cannot mint twice
  *   - self-dealing never accrues
- *   - a clawback voids before settlement and carries forward after it
- *   - a bucket whose net went non-positive stays OWED, rather than being
- *     forgiven at zero
+ *
+ * The clawback was retired in round 0 (zero production callers, and its
+ * carry-forward arm unreachable until something had settled), so there is
+ * nothing here pinning a reversal — slice 2b brings both back together.
  *
  * Prisma, the Buzz service and the logger are mocked at the module boundary.
  */
@@ -22,7 +23,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { mockDbRead, mockDbWrite, mockLog, mockCreateMany } = vi.hoisted(() => ({
   mockDbRead: {
     oauthClient: { findUnique: vi.fn() },
-    blockAuthorFeeAccrual: { findUnique: vi.fn(), findMany: vi.fn() },
+    blockAuthorFeeAccrual: { findMany: vi.fn() },
   },
   mockDbWrite: {
     blockAuthorFeeAccrual: { create: vi.fn(), updateMany: vi.fn() },
@@ -44,7 +45,6 @@ vi.mock('~/server/services/buzz.service', () => ({
 
 import {
   accrueBlockAuthorFee,
-  clawbackBlockAuthorFee,
   settleBlockAuthorFees,
 } from '../author-fee-settlement.service';
 import type { BlockAuthorFeeComputation } from '../author-fee';
@@ -117,7 +117,6 @@ describe('accrueBlockAuthorFee', () => {
     expect(data.appOwnerUserId).toBe(OWNER_ID);
     expect(data.viewerUserId).toBe(VIEWER_ID);
     expect(data.status).toBe('accrued');
-    expect(data.entryType).toBe('accrual');
   });
 
   it('carries the buzz type through rather than defaulting it (D6)', async () => {
@@ -257,31 +256,11 @@ describe('settleBlockAuthorFees', () => {
     expect(firstKey).toBe(`block-author-fee-2026-09-18-${OWNER_ID}-yellow`);
   });
 
-  it('holds a bucket whose net went non-positive instead of forgiving it', async () => {
-    mockDbRead.blockAuthorFeeAccrual.findMany.mockResolvedValue([
-      accrual({ id: 'bafa_1', feeBuzz: 5 }),
-      accrual({ id: 'bafa_2', feeBuzz: -9 }), // a carried-forward clawback
-    ]);
-
-    const result = await settleBlockAuthorFees({ date: new Date('2026-09-18T00:00:00Z') });
-
-    expect(mockCreateMany).not.toHaveBeenCalled();
-    expect(result.bucketsSkippedNonPositive).toBe(1);
-    expect(result.rowsSettled).toBe(0);
-    // 🔴 The rows stay `accrued` so the debt nets against future earnings.
-    expect(mockDbWrite.blockAuthorFeeAccrual.updateMany).not.toHaveBeenCalled();
-  });
-
   it('no-ops on an empty scan', async () => {
     mockDbRead.blockAuthorFeeAccrual.findMany.mockResolvedValue([]);
     const result = await settleBlockAuthorFees({});
     expect(mockCreateMany).not.toHaveBeenCalled();
-    expect(result).toEqual({
-      buckets: 0,
-      rowsSettled: 0,
-      buzzMinted: 0,
-      bucketsSkippedNonPositive: 0,
-    });
+    expect(result).toEqual({ buckets: 0, rowsSettled: 0, buzzMinted: 0 });
   });
 
   it('mints BEFORE flipping status, so a crash settles late rather than paying twice', async () => {
@@ -298,93 +277,5 @@ describe('settleBlockAuthorFees', () => {
     await settleBlockAuthorFees({ date: new Date('2026-09-18T00:00:00Z') });
 
     expect(order).toEqual(['mint', 'flip']);
-  });
-});
-
-describe('clawbackBlockAuthorFee', () => {
-  it('voids in place when the accrual has not settled yet', async () => {
-    mockDbRead.blockAuthorFeeAccrual.findUnique.mockResolvedValue({
-      id: 'bafa_1',
-      status: 'accrued',
-      feeBuzz: 7,
-    });
-    mockDbWrite.blockAuthorFeeAccrual.updateMany.mockResolvedValue({ count: 1 });
-
-    const result = await clawbackBlockAuthorFee({ workflowId: WORKFLOW_ID, reason: 'refund' });
-
-    expect(result).toEqual({ clawedBack: true, mode: 'voided', feeBuzz: 7 });
-    // No carry-forward row — nothing was paid, so there is nothing to net.
-    expect(mockDbWrite.blockAuthorFeeAccrual.create).not.toHaveBeenCalled();
-  });
-
-  it('carries a NEGATIVE row forward when the accrual already settled', async () => {
-    mockDbRead.blockAuthorFeeAccrual.findUnique.mockResolvedValue({
-      id: 'bafa_1',
-      status: 'settled',
-      feeBuzz: 7,
-      appId: APP_ID,
-      appBlockId: APP_BLOCK_ID,
-      appOwnerUserId: OWNER_ID,
-      viewerUserId: VIEWER_ID,
-      buzzType: 'blue',
-      baseGenerationBuzz: 53,
-      flatLegBuzz: 3,
-      pctLegBuzz: 5,
-      governingLeg: 'pct',
-      generationType: 'textToImage:txt2img',
-    });
-
-    const result = await clawbackBlockAuthorFee({ workflowId: WORKFLOW_ID, reason: 'undelivered' });
-
-    expect(result).toEqual({ clawedBack: true, mode: 'carried-forward', feeBuzz: 7 });
-    const data = mockDbWrite.blockAuthorFeeAccrual.create.mock.calls[0][0].data;
-    expect(data.entryType).toBe('clawback');
-    expect(data.feeBuzz).toBe(-7); // the SIGN is the whole point
-    expect(data.status).toBe('accrued'); // so the next settlement run nets it
-    expect(data.buzzType).toBe('blue'); // reversal returns the same currency
-  });
-
-  it('falls through to carry-forward when the row settles underneath it', async () => {
-    // The read saw `accrued`, but the conditional update matched 0 rows because a
-    // settlement run flipped it in between. Without the fallthrough the fee would
-    // be paid and never reversed.
-    mockDbRead.blockAuthorFeeAccrual.findUnique.mockResolvedValue({
-      id: 'bafa_1',
-      status: 'accrued',
-      feeBuzz: 7,
-      appId: APP_ID,
-      appBlockId: APP_BLOCK_ID,
-      appOwnerUserId: OWNER_ID,
-      viewerUserId: VIEWER_ID,
-      buzzType: 'yellow',
-      baseGenerationBuzz: 53,
-      flatLegBuzz: 3,
-      pctLegBuzz: 5,
-      governingLeg: 'pct',
-      generationType: null,
-    });
-    mockDbWrite.blockAuthorFeeAccrual.updateMany.mockResolvedValue({ count: 0 });
-
-    const result = await clawbackBlockAuthorFee({ workflowId: WORKFLOW_ID, reason: 'refund' });
-
-    expect(result).toEqual({ clawedBack: true, mode: 'carried-forward', feeBuzz: 7 });
-    expect(mockDbWrite.blockAuthorFeeAccrual.create).toHaveBeenCalledTimes(1);
-  });
-
-  it('is idempotent on an already-clawed-back accrual', async () => {
-    mockDbRead.blockAuthorFeeAccrual.findUnique.mockResolvedValue({
-      id: 'bafa_1',
-      status: 'clawed_back',
-      feeBuzz: 7,
-    });
-    const result = await clawbackBlockAuthorFee({ workflowId: WORKFLOW_ID, reason: 'refund' });
-    expect(result).toEqual({ clawedBack: false, reason: 'already-clawed-back' });
-    expect(mockDbWrite.blockAuthorFeeAccrual.create).not.toHaveBeenCalled();
-  });
-
-  it('reports not-found for a workflow that never accrued', async () => {
-    mockDbRead.blockAuthorFeeAccrual.findUnique.mockResolvedValue(null);
-    const result = await clawbackBlockAuthorFee({ workflowId: 'wf_nope', reason: 'refund' });
-    expect(result).toEqual({ clawedBack: false, reason: 'not-found' });
   });
 });

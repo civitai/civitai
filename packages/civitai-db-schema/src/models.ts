@@ -2348,7 +2348,6 @@ export interface BlockSpendAttribution {
 export interface BlockAuthorFeeAccrual {
   id: string;
   workflowId: string;
-  entryType: string;
   appId: string;
   app?: OauthClient;
   appBlockId: string;

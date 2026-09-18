@@ -64,17 +64,16 @@
 --    previous owner (`app-ownership-transfer.service.ts` is the precedent).
 --    Resolving the owner in the settlement query would do exactly that.
 --
--- CLAWBACK. A generation that fails or partially delivers is refunded by the
--- orchestrator AFTER submit (the settled base drops below the submit-time base),
--- and the fee must follow or an author earns on a generation the viewer got their
--- money back on. Two paths, both keyed by `entry_type`:
---   * refund BEFORE settlement -> the 'accrual' row flips to status='clawed_back'
---     and the daily sum never sees it. Nothing was minted.
---   * refund AFTER settlement  -> a NEGATIVE 'clawback' row is written and the
---     next day's sum nets it off, the carry-forward shape already proven on the
---     other rail (`voidAttributionsForPayment`).
--- Hence the unique key is (workflow_id, entry_type): at most one accrual and at
--- most one clawback per workflow, and re-running either is a no-op.
+-- 🔴 NO CLAWBACK HERE, DELIBERATELY. A generation that fails or partially
+-- delivers is refunded by the orchestrator AFTER submit, and the fee must follow
+-- or an author earns on a generation the viewer got their money back on. That is
+-- real and it is slice 2b's, together with the refund path that drives it.
+-- Round 0 retired it from this PR: it had ZERO production callers, and its
+-- negative carry-forward arm was unreachable until something had settled — at
+-- least two PRs away. The reversal of a charge cannot be needed before the charge
+-- exists, and shipping it early is how the repo's previous payout rail
+-- (bulk-payout-block-attributions, built 2026-05-31) ended up still unwired.
+-- So: no `entry_type` axis, no negative rows, one unique key on workflow_id.
 --
 -- ⚠️ MANUAL-APPLY: committed for history, NOT auto-applied. A human applies this
 --    to the dev database and to prod out of band — the main civitai DB is not on
@@ -100,24 +99,20 @@ CREATE TABLE "block_author_fee_accrual" (
   -- a resubmit of the same workflow must never charge or accrue twice.
   "workflow_id"          TEXT        NOT NULL,
 
-  -- 'accrual' (positive, the charge) or 'clawback' (negative, the carry-forward
-  -- reversal of an already-settled accrual).
-  "entry_type"           TEXT        NOT NULL DEFAULT 'accrual',
-
   "app_id"               TEXT        NOT NULL,
   "app_block_id"         TEXT        NOT NULL,
 
   -- Resolved at WRITE time. See the ownership note above.
   "app_owner_user_id"    INTEGER     NOT NULL,
 
-  -- The viewer who paid. Needed for clawback and for abuse review; also what the
-  -- self-dealing exclusion is measured against.
+  -- The viewer who paid. What the self-dealing exclusion is measured against, and
+  -- what slice 2b's refund path will join on to reverse a fee.
   "viewer_user_id"       INTEGER     NOT NULL,
 
   -- D6: the account the viewer paid from and the author is credited in.
   "buzz_type"            TEXT        NOT NULL,
 
-  -- Whole Buzz. Positive on an 'accrual' row, negative on a 'clawback' row.
+  -- Whole Buzz owed to the author. Always > 0; see the CHECK below.
   "fee_buzz"             INTEGER     NOT NULL,
 
   -- The pricing inputs, kept so a disputed charge can be explained without
@@ -144,9 +139,9 @@ CREATE TABLE "block_author_fee_accrual" (
   CONSTRAINT "block_author_fee_accrual_pkey" PRIMARY KEY ("id")
 );
 
--- Idempotency: one accrual and one clawback per workflow, at most.
-CREATE UNIQUE INDEX "block_author_fee_accrual_workflow_entry_key"
-  ON "block_author_fee_accrual" ("workflow_id", "entry_type");
+-- Idempotency: at most one accrual per workflow.
+CREATE UNIQUE INDEX "block_author_fee_accrual_workflow_key"
+  ON "block_author_fee_accrual" ("workflow_id");
 
 -- The settlement scan: everything still owed, oldest first.
 CREATE INDEX "block_author_fee_accrual_settlement_idx"
@@ -157,31 +152,17 @@ CREATE INDEX "block_author_fee_accrual_settlement_idx"
 CREATE INDEX "block_author_fee_accrual_owner_idx"
   ON "block_author_fee_accrual" ("app_owner_user_id", "accrued_at");
 
--- An accrual is owed money; a clawback returns it. Pinning the sign per
--- entry_type is what keeps a sign error from silently paying an author on a
--- reversal.
+-- A row exists only because a viewer was debited, so the amount is strictly
+-- positive. This is what makes the settlement job's "a bucket can never sum to
+-- <= 0" reasoning structural rather than a dead branch in the code.
 ALTER TABLE "block_author_fee_accrual"
-  ADD CONSTRAINT "block_author_fee_accrual_amount_sign_check"
-  CHECK (
-    ("entry_type" = 'accrual'  AND "fee_buzz" >= 0) OR
-    ("entry_type" = 'clawback' AND "fee_buzz" <= 0)
-  );
+  ADD CONSTRAINT "block_author_fee_accrual_amount_positive_check"
+  CHECK ("fee_buzz" > 0);
 
--- ⚠️ SUBSUMED BY THE SIGN CHECK ABOVE, AND MEASURED TO BE — kept as an explicit
--- statement of the allowed set, NOT as a reachable guard. The sign check reads
--- `(entry_type='accrual' AND ...) OR (entry_type='clawback' AND ...)`, so ANY
--- third value makes both disjuncts false and is already rejected there. Verified
--- on the dev database 2026-09-18: an insert with entry_type='bogus' was rejected
--- by `..._amount_sign_check`, never by this one, and no input exists that can
--- reach it. Do not read it as coverage; if the sign check is ever loosened, this
--- becomes live and should be re-verified with its own negative control.
-ALTER TABLE "block_author_fee_accrual"
-  ADD CONSTRAINT "block_author_fee_accrual_entry_type_check"
-  CHECK ("entry_type" IN ('accrual', 'clawback'));
 
 ALTER TABLE "block_author_fee_accrual"
   ADD CONSTRAINT "block_author_fee_accrual_status_check"
-  CHECK ("status" IN ('accrued', 'settled', 'clawed_back'));
+  CHECK ("status" IN ('accrued', 'settled'));
 
 ALTER TABLE "block_author_fee_accrual"
   ADD CONSTRAINT "block_author_fee_accrual_governing_leg_check"

@@ -885,11 +885,6 @@ export type BlockAuthorFeeAccrual = {
    * workflow must never charge or accrue twice.
    */
   workflow_id: string;
-  /**
-   * 'accrual' (positive, the charge) or 'clawback' (negative, the
-   * carry-forward reversal of an already-settled accrual).
-   */
-  entry_type: Generated<string>;
   app_id: string;
   app_block_id: string;
   /**
@@ -900,8 +895,8 @@ export type BlockAuthorFeeAccrual = {
    */
   app_owner_user_id: number;
   /**
-   * The viewer who paid. Needed for clawback and abuse review, and it is what
-   * the self-dealing exclusion is measured against.
+   * The viewer who paid. What the self-dealing exclusion is measured against,
+   * and what slice 2b's refund path will join on to reverse a fee.
    */
   viewer_user_id: number;
   /**
@@ -912,9 +907,10 @@ export type BlockAuthorFeeAccrual = {
    */
   buzz_type: string;
   /**
-   * Whole Buzz. Positive on an 'accrual' row, negative on a 'clawback' row —
-   * pinned by a CHECK, so a sign error cannot quietly pay an author on a
-   * reversal.
+   * Whole Buzz owed to the author, always > 0 — pinned by a CHECK. There is no
+   * negative row: the clawback was retired in round 0 (zero production callers,
+   * and its carry-forward arm unreachable until something had settled). Slice 2b
+   * adds it together with the refund path that drives it.
    */
   fee_buzz: number;
   /**
@@ -932,7 +928,7 @@ export type BlockAuthorFeeAccrual = {
    */
   generation_type: string | null;
   /**
-   * 'accrued' | 'settled' | 'clawed_back'.
+   * 'accrued' | 'settled'.
    */
   status: Generated<string>;
   /**

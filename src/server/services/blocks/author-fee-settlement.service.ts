@@ -82,21 +82,20 @@ export const BLOCK_AUTHOR_FEE_LOG_NAME = 'block-author-fee' as const;
  * Lifecycle of one accrual row.
  *
  * ⚠️ USED, not decorative — every status literal written or compared below is
- * annotated with this type. An earlier revision exported both of these and then
- * wrote bare string literals everywhere, so neither was referenced even inside
- * this file and a typo'd `'setled'` would have compiled and silently matched
- * nothing.
+ * annotated with this type. An earlier revision exported this and then wrote
+ * bare string literals everywhere, so it was not referenced even inside this
+ * file and a typo'd `'setled'` would have compiled and silently matched nothing.
+ *
+ * 🔴 THERE IS NO `clawed_back` STATE AND NO `entry_type` AXIS. Round 0 retired
+ * the clawback: it had zero production callers, and its negative carry-forward
+ * arm could not be reached until something had settled — two PRs away. The
+ * reversal of a charge cannot be needed before the charge exists. Slice 2b adds
+ * both together, when the refund path that drives it is real.
  */
-export type BlockAuthorFeeAccrualStatus = 'accrued' | 'settled' | 'clawed_back';
-
-/** Which kind of row: the charge, or its carry-forward reversal. */
-export type BlockAuthorFeeEntryType = 'accrual' | 'clawback';
+export type BlockAuthorFeeAccrualStatus = 'accrued' | 'settled';
 
 const STATUS_ACCRUED: BlockAuthorFeeAccrualStatus = 'accrued';
 const STATUS_SETTLED: BlockAuthorFeeAccrualStatus = 'settled';
-const STATUS_CLAWED_BACK: BlockAuthorFeeAccrualStatus = 'clawed_back';
-const ENTRY_ACCRUAL: BlockAuthorFeeEntryType = 'accrual';
-const ENTRY_CLAWBACK: BlockAuthorFeeEntryType = 'clawback';
 
 export type AccrueBlockAuthorFeeInput = {
   /** Orchestrator workflow id — the idempotency anchor. */
@@ -205,7 +204,6 @@ export async function accrueBlockAuthorFee(
       data: {
         id,
         workflowId,
-        entryType: ENTRY_ACCRUAL,
         appId,
         appBlockId,
         appOwnerUserId: app.userId,
@@ -221,7 +219,7 @@ export async function accrueBlockAuthorFee(
       },
     });
   } catch (error) {
-    // The unique index on (workflow_id, entry_type) is the idempotency guard: a
+    // The unique index on workflow_id is the idempotency guard: a
     // resubmit of the same workflow lands here rather than double-charging. It
     // is benign and must NOT be reported as a failure, or a retry would look
     // like a lost accrual and invite a compensating write.
@@ -262,110 +260,11 @@ function isUniqueViolation(error: unknown): boolean {
   );
 }
 
-export type ClawbackReason = 'refund' | 'undelivered';
-
-export type ClawbackBlockAuthorFeeResult =
-  | { clawedBack: true; mode: 'voided' | 'carried-forward'; feeBuzz: number }
-  | { clawedBack: false; reason: 'not-found' | 'already-clawed-back' | 'error' };
-
-/**
- * Reverse an author fee when the generation it was charged on was refunded.
- *
- * 🔴 WHY THIS EXISTS AT ALL — the orchestrator refunds AFTER submit. A failed or
- * partially-delivered generation is re-priced with `undeliveredByJobId` and the
- * settled base drops below the submit-time base, with the difference refunded to
- * the viewer. If the fee did not follow, an author would earn on a generation
- * the viewer got their money back on.
- *
- * This is NOT a new policy invented here: the rail this fee is modelled on
- * already prorates. `CalculateLicenseFees` in the orchestrator weights every fee
- * by the job's delivered fraction, and `NothingDelivered_ZeroesTheFee` pins it.
- * Following the refund is the CONSISTENT behaviour.
- *
- * TWO MODES, decided by whether the money has already moved:
- *   * BEFORE settlement — flip the accrual to `clawed_back`. The daily sum never
- *     sees it and nothing was minted. Clean.
- *   * AFTER settlement — write a NEGATIVE `clawback` row. The next day's sum
- *     nets it off. This is the carry-forward shape already proven on the other
- *     rail (`voidAttributionsForPayment`), chosen over clawing Buzz back out of
- *     an author's balance, which can be spent and would fail.
- */
-export async function clawbackBlockAuthorFee(args: {
-  workflowId: string;
-  reason: ClawbackReason;
-}): Promise<ClawbackBlockAuthorFeeResult> {
-  const { workflowId, reason } = args;
-
-  try {
-    const accrual = await dbRead.blockAuthorFeeAccrual.findUnique({
-      where: { workflowId_entryType: { workflowId, entryType: ENTRY_ACCRUAL } },
-    });
-    if (!accrual) return { clawedBack: false, reason: 'not-found' };
-    if (accrual.status === STATUS_CLAWED_BACK) {
-      return { clawedBack: false, reason: 'already-clawed-back' };
-    }
-
-    if (accrual.status === STATUS_ACCRUED) {
-      // Not yet paid — void it in place. Conditioned on the status so a
-      // settlement running concurrently cannot be overwritten: if the row moved
-      // to `settled` between the read and this write, zero rows match and we
-      // fall through to the carry-forward below.
-      const { count } = await dbWrite.blockAuthorFeeAccrual.updateMany({
-        where: { id: accrual.id, status: STATUS_ACCRUED },
-        data: { status: STATUS_CLAWED_BACK },
-      });
-      if (count > 0) {
-        return { clawedBack: true, mode: 'voided', feeBuzz: accrual.feeBuzz };
-      }
-    }
-
-    // Already settled (or settled underneath us) — carry the debt forward.
-    await dbWrite.blockAuthorFeeAccrual.create({
-      data: {
-        id: newBlockAuthorFeeAccrualId(),
-        workflowId,
-        entryType: ENTRY_CLAWBACK,
-        appId: accrual.appId,
-        appBlockId: accrual.appBlockId,
-        appOwnerUserId: accrual.appOwnerUserId,
-        viewerUserId: accrual.viewerUserId,
-        buzzType: accrual.buzzType,
-        feeBuzz: -accrual.feeBuzz,
-        baseGenerationBuzz: accrual.baseGenerationBuzz,
-        flatLegBuzz: accrual.flatLegBuzz,
-        pctLegBuzz: accrual.pctLegBuzz,
-        governingLeg: accrual.governingLeg,
-        generationType: accrual.generationType,
-        status: STATUS_ACCRUED,
-      },
-    });
-
-    return { clawedBack: true, mode: 'carried-forward', feeBuzz: accrual.feeBuzz };
-  } catch (error) {
-    if (isUniqueViolation(error)) {
-      // A clawback row already exists for this workflow — the reversal already
-      // happened. Idempotent, not an error.
-      return { clawedBack: false, reason: 'already-clawed-back' };
-    }
-    logToAxiom(
-      {
-        name: BLOCK_AUTHOR_FEE_LOG_NAME,
-        type: 'error',
-        message: 'clawback failed',
-        workflowId,
-        reason,
-        error: error instanceof Error ? error.message : String(error),
-      },
-      'civitai-prod'
-    ).catch(() => undefined);
-    return { clawedBack: false, reason: 'error' };
-  }
-}
 
 export type SettlementBucket = {
   appOwnerUserId: number;
   buzzType: string;
-  /** Net Buzz across accrual and clawback rows in this bucket. May be <= 0. */
+  /** Total Buzz owed in this bucket. Always > 0 — see `settleBlockAuthorFees`. */
   totalBuzz: number;
   rowIds: string[];
 };
@@ -374,8 +273,6 @@ export type SettleBlockAuthorFeesResult = {
   buckets: number;
   rowsSettled: number;
   buzzMinted: number;
-  /** Buckets whose net was <= 0 (a clawback met or exceeded the day's earnings). */
-  bucketsSkippedNonPositive: number;
 };
 
 /**
@@ -420,7 +317,7 @@ export async function settleBlockAuthorFees(args: {
   });
 
   if (!rows.length) {
-    return { buckets: 0, rowsSettled: 0, buzzMinted: 0, bucketsSkippedNonPositive: 0 };
+    return { buckets: 0, rowsSettled: 0, buzzMinted: 0 };
   }
 
   const byBucket = new Map<string, SettlementBucket>();
@@ -437,28 +334,15 @@ export async function settleBlockAuthorFees(args: {
     byBucket.set(key, bucket);
   }
 
-  const payable: SettlementBucket[] = [];
-  let bucketsSkippedNonPositive = 0;
-  for (const bucket of byBucket.values()) {
-    // A net of zero or less means a clawback met or exceeded the day's earnings.
-    // 🔴 LEAVE THOSE ROWS `accrued` rather than settling them at zero: the debt
-    // has to stay visible to the NEXT run so it nets against future earnings.
-    // Settling them would forgive the outstanding balance silently.
-    if (bucket.totalBuzz <= 0) {
-      bucketsSkippedNonPositive += 1;
-      continue;
-    }
-    payable.push(bucket);
-  }
-
-  if (!payable.length) {
-    return {
-      buckets: byBucket.size,
-      rowsSettled: 0,
-      buzzMinted: 0,
-      bucketsSkippedNonPositive,
-    };
-  }
+  // ⚠️ NO NON-POSITIVE GUARD, AND THAT IS A DELETION RATHER THAN AN OMISSION.
+  // An earlier revision held back any bucket whose net was <= 0, for the case
+  // where a clawback exceeded the day's earnings. With the clawback retired
+  // there are no negative rows: `accrueBlockAuthorFee` refuses a fee <= 0 and
+  // the database CHECK pins `fee_buzz > 0`, so a non-empty bucket cannot sum to
+  // zero or less. The guard was unreachable, and an unreachable guard reads as
+  // coverage while providing none. The invariant is enforced where it can
+  // actually be violated — at the write, and in the schema.
+  const payable = [...byBucket.values()];
 
   const transactions = payable.map((bucket) => ({
     fromAccountId: 0,
@@ -498,15 +382,9 @@ export async function settleBlockAuthorFees(args: {
       buckets: payable.length,
       rowsSettled,
       buzzMinted,
-      bucketsSkippedNonPositive,
     },
     'civitai-prod'
   ).catch(() => undefined);
 
-  return {
-    buckets: byBucket.size,
-    rowsSettled,
-    buzzMinted,
-    bucketsSkippedNonPositive,
-  };
+  return { buckets: byBucket.size, rowsSettled, buzzMinted };
 }

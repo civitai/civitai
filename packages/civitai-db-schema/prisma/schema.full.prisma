@@ -3758,10 +3758,6 @@ model BlockAuthorFeeAccrual {
   /// workflow must never charge or accrue twice.
   workflowId         String   @map("workflow_id")
 
-  /// 'accrual' (positive, the charge) or 'clawback' (negative, the
-  /// carry-forward reversal of an already-settled accrual).
-  entryType          String   @default("accrual") @map("entry_type")
-
   appId              String   @map("app_id")
   app                OauthClient @relation("BlockAuthorFeeAccrualApp", fields: [appId], references: [id], onDelete: Restrict)
   appBlockId         String   @map("app_block_id")
@@ -3774,8 +3770,8 @@ model BlockAuthorFeeAccrual {
   appOwnerUserId     Int      @map("app_owner_user_id")
   appOwner           User     @relation("BlockAuthorFeeAccrualAppOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
 
-  /// The viewer who paid. Needed for clawback and abuse review, and it is what
-  /// the self-dealing exclusion is measured against.
+  /// The viewer who paid. What the self-dealing exclusion is measured against,
+  /// and what slice 2b's refund path will join on to reverse a fee.
   viewerUserId       Int      @map("viewer_user_id")
   viewer             User     @relation("BlockAuthorFeeAccrualViewer", fields: [viewerUserId], references: [id], onDelete: Restrict)
 
@@ -3785,9 +3781,10 @@ model BlockAuthorFeeAccrual {
   /// Buzz into withdrawable earnings. No `@default` for that reason.
   buzzType           String   @map("buzz_type")
 
-  /// Whole Buzz. Positive on an 'accrual' row, negative on a 'clawback' row —
-  /// pinned by a CHECK, so a sign error cannot quietly pay an author on a
-  /// reversal.
+  /// Whole Buzz owed to the author, always > 0 — pinned by a CHECK. There is no
+  /// negative row: the clawback was retired in round 0 (zero production callers,
+  /// and its carry-forward arm unreachable until something had settled). Slice 2b
+  /// adds it together with the refund path that drives it.
   feeBuzz            Int      @map("fee_buzz")
 
   /// The pricing inputs, kept so a disputed charge can be explained without
@@ -3802,7 +3799,7 @@ model BlockAuthorFeeAccrual {
   /// to the app's default (see `resolveBlockAuthorFeeParams`).
   generationType     String?  @map("generation_type")
 
-  /// 'accrued' | 'settled' | 'clawed_back'.
+  /// 'accrued' | 'settled'.
   status             String   @default("accrued")
 
   /// The externalTransactionId this row settled under, so a row traces to the
@@ -3813,7 +3810,7 @@ model BlockAuthorFeeAccrual {
   accruedAt          DateTime @default(now()) @map("accrued_at") @db.Timestamptz(6)
   settledAt          DateTime? @map("settled_at") @db.Timestamptz(6)
 
-  @@unique([workflowId, entryType], map: "block_author_fee_accrual_workflow_entry_key")
+  @@unique([workflowId], map: "block_author_fee_accrual_workflow_key")
   @@index([status, accruedAt], map: "block_author_fee_accrual_settlement_idx")
   @@index([appOwnerUserId, accruedAt], map: "block_author_fee_accrual_owner_idx")
   @@map("block_author_fee_accrual")
