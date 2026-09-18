@@ -670,10 +670,29 @@ export async function recordSpendAttribution(
     // reachable it would file a THROW into the `flag-disabled` population —
     // which is one of the two denominators the slice-2 sizing read depends on.
     // A rejection here is a contract violation and must surface as one rather
-    // than be laundered into a gate-is-off count. Where it would surface: the
-    // `catch` below, which rethrows anything that is not a P2002 — loud, and
-    // reaching the caller's fire-and-forget `.catch`. That is the correct
-    // destination for a broken contract; `authorFee.reason` is not.
+    // than be laundered into a gate-is-off count.
+    //
+    // ⚠️ WHERE IT WOULD SURFACE — stated precisely, because an earlier revision
+    // of this comment called the enclosing `catch` merely "loud" and that
+    // UNDERSTATES IT BY THREE EFFECTS. A rejection here unwinds past everything
+    // between this line and the `catch` below, for a row that WAS persisted:
+    //   1. the success Axiom line is never written — the row exists with no
+    //      `block-spend-attribution` record of it;
+    //   2. `blockSpendAttributionWriteCounter.inc({ status })` never fires, so
+    //      the written-row counter undercounts;
+    //   3. the `catch` runs `refundAppBountyAccrual` against a row that was NOT
+    //      rolled back, double-releasing its reservation. Inert only while
+    //      `appOwnerShareCents` is identically 0 — i.e. until #2605.
+    // Then it rethrows (not a P2002) and reaches the caller's fire-and-forget
+    // `.catch`. That is still the correct destination for a broken contract —
+    // `authorFee.reason` is not — but it is not a free "loud" either, so the
+    // unreachability argument above is what carries this, and it holds for
+    // today's one caller.
+    //
+    // 🔴 IF A `.catch` IS EVER REINSTATED it needs a THIRD skip reason of its
+    // own (`observe-failed`, say), never `flag-disabled` and never
+    // `base-unavailable`: both are live denominators, and folding a contract
+    // violation into either is how the sizing read acquires a silent bias.
     const authorFee = await observeBlockAuthorFee({
       // 🔴 NOT `buzzAmount` — see the field docs on RecordSpendAttributionInput.
       baseGenerationBuzz: input.baseGenerationBuzz ?? null,

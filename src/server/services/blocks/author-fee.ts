@@ -115,7 +115,17 @@ export const BLOCK_AUTHOR_FEE_DEFAULT_PCT_OF_BASE = 0.05;
  */
 export const BLOCK_AUTHOR_FEE_MAX_FLAT_BUZZ = 100;
 
-/** Platform CEILING on the percentage leg: 100% of base. Again, no floor. */
+/**
+ * Platform CEILING on the percentage leg: 100% of base. Again, no floor.
+ *
+ * 🔴 THIS IS THE ONE SPELLING OF THE CEILING. `BLOCK_AUTHOR_FEE_MAX_PCT_BASIS_POINTS`
+ * below is DERIVED from it, and the clamp enforces that derived value — so the
+ * policy an author-facing validator reads (slice 3) and the bound the
+ * computation enforces cannot disagree. Until this was derived they were two
+ * independent numbers that agreed only by coincidence: the clamp capped at
+ * `BLOCK_AUTHOR_FEE_BASIS_POINTS_SCALE`, which was doing double duty as scale
+ * factor AND ceiling, and this constant had no implementation reader at all.
+ */
 export const BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE = 1;
 
 /**
@@ -125,8 +135,19 @@ export const BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE = 1;
  * `floor(20 × 500 / 10000) === 1`, not `floor(20 × 0.05)` with whatever the
  * double rounds to. A fee percentage finer than one basis point is not a
  * quantity anyone can act on, so quantizing at the clamp costs nothing.
+ *
+ * ⚠️ SCALE FACTOR ONLY. It is NOT the ceiling — see the constant below.
  */
 export const BLOCK_AUTHOR_FEE_BASIS_POINTS_SCALE = 10_000;
+
+/**
+ * The percentage ceiling in the unit the clamp computes in. DERIVED, never
+ * written by hand: this is `BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE` expressed in basis
+ * points, so moving the declared policy moves the enforced bound with it.
+ */
+export const BLOCK_AUTHOR_FEE_MAX_PCT_BASIS_POINTS = Math.round(
+  BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE * BLOCK_AUTHOR_FEE_BASIS_POINTS_SCALE
+);
 
 /** The `coarse_type` metric label used when the generation type is unresolvable. */
 export const BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL = 'unknown';
@@ -201,15 +222,42 @@ export const BLOCK_AUTHOR_FEE_PLATFORM_CONFIG: BlockAuthorFeeConfig = {
 export type ClampedBlockAuthorFeeParams = {
   /** Integer Buzz in `[0, BLOCK_AUTHOR_FEE_MAX_FLAT_BUZZ]`. */
   readonly flatBuzz: number;
-  /** Integer basis points in `[0, BLOCK_AUTHOR_FEE_BASIS_POINTS_SCALE]`. */
+  /** Integer basis points in `[0, BLOCK_AUTHOR_FEE_MAX_PCT_BASIS_POINTS]`. */
   readonly pctBasisPoints: number;
   /** True when either leg was out of range (or unusable) and had to be pulled in. */
   readonly clamped: boolean;
 };
 
 /**
+ * A finite fraction → whole basis points, rounding DOWN.
+ *
+ * 🔴 IT FLOORS, IT DOES NOT ROUND. `computeBlockAuthorFee` promises that "a
+ * stated 5% never charges more than 5%", and `Math.round` breaks that promise at
+ * the quantization step before the fee is ever computed: a stated `0.049999`
+ * rounds UP to 500 bp and charges a full 5%. Flooring makes the guarantee exact
+ * — 499 bp — and keeps every rounding in this module pointed the same way, at
+ * the viewer.
+ *
+ * ⚠️ THE `toFixed` IS NOT DECORATION — a naive `Math.floor(pct * SCALE)` LOSES A
+ * BASIS POINT ON 573 OF THE 10,001 EXACT BASIS-POINT INPUTS (measured), because
+ * a value like `0.0029` is not exactly representable and `0.0029 * 10_000` lands
+ * at `28.999999999999996`. An author typing 0.29% would be charged 0.28%.
+ * Normalising to 6 decimal places first — far finer than one basis point, so it
+ * cannot mask a genuine sub-bp fraction — makes every exact basis-point input
+ * exact (measured: 0 of 10,001 wrong) while still flooring `0.049999` to 499.
+ */
+function toBasisPoints(pct: number): number {
+  return Math.floor(Number((pct * BLOCK_AUTHOR_FEE_BASIS_POINTS_SCALE).toFixed(6)));
+}
+
+/**
  * Apply the platform CEILING to a pair, and quantize the percentage leg to
  * basis points.
+ *
+ * The percentage ceiling enforced here is `BLOCK_AUTHOR_FEE_MAX_PCT_BASIS_POINTS`,
+ * which is DERIVED from `BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE` — so the number an
+ * author-facing validator reads and the number this enforces are one value, not
+ * two that happen to agree.
  *
  * Clamps rather than rejects. Slice 1's only config source is a code constant,
  * but slice 3's is author input, and a fee path that throws on a bad number is a
@@ -232,8 +280,11 @@ export function clampBlockAuthorFeeParams(
 
   const rawPct = params.pctOfBase;
   const pctUsable = typeof rawPct === 'number' && Number.isFinite(rawPct);
-  const rawBasisPoints = pctUsable ? Math.round(rawPct * BLOCK_AUTHOR_FEE_BASIS_POINTS_SCALE) : 0;
-  const pctBasisPoints = Math.min(Math.max(rawBasisPoints, 0), BLOCK_AUTHOR_FEE_BASIS_POINTS_SCALE);
+  const rawBasisPoints = pctUsable ? toBasisPoints(rawPct) : 0;
+  const pctBasisPoints = Math.min(
+    Math.max(rawBasisPoints, 0),
+    BLOCK_AUTHOR_FEE_MAX_PCT_BASIS_POINTS
+  );
 
   // Quantizing 0.050001 to 500 bp is NOT a clamp — only leaving the permitted
   // range is, plus a leg that was not a usable number to begin with.
@@ -333,11 +384,13 @@ export type BlockAuthorFeeComputation = {
  * indefensible thing this computation could do. The guard is stated first and
  * returns before the legs are evaluated.
  *
- * The percentage leg FLOORS. Buzz is an integer currency and the fee is
- * additive on top of what the viewer already pays, so the rounding goes toward
- * the viewer: a stated 5% never charges more than 5%. The flat leg is the floor
- * of the whole expression, which is what makes the default meaningful on a cheap
- * generation.
+ * The percentage leg FLOORS — at BOTH steps, which is what makes the guarantee
+ * exact rather than approximate: the stated fraction floors to whole basis
+ * points in `toBasisPoints`, and the resulting Buzz floors again here. Buzz is an
+ * integer currency and the fee is additive on top of what the viewer already
+ * pays, so every rounding goes toward the viewer: a stated 5% never charges more
+ * than 5%. The flat leg is the floor of the whole expression, which is what makes
+ * the default meaningful on a cheap generation.
  *
  * At the CROSSOVER the legs are equal and `governingLeg` reports `'flat'` — an
  * arbitrary but pinned tie-break, chosen so the leg that is always present wins
@@ -400,6 +453,15 @@ export function computeBlockAuthorFee(args: {
 /** Why an observation produced no computation. */
 export type BlockAuthorFeeSkipReason = 'flag-disabled' | 'base-unavailable';
 
+/**
+ * ONE SPELLING of the missing-base skip, shared by the Prometheus `outcome`
+ * label and the Axiom `authorFeeSkipped` field. The counter used to say
+ * `base_unavailable` while the log line said `base-unavailable` — two spellings
+ * of one concept across the two instruments the slice-2 sizing read joins, which
+ * is exactly the join that then silently returns nothing.
+ */
+export const BLOCK_AUTHOR_FEE_BASE_UNAVAILABLE: BlockAuthorFeeSkipReason = 'base-unavailable';
+
 export type BlockAuthorFeeObservation =
   | { readonly observed: false; readonly reason: BlockAuthorFeeSkipReason }
   | { readonly observed: true; readonly computation: BlockAuthorFeeComputation };
@@ -424,9 +486,20 @@ export type BlockAuthorFeeObservation =
  * cache before this function is entered, so the dynamic form bought no
  * deferral, and the `.catch(() => ({ …: null }))` fallback it carried was
  * unreachable. Both are ordinary static imports now and the claim is deleted
- * rather than reworded. What IS still true is the ORDER of the statements
- * below, which is what the flag-off test asserts: no counter is touched on the
- * disabled path.
+ * rather than reworded.
+ *
+ * 🔴 WHAT PINS THE ORDER, EXACTLY. Two different assertions, because one of them
+ * does less than it reads like it does:
+ *   - the counter assertions pin only that NOTHING IS EMITTED on the disabled
+ *     path. `computeBlockAuthorFee` is pure, so a copy of it hoisted above the
+ *     flag read emits nothing either and those assertions stay green — they are
+ *     not an ordering guard and must not be read as one.
+ *   - the ordering itself is pinned by `does not touch its own ARGUMENTS`, which
+ *     hands this function an args object whose `generationType` and `config` are
+ *     GETTERS. Neither is read anywhere but inside the `computeBlockAuthorFee`
+ *     call below, so a read with the flag off means the computation ran early.
+ *     Slice 2 replaces "pure computation" with "moves money", at which point
+ *     this is the guard that matters.
  *
  * OPERATOR NOTE: create `app-blocks-author-fee-enabled` as a PLAIN GLOBAL
  * BOOLEAN with no segment. This evaluates globally (entityId `'global'`, empty
@@ -441,10 +514,11 @@ export type BlockAuthorFeeObservation =
  * to — three Prometheus counters and the `block-spend-attribution` Axiom line.
  * `block_author_fee_buzz_total / block_author_fee_base_buzz_total` by coarse
  * type gives the realized effective rate; `block_author_fee_observed_total` by
- * `outcome` gives the leg mix plus the `base_unavailable` population. The OTHER
- * skip — the flag being off — is deliberately silent here and visible only as
- * `authorFeeSkipped` on the log line, because a gate that has never been turned
- * on must not emit a per-generation metric.
+ * `outcome` gives the leg mix plus the `base-unavailable` population — in the
+ * SAME spelling the log line's `authorFeeSkipped` uses, so the two instruments
+ * join. The OTHER skip — the flag being off — is deliberately silent here and
+ * visible only as `authorFeeSkipped` on the log line, because a gate that has
+ * never been turned on must not emit a per-generation metric.
  *
  * TOTAL AND NON-THROWING. Every caller is on a fire-and-forget path off an
  * already-billed submit. A telemetry failure, a flag-read failure, or anything
@@ -473,12 +547,12 @@ export async function observeBlockAuthorFee(args: {
     try {
       blockAuthorFeeObservedCounter.inc({
         coarse_type: BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL,
-        outcome: 'base_unavailable',
+        outcome: BLOCK_AUTHOR_FEE_BASE_UNAVAILABLE,
       });
     } catch {
       // swallow — telemetry must never back-pressure the caller
     }
-    return { observed: false, reason: 'base-unavailable' };
+    return { observed: false, reason: BLOCK_AUTHOR_FEE_BASE_UNAVAILABLE };
   }
 
   const computation = computeBlockAuthorFee({

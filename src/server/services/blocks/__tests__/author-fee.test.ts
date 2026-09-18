@@ -66,6 +66,37 @@ describe('author fee — the platform defaults and ceilings', () => {
     });
   });
 
+  it('the ENFORCED percentage ceiling IS the DECLARED one — one spelling, not two', () => {
+    // 🔴 DIVERGENCE GUARD. `BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE` is the policy
+    // number; slice 3's author-input validation reads it. Until the clamp bound
+    // was derived from it, the clamp capped at `BLOCK_AUTHOR_FEE_BASIS_POINTS_SCALE`
+    // instead — a SECOND, independent spelling of "100%" that agreed with this
+    // one only by coincidence, with no implementation reading this constant at
+    // all. Moving the declared ceiling and deleting its `toBe(1)` line left
+    // every test green (measured at 92646e0: 84/84, mutant SURVIVED).
+    //
+    // Both halves are needed and neither alone suffices:
+    //  (a) the RELATIONSHIP — the clamp must land at exactly the declared
+    //      fraction of the base, so a bound that stops tracking the constant
+    //      fails here;
+    //  (b) the LITERAL — pinned so the pair cannot simply drift together.
+    const base = 640;
+    const overCeiling = computeBlockAuthorFee({
+      baseGenerationBuzz: base,
+      generationType: 'textToImage',
+      // 900% — far above any plausible ceiling, so this exercises the bound
+      // itself rather than the identity case.
+      config: { default: { flatBuzz: 0, pctOfBase: 9 } },
+    });
+    expect(
+      overCeiling.pctLegBuzz,
+      'the ENFORCED percentage ceiling has diverged from BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE'
+    ).toBe(Math.floor(BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE * base)); // (a)
+    expect(BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE).toBe(1); // (b)
+    expect(overCeiling.pctLegBuzz).toBe(640); // (b), behaviourally
+    expect(overCeiling.clamped).toBe(true);
+  });
+
   it('seeds exactly ONE per-type override: chat-completion pays nothing', () => {
     expect(BLOCK_AUTHOR_FEE_PLATFORM_CONFIG.byType).toEqual([
       ['chat-completion', { flatBuzz: 0, pctOfBase: 0 }],
@@ -322,6 +353,40 @@ describe('author fee — the platform ceiling', () => {
       clamped: false,
     });
   });
+
+  it('QUANTIZATION FLOORS — a stated 4.9999% never becomes a charged 5%', () => {
+    // `Math.round` gave 500 bp here, i.e. a full 5%, contradicting the module's
+    // own "a stated 5% never charges more than 5%". 499 bp is the exact answer.
+    expect(clampBlockAuthorFeeParams({ flatBuzz: 0, pctOfBase: 0.049999 }).pctBasisPoints).toBe(
+      499
+    );
+    // …and it reaches the fee: 499 bp of 10,000 ⚡ is 499, not 500.
+    expect(
+      computeBlockAuthorFee({
+        baseGenerationBuzz: 10_000,
+        generationType: 'textToImage',
+        config: { default: { flatBuzz: 0, pctOfBase: 0.049999 } },
+      }).feeBuzz
+    ).toBe(499);
+  });
+
+  it('flooring does NOT cost a basis point on an exactly-stated percentage', () => {
+    // The trap a naive `Math.floor(pct * 10_000)` walks into: 0.0029 is not
+    // exactly representable, so the product lands just below 29 and floors to 28.
+    // An author typing 0.29% must be charged 0.29%, not 0.28%.
+    expect(clampBlockAuthorFeeParams({ flatBuzz: 0, pctOfBase: 0.0029 }).pctBasisPoints).toBe(29);
+    expect(clampBlockAuthorFeeParams({ flatBuzz: 0, pctOfBase: 0.0093 }).pctBasisPoints).toBe(93);
+    expect(clampBlockAuthorFeeParams({ flatBuzz: 0, pctOfBase: 0.0113 }).pctBasisPoints).toBe(113);
+    // Exhaustive over every exact basis point in range — the measurement the
+    // `toBasisPoints` docblock quotes (573 of 10,001 wrong under a naive floor).
+    for (let bp = 0; bp <= 10_000; bp++) {
+      expect(clampBlockAuthorFeeParams({ flatBuzz: 0, pctOfBase: bp / 10_000 })).toEqual({
+        flatBuzz: 0,
+        pctBasisPoints: bp,
+        clamped: false,
+      });
+    }
+  });
 });
 
 describe('author fee — per-generation-type lookup', () => {
@@ -448,8 +513,11 @@ vi.mock('~/server/prom/client', () => ({
   blockAuthorFeeBaseBuzzCounter: { inc: mockBaseBuzz },
 }));
 
-// Imported after the mocks so the dynamic imports inside `observeBlockAuthorFee`
-// resolve to them.
+// `observeBlockAuthorFee`'s dependencies are ordinary STATIC imports; what makes
+// the mocks above take effect is `vi.mock` hoisting, not this import's position.
+// (An earlier revision of this comment said "the dynamic imports inside
+// `observeBlockAuthorFee` resolve to them" — there are none; the same claim was
+// already deleted from the module's own docblock.)
 import { observeBlockAuthorFee } from '../author-fee';
 import { APP_BLOCKS_AUTHOR_FEE_FLAG } from '~/server/services/app-blocks-flag';
 
@@ -476,12 +544,61 @@ describe('observeBlockAuthorFee — fail-closed dark gate', () => {
       generationType: 'textToImage',
     });
     expect(r).toEqual({ observed: false, reason: 'flag-disabled' });
-    // The observable consequence of the gate being FIRST: nothing is emitted at
-    // all, not even the skip counter. A gate moved below the computation would
-    // show up right here.
+    // ⚠️ WHAT THIS PINS, EXACTLY: that NOTHING IS EMITTED on the disabled path —
+    // not even the skip counter. It does NOT pin the gate's POSITION. An earlier
+    // revision of this comment claimed "a gate moved below the computation would
+    // show up right here", and that was false: `computeBlockAuthorFee` is pure,
+    // so a copy of it hoisted above the flag read emits nothing either and every
+    // assertion below stays green (measured at 92646e0: this file +
+    // spend-attribution.service.test.ts, 84/84, mutant SURVIVED).
+    // The ordering guard is the next test.
     expect(mockObserved).not.toHaveBeenCalled();
     expect(mockFeeBuzz).not.toHaveBeenCalled();
     expect(mockBaseBuzz).not.toHaveBeenCalled();
+  });
+
+  it('with the flag OFF it does not touch its own ARGUMENTS — the gate really is first', async () => {
+    // 🔴 THE ORDERING GUARD. The emptiness of the counters cannot see a hoisted
+    // PURE computation, so observe the one thing any invocation of
+    // `computeBlockAuthorFee` must do regardless of purity: READ ITS INPUTS.
+    // `generationType` and `config` are read nowhere in `observeBlockAuthorFee`
+    // except inside the `computeBlockAuthorFee(...)` call, so a read with the
+    // flag off means the computation ran before the gate.
+    //
+    // Slice 1's computation is pure, so this is cheap insurance; slice 2 replaces
+    // it with code that moves money, and then this is the guard that matters.
+    let generationTypeReads = 0;
+    let configReads = 0;
+    const probe = {
+      baseGenerationBuzz: 137,
+      get generationType() {
+        generationTypeReads++;
+        return 'textToImage';
+      },
+      get config() {
+        configReads++;
+        return undefined;
+      },
+    };
+
+    mockIsFlipt.mockResolvedValue(false);
+    await observeBlockAuthorFee(probe);
+    expect(
+      generationTypeReads,
+      'flag OFF: `generationType` was read, so the fee computation ran BEFORE the gate'
+    ).toBe(0);
+    expect(
+      configReads,
+      'flag OFF: `config` was read, so the fee computation ran BEFORE the gate'
+    ).toBe(0);
+
+    // POSITIVE CONTROL, in the same test: the probe CAN observe the reads, so the
+    // two zeros above are a fact about the gate and not about a getter wired to
+    // nothing.
+    mockIsFlipt.mockResolvedValue(true);
+    await observeBlockAuthorFee(probe);
+    expect(generationTypeReads, 'probe wired to nothing — flag ON read nothing').toBe(1);
+    expect(configReads, 'probe wired to nothing — flag ON read nothing').toBe(1);
   });
 
   it('a flag read that REJECTS is treated as off, never as on', async () => {
@@ -520,9 +637,12 @@ describe('observeBlockAuthorFee — fail-closed dark gate', () => {
       generationType: 'textToImage',
     });
     expect(r).toEqual({ observed: false, reason: 'base-unavailable' });
+    // ONE SPELLING across both instruments: the counter's `outcome` label is the
+    // same string as the log line's `authorFeeSkipped`, so a sizing read can join
+    // them. It used to be `base_unavailable` here and `base-unavailable` there.
     expect(mockObserved).toHaveBeenCalledWith({
       coarse_type: 'unknown',
-      outcome: 'base_unavailable',
+      outcome: 'base-unavailable',
     });
     // The money counters must stay untouched, or the sizing read gains a
     // phantom zero-fee sample for a generation the fee never saw.

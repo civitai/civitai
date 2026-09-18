@@ -794,4 +794,89 @@ describe('recordSpendAttribution — the author-fee log ledger', () => {
     await recordSpendAttribution(fakeInput({ baseGenerationBuzz: 640 }));
     expect(mockIsFlipt).toHaveBeenCalledWith('app-blocks-author-fee-enabled');
   });
+
+  it('a SELF-SPEND row IS charged a fee — the deliberate divergence from attribution', async () => {
+    // 🔴 THE DIVERGENCE, PINNED. Two lines up in the service, `isSelfSpend` VOIDS
+    // the attribution row and zeroes its share: a bounty is the platform paying
+    // an author out of platform money, so paying them for their own spend is a
+    // wash. The author fee is the VIEWER paying the author, and an author using
+    // their own app is a viewer like any other — so it is charged. That
+    // divergence was argued in ~15 lines of comment and asserted by nothing:
+    // routing self-spend to a null base left every test green (measured at
+    // 92646e0: this file + author-fee.test.ts, 84/84, mutant SURVIVED).
+    mockIsFlipt.mockResolvedValue(true);
+    const res = await recordSpendAttribution(
+      fakeInput({
+        userId: APP_OWNER_USER_ID, // spender == app owner
+        generationType: 'convert-image',
+        baseGenerationBuzz: 640,
+      })
+    );
+
+    // Attribution voids, exactly as before…
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+    expect(res.written).toBe(true);
+    expect(data.status).toBe('voided');
+    expect(data.voidedReason).toBe('self_spend');
+    expect(data.appOwnerShareCents).toBe(0);
+
+    // …and the AUTHOR FEE is computed anyway. 5% of 640 = 32, by hand from the
+    // rule, not read back off the module.
+    const payload = loggedPayload();
+    expect(payload.isSelfSpend).toBe(true);
+    expect(
+      payload.authorFeeSkipped,
+      'a self-spend generation was NOT charged an author fee — the divergence was removed'
+    ).toBeNull();
+    expect(payload.authorFeeBuzz).toBe(32);
+    expect(payload.authorFeeBaseBuzz).toBe(640);
+    expect(payload.authorFeeParamsSource).toBe('default');
+  });
+
+  it('a DUPLICATE (P2002) observes NO second fee — the observation follows the write', async () => {
+    // 🔴 THE ORDERING, PINNED. The row is idempotent on (workflowId, appBlockId);
+    // a re-poll / retry lands in the P2002 branch, and observing the fee BEFORE
+    // the write would count one generation twice — inflating the only number
+    // slice 2 gets to size settlement from by exactly the retry rate. Hoisting
+    // the observation above the create left every test green (measured at
+    // 92646e0: this file + author-fee.test.ts, 84/84, mutant SURVIVED).
+    //
+    // The instrument is the FLAG READ, because it is the first thing
+    // `observeBlockAuthorFee` does and it happens on every path through it,
+    // skipped and observed alike. A count on the log line could not see this:
+    // the log is itself after the write, so the duplicate path emits none either
+    // way.
+    mockIsFlipt.mockResolvedValue(true);
+    const input = fakeInput({ generationType: 'convert-image', baseGenerationBuzz: 640 });
+
+    const first = await recordSpendAttribution(input);
+    expect(first.written).toBe(true);
+    expect(mockIsFlipt).toHaveBeenCalledTimes(1); // the one and only observation
+
+    mockDbWrite.blockSpendAttribution.create.mockRejectedValueOnce(
+      new FakePrismaKnownError('dup', 'P2002')
+    );
+    mockDbRead.blockSpendAttribution.findUnique.mockResolvedValueOnce({
+      id: 'bsa_existing',
+      status: 'tracked',
+      appOwnerShareCents: 0,
+      spendSharePct: 0,
+      grossValueCents: 500,
+      rateCardVersion: 'unrated',
+      voidedReason: null,
+    });
+
+    const second = await recordSpendAttribution(input);
+    expect(second.written).toBe(false);
+    expect(second.row.id).toBe('bsa_existing');
+    // STILL ONE. This is the assertion the hoist breaks.
+    expect(
+      mockIsFlipt.mock.calls.length,
+      'the duplicate observed a SECOND author fee — the observation is no longer after the write'
+    ).toBe(1);
+    // …and exactly one row carried a fee to the log.
+    expect(
+      mockLog.mock.calls.filter(([p]) => (p as Record<string, unknown>).authorFeeBuzz != null)
+    ).toHaveLength(1);
+  });
 });
