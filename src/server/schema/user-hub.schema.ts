@@ -135,6 +135,26 @@ export const userHubSourceSchema = z.object({
   // anyway, and spelling it makes the round trip visible.
   exclude: z.boolean().default(false),
   index: z.number().int().min(0).default(0),
+  // A tag AND-set. Tag sources of one hub sharing a key, on the same side of
+  // `exclude`, must ALL match; null is a group of one. Assigned client-side by
+  // position, like `index`, which is safe because a save REPLACES the hub's whole
+  // source list — there is no stored key to collide with.
+  //
+  // Only Tag sources are grouped. It is nullable rather than validated per type
+  // because the resolver groups within the tag rows alone, so a key on any other
+  // type is inert rather than wrong.
+  //
+  // Bounded, not merely non-negative: the column is a Postgres `INTEGER`, and an
+  // unbounded value passes zod and then fails inside the replace transaction as a
+  // raw DB error rather than a validation message. The ceiling is the most rows a
+  // hub can hold, which is the most distinct keys it can ever need —
+  // `nextHubGroupKey` hands out the lowest free one for that reason.
+  groupKey: z
+    .number()
+    .int()
+    .min(0)
+    .max(hubLimits.sourcesPerHub + hubLimits.exclusionsPerHub)
+    .nullish(),
 });
 
 const capList = <T>(value: T[]) => value.slice(0, hubLimits.filterListLength);
@@ -231,6 +251,19 @@ export type HubSourceExclusionInput = z.infer<typeof hubSourceExclusionSchema>;
 // One spelling, in the module both sides already import from.
 export const hubSourceKey = (source: HubSourceExclusionInput) =>
   `${source.type}:${source.targetId}`;
+
+/**
+ * The equivalence key for a tag AND-group: rows sharing it, within one hub, are ANDed.
+ *
+ * 🔴 `exclude` is part of the key, not merely a property of the list it is computed
+ * over. An include group 3 and an exclude group 3 are different groups, and a caller
+ * that keys on the bare `groupKey` is correct only for as long as it happens to be
+ * handed a polarity-uniform list — which is a fact about its caller, not about it.
+ * That exact divergence has already happened once here: the client carried the
+ * polarity and the server did not, and the two were fixed a round apart.
+ */
+export const hubTagGroupKey = (source: { exclude?: boolean | null; groupKey: number }) =>
+  `${source.exclude ? 'x' : 'i'}-${source.groupKey}`;
 
 // 🔴 Keyed, not int. `getFollowed` returns each hub's `key`, so an int-addressed
 // follow of a public hub handed that key to any signed-in caller for the price of

@@ -8374,6 +8374,9 @@ model UserHubSource {
   // target is either something the hub collects or something it refuses.
   exclude  Boolean           @default(false)
   index    Int               @default(0)
+  // Tag sources sharing this key (within one hub and one `exclude` polarity) must ALL
+  // match. NULL is a group of one, which is what every pre-existing row means.
+  groupKey Int?
 
   @@unique([hubId, type, targetId])
   @@index([hubId])

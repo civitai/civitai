@@ -16,7 +16,9 @@ import { HUB_TAG_SOURCE_FILTER } from '~/server/schema/user-hub.schema';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
-type Suggestion = { type: UserHubSourceType; targetId: number; alias: string };
+// Exported: `HubSourceEditor` types its group-add callback with it, and a second
+// declaration there would make a field added here silently invisible to that path.
+export type HubSourceSuggestion = { type: UserHubSourceType; targetId: number; alias: string };
 
 // Collections are absent rather than disabled. They cannot work until the index
 // attribute serving them is live, and a greyed-out tab advertises a source the
@@ -41,12 +43,19 @@ export function HubSourceSearch({
   onSelect,
   isAdded,
   disabled,
+  onlyType,
 }: {
-  onSelect: (suggestion: Suggestion) => void;
-  isAdded: (suggestion: Suggestion) => boolean;
+  onSelect: (suggestion: HubSourceSuggestion) => void;
+  isAdded: (suggestion: HubSourceSuggestion) => boolean;
   disabled?: boolean;
+  /**
+   * Pin the picker to one kind and drop the tab strip. Used by the add-to-group
+   * popover, where the group is already a tag group and the other tabs would offer
+   * something that cannot join it.
+   */
+  onlyType?: UserHubSourceType;
 }) {
-  const [type, setType] = useState<UserHubSourceType>(UserHubSourceType.User);
+  const [type, setType] = useState<UserHubSourceType>(onlyType ?? UserHubSourceType.User);
   const [query, setQuery] = useState('');
   const [debounced] = useDebouncedValue(query, 300);
   const isTag = type === UserHubSourceType.Tag;
@@ -78,7 +87,7 @@ export function HubSourceSearch({
   );
 
   const isFetching = isTag ? fetchingTags : fetchingRelated;
-  const suggestions: Suggestion[] = isTag
+  const suggestions: HubSourceSuggestion[] = isTag
     ? (tagData?.items ?? []).map((tag) => ({
         type: UserHubSourceType.Tag,
         targetId: tag.id,
@@ -90,14 +99,16 @@ export function HubSourceSearch({
 
   return (
     <Stack gap="xs">
-      <SegmentedControl
-        fullWidth
-        size="xs"
-        value={type}
-        disabled={disabled}
-        data={tabs.map(({ value, label }) => ({ value, label }))}
-        onChange={(value) => setType(value as UserHubSourceType)}
-      />
+      {!onlyType && (
+        <SegmentedControl
+          fullWidth
+          size="xs"
+          value={type}
+          disabled={disabled}
+          data={tabs.map(({ value, label }) => ({ value, label }))}
+          onChange={(value) => setType(value as UserHubSourceType)}
+        />
+      )}
 
       <TextInput
         size="xs"

@@ -3454,7 +3454,44 @@ async function resolvedHubSources(input: ImageSearchInput) {
   });
 }
 
-type HubFilterArm = { field: MetricsImageFilterableAttribute; ids: number[] };
+type HubFilterClause = { field: MetricsImageFilterableAttribute; ids: number[] };
+/**
+ * One arm of the OR a hub's sources become. Its clauses are ANDed, which only a tag
+ * GROUP ever uses — every other arm is a single clause.
+ */
+type HubFilterArm = HubFilterClause[];
+
+/**
+ * 🔴 The brackets are load-bearing. Arms are joined with ` OR ` and AND binds tighter,
+ * so a multi-clause arm emitted bare re-associates the whole filter — silently ANDing
+ * one tag onto every other arm. A single clause needs none, and gets none, so a hub
+ * without groups emits exactly the filter it emitted before groups existed.
+ */
+function renderHubArm(arm: HubFilterArm) {
+  const clauses = arm.map((clause) =>
+    makeMeiliImageSearchFilter(clause.field, `IN [${clause.ids.join(',')}]`)
+  );
+  // No producer can emit an empty arm today. If one ever does, `clauses[0]` is
+  // `undefined`, that literal text lands in the filter string, and Meilisearch rejects
+  // the whole query — a 503 on the hub feed, far from the mistake that caused it.
+  if (!clauses.length) throw new Error('hub filter arm has no clauses');
+  return clauses.length > 1 ? `(${clauses.join(' AND ')})` : clauses[0];
+}
+
+/**
+ * Tag groups as arms. Single-tag groups are folded into ONE `IN [...]` clause rather
+ * than an arm each — identical to OR-ing them, and it keeps a hub built before
+ * `groupKey` existed on the same one-clause shape it always had.
+ */
+function tagGroupArms(tagGroups: number[][]): HubFilterArm[] {
+  const arms: HubFilterArm[] = [];
+  const singles = tagGroups.filter((group) => group.length === 1).map(([id]) => id);
+  if (singles.length) arms.push([{ field: 'tagIds', ids: singles }]);
+  for (const group of tagGroups) {
+    if (group.length > 1) arms.push(group.map((id) => ({ field: 'tagIds' as const, ids: [id] })));
+  }
+  return arms;
+}
 
 // The single enumeration of the arms a hub ORs together. One builder consumes it
 // today (`buildHubFilter`); the split survives so a second clause syntax cannot be
@@ -3469,22 +3506,22 @@ function hubFilterArms(
   }: Pick<ImageSearchInput, 'hideAutoResources' | 'hideManualResources'>
 ): HubFilterArm[] | null {
   const arms: HubFilterArm[] = [];
-  if (sources.userIds.length) arms.push({ field: 'userId', ids: sources.userIds });
+  if (sources.userIds.length) arms.push([{ field: 'userId', ids: sources.userIds }]);
   if (sources.modelVersionIds.length) {
-    arms.push({ field: 'postedToId', ids: sources.modelVersionIds });
-    if (!hideAutoResources) arms.push({ field: 'modelVersionIds', ids: sources.modelVersionIds });
+    arms.push([{ field: 'postedToId', ids: sources.modelVersionIds }]);
+    if (!hideAutoResources) arms.push([{ field: 'modelVersionIds', ids: sources.modelVersionIds }]);
     if (!hideManualResources)
-      arms.push({ field: 'modelVersionIdsManual', ids: sources.modelVersionIds });
+      arms.push([{ field: 'modelVersionIdsManual', ids: sources.modelVersionIds }]);
   }
   // No guard, unlike `collectionIds` below: `tagIds` has been a live filterable
   // attribute on the metrics index since 2024, and the ids are denormalised onto the
   // documents at index time. Verified against the prod index rather than assumed —
   // a tag filter returns hits where `collectionIds IN [...]` is rejected outright.
-  if (sources.tagIds.length) arms.push({ field: 'tagIds', ids: sources.tagIds });
+  arms.push(...tagGroupArms(sources.tagGroups));
   // Guarded, not merely unused: filtering on an attribute the index has not been
   // rebuilt with makes Meilisearch reject the entire query, which surfaces as a 503.
   if (HUB_COLLECTION_SOURCES_ENABLED && sources.collectionIds.length)
-    arms.push({ field: 'collectionIds', ids: sources.collectionIds });
+    arms.push([{ field: 'collectionIds', ids: sources.collectionIds }]);
 
   return arms.length ? arms : null;
 }
@@ -3505,14 +3542,17 @@ function hubFilterArms(
  * attribution.
  */
 function buildHubExclusionFilter(sources: ResolvedHubSources): string | null {
-  const { userIds, modelVersionIds, tagIds } = sources.excluded;
+  const { userIds, modelVersionIds, tagGroups } = sources.excluded;
   const arms: HubFilterArm[] = [];
-  if (userIds.length) arms.push({ field: 'userId', ids: userIds });
-  if (tagIds.length) arms.push({ field: 'tagIds', ids: tagIds });
+  if (userIds.length) arms.push([{ field: 'userId', ids: userIds }]);
+  // A grouped exclusion removes LESS than an ungrouped one: `NOT (x AND y)` keeps an
+  // image carrying only x. The UI states that where the group is built; it is not
+  // something the filter can compensate for.
+  arms.push(...tagGroupArms(tagGroups));
   if (modelVersionIds.length) {
-    arms.push({ field: 'postedToId', ids: modelVersionIds });
-    arms.push({ field: 'modelVersionIds', ids: modelVersionIds });
-    arms.push({ field: 'modelVersionIdsManual', ids: modelVersionIds });
+    arms.push([{ field: 'postedToId', ids: modelVersionIds }]);
+    arms.push([{ field: 'modelVersionIds', ids: modelVersionIds }]);
+    arms.push([{ field: 'modelVersionIdsManual', ids: modelVersionIds }]);
   }
   if (!arms.length) return null;
 
@@ -3520,9 +3560,7 @@ function buildHubExclusionFilter(sources: ResolvedHubSources): string | null {
   // `tagIds` is empty survives `NOT tagIds IN [x]`, and `NOT field IN [unused-id]`
   // returns the whole set. So a NOT arm removes matches only — it does not also
   // drop documents that lack the field.
-  return `NOT (${arms
-    .map((arm) => makeMeiliImageSearchFilter(arm.field, `IN [${arm.ids.join(',')}]`))
-    .join(' OR ')})`;
+  return `NOT (${arms.map(renderHubArm).join(' OR ')})`;
 }
 
 function buildHubFilter(
@@ -3531,9 +3569,7 @@ function buildHubFilter(
 ): string | null {
   const arms = hubFilterArms(sources, input);
   if (!arms) return null;
-  return `(${arms
-    .map((arm) => makeMeiliImageSearchFilter(arm.field, `IN [${arm.ids.join(',')}]`))
-    .join(' OR ')})`;
+  return `(${arms.map(renderHubArm).join(' OR ')})`;
 }
 
 export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {

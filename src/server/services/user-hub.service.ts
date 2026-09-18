@@ -18,6 +18,7 @@ import {
   hubFeedFiltersSchema,
   hubLimits,
   hubSourceKey,
+  hubTagGroupKey,
 } from '~/server/schema/user-hub.schema';
 import {
   throwAuthorizationError,
@@ -70,6 +71,7 @@ const hubListSelect = {
       enabled: true,
       exclude: true,
       index: true,
+      groupKey: true,
     },
     orderBy: { index: 'asc' },
   },
@@ -658,15 +660,37 @@ export async function setUserHubOrder({ ids, userId }: SetUserHubOrderInput & { 
   );
 }
 
+/**
+ * A row's tag-group key, or undefined when it is not in a group. Only Tag rows group:
+ * every other kind is its own OR-arm in the feed filter, so a `groupKey` on one is
+ * inert and must not pull anything with it.
+ */
+const tagGroupKey = (source: HubSourceRow) =>
+  source.type === UserHubSourceType.Tag && source.groupKey != null
+    ? hubTagGroupKey({ exclude: source.exclude, groupKey: source.groupKey })
+    : undefined;
+
+/** The columns `resolveHubSources` reads off a hub's source rows. */
+type HubSourceRow = {
+  type: UserHubSourceType;
+  targetId: number;
+  exclude: boolean;
+  groupKey: number | null;
+};
+
 export type ResolvedHubSources = {
   userIds: number[];
   modelVersionIds: number[];
   collectionIds: number[];
   /**
-   * Image tags. Unlike a Model source these need no expansion and no budget: the
-   * ids ARE what the index is filtered on.
+   * Image tags, as AND-groups. Unlike a Model source these need no expansion and no
+   * budget: the ids ARE what the index is filtered on.
+   *
+   * Each inner array is ANDed and the groups are ORed, so `[[1,2],[3]]` reads
+   * "(1 and 2) or 3". A hub with no groups set resolves to one id per array, which
+   * is the pre-`groupKey` behaviour.
    */
-  tagIds: number[];
+  tagGroups: number[][];
   /** True when a Model source expanded past the id cap and was trimmed. */
   truncated: boolean;
   /** The hub's stored browsing-level cap. 0 means the hub imposes none. */
@@ -677,7 +701,7 @@ export type ResolvedHubSources = {
    * exclusion shows content they said to keep out. `exclusionsPerHub` is what
    * bounds this instead.
    */
-  excluded: { userIds: number[]; modelVersionIds: number[]; tagIds: number[] };
+  excluded: { userIds: number[]; modelVersionIds: number[]; tagGroups: number[][] };
 };
 
 // Resolves a hub to the id sets its feed filter is built from. Returns null when
@@ -698,8 +722,15 @@ export async function resolveHubSources({
     select: {
       forcedBrowsingLevel: true,
       sources: {
+        // ⚠️ Nothing constrains a GROUP's members to share `enabled`, so a half-enabled
+        // group resolves to an AND-set of only the enabled half — a WIDER feed than the
+        // card describes. Benign only because the editor's single control switches the
+        // whole group and only the owner can persist `enabled`. It stops being benign
+        // the day any non-owner surface can write that column, at which point it is the
+        // same widening the session-toggle sweep below exists to prevent, by another
+        // door. Constrain it there, not here.
         where: { enabled: true },
-        select: { type: true, targetId: true, exclude: true },
+        select: { type: true, targetId: true, exclude: true, groupKey: true },
       },
     },
   });
@@ -711,6 +742,12 @@ export async function resolveHubSources({
   // and because subtracting can only ever NARROW the feed: a forged exclusion
   // removes content from the forger, and can add none.
   //
+  // 🔴 That claim is what makes this list safe to accept from the client, and a tag
+  // AND-group is the one thing that can break it. Dropping ONE member turns `A AND B`
+  // into `A`, which matches a SUPERSET — so a toggle landing on any member takes the
+  // whole group with it. That is also what the editor's own switch does, since a
+  // half-enabled group filters on fewer tags than its card shows.
+  //
   // 🔴 Applied to the POSITIVE sources only. A session toggle reaching the negative
   // ones would let a viewer switch off somebody else's exclusion, which is the one
   // direction this list must never be able to move the feed: forging it would ADD
@@ -718,9 +755,22 @@ export async function resolveHubSources({
   // own.
   const sessionExcluded = new Set((excludedSources ?? []).map(hubSourceKey));
   const negativeSources = hub.sources.filter((s) => s.exclude);
-  const positiveSources = hub.sources
-    .filter((s) => !s.exclude)
-    .filter((s) => !sessionExcluded.size || !sessionExcluded.has(hubSourceKey(s)));
+  const positive = hub.sources.filter((s) => !s.exclude);
+  // Only tags group, so only a tag's key can pull its siblings out with it. Keyed
+  // through `hubTagGroupKey` rather than on the bare int: these rows are all positive
+  // today, so the polarity is constant — but that is a property of the filter three
+  // lines up, and keying on the int would make this correct only while that holds.
+  const toggledOffGroups = new Set(
+    positive
+      .filter((s) => sessionExcluded.has(hubSourceKey(s)))
+      .map(tagGroupKey)
+      .filter((key): key is string => !!key)
+  );
+  const positiveSources = positive.filter((s) => {
+    if (sessionExcluded.has(hubSourceKey(s))) return false;
+    const group = tagGroupKey(s);
+    return !group || !toggledOffGroups.has(group);
+  });
 
   const byType = (type: UserHubSourceType) =>
     positiveSources.filter((s) => s.type === type).map((s) => s.targetId);
@@ -777,7 +827,7 @@ export async function resolveHubSources({
     modelVersionIds,
     truncated,
     collectionIds: byType(UserHubSourceType.Collection),
-    tagIds: byType(UserHubSourceType.Tag),
+    tagGroups: groupTagIds(positiveSources),
     forcedBrowsingLevel: hub.forcedBrowsingLevel,
     excluded,
   };
@@ -795,7 +845,7 @@ export async function resolveHubSources({
  * property of the data, not of the code.
  */
 async function resolveExcludedSources(
-  sources: { type: UserHubSourceType; targetId: number }[]
+  sources: HubSourceRow[]
 ): Promise<ResolvedHubSources['excluded']> {
   const byType = (type: UserHubSourceType) =>
     sources.filter((s) => s.type === type).map((s) => s.targetId);
@@ -814,8 +864,46 @@ async function resolveExcludedSources(
   return {
     userIds: byType(UserHubSourceType.User),
     modelVersionIds: [...new Set(versionIds)],
-    tagIds: byType(UserHubSourceType.Tag),
+    tagGroups: groupTagIds(sources),
   };
+}
+
+/**
+ * The hub's tag rows as AND-groups: rows sharing a `groupKey` must ALL match, and a
+ * null key is a group of one. An include group 3 and an exclude group 3 are different
+ * groups — scoped by `exclude` being part of the map key, NOT by this happening to be
+ * called once per polarity, so folding the two calls into one cannot quietly merge a
+ * kept-out tag into the hub's own AND-set. `groupHubSources` in hub.utils.ts states
+ * the same rule over display values.
+ *
+ * Exported for `user-hub.service.test.ts`, which calls it with a MIXED list. Through
+ * `resolveHubSources` the polarity scoping is unreachable — the two calls are already
+ * split by polarity, so a test there passes with or without `exclude` in the key, and
+ * would read as coverage of a guard it cannot see.
+ *
+ * Groups keep first-appearance order, and a one-member group is indistinguishable from
+ * an ungrouped tag. That is what leaves every hub predating the column unchanged.
+ */
+export function groupTagIds(sources: HubSourceRow[]) {
+  const groups: number[][] = [];
+  const byKey = new Map<string, number[]>();
+  for (const source of sources) {
+    if (source.type !== UserHubSourceType.Tag) continue;
+    if (source.groupKey == null) {
+      groups.push([source.targetId]);
+      continue;
+    }
+    const key = hubTagGroupKey({ ...source, groupKey: source.groupKey });
+    const held = byKey.get(key);
+    if (held) {
+      held.push(source.targetId);
+      continue;
+    }
+    const group = [source.targetId];
+    byKey.set(key, group);
+    groups.push(group);
+  }
+  return groups;
 }
 
 /**
