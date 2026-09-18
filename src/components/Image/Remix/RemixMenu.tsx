@@ -1,6 +1,6 @@
 import { Menu, Text, ThemeIcon } from '@mantine/core';
 import { useEffect, useRef } from 'react';
-import { IconBrush, IconMovie, IconWand } from '@tabler/icons-react';
+import { IconBrush, IconMovie, IconRosetteDiscountCheck, IconWand } from '@tabler/icons-react';
 import type { RemixKind } from '~/shared/constants/remix.constants';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import {
@@ -22,6 +22,11 @@ type RemixOption = {
   icon: typeof IconWand;
   /** A colour per option so the three read as distinct things, not a list. */
   color: string;
+  /**
+   * Set on the options that verify, not on the one that lacks it — so reusing a
+   * prompt doesn't read as a discouraged choice.
+   */
+  verifiable: boolean;
 };
 
 const kindLabels: Record<RemixKind, RemixOption> = {
@@ -30,12 +35,14 @@ const kindLabels: Record<RemixKind, RemixOption> = {
     description: 'Change this image with a prompt',
     icon: IconWand,
     color: 'violet',
+    verifiable: true,
   },
   video: {
     label: 'Animate',
     description: 'Turn this image into a video',
     icon: IconMovie,
     color: 'blue',
+    verifiable: true,
   },
 };
 
@@ -44,7 +51,21 @@ const reuseOption: RemixOption = {
   description: "Start from this image's settings",
   icon: IconBrush,
   color: 'teal',
+  verifiable: false,
 };
+
+/**
+ * States what this earns, not a promise the submission will be free —
+ * `freeSubmissionOffer` decides that later and can override it.
+ */
+function VerifiedHint() {
+  return (
+    <Text size="xs" c="green.6" lh={1.2} className="mt-1 flex items-center gap-1">
+      <IconRosetteDiscountCheck size={13} stroke={1.9} />
+      Uses this image, so we can verify the remix
+    </Text>
+  );
+}
 
 function OptionIcon({ option }: { option: RemixOption }) {
   return (
@@ -63,6 +84,7 @@ function OptionLabel({ option }: { option: RemixOption }) {
       <Text size="xs" c="dimmed" lh={1.2}>
         {option.description}
       </Text>
+      {option.verifiable && <VerifiedHint />}
     </div>
   );
 }
