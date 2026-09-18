@@ -75,14 +75,11 @@ describe('remixClaimHolds', () => {
   });
 });
 
-/**
- * What the restricted account typed with four of the seed's eleven tags left —
- * a real remix that has moved on. Scores 0.2969 against the seed.
- */
+/** Four of the seed's eleven tags survive — a real remix that moved on, scoring below the 0.75 cutoff. */
 const PARTIAL_PROMPT =
   '1girl, 1boy, creampie, bed, forest, waterfall, sunlight, castle, epic fantasy';
 
-/** Two tags changed out of eleven. Scores 0.7601 — changed a lot, still counts. */
+/** Two of the seed's eleven tags changed — a real edit that still scores at or above the 0.75 cutoff. */
 const NEAR_PROMPT =
   'netorare, cuckold pov, 1girl, 1boy, creampie, bed, bedroom, day, plain background';
 
@@ -152,10 +149,6 @@ describe('remixClaimState reasons', () => {
 
   it('scores a nearer prompt above a further one, and a disjoint one at the floor', () => {
     seedRemix();
-    // `toBeLessThan(0.75)` on a disjoint prompt passed for free: it shares no
-    // token with the seed, so every term is 0 and any bounded wrong answer
-    // satisfies it. Ordering is the property that cannot be satisfied by
-    // accident — `?? -1` so a null breaks the chain rather than reading as 0.
     const near = state({ prompt: NEAR_PROMPT }).score ?? -1;
     const partial = state({ prompt: PARTIAL_PROMPT }).score ?? -1;
     const disjoint = state({ prompt: UNRELATED_PROMPT }).score ?? -1;
