@@ -57,8 +57,12 @@ const ROUTER = path.join(process.cwd(), 'src/server/routers/blocks.router.ts');
 
 /** Every `recordSpendAttribution({ … })` argument object in the router source. */
 function spendAttributionCallSites(source: string): string[] {
+  return callSites(source, 'recordSpendAttribution({');
+}
+
+/** Every `<fn>({ … })` argument object in the router source, braces balanced. */
+function callSites(source: string, opener: string): string[] {
   const sites: string[] = [];
-  const opener = 'recordSpendAttribution({';
   let from = 0;
   for (;;) {
     const start = source.indexOf(opener, from);
@@ -154,5 +158,145 @@ describe('author fee — the spend-attribution seam', () => {
     // `snapshot` has no `variable` either — reading one would be `undefined`,
     // i.e. "never a cap", which is the fail-OPEN direction.
     expect(source).not.toMatch(/realizedPriceIsCap\s*=\s*[^;]*snapshot\./);
+  });
+});
+
+/**
+ * THE SLICE-2b HALF OF THE SEAM — the viewer-charge path.
+ *
+ * 🔴 EVERY ASSERTION IN THIS BLOCK IS RED AT `dce428a492` (the merge base): the
+ * router contains ZERO `chargeBlockAuthorFee` call sites there, so the extractor
+ * returns an empty array and the positive control fails first. It is regression
+ * coverage in the strict sense — it pins a property this change introduces and
+ * would catch its removal.
+ *
+ * 🔴 WHAT IT PINS AND WHY A UNIT TEST CANNOT. The one safety hole the design
+ * review found is a fee DEBITED OUTSIDE THE RESERVATION. That is not a property
+ * of any function — `chargeBlockAuthorFee` in isolation is correct either way.
+ * It is a property of the ORDER of statements in a ~10,000-line tRPC router
+ * whose handlers cannot be invoked without the whole orchestrator + auth stack.
+ * So it is pinned as source text: the number every gate and every reservation is
+ * taken against must LITERALLY be the generation price PLUS the quoted fee, and
+ * every submit path must hand the charge the amount it reserved.
+ *
+ * The behavioural half lives in
+ * `src/server/services/blocks/__tests__/author-fee-charge.service.test.ts` — a
+ * structural check alone would type-check past a wrong argument, and a
+ * behavioural check alone cannot see a path that forgot to call at all.
+ */
+describe('author fee — the viewer-charge seam', () => {
+  const source = readFileSync(ROUTER, 'utf8');
+  const charges = callSites(source, 'chargeBlockAuthorFee({');
+  const quotes = callSites(source, 'quoteBlockAuthorFee({');
+
+  it('the extractor finds charge and quote call sites (positive control)', () => {
+    // Without this, an extractor that silently matched nothing would make every
+    // assertion below vacuously true over two empty arrays.
+    expect(charges.length).toBeGreaterThan(0);
+    expect(quotes.length).toBeGreaterThan(0);
+    expect(charges[0]).toContain('workflowId');
+  });
+
+  it('there are exactly FOUR charge call sites — one per submit path', () => {
+    // textToImage, customComfy, the registry-step bridge, and the pass-through
+    // step. A new submit path is a deliberate decision about whether it charges
+    // an author fee, so it must land here rather than silently inherit a skip.
+    expect(charges).toHaveLength(4);
+  });
+
+  it('🔴 every charge site passes the amount ITS OWN path reserved', () => {
+    // The ceiling is what makes "priced into the reservation" structural rather
+    // than conventional: a path that reserved nothing passes 0 and can then
+    // charge nothing, whatever the realized base says.
+    for (const site of charges) expect(site).toContain('reservedAuthorFeeBuzz');
+  });
+
+  it('🔴 exactly TWO paths reserve a fee and exactly TWO reserve none', () => {
+    // The two that reserve none are POST-PAID and take no pre-submit `cost.base`
+    // to price from (customComfy makes no whatIf quote at all; the pass-through
+    // quote helper returns a total only). Asserting the SPLIT rather than just
+    // the total is what makes a silent regression visible in either direction: a
+    // priced path degraded to 0 stops charging, and a post-paid path handed a
+    // live reserve starts charging off a ceiling.
+    const zeroed = charges.filter((s) => /reservedAuthorFeeBuzz:\s*0\b/.test(s));
+    const priced = charges.filter((s) => /reservedAuthorFeeBuzz,/.test(s));
+    expect(zeroed).toHaveLength(2);
+    expect(priced).toHaveLength(2);
+  });
+
+  it('every charge site prices off the RAW orchestrator response, never `snapshot`', () => {
+    // Same rule, same reason, as the attribution seam above: `snapshot.cost` is
+    // `{ total }` only, so a `snapshot.cost?.base` here is `undefined` silently —
+    // and `undefined` maps to a `base-unavailable` skip, i.e. the fee quietly
+    // stops charging on every generation with nothing to say so.
+    for (const site of charges) {
+      expect(site).toContain('baseGenerationBuzz: realizedBaseCost');
+      expect(site).toContain('priceIsCap: realizedPriceIsCap');
+      expect(site).not.toMatch(/baseGenerationBuzz:\s*(snapshot|buzzAmount|cost\b|\d)/);
+    }
+  });
+
+  it('🔴 THE FEE IS INSIDE THE RESERVED NUMBER, on both priced paths', () => {
+    // The whole point of the slice, as source text. `cost` (txt2img) and
+    // `reserveBuzz` (registry step) are the numbers the per-call `buzzBudget`
+    // gate, the per-user daily cap, the viewer's OWN per-app CONSENT BUDGET, the
+    // per-app aggregate cap and the dev-session backstop are each taken against.
+    // Delete either `+ reservedAuthorFeeBuzz` and the fee escapes all five while
+    // every other test in this repo stays green.
+    const folded = source.match(/=\s*\w+\s*\+\s*reservedAuthorFeeBuzz;/g);
+    expect(folded).toHaveLength(2);
+  });
+
+  it('🔴 both quotes are priced off the WHATIF response, before anything is reserved', () => {
+    expect(quotes).toHaveLength(2);
+    for (const site of quotes) {
+      expect(site).toContain('baseGenerationBuzz: whatIfResult.cost?.base');
+      expect(site).toContain('priceIsCap: whatIfResult.cost?.variable');
+    }
+    // ORDERING, on the txt2img path: price → reserve → charge. A quote taken
+    // after the reservation would be a number nothing was gated on, which is the
+    // defect this whole block exists to make impossible.
+    const firstQuote = source.indexOf('quoteBlockAuthorFee({');
+    const firstReserve = source.indexOf('reserveAppSpend(');
+    const firstCharge = source.indexOf('chargeBlockAuthorFee({');
+    expect(firstQuote).toBeGreaterThan(-1);
+    expect(firstQuote).toBeLessThan(firstReserve);
+    expect(firstReserve).toBeLessThan(firstCharge);
+  });
+
+  it('🔴 the fee is REVERSED where the generation reaches a non-succeeded terminal state', () => {
+    // Two observers reach a terminal workflow: `pollWorkflow` (every poll after
+    // the workflow settles) and `cancelAppWorkflow`. Both must reverse, or a
+    // refunded generation leaves an accrual standing and the author is paid out
+    // of money the viewer got back. Pinned as a COUNT so removing one is visible.
+    const reversals = callSites(source, 'reverseBlockAuthorFee({');
+    expect(reversals).toHaveLength(2);
+    for (const site of reversals) {
+      expect(site).toContain('workflowId: input.workflowId');
+      expect(site).toContain('terminalStatus: snapshot.status');
+    }
+  });
+
+  it('🔴 neither reversal fires on a SUCCEEDED workflow', () => {
+    // The direction of this reversal that costs the AUTHOR rather than
+    // protecting the viewer. `cancelAppWorkflow` is where it bites: a cancel
+    // RACES completion, so the re-read after `cancelWorkflow` can report
+    // `succeeded` — the viewer got their generation, the orchestrator refunds
+    // nothing, and a reversal would hand back money for delivered work.
+    //
+    // Pinned on the text immediately PRECEDING each call rather than on a bare
+    // substring count, so a guard that exists somewhere else in the file cannot
+    // satisfy it.
+    let from = 0;
+    let guarded = 0;
+    for (;;) {
+      const at = source.indexOf('reverseBlockAuthorFee({', from);
+      if (at === -1) break;
+      if (source.slice(Math.max(0, at - 200), at).includes("snapshot.status !== 'succeeded'")) {
+        guarded += 1;
+      }
+      from = at + 1;
+    }
+    expect(guarded).toBe(2);
   });
 });
