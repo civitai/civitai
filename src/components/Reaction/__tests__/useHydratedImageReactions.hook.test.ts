@@ -136,6 +136,11 @@ describe('useHydratedImageReactions wiring', () => {
     // asked. It proves the gate survives the WHOLE BODY — chunking, `useQueries`, `byImageId`,
     // merge — which the pure `it.each` next door cannot, and it is the only test that would catch
     // `byImageId` being sourced from anything other than `queries`.
+    // The assertion this case's NAME has been promising since it was written. `asked` did not
+    // exist then; it arrived two rounds later and this case was never revisited. Without it the
+    // case asserts only the output, which the pure `it.each` next door already covers — with it,
+    // this is the only place pinning that no query is issued outside `chunks`.
+    expect(asked.current).toEqual([]);
     expect(result.current[0].reactions).toEqual([]);
     unmount();
   });
