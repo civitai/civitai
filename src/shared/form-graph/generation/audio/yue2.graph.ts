@@ -7,7 +7,10 @@ import {
   yue2Steps,
 } from '~/shared/constants/yue2.constants';
 import { SEED, enumDef, sliderDef, textDef } from '../defs';
+import { checkpointDef } from '../checkpoint';
 import { familyScope, type FamilyExt } from '../shared';
+
+export const yue2VersionIds = { v2: 3337846 } as const;
 
 type YuE2Ext = FamilyExt & { yue2MusicMode?: 'simple' | 'custom' };
 
@@ -34,6 +37,15 @@ const custom = defineGraph<YuE2Ext>()
   .field('yue2Abc', ({ yue2Mode }) => (yue2Mode !== 'off' ? textDef('yue2Abc') : null));
 
 export const yue2 = defineGraph<FamilyExt>({ scope: familyScope })
+  .field('model', ({ _ext }) =>
+    checkpointDef({
+      ecosystem: _ext.ecosystem,
+      workflow: _ext.workflow,
+      ext: _ext,
+      versions: { options: [{ label: 'v2', value: yue2VersionIds.v2 }] },
+      defaultModelId: yue2VersionIds.v2,
+    })
+  )
   .field('duration', sliderDef(yue2Duration))
   .field('seed', SEED)
   .field('yue2MusicMode', enumDef({ options: yue2MusicModeOptions, default: 'simple' }))

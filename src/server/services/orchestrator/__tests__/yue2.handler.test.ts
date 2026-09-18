@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   getEcosystemDisplayItems,
+  isBaseModelGenerationSupported,
   isSelfHostedEcosystem,
 } from '@civitai/shared/basemodel.constants';
 import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
@@ -11,6 +12,8 @@ import { getEcosystemStates as getFormEcosystemStates } from '~/shared/form-grap
 import { createEcosystemStepInput } from '../ecosystems';
 import { createFormGraphStepInput } from '../form-graph';
 import { formatStepOutputs, type GenerationHandlerCtx } from '../orchestration-new.service';
+import { mapDataToGraphInput } from '../legacy-metadata-mapper';
+import type { GenerationResource } from '~/shared/types/generation.types';
 
 const ext: GenerationCtx = {
   limits: { maxQuantity: 4, maxResources: 9, vidQuantity: 1 },
@@ -48,6 +51,31 @@ describe.each([
     dispatch: createFormGraphStepInput,
   },
 ])('YuE2 $name', ({ parse, dispatch }) => {
+  it('opens the official model card in the music generator with v2 selected', () => {
+    const model = {
+      id: 3337846,
+      baseModel: 'YuE2',
+      model: { id: 2944296, type: 'Checkpoint' },
+    };
+    const params = mapDataToGraphInput({}, [model as GenerationResource]);
+    expect(params).toMatchObject({ ecosystem: 'YuE2', workflow: 'txt2music' });
+    const parsed = parse({ ...params, model, prompt: 'A hopeful synth-pop song' });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data).toMatchObject({
+      ecosystem: 'YuE2',
+      workflow: 'txt2music',
+      model: { id: 3337846 },
+      yue2MusicMode: 'simple',
+    });
+  });
+
+  it('selects the official v2 checkpoint when starting from the ecosystem picker', () => {
+    const parsed = parse(base);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data).toMatchObject({ model: { id: 3337846 } });
+  });
+
   async function submit(overrides: Record<string, unknown> = {}) {
     const parsed = parse({ ...base, ...overrides });
     if (!parsed.success) throw new Error(JSON.stringify(parsed.errors));
@@ -211,4 +239,6 @@ it('offers YuE2 in the audio picker and applies self-hosted availability', () =>
     expect.arrayContaining([expect.objectContaining({ key: 'YuE2', compatible: true })])
   );
   expect(isSelfHostedEcosystem('YuE2')).toBe(true);
+  expect(isBaseModelGenerationSupported('YuE2', 'Checkpoint')).toBe(true);
+  expect(isBaseModelGenerationSupported('YuE2', 'LORA')).toBe(false);
 });
