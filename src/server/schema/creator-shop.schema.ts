@@ -366,7 +366,7 @@ export const cosmeticImageRequirements = (type: CosmeticType): CosmeticImageRequ
 
 const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
 
-// Human-readable aspect ratio, e.g. 144×144 -> "1:1", 450×144 -> "25:9".
+// Human-readable aspect ratio, e.g. 144×144 -> "1:1", 450×144 -> "25:8".
 export const aspectRatioLabel = (width: number, height: number): string => {
   const g = gcd(width, height) || 1;
   return `${width / g}:${height / g}`;
