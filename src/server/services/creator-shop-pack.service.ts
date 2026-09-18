@@ -21,7 +21,11 @@ import {
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
 import { assertQuotedFee, getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
 import { getCosmeticArtworkUrl } from '~/server/services/cosmetic-phash.service';
-import { REJECTED_IS_FINAL, wasLastReviewARejection } from '~/server/services/creator-shop.data';
+import {
+  REJECTED_IS_FINAL,
+  packDisplayMeta,
+  wasLastReviewARejection,
+} from '~/server/services/creator-shop.data';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
@@ -501,6 +505,7 @@ export const getPackDetail = async ({
     throw throwNotFoundError('Pack not found');
 
   const packMeta = (item.meta ?? {}) as CosmeticShopItemMeta;
+  const canReadReviewState = !!isModerator || (!!userId && userId === item.addedById);
 
   const snapshotByCosmetic = new Map(item.members.map((m) => [m.cosmeticId, m.floorAmount]));
   const resolved = await resolvePackMembers(item.members.map((m) => m.cosmeticId));
@@ -542,18 +547,20 @@ export const getPackDetail = async ({
     status: item.status,
     listed: item.listed,
     availableQuantity: item.availableQuantity,
-    // Named fields, not the column: this procedure is public, and meta also
-    // holds payout and review bookkeeping that no pack page renders.
+    // Named fields, not the column, and the same whitelist the storefront
+    // sanitizers spread — a second list here is a list that stops agreeing.
     meta: {
-      coverUrl: packMeta.coverUrl,
-      coverTiles: packMeta.coverTiles,
-      acceptsBlueBuzz: packMeta.acceptsBlueBuzz,
       purchases: packMeta.purchases ?? 0,
+      acceptsBlueBuzz: packMeta.acceptsBlueBuzz ?? false,
+      ...packDisplayMeta(packMeta),
     },
     // Archiving overwrites `status`, so this is the only thing that tells a
-    // rejected pack from an ordinary archived one. Derived here, from the same
-    // helper the manage list uses, because what it reads stays server-side.
-    lastReviewWasRejection: wasLastReviewARejection(packMeta.history),
+    // rejected pack from an ordinary archived one. Derived here rather than
+    // client-side, and answered only for the two viewers whose editor asks the
+    // question — everyone else gets no answer rather than a false one.
+    lastReviewWasRejection: canReadReviewState
+      ? wasLastReviewARejection(packMeta.history)
+      : undefined,
     // A member the pack no longer resolves is a member that can't be sold; the
     // purchase refuses on the same condition, so say so before they try.
     unavailableCount: item.members.length - members.length,

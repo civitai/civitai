@@ -497,19 +497,25 @@ describe('the moderator cosmetic-store pack edit route', () => {
     // remove, and it was pinned by nothing.
     //
     // The derivation MOVED to the server (getPackDetail) rather than being
-    // dropped: the endpoint is public, so the history it reads must not leave
-    // the server. Restating the rule from client-side history — the shape this
-    // pinned before — would put it back. If you are deleting this, check
+    // dropped — the endpoint now returns named fields, and the verdict is one
+    // of them. Restating the rule from the history client-side, the shape this
+    // pinned before, would undo that. If you are deleting this, read
     // `pack-detail-public-fields.test.ts` first: it is the other half.
+    //
+    // The OPERATOR, as with canSubmit above: an `||` here keeps the term, keeps
+    // the guard green, and makes a Published pack with an old rejection in its
+    // history uneditable.
     expect(
       modalSource,
       'The rejected-vs-archived split must use the server-derived verdict, not restate ' +
         'the rule — an archived-after-rejection pack is NOT restorable.'
-    ).toContain('!!existing.lastReviewWasRejection');
+    ).toContain('CosmeticShopItemStatus.Archived && !!existing.lastReviewWasRejection');
+    // Optional-chained, because `existing.meta?.history` is the spelling this
+    // file's own idiom would reach for and it does not contain `meta.history`.
     expect(
       modalSource,
-      'The editor must not read review history client-side — the endpoint that feeds it is public.'
-    ).not.toContain('meta.history');
+      'The editor must derive this from what the endpoint returns, not from the review history.'
+    ).not.toMatch(/meta\??\.history/);
     expect(
       modalSource,
       'The alert must choose its copy from wasRejected, or the two arms can be swapped back.'
