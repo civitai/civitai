@@ -278,6 +278,9 @@ describe(`${SYMBOL} seam`, () => {
     expect(isTestPath('components/Foo/__tests__/Foo.test.tsx')).toBe(true);
     expect(isTestPath('tests/api/v1/download-url-seam.helper.ts')).toBe(true);
     expect(isTestPath('server/services/latest-tests.service.ts')).toBe(false);
+    // 'contests/' contains 'tests/', so an unanchored rule drops real route files — and both
+    // copies of it would drop them together, which the equality cannot see.
+    expect(isTestPath('pages/moderator/contests/index.tsx')).toBe(false);
     expect(isTestPath('server/services/blocks/block-post.service.ts')).toBe(false);
   });
 
