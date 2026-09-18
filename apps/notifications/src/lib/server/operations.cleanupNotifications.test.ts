@@ -3,8 +3,9 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 // The cleanup sweep with a fake write pool: each `query` call returns the next programmed batch of
 // deleted rows, so the batch loop, the unread filter and the per-user cache bust are all observable
 // without a DB or a redis.
-const { captured, batches, fakePool, calls } = vi.hoisted(() => {
+const { captured, batches, fakePool, calls, logged } = vi.hoisted(() => {
   const captured: Array<{ sql: string; params?: unknown[] }> = [];
+  const logged: Array<Record<string, unknown>> = [];
   const batches: Array<Array<{ userId: number; viewed: boolean }>> = [];
   // Ordered log of every cache/lag call, so "flagged before busted" is assertable and not assumed.
   const calls: string[] = [];
@@ -15,26 +16,27 @@ const { captured, batches, fakePool, calls } = vi.hoisted(() => {
       return { rows, rowCount: rows.length };
     },
   };
-  return { captured, batches, fakePool, calls };
+  return { captured, batches, fakePool, calls, logged };
 });
 
 vi.mock('./clients/db', () => ({ notifDbWrite: () => fakePool, notifDbRead: () => fakePool }));
 vi.mock('./clients/axiom', () => ({
-  logToAxiom: async () => undefined,
-  logAxiomError: async () => undefined,
+  logToAxiom: async (data: Record<string, unknown>) => {
+    logged.push(data);
+  },
   safeError: (e: unknown) => e,
 }));
+// Every export of ./cache and ./lag that this module can reach is stubbed, so a call to one cleanup
+// does not make today shows up in `calls` rather than dying as "not a function".
 vi.mock('./cache', () => ({
   notificationCache: {
-    bustUser: vi.fn(async (userId: number) => {
-      calls.push(`bust:${userId}`);
-    }),
+    bustUser: vi.fn(),
+    clearCategory: vi.fn(),
+    decrementUser: vi.fn(),
   },
 }));
 vi.mock('./lag', () => ({
-  preventReplicationLag: vi.fn(async (userId: number) => {
-    calls.push(`lag:${userId}`);
-  }),
+  preventReplicationLag: vi.fn(),
   getNotifDbWithoutLag: async () => fakePool,
   isWritePool: () => false,
 }));
@@ -44,13 +46,23 @@ import { notificationCache } from './cache';
 import { preventReplicationLag } from './lag';
 
 const before = new Date('2025-09-01T00:00:00.000Z');
+const bustUser = vi.mocked(notificationCache.bustUser);
+const markFresh = vi.mocked(preventReplicationLag);
+const bustedIds = () => bustUser.mock.calls.map(([id]) => id);
 
 beforeEach(() => {
   captured.length = 0;
   batches.length = 0;
   calls.length = 0;
-  vi.mocked(notificationCache.bustUser).mockClear();
-  vi.mocked(preventReplicationLag).mockClear();
+  logged.length = 0;
+  // mockReset, not mockClear: a `mockRejectedValueOnce` queued by one test survives mockClear and
+  // would poison the first bust of the next one.
+  bustUser.mockReset().mockImplementation(async (userId: number) => {
+    calls.push(`bust:${userId}`);
+  });
+  markFresh.mockReset().mockImplementation(async (userId: number) => {
+    calls.push(`lag:${userId}`);
+  });
 });
 
 describe('cleanupNotifications cache busting', () => {
@@ -66,8 +78,7 @@ describe('cleanupNotifications cache busting', () => {
     const deleted = await cleanupNotifications(before);
 
     expect(deleted).toBe(5);
-    const busted = vi.mocked(notificationCache.bustUser).mock.calls.map(([id]) => id);
-    expect(busted.sort()).toEqual([1, 3]);
+    expect(bustedIds().sort((a, b) => a - b)).toEqual([1, 3]);
   });
 
   it('busts a user again in a later batch — a bust is only the last word until the next delete', async () => {
@@ -76,8 +87,7 @@ describe('cleanupNotifications cache busting', () => {
 
     await cleanupNotifications(before);
 
-    const busted = vi.mocked(notificationCache.bustUser).mock.calls.map(([id]) => id);
-    expect(busted).toEqual([7, 7]);
+    expect(bustedIds()).toEqual([7, 7]);
   });
 
   it('flags the replication-lag window BEFORE busting each user', async () => {
@@ -88,6 +98,17 @@ describe('cleanupNotifications cache busting', () => {
     await cleanupNotifications(before);
 
     expect(calls).toEqual(['lag:5', 'bust:5']);
+  });
+
+  it('busts every user in a batch larger than the concurrency width', async () => {
+    // Exercises the worker pool's cursor: below the width each worker runs one user and the loop's
+    // second iteration never executes, so an off-by-one there would be invisible.
+    const userIds = Array.from({ length: 30 }, (_, i) => i + 100);
+    batches.push(userIds.map((userId) => ({ userId, viewed: false })));
+
+    await cleanupNotifications(before);
+
+    expect(bustedIds().sort((a, b) => a - b)).toEqual(userIds);
   });
 
   it('deletes with RETURNING so the unread filter has something to filter on', async () => {
@@ -113,13 +134,32 @@ describe('cleanupNotifications cache busting', () => {
     expect(captured).toHaveLength(3);
   });
 
-  it('keeps sweeping when redis is failing', async () => {
-    vi.mocked(notificationCache.bustUser).mockRejectedValueOnce(new Error('redis down'));
+  it('keeps sweeping and keeps busting when redis rejects', async () => {
+    // Both redis calls, because the lag flag is the one that fails FIRST in an outage: an unswallowed
+    // rejection there would abort the sweep before a single bust ran.
+    markFresh.mockRejectedValueOnce(new Error('redis down'));
+    bustUser.mockRejectedValueOnce(new Error('redis down'));
     batches.push([{ userId: 1, viewed: false }]);
     batches.push([{ userId: 2, viewed: false }]);
 
     const deleted = await cleanupNotifications(before);
 
     expect(deleted).toBe(2);
+    expect(bustedIds()).toEqual([1, 2]);
+  });
+
+  it('reports the busts that landed, not the ones attempted', async () => {
+    // A sweep log that reads full while redis is dropping every DEL is the wrong tell to leave for
+    // whoever reads it during the next incident.
+    bustUser.mockRejectedValueOnce(new Error('redis down'));
+    batches.push([
+      { userId: 1, viewed: false },
+      { userId: 2, viewed: false },
+    ]);
+
+    await cleanupNotifications(before);
+
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toMatchObject({ name: 'notification.cleanup', deleted: 2, busted: 1 });
   });
 });
