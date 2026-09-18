@@ -513,6 +513,14 @@ async function tryDevTunnelScopedMint(args: {
     // Forced-SFW: the dev mint never reads the request host.
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
+    // The per-call Buzz ceiling this dev token was SIGNED with (dev-capped). Same
+    // plaintext mirror as the public path, and it has to be here rather than only
+    // on the public path: the tunnel is where an author DOGFOODS the very
+    // pre-check this field exists to enable, so a tunnel that withheld it would
+    // let the author test their app with the check silently inert and ship it
+    // believing it worked. `undefined` when no spend scope survived the clamp —
+    // see the public branch for why that needs no conditional spread.
+    buzzBudget,
     // Still narrowed by the author's OWN browsing level: forced-SFW caps the
     // domain half, it says nothing about the viewer half. An author with NSFW
     // off dogfoods at PG here, exactly as they would on the public run page.
@@ -688,6 +696,8 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
     missingScopes: [],
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
+    // The signed per-call Buzz ceiling — see the ephemeral branch above.
+    buzzBudget,
     // See the ephemeral branch above: forced-SFW is the DOMAIN half only.
     effectiveBrowsingLevel: resolveEffectiveBrowsingLevel({
       req,
@@ -1268,6 +1278,35 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     // self-filter their catalog reads / blur. See projectBlockInit.ts.
     domain: domainColor ?? null,
     maxBrowsingLevel,
+    // The PER-CALL Buzz ceiling this token was SIGNED with — the same plaintext
+    // mirror, for the same reason, as the two maturity fields above.
+    //
+    // 🔴 IT IS THE SIGNED VALUE, NOT A SECOND DERIVATION. `submitWorkflow`
+    // refuses on `cost > claims.buzzBudget` and reports the number it refused
+    // against, so a host that computes its own copy can disagree with the server
+    // and show a block a ceiling nothing enforces. `IframeHost` does exactly that
+    // (it re-derives from `install.publisherSettings`) and it CANNOT work for a
+    // page: a page has no install row, its budget comes from the approved
+    // manifest's `page.buzzBudgetPerGen`, and the run route's synthetic install
+    // carries `publisherSettings: {}` — so the same mirror on the page surface
+    // would always compute the flat default and be silently wrong for every app
+    // that declares a budget. Reporting what was signed is the only version of
+    // this that cannot drift.
+    //
+    // DISCLOSES NOTHING NEW: `buzzBudget` is already a claim inside the JWT in
+    // the `token` field of this very response, which the same caller holds and
+    // can base64-decode — and `/api/v1/blocks/me` already returns it outright to
+    // any block holding `user:read:self`. This saves a round-trip and a scope; it
+    // does not reveal a number the caller could not already obtain.
+    //
+    // 🔴 PLAIN `buzzBudget,`, NOT A CONDITIONAL SPREAD — the omit-vs-present-and-
+    // undefined distinction is UNOBSERVABLE here and pretending otherwise buys a
+    // guard that cannot fail. `res.json()` serializes through `JSON.stringify`,
+    // which drops an `undefined`-valued key unconditionally, so both spellings put
+    // exactly the same bytes on the wire. The distinction IS observable on the
+    // postMessage envelope in `PageBlockHost` — structured clone PRESERVES
+    // `key: undefined` — and that is the one place it is spelled conditionally.
+    buzzBudget,
     // The PER-VIEWER narrowing of the line above. `maxBrowsingLevel` is a
     // property of the domain and is identical for every viewer on it; this is
     // that ceiling intersected with the viewer's own NSFW browsing level, and

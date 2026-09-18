@@ -205,6 +205,10 @@ export default function DevTunnelPage(props: DevTunnelProps) {
     domain,
     maxBrowsingLevel,
     effectiveBrowsingLevel,
+    // The per-call Buzz ceiling the mint SIGNED this token with — forwarded to
+    // the host verbatim so the block can pre-check a run against it instead of
+    // discovering the ceiling from a server refusal.
+    buzzBudget,
     error,
     // `terminal` = the mint failed, nothing usable is left, AND the hook's
     // bounded automatic re-mints are spent. A bare `error` is NOT enough to tear
@@ -278,6 +282,7 @@ export default function DevTunnelPage(props: DevTunnelProps) {
             domain={domain}
             maxBrowsingLevel={maxBrowsingLevel}
             effectiveBrowsingLevel={effectiveBrowsingLevel}
+            buzzBudget={buzzBudget}
             tokenError={error != null}
             tokenTerminal={terminal}
             viewer={viewer}

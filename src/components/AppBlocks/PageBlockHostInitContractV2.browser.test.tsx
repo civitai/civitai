@@ -191,7 +191,12 @@ const baseProps = {
  * from a genuine zero, so nothing is asserted until the channel has been proven
  * to carry traffic.
  */
-async function mountAndCaptureInit(overrides: Partial<typeof baseProps> = {}) {
+// `buzzBudget` is deliberately NOT in `baseProps`: its ABSENCE is the default
+// this file asserts (a token with no spend scope must not carry the key at
+// all), so the budget cases opt in through this widened override type.
+async function mountAndCaptureInit(
+  overrides: Partial<typeof baseProps> & { buzzBudget?: number } = {}
+) {
   await renderWithProviders(
     <PageBlockHost
       {...baseProps}
@@ -353,6 +358,69 @@ describe('PageBlockHost BLOCK_INIT — blockId / appId are DEPRECATED but MANDAT
     // …and not transposed with each other or with the instance id, which the
     // pairwise-distinct fixture makes observable.
     expect(init.blockInstanceId).toBe('page_apb_sandpiper_5527');
+    posts.stop();
+  });
+});
+
+describe('PageBlockHost token envelope — buzzBudget reaches EVERY sender', () => {
+  /**
+   * REGRESSION. The SDK's `BlockToken` type declares `buzzBudget?: number`, and
+   * `IframeHost` populates it on all three of its token envelopes — so a
+   * MODEL-slot block can check a run against its per-call Buzz ceiling before the
+   * user commits. `PageBlockHost` populated it on NONE of its three: the field
+   * was permanently `undefined` on the whole full-page surface, so a page block
+   * could only ever learn the ceiling from the server's after-the-fact
+   * `insufficient buzz budget: estimate N exceeds budget M` refusal.
+   *
+   * There are three senders (BLOCK_INIT, the rotation push, the REQUEST_TOKEN
+   * reply) and they now share ONE built object, which is the point: these tests
+   * assert every sender, so re-splitting them re-opens the defect visibly.
+   *
+   * The number is deliberately not a round one and not equal to any other
+   * fixture value here, so an assertion cannot be satisfied by a coincidence.
+   */
+  const BUDGET = 137;
+
+  test('BLOCK_INIT carries the budget', async () => {
+    const { init, posts } = await mountAndCaptureInit({ buzzBudget: BUDGET });
+    expect((init.token as { buzzBudget?: number }).buzzBudget).toBe(BUDGET);
+    posts.stop();
+  });
+
+  test('the REQUEST_TOKEN REPLY carries the budget', async () => {
+    const { posts } = await mountAndCaptureInit({ buzzBudget: BUDGET });
+
+    postFromBlock('REQUEST_TOKEN', { requestId: 'req-heron-2208' });
+
+    await vi.waitFor(() => {
+      const reply = posts.last('TOKEN_REFRESH_RESPONSE');
+      if (!reply) throw new Error('no TOKEN_REFRESH_RESPONSE yet');
+      expect((reply.payload as { token?: { buzzBudget?: number } }).token?.buzzBudget).toBe(BUDGET);
+    });
+    posts.stop();
+  });
+
+  test('the TOKEN_REFRESH PUSH carries the budget', async () => {
+    const { posts } = await mountAndCaptureInit({ buzzBudget: BUDGET });
+    const pushesBefore = posts.of('TOKEN_REFRESH').length;
+
+    // A REQUEST_TOKEN with no correlatable id is answered with a PUSH — the same
+    // sender the post-consent token rotation uses.
+    postFromBlock('REQUEST_TOKEN', {});
+
+    await vi.waitFor(() => {
+      expect(posts.of('TOKEN_REFRESH').length).toBe(pushesBefore + 1);
+    });
+    const push = posts.last('TOKEN_REFRESH')!.payload as { token?: { buzzBudget?: number } };
+    expect(push.token?.buzzBudget).toBe(BUDGET);
+    posts.stop();
+  });
+
+  test('🔴 the key is ABSENT — not `undefined` — when the token has no spend scope', async () => {
+    // One shape per state. A block testing `'buzzBudget' in token` must not be
+    // told "there is a ceiling, and it is undefined".
+    const { init, posts } = await mountAndCaptureInit();
+    expect(Object.keys(init.token as object)).not.toContain('buzzBudget');
     posts.stop();
   });
 });
