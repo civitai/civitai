@@ -8,10 +8,11 @@ const log = createLogger('block-author-fee-settlement', 'green');
 /**
  * Daily settlement of App Blocks per-generation AUTHOR FEES.
  *
- * Pays each app owner the sum of the fees their viewers were debited since the
- * last run, one Buzz transaction per (owner × buzz type). The charge already
- * happened at submit; this is the second hop, mirroring
- * `deliver-creator-compensation` for the model licensing fee.
+ * Pays each app owner the fees their viewers were debited, one Buzz transaction
+ * per (owner × buzz type × ACCRUAL DAY) — not "since the last run", which is a
+ * different set whenever a run is missed. The charge already happened at submit;
+ * this is the second hop, mirroring `deliver-creator-compensation` for the model
+ * licensing fee.
  *
  * 🔴 A NEWLY ADDED CRON IS NOT PICKED UP BY A DEPLOY. Jobs are discovered
  * through `/api/internal/get-jobs` and the external scheduler needs an explicit
@@ -57,19 +58,23 @@ export const settleBlockAuthorFeesJob = createJob(
       return;
     }
 
-    // ⚠️ NO getJobDate/setLastRun CURSOR, DELIBERATELY. An earlier revision kept
-    // one. It gated nothing: `settleBlockAuthorFees` scans `status: 'accrued'`
-    // with no date filter, so the cursor was read only to interpolate into the
-    // log line below and then written back — two DB round-trips and a persisted
-    // KeyValue row that no branch consulted. The real idempotency mechanism is
-    // the deterministic `externalTransactionId`, which does not consult a cursor:
-    // a re-run of the same day conflicts on the key and mints nothing. A cursor
-    // that looks like a run-once guard while guarding nothing is worse than none.
+    // ⚠️ NO getJobDate/setLastRun CURSOR, DELIBERATELY — but NOT for the reason an
+    // earlier revision of this comment gave. That revision said the scan had "no
+    // date filter" so the cursor only fed a log line. The first half is no longer
+    // true: `settleBlockAuthorFees` settles one COMPLETE accrual day at a time.
+    //
+    // The cursor is unnecessary because idempotency does not live in the
+    // invocation at all — it lives in the ROWS. The settlement key is derived from
+    // a row's accrual day, so re-running this job an hour later, a day later or
+    // after a month with the flag off re-derives the SAME key per bucket and
+    // conflicts rather than paying again. A run-once-per-day cursor would add a
+    // second, weaker guard keyed on invocations, which is exactly the thing that
+    // does NOT hold when createJob's lock expires and two runs overlap.
     const result = await settleBlockAuthorFees({ date: new Date() });
 
     log(
       `Settled ${result.rowsSettled} row(s) across ${result.buckets} bucket(s), ` +
-        `${result.buzzMinted} buzz minted`
+        `${result.buzzMinted} buzz minted, ${result.daysTruncated} day(s) skipped as oversized`
     );
   }
 );

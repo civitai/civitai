@@ -72,13 +72,17 @@ function migrationColumnState() {
     // precisely that defect. So the fix is here, not a reworded comment in the
     // other migration — a comment-level workaround leaves the next table to trip it.
     //
-    // Comments are stripped first, then the file is split into statements, and only
-    // statements naming the table are scanned. A statement about another table can
-    // no longer contribute a default, a CHECK, or anything else.
+    // Comments are stripped first — BOTH `/* */` and `--`; Prisma-generated
+    // migrations in this repo open with `/* Warnings */` headers, so stripping only
+    // `--` would have left that half of the hole open — then the file is split into
+    // statements, and only statements naming the table are scanned. A statement
+    // about another table can no longer contribute a default, a CHECK, or anything
+    // else.
     const sql = readOrThrow(file);
     if (!sql.includes(TABLE)) continue;
 
     const statements = sql
+      .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/--[^\n]*/g, '')
       .split(';')
       .filter((stmt) => stmt.includes(TABLE));
