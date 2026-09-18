@@ -8,6 +8,7 @@ import { PostCard } from '~/components/Cards/PostCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
+import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { FeaturedCollectionHeader } from '~/components/HomeBlocks/FeaturedCollectionHeader';
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
@@ -17,6 +18,7 @@ import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import type { PickedFeaturedCollection } from '~/server/services/home-block.service';
 import { CollectionMode } from '~/shared/utils/prisma/enums';
+import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { shuffle } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -57,6 +59,9 @@ export const FeaturedCollectionsHomeBlock = ({ homeBlockId, blockIndex }: Props)
   );
 };
 
+/** Stable identity so the hook's id list does not change on every render of a non-image pick. */
+const NO_IMAGES: { id: number; reactions: { userId: number; reaction: ReviewReactions }[] }[] = [];
+
 type SectionProps = { order: number } & (
   | { pick: PickedFeaturedCollection; isLoading?: false }
   | {
@@ -87,6 +92,14 @@ function FeaturedCollectionSection({ pick, isLoading, order }: SectionProps) {
     maxPerUser,
   });
 
+  // Featured collections come from the same shared, viewer-agnostic entry the other blocks do, so
+  // an image pick arrives with `reactions: []` for every viewer. Called unconditionally with an
+  // empty list for the other entity types, which issues no query.
+  const hydratedImages = useHydratedImageReactions(
+    type === 'image' ? (items as unknown as typeof NO_IMAGES) : NO_IMAGES
+  );
+  const displayItems = type === 'image' ? hydratedImages : items;
+
   const title = collection?.name ?? 'Collection';
   const link = collection ? `/collections/${collection.id}` : '#';
   const curator = collection?.user ?? null;
@@ -99,7 +112,7 @@ function FeaturedCollectionSection({ pick, isLoading, order }: SectionProps) {
     ) : null;
 
   return (
-    <div style={{ '--count': items.length, '--rows': rows } as React.CSSProperties}>
+    <div style={{ '--count': displayItems.length, '--rows': rows } as React.CSSProperties}>
       <Box mb="md">{Header}</Box>
       {isLoading || loadingPreferences ? (
         <div className={classes.grid}>
@@ -114,7 +127,7 @@ function FeaturedCollectionSection({ pick, isLoading, order }: SectionProps) {
           <RemixFlyoutLayoutProvider layout="side">
             <ImagesProvider
               hideReactionCount={collection?.mode === CollectionMode.Contest}
-              images={type === 'image' ? (items as any) : undefined}
+              images={type === 'image' ? (hydratedImages as any) : undefined}
             >
               <ReactionSettingsProvider
                 settings={{
@@ -122,7 +135,7 @@ function FeaturedCollectionSection({ pick, isLoading, order }: SectionProps) {
                   hideReactions: collection ? contestCollectionReactionsHidden(collection) : false,
                 }}
               >
-                {(items as any[]).map((item: any, idx: number) => (
+                {(displayItems as any[]).map((item: any, idx: number) => (
                   <div key={item.id ?? idx} className="p-2">
                     {type === 'model' && <ModelCard data={item} forceInView />}
                     {type === 'image' && <ImageCard data={item} />}

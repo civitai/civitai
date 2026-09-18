@@ -21,6 +21,7 @@ import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
 import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
+import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
@@ -201,14 +202,18 @@ function ImageFeedGrid({
     rows,
     maxPerUser,
   });
+  // The block's payload is shared between viewers, so it arrives with `reactions: []` for
+  // everyone. Hydrated HERE, after the cap, so the lookup covers exactly the cards that render
+  // and the window handed to the detail dialog below — the dialog browses these same objects.
+  const hydrated = useHydratedImageReactions(visible);
 
   if (loadingPreferences) return <FeedSkeleton rows={rows} />;
 
   return (
-    <div className={classes.grid} style={{ '--count': visible.length } as React.CSSProperties}>
+    <div className={classes.grid} style={{ '--count': hydrated.length } as React.CSSProperties}>
       <RemixFlyoutLayoutProvider layout="side">
-        <ImagesProvider images={visible}>
-          {visible.map((item) => (
+        <ImagesProvider images={hydrated}>
+          {hydrated.map((item) => (
             <div key={item.id} className="p-2">
               <ImageCard data={item} />
             </div>
