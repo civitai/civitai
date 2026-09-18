@@ -3,26 +3,43 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 // The cleanup sweep with a fake write pool: each `query` call returns the next programmed batch of
 // deleted rows, so the batch loop, the unread filter and the per-user cache bust are all observable
 // without a DB or a redis.
-const { captured, batches, fakePool, calls, logged } = vi.hoisted(() => {
+const { captured, batches, fakePool, calls, logged, failures, logFailures } = vi.hoisted(() => {
   const captured: Array<{ sql: string; params?: unknown[] }> = [];
   const logged: Array<Record<string, unknown>> = [];
   const batches: Array<Array<{ userId: number; viewed: boolean }>> = [];
   // Ordered log of every cache/lag call, so "flagged before busted" is assertable and not assumed.
   const calls: string[] = [];
+  // Errors to throw from the Nth query / log call. Without these the DB and the logger cannot fail
+  // in this suite at all, and anything done to their error paths is unobservable.
+  const failures: Array<Error | null> = [];
+  const logFailures: Array<Error | null> = [];
   const fakePool = {
     query: async (sql: string, params?: unknown[]) => {
       captured.push({ sql, params });
+      const failure = failures.shift();
+      if (failure) throw failure;
       const rows = batches.shift() ?? [];
       return { rows, rowCount: rows.length };
     },
   };
-  return { captured, batches, fakePool, calls, logged };
+  return { captured, batches, fakePool, calls, logged, failures, logFailures };
 });
 
-vi.mock('./clients/db', () => ({ notifDbWrite: () => fakePool, notifDbRead: () => fakePool }));
+// Two DISTINCT objects: with one fakePool serving both, `notifDbWrite()` and `notifDbRead()` are
+// indistinguishable, and sending the sweep's DELETE to a hot standby is a one-word green mutation.
+vi.mock('./clients/db', () => ({
+  notifDbWrite: () => fakePool,
+  notifDbRead: () => ({
+    query: async () => {
+      throw new Error('cleanup must not run against the read pool');
+    },
+  }),
+}));
 vi.mock('./clients/axiom', () => ({
   logToAxiom: async (data: Record<string, unknown>) => {
     logged.push(data);
+    const failure = logFailures.shift();
+    if (failure) throw failure;
   },
   safeError: (e: unknown) => e,
 }));
@@ -46,6 +63,9 @@ import { notificationCache } from './cache';
 import { preventReplicationLag } from './lag';
 
 const before = new Date('2025-09-01T00:00:00.000Z');
+const EXPECTED_SQL =
+  'DELETE FROM "UserNotification" WHERE id IN (SELECT id FROM "UserNotification" WHERE "createdAt" < $1 LIMIT 10000) RETURNING "userId", viewed';
+const normalise = (sql: string) => sql.replace(/\s+/g, ' ').trim();
 const bustUser = vi.mocked(notificationCache.bustUser);
 const markFresh = vi.mocked(preventReplicationLag);
 const bustedIds = () => bustUser.mock.calls.map(([id]) => id);
@@ -55,6 +75,8 @@ beforeEach(() => {
   batches.length = 0;
   calls.length = 0;
   logged.length = 0;
+  failures.length = 0;
+  logFailures.length = 0;
   // mockReset, not mockClear: a `mockRejectedValueOnce` queued by one test survives mockClear and
   // would poison the first bust of the next one.
   bustUser.mockReset().mockImplementation(async (userId: number) => {
@@ -118,6 +140,43 @@ describe('cleanupNotifications cache busting', () => {
     expect(markFresh.mock.calls.map(([id]) => id).sort((a, b) => a - b)).toEqual(userIds);
   });
 
+  it('issues the same statement, with the same cutoff, on every batch of a long sweep', async () => {
+    // Two things at once, both invisible to a two-batch fixture: only captured[0] was ever asserted,
+    // so calls 2..N could drift in SQL or in the cutoff parameter; and a "runaway" pass cap added to
+    // the unbounded for(;;) would truncate a real sweep while passing anything under its limit. The
+    // floor this sets is 60 passes — a cap above that is still invisible, which is why the loop's
+    // real guarantee is that it exits on an EMPTY batch and nothing else.
+    for (let i = 0; i < 60; i++) batches.push([{ userId: i + 1, viewed: false }]);
+
+    const deleted = await cleanupNotifications(before);
+
+    expect(deleted).toBe(60);
+    expect(captured).toHaveLength(61);
+    expect(captured.map((c) => normalise(c.sql))).toEqual(Array(61).fill(EXPECTED_SQL));
+    expect(captured.map((c) => c.params)).toEqual(Array(61).fill([before.toISOString()]));
+  });
+
+  it('lets a database error out rather than logging a partial sweep as a clean one', async () => {
+    // The fake could not reject until this fixture existed, so the whole query error path was
+    // unobserved: swallowing it would end the sweep early, log a healthy-looking `deleted`, and hand
+    // the admin endpoint a 200 while rows accumulated every night.
+    batches.push([{ userId: 1, viewed: false }]);
+    failures.push(null, new Error('connection terminated'));
+
+    await expect(cleanupNotifications(before)).rejects.toThrow('connection terminated');
+    expect(logged).toHaveLength(0);
+  });
+
+  it('survives a logging outage at the end of a sweep', async () => {
+    // logToAxiom is called without await, so an unhandled rejection here takes the process down
+    // after the deletes have already happened — the caller then sees a transport failure and retries
+    // the whole sweep.
+    batches.push([{ userId: 1, viewed: false }]);
+    logFailures.push(new Error('axiom down'));
+
+    await expect(cleanupNotifications(before)).resolves.toBe(1);
+  });
+
   it('never has more than CLEANUP_BUST_CONCURRENCY busts in flight', async () => {
     // The width cap is the only thing between one batch and thousands of simultaneous redis
     // round-trips, and it is invisible to every other assertion here: replace the pool with an
@@ -177,9 +236,7 @@ describe('cleanupNotifications cache busting', () => {
     // the wrong table, deletes without a limit, or returns an inverted `viewed`. Fragment guards were
     // tried first and each one left a green mutation beside it; `toContain` cannot see an insertion,
     // and a limit derived from CLEANUP_BATCH_SIZE moves with the constant it is meant to pin.
-    expect(captured[0].sql.replace(/\s+/g, ' ').trim()).toBe(
-      'DELETE FROM "UserNotification" WHERE id IN (SELECT id FROM "UserNotification" WHERE "createdAt" < $1 LIMIT 10000) RETURNING "userId", viewed'
-    );
+    expect(normalise(captured[0].sql)).toBe(EXPECTED_SQL);
     expect(captured[0].params).toEqual([before.toISOString()]);
   });
 
