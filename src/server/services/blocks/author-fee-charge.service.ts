@@ -453,18 +453,21 @@ export async function chargeBlockAuthorFee(args: {
   return { charged: false, reason: 'accrual-failed' };
 }
 
+/**
+ * What a reversal attempt did.
+ *
+ * ⚠️ `no-accrual` COVERS TWO STATES, deliberately not separated: the workflow
+ * never accrued a fee at all, and the boundary-guarded `deleteMany` matched
+ * nothing because a concurrent observer claimed the row first. Neither leaves
+ * money to recover and neither is actionable differently, so splitting them
+ * would put a distinction in the public result that no caller can use.
+ */
 export type ReverseBlockAuthorFeeResult =
   | { reversed: true; feeBuzz: number }
   | {
       reversed: false;
-      reason: /**
-       * No row was claimed. TWO states share this reason and are deliberately
-       * not separated: the workflow never accrued a fee at all, and the
-       * boundary-guarded `deleteMany` matched nothing because a concurrent
-       * observer claimed the row first. Neither leaves money to recover, and
-       * neither is actionable differently.
-       */
-      | 'no-accrual'
+      reason:
+        | 'no-accrual'
         /**
          * The row's `status` column reads `settled` — the flip confirmed.
          *
