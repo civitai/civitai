@@ -2478,6 +2478,12 @@ export type HuggingFaceImport = {
   modelVersionId: number | null;
   modelFileId: number | null;
   /**
+   * Where this file is headed, recorded before the bytes move so the transfer job can attach it
+   * itself. `modelVersionId` cannot carry this: it means "attached to", and detaching clears it.
+   */
+  attachVersionId: number | null;
+  attachType: string | null;
+  /**
    * Worker lease. A transfer outlives any one job run, so a claim plus a heartbeat is what stops two
    * runs moving the same file and what lets the next run tell "in flight" from "abandoned".
    */

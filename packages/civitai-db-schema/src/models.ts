@@ -860,6 +860,8 @@ export interface HuggingFaceImport {
   userId: number | null;
   modelVersionId: number | null;
   modelFileId: number | null;
+  attachVersionId: number | null;
+  attachType: string | null;
   claimedBy: string | null;
   claimedAt: Date | null;
   heartbeatAt: Date | null;
