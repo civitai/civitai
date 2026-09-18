@@ -330,21 +330,31 @@ export async function runBotAccountDetection(
   // 🔴 THIS COMMENT USED TO NAME A QUESTION THESE COUNTERS CAN NO LONGER ANSWER, AND THE CORRECTION
   // MATTERS BECAUSE THE OLD SENTENCE READ AS COVERAGE. It said they were here to settle "whether the
   // same-second half ever fires on an account the volume half did not already carry". Since the
-  // firing point moved to two that has a known answer — NEVER — and it is known by arithmetic
-  // rather than by measurement: a same-second group is a subset of the staged rows, so a burst of
-  // two implies a count of at least two, and both halves now share boundaries (see `BURST_ONE_AT`).
-  // `fired_burst > 0 && fired_volume == 0` is unreachable, so a run reporting it is a defect in the
-  // evidence fold, not a finding about accounts. Leaving the old sentence would have had someone
-  // watch a counter for a signal that cannot arrive and read its silence as an answer.
+  // firing point moved to two that has a known answer — NEVER. `fired_burst > 0 && fired_volume == 0`
+  // is unreachable, so a run reporting it is a defect in the evidence fold, not a finding about
+  // accounts. Leaving the old sentence would have had someone watch a counter for a signal that
+  // cannot arrive and read its silence as an answer.
+  //
+  // 🔴 WHY IT IS UNREACHABLE, AND UNDER WHAT CONDITION, IS ON `BURST_ONE_AT` — DO NOT RE-DERIVE IT
+  // FROM THE CONSTANTS HERE. This comment used to, and the derivation it carried ("the two halves
+  // share boundaries") went stale the moment the volume boundary moved. So did the copy on the
+  // constants — both said it, both were wrong, both had to be rewritten, which is the argument for
+  // one derivation in one place rather than a claim that the other copy fared better.
   //
   // WHAT THEY CAN STILL SETTLE, which is why they are kept: `fired_burst` is the population of
   // accounts whose staged uploads arrived in one batch, and the question is whether THAT population
   // is actioned at a different rate than the accounts carried by volume alone. That is a grading
   // question over outcomes, answered by joining these counters to moderation results — not by
   // either counter on its own. If the answer is "no different", the burst arm has no reason to
-  // exist and the honest edit is to delete it; if it separates, that is the evidence for giving it
-  // a tighter boundary than the volume half again, which is the only thing that would make it
-  // affect a score.
+  // exist and the honest edit is to delete it.
+  //
+  // 🔴 IF IT SEPARATES, TIGHTENING `BURST_ONE_AT` IS NOT THE FIX — AND THIS PARAGRAPH SAID IT WAS
+  // UNTIL THE VOLUME RAMP BECAME A STEP. Such an edit changes no SCORE. It is not silent, though,
+  // and saying "it ships green" would send someone to read a guard firing as designed as an
+  // unrelated break: the two assertions that read the burst half AT 0.5 go red, which is exactly
+  // what they are for. (Other assertions read that half at 0 or 1 and are unmoved — the qualifier
+  // is what makes the count right.) What reviving the arm takes instead is on `BURST_ONE_AT` and on
+  // the `max` in `assetStagingHeuristic`.
   //
   // Counted over EVERY scored member, matching `fired`'s own population. They may sum to MORE than
   // `fired` — an account can be both, and attributing it to whichever won a `>` comparison would
