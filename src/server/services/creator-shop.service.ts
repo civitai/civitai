@@ -16,8 +16,8 @@ import {
   appendItemHistory,
   buildCosmeticData,
   creatorGrantRemaining,
-  packDisplayMeta,
   patchCosmeticData,
+  shopItemDisplayMeta,
   wasLastReviewARejection,
 } from '~/server/services/creator-shop.data';
 import type { StickerEconomics } from '~/shared/utils/sticker-token';
@@ -1161,8 +1161,6 @@ export const getCreatorShop = async ({
       purchases: item._count.purchases,
       sellerShare:
         resaleShares.get(item.id) ?? (item.meta as CosmeticShopItemMeta)?.sellerShare ?? 0,
-      acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
-      ...packDisplayMeta(item.meta as CosmeticShopItemMeta | null),
     },
   });
   const resold = preview
