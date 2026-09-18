@@ -16,32 +16,20 @@ import { stripSourceComments } from '~/components/AppBlocks/stripSourceComments'
  * own — each one type-checks, each one's unit tests pass — so it is exactly the
  * class of defect a per-file suite cannot see.
  *
- * This asserts the RELATIONSHIP, not a component:
- *   1. the exact SET of call sites (fails when it GROWS *or* SHRINKS, so a new
- *      consumer cannot join without a human deciding what it does with `pending`),
- *   2. that no call site outside the projection gates on `=== 'hidden'`.
+ * A call site is detected by the IMPORT SPECIFIER as well as by the symbol's
+ * spelling, because an aliased import — `classifyGatedImageForViewer as classify`
+ * — walks a spelling-only check, which is what the ledger used to be.
  *
- * 🔴 (1) IS DETECTED BY THE IMPORT SPECIFIER, NOT BY THE SYMBOL'S SPELLING, AND
- * THAT IS THE WHOLE POINT. It used to be `source.includes('classifyGatedImageForViewer(')`
- * — a SPELLED check, walkable by writing the thing a different way. A third
- * consumer added as
- *
- *     import { classifyGatedImageForViewer as classify } from '…block-gated-images.logic';
- *     if (classify(row, level).status === 'hidden') { … }   // ADMITS `pending`
- *
- * is a real bypass of both assertions below, and this suite reported 85/85 green
- * over it. Binding the ledger to `from '…block-gated-images.logic'` pins the
- * thing that cannot be renamed away: you cannot call the function without
- * importing the module it lives in. The symbol-spelling test is KEPT as a second,
- * differently-failing route (a namespace import, a re-export) rather than
- * replaced — a file matching EITHER is a call site.
+ * The limit, so nobody trusts it further than it goes: a consumer reached through
+ * a re-exporting barrel matches NEITHER half. The barrel itself matches the `from`
+ * clause and joins the ledger, so the hop still fails this suite — one file away
+ * from the consumer that actually gates. No such barrel exists today.
  *
  * The BEHAVIOURAL half lives with each consumer and is deliberately not duplicated
  * here: `block-post.service.test.ts` proves the public-Post adoption gate refuses
  * a `Pending`-ingestion and an unrated (`nsfwLevel: 0`) image, and
  * `block-gated-images.service.test.ts` proves the grid withholds the url from
- * every viewer but the image's own author. A structural check alone would
- * type-check past a wrong argument; those two are what make it mean something.
+ * every viewer but the image's own author.
  */
 
 const SRC = resolve(__dirname, '../../../..'); // …/src
