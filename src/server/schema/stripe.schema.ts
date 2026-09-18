@@ -78,6 +78,19 @@ export type PaymentIntentCreationSchema = z.infer<typeof paymentIntentCreationSc
 export const paymentIntentCreationSchema = z.object({
   unitAmount: z
     .number()
+    // Stripe amounts are in the currency's MINOR unit and must be whole: `amount: 1000.4`
+    // comes back as `Invalid integer: 1000.4`, which surfaced as a 500. A fraction arrives
+    // honestly — the purchase form derives cents from the Buzz amount by dividing by 10, so
+    // any Buzz amount that is not a multiple of 10 lands here — and the service-side tamper
+    // guard (`unitAmount === metadata.buzzAmount / 10`) agrees with it, so nothing further
+    // down the Stripe path looks at whether the number is whole.
+    //
+    // Scope: this covers the STRIPE route only. The purchase form hands the same derived
+    // `unitAmount` to the Paddle and Coinbase buttons, whose schemas declare the same
+    // min/max pair without `.int()`. Whether those providers reject a fractional minor
+    // unit was not established, so they are deliberately left alone rather than changed
+    // on an assumption.
+    .int({ message: 'The transaction amount must be a whole number of cents' })
     .min(constants.buzz.minChargeAmount, {
       message: `The minimum transaction amount is $${(constants.buzz.minChargeAmount / 100).toFixed(
         2

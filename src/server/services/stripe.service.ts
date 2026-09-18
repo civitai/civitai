@@ -1285,8 +1285,16 @@ export const getPaymentIntent = async ({
   }
 
   if (unitAmount !== metadata.buzzAmount / 10) {
-    // Safeguard against tampering with the amount on the client side
-    throw new Error('There was an error while creating your order. Please try again later.');
+    // Safeguard against tampering with the amount on the client side.
+    //
+    // Typed rather than a bare `Error`: `getTRPCErrorFromUnknown` maps a plain Error to
+    // INTERNAL_SERVER_ERROR, so rejected input on this route answered with a 500 — the same
+    // defect class as the fractional amount above. The pair is unreachable through the UI
+    // (both values derive from one field), but this is an exposed authenticated procedure.
+    // The condition is unchanged; only its type.
+    throw throwBadRequestError(
+      'There was an error while creating your order. Please try again later.'
+    );
   }
 
   // FIN-1: App Blocks revenue attribution is client-forgeable end-to-end —
