@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { groupRule } from '~/components/Hubs/HubSourceCard';
 import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
-import { groupHubSources, nextHubGroupKey } from '~/components/Hubs/hub.utils';
+import {
+  addTagToHubGroup,
+  groupHubSources,
+  nextHubGroupKey,
+  removeHubGroup,
+  removeTagFromHubGroup,
+  setHubGroupEnabled,
+} from '~/components/Hubs/hub.utils';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 
 const source = (over: Partial<HubSourceValue> & Pick<HubSourceValue, 'targetId'>) =>
@@ -13,6 +21,8 @@ const source = (over: Partial<HubSourceValue> & Pick<HubSourceValue, 'targetId'>
     groupKey: null,
     ...over,
   } as HubSourceValue);
+
+const groupOf = (value: HubSourceValue[], index = 0) => groupHubSources(value)[index];
 
 describe('groupHubSources', () => {
   it('folds tags sharing a groupKey into one card and leaves null keys alone', () => {
@@ -34,7 +44,7 @@ describe('groupHubSources', () => {
       source({ targetId: 11, type: UserHubSourceType.User, groupKey: 0 }),
     ]);
 
-    expect(groups).toHaveLength(2);
+    expect(groups.map((group) => group.sources.map((s) => s.targetId))).toEqual([[10], [11]]);
   });
 
   it('keeps an include group and an exclude group with the SAME key apart', () => {
@@ -51,13 +61,111 @@ describe('groupHubSources', () => {
 });
 
 describe('nextHubGroupKey', () => {
-  it('returns a key no existing source holds', () => {
-    expect(nextHubGroupKey([{ groupKey: 0 }, { groupKey: 3 }, { groupKey: null }])).toBe(4);
+  it('returns the LOWEST key no source holds', () => {
+    // Lowest-free, not max-plus-one: the key is bounded by how many rows a hub may
+    // hold, which is what `userHubSourceSchema`'s `.max()` is set to. Max-plus-one
+    // climbs past that across enough edits and refuses a save nobody can fix.
+    expect(nextHubGroupKey([{ groupKey: 0 }, { groupKey: 3 }, { groupKey: null }])).toBe(1);
   });
 
   it('starts at 0 on a hub that has never grouped anything', () => {
     // 0 is a real key, not a falsy placeholder — `first.groupKey ?? nextHubGroupKey`
-    // in the editor relies on it surviving `??`, which `||` would swallow.
+    // in `addTagToHubGroup` relies on it surviving `??`, which `||` would swallow.
     expect(nextHubGroupKey([{ groupKey: null }, {}])).toBe(0);
+  });
+});
+
+describe('addTagToHubGroup', () => {
+  it('mints a key on the click that creates the group, and puts BOTH tags in it', () => {
+    const value = [source({ targetId: 77 })];
+    const next = addTagToHubGroup(value, groupOf(value), { targetId: 78, alias: 'cyberpunk' });
+
+    expect(next.map((s) => [s.targetId, s.groupKey])).toEqual([
+      [77, 0],
+      [78, 0],
+    ]);
+  });
+
+  it('reuses the key when the card is ALREADY a group', () => {
+    const value = [source({ targetId: 77, groupKey: 4 }), source({ targetId: 78, groupKey: 4 })];
+    const next = addTagToHubGroup(value, groupOf(value), { targetId: 79, alias: 'forest' });
+
+    expect(next.map((s) => s.groupKey)).toEqual([4, 4, 4]);
+  });
+
+  it('🔴 gives a tag added to a KEPT-OUT group the exclude side', () => {
+    // The sharpest mutation in this file. Defaulting `exclude` to false lands the new
+    // tag on the INCLUDE side, where the polarity scoping splits it into its own card
+    // — so a click meaning "block more" adds a source that SURFACES content, and the
+    // card it was added from looks unchanged.
+    const value = [source({ targetId: 90, exclude: true })];
+    const next = addTagToHubGroup(value, groupOf(value), { targetId: 91, alias: 'violence' });
+
+    expect(next.map((s) => s.exclude)).toEqual([true, true]);
+  });
+
+  it('gives a tag joining a switched-OFF group the same off state', () => {
+    // A group toggles as one. Arriving enabled would leave the card reading off while
+    // one of its tags still filters the feed.
+    const value = [source({ targetId: 77, enabled: false })];
+    const next = addTagToHubGroup(value, groupOf(value), { targetId: 78, alias: 'cyberpunk' });
+
+    expect(next.map((s) => s.enabled)).toEqual([false, false]);
+  });
+
+  it('MOVES a tag the hub already holds instead of adding a second row', () => {
+    // `(hubId, type, targetId)` is unique, so there is only ever one row per tag.
+    // Refusing this is what left an owner unable to group two tags they already had:
+    // the picker showed the second one greyed out as "Added", with no way forward.
+    const value = [source({ targetId: 77 }), source({ targetId: 78, index: 1 })];
+    const next = addTagToHubGroup(value, groupOf(value), { targetId: 78, alias: 'cyberpunk' });
+
+    expect(next).toHaveLength(2);
+    expect(next.map((s) => [s.targetId, s.groupKey])).toEqual([
+      [77, 0],
+      [78, 0],
+    ]);
+  });
+});
+
+describe('group edits touch the whole group, or exactly one tag', () => {
+  const value = [
+    source({ targetId: 77, groupKey: 0 }),
+    source({ targetId: 78, groupKey: 0 }),
+    source({ targetId: 79, index: 2 }),
+  ];
+
+  it('removes ONE tag without taking its group with it', () => {
+    // The ✕ on a chip and the trash on the card are one click apart. Swapping them
+    // deletes the whole AND-set, and the card simply vanishes — which reads exactly
+    // like the trash button having been pressed.
+    expect(removeTagFromHubGroup(value, 78).map((s) => s.targetId)).toEqual([77, 79]);
+  });
+
+  it('removes every member when the group itself is removed', () => {
+    expect(removeHubGroup(value, groupOf(value)).map((s) => s.targetId)).toEqual([79]);
+  });
+
+  it('switches every member together, and nothing outside the group', () => {
+    const next = setHubGroupEnabled(value, groupOf(value), false);
+
+    expect(next.map((s) => [s.targetId, s.enabled])).toEqual([
+      [77, false],
+      [78, false],
+      [79, true],
+    ]);
+  });
+});
+
+describe('the group rule copy', () => {
+  it('🔴 says OPPOSITE things on the two sides, on purpose', () => {
+    // Named for the decision, because the next competent review will correctly
+    // recommend making these agree. Do not. Grouping tags you WANT narrows the feed;
+    // grouping tags you want GONE removes less, because `NOT (x AND y)` keeps an
+    // image carrying only x. Justin approved the asymmetry on 2026-09-17, and this
+    // wording is the only place in the product that states it.
+    expect(groupRule(false)).toBe('Require all of these');
+    expect(groupRule(true)).toBe('Only block when all of these match');
+    expect(groupRule(true)).not.toBe(groupRule(false));
   });
 });

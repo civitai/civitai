@@ -53,8 +53,12 @@ const sourceMeta: Record<
  * that says so. Grouping tags you want NARROWS the feed; grouping tags you want gone
  * REMOVES LESS, because `NOT (x AND y)` keeps an image carrying only x. Justin approved
  * this asymmetry on 2026-09-17 — if the copy changes, keep it.
+ *
+ * Exported only so `hub-groups.test.ts` can pin both strings. That test is not
+ * decoration: nothing else in the toolchain can tell that the two labels have been
+ * made to agree, and two agreeing labels describe one of the two behaviours wrongly.
  */
-const groupRule = (exclude?: boolean) =>
+export const groupRule = (exclude?: boolean) =>
   exclude ? 'Only block when all of these match' : 'Require all of these';
 
 export function HubSourceCard({

@@ -3471,6 +3471,10 @@ function renderHubArm(arm: HubFilterArm) {
   const clauses = arm.map((clause) =>
     makeMeiliImageSearchFilter(clause.field, `IN [${clause.ids.join(',')}]`)
   );
+  // No producer can emit an empty arm today. If one ever does, `clauses[0]` is
+  // `undefined`, that literal text lands in the filter string, and Meilisearch rejects
+  // the whole query — a 503 on the hub feed, far from the mistake that caused it.
+  if (!clauses.length) throw new Error('hub filter arm has no clauses');
   return clauses.length > 1 ? `(${clauses.join(' AND ')})` : clauses[0];
 }
 

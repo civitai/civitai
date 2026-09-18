@@ -659,6 +659,14 @@ export async function setUserHubOrder({ ids, userId }: SetUserHubOrderInput & { 
   );
 }
 
+/** The columns `resolveHubSources` reads off a hub's source rows. */
+type HubSourceRow = {
+  type: UserHubSourceType;
+  targetId: number;
+  exclude: boolean;
+  groupKey: number | null;
+};
+
 export type ResolvedHubSources = {
   userIds: number[];
   modelVersionIds: number[];
@@ -716,6 +724,12 @@ export async function resolveHubSources({
   // and because subtracting can only ever NARROW the feed: a forged exclusion
   // removes content from the forger, and can add none.
   //
+  // 🔴 That claim is what makes this list safe to accept from the client, and a tag
+  // AND-group is the one thing that can break it. Dropping ONE member turns `A AND B`
+  // into `A`, which matches a SUPERSET — so a toggle landing on any member takes the
+  // whole group with it. That is also what the editor's own switch does, since a
+  // half-enabled group filters on fewer tags than its card shows.
+  //
   // 🔴 Applied to the POSITIVE sources only. A session toggle reaching the negative
   // ones would let a viewer switch off somebody else's exclusion, which is the one
   // direction this list must never be able to move the feed: forging it would ADD
@@ -723,9 +737,20 @@ export async function resolveHubSources({
   // own.
   const sessionExcluded = new Set((excludedSources ?? []).map(hubSourceKey));
   const negativeSources = hub.sources.filter((s) => s.exclude);
-  const positiveSources = hub.sources
-    .filter((s) => !s.exclude)
-    .filter((s) => !sessionExcluded.size || !sessionExcluded.has(hubSourceKey(s)));
+  const positive = hub.sources.filter((s) => !s.exclude);
+  // Only tags group, so only a tag's key can pull its siblings out with it.
+  const groupOf = (source: { type: UserHubSourceType; groupKey: number | null }) =>
+    source.type === UserHubSourceType.Tag ? source.groupKey : null;
+  const toggledOffGroups = new Set(
+    positive
+      .filter((s) => groupOf(s) != null && sessionExcluded.has(hubSourceKey(s)))
+      .map((s) => groupOf(s) as number)
+  );
+  const positiveSources = positive.filter((s) => {
+    if (sessionExcluded.has(hubSourceKey(s))) return false;
+    const group = groupOf(s);
+    return group == null || !toggledOffGroups.has(group);
+  });
 
   const byType = (type: UserHubSourceType) =>
     positiveSources.filter((s) => s.type === type).map((s) => s.targetId);
@@ -800,7 +825,7 @@ export async function resolveHubSources({
  * property of the data, not of the code.
  */
 async function resolveExcludedSources(
-  sources: { type: UserHubSourceType; targetId: number; groupKey: number | null }[]
+  sources: HubSourceRow[]
 ): Promise<ResolvedHubSources['excluded']> {
   const byType = (type: UserHubSourceType) =>
     sources.filter((s) => s.type === type).map((s) => s.targetId);
@@ -825,30 +850,32 @@ async function resolveExcludedSources(
 
 /**
  * The hub's tag rows as AND-groups: rows sharing a `groupKey` must ALL match, and a
- * null key is a group of one. Called once per polarity, which is what scopes the keys
- * — an include group 3 and an exclude group 3 are different groups.
+ * null key is a group of one. An include group 3 and an exclude group 3 are different
+ * groups — scoped by `exclude` being part of the map key, NOT by this happening to be
+ * called once per polarity, so folding the two calls into one cannot quietly merge a
+ * kept-out tag into the hub's own AND-set. `groupHubSources` in hub.utils.ts states
+ * the same rule over display values.
  *
  * Groups keep first-appearance order, and a one-member group is indistinguishable from
  * an ungrouped tag. That is what leaves every hub predating the column unchanged.
  */
-function groupTagIds(
-  sources: { type: UserHubSourceType; targetId: number; groupKey: number | null }[]
-) {
+function groupTagIds(sources: HubSourceRow[]) {
   const groups: number[][] = [];
-  const byKey = new Map<number, number[]>();
+  const byKey = new Map<string, number[]>();
   for (const source of sources) {
     if (source.type !== UserHubSourceType.Tag) continue;
     if (source.groupKey == null) {
       groups.push([source.targetId]);
       continue;
     }
-    const held = byKey.get(source.groupKey);
+    const key = `${source.exclude ? 'x' : 'i'}-${source.groupKey}`;
+    const held = byKey.get(key);
     if (held) {
       held.push(source.targetId);
       continue;
     }
     const group = [source.targetId];
-    byKey.set(source.groupKey, group);
+    byKey.set(key, group);
     groups.push(group);
   }
   return groups;

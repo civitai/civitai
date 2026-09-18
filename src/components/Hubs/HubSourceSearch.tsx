@@ -16,7 +16,9 @@ import { HUB_TAG_SOURCE_FILTER } from '~/server/schema/user-hub.schema';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
-type Suggestion = { type: UserHubSourceType; targetId: number; alias: string };
+// Exported: `HubSourceEditor` types its group-add callback with it, and a second
+// declaration there would make a field added here silently invisible to that path.
+export type HubSourceSuggestion = { type: UserHubSourceType; targetId: number; alias: string };
 
 // Collections are absent rather than disabled. They cannot work until the index
 // attribute serving them is live, and a greyed-out tab advertises a source the
@@ -43,8 +45,8 @@ export function HubSourceSearch({
   disabled,
   onlyType,
 }: {
-  onSelect: (suggestion: Suggestion) => void;
-  isAdded: (suggestion: Suggestion) => boolean;
+  onSelect: (suggestion: HubSourceSuggestion) => void;
+  isAdded: (suggestion: HubSourceSuggestion) => boolean;
   disabled?: boolean;
   /**
    * Pin the picker to one kind and drop the tab strip. Used by the add-to-group
@@ -85,7 +87,7 @@ export function HubSourceSearch({
   );
 
   const isFetching = isTag ? fetchingTags : fetchingRelated;
-  const suggestions: Suggestion[] = isTag
+  const suggestions: HubSourceSuggestion[] = isTag
     ? (tagData?.items ?? []).map((tag) => ({
         type: UserHubSourceType.Tag,
         targetId: tag.id,

@@ -12,11 +12,18 @@ import {
 import { IconPlus, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { HubSourceCard } from '~/components/Hubs/HubSourceCard';
+import type { HubSourceSuggestion } from '~/components/Hubs/HubSourceSearch';
 import { HubSourceSearch } from '~/components/Hubs/HubSourceSearch';
 import { HubSourceUrlInput } from '~/components/Hubs/HubSourceUrlInput';
 import type { HubSourceGroup } from '~/components/Hubs/hub.utils';
-import { groupHubSources, nextHubGroupKey } from '~/components/Hubs/hub.utils';
-import { hubLimits } from '~/server/schema/user-hub.schema';
+import {
+  addTagToHubGroup,
+  groupHubSources,
+  removeHubGroup,
+  removeTagFromHubGroup,
+  setHubGroupEnabled,
+} from '~/components/Hubs/hub.utils';
+import { hubLimits, hubSourceKey } from '~/server/schema/user-hub.schema';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 
@@ -37,8 +44,6 @@ export type HubSourceValue = {
 
 type AddMode = 'include' | 'exclude';
 
-type Suggestion = { type: UserHubSourceType; targetId: number; alias: string };
-
 /**
  * The add-another-tag affordance on a tag card. The Tooltip sits OUTSIDE the Popover
  * rather than inside `Popover.Target`: both components clone their child to attach a
@@ -53,8 +58,8 @@ function AddTagToGroup({
 }: {
   exclude?: boolean;
   disabled?: boolean;
-  isAdded: (suggestion: Suggestion) => boolean;
-  onSelect: (suggestion: Suggestion) => void;
+  isAdded: (suggestion: HubSourceSuggestion) => boolean;
+  onSelect: (suggestion: HubSourceSuggestion) => void;
 }) {
   const [opened, setOpened] = useState(false);
 
@@ -133,91 +138,77 @@ export function HubSourceEditor({
   const includedGroups = groupHubSources(included);
   const excludedGroups = groupHubSources(excluded);
 
-  const sameTarget = (a: { type: UserHubSourceType; targetId: number }) => (b: HubSourceValue) =>
-    b.type === a.type && b.targetId === a.targetId;
+  const held = (target: { type: UserHubSourceType; targetId: number }) =>
+    value.find((source) => hubSourceKey(source) === hubSourceKey(target));
 
-  /**
-   * The two guards every add passes, whichever affordance ran it. Returns true when the
-   * add was refused and the caller must stop — told rather than silently dropped, since
-   * either list can be long enough that the clashing row is off screen.
-   */
-  const refuseAdd = (type: UserHubSourceType, targetId: number, asExclusion: boolean) => {
-    // Across BOTH lists, matching the row's unique key: a target the hub already
-    // collects cannot also be excluded.
-    const clash = value.find(sameTarget({ type, targetId }));
-    if (clash) {
-      showErrorNotification({
-        title: 'Already in this hub',
-        error: new Error(
-          clash.exclude
-            ? `"${
-                clash.alias ?? targetId
-              }" is currently kept out of this hub. Remove it from the kept-out list first.`
-            : `"${clash.alias ?? targetId}" is already one of this hub's sources.`
-        ),
-      });
-      return true;
-    }
-    const held = asExclusion ? excluded.length : included.length;
+  // Told, not silently dropped: either list can be long enough that the clashing row
+  // is off screen, so the same click would otherwise appear to do nothing whether the
+  // target was already collected or currently kept out.
+  const notifyClash = (clash: HubSourceValue, targetId: number) =>
+    showErrorNotification({
+      title: 'Already in this hub',
+      error: new Error(
+        clash.exclude
+          ? `"${
+              clash.alias ?? targetId
+            }" is currently kept out of this hub. Remove it from the kept-out list first.`
+          : `"${clash.alias ?? targetId}" is already one of this hub's sources.`
+      ),
+    });
+
+  /** True when the list this source would join is full, and the caller must stop. */
+  const refuseForCap = (asExclusion: boolean) => {
+    const count = asExclusion ? excluded.length : included.length;
     const cap = asExclusion ? maxExclusions : maxSources;
-    if (held >= cap) {
-      showErrorNotification({
-        title: asExclusion ? 'Exclusion list is full' : 'Hub is full',
-        error: new Error(
-          asExclusion
-            ? `A hub can exclude at most ${cap} sources.`
-            : `A hub can hold at most ${cap} sources.`
-        ),
-      });
-      return true;
-    }
-    return false;
+    if (count < cap) return false;
+    showErrorNotification({
+      title: asExclusion ? 'Exclusion list is full' : 'Hub is full',
+      error: new Error(
+        asExclusion
+          ? `A hub can exclude at most ${cap} sources.`
+          : `A hub can hold at most ${cap} sources.`
+      ),
+    });
+    return true;
   };
 
   const addSource = (type: UserHubSourceType, targetId: number, rawAlias: string) => {
-    // Match what the server stores, so the optimistic row is not a different
-    // string from the one that comes back.
-    const alias = rawAlias.trim().slice(0, hubLimits.aliasLength);
-    if (refuseAdd(type, targetId, exclude)) return;
+    // Across BOTH lists, matching the row's unique key: a target the hub already
+    // collects cannot also be excluded.
+    const clash = held({ type, targetId });
+    if (clash) return notifyClash(clash, targetId);
+    if (refuseForCap(exclude)) return;
     onChange([
       ...value,
-      { type, targetId, alias, enabled: true, exclude, index: value.length, groupKey: null },
+      {
+        type,
+        targetId,
+        // Match what the server stores, so the optimistic row is not a different
+        // string from the one that comes back.
+        alias: rawAlias.trim().slice(0, hubLimits.aliasLength),
+        enabled: true,
+        exclude,
+        index: value.length,
+        groupKey: null,
+      },
     ]);
   };
 
-  // A tag joining a group is another row against the same cap as any other source —
-  // grouping changes what the rows MEAN, not how many a hub may hold.
-  const addToGroup = (group: HubSourceGroup, item: Suggestion) => {
+  const addToGroup = (group: HubSourceGroup, item: HubSourceSuggestion) => {
     const first = group.sources[0];
-    const alias = item.alias.trim().slice(0, hubLimits.aliasLength);
-    if (refuseAdd(item.type, item.targetId, !!first.exclude)) return;
-    // Reused when the card is already a group, minted when this is the second tag —
-    // so the click that creates a group is the one that assigns its key.
-    const groupKey = first.groupKey ?? nextHubGroupKey(value);
-    const members = group.sources.map(sameTarget);
-    onChange([
-      ...value.map((source) =>
-        members.some((matches) => matches(source)) ? { ...source, groupKey } : source
-      ),
-      {
-        type: UserHubSourceType.Tag,
-        targetId: item.targetId,
-        alias,
-        // The group toggles as one, so a tag joining a switched-off group must arrive
-        // switched off — otherwise the card reads as on while half of it is not.
-        enabled: first.enabled,
-        exclude: !!first.exclude,
-        index: value.length,
-        groupKey,
-      },
-    ]);
+    const clash = held(item);
+    // A tag already on the OTHER side of `exclude` is refused, not moved: that would
+    // flip it from blocking content to surfacing it, which is a different decision
+    // from grouping. One on THIS side is moved in, and spends no cap — no new row.
+    if (clash && !!clash.exclude !== !!first.exclude) return notifyClash(clash, item.targetId);
+    if (!clash && refuseForCap(!!first.exclude)) return;
+    onChange(addTagToHubGroup(value, group, item));
   };
 
   const renderGroup = (group: HubSourceGroup) => {
     const [first, ...rest] = group.sources;
     const isTag = first.type === UserHubSourceType.Tag;
-    const inGroup = (source: HubSourceValue) =>
-      group.sources.some((member) => sameTarget(member)(source));
+    const members = new Set(group.sources.map(hubSourceKey));
 
     return (
       <HubSourceCard
@@ -227,25 +218,29 @@ export function HubSourceEditor({
         onRemoveTag={
           readOnly || rest.length === 0
             ? undefined
-            : (targetId) =>
-                onChange(value.filter((s) => !sameTarget({ type: first.type, targetId })(s)))
+            : (targetId) => onChange(removeTagFromHubGroup(value, targetId))
         }
         addControl={
           isTag && !readOnly ? (
             <AddTagToGroup
               exclude={first.exclude}
               disabled={disabled}
-              isAdded={(item) => value.some(sameTarget(item))}
+              // "Added" means "cannot join this group", which is narrower than
+              // "already in this hub": a tag the hub holds on the same side is
+              // selectable, and picking it MOVES it in.
+              isAdded={(item) => {
+                const clash = held(item);
+                if (!clash) return false;
+                return !!clash.exclude !== !!first.exclude || members.has(hubSourceKey(clash));
+              }}
               onSelect={(item) => addToGroup(group, item)}
             />
           ) : undefined
         }
         disabled={disabled}
-        // The whole group at once: a half-enabled AND-set would filter on fewer tags
-        // than the card shows, with nothing on screen saying which.
-        onToggle={(enabled) => onChange(value.map((s) => (inGroup(s) ? { ...s, enabled } : s)))}
+        onToggle={(enabled) => onChange(setHubGroupEnabled(value, group, enabled))}
         hideRemove={readOnly}
-        onRemove={() => onChange(value.filter((s) => !inGroup(s)))}
+        onRemove={() => onChange(removeHubGroup(value, group))}
       />
     );
   };
@@ -285,7 +280,7 @@ export function HubSourceEditor({
                   </Text>
                   <HubSourceSearch
                     disabled={disabled}
-                    isAdded={(item) => value.some(sameTarget(item))}
+                    isAdded={(item) => !!held(item)}
                     onSelect={(item) => addSource(item.type, item.targetId, item.alias)}
                   />
                   <HubSourceUrlInput

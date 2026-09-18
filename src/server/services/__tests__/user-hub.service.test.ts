@@ -246,11 +246,15 @@ describe('resolveHubSources', () => {
       expect(result?.excluded.tagGroups).toEqual([[90, 91]]);
     });
 
-    it('shrinks a group a session toggle removed a member from', async () => {
-      // The subtraction happens before grouping, so a viewer switching one tag off
-      // leaves an AND-set of the rest rather than emptying the group. Asserted
-      // because the alternative — grouping first — reads identically in the code and
-      // would serve the ungrouped tag as if the group were still whole.
+    it('drops the WHOLE group when a session toggle hits ONE member', async () => {
+      // 🔴 Do not "simplify" this to dropping the toggled member. This list comes from
+      // the client, and the only reason it is safe to honour is that subtracting can
+      // ONLY narrow the feed. `A AND B` minus B is `A`, which matches a SUPERSET — so
+      // a per-member subtraction would let any viewer widen someone else's hub past
+      // what its owner set, by sending one id on the feed query.
+      //
+      // The ungrouped tag beside it is the control: it proves the toggle removed the
+      // group rather than emptying the tag set outright.
       findFirstHub.mockResolvedValue({
         forcedBrowsingLevel: 0,
         sources: [
@@ -266,7 +270,33 @@ describe('resolveHubSources', () => {
         excludedSources: [{ type: UserHubSourceType.Tag, targetId: 78 }],
       });
 
-      expect(result?.tagGroups).toEqual([[77], [79]]);
+      expect(result?.tagGroups).toEqual([[79]]);
+    });
+
+    it('resolves a hub that PREDATES groupKey to one group per tag', async () => {
+      // The compatibility claim, asserted over rows rather than over a hand-written
+      // `tagGroups` stub. `hub-feed-filter.test.ts` mocks this function out entirely,
+      // so without this case the "null means a group of one" mapping is pinned at
+      // both ends of the path and nowhere in the middle.
+      //
+      // `groupKey: null` spelled out, not omitted: null is what Prisma returns for a
+      // row written before the column existed, and a fixture that leaves the key off
+      // describes a row that cannot exist.
+      findFirstHub.mockResolvedValue({
+        forcedBrowsingLevel: 0,
+        sources: [
+          { type: UserHubSourceType.Tag, targetId: 77, exclude: false, groupKey: null },
+          { type: UserHubSourceType.Tag, targetId: 78, exclude: false, groupKey: null },
+          { type: UserHubSourceType.Tag, targetId: 79, exclude: false, groupKey: null },
+          { type: UserHubSourceType.Tag, targetId: 90, exclude: true, groupKey: null },
+          { type: UserHubSourceType.Tag, targetId: 91, exclude: true, groupKey: null },
+        ],
+      });
+
+      const result = await resolveHubSources({ hubId: 1, userId: 5 });
+
+      expect(result?.tagGroups).toEqual([[77], [78], [79]]);
+      expect(result?.excluded.tagGroups).toEqual([[90], [91]]);
     });
 
     it('IGNORES a session toggle aimed at a negative source', async () => {

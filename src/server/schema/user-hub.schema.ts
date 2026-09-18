@@ -143,7 +143,18 @@ export const userHubSourceSchema = z.object({
   // Only Tag sources are grouped. It is nullable rather than validated per type
   // because the resolver groups within the tag rows alone, so a key on any other
   // type is inert rather than wrong.
-  groupKey: z.number().int().min(0).nullish(),
+  //
+  // Bounded, not merely non-negative: the column is a Postgres `INTEGER`, and an
+  // unbounded value passes zod and then fails inside the replace transaction as a
+  // raw DB error rather than a validation message. The ceiling is the most rows a
+  // hub can hold, which is the most distinct keys it can ever need —
+  // `nextHubGroupKey` hands out the lowest free one for that reason.
+  groupKey: z
+    .number()
+    .int()
+    .min(0)
+    .max(hubLimits.sourcesPerHub + hubLimits.exclusionsPerHub)
+    .nullish(),
 });
 
 const capList = <T>(value: T[]) => value.slice(0, hubLimits.filterListLength);
