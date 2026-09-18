@@ -61,7 +61,9 @@ export function PostsCard({
                 </div>
               )}
 
-              <NextLink href={`/posts/${id}`}>
+              {/* The grid sizes the card, so the media has to fill it: without flex-1 this link is
+                  content-height and `.image`'s height: 100% resolves against auto. */}
+              <NextLink href={`/posts/${id}`} className="min-h-0 flex-1">
                 {!safe ? (
                   <div style={{ aspectRatio: (image?.width ?? 1) / (image?.height ?? 1) }}>
                     <MediaHash {...image} />
@@ -83,7 +85,7 @@ export function PostsCard({
               </NextLink>
               {(scheduledAt || !publishedAt) && (
                 <Badge
-                  className="absolute bottom-1.5 right-1.5 z-10"
+                  className={classes.publishState}
                   color={scheduledAt ? 'blue' : 'gray'}
                   variant="filled"
                   radius="sm"

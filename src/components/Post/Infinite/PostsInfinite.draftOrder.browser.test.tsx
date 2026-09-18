@@ -50,7 +50,9 @@ vi.mock('~/components/Post/Infinite/PostsCard', () => ({
 
 // Descending publish order, the order the server returns: 3d, 2d, 8h, 7h, 6h, 5h, 40m.
 // Heights vary the way real posts do, which is the input masonry reorders on.
-const heights = [420, 180, 300, 520, 200, 360, 240, 480, 220];
+// Ten, not nine: three columns in this harness, so the last row is ragged and the
+// grid's end-of-list slice is exercised.
+const heights = [420, 180, 300, 520, 200, 360, 240, 480, 220, 340];
 const posts = heights.map((height, i) => ({
   id: i + 1,
   images: [{ id: i + 1, width: 300, height }],
@@ -92,17 +94,33 @@ function Feed({ draftOnly }: { draftOnly: boolean }) {
 const cards = () => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="post"]'));
 const renderedIds = () => cards().map((card) => Number(card.getAttribute('data-id')));
 const columnCount = () => new Set(cards().map((card) => card.getBoundingClientRect().left)).size;
+const serverOrder = posts.map((post) => post.id);
+// What height-balanced masonry does to that order in this harness's three columns.
+const MASONRY_ORDER = [1, 6, 10, 2, 4, 8, 3, 5, 7, 9];
 
 describe('drafts feed order', () => {
   test('renders the server order left to right', async () => {
     renderWithProviders(<Feed draftOnly />);
 
     await vi.waitFor(() => expect(cards().length).toBe(posts.length));
-    expect(renderedIds()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(renderedIds()).toEqual(serverOrder);
     // With one column every layout agrees and the assertion above proves nothing, so fail
     // here rather than passing vacuously. Keep it AFTER the order check: a column-balanced
     // layout should be reported as the wrong order, not as an unmeasurable one.
     expect(columnCount()).toBeGreaterThan(1);
+
+    // Document order is not reading order: `direction: rtl` or a grid `order` would keep the
+    // ids above in sequence while the queue read backwards. Assert the geometry too.
+    const boxes = cards().map((card) => card.getBoundingClientRect());
+    const firstRow = boxes.filter((box) => box.top === boxes[0].top);
+    expect(firstRow.length).toBe(columnCount());
+    expect(firstRow.map((box) => box.left)).toEqual(
+      firstRow
+        .map((box) => box.left)
+        .slice()
+        .sort((a, b) => a - b)
+    );
+    expect(boxes[columnCount()].top).toBeGreaterThan(boxes[0].top);
   });
 
   test('leaves the published feed on masonry', async () => {
@@ -116,12 +134,15 @@ describe('drafts feed order', () => {
       renderedIds()
         .slice()
         .sort((a, b) => a - b)
-    ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
-    expect(renderedIds()).not.toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    ).toEqual(serverOrder);
+    // The grouping is deterministic for these heights, so pin the permutation rather than
+    // "not the server order" — a negative would also accept a DIFFERENT wrong grouping.
+    expect(renderedIds()).toEqual(MASONRY_ORDER);
   });
 
-  // A card renders a live-ticking relative time, so the number of them MOUNTED is the cost,
-  // not the number of posts. The grid windows its rows, and this is what says it still does.
+  // Each mounted card installs a 15s interval for its countdown (mocked out here, so this
+  // case bounds the count rather than observing the cost). The grid windows its rows, so the
+  // count follows the viewport, not the queue: ~90 on a wide desktop, 200 without windowing.
   test('mounts a window, not the whole queue, at 200 posts', async () => {
     feed.posts = Array.from({ length: 200 }, (_, i) => ({
       id: i + 1,
@@ -131,6 +152,9 @@ describe('drafts feed order', () => {
 
     await vi.waitFor(() => expect(cards().length).toBeGreaterThan(0));
     expect(cards().length).toBeLessThan(60);
+    // Bounded from below too: a collapsed window — one row, or columnCount briefly 0 — is a
+    // feed that goes blank on scroll, and it satisfies every upper bound.
+    expect(cards().length).toBeGreaterThanOrEqual(columnCount() * 2);
     expect(renderedIds()[0]).toBe(1);
   });
 });
