@@ -1,5 +1,4 @@
 import type { BlockAttributionScope } from '~/server/schema/blocks/attribution.schema';
-import { isPayoutEligibleBuzz } from '~/server/utils/buzz-helpers';
 
 /**
  * Revenue-share rate card for buzz purchases originated inside an App
@@ -22,14 +21,20 @@ export type RateCard = {
    */
   publisherSharePctByScope: Record<BlockAttributionScope, number>;
   /**
-   * W3 flow A — buzz SPEND attribution (author bounty).
+   * W3 flow A — buzz SPEND attribution (author bounty). RETIRED: nothing
+   * computes a share from this any more. The platform-funded percentage
+   * bounty was superseded by the additive, author-set, viewer-paid
+   * per-generation author fee, and its compute + backpay rails were removed.
    *
-   * The percentage of a block-initiated generation's USD value paid to
-   * the app author as a PLATFORM-FUNDED BOUNTY (NOT a cut of the viewer's
-   * spend — see the accounting note below and the migration). One flat
-   * rate for spend (no per-scope dimension): a spend has no install
-   * scope the way a purchase does — it's just "this app caused a
-   * generation". PLACEHOLDER pending monetization sign-off.
+   * The field stays for SHAPE STABILITY of the published `RateCard` snapshots
+   * (V4 and V5 were published carrying it), NOT because a row depends on it.
+   * ⚠️ AN EARLIER REVISION JUSTIFIED IT WITH "`block_spend_attribution` rows
+   * stamp a card version", which is misleading: the spend write path hardcodes
+   * `UNRATED_RATE_CARD_VERSION`, so those rows stamp 'unrated' and carry
+   * `spend_share_pct = 0`. Measured in production 2026-09-18 — a
+   * `GROUP BY rate_card_version` over that whole table returned a single
+   * 'unrated' group, so no row references a real card version. See the
+   * retirement note at `RATE_CARD_V5`'s declaration for the full accounting.
    */
   spendSharePct: number;
   /**
@@ -213,6 +218,12 @@ export const RATE_CARD_V3: RateCard = {
 /**
  * V4 — adds the W3 flow A buzz-SPEND author bounty (`spendSharePct`).
  *
+ * 🔴 THE SPEND BOUNTY IS RETIRED. Nothing computes a share from
+ * `spendSharePct` any more, so the sign-off this block asks for is moot and
+ * the rest of it is a record of what V4 meant when it was published. The rail
+ * was superseded by the additive, author-set, viewer-paid per-generation
+ * author fee (`author-fee.ts`). The card itself is immutable and stays.
+ *
  * Carries V3's purchase percentages UNCHANGED (15/15/25/0/0) and sets
  * `spendSharePct` to the FIRST non-zero spend rate. This is the first
  * card emitted for the spend flow: a block-initiated generation that
@@ -336,6 +347,53 @@ export const RATE_CARD_V5: RateCard = {
     viewer_global: 0,
   },
   // Carried from V4 verbatim.
+  //
+  // 🔴 RETIRED — DO NOT CARRY THIS FORWARD INTO A V6 WITHOUT READING THIS.
+  // Nothing computes a share from `spendSharePct` any more. The platform-funded
+  // percentage spend bounty was superseded by the additive, author-set,
+  // viewer-paid per-generation author fee (`author-fee.ts`), and its compute +
+  // backpay rails were removed. After that removal the ONLY reads of a card's
+  // `spendSharePct` anywhere in the tree are assertions in
+  // `src/server/services/blocks/__tests__/rate-card.test.ts` and
+  // `src/server/services/blocks/__tests__/spend-attribution.service.test.ts`.
+  // No production file reads it. The `5` is inert.
+  //
+  // ⚠️ WHY IT IS STILL HERE, STATED HONESTLY. The usual defence for keeping a
+  // published card's field is that immutable rows stamped this version must keep
+  // paying out under their own snapshot. THAT DEFENCE DOES NOT BIND HERE, and
+  // this comment is the record of it rather than a restatement of the doctrine:
+  // `recordSpendAttribution` hardcodes `rateCardVersion = UNRATED_RATE_CARD_VERSION`,
+  // so every spend row it writes stamps 'unrated', never 'v4' or 'v5'. The only
+  // code that would have stamped a real version onto a spend row is the backpay
+  // that never ran. (The code-history caveat that made an earlier revision hedge:
+  // the pre-track-only write path shipped in #2627 DID stamp `share.rateCardVersion`,
+  // and #2635 retrofitted it to 'unrated' the SAME DAY — 2026-06-18. That
+  // retrofit's migration records, contemporaneously, that prod held 0 spend rows
+  // at the time.)
+  //
+  // ✅ MEASURED, NOT INFERRED (production, 2026-09-18). An earlier revision said
+  // "no KNOWN referent" precisely because the code history above was never
+  // re-confirmed against the database. It has been now: a
+  // `GROUP BY rate_card_version` over the whole of `block_spend_attribution`
+  // returned exactly ONE group — `'unrated'`. The grouping is
+  // self-discriminating, so any other stamped version would have come back as a
+  // second row; none did. NO spend row references 'v4' or 'v5'. (The row count
+  // is deliberately not published here — this repo is public and that figure is
+  // product usage. Re-run the query to recover it.)
+  //
+  // Read that at its real scope: it is a statement about that table at that
+  // moment, NOT a guarantee about the future. It holds as long as
+  // `recordSpendAttribution` remains the only writer and keeps hardcoding the
+  // sentinel. A future writer that stamps a real version would create the
+  // referent this note says does not exist — re-measure before relying on it.
+  //
+  // So the field is retained with NO historical referent — for shape
+  // stability of the published `RateCard` snapshots and to avoid a type change
+  // rippling through every card, NOT because a row depends on it. Removing it is
+  // a larger act than the rail removal took on; if you are authoring a V6 and
+  // want it gone, delete it from the `RateCard` type and every card together.
+  // The CARDS themselves must stay regardless: purchase rows DO stamp a real
+  // version via `computeRateCardSplit`.
   spendSharePct: 5,
   // PLACEHOLDER 15% subscription rev-share — see the doc block above.
   subscriptionSharePct: 15,
@@ -408,8 +466,7 @@ export function computeRateCardSplit({
   const net = safeGross - safeFee;
 
   const isInternal = rateCard.internalAppOwnerUserIds.includes(appOwnerUserId);
-  const sharePct =
-    isSelfPurchase || isInternal ? 0 : rateCard.publisherSharePctByScope[scope] ?? 0;
+  const sharePct = isSelfPurchase || isInternal ? 0 : rateCard.publisherSharePctByScope[scope] ?? 0;
   const appOwnerShareCents = Math.floor((net * sharePct) / 100);
   const platformShareCents = net - appOwnerShareCents;
 
@@ -418,92 +475,6 @@ export function computeRateCardSplit({
     appOwnerShareCents,
     platformShareCents,
     providerFeeCents: safeFee,
-  };
-}
-
-/**
- * Result of running a (grossValueCents, owner) tuple through the active
- * card's SPEND dimension (W3 flow A). Unlike RateCardSplit there is no
- * platform-share / provider-fee field: the author bounty is platform-
- * funded and paid ON TOP of the spend, not carved out of it, so there is
- * nothing to "split". See RATE_CARD_V4's accounting note.
- */
-export type SpendShareResult = {
-  rateCardVersion: string;
-  spendSharePct: number;
-  appOwnerShareCents: number;
-};
-
-/**
- * Compute the author bounty for a single block-initiated Buzz SPEND.
- *
- * `grossValueCents` is the USD value of the Buzz the generation burned
- * (buzzDollarRatio 1000 Buzz = $1 = 100 cents — the caller converts). The
- * bounty is `spendSharePct` % of that value, floored so the platform
- * never over-pays a fractional cent.
- *
- * Special cases (mirror computeRateCardSplit):
- *   - `isSelfSpend` (spender == app owner) → 0 bounty. The author
- *     generating in their own app earns nothing; the caller sets
- *     status='voided', voided_reason='self_spend' so the row never enters
- *     the payout pipeline.
- *   - `appOwnerUserId` ∈ `internalAppOwnerUserIds` → 0 bounty (internal
- *     civitai app — same legal entity on both sides).
- *   - `buzzType` NOT payout-eligible → 0 bounty. ⚠️ LOAD-BEARING
- *     PAYOUT-SAFETY GATE (App Blocks Sybil / payout review). Block
- *     currencies were widened to on-site PARITY (blue/green/yellow); to
- *     keep that widening from EVER becoming platform-funded farming, only
- *     PAID Buzz (`isPayoutEligibleBuzz` → green + yellow) can accrue an
- *     author bounty. The FREE type — blue (free generation Buzz) — is
- *     EXCLUDED here so a Sybil ring spending free Buzz mints ZERO
- *     platform-funded bounty. (green is PAID — product confirmed
- *     2026-06-30: "green buzz is paid, only blue is free".)
- *     `buzzType` defaults to the legacy 'yellow' (the pre-widening
- *     currency) so existing/untyped callers are behavior-preserved.
- *     Whoever enables the #2605 payout rail MUST keep this gate — it is the
- *     single boundary that decouples spendable-currency parity from
- *     payout-eligibility. See `isPayoutEligibleBuzz` in buzz-helpers.ts.
- *
- * Invariants (also enforced by the migration's CHECKs):
- *   - appOwnerShareCents >= 0
- *   - appOwnerShareCents <= grossValueCents (a bounty can never exceed
- *     the revenue it rewards — a runaway rate is a bug)
- */
-export function computeSpendShare({
-  rateCard = ACTIVE_RATE_CARD,
-  grossValueCents,
-  isSelfSpend,
-  appOwnerUserId,
-  buzzType = 'yellow',
-}: {
-  rateCard?: RateCard;
-  grossValueCents: number;
-  isSelfSpend: boolean;
-  appOwnerUserId: number;
-  /**
-   * The account type the spend was drained from. Defaults to 'yellow' (the
-   * pre-parity currency) so legacy callers are unchanged. The free type
-   * (blue) is non-payout-eligible and zeroes the bounty. See the PAYOUT-SAFETY
-   * note above.
-   */
-  buzzType?: string;
-}): SpendShareResult {
-  const safeGross = Math.max(0, Math.floor(grossValueCents));
-
-  const isInternal = rateCard.internalAppOwnerUserIds.includes(appOwnerUserId);
-  // PAYOUT-SAFETY: the free Buzz type (blue) is never payout-eligible.
-  const isPayoutIneligible = !isPayoutEligibleBuzz(buzzType);
-  const sharePct =
-    isSelfSpend || isInternal || isPayoutIneligible ? 0 : rateCard.spendSharePct ?? 0;
-  // Floor so the platform never over-pays a sub-cent remainder, then clamp
-  // to the gross as a defensive ceiling (the bounty can never exceed the
-  // spend's USD value — matches the migration's _share_le_gross_check).
-  const appOwnerShareCents = Math.min(safeGross, Math.floor((safeGross * sharePct) / 100));
-
-  return {
-    rateCardVersion: rateCard.version,
-    spendSharePct: sharePct,
-    appOwnerShareCents,
   };
 }
 
@@ -566,8 +537,7 @@ export function computeSubscriptionShare({
   const net = safeGross - safeFee;
 
   const isInternal = rateCard.internalAppOwnerUserIds.includes(appOwnerUserId);
-  const sharePct =
-    isSelfPurchase || isInternal ? 0 : rateCard.subscriptionSharePct ?? 0;
+  const sharePct = isSelfPurchase || isInternal ? 0 : rateCard.subscriptionSharePct ?? 0;
   const appOwnerShareCents = Math.floor((net * sharePct) / 100);
   const platformShareCents = net - appOwnerShareCents;
 

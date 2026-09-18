@@ -3545,19 +3545,46 @@ model BlockAttributionPayout {
   @@map("block_attribution_payout")
 }
 
-/// W3 flow A — App Blocks buzz SPEND attribution (author bounty).
+/// W3 flow A — App Blocks buzz SPEND attribution. TRACK-ONLY: an audit
+/// trail of the generation EVENT and its money BASIS. It pays nobody.
 ///
 /// One row per block-initiated generation that spends the VIEWER's own
 /// Buzz balance. Distinct from BlockBuzzAttribution (which covers card
 /// PURCHASES from inside a block): a spend has no payment provider, no
 /// provider fee, no refund/clawback lifecycle.
 ///
-/// ACCOUNTING: the author share is a PLATFORM-FUNDED BOUNTY paid on top
-/// of the spend, NOT a slice carved out of the viewer's Buzz. The viewer
-/// burned 100% of their Buzz on the generation (platform revenue); the
-/// author bounty is a separate platform expense sized as a percentage of
-/// the spend's USD value. There is therefore NO three-way conservation
-/// invariant (unlike the purchase table) — see the migration for detail.
+/// 🔴 THE AUTHOR BOUNTY THIS TABLE WAS BUILT FOR IS REMOVED. It was a
+/// PLATFORM-FUNDED percentage bounty (`gross_value_cents × spend_share_pct`)
+/// paid on top of the spend — never a slice of the viewer's Buzz — and it was
+/// superseded by the additive, author-set, viewer-paid per-generation author
+/// fee (`src/server/services/blocks/author-fee.ts`). Its compute and backpay
+/// rails were deleted; nothing reads a rate card's `spendSharePct` any more.
+///
+/// WHAT THE ROWS CARRY NOW: `app_owner_share_cents = 0`, `spend_share_pct = 0`,
+/// `rate_card_version = 'unrated'`. `status` is NOT uniformly 'tracked' — do not
+/// read this summary as the write-time contract. Self-spend (spender == app
+/// owner) and internal-owner apps write 'voided'; everything else writes
+/// 'tracked'. That distinction is live and load-bearing (it is the marker the
+/// analytics reader and any future payout rail would both need), and
+/// `app-analytics.service.ts` applies NO status filter today. The authoritative,
+/// complete statement is the doc block on `recordSpendAttribution` in
+/// `src/server/services/blocks/buzz-attribution.service.ts` — read it there
+/// rather than trusting a restatement here.
+///
+/// Measured in production 2026-09-18: a `GROUP BY rate_card_version` over the
+/// whole table returned a single 'unrated' group. The grouping is
+/// self-discriminating — any other stamped version would have been a second
+/// group — so no row references a real card version. Re-measure before relying
+/// on it. The money columns are retained at zero so the row shape and its CHECK
+/// constraints are unchanged, NOT because anything computes them.
+///
+/// The LIVE consumer is reporting, not payout: `app-analytics.service.ts`
+/// aggregates these rows for the app-owner dashboard.
+///
+/// ACCOUNTING (historical, for reading the constraints): because the bounty was
+/// platform-funded rather than carved out of the spend, there is NO three-way
+/// conservation invariant here (unlike the purchase table) — see the migration
+/// for detail. That asymmetry is why the constraints look the way they do.
 ///
 /// Idempotent on (workflow_id, app_block_id): a re-poll / retry /
 /// re-submit of the same workflow is a no-op.
@@ -3583,8 +3610,16 @@ model BlockSpendAttribution {
   blockInstanceId    String   @map("block_instance_id")
   modelId            Int?     @map("model_id")
 
+  /// Always the 'unrated' sentinel — the write path hardcodes it. No rate card
+  /// is applied to a spend row, and nothing re-stamps it (the backpay that would
+  /// have is removed). Measured in production 2026-09-18: a
+  /// `GROUP BY rate_card_version` over the whole table returned a single
+  /// 'unrated' group — self-discriminating, since any other stamped version
+  /// would have been a second group. Re-measure before relying on it.
   rateCardVersion    String   @map("rate_card_version")
-  /// The spend rev-share percentage stamped at write time.
+  /// Always 0. This was the spend rev-share percentage stamped at write time,
+  /// for the removed platform-funded bounty; the write path now hardcodes 0 and
+  /// the column is retained only to keep the row shape + CHECK constraints.
   spendSharePct      Int      @map("spend_share_pct")
   appOwnerShareCents Int      @map("app_owner_share_cents")
   appOwnerUserId     Int      @map("app_owner_user_id")
@@ -3645,9 +3680,18 @@ model BlockSpendAttribution {
   /// the fire-and-forget spend path.
   generationType      String? @map("generation_type")
 
-  // Must stay equal to the column default in Postgres and to what backpay selects: Prisma supplies
-  // this itself on create, so a value backpay does not read makes an omitted-status row invisible to
-  // payout forever. Pinned by block-spend-attribution-status-default.test.ts.
+  // Must stay equal to the column default the committed migrations provision, and be allowed by
+  // their CHECK: Prisma supplies this itself on create, so a database built from history would
+  // otherwise disagree with the one this code runs against, with no error and no drift. Pinned by
+  // block-spend-attribution-status-default.test.ts.
+  //
+  // ⚠️ THE SECOND HALF OF THIS NOTE IS GONE. It used to add "and to what backpay selects … a value
+  // backpay does not read makes an omitted-status row invisible to payout forever". There is no
+  // spend backpay any more — the platform-funded percentage bounty was superseded by the
+  // per-generation author fee and its rail was removed — so no read exists for this value to agree
+  // with, and nothing pays out of this table. The guard's matching second assertion was dropped for
+  // the same reason rather than left to fail closed; the schema-vs-migrations half above is real,
+  // still asserted, and is the whole of what this comment now claims.
   status             String   @default("tracked")
   /// 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no
   /// refund path, so this is never 'refund'/'chargeback'.

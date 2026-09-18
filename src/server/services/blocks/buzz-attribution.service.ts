@@ -20,12 +20,10 @@ import { observeBlockAuthorFee } from './author-fee';
 import { isBlockGenerationType, type BlockGenerationType } from './generation-type';
 import {
   computeRateCardSplit,
-  // NOTE: neither computeSpendShare nor computeSubscriptionShare is imported
-  // here. Both the buzz-SPEND (flow A) and membership (flow C) attributions
-  // are TRACK-ONLY — no rate is applied at write time. The share is computed
-  // at payout time (Slice 4) as a backpay against the signed-off rate over
-  // status='tracked' rows. The compute* helpers stay in rate-card.ts for that
-  // payout-time backpay to call.
+  // NOTE: `computeSubscriptionShare` is deliberately not imported here. The
+  // membership attribution (flow C) is TRACK-ONLY — no rate is applied at write
+  // time. Its share is computed at payout time as a backpay against the
+  // signed-off rate over status='tracked' rows.
   ACTIVE_RATE_CARD,
 } from './rate-card';
 
@@ -260,11 +258,16 @@ export class AttributionAppMissingError extends Error {
  * (Slice 4) as a backpay. A row carrying this sentinel + status='tracked' is
  * "share-pending": the payout rail re-stamps the signed-off version when it
  * computes the share.
+ *
+ * ⚠️ TRUE FOR MEMBERSHIP ROWS ONLY. A `block_spend_attribution` row also carries
+ * this sentinel, but it is NOT share-pending — the spend bounty was removed, no
+ * backpay reads that table, and nothing will ever re-stamp those rows.
  */
 export const UNRATED_RATE_CARD_VERSION = 'unrated' as const;
 
 // ---------------------------------------------------------------
-// W3 flow A — buzz SPEND attribution (author bounty)
+// W3 flow A — buzz SPEND attribution (TRACK-ONLY audit trail; the author
+// bounty it was built for is removed — see `recordSpendAttribution`)
 // ---------------------------------------------------------------
 
 const SPEND_ATTRIBUTION_LOG_NAME = 'block-spend-attribution';
@@ -464,8 +467,10 @@ export async function resolvePublishedContentAuthorUserId(args: {
 }
 
 /**
- * Record an author bounty for a block-initiated generation that SPENT the
- * viewer's own Buzz. Idempotent on `(workflow_id, app_block_id)` — a
+ * Record a TRACK-ONLY attribution row for a block-initiated generation that
+ * SPENT the viewer's own Buzz. It accrues nothing and pays nobody — the
+ * percentage author bounty it was named for is GONE (see the ⚠️ TRACK-ONLY
+ * paragraph below). Idempotent on `(workflow_id, app_block_id)` — a
  * re-poll / retry / re-submit of the same workflow is a no-op.
  *
  * EVERYTHING is server-derived from the verified block-token claims by
@@ -476,35 +481,27 @@ export async function resolvePublishedContentAuthorUserId(args: {
  * inherently forge-safe (unlike the purchase/Paddle path, which must
  * re-derive client metadata via validateBuzzPurchaseAttribution).
  *
- * ACCOUNTING: the bounty is platform-funded (paid ON TOP of the spend),
- * not a cut of the viewer's Buzz. See rate-card.ts RATE_CARD_V4 and the
- * migration. This function moves NO money and touches NO BuzzTransaction
- * — it writes a derived audit/payout row. A failed write never affects
- * the generation (the caller fires it best-effort / fire-and-forget).
+ * This function moves NO money and touches NO BuzzTransaction — it writes a
+ * derived audit row. A failed write never affects the generation (the caller
+ * fires it best-effort / fire-and-forget).
  *
  * ⚠️ TRACK-ONLY (mirrors #2629's membership rework). This write records the
  * ATTRIBUTION EVENT + the MONEY BASIS (gross_value_cents = USD value of the
- * Buzz burned) only. It does NOT apply the spend rate card and does NOT bake
- * an author bounty. The row is written:
- *   - status                = 'tracked'  (share-pending, not yet computed)
+ * Buzz burned) only. The row is written:
+ *   - status                = 'tracked'
  *   - app_owner_share_cents  = 0
  *   - spend_share_pct        = 0         (no rate applied)
  *   - rate_card_version      = 'unrated' (no version stamped)
- * The author bounty is DEFERRED to PAYOUT time: the future payout rail
- * (Slice 4) reads status='tracked' rows and computes
- * bounty = gross × <signed-off spendSharePct> as a clean retroactive BACKPAY
- * (via the retained `computeSpendShare`), then transitions them to a
- * computed/confirmed state. Because the tracked row carries the gross, that
- * computation is exact.
  *
- * WHY: committing a bounty at the placeholder spend rate before monetization
- * sign-off would lock these immutable rows to the placeholder (each row pays
- * out under its STAMPED snapshot forever). Recording the basis now and
- * applying the signed-off rate later removes the placeholder-rate liability.
+ * The percentage author bounty these columns were the basis for is GONE: it was
+ * superseded by the additive, author-set, viewer-paid per-generation author fee
+ * (observed dark below), and its compute + backpay rails were removed. The
+ * columns stay at 0 / 'unrated' so the row shape and its CHECK constraints are
+ * unchanged, and the event/gross trail keeps its full history.
  *
  * Self-spend (spender == app owner) and internal-owner apps write a
- * voided, zero-share row so the audit trail exists but nothing is ever
- * backpaid (mirrors recordAttribution's self-purchase wash).
+ * voided, zero-share row so the audit trail exists but the row is never
+ * payable (mirrors recordAttribution's self-purchase wash).
  */
 export async function recordSpendAttribution(
   input: RecordSpendAttributionInput
@@ -591,36 +588,21 @@ export async function recordSpendAttribution(
       })
     : null;
 
-  // TRACK-ONLY money basis: record the gross (USD value of the Buzz burned),
-  // defer the bounty. NO rate card is applied here (no computeSpendShare
-  // call). The backpay (Slice 4) computes bounty = gross × <signed-off
-  // spendSharePct> over status='tracked' rows. Today: share 0, no rate
-  // stamped.
+  // TRACK-ONLY money basis: record the gross (USD value of the Buzz burned).
+  // NO rate card is applied here, and the percentage author bounty this row was
+  // once the basis for no longer exists — it was superseded by the additive,
+  // author-set, viewer-paid per-generation author fee. The columns are kept at
+  // 0 / 'unrated' so the row shape and its CHECK constraints are unchanged.
   const rateCardVersion = UNRATED_RATE_CARD_VERSION;
   const spendSharePct = 0;
-  // The accrued bounty for THIS row. Track-only today: identically 0 until the
-  // payout rail (#2605) starts stamping a non-zero share here. `let` so the
-  // per-APP daily cap below can CLAMP it (a Sybil ring pointed at one app must
-  // not mint unbounded platform-funded bounty — audit note 🟡-2).
-  let appOwnerShareCents = 0;
+  const appOwnerShareCents = 0;
 
-  // PER-APP daily spend-BOUNTY accrual cap (audit 🟡-2 / Sybil-economics
-  // review). The per-user `BLOCK_BUZZ_CAP_PER_DAY` bounds one viewer's daily
-  // SPEND but is blind to MANY viewers funnelling bounty at ONE app. Reserve
-  // this row's accrued share against the app's cumulative UTC-day BOUNTY
-  // counter and clamp the accrual to whatever headroom remains. Same atomic
-  // INCRBY-with-TTL TOCTOU-safe mechanism as the per-user cap. DORMANT today:
-  // `appOwnerShareCents` is 0, so `reserveAppBountyAccrual` short-circuits
-  // without touching Redis and grants 0 — the cap never clamps and behaviour
-  // is byte-identical to before. When #2605 flips spendSharePct>0 the cap is
-  // already enforcing. Void rows (self/internal) also carry 0 → no-op.
-  const { reserveAppBountyAccrual } = await import('./app-bounty-cap.service');
-  const bountyReservation = await reserveAppBountyAccrual(appBlockId, appOwnerShareCents);
-  appOwnerShareCents = bountyReservation.grantedCents;
-
-  // Void rows that are zero because of WHO spent/owns so they are never
-  // backpaid. Otherwise the row is 'tracked' — share-pending, awaiting the
-  // payout-time backpay at the signed-off rate.
+  // Void rows that are zero because of WHO spent/owns. Otherwise the row is
+  // 'tracked'. ⚠️ NOT "share-pending awaiting a payout-time backpay" — that was
+  // the removed spend bounty. No backpay reads this table; 'tracked' is where a
+  // spend row stays. The void/track distinction is kept because it is the
+  // self-spend / internal-owner marker the analytics reader and any future rail
+  // would both need, and voiding costs nothing.
   const voidedReason = isSelfSpend ? 'self_spend' : isInternal ? 'internal_owner' : null;
   const status = voidedReason ? 'voided' : 'tracked';
   const voidedAt = voidedReason ? new Date() : null;
@@ -684,11 +666,9 @@ export async function recordSpendAttribution(
     //
     // 🔴 SELF-SPEND IS OBSERVED LIKE ANY OTHER GENERATION — deliberately, and
     // this is a DIVERGENCE from how attribution behaves two lines up, where
-    // `isSelfSpend` voids the row and `computeSpendShare` zeroes the share. A
-    // bounty is the platform paying an author out of platform money, so paying
-    // an author for their own spend is a wash. The author fee is the VIEWER
-    // paying the author, and an author using their own app is a viewer like any
-    // other. ⚠️ FLAGGED FOR SLICE 2: at settlement that becomes a Buzz
+    // `isSelfSpend` voids the row. The author fee is the VIEWER paying the
+    // author, and an author using their own app is a viewer like any other.
+    // ⚠️ FLAGGED FOR SLICE 2: at settlement that becomes a Buzz
     // transaction from an account to ITSELF, which is at best a no-op and may be
     // rejected outright. Slice 1's shape does not make that harder — the
     // observation carries no recipient, and `isSelfSpend` is already on this
@@ -708,15 +688,12 @@ export async function recordSpendAttribution(
     //
     // ⚠️ WHERE IT WOULD SURFACE — stated precisely, because an earlier revision
     // of this comment called the enclosing `catch` merely "loud" and that
-    // UNDERSTATES IT BY THREE EFFECTS. A rejection here unwinds past everything
-    // between this line and the `catch` below, for a row that WAS persisted:
+    // UNDERSTATES IT. A rejection here unwinds past everything between this
+    // line and the `catch` below, for a row that WAS persisted:
     //   1. the success Axiom line is never written — the row exists with no
     //      `block-spend-attribution` record of it;
     //   2. `blockSpendAttributionWriteCounter.inc({ status })` never fires, so
     //      the written-row counter undercounts;
-    //   3. the `catch` runs `refundAppBountyAccrual` against a row that was NOT
-    //      rolled back, double-releasing its reservation. Inert only while
-    //      `appOwnerShareCents` is identically 0 — i.e. until #2605.
     // Then it rethrows (not a P2002) and reaches the caller's fire-and-forget
     // `.catch`. That is still the correct destination for a broken contract —
     // `authorFee.reason` is not — but it is not a free "loud" either, so the
@@ -783,10 +760,6 @@ export async function recordSpendAttribution(
         status,
         voidedReason,
         isSelfSpend,
-        // Per-app bounty cap observability (dormant today: clamped=false,
-        // appBountyDailyTotal=0). Surfaces a clamp the moment the cap bites.
-        appBountyClamped: bountyReservation.clamped,
-        appBountyDailyTotal: bountyReservation.total,
         // DARK author-fee observability — FOUR fields, and the set is chosen by
         // ONE rule: a property gets exactly one instrument, and this row is the
         // instrument only where the counters cannot reach. The counters carry a
@@ -844,17 +817,6 @@ export async function recordSpendAttribution(
 
     return { written: true, row: created };
   } catch (err) {
-    // This call's row was NOT persisted (either a duplicate that the ORIGINAL
-    // row already accounts for, or a hard write failure). Release the bounty we
-    // reserved for it so the per-app daily counter reflects only persisted
-    // accrual — otherwise a retry storm would double-count toward the cap.
-    // Best-effort + DORMANT today (granted 0 → no-op). Refund against the
-    // PINNED key from the reservation (never a re-derived one — midnight-UTC
-    // race, same reasoning as the per-user refund).
-    if (bountyReservation.grantedCents > 0) {
-      const { refundAppBountyAccrual } = await import('./app-bounty-cap.service');
-      await refundAppBountyAccrual(bountyReservation.key, bountyReservation.grantedCents);
-    }
     // Idempotency: a re-poll / retry / re-submit that races the original
     // write lands on the (workflow_id, app_block_id) UNIQUE -> P2002.
     // Return the pre-existing row so callers treat first-write and retry

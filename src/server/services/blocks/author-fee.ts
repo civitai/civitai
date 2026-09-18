@@ -50,8 +50,9 @@ import { blockGenerationCoarseType, isBlockGenerationType } from './generation-t
 //      spend's USD value), and a flat BUZZ leg has no expression in that unit at
 //      all. Worse, the card's per-row CENT FLOORING is precisely the defect that
 //      made the bounty pay $0.00: at 10 Buzz per cent (`buzzSpendToUsdCents`)
-//      and `spendSharePct: 5`, `computeSpendShare` returns **0 cents for every
-//      generation under 200 ⚡** — i.e. for most of them. Computing in Buzz and
+//      and `spendSharePct: 5`, a per-row `floor(cents × pct / 100)` yields
+//      **0 cents for every generation under 200 ⚡** — i.e. for most of them.
+//      That bounty rail has since been removed. Computing in Buzz and
 //      flooring ONCE, at the end, is what the basis-point arithmetic below
 //      exists for.
 //
@@ -61,6 +62,16 @@ import { blockGenerationCoarseType, isBlockGenerationType } from './generation-t
 // reads a row, or touches a Buzz account. `observeBlockAuthorFee` is the ONLY
 // production entry point and it is fail-closed behind
 // `app-blocks-author-fee-enabled`.
+//
+// 🔴 SLICE 2, READ THIS BEFORE YOU DERIVE A RECIPIENT: an OPEN SECURITY GATE in
+// `src/pages/api/v1/blocks/dev-token.ts` (the APPID MISATTRIBUTION block) is
+// addressed to you by name. Slice 1 carries no recipient, so a mis-resolved
+// `appId` cannot misdirect a fee today; slice 2 is where that stops being true,
+// because the recipient comes from the same spend-attribution app resolution.
+// The gate names what re-confirms it (an existing S1 case in
+// `src/tests/api/v1/blocks/dev-token.test.ts`) and closes when the settlement
+// PR merges with that assertion green. It is pointed at from here because
+// nothing else on this surface would send you to a dev-token mint handler.
 //
 // ── NO MIGRATION IN THIS SLICE, ON PURPOSE ──────────────────────────────────
 // The defaults apply to EVERY app including the ones that already exist, so

@@ -5966,9 +5966,9 @@ export const blocksRouter = router({
         });
       }
 
-      // W3 flow A — buzz SPEND attribution (author bounty). The block
-      // burned the viewer's own Buzz on this generation; accrue the app
-      // author's platform-funded bounty share. EVERYTHING is server-derived
+      // W3 flow A — buzz SPEND attribution. The block burned the viewer's own
+      // Buzz on this generation; record the event and its money basis.
+      // EVERYTHING is server-derived
       // from the VERIFIED token claims (appId/appBlockId/blockInstanceId
       // from the JWT, spender from `sub`, author looked up from the app's
       // OauthClient) — there is NO client-supplied attribution, so spend is
@@ -5988,29 +5988,34 @@ export const blocksRouter = router({
           const { recordSpendAttribution } = await import(
             '~/server/services/blocks/buzz-attribution.service'
           );
-          // Accrue the author bounty off the REALIZED debit, not the
-          // whatif preflight ESTIMATE (`cost`). `snapshotFromWorkflow`
-          // surfaces the REAL submit's `workflow.cost.total` onto
-          // `snapshot.cost.total` (see workflow.service.ts:~49,61), read
-          // from the SAME resolved `submitted` snapshot this handler
-          // already holds (no re-fetch). The realized value is what the
-          // platform actually took, so the bounty matches the spend
-          // (the `share_le_gross` intent). This closes: (a) estimate >
-          // realized over-accrual; (b) a cache-hit / 0-realized that
-          // would otherwise still accrue off a non-zero estimate (author
-          // paid for a gen that cost nothing); (c) queue/surge/tier drift
-          // landing on platform bounty liability. Fall back to the
-          // estimate ONLY when the realized value is absent on the
+          // Record the attribution off the REALIZED debit, not the whatif
+          // preflight ESTIMATE (`cost`). ⚠️ This used to read "accrue the author
+          // bounty off the realized debit" — that platform-funded percentage
+          // rail is REMOVED and this row accrues nothing (`spend_share_pct = 0`,
+          // `app_owner_share_cents = 0`). The realized-vs-estimate choice
+          // survives the removal on its own terms: the row is the durable
+          // MONEY BASIS (`gross_value_cents`) for reporting today and for
+          // anything sized off it later, so a basis that overstates what the
+          // platform took is simply wrong.
+          //
+          // `snapshotFromWorkflow` surfaces the REAL submit's
+          // `workflow.cost.total` onto `snapshot.cost.total` (see
+          // workflow.service.ts:~49,61), read from the SAME resolved
+          // `submitted` snapshot this handler already holds (no re-fetch). The
+          // realized value is what the platform actually took, so the recorded
+          // basis matches the spend (the `share_le_gross` intent, still a live
+          // CHECK constraint). This closes: (a) estimate > realized
+          // overstatement; (b) a cache-hit / 0-realized that would otherwise
+          // record a non-zero basis for a generation that cost nothing; (c)
+          // queue/surge/tier drift inflating the recorded figure. Fall back to
+          // the estimate ONLY when the realized value is absent on the
           // snapshot (e.g. a snapshot that carries no cost).
           //
-          // SYBIL CAP NOTE (audit 🟡-2): there is NO per-APP aggregate
-          // accrual cap here — only the per-(USER, UTC-day) Buzz SPEND
-          // reservation above. A Sybil ring of many viewers could mint
-          // unbounded platform-funded bounty toward ONE app. This is
-          // accrual-only + mod-gated today, so it is not a merge blocker,
-          // but a per-app earnings cap / velocity check is a HARD
-          // prerequisite before the spend flow opens to non-mods (track
-          // alongside the Slice-4 payout gate + the rate sign-off).
+          // SYBIL CAP NOTE (audit 🟡-2): the per-APP aggregate ceiling this
+          // note used to ask for is `reserveAppSpend` (G8), taken above on
+          // the submit path. The platform-funded bounty it was originally
+          // written about no longer exists — nothing on this path accrues a
+          // payable share.
           // Record a PAYOUT-SAFE currency basis for this spend off the REAL
           // per-account debit. The orchestrator drains the offered currencies
           // in spend order (blue-FIRST — blue is the free generation Buzz) and
@@ -6022,22 +6027,22 @@ export const blocksRouter = router({
           //
           // Rule: a generation can split across FREE (blue) and PAID
           // (green/yellow) Buzz. ONLY the PAID portion earns — stamp the paid
-          // account and the SUMMED paid debit amount, so the author bounty
-          // accrues off what the user actually paid, never the free blue
+          // account and the SUMMED paid debit amount, so any future payout is
+          // based on what the user actually paid, never the free blue
           // portion. The offered currencies are ['blue', green|yellow] (never
           // both green and yellow), so at most ONE paid account is ever
           // drained; we NET that paid account's debits against any same-submit
           // credits (a partial refund / charge correction the orchestrator may
-          // emit in the SAME transactions.list) so the bounty accrues off what
-          // the user NET paid, not a gross debit that was partly refunded.
+          // emit in the SAME transactions.list) so the recorded money basis is
+          // what the user NET paid, not a gross debit that was partly refunded.
           //
           // When NO paid debit is present — a blue-only spend, OR a cache-hit /
           // 0-cost gen, OR a snapshot the orchestrator returned WITHOUT
           // transactions — we fall back to the conservative FREE floor (blue +
           // the realized/estimated cost), which `isPayoutEligibleBuzz`
-          // (computeSpendShare) EXCLUDES → ZERO bounty. This preserves the
-          // anti-farming guarantee: free-Buzz spend can never accrue a bounty,
-          // and an absent/unknown debit signal never pays. Forge-safe:
+          // EXCLUDES from payout eligibility. This preserves the anti-farming
+          // guarantee: free-Buzz spend can never become payable, and an
+          // absent/unknown debit signal never pays. Forge-safe:
           // `submitted` is the orchestrator's authoritative response, not
           // client input.
           // ALL paid-account (green/yellow) entries — debits AND credits — so we
@@ -7493,10 +7498,13 @@ function compareSemver(a: string, b: string): number {
 // regardless of which account type pays.
 //
 // PAYOUT-SAFETY: widening the SPENDABLE currencies here is decoupled from
-// payout eligibility. The author-bounty rail (#2605) excludes only free
-// (blue) Buzz via `isPayoutEligibleBuzz` at the payout boundary
-// (`computeSpendShare`); green and yellow are PAID and payout-eligible. So
-// this widening can NEVER make free Buzz become platform-funded farming.
+// payout eligibility. Free (blue) Buzz is excluded by `isPayoutEligibleBuzz`
+// when the realized debit is narrowed to its PAID portion, BEFORE that becomes a
+// spend row's money basis; green and yellow are PAID and payout-eligible. So
+// this widening can NEVER make free Buzz payable. (Corrected: this used to name
+// "the payout rail (#2605)" as the enforcement point. #2605 reads the PURCHASE
+// table only and never reads a spend row, and the spend bounty is removed — the
+// exclusion happens at the WRITE boundary here, not at a payout boundary.)
 // See buzz-helpers.ts.
 function resolveBlockCurrencies(isGreen: boolean) {
   return BuzzTypes.toOrchestratorType(getBlockAllowedAccountTypes(isGreen));
@@ -8201,7 +8209,7 @@ async function submitCustomComfyWorkflow(opts: {
   // ── Durable audit + attribution (parity with the txt2img path ~:3725,3810).
   // The customComfy branch early-returned before these writes, so a successful
   // recipe generation billed real Buzz but left NO durable trail: no
-  // per-user activity row (block_scope_invocations) and no author-bounty basis
+  // per-user activity row (block_scope_invocations) and no spend basis
   // (block_spend_attribution). Both are ADDED here, server-derived from the
   // VERIFIED token claims (never client input), fire-and-forget with each
   // write's OWN try/catch so an audit failure can never add latency to — or
@@ -8245,9 +8253,14 @@ async function submitCustomComfyWorkflow(opts: {
     });
   }
 
-  // (2) block_spend_attribution — the author-bounty spend basis (TRACK-ONLY,
-  // status='tracked' / rate_card_version='unrated' / share=0 today; the payout
-  // rail backpays later). One row per generation that spends the viewer's Buzz,
+  // (2) block_spend_attribution — the spend basis (TRACK-ONLY, status='tracked'
+  // / rate_card_version='unrated' / share=0). ⚠️ NOT an "author-bounty" basis
+  // any more, and NOTHING backpays it: the platform-funded percentage bounty was
+  // superseded by the additive, author-set, viewer-paid per-generation author fee
+  // and its backpay rail was removed, so these rows are never confirmed or paid.
+  // Their LIVE consumer is `app-analytics.service.ts`, which aggregates the table
+  // for the app-owner dashboard — that is why the table is still written.
+  // One row per generation that spends the viewer's Buzz,
   // server-derived from the verified block-JWT (appId/appBlockId/blockInstanceId
   // from the token, spender from `sub`, author looked up from the app's
   // OauthClient) — no client-supplied attribution, so it is forge-safe.
@@ -8273,7 +8286,9 @@ async function submitCustomComfyWorkflow(opts: {
         isGreen,
         // Fall back to the realized snapshot cost (then the reserved ceiling)
         // when no paid debit is surfaced — the conservative FREE floor, which
-        // isPayoutEligibleBuzz EXCLUDES → zero bounty (anti-farming preserved).
+        // isPayoutEligibleBuzz EXCLUDES → zero payable basis (anti-farming
+        // preserved). "Bounty" here was the removed platform-funded rail; the
+        // exclusion still holds, it just bounds the recorded basis now.
         snapshot.cost?.total ?? ceiling
       );
       await recordSpendAttribution({
@@ -9438,7 +9453,7 @@ async function submitStepWorkflow(opts: {
 
   // ── Durable audit + attribution (parity with the txt2img + customComfy paths).
   // A step generation bills real Buzz, so it must leave the same durable trail:
-  // a per-user activity row and an author-bounty spend basis. Both are
+  // a per-user activity row and a spend-attribution basis. Both are
   // server-derived from the VERIFIED token claims (never client input), and both
   // are fire-and-forget with their OWN try/catch so an audit failure can never
   // add latency to — or break — the already-billed submit response.
@@ -10164,7 +10179,9 @@ async function submitPassThroughStepWorkflow(opts: {
  *  - When NO net paid debit is present (blue-only, cache-hit/0-cost, or a
  *    snapshot returned WITHOUT transactions) fall back to the conservative FREE
  *    floor (blue + `fallbackCost`), which `isPayoutEligibleBuzz` EXCLUDES → zero
- *    bounty. Free-Buzz spend can never accrue a bounty; an absent debit never pays.
+ *    payable basis. Free-Buzz spend can never enter the money basis; an absent
+ *    debit never pays. (The platform-funded "bounty" this rule was written for is
+ *    removed; the exclusion is unchanged and now bounds the recorded basis.)
  *  - Defensive: if BOTH green and yellow appear (the contract offers only
  *    ['blue', green|yellow], so at most one paid account is touched today) we
  *    refuse to conflate them and fall back to the blue floor.
