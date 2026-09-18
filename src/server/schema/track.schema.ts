@@ -509,8 +509,8 @@ const imageRemixClickSchema = z.object({
 //                remix it came from, so these rows additionally stop counting a
 //                source the user left behind hours ago. See
 //                `utils/remix-claim.ts`.
-//     Those versions are the earliest release that could carry each change. The
-//     real boundary in the data is the deploy, which is not knowable from here.
+//     Each version is the earliest release containing the change; the boundary
+//     in the data is the deploy behind it.
 //      'video':  historical rows only. No emitter has existed since v5.0.1786
 //                (Jun 2026), when the legacy forms went; video now renders
 //                through the same footer as everything else and emits the field
@@ -519,9 +519,16 @@ const imageRemixClickSchema = z.object({
 //     Whether a derivation was actually VERIFIED is a different field on the
 //     image (meta.extra.sourceImageIds); this one is only the user's claim.
 //     A GROUP BY hasRemixOfId rolls up across 'legacy', 'new' and 'form-graph'
-//     only if the two definition boundaries above are acceptable for the
-//     question being asked; 'video' rows have the field absent rather than
-//     false, so exclude them or bucket them on their own.
+//     only if both definition boundaries above are acceptable for the question
+//     being asked; 'video' rows have the field absent rather than false, so
+//     exclude them or bucket them on their own.
+//     'new' and 'form-graph' are also different POPULATIONS, not just different
+//     forms: the form-graph lane is gated by the `formGraphGenerator` flag, so
+//     those rows are whatever audience `form-graph-generator` admits rather than
+//     everyone. The static `['mod']` beside it is only the Flipt-down fallback —
+//     Flipt overrides the role check in both directions, so the real audience is
+//     not knowable from this repo. Comparing a rate across the two buckets
+//     compares two cohorts.
 //
 //   formVersion: absent on rate-limited emits from GenForm — the legacy
 //     image GenForm wrapper and VideoGenerationForm don't have a way to
