@@ -201,12 +201,15 @@ function ImageFeedGrid({
   // its own: the capped list is then the only array in scope, so there is no un-hydrated one
   // left to render by mistake. Before the cap also keeps the query key stable — the cap depends
   // on what earlier blocks claimed, which changes as they resolve.
-  const visible = useDedupedCappedItems(useHydratedImageReactions(filtered), {
-    order,
-    entity: 'image',
-    rows,
-    maxPerUser,
-  });
+  const visible = useDedupedCappedItems(
+    useHydratedImageReactions(filtered, { enabled: !loadingPreferences }),
+    {
+      order,
+      entity: 'image',
+      rows,
+      maxPerUser,
+    }
+  );
 
   if (loadingPreferences) return <FeedSkeleton rows={rows} />;
 

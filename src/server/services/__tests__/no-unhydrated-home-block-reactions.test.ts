@@ -17,13 +17,18 @@ import { describe, expect, it } from 'vitest';
  *
  * 🔴 WHAT THIS CANNOT SEE. It reads source text, so it proves a block MENTIONS the hook, not that
  * the hydrated array reaches the cards. That gap is real and was found by review: keeping the
- * call and rendering a second, un-hydrated binding restores the bug in full with this green. The
- * second assertion is the answer — it requires the hook's result to be passed straight into
- * `useDedupedCappedItems`, so the rendered list is the hook's own output and no second binding
- * exists to render instead. Structure, not discipline.
+ * call and rendering a second, un-hydrated binding restored the bug in full with this green. The
+ * assertion below is the answer — it requires the hook and the cap to be composed INLINE, so the
+ * un-hydrated list is never given a name and the obvious mutation cannot be written.
  *
- * If you are moving the hydration somewhere better — into `ImagesProvider` itself, say — change
- * what this reads rather than deleting it, and say so here.
+ * It does not make the bug impossible: `filtered` is still a binding, and mapping over it would
+ * pass this. It removes the INVITED mutation, which is the one that happens. Do not chase the
+ * residue with a longer regex; that is an arms race a text guard loses.
+ *
+ * It pins ONE SPELLING of that wiring, which is the trade. So if you are moving the hydration
+ * somewhere better — into `ImagesProvider` itself, or behind a `useHydratedCappedItems` helper —
+ * change what this reads FIRST, and say so here. Hitting the red and loosening the regex to get
+ * past it is the failure this is guarding against, not a shortcut through it.
  */
 const blockDir = path.resolve(__dirname, '../../../components/HomeBlocks');
 
@@ -59,20 +64,37 @@ describe('home blocks hydrate the viewer reactions their shared payload cannot c
   // could barely fail: deleting the CALL leaves the import, and the string with it — measured,
   // the mutation that removed the call reddened only the assertion below. That one subsumes it.
   it.each(imageBlocks)('$file renders the hook output, not a second binding', ({ source }) => {
+    // Either nesting order passes. What kills the second binding is the INLINING, not which hook
+    // is outermost — and hydrating after the cap is a defensible shape this guard has no business
+    // forbidding, since it was this branch's own design one commit ago.
     expect(
       source,
-      'pass useHydratedImageReactions(...) straight into useDedupedCappedItems, so the list that renders IS the hydrated one'
-    ).toMatch(/useDedupedCappedItems\(\s*useHydratedImageReactions\(/);
+      'compose useHydratedImageReactions and useDedupedCappedItems inline, so the list that renders IS the hydrated one'
+    ).toMatch(
+      /useDedupedCappedItems\(\s*useHydratedImageReactions\(|useHydratedImageReactions\(\s*useDedupedCappedItems\(/
+    );
   });
 
   it('keeps the lookup behind an authenticated procedure', () => {
     // A public procedure resolving `ctx.user?.id ?? 0` would answer "you have reacted to none of
     // these" for a signed-out viewer — the exact state that gets a reaction clicked off — instead
     // of failing where someone would notice.
+    //
+    // An ALLOW-LIST rather than `toContain('… protectedProcedure')`: that spelling would also go
+    // red on a legitimate TIGHTENING to a stricter rung, which sends whoever hits it to edit the
+    // guard instead of to think. This reds only on a loosening.
     const router = readFileSync(
       path.resolve(__dirname, '../../routers/reaction.router.ts'),
       'utf8'
     );
-    expect(router).toContain('getMyImageReactions: protectedProcedure');
+    const rung = router.match(/getMyImageReactions:\s*(\w+)/)?.[1];
+
+    expect(rung, 'reaction.router.ts no longer declares getMyImageReactions').toBeDefined();
+    expect([
+      'protectedProcedure',
+      'guardedProcedure',
+      'verifiedProcedure',
+      'moderatorProcedure',
+    ]).toContain(rung);
   });
 });

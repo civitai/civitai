@@ -26,7 +26,15 @@ export function reactionQueryChunks(
   enabled: boolean
 ): number[][] {
   if (!userId || !enabled) return [];
-  return chunkIds(imageIds, REACTION_FETCH_CHUNK);
+  // SORTED here, and deliberately not inside `chunkIds`, whose contract is insertion order: its
+  // other callers page, and a feed that appends lower ids would have every chunk boundary shift
+  // under it. A home block is the opposite — it never appends, it asks about its whole pool, and
+  // the only thing that varies between mounts is the shuffle. Sorting makes the key repeat, which
+  // is the only thing that makes `staleTime` below worth anything.
+  return chunkIds(
+    [...imageIds].sort((a, b) => a - b),
+    REACTION_FETCH_CHUNK
+  );
 }
 
 /**
@@ -52,8 +60,10 @@ export function mergeUserImageReactions<T extends HydratableImage>(
     // one user, and `Reactions` counts a reaction as given by finding the first match, so the
     // duplicate is invisible until something sums them.
     //
-    // `?? []` because the call sites cast: a collection payload that dropped `reactions` from its
-    // image shape would throw here, in the render body of a front-page block, with tsc silent.
+    // `?? []` because `reactions` is optional on this type, so the collection blocks can pass a
+    // union of image/model/post/article items in without a cast. It protects the merge only:
+    // `ReactionsList` dereferences `reactions` unguarded, so a payload that dropped the field
+    // would still throw, one component further down.
     const existing = image.reactions ?? [];
     const missing = mine.filter(
       (reaction) => !existing.some((x) => x.userId === userId && x.reaction === reaction)
@@ -83,11 +93,27 @@ export function mergeUserImageReactions<T extends HydratableImage>(
  * bindings is how this silently comes undone: rendering the other one restores the bug in full
  * while the hook call, and so the guard that reads for it, stay in place.
  *
- * COST, measured on prod 2026-09-18: one request per image-rendering surface, and the signed-in
- * home page has ~6 of them (3 Feed blocks, 2 Collection blocks, 1 FeaturedCollections block
- * whose `renderCount` is 5 — its picks share this one call). Each is an index-only scan of ~6
- * shared buffers, 0.04 ms at the real 14-id shape. These queries deliberately do NOT set
- * `skipBatch`, so they collapse into one request when tRPC batching ramps.
+ * COST, measured on prod 2026-09-18: one request per image-rendering SECTION, which on today's
+ * home page is 9 — a FeaturedCollections block renders one section per pick and its `renderCount`
+ * is 5, and one of the three Feed blocks carries models and asks nothing. Each is an Index Only
+ * Scan on `ImageReaction_imageId_userId_reaction_key`, 0.4–1.2 ms over a block's whole pre-cap
+ * pool; ~4.6 ms of replica time for the page. These queries deliberately do NOT set `skipBatch`,
+ * so they collapse into one request when tRPC batching ramps.
+ *
+ * `useEngagedModelMembership` solves the same problem class — per-viewer state keyed by entity
+ * id, overlaid on a payload that arrived shared — and solves it BETTER, with a module-level
+ * batcher that coalesces across surfaces into one request and a persisted already-known set. It
+ * is already on this page, under `ModelCard`. Reactions deliberately do not use it: different
+ * entity, different endpoint, different store, and fusing them would couple two features that
+ * only rhyme. If a SECOND cached surface ever needs reaction hydration, adopt that batcher's
+ * shape here rather than writing the per-surface one a third time.
+ *
+ * 🔴 KNOWN, and not closed by this: a chunk that ERRORS contributes nothing and the merge becomes
+ * a no-op, so the cards degrade to exactly the un-highlighted state that gets a reaction clicked
+ * off — silently, with nothing surfaced to the viewer or to telemetry. Same for the window before
+ * the first response lands. Both are closed by the same lever, which is not showing an un-given
+ * state until the lookup settles, or by making `reaction.toggle` carry the viewer's intent so the
+ * click cannot be destructive in the first place.
  */
 export function useHydratedImageReactions<T extends HydratableImage>(
   images: T[],

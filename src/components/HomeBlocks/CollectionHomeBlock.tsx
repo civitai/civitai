@@ -90,12 +90,16 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
   });
 
   const maxPerUser = metadata.collection?.maxPerUser;
+  // `enabled` also waits on hidden preferences: `useApplyHiddenPreferences` does not block, so
+  // between the payload landing and the preference maps resolving it hands back the UNFILTERED
+  // pool — asking about that first would spend a whole extra round of requests, once, per cold
+  // load. The blocks render a skeleton in that window anyway.
   // Served from the same shared, viewer-agnostic entry the feed block is, so image items arrive
   // with `reactions: []` for every viewer. Passed straight into the cap rather than held in a
   // binding of its own: the capped list is then the only array in scope, so there is no
   // un-hydrated one left to render by mistake. `enabled` keeps the other entity types query-free.
   const items = useDedupedCappedItems(
-    useHydratedImageReactions(filtered, { enabled: type === 'image' }) as {
+    useHydratedImageReactions(filtered, { enabled: !loadingPreferences && type === 'image' }) as {
       id: number;
       user?: { id: number } | null;
     }[],
