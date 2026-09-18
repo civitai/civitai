@@ -1240,8 +1240,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // the graph exposes no resources node, so advertising LoRA support would offer
   // resources the form cannot send.
   { ecosystemId: ECO.MiniMaxMusic3, supportType: 'generation', modelTypes: checkpointOnly },
-  // The recipe resolves its own weights; no Civitai resource selection yet.
-  { ecosystemId: ECO.YuE2, supportType: 'generation', modelTypes: [] },
+  { ecosystemId: ECO.YuE2, supportType: 'generation', modelTypes: checkpointOnly },
 
   // PolyGen - remote 3D generator (Meshy via Fal). No Civitai checkpoint/LoRA;
   // entry exists so the unified generator picker can route 3D-Models workflows
@@ -1708,6 +1707,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.MiniMaxMusic3,
     defaults: {
       model: { id: 3225593 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.YuE2,
+    defaults: {
+      model: { id: 3337846 },
       modelLocked: true,
     },
   },
