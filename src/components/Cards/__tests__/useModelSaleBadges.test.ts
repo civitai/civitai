@@ -186,9 +186,16 @@ describe('useModelSaleBadges', () => {
 
     expect(isLargeQuery({ type: 'query', input: { ids: chunk } })).toBe(false);
     // Positive control: the sizer does say yes to something, so the `false` above is a measurement
-    // and not a function that never fires. A chunk at the CAP is exactly what used to be a POST.
-    const atCap = Array.from({ length: MODEL_SALE_IDS_PER_QUERY }, (_, i) => 9000000 - i);
-    expect(isLargeQuery({ type: 'query', input: { ids: atCap } })).toBe(true);
+    // and not a function that never fires.
+    //
+    // 🔴 A LITERAL, NOT THE CAP. Sized off `MODEL_SALE_IDS_PER_QUERY` this control is coupled to a
+    // constant it is not testing: at 7-digit ids the serialized input is `8N + 9` chars against
+    // `MAX_GET_INPUT_LENGTH` (2500), so break-even is N = 312 — and lowering the cap below that
+    // turns this `true` into a `false` and reds the test for a reason unrelated to the property
+    // under test. 400 is comfortably over (3209 chars) and moves with nothing.
+    const OVER_THE_GET_BUDGET = 400;
+    const tooBig = Array.from({ length: OVER_THE_GET_BUDGET }, (_, i) => 9000000 - i);
+    expect(isLargeQuery({ type: 'query', input: { ids: tooBig } })).toBe(true);
   });
 
   it('hands out the same object when nothing has changed', () => {

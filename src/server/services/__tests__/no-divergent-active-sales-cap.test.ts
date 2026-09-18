@@ -6,8 +6,19 @@ import {
 } from '~/server/schema/model-sale.schema';
 
 /**
- * The cap on `model.getActiveSales`'s `ids` and the size its card surfaces chunk to are one contract
- * across two files, and it cannot be stated once: the router validates, the card hook splits.
+ * 🔴 SCOPE, STATED FIRST BECAUSE IT IS NARROWER THAN THE NAME SUGGESTS. This file checks the SERVER
+ * side of the cap and nothing else: that the parser `model.getActiveSales` actually runs enforces
+ * `MODEL_SALE_IDS_PER_QUERY` in both directions, and that `MODEL_SALE_IDS_PER_REQUEST` — the size a
+ * card surface is supposed to split to — does not exceed it.
+ *
+ * ⚠️ IT CANNOT SEE THE CALL SITE, and must not be read as if it can. Nothing below imports
+ * `ModelCardContext`, so replacing `chunkIds(modelIds, MODEL_SALE_IDS_PER_REQUEST)` with a literal
+ * leaves every test here green — measured, a chunk of 400 is `4 passed (4)` on this file. The other
+ * half of the seam, that the card surface chunks to the constant AT ALL, is pinned behaviourally by
+ * `src/components/Cards/__tests__/useModelSaleBadges.test.ts`, which runs every request the hook
+ * builds through the real schema (the same 400 is `3 failed | 15 passed (18)` there). That file is
+ * in the full unit suite, NOT in `test:lint-rules` — so a `test:lint-rules` run alone does not
+ * cover the seam, and this comment is the only thing that says so.
  *
  * 🔴 THIS IS THE SEAM THAT ACTUALLY BROKE. The procedure was rejecting every call from a scrolled
  * feed — an input-validation 400, so the resolver never ran, no 5xx was recorded and the sale badge

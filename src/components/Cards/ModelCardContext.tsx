@@ -131,10 +131,21 @@ export const useModelSaleBadges = (modelIds: number[]) => {
   // therefore would not re-check it. In between, the returned object stays referentially stable; a
   // fresh object every render would churn the context and re-render every memoised card.
   //
-  // ⚠️ RESIDUAL, and it is pre-existing rather than introduced here: a feed left mounted and IDLE
-  // re-reads nothing, so a window closing with no scroll and no refetch stays badged. That was
-  // equally true before this hook chunked — the map was never re-checked at all — and closing it
-  // needs the gate at the per-card read in `ModelCard`, not here.
+  // ⚠️ RESIDUAL, and it is the STEADY STATE on any surface that has stopped growing — not an edge
+  // case, which is how an earlier wording of this comment ("left mounted and IDLE") read.
+  // `refetchOnWindowFocus` is false APP-WIDE (`~/utils/trpc`'s queryClientConfig), the only
+  // per-query override here is `staleTime`, and a stale query does not refetch by itself. So the
+  // memo below re-reads the clock ONLY when a chunk resolves, the connection recovers, or the hook
+  // remounts. On a surface that has stopped growing — `OnSaleSection`'s single chunk, a search page
+  // the user stopped paging, a feed scrolled to the end — none of those fire, and returning to the
+  // tab does not force one: the gate freezes for the life of the mount. Concretely, a profile page
+  // opened at T keeps advertising at T+2h a sale that ended at T+20m.
+  //
+  // This is not a regression — before this hook chunked, the map was never end-checked at all — and
+  // closing it needs the gate at the per-card read in `ModelCard`, where it costs one comparison
+  // per card, not a re-filter of the whole map. Deliberately NOT closed with a timer here: a
+  // `refetchInterval` would re-issue the per-id Redis fan-out this endpoint is capped to bound, for
+  // every mounted feed of every user, to fix a display edge.
   const heldOver = !merged;
   return useMemo(
     () => (known ? runningSalesOnly(known, Date.now()) : undefined),
