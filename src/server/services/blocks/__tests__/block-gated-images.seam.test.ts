@@ -161,10 +161,13 @@ describe(`${SYMBOL} seam`, () => {
     expect(rels).toContain(DEFINITION);
     // `verdictFor` writes straight into `SOURCE`, so no detector fixture can observe the corpus
     // loop narrowing by path — and every real corpus member carries the token `blocks`, so no
-    // membership assertion can either. Re-derive the corpus from the same walk instead: any
-    // filter the loop grows, by path or otherwise, makes the two disagree.
-    const expectedCorpus = PRODUCTION_FILES.map(toRel)
-      .filter((rel) => couldBeCallSite(readFileSync(join(SRC, rel), 'utf8')))
+    // Re-derive from the same walk instead: a filter added to the LOOP makes the two disagree.
+    // Both shared inputs are pinned elsewhere — `PRODUCTION_FILES` by the enumeration equality
+    // above, `couldBeCallSite` by its own case — so deleting either makes this one vacuous.
+    const expectedCorpus = PRODUCTION_FILES.filter((full) =>
+      couldBeCallSite(readFileSync(full, 'utf8'))
+    )
+      .map(toRel)
       .sort();
     expect(expectedCorpus.length).toBeGreaterThan(0);
     expect([...SOURCE.keys()].sort()).toEqual(expectedCorpus);
@@ -252,11 +255,11 @@ describe(`${SYMBOL} seam`, () => {
 
     // The REL is an input to `isCallSite` too, and every fixture above passes one inside
     // `server/services/blocks/` — as are both ledgered call sites, so scoping the detector to
-    // that prefix stays green while a consumer added under `components/` or `pages/` never
-    // joins the ledger.
+    // that prefix stays green while a consumer added anywhere else never joins the ledger.
     expect(verdictFor(aliased, 'components/ImageGuard2/__synthetic_consumer__.tsx')).toBe(true);
     expect(verdictFor(aliased, 'server/services/__synthetic_consumer__.ts')).toBe(true);
-    // The occupancy throw is what stops the unconditional delete evicting a real corpus file.
+    expect(verdictFor(aliased, 'pages/api/v1/__synthetic_consumer__.ts')).toBe(true);
+    // Pins the occupancy throw in `verdictFor`.
     expect(() => verdictFor(aliased, DEFINITION)).toThrow();
 
     expect(SOURCE.has(SYNTHETIC_REL), 'the synthetic source outlived its test').toBe(false);
