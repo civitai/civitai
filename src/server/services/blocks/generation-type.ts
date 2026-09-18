@@ -310,6 +310,14 @@ export const BLOCK_PASS_THROUGH_SUBTYPE_MAX_CHARS = 64;
  * guarantees `$type` is a non-empty string — so every bare-`step` row IS a
  * shape-refused `$type` and nothing else is. No alert, one query.
  *
+ * 🔴 THAT EXACTNESS HAS ONE UNPINNED DEPENDENCY, stated so nobody relies on it
+ * blindly: it holds because every `recordSpendAttribution` writer passes this
+ * resolver's OUTPUT. A future writer could hand-build `'step'` — it is a member of
+ * `BlockGenerationType` and the write-side re-check accepts it — and the detector
+ * would then also count rows that were never shape-refused. Nothing enforces the
+ * writer set today (a ledger test over the call sites would; it is filed, not
+ * built). Re-check the writers before treating the count as exact.
+ *
  * ⚠️ CASE IS PRESERVED, NOT FOLDED, and that differs from the denylist one module
  * over (`isPlatformInternalStepType` lowercases, deliberately). Right for this
  * axis: the column records what the app SUBMITTED, and folding case would invent a

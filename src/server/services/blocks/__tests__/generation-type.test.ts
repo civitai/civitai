@@ -631,10 +631,13 @@ describe('the pass-through SHAPE bound is the only bound on that axis', () => {
   it('admits EVERY character of the class and NO other printable ASCII', () => {
     // 🔴 THE CLASS AS A WHITELIST, ENUMERATED — because sampling its complement
     // leaves most of the widening family alive: adding `+ ~ % @ # * , ; " ( ) [ ] |`
-    // to the class turns no other test in this file red. (NOT "anything else": a
-    // space, `\t`, `\n`, `/`, `\` are pinned in the next test and `:` in the one
-    // above. An earlier draft of this line over-claimed by saying "or anything
-    // else".) Both directions, mechanically, so the guard is as wide as its name.
+    // to the class turns no other test in this file red — verified by extracting
+    // every string fixture in the file; none contains any of them. (NOT "anything
+    // else", which an earlier draft claimed: a space, `\t`, `\n`, `/` and `\` are
+    // pinned by `refuses whitespace, control characters and non-ASCII`, and `:` by
+    // `refuses a SECOND colon`. Named rather than positional — a draft said "the
+    // next test" and then a test was inserted between them.) Both directions,
+    // mechanically, so the guard is as wide as its name.
     const allowed = new Set(
       'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-'.split('')
     );
@@ -657,11 +660,17 @@ describe('the pass-through SHAPE bound is the only bound on that axis', () => {
     expect(new Set(admitted)).toEqual(allowed);
   });
 
+  // HOLDS AT BASE (a bound, not regression coverage): at base `step` was not a
+  // coarse key, so every `step:` value was refused for a different reason. Marked
+  // even though this test was ADDED to close a mutation hole — the round that added
+  // it forgot this marker, which made the header's "grep HOLDS AT BASE for the
+  // population" wrong on its first outing. A test being new is not the same claim
+  // as a test being red at base.
   it('refuses NON-ASCII and DEL — the half the printable-ASCII sweep cannot see', () => {
-    // 🔴 THE ENUMERATION ABOVE STOPS AT 0x7E, so a class widened into a non-Latin
-    // RANGE (Cyrillic, any CJK block) or by DEL survives it. The class claims to
-    // exclude non-ASCII, and without these fixtures that claim is sampled at
-    // exactly one code point.
+    // 🔴 THE PRINTABLE-ASCII ENUMERATION STOPS AT 0x7E, so a class widened into a
+    // non-Latin RANGE (Cyrillic, any CJK block) or by DEL survives it. The class
+    // claims to exclude non-ASCII, and without these fixtures that claim is
+    // sampled at exactly one code point.
     //
     // 🔴 EVERY INVISIBLE CHARACTER IS A `\u` ESCAPE, NEVER A PASTED LITERAL. A
     // zero-width space, a BOM, an NBSP and DEL are invisible in a diff and in most
