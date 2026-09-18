@@ -650,14 +650,26 @@ async function cmdTest(sub, rest) {
     case 'cancel':
       result = await daemonRequest(`/test-runs/${rest[0]}`, { method: 'DELETE' });
       break;
-    case 'config':
-      result = rest[0]
-        ? await daemonRequest('/test-runs/config', {
-            method: 'POST',
-            body: JSON.stringify({ concurrency: Number(rest[0]) }),
-          })
+    case 'config': {
+      // `test config 2 --max-workers 15` sets both in one POST. Each key is sent only when it was
+      // typed, because the daemon leaves an absent key alone — sending a default for the one you
+      // did not mean to change is how the cap gets dropped while raising concurrency.
+      const body = {};
+      if (rest[0] !== undefined && !rest[0].startsWith('--')) body.concurrency = Number(rest[0]);
+      // Both spellings, because a caller who types the `=` form and silently gets no cap has no
+      // way to tell that from a cap that was applied — the reply prints maxWorkers either way.
+      const capAt = rest.findIndex((a) => /^--max-workers(=|$)/.test(a));
+      if (capAt !== -1) {
+        const inline = rest[capAt].split('=')[1];
+        const raw = inline !== undefined ? inline : rest[capAt + 1];
+        // `--max-workers none` is the only way back to an uncapped pool without a restart.
+        body.maxWorkers = raw === undefined || raw === 'none' ? null : Number(raw);
+      }
+      result = Object.keys(body).length
+        ? await daemonRequest('/test-runs/config', { method: 'POST', body: JSON.stringify(body) })
         : await daemonRequest('/test-runs/config');
       break;
+    }
     default:
       console.error(`Unknown test subcommand: ${action}`);
       console.error('Usage: test [run|wait|list|show|logs|cancel|config]');
@@ -1043,6 +1055,7 @@ Commands:
   test list           List runs and queue state
   test cancel <id>    Cancel a queued or running run
   test config [n]     Show or set the concurrency limit (0 pauses the queue)
+                      [--max-workers <n>|none] also caps each run's vitest pool
   wt stale            List worktrees whose PR merged (read-only)
   wt rm <path>        Remove a worktree safely (unlinks junctions first)
                       [--stop-server] [--force]

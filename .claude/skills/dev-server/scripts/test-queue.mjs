@@ -30,6 +30,9 @@ import { StringDecoder } from 'string_decoder';
 export const READ_WINDOW_BYTES = 64 * 1024;
 
 export const DEFAULT_CONCURRENCY = 1;
+// null, not a number: no cap is not the same decision as a cap that happens to equal today's core
+// count, and only the first one keeps following the box when it changes.
+export const DEFAULT_MAX_WORKERS = null;
 const DEFAULT_ABANDON_AFTER_MS = 10 * 60 * 1000;
 const DEFAULT_RUN_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_KILL_GRACE_MS = 30 * 1000;
@@ -160,11 +163,30 @@ export function createOutputCapture(onLine) {
   return { path, writeFd, drain, close };
 }
 
-export function defaultStartRun({ worktree, args, onLog, onExit }) {
+/**
+ * The `--max-workers` argument a queued run should carry, if any.
+ *
+ * Vitest sizes its own pool at `cpus - 1`, which is right for a queue of one and wrong the moment
+ * two runs share the box: at concurrency 2 an uncapped pair asks for 62 workers on 32 cores.
+ * `VITEST_MAX_WORKERS` cannot do this job here — the daemon spawns the child with the DAEMON's
+ * environment, so the caller's copy never arrives and the daemon's own is fixed at whatever it was
+ * started with. The CLI flag is forwarded through `pnpm run` into vitest, and is the only knob that
+ * reaches a queued run.
+ *
+ * A caller who passed their own `--max-workers` keeps it: they asked for a specific width, and a
+ * second copy of the flag would decide the run by argument order rather than by intent.
+ */
+export function workerCapArgv(maxWorkers, args) {
+  if (!maxWorkers) return [];
+  if (args.some((a) => /^--max-workers(=|$)/.test(String(a)))) return [];
+  return [`--max-workers=${maxWorkers}`];
+}
+
+export function defaultStartRun({ worktree, args, onLog, onExit, maxWorkers = null }) {
   const emitter = new EventEmitter();
   const isWindows = process.platform === 'win32';
   const pnpm = isWindows ? 'pnpm.cmd' : 'pnpm';
-  const argv = ['run', 'test:unit:run', ...args];
+  const argv = ['run', 'test:unit:run', ...args, ...workerCapArgv(maxWorkers, args)];
 
   onLog('info', `> ${pnpm} ${argv.join(' ')}`);
 
@@ -294,6 +316,7 @@ export class TestQueue {
   constructor(options = {}) {
     const {
       concurrency = DEFAULT_CONCURRENCY,
+      maxWorkers = DEFAULT_MAX_WORKERS,
       startRun = defaultStartRun,
       now = () => Date.now(),
       abandonAfterMs = DEFAULT_ABANDON_AFTER_MS,
@@ -303,6 +326,7 @@ export class TestQueue {
     } = options;
 
     this.concurrency = normalizeConcurrency(concurrency);
+    this.maxWorkers = normalizeMaxWorkers(maxWorkers);
     this.startRun = startRun;
     this.now = now;
     this.abandonAfterMs = abandonAfterMs;
@@ -392,6 +416,15 @@ export class TestQueue {
     this.concurrency = normalizeConcurrency(value);
     this.pump();
     return this.concurrency;
+  }
+
+  /**
+   * Takes effect on the NEXT run to start, never on one already running — the width is fixed when
+   * vitest is spawned. Nothing here kills a run to resize it.
+   */
+  setMaxWorkers(value) {
+    this.maxWorkers = normalizeMaxWorkers(value);
+    return this.maxWorkers;
   }
 
   /**
@@ -537,7 +570,13 @@ export class TestQueue {
     };
 
     try {
-      handle = this.startRun({ worktree: run.worktree, args: run.args, onLog, onExit });
+      handle = this.startRun({
+        worktree: run.worktree,
+        args: run.args,
+        onLog,
+        onExit,
+        maxWorkers: this.maxWorkers,
+      });
     } catch (err) {
       // A runner that reported an exit and then threw has already produced a verdict; overwriting
       // it here would replace a real result with the noise that followed it.
@@ -612,6 +651,7 @@ export class TestQueue {
       queueLength: this.order.length,
       running: this.running.size,
       concurrency: this.concurrency,
+      maxWorkers: this.maxWorkers,
       paused: this.paused,
       enqueuedAt: run.enqueuedAt,
       startedAt: run.startedAt,
@@ -625,6 +665,21 @@ export class TestQueue {
       waitCommand: `${this.waitCommand} ${run.id}`,
     };
   }
+}
+
+/**
+ * Same defensive shape as normalizeConcurrency, with one difference that matters: 0 is REJECTED
+ * rather than treated as a pause. `--max-workers=0` is not a smaller run, it is a run with no
+ * workers, and vitest's own resolution treats a falsy value as "unset" — so a 0 that slipped
+ * through here would silently restore the uncapped pool the setting exists to prevent.
+ */
+function normalizeMaxWorkers(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = typeof value === 'number' ? value : parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`maxWorkers must be an integer >= 1, or null for no cap, got: ${value}`);
+  }
+  return parsed;
 }
 
 function normalizeConcurrency(value) {

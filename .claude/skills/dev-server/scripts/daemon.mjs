@@ -87,6 +87,7 @@ function loadSkillConfig() {
     prewarmRoutes: ['/api/user/settings'],
     prewarmTimeout: 300000,
     testConcurrency: 1,
+    testMaxWorkers: null,
     prodGroups: [],
   };
 
@@ -166,6 +167,16 @@ function loadSkillConfig() {
           const parsed = parseInt(value, 10);
           if (Number.isInteger(parsed) && parsed >= 0) config.testConcurrency = parsed;
           else if (value) console.error(`Ignoring TEST_CONCURRENCY=${value} (want an integer >= 0)`);
+          break;
+        }
+        case 'TEST_MAX_WORKERS': {
+          // Same reasoning as TEST_CONCURRENCY above — this feeds a constructor that throws, and
+          // the queue is built at module scope, so a typo would stop the daemon binding at all.
+          // An empty value means "no cap", which is the default and not an error.
+          if (!value) break;
+          const parsed = parseInt(value, 10);
+          if (Number.isInteger(parsed) && parsed >= 1) config.testMaxWorkers = parsed;
+          else console.error(`Ignoring TEST_MAX_WORKERS=${value} (want an integer >= 1)`);
           break;
         }
         case 'DEVSERVER_PROD_GROUPS':
@@ -1990,7 +2001,10 @@ async function stopAppSessions() {
 // Session manager
 const sessions = new Map();
 
-const testQueue = new TestQueue({ concurrency: skillConfig.testConcurrency });
+const testQueue = new TestQueue({
+  concurrency: skillConfig.testConcurrency,
+  maxWorkers: skillConfig.testMaxWorkers,
+});
 
 // A tracked session owns its port whatever its status says. Status is a report the daemon
 // writes about a process it cannot see into — it has read `crashed` for a session whose
@@ -2589,7 +2603,11 @@ async function main() {
               return;
             }
             try {
-              testQueue.setConcurrency(parsed.concurrency);
+              // Each key is applied only when the caller sent it. A POST carrying one field must
+              // not reset the other to its default — that is how a concurrency change would
+              // silently drop the worker cap and hand the box an uncapped pair.
+              if (parsed.concurrency !== undefined) testQueue.setConcurrency(parsed.concurrency);
+              if (parsed.maxWorkers !== undefined) testQueue.setMaxWorkers(parsed.maxWorkers);
             } catch (err) {
               res.writeHead(400);
               res.end(JSON.stringify({ error: err.message }));
@@ -2599,6 +2617,7 @@ async function main() {
           res.writeHead(200);
           res.end(JSON.stringify({
             concurrency: testQueue.concurrency,
+            maxWorkers: testQueue.maxWorkers,
             paused: testQueue.paused,
             queued: testQueue.order.length,
             running: testQueue.running.size,

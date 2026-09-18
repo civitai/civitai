@@ -162,8 +162,13 @@ export function unboundedDevRequest(command) {
     .filter((seg) => !isBounded(seg));
 }
 
-// The full unit suite (~21,500 tests / ~75s, serialised through the dev-server queue) belongs at
-// the END of a task, once — not between edits. Denied rather than asked, so the redirect reaches
+// The full unit suite belongs at the END of a task, once — not between edits.
+//
+// The numbers below are measured, and the "~75s" they replace was not: a day of the daemon's own
+// queue history (50 full runs, 12 worktrees, 2026-09-17/18) puts the RUN at a median of 549s and
+// the QUEUE WAIT in front of it at a median of 186s, mean 405s, worst 2247s. An agent budgeting a
+// mid-iteration suite run against 75s is off by 7x on the run alone, which is precisely the
+// miscalculation that fills the queue this hook exists to protect. Denied rather than asked, so the redirect reaches
 // the agent at the moment of the mistake instead of interrupting the user. FULL_SUITE=1 is the
 // deliberate opt-in for the single pre-commit run or an explicit user request.
 const VITEST_INVOCATION =
@@ -184,8 +189,9 @@ export function fullUnitSuiteRun(command) {
 }
 
 const FULL_SUITE_REASON =
-  'Full unit suite blocked mid-iteration: it is ~21,500 tests / ~75s and serialised through the ' +
-  "dev-server queue, blocking everyone else's runs. Run only the test files covering your change: " +
+  'Full unit suite blocked mid-iteration: it is ~25,000 tests, ~9 minutes to run, and serialised ' +
+  "through the dev-server queue behind a typical 3-minute wait — blocking everyone else's runs. " +
+  'Run only the test files covering your change: ' +
   "`pnpm exec vitest run --project 'unit*' <files>` — find them with " +
   '`grep -rln \'<symbol>\' src --include=*.test.ts`. The full suite runs ONCE, right before ' +
   'committing; for that single run (or when the user explicitly asked for a full run), prefix the ' +
