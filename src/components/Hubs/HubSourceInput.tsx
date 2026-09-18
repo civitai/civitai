@@ -56,10 +56,20 @@ function RowAvatar({ item }: { item: Suggestion }) {
 // Tags are deliberately NOT a tab. There is no list of yours to browse — only the
 // site's biggest tags, and one of those matched 1,920 of the last 2,000 images, so a
 // one-click list of them builds a hub that is the whole site. Tags are searchable.
-const tabs: { template: HubTemplate; label: string }[] = [
-  { template: 'following', label: 'Creators' },
-  { template: 'my-models', label: 'My models' },
-  { template: 'bookmarks', label: 'Bookmarked' },
+const tabs: { template: HubTemplate; label: string; scope: string; reach?: string }[] = [
+  {
+    template: 'following',
+    label: 'Creators',
+    scope: 'creators you follow',
+    reach: 'Someone you do not follow? Search for them above.',
+  },
+  { template: 'my-models', label: 'My models', scope: 'models you published' },
+  {
+    template: 'bookmarks',
+    label: 'Bookmarked',
+    scope: 'models you bookmarked',
+    reach: 'Anything else? Search for it above.',
+  },
 ];
 
 const emptyTab: Record<HubTemplate, string> = {
@@ -113,6 +123,8 @@ function Row({
 }
 
 function Group({
+  scope,
+  reach,
   total,
   template,
   items,
@@ -122,6 +134,10 @@ function Group({
   onAddMany,
   remaining,
 }: {
+  /** What this list IS — "creators you follow". A tab label cannot carry it. */
+  scope: string;
+  /** How to reach what the list does not hold. */
+  reach?: string;
   total?: number;
   template?: HubTemplate;
   items: Suggestion[];
@@ -158,7 +174,7 @@ function Group({
       <div className="flex items-center gap-2 bg-gray-1 px-3 py-1.5 dark:bg-dark-7">
         <Text size="xs" c="dimmed" lineClamp={1}>
           Showing {Math.min(items.length, PREVIEW_ROWS)} of{' '}
-          {abbreviateNumber(total ?? items.length)}
+          {abbreviateNumber(total ?? items.length)} {scope}
         </Text>
         {!!template && !!onAddMany && bulkCount > 0 && (
           <Button
@@ -180,12 +196,19 @@ function Group({
           onToggle={() => (isAdded(item) ? onRemove(item) : onAdd(item))}
         />
       ))}
-      {!!total && total > items.slice(0, PREVIEW_ROWS).length && (
-        <Text size="xs" c="dimmed" className="px-3 pb-2 pt-1.5">
-          {abbreviateNumber(total - Math.min(items.length, PREVIEW_ROWS))} more — start typing to
-          find them
-        </Text>
-      )}
+      <div className="flex flex-col gap-0.5 px-3 pb-2 pt-1.5">
+        {!!total && total > items.slice(0, PREVIEW_ROWS).length && (
+          <Text size="xs" c="dimmed">
+            {abbreviateNumber(total - Math.min(items.length, PREVIEW_ROWS))} more of yours — start
+            typing to find them
+          </Text>
+        )}
+        {!!reach && (
+          <Text size="xs" c="dimmed">
+            {reach}
+          </Text>
+        )}
+      </div>
     </div>
   );
 }
@@ -330,8 +353,11 @@ export function HubSourceInput({
                     </Text>
                   );
 
+                const meta = tabs.find((item) => item.template === tab);
                 return (
                   <Group
+                    scope={meta?.scope ?? ''}
+                    reach={meta?.reach}
                     template={group.template}
                     total={group.total}
                     items={named(group.items)}
