@@ -20,6 +20,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * It asserts a state that ARRIVES rather than one that leaves: the un-hydrated render is asserted
  * synchronously, then the queries are made to report data and the hydrated render is asserted.
  * Nothing here is on a timer, so there is no state that can delete itself out from under it.
+ *
+ * 🔴 WHICH DEP LIST A CASE CAN SEE IS DECIDED BY ITS FIXTURE, so check that before adding one.
+ * A case whose `images` is a stable binding can see the `byImageId` and final memos, and CANNOT
+ * see the `chunks` memo — its ids never change, so a frozen `chunks` is frozen at the right
+ * value. A case that GROWS `images` across a rerender is the only shape that reaches `chunks`,
+ * and it cannot see the final memo, because a fresh `images` identity makes that one recompute
+ * regardless of its deps. The two shapes are mutually blind. Do not merge them into one case to
+ * save a render: that closes one and silently unarms the other.
  */
 const VIEWER = 9266475;
 
@@ -47,9 +55,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       // the other half pinned by nothing.
       const descriptors = build({
         reaction: {
-          getMyImageReactions: (imageIds: unknown, opts: unknown) => ({ imageIds, opts }),
+          getMyImageReactions: (input: unknown, opts: unknown) => ({ input, opts }),
         },
-      }) as { imageIds: { imageIds: number[] }; opts: { staleTime: number } }[];
+      }) as { input: { imageIds: number[] }; opts: { staleTime: number } }[];
       asked.current = descriptors;
       // Mapped, not sliced: a `queryResults` shorter than the descriptor list would silently hand
       // the hook fewer results than `useQueries` can ever return, which is a shape production
@@ -144,8 +152,8 @@ describe('useHydratedImageReactions chunking, through the hook', () => {
       useHydratedImageReactions(images, { entity: 'image' })
     );
 
-    expect(asked.current.map((d) => d.imageIds.imageIds.length)).toEqual([100, 50]);
-    expect(asked.current[1].imageIds.imageIds[0]).toBe(101);
+    expect(asked.current.map((d) => d.input.imageIds.length)).toEqual([100, 50]);
+    expect(asked.current[1].input.imageIds[0]).toBe(101);
     expect(asked.current[0].opts.staleTime).toBe(60_000);
 
     // The RESPONSE side, not just the request. Asserting only what was asked leaves
@@ -153,6 +161,36 @@ describe('useHydratedImageReactions chunking, through the hook', () => {
     // every chunk after the first: images 101+ render un-hydrated and the first click deletes.
     expect(result.current[0].reactions).toEqual([{ userId: VIEWER, reaction: 'Like' }]);
     expect(result.current[149].reactions).toEqual([{ userId: VIEWER, reaction: 'Heart' }]);
+    unmount();
+  });
+});
+
+describe('useHydratedImageReactions when the pool arrives after the first render', () => {
+  it('asks once the pool arrives, not only for the pool it first saw', () => {
+    // PRODUCTION'S ACTUAL SEQUENCE, and the only shape that reaches the `chunks` memo's dep list.
+    // `useApplyHiddenPreferences` returns `items: []` unconditionally while hidden preferences
+    // load, so every home block hands this hook an EMPTY array on its first render and the real
+    // pool on a later one. Drop the id join from that dep list and `chunks` freezes at `[]`:
+    // nothing is ever asked, the merge is a permanent no-op, and every card on the front page
+    // renders un-hydrated and deletes on first click.
+    //
+    // Deliberately its own case rather than folded into the one above — `pool` has a fresh
+    // identity each render, which is exactly what disarms the final memo's control.
+    const pool = { current: [] as { id: number; reactions: never[] }[] };
+    queryResults.current = [];
+
+    const { result, rerender, unmount } = renderHook(() =>
+      useHydratedImageReactions(pool.current, { entity: 'image' })
+    );
+
+    expect(asked.current).toEqual([]);
+
+    pool.current = [{ id: 142799705, reactions: [] }];
+    queryResults.current = [{ data: { 142799705: ['Like'] }, dataUpdatedAt: 1 }];
+    rerender();
+
+    expect(asked.current.map((d) => d.input.imageIds)).toEqual([[142799705]]);
+    expect(result.current[0].reactions).toEqual([{ userId: VIEWER, reaction: 'Like' }]);
     unmount();
   });
 });
