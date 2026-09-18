@@ -203,6 +203,7 @@ export const ECO = {
   // Root ecosystems - Audio models
   AceAudio: 68,
   MiniMaxMusic3: 85,
+  YuE2: 87,
 
   // Root ecosystems - 3D Model providers
   // PolyGen has been displaced twice on main merges:
@@ -857,6 +858,13 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 306,
   },
 
+  {
+    id: ECO.YuE2,
+    key: 'YuE2',
+    displayName: 'YuE2',
+    sortOrder: 307,
+  },
+
   // 3D Model ecosystems
   {
     id: ECO.PolyGen,
@@ -968,6 +976,7 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'Ace',
   // MiniMaxMusic3Input
   'MiniMaxMusic3',
+  'YuE2',
   // Hunyuan3dComfyPolyGenInput (3D; Meshy/Tripo are FAL and stay external)
   'Hunyuan3D',
   // Trellis2ImageTo3dComfyPolyGenInput (3D; Pixal3D + Trellis.2 are modelVersions of trellis2)
@@ -1231,6 +1240,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // the graph exposes no resources node, so advertising LoRA support would offer
   // resources the form cannot send.
   { ecosystemId: ECO.MiniMaxMusic3, supportType: 'generation', modelTypes: checkpointOnly },
+  { ecosystemId: ECO.YuE2, supportType: 'generation', modelTypes: checkpointOnly },
 
   // PolyGen - remote 3D generator (Meshy via Fal). No Civitai checkpoint/LoRA;
   // entry exists so the unified generator picker can route 3D-Models workflows
@@ -1697,6 +1707,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.MiniMaxMusic3,
     defaults: {
       model: { id: 3225593 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.YuE2,
+    defaults: {
+      model: { id: 3337846 },
       modelLocked: true,
     },
   },
@@ -2223,6 +2240,7 @@ export const BM = {
   Trellis2: 103,
   MiniMaxMusic3: 104,
   MuseImage: 105,
+  YuE2: 106,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2531,6 +2549,11 @@ export const licenses: LicenseRecord[] = [
     // licence, so the governing text is Meta's general AI terms.
     name: 'Meta AI Terms of Service',
     url: 'https://www.meta.com/legal/ai-terms/',
+  },
+  {
+    id: 44,
+    name: 'CC BY-NC 4.0',
+    url: 'https://creativecommons.org/licenses/by-nc/4.0/',
   },
 ];
 
@@ -3616,6 +3639,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'audio',
     ecosystemId: ECO.MiniMaxMusic3,
     licenseId: 42,
+  },
+
+  {
+    id: BM.YuE2,
+    name: 'YuE2',
+    description: 'Multimodal Art Projection music generation from style and lyrics',
+    type: 'audio',
+    ecosystemId: ECO.YuE2,
+    licenseId: 44,
+    hidden: true,
   },
 
   // PolyGen (Meshy via Fal) — remote 3D model generator. Type='image' matches

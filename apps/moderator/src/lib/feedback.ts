@@ -100,13 +100,37 @@ export function reconstructFeedbackUrl(
   return query ? `${path}?${query}` : path;
 }
 
+/** One failed request from the reporter's browser-error snapshot. */
+export type FeedbackNetworkError = {
+  url: string;
+  status: number;
+  initiatorType: string;
+};
+
+/**
+ * One DISTINCT console message from the snapshot, and how many times it fired.
+ *
+ * The producer collapses repeats rather than storing each copy, so `count` can be far larger than
+ * the array — ten entries can describe hundreds of console events. A section header reading
+ * "N captured" is therefore a count of DISTINCT messages, not of events.
+ */
+export type FeedbackConsoleError = {
+  message: string;
+  count: number;
+};
+
 export type FeedbackContext = {
   path: string | null;
   filters: FeedbackFilters | null;
   images: string[];
   screenshotId: string | null;
   sessionId: string | null;
-  /** Everything the five named keys did not claim. `null` when there is nothing left over. */
+  /** Console errors the reporter's browser recorded. Empty when absent, empty, OR malformed —
+   *  a malformed array is routed to `other` and shown there, not silently dropped. */
+  consoleErrors: FeedbackConsoleError[];
+  /** Requests that came back 4xx/5xx. Empty on the same three cases as `consoleErrors`. */
+  networkErrors: FeedbackNetworkError[];
+  /** Everything the named keys did not claim. `null` when there is nothing left over. */
   other: Record<string, unknown> | null;
 };
 
@@ -115,6 +139,56 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> =>
 
 const isFilterValue = (value: unknown): value is string | number | boolean =>
   typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
+
+const isString = (value: unknown): value is string => typeof value === 'string';
+
+/** The fields the renderer draws. An entry carrying anything else is not one of these. */
+const NETWORK_ERROR_FIELDS = ['url', 'status', 'initiatorType'] as const;
+
+/**
+ * 🔴 EXACT KEYS, NOT A SUBSET, AND THAT IS THE WHOLE POINT OF THIS GUARD.
+ *
+ * A `typeof`-only check passes `{url, status, initiatorType, method}`, so `splitContext` claims the
+ * array, the renderer draws its fixed three spans, and `method` appears NOWHERE — not in the
+ * section, and not in "Other context" either, because the key was claimed. That is the one drift
+ * direction the "other" bucket does not cover, and it is silent and total.
+ *
+ * Rejecting the unknown key sends the whole array to "other" as a visible JSON dump instead —
+ * which is exactly what `consoleErrors` does when its own element shape drifts.
+ *
+ * ⚠️ `filters` does not need this because it renders `Object.entries(...)` — a new key there
+ * appears by itself. This section renders a fixed triple, which is what makes the difference.
+ *
+ * `status` is checked for being a finite number only, NOT for being 400..599. The producer bounds
+ * it at write time; re-imposing that here would send a row stored under a future widened bound to
+ * the "other" bucket — see the render note on out-of-range statuses in `FeedbackBrowserErrors`.
+ */
+const isNetworkError = (value: unknown): value is FeedbackNetworkError =>
+  isPlainObject(value) &&
+  typeof value.url === 'string' &&
+  typeof value.status === 'number' &&
+  Number.isFinite(value.status) &&
+  typeof value.initiatorType === 'string' &&
+  Object.keys(value).length === NETWORK_ERROR_FIELDS.length;
+
+/** Same idea, for a console entry. */
+const CONSOLE_ERROR_FIELDS = ['message', 'count'] as const;
+
+/**
+ * 🔴 EXACT KEYS, for the reason `isNetworkError` above spells out: this section ALSO renders a
+ * fixed set of fields, so an entry carrying a key this app does not know would be claimed here,
+ * drawn nowhere, and kept out of "Other context" precisely because it was claimed.
+ *
+ * `count` is checked for being a finite number only, NOT for `>= 1`. The producer bounds it at
+ * write time; re-imposing that here would send a whole stored array to the "other" bucket over one
+ * value the renderer can display perfectly well — the same reading as `status` above.
+ */
+const isConsoleError = (value: unknown): value is FeedbackConsoleError =>
+  isPlainObject(value) &&
+  typeof value.message === 'string' &&
+  typeof value.count === 'number' &&
+  Number.isFinite(value.count) &&
+  Object.keys(value).length === CONSOLE_ERROR_FIELDS.length;
 
 /**
  * A Cloudflare-images key, as the delivery URL builder requires one.
@@ -152,9 +226,16 @@ const IMAGE_KEY = /^(?!https?|blob)[A-Za-z0-9][A-Za-z0-9_-]{7,99}$/;
 
 /**
  * 🔴 THE "OTHER" BUCKET IS NOT A NICETY. `feedbackContextSchema` already accepts keys no current
- * producer emits, so a panel rendering only the five it knows about discards the payload of every
+ * producer emits, so a panel rendering only the ones it knows about discards the payload of every
  * area added after it, silently. A known key holding an unexpected TYPE or an unusable VALUE lands
  * there too — `context` is JSONB with no schema at rest, so its shape is a claim.
+ *
+ * ⚠ THAT SENTENCE IS ABOUT DECLARED-BUT-UNRENDERED OPTIONALS (`reportedSource`,
+ * `reportedPageSources`, `pagesLoaded`) — NOT about arbitrary keys surviving the wire. The
+ * producer's `feedbackContextSchema` is a `z.object`, which STRIPS what it does not declare, so a
+ * key it never heard of does not reach this column at all. The bucket is what makes a key the
+ * producer HAS declared and this app has not yet learned to render degrade to a visible JSON dump
+ * instead of vanishing.
  */
 export function splitContext(context: unknown): FeedbackContext {
   const out: FeedbackContext = {
@@ -163,6 +244,8 @@ export function splitContext(context: unknown): FeedbackContext {
     images: [],
     screenshotId: null,
     sessionId: null,
+    consoleErrors: [],
+    networkErrors: [],
     other: null,
   };
   if (!isPlainObject(context)) return out;
@@ -176,15 +259,11 @@ export function splitContext(context: unknown): FeedbackContext {
       out.sessionId = value;
     } else if (key === 'screenshotId' && typeof value === 'string' && IMAGE_KEY.test(value)) {
       out.screenshotId = value;
-    } else if (
-      key === 'images' &&
-      Array.isArray(value) &&
-      value.every((v) => typeof v === 'string')
-    ) {
+    } else if (key === 'images' && Array.isArray(value) && value.every(isString)) {
       // Deduplicated as well as filtered: `{#each … (id)}` THROWS on a duplicate key in production
       // as well as in dev, and the array is client-supplied with no uniqueness constraint anywhere
       // — so one repeated id makes the report permanently unopenable.
-      out.images = [...new Set((value as string[]).filter((v) => IMAGE_KEY.test(v)))];
+      out.images = [...new Set(value.filter((v) => IMAGE_KEY.test(v)))];
       // Anything dropped is still shown, as text, under "Other context".
       if (out.images.length !== value.length) other[key] = value;
     } else if (
@@ -193,6 +272,13 @@ export function splitContext(context: unknown): FeedbackContext {
       Object.values(value).every(isFilterValue)
     ) {
       out.filters = value as FeedbackFilters;
+    } else if (key === 'consoleErrors' && Array.isArray(value) && value.every(isConsoleError)) {
+      // All-or-nothing, unlike `images` — which filters per entry only because a bad id there is a
+      // live `<img src>` hazard. These are text, so a malformed array goes to "Other context"
+      // whole rather than being shortened in a way the moderator cannot see.
+      out.consoleErrors = value;
+    } else if (key === 'networkErrors' && Array.isArray(value) && value.every(isNetworkError)) {
+      out.networkErrors = value;
     } else {
       other[key] = value;
     }

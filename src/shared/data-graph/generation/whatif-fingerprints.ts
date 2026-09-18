@@ -55,6 +55,8 @@ export const whatIfFingerprints: Record<string, WhatIfFingerprint> = {
   denoise: () => undefined,
   musicDescription: () => undefined,
   lyrics: () => undefined,
+  // A supplied score skips the billed score-planning stage.
+  yue2Abc: (value) => typeof value === 'string' && value.trim().length > 0,
 };
 
 /**

@@ -134,7 +134,7 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
   },
   'src/pages/api/v1/blocks/me.ts': {
     exposure: 'READ_VIEWER_SCOPED',
-    why: 'Viewer identity (id, username, status) and the token’s buzzBudget. Gated on the viewer being a moderator today, which is a GA posture and not a takedown check.',
+    why: 'Viewer identity (id, username, status) and the token’s buzzBudget. Gated on the `app-blocks-enabled` Flipt audience, evaluated against the TOKEN subject via the same shared assertAppBlocksEnabledForTokenUser its tRPC twin blocks.getMyViewer calls — a GA posture, not a takedown check. It used to be gated on a hardcoded isModerator literal instead, which the twin never had; that divergence was resolved 2026-09-18 by dropping the literal.',
   },
   'src/pages/api/v1/blocks/models.ts': {
     exposure: 'READ_PUBLIC',

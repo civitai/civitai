@@ -11,7 +11,10 @@
   } from '@tabler/icons-svelte';
   import { untrack } from 'svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
+  import { nonBlueSpend } from '$lib/buzz-balance.svelte';
   import { portalProps } from '$lib/host';
+  import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
+  import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
@@ -20,6 +23,7 @@
     loraTypeById,
     paramBounds,
     paramsForVersion,
+    TE_TRAINING_UNSUPPORTED,
     typesForMedia,
     type FromPrices,
     type ParamBound,
@@ -195,8 +199,35 @@
   function removePrompt(i: number) {
     if (prompts.length > 1) prompts = prompts.filter((_, k) => k !== i);
   }
-  async function start() {
+  // Blue always spends first (it isn't offered in the picker), so the moment the price exceeds the
+  // Blue balance the remainder comes out of yellow/green — real money. Testers were charged Yellow
+  // without ever being told, and the same run cost Blue one day and Yellow the next as balances
+  // drifted. Anything beyond Blue requires an explicit confirmation naming the amount — and when
+  // the balance is UNKNOWN (a host without getBuzzBalances, a buzz-service blip), fail safe:
+  // confirm with "up to the full price" rather than reverting to silent spending.
+  // `confirmSpend` is the dialog's payload and outlives the close animation (nulling it on close
+  // blanks the outgoing frame's copy); `spendDialogOpen` alone drives visibility.
+  let confirmSpend = $state<{
+    amount: number;
+    currency: 'yellow' | 'green';
+    uncertain: boolean;
+  } | null>(null);
+  let spendDialogOpen = $state(false);
+
+  function start() {
     if (starting || (needsAttestation && !attestSfw)) return;
+    const spend = nonBlueSpend(total, buzzMode.value);
+    if (spend) {
+      confirmSpend = spend;
+      spendDialogOpen = true;
+      return;
+    }
+    void reallyStart();
+  }
+
+  async function reallyStart() {
+    if (starting) return;
+    spendDialogOpen = false;
     starting = true;
     startError = '';
     try {
@@ -310,6 +341,7 @@
 
           {#if openAdv === i && !noAdvancedParams(run)}
             {@const b = boundsFor(i)}
+            {@const teLocked = TE_TRAINING_UNSUPPORTED.has(selection.runs[i]!.versionKey)}
             <div class="border-t border-dark-4 bg-dark-8 px-4 py-4">
               <div class="mb-2 flex items-center gap-1 font-mono text-xs uppercase tracking-wider text-primary">
                 <IconSettings size={12} stroke={2} />Advanced training settings
@@ -328,8 +360,17 @@
                   <Input type="number" min={b.unetLr.min} max={b.unetLr.max} step={b.unetLr.step} bind:value={params[i]!.unetLr} onblur={() => clampField(i, 'unetLr', b.unetLr)} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
-                  <span class="text-dark-2">Text encoder LR</span>
-                  <Input type="number" min={b.textEncoderLr.min} max={b.textEncoderLr.max} step={b.textEncoderLr.step} bind:value={params[i]!.textEncoderLr} onblur={() => clampField(i, 'textEncoderLr', b.textEncoderLr)} class="h-7 font-mono" />
+                  <span class="text-dark-2">
+                    Text encoder LR{#if teLocked}<Tooltip.Provider>
+                        <Tooltip.Root>
+                          <Tooltip.Trigger class="ml-1 text-dark-2">(unavailable)</Tooltip.Trigger>
+                          <Tooltip.Content class="max-w-[240px] text-xs" portalProps={portalProps()}>
+                            This model cannot train its text encoder — runs fail and hang.
+                          </Tooltip.Content>
+                        </Tooltip.Root>
+                      </Tooltip.Provider>{/if}
+                  </span>
+                  <Input type="number" min={b.textEncoderLr.min} max={b.textEncoderLr.max} step={b.textEncoderLr.step} bind:value={params[i]!.textEncoderLr} onblur={() => clampField(i, 'textEncoderLr', b.textEncoderLr)} disabled={teLocked} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">Network dim</span>
@@ -464,3 +505,37 @@
   </Button>
   <span class="font-mono text-xs text-dark-2">This is the only step that spends Buzz</span>
 </div>
+
+<Dialog.Root bind:open={spendDialogOpen}>
+  <Dialog.Content class="sm:max-w-md" portalProps={portalProps()}>
+    <Dialog.Header>
+      <Dialog.Title>
+        This {confirmSpend?.uncertain ? 'can spend' : 'spends'}
+        {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz
+      </Dialog.Title>
+      <Dialog.Description>
+        {#if confirmSpend?.uncertain}
+          Blue Buzz spends first, but your balance couldn't be read — up to
+          <strong>{confirmSpend?.amount.toLocaleString()}</strong> of this run may come out of your
+          {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz.
+        {:else}
+          Your Blue Buzz covers part of this run; the remaining
+          <strong>{confirmSpend?.amount.toLocaleString()}</strong> will come out of your
+          {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz.
+        {/if}
+        You can switch which Buzz is used from the balance at the top of the page.
+      </Dialog.Description>
+    </Dialog.Header>
+    <Dialog.Footer>
+      <Dialog.Close>
+        {#snippet child({ props })}
+          <Button {...props} variant="ghost" size="sm">Cancel</Button>
+        {/snippet}
+      </Dialog.Close>
+      <Button size="sm" onclick={() => void reallyStart()}>
+        Spend {confirmSpend?.uncertain ? 'up to ' : ''}{confirmSpend?.amount.toLocaleString()}
+        {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} and start
+      </Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>

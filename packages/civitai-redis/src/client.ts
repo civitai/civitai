@@ -1847,24 +1847,9 @@ export const REDIS_SYS_KEYS = {
      */
     GEN_IDEM: 'system:blocks:gen-idem',
     /**
-     * Per-APP cumulative spend-BOUNTY accrual cap counter (audit 🟡-2 / the
-     * App-Blocks Sybil-economics review). DISTINCT from BUZZ_CAP: that one
-     * bounds a single USER's daily Buzz SPEND; this one bounds the daily
-     * platform-funded BOUNTY (in USD cents) accrued toward a single APP across
-     * ALL viewers, so a Sybil ring of many accounts can't funnel unbounded
-     * bounty at one author. Integer counter (cents), keyed
-     * `system:blocks:bounty-cap:${appBlockId}:${UTC-day}`, INCRBY'd by each
-     * row's accrued `app_owner_share_cents` at spend-attribution write time.
-     * TTL is set on first write so the per-window key self-expires. DORMANT
-     * today: the share is 0 until the payout rail (#2605) flips spendSharePct>0,
-     * so the counter never moves and the cap never clamps.
-     */
-    BOUNTY_CAP: 'system:blocks:bounty-cap',
-    /**
      * Per-APP aggregate generation-SPEND + velocity cap counters (G8 — generic
      * per-app safety). DISTINCT from BUZZ_CAP (which bounds a single USER's daily
-     * Buzz spend) and from BOUNTY_CAP (which bounds a single APP's daily accrued
-     * BOUNTY): this bounds the daily block-initiated generation SPEND (in Buzz)
+     * Buzz spend): this bounds the daily block-initiated generation SPEND (in Buzz)
      * AND the short-window generation VELOCITY funnelled through ONE app across
      * ALL viewers — the hard prerequisite before shareable, spend-driving block
      * apps open to non-mods (a Sybil ring of many accounts each under the per-user
@@ -2324,6 +2309,16 @@ const REDIS_KEYS_UNPREFIXED = {
     // is exactly what let this line claim 15min while dev tokens lived hours.
     // Read the constant there rather than trusting a number written here.
     REVOKED_INSTANCE: 'blocks:revoked-instance',
+    // 🔴 BAN REVOCATIONS LIVE IN THEIR OWN KEYSPACE, AND THAT SEPARATION IS THE
+    // SECURITY CONTROL — not a tidiness choice. When both causes shared one key,
+    // `toggleEnabled(false)` (an ordinary model owner, reachable over tRPC) wrote
+    // that key with no cause and DOWNGRADED a ban marker to an install marker;
+    // `toggleEnabled(true)` then cleared it, and the banned publisher's pre-ban
+    // token was accepted again. A value-guarded write would have been a
+    // read-modify-write with a race in it; separate keys make the downgrade
+    // unrepresentable — the install path cannot address this key at all.
+    // Same TTL, same semantics, checked together by BlockRevocation.isRevoked.
+    REVOKED_INSTANCE_BAN: 'blocks:revoked-instance-ban',
     // Per-ecosystem-key most-popular-Checkpoint cache (JSON ValidatedCheckpoint, 1h TTL).
     POPULAR_CHECKPOINT: 'blocks:popular-checkpoint',
   },

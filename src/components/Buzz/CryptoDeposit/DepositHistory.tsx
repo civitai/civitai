@@ -2,6 +2,7 @@ import { keepPreviousData } from '@tanstack/react-query';
 import {
   ActionIcon,
   Badge,
+  Button,
   Group,
   HoverCard,
   Pagination,
@@ -19,10 +20,11 @@ import {
   IconLoader,
   IconPlus,
   IconRefresh,
+  IconSearch,
   IconWallet,
   IconWifiOff,
 } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import useIsClient from '~/hooks/useIsClient';
 import { BonusBuzzContent } from '~/components/Buzz/CryptoDeposit/BonusBuzzContent';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
@@ -76,6 +78,7 @@ export function DepositHistory() {
   );
   const total = data?.total ?? 0;
   const totalPages = Math.ceil(total / perPage);
+  const reconcile = useReconcileDeposits(total);
 
   if (!isClient) return null;
 
@@ -119,6 +122,7 @@ export function DepositHistory() {
       <EmptyDepositState
         signalStatus={signalStatus}
         onRefresh={() => utils.nowPayments.getDepositHistory.invalidate()}
+        reconcile={reconcile}
       />
     );
   }
@@ -235,9 +239,7 @@ export function DepositHistory() {
           <Pagination total={totalPages} value={page} onChange={setPage} size="sm" />
         </Group>
       )}
-      <CheckDepositsNotice
-        onSuccess={() => utils.nowPayments.getDepositHistory.invalidate()}
-      />
+      <CheckDepositsNotice reconcile={reconcile} />
     </Paper>
   );
 }
@@ -245,9 +247,11 @@ export function DepositHistory() {
 function EmptyDepositState({
   signalStatus,
   onRefresh,
+  reconcile,
 }: {
   signalStatus: string | null;
   onRefresh: () => void;
+  reconcile: Reconcile;
 }) {
   return (
     <Paper p="lg" radius="md" withBorder style={outerCardStyle}>
@@ -269,7 +273,7 @@ function EmptyDepositState({
             </Text>
           </Group>
         </Paper>
-        <CheckDepositsNotice onSuccess={onRefresh} />
+        <CheckDepositsNotice reconcile={reconcile} />
       </Stack>
     </Paper>
   );
@@ -431,46 +435,118 @@ function BonusBuzzPopover({
   );
 }
 
-function CheckDepositsNotice({ onSuccess }: { onSuccess: () => void }) {
-  const reconcileMutation = trpc.nowPayments.reconcileMyDeposits.useMutation({
+type Reconcile = ReturnType<typeof useReconcileDeposits>;
+
+// A result describes the list as it stood when the button was pressed. Once the list
+// moves — the signal delivers the deposit, another tab reconciles — a nothing-found or
+// an error no longer describes what the user is looking at, so the notice falls back to
+// idle rather than captioning the new list with the old answer. The total is stamped in
+// onMutate, at click time, so a deposit landing mid-request cannot consume the
+// comparison and leave the wrong label up for good.
+//
+// A found-result is exempt and must stay exempt. It normally moves the list, because
+// crediting invalidates the query — so treating it as stale wipes the confirmation with
+// its own refetch, which is the bug this file exists to fix (ClickUp 868m6j63r). Not
+// always, though: reconciling a deposit already listed as Confirming credits an
+// existing row and adds none, leaving the total unchanged.
+export function isResultStale({
+  found,
+  isSuccess,
+  isError,
+  totalAtMutate,
+  total,
+}: {
+  found: boolean;
+  isSuccess: boolean;
+  isError: boolean;
+  totalAtMutate: number;
+  total: number;
+}) {
+  return !found && (isSuccess || isError) && totalAtMutate !== total;
+}
+
+// Owned by DepositHistory rather than by the notice: a successful reconcile
+// repopulates the list, which unmounts the empty-state branch. A mutation living
+// in the notice would take its own success state down with it, so the user never
+// saw that the click worked.
+function useReconcileDeposits(total: number) {
+  const utils = trpc.useUtils();
+  const totalAtMutate = useRef(total);
+  const mutation = trpc.nowPayments.reconcileMyDeposits.useMutation({
+    onMutate: () => {
+      totalAtMutate.current = total;
+    },
     onSuccess: (data) => {
-      if (data.processed > 0) onSuccess();
+      if (data.processed > 0) utils.nowPayments.getDepositHistory.invalidate();
     },
   });
 
-  const linkText = reconcileMutation.isPending
+  const found = mutation.isSuccess && mutation.data.processed > 0;
+
+  return {
+    mutation,
+    found,
+    resultIsStale: isResultStale({
+      found,
+      isSuccess: mutation.isSuccess,
+      isError: mutation.isError,
+      totalAtMutate: totalAtMutate.current,
+      total,
+    }),
+  };
+}
+
+function CheckDepositsNotice({ reconcile }: { reconcile: Reconcile }) {
+  const { mutation, found, resultIsStale } = reconcile;
+  const showPrompt = resultIsStale || (!mutation.isSuccess && !mutation.isError);
+  const buttonLabel = mutation.isPending
     ? 'Checking...'
-    : reconcileMutation.isSuccess
-    ? reconcileMutation.data.processed > 0
-      ? `Found ${reconcileMutation.data.processed} deposit(s)!`
+    : resultIsStale
+    ? 'Check now'
+    : mutation.isSuccess
+    ? found
+      ? `Found ${mutation.data.processed} deposit(s)!`
       : 'No missing deposits found'
-    : reconcileMutation.isError
+    : mutation.isError
     ? 'Try again in a minute'
-    : 'Missing a deposit? Check now';
+    : 'Check now';
 
   return (
-    <Group gap="xs" mt="sm" wrap="nowrap" align="center">
-      <IconClock size={14} className="text-yellow-500" style={{ flexShrink: 0 }} />
-      <Text size="xs" c="dimmed" lh={1.4}>
-        Deposits can take up to 1 hour to appear depending on network congestion.{' '}
-        <UnstyledButton
-          onClick={() => !reconcileMutation.isPending && reconcileMutation.mutate()}
-          disabled={reconcileMutation.isPending}
-          style={{ display: 'inline' }}
+    <Paper
+      p="sm"
+      radius="sm"
+      withBorder
+      mt="sm"
+      className="bg-gray-50 dark:bg-white/[0.03] border border-gray-200 dark:border-white/10"
+    >
+      <Group gap="sm" justify="space-between" align="center" wrap="wrap">
+        <Group gap="xs" wrap="nowrap" align="flex-start" className="min-w-[180px] flex-1">
+          <IconClock size={16} className="mt-0.5 shrink-0 text-yellow-500" />
+          <Stack gap={2}>
+            {showPrompt && (
+              <Text size="xs" fw={600}>
+                Missing a deposit?
+              </Text>
+            )}
+            <Text size="xs" c="dimmed" lh={1.4}>
+              Deposits can take up to 1 hour to appear depending on network congestion.
+            </Text>
+          </Stack>
+        </Group>
+        <Button
+          size="compact-sm"
+          variant="light"
+          color={found ? 'green' : undefined}
+          leftSection={<IconSearch size={14} />}
+          loading={mutation.isPending}
+          disabled={mutation.isPending}
+          onClick={() => mutation.mutate()}
+          className="shrink-0"
         >
-          <Text
-            span
-            size="xs"
-            c={reconcileMutation.isSuccess && reconcileMutation.data.processed > 0 ? 'green' : 'dimmed'}
-            td="underline"
-            className="cursor-pointer"
-          >
-            {reconcileMutation.isPending && <IconLoader size={10} className="inline mr-1 animate-spin" />}
-            {linkText}
-          </Text>
-        </UnstyledButton>
-      </Text>
-    </Group>
+          {buttonLabel}
+        </Button>
+      </Group>
+    </Paper>
   );
 }
 

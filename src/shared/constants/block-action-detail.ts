@@ -79,8 +79,14 @@ export type BlockActionDetail = {
    * capability) usage accounting was therefore not answerable from this table at
    * all.
    *
-   * Bounded by construction: the value is a registry KEY, which the wire schema
-   * derives its `step` enum from (`REGISTERED_STEP_IDS`) — never client text.
+   * ⚠️ NO LONGER BOUNDED BY CONSTRUCTION. On the registry arm the value is a
+   * registry KEY, which the wire schema derives its `step` enum from
+   * (`REGISTERED_STEP_IDS`). The PASS-THROUGH arm writes the submitted
+   * orchestrator `$type` here instead, and that is app-supplied text bounded
+   * only by `z.string().min(1).max(64)` — deliberately, because on an arm whose
+   * type set is open by construction this is the one dimension that makes two
+   * submits distinguishable. Nothing reads this field for display today; treat
+   * it as untrusted if anything starts to.
    */
   step?: string;
   /**

@@ -173,12 +173,15 @@ function resolveWorkflow(w: Workflow) {
     ?.estimatedProgressRate;
   const progress = typeof rate === 'number' ? Math.max(0, Math.min(1, rate)) : undefined;
 
-  // Base model: the exact `air` the run trained on, else its ecosystem, else our metadata's card type.
+  // Base model: the exact `air` the run trained on, else the card the user picked (metadata), else
+  // the step's ecosystem. cardType must beat the ecosystem fallback: several cards share an
+  // ecosystem (Illustrious/Pony/a custom checkpoint are all `sdxl`), so ecosystem-first showed
+  // every one of them as "SDXL" instead of the base the run actually trained on.
   const byAir = input.model ? findByAir(input.model) : undefined;
   const card =
     byAir?.card ??
-    (input.ecosystem ? cardByEcosystem(input.ecosystem) : undefined) ??
-    (meta.cardType ? cardByType(meta.cardType) : undefined);
+    (meta.cardType ? cardByType(meta.cardType) : undefined) ??
+    (input.ecosystem ? cardByEcosystem(input.ecosystem) : undefined);
   const version = byAir?.version ?? card?.versions.find((v) => v.key === meta.versionKey);
 
   return {
@@ -187,6 +190,7 @@ function resolveWorkflow(w: Workflow) {
     input,
     output,
     progress,
+    completedAt: (step as { completedAt?: string | null } | undefined)?.completedAt ?? undefined,
     media: card?.media ?? 'image',
     base: card
       ? `${card.name}${
@@ -315,6 +319,10 @@ export interface TrainingDetail {
   code: string;
   state: RunState;
   createdAt: string;
+  /** When the training step finished — the anchor for the 30-day retention countdown. Absent while
+   *  running and on runs whose step carries no completion date (retention then anchors at createdAt,
+   *  which can only warn early, never late). */
+  completedAt?: string;
   /** The training step's orchestrator ecosystem (e.g. `sdxl`) — what an epoch's blob AIR is scoped
    *  by. Absent on runs whose step carries none (older main-app runs). */
   ecosystem?: string;
@@ -347,7 +355,8 @@ export interface TrainingDetail {
 /** Map one workflow (fetched by id) to the detail screen's shape. Null if we can't place it. */
 export function workflowToDetail(w: Workflow): TrainingDetail | null {
   if (!w.id || w.tags?.includes(AUTO_LABEL_TAG)) return null;
-  const { meta, input, state, output, media, base, code, name, progress } = resolveWorkflow(w);
+  const { meta, input, state, output, media, base, code, name, progress, completedAt } =
+    resolveWorkflow(w);
   if (!state) return null;
 
   const prompts = input.samples?.prompts ?? [];
@@ -398,6 +407,7 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     code,
     state,
     createdAt: w.createdAt,
+    completedAt,
     ecosystem: typeof input.ecosystem === 'string' && input.ecosystem ? input.ecosystem : undefined,
     media,
     isVideo: media === 'video',

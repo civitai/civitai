@@ -175,6 +175,7 @@ export function HubSourceInput({
   disabled,
   autoFocus,
   exclude,
+  only,
 }: {
   isAdded: (source: { type: HubSourceValue['type']; targetId: number }) => boolean;
   onAdd: (source: Suggestion) => void;
@@ -185,9 +186,15 @@ export function HubSourceInput({
   autoFocus?: boolean;
   /** The keep-out box: same search, no bulk actions — nobody keeps out 50 things. */
   exclude?: boolean;
+  /**
+   * Pin the picker to one tab and hide the strip. The add-to-group popover uses it:
+   * the group is already a tag AND-set, and the other tabs would offer creators and
+   * models, which cannot join one.
+   */
+  only?: HubSourceScope;
 }) {
   const utils = trpc.useUtils();
-  const [scope, setScope] = useState<HubSourceScope>(exclude ? 'all' : 'following');
+  const [scope, setScope] = useState<HubSourceScope>(only ?? (exclude ? 'all' : 'following'));
   const [query, setQuery] = useState('');
   const [debounced] = useDebouncedValue(query, 400);
   const [filling, setFilling] = useState(false);
@@ -247,8 +254,9 @@ export function HubSourceInput({
   return (
     <div className="flex flex-col gap-2">
       {/* No tabs in the keep-out box: it is one short list of things to hide, and a
-          second copy of the picker's whole apparatus for it is noise. */}
-      {!exclude && (
+          second copy of the picker's whole apparatus for it is noise. None when the
+          caller has pinned a tab either — there is nothing to choose. */}
+      {!exclude && !only && (
         <div className="flex flex-wrap gap-1.5">
           {tabs.map((option) => (
             <UnstyledButton

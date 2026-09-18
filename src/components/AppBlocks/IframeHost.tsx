@@ -1324,7 +1324,13 @@ export function IframeHost({
     [effectiveSandbox]
   );
 
-  const { send, onMessage } = usePostMessage({ iframeRef, expectedOrigin, opaqueOrigin });
+  const { send, onMessage, reportNoToken } = usePostMessage({
+    iframeRef,
+    expectedOrigin,
+    opaqueOrigin,
+    host: 'IframeHost',
+    appBlockId: install.appBlockId,
+  });
 
   // The last height the BLOCK ITSELF stated, before any clamping — stashed so a
   // viewport change can re-run the clamp against the new bound. The block is
@@ -1625,11 +1631,30 @@ export function IframeHost({
   // own browser test for this.
   useEffect(() => {
     const off = onMessage<{ requestId?: string } | undefined>('REQUEST_TOKEN', (raw) => {
-      if (!token || !initSentRef.current) return;
       const requestId =
         raw && typeof raw === 'object' && typeof raw.requestId === 'string'
           ? raw.requestId
           : undefined;
+      if (!token || !initSentRef.current) {
+        // 🔴 COUNTED, BUT DELIBERATELY NOT ANSWERED — and the asymmetry is the
+        // protocol's, not an oversight here. `REQUEST_TOKEN` is in
+        // `BRIDGE_NACK_EXEMPT` because `isValidTokenRefreshResponse` requires a
+        // valid `WrappedToken`, so an error-only `TOKEN_REFRESH_RESPONSE` is
+        // dropped at the block's own trust boundary and the block would hang
+        // exactly as before while we believed we had fixed it. Closing the
+        // block-facing half needs a failure variant in the SDK message union.
+        //
+        // 🔴 UNCONDITIONAL, AND NOT GATED ON `requestId`. A `REQUEST_TOKEN`
+        // carrying no `requestId` is an explicitly documented protocol shape (the
+        // success path below answers it with a `TOKEN_REFRESH` push), so gating
+        // the count on one would report NOTHING for it — and the count is this
+        // branch's only observable. `PageBlockHost` does the identical thing, and
+        // the two must stay in step by hand: there is no test asserting the
+        // relationship (see the PR description for why the structural guard that
+        // would have was removed rather than shipped).
+        reportNoToken('REQUEST_TOKEN');
+        return;
+      }
       const wrapped = {
         raw: token,
         scopes: grantedScopes,
@@ -1643,7 +1668,7 @@ export function IframeHost({
       send('TOKEN_REFRESH_RESPONSE', { requestId, token: wrapped });
     });
     return off;
-  }, [token, expiresAt, buzzBudget, grantedScopes, send, onMessage]);
+  }, [token, expiresAt, buzzBudget, grantedScopes, send, onMessage, reportNoToken]);
 
   // Init handshake. Start the moment we're ALLOWED to init — token present and
   // the effective-checkpoint query resolved (`isLoading` false; the error path

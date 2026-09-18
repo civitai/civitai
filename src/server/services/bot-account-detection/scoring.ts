@@ -424,9 +424,10 @@ export const MIN_REPORTED_CONFIDENCE = 0.1125;
  *
  * So: PROVISIONAL. It is carried forward unchanged because changing it would move the reported
  * population of every heuristic at once, which is a decision that wants its own evidence and its
- * own change — not a side effect of adding a signal. `asset-staging`'s boundaries are derived
- * AGAINST this number (see `STAGED_ONE_AT`), so it is load-bearing for that heuristic's firing
- * point; that makes it more important to be honest about its provenance, not less. The
+ * own change — not a side effect of adding a signal. `asset-staging`'s boundaries are CHECKED
+ * against this number (see `STAGED_ONE_AT` — they were derived from it until the ordering evidence
+ * set the volume boundary instead), so it still bounds that heuristic's firing point; that makes it
+ * more important to be honest about its provenance, not less. The
  * `confidence_bucket_*` counters are what can eventually replace it with a measured value.
  */
 export const LONE_SIGNAL_CUT = 0.45;

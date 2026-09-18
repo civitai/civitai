@@ -19,8 +19,10 @@ import { REGISTERED_STEP_IDS } from './steps';
 // ── THE VALUE GRAMMAR ───────────────────────────────────────────────────────
 //
 //   value   ::= coarse | coarse ":" subtype
-//   coarse  ::= "textToImage" | "customComfy" | <registered step id>
-//   subtype ::= a COLON-FREE token from the closed set that coarse key allows
+//   coarse  ::= "textToImage" | "customComfy" | "step" | <registered step id>
+//   subtype ::= a COLON-FREE token, from the closed set that coarse key allows —
+//               EXCEPT under "step", whose subtype axis is OPEN and bounded by
+//               SHAPE instead (see THE ONE OPEN AXIS below)
 //
 // 🔴 THE COARSE KEY IS EVERYTHING BEFORE THE FIRST COLON, AND A VALUE CARRIES
 // AT MOST ONE COLON. Both halves of that rule are load-bearing and both are
@@ -41,10 +43,54 @@ import { REGISTERED_STEP_IDS } from './steps';
 //   textToImage:txt2img        textToImage:img2img        textToImage:img2img-edit
 //   customComfy:<recipe id>    customComfy:inline
 //   convert-image              chat-completion
+//   step:<orchestrator $type>
 //
-// A bare `textToImage` / `customComfy` is still a legal value: it is what a
-// submit degrades to when the sub-axis cannot be established (see RESOLUTION
-// below). It is shallower, never wrong.
+// A bare `textToImage` / `customComfy` / `step` is still a legal value: it is
+// what a submit degrades to when the sub-axis cannot be established (see
+// RESOLUTION below). It is shallower, never wrong.
+//
+// ── THE ONE OPEN AXIS: `step:<orchestrator $type>` ──────────────────────────
+//
+// 🔴 EVERY OTHER SUBTYPE COMES FROM A SERVER-OWNED CLOSED SET. THIS ONE DOES
+// NOT — IT IS CALLER-SUPPLIED, AND THAT IS THE FACT TO CARRY INTO ANY READING OF
+// THIS COLUMN. `kind: 'step'` has TWO arms (see `blockStepMemberSchema` in
+// `workflow.schema`): the REGISTRY arm names a server-registered capability by id
+// (`convert-image`), and the PASS-THROUGH arm names an ORCHESTRATOR `$type`
+// directly and forwards `input` unmodified. On the pass-through arm the `$type` is
+// validated against nothing but `PLATFORM_INTERNAL_STEP_TYPES` — no per-type
+// schema, no registry — so the token this file interpolates is a string an
+// untrusted iframe chose. It is bounded by SHAPE here
+// (`BLOCK_PASS_THROUGH_SUBTYPE_PATTERN`) and by nothing else, and a value that
+// fails that shape DEGRADES to the bare `step` rather than being refused: the
+// write is fire-and-forget off an already-billed submit and must never throw.
+//
+// 🔴 WHY IT IS NAMESPACED UNDER `step:` RATHER THAN RECORDED BARE, and this is
+// the load-bearing half of the design: `textToImage` and `customComfy` are
+// THEMSELVES real orchestrator `$type` keys (measured 2026-09-17 against
+// `WorkflowStepTemplate.discriminator.mapping` — 50 keys, both present, along with
+// `imageGen`, `convertImage` and `chatCompletion`). So a BARE `$type` would stamp
+// `{kind:'step', $type:'textToImage'}` as `generationType: 'textToImage'` —
+// indistinguishable from a genuine `kind:'textToImage'` submit and PRICED AS ONE
+// by the per-generation-type fee. That is the same hazard the step arm's own
+// resolution note names ("reporting a step submit as an image generation …
+// exactly the direction in which a wrong value is worse than a null one"), and
+// the namespace is what makes it unrepresentable: the coarse key of a
+// pass-through row is always `step`, never a kind key and never a registry id.
+//
+// 🔴 THE VALUE IS AN UPSTREAM SPELLING, DELIBERATELY. It breaks the
+// APP-FACING-ID-NEVER-ORCHESTRATOR-`$type` rule below — and it has to, because
+// the pass-through arm HAS no app-facing id: the `$type` IS the wire contract the
+// app wrote. The `step:` prefix is what keeps that visible in the value itself,
+// so a reader can never mistake an orchestrator spelling for a registry id. An
+// orchestrator rename therefore splits one capability into two values in this
+// column; that is the honest record of what the app actually submitted.
+//
+// 🔴 AND IT CANNOT BE BOUNDED AGAINST A KNOWN SET. There is no vendored `$type`
+// catalog in this repo — only the 15-entry `PLATFORM_INTERNAL_STEP_TYPES`
+// denylist and the 2-entry step registry — and the live mapping gained three
+// types in six weeks, so a membership test here would either need a catalog
+// nobody maintains or would degrade every new upstream type to a bare `step`.
+// Shape is the only bound available, which is why it is stated as one.
 //
 // 🔴 THE VALUE IS THE APP-FACING ID, NEVER THE ORCHESTRATOR `$type`. For
 // `kind: 'step'` the coarse key is the REGISTERED STEP ID (`convert-image`,
@@ -60,13 +106,20 @@ import { REGISTERED_STEP_IDS } from './steps';
 //
 // COLLISION. A step id implies `kind: 'step'`, so ONE column is enough — no
 // companion `kind` column. That reading holds as long as no registered step id
-// collides with `textToImage` / `customComfy`. ⚠️ NOTHING ENFORCES THAT: the
-// registry's load-time invariants pin `step.id === <registry key>` and
-// uniqueness of `orchestratorType`, but neither knows these two strings exist.
-// Today the two sets are disjoint; if a future entry were registered under one
-// of those names the column would become ambiguous, so it is called out here
-// rather than assumed. Registering a step is a reviewed PR, which is where that
-// is caught.
+// collides with `textToImage` / `customComfy` / `step`. ⚠️ NOTHING ENFORCES THAT
+// IN THE REGISTRY: its load-time invariants pin `step.id === <registry key>` and
+// uniqueness of `orchestratorType`, but none of them knows these three strings
+// exist. Today the sets are disjoint (measured: the registry holds
+// `convert-image` and `chat-completion`); a `step` entry would be the sharpest
+// collision of the three, because a bare `step` value would then mean EITHER "a
+// pass-through submit whose `$type` was unusable" OR "the registered step named
+// `step`". `generation-type.test.ts` turns all three into a red test rather than
+// an ambiguous column, and registering a step is a reviewed PR besides.
+//
+// ⚠️ The `step:` namespace does NOT collide with a registry id in the value
+// space, and that is the point of it: `step:convert-image` (a pass-through submit
+// naming that `$type`) and `convert-image` (the registry arm) are different
+// values with different coarse keys, so the fee cannot conflate them.
 //
 // DEPTH. 🔴 THE SECOND DECISION, AND THE ONE AN EARLIER REVISION OF THIS HEADER
 // DID NOT MAKE AT ALL. One column also fixes HOW FINELY the generation axis is
@@ -103,12 +156,35 @@ import { REGISTERED_STEP_IDS } from './steps';
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * The two non-registry `kind`s, which are their own coarse generation type.
- * Kept as a literal tuple (rather than derived from the zod union) because
- * these are wire discriminants: a rename is a breaking change that must be made
- * deliberately, and this list is what a reader diffs against.
+ * The COARSE key for the PASS-THROUGH `kind: 'step'` arm — the wire `kind`
+ * itself, because that arm has no registry id to use instead.
+ *
+ * 🔴 IT IS ALSO THE NAMESPACE THAT KEEPS A CALLER-SUPPLIED `$type` OUT OF THE
+ * KIND-KEY AND REGISTRY-ID NAMESPACES. See THE ONE OPEN AXIS in the header: both
+ * `textToImage` and `customComfy` are real orchestrator `$type`s, so a bare
+ * `$type` in this column would be priced as an image generation.
  */
-export const BLOCK_WORKFLOW_KIND_GENERATION_TYPES = ['textToImage', 'customComfy'] as const;
+export const BLOCK_PASS_THROUGH_COARSE_TYPE = 'step';
+
+/**
+ * The wire `kind`s that are their own coarse generation type.
+ *
+ * Kept as a literal tuple (rather than derived from the zod union) because these
+ * are wire discriminants: a rename is a breaking change that must be made
+ * deliberately, and this list is what a reader diffs against.
+ *
+ * 🔴 `step` IS IN HERE, AND THAT MEMBERSHIP IS LOAD-BEARING TWICE OVER — it is
+ * not a tidy grouping. It is what makes a bare `step` a legal (degraded) stored
+ * value, and it is what puts `step` inside the reach of the registry-collision
+ * guard in `generation-type.test.ts`, which loops this tuple against
+ * `REGISTERED_STEP_IDS`. Take it out and a step registered as `step` becomes an
+ * ambiguous column with nothing red.
+ */
+export const BLOCK_WORKFLOW_KIND_GENERATION_TYPES = [
+  'textToImage',
+  'customComfy',
+  BLOCK_PASS_THROUGH_COARSE_TYPE,
+] as const;
 
 /**
  * Every COARSE key — the first `:`-delimited segment, and the only thing the
@@ -167,23 +243,165 @@ export const CUSTOM_COMFY_GENERATION_SUBTYPES: readonly string[] = [
   CUSTOM_COMFY_INLINE_SUBTYPE,
 ];
 
+/**
+ * Max characters of a pass-through SUBTYPE — i.e. of the submitted `$type`.
+ *
+ * 🔴 MUST EQUAL the wire bound `PASS_THROUGH_TYPE_MAX_CHARS` in
+ * `~/server/schema/blocks/workflow.schema`. `generation-type.test.ts` imports
+ * both and pins them equal — one equality plus a LITERAL, which is what catches
+ * growth, shrinkage AND the pair drifting together; a reversed second equality
+ * would state nothing, `toBe` being symmetric. A wire cap that grows past this
+ * one would silently degrade every long `$type` to a bare `step`, which is a
+ * depth loss no error reports.
+ *
+ * It is a LITERAL here rather than an import to keep this module import-light on
+ * the fire-and-forget spend path (`buzz-attribution.service` pulls it in). ⚠️ BE
+ * EXACT ABOUT WHAT THAT BUYS — a draft of this comment said `workflow.schema`
+ * "pulls in zod and the whole block wire surface", and review MEASURED that
+ * false: every runtime module `workflow.schema` imports is ALREADY in this
+ * module's graph via `./recipes` and `./steps` (zod included). Importing it would
+ * add exactly ONE module — `workflow.schema` itself, whose cost is evaluating its
+ * own ~60 zod builders at load. That is a real cost and a narrow one, and it is
+ * WEAKER than the `IMAGE_SUBTYPE_BY_WORKFLOW` precedent, where `workflow.service`
+ * genuinely does drag in the generation-graph pipeline. The copy is defensible
+ * because the seam test pins it; do not cite this precedent for a copy that has
+ * no such test. The repo's default one directory over is the opposite —
+ * `steps/chat-completion.step.ts`'s `MAX_TOOL_NAME_CHARS` says "Import this; do
+ * not write the number again."
+ */
+export const BLOCK_PASS_THROUGH_SUBTYPE_MAX_CHARS = 64;
+
+/**
+ * The SHAPE bound on a pass-through subtype — the only bound available on the one
+ * open axis (see THE ONE OPEN AXIS in the header for why there cannot be a
+ * membership one).
+ *
+ * 🔴 ONE EXPRESSION, THREE PROPERTIES, DELIBERATELY NOT THREE CHECKS. It pins
+ * NON-EMPTY (`{1,`), LENGTH-CAPPED (`,N}`) and COLON-FREE plus
+ * whitespace/control/unicode-free (the character class). Written as three separate
+ * clauses, the non-empty one would be unkillable — a `{1,N}` quantifier already
+ * refuses `''` — and this file's own note on `isBlockGenerationType` explains why
+ * a guard no test can turn red is worse than none. Each property is instead
+ * killable through this one expression: drop the anchors and `step:a:b` is
+ * accepted; drop the `{1,N}` and a 65-char `$type` is; widen the class and
+ * `step:a b` is. `generation-type.test.ts` asserts all three.
+ *
+ * 🔴 THE CHARACTER CLASS IS A FOURTH PROPERTY, AND IT IS THE ONE WITH NO LIVE
+ * GUARD. Non-empty, colon-free and length-capped are the properties this bound was
+ * asked for; excluding whitespace, control bytes, non-ASCII and every other
+ * punctuation mark is an additional narrowing, chosen because the token is
+ * caller-supplied and lands in a fee-keyed column. It is not free: the cap has a
+ * BIDIRECTIONAL SEAM TEST against the wire schema precisely because a drifting cap
+ * would silently cost depth in an unbackfillable column — and that argument
+ * applies word for word to the class, which can only be pinned against a SNAPSHOT
+ * of the upstream population (`generation-type.test.ts` asserts the 50 measured
+ * `$type` keys all match it), never against upstream itself. So: if the
+ * orchestrator ever ships a `$type` containing a character outside this class,
+ * every submit of it records the bare `step` and nothing ALERTS on it. That is
+ * the same failure mode the cap's seam test exists to prevent, accepted here
+ * because no in-repo signal can see it (the same reason there is no membership
+ * bound) and because a JSON discriminator outside `[A-Za-z0-9._-]` would be
+ * extraordinary. Revisit the class before the population does.
+ *
+ * ⚠️ IT IS NOT INVISIBLE, THOUGH, AND AN EARLIER DRAFT SAID "NOTHING REPORTS IT".
+ * The DETECTOR is `WHERE generation_type = 'step'`, and it is exact rather than
+ * approximate: `composeBlockGenerationType(BLOCK_PASS_THROUGH_COARSE_TYPE, …)` is
+ * the only producer of a bare `step`, it is called from one place, and the wire
+ * guarantees `$type` is a non-empty string — so every bare-`step` row IS a
+ * shape-refused `$type` and nothing else is. No alert, one query.
+ *
+ * 🔴 THAT EXACTNESS HAS ONE UNPINNED DEPENDENCY, stated so nobody relies on it
+ * blindly: it holds because every `recordSpendAttribution` writer passes this
+ * resolver's OUTPUT. A future writer could hand-build `'step'` — it is a member of
+ * `BlockGenerationType` and the write-side re-check accepts it — and the detector
+ * would then also count rows that were never shape-refused. Nothing enforces the
+ * writer set today (a ledger test over the call sites would; it is filed, not
+ * built). Re-check the writers before treating the count as exact.
+ *
+ * ⚠️ CASE IS PRESERVED, NOT FOLDED, and that differs from the denylist one module
+ * over (`isPlatformInternalStepType` lowercases, deliberately). Right for this
+ * axis: the column records what the app SUBMITTED, and folding case would invent a
+ * value nobody sent. The cost is that `step:imageGen` and `step:imagegen` are two
+ * stored values for one upstream capability, so a future per-subtype rollup should
+ * fold case at READ time. The coarse key is unaffected, so no fee is.
+ *
+ * 🔴 THE COLON-FREE PROPERTY IS STRUCTURAL AGAIN, not a separate guard: `:` is
+ * not in the class, so the at-most-one-colon rule of THE VALUE GRAMMAR holds on
+ * this arm exactly the way it holds on the closed ones (every allowed subtype is
+ * colon-free). This is the one place that is true by a character class rather
+ * than by a set's contents.
+ *
+ * 🔴 THE CLASS IS NOT A GUESS: all 50 `$type` keys of the live
+ * `WorkflowStepTemplate.discriminator.mapping` match it (measured 2026-09-17; 50
+ * of 50, longest 22 chars), so no legitimate submit loses its subtype to this
+ * bound. The wire schema is far laxer — `z.string().min(1).max(64)` admits
+ * `a:b`, `foo bar`, a newline — so the degrade path is REACHABLE from the wire,
+ * not hypothetical, and `generation-type.test.ts` proves that by parsing such a
+ * body with the real schema.
+ *
+ * ⚠️ IT DOES NOT MAKE THE SUBTYPE TRUSTWORTHY, and nothing here should be read as
+ * claiming that. `step:toString` is an ACCEPTED value (a legal `$type` string as
+ * far as this repo is concerned) — harmless because nothing indexes an object by
+ * this segment and the fee keys on the coarse `step`, but it is why the
+ * prototype-key discipline documented on `isBlockGenerationType` is about
+ * LOOKUPS, not about this shape test.
+ */
+const BLOCK_PASS_THROUGH_SUBTYPE_PATTERN = new RegExp(
+  `^[A-Za-z0-9._-]{1,${BLOCK_PASS_THROUGH_SUBTYPE_MAX_CHARS}}$`
+);
+
+/**
+ * True iff `subtype` is a shape-valid pass-through subtype. Total, non-throwing.
+ *
+ * MODULE-PRIVATE on purpose: the bound callers must use is `isBlockGenerationType`
+ * (which consults this), never this predicate on its own — a caller that
+ * shape-checked a subtype in isolation would have skipped the coarse key.
+ */
+function isBlockPassThroughSubtype(subtype: string): boolean {
+  return BLOCK_PASS_THROUGH_SUBTYPE_PATTERN.test(subtype);
+}
+
 export type BlockGenerationType =
   | 'textToImage'
   | `textToImage:${BlockImageGenerationSubtype}`
   | 'customComfy'
   | `customComfy:${RegisteredRecipeId | typeof CUSTOM_COMFY_INLINE_SUBTYPE}`
+  // 🔴 THE OPEN ARM. `${string}` because the subtype is a caller-supplied
+  // orchestrator `$type` bounded by SHAPE, not by membership — a template literal
+  // type cannot express "matches this regex", so the TYPE is wider than the
+  // runtime bound and `isBlockGenerationType` is the only complete statement of
+  // what is legal. That asymmetry is the reason the write-side re-check in
+  // `buzz-attribution.service` is not redundant with this type.
+  | typeof BLOCK_PASS_THROUGH_COARSE_TYPE
+  | `${typeof BLOCK_PASS_THROUGH_COARSE_TYPE}:${string}`
   | (typeof REGISTERED_STEP_IDS)[number];
 
 /**
- * The closed subtype set a given COARSE key allows.
+ * Sentinel for a coarse key whose subtype axis is OPEN — bounded by SHAPE
+ * (`isBlockPassThroughSubtype`) instead of by membership.
  *
- * A registered step id gets the EMPTY set, not a wildcard: a step carries no
- * subtype today, so `convert-image:anything` must be refused rather than
- * waved through as "some future step subtype".
+ * 🔴 A SENTINEL RATHER THAN A RETURNED SET, SO THE OPEN AXIS CANNOT LOOK CLOSED.
+ * The obvious alternative — have `blockGenerationSubtypeRule` keep returning
+ * `readonly string[]` and special-case `step` at the call site — puts the "this
+ * key is open" fact in two places and makes the function's own answer for `step`
+ * (an empty set, i.e. "no subtype is ever allowed") a lie that reads as a bound.
  */
-function blockGenerationSubtypesFor(coarse: string): readonly string[] {
+const OPEN_SUBTYPE_AXIS = Symbol('OPEN_SUBTYPE_AXIS');
+
+/**
+ * What subtypes a given COARSE key allows — the ONE place that policy lives.
+ *
+ * A closed set for the two `kind` keys. `OPEN_SUBTYPE_AXIS` for the pass-through
+ * key, whose subtype is a caller-supplied `$type` (see THE ONE OPEN AXIS).
+ *
+ * A registered step id gets the EMPTY set, not a wildcard and not the open
+ * sentinel: a step carries no subtype today, so `convert-image:anything` must be
+ * refused rather than waved through as "some future step subtype".
+ */
+function blockGenerationSubtypeRule(coarse: string): readonly string[] | typeof OPEN_SUBTYPE_AXIS {
   if (coarse === 'textToImage') return BLOCK_IMAGE_GENERATION_SUBTYPES;
   if (coarse === 'customComfy') return CUSTOM_COMFY_GENERATION_SUBTYPES;
+  if (coarse === BLOCK_PASS_THROUGH_COARSE_TYPE) return OPEN_SUBTYPE_AXIS;
   return [];
 }
 
@@ -196,6 +414,22 @@ function blockGenerationSubtypesFor(coarse: string): readonly string[] {
  * function for why. This enumeration exists so a test can assert the two agree
  * in BOTH directions over the whole population, which is what turns a widened
  * registry into a visible change rather than a silent one.
+ *
+ * 🔴 "THE WHOLE POPULATION" IS NOW THE CLOSED POPULATION ONLY, AND THE GAP IS
+ * DELIBERATE — READ THIS BEFORE ADDING TO THE LEDGER. The `step:<$type>` arm is
+ * open by construction (the subtype is a caller-supplied orchestrator `$type`
+ * bounded by shape), so it has no finite enumeration to put here: the bare
+ * `step` coarse key is in this list and NO `step:` value ever is. That is not an
+ * omission to be fixed by inventing a sample — a sampled `step:` entry would make
+ * the ledger read as complete while covering an infinite set, which is worse than
+ * a stated gap. `generation-type.test.ts` asserts the exclusion EXPLICITLY (no
+ * member starts with `step:`, while the resolver demonstrably emits values that
+ * the bound accepts and this ledger does not contain), so the decision is pinned
+ * rather than inferred from a missing line.
+ *
+ * The consequence to keep in mind when reading a test over this list: for the
+ * closed arms it is still bidirectional, but "the ledger covers everything the
+ * resolver can emit" is FALSE by design, and only the open arm is exempt.
  */
 export const BLOCK_GENERATION_TYPES: readonly BlockGenerationType[] = [
   ...BLOCK_WORKFLOW_KIND_GENERATION_TYPES,
@@ -222,7 +456,14 @@ export const BLOCK_GENERATION_TYPES: readonly BlockGenerationType[] = [
  *   - the subtype is non-empty and in the closed set that coarse key allows,
  *     which for a registered step id is the EMPTY set (a step carries no
  *     subtype, so `convert-image:anything` is refused rather than waved
- *     through as "some future step subtype").
+ *     through as "some future step subtype");
+ *   - 🔴 EXCEPT under the ONE OPEN COARSE KEY, `step`, where the subtype is a
+ *     caller-supplied orchestrator `$type` and the membership test is replaced by
+ *     `isBlockPassThroughSubtype` — a shape test, not a weaker membership test.
+ *     It is still non-empty, still colon-free (a colon is not in its character
+ *     class) and additionally length-capped, so THE VALUE GRAMMAR holds on this
+ *     arm too. What it does NOT do is bound the subtype to anything this repo
+ *     knows; see THE ONE OPEN AXIS in the header for why no such set exists.
  *
  * 🔴 EVERY LOOKUP IS AN ARRAY MEMBERSHIP TEST, DELIBERATELY — never an index
  * into a registry object. `getStep(id)` / `getRecipe(id)` index plain object
@@ -242,26 +483,33 @@ export function isBlockGenerationType(value: unknown): value is BlockGenerationT
     return BLOCK_GENERATION_COARSE_TYPES.includes(value);
   }
 
-  // 🔴 ONE MEMBERSHIP TEST, NOT FOUR — AND THE MISSING THREE ARE A DELIBERATE
-  // DELETION, NOT AN OVERSIGHT. Separate checks for "the coarse key is known",
-  // "at most one colon" and "the subtype is non-empty" were all written, and a
-  // mutation sweep proved NONE of them could be turned red: `subtypesFor`
+  // 🔴 ONE RULE PER COARSE KEY, NOT FOUR CHECKS — AND THE MISSING THREE ARE A
+  // DELIBERATE DELETION, NOT AN OVERSIGHT. Separate checks for "the coarse key is
+  // known", "at most one colon" and "the subtype is non-empty" were all written,
+  // and a mutation sweep proved NONE of them could be turned red: the rule lookup
   // returns the EMPTY set for an unknown coarse key, and every member of every
-  // allowed set is colon-free and non-empty, so this single line already refuses
-  // `videoToVideo:txt2img`, `textToImage:img2img:edit` and `textToImage:`. A
-  // guard no test can turn red is worse than no guard — it reads as coverage
-  // while providing none, which is how a reviewer is talked out of looking.
+  // closed set is colon-free and non-empty, so the membership line below already
+  // refuses `videoToVideo:txt2img`, `textToImage:img2img:edit` and
+  // `textToImage:`. A guard no test can turn red is worse than no guard — it
+  // reads as coverage while providing none, which is how a reviewer is talked out
+  // of looking.
   //
-  // So the whole bound on the composite half is ONE rule in ONE place: the
-  // allowed-subtype set for this coarse key. The one way such a set could ever
-  // admit a colon is a REGISTRY ID containing one (recipe ids are interpolated
-  // verbatim). That is pinned at REGISTRATION time by the "no registry id
-  // contains a colon" invariant guard in `generation-type.test.ts` — where a new
-  // entry trips it — rather than here at runtime, where the value would already
-  // have been written.
-  return blockGenerationSubtypesFor(value.slice(0, firstColon)).includes(
-    value.slice(firstColon + 1)
-  );
+  // So the whole bound on the composite half is ONE rule in ONE place: whatever
+  // `blockGenerationSubtypeRule` says this coarse key allows. The one way a closed
+  // set could ever admit a colon is a REGISTRY ID containing one (recipe ids are
+  // interpolated verbatim). That is pinned at REGISTRATION time by the "no
+  // registry id contains a colon" invariant guard in `generation-type.test.ts` —
+  // where a new entry trips it — rather than here at runtime, where the value
+  // would already have been written.
+  //
+  // 🔴 THE SECOND BRANCH IS THE OPEN AXIS, AND IT IS THE ONLY THING THAT ADMITS A
+  // `step:` VALUE — delete it and `step:imageGen` is refused, which is what makes
+  // it killable rather than decorative. It replaces the membership test with the
+  // shape test for exactly one coarse key; the closed keys are untouched, so a
+  // value under them cannot reach the shape test and be waved through by it.
+  const rule = blockGenerationSubtypeRule(value.slice(0, firstColon));
+  const subtype = value.slice(firstColon + 1);
+  return rule === OPEN_SUBTYPE_AXIS ? isBlockPassThroughSubtype(subtype) : rule.includes(subtype);
 }
 
 /**
@@ -278,12 +526,23 @@ export function isBlockGenerationType(value: unknown): value is BlockGenerationT
  * dropping to it costs depth and nothing else, whereas returning `null` would
  * throw away a fact that is certainly correct. Returns `null` only when the
  * coarse key itself is not one this build knows.
+ *
+ * 🔴 THE GUARD IS `typeof subtype === 'string'`, NOT `subtype !== null`, AND THE
+ * DIFFERENCE IS A MEASURED DEFECT THE OPEN AXIS INTRODUCED. With the `!== null`
+ * form, `compose('step', undefined as never)` interpolates the STRING
+ * `"undefined"` and the shape test accepts it, so the one constructor mints
+ * `step:undefined` into a fee-bearing column — verified by execution, not
+ * reasoned. It was harmless while every subtype axis was a closed set
+ * (`textToImage:undefined` is in no set, so it degraded), which is exactly why
+ * the widening is what makes it reachable. Unreachable from the resolver today
+ * (its own `typeof $type !== 'string'` guard runs first), and pinned here anyway
+ * because this function is the one place a future writer will call.
  */
 export function composeBlockGenerationType(
   coarse: string,
   subtype: string | null
 ): BlockGenerationType | null {
-  if (subtype !== null) {
+  if (typeof subtype === 'string') {
     const composed = `${coarse}:${subtype}`;
     if (isBlockGenerationType(composed)) return composed;
   }
@@ -356,8 +615,18 @@ export type BlockGenerationTypeContext = {
  * must degrade to a NULL column exactly the way `sharedContentKey` /
  * `contentAuthorUserId` resolution degrades, never become a new way for the
  * spend path to throw. So this takes `unknown` and returns `null` for anything
- * it cannot type — a malformed body, a `kind` this build does not know, or a
- * `step` id that is not registered here.
+ * it cannot type — a malformed body, a `kind` this build does not know, a
+ * `step` id that is not registered here, or a `kind: 'step'` body that matches
+ * NEITHER arm (no registry id and no string `$type`).
+ *
+ * ⚠️ "TOTAL" IS SCOPED TO JSON-SHAPED INPUT, and saying so is more useful than
+ * implying more. A body carrying an own ACCESSOR on `kind`, `step`, `$type`,
+ * `mode` or `recipe` propagates whatever that getter throws — this function reads
+ * properties, it does not sandbox them. Unreachable through the wire, where the
+ * value is `JSON.parse`d (which cannot create accessors) and then REBUILT by a
+ * `.strict()` zod object; and true of the pre-existing `kind`/`step` reads too,
+ * so the pass-through arm widens the input surface rather than the claim. Same
+ * scoping `containsAirReference` documents one module over, for the same reason.
  *
  * NULL is a real, expected value. A row whose type could not be resolved is
  * better left untyped than stamped with a guess: a wrong type is worse than a
@@ -386,6 +655,31 @@ export function resolveBlockGenerationType(
   }
 
   if (kind === 'step') {
+    const step = (body as { step?: unknown }).step;
+
+    // 🔴 `kind: 'step'` HAS TWO ARMS AND `step === undefined` IS THE
+    // DISCRIMINATOR, not a missing field. `blockStepMemberSchema` nests a
+    // discriminated union on `step` itself, where the PASS-THROUGH arm declares
+    // `step: z.undefined()` — so a body reaching here with no `step` is the
+    // pass-through arm, carrying an orchestrator `$type` instead of a registry id.
+    // Before this arm existed here, every pass-through generation recorded NULL:
+    // the registry check below cannot match `undefined`, and `null` is a
+    // legitimate return for an unknown body, so nothing looked wrong.
+    if (step === undefined) {
+      const passThroughType = (body as { $type?: unknown }).$type;
+      // A body with neither `step` NOR a string `$type` is not a pass-through
+      // body this build can type — `null`, not a bare `step`. That keeps the
+      // contract above ("a `kind` this build does not know → null") true for
+      // junk like `{ kind: 'step', params: {} }`, which matches NEITHER arm of
+      // the wire schema and must not be recorded as a pass-through submit.
+      if (typeof passThroughType !== 'string') return null;
+      // NAMESPACED, and routed through the one constructor so the shape bound and
+      // the write-side re-check cannot disagree. An unusable `$type` (colon-
+      // bearing, over-long, whitespace — all of which the wire schema permits)
+      // degrades to the bare `step`, never to a raw value and never to a throw.
+      return composeBlockGenerationType(BLOCK_PASS_THROUGH_COARSE_TYPE, passThroughType);
+    }
+
     // The registered STEP ID — the app-facing wire commitment — never the
     // entry's `orchestratorType`. See the header note; this is the one place
     // the distinction is decided.
@@ -396,7 +690,6 @@ export function resolveBlockGenerationType(
     // reporting a step submit as an image generation. The wire schema rejects
     // that body, so this is defense in depth — but it is exactly the direction
     // in which a wrong value is worse than a null one.
-    const step = (body as { step?: unknown }).step;
     return typeof step === 'string' && (REGISTERED_STEP_IDS as readonly string[]).includes(step)
       ? (step as BlockGenerationType)
       : null;
@@ -409,10 +702,17 @@ export function resolveBlockGenerationType(
  * The COARSE key of a persisted value — everything before the first colon.
  *
  * 🔴 THE DECOMPOSITION RULE, EXPORTED SO THERE IS ONE COPY OF IT. The
- * (unbuilt) per-generation-type author fee keys on this, and it must keep
- * working unchanged as the subtype axis grows. Exported rather than left for
- * each reader to open-code `split(':')[0]`, which is the shape that regenerates
- * the same bug at every call site.
+ * per-generation-type author fee keys on this, and it must keep working
+ * unchanged as the subtype axis grows. Exported rather than left for each reader
+ * to open-code `split(':')[0]`, which is the shape that regenerates the same bug
+ * at every call site.
+ *
+ * ⚠️ IT HAS A PRODUCTION CALLER NOW, so this is no longer a helper waiting for
+ * one: `author-fee.ts`'s `resolveBlockAuthorFeeParams` bounds its key with
+ * `isBlockGenerationType`, then tries the FULL value and falls back to THIS
+ * decomposition, and labels its counters `coarse_type` with the result. That is
+ * the reason a `step:` row must never decompose to a kind key — under the
+ * platform table it would inherit that key's fee parameters.
  *
  * Returns `null` for a value this build does not recognise, so a caller cannot
  * key a fee on a string that was never a generation type.

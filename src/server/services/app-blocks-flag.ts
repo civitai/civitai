@@ -253,8 +253,10 @@ export const APP_BLOCKS_RUNTIME_FLAG = 'app-blocks-runtime-enabled';
  *   no-user caller of THIS helper starts passing. That is the intended reading
  *   for a kill-switch, and it is why the identity-shaped callers must not route a
  *   missing subject through it — see GLOBAL-EVAL SEMANTICS at the top of this
- *   file, and `blocks.router.ts::assertAppBlocksEnabledForTokenUser`, which
- *   refuses an unhydratable subject before it gets here.
+ *   file, and `block-token-access.service.ts::assertAppBlocksEnabledForTokenUser`,
+ *   which refuses an unhydratable subject before it gets here. (That helper lived
+ *   in `blocks.router.ts` until 2026-09-18; it moved to a service so the REST
+ *   route `/api/v1/blocks/me` could share the one implementation.)
  *
  * The FLAG_OVERRIDE/local-overrides env exists for unit tests + local dev that
  * need to flip the flag without standing up Flipt.
@@ -614,6 +616,57 @@ export const APP_BLOCKS_BACKPAY_FLAG = 'app-blocks-backpay-enabled';
  */
 export async function isAppBlocksBackpayEnabled(): Promise<boolean> {
   return isFlipt(APP_BLOCKS_BACKPAY_FLAG);
+}
+
+/**
+ * Dedicated GLOBAL flag for the PER-GENERATION AUTHOR FEE (slice 1).
+ *
+ * The fee is an additive, author-set, viewer-paid charge on each generation an
+ * app runs — `max(flatBuzz, pctOfBase × base_generation_buzz)`. Slice 1 computes
+ * it and reports it to Prometheus + Axiom so the settlement slice can be sized
+ * from real traffic; it moves no money and writes no row. This flag is what
+ * keeps even that computation off the production path until someone asks for it.
+ *
+ * GLOBAL (no user context), like `app-blocks-pipeline-enabled` /
+ * `app-blocks-backpay-enabled`: the only caller is the fire-and-forget
+ * spend-attribution writer, which is machine-side and has no session to segment
+ * on. The viewer identity is on the row, not in the gate.
+ *
+ * OPERATOR NOTE: `app-blocks-author-fee-enabled` EXISTS, as a PLAIN GLOBAL
+ * BOOLEAN — base `enabled: false`, NO segment, no variants, no rollouts. Keep it
+ * that shape. A global eval returns the flag's BASE value, so a segment can
+ * neither match nor restrict: base `false` + a rollout stays dark for everyone
+ * (safe but confusing), and base `true` + a rollout is ON for everyone while
+ * looking restricted (not safe). See GLOBAL-EVAL SEMANTICS at the top of this
+ * file.
+ *
+ * Fail-safe, code half: an unreachable Flipt — and an absent key — evaluates
+ * `false` unconditionally, so the computation cannot run by accident.
+ *
+ * ⚠️ FLAG STATE, AND IT IS WEAKER THAN AN EARLIER REVISION OF THIS COMMENT SAID.
+ * That revision claimed the flag does NOT exist as this merges and read the
+ * resulting dark posture as something that "cannot regress open". The key was
+ * created at base `false` after this branch's last commit, deliberately: an
+ * ABSENT key makes the evaluation throw, bypass its cache and log a
+ * `console.error` on every App Blocks generation submit, forever. Verified live
+ * in the `civitai-app` environment — `BOOLEAN_FLAG_TYPE`, `enabled: false`,
+ * empty `rules`/`rollouts`, global evaluation
+ * `enabled:false, reason:DEFAULT_EVALUATION_REASON, segmentKeys:[]`.
+ *
+ * So: still dark at merge, for a weaker reason. An absent flag had to be CREATED
+ * before the fee could be enabled at all; a present base-`false` flag is one
+ * toggle away, with no deploy and no review. The dark posture is flag state, not
+ * structure.
+ */
+export const APP_BLOCKS_AUTHOR_FEE_FLAG = 'app-blocks-author-fee-enabled';
+
+/**
+ * GLOBAL fail-closed gate for the per-generation AUTHOR FEE computation.
+ * See APP_BLOCKS_AUTHOR_FEE_FLAG for the fail-safe reasoning, and
+ * `~/server/services/blocks/author-fee` for what it gates.
+ */
+export async function isAppBlocksAuthorFeeEnabled(): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_AUTHOR_FEE_FLAG);
 }
 
 /**

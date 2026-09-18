@@ -1,5 +1,10 @@
 // src/pages/_app.tsx
 
+// Side-effect import: starts the bounded console/network snapshot a bug report attaches. FIRST,
+// and deliberately so — `console.error` leaves no buffer to replay, so anything React logs before
+// this module evaluates (a hydration mismatch above all, which is the case the feature exists for)
+// is unrecoverable. It is a no-op under SSR. See the file for the rest.
+import '~/utils/feedback/startBrowserErrorLog';
 import dynamic from 'next/dynamic';
 // Side-effect import: globally disables next/link route prefetching. Must run
 // before any <Link> mounts — see the file for rationale.

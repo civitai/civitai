@@ -16,6 +16,10 @@ import {
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
 import { authorizeBlockBridgeToken } from '~/server/services/blocks/block-bridge-auth.service';
+// THE App-Blocks kill-switch for a block-token subject. Lives in a service, not here,
+// because `src/pages/api/v1/blocks/me.ts` is its other caller and a Next API route must
+// not import this router. See that module's docblock for why a second copy is banned.
+import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
 import { assertSharedWriteTrust } from '~/server/services/blocks/block-write-trust.service';
 import {
   BLOCK_POST_DETAIL_MAX,
@@ -144,6 +148,7 @@ import {
 } from '~/server/services/blocks/block-workflow-access';
 import {
   appBlockTag,
+  BLOCK_STEP_NAME,
   buildCustomComfyWorkflowInput,
   buildTextToImageInput,
   createBlockCustomComfyStep,
@@ -182,6 +187,10 @@ import {
   planStepSpend,
   resolveStepVariant,
 } from '~/server/services/blocks/steps';
+import {
+  assertStepTypeAllowed,
+  PlatformInternalStepTypeError,
+} from '~/server/services/blocks/steps/orchestrator-denylist';
 // APP-FACING generation type for the spend-attribution row, resolved from the
 // submitted body. Imported (not open-coded at each of the three submit paths) so
 // the `kind` → key and step-id → key mapping has exactly one definition — and so
@@ -389,108 +398,6 @@ async function assertAppEditAccess(
   // The owner is already in hand from the proc's own AppBlock select — passed through
   // so the gate costs ZERO extra queries on the owner path.
   await assertAccess({ appBlockId: block.id, ownerUserId: block.app?.userId, userId });
-}
-
-/**
- * App-Blocks flag gate for the BLOCK-TOKEN-authed runtime procs
- * (estimate/submit/poll/cancelWorkflow, updateUserSettings).
- *
- * WHY THIS EXISTS — `enforceAppBlocksFlag` (the middleware) evaluates the flag
- * against `ctx.user` (the request's SESSION user). These procs are
- * `publicProcedure` authenticated by a BLOCK JWT, NOT a civitai.com session: a
- * page-host call carries a session, but a `dev:live` (localhost) call is
- * block-token-only and has NO session cookie → `ctx.user` is `undefined`. The
- * live `app-blocks-enabled` flag is base-`false` with a `moderators` segment, so
- * a no-user (global) eval can never match the segment → resolves `false` →
- * UNAUTHORIZED "App Blocks not enabled", even when the token's subject IS a
- * moderator. The flag must therefore be evaluated against the TOKEN's subject
- * user, not `ctx.user`.
- *
- * The flag stays a real kill-switch (a flip still shuts these procs down) — we
- * only fix the IDENTITY it's evaluated against. This does NOT widen access: with
- * the flag base-`false` + `moderators`/cohort segments as it is today, it resolves
- * `true` only for an in-segment subject and a non-mod outside the cohort resolves
- * `false` → blocked. An ANONYMOUS token (`sub:'anon'`) never reaches this function
- * at all — each of its 16 call sites runs `parseSubjectUserId(claims.sub)` and
- * throws UNAUTHORIZED on `null` first, so the no-subject case handled below is a
- * VANISHED user, not an anon caller. There are **16** such parse sites, not 17:
- * the 17th gate call is `assertViewerIsAppDeveloper`, which shares the parse site
- * of the enabled-gate call immediately above it rather than adding one, so the two
- * sets OVERLAP and must not be added. (No raw-occurrence total is recorded here,
- * and none should be: a grep for either identifier also matches this docblock's
- * own prose and the import at the top of the file, and for the gate it matches a
- * DIFFERENT function of the same name in `apps.router.ts`. Nor is a re-derivation
- * command given — the obvious one contains the identifier it searches for, so it
- * matches the very line it is written on and returns one too many. Enumerate the
- * call sites if you need the number; this paragraph has now been wrong four
- * rounds running, each time by writing a figure down.)
- * `authorizeBlockBridgeToken` (caller) already rejected invalid/expired
- * tokens, revoked instances and non-approved apps before this runs — the "revoked"
- * half of that sentence used to be false, because the caller ran a bare
- * `verifyBlockToken`, which never checked it. Every other belt (the per-scope
- * consent checks, budget cap, daily Buzz cap, the per-(user, app) consent budget,
- * reserveBlockBuzzSpend, getOrchestratorToken, forced-SFW) is unchanged — this
- * only swaps which identity the FLAG sees.
- *
- * Resolves the FULL server-side SessionUser via `sessionClient.getSessionUserById`
- * (the hub-backed resolver; never a client-supplied value) so the segment match
- * can't be spoofed AND every property `buildFliptContext` consumes is real.
- *
- * ## Why the full SessionUser, not a trimmed `{ id, isModerator }` cast
- *
- * `isAppBlocksEnabled({ user })` feeds `user` to `buildFliptContext`, which
- * reads `id`, `isModerator`, AND `tier` (deriving `isMember` from `tier`). A
- * trimmed `getUserById({ select: { id, isModerator } })` cast to SessionUser
- * (the #2740 shape) leaves `tier` undefined → the Flipt context carries the
- * type-default `tier:'free'` / `isMember:'false'` instead of the user's real
- * subscription tier. That is correct TODAY only because the live
- * `app-blocks-enabled` flag segments solely on `isModerator`. The moment the
- * flag is widened to segment on `tier`/region, a stale-`free` context would
- * silently mis-gate a paying user. Resolving the real SessionUser here (whose
- * `tier` is derived from the highest active subscription — not a User column,
- * so it CANNOT be fetched by widening the select) makes the gate stay correct
- * across any future widening. Pre-GA security review hardening.
- */
-async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void> {
-  // Full, authoritative SessionUser (cached; tier derived from active
-  // subscriptions) so buildFliptContext sees the user's REAL tier/isMember, not
-  // type-defaults. getSessionUserById returns the package SessionUser (loosely
-  // typed at this boundary — cast as bearer-token.ts does) or null for a vanished
-  // user. This is the LAST identity-shaped belt on most runtime procs now that the
-  // author gate is off them, so its fail-closed posture is not backed up by a
-  // second one — do not weaken it.
-  const user = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
-  // 🔴 REFUSE AN UNHYDRATABLE SUBJECT OUTRIGHT, before the flag is consulted.
-  // This used to pass `{ user: user ?? undefined }`, and the comment derived the
-  // denial from "global eval → flag false → blocked". The premise holds (a no-user
-  // eval carries entityId 'global' and an empty context, which no segment can
-  // match) but the conclusion came from `app-blocks-enabled` being base-`false`,
-  // not from the segment miss: a global eval returns the flag's own base value, so
-  // a base-`enabled: true` GA flip would have let a token whose subject no longer
-  // resolves through this gate. `isAppBlocksEnabled`'s no-user branch is KEPT for
-  // its real machine caller, so the refusal has to live here. Mechanism + the
-  // measurement against the real wasm engine: GLOBAL-EVAL SEMANTICS in
-  // `app-blocks-flag.ts`. Distinct message so the two refusals stay separable.
-  //
-  // 🔴 WATCHLISTED as `block-token-subject-refusal` in
-  // `scripts/compiled-branch-watchlist.mjs`. Unlike a type-level guard, this is a pure
-  // runtime branch, so a bundler that drops it re-opens the exposure with the source
-  // still correct — which is precisely what shipped in release 5.1.18 (civitai#3983).
-  // MOVING this branch is fine — the gate resolves its anchor from source at run time,
-  // so line numbers do not matter. DELETING it fails the production Docker build at
-  // `assert-compiled-branches.mjs`. And 🔴 REWORDING THE MESSAGE BELOW IS A WATCHLIST
-  // EDIT: that exact string IS this entry's anchor, so changing it makes the gate exit 2
-  // ("no line contains this anchor") — a failure that reads like gate breakage rather
-  // than like the copy change that caused it. Update the entry in the same commit.
-  if (!user) {
-    throw new TRPCError({
-      code: 'UNAUTHORIZED',
-      message: 'runtime block token subject could not be resolved',
-    });
-  }
-  if (!(await isAppBlocksEnabled({ user }))) {
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
-  }
 }
 
 /**
@@ -3941,10 +3848,11 @@ export const blocksRouter = router({
         } catch {
           /* best-effort: a read-model write failure never breaks the poll */
         }
-        // customComfy post-paid SETTLE-TO-ACTUAL (plan §5.3): refund the reserved
-        // CEILING down to the workflow's REAL accrued cost on BOTH reservation
-        // keys. Self-scoping + idempotent (a settle record exists ONLY for a
-        // customComfy submit and is consumed once via GET+DEL), and best-effort
+        // Post-paid SETTLE-TO-ACTUAL (plan §5.3): refund the reserved CEILING
+        // down to the workflow's REAL accrued cost on every reservation key.
+        // Self-scoping + idempotent (a settle record is written only by a submit
+        // that reserved a ceiling — customComfy, a post-paid registry step, or a
+        // pass-through step — and is consumed once via GET+DEL), and best-effort
         // (never throws) — so it is safe to call for ANY terminal workflow; a
         // txt2img / already-settled workflow simply no-ops.
         await settleCustomComfySpend({
@@ -4187,11 +4095,20 @@ export const blocksRouter = router({
       //      `textOutputs`/`textOutputWithheld` to populate, so wrapping would
       //      have nowhere to put a verdict. A block that wants a text step's
       //      output polls `pollWorkflow`, which is wrapped.
-      //   2. `images` IS POSTURE-GATED. `projectAppWorkflow` calls a registered
-      //      entry's `extractOutput` only when `postureProducesMedia(...)`, and a
-      //      text-posture entry cannot declare one at all
-      //      (`TextOutputSurface.extractOutput?: never`, registry clause 8-ii).
-      //      So a text step contributes NOTHING here — not even a url.
+      //   2. `images` IS POSTURE-GATED FOR A REGISTERED STEP. `projectAppWorkflow`
+      //      calls a registered entry's `extractOutput` only when
+      //      `postureProducesMedia(...)`, and a text-posture entry cannot declare
+      //      one at all (`TextOutputSurface.extractOutput?: never`, registry
+      //      clause 8-ii). So a registered text step contributes NOTHING here —
+      //      not even a url.
+      //
+      //      ⚠️ THAT NO LONGER COVERS THE WHOLE ARRAY, and saying so is the point
+      //      of restating it: the PASS-THROUGH arm's branch pushes media into
+      //      `images` with no registry entry and no posture at all. What bounds
+      //      that branch is different and narrower — it fires only for a step
+      //      carrying the server-stamped `BLOCK_STEP_NAME`, and it lifts only
+      //      values with the orchestrator `Blob` shape. Do not read "posture-
+      //      gated" as a property of `images`.
       //
       // 🔴 AND THE COST ARGUMENT, because it is the reason not to "just wrap it
       // for symmetry": this returns up to 50 workflows per call, so wrapping
@@ -4385,9 +4302,16 @@ export const blocksRouter = router({
       // HIGHEST-CONSEQUENCE of the three unwrapped `projectAppWorkflow`
       // consumers (see the enumeration at `pollWorkflow`): the urls below are
       // not merely returned, they are FETCHED and re-uploaded into public
-      // civitai `Image` rows. What makes it safe is the same posture gate the
-      // others rely on — `projectAppWorkflow` calls a registered entry's
-      // `extractOutput` only when `postureProducesMedia(...)`, and a
+      // civitai `Image` rows. ⚠️ THE POSTURE GATE IS NO LONGER THE WHOLE ANSWER
+      // HERE — the PASS-THROUGH arm contributes to `images` with no registry
+      // entry and no posture (see the enumeration at `pollWorkflow`). What holds
+      // for EVERY url on this path, registered or not, is the ingestion belt
+      // below: `persistBlockWorkflowOutputImage` host-allowlists each url
+      // (`isAllowedOutputHost`, re-validated per redirect hop), sniffs magic
+      // bytes, and creates the row at default ingestion so it meets a REAL scan.
+      // For a registered step the posture gate still applies on top —
+      // `projectAppWorkflow` calls a registered entry's `extractOutput` only when
+      // `postureProducesMedia(...)`, and a
       // text-posture entry may not declare one at all
       // (`TextOutputSurface.extractOutput?: never`, registry clause 8-ii) — so a
       // `'textOutput'` step contributes NO url here to be ingested. If that gate
@@ -4978,7 +4902,9 @@ export const blocksRouter = router({
       // whatIf", which was the defect, not the design. The textToImage path
       // below stays byte-identical (we only ADD a branch).
       if (input.body.kind === 'step') {
-        return await estimateStepWorkflow({ ctx, claims, body: input.body });
+        return isPassThroughStepBody(input.body)
+          ? await estimatePassThroughStepWorkflow({ ctx, claims, body: input.body })
+          : await estimateStepWorkflow({ ctx, claims, body: input.body });
       }
       // Context binding. A MODEL token pins `ctx.modelId`; the body must match
       // it. A PAGE token (ctx.entityType==='none') has NO model binding — it
@@ -5196,12 +5122,19 @@ export const blocksRouter = router({
       // `reserveAppSpend` per-app aggregate + dev-session) the other kinds use.
       // The textToImage path below stays byte-identical (we only ADD a branch).
       if (input.body.kind === 'step') {
-        return await submitStepWorkflow({
-          ctx,
-          claims,
-          body: input.body,
-          idempotencyKey: input.idempotencyKey,
-        });
+        return isPassThroughStepBody(input.body)
+          ? await submitPassThroughStepWorkflow({
+              ctx,
+              claims,
+              body: input.body,
+              idempotencyKey: input.idempotencyKey,
+            })
+          : await submitStepWorkflow({
+              ctx,
+              claims,
+              body: input.body,
+              idempotencyKey: input.idempotencyKey,
+            });
       }
       // Namespaced idempotency externalId for the orchestrator dedupe (item 2, gen
       // half). Per-app + per-user-scoped (the orchestrator additionally prefixes
@@ -5719,6 +5652,36 @@ export const blocksRouter = router({
       // (which runs AFTER the try/catch) can read the REALIZED per-account
       // debit — `submitted` is a try-block `const` and is out of scope there.
       let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
+      // Hoisted for the same reason as `realizedTransactions` above: the DARK
+      // per-generation author-fee observation needs the orchestrator's BASE cost,
+      // and it is NOT reachable from `snapshot`. 🔴 `BlockWorkflowSnapshot.cost` is
+      // deliberately `{ total }` ONLY — that is the block-facing WIRE shape, and
+      // widening it would publish the platform's cost breakdown to every
+      // third-party app for a number no app has asked for. So the base is read off
+      // the raw orchestrator response here and passed to the attribution writer,
+      // never surfaced to the block.
+      let realizedBaseCost: number | null = null;
+      // `WorkflowCost.variable` — TRUE when the price is a CAP that may settle
+      // lower. Hoisted and threaded for the SAME reason as the base: nothing
+      // downstream of this response can tell a cap apart from a final price, and
+      // the author fee must not be computed on one. See
+      // `BLOCK_AUTHOR_FEE_PRICE_IS_CAP`.
+      //
+      // 🔴 AN ABSENT FIELD IS TREATED AS A FINAL PRICE, AND THAT IS THE
+      // FAIL-OPEN DIRECTION. `WorkflowCost.variable` is `?: null | boolean`, so
+      // `=== true` collapses a genuine tri-state — cap / not-a-cap / the
+      // orchestrator did not say — into two, and the two it merges are
+      // "not-a-cap" and "unknown". An orchestrator that stops sending the field
+      // therefore silently resumes charging on every cap-priced generation
+      // instead of skipping them; nothing errors and no skip counter moves.
+      // Chosen deliberately over `!== false`, which fails the other way and
+      // would suppress the fee on every path the moment the field went missing.
+      // 🔴 INERT IN SLICE 1 — this observation moves no money, so today the
+      // consequence is only a biased sizing read. It becomes a MONEY question
+      // the moment slice 2 settles, and the tri-state policy (skip on unknown,
+      // charge on unknown, or require the field) is SLICE 2'S TO DECIDE, not
+      // this slice's. Do not quietly pick one here.
+      let realizedPriceIsCap: boolean | null = null;
       try {
         // Daily-boost autoclaim. Cost cleared the install's budget cap; check
         // whether the user's actual spendable Buzz can pay for it. If they're
@@ -5771,6 +5734,8 @@ export const blocksRouter = router({
         // validation inside `createBlockTextToImageStep` above.
         snapshot = snapshotFromWorkflow(submitted, { modelSubstitutions });
         realizedTransactions = submitted.transactions;
+        realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
+        realizedPriceIsCap = submitted.cost?.variable === true;
       } catch (e) {
         // No resolved submit → undo the reservation (net-equivalent to the old
         // "only record after a resolved submit" behavior) and propagate. Refund
@@ -5903,9 +5868,9 @@ export const blocksRouter = router({
         });
       }
 
-      // W3 flow A — buzz SPEND attribution (author bounty). The block
-      // burned the viewer's own Buzz on this generation; accrue the app
-      // author's platform-funded bounty share. EVERYTHING is server-derived
+      // W3 flow A — buzz SPEND attribution. The block burned the viewer's own
+      // Buzz on this generation; record the event and its money basis.
+      // EVERYTHING is server-derived
       // from the VERIFIED token claims (appId/appBlockId/blockInstanceId
       // from the JWT, spender from `sub`, author looked up from the app's
       // OauthClient) — there is NO client-supplied attribution, so spend is
@@ -5925,29 +5890,34 @@ export const blocksRouter = router({
           const { recordSpendAttribution } = await import(
             '~/server/services/blocks/buzz-attribution.service'
           );
-          // Accrue the author bounty off the REALIZED debit, not the
-          // whatif preflight ESTIMATE (`cost`). `snapshotFromWorkflow`
-          // surfaces the REAL submit's `workflow.cost.total` onto
-          // `snapshot.cost.total` (see workflow.service.ts:~49,61), read
-          // from the SAME resolved `submitted` snapshot this handler
-          // already holds (no re-fetch). The realized value is what the
-          // platform actually took, so the bounty matches the spend
-          // (the `share_le_gross` intent). This closes: (a) estimate >
-          // realized over-accrual; (b) a cache-hit / 0-realized that
-          // would otherwise still accrue off a non-zero estimate (author
-          // paid for a gen that cost nothing); (c) queue/surge/tier drift
-          // landing on platform bounty liability. Fall back to the
-          // estimate ONLY when the realized value is absent on the
+          // Record the attribution off the REALIZED debit, not the whatif
+          // preflight ESTIMATE (`cost`). ⚠️ This used to read "accrue the author
+          // bounty off the realized debit" — that platform-funded percentage
+          // rail is REMOVED and this row accrues nothing (`spend_share_pct = 0`,
+          // `app_owner_share_cents = 0`). The realized-vs-estimate choice
+          // survives the removal on its own terms: the row is the durable
+          // MONEY BASIS (`gross_value_cents`) for reporting today and for
+          // anything sized off it later, so a basis that overstates what the
+          // platform took is simply wrong.
+          //
+          // `snapshotFromWorkflow` surfaces the REAL submit's
+          // `workflow.cost.total` onto `snapshot.cost.total` (see
+          // workflow.service.ts:~49,61), read from the SAME resolved
+          // `submitted` snapshot this handler already holds (no re-fetch). The
+          // realized value is what the platform actually took, so the recorded
+          // basis matches the spend (the `share_le_gross` intent, still a live
+          // CHECK constraint). This closes: (a) estimate > realized
+          // overstatement; (b) a cache-hit / 0-realized that would otherwise
+          // record a non-zero basis for a generation that cost nothing; (c)
+          // queue/surge/tier drift inflating the recorded figure. Fall back to
+          // the estimate ONLY when the realized value is absent on the
           // snapshot (e.g. a snapshot that carries no cost).
           //
-          // SYBIL CAP NOTE (audit 🟡-2): there is NO per-APP aggregate
-          // accrual cap here — only the per-(USER, UTC-day) Buzz SPEND
-          // reservation above. A Sybil ring of many viewers could mint
-          // unbounded platform-funded bounty toward ONE app. This is
-          // accrual-only + mod-gated today, so it is not a merge blocker,
-          // but a per-app earnings cap / velocity check is a HARD
-          // prerequisite before the spend flow opens to non-mods (track
-          // alongside the Slice-4 payout gate + the rate sign-off).
+          // SYBIL CAP NOTE (audit 🟡-2): the per-APP aggregate ceiling this
+          // note used to ask for is `reserveAppSpend` (G8), taken above on
+          // the submit path. The platform-funded bounty it was originally
+          // written about no longer exists — nothing on this path accrues a
+          // payable share.
           // Record a PAYOUT-SAFE currency basis for this spend off the REAL
           // per-account debit. The orchestrator drains the offered currencies
           // in spend order (blue-FIRST — blue is the free generation Buzz) and
@@ -5959,22 +5929,22 @@ export const blocksRouter = router({
           //
           // Rule: a generation can split across FREE (blue) and PAID
           // (green/yellow) Buzz. ONLY the PAID portion earns — stamp the paid
-          // account and the SUMMED paid debit amount, so the author bounty
-          // accrues off what the user actually paid, never the free blue
+          // account and the SUMMED paid debit amount, so any future payout is
+          // based on what the user actually paid, never the free blue
           // portion. The offered currencies are ['blue', green|yellow] (never
           // both green and yellow), so at most ONE paid account is ever
           // drained; we NET that paid account's debits against any same-submit
           // credits (a partial refund / charge correction the orchestrator may
-          // emit in the SAME transactions.list) so the bounty accrues off what
-          // the user NET paid, not a gross debit that was partly refunded.
+          // emit in the SAME transactions.list) so the recorded money basis is
+          // what the user NET paid, not a gross debit that was partly refunded.
           //
           // When NO paid debit is present — a blue-only spend, OR a cache-hit /
           // 0-cost gen, OR a snapshot the orchestrator returned WITHOUT
           // transactions — we fall back to the conservative FREE floor (blue +
           // the realized/estimated cost), which `isPayoutEligibleBuzz`
-          // (computeSpendShare) EXCLUDES → ZERO bounty. This preserves the
-          // anti-farming guarantee: free-Buzz spend can never accrue a bounty,
-          // and an absent/unknown debit signal never pays. Forge-safe:
+          // EXCLUDES from payout eligibility. This preserves the anti-farming
+          // guarantee: free-Buzz spend can never become payable, and an
+          // absent/unknown debit signal never pays. Forge-safe:
           // `submitted` is the orchestrator's authoritative response, not
           // client input.
           // ALL paid-account (green/yellow) entries — debits AND credits — so we
@@ -6049,6 +6019,18 @@ export const blocksRouter = router({
             generationType: resolveBlockGenerationType(textToImageBody, {
               imageWorkflowType: generateInput.workflow,
             }),
+            // BASE generation cost, for the DARK per-generation author-fee
+            // observation only (never persisted). 🔴 `.base`, NOT `.total` and
+            // NOT `buzzAmount` above: `total` already carries the per-resource
+            // model licensing fees, the lineage fee and the viewer's tips, and
+            // the author fee is additive ON TOP of the base and stacks alongside
+            // those. Absent → the observation records a skip rather than
+            // computing against a number that means something else.
+            baseGenerationBuzz: realizedBaseCost,
+            // …and whether that price is a CAP. True → no fee is computed, under
+            // its own skip reason. Threaded from every submit path so the rule
+            // lives in ONE place.
+            generationPriceIsCap: realizedPriceIsCap,
           });
         })().catch(() => {
           /* best-effort: a failed attribution write never breaks submit */
@@ -6228,14 +6210,75 @@ export const blocksRouter = router({
    * db read — the ban/mute lookup hits the PRIMARY, so a hammering block must be
    * bounded) → the /blocks/me identity read.
    *
-   * The identity read mirrors src/pages/api/v1/blocks/me.ts EXACTLY: `dbWrite`
-   * (NOT the replica) so a banned/muted-during-replication-lag viewer can't
-   * surface as active; 404 (NOT_FOUND) on a vanished/deleted user; 403
-   * (FORBIDDEN) on a banned viewer (a token minted just before a ban is valid
-   * for up to ~15min — reject here as a second line of defense); a muted viewer
-   * passes through with `status: 'muted'` so the block can suppress write UI.
-   * `buzzBudget` is surfaced from the token claim (if present) so a block can
-   * clamp UI without a second call — same shape /me returns.
+   * ## WHAT THIS SHARES WITH `src/pages/api/v1/blocks/me.ts`, AND WHAT IT DOES NOT
+   *
+   * 🔴 THIS BLOCK SAID THE TWO MIRRORED EACH OTHER "EXACTLY" AND THAT WAS FALSE FOR
+   * MONTHS. `me.ts` carried a hardcoded `if (!user.isModerator) → 403` and NO
+   * App-Blocks flag gate; this proc had the flag gate and no mod literal. So for a
+   * hand-allowlisted NON-moderator inside the live `app-blocks-enabled` audience the
+   * REST door 403'd while this one returned 200 — invisible only because the audience
+   * was mostly moderators, and guaranteed to surface for every user admitted by the GA
+   * widen. Resolved 2026-09-18 by DROPPING the literal (Flipt is the gate) and giving
+   * `me.ts` this proc's flag gate and rate limiter. Both now run the SAME
+   * `assertAppBlocksEnabledForTokenUser`, imported from
+   * `~/server/services/blocks/block-token-access.service` rather than spelled twice,
+   * and the same `checkBlockCatalogRateLimit` bucket.
+   *
+   * SHARED — and this list is exactly what `blocks.router.me-parity.test.ts` EXERCISES,
+   * not a superset of it. Each item below is a case in that file, driving both doors with
+   * one subject and comparing the whole verdict:
+   *   - the App-Blocks kill-switch on the token subject (one shared implementation);
+   *   - the catalog rate-limit bucket, same helper, same key, same position;
+   *   - `dbWrite` (NOT the replica), so a banned/muted-during-replication-lag viewer
+   *     cannot surface as active;
+   *   - refusal on a vanished/deleted user, and on a banned viewer (a token minted just
+   *     before a ban is valid for up to ~15min);
+   *   - a muted viewer passing through with `status: 'muted'`;
+   *   - the same `{ id, username, status, buzzBudget }` body.
+   *
+   * ⚠️ NOT SHARED. An earlier draft of this block listed the scope check and the non-anon
+   * subject check under SHARED — they are NOT, and saying so re-made the same kind of
+   * unbacked promise the "EXACTLY" claim was. Both doors REFUSE in every case below; what
+   * differs is the status, the text, or where the belt lives. None is an allow/deny
+   * inversion, and none is pinned by the parity test, which says so in its own header.
+   *   - THE PRE-BELTS ARE NOT THE SAME SET. Token validity, revocation and
+   *     approved-status are common (this proc via `authorizeBlockBridgeToken`; the REST
+   *     door inside `withBlockScope`, before its handler is entered). But `withBlockScope`
+   *     ALSO runs `enforceContextBinding`, which this proc has no equivalent of: it is
+   *     deny-by-default over every scope on the token, so a token carrying an unknown
+   *     scope, or `models:read:self` bound to a modelId the request does not name, is
+   *     refused on REST and admitted here. The REST door is the stricter one.
+   *   - THE CONSENT SCOPE REFUSAL differs in text: REST answers 403
+   *     `missing required scope: user:read:self` (from the wrapper), this proc 403
+   *     `block lacks user:read:self scope`. Same code, same decision.
+   *   - THE ANON-SUBJECT REFUSAL differs in status: REST 403, this proc 401. ⚠️ It does
+   *     NOT differ in the way an earlier revision of this block claimed. That revision
+   *     quoted `me.ts`'s handler literal (`Anonymous block tokens may not call
+   *     /blocks/me`), which PRODUCTION NEVER EMITS: `me.ts` declares
+   *     `requiredScope: 'user:read:self'`, so `withBlockScope` runs
+   *     `enforceContextBinding` first, and that refuses an anon subject holding a `:self`
+   *     scope with `user:read:self requires authenticated subject`. The handler's own
+   *     branch is unreachable defence-in-depth. The 403-vs-401 difference is real; the
+   *     text quoted for it was not.
+   *   - 🔴 A MALFORMED `sub` DIVERGES ON NEITHER DOOR, and an earlier revision of this
+   *     block asserted it did — that this proc let `parseSubjectUserId`'s bare
+   *     `ForbiddenError` escape as a 500, called it "a pre-existing gap", and invited a
+   *     fix. That was WRONG, and wrong in the more dangerous direction: it reported a
+   *     live 500-leak that cannot occur, in the document a maintainer treats as
+   *     authoritative. `verifyBlockToken` rejects any `sub` that is not `anon` or
+   *     `user:<1-12 digits>` BEFORE returning claims (`isValidSubject`,
+   *     `block-scope.middleware.ts`), and BOTH doors go through it — this proc via
+   *     `authorizeBlockBridgeToken`, the REST door via the wrapper. So a malformed `sub`
+   *     is a 401 `invalid block token` on both, and both handlers' malformed-`sub`
+   *     branches are unreachable belt-and-braces. Do not "fix" either one.
+   *   - HOW A REFUSAL IS SPELLED. This proc throws `TRPCError`; `me.ts` writes an HTTP
+   *     status. For the kill-switch branch that status is DERIVED from this side's code
+   *     via tRPC's own `getHTTPStatusCodeFromError`; every other status on that route is
+   *     a literal that agrees with this one by inspection. `me.ts` deliberately does NOT
+   *     echo the gate's message — see its comment for the two reasons — so the parity
+   *     test compares STATUS, not text, on that one branch.
+   *   - `me.ts` additionally answers 405 on a non-GET and 401 on absent claims. Neither
+   *     is reachable through tRPC, which has no method and no claim-less call.
    */
   getMyViewer: publicProcedure
     // Block-JWT-authed (no session for dev:live) — flag evaluated against the
@@ -7418,10 +7461,13 @@ function compareSemver(a: string, b: string): number {
 // regardless of which account type pays.
 //
 // PAYOUT-SAFETY: widening the SPENDABLE currencies here is decoupled from
-// payout eligibility. The author-bounty rail (#2605) excludes only free
-// (blue) Buzz via `isPayoutEligibleBuzz` at the payout boundary
-// (`computeSpendShare`); green and yellow are PAID and payout-eligible. So
-// this widening can NEVER make free Buzz become platform-funded farming.
+// payout eligibility. Free (blue) Buzz is excluded by `isPayoutEligibleBuzz`
+// when the realized debit is narrowed to its PAID portion, BEFORE that becomes a
+// spend row's money basis; green and yellow are PAID and payout-eligible. So
+// this widening can NEVER make free Buzz payable. (Corrected: this used to name
+// "the payout rail (#2605)" as the enforcement point. #2605 reads the PURCHASE
+// table only and never reads a spend row, and the spend bounty is removed — the
+// exclusion happens at the WRITE boundary here, not at a payout boundary.)
 // See buzz-helpers.ts.
 function resolveBlockCurrencies(isGreen: boolean) {
   return BuzzTypes.toOrchestratorType(getBlockAllowedAccountTypes(isGreen));
@@ -8002,6 +8048,13 @@ async function submitCustomComfyWorkflow(opts: {
   // `submitted` is a try-block `const` and is out of scope there. Mirrors the
   // txt2img path (~:3646).
   let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
+  // The orchestrator's BASE cost, for the DARK author-fee observation. Hoisted
+  // for the same reason, and read off the raw response rather than `snapshot`,
+  // for the reason spelled out on the txt2img path.
+  let realizedBaseCost: number | null = null;
+  // `WorkflowCost.variable` — TRUE when the price is a CAP that may settle lower;
+  // the author fee is skipped on one. Same hoist, same reason.
+  let realizedPriceIsCap: boolean | null = null;
   // Captured just before the orchestrator submit → the server-side proxy for the
   // job's submit instant, so the settle-time wall-clock metric measures
   // submit→terminal-observation (incl. GPU queue-wait). Observability-only.
@@ -8046,6 +8099,8 @@ async function submitCustomComfyWorkflow(opts: {
     });
     snapshot = snapshotFromWorkflow(submitted);
     realizedTransactions = submitted.transactions;
+    realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
+    realizedPriceIsCap = submitted.cost?.variable === true;
   } catch (e) {
     await refundBlockBuzzReservation(reservation, ceiling);
     if (appSpendReserve) {
@@ -8117,7 +8172,7 @@ async function submitCustomComfyWorkflow(opts: {
   // ── Durable audit + attribution (parity with the txt2img path ~:3725,3810).
   // The customComfy branch early-returned before these writes, so a successful
   // recipe generation billed real Buzz but left NO durable trail: no
-  // per-user activity row (block_scope_invocations) and no author-bounty basis
+  // per-user activity row (block_scope_invocations) and no spend basis
   // (block_spend_attribution). Both are ADDED here, server-derived from the
   // VERIFIED token claims (never client input), fire-and-forget with each
   // write's OWN try/catch so an audit failure can never add latency to — or
@@ -8161,9 +8216,14 @@ async function submitCustomComfyWorkflow(opts: {
     });
   }
 
-  // (2) block_spend_attribution — the author-bounty spend basis (TRACK-ONLY,
-  // status='tracked' / rate_card_version='unrated' / share=0 today; the payout
-  // rail backpays later). One row per generation that spends the viewer's Buzz,
+  // (2) block_spend_attribution — the spend basis (TRACK-ONLY, status='tracked'
+  // / rate_card_version='unrated' / share=0). ⚠️ NOT an "author-bounty" basis
+  // any more, and NOTHING backpays it: the platform-funded percentage bounty was
+  // superseded by the additive, author-set, viewer-paid per-generation author fee
+  // and its backpay rail was removed, so these rows are never confirmed or paid.
+  // Their LIVE consumer is `app-analytics.service.ts`, which aggregates the table
+  // for the app-owner dashboard — that is why the table is still written.
+  // One row per generation that spends the viewer's Buzz,
   // server-derived from the verified block-JWT (appId/appBlockId/blockInstanceId
   // from the token, spender from `sub`, author looked up from the app's
   // OauthClient) — no client-supplied attribution, so it is forge-safe.
@@ -8189,7 +8249,9 @@ async function submitCustomComfyWorkflow(opts: {
         isGreen,
         // Fall back to the realized snapshot cost (then the reserved ceiling)
         // when no paid debit is surfaced — the conservative FREE floor, which
-        // isPayoutEligibleBuzz EXCLUDES → zero bounty (anti-farming preserved).
+        // isPayoutEligibleBuzz EXCLUDES → zero payable basis (anti-farming
+        // preserved). "Bounty" here was the removed platform-funded rail; the
+        // exclusion still holds, it just bounds the recorded basis now.
         snapshot.cost?.total ?? ceiling
       );
       await recordSpendAttribution({
@@ -8214,6 +8276,13 @@ async function submitCustomComfyWorkflow(opts: {
         // parsed. Non-throwing: an unresolvable sub-axis degrades to the bare
         // `customComfy` key, an unresolvable body to NULL.
         generationType: resolveBlockGenerationType(body),
+        // BASE generation cost for the DARK author-fee observation — `.base`,
+        // never `.total` (which already carries licensing fees and tips) and
+        // never `buzzAmount`. Same rule as the txt2img path.
+        baseGenerationBuzz: realizedBaseCost,
+        // …and whether that price is a CAP. True → no fee is computed, under its
+        // own skip reason. Same rule, same single place, as the txt2img path.
+        generationPriceIsCap: realizedPriceIsCap,
       });
     })().catch(() => {
       /* best-effort: a failed attribution write never breaks submit */
@@ -8251,9 +8320,89 @@ async function submitCustomComfyWorkflow(opts: {
 // ─────────────────────────────────────────────────────────────────────────────
 
 type StepBody = Extract<BlockWorkflowBody, { kind: 'step' }>;
+/** The PASS-THROUGH arm — carries an orchestrator `$type` + its native input. */
+type PassThroughStepBody = Extract<StepBody, { $type: string }>;
+/** The REGISTRY arm — names a registered capability by id. Unchanged. */
+type RegistryStepBody = Exclude<StepBody, PassThroughStepBody>;
 
-/** Orchestrator step name stamped on a block step submission. */
-const BLOCK_STEP_NAME = 'block-step';
+/**
+ * Narrow a `kind:'step'` body to its PASS-THROUGH arm.
+ *
+ * 🔴 KEYED ON THE VALUE OF `step`, NOT `'step' in body`. The pass-through arm
+ * declares `step: z.undefined()`, so a body carrying `step` as an own key is a
+ * LEGAL pass-through body (an SDK spreading an optional variable produces one,
+ * and `undefined` survives superjson); a presence test routes it to
+ * `resolveBlockStep`, which answers BAD_REQUEST. Same rule as
+ * `isInlineComfyBody`.
+ */
+function isPassThroughStepBody(body: StepBody): body is PassThroughStepBody {
+  return body.step === undefined;
+}
+
+/**
+ * Settle-time observability labels for a pass-through submit.
+ *
+ * CONSTANT, never the submitted `$type` — `civitai_app_block_customcomfy_*` is
+ * labelled by these and the `$type` set is open by construction on this arm, so
+ * labelling by it would let an app grow the metric's cardinality at will. Same
+ * reasoning (and same shape) as `INLINE_ENGINE_LABEL` / `INLINE_RECIPE_LABEL`.
+ */
+const PASS_THROUGH_ENGINE_LABEL = 'passthrough';
+const PASS_THROUGH_RECIPE_LABEL = '__passthrough__';
+
+/**
+ * THE denylist call for the pass-through arm, shared by the estimate and the
+ * submit so a caller can never probe a `$type` it may not run.
+ *
+ * 🔴 RE-THROWN AS `FORBIDDEN` WITH THE ORIGINAL AS `cause`, not swallowed and not
+ * left raw. Raw, tRPC's `getTRPCErrorFromUnknown` maps an unrecognized throw to
+ * INTERNAL_SERVER_ERROR (see `parseStepParams` for the same measurement), so a
+ * correct refusal would read as a platform fault. Converted without `cause`, the
+ * refusal becomes indistinguishable from every other FORBIDDEN on this path —
+ * and a test asserting "the denylist refused it" would really be asserting
+ * "something refused it", which stays green after the denylist is deleted. The
+ * `cause` is what keeps that test honest; it is the reason
+ * `PlatformInternalStepTypeError` is its own class.
+ */
+function assertPassThroughStepTypeAllowed($type: string): void {
+  try {
+    assertStepTypeAllowed($type, 'block pass-through step');
+  } catch (e) {
+    if (e instanceof PlatformInternalStepTypeError) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: e.message, cause: e });
+    }
+    throw e;
+  }
+}
+
+/**
+ * Build the orchestrator step a pass-through body submits.
+ *
+ * 🔴 `input` IS FORWARDED UNMODIFIED — no merge, no defaulting, no server-owned
+ * key. Pinned byte-for-byte on BOTH the quote and the submit in
+ * `src/server/routers/__tests__/blocks.router.workflow.test.ts`.
+ *
+ * ⚠️ A DRAFT OF THIS LINE CLAIMED THE TEST PINS IT "BY REFERENCE IDENTITY, so a
+ * spread cannot pass". It does not, and a `{ ...body.input }` mutant SURVIVED
+ * the whole suite — correctly, because a shallow spread of this object is
+ * observationally identical (same keys, same nested references, same JSON). Do
+ * not re-add that claim. What the identity assertion in that suite DOES pin is
+ * that the quote and the submit hold ONE step object, which is what makes
+ * "the quote priced the same work" true; building the step twice kills it.
+ *
+ * `timeout` is the PHYSICAL Buzz ceiling, derived from the single declared
+ * `maxBuzz` exactly as the inline-comfy arm derives it: `stepTimeoutSeconds =
+ * maxBuzz`, so `maxBuzz === ceil(stepTimeoutSeconds)` is not asserted, it is
+ * unrepresentable.
+ */
+function buildPassThroughOrchestratorStep(body: PassThroughStepBody) {
+  return {
+    $type: body.$type,
+    name: BLOCK_STEP_NAME,
+    timeout: formatStepTimeout(body.maxBuzz),
+    input: body.input,
+  };
+}
 
 /**
  * Resolve the registry entry from the (schema-gated) `step` id. The wire
@@ -8261,7 +8410,7 @@ const BLOCK_STEP_NAME = 'block-step';
  * the union, so this never returns undefined for a schema-valid body — the
  * guard is defense-in-depth against a registry/schema desync. Fail closed.
  */
-function resolveBlockStep(body: StepBody) {
+function resolveBlockStep(body: RegistryStepBody) {
   const step = getStep(body.step);
   if (!step) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'unknown step type' });
@@ -8510,7 +8659,11 @@ function buildStepOrchestratorStep(
  * `assertStepRequestAllowed`; that call is bounded by the orchestrator client's
  * own whatIf attempt timeout and retry budget.
  */
-async function estimateStepWorkflow(opts: { ctx: Context; claims: BlockClaims; body: StepBody }) {
+async function estimateStepWorkflow(opts: {
+  ctx: Context;
+  claims: BlockClaims;
+  body: RegistryStepBody;
+}) {
   const { ctx, claims, body } = opts;
   const userId = await assertStepRequestAllowed(claims);
   const step = resolveBlockStep(body);
@@ -8672,7 +8825,7 @@ async function quoteStepBuzz(opts: {
 async function submitStepWorkflow(opts: {
   ctx: Context;
   claims: BlockClaims;
-  body: StepBody;
+  body: RegistryStepBody;
   /** OPTIONAL client idempotency key → orchestrator externalId. */
   idempotencyKey?: string;
 }) {
@@ -9027,6 +9180,13 @@ async function submitStepWorkflow(opts: {
   // Hoisted out of the try so the post-submit spend-attribution closure can read
   // the REALIZED per-account debit.
   let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
+  // The orchestrator's BASE cost, for the DARK author-fee observation. Hoisted
+  // for the same reason, and read off the raw response rather than `snapshot`,
+  // for the reason spelled out on the txt2img path.
+  let realizedBaseCost: number | null = null;
+  // `WorkflowCost.variable` — TRUE when the price is a CAP that may settle lower;
+  // the author fee is skipped on one. Same hoist, same reason.
+  let realizedPriceIsCap: boolean | null = null;
   const submittedAt = Date.now();
   try {
     // `orchestratorStep` + `tags` were built above the quote — the SAME objects
@@ -9046,6 +9206,8 @@ async function submitStepWorkflow(opts: {
     });
     snapshot = snapshotFromWorkflow(submitted);
     realizedTransactions = submitted.transactions;
+    realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
+    realizedPriceIsCap = submitted.cost?.variable === true;
   } catch (e) {
     await refundBlockBuzzReservation(reservation, reserveBuzz);
     if (appSpendReserve) {
@@ -9254,7 +9416,7 @@ async function submitStepWorkflow(opts: {
 
   // ── Durable audit + attribution (parity with the txt2img + customComfy paths).
   // A step generation bills real Buzz, so it must leave the same durable trail:
-  // a per-user activity row and an author-bounty spend basis. Both are
+  // a per-user activity row and a spend-attribution basis. Both are
   // server-derived from the VERIFIED token claims (never client input), and both
   // are fire-and-forget with their OWN try/catch so an audit failure can never
   // add latency to — or break — the already-billed submit response.
@@ -9359,6 +9521,13 @@ async function submitStepWorkflow(opts: {
         // step invocation row's `detail`. `isBlockGenerationType` refuses
         // `convert-image:<anything>` for exactly that reason.
         generationType: resolveBlockGenerationType(body),
+        // BASE generation cost for the DARK author-fee observation — `.base`,
+        // never `.total` (which already carries licensing fees and tips) and
+        // never `buzzAmount`. Same rule as the txt2img path.
+        baseGenerationBuzz: realizedBaseCost,
+        // …and whether that price is a CAP. True → no fee is computed, under its
+        // own skip reason. Same rule, same single place, as the txt2img path.
+        generationPriceIsCap: realizedPriceIsCap,
       });
     })().catch(() => {
       /* best-effort: a failed attribution write never breaks submit */
@@ -9366,6 +9535,595 @@ async function submitStepWorkflow(opts: {
   }
 
   // Same object already cached under the idempotency key (see genResult above).
+  return genResult;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// App Blocks PASS-THROUGH bridge (`kind: 'step'` with a bare `$type`).
+//
+// A pass-through body carries `{ kind, $type, input, maxBuzz }`. The server
+// translates NOTHING: `input` is forwarded to the orchestrator byte-for-byte,
+// and the only thing standing between an app and a `$type` is
+// `PLATFORM_INTERNAL_STEP_TYPES`.
+//
+// 🔴 WHAT THIS ARM DOES NOT DO, and why, is on `blockPassThroughStepBodySchema`
+// in `schema/blocks/workflow.schema` — the wire shape that admits the gap. One
+// copy, because four operator decisions stated twice disagree the first time one
+// of them changes.
+//
+// 🔴 THE SPEND SHAPE IS THE INLINE-COMFY ONE, REUSED RATHER THAN REINVENTED. The
+// app declares ONE number; the server derives `stepTimeoutSeconds = maxBuzz` and
+// stamps it as the step timeout, which is the physical per-job Buzz cap. The
+// reservation is `max(maxBuzz, whatIf quote)` — the quote is what makes a cap
+// counter honest when the orchestrator prices a `$type` above the declared
+// ceiling — and the whole post-paid belt (static gate, three reservations,
+// settle-to-actual at terminal) is the one `customComfy` already runs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * PASS-THROUGH ESTIMATE. Quotes the orchestrator, floored at the declared
+ * `maxBuzz`.
+ *
+ * 🔴 THE DENYLIST RUNS HERE TOO — an estimate makes a real `whatif:true` submit.
+ *
+ * 🔴 NEVER SHOW LESS THAN THE SUBMIT WILL RESERVE, same rule as the registry
+ * arm's estimate: the submit reserves `max(maxBuzz, quoted)`, so the estimate
+ * computes that same expression rather than preferring the quote.
+ *
+ * The no-quote FALLBACK is `maxBuzz`, NOT an error — and unlike the registry
+ * arm's submit, the pass-through SUBMIT does not fail closed on a missing quote
+ * either. That is an operator decision ("say so rather than silently refusing
+ * those types"), not a derivation, and the honest statement of what it costs is
+ * at the `ceiling` in `submitPassThroughStepWorkflow`: the stamped `timeout`
+ * bounds a GPU-second-metered step and nothing else, so for a per-unit-priced
+ * `$type` an unquotable submit reserves `maxBuzz` and may bill more.
+ */
+async function estimatePassThroughStepWorkflow(opts: {
+  ctx: Context;
+  claims: BlockClaims;
+  body: PassThroughStepBody;
+}) {
+  const { ctx, claims, body } = opts;
+  const userId = await assertStepRequestAllowed(claims);
+  assertPassThroughStepTypeAllowed(body.$type);
+
+  const orchestratorStep = buildPassThroughOrchestratorStep(body);
+  // The token mint is INSIDE the quote's catch on this path and outside it on
+  // the submit's, which is why it is threaded in rather than minted by the quote:
+  // an estimate must degrade to the declared ceiling when the mint fails, while a
+  // submit that cannot mint must throw before it reserves anything.
+  const token = await getOrchestratorToken(userId, ctx).catch(() => null);
+  let quotedBuzz: number | null = null;
+  if (token) {
+    quotedBuzz = await quotePassThroughBuzz({
+      claims,
+      body,
+      orchestratorStep,
+      token,
+      phase: 'estimate',
+    });
+  } else {
+    recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, 'estimate_absent');
+  }
+
+  return {
+    snapshot: {
+      // Non-empty sentinel: the SDK's inbound validator drops empty-workflowId
+      // snapshots. The block treats estimate as a cost quote and never polls it.
+      workflowId: 'wf_estimate',
+      status: 'pending' as const,
+      cost: { total: Math.max(body.maxBuzz, quotedBuzz ?? body.maxBuzz) },
+    },
+  };
+}
+
+/**
+ * The orchestrator's live price for an already-built pass-through step, or
+ * `null` if it could not be had.
+ *
+ * Only the orchestrator ROUND-TRIP is swallowed. The `$type` refusal is
+ * deliberately outside this, at both call sites, so a deterministic denial can
+ * never degrade into "no quote" and then into a price. (The registry arm learned
+ * that the expensive way; see the note at `estimateStepWorkflow`'s build site.)
+ *
+ * 🔴 EVERY OUTCOME IS COUNTED, and it matters MORE here than on the registry arm
+ * it borrows the counter from. There a missing quote fails the submit closed, so
+ * the outage is loud; here the arm deliberately falls back to the declared
+ * `maxBuzz` and proceeds — so without this pair, an orchestrator that stopped
+ * pricing would move every pass-through job onto its declared ceiling with
+ * nothing anywhere moving. Read the ratio, not `estimate_absent` alone.
+ *
+ * 🔴 LABELLED WITH A CONSTANT, never the submitted `$type` — `step` is a metric
+ * label and the `$type` set is open by construction on this arm. Same reasoning
+ * as `PASS_THROUGH_ENGINE_LABEL`.
+ */
+async function quotePassThroughBuzz(opts: {
+  claims: BlockClaims;
+  body: PassThroughStepBody;
+  orchestratorStep: ReturnType<typeof buildPassThroughOrchestratorStep>;
+  token: string;
+  /**
+   * 🔴 THE PHASE, THREADED, NOT ASSUMED. `estimate_*` is defined by the counter
+   * as "one emit per estimate, BEFORE any spend exists". This helper serves both
+   * call sites, so a fixed label would file the one event that precedes a
+   * reservation — a submit proceeding at the declared ceiling because no quote
+   * was had — into the estimate bucket, blended with estimate traffic under one
+   * constant `step` label.
+   *
+   * 🔴 BOTH PHASES EMIT A PAIR. Without a success-side emit, `absent` has no
+   * denominator and falls when submit volume falls, which reads as healthy.
+   */
+  phase: 'estimate' | 'submit';
+}): Promise<number | null> {
+  const { claims, body, orchestratorStep, token, phase } = opts;
+  const [quoted, absent] =
+    phase === 'estimate'
+      ? (['estimate_quoted', 'estimate_absent'] as const)
+      : (['quoted', 'absent'] as const);
+  try {
+    const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+    const quote = await submitWorkflow({
+      token,
+      body: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        steps: [orchestratorStep as any],
+        tags: buildWorkflowTags(claims, PASS_THROUGH_ENGINE_LABEL, 'step'),
+        currencies: resolveBlockCurrenciesForAccount(isGreen, undefined),
+        ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+      },
+      query: { whatif: true },
+    });
+    const total = quote.cost?.total;
+    if (typeof total !== 'number' || !Number.isFinite(total)) {
+      recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, absent);
+      return null;
+    }
+    recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, quoted);
+    return Math.ceil(total);
+  } catch {
+    recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, absent);
+    return null;
+  }
+}
+
+/**
+ * PASS-THROUGH SUBMIT. Post-paid, sharing `submitCustomComfyWorkflow`'s
+ * reservation order, refund rules and settle machinery — the two must not drift.
+ *
+ * 🔴 IT DIFFERS FROM THAT SIBLING IN ONE PLACE: it takes a `whatif` quote before
+ * reserving, because the app's declared `maxBuzz` is not the only price this arm
+ * can face. `submitCustomComfyWorkflow` makes no quote at all — its ceiling IS
+ * the declared number.
+ */
+async function submitPassThroughStepWorkflow(opts: {
+  ctx: Context;
+  claims: BlockClaims;
+  body: PassThroughStepBody;
+  /** OPTIONAL client idempotency key → orchestrator externalId. */
+  idempotencyKey?: string;
+}) {
+  const { ctx, claims, body, idempotencyKey } = opts;
+
+  const blockExternalId = idempotencyKey
+    ? composeBlockExternalId(claims.appBlockId, idempotencyKey)
+    : mintServerBlockExternalId();
+
+  const userId = await assertStepRequestAllowed(claims);
+  // DEFENSE-IN-DEPTH, AND NOT REACHABLE TODAY — say so rather than counting it as
+  // coverage. The `submitWorkflow` procedure rejects a token without a positive
+  // `buzzBudget` before it dispatches here, so no request arrives with one
+  // missing; a mutation of THIS line survives the suite, measured. It re-narrows
+  // the claim to a number the static gate below can compare against, and keeps
+  // the helper safe on its own terms if it ever gains a caller that does not
+  // pre-check — the same belt, for the same reason, as the customComfy sibling.
+  if (typeof claims.buzzBudget !== 'number' || claims.buzzBudget <= 0) {
+    // A DISTINCT message on purpose: the outer gate's is byte-identical, so a
+    // test matching the shared text cannot say which one fired — which is how
+    // "this copy is unreachable" became a claim resting on a comment.
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'pass-through step: block token missing budget',
+    });
+  }
+
+  // 🔴 THE ONE CONTROL, AND IT RUNS BEFORE EVERYTHING THAT COSTS SOMETHING —
+  // before the orchestrator token, before the quote, before every reservation.
+  // A refusal here therefore costs no orchestrator call and has nothing to
+  // refund. A denylist the wire does not consult is decoration.
+  assertPassThroughStepTypeAllowed(body.$type);
+
+  const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+  // A pass-through body carries no `accountType` (its `.strict()` wire shape has
+  // no such field), so currency selection is Auto — the domain-allowed set,
+  // drained blue-first.
+  const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
+
+  const orchestratorStep = buildPassThroughOrchestratorStep(body);
+  // 🔴 A CONSTANT IN THE `baseModel` SLOT, NOT THE SUBMITTED `$type`. The other
+  // arms pass a bounded server-side id there (a registry step id, a recipe id);
+  // `$type` is app-supplied free text, and `buildWorkflowTags` emits that slot
+  // verbatim into the same array as `app-block:<appId>` — the tag
+  // `assertBlockWorkflowTaggedForApp` and `queryAppWorkflows` treat as the
+  // app-scoping boundary. The argument that it is safe anyway (an unknown
+  // `$type` fails the submit, so no workflow persists the forged tag) delegates
+  // the control to an orchestrator behaviour this repo does not own and has not
+  // measured. A constant needs no such argument. The per-`$type` dimension is
+  // kept on the audit row's `detail` JSON, which has no scoping meaning and no
+  // cardinality budget.
+  const tags = buildWorkflowTags(claims, PASS_THROUGH_ENGINE_LABEL, 'step');
+
+  const token = await getOrchestratorToken(userId, ctx);
+  const quotedBuzz = await quotePassThroughBuzz({
+    claims,
+    body,
+    orchestratorStep,
+    token,
+    phase: 'submit',
+  });
+
+  // 🔴 THE RESERVATION IS THE LARGER OF THE TWO, AND THE TIMEOUT IS STILL
+  // `maxBuzz`. The declared ceiling is the floor because the job may accrue up
+  // to it; the quote raises the reservation when the orchestrator prices this
+  // `$type` above it. Over-reserving only makes a cap stricter, and the terminal
+  // settle refunds `ceiling - actual` back down.
+  //
+  // 🔴 WHAT THIS DOES NOT DO, because the obvious reading is wrong and expensive:
+  // it does NOT make the caps an upper bound on real spend. The settle clamps the
+  // refund at 0 and nothing raises a counter, so a job billed ABOVE the
+  // reservation leaves every counter the submit reserved short by the overage,
+  // permanently. The
+  // thing that would prevent that is the quote, and this arm deliberately does
+  // not fail closed when there is none (see `quotePassThroughBuzz`) — for a
+  // GPU-second-metered `$type` the stamped `timeout` still bounds it, but most
+  // reachable types are priced per unit at submit, where a timeout bounds
+  // wall-clock and nothing else. Operator decision, recorded in the PR.
+  const ceiling = Math.max(body.maxBuzz, quotedBuzz ?? body.maxBuzz);
+
+  // (1) STATIC pre-submit gate against the token's per-call budget.
+  if (ceiling > claims.buzzBudget) {
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: ceiling },
+        error: `insufficient buzz budget: step ceiling ${ceiling} exceeds budget ${claims.buzzBudget}`,
+      },
+    };
+  }
+
+  // ── GEN IDEMPOTENCY CLAIM — taken BEFORE the cap reservations + orchestrator
+  //    submit so two CONCURRENT same-key submits can't BOTH reserve + BOTH
+  //    charge. Fail-CLOSED on a redis error; every non-committed exit RELEASEs.
+  let genClaimKey: string | null = null;
+  if (idempotencyKey) {
+    let claim: BlockGenIdempotencyClaim<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>;
+    try {
+      claim = await claimGenIdempotency<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>(
+        userId,
+        claims.appBlockId,
+        idempotencyKey
+      );
+    } catch {
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'generation idempotency unavailable; please retry',
+      });
+    }
+    if (claim.state === 'replay') return claim.result;
+    if (claim.state === 'in_progress') {
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'a generation with this idempotency key is already in progress',
+      });
+    }
+    genClaimKey = claim.key;
+  }
+
+  // (2) Reserve the CEILING against the per-user cumulative cap.
+  let reservation: Awaited<ReturnType<typeof reserveBlockBuzzSpendForClaims>>;
+  try {
+    reservation = await reserveBlockBuzzSpendForClaims(claims, userId, ceiling);
+  } catch (e) {
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    throw e;
+  }
+  const { total, key: buzzCapKey, cap: buzzCap } = reservation;
+  if (total > buzzCap) {
+    await refundBlockBuzzReservation(reservation, ceiling);
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: ceiling },
+        error:
+          claims.reviewRunForReal === true
+            ? `review run-for-real Buzz cap reached: ${total - ceiling} already ` +
+              `spent this review session, this step may cost up to ${ceiling}, ` +
+              `session cap is ${buzzCap}`
+            : `daily Buzz cap reached: ${total - ceiling} already spent today ` +
+              `across your installed apps, this step may cost up to ${ceiling}, ` +
+              `daily cap is ${buzzCap}`,
+      },
+    };
+  }
+
+  // ── CONSENT BUDGET — post-paid, so the CEILING is what is reserved and
+  // therefore what is judged.
+  if (consentBudgetExceeded(reservation)) {
+    await refundBlockBuzzReservation(reservation, ceiling);
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: ceiling },
+        error: consentBudgetRejection(
+          reservation.consent,
+          ceiling,
+          `this step may cost up to ${ceiling}`
+        ),
+      },
+    };
+  }
+
+  // 🔴 (3) Reserve the CEILING against the PER-APP aggregate cap (daily Buzz +
+  // velocity) — the guardrail the per-user cap structurally cannot provide,
+  // since it is keyed on `appBlockId` with the spender absent from the key.
+  // Skipped ONLY for DEV tokens (synthetic non-FK appBlockId), as every kind does.
+  let appSpendReserve: { key: AppSpendDailyKey; cost: number } | null = null;
+  if (claims.dev !== true) {
+    const { reserveAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+    const appSpend = await reserveAppSpend(claims.appBlockId, ceiling);
+    if (!appSpend.allowed) {
+      await refundBlockBuzzReservation(reservation, ceiling);
+      if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+      return {
+        snapshot: {
+          workflowId: 'failed',
+          status: 'failed' as const,
+          cost: { total: ceiling },
+          error:
+            appSpend.reason === 'velocity'
+              ? 'app generation rate limit reached: this app has run too many generations in a short window — please retry shortly'
+              : appSpend.reason === 'unavailable'
+              ? 'generation temporarily unavailable — please retry shortly'
+              : 'app daily spend cap reached: this app has hit its aggregate daily generation-spend ceiling — please try again later',
+        },
+      };
+    }
+    if (appSpend.dailyKey) appSpendReserve = { key: appSpend.dailyKey, cost: ceiling };
+  }
+
+  // (4) APP DEV TUNNEL per-session spend backstop.
+  let devSessionReserve: { sessionId: string; cost: number } | null = null;
+  {
+    const { getActiveDevTunnel, reserveDevSessionBuzz } = await import(
+      '~/server/services/blocks/dev-tunnel.service'
+    );
+    const devTunnel = await getActiveDevTunnel(userId, claims.blockId).catch(() => null);
+    if (devTunnel) {
+      const reserved = await reserveDevSessionBuzz(
+        devTunnel.sessionId,
+        ceiling,
+        devTunnel.spendCapBuzz
+      );
+      if (!reserved.allowed) {
+        await refundBlockBuzzReservation(reservation, ceiling);
+        if (appSpendReserve) {
+          const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+          await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+        }
+        if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+        return {
+          snapshot: {
+            workflowId: 'failed',
+            status: 'failed' as const,
+            cost: { total: ceiling },
+            error:
+              `dev tunnel session Buzz cap reached: ${reserved.total} already spent ` +
+              `this dev session, this step may cost up to ${ceiling}, ` +
+              `session cap is ${devTunnel.spendCapBuzz}`,
+          },
+        };
+      }
+      devSessionReserve = { sessionId: devTunnel.sessionId, cost: ceiling };
+    }
+  }
+
+  // ── Submit. On ANY throw AFTER reserving, refund the CEILING on ALL keys.
+  let snapshot: ReturnType<typeof snapshotFromWorkflow>;
+  let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
+  // The orchestrator's BASE cost, for the DARK author-fee observation. Hoisted
+  // for the same reason as `realizedTransactions`, and read off the raw response
+  // rather than `snapshot`, for the reason spelled out on the txt2img path.
+  let realizedBaseCost: number | null = null;
+  // 🔴 `WorkflowCost.variable` — TRUE when the price is a CAP that may settle
+  // lower. THIS PATH IS THE MOTIVATING CASE: its spend basis is
+  // `snapshot.cost?.total ?? ceiling`, i.e. post-billed against a reserved
+  // ceiling, and the settle hook below refunds `ceiling - actual`. Charging an
+  // author fee on the cap would be a fee on money the viewer gets back. The
+  // author fee is therefore SKIPPED on a cap — under its own counted skip
+  // reason, not folded into `base-unavailable`. See
+  // `BLOCK_AUTHOR_FEE_PRICE_IS_CAP`; whether a cap-priced path should EVER
+  // charge, and on what number, is slice 2's to settle.
+  //
+  // 🔴 And on THIS path above all: an ABSENT `variable` reads as a final price,
+  // the FAIL-OPEN direction — see the txt2img hoist for why `=== true` merges
+  // "not-a-cap" with "the orchestrator did not say", and why resolving that
+  // tri-state is slice 2's call rather than this slice's.
+  let realizedPriceIsCap: boolean | null = null;
+  const submittedAt = Date.now();
+  try {
+    const submitted = await submitWorkflow({
+      token,
+      body: {
+        // The SAME object the quote priced — so the quote and the charge can
+        // never describe different work.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        steps: [orchestratorStep as any],
+        tags,
+        currencies,
+        ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+        externalId: blockExternalId,
+      },
+    });
+    snapshot = snapshotFromWorkflow(submitted);
+    realizedTransactions = submitted.transactions;
+    realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
+    realizedPriceIsCap = submitted.cost?.variable === true;
+  } catch (e) {
+    await refundBlockBuzzReservation(reservation, ceiling);
+    if (appSpendReserve) {
+      const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+      await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+    }
+    if (devSessionReserve) {
+      const { refundDevSessionBuzz } = await import('~/server/services/blocks/dev-tunnel.service');
+      await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
+    }
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    throw e;
+  }
+
+  const genResult = { snapshot };
+  if (genClaimKey) await finalizeGenIdempotency(genClaimKey, genResult);
+
+  // ── Persist the settle record. The terminal poll/cancel hook reads it and
+  // refunds `ceiling - actual` on every reservation key. The refund is clamped at
+  // 0, so a job that accrues MORE than the ceiling gives nothing back and every
+  // cap counter stays at what was reserved — never below it.
+  if (snapshot.workflowId && snapshot.workflowId !== 'failed' && snapshot.workflowId !== 'whatif') {
+    await persistCustomComfySettle({
+      workflowId: snapshot.workflowId,
+      buzzCapKey,
+      consentBudgetKey: reservation.consent?.key ?? null,
+      appSpendKey: appSpendReserve?.key ?? null,
+      ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
+      ceiling,
+      engine: PASS_THROUGH_ENGINE_LABEL,
+      recipe: PASS_THROUGH_RECIPE_LABEL,
+      submittedAt,
+    });
+    // G6 — persistent output queue (best-effort, non-dev), so a pass-through gen
+    // rebuilds in listMyWorkflows on reload. Same posture as every other kind.
+    if (claims.dev !== true) {
+      const realWorkflowId = snapshot.workflowId;
+      void (async () => {
+        const { upsertBlockWorkflowOnSubmit } = await import(
+          '~/server/services/blocks/block-workflows.service'
+        );
+        await upsertBlockWorkflowOnSubmit({
+          workflowId: realWorkflowId,
+          appBlockId: claims.appBlockId,
+          blockInstanceId: claims.blockInstanceId,
+          userId,
+          status: snapshot.status,
+        });
+      })().catch(() => {
+        /* best-effort: a failed queue write never breaks (or slows) submit */
+      });
+    }
+  }
+
+  // ── Durable audit + attribution (parity with every other kind). Both are
+  // server-derived from the VERIFIED token claims and fire-and-forget.
+  {
+    const invocationCost = snapshot.cost?.total ?? ceiling;
+    void (async () => {
+      const { recordScopeInvocation } = await import(
+        '~/server/services/blocks/user-app-surface.service'
+      );
+      await recordScopeInvocation({
+        userId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        scope: 'ai:write:budgeted',
+        endpoint: 'workflow:submit',
+        statusCode: snapshot.status === 'failed' ? 500 : 200,
+        detail: {
+          action: 'workflow.submit',
+          amount: typeof invocationCost === 'number' ? -Math.abs(invocationCost) : undefined,
+          outcome: snapshot.status === 'failed' ? 'failed' : 'ok',
+          // 🔴 THE SUBMITTED `$type` IS THE DIMENSION HERE, where the registry
+          // arm writes its `step` id — without it every pass-through submit is
+          // indistinguishable from every other in `block_scope_invocations`, on
+          // the arm whose whole point is that the type set is open. `detail` is a
+          // nullable JSON column, so this is additive; unlike a METRIC LABEL
+          // (see `PASS_THROUGH_ENGINE_LABEL`) a JSON column has no cardinality
+          // budget to blow.
+          step: body.$type,
+          variant: PASS_THROUGH_ENGINE_LABEL,
+          ...(snapshot.workflowId ? { workflowId: snapshot.workflowId } : {}),
+        },
+        dev: claims.dev === true,
+      });
+    })().catch(() => {
+      /* swallowed inside helper */
+    });
+  }
+
+  const spendWorkflowId = snapshot.workflowId;
+  if (spendWorkflowId && spendWorkflowId !== 'failed' && snapshot.status !== 'failed') {
+    void (async () => {
+      const { recordSpendAttribution } = await import(
+        '~/server/services/blocks/buzz-attribution.service'
+      );
+      const { buzzType, buzzAmount } = deriveBlockSpendBasis(
+        realizedTransactions,
+        isGreen,
+        snapshot.cost?.total ?? ceiling
+      );
+      await recordSpendAttribution({
+        userId,
+        buzzAmount,
+        buzzType,
+        workflowId: spendWorkflowId,
+        appId: claims.appId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        // A pass-through step carries no model binding and no sharedContentKey
+        // (its `.strict()` wire shape has neither).
+        modelId: null,
+        sharedContentKey: null,
+        // BASE generation cost for the DARK author-fee observation — `.base`,
+        // never `.total` (which already carries licensing fees and tips) and
+        // never `buzzAmount`. Same rule as every other submit path.
+        baseGenerationBuzz: realizedBaseCost,
+        // 🔴 …and whether that price is a CAP. This path quotes a CEILING and
+        // settles down (`snapshot.cost?.total ?? ceiling` above, and the settle
+        // hook refunds `ceiling - actual`), so on a cap-priced step the fee is
+        // deliberately SKIPPED — a percentage of a number the viewer is partly
+        // refunded is a fee on money they did not spend. It is a NAMED,
+        // COUNTED skip (`price-is-cap`), never folded into `base-unavailable`,
+        // and slice 2 owns the question of what a cap-priced path should charge.
+        generationPriceIsCap: realizedPriceIsCap,
+        // APP-FACING generation type = `step:<submitted $type>`. 🔴 NAMESPACED,
+        // AND THE NAMESPACE IS THE WHOLE POINT: `textToImage` and `customComfy`
+        // are THEMSELVES live orchestrator `$type`s, so recording a bare `$type`
+        // here would stamp `{kind:'step', $type:'textToImage'}` as an image
+        // generation and the per-generation-type author fee would price it as one.
+        // Under `step:` the COARSE key of every pass-through row is `step`,
+        // which is the key that fee looks up.
+        //
+        // 🔴 THE SUBTYPE IS CALLER-INFLUENCED — unlike every other value this
+        // column holds, it is not drawn from a server-owned set. This arm
+        // validates `$type` against nothing but the denylist, so the string is the
+        // app's; `resolveBlockGenerationType` bounds it by SHAPE (non-empty,
+        // colon-free, length-capped) and degrades anything else to the bare
+        // `step`. Same reasoning as `detail.step` on the invocation row above: a
+        // TEXT column has no cardinality budget to blow, unlike a metric label.
+        //
+        // Without this the arm recorded NULL on every generation — the value was
+        // simply not passed, and `null` is a legitimate value here, so nothing
+        // surfaced it. An untyped spend event can never be typed retrospectively.
+        generationType: resolveBlockGenerationType(body),
+      });
+    })().catch(() => {
+      /* best-effort: a failed attribution write never breaks submit */
+    });
+  }
+
   return genResult;
 }
 
@@ -9384,7 +10142,9 @@ async function submitStepWorkflow(opts: {
  *  - When NO net paid debit is present (blue-only, cache-hit/0-cost, or a
  *    snapshot returned WITHOUT transactions) fall back to the conservative FREE
  *    floor (blue + `fallbackCost`), which `isPayoutEligibleBuzz` EXCLUDES → zero
- *    bounty. Free-Buzz spend can never accrue a bounty; an absent debit never pays.
+ *    payable basis. Free-Buzz spend can never enter the money basis; an absent
+ *    debit never pays. (The platform-funded "bounty" this rule was written for is
+ *    removed; the exclusion is unchanged and now bounds the recorded basis.)
  *  - Defensive: if BOTH green and yellow appear (the contract offers only
  *    ['blue', green|yellow], so at most one paid account is touched today) we
  *    refuse to conflate them and fall back to the blue floor.

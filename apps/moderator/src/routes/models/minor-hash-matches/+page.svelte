@@ -5,6 +5,7 @@
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
@@ -23,8 +24,16 @@
   const tabHref = (tab: string) => {
     const url = new URL(page.url);
     url.searchParams.set('tab', tab);
-    // Expanded rows and the limit both describe the tab you are leaving.
+    // The limit and page describe the tab you are leaving; the search carries over.
     url.searchParams.delete('limit');
+    url.searchParams.delete('page');
+    return url.pathname + url.search;
+  };
+
+  const clearSearchHref = () => {
+    const url = new URL(page.url);
+    url.searchParams.delete('q');
+    url.searchParams.delete('page');
     return url.pathname + url.search;
   };
 
@@ -157,13 +166,91 @@
   {/each}
 </nav>
 
+<form method="GET" class="mb-4 flex max-w-xl gap-2">
+  <input type="hidden" name="tab" value={data.tab} />
+  <Input
+    name="q"
+    value={data.q}
+    placeholder="Model ID, user ID or username"
+    aria-label="Search models"
+    class="flex-1"
+  />
+  <Button type="submit">Search</Button>
+  {#if data.q}
+    <Button href={clearSearchHref()} variant="outline">Clear</Button>
+  {/if}
+</form>
+
 {#if form && 'error' in form && form.error}
   <ErrorAlert class="mb-4" message={form.error} />
 {/if}
 
+<!-- A numeric term is also a user id, so a model with no minor history is not shown — it would put an
+     unrelated model's actions beside a queue filtered to some account. -->
+{#if data.lookup && (data.lookup.minor || data.lookup.flaggedAt || data.lookup.clearedAt)}
+  {@const m = data.lookup}
+  {@const verdict = acted.get(m.modelId)}
+  <section
+    class={cn(
+      'mb-4 rounded-lg border border-dark-4 bg-dark-6 p-4 transition-opacity',
+      verdict && 'opacity-50'
+    )}
+  >
+    <div class="flex flex-wrap items-baseline gap-x-2">
+      <span class="text-xs tracking-wide text-dark-2 uppercase">Model #{m.modelId}</span>
+      <a href={modelHref(m.modelId, null)} target="_blank" rel="noreferrer" class="font-medium {LINK_CLASS}">
+        {m.modelName}
+      </a>
+      <Badge variant="secondary">{m.status}</Badge>
+      <Badge variant={m.minor ? 'destructive' : 'outline'}>{m.minor ? 'minor' : 'not minor'}</Badge>
+      {#if m.flagSource}
+        <Badge variant="outline">
+          {m.flagSource}{m.flagConfirmedFrom ? ` (was ${m.flagConfirmedFrom})` : ''}
+        </Badge>
+      {/if}
+      {#if m.username}
+        <a href={userLookupUrl(m.userId)} class="text-xs {LINK_CLASS}">{m.username}</a>
+      {/if}
+    </div>
+    <p class="mt-1 text-xs text-dark-2">
+      {#if m.flaggedAt}Flagged {dateTime(m.flaggedAt)}.{/if}
+      {#if m.acceptedAt}Aged out of review {dateTime(m.acceptedAt)}.{/if}
+      {#if m.clearedAt}Cleared {dateTime(m.clearedAt)} — the sweep and scan skip files uploaded before then.{/if}
+    </p>
+
+    {#if verdict || m.minor}
+    <div class="mt-3 flex flex-wrap items-center gap-2">
+      {#if verdict}
+        <span class="text-sm text-dark-2">{verdict}</span>
+      {:else if m.minor && m.flaggedAt}
+        {#if m.flagSource === 'auto'}
+          <form method="POST" action="?/confirm" use:enhance={submit(m.modelId, 'Kept flagged')}>
+            <input type="hidden" name="modelId" value={m.modelId} />
+            <Button type="submit" size="xs">Keep flagged</Button>
+          </form>
+        {/if}
+        <form method="POST" action="?/revert" use:enhance={submit(m.modelId, 'Reverted')}>
+          <input type="hidden" name="modelId" value={m.modelId} />
+          <Button type="submit" size="xs" variant="destructive">Revert flag</Button>
+        </form>
+        <span class="text-xs text-dark-2">
+          Revert restores the pre-flag NSFW, gallery level and locks, and stops the automation re-flagging it.
+        </span>
+      {:else}
+        <span class="text-xs text-dark-2">
+          Flagged with no snapshot to restore, so it cannot be reverted here — edit the model by hand.
+        </span>
+      {/if}
+    </div>
+    {/if}
+  </section>
+{/if}
+
 {#if rows.length === 0}
   <p class="text-sm text-dark-2">
-    {data.tab === 'pending'
+    {data.q
+      ? `Nothing on this tab matches "${data.q}".`
+      : data.tab === 'pending'
       ? 'No unreviewed hash matches.'
       : data.tab === 'auto'
         ? 'Nothing flagged automatically inside the review window.'
@@ -409,7 +496,7 @@
       <a href={pageHref(data.page - 1)} class={LINK_CLASS}>← Previous</a>
     {/if}
     <span class="text-dark-2">
-      {num(firstShown)}–{num(lastShown)}{counts ? ` of ${num(counts[data.tab])}` : ''}
+      {num(firstShown)}–{num(lastShown)}{counts && !data.q ? ` of ${num(counts[data.tab])}` : ''}
     </span>
     {#if data.hasMore}
       <a href={pageHref(data.page + 1)} class={LINK_CLASS}>Next →</a>

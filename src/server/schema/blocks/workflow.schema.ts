@@ -511,6 +511,108 @@ export function makeBlockStepBodySchema(stepIds: [string, ...string[]]) {
 
 export const blockStepBodySchema = makeBlockStepBodySchema(REGISTERED_STEP_IDS);
 
+// ── App Blocks PASS-THROUGH arm (`kind:'step'` with no `step` id) ─────────────
+//
+// The SECOND arm of the `kind: 'step'` member, and the one that makes this
+// bridge a denylist-only proxy. The registry arm above names a server-registered
+// capability by id and the server translates; this arm names an ORCHESTRATOR
+// `$type` directly and forwards `input` unmodified. Only
+// `PLATFORM_INTERNAL_STEP_TYPES` stands between the two (`assertStepTypeAllowed`,
+// called on the submitted `$type` in blocks.router before any spend reservation
+// or orchestrator call).
+//
+// 🔴 WHAT THE REGISTRY ARM PROVIDED THAT THIS ONE DOES NOT REPLACE. Four of the
+// registry's controls are deliberately absent here, by operator decision, and a
+// reader is meant to see that rather than assume an oversight:
+//   1. the per-step `.strict()` param schema → `input` is opaque. The
+//      orchestrator's own per-`$type` validation is the only shape gate.
+//   2. `moderationPosture` / the prompt audit → nothing audits this input.
+//      Moderation moved to the PUBLISH boundary; nothing a block generates is
+//      public until published, and that path is moderated.
+//   3. `resourcePolicy` / the `urn:air:` scan → AIR resources are ALLOWED here.
+//      Spend, not entitlement, is the binding control.
+//   4. `billingMode` + the load-time `estimateBuzz === priceForVariant`
+//      invariant → replaced by the inline-comfy mechanism below.
+//
+// 🔴 CONSEQUENCE OF (3) WORTH NAMING, because the denylist does not cover it:
+// `$type: 'customComfy'` is not platform-internal, so an app may reach it
+// through this arm with an `input` the `mode:'inline'` arm's `.strict()` exists
+// to refuse — `comfyImage` (an arbitrary OCI container AIR the worker pulls and
+// runs) and `minVramGb` (which selects a higher worker tier, and therefore a
+// different Buzz/second rate than the `stepTimeoutSeconds = maxBuzz` ceiling
+// assumes). Recorded here so it is a decision someone can revisit, not a
+// surprise. See the PR that added this arm.
+//
+// `maxBuzz` is the ONLY spend knob and it works exactly as the inline-comfy arm's
+// does: the server derives `stepTimeoutSeconds = maxBuzz` and stamps it as the
+// step timeout, so `maxBuzz === ceil(stepTimeoutSeconds)` cannot be violated —
+// there is only one number.
+
+/**
+ * Hard per-job Buzz ceiling a pass-through body may declare. The same number as
+ * `INLINE_MAX_BUZZ` because two ceilings meant to be equal drift.
+ *
+ * 🔴 IT IS THE BINDING BOUND, NOT A REDUNDANT ONE. A draft of this comment said
+ * both arms were developer-only and therefore already clamped by
+ * `DEV_BUZZ_BUDGET_CAP` (250); both halves are false — neither arm runs
+ * `assertViewerIsAppDeveloper`, and an ordinary install token's per-call budget
+ * clamps at `BUZZ_BUDGET_CAP` (1000, see `shared/constants/block-scope.constants`).
+ * Recorded because the false version read as "raising this changes nothing".
+ * (`INLINE_MAX_BUZZ`'s own docblock above still carries the developer-only
+ * claim; it is wrong there too.)
+ */
+export const PASS_THROUGH_MAX_BUZZ = INLINE_MAX_BUZZ;
+
+/**
+ * Max characters of a pass-through `$type`.
+ *
+ * 🔴 EXPORTED so the SEAM can be pinned, not for reuse. The submitted `$type`
+ * becomes the SUBTYPE of the recorded generation type (`step:<$type>`), and
+ * `generation-type.ts` carries its own literal copy of this cap because it must
+ * stay import-light on the fire-and-forget spend path. `generation-type.test.ts`
+ * imports both and asserts them equal, plus equal to a LITERAL — the pair that
+ * catches growth, shrinkage and joint drift: a wire cap raised past that copy
+ * would silently degrade every long `$type` to a bare `step`, a depth loss in an
+ * unbackfillable column that nothing else reports.
+ */
+export const PASS_THROUGH_TYPE_MAX_CHARS = 64;
+
+/**
+ * Max serialized bytes of a pass-through `input`.
+ *
+ * Payload DoS only — `input` is an unbounded `Record<string, unknown>` on a
+ * submit path, so without this a single request can be arbitrarily large. NOT a
+ * moderation bound (there is no sweep on this arm) and not a shape gate. Same
+ * number as the inline graph bound for the same reason `PASS_THROUGH_MAX_BUZZ`
+ * is: one value, not two that are meant to agree.
+ */
+export const PASS_THROUGH_INPUT_BYTES_MAX = INLINE_GRAPH_BYTES_MAX;
+
+const blockPassThroughStepShape = {
+  kind: z.literal('step'),
+  // The ARM discriminator. `z.undefined()` — NOT an absent key. See the
+  // `blockStepMemberSchema` note below: an arm that simply omits `step` builds
+  // fine and then throws on the first parse, measured.
+  step: z.undefined(),
+  $type: z.string().min(1).max(PASS_THROUGH_TYPE_MAX_CHARS),
+  // 🔴 ORCHESTRATOR-NATIVE AND FORWARDED UNMODIFIED. The server does not read,
+  // rewrite, merge or default any field in here — that is the whole point of the
+  // arm, and the submitted step's `input` is BYTE-IDENTICAL to this value.
+  // (Not the SAME object: `z.record` rebuilds the top level, so the caller's own
+  // object never reaches the orchestrator whatever the router does. An earlier
+  // draft claimed identity here and in `blocks.router`; measured false.)
+  input: z.record(z.string(), z.unknown()),
+  maxBuzz: z.number().int().min(1).max(PASS_THROUGH_MAX_BUZZ),
+};
+
+export const blockPassThroughStepBodySchema = z
+  .object(blockPassThroughStepShape)
+  .strict()
+  .refine((b) => JSON.stringify(b.input).length <= PASS_THROUGH_INPUT_BYTES_MAX, {
+    path: ['input'],
+    message: `step input exceeds the ${PASS_THROUGH_INPUT_BYTES_MAX}-byte limit`,
+  });
+
 export type BlockWorkflowBody = z.infer<typeof blockWorkflowBodySchema>;
 
 // 🔴 THE `customComfy` MEMBER IS A NESTED DISCRIMINATED UNION ON `mode`, AND THE
@@ -571,10 +673,45 @@ const blockCustomComfyMemberSchema = z.discriminatedUnion(
   }
 );
 
+// 🔴 THE `kind:'step'` MEMBER IS ALSO A NESTED DISCRIMINATED UNION — ON `step`
+// ITSELF, whose value is the registry id on one arm and `undefined` on the
+// other. Same trap family as `customComfy`/`mode` above, and the three
+// alternatives were again RUN against zod 4.0.17 rather than reasoned about:
+//
+//   1. `blockPassThroughStepBodySchema` as a FOURTH option of the OUTER union
+//      throws `Duplicate discriminator value "step"` — the outer union is a
+//      value→schema map, so two members cannot share a `kind`. (The same
+//      failure `customComfy` documents.)
+//   2. A pass-through arm that simply OMITS `step` CONSTRUCTS fine and then
+//      throws at PARSE time: `Invalid discriminated union option at index "1"`.
+//      zod needs a definite discriminator value per option; an absent key
+//      supplies none. 🔴 THIS IS THE DANGEROUS ONE — it type-checks, it builds,
+//      and it takes down every `kind:'step'` body including the two REGISTERED
+//      ones, on the first request rather than at import.
+//   3. Wrapping the two arms in a plain `z.union([...])` and nesting THAT in the
+//      outer discriminated union throws the SAME parse-time error, for the same
+//      reason: a plain union exposes no discriminator value for `kind` either.
+//      (The `customComfy` note above records `z.union` as merely DEGRADING the
+//      error shape — that was measured about the OUTER union, where the plain
+//      union is the top level. Nested, it does not work at all.)
+//
+// `z.undefined()` supplies the discriminator value zod needs, so
+// `{kind:'step', $type, input, maxBuzz}` (no `step` key) lands on the
+// pass-through arm while `{kind:'step', step, params}` still lands on the
+// registry arm and rejects an unregistered id at `path:['step']` — the error
+// path `workflow.schema.step.test.ts` already pins.
+//
+// Both arms are `.strict()`, so a body naming BOTH `step` and `$type` is
+// rejected by both and there is no ambiguity to resolve.
+const blockStepMemberSchema = z.discriminatedUnion('step', [
+  blockStepBodySchema,
+  blockPassThroughStepBodySchema,
+]);
+
 export const blockWorkflowBodySchema = z.discriminatedUnion('kind', [
   blockTextToImageBodySchemaChecked,
   blockCustomComfyMemberSchema,
-  blockStepBodySchema,
+  blockStepMemberSchema,
 ]);
 
 // Mirrors BlockWorkflowSnapshot in @civitai/app-sdk's blocks/types.ts.
@@ -834,4 +971,57 @@ export type BlockWorkflowSnapshot = {
    * another repo.
    */
   toolCalls?: BlockStepToolCall[];
+  /**
+   * The raw orchestrator output of a PASS-THROUGH step (`kind:'step'` with a
+   * `$type` and no registry id), forwarded as-is — minus its blobs.
+   *
+   * 🔴 BLOBS ARE REMOVED, NOT PASSED THROUGH, AND THAT IS THE SAFETY PROPERTY.
+   * Every blob-SHAPED value is stripped (`splitPassThroughStepOutput`) and its
+   * available url goes to `snapshot.imageUrls` AND to `AppWorkflow.images` —
+   * both, because the block reads the snapshot and the publish path
+   * (`resolveOwnedWorkflowOutputs` → `publishGenerationOutputs`) reads the
+   * projection, and only the second leads to the per-viewer gated read
+   * (`blocks.getImagesByIds` → `BlockGatedImage`). A pass-through step must not
+   * create a SECOND image channel that those two do not see.
+   *
+   * ⚠️ "BLOB-SHAPED" IS THE EXACT SCOPE OF THAT PROPERTY, AND TWO ALLOWED TYPES
+   * FALL OUTSIDE IT. `blobArchive`'s whole output is `{ url, entryCount, … }`
+   * and `imageResourceTraining.epochs[].blobUrl` is a plain string; a shape test
+   * cannot see either, so those urls reach the app here and are never seen by
+   * the publish path or the gated read. Stated rather than implied, because the
+   * measurement behind the splitter enumerated blob-TYPED fields and a reader
+   * takes it for the whole population. Closing it is a decision — lift a named
+   * string field, or refuse those `$type`s — not a cleanup.
+   *
+   * 🔴 EVERYTHING ELSE IS UNSCANNED. Unlike {@link textOutputs}, no moderation
+   * scan runs over this field: the pass-through arm has no `moderationPosture`,
+   * by operator decision (moderation moved to the publish boundary).
+   *
+   * ⚠️ AN EARLIER VERSION OF THIS PARAGRAPH ILLUSTRATED THAT WITH "a pass-through
+   * `chatCompletion` returns its prose here, unscanned", AND THAT IS FALSE —
+   * recorded rather than replaced, because it is the reading a reviewer arrives
+   * at from the wire shape alone. A `$type` that COLLIDES with a registry
+   * entry's `orchestratorType` — and `chat-completion` declares exactly
+   * `'chatCompletion'` — is claimed by the registry branch in BOTH extractors
+   * and by `attachModeratedStepTextOutputs`, all of which look the entry up by
+   * `$type` and never ask which arm submitted it. So that case IS scanned and
+   * never reaches this field.
+   *
+   * 🔴 THE REAL CONSEQUENCE IS THE SHADOWING ITSELF: whether a pass-through
+   * step's output is forwarded here or handled by a registry entry depends on a
+   * `$type` collision, and that flips the day someone registers a step. A new
+   * entry for a media-producing `$type` would silently stop surfacing that
+   * type's media for existing pass-through callers, with no error. The
+   * unscanned-text surface is real for every `$type` that does NOT collide.
+   *
+   * OMITTED entirely when the workflow carries no step with an UNRECOGNISED
+   * `$type` — which is every workflow the other three kinds produce — so their
+   * snapshots stay byte-identical.
+   *
+   * 🔴 WIRE CONTRACT: additive on the type `@civitai/app-sdk`'s `blocks/types.ts`
+   * mirrors, exactly like `textOutputs` above. The SDK's inbound validator does
+   * not know it yet, so a block reads it only once that type is widened in the
+   * SDK repo — tracked separately; nothing here edits another repo.
+   */
+  stepOutputs?: Array<{ $type: string; output: unknown }>;
 };

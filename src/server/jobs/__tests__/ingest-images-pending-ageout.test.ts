@@ -27,7 +27,10 @@ const PENDING_TIMEOUT_MIN = 30;
 
 // Fixture rows returned by the image SELECT. Fields mirror IngestImageRow.
 const OLD = new Date(Date.now() - 2 * HOUR); // past the 30-min age-out threshold
-const FRESH = new Date(); // well under the threshold
+// Under the age-out threshold, but past SUBMIT_IN_FLIGHT_GRACE — a just-created row
+// with no `scanRequestedAt` is deferred as "first submit still in flight", which would
+// mask the age-out behaviour under test here.
+const FRESH = new Date(Date.now() - 10 * 60 * 1000);
 const OLD_SCAN = new Date(Date.now() - 2 * HOUR); // past the 60-min Error retry delay
 
 const ROWS = [

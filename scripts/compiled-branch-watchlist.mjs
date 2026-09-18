@@ -126,8 +126,21 @@ export const COMPILED_BRANCH_WATCHLIST = [
   },
   {
     id: 'block-token-subject-refusal',
-    module: 'src/server/routers/blocks.router.ts',
-    why: "`assertAppBlocksEnabledForTokenUser` refuses an unhydratable token subject BEFORE consulting `app-blocks-enabled`. Lost, it falls through to `isAppBlocksEnabled`'s no-user branch — a deliberate global eval kept for the machine registrar — which returns the flag's BASE value. Under a base-`enabled: true` GA flip a token whose subject no longer resolves then passes the kill-switch on 16 block-token runtime procs. NB the sibling `assertViewerIsAppDeveloper` guard is deliberately NOT listed: `isAppBlocksAuthorEnabled` takes a non-nullable subject and dereferences it at once, so losing that one throws rather than passing.",
+    // MOVED 2026-09-18 out of `src/server/routers/blocks.router.ts`. The function is now
+    // shared with the REST route `src/pages/api/v1/blocks/me.ts`, which cannot import a
+    // tRPC router — so it lives in a service and BOTH doors call it. This field is a PIN:
+    // the move made both anchors below resolve to zero lines in the old module until it
+    // was updated here, which is the failure to expect if it is ever moved again.
+    //
+    // ⚠️ KNOWN LIMIT, WIDENED BY THAT MOVE. This gate unions mapped source lines across
+    // EVERY emitted chunk, so it answers "did this branch survive SOMEWHERE", not "did it
+    // survive in each consumer's chunk". The function now has two consumers — the tRPC
+    // router and the `/api/v1/blocks/me` API route — so a build that kept the branch in
+    // the router's chunk and dropped it from the API-route chunk would still pass. The
+    // union is pre-existing (one module inlines into ~200 chunks, as this file's header
+    // notes); recorded because the second consumer is new.
+    module: 'src/server/services/blocks/block-token-access.service.ts',
+    why: "`assertAppBlocksEnabledForTokenUser` refuses an unhydratable token subject BEFORE consulting `app-blocks-enabled`. Lost, it falls through to `isAppBlocksEnabled`'s no-user branch — a deliberate global eval kept for the machine registrar — which returns the flag's BASE value. Under a base-`enabled: true` GA flip a token whose subject no longer resolves then passes the kill-switch on every block-token runtime caller — the tRPC bridge procs AND the `/api/v1/blocks/me` REST route, which joined them when its hardcoded moderator literal was dropped. NB the sibling `assertViewerIsAppDeveloper` guard is deliberately NOT listed: `isAppBlocksAuthorEnabled` takes a non-nullable subject and dereferences it at once, so losing that one throws rather than passing.",
     control: [
       {
         code: 'await isAppBlocksEnabled({ user })',
@@ -137,7 +150,7 @@ export const COMPILED_BRANCH_WATCHLIST = [
     required: [
       {
         code: "'runtime block token subject could not be resolved'",
-        why: "the refusal's message literal. Lost, the gate evaluates the kill-switch with no subject and a base-true flag answers `true`. NB this anchors a literal INSIDE the branch rather than the branch's condition, because `if (!user) {` is not unique in this module (the author gate above uses the same condition). That is sound here only because the literal is unique ACROSS THE WHOLE APP: a minifier cannot intern it from another site, so a surviving mapping for this line means this site survived. Keep it unique — do not reuse this string elsewhere.",
+        why: "the refusal's message literal. Lost, the gate evaluates the kill-switch with no subject and a base-true flag answers `true`. NB this anchors a literal INSIDE the branch rather than the branch's condition. That was originally because `if (!user) {` was not unique in `blocks.router.ts`, where the function used to live alongside `assertViewerIsAppDeveloper`'s identical condition; since the 2026-09-18 move the condition IS unique in this module, so the literal is no longer the only option — it is kept because it remains the stronger anchor and re-pointing an anchor is itself a change worth not making idly. It is sound because the literal is unique ACROSS THE WHOLE APP: a minifier cannot intern it from another site, so a surviving mapping for this line means this site survived. Keep it unique — do not reuse this string elsewhere. 🔴 That uniqueness is why `/api/v1/blocks/me` renders this refusal with its OWN generic literal instead of echoing this message.",
       },
     ],
   },

@@ -8,6 +8,7 @@
     hrefFor,
     modelPageUrl,
     navigate,
+    portalProps,
     publishUrl,
   } from '$lib/host';
   import { loraBlobAir } from '$lib/train-core';
@@ -46,6 +47,11 @@
     type TrainingDetailEpoch,
   } from '$lib/data/trainingRows';
   import { directDatasetUrl, handoffReuse, toReuseItems } from '$lib/reuse';
+  import { extOfAir, extOfMime } from '$lib/media';
+  import { RETENTION_DAYS } from '$lib/orchestrator-core';
+  import { nonBlueSpend } from '$lib/buzz-balance.svelte';
+  import { buzzMode } from '$lib/buzz-mode.svelte';
+  import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
 
   let {
     detail,
@@ -156,6 +162,22 @@
     }
   }
 
+  // When the run's data leaves the orchestrator: checkpoints and dataset are retained
+  // RETENTION_DAYS from COMPLETION (the main app's stated policy), falling back to creation when
+  // the step carries no completion date — that can only warn early, never late. Testers had no way
+  // to tell whether a saved LoRA still existed — surface the date, and color it once it's a week out.
+  const expiresAt = $derived(
+    new Date(d.completedAt ?? d.createdAt).getTime() + RETENTION_DAYS * 86400000
+  );
+  const expiresLabel = $derived.by(() => {
+    if (!Number.isFinite(expiresAt)) return '';
+    const daysLeft = Math.ceil((expiresAt - Date.now()) / 86400000);
+    if (daysLeft <= 0) return 'expired';
+    const date = new Date(expiresAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return `${date} (${daysLeft} day${daysLeft === 1 ? '' : 's'})`;
+  });
+  const expiresSoon = $derived(expiresAt - Date.now() < 7 * 86400000);
+
   // Relative "created" label: minutes/hours ago for a recent run, weekday-at-time within the last week,
   // otherwise the date. Recomputed on each poll so "2 minutes ago" stays honest while training.
   const createdLabel = $derived.by(() => {
@@ -231,21 +253,13 @@
     return directDatasetUrl(air) ?? datasetSrcs[air] ?? null;
   }
 
-  const MIME_EXT: Record<string, string> = {
-    'image/png': 'png',
-    'image/jpeg': 'jpg',
-    'image/webp': 'webp',
-    'image/gif': 'gif',
-    'video/mp4': 'mp4',
-    'video/webm': 'webm',
-    'audio/mpeg': 'mp3',
-    'audio/wav': 'wav',
-  };
-  // The blob's own extension (the air ends in one, e.g. `…-0.png`), falling back to the fetched mime.
+  // The blob's own extension (the air ends in one, e.g. `…-0.png`), falling back to the fetched
+  // mime — both answered by $lib/media's one table, which the Data step's zip IMPORT reads too, so
+  // a downloaded zip's names always round-trip.
   function fileExt(air: string, mime: string): string {
-    const fromAir = air.split('?')[0].split('.').pop();
-    if (fromAir && /^[a-z0-9]{2,4}$/i.test(fromAir) && fromAir.length <= 4) return fromAir.toLowerCase();
-    return MIME_EXT[mime] ?? 'png';
+    const fromAir = extOfAir(air);
+    if (fromAir && fromAir.length <= 4) return fromAir;
+    return extOfMime(mime) ?? 'png';
   }
   function slug(s: string): string {
     return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'dataset';
@@ -539,6 +553,21 @@
         <dt class="text-dark-2">Created</dt>
         <dd class="m-0 text-dark-0">{createdLabel}</dd>
       </div>
+      {#if d.state !== 'training' && d.epochs.length > 0 && expiresLabel}
+        <div class="flex items-center gap-1.5">
+          <dt class="text-dark-2">Expires</dt>
+          <dd class="m-0 {expiresSoon ? 'text-buzz' : 'text-dark-0'}">
+            <Tooltip.Provider>
+              <Tooltip.Root>
+                <Tooltip.Trigger class="cursor-default">{expiresLabel}</Tooltip.Trigger>
+                <Tooltip.Content class="max-w-[240px] text-xs" portalProps={portalProps()}>
+                  Download or publish anything you want to keep.
+                </Tooltip.Content>
+              </Tooltip.Root>
+            </Tooltip.Provider>
+          </dd>
+        </div>
+      {/if}
       <div class="flex items-center gap-1.5">
         <dt class="text-dark-2">Workflow</dt>
         <dd class="m-0 flex items-center gap-1.5 text-dark-0">
@@ -917,12 +946,13 @@
             <p class="mt-1 text-[13px] text-dark-2">
               Don't love the progression yet? Continue from the
               <IconStarFilled size={11} class="inline text-buzz" /> recommended checkpoint (epoch {publishTarget.number})
-              with more epochs — same dataset and settings, starts a new run.
+              with more training — same dataset and settings, starts a new run. Each checkpoint is a
+              save point along the way, not one pass over your images.
             </p>
           </div>
           <div class="ml-auto flex flex-col items-end gap-1.5">
             <div class="flex items-center gap-2">
-              <label for="further-epochs" class="font-mono text-xs text-dark-2">+ epochs</label>
+              <label for="further-epochs" class="font-mono text-xs text-dark-2">+ checkpoints</label>
               <Input
                 id="further-epochs"
                 type="number"
@@ -950,9 +980,16 @@
               {#if quoteError}
                 <span class="text-red-400">{quoteError}</span>
               {:else if quote?.cost != null}
+                {@const spend = nonBlueSpend(quote.cost, buzzMode.value)}
                 Costs <span class="text-buzz"
                   ><IconBoltFilled size={10} stroke={2} class="mb-px inline" />{quote.cost.toLocaleString()}</span
-                >{#if quote.eta} · ~{quote.eta} min{/if} · spends Buzz on confirm
+                >{#if quote.eta} · ~{quote.eta} min{/if} · spends Buzz on confirm{#if spend}
+                  · <span class="text-buzz"
+                    >{spend.amount.toLocaleString()}
+                    {spend.uncertain ? 'may come' : ''} from {spend.currency === 'green'
+                      ? 'Green'
+                      : 'Yellow'}</span
+                  >{/if}
               {:else}
                 pricing…
               {/if}

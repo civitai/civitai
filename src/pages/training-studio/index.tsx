@@ -10,6 +10,7 @@ import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-s
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { generationGraphPanel } from '~/store/generation-graph.store';
+import { trpc } from '~/utils/trpc';
 
 /**
  * The Training Studio embedded in the main app (docs/training-studio-web-component.md), behind the
@@ -76,6 +77,9 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
   const router = useRouter();
   const routerRef = useRef(router);
   routerRef.current = router;
+  const utils = trpc.useUtils();
+  const utilsRef = useRef(utils);
+  utilsRef.current = utils;
 
   // Providing generate/generateUrl is the capability signal: without them the element hides its
   // per-epoch Generate affordance. Only the form-graph lane consumes the seeded epoch resource —
@@ -132,6 +136,24 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
           const r = await fetch('/api/training-studio/host');
           if (!r.ok) throw new Error(`token mint failed (${r.status})`);
           return (await r.json()).token as string;
+        },
+        // Without this the element has no Blue balance to compare against, and its Review step's
+        // Yellow/Green spend confirmation degrades to the vaguer "up to the full price" wording.
+        getBuzzBalances: async () => {
+          try {
+            const accounts = (await utilsRef.current.buzz.getBuzzAccount.fetch()) as Record<
+              string,
+              number
+            >;
+            const { yellow, green, blue } = accounts;
+            // A missing/non-numeric balance must stay UNKNOWN (null → the element's fail-safe
+            // "up to" confirmation), not read as a known zero — blue:0 would assert the whole
+            // price is non-Blue with certainty.
+            if ([yellow, green, blue].some((v) => typeof v !== 'number')) return null;
+            return { yellow, green, blue };
+          } catch {
+            return null;
+          }
         },
         config: { orchestratorEndpoint, orchestratorMode },
         hrefFor,

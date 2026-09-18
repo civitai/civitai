@@ -28,6 +28,16 @@ const { mocks } = vi.hoisted(() => ({
     showErrorNotification: vi.fn(),
     areaEnabled: { value: true },
     faroSessionId: { value: undefined as string | undefined },
+    /**
+     * The browser-error snapshot, through mutable holders for the SAME reason `faroSessionId` is:
+     * the real recorder needs a patched `console` and a `PerformanceObserver` that has seen a
+     * failed request, neither of which the scaffold produces. Its honest answer here is always
+     * `[]`, so an absence-only test would pass with the whole `readConsoleErrors()` call deleted.
+     */
+    consoleErrors: { value: [] as Array<{ message: string; count: number }> },
+    networkErrors: {
+      value: [] as Array<{ url: string; status: number; initiatorType: string }>,
+    },
     /** When set, `mutate` takes the failure path instead of the success one. */
     mutateError: { value: undefined as string | undefined },
   },
@@ -75,6 +85,11 @@ vi.mock('~/utils/faro/getFaroSessionId', () => ({
   getFaroSessionId: () => mocks.faroSessionId.value,
 }));
 
+vi.mock('~/utils/feedback/browserErrorLog', () => ({
+  readConsoleErrors: () => mocks.consoleErrors.value,
+  readNetworkErrors: () => mocks.networkErrors.value,
+}));
+
 vi.mock('~/utils/notifications', () => ({
   showErrorNotification: mocks.showErrorNotification,
   showSuccessNotification: vi.fn(),
@@ -116,6 +131,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.areaEnabled.value = true;
   mocks.faroSessionId.value = undefined;
+  mocks.consoleErrors.value = [];
+  mocks.networkErrors.value = [];
   mocks.mutateError.value = undefined;
   setRoute('/');
 });
@@ -187,6 +204,69 @@ describe('🔴 the Grafana Faro session travels with the report', () => {
     await fileReport('no faro in the test browser');
 
     expect(await context()).not.toHaveProperty('sessionId');
+  });
+});
+
+/**
+ * 🔴 THE SEAM. The recorder is unit-tested (`browserErrorLog.test.ts`), the schema is unit-tested
+ * (`feedback.schema.test.ts`), and NEITHER of them can see whether `handleSubmit` actually puts
+ * one into the other — that join exists in no other test, and it is where a feature that is green
+ * on both sides ships doing nothing.
+ *
+ * Both directions, for the reason the Faro block states: the real reader returns `[]` in this
+ * browser, so a present-case test is what makes the absent case a control rather than a
+ * coincidence.
+ */
+describe('🔴 the browser-error snapshot travels with the report', () => {
+  const NETWORK = [{ url: 'https://civitai.com/api/trpc/x', status: 500, initiatorType: 'fetch' }];
+  // A repeat count above 1, so the whole entry — not just the message — is shown to travel. A
+  // `count: 1` fixture cannot distinguish "the entry is forwarded" from "the count is defaulted".
+  const CONSOLE = [{ message: 'TypeError: x is not a function', count: 4 }];
+
+  test('console and network errors are attached when the recorder has any', async () => {
+    mocks.consoleErrors.value = CONSOLE;
+    mocks.networkErrors.value = NETWORK;
+    await fileReport();
+
+    expect(await context()).toMatchObject({ consoleErrors: CONSOLE, networkErrors: NETWORK });
+  });
+
+  /**
+   * An EMPTY array is OMITTED, not sent. `{}` in the column reads as "we looked and there was
+   * nothing"; an absent key reads as "no claim was made". Only the second is true of a session
+   * where the recorder never installed — which is every browser without `responseStatus`, and
+   * every session that blocked the script.
+   */
+  test('an empty snapshot omits both keys rather than storing an empty array', async () => {
+    await fileReport();
+
+    expect(await context()).not.toHaveProperty('consoleErrors');
+    expect(await context()).not.toHaveProperty('networkErrors');
+  });
+
+  test('and the report still sends when the recorder has nothing', async () => {
+    await fileReport('nothing in the buffer');
+    expect((await sent()).message).toBe('nothing in the buffer');
+  });
+});
+
+/**
+ * 🔴 A FALSE CLAIM THAT MUST NOT COME BACK, pinned on its own rather than as part of a copy test.
+ *
+ * The drawer used to read "We attach your browser session automatically, so console errors come
+ * with the report" — but `FaroProvider` runs an explicit instrumentation allow-list that EXCLUDES
+ * the Console instrumentation, so no `console.error` had ever been collected and the sentence was
+ * simply untrue. A console snapshot now genuinely does ride along, which makes it true for the
+ * first time, and it stays deleted anyway: it names the WRONG MECHANISM. The snapshot is not the
+ * Faro session, so a reader who believed the sentence would go looking for the data in Loki, where
+ * it has never been and still is not.
+ */
+describe('🔴 the drawer makes no claim about the Faro session', () => {
+  test('the drawer no longer attributes console errors to the Faro session', async () => {
+    await openDrawer();
+    await expect
+      .element(page.getByText('so console errors come with the report'))
+      .not.toBeInTheDocument();
   });
 });
 

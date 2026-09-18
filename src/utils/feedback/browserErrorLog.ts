@@ -1,0 +1,554 @@
+import {
+  FEEDBACK_CONSOLE_ERROR_MAX_COUNT,
+  FEEDBACK_CONSOLE_ERROR_MAX_LENGTH,
+  FEEDBACK_NETWORK_ERROR_MAX_COUNT,
+  FEEDBACK_NETWORK_INITIATOR_MAX_LENGTH,
+  FEEDBACK_NETWORK_URL_MAX_LENGTH,
+} from '~/shared/constants/feedback.constants';
+import { redactText, redactValue } from '~/utils/faro/redact';
+
+/**
+ * A bounded, redacted, in-memory snapshot of what the reporter's browser complained about, read at
+ * submit time by `useFeedbackSubmission` and stored on `Feedback.context`.
+ *
+ * ─── WHY A SNAPSHOT RATHER THAN A QUERY ───────────────────────────────────────────────────────
+ * The moderator queue already shows a Faro `sessionId` and a Grafana deep link, and both are
+ * useless for triage on anything but a fresh report: `faroSessionLink()` returns null past
+ * `FARO_LOKI_RETENTION_HOURS` (72 h), so every row in the queue today has a suppressed link. An
+ * in-page panel that queried Loki for console/network detail would inherit the same wall. Writing
+ * the data into the report makes it permanent and independent of retention. Accepted, stated
+ * consequence: rows written before this shipped gain nothing — this helps NEW reports only.
+ *
+ * 🔴 AND THE SNAPSHOT IS NOT MERELY A RETENTION-PROOF COPY OF WHAT LOKI HOLDS — FOR CONSOLE TEXT
+ * IT IS THE ONLY COPY THERE HAS EVER BEEN. `FaroProvider` runs an explicit instrumentation
+ * allow-list and DELIBERATELY EXCLUDES the Console instrumentation ("serialises arbitrary logged
+ * objects") and the stock Performance instrumentation ("emits full resource URLs"). So a
+ * `console.error` — which is how React reports a render error, a hydration mismatch or a failed
+ * boundary — has never reached Loki at any age, and failed-request URLs reach it only as coarse
+ * route-normalised timings behind two flags, or as ~10 %-sampled OTel fetch spans. Only uncaught
+ * exceptions ride `ErrorsInstrumentation`. Two consequences worth holding on to:
+ *   1. this module is ADDITIVE, not redundant — do not "simplify" it away by pointing at Faro; and
+ *   2. it is a genuinely NEW collection surface, so it is held to the privacy bar that kept those
+ *      instrumentations switched off, not to the lower bar of an existing debug field.
+ *
+ * ─── WHAT IS DELIBERATELY NOT CAPTURED ────────────────────────────────────────────────────────
+ * · Request and response BODIES, and headers. On this platform a body can hold a payment payload,
+ *   a prompt, or another user's content. Nothing here reads one.
+ * · STACK TRACES. Only an error's `message`. A stack is mostly bundle paths, it blows the length
+ *   bound on its own, and its frames add no triage signal a moderator can act on that the message
+ *   and the URL do not already carry.
+ * · `console.warn` / `console.log` / `console.info`. Errors only — the rest is an order of
+ *   magnitude more volume and is where incidental user data actually lives.
+ * · STATUS-0 REQUESTS, i.e. genuine network-layer failures (offline, DNS, CORS). See the mechanism
+ *   note below: they are indistinguishable from an ordinary opaque cross-origin success, so
+ *   recording them would show a moderator "failures" that never happened.
+ *
+ * ─── AND WHAT *IS* CAPTURED THAT THE LIST ABOVE MIGHT LEAD YOU TO ASSUME IS NOT ────────────────
+ * 🔴 THE TWO PATHS TREAT QUERY STRINGS DIFFERENTLY, AND THE DIFFERENCE IS DELIBERATE. It is worth
+ * stating because `recordConsoleError` and `recordNetworkError` sit next to each other and read as
+ * though one rule governs both.
+ *   · NETWORK path: `sanitizeNetworkUrl` removes the query string and fragment ENTIRELY. What is
+ *     stored is `origin + pathname`, whatever the param was called.
+ *   · CONSOLE path: the message is kept as text. A URL written inside it keeps its query string,
+ *     and only the VALUES of params whose NAME substring-matches `SENSITIVE_PARAM_KEYS` (`token`,
+ *     `code`, `key`, `signature`, …) are replaced by `redactText`. A param with a name that is not
+ *     on that list — a search term, a prompt, a filter — is stored verbatim in `Feedback.context`,
+ *     which is a JSONB column a moderator reads and which has no retention policy.
+ * That asymmetry is an operator decision taken on 2026-09-14 — keep the full console text, query
+ * strings included — not an oversight, and not something to "fix" by widening the redaction. What
+ * it means for a reader of this module: the console path's protection is the `SENSITIVE_PARAM_KEYS`
+ * / email / token heuristics in `redactText`, NOT the unconditional strip the network path gets.
+ *
+ * ─── MECHANISM, AND THE ONE THING IT REFUSES TO DO ────────────────────────────────────────────
+ * 🔴 `fetch` IS NOT PATCHED, AND THAT IS A DECISION, NOT AN OVERSIGHT. Wrapping global `fetch`
+ * would give complete coverage — every 4xx/5xx plus the network-layer throws named above, in every
+ * browser. It would also put code written for a triage convenience directly in the request path of
+ * every page view on the site, where a defect is a site outage rather than a missing log line.
+ * Network capture is therefore PASSIVE ONLY: a `PerformanceObserver` over `resource` entries,
+ * reading `responseStatus`. An observer cannot alter, delay or fail a request.
+ *
+ * What that costs, named rather than hidden:
+ *   · `PerformanceResourceTiming.responseStatus` is not universally implemented. Where it is
+ *     absent, NOTHING is captured and the field is simply omitted — the same "absence is ordinary"
+ *     shape `getFaroSessionId` uses, never an error.
+ *   · A cross-origin response without `Timing-Allow-Origin` reports `responseStatus: 0`, which is
+ *     the SAME observable as a real network failure. Only `>= 400` is recorded, so both are
+ *     dropped. Under-reporting is the safe direction; a fabricated failure is not.
+ *
+ * Console capture DOES wrap `console.error`, which is the only way to see it at all. The wrapper
+ * delegates to the captured original FIRST and does its own work inside a `try`, so the worst
+ * available failure is a lost buffer entry, never a lost log line or a thrown error.
+ *
+ * ─── EVERY STRING IS REDACTED AND CLIPPED ON THE WAY IN, NOT ON THE WAY OUT ───────────────────
+ * The buffers hold only sanitized values. That bounds memory, and it means a `read*` call cannot
+ * be the thing that forgets to redact. `feedbackContextSchema` REJECTS an over-long value rather
+ * than clipping it, so clipping here is not belt-and-braces — it is what keeps an over-long
+ * console line from failing the whole submission on the surface that exists to collect reports.
+ * A clipped string carries a marker so a moderator can tell it from a complete one — see `clip`.
+ */
+
+export type FeedbackNetworkError = {
+  url: string;
+  status: number;
+  initiatorType: string;
+};
+
+/** One DISTINCT console message, with how many times it was recorded. */
+export type FeedbackConsoleError = {
+  message: string;
+  count: number;
+};
+
+/**
+ * Keeps the LAST `capacity` items. The last few failed requests before someone gives up and files a
+ * report are the ones describing what they gave up on.
+ *
+ * Console messages deliberately do NOT use this — see `CountingBuffer` for why "keep the last N" is
+ * the wrong rule for them.
+ */
+class RingBuffer<T> {
+  private items: T[] = [];
+  constructor(private readonly capacity: number) {}
+  push(item: T) {
+    this.items.push(item);
+    if (this.items.length > this.capacity) this.items.splice(0, this.items.length - this.capacity);
+  }
+  read(): T[] {
+    return [...this.items];
+  }
+  clear() {
+    this.items = [];
+  }
+}
+
+/**
+ * Keeps up to `capacity` DISTINCT messages, first-seen first, collapsing a repeat into a `count` on
+ * the entry that is already there.
+ *
+ * 🔴 THIS IS NOT AN OPTIMISATION. IT IS THE FIX FOR WHAT A "KEEP THE LAST N" BUFFER DOES TO A REACT
+ * CASCADE. One broken render is not one `console.error`: React reports the error, then the
+ * component stack, then the boundary re-render, then the retry. So a plain last-10 buffer ships ten
+ * copies of the DOWNSTREAM symptom and ZERO copies of the originating error — the one entry a
+ * moderator actually needs, evicted by the noise it caused. Collapsing repeats spends one slot on
+ * the cascade and leaves the other nine for genuinely distinct errors, inside the same bound.
+ *
+ * ⚠ The rationale this replaced argued the opposite way — "the first few are usually page-load
+ * noise, keep the last few". That is right for a slow drift across a long session and exactly
+ * INVERTED for a cascade, which is the case a bug report is most often filed about.
+ *
+ * 🔴 A REPEAT DOES NOT MOVE ITS ENTRY TO THE END, AND THAT IS THE LOAD-BEARING HALF. Refreshing
+ * recency on a repeat would let a message firing in a loop outlive — and then evict — the
+ * originating error that arrived before it, which is the exact failure this class exists to stop.
+ * Position is FIRST-SEEN; only `count` moves.
+ *
+ * `count` is deliberately unbounded: it is a count, so a cap would understate a real cascade to
+ * save a handful of bytes. What is bounded is the number of ENTRIES, which is what carries strings.
+ */
+class CountingBuffer {
+  private entries: FeedbackConsoleError[] = [];
+  /** message → the entry in `entries`, so a repeat is O(1) rather than a scan of the array. */
+  private index = new Map<string, FeedbackConsoleError>();
+  constructor(private readonly capacity: number) {}
+  push(message: string) {
+    const seen = this.index.get(message);
+    if (seen) {
+      seen.count += 1;
+      return;
+    }
+    const entry: FeedbackConsoleError = { message, count: 1 };
+    this.entries.push(entry);
+    this.index.set(message, entry);
+    while (this.entries.length > this.capacity) {
+      const evicted = this.entries.shift();
+      // `index` is only ever written alongside `entries`, and the lookup above means a message
+      // appears at most once, so the evicted entry's key is always its own.
+      if (evicted) this.index.delete(evicted.message);
+    }
+  }
+  read(): FeedbackConsoleError[] {
+    // Entry COPIES, not references: `count` is mutable and the buffer keeps recording after a read,
+    // so handing out the live objects would let a later repeat change a value already submitted.
+    return this.entries.map((entry) => ({ ...entry }));
+  }
+  clear() {
+    this.entries = [];
+    this.index.clear();
+  }
+}
+
+const consoleBuffer = new CountingBuffer(FEEDBACK_CONSOLE_ERROR_MAX_COUNT);
+const networkBuffer = new RingBuffer<FeedbackNetworkError>(FEEDBACK_NETWORK_ERROR_MAX_COUNT);
+
+/**
+ * How many `console.error` arguments are formatted. A cap rather than the whole list because the
+ * result is clipped to one bounded string anyway, so arguments past the first few cannot reach the
+ * stored value — and formatting them is work done inside somebody's error path for nothing.
+ */
+const MAX_CONSOLE_ARGS = 4;
+
+/**
+ * One `console.error` argument as text.
+ *
+ * An `Error` contributes `name: message` and NOT `.stack` — see the "deliberately not captured"
+ * list. Anything else is JSON where that works and `String()` where it does not (a circular
+ * structure, a throwing getter, a BigInt): this runs inside an error path, so it must not be able
+ * to add a second error to the first.
+ */
+function formatConsoleArg(value: unknown): string {
+  try {
+    if (typeof value === 'string') return value;
+    if (value instanceof Error) return `${value.name}: ${value.message}`;
+    if (value === null || value === undefined || typeof value !== 'object') return String(value);
+    const json = JSON.stringify(value);
+    // `JSON.stringify` returns undefined for a function or a lone symbol.
+    return typeof json === 'string' ? json : String(value);
+  } catch {
+    try {
+      return String(value);
+    } catch {
+      // A `Symbol` throws on String(), and an object with a throwing `toString` reaches here too.
+      return '[unserializable]';
+    }
+  }
+}
+
+/** The formatted arguments of one `console.error` call, space-joined as the console shows them. */
+export function formatConsoleArgs(args: readonly unknown[]): string {
+  return args.slice(0, MAX_CONSOLE_ARGS).map(formatConsoleArg).join(' ');
+}
+
+/**
+ * What a clipped string ends with, so a moderator can tell a cut-off value from a complete one.
+ *
+ * 🔴 WITHOUT A MARKER THE TWO ARE INDISTINGUISHABLE ON SCREEN. A React hydration message runs well
+ * past the bound and a genuine 300-character message does not, yet `FeedbackBrowserErrors.svelte`
+ * renders both as the same bordered box — so a moderator reading a clipped line has no way to know
+ * that the part naming the component is missing, and reads a fragment as the whole error. It is the
+ * same care the panel's "N captured" heading already takes at the ARRAY level, applied to a string.
+ *
+ * One character (U+2026, not three dots) because the marker is spent out of the bound rather than
+ * added to it — see `clip`.
+ */
+const TRUNCATION_MARKER = '…';
+
+/**
+ * `value` at no more than `max` characters, marked when something was ACTUALLY cut.
+ *
+ * 🔴 THE MARKER IS SPENT OUT OF THE BUDGET, NEVER ADDED TO IT. `feedbackContextSchema` REJECTS an
+ * over-long value rather than clipping it, and a rejection fails the reporter's whole submission on
+ * the surface that exists to collect reports — so a marker appended PAST `max` would turn every
+ * long console line into a submit failure. A clipped result is exactly `max` characters.
+ *
+ * 🔴 A STRING OF EXACTLY `max` IS NOT TRUNCATED, so it gets no marker. `slice` is a no-op at the
+ * boundary, so a `>=` here would stamp "there is more" onto a complete message AND spend one of its
+ * characters saying so. The boundary is pinned from both sides by a test.
+ *
+ * 🔴 THE CUT NEVER LANDS INSIDE A SURROGATE PAIR, AND THAT IS A DATA-LOSS BUG, NOT A COSMETIC ONE.
+ * `length` and `slice` count UTF-16 code units, so a boundary falling between the two halves of an
+ * astral character (emoji, and most non-BMP scripts) keeps a LONE SURROGATE. The result is still
+ * `max` units long and still satisfies `feedbackContextSchema`'s `.max()` — which counts the same
+ * units — but it is not well-formed Unicode, and `JSON.stringify` preserves it as an unpaired
+ * `\uD83D` escape all the way to the server. `Feedback.context` is a `jsonb` column, and Postgres
+ * REJECTS that value: measured against a real engine, the insert fails with `invalid input syntax
+ * for type json` while the same string with its pair intact inserts cleanly. So the reporter's
+ * WHOLE submission is lost, on the surface that exists to collect reports — the same failure the
+ * length bound above exists to prevent, arriving through the other half of the encoding.
+ *
+ * When the boundary would split a pair the whole character is dropped, so a clipped result is
+ * occasionally one character SHORTER than `max` rather than one character broken. Never longer.
+ */
+function clip(value: string, max: number): string {
+  if (value.length <= max) return value;
+  let end = max - TRUNCATION_MARKER.length;
+  // A HIGH surrogate in the last KEPT position has its partner at `end`, i.e. in the part being
+  // cut off — that is the one case that manufactures a lone surrogate, so drop the pair entirely.
+  // A low surrogate there is the tail of a pair that is already fully inside the kept region.
+  // `charCodeAt` out of range gives `NaN`, which fails both comparisons, so `end <= 0` is safe.
+  const lastKept = value.charCodeAt(end - 1);
+  if (lastKept >= 0xd800 && lastKept <= 0xdbff) end -= 1;
+  return value.slice(0, end) + TRUNCATION_MARKER;
+}
+
+/**
+ * Redact, then clip. `''` when there is nothing worth keeping, which the callers treat as "do not
+ * record" rather than as an empty entry.
+ *
+ * 🔴 THE ORDER IS LOAD-BEARING AND IS PINNED BY A TEST. Clipping first can cut a JWT or a signed
+ * URL in half, leaving a fragment that no longer matches the pattern that would have removed it —
+ * so the stored value would carry the front half of the secret. Redacting first cannot do that.
+ *
+ * `redactText` (not `redactValue`) because a console message is genuine free text, which is the
+ * one context where the long-opaque-token heuristic is safe to apply — the same routing
+ * `deepRedact` uses for `message` / `stack` keys.
+ */
+/**
+ * Drop unpaired surrogate code units.
+ *
+ * 🔴 THE OTHER HALF OF THE HAZARD `clip` GUARDS. `clip` can no longer MANUFACTURE a lone
+ * surrogate, but it never repaired one it was HANDED, and an input-borne one reaches the wire
+ * through both branches — including the early return, where the value is short enough that `clip`
+ * does nothing at all. The consequence is identical and is measured in `clip`'s docblock: Postgres
+ * rejects the `jsonb` insert with `invalid input syntax for type json`, so the reporter's whole
+ * submission is lost. Real sources are ordinary: a third-party formatter slicing a string across an
+ * astral character, a partial `TextDecoder` chunk, `String.fromCharCode` over binary.
+ *
+ * 🔴 DELIBERATELY NOT `String.prototype.toWellFormed()`, AND NOT A LOOKBEHIND REGEX. This runs
+ * inside the `console.error` wrapper, which must never throw — and this repo declares NO
+ * `browserslist`, so the supported floor is unstated rather than known to be recent. Both of those
+ * constructs are Safari 16.4+; a browser below that would throw a `TypeError` here and take out the
+ * page's console. The manual scan is ES5 and cannot.
+ *
+ * A dropped lone surrogate is not recoverable text — it is half of a character whose other half
+ * never arrived — so it is removed rather than replaced with U+FFFD, matching `clip`'s choice to
+ * drop a split character rather than keep a broken one.
+ */
+function dropLoneSurrogates(value: string): string {
+  if (!/[\ud800-\udfff]/.test(value)) return value;
+  let out = '';
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        out += value[i] + value[i + 1];
+        i += 1;
+      }
+      continue;
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) continue;
+    out += value[i];
+  }
+  return out;
+}
+
+export function sanitizeConsoleMessage(raw: string): string {
+  if (typeof raw !== 'string') return '';
+  const redacted = dropLoneSurrogates(redactText(raw).trim());
+  return clip(redacted, FEEDBACK_CONSOLE_ERROR_MAX_LENGTH);
+}
+
+/**
+ * A captured request URL with its query string and fragment removed, or `null` if it must not be
+ * stored at all.
+ *
+ * 🔴 STRIPPING THE QUERY IS THE POINT OF THIS FUNCTION, and it is the same rule `FeedbackDrawer`
+ * already applies to `context.path`: this platform routes secrets through query strings
+ * (`/redeem-code?code=…`, `/payment/coinbase?key=…`, signed S3 URLs, OAuth callbacks), and
+ * `context` is a JSONB column with no retention policy. A failed request to one of those would
+ * otherwise write a live credential into a moderator-readable column, permanently, without ever
+ * telling the reporter.
+ *
+ * 🔴 NON-http(s) SCHEMES ARE REFUSED ENTIRELY rather than stripped. A `data:` resource entry IS
+ * its own payload — there is no query string to remove, the whole URL is the content, and it can
+ * be megabytes. `blob:` is refused alongside it: same shape, and it is already the spelling the
+ * moderator's `IMAGE_KEY` guard treats as hostile.
+ *
+ * The surviving `origin + pathname` still goes through `redactValue` (the structural-leaf scrub:
+ * emails, JWTs, embedded URLs) because a path can carry an email — `/user/someone@example.com`.
+ * `redactValue` rather than `redactText` so the long-token heuristic does not corrupt a legitimate
+ * long id or content hash in a path segment, which is exactly the routing `deepRedact` documents.
+ */
+export function sanitizeNetworkUrl(raw: string, base?: string): string | null {
+  if (typeof raw !== 'string' || !raw) return null;
+  try {
+    const url = new URL(raw, base);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    url.search = '';
+    url.hash = '';
+    const scrubbed = redactValue(url.toString()).trim();
+    if (!scrubbed) return null;
+    return clip(scrubbed, FEEDBACK_NETWORK_URL_MAX_LENGTH);
+  } catch {
+    // A relative URL with no base, or anything else `new URL` refuses. Storing a value we could
+    // not parse means storing a value we could not strip a query off, so store nothing.
+    return null;
+  }
+}
+
+/** Record one already-raw console message. Exported for the recorder and for tests. */
+export function recordConsoleError(raw: string) {
+  const message = sanitizeConsoleMessage(raw);
+  if (!message) return;
+  consoleBuffer.push(message);
+}
+
+/**
+ * Record one failed request.
+ *
+ * Returns nothing and swallows everything: `status` outside 4xx/5xx, an unusable URL, a missing
+ * `initiatorType`. The schema's `status` bound is `400..599`, so a value this function let through
+ * unfiltered would fail the reporter's whole submission rather than log a wrong number.
+ *
+ * 🔴 `status` IS TYPED `number` AND IS ROUTINELY `undefined` AT RUNTIME, which is why the check is
+ * `Number.isInteger` rather than a range comparison. `PerformanceResourceTiming.responseStatus` is
+ * declared `number` by the DOM lib but is unimplemented in some browsers, and this is the ONE
+ * place that fact is handled — the observer deliberately carries no second guard of its own.
+ * A bare `status < 400 || status > 599` would let `undefined` through both comparisons as `false`.
+ */
+export function recordNetworkError(input: {
+  url: string;
+  status: number;
+  initiatorType?: string;
+  base?: string;
+}) {
+  if (!Number.isInteger(input.status) || input.status < 400 || input.status > 599) return;
+  const url = sanitizeNetworkUrl(input.url, input.base);
+  if (!url) return;
+  networkBuffer.push({
+    url,
+    status: input.status,
+    initiatorType: String(input.initiatorType ?? 'other').slice(
+      0,
+      FEEDBACK_NETWORK_INITIATOR_MAX_LENGTH
+    ),
+  });
+}
+
+/**
+ * The console errors to attach to a submission, FIRST-SEEN first, already redacted and clipped —
+ * each one distinct, carrying the number of times it was recorded. See `CountingBuffer`.
+ */
+export const readConsoleErrors = (): FeedbackConsoleError[] => consoleBuffer.read();
+
+/** The failed requests to attach to a submission, oldest first. Already redacted and clipped. */
+export const readNetworkErrors = (): FeedbackNetworkError[] => networkBuffer.read();
+
+/** Drop everything. For tests, and for a caller that wants a clean slate. */
+export function resetBrowserErrorLog() {
+  consoleBuffer.clear();
+  networkBuffer.clear();
+}
+
+// Module + window guards make install idempotent across React StrictMode's double-mount and
+// Next.js Fast Refresh, where module state resets but the patched `console` persists — the same
+// shape `FaroProvider` uses for `initializeFaro`.
+let installed = false;
+const WINDOW_GUARD_KEY = '__civitaiBrowserErrorLogInstalled__';
+
+/**
+ * Start recording. Idempotent, never throws, and a no-op outside a browser.
+ *
+ * Returns an uninstall function that restores `console.error` and detaches every listener — used
+ * by tests, and the honest thing to hand back for a patch of a global.
+ */
+export function installBrowserErrorLog(): () => void {
+  const noop = () => undefined;
+  if (typeof window === 'undefined') return noop;
+  const guarded = window as unknown as Record<string, unknown>;
+  if (installed || guarded[WINDOW_GUARD_KEY]) return noop;
+  installed = true;
+  guarded[WINDOW_GUARD_KEY] = true;
+
+  const teardown: Array<() => void> = [];
+
+  // ── console.error ────────────────────────────────────────────────────────────────────────────
+  // 🔴 THE ORIGINAL IS CALLED FIRST AND UNCONDITIONALLY. Everything this wrapper adds happens
+  // after the delegation, inside a `try`, so a defect here can lose a buffer entry and nothing
+  // else. It must never swallow a log line or throw into somebody's error path.
+  try {
+    const original = window.console?.error;
+    if (typeof original === 'function') {
+      const patched = function (this: unknown, ...args: unknown[]) {
+        const result = original.apply(this, args);
+        try {
+          recordConsoleError(formatConsoleArgs(args));
+        } catch {
+          // A console call must not be able to fail because of the recorder.
+        }
+        return result;
+      };
+      window.console.error = patched as typeof window.console.error;
+      teardown.push(() => {
+        // Only restore if nothing else has patched over us since; clobbering a later wrapper
+        // (React DevTools, Next's overlay) is worse than leaving ours in place.
+        if (window.console.error === patched) window.console.error = original;
+      });
+    }
+  } catch {
+    // A locked-down `console` (some embedded webviews) — carry on without console capture.
+  }
+
+  // ── uncaught errors and rejections ───────────────────────────────────────────────────────────
+  // Passive listeners. These are the ones `ErrorsInstrumentation` also sees; they are recorded
+  // anyway because the snapshot has to stand on its own when Faro is not running — which is every
+  // dev, preview and ad-blocked session, and is precisely when someone is filing a bug report.
+  try {
+    const onError = (event: ErrorEvent) => {
+      try {
+        // A resource load failure (`<img>`, `<script>`) also raises `error` on window, with an
+        // empty message and the element as the target. The PerformanceObserver below is the
+        // instrument for those; an empty string here would be a blank buffer entry.
+        if (event?.message) recordConsoleError(event.message);
+      } catch {
+        // Never let a listener throw.
+      }
+    };
+    const onRejection = (event: PromiseRejectionEvent) => {
+      try {
+        const reason = event?.reason;
+        recordConsoleError(
+          `Unhandled rejection: ${
+            reason instanceof Error ? `${reason.name}: ${reason.message}` : formatConsoleArg(reason)
+          }`
+        );
+      } catch {
+        // Never let a listener throw.
+      }
+    };
+    window.addEventListener('error', onError);
+    window.addEventListener('unhandledrejection', onRejection);
+    teardown.push(() => {
+      window.removeEventListener('error', onError);
+      window.removeEventListener('unhandledrejection', onRejection);
+    });
+  } catch {
+    // No `addEventListener` — nothing to do.
+  }
+
+  // ── failed requests, passively ───────────────────────────────────────────────────────────────
+  // `buffered: true` replays the entries already in the resource-timing buffer, so installing this
+  // after the first paint still sees the page-load failures that a reporter is most likely to be
+  // filing about.
+  try {
+    if (typeof PerformanceObserver === 'function') {
+      const observer = new PerformanceObserver((list) => {
+        try {
+          for (const entry of list.getEntries()) {
+            const resource = entry as PerformanceResourceTiming;
+            // 🔴 NO FEATURE DETECT HERE, DELIBERATELY. `responseStatus` is `undefined` at runtime
+            // in a browser that does not implement it — the DOM lib types it as `number`
+            // regardless, so TypeScript is no help — and `recordNetworkError` already refuses a
+            // non-integer status. A `typeof … !== 'number'` guard on this line was written first
+            // and then REMOVED: mutation-testing it showed it could not be killed, because every
+            // input that reaches it is rejected one call later by the other guard anyway. One
+            // rule, one place; `recordNetworkError`'s own test covers the `undefined` case.
+            recordNetworkError({
+              url: resource.name,
+              status: resource.responseStatus,
+              initiatorType: resource.initiatorType,
+              base: window.location?.href,
+            });
+          }
+        } catch {
+          // Never let the observer callback throw.
+        }
+      });
+      observer.observe({ type: 'resource', buffered: true });
+      teardown.push(() => observer.disconnect());
+    }
+  } catch {
+    // `type`-style observe is unsupported, or resource timing is unavailable.
+  }
+
+  return () => {
+    for (const undo of teardown) {
+      try {
+        undo();
+      } catch {
+        // Best effort — carry on tearing the rest down.
+      }
+    }
+    installed = false;
+    delete guarded[WINDOW_GUARD_KEY];
+  };
+}

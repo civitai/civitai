@@ -21,7 +21,11 @@ import {
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
 import { assertQuotedFee, getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
 import { getCosmeticArtworkUrl } from '~/server/services/cosmetic-phash.service';
-import { REJECTED_IS_FINAL } from '~/server/services/creator-shop.data';
+import {
+  REJECTED_IS_FINAL,
+  packDisplayMeta,
+  wasLastReviewARejection,
+} from '~/server/services/creator-shop.data';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
@@ -330,35 +334,63 @@ export const updateCreatorShopPack = async ({
 
   const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
   const memberIds = memberCosmeticIds ?? existing.members.map((m) => m.cosmeticId);
-  // Re-resolved even when the contents didn't change: the price floor has to be
-  // checked against today's list prices, not the ones the pack was built against.
   const packOwnerId = existing.addedById ?? userId;
-  const members = withOwnership(await resolvePackMembers(memberIds), packOwnerId);
-  assertMembersBundlable(memberIds, members);
-  assertMembersResellable(members, packOwnerId);
-  assertStickerMembersAllowed(members, stickersEnabled);
-
-  const nextPrice = price ?? existing.unitAmount;
-  const floor = packPriceFloor(members);
-  if (nextPrice < floor)
-    throw throwBadRequestError(
-      `This pack must be listed for at least ${floor} Buzz — every item another creator made has to be covered at its own price`
-    );
-
-  const blockers = blueBuzzBlockers(members);
-  const nextAcceptsBlue = acceptsBlueBuzz ?? !!meta.acceptsBlueBuzz;
-  if (nextAcceptsBlue && blockers.length)
-    throw throwBadRequestError(
-      `These items don't accept Blue Buzz, so this pack can't either: ${blockers
-        .map((b) => b.name)
-        .join(', ')}`
-    );
-
+  const membershipSupplied = memberCosmeticIds !== undefined;
+  const repriced = price !== undefined;
   // Re-snapshot whenever the price moves, not only when the contents do. The
   // floor is checked against today's list prices; leaving yesterday's snapshots
   // in place lets a lowered member price drag the pack's price down while its
   // component still pays out the old, higher amount.
-  const reSnapshot = !!memberCosmeticIds || price !== undefined;
+  const reSnapshot = membershipSupplied || repriced;
+
+  // Resolved only for the edits that read it. Every consumer below — the three
+  // asserts, the floor, the blue blockers, the snapshot rows and the cover
+  // tiles — sits behind one of these two conditions, so a title-only edit was
+  // paying for a query (measured 1.1 ms, and a seq scan of every shop item)
+  // whose result nothing looked at. 🔴 Anything added below that reads
+  // `members` must extend this predicate, or it will read an empty list.
+  const needsMembers = reSnapshot || acceptsBlueBuzz !== undefined;
+  const members = needsMembers
+    ? withOwnership(await resolvePackMembers(memberIds), packOwnerId)
+    : [];
+
+  // Everything below re-validates state the edit did not necessarily touch, so
+  // each is scoped to the edit that makes it meaningful. Run unconditionally
+  // they refuse a title fix over a member's later, unrelated decision — which is
+  // the same "form that cannot save" this whole editor exists to remove.
+  //
+  // Bundlability rides `reSnapshot` rather than membership alone: a price move is
+  // re-checked against a floor that can only be summed over members that still
+  // resolve, so a missing one has to refuse there.
+  if (reSnapshot) assertMembersBundlable(memberIds, members);
+  if (membershipSupplied) {
+    // Resale consent is deliberately NOT re-checked on a price move. Revoking
+    // `sellableByOthers` is an offer withdrawn from FUTURE resellers, never a
+    // term of an existing listing — see the note on `resaleChanged` in
+    // creator-shop.service.ts.
+    assertMembersResellable(members, packOwnerId);
+    assertStickerMembersAllowed(members, stickersEnabled);
+  }
+
+  if (reSnapshot) {
+    const nextPrice = price ?? existing.unitAmount;
+    const floor = packPriceFloor(members);
+    if (nextPrice < floor)
+      throw throwBadRequestError(
+        `This pack must be listed for at least ${floor} Buzz — every item another creator made has to be covered at its own price`
+      );
+  }
+
+  const nextAcceptsBlue = acceptsBlueBuzz ?? !!meta.acceptsBlueBuzz;
+  if (membershipSupplied || acceptsBlueBuzz !== undefined) {
+    const blockers = blueBuzzBlockers(members);
+    if (nextAcceptsBlue && blockers.length)
+      throw throwBadRequestError(
+        `These items don't accept Blue Buzz, so this pack can't either: ${blockers
+          .map((b) => b.name)
+          .join(', ')}`
+      );
+  }
 
   return dbWrite.$transaction(async (tx) => {
     if (reSnapshot) {
@@ -384,19 +416,17 @@ export const updateCreatorShopPack = async ({
           : {}),
         // Contents or price changing sends the pack back through review, the
         // same way an item's content edit does.
-        ...(memberCosmeticIds || price !== undefined
-          ? { status: CosmeticShopItemStatus.PendingReview }
-          : {}),
+        ...(reSnapshot ? { status: CosmeticShopItemStatus.PendingReview } : {}),
         meta: {
           ...meta,
           // `null` clears, `undefined` leaves alone — without the distinction
           // the clear button emptied the form and saved nothing.
           ...(imageUrl === undefined ? {} : { coverUrl: imageUrl ?? undefined }),
-          ...(memberCosmeticIds ? { coverTiles: coverTilesFrom(members) } : {}),
+          ...(membershipSupplied ? { coverTiles: coverTilesFrom(members) } : {}),
           // Only re-baselined when the contents were actually chosen. A member
           // Cosmetic being deleted cascades its join row away, so rewriting this
           // on a price-only edit would quietly ratify the shrunken pack.
-          ...(memberCosmeticIds ? { packMemberCount: members.length } : {}),
+          ...(membershipSupplied ? { packMemberCount: members.length } : {}),
           acceptsBlueBuzz: nextAcceptsBlue,
         } as Prisma.InputJsonValue,
       },
@@ -465,14 +495,16 @@ export const getPackDetail = async ({
   });
   if (!item) throw throwNotFoundError('Pack not found');
   if (item.cosmeticId != null) throw throwBadRequestError('This listing is not a pack');
+  // Named once: this decides both who may read a pack that is not on sale and
+  // who is answered about its review state. Two spellings of it drift apart on
+  // the first tightening.
+  const canReadPrivateState = !!isModerator || (!!userId && userId === item.addedById);
   // Every other read path in the shop gates on Published. Without this, an id is
   // enough to read an unreviewed or rejected pack's contents and pricing.
-  if (
-    item.status !== CosmeticShopItemStatus.Published &&
-    !isModerator &&
-    (!userId || userId !== item.addedById)
-  )
+  if (item.status !== CosmeticShopItemStatus.Published && !canReadPrivateState)
     throw throwNotFoundError('Pack not found');
+
+  const packMeta = (item.meta ?? {}) as CosmeticShopItemMeta;
 
   const snapshotByCosmetic = new Map(item.members.map((m) => [m.cosmeticId, m.floorAmount]));
   const resolved = await resolvePackMembers(item.members.map((m) => m.cosmeticId));
@@ -514,7 +546,20 @@ export const getPackDetail = async ({
     status: item.status,
     listed: item.listed,
     availableQuantity: item.availableQuantity,
-    meta: (item.meta ?? {}) as CosmeticShopItemMeta,
+    // Named fields, not the column, and the same whitelist the storefront
+    // sanitizers spread — a second list here is a list that stops agreeing.
+    meta: {
+      purchases: packMeta.purchases ?? 0,
+      acceptsBlueBuzz: packMeta.acceptsBlueBuzz ?? false,
+      ...packDisplayMeta(packMeta),
+    },
+    // Archiving overwrites `status`, so this is the only thing that tells a
+    // rejected pack from an ordinary archived one. Derived here rather than
+    // client-side, and answered only for the two viewers whose editor asks the
+    // question — everyone else gets no answer rather than a false one.
+    lastReviewWasRejection: canReadPrivateState
+      ? wasLastReviewARejection(packMeta.history)
+      : undefined,
     // A member the pack no longer resolves is a member that can't be sold; the
     // purchase refuses on the same condition, so say so before they try.
     unavailableCount: item.members.length - members.length,

@@ -1,11 +1,23 @@
-import { Badge, Text, UnstyledButton } from '@mantine/core';
+import { Badge, Popover, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { IconPlus, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
 import { HubSourceInput } from '~/components/Hubs/HubSourceInput';
-import { hubSourceKindLabel, kindColor } from '~/components/Hubs/hub.utils';
+import type { HubSourceGroup } from '~/components/Hubs/hub.utils';
+import {
+  addTagToHubGroup,
+  excludeGroupRule,
+  findHubSource,
+  groupAddHint,
+  groupHubSources,
+  groupMemberKeys,
+  hubSourceKindLabel,
+  kindColor,
+  removeHubGroup,
+  removeHubTag,
+} from '~/components/Hubs/hub.utils';
 import { hubLimits } from '~/server/schema/user-hub.schema';
-import type { UserHubSourceType } from '~/shared/utils/prisma/enums';
+import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 
 export type HubSourceValue = {
@@ -16,19 +28,102 @@ export type HubSourceValue = {
   /** A negative source: kept OUT of the hub rather than collected into it. */
   exclude: boolean;
   index: number;
+  /**
+   * A tag AND-set. Tag sources sharing a key, on the same side of `exclude`, must ALL
+   * match; null is a group of one, which is every source that predates the column.
+   */
+  groupKey?: number | null;
 };
 
-function SourceChip({
-  source,
+/**
+ * The add-another-tag affordance. The Tooltip sits OUTSIDE the Popover rather than
+ * inside `Popover.Target`: both clone their child to attach a ref, and stacking them on
+ * one element is the shape that silently stops the trigger opening (CLAUDE.md records
+ * it for `Menu.Target`).
+ */
+function AddToGroup({
   exclude,
   disabled,
+  isAdded,
+  onSelect,
   onRemove,
 }: {
-  source: HubSourceValue;
   exclude?: boolean;
   disabled?: boolean;
-  onRemove: VoidFunction;
+  isAdded: (source: { type: UserHubSourceType; targetId: number }) => boolean;
+  onSelect: (item: { targetId: number; alias: string }) => void;
+  onRemove: (target: { type: UserHubSourceType; targetId: number }) => void;
 }) {
+  const [opened, setOpened] = useState(false);
+
+  return (
+    <Tooltip label={groupAddHint(exclude)}>
+      <div className="flex">
+        <Popover
+          opened={opened}
+          onChange={setOpened}
+          position="bottom-start"
+          width={280}
+          shadow="md"
+          // 🔴 Explicit. ThemeProvider defaults every Popover to withinPortal={false},
+          // and a chip row is a flex container that clips, so the dropdown is drawn
+          // truncated without it.
+          withinPortal
+        >
+          <Popover.Target>
+            <UnstyledButton
+              disabled={disabled}
+              aria-label="Require another tag"
+              onClick={() => setOpened((open) => !open)}
+              className="shrink-0 text-gray-6 hover:text-gray-9 dark:text-dark-2 dark:hover:text-white"
+            >
+              <IconPlus size={14} />
+            </UnstyledButton>
+          </Popover.Target>
+          <Popover.Dropdown p="xs">
+            <HubSourceInput
+              autoFocus
+              only="tags"
+              disabled={disabled}
+              remaining={hubLimits.sourcesPerHub}
+              isAdded={isAdded}
+              onAdd={(item) => {
+                onSelect(item);
+                setOpened(false);
+              }}
+              onRemove={onRemove}
+            />
+          </Popover.Dropdown>
+        </Popover>
+      </div>
+    </Tooltip>
+  );
+}
+
+/**
+ * One chip per GROUP, not per source: tag sources sharing a `groupKey` are ANDed, so
+ * they are one thing the feed does and have to read as one thing here. Every other kind
+ * is always a group of one.
+ */
+function SourceChip({
+  group,
+  exclude,
+  disabled,
+  onRemoveGroup,
+  onRemoveTag,
+  addControl,
+}: {
+  group: HubSourceGroup;
+  exclude?: boolean;
+  disabled?: boolean;
+  onRemoveGroup: VoidFunction;
+  onRemoveTag: (targetId: number) => void;
+  addControl?: React.ReactNode;
+}) {
+  const [first] = group.sources;
+  const grouped = group.sources.length > 1;
+  const name = (source: HubSourceValue) => source.alias ?? `#${source.targetId}`;
+
   return (
     <div
       className={clsx(
@@ -38,25 +133,54 @@ function SourceChip({
           : 'border-gray-3 dark:border-dark-4'
       )}
     >
-      <Text size="sm" lineClamp={1}>
-        {source.alias ?? `#${source.targetId}`}
-      </Text>
+      {group.sources.map((source, index) => (
+        <div key={source.targetId} className="flex min-w-0 items-center gap-1">
+          {/* The AND, said with a glyph rather than a word: the chip is already
+              narrow, and "and" beside a tag name reads as part of the tag. */}
+          {index > 0 && (
+            <Text size="xs" c="dimmed" className="shrink-0">
+              +
+            </Text>
+          )}
+          <Text size="sm" lineClamp={1}>
+            {name(source)}
+          </Text>
+          {/* Only once the group holds more than one: at one member the chip's own ✕
+              already means this, and two ✕ on one chip is a choice nobody has. */}
+          {grouped && (
+            <UnstyledButton
+              aria-label={`Remove ${name(source)} from this hub`}
+              disabled={disabled}
+              onClick={() => onRemoveTag(source.targetId)}
+              className="shrink-0 text-gray-6 hover:text-gray-9 dark:text-dark-2 dark:hover:text-white"
+            >
+              <IconX size={12} />
+            </UnstyledButton>
+          )}
+        </div>
+      ))}
+
       <Badge
         size="xs"
         variant="light"
-        color={exclude ? 'red' : kindColor[source.type] ?? 'gray'}
+        color={exclude ? 'red' : kindColor[first.type] ?? 'gray'}
         className="shrink-0"
       >
-        {hubSourceKindLabel(source.type)}
+        {hubSourceKindLabel(first.type)}
       </Badge>
-      <UnstyledButton
-        aria-label={`Remove ${source.alias ?? source.targetId}`}
-        disabled={disabled}
-        onClick={onRemove}
-        className="shrink-0 text-gray-6 hover:text-gray-9 dark:text-dark-2 dark:hover:text-white"
-      >
-        <IconX size={14} />
-      </UnstyledButton>
+
+      {addControl}
+
+      {!grouped && (
+        <UnstyledButton
+          aria-label={`Remove ${name(first)}`}
+          disabled={disabled}
+          onClick={onRemoveGroup}
+          className="shrink-0 text-gray-6 hover:text-gray-9 dark:text-dark-2 dark:hover:text-white"
+        >
+          <IconX size={14} />
+        </UnstyledButton>
+      )}
     </div>
   );
 }
@@ -92,6 +216,21 @@ export function HubSourceEditor({
   const held = (type: UserHubSourceType, targetId: number) =>
     value.find((source) => source.type === type && source.targetId === targetId);
 
+  const atCap = (exclude: boolean) => {
+    const count = exclude ? excluded.length : included.length;
+    const cap = exclude ? hubLimits.exclusionsPerHub : hubLimits.sourcesPerHub;
+    if (count < cap) return false;
+    showErrorNotification({
+      title: exclude ? 'Never-show list is full' : 'Hub is full',
+      error: new Error(
+        exclude
+          ? `A hub can keep out at most ${cap} things.`
+          : `A hub can hold at most ${cap} things.`
+      ),
+    });
+    return true;
+  };
+
   const addSource = (
     {
       type,
@@ -120,21 +259,41 @@ export function HubSourceEditor({
       return;
     }
 
-    const count = exclude ? excluded.length : included.length;
-    const cap = exclude ? hubLimits.exclusionsPerHub : hubLimits.sourcesPerHub;
-    if (count >= cap) {
+    if (atCap(exclude)) return;
+
+    onChange([...value, { type, targetId, alias, enabled: true, exclude, index: value.length }]);
+  };
+
+  /**
+   * Add a tag to an existing group. The transform MOVES a tag the hub already holds
+   * rather than adding a row, so the cap is only spent on a genuinely new one — and
+   * the caller owns both checks because only it can say why a click was refused.
+   */
+  const addToGroup = (group: HubSourceGroup, item: { targetId: number; alias: string }) => {
+    const target = { type: UserHubSourceType.Tag, targetId: item.targetId };
+    const existing = findHubSource(value, target);
+    const exclude = !!group.sources[0].exclude;
+
+    // The transform returns `value` untouched for this case; the message is the half
+    // it cannot show. Moving it anyway would give the row one side's group key and the
+    // other side's `exclude`, quietly weakening an exclusion the owner set.
+    if (existing && !!existing.exclude !== exclude) {
       showErrorNotification({
-        title: exclude ? 'Never-show list is full' : 'Hub is full',
+        title: 'Already in this hub',
         error: new Error(
-          exclude
-            ? `A hub can keep out at most ${cap} things.`
-            : `A hub can hold at most ${cap} things.`
+          existing.exclude
+            ? `"${
+                existing.alias ?? item.targetId
+              }" is on the never-show list. Remove it from there first.`
+            : `"${existing.alias ?? item.targetId}" is already in this hub.`
         ),
       });
       return;
     }
 
-    onChange([...value, { type, targetId, alias, enabled: true, exclude, index: value.length }]);
+    if (!existing && atCap(exclude)) return;
+
+    onChange(addTagToHubGroup(value, group, item));
   };
 
   // A group's "Add 50" — everything that still fits, in the order it was gathered.
@@ -156,8 +315,41 @@ export function HubSourceEditor({
   const removeByTarget = (target: { type: UserHubSourceType; targetId: number }) =>
     onChange(value.filter((s) => !(s.type === target.type && s.targetId === target.targetId)));
 
-  const remove = (source: HubSourceValue) =>
-    onChange(value.filter((s) => !(s.type === source.type && s.targetId === source.targetId)));
+  const chipsFor = (sources: HubSourceValue[], exclude: boolean) =>
+    groupHubSources(sources).map((group) => {
+      const [first] = group.sources;
+      const members = groupMemberKeys(group);
+      return (
+        <SourceChip
+          key={group.key}
+          group={group}
+          exclude={exclude}
+          disabled={disabled}
+          onRemoveGroup={() => onChange(removeHubGroup(value, group))}
+          onRemoveTag={(targetId) => onChange(removeHubTag(value, targetId))}
+          addControl={
+            first.type === UserHubSourceType.Tag && (
+              <AddToGroup
+                exclude={exclude}
+                disabled={disabled}
+                isAdded={(source) =>
+                  members.has(`${source.type}:${source.targetId}`) ||
+                  !!held(source.type, source.targetId)
+                }
+                onSelect={(item) => addToGroup(group, item)}
+                onRemove={(target) => onChange(removeHubTag(value, target.targetId))}
+              />
+            )
+          }
+        />
+      );
+    });
+
+  // EXCLUDE ONLY. The include-side line was cut after seeing it rendered: a row of
+  // chips joined by `+` reads as "all of these" unaided, while the exclude side means
+  // the opposite of what people assume — `NOT (x AND y)` keeps an image carrying only
+  // x, so grouping there removes LESS.
+  const hasExcludeGroup = groupHubSources(excluded).some((group) => group.sources.length > 1);
 
   return (
     <div className="flex flex-col gap-3">
@@ -176,16 +368,7 @@ export function HubSourceEditor({
       </div>
 
       {included.length ? (
-        <div className="flex flex-wrap gap-2">
-          {included.map((source) => (
-            <SourceChip
-              key={`${source.type}-${source.targetId}`}
-              source={source}
-              disabled={disabled}
-              onRemove={() => remove(source)}
-            />
-          ))}
-        </div>
+        <div className="flex flex-wrap gap-2">{chipsFor(included, false)}</div>
       ) : (
         <Text size="sm" c="dimmed">
           {emptyMessage}
@@ -205,15 +388,7 @@ export function HubSourceEditor({
         </Text>
 
         <div className="flex flex-wrap gap-2">
-          {excluded.map((source) => (
-            <SourceChip
-              key={`${source.type}-${source.targetId}`}
-              source={source}
-              exclude
-              disabled={disabled}
-              onRemove={() => remove(source)}
-            />
-          ))}
+          {chipsFor(excluded, true)}
 
           {!addingExclusion && (
             <UnstyledButton
@@ -226,6 +401,12 @@ export function HubSourceEditor({
             </UnstyledButton>
           )}
         </div>
+
+        {hasExcludeGroup && (
+          <Text size="xs" c="dimmed">
+            {excludeGroupRule}
+          </Text>
+        )}
 
         {addingExclusion && (
           <HubSourceInput

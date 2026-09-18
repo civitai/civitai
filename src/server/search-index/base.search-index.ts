@@ -76,6 +76,13 @@ type SearchIndexProcessor = {
    */
   updateSyncChunkSize?: number;
   pullSteps?: number;
+  /**
+   * Ids a transformed batch ACCOUNTS FOR, when that is not the same as the ids of the documents
+   * in it. A processor needs this only when it handles an id by some means other than writing a
+   * document — `collections` deletes the ids it disqualifies, which is a handled id with no
+   * document. Without the override those ids would be reported as having produced nothing.
+   */
+  getHandledIds?: (transformedData: any) => (number | string)[];
   client?: MeiliSearch | null;
   jobName?: string;
   partial?: boolean;
@@ -89,6 +96,127 @@ type SearchIndexProcessor = {
    */
   retired?: boolean;
 };
+
+/**
+ * Ids a transformed batch accounts for, read out of the batch itself.
+ *
+ * Handles the two shapes every processor in this directory returns today: a flat array of
+ * documents, and an object whose values are arrays of documents. Returns `undefined` — not an
+ * empty list — for any shape it does not recognise, because "I cannot see the documents" and
+ * "there are no documents" are the two answers this whole mechanism exists to tell apart.
+ */
+const readDocumentIds = (
+  transformedData: any,
+  primaryKey: string
+): (number | string)[] | undefined => {
+  const fromArray = (value: any): (number | string)[] | undefined => {
+    if (!Array.isArray(value)) return undefined;
+    const ids: (number | string)[] = [];
+    let sawDocument = false;
+    for (const entry of value) {
+      if (!entry || typeof entry !== 'object') continue;
+      sawDocument = true;
+      const id = entry[primaryKey];
+      if (typeof id === 'number' || typeof id === 'string') ids.push(id);
+    }
+    // A non-empty array holding no objects is not a batch of documents — it is a shape this
+    // cannot read, and saying "0 documents" about it would report every requested id as unwritten.
+    // An EMPTY array is the opposite: it is a readable answer, and the answer is none.
+    if (value.length > 0 && !sawDocument) return undefined;
+    return ids;
+  };
+
+  const direct = fromArray(transformedData);
+  if (direct) return direct;
+  if (!transformedData || typeof transformedData !== 'object') return undefined;
+
+  const ids: (number | string)[] = [];
+  let sawArray = false;
+  for (const value of Object.values(transformedData)) {
+    const fromValue = fromArray(value);
+    if (!fromValue) continue;
+    sawArray = true;
+    ids.push(...fromValue);
+  }
+  return sawArray ? ids : undefined;
+};
+
+/**
+ * Which of the ids a targeted pull asked for produced nothing the index will ever see.
+ *
+ * A row that `pullData` returns and `transformData` then drops is written by nobody and reported
+ * by nobody: `pushData` is handed a batch that simply does not contain it, the task completes,
+ * and every counter above says success. Two published models with no versions sat stale in
+ * `models_v9` for weeks that way, through a bulk repair and a targeted re-enqueue (868m6jk7w).
+ */
+const accountForBatch = (
+  processor: SearchIndexProcessor,
+  requestedIds: (number | string)[] | undefined,
+  transformedData: any
+): {
+  idsWithoutDocument?: (number | string)[];
+  handledWithoutDocumentIds?: (number | string)[];
+} => {
+  if (!requestedIds?.length) return {};
+  const documentIds = readDocumentIds(transformedData, processor.primaryKey ?? 'id');
+  const handled = processor.getHandledIds ? processor.getHandledIds(transformedData) : documentIds;
+  if (!handled) return {};
+  const handledSet = new Set(handled.map(String));
+  const idsWithoutDocument = requestedIds.filter((id) => !handledSet.has(String(id)));
+
+  // What `getHandledIds` subtracts from the count, kept visible instead of silent. A hook is
+  // the one way a processor can make an id stop being reported, which is the shape of the defect
+  // this accounting exists to catch, moved one layer up: if `collections` ever prunes an id it
+  // should not have, only this number shows it happened. A processor with no hook reports none of
+  // these, because for it "handled" and "carries a document" are the same set.
+  if (!processor.getHandledIds || !documentIds) return { idsWithoutDocument };
+  const documentIdSet = new Set(documentIds.map(String));
+  const handledWithoutDocumentIds = requestedIds.filter(
+    (id) => handledSet.has(String(id)) && !documentIdSet.has(String(id))
+  );
+  return { idsWithoutDocument, handledWithoutDocumentIds };
+};
+
+/**
+ * The line that says how many of the ids a run was asked for produced no document.
+ *
+ * `console.log`, NOT `console.error`, and that is a decision rather than an oversight: on the
+ * queue-drain paths this number is nonzero by design. The Update queue legitimately carries ids
+ * the index filters out — `model-scan-result` queues an Update for every scanned Draft model,
+ * while `pullData` filters to Published — so an error-level line here would fire on every cron
+ * run and train its reader to ignore it. This is a measurement; a caller that asked for a repair
+ * reads the number out of `updateSync`'s return value instead.
+ */
+const logIdsWithoutDocument = (indexName: string, caller: string, queue: TaskQueue) => {
+  const parts: string[] = [];
+  if (queue.idsWithoutDocumentCount > 0)
+    parts.push(
+      `${
+        queue.idsWithoutDocumentCount
+      } ids produced no document (sample: ${queue.idsWithoutDocumentSample
+        .slice(0, 20)
+        .join(', ')})`
+    );
+  if (queue.handledWithoutDocumentIdCount > 0)
+    parts.push(`${queue.handledWithoutDocumentIdCount} handled without a document`);
+  if (!parts.length) return;
+  console.log(
+    `createSearchIndexUpdateProcessor :: ${caller} :: ${indexName} :: ${parts.join('; ')}`
+  );
+};
+
+/**
+ * One statement, INSIDE `updateSync`, of "an item with no action is an Update" — read by the
+ * dedupe key and both of its filters so they cannot disagree about an item that carries no action.
+ * Not repo-wide: `SearchIndexUpdate.queueUpdate` states the rule the other way (strict equality,
+ * no defaulting), so an item queued with no action there reaches neither bucket.
+ *
+ * It does NOT make the taxonomy exhaustive: a third enum member returns itself here, matches
+ * neither filter, and still vanishes from the run. Closing that is an else-branch or an
+ * exhaustive check, not this helper.
+ */
+const actionOf = (item: { action?: SearchIndexUpdateQueueAction }) =>
+  item.action ?? SearchIndexUpdateQueueAction.Update;
 
 const processSearchIndexTask = async (
   processor: SearchIndexProcessor,
@@ -124,7 +252,20 @@ const processSearchIndexTask = async (
       const pulledData = await processor.pullData(context, batch, activeStep, t.currentData);
 
       if (!pulledData) {
-        // We don't need to do anything if no data was pulled.
+        // Nothing to transform or push — but for a TARGETED batch that is not "nothing to do", it
+        // is every requested id producing no document, by a different route than the transform
+        // route below. `users`, `comics`, `tools` and `metrics-images` all return null here for an
+        // empty pull, so without this the WORST case — every requested id producing nothing — was
+        // the one case reporting zero.
+        // STEP 0 ONLY, deliberately. A falsy pull at step 0 proves nothing was ever pulled, and no
+        // `pullData` in this directory writes to an index, so nothing can have been written. A
+        // falsy pull at a LATER step is overloaded: some processors use it to mean "the step
+        // sequence ran out" rather than "no rows". Both such returns are unreachable under today's
+        // `pullSteps` counts, so this excludes nothing that happens — it is written this way so
+        // that lowering a processor's branch coverage below its step count cannot silently turn
+        // every batch into a batch reported as writing nothing.
+        if (t.mode === 'targeted' && t.ids.length && activeStep === 0)
+          task.idsWithoutDocument = t.ids;
         context.logger(
           `processSearchIndexTask :: pull :: ${processor.indexName} :: No data pulled. Marking as done.`,
           start ? (Date.now() - start) / 1000 : 'unknown duration'
@@ -146,6 +287,7 @@ const processSearchIndexTask = async (
           index: task.index,
           total: task.total,
           idCount: task.idCount,
+          requestedIds: t.mode === 'targeted' ? t.ids : undefined,
           data: pulledData,
         } as TransformTask;
       }
@@ -153,14 +295,40 @@ const processSearchIndexTask = async (
       context.logger(
         `processSearchIndexTask :: transform :: ${processor.indexName} :: Processing task`
       );
-      const { data, start } = task as TransformTask;
+      const { data, start, requestedIds } = task as TransformTask;
       const transformedData = processor.transformData ? await processor.transformData(data) : data;
+      // Observation must not be able to lose a batch. A throw here would return 'error', and the
+      // task would retry three times and then be reported as failed — an accounting helper
+      // destroying the very write it exists to watch. `getHandledIds` is processor-supplied, so
+      // it is the one call in this chain that is not ours.
+      let idsWithoutDocument: (number | string)[] | undefined;
+      let handledWithoutDocumentIds: (number | string)[] | undefined;
+      try {
+        ({ idsWithoutDocument, handledWithoutDocumentIds } = accountForBatch(
+          processor,
+          requestedIds,
+          transformedData
+        ));
+      } catch (e) {
+        console.error(
+          `processSearchIndexTask :: transform :: ${processor.indexName} :: without-document accounting threw; the batch is unaffected`,
+          e
+        );
+      }
+      if (idsWithoutDocument?.length) {
+        context.logger(
+          `processSearchIndexTask :: transform :: ${processor.indexName} :: ${idsWithoutDocument.length} of ${requestedIds?.length} requested ids produced no document`,
+          idsWithoutDocument.slice(0, 10)
+        );
+      }
       return {
         start,
         type: 'push',
         index: task.index,
         total: task.total,
         idCount: task.idCount,
+        idsWithoutDocument,
+        handledWithoutDocumentIds,
         data: transformedData,
       } as PushTask;
     } else if (type === 'push') {
@@ -200,6 +368,24 @@ export type SearchIndexUpdateSyncResult = {
   totalTasks: number;
   failedTasks: number;
   failedIds: number;
+  /**
+   * Ids that were pulled but produced no document — nothing was written for them and nothing
+   * failed. A repair that reports `failedIds: 0` alongside a nonzero `idsWithoutDocument` did not repair
+   * those ids, and before this existed there was no number that said so.
+   */
+  idsWithoutDocument: number;
+  /**
+   * Up to `WITHOUT_DOCUMENT_SAMPLE_LIMIT` of those ids. A SAMPLE, deliberately: `idsWithoutDocument` is the
+   * count to act on, and a caller that needs all of them should read the log line per batch.
+   */
+  idsWithoutDocumentSample: (number | string)[];
+  /**
+   * Ids a processor's `getHandledIds` accounted for although no document carries them — a
+   * `collections` prune, today, where the processor calls the same set `disqualifiedIds`. Reported rather than subtracted into silence: the hook is the one
+   * way an id can stop being counted here, so this is the only number that would show a
+   * processor pruning ids it should not have.
+   */
+  handledWithoutDocument: number;
 };
 
 export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor) {
@@ -235,6 +421,18 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     indexName,
     /** Exposed so callers/tests can see the batch size `updateSync` will actually use. */
     updateSyncChunkSize,
+    /**
+     * Exposed so the hook can be tested as the processor's own, rather than as a copy of it in a
+     * fixture. A test that re-implements the lambda it is checking passes whether or not the
+     * processor still carries one.
+     */
+    getHandledIds: processor.getHandledIds,
+    /**
+     * Exposed for the same reason: a test that imports an index's batch function directly proves
+     * nothing about the function this processor runs. Re-inlining a different body here is
+     * invisible to such a test unless it can compare the two.
+     */
+    prepareBatches,
     async getData(ids: number[]) {
       const ctx = {
         db: dbWrite,
@@ -385,6 +583,8 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
 
       await Promise.all(workers);
 
+      logIdsWithoutDocument(indexName, 'update', queue);
+
       // Commit queues:
       await queuedUpdates.commit();
       await queuedDeletes.commit();
@@ -461,7 +661,15 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       jobContext?: JobContext
     ): Promise<SearchIndexUpdateSyncResult> {
       if (retired || !items.length) {
-        return { indexName, totalTasks: 0, failedTasks: 0, failedIds: 0 };
+        return {
+          indexName,
+          totalTasks: 0,
+          failedTasks: 0,
+          failedIds: 0,
+          idsWithoutDocument: 0,
+          idsWithoutDocumentSample: [],
+          handledWithoutDocument: 0,
+        };
       }
 
       // TODO index.update shouldnt run
@@ -471,15 +679,27 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         `createSearchIndexUpdateProcessor :: updateSync :: ${indexName} :: Called with ${items.length} items`
       );
       const queue = new TaskQueue('pull', maxQueueSize);
-      const batches = chunk(items, updateSyncChunkSize);
+      // Deduped BEFORE chunking, which is what `update()` and `processQueues()` already do. Doing
+      // it per chunk instead leaves a repeated id counted once per chunk it lands in, so the
+      // guarantee would hold only for callers whose duplicates happened to be adjacent.
+      // Per ACTION, not globally: the same id may legitimately arrive once as an Update and once
+      // as a Delete, and collapsing that pair would change which one runs.
+      const seen = new Set<string>();
+      const dedupedItems = items.filter((item) => {
+        const key = `${actionOf(item)}:${item.id}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      const batches = chunk(dedupedItems, updateSyncChunkSize);
       let totalTasks = 0;
 
       for (const batch of batches) {
         const updateIds = batch
-          .filter((i) => !i.action || i.action === SearchIndexUpdateQueueAction.Update)
+          .filter((i) => actionOf(i) === SearchIndexUpdateQueueAction.Update)
           .map(({ id }) => id);
         const deleteIds = batch
-          .filter((i) => i.action === SearchIndexUpdateQueueAction.Delete)
+          .filter((i) => actionOf(i) === SearchIndexUpdateQueueAction.Delete)
           .map(({ id }) => id);
 
         if (deleteIds.length > 0 && !partial) {
@@ -526,7 +746,12 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         totalTasks,
         failedTasks: queue.failedTasks.length,
         failedIds: queue.failedIdCount,
+        idsWithoutDocument: queue.idsWithoutDocumentCount,
+        idsWithoutDocumentSample: queue.idsWithoutDocumentSample,
+        handledWithoutDocument: queue.handledWithoutDocumentIdCount,
       };
+
+      logIdsWithoutDocument(indexName, 'updateSync', queue);
 
       if (result.failedTasks > 0) {
         console.error(
@@ -612,6 +837,9 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         });
 
         await Promise.all(workers);
+
+        logIdsWithoutDocument(indexName, 'processQueues', queue);
+
         await queuedUpdates.commit();
       }
     },

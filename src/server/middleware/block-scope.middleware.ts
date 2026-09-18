@@ -4,6 +4,7 @@ import { env } from '~/env/server';
 import {
   ensureRegisterAppBlockRuntimeMetrics,
   recordBlockRestApprovalVerdict,
+  recordBlockRevocationRefusal,
   statusToRequestResult,
   type AppBlockEndpoint,
 } from '~/server/metrics/app-block-runtime.metrics';
@@ -901,27 +902,63 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     res.on('finish', recordBlockMetric);
     res.on('close', recordBlockMetric);
 
-    // H-2: per-instance revocation check. Uninstall and toggleEnabled(false)
-    // write a marker that lives for one full token lifetime. Tokens for revoked
-    // instances are rejected here before the wrapped handler runs. Fail-open on
-    // Redis incidents.
+    // H-2: per-instance revocation check. Uninstall, toggleEnabled(false) and a
+    // publisher ban each write a marker that lives for one full token lifetime.
+    // Tokens for revoked instances are rejected here before the wrapped handler
+    // runs. Fail-open on Redis incidents.
     //
-    // 🔴 THIS LINE USED TO READ "and (Phase 2) publisher-ban all write a marker",
-    // and other files cite THIS comment as the authority that a ban does not.
-    // The "(Phase 2)" was carrying that whole meaning, and it could not: the main
-    // verb said all three DO write one, and "(Phase 2)" labels shipped things
-    // elsewhere in this tree. The fact, by enumeration: `revokeInstance` has
-    // exactly two production call sites, `uninstallFromModel` and
-    // `toggleEnabled(false)` (both `block-registry.service.ts`). `toggleBan`
-    // (`user.service.ts`) writes NONE of the three things this guard checks —
-    // it does plenty else (unpublishes the user's models, cancels the
-    // subscription, blocks media, invalidates sessions), so do not read this as
-    // "a ban only logs you out"; the point is narrower and only about THIS
-    // guard. `block-approval.service.ts` never consults owner ban state. So
-    // banning a
-    // publisher does NOT revoke that publisher's live block tokens; they run to
-    // natural `exp`. Do not re-add a ban to this list without adding the writer.
-    if (await BlockRevocation.isRevoked(claims.blockInstanceId)) {
+    // 🔴 THE BAN LEG IS NEW, AND OTHER FILES CITE THIS COMMENT AS THE AUTHORITY ON
+    // IT — keep the enumeration here honest or they all go stale together.
+    // History, because this line has been wrong in both directions: it once read
+    // "and (Phase 2) publisher-ban all write a marker" while NO ban writer existed,
+    // and was then corrected to say a ban writes none of the three. As of
+    // clawgate #618 the writer exists, so the correction is itself now stale.
+    // By enumeration, there are now TWO WRITERS over TWO KEYSPACES, and `isRevoked`
+    // refuses if either holds a marker. The INSTALL writer `revokeInstance` has two
+    // production call sites — `uninstallFromModel` and `toggleEnabled(false)`, both
+    // `block-registry.service.ts`. The BAN writer `revokeInstanceForBan` has one,
+    // `revokeBlockInstancesForPublisher` (`blocks/publisher-ban-revocation.service.ts`),
+    // which `toggleBan` (`user.service.ts`) calls in its ban fan-out.
+    //
+    // 🔴 THE SPLIT IS THE CONTROL. With one shared key, `toggleEnabled(false)` — an
+    // ordinary model owner, reachable over tRPC — overwrote a ban marker and
+    // `toggleEnabled(true)` then cleared it, putting a banned publisher's live token back
+    // into service. Separate keyspaces make that unrepresentable. Both ledgers are pinned
+    // by `blocks/__tests__/publisher-ban-revocation.namespaces.test.ts`.
+    //
+    // 🔴 WHAT THE BAN LEG COVERS IS NARROWER THAN "a banned user's tokens stop
+    // working". It marks every live instance of every block the banned user
+    // CANONICALLY owns — `resolveCanonicalListingOwner`, which is `AppListing.userId`
+    // for an offsite listing and NOT `app.userId`; deliberately not apps they merely
+    // hold a collaborator seat on, which would take down another account's product. It
+    // is asynchronous with respect to a request already in flight: a token minted
+    // before the ban is refused on its NEXT call here, not mid-call. And it is
+    // TIME-BOXED — the markers expire after one token lifetime; durability beyond that
+    // is clawgate #620, layered on top of this rather than replacing it.
+    //
+    // 🔴 THE `page_` PREFIX IS FIVE MINT SHAPES, AND ONE OF THEM IS UNCOVERED:
+    // `page_local_<slug>`, the dev mint's no-server-row path — nothing ties that slug to
+    // a user, so there is nothing to enumerate at ban time and its 4h token runs to
+    // natural `exp`. This line previously said "ONE SHAPE" while the writer said "THREE",
+    // and both undercounted; the authoritative enumeration, with which shapes are
+    // covered and why, lives on `revokeBlockInstancesForPublisher`. Do not restate a
+    // count here — read it there.
+    //
+    // `block-approval.service.ts` still never consults owner ban state — the
+    // approved-status gate below is a separate signal, and a ban does not flip
+    // `app_blocks.status`.
+    //
+    // Do not re-add a fourth cause to this list without adding its writer.
+    // `claims.sub` verbatim: the subject-scoped ban keyspace exists because
+    // `page_ephemeral-<slug>` is NOT globally unique across users, so a global marker
+    // there would refuse an innocent author's own tunnel. See `bannedSubjectKey`.
+    if (await BlockRevocation.isRevoked(claims.blockInstanceId, claims.sub)) {
+      // 🔴 THE ONLY SIGNAL THIS REFUSAL EMITS. `recordScopeInvocation` registers its
+      // `res.on('finish')` handler further down, AFTER this early return, so a revocation
+      // 403 has never been able to write a `block_scope_invocations` row — the audit
+      // surface a reader would assume covers it. Without this counter, "revocation fired"
+      // and "revocation is broken and silently serving" are the same observation.
+      recordBlockRevocationRefusal('rest', claims.blockInstanceId);
       res.status(403).json({ error: 'block instance revoked' });
       return;
     }

@@ -35,6 +35,7 @@ import {
   getUserHubForRoute,
   getHubSourceScope,
   deleteUserHub,
+  groupTagIds,
   hubBrowsingLevel,
   hubViewerWhere,
   hubWriterWhere,
@@ -120,6 +121,24 @@ describe('hubViewerWhere', () => {
     // Strict: `toEqual({})` also passes for `{ OR: undefined }`, which is a
     // different query and would be a moderator seeing nothing.
     expect(hubViewerWhere({ userId: 5, isModerator: true })).toStrictEqual({});
+  });
+});
+
+describe('userHubSourceSchema.groupKey', () => {
+  const parse = (groupKey: number) =>
+    upsertUserHubSchema.safeParse({
+      id: 1,
+      sources: [{ type: UserHubSourceType.Tag, targetId: 77, groupKey }],
+    });
+
+  it('refuses a key past the most rows a hub can hold', () => {
+    // The column is a Postgres INTEGER. Unbounded, an out-of-range key passes zod and
+    // fails inside the replace transaction as a raw DB error with no message the owner
+    // can act on. The ceiling is the row cap, which is the most distinct keys a hub can
+    // ever need — `nextHubGroupKey` hands out the lowest free one so it cannot climb.
+    expect(parse(hubLimits.sourcesPerHub + hubLimits.exclusionsPerHub).success).toBe(true);
+    expect(parse(hubLimits.sourcesPerHub + hubLimits.exclusionsPerHub + 1).success).toBe(false);
+    expect(parse(2_147_483_648).success).toBe(false);
   });
 });
 
@@ -220,9 +239,131 @@ describe('resolveHubSources', () => {
       // Both directions asserted. Half of this — the positive sets — stays green if
       // every source is read as an exclusion, which is a hub that shows nothing.
       expect(result?.userIds).toEqual([10]);
-      expect(result?.tagIds).toEqual([77]);
+      expect(result?.tagGroups).toEqual([[77]]);
       expect(result?.excluded.userIds).toEqual([11]);
-      expect(result?.excluded.tagIds).toEqual([78]);
+      expect(result?.excluded.tagGroups).toEqual([[78]]);
+    });
+
+    it('scopes groupKey to one side of `exclude` — asserted on groupTagIds DIRECTLY', () => {
+      // 🔴 Called with a MIXED list, which `resolveHubSources` never does: it splits
+      // the rows by polarity and calls this once per side, so a test routed through it
+      // passes whether or not `exclude` is part of the map key. Verified — removing
+      // the polarity from the key leaves the whole resolver suite green.
+      //
+      // The key is the guard against a later refactor folding those two calls into
+      // one. Fold them and this is the only thing standing between a kept-out tag and
+      // the hub's own AND-set.
+      const row = (targetId: number, exclude: boolean, groupKey: number | null) => ({
+        type: UserHubSourceType.Tag,
+        targetId,
+        exclude,
+        groupKey,
+      });
+
+      expect(
+        groupTagIds([row(77, false, 0), row(90, true, 0), row(78, false, 0), row(91, true, 0)])
+      ).toEqual([
+        [77, 78],
+        [90, 91],
+      ]);
+    });
+
+    it('groups each side of `exclude` independently', async () => {
+      // What this pins is that grouping HAPPENS on both sides with a shared key — not
+      // the polarity scoping, which it cannot observe: `resolveHubSources` hands
+      // `groupTagIds` a list already split by polarity, so deleting `exclude` from the
+      // key leaves both arms here green. The scoping is asserted directly above, by
+      // calling `groupTagIds` with a mixed list. Do not re-add a 🔴 claim here.
+      findFirstHub.mockResolvedValue({
+        forcedBrowsingLevel: 0,
+        sources: [
+          { type: UserHubSourceType.Tag, targetId: 77, exclude: false, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 78, exclude: false, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 90, exclude: true, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 91, exclude: true, groupKey: 0 },
+        ],
+      });
+
+      const result = await resolveHubSources({ hubId: 1, userId: 5 });
+
+      expect(result?.tagGroups).toEqual([[77, 78]]);
+      expect(result?.excluded.tagGroups).toEqual([[90, 91]]);
+    });
+
+    it('lets a NON-TAG row carry a groupKey without pulling anything with it', async () => {
+      // Only tags are ANDed; every other kind is its own OR-arm, so a key on one is
+      // inert. Without the type check a toggled creator would sweep the tag group that
+      // happens to share its number — a widening by the same door the sweep closes.
+      findFirstHub.mockResolvedValue({
+        forcedBrowsingLevel: 0,
+        sources: [
+          { type: UserHubSourceType.User, targetId: 10, exclude: false, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 77, exclude: false, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 78, exclude: false, groupKey: 0 },
+        ],
+      });
+
+      const result = await resolveHubSources({
+        hubId: 1,
+        userId: 5,
+        excludedSources: [{ type: UserHubSourceType.User, targetId: 10 }],
+      });
+
+      expect(result?.userIds).toEqual([]);
+      expect(result?.tagGroups).toEqual([[77, 78]]);
+    });
+
+    it('drops the WHOLE group when a session toggle hits ONE member', async () => {
+      // 🔴 Do not "simplify" this to dropping the toggled member. This list comes from
+      // the client, and the only reason it is safe to honour is that subtracting can
+      // ONLY narrow the feed. `A AND B` minus B is `A`, which matches a SUPERSET — so
+      // a per-member subtraction would let any viewer widen someone else's hub past
+      // what its owner set, by sending one id on the feed query.
+      //
+      // The ungrouped tag beside it is the control: it proves the toggle removed the
+      // group rather than emptying the tag set outright.
+      findFirstHub.mockResolvedValue({
+        forcedBrowsingLevel: 0,
+        sources: [
+          { type: UserHubSourceType.Tag, targetId: 77, exclude: false, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 78, exclude: false, groupKey: 0 },
+          { type: UserHubSourceType.Tag, targetId: 79, exclude: false, groupKey: null },
+        ],
+      });
+
+      const result = await resolveHubSources({
+        hubId: 1,
+        userId: 5,
+        excludedSources: [{ type: UserHubSourceType.Tag, targetId: 78 }],
+      });
+
+      expect(result?.tagGroups).toEqual([[79]]);
+    });
+
+    it('resolves a hub that PREDATES groupKey to one group per tag', async () => {
+      // The compatibility claim, asserted over rows rather than over a hand-written
+      // `tagGroups` stub. `hub-feed-filter.test.ts` mocks this function out entirely,
+      // so without this case the "null means a group of one" mapping is pinned at
+      // both ends of the path and nowhere in the middle.
+      //
+      // `groupKey: null` spelled out, not omitted: null is what Prisma returns for a
+      // row written before the column existed, and a fixture that leaves the key off
+      // describes a row that cannot exist.
+      findFirstHub.mockResolvedValue({
+        forcedBrowsingLevel: 0,
+        sources: [
+          { type: UserHubSourceType.Tag, targetId: 77, exclude: false, groupKey: null },
+          { type: UserHubSourceType.Tag, targetId: 78, exclude: false, groupKey: null },
+          { type: UserHubSourceType.Tag, targetId: 79, exclude: false, groupKey: null },
+          { type: UserHubSourceType.Tag, targetId: 90, exclude: true, groupKey: null },
+          { type: UserHubSourceType.Tag, targetId: 91, exclude: true, groupKey: null },
+        ],
+      });
+
+      const result = await resolveHubSources({ hubId: 1, userId: 5 });
+
+      expect(result?.tagGroups).toEqual([[77], [78], [79]]);
+      expect(result?.excluded.tagGroups).toEqual([[90], [91]]);
     });
 
     it('IGNORES a session toggle aimed at a negative source', async () => {
@@ -510,7 +651,7 @@ describe('tag sources are restricted to the browsable vocabulary', () => {
         unlisted: false,
         adminOnly: false,
         target: { hasEvery: [TagTarget.Image] },
-        type: { in: [TagType.UserGenerated, TagType.Label] },
+        type: { in: [TagType.UserGenerated, TagType.Label, TagType.Moderation] },
       });
     });
   });
@@ -568,7 +709,7 @@ describe('tag sources are restricted to the browsable vocabulary', () => {
       unlisted: false,
       adminOnly: false,
       target: { hasEvery: [TagTarget.Image] },
-      type: { in: [TagType.UserGenerated, TagType.Label] },
+      type: { in: [TagType.UserGenerated, TagType.Label, TagType.Moderation] },
     });
   });
 });
@@ -939,7 +1080,7 @@ describe('resolving a pasted link', () => {
         unlisted: false,
         adminOnly: false,
         target: { hasEvery: [TagTarget.Image] },
-        type: { in: [TagType.UserGenerated, TagType.Label] },
+        type: { in: [TagType.UserGenerated, TagType.Label, TagType.Moderation] },
       });
     });
 
@@ -962,7 +1103,7 @@ describe('resolving a pasted link', () => {
         unlisted: false,
         adminOnly: false,
         target: { hasEvery: [TagTarget.Image] },
-        type: { in: [TagType.UserGenerated, TagType.Label] },
+        type: { in: [TagType.UserGenerated, TagType.Label, TagType.Moderation] },
       });
     });
 
@@ -981,7 +1122,7 @@ describe('resolving a pasted link', () => {
           unlisted: false,
           adminOnly: false,
           target: { hasEvery: [TagTarget.Image] },
-          type: { in: [TagType.UserGenerated, TagType.Label] },
+          type: { in: [TagType.UserGenerated, TagType.Label, TagType.Moderation] },
         })
       );
     });

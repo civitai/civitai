@@ -1,4 +1,10 @@
 import * as z from 'zod';
+import {
+  BRIDGE_HOSTS,
+  BRIDGE_MESSAGE_BATCH_MAX,
+  BRIDGE_MESSAGE_COUNT_MAX,
+  BRIDGE_MESSAGE_OUTCOMES,
+} from '~/components/AppBlocks/bridgeLabels';
 import { trackedReasons } from '~/utils/login-helpers';
 
 // Both lists mirror the `views` / `daily_views` Enum8 columns, ordered by the ordinal the column stores —
@@ -492,23 +498,43 @@ const imageRemixClickSchema = z.object({
 //     dashboard should treat `isRateLimited:true` as the source of truth
 //     for "capacity-bounded click" and ignore `isValid` on those rows.
 //
-//   hasRemixOfId semantics:
-//      'new' (v2): true whenever the generator was opened from the remix
-//                entry point. It no longer gates on prompt similarity — an
+//   hasRemixOfId semantics: THREE definitions across history, not two. The
+//     field is `!!remixOfId` at submit; what lets that id survive to submit has
+//     changed twice, and each change moves the boundary of a roll-up.
+//      'legacy', and 'new' before v5.1.0: gated on a >=0.75 prompt-similarity
+//                score against the remixed image's prompt, on every branch.
+//      'new' from v5.1.0 (#3871): ungated — true whenever the generator was
+//                opened from the remix entry point. The gate went because an
 //                image edit or an image-to-video shares no prompt with its
-//                source, so the old >=0.75 threshold dropped the link exactly
-//                where the derivation was most literal. Historical 'legacy'
-//                and pre-2026-08 'new' rows DO carry that gate, so a roll-up
-//                across that boundary compares two different definitions.
-//                Whether a derivation was actually verified is a separate
-//                field on the image (meta.extra.sourceImageIds), not this one.
-//      'video':  hasRemixOfId is NOT emitted (field absent in the details
-//                payload — see VideoGenerationForm.tsx:153-165, 241-252).
-//                Video form has no prompt-similarity hook yet; add when
-//                video remix analytics matter.
-//     A query GROUP BY hasRemixOfId is safe to roll up across formVersion
-//     'legacy' and 'new', but should EXCLUDE 'video' (the field is missing,
-//     not false) or split it out as its own bucket.
+//                source, so it dropped the link exactly where the derivation
+//                was most literal.
+//      'new' and 'form-graph' from v5.1.101: gated again, but only where the
+//                prompt is the carrier — a form still holding the source media
+//                keeps the id, a pure txt2img must still score >=0.75. The
+//                claim now also expires (REMIX_CLAIM_TTL) and is scoped to the
+//                remix it came from, so these rows additionally stop counting a
+//                source the user left behind hours ago. See
+//                `utils/remix-claim.ts`.
+//     Each version is the earliest release containing the change; the boundary
+//     in the data is the deploy behind it.
+//      'video':  historical rows only. No emitter has existed since v5.0.1786
+//                (Jun 2026), when the legacy forms went; video now renders
+//                through the same footer as everything else and emits the field
+//                like any other row. An empty 'video' bucket is the end of a
+//                label, NOT a drop in video generation.
+//     Whether a derivation was actually VERIFIED is a different field on the
+//     image (meta.extra.sourceImageIds); this one is only the user's claim.
+//     A GROUP BY hasRemixOfId rolls up across 'legacy', 'new' and 'form-graph'
+//     only if both definition boundaries above are acceptable for the question
+//     being asked; 'video' rows have the field absent rather than false, so
+//     exclude them or bucket them on their own.
+//     'new' and 'form-graph' are also different POPULATIONS, not just different
+//     forms: the form-graph lane is gated by the `formGraphGenerator` flag, so
+//     those rows are whatever audience `form-graph-generator` admits rather than
+//     everyone. The static `['mod']` beside it is only the Flipt-down fallback —
+//     Flipt overrides the role check in both directions, so the real audience is
+//     not knowable from this repo. Comparing a rate across the two buckets
+//     compares two cohorts.
 //
 //   formVersion: absent on rate-limited emits from GenForm — the legacy
 //     image GenForm wrapper and VideoGenerationForm don't have a way to
@@ -975,3 +1001,40 @@ export const IMMEDIATE_FLUSH_ACTION_TYPES = new Set<TrackActionInput['type']>([
 export function isImmediateFlushTrackEvent(event: TrackBatchEvent): boolean {
   return event.kind === 'action' && IMMEDIATE_FLUSH_ACTION_TYPES.has(event.data.type);
 }
+
+// ── App Blocks postMessage BRIDGE message counts ─────────────────────────────
+//
+// The wire shape for /api/track/block-message: a COALESCED batch of
+// {appBlockId, type, host, outcome, count} rows, each incrementing
+// `civitai_app_block_bridge_messages_total` by `count`.
+//
+// 🔴 `count` IS WHY THE BEACON IS AFFORDABLE. The bridge's own inbound rate limit
+// is 30 messages/sec/host, so a per-message beacon would be a ~30 req/s/tab
+// channel. The quantity prom needs is a count, and a count aggregates losslessly:
+// the resulting series is byte-identical to a per-message beacon's. The cap keeps
+// one tampered request from asking for an unbounded single increment.
+//
+// 🔴 NOTHING HERE IS A LABEL BOUND. `type` is capped only in LENGTH; the
+// cardinality bound is `boundBridgeMessageType` in the route (clamped against the
+// code-owned protocol inventory), exactly as `appBlockId` is bounded by
+// `boundAppBlockIdLabel` rather than by this schema. A length cap on a public body
+// is not a cardinality bound — 128 characters is still unbounded distinct values.
+export type BlockMessageBatchInput = z.infer<typeof blockMessageBatchSchema>;
+export const blockMessageBatchSchema = z.object({
+  events: z
+    .array(
+      z.object({
+        appBlockId: z.string().trim().min(1).max(256),
+        type: z.string().trim().min(1).max(128),
+        // 🔴 BUILT FROM THE EMITTER'S OWN CONST ARRAYS, never re-spelled. A zod
+        // array rejects WHOLESALE, so an outcome added client-side but not here
+        // would 400 the entire batch and silently destroy every good row riding
+        // with it. Same shape as `IMPRESSION_SURFACES` -> `z.enum(...)` above.
+        host: z.enum(BRIDGE_HOSTS),
+        outcome: z.enum(BRIDGE_MESSAGE_OUTCOMES),
+        count: z.number().int().positive().max(BRIDGE_MESSAGE_COUNT_MAX),
+      })
+    )
+    .min(1)
+    .max(BRIDGE_MESSAGE_BATCH_MAX),
+});

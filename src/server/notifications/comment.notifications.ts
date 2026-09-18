@@ -7,6 +7,7 @@ import {
   notThreadMuted,
 } from '~/server/notifications/base.notifications';
 import { OWNER_SUBMISSIONS_URL } from '~/server/notifications/app-listing.notifications';
+import { getModelCommentThreadUrl } from '~/utils/comment-url-helpers';
 import { QS } from '~/utils/qs';
 
 /**
@@ -215,7 +216,7 @@ export const commentNotifications = createNotificationProcessor({
     priority: CommentNotificationPriority.EntityOwner,
     prepareMessage: ({ details }) => ({
       message: `${details.username} commented on your ${details.modelName} model`,
-      url: `/models/${details.modelId}?dialog=commentThread&commentId=${details.commentId}`,
+      url: getModelCommentThreadUrl({ modelId: details.modelId, commentId: details.commentId }),
     }),
     prepareQuery: ({ lastSent }) => `
       WITH new_comments AS (
@@ -253,9 +254,11 @@ export const commentNotifications = createNotificationProcessor({
     priority: CommentNotificationPriority.DirectResponse,
     prepareMessage: ({ details }) => ({
       message: `${details.username} responded to your comment on the ${details.modelName} model`,
-      url: `/models/${details.modelId}?dialog=commentThread&commentId=${
-        details.parentId ?? details.commentId
-      }&highlight=${details.commentId}`,
+      url: getModelCommentThreadUrl({
+        modelId: details.modelId,
+        commentId: details.parentId ?? details.commentId,
+        highlight: details.commentId,
+      }),
     }),
     prepareQuery: ({ lastSent }) => `
       WITH new_comment_response AS (

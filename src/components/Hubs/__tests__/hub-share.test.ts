@@ -105,6 +105,23 @@ describe('buildDuplicateHubInput', () => {
     expect(result.sources.map((s) => s.index)).toEqual([0, 1]);
   });
 
+  it('carries the tag AND-groups rather than flattening them', () => {
+    // Dropping `groupKey` here is silent and WIDENING: the copy's "require all of
+    // these" card becomes two OR'd tags, so it shows strictly more than the hub it
+    // was copied from — and each tag renders as its own ordinary card, so it does
+    // not even look wrong. Nothing else in the suite carries a `groupKey`.
+    const tag = (targetId: number, groupKey: number | null) => ({
+      ...source(targetId),
+      type: UserHubSourceType.Tag,
+      groupKey,
+    });
+    const result = buildDuplicateHubInput(
+      hub({ sources: [tag(77, 3), tag(78, 3), tag(79, null)] })
+    );
+
+    expect(result.sources.map((s) => s.groupKey)).toEqual([3, 3, null]);
+  });
+
   it('marks the copy as a copy, within the name limit the server enforces', () => {
     const long = 'x'.repeat(hubLimits.nameLength);
 
@@ -149,6 +166,7 @@ describe('buildDuplicateHubInput', () => {
         enabled: true,
         exclude: false,
         index: 0,
+        groupKey: null,
       },
       {
         type: UserHubSourceType.User,
@@ -157,6 +175,7 @@ describe('buildDuplicateHubInput', () => {
         enabled: true,
         exclude: true,
         index: 1,
+        groupKey: null,
       },
     ]);
   });
