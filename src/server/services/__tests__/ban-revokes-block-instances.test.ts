@@ -39,13 +39,21 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * check the ids someone thought to write down, and that is the half that decayed.
  */
 
-const { isFliptMock, mockRemoveContent, mockSendModerationEmail } = vi.hoisted(() => ({
-  isFliptMock: vi.fn(async (flag: string) => flag === 'app-blocks-runtime-enabled'),
-  mockRemoveContent: vi.fn(async () => undefined),
-  mockSendModerationEmail: vi.fn(async (..._a: unknown[]) => undefined),
-}));
+const { isFliptMock, listTunnelsMock, mockRemoveContent, mockSendModerationEmail } = vi.hoisted(
+  () => ({
+    isFliptMock: vi.fn(async (flag: string) => flag === 'app-blocks-runtime-enabled'),
+    listTunnelsMock: vi.fn(async () => [] as string[]),
+    mockRemoveContent: vi.fn(async () => undefined),
+    mockSendModerationEmail: vi.fn(async (..._a: unknown[]) => undefined),
+  })
+);
 
 vi.mock('~/server/flipt/client', () => ({ isFlipt: isFliptMock }));
+// The dev-tunnel index read. Mocked at the seam rather than through sysRedis so this
+// suite states WHICH tunnels are live rather than reproducing the index's key shape.
+vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
+  listActiveDevTunnelBlockIds: listTunnelsMock,
+}));
 vi.mock('~/server/email/templates', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return { ...actual, moderationActionEmail: { send: mockSendModerationEmail } };
@@ -120,7 +128,26 @@ const APP_BLOCK_SURFACE_IDS = OWNED_APP_BLOCK_IDS.flatMap((id) => [`pdb_${id}`, 
  * holding. The prefix-granular seam guard cannot see it, because it IS a `page_` id.
  */
 const PENDING_REQUEST_IDS = ['pubreq_618_one'];
-const PENDING_SURFACE_IDS = PENDING_REQUEST_IDS.map((id) => `page_pubreq_${id}`);
+/**
+ * BOTH spellings, and they are different shapes with different holders. `id` already
+ * starts `pubreq_`, so the dev mint's author-held token is the DOUBLE-prefixed
+ * `page_pubreq_pubreq_<ULID>` while the MOD review preview is the single
+ * `page_pubreq_<ULID>`. Emitting one and not the other leaves a 4h token running, and a
+ * fixture carrying one and not the other cannot tell.
+ */
+const PENDING_SURFACE_IDS = PENDING_REQUEST_IDS.flatMap((id) => [
+  `page_pubreq_${id}`,
+  `page_${id}`,
+]);
+
+/**
+ * 🔴 THE EPHEMERAL SHAPE — an UNSUBMITTED app running over a live dev tunnel,
+ * `page_ephemeral-<blockId>`, `dev: true` so 14400s, and held by the AUTHOR: precisely
+ * the publisher a ban exists to cut off. It has no AppBlock row, no publish request and
+ * no listing, so the dev-tunnel index is the only server record that can find it.
+ */
+const TUNNELLED_BLOCK_IDS = ['blk_618_ephemeral'];
+const EPHEMERAL_SURFACE_IDS = TUNNELLED_BLOCK_IDS.map((id) => `page_ephemeral-${id}`);
 
 /** Every instance id a ban on this publisher must reach, across all five namespaces. */
 const ALL_INSTANCE_IDS = [
@@ -128,6 +155,7 @@ const ALL_INSTANCE_IDS = [
   ...BLANKET.map((b) => b.instanceId),
   ...APP_BLOCK_SURFACE_IDS,
   ...PENDING_SURFACE_IDS,
+  ...EPHEMERAL_SURFACE_IDS,
 ];
 
 /**
@@ -303,6 +331,7 @@ beforeEach(() => {
   ]);
   appBlockFindMany.mockResolvedValue(OWNED_APP_BLOCK_IDS.map((id) => ({ id })));
   publishRequestFindMany.mockResolvedValue(PENDING_REQUEST_IDS.map((id) => ({ id })));
+  listTunnelsMock.mockResolvedValue([...TUNNELLED_BLOCK_IDS]);
   subscriptionUpdate.mockResolvedValue({ id: 'bus_pinned_0' });
   appBlockFindUnique.mockResolvedValue({ status: 'approved' });
 
@@ -403,13 +432,25 @@ describe('AC-2 — EVERY live instance of EVERY block the publisher owns', () =>
    * Each case below mints a REAL token carrying the synthesised id — which is exactly what
    * `listForModel` and the page mint hand a client — and drives a real bridge request.
    */
-  it.each([
-    ...BLANKET.map((b) => [b.instanceId, `blanket ${b.scope} subscription`] as const),
-    ...APP_BLOCK_SURFACE_IDS.map(
-      (id) =>
-        [id, id.startsWith('pdb_') ? 'platform-default promotion' : 'full-page surface'] as const
-    ),
-  ])('refuses the SYNTHESISED id %s (%s)', async (instanceId) => {
+  const describeShape = (id: string) => {
+    if (id.startsWith('bus_pub_')) return 'blanket publisher_all_my_models subscription';
+    if (id.startsWith('bus_view_')) return 'viewer_personal subscription';
+    if (id.startsWith('pdb_')) return 'platform-default promotion';
+    if (id.startsWith('page_ephemeral-')) return 'ephemeral app over a live dev tunnel (4h)';
+    if (id.startsWith('page_pubreq_')) return 'dev-token pending submission, DOUBLE prefix (4h)';
+    if (id.startsWith('page_pubreq')) return 'mod review preview, single prefix (4h)';
+    if (id.startsWith('page_')) return 'approved full-page surface';
+    return 'stored pinned install';
+  };
+
+  // Driven off ALL_INSTANCE_IDS rather than a hand-listed subset, so a newly covered
+  // shape gets a real bridge request the moment it joins the fixture — the previous
+  // hand-listed form silently skipped the two shapes added this round.
+  it.each(
+    ALL_INSTANCE_IDS.filter((id) => !PINNED.some((p) => p.blockInstanceId === id)).map(
+      (id) => [id, describeShape(id)] as const
+    )
+  )('refuses the SYNTHESISED id %s (%s)', async (instanceId) => {
     const token = await mint(instanceId, PINNED[0].blockId);
 
     const before = await driveRest(token);
@@ -495,6 +536,7 @@ describe('AC-2 — EVERY live instance of EVERY block the publisher owns', () =>
     subscriptionFindMany.mockResolvedValue([]);
     appBlockFindMany.mockResolvedValue([]);
     publishRequestFindMany.mockResolvedValue([]);
+    listTunnelsMock.mockResolvedValue([]);
     const token = await mint(PINNED[0].blockInstanceId, PINNED[0].blockId);
 
     await banPublisher();
@@ -515,6 +557,7 @@ describe('AC-2 — EVERY live instance of EVERY block the publisher owns', () =>
     ]);
     appBlockFindMany.mockResolvedValue([]);
     publishRequestFindMany.mockResolvedValue([]);
+    listTunnelsMock.mockResolvedValue([]);
 
     await banPublisher();
 

@@ -36,8 +36,8 @@ import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-a
  * ORDER, and why it is this order:
  *   1. TOKEN VALIDITY — nothing downstream can be trusted before it; an unverifiable
  *      token also has no `blockInstanceId` to key a revocation lookup on.
- *   2. REVOCATION — a Redis GET, so it is the cheap check and it runs before the DB
- *      read. It is also the one that responds to a user action (uninstall /
+ *   2. REVOCATION — two pipelined Redis GETs, so it is still the cheap check and it runs
+ *      before the DB read. It is also the one that responds to a user action (uninstall /
  *      toggle-off) within seconds rather than at the next approval change.
  *      🔴 A PUBLISHER BAN IS NOW ALSO CONTAINED HERE, and this line has been
  *      wrong in both directions before — it claimed the ban leg until 2026-09-16
@@ -57,13 +57,21 @@ import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-a
  * rather than re-decided, so the REST and tRPC paths cannot drift apart on it.
  *
  * 🔴 THE PER-REQUEST COST, because this runs on EVERY bridge call including the polling
- * ones. Steps 2 and 3 add ONE Redis GET plus ONE indexed `appBlock.findUnique` (the
+ * ones. Steps 2 and 3 add TWO Redis GETs plus ONE indexed `appBlock.findUnique` (the
  * `(appId, blockId)` unique, on the replica — never the primary) to every bridge request.
+ *
+ * ⚠️ IT WAS "ONE Redis GET" UNTIL THE BAN KEYSPACE WAS SPLIT OUT, and the line that
+ * introduced the split claimed the count was unchanged because it used `mGet`. That was
+ * wrong: this repo's client WRAPS `mGet` into `Promise.all(keys.map(get))` to avoid
+ * CROSSSLOT on the cluster, so the array path never reaches the native `MGET`. The two
+ * GETs are issued in one tick and pipeline, so wall-clock is likely unchanged — but the
+ * COMMAND RATE against the cache cluster is doubled on this path. Count commands, not
+ * awaits.
  * The read itself is issued by the shared predicate rather than spelled here, which moves
  * where it lives and not what it costs. `pollWorkflow` is the shape to think about: a
  * running block polls it on a timer, so that pair is paid per poll, per open block
  * instance. A `dev` token skips the DB read (the predicate short-circuits on the
- * exemption, before the query) but still pays the Redis GET.
+ * exemption, before the query) but still pays both Redis GETs.
  *
  * 🔴 AND THE ORDER THIS PUT THE RATE LIMITER IN. `checkBlockCatalogRateLimit` has five
  * call sites in `blocks.router.ts`, covering seven of the fifteen bridge procedures. Four
@@ -101,7 +109,7 @@ import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-a
  *     App-Blocks flag (an in-process, cached Flipt eval).
  *     ⚠️ This enumeration used to omit that step while phrasing itself as closed ("what
  *     the reorder would save is one Redis GET + one replica findUnique … roughly one
- *     op"). It is not roughly one op: on a session-cache miss it is a network round-trip.
+ *     op") — and it is now TWO GETs, per the note above. It is not roughly one op: on a session-cache miss it is a network round-trip.
  * The conclusion is unchanged, because it never rested on the cost: what decides it is the
  * availability argument above — a shared 120/10s ceiling would reach `pollWorkflow`. The
  * cost line only ever said the reorder was not worth making for its own sake, and a

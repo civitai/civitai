@@ -1,5 +1,6 @@
 import { dbWrite } from '~/server/db/client';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
+import { listActiveDevTunnelBlockIds } from '~/server/services/blocks/dev-tunnel.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 /**
@@ -32,23 +33,42 @@ const REVOKE_CONCURRENCY = 100;
  *   `pdb_<appBlockId>`  synthesised — platform-default promotion
  *   `page_<appBlockId>` synthesised — the approved `<slug>.civit.ai` full-page surface
  *
- * 🔴 AND `page_` HAS THREE MINT SHAPES, NOT ONE — the prefix hides them, which is why a
- * prefix-granular guard cannot see the gap. `block-tokens/index.ts` mints
- * `page_<appBlockId>` for an approved block; `dev-token.ts` additionally mints
- * `page_pubreq_<publishRequestId>` for a caller-owned PENDING submission and
- * `page_local_<slug>` for an unsubmitted local app. Both dev shapes are `dev: true`, so
- * they live 14400s — the widest exposure of any token here, on exactly the surface a
- * banned author is most likely to hold.
+ * 🔴 AND `page_` IS FIVE MINT SHAPES, NOT ONE — the shared prefix hides them, which is
+ * why a prefix-granular guard is structurally unable to see a gap in this class. An
+ * earlier version of this comment said THREE and narrowed the uncovered set to one; both
+ * were wrong. The complete enumeration, with its mint site:
  *
- *   - `page_pubreq_*` IS covered: the publish request is a server row, keyed on
- *     `submittedByUserId`.
- *   - 🔴 `page_local_*` IS NOT COVERED AND CANNOT BE, and this is documented rather than
- *     papered over. That shape exists precisely BECAUSE there is no server row of any
- *     kind — no AppBlock, no publish request, nothing that ties the slug to a user — so
- *     there is no set to enumerate at ban time. Closing it needs a different mechanism
- *     (a per-user mint ledger, or keying dev revocation on the subject user rather than
- *     the instance), which is a design change, not a wider query. Until then a banned
- *     author's `page_local_*` dev token runs to its natural 4h `exp`.
+ *   1. `page_<appBlockId>`            `block-tokens/index.ts` — approved block. COVERED
+ *                                     (owned app blocks).
+ *   2. `page_pubreq_<pubreq_ULID>`    `dev-token.ts` — caller-owned PENDING submission.
+ *                                     Note the DOUBLE `pubreq_`: the id already carries
+ *                                     the prefix. `dev: true`, 4h. COVERED (pending
+ *                                     requests by `submittedByUserId`).
+ *   3. `page_<pubreq_ULID>`           `publish-request.service.ts` — the MOD review
+ *                                     preview, SINGLE `pubreq_`, so shape 2's spelling
+ *                                     never matches it. `dev: true`, 4h. COVERED, from
+ *                                     the same pending rows.
+ *   4. `page_ephemeral-<blockId>`     `block-tokens/index.ts` — an UNSUBMITTED app
+ *                                     running over a live dev tunnel. `dev: true`, 4h,
+ *                                     and held by the AUTHOR, i.e. precisely the
+ *                                     publisher this control exists to cut off. COVERED
+ *                                     via the dev-tunnel index (see below).
+ *   5. `page_local_<slug>`            `dev-token.ts` — a brand-new app with no server
+ *                                     state at all. NOT COVERED; see below.
+ *
+ * 🔴 SHAPE 4 WAS WRONGLY FILED AS UNCOVERABLE ALONGSIDE SHAPE 5. It is not: an ephemeral
+ * app has no `AppBlock` row, but a live tunnel session IS server state, and
+ * `dev-tunnel.service.ts` now maintains a per-user index of tunnelled blockIds for
+ * exactly this read. Do not re-merge 4 and 5 — they differ in whether ANY server record
+ * ties the app to a user, which is the whole question.
+ *
+ * 🔴 SHAPE 5 IS GENUINELY UNCOVERABLE HERE, and that is a statement about the mechanism,
+ * not an excuse. It exists precisely BECAUSE no server row of any kind ties the slug to
+ * a user — no AppBlock, no publish request, no tunnel — so there is no set to enumerate
+ * at ban time. Closing it needs a different mechanism (a per-user mint ledger, or keying
+ * dev revocation on the token's SUBJECT rather than its instance), which is a design
+ * change, not a wider query. Until then a banned author's `page_local_*` token runs to
+ * its natural 4h `exp`.
  */
 type SubscriptionRow = { id: string; scope: string; blockInstanceId: string | null };
 
@@ -113,10 +133,15 @@ function subscriptionInstanceId(row: SubscriptionRow): string | null {
  *   2. an `onsite` listing    → owner = `app.userId`
  *   3. a non-`onsite` listing → owner = `AppListing.userId`
  *
- * 🔴 BRANCH 1 IS LOAD-BEARING AND MUST NOT BE DROPPED. Most app blocks predate W13 and
- * have no listing row; selecting only via the listing would UNDER-revoke, which for a
- * security control is strictly worse than over-revoking — and it would look fine in any
- * fixture that bothered to create a listing. `AppListing.appBlockId` is `@unique` and
+ * 🔴 BRANCH 1 IS LOAD-BEARING AND MUST NOT BE DROPPED — for ONE row, not for most of
+ * them. Measured in prod 2026-09-18: 24 app blocks, 23 WITH a listing and 1 without.
+ * (This paragraph claimed the inverse, "most app blocks predate W13 and have no listing
+ * row", in a file that elsewhere insists empirical counts be labelled as such.) The
+ * conclusion is unchanged and the single row is the entire reason: selecting only via
+ * the listing would drop it, and UNDER-revoking is strictly worse than over-revoking for
+ * a security control — it would also look fine in any fixture that bothered to create a
+ * listing. A count of 1 is one approval away from a count of many, and the branch costs
+ * nothing. `AppListing.appBlockId` is `@unique` and
  * `beginListingRevision` writes the shadow with a NULL `appBlockId`, so a block has at
  * most one listing and a shadow can never hold it: `appBlock.appListing` is always the
  * PARENT, which is the row the resolver wants. That is why this needs no
@@ -168,7 +193,7 @@ export function canonicallyOwnedAppBlock(userId: number) {
  * install created seconds before the ban is exactly the row replica lag would hide.
  */
 async function resolvePublisherInstanceIds(userId: number): Promise<string[]> {
-  const [subscriptions, appBlocks, pendingRequests] = await Promise.all([
+  const [subscriptions, appBlocks, pendingRequests, tunnelledBlockIds] = await Promise.all([
     dbWrite.blockUserSubscription.findMany({
       where: { appBlock: canonicallyOwnedAppBlock(userId) },
       select: { id: true, scope: true, blockInstanceId: true },
@@ -177,10 +202,10 @@ async function resolvePublisherInstanceIds(userId: number): Promise<string[]> {
       where: canonicallyOwnedAppBlock(userId),
       select: { id: true },
     }) as Promise<Array<{ id: string }>>,
-    // `page_pubreq_<id>` — the dev mint's PENDING-submission shape.
+    // Pending publish requests — the source of BOTH `page_` shapes 2 and 3.
     //
     // 🔴 KEYED ON THE SUBMITTER, NOT THE CANONICAL OWNER, AND DELIBERATELY SO: it mirrors
-    // the MINT. `dev-token.ts` will only issue this token to the row's own
+    // the MINT. `dev-token.ts` will only issue shape 2 to the row's own
     // `submittedByUserId`, so the submitter is the only account that can be holding one,
     // and there is no app block to resolve an owner from — a pending request may have no
     // `appBlockId` at all. Same distinction the gate ledger records for
@@ -190,6 +215,10 @@ async function resolvePublisherInstanceIds(userId: number): Promise<string[]> {
       where: { submittedByUserId: userId, status: 'pending' },
       select: { id: true },
     }) as Promise<Array<{ id: string }>>,
+    // `page_ephemeral-<blockId>` — shape 4. The tunnel index is the only server record
+    // an unsubmitted app leaves; see `listActiveDevTunnelBlockIds`, which fails to an
+    // empty list rather than failing the ban.
+    listActiveDevTunnelBlockIds(userId),
   ]);
 
   // A set, because the same id cannot be reached twice today but nothing structural
@@ -205,7 +234,15 @@ async function resolvePublisherInstanceIds(userId: number): Promise<string[]> {
     instanceIds.add(`page_${id}`);
   }
   for (const { id } of pendingRequests) {
+    // 🔴 BOTH SPELLINGS, and they are not a typo for each other. `id` already begins
+    // `pubreq_`, so shape 2 (dev-token, author-held) is the DOUBLE-prefixed
+    // `page_pubreq_pubreq_<ULID>` while shape 3 (the mod review preview) is the single
+    // `page_pubreq_<ULID>`. Emitting only one leaves the other running for 4h.
     instanceIds.add(`page_pubreq_${id}`);
+    instanceIds.add(`page_${id}`);
+  }
+  for (const blockId of tunnelledBlockIds) {
+    instanceIds.add(`page_ephemeral-${blockId}`);
   }
   return [...instanceIds];
 }

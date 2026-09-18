@@ -84,10 +84,18 @@ export class BlockRevocation {
   /**
    * True when EITHER keyspace holds a marker.
    *
-   * 🔴 ONE ROUND TRIP, NOT TWO. This runs on every REST and bridge request including the
-   * polling ones, so the second keyspace is read with `mGet` rather than a second `get` —
-   * the cost claim in `block-bridge-auth.service.ts` ("one Redis GET") stays true by
-   * round trips, which is the number that matters on that path.
+   * 🔴 TWO GETs, PIPELINED — NOT ONE ROUND TRIP. This said "ONE ROUND TRIP, NOT TWO" and
+   * that was false: `packages/civitai-redis/src/client.ts` WRAPS `mGet` to fetch keys
+   * individually (`Promise.all(keys.map(get))`) so a multi-key read cannot CROSSSLOT on
+   * the cluster, and the array path never reaches the native `MGET`. Wall-clock is
+   * likely unchanged — both GETs are issued in the same tick and pipeline — but the
+   * COMMAND RATE against the cache cluster is doubled on every REST and bridge request,
+   * including the polling ones. That is the honest cost of splitting the keyspaces, and
+   * it is the price of making a ban marker unoverwritable; it is not a free win.
+   *
+   * `mGet` is still the right call rather than two awaited `get`s: it keeps the two
+   * reads in one tick instead of serialising them. The order of the returned values does
+   * not matter — either key present means revoked.
    */
   static async isRevoked(blockInstanceId: string): Promise<boolean> {
     try {

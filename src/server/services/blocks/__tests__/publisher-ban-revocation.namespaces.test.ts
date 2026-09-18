@@ -422,3 +422,93 @@ describe('canonicallyOwnedAppBlock is resolveCanonicalListingOwner, branch for b
     ).toBe(canonicalOwner === ME);
   });
 });
+
+/**
+ * 🔴 THE PREFIX LEDGERS ABOVE ARE STRUCTURALLY BLIND TO A WHOLE CLASS, AND THIS IS THE
+ * GUARD FOR IT.
+ *
+ * Every assertion above compares PREFIX SETS. A new mint surface that reuses an existing
+ * prefix therefore changes nothing they can see: `deriveScopeFromInstanceId`
+ * ('page_ephemeral-foo') returns `viewer_global` through the bare `page_` branch, and
+ * `resolveBlockInstance` dispatches it the same way, so both ledgers stay green while the
+ * ban writer reaches none of it.
+ *
+ * That is not hypothetical — it is how this PR undercounted twice. `page_` was documented
+ * as ONE shape, then THREE; it is FIVE, and two of the misses (`page_ephemeral-<blockId>`,
+ * the mod review preview `page_<pubreq_ULID>`) add no prefix at all. Both are `dev: true`
+ * 4h tokens.
+ *
+ * So this ledgers the MINT SITES instead of the prefixes: the files that CONSTRUCT a
+ * blockInstanceId. A sixth shape has to be built somewhere, and a new file building one —
+ * or an existing one losing the ability to — lands here. It cannot tell you that an
+ * EXISTING file grew a new shape internally; nothing static can, short of parsing. What it
+ * does is make the population of constructors an enumerated, reviewed set rather than an
+ * assumption, which is the half that was missing.
+ */
+describe('the blockInstanceId MINT-SITE ledger', () => {
+  const MINT_SITE_LEDGER: Record<string, string> = {
+    'src/pages/api/v1/block-tokens/index.ts':
+      'The main mint. Builds `page_<appBlockId>` for an approved block (COVERED by the ' +
+      'owned-app-block leg) and `page_ephemeral-<blockId>` for an unsubmitted app running ' +
+      'over a live dev tunnel (COVERED via listActiveDevTunnelBlockIds — an ephemeral app ' +
+      'has no AppBlock row, so the tunnel index is the only server record of it).',
+    'src/pages/api/v1/blocks/dev-token.ts':
+      'The dev mint. Builds `page_pubreq_<pubreq_ULID>` for a caller-owned PENDING ' +
+      'submission (COVERED — note the DOUBLE pubreq_, the id already carries the prefix) ' +
+      'and `page_local_<slug>` for an app with NO server row of any kind (NOT COVERED and ' +
+      'not coverable from here — nothing ties that slug to a user; see the writer).',
+    'src/server/services/blocks/publish-request.service.ts':
+      'The MOD review preview: `page_<pubreq_ULID>`, SINGLE pubreq_, so dev-token’s ' +
+      'spelling never matches it. COVERED — the writer emits both spellings from the same ' +
+      'pending rows.',
+    'src/server/services/block-registry.service.ts':
+      'The SQL synthesis in listForModel: `bus_pub_ || bus.id`, `bus_view_ || bus.id`, ' +
+      '`pdb_ || pdb.app_block_id`. COVERED by the subscription and app-block legs.',
+  };
+
+  const MINT_RE =
+    /blockInstanceId:\s*`|blockInstanceId = `|AS block_instance_id|PAGE_INSTANCE_PREFIX\}/;
+
+  const MINT_ROOTS = ['src/server', 'src/pages'];
+  const mintWalk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === '__tests__' || entry.name === 'node_modules') continue;
+        out.push(...mintWalk(full));
+      } else if (entry.name.endsWith('.ts') && !entry.name.includes('.test.')) {
+        out.push(full);
+      }
+    }
+    return out;
+  };
+  const ALL_MINT_FILES = MINT_ROOTS.flatMap((r) => mintWalk(join(process.cwd(), r)));
+
+  const MINT_SITES = ALL_MINT_FILES.filter((f) => MINT_RE.test(readFileSync(f, 'utf8')))
+    .map((f) => relative(process.cwd(), f).split(sep).join('/'))
+    .sort();
+
+  it('POSITIVE CONTROL: the pattern finds real constructors', () => {
+    expect(ALL_MINT_FILES.length).toBeGreaterThan(300);
+    expect(MINT_SITES.length).toBeGreaterThan(2);
+  });
+
+  it('NEGATIVE CONTROL: a definitely-absent construction shape matches nothing', () => {
+    const bogus = ALL_MINT_FILES.filter((f) =>
+      /blockInstanceIdNoSuchThing:\s*`/.test(readFileSync(f, 'utf8'))
+    );
+    expect(bogus).toEqual([]);
+  });
+
+  it('every file that CONSTRUCTS a blockInstanceId is ledgered, with its coverage', () => {
+    expect(
+      MINT_SITES,
+      'a file started (or stopped) constructing blockInstanceIds. Every mint shape has to ' +
+        'be reachable by revokeBlockInstancesForPublisher or explicitly recorded as ' +
+        'uncovered — the prefix ledgers above CANNOT see a new shape that reuses an ' +
+        'existing prefix, which is how `page_` came to be documented as one shape when it ' +
+        'is five.'
+    ).toEqual(Object.keys(MINT_SITE_LEDGER).sort());
+  });
+});

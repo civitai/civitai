@@ -936,9 +936,13 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // TIME-BOXED — the markers expire after one token lifetime; durability beyond that
     // is clawgate #620, layered on top of this rather than replacing it.
     //
-    // 🔴 ONE SHAPE IS KNOWN-UNCOVERED: `page_local_<slug>`, the dev mint's no-server-row
-    // path. There is nothing to enumerate at ban time, so that 4h token runs to its
-    // natural `exp`. Documented in the ban writer; do not read this guard as closing it.
+    // 🔴 THE `page_` PREFIX IS FIVE MINT SHAPES, AND ONE OF THEM IS UNCOVERED:
+    // `page_local_<slug>`, the dev mint's no-server-row path — nothing ties that slug to
+    // a user, so there is nothing to enumerate at ban time and its 4h token runs to
+    // natural `exp`. This line previously said "ONE SHAPE" while the writer said "THREE",
+    // and both undercounted; the authoritative enumeration, with which shapes are
+    // covered and why, lives on `revokeBlockInstancesForPublisher`. Do not restate a
+    // count here — read it there.
     //
     // `block-approval.service.ts` still never consults owner ban state — the
     // approved-status gate below is a separate signal, and a ban does not flip
