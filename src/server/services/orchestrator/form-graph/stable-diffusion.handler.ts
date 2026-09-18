@@ -6,13 +6,26 @@
 
 import type {
   ComfyStepTemplate,
+  ImageGenStepTemplate,
   ImageJobControlNet,
   ImageJobNetworkParams,
   PreprocessImageStepTemplate,
   Scheduler,
   TextToImageStepTemplate,
 } from '@civitai/client';
-import { samplersToSchedulers } from '~/shared/constants/generation.constants';
+import type {
+  ComfySd1CreateImageGenInput,
+  ComfySdxlCreateImageGenInput,
+  Sd1CreateImageGenInput,
+  SdxlCreateImageGenInput,
+} from '@civitai/orchestration-client';
+import {
+  samplersToComfySamplers,
+  samplersToSchedulers,
+  samplersToSdCppSamplers,
+  usesComfyEngine,
+} from '~/shared/constants/generation.constants';
+import { removeEmpty } from '~/utils/object-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
 import { maxRandomSeed } from '~/server/common/constants';
 import type { ResourceData } from '~/shared/form-graph/generation/defs';
@@ -35,6 +48,14 @@ const SDXL_DRAFT_LORA = {
   air: 'urn:air:sdxl1:lora:civitai:391999@391999',
   strength: 1,
 } as const;
+
+const IMAGE_GEN_ECOSYSTEM: Record<string, 'sd1' | 'sdxl' | undefined> = {
+  SD1: 'sd1',
+  SDXL: 'sdxl',
+  Pony: 'sdxl',
+  Illustrious: 'sdxl',
+  NoobAI: 'sdxl',
+};
 
 /** Workflows that always use comfy (regardless of images) */
 const COMFY_ALWAYS = [
@@ -125,7 +146,12 @@ function createTextToImageInput(
 
 export const createStableDiffusionInput = defineHandler<
   EcosystemData<'SD1' | 'SD2' | 'SDXL' | 'Pony' | 'Illustrious' | 'NoobAI'>,
-  (TextToImageStepTemplate | ComfyStepTemplate | PreprocessImageStepTemplate)[]
+  (
+    | TextToImageStepTemplate
+    | ImageGenStepTemplate
+    | ComfyStepTemplate
+    | PreprocessImageStepTemplate
+  )[]
 >(async (data, ctx) => {
   if (!data.model) throw new Error('Model is required for SD family workflows');
   if (!data.aspectRatio && !data.images?.length)
@@ -214,6 +240,86 @@ export const createStableDiffusionInput = defineHandler<
     data.controlNets,
     ctx.baseStepIndex
   );
+
+  const ecosystem = IMAGE_GEN_ECOSYSTEM[data.ecosystem];
+  // Keep whichever engine this request runs on today: the comfy inputs have no
+  // `embeddings` and the sdcpp ones no `controlNets`, so each route sends only
+  // what it can carry and the rest stays on textToImage. Draft needs batchSize,
+  // which no imageGen input has.
+  const comfyEngine = usesComfyEngine({
+    ecosystem: data.ecosystem,
+    modelId: data.model.id,
+    enhancedCompatibility: data.enhancedCompatibility,
+  });
+  const embeddings = userResources.filter((r) => r.model?.type === 'TextualInversion');
+  const canImageGen =
+    ctx.useImageGen &&
+    !!ecosystem &&
+    !isDraft &&
+    (comfyEngine ? embeddings.length === 0 : controlNets.length === 0);
+
+  if (canImageGen && ecosystem) {
+    const loras: Record<string, number> = {};
+    for (const r of userResources) {
+      if (r.model?.type === 'TextualInversion') continue;
+      loras[ctx.airs.getOrThrow(r.id)] = r.strength ?? 1;
+    }
+
+    const shared = {
+      ecosystem,
+      operation: 'createImage' as const,
+      model: ctx.airs.getOrThrow(data.model.id),
+      prompt: data.prompt ?? '',
+      negativePrompt: data.negativePrompt,
+      width: data.aspectRatio?.width,
+      height: data.aspectRatio?.height,
+      steps,
+      cfgScale,
+      seed,
+      quantity,
+      outputFormat: data.outputFormat,
+      loras: Object.keys(loras).length ? loras : undefined,
+      vaeModel: data.vae ? ctx.airs.getOrThrow(data.vae.id) : undefined,
+      // Only the sd1 inputs carry clipSkip; the sdxl ones drop it on both engines.
+      ...(ecosystem === 'sd1' && data.clipSkip != null ? { clipSkip: data.clipSkip } : {}),
+    };
+
+    let input:
+      | ComfySd1CreateImageGenInput
+      | ComfySdxlCreateImageGenInput
+      | Sd1CreateImageGenInput
+      | SdxlCreateImageGenInput;
+    if (comfyEngine) {
+      const comfy =
+        samplersToComfySamplers[sampler as keyof typeof samplersToComfySamplers] ??
+        samplersToComfySamplers['undefined'];
+      input = {
+        ...shared,
+        engine: 'comfy',
+        sampler: comfy.sampler,
+        scheduler: comfy.scheduler,
+        ...(controlNets.length ? { controlNets } : {}),
+      };
+    } else {
+      const sdcpp =
+        samplersToSdCppSamplers[sampler as keyof typeof samplersToSdCppSamplers] ??
+        samplersToSdCppSamplers['undefined'];
+      input = {
+        ...shared,
+        engine: 'sdcpp',
+        sampleMethod: sdcpp.sampleMethod,
+        schedule: sdcpp.schedule,
+        ...(embeddings.length
+          ? { embeddings: embeddings.map((r) => ctx.airs.getOrThrow(r.id)) }
+          : {}),
+      };
+    }
+
+    return [
+      ...preprocessSteps,
+      { $type: 'imageGen', input: removeEmpty(input) } as ImageGenStepTemplate,
+    ];
+  }
 
   const genStep = createTextToImageInput(
     {

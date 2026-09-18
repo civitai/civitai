@@ -1,4 +1,10 @@
 import type { WorkflowStatus } from '@civitai/client';
+import type {
+  ComfySampler,
+  ComfyScheduler,
+  SdCppSampleMethod,
+  SdCppSchedule,
+} from '@civitai/orchestration-client';
 import { Scheduler } from '@civitai/client';
 import type { MantineColor } from '@mantine/core';
 import type { Sampler } from '~/server/common/constants';
@@ -264,14 +270,14 @@ export const generationSamplers = Object.keys(samplersToSchedulers) as Sampler[]
 // !important - undefined maps to the same values as 'DPM++ 2M Karras'
 export const samplersToComfySamplers: Record<
   Sampler | 'undefined',
-  { sampler: string; scheduler: 'normal' | 'karras' | 'exponential' }
+  { sampler: ComfySampler; scheduler: ComfyScheduler }
 > = {
   'Euler a': { sampler: 'euler_ancestral', scheduler: 'normal' },
   Euler: { sampler: 'euler', scheduler: 'normal' },
   LMS: { sampler: 'lms', scheduler: 'normal' },
   Heun: { sampler: 'heun', scheduler: 'normal' },
-  DPM2: { sampler: 'dpmpp_2', scheduler: 'normal' },
-  'DPM2 a': { sampler: 'dpmpp_2_ancestral', scheduler: 'normal' },
+  DPM2: { sampler: 'dpm_2', scheduler: 'normal' },
+  'DPM2 a': { sampler: 'dpm_2_ancestral', scheduler: 'normal' },
   'DPM++ 2S a': { sampler: 'dpmpp_2s_ancestral', scheduler: 'normal' },
   'DPM++ 2M': { sampler: 'dpmpp_2m', scheduler: 'normal' },
   'DPM++ 2M SDE': { sampler: 'dpmpp_2m_sde', scheduler: 'normal' },
@@ -289,10 +295,46 @@ export const samplersToComfySamplers: Record<
   'DPM++ 3M SDE Karras': { sampler: 'dpmpp_3m_sde', scheduler: 'karras' },
   'DPM++ 3M SDE Exponential': { sampler: 'dpmpp_3m_sde', scheduler: 'exponential' },
   DDIM: { sampler: 'ddim', scheduler: 'normal' },
-  PLMS: { sampler: 'plms', scheduler: 'normal' },
+  PLMS: { sampler: 'ddim', scheduler: 'normal' },
   UniPC: { sampler: 'uni_pc', scheduler: 'normal' },
   LCM: { sampler: 'lcm', scheduler: 'normal' },
   undefined: { sampler: 'dpmpp_2m', scheduler: 'karras' },
+};
+
+// stable-diffusion.cpp ships a smaller sampler set than ComfyUI: LMS, the SDE variants,
+// DPM fast/adaptive, UniPC and PLMS have no equivalent and collapse onto the nearest
+// family member, so a user's sampler choice is not always preserved across this map.
+export const samplersToSdCppSamplers: Record<
+  Sampler | 'undefined',
+  { sampleMethod: SdCppSampleMethod; schedule: SdCppSchedule }
+> = {
+  'Euler a': { sampleMethod: 'euler_a', schedule: 'discrete' },
+  Euler: { sampleMethod: 'euler', schedule: 'discrete' },
+  LMS: { sampleMethod: 'euler', schedule: 'discrete' },
+  Heun: { sampleMethod: 'heun', schedule: 'discrete' },
+  DPM2: { sampleMethod: 'dpm2', schedule: 'discrete' },
+  'DPM2 a': { sampleMethod: 'dpm++2s_a', schedule: 'discrete' },
+  'DPM++ 2S a': { sampleMethod: 'dpm++2s_a', schedule: 'discrete' },
+  'DPM++ 2M': { sampleMethod: 'dpm++2m', schedule: 'discrete' },
+  'DPM++ 2M SDE': { sampleMethod: 'dpm++2mv2', schedule: 'discrete' },
+  'DPM++ SDE': { sampleMethod: 'dpm++2mv2', schedule: 'discrete' },
+  'DPM fast': { sampleMethod: 'euler', schedule: 'discrete' },
+  'DPM adaptive': { sampleMethod: 'euler', schedule: 'discrete' },
+  'LMS Karras': { sampleMethod: 'euler', schedule: 'karras' },
+  'DPM2 Karras': { sampleMethod: 'dpm2', schedule: 'karras' },
+  'DPM2 a Karras': { sampleMethod: 'dpm++2s_a', schedule: 'karras' },
+  'DPM++ 2S a Karras': { sampleMethod: 'dpm++2s_a', schedule: 'karras' },
+  'DPM++ 2M Karras': { sampleMethod: 'dpm++2m', schedule: 'karras' },
+  'DPM++ SDE Karras': { sampleMethod: 'dpm++2mv2', schedule: 'karras' },
+  'DPM++ 2M SDE Karras': { sampleMethod: 'dpm++2mv2', schedule: 'karras' },
+  'DPM++ 3M SDE': { sampleMethod: 'dpm++2mv2', schedule: 'discrete' },
+  'DPM++ 3M SDE Karras': { sampleMethod: 'dpm++2mv2', schedule: 'karras' },
+  'DPM++ 3M SDE Exponential': { sampleMethod: 'dpm++2mv2', schedule: 'exponential' },
+  DDIM: { sampleMethod: 'ddim_trailing', schedule: 'discrete' },
+  PLMS: { sampleMethod: 'ddim_trailing', schedule: 'discrete' },
+  UniPC: { sampleMethod: 'dpm++2m', schedule: 'discrete' },
+  LCM: { sampleMethod: 'lcm', schedule: 'lcm' },
+  undefined: { sampleMethod: 'dpm++2m', schedule: 'karras' },
 };
 
 // #region [utils]
@@ -755,6 +797,14 @@ export function getIsPonyV7(id: number) {
 
 export function getSizeFromFluxUltraAspectRatio(value: number) {
   return fluxUltraAspectRatios[value] ?? fluxUltraAspectRatios[defaultFluxUltraAspectRatioIndex];
+}
+
+/** The label form `Flux1ProUltraImageGenInput.aspectRatio` takes, vs the index the sibling returns. */
+export function getClosestFluxUltraAspectRatioLabel(width = 1024, height = 1024) {
+  const ratios = fluxUltraAspectRatios.map((x) => x.width / x.height);
+  const index = ratios.indexOf(findClosest(ratios, width / height));
+  return (fluxUltraAspectRatios[index] ?? fluxUltraAspectRatios[defaultFluxUltraAspectRatioIndex])
+    .label;
 }
 
 export function getClosestFluxUltraAspectRatio(width = 1024, height = 1024) {
