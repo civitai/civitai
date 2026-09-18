@@ -86,6 +86,7 @@ export function ImageDetailByProps({
     heartCountAllTime: number;
     laughCountAllTime: number;
     cryCountAllTime: number;
+    statsUnknown?: boolean;
   } | null = data?.stats ?? null;
 
   const user = data?.user;
@@ -442,6 +443,7 @@ function ImageDetailByPropsReactions({
     heartCountAllTime: number;
     laughCountAllTime: number;
     cryCountAllTime: number;
+    statsUnknown?: boolean;
   } | null;
   userId?: number;
 }) {
@@ -463,6 +465,7 @@ function ImageDetailByPropsReactions({
           entityType="image"
           reactions={reactions}
           metrics={metrics}
+          metricsUnknown={stats?.statsUnknown}
           targetUserId={userId}
         />
       )}

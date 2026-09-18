@@ -332,6 +332,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
             entityId={image.id}
             entityType="image"
             reactions={image.reactions}
+            metricsUnknown={image.stats?.statsUnknown}
             metrics={{
               likeCount: image.stats?.likeCountAllTime,
               dislikeCount: image.stats?.dislikeCountAllTime,
@@ -457,6 +458,7 @@ function PostCarouselSlide({
             entityId={image.id}
             entityType="image"
             reactions={image.reactions}
+            metricsUnknown={image.stats?.statsUnknown}
             metrics={{
               likeCount: image.stats?.likeCountAllTime,
               dislikeCount: image.stats?.dislikeCountAllTime,
@@ -626,7 +628,15 @@ export function LazyPostImagesCarousel({
   const postTail = useMemo<PostTailDescriptor | undefined>(
     () =>
       postId != null
-        ? { postId, imageCount: total, filters, browsingLevel, hiddenImageIds, hiddenTags, hiddenUsers }
+        ? {
+            postId,
+            imageCount: total,
+            filters,
+            browsingLevel,
+            hiddenImageIds,
+            hiddenTags,
+            hiddenUsers,
+          }
         : undefined,
     [postId, total, filters, browsingLevel, hiddenImageIds, hiddenTags, hiddenUsers]
   );

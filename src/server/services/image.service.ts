@@ -148,7 +148,7 @@ import type {
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
-import type { ImageV2Model } from '~/server/selectors/imagev2.selector';
+import type { ImageV2Model, ImageV2Stats } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import {
   getCollectionRandomSeed,
@@ -2564,19 +2564,7 @@ const getAllImagesUncaptured = async (
           cosmetics: userCosmetics?.[creatorId] ?? [],
           profilePicture: profilePictures?.[creatorId] ?? null,
         },
-        stats: {
-          likeCountAllTime: match?.reactionLike ?? 0,
-          laughCountAllTime: match?.reactionLaugh ?? 0,
-          heartCountAllTime: match?.reactionHeart ?? 0,
-          cryCountAllTime: match?.reactionCry ?? 0,
-
-          commentCountAllTime: match?.comment ?? 0,
-          collectedCountAllTime: match?.collection ?? 0,
-          tippedAmountCountAllTime: match?.buzz ?? 0,
-
-          dislikeCountAllTime: 0,
-          viewCountAllTime: 0,
-        },
+        stats: toImageV2Stats(match),
         reactions:
           userReactions?.[i.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [],
         tags: tagsByImageId?.get(i.id),
@@ -2988,17 +2976,7 @@ export const getAllImagesIndex = async (
           cosmetics: userCosmetics?.[sr.userId] ?? [],
           profilePicture: profilePictures?.[sr.userId] ?? null,
         },
-        stats: {
-          likeCountAllTime: metrics?.reactionLike ?? 0,
-          laughCountAllTime: metrics?.reactionLaugh ?? 0,
-          heartCountAllTime: metrics?.reactionHeart ?? 0,
-          cryCountAllTime: metrics?.reactionCry ?? 0,
-          commentCountAllTime: metrics?.comment ?? 0,
-          collectedCountAllTime: metrics?.collection ?? 0,
-          tippedAmountCountAllTime: metrics?.buzz ?? 0,
-          dislikeCountAllTime: 0,
-          viewCountAllTime: 0,
-        },
+        stats: toImageV2Stats(metrics),
         reactions,
         cosmetic: imageCosmetics?.[sr.id] ?? null,
         // TODO fix below
@@ -3354,6 +3332,12 @@ export async function getImagesFromFeedSearch(
         availability: img.availability ?? Availability.Public,
         reactions: transformedReactions,
         tags: transformedTags,
+        // Not derived: this path's stats come from `event-engine-common`'s ImageStats,
+        // which has already collapsed an absent metric row to zero and cannot say which
+        // it was. Reachable only from /api/v1/images (JSON), never from a rendered feed,
+        // so nothing renders a wrong unknown state off it. Carrying the flag properly
+        // needs the shape changed in the submodule first.
+        stats: { ...rest.stats, statsUnknown: false },
       };
     });
 
@@ -4066,17 +4050,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
         const match = imageMetrics[h.id];
         return {
           ...h,
-          stats: {
-            likeCountAllTime: match?.reactionLike ?? 0,
-            laughCountAllTime: match?.reactionLaugh ?? 0,
-            heartCountAllTime: match?.reactionHeart ?? 0,
-            cryCountAllTime: match?.reactionCry ?? 0,
-            commentCountAllTime: match?.comment ?? 0,
-            collectedCountAllTime: match?.collection ?? 0,
-            tippedAmountCountAllTime: match?.buzz ?? 0,
-            dislikeCountAllTime: 0,
-            viewCountAllTime: 0,
-          },
+          stats: toImageV2Stats(match),
         };
       });
 
@@ -4189,17 +4163,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       const match = imageMetrics[h.id];
       return {
         ...h,
-        stats: {
-          likeCountAllTime: match?.reactionLike ?? 0,
-          laughCountAllTime: match?.reactionLaugh ?? 0,
-          heartCountAllTime: match?.reactionHeart ?? 0,
-          cryCountAllTime: match?.reactionCry ?? 0,
-          commentCountAllTime: match?.comment ?? 0,
-          collectedCountAllTime: match?.collection ?? 0,
-          tippedAmountCountAllTime: match?.buzz ?? 0,
-          dislikeCountAllTime: 0,
-          viewCountAllTime: 0,
-        },
+        stats: toImageV2Stats(match),
       };
     });
 
@@ -4883,17 +4847,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
         const match = imageMetrics[h.id];
         return {
           ...h,
-          stats: {
-            likeCountAllTime: match?.reactionLike ?? 0,
-            laughCountAllTime: match?.reactionLaugh ?? 0,
-            heartCountAllTime: match?.reactionHeart ?? 0,
-            cryCountAllTime: match?.reactionCry ?? 0,
-            commentCountAllTime: match?.comment ?? 0,
-            collectedCountAllTime: match?.collection ?? 0,
-            tippedAmountCountAllTime: match?.buzz ?? 0,
-            dislikeCountAllTime: 0,
-            viewCountAllTime: 0,
-          },
+          stats: toImageV2Stats(match),
         };
       });
 
@@ -5011,17 +4965,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       const match = imageMetrics[h.id];
       return {
         ...h,
-        stats: {
-          likeCountAllTime: match?.reactionLike ?? 0,
-          laughCountAllTime: match?.reactionLaugh ?? 0,
-          heartCountAllTime: match?.reactionHeart ?? 0,
-          cryCountAllTime: match?.reactionCry ?? 0,
-          commentCountAllTime: match?.comment ?? 0,
-          collectedCountAllTime: match?.collection ?? 0,
-          tippedAmountCountAllTime: match?.buzz ?? 0,
-          dislikeCountAllTime: 0,
-          viewCountAllTime: 0,
-        },
+        stats: toImageV2Stats(match),
       };
     });
 
@@ -5068,6 +5012,29 @@ type ImageMetricsObject = Record<
     buzz: number | null;
   }
 >;
+
+/**
+ * The one place an `ImageMetricsObject` entry becomes a feed `stats` block.
+ *
+ * Seven call sites derived this independently, all reading `match?.x ?? 0`, which
+ * is why `statsUnknown` lives here: the absent-vs-zero decision has to be made the
+ * same way at every one of them or a metrics outage reads as silence on some feeds
+ * and as unknown on others.
+ */
+export function toImageV2Stats(match: ImageMetricsObject[number] | undefined): ImageV2Stats {
+  return {
+    likeCountAllTime: match?.reactionLike ?? 0,
+    laughCountAllTime: match?.reactionLaugh ?? 0,
+    heartCountAllTime: match?.reactionHeart ?? 0,
+    cryCountAllTime: match?.reactionCry ?? 0,
+    commentCountAllTime: match?.comment ?? 0,
+    collectedCountAllTime: match?.collection ?? 0,
+    tippedAmountCountAllTime: match?.buzz ?? 0,
+    dislikeCountAllTime: 0,
+    viewCountAllTime: 0,
+    statsUnknown: !match,
+  };
+}
 
 // Image metric counts are read from the watcher-fed `metrics:*` cache via
 // MetricService (which now pulls from the FINAL `entityMetricDailyAgg_v2` view).
@@ -5338,19 +5305,7 @@ export const getImage = async ({
       cosmetics: userCosmetics?.[creatorId] ?? [],
       profilePicture: profilePictures?.[creatorId] ?? null,
     },
-    stats: {
-      likeCountAllTime: match?.reactionLike ?? 0,
-      laughCountAllTime: match?.reactionLaugh ?? 0,
-      heartCountAllTime: match?.reactionHeart ?? 0,
-      cryCountAllTime: match?.reactionCry ?? 0,
-
-      commentCountAllTime: match?.comment ?? 0,
-      collectedCountAllTime: match?.collection ?? 0,
-      tippedAmountCountAllTime: match?.buzz ?? 0,
-
-      dislikeCountAllTime: 0,
-      viewCountAllTime: 0,
-    },
+    stats: toImageV2Stats(match),
     reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
   };
 
