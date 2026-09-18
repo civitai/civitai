@@ -26,9 +26,13 @@ export type RateCard = {
    * bounty was superseded by the additive, author-set, viewer-paid
    * per-generation author fee, and its compute + backpay rails were removed.
    *
-   * The field stays because rate cards are immutable snapshots — V4 and V5
-   * were published carrying it, and `block_spend_attribution` rows stamp a
-   * card version. Every live spend row carries `spend_share_pct = 0`.
+   * The field stays for SHAPE STABILITY of the published `RateCard` snapshots
+   * (V4 and V5 were published carrying it), NOT because a row depends on it.
+   * ⚠️ AN EARLIER REVISION JUSTIFIED IT WITH "`block_spend_attribution` rows
+   * stamp a card version", which is misleading: the spend write path hardcodes
+   * `UNRATED_RATE_CARD_VERSION`, so those rows stamp 'unrated' and carry
+   * `spend_share_pct = 0`. See the retirement note at `RATE_CARD_V5`'s
+   * declaration for the full accounting, including the one historical caveat.
    */
   spendSharePct: number;
   /**
@@ -341,6 +345,38 @@ export const RATE_CARD_V5: RateCard = {
     viewer_global: 0,
   },
   // Carried from V4 verbatim.
+  //
+  // 🔴 RETIRED — DO NOT CARRY THIS FORWARD INTO A V6 WITHOUT READING THIS.
+  // Nothing computes a share from `spendSharePct` any more. The platform-funded
+  // percentage spend bounty was superseded by the additive, author-set,
+  // viewer-paid per-generation author fee (`author-fee.ts`), and its compute +
+  // backpay rails were removed. After that removal the ONLY reads of a card's
+  // `spendSharePct` anywhere in the tree are assertions in
+  // `src/server/services/blocks/__tests__/rate-card.test.ts` and
+  // `src/server/services/blocks/__tests__/spend-attribution.service.test.ts`.
+  // No production file reads it. The `5` is inert.
+  //
+  // ⚠️ WHY IT IS STILL HERE, STATED HONESTLY. The usual defence for keeping a
+  // published card's field is that immutable rows stamped this version must keep
+  // paying out under their own snapshot. THAT DEFENCE DOES NOT BIND HERE, and
+  // this comment is the record of it rather than a restatement of the doctrine:
+  // `recordSpendAttribution` hardcodes `rateCardVersion = UNRATED_RATE_CARD_VERSION`,
+  // so every spend row it writes stamps 'unrated', never 'v4' or 'v5'. The only
+  // code that would have stamped a real version onto a spend row is the backpay
+  // that never ran. (One caveat, and it is why this says "no KNOWN referent"
+  // rather than "none": the pre-track-only write path shipped in #2627 DID stamp
+  // `share.rateCardVersion`, and #2635 retrofitted it to 'unrated' the SAME DAY —
+  // 2026-06-18. That retrofit's migration records, contemporaneously, that prod
+  // held 0 spend rows at the time. No row is known to reference v4 or v5; that
+  // was not re-confirmed against the database here.)
+  //
+  // So the field is retained WITHOUT a known historical referent — for shape
+  // stability of the published `RateCard` snapshots and to avoid a type change
+  // rippling through every card, NOT because a row depends on it. Removing it is
+  // a larger act than the rail removal took on; if you are authoring a V6 and
+  // want it gone, delete it from the `RateCard` type and every card together.
+  // The CARDS themselves must stay regardless: purchase rows DO stamp a real
+  // version via `computeRateCardSplit`.
   spendSharePct: 5,
   // PLACEHOLDER 15% subscription rev-share — see the doc block above.
   subscriptionSharePct: 15,

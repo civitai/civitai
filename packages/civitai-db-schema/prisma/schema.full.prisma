@@ -3632,9 +3632,18 @@ model BlockSpendAttribution {
   /// the fire-and-forget spend path.
   generationType      String? @map("generation_type")
 
-  // Must stay equal to the column default in Postgres and to what backpay selects: Prisma supplies
-  // this itself on create, so a value backpay does not read makes an omitted-status row invisible to
-  // payout forever. Pinned by block-spend-attribution-status-default.test.ts.
+  // Must stay equal to the column default the committed migrations provision, and be allowed by
+  // their CHECK: Prisma supplies this itself on create, so a database built from history would
+  // otherwise disagree with the one this code runs against, with no error and no drift. Pinned by
+  // block-spend-attribution-status-default.test.ts.
+  //
+  // ⚠️ THE SECOND HALF OF THIS NOTE IS GONE. It used to add "and to what backpay selects … a value
+  // backpay does not read makes an omitted-status row invisible to payout forever". There is no
+  // spend backpay any more — the platform-funded percentage bounty was superseded by the
+  // per-generation author fee and its rail was removed — so no read exists for this value to agree
+  // with, and nothing pays out of this table. The guard's matching second assertion was dropped for
+  // the same reason rather than left to fail closed; the schema-vs-migrations half above is real,
+  // still asserted, and is the whole of what this comment now claims.
   status             String   @default("tracked")
   /// 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no
   /// refund path, so this is never 'refund'/'chargeback'.

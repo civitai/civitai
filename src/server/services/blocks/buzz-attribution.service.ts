@@ -258,6 +258,10 @@ export class AttributionAppMissingError extends Error {
  * (Slice 4) as a backpay. A row carrying this sentinel + status='tracked' is
  * "share-pending": the payout rail re-stamps the signed-off version when it
  * computes the share.
+ *
+ * ⚠️ TRUE FOR MEMBERSHIP ROWS ONLY. A `block_spend_attribution` row also carries
+ * this sentinel, but it is NOT share-pending — the spend bounty was removed, no
+ * backpay reads that table, and nothing will ever re-stamp those rows.
  */
 export const UNRATED_RATE_CARD_VERSION = 'unrated' as const;
 
@@ -573,9 +577,12 @@ export async function recordSpendAttribution(
   const spendSharePct = 0;
   const appOwnerShareCents = 0;
 
-  // Void rows that are zero because of WHO spent/owns so they are never
-  // backpaid. Otherwise the row is 'tracked' — share-pending, awaiting the
-  // payout-time backpay at the signed-off rate.
+  // Void rows that are zero because of WHO spent/owns. Otherwise the row is
+  // 'tracked'. ⚠️ NOT "share-pending awaiting a payout-time backpay" — that was
+  // the removed spend bounty. No backpay reads this table; 'tracked' is where a
+  // spend row stays. The void/track distinction is kept because it is the
+  // self-spend / internal-owner marker the analytics reader and any future rail
+  // would both need, and voiding costs nothing.
   const voidedReason = isSelfSpend ? 'self_spend' : isInternal ? 'internal_owner' : null;
   const status = voidedReason ? 'voided' : 'tracked';
   const voidedAt = voidedReason ? new Date() : null;

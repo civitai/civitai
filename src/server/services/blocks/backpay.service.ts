@@ -19,8 +19,23 @@ import { ACTIVE_RATE_CARD, computeSubscriptionShare } from './rate-card';
  * This module is the BACKPAY: when (and ONLY when) a rate is signed off by
  * monetization leadership, it reads `status='tracked'` rows, computes the
  * author share at the signed-off rate (via `computeSubscriptionShare` in
- * rate-card.ts), stamps it, and transitions the row to `confirmed`. A SEPARATE
- * payout rail (PR #2605) later disburses `confirmed` rows.
+ * rate-card.ts), stamps it, and transitions the row to `confirmed`.
+ *
+ * 🔴 NOTHING DISBURSES THOSE `confirmed` ROWS, AND NO OPEN PR DOES EITHER.
+ * ⚠️ THIS LINE USED TO NAME PR #2605 as "a SEPARATE payout rail [that] later
+ * disburses `confirmed` rows". That is WRONG and was checked: #2605 (open, not
+ * merged) aggregates and flips `blockBuzzAttribution` ONLY — the PURCHASE table.
+ * Its diff contains no reference to `block_subscription_attribution` at all.
+ * The mistake survived an earlier pass because that pass checked #2605 against
+ * the code being DELETED, correctly, and never against this kept module's own
+ * claim.
+ *
+ * So the membership leg's back-half is: this reader can move rows
+ * `tracked → confirmed` (once leadership signs off a rate AND the flag exists),
+ * and there it stops. `confirmed` is currently a terminal state in practice.
+ * Do not read the existence of this module as evidence that a disburser is
+ * queued up behind it — none is named here because none is known to exist.
+ * Whoever builds one owns re-pointing this paragraph at it.
  *
  * ## Membership only
  *
