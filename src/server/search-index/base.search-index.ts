@@ -427,6 +427,12 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
      * processor still carries one.
      */
     getHandledIds: processor.getHandledIds,
+    /**
+     * Exposed for the same reason: a test that imports an index's batch function directly proves
+     * nothing about the function this processor runs. Re-inlining a different body here is
+     * invisible to such a test unless it can compare the two.
+     */
+    prepareBatches,
     async getData(ids: number[]) {
       const ctx = {
         db: dbWrite,

@@ -1,7 +1,7 @@
 /**
  * Reading the SQL a search-index module actually issues.
  *
- * 🔴 PIN A WHOLE NORMALISED CLAUSE WITH `toBe`, NEVER A SUBSTRING. `toMatch`/`toContain` on a
+ * 🔴 PIN A WHOLE NORMALISED CLAUSE, NEVER A SUBSTRING. `toMatch`/`toContain` on a
  * predicate is satisfied by any statement that merely MENTIONS it, so a WIDENING mutation passes:
  * `AND (<eligibility> OR "bannedAt" IS NOT NULL)` still contains the eligibility text, and
  * `... AND id > $1 OR availability = 'Unsearchable'` still contains every fragment of the WHERE it

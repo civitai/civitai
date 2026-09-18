@@ -21,6 +21,11 @@ import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
  * A future reader who replaces the keyset cursor with an ordered OFFSET will see case 1 go red
  * with `expected [ ... ] to contain 2001` — that is this file doing its job, not a flake.
  *
+ * 🔴 AND THE LAST CASE IS WHAT MAKES THAT TRUE. Every case here drives the EXPORTED function;
+ * the index job runs whatever is wired into `createSearchIndexUpdateProcessor`. Those were the
+ * same object and nothing said so, so re-inlining the old OFFSET body at the wiring site while
+ * leaving this export untouched reverted the fix with the whole file still green.
+ *
  * 🔴 THE FAKE TERMINATES ON ITS OWN, at PAGE_CAP. A paging fake that just keeps answering turns
  * a regression into a pure microtask loop, which vitest's setTimeout-based timeout cannot
  * observe: CI hangs with no assertion to read. The cap converts that into a thrown error in
@@ -34,7 +39,9 @@ vi.mock('~/server/meilisearch/client', () => ({
   updateDocs: vi.fn(async () => undefined),
 }));
 
-const { prepareModelsBatches } = await import('~/server/search-index/models.search-index');
+const { prepareModelsBatches, modelsSearchIndex } = await import(
+  '~/server/search-index/models.search-index'
+);
 
 /** Production page size, restated here so the fixtures below are honestly multi-page. */
 const READ_BATCH_SIZE = 2000;
@@ -234,6 +241,19 @@ describe('prepareModelsBatches paging', () => {
 
     expect(updateIds).toHaveLength(READ_BATCH_SIZE);
     expect(fake.pageQueries()).toBe(2);
+  });
+
+  /**
+   * The wiring, not the behaviour. Everything above imports `prepareModelsBatches` directly, so on
+   * its own this file is evidence about an exported helper rather than about the scan the models
+   * index job actually runs, and the cheapest possible revert is to leave the export alone and
+   * re-inline the old OFFSET body into the processor's options object.
+   *
+   * Wrapping the reference here - even in a behaviour-preserving arrow - fails this too. That is
+   * the cost of an identity check, and the fix is to keep the wiring a direct reference.
+   */
+  it('is the function the models index processor actually runs', () => {
+    expect(modelsSearchIndex.prepareBatches).toBe(prepareModelsBatches);
   });
 
   it('issues no page query at all on a full rebuild', async () => {
