@@ -733,7 +733,9 @@ describe('asset-staging', () => {
     //
     // 🔴 AND READ THE `>=` COMPARISONS AS REGRESSION COVERAGE, NOT AS A STANDING INVARIANT. `at2` is
     // the ramp's ceiling at today's constants and `rampScore` clamps at 1, so `at2 >= at3` and the
-    // loop below hold for EVERY boundary pair with `oneAt <= 2`. They were red at the pre-change
+    // loop below hold for every NON-DEGENERATE boundary pair with `oneAt <= 2` — a pair with
+    // `zeroAt >= oneAt` satisfies that quantifier and throws instead, which is why the qualifier is
+    // there. They were red at the pre-change
     // constants — which is what they exist to pin — but going forward the teeth are in the three
     // assertions after the loop, not in the comparisons. Do not "simplify" this case by deleting
     // them.
@@ -898,10 +900,16 @@ describe('asset-staging', () => {
     // 🔴 THE LOOP BELOW IS VACUOUS ABOUT THE BURST RAMP — NOT MERELY ABOUT ITS BOUNDARIES — AND THE
     // TITLE WAS RENAMED BECAUSE OF IT. Every row of the table has `count >= 2`, so `volume` is 1 for
     // all five, and `rampScore` clamps at 1: `burst <= 1 === volume` therefore holds for any burst
-    // implementation whose output STAYS IN [0, 1] — which is every boundary mutation, since
-    // `rampScore` clamps — including one that returned a constant 1. (Not for literally any
-    // implementation: a burst half returning 2, or returning the raw same-second tally unramped,
-    // does fail that line. The clamp is the hypothesis.) This case used to double
+    // implementation whose output STAYS IN [0, 1] — which is every boundary mutation `rampScore`
+    // ACCEPTS, since it clamps those — including one that returned a constant 1. (Not for literally
+    // any implementation: a burst half returning 2, or returning the raw same-second tally unramped,
+    // does fail that line. The clamp is the hypothesis.) 🔴 "ACCEPTS" IS LOAD-BEARING AND AN EARLIER
+    // WORDING OMITTED IT, SAYING "every boundary mutation": a DEGENERATE pair does not produce an
+    // output in [0, 1] at all, it THROWS (`rampScore` guards `!(oneAt > zeroAt)`), so the loop goes
+    // red rather than holding. That is the same false-absolute class the case two hundred lines up
+    // retracts by name, and this file would have held two paragraphs disagreeing about it. The error
+    // ran in the safe direction — it overstated the loop's vacuity, i.e. understated coverage — but
+    // it was still wrong. This case used to double
     // as the guard that went red if the burst pair were tightened below the volume pair; it cannot
     // any more, because the volume half is now a STEP at two and is already saturated wherever the
     // burst half is non-zero.
@@ -909,7 +917,7 @@ describe('asset-staging', () => {
     // WHAT ACTUALLY GUARDS THE BURST PAIR, so nobody deletes it believing this loop has them
     // covered: the four literal pins in the CONSTANTS case (which kill a blind mutant of either
     // constant), the separate dominance case beside them (which catches a deliberate re-tune that
-    // updates those literals), and `spread.burst` at the foot of THIS case — 2 in one second on an
+    // updates those literals), and `spread.burst` in the penultimate block of THIS case — 2 in one second on an
     // account with 5 staged is `rampScore(2, 1, 3) = 0.5`, and both `BURST_ZERO_AT -> 0` (0.666…)
     // and `BURST_ONE_AT -> 2` (1) fail it. That last one is the only burst-pair guard inside this
     // case, and it is the reason the case is not merely the `x <= x` its loop has become.
