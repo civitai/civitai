@@ -96,6 +96,14 @@ export default ModEndpoint(async function updateIndexSync(
 
     // A batch that exhausted its retries indexed nothing. Returning 200 here is what made a
     // failed backfill indistinguishable from a successful one for the caller.
+    // One spelling of the accounting triple for both bodies: they differ in what else they carry,
+    // and a fourth field on the result would otherwise land in one of them only.
+    const accounting = syncResult && {
+      idsWithoutDocument: syncResult.idsWithoutDocument,
+      idsWithoutDocumentSample: syncResult.idsWithoutDocumentSample,
+      handledWithoutDocument: syncResult.handledWithoutDocument,
+    };
+
     if (syncResult && syncResult.failedTasks > 0) {
       res.status(500).send({
         status: 'error',
@@ -103,9 +111,7 @@ export default ModEndpoint(async function updateIndexSync(
         failedTasks: syncResult.failedTasks,
         totalTasks: syncResult.totalTasks,
         failedIds: syncResult.failedIds,
-        idsWithoutDocument: syncResult.idsWithoutDocument,
-        idsWithoutDocumentSample: syncResult.idsWithoutDocumentSample,
-        handledWithoutDocument: syncResult.handledWithoutDocument,
+        ...accounting,
         error: `${syncResult.failedIds} ids in ${syncResult.failedTasks} of ${syncResult.totalTasks} batches failed to index`,
       });
       return;
@@ -122,9 +128,7 @@ export default ModEndpoint(async function updateIndexSync(
             status: 'ok',
             index: syncResult.indexName,
             totalTasks: syncResult.totalTasks,
-            idsWithoutDocument: syncResult.idsWithoutDocument,
-            idsWithoutDocumentSample: syncResult.idsWithoutDocumentSample,
-            handledWithoutDocument: syncResult.handledWithoutDocument,
+            ...accounting,
           }
         : { status: 'ok' }
     );

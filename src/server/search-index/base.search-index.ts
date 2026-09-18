@@ -206,8 +206,10 @@ const logIdsWithoutDocument = (indexName: string, caller: string, queue: TaskQue
 };
 
 /**
- * One statement of "an item with no action is an Update", read by the dedupe key and both
- * `updateSync` filters so they cannot disagree about an item that carries no action.
+ * One statement, INSIDE `updateSync`, of "an item with no action is an Update" — read by the
+ * dedupe key and both of its filters so they cannot disagree about an item that carries no action.
+ * Not repo-wide: `SearchIndexUpdate.queueUpdate` states the rule the other way (strict equality,
+ * no defaulting), so an item queued with no action there reaches neither bucket.
  *
  * It does NOT make the taxonomy exhaustive: a third enum member returns itself here, matches
  * neither filter, and still vanishes from the run. Closing that is an else-branch or an
@@ -379,7 +381,7 @@ export type SearchIndexUpdateSyncResult = {
   idsWithoutDocumentSample: (number | string)[];
   /**
    * Ids a processor's `getHandledIds` accounted for although no document carries them — a
-   * `collections` prune, today. Reported rather than subtracted into silence: the hook is the one
+   * `collections` prune, today, where the processor calls the same set `disqualifiedIds`. Reported rather than subtracted into silence: the hook is the one
    * way an id can stop being counted here, so this is the only number that would show a
    * processor pruning ids it should not have.
    */
