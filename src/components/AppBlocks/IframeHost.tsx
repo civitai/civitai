@@ -1324,7 +1324,13 @@ export function IframeHost({
     [effectiveSandbox]
   );
 
-  const { send, onMessage } = usePostMessage({ iframeRef, expectedOrigin, opaqueOrigin });
+  const { send, onMessage, nack } = usePostMessage({
+    iframeRef,
+    expectedOrigin,
+    opaqueOrigin,
+    host: 'IframeHost',
+    appBlockId: install.appBlockId,
+  });
 
   // The last height the BLOCK ITSELF stated, before any clamping — stashed so a
   // viewport change can re-run the clamp against the new bound. The block is
@@ -1625,11 +1631,23 @@ export function IframeHost({
   // own browser test for this.
   useEffect(() => {
     const off = onMessage<{ requestId?: string } | undefined>('REQUEST_TOKEN', (raw) => {
-      if (!token || !initSentRef.current) return;
       const requestId =
         raw && typeof raw === 'object' && typeof raw.requestId === 'string'
           ? raw.requestId
           : undefined;
+      if (!token || !initSentRef.current) {
+        // 🔴 COUNTED, BUT DELIBERATELY NOT ANSWERED — and the asymmetry is the
+        // protocol's, not an oversight here. `nack` records `no_token` on the
+        // bridge counter and returns false: `REQUEST_TOKEN` is in
+        // `BRIDGE_NACK_EXEMPT` because `isValidTokenRefreshResponse` requires a
+        // valid `WrappedToken`, so an error-only `TOKEN_REFRESH_RESPONSE` is
+        // dropped at the block's own trust boundary and the block would hang
+        // exactly as before while we believed we had fixed it. Closing this needs
+        // a failure variant in the SDK message union. Until then the operator
+        // half lands and the block half is honestly absent.
+        if (requestId !== undefined) nack('REQUEST_TOKEN', requestId);
+        return;
+      }
       const wrapped = {
         raw: token,
         scopes: grantedScopes,
@@ -1643,7 +1661,7 @@ export function IframeHost({
       send('TOKEN_REFRESH_RESPONSE', { requestId, token: wrapped });
     });
     return off;
-  }, [token, expiresAt, buzzBudget, grantedScopes, send, onMessage]);
+  }, [token, expiresAt, buzzBudget, grantedScopes, send, onMessage, nack]);
 
   // Init handshake. Start the moment we're ALLOWED to init — token present and
   // the effective-checkpoint query resolved (`isLoading` false; the error path
