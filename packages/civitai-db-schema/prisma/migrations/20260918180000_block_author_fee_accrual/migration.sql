@@ -154,6 +154,14 @@ ALTER TABLE "block_author_fee_accrual"
     ("entry_type" = 'clawback' AND "fee_buzz" <= 0)
   );
 
+-- ⚠️ SUBSUMED BY THE SIGN CHECK ABOVE, AND MEASURED TO BE — kept as an explicit
+-- statement of the allowed set, NOT as a reachable guard. The sign check reads
+-- `(entry_type='accrual' AND ...) OR (entry_type='clawback' AND ...)`, so ANY
+-- third value makes both disjuncts false and is already rejected there. Verified
+-- on the dev database 2026-09-18: an insert with entry_type='bogus' was rejected
+-- by `..._amount_sign_check`, never by this one, and no input exists that can
+-- reach it. Do not read it as coverage; if the sign check is ever loosened, this
+-- becomes live and should be re-verified with its own negative control.
 ALTER TABLE "block_author_fee_accrual"
   ADD CONSTRAINT "block_author_fee_accrual_entry_type_check"
   CHECK ("entry_type" IN ('accrual', 'clawback'));
@@ -181,7 +189,7 @@ ALTER TABLE "block_author_fee_accrual"
 
 ALTER TABLE "block_author_fee_accrual"
   ADD CONSTRAINT "block_author_fee_accrual_app_block_id_fkey"
-  FOREIGN KEY ("app_block_id") REFERENCES "AppBlock"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  FOREIGN KEY ("app_block_id") REFERENCES "app_blocks"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 ALTER TABLE "block_author_fee_accrual"
   ADD CONSTRAINT "block_author_fee_accrual_app_owner_user_id_fkey"
