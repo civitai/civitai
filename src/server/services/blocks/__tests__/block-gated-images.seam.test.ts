@@ -114,9 +114,12 @@ const PRODUCTION_FILES = walk(SRC).filter((f) => {
  * ~1,700 files that obviously do not matter.
  */
 const SOURCE = new Map<string, string>();
+/** The same files before stripping — kept only so a control can observe that stripping happened. */
+const RAW = new Map<string, string>();
 for (const full of PRODUCTION_FILES) {
   const raw = readFileSync(full, 'utf8');
   if (!raw.includes('block-gated-images.logic') && !raw.includes(SYMBOL)) continue;
+  RAW.set(toRel(full), raw);
   SOURCE.set(toRel(full), stripSourceComments(raw));
 }
 
@@ -129,6 +132,22 @@ function isCallSite(rel: string): boolean {
   if (rel === DEFINITION) return false;
   const code = SOURCE.get(rel) ?? '';
   return LOGIC_MODULE_IMPORT.test(code) || code.includes(`${SYMBOL}(`);
+}
+
+const SYNTHETIC_REL = 'server/services/blocks/__synthetic_consumer__.ts';
+
+/**
+ * Ask `isCallSite` — the predicate the ledger consumes — about a source that is not on disk.
+ * Deliberately not a pure predicate extracted out of `isCallSite` for the control to call: that
+ * would leave two places the rule lives and pin the one the ledger does not use.
+ */
+function verdictFor(source: string): boolean {
+  SOURCE.set(SYNTHETIC_REL, source);
+  try {
+    return isCallSite(SYNTHETIC_REL);
+  } finally {
+    SOURCE.delete(SYNTHETIC_REL);
+  }
 }
 
 describe(`${SYMBOL} seam`, () => {
@@ -157,31 +176,53 @@ describe(`${SYMBOL} seam`, () => {
     expect(rels.filter((rel) => rel.includes('\\'))).toEqual([]);
   });
 
-  // POSITIVE CONTROL for the DETECTOR, not just the walk. A ledger assertion that
-  // has never been watched match anything is indistinguishable from one wired to
-  // nothing — and the defect this rewrite fixes was exactly a detector that
-  // returned a confident, wrong `false`. These feed the real predicate the
-  // synthetic sources an aliased consumer would have, and require it to say YES.
+  // POSITIVE CONTROL for the DETECTOR. A ledger assertion that has never been watched match
+  // anything is indistinguishable from one wired to nothing — and the defect the ledger's
+  // rewrite fixed was a detector returning a confident, wrong `false`.
+  //
+  // Every case here goes through `isCallSite`, which is what the ledger consumes. Asserting
+  // `LOGIC_MODULE_IMPORT` directly — which is what this control used to do — vouches for the
+  // regex and leaves the predicate unconstrained: the union in `isCallSite` could be narrowed
+  // to an intersection and every case in this file stayed green, because both real consumers
+  // satisfy both halves. `verdictFor` is the seam that closes that.
   it('the detector matches an ALIASED import (the shape that walked the old ledger)', () => {
     const aliased = `import { ${SYMBOL} as classify } from '~/server/services/blocks/block-gated-images.logic';\nif (classify(row, level).status === 'hidden') {}\n`;
-    expect(LOGIC_MODULE_IMPORT.test(aliased)).toBe(true);
-    // …and the OLD spelled-only rule does NOT — i.e. this control can tell the
-    // two detectors apart, so a green here is about the new rule.
+    expect(verdictFor(aliased)).toBe(true);
+    // …and the OLD spelled-only rule does NOT match it — i.e. this control can tell the two
+    // detectors apart, so a green here is about the new rule.
     expect(aliased.includes(`${SYMBOL}(`)).toBe(false);
 
-    // The other spellings a consumer can be written in.
+    // The other spellings a consumer can be written in. Each satisfies the import half alone,
+    // so each also fails if the union narrows.
     for (const source of [
       `import { ${SYMBOL} } from '~/server/services/blocks/block-gated-images.logic';`,
       `import { ${SYMBOL} as c } from './block-gated-images.logic';`,
       `import * as gate from '../blocks/block-gated-images.logic';`,
       `export { ${SYMBOL} } from '~/server/services/blocks/block-gated-images.logic';`,
     ]) {
-      expect(LOGIC_MODULE_IMPORT.test(source), source).toBe(true);
+      expect(verdictFor(source), source).toBe(true);
     }
 
-    // NEGATIVE control: prose naming the module is not an import. (Real sources
-    // are comment-stripped before the predicate runs; this pins the regex itself.)
-    expect(LOGIC_MODULE_IMPORT.test('see block-gated-images.logic.ts for the clamp')).toBe(false);
+    // The symbol half alone, with no import — a namespace consumer's call position.
+    expect(verdictFor(`gate.${SYMBOL}(row, level);`)).toBe(true);
+
+    // NEGATIVE control: prose naming the module is not an import.
+    expect(verdictFor('see block-gated-images.logic.ts for the clamp')).toBe(false);
+
+    expect(SOURCE.has(SYNTHETIC_REL), 'the synthetic source outlived its test').toBe(false);
+  });
+
+  // The strip runs at load, so nothing that reads `SOURCE` can tell whether it ran. Dropping it
+  // at the call site left every case in this file green: no file's PROSE currently spells a
+  // call or an import, so the ledger's verdicts do not change — it is fragility rather than a
+  // bypass, and this is the assertion that says so out loud. It reddens if the strip stops
+  // being applied, and honestly reddens if the repo ever stops naming the symbol in prose,
+  // which is the point at which the strip stops being exercised by anything.
+  it('strips comments before the detector reads a file', () => {
+    const strippedAMention = [...SOURCE.keys()].filter(
+      (rel) => RAW.get(rel)?.includes(SYMBOL) && !SOURCE.get(rel)?.includes(SYMBOL)
+    );
+    expect(strippedAMention.length).toBeGreaterThan(0);
   });
 
   it('has exactly the ledgered call sites — no more, no fewer', () => {
