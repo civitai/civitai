@@ -2021,7 +2021,7 @@ export async function whatIfFromGraph({
     prompt: 'cost-estimation',
     negativePrompt: '',
     musicDescription: 'cost-estimation',
-    lyrics: '',
+    lyrics: 'cost-estimation',
     ...input,
   };
   const { data, computedKeys } = validateInput(whatIfInput, externalCtx);
@@ -2558,7 +2558,7 @@ export function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] 
         return [{ ...(output.blob as VideoBlob), type: 'video' as const }];
       return [{ ...(output.blob as AudioBlob), type: 'audio' as const }];
     case 'miniMaxMusic3':
-      // Always audio-only — MiniMaxMusic3Output has no cover-image variant.
+    case 'yuE2':
       return output.blob ? [{ ...(output.blob as AudioBlob), type: 'audio' as const }] : [];
     case 'polyGen':
       // Bundle every PolyGen sibling onto a single item — the format step
