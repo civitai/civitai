@@ -57,10 +57,17 @@ import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-a
  * rather than re-decided, so the REST and tRPC paths cannot drift apart on it.
  *
  * 🔴 THE PER-REQUEST COST, because this runs on EVERY bridge call including the polling
- * ones. Steps 2 and 3 add TWO Redis GETs plus ONE indexed `appBlock.findUnique` (the
+ * ones. Steps 2 and 3 add TWO Redis GETs — three for a `page_ephemeral-*` id, the only
+ * shape carrying a subject-scoped ban marker — plus ONE indexed `appBlock.findUnique` (the
  * `(appId, blockId)` unique, on the replica — never the primary) to every bridge request.
  *
- * ⚠️ IT WAS "ONE Redis GET" UNTIL THE BAN KEYSPACE WAS SPLIT OUT, and the line that
+ * ⚠️ THIS COUNT HAS NOW BEEN WRONG THREE TIMES — "ONE Redis GET" before the ban keyspace
+ * was split out, "TWO" after the subject keyspace was added, and the sibling copy in
+ * `block-revocation.service.ts` was corrected while this one was missed. A number in prose
+ * about a function two other files also describe is a claim with three places to rot. It is
+ * kept only because the per-request cost of THIS step is the argument for the step order
+ * below; if it goes wrong a fourth time, delete the count rather than correct it — the
+ * ordering argument survives without it. The history, which is the part worth keeping:
  * introduced the split claimed the count was unchanged because it used `mGet`. That was
  * wrong: this repo's client WRAPS `mGet` into `Promise.all(keys.map(get))` to avoid
  * CROSSSLOT on the cluster, so the array path never reaches the native `MGET`. The two
@@ -109,7 +116,7 @@ import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-a
  *     App-Blocks flag (an in-process, cached Flipt eval).
  *     ⚠️ This enumeration used to omit that step while phrasing itself as closed ("what
  *     the reorder would save is one Redis GET + one replica findUnique … roughly one
- *     op") — and it is now TWO GETs, per the note above. It is not roughly one op: on a session-cache miss it is a network round-trip.
+ *     op") — and the GET count is per the note above, not the one in this sentence. It is not roughly one op: on a session-cache miss it is a network round-trip.
  * The conclusion is unchanged, because it never rested on the cost: what decides it is the
  * availability argument above — a shared 120/10s ceiling would reach `pollWorkflow`. The
  * cost line only ever said the reorder was not worth making for its own sake, and a

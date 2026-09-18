@@ -162,7 +162,12 @@ export async function resolveSharedContext(
   // `revokeInstance` — `uninstallFromModel`, `toggleEnabled(false)` — and ban writes
   // through `revokeInstanceForBan`, from `revokeBlockInstancesForPublisher`. Read
   // `block-scope.middleware.ts` before reasoning about the ban path from here.)
-  if (await BlockRevocation.isRevoked(claims.blockInstanceId)) {
+
+  // `claims.sub` is passed for the same reason the two runtime guards pass it: the
+  // subject-scoped ban keyspace. Latent on THIS path today — it requires an `approved`
+  // AppBlock row and an ephemeral app has none — but the argument costs nothing and
+  // the alternative is a silent trap pointed at unsubmitted-app storage.
+  if (await BlockRevocation.isRevoked(claims.blockInstanceId, claims.sub)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'block instance revoked' });
   }
 

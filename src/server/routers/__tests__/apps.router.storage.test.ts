@@ -48,9 +48,14 @@ const {
     // Mirrors the real AppStorageProvisioner.provisionReviewPreview: derives the
     // disposable `apprev_<norm>` schema from the publishRequestId (so isolation
     // tests can assert distinct schemas) without touching a real DB.
-    mockProvisionReviewPreview: vi.fn(async ({ publishRequestId }: { publishRequestId: string }) => ({
-      schema: `"apprev_${publishRequestId.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 48)}"`,
-    })),
+    mockProvisionReviewPreview: vi.fn(
+      async ({ publishRequestId }: { publishRequestId: string }) => ({
+        schema: `"apprev_${publishRequestId
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '')
+          .slice(0, 48)}"`,
+      })
+    ),
     mockLogToAxiom: vi.fn(async () => undefined),
     mockGetUserById: vi.fn(),
     mockGetSessionUser: vi.fn(),
@@ -300,20 +305,38 @@ describe('apps.storage shared gates', () => {
   it('rejects an invalid block token with UNAUTHORIZED', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(null);
     const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.storage.get({ blockToken: 't', key: 'k' })
-    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
   });
 
   // A revoked instance must lose storage access IMMEDIATELY, not at token expiry.
   // Every op, not just the writes: a read of the user's own rows is still access
   // granted by an install that no longer exists.
   it.each([
-    ['get', (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.get({ blockToken: 't', key: 'k' })],
-    ['set', (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.set({ blockToken: 't', key: 'k', value: 'v' })],
-    ['delete', (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.delete({ blockToken: 't', key: 'k' })],
-    ['list', (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.list({ blockToken: 't' })],
-    ['getQuota', (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.getQuota({ blockToken: 't' })],
+    [
+      'get',
+      (c: ReturnType<typeof appsRouter.createCaller>) =>
+        c.storage.get({ blockToken: 't', key: 'k' }),
+    ],
+    [
+      'set',
+      (c: ReturnType<typeof appsRouter.createCaller>) =>
+        c.storage.set({ blockToken: 't', key: 'k', value: 'v' }),
+    ],
+    [
+      'delete',
+      (c: ReturnType<typeof appsRouter.createCaller>) =>
+        c.storage.delete({ blockToken: 't', key: 'k' }),
+    ],
+    [
+      'list',
+      (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.list({ blockToken: 't' }),
+    ],
+    [
+      'getQuota',
+      (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.getQuota({ blockToken: 't' }),
+    ],
   ] as const)('rejects a revoked block instance on %s', async (_op, call) => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     mockIsRevoked.mockResolvedValueOnce(true);
@@ -332,7 +355,14 @@ describe('apps.storage shared gates', () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ value: 1 }], rowCount: 1 });
     const caller = appsRouter.createCaller(fakeCtx() as never);
     await expect(caller.storage.get({ blockToken: 't', key: 'k' })).resolves.toEqual({ value: 1 });
-    expect(mockIsRevoked).toHaveBeenCalledWith('mbi_inst');
+    // 🔴 THE SUBJECT IS THE SECOND ARGUMENT AND IT COMES FROM THE TOKEN TOO. It selects
+    // the subject-scoped ban keyspace, which exists because `page_ephemeral-<slug>` is not
+    // unique across users — a global marker there refuses an innocent author's own dev
+    // tunnel. This path cannot reach that shape today (it requires an `approved` AppBlock
+    // row and an ephemeral app has none), but passing anything client-supplied here would
+    // let a caller choose whose revocation they are checked against, so the claim is what
+    // is asserted.
+    expect(mockIsRevoked).toHaveBeenCalledWith('mbi_inst', 'user:42');
   });
 
   // The run-for-real review branch returns before the approved-app checks, so it
@@ -354,9 +384,9 @@ describe('apps.storage shared gates', () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     mockDbRead.appBlock.findUnique.mockResolvedValueOnce(null);
     const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.storage.get({ blockToken: 't', key: 'k' })
-    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
   });
 
   it('rejects when the AppBlock status is not approved (FORBIDDEN)', async () => {
@@ -366,9 +396,9 @@ describe('apps.storage shared gates', () => {
       status: 'pending',
     });
     const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.storage.get({ blockToken: 't', key: 'k' })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
   });
 
   it('rejects a blockId that doesnt sanitize to a valid slug', async () => {
@@ -378,9 +408,9 @@ describe('apps.storage shared gates', () => {
       status: 'approved',
     });
     const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.storage.get({ blockToken: 't', key: 'k' })
-    ).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+    await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'INTERNAL_SERVER_ERROR',
+    });
   });
 
   // ── Per-user storage is gated on the RUN capability, not the AUTHOR one ──────
@@ -494,7 +524,7 @@ describe('apps.storage shared gates', () => {
       mockGetSessionUser.mockResolvedValue(null);
     });
 
-    it('is refused under TODAY\'s base-false flag (get)', async () => {
+    it("is refused under TODAY's base-false flag (get)", async () => {
       mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
 
       const caller = appsRouter.createCaller(fakeCtx() as never);
@@ -600,22 +630,18 @@ describe('apps.storage shared gates', () => {
   // models:read:self) but NOT apps:storage:* must be denied at the storage
   // resolver before it touches appsDb.
   it('rejects a token without apps:storage:read on a read op (FORBIDDEN)', async () => {
-    mockVerifyBlockToken.mockResolvedValueOnce(
-      validClaims({ scopes: ['models:read:self'] })
-    );
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ scopes: ['models:read:self'] }));
     const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.storage.get({ blockToken: 't', key: 'k' })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
     // The block with no storage scope must never reach the data pool.
     expect(mockPool.query).not.toHaveBeenCalled();
   });
 
   it('rejects a token without apps:storage:write on a write op (FORBIDDEN)', async () => {
     // Read scope present, write scope absent → set/delete must still 403.
-    mockVerifyBlockToken.mockResolvedValueOnce(
-      validClaims({ scopes: ['apps:storage:read'] })
-    );
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ scopes: ['apps:storage:read'] }));
     const caller = appsRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
@@ -624,9 +650,7 @@ describe('apps.storage shared gates', () => {
   });
 
   it('read scope alone is sufficient for a read op (no write needed)', async () => {
-    mockVerifyBlockToken.mockResolvedValueOnce(
-      validClaims({ scopes: ['apps:storage:read'] })
-    );
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ scopes: ['apps:storage:read'] }));
     mockPool.query.mockResolvedValueOnce({ rows: [{ value: 1 }], rowCount: 1 });
     const caller = appsRouter.createCaller(fakeCtx() as never);
     const out = await caller.storage.get({ blockToken: 't', key: 'k' });
@@ -634,13 +658,11 @@ describe('apps.storage shared gates', () => {
   });
 
   it('rejects a delete without apps:storage:write (FORBIDDEN)', async () => {
-    mockVerifyBlockToken.mockResolvedValueOnce(
-      validClaims({ scopes: ['apps:storage:read'] })
-    );
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ scopes: ['apps:storage:read'] }));
     const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.storage.delete({ blockToken: 't', key: 'k' })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(caller.storage.delete({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
     expect(mockPool.connect).not.toHaveBeenCalled();
   });
 });
@@ -735,9 +757,7 @@ describe('apps.storage.set', () => {
     });
     expect(out.ok).toBe(true);
 
-    const sqls = (mockClient.query.mock.calls as Array<[string, unknown?]>).map(
-      (call) => call[0]
-    );
+    const sqls = (mockClient.query.mock.calls as Array<[string, unknown?]>).map((call) => call[0]);
     expect(sqls[0]).toBe('BEGIN');
     expect(sqls[sqls.length - 1]).toBe('COMMIT');
     expect(sqls.some((s) => s.startsWith('SET LOCAL app.current_app_block_id'))).toBe(true);
@@ -1227,9 +1247,9 @@ describe('apps.storage.set', () => {
         'relation "app_x.quota" does not exist'
       );
       // Two attempts, both raising — the fallback did not paper over it.
-      expect(mockPool.query.mock.calls.filter(([s]) => String(s).includes('.quota q'))).toHaveLength(
-        2
-      );
+      expect(
+        mockPool.query.mock.calls.filter(([s]) => String(s).includes('.quota q'))
+      ).toHaveLength(2);
       expect(inc).toHaveBeenCalledWith({ op: 'set', outcome: 'error' });
     });
   });
@@ -1274,9 +1294,7 @@ describe('apps.storage.set', () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     mockPool.query
       .mockResolvedValueOnce({
-        rows: [
-          { used_bytes: '0', row_count: '0', user_used_bytes: '0', user_row_count: '0' },
-        ],
+        rows: [{ used_bytes: '0', row_count: '0', user_used_bytes: '0', user_row_count: '0' }],
         rowCount: 1,
       })
       .mockResolvedValueOnce(sizeProbe());
@@ -1330,9 +1348,9 @@ describe('apps.storage.set', () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
     const caller = appsRouter.createCaller(fakeCtx() as never);
     const value = 'x'.repeat(500);
-    await expect(
-      caller.storage.set({ blockToken: 't', key: 'k', value })
-    ).rejects.toMatchObject({ message: 'per-user storage quota exceeded' });
+    await expect(caller.storage.set({ blockToken: 't', key: 'k', value })).rejects.toMatchObject({
+      message: 'per-user storage quota exceeded',
+    });
     // The wire size and the stored size are different numbers here, which is what
     // makes the assertion able to tell them apart.
     expect(Buffer.byteLength(JSON.stringify(value), 'utf8')).not.toBe(DEFAULT_STORED_BYTES);
@@ -1381,26 +1399,24 @@ describe('apps.storage.set', () => {
   ])(
     'refuses the write when the stored-size probe returns %s',
     async (_label, probeResult, expectedMessage) => {
-    const inc = vi.mocked(appStorageOpsCounter.inc);
-    inc.mockClear();
-    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockPool.query.mockImplementation(async (sql: string) => {
-      if (isSizeProbe(sql)) return probeResult;
-      return {
-        rows: [
-          { used_bytes: '0', row_count: '0', user_used_bytes: '0', user_row_count: '0' },
-        ],
-        rowCount: 1,
-      };
-    });
-    const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
-    ).rejects.toThrow(`app storage: stored-size probe returned ${expectedMessage}`);
-    // It is a FAULT, not a refusal — so it lands on the error series an alert can
-    // watch, and the write never reached the transaction.
-    expect(inc).toHaveBeenCalledWith({ op: 'set', outcome: 'error' });
-    expect(mockPool.connect).not.toHaveBeenCalled();
+      const inc = vi.mocked(appStorageOpsCounter.inc);
+      inc.mockClear();
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockPool.query.mockImplementation(async (sql: string) => {
+        if (isSizeProbe(sql)) return probeResult;
+        return {
+          rows: [{ used_bytes: '0', row_count: '0', user_used_bytes: '0', user_row_count: '0' }],
+          rowCount: 1,
+        };
+      });
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
+      ).rejects.toThrow(`app storage: stored-size probe returned ${expectedMessage}`);
+      // It is a FAULT, not a refusal — so it lands on the error series an alert can
+      // watch, and the write never reached the transaction.
+      expect(inc).toHaveBeenCalledWith({ op: 'set', outcome: 'error' });
+      expect(mockPool.connect).not.toHaveBeenCalled();
     }
   );
 
@@ -1665,7 +1681,11 @@ describe('apps.storage — run-for-real preview namespace', () => {
     // Same synthetic pending token but NO reviewRunForReal → the approved-status
     // gate runs and rejects; the preview namespace is never provisioned.
     mockVerifyBlockToken.mockResolvedValueOnce(
-      validClaims({ appId: 'pending-pubreq_aaa', appBlockId: 'pubreq_aaa', blockId: 'generate-from-model' })
+      validClaims({
+        appId: 'pending-pubreq_aaa',
+        appBlockId: 'pubreq_aaa',
+        blockId: 'generate-from-model',
+      })
     );
     mockDbRead.appBlock.findUnique.mockResolvedValueOnce({ id: 'apb_x', status: 'pending' });
     const caller = appsRouter.createCaller(fakeCtx() as never);
@@ -1731,9 +1751,9 @@ describe('apps.storage — run-for-real preview namespace', () => {
     mockVerifyBlockToken.mockResolvedValueOnce(reviewClaims());
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValueOnce(null);
     const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.storage.get({ blockToken: 't', key: 'k' })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
     expect(mockProvisionReviewPreview).not.toHaveBeenCalled();
   });
 

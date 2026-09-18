@@ -214,12 +214,29 @@ describe('the ban writer is closed over every blockInstanceId namespace', () => 
    * 🔴 SHRINK / TYPO. A marker written under an id no token ever carries refuses
    * nothing, and is indistinguishable from coverage in every behavioural test — the
    * fixture would simply assert the id the writer invented.
+   *
+   * 🔴 AND A PARSER CHECK CANNOT SEE INSIDE A SHARED PREFIX, WHICH IS WHERE THIS KEEPS
+   * GOING WRONG. Widening the extraction to `[a-z_-]` put `page_ephemeral-` into
+   * `emitted`, and a previous version of this comment claimed that closed the typo case.
+   * It did not: the assertion below feeds each prefix to `deriveScopeFromInstanceId`,
+   * which dispatches on `page_`, so `page_ephemral-` — a real typo, one letter — parses
+   * FINE and stayed green. (Positive control: `pdb_` → `pdx_` does go red, so the parser
+   * check works; it is simply blind within a prefix family.)
+   *
+   * So the emitted set is now compared as a SET against the shapes the writer is supposed
+   * to build. That is what catches a typo inside `page_*`, and it fails in both
+   * directions: a prefix that appears and a prefix that disappears.
    */
+  const EXPECTED_EMITTED_PREFIXES = [
+    'bus_pub_',
+    'bus_view_',
+    'pdb_',
+    'page_',
+    'page_pubreq_',
+    'page_ephemeral-',
+  ];
+
   it('every prefix the writer constructs is one the parser recognises', () => {
-    // 🔴 `[a-z_-]`, WITH THE HYPHEN. This was `[a-z_]+`, which cannot match
-    // `page_ephemeral-` — so the one prefix whose spelling is hyphenated was absent from
-    // this guard's results entirely, and a typo'd `page_ephemral-${blockId}` was invisible
-    // to the very check whose sentence claims to catch exactly that.
     const emitted = [...CODE.matchAll(/`([a-z_-]+)\$\{/g)].map((m) => m[1]);
     expect(
       emitted.length,
@@ -232,6 +249,17 @@ describe('the ban writer is closed over every blockInstanceId namespace', () => 
           `does not recognise — no token carries that id, so the marker refuses nothing`
       ).not.toBeNull();
     }
+  });
+
+  it('🔴 the writer builds EXACTLY the expected prefixes — catches a typo inside `page_*`', () => {
+    const emitted = [...new Set([...CODE.matchAll(/`([a-z_-]+)\$\{/g)].map((m) => m[1]))].sort();
+    expect(
+      emitted,
+      'the set of prefixes the ban writer constructs changed. A prefix that VANISHED is a ' +
+        'shape no longer revoked; a prefix that APPEARED is either a new shape needing a ' +
+        'ledger entry, or a TYPO — and a typo that keeps `page_` parses fine, so the ' +
+        'parser check above cannot see it. Update this list deliberately.'
+    ).toEqual([...EXPECTED_EMITTED_PREFIXES].sort());
   });
 });
 

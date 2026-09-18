@@ -13,13 +13,17 @@ const {
   mockWaitForApplyJob,
   mockRecordTeardown,
   sysRedis,
+  evalTtls,
   mockEnv,
   mockNewId,
 } = vi.hoisted(() => {
   const store = new Map<string, string>();
-  // TTL floors recorded by the `eval` fake, so a test can assert the index really got one.
+  // TTL floors the `eval` fake was handed, asserted by the index test below. It cannot
+  // model the GE comparison itself — the fake has no TTL clock — so it pins the VALUE the
+  // service passes, not the floor semantics, and the test says so.
   const evalTtls = new Map<string, number>();
   return {
+    evalTtls,
     store,
     mockK8sFetch: vi.fn(),
     mockGetDp1Target: vi.fn(async () => ({ server: 'https://k8s', token: 't' })),
@@ -295,7 +299,7 @@ describe('the dev-tunnel index a ban enumerates', () => {
     ).toEqual([TEST_BLOCK_ID]);
   });
 
-  it('writes the index ATOMICALLY — one EVAL, not a SADD + EXPIRE pair', async () => {
+  it('writes the index ATOMICALLY — one EVAL, not a SADD + EXPIRE pair, and with a TTL', async () => {
     await startTunnel();
 
     // `sAddWithExpireGe` is an EVAL. The racy pair it replaced could land the SADD and
@@ -304,6 +308,14 @@ describe('the dev-tunnel index a ban enumerates', () => {
     // all of them.
     expect(sysRedis.eval).toHaveBeenCalledTimes(1);
     expect(sysRedis.sAdd, 'the non-atomic SADD is back').not.toHaveBeenCalled();
+
+    // 🔴 AND THE TTL IS ASSERTED, not merely recorded. `evalTtls` was written and never
+    // read, under a comment promising TTL coverage — which is the shape of a guard that
+    // reads as coverage and provides none. A TTL-less index is exactly the state the
+    // atomic swap exists to make unreachable, so the floor it passes is worth pinning.
+    const key = [...evalTtls.keys()].find((k) => k.includes('user-index'));
+    expect(key, 'the index write did not go through the EVAL path').toBeTruthy();
+    expect(evalTtls.get(key!)).toBe(DEV_TUNNEL_HARD_SECONDS);
   });
 
   it('teardown removes the member, so a stopped tunnel is not re-revoked', async () => {

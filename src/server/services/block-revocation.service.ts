@@ -45,11 +45,35 @@ function bannedSubjectKey(blockInstanceId: string, subject: string) {
 }
 
 /**
+ * Whether an instance id's ban marker lives in the SUBJECT-SCOPED keyspace.
+ *
+ * 🔴 ONE PREDICATE, TWO CONSUMERS, AND THAT IS THE POINT. The ban WRITER uses it to pick
+ * the keyspace and `isRevoked` uses it to decide whether the scoped key is worth reading.
+ * Open-coded at the two sites these would drift, and the failure is silent in the worst
+ * direction: a writer that scopes while a reader does not look leaves the marker
+ * unreadable, so the ban refuses nobody and every test that checks the KEY still passes.
+ *
+ * It also keeps the read cheap. Without the gate `isRevoked` issued a third GET on EVERY
+ * REST and bridge request — including the `pollWorkflow` polling ones — for a key that
+ * only one of five `page_` sub-shapes can ever carry, and that can never exist for an
+ * `anon` subject. ~50% more round-trips on the hot path for a guaranteed miss.
+ */
+export function isSubjectScopedInstanceId(blockInstanceId: string): boolean {
+  return blockInstanceId.startsWith('page_ephemeral-');
+}
+
+/**
  * The token `sub` a given userId mints as. THE ONE PLACE this format is written on the
  * WRITE side — the read side passes `claims.sub` verbatim, so if these two spellings
- * ever disagree the scoped marker silently refuses nobody. `block-revocation.service`'s
- * own suite round-trips this against `parseSubjectUserId`, which is the read side's
- * parser, so the pair cannot drift.
+ * ever disagree the scoped marker silently refuses nobody.
+ *
+ * Pinned by `__tests__/subject-key-round-trip.test.ts`, which feeds this through
+ * `parseSubjectUserId` — the READ side's parser — and back. An earlier version of this
+ * sentence claimed that suite already existed; it did not, and the only thing holding the
+ * spelling was a hand-typed `:user:<id>:` literal in
+ * `services/__tests__/ban-revokes-block-instances.test.ts`. That literal still
+ * independently reds on a spelling change and is worth keeping for exactly that reason,
+ * but it pins the KEY, not this function.
  */
 export function subjectForUserId(userId: number): string {
   return `user:${userId}`;
@@ -128,7 +152,7 @@ export class BlockRevocation {
   /**
    * True when EITHER keyspace holds a marker.
    *
-   * 🔴 TWO GETs — THREE when a `subject` is supplied — PIPELINED, NOT ONE ROUND TRIP. This said "ONE ROUND TRIP, NOT TWO" and
+   * 🔴 TWO GETs — THREE only for a subject-scoped id — PIPELINED, NOT ONE ROUND TRIP. This said "ONE ROUND TRIP, NOT TWO" and
    * that was false: `packages/civitai-redis/src/client.ts` WRAPS `mGet` to fetch keys
    * individually (`Promise.all(keys.map(get))`) so a multi-key read cannot CROSSSLOT on
    * the cluster, and the array path never reaches the native `MGET`. Wall-clock is
@@ -143,12 +167,25 @@ export class BlockRevocation {
    */
   static async isRevoked(blockInstanceId: string, subject?: string): Promise<boolean> {
     try {
-      // `subject` is the token's own `sub`, passed verbatim by both guards. Omitting it
-      // only narrows the check — the subject-scoped keyspace is then not consulted — so
-      // a caller that does not have it degrades to the pre-existing behaviour rather
-      // than to a wrong answer.
+      // `subject` is the token's own `sub`. FOUR production call sites pass it —
+      // `withBlockScope` (`block-scope.middleware.ts`), `authorizeBlockBridgeToken`
+      // (`blocks/block-bridge-auth.service.ts`), `resolveStorageContext`
+      // (`routers/apps.router.ts`) and `resolveSharedContext`
+      // (`routers/apps-shared.router.ts`). An earlier version of this sentence said "both
+      // guards", and two of the four were passing nothing: they read only the global keys
+      // while the ephemeral marker exists solely under the subject key. Latent, because
+      // both tRPC paths require an `approved` AppBlock row and an ephemeral app has none —
+      // but latent in the direction this work keeps moving (storage for unsubmitted apps).
+      //
+      // Omitting it only NARROWS the check — the scoped keyspace is not consulted — so a
+      // caller without a subject degrades to the pre-existing behaviour rather than to a
+      // wrong answer. That is why the gap was silent.
       const keys = [revokedKey(blockInstanceId), bannedKey(blockInstanceId)];
-      if (subject) keys.push(bannedSubjectKey(blockInstanceId, subject));
+      // The third key is read ONLY for the one shape that can carry it — see
+      // `isSubjectScopedInstanceId`. Everything else pays two GETs, as before.
+      if (subject && isSubjectScopedInstanceId(blockInstanceId)) {
+        keys.push(bannedSubjectKey(blockInstanceId, subject));
+      }
       const values = await redis.mGet<string>(keys);
       return values.some((v) => v != null);
     } catch {

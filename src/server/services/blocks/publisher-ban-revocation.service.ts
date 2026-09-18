@@ -1,5 +1,9 @@
 import { dbWrite } from '~/server/db/client';
-import { BlockRevocation, subjectForUserId } from '~/server/services/block-revocation.service';
+import {
+  BlockRevocation,
+  isSubjectScopedInstanceId,
+  subjectForUserId,
+} from '~/server/services/block-revocation.service';
 import { listActiveDevTunnelBlockIds } from '~/server/services/blocks/dev-tunnel.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
@@ -252,7 +256,19 @@ async function resolvePublisherInstanceIds(
   // ban that has nothing to do with them. See `bannedSubjectKey`.
   const subjectScopedIds = new Set<string>();
   for (const blockId of tunnelledBlockIds) {
-    subjectScopedIds.add(`page_ephemeral-${blockId}`);
+    const id = `page_ephemeral-${blockId}`;
+    // 🔴 THE SHARED PREDICATE DECIDES, NOT THIS LOOP. `isRevoked` gates its third GET on
+    // the same function, so a shape this file scoped but the reader did not look for
+    // would produce an UNREADABLE marker — a ban that refuses nobody, with every
+    // key-level assertion still green. Asserting it here turns that drift into a loud
+    // failure at the one place both sides meet.
+    if (!isSubjectScopedInstanceId(id)) {
+      throw new Error(
+        `publisher-ban-revocation: "${id}" is written to the subject-scoped keyspace but ` +
+          `isSubjectScopedInstanceId() does not recognise it — isRevoked would never read it`
+      );
+    }
+    subjectScopedIds.add(id);
   }
   return { global: [...instanceIds], subjectScoped: [...subjectScopedIds] };
 }
