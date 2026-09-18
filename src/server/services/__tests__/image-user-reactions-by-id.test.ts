@@ -44,6 +44,7 @@ describe('getUserReactionsForImages', () => {
     // to the current one — so every image on the front page would draw as already reacted, and
     // the first click on any of them would create a reaction rather than the removal it looks
     // like. That is the inverse of the bug this function exists to fix.
+    expect(dbMock.dbRead.imageReaction.findMany).toHaveBeenCalledTimes(1);
     expect(dbMock.dbRead.imageReaction.findMany).toHaveBeenCalledWith({
       where: { imageId: { in: [1, 2] }, userId: VIEWER },
       select: { imageId: true, reaction: true },

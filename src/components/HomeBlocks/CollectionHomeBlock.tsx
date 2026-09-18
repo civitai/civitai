@@ -37,7 +37,6 @@ import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
 import { CollectionMode } from '~/shared/utils/prisma/enums';
-import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
@@ -63,9 +62,6 @@ export const CollectionHomeBlock = ({ showAds, ...props }: Props) => {
     </HomeBlockWrapper>
   );
 };
-
-/** Stable identity so the hook's id list does not change on every render of a non-image block. */
-const NO_IMAGES: { id: number; reactions: { userId: number; reaction: ReviewReactions }[] }[] = [];
 
 const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props) => {
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery(
@@ -94,20 +90,22 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
   });
 
   const maxPerUser = metadata.collection?.maxPerUser;
-  const items = useDedupedCappedItems(filtered as { id: number; user?: { id: number } | null }[], {
-    order: dedupeOrder(blockIndex),
-    entity: type,
-    rows,
-    maxPerUser,
-  }) as typeof filtered;
-
-  // Image collections are served from the same shared, viewer-agnostic entry the feed block is,
-  // so they arrive with `reactions: []` for every viewer. Called unconditionally with an empty
-  // list for the other entity types, which issues no query.
-  const hydratedImages = useHydratedImageReactions(
-    type === 'image' ? (items as unknown as typeof NO_IMAGES) : NO_IMAGES
-  );
-  const displayItems = (type === 'image' ? hydratedImages : items) as typeof items;
+  // Served from the same shared, viewer-agnostic entry the feed block is, so image items arrive
+  // with `reactions: []` for every viewer. Passed straight into the cap rather than held in a
+  // binding of its own: the capped list is then the only array in scope, so there is no
+  // un-hydrated one left to render by mistake. `enabled` keeps the other entity types query-free.
+  const items = useDedupedCappedItems(
+    useHydratedImageReactions(filtered, { enabled: type === 'image' }) as {
+      id: number;
+      user?: { id: number } | null;
+    }[],
+    {
+      order: dedupeOrder(blockIndex),
+      entity: type,
+      rows,
+      maxPerUser,
+    }
+  ) as typeof filtered;
 
   // useEffect(() => console.log({ homeBlock, filtered, items }), [homeBlock, filtered, items]);
 
@@ -232,7 +230,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
     <div
       style={
         {
-          '--count': displayItems.length ?? 0,
+          '--count': items.length ?? 0,
           '--rows': rows,
         } as React.CSSProperties
       }
@@ -254,7 +252,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
           <RemixFlyoutLayoutProvider layout="side">
             <ImagesProvider
               hideReactionCount={collection?.mode === CollectionMode.Contest}
-              images={type === 'image' ? (hydratedImages as any) : undefined}
+              images={type === 'image' ? (items as any) : undefined}
             >
               <ReactionSettingsProvider
                 settings={{
@@ -263,7 +261,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
                 }}
               >
                 {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
-                {displayItems.map((item) => (
+                {items.map((item) => (
                   <div key={item.id} className="p-2">
                     {type === 'model' && <ModelCard data={item as any} forceInView />}
                     {type === 'image' && <ImageCard data={item as any} />}

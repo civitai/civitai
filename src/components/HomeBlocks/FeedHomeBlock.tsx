@@ -196,24 +196,25 @@ function ImageFeedGrid({
     type: 'images',
     data: rotated,
   });
-  const visible = useDedupedCappedItems(filtered, {
+  // The block's payload is shared between viewers, so it arrives with `reactions: []` for
+  // everyone. Hydrated BEFORE the cap, and passed straight in rather than held in a binding of
+  // its own: the capped list is then the only array in scope, so there is no un-hydrated one
+  // left to render by mistake. Before the cap also keeps the query key stable — the cap depends
+  // on what earlier blocks claimed, which changes as they resolve.
+  const visible = useDedupedCappedItems(useHydratedImageReactions(filtered), {
     order,
     entity: 'image',
     rows,
     maxPerUser,
   });
-  // The block's payload is shared between viewers, so it arrives with `reactions: []` for
-  // everyone. Hydrated HERE, after the cap, so the lookup covers exactly the cards that render
-  // and the window handed to the detail dialog below — the dialog browses these same objects.
-  const hydrated = useHydratedImageReactions(visible);
 
   if (loadingPreferences) return <FeedSkeleton rows={rows} />;
 
   return (
-    <div className={classes.grid} style={{ '--count': hydrated.length } as React.CSSProperties}>
+    <div className={classes.grid} style={{ '--count': visible.length } as React.CSSProperties}>
       <RemixFlyoutLayoutProvider layout="side">
-        <ImagesProvider images={hydrated}>
-          {hydrated.map((item) => (
+        <ImagesProvider images={visible}>
+          {visible.map((item) => (
             <div key={item.id} className="p-2">
               <ImageCard data={item} />
             </div>

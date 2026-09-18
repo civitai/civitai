@@ -1,12 +1,33 @@
 import { useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
+import { chunkIds } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 
-/** Matches the `imageIds` cap on `getMyImageReactionsSchema`. */
-const REACTION_FETCH_CHUNK = 100;
+/** Must not exceed the `imageIds` cap on `getMyImageReactionsSchema`, which is pinned by a test. */
+export const REACTION_FETCH_CHUNK = 100;
 
-type HydratableImage = { id: number; reactions: { userId: number; reaction: ReviewReactions }[] };
+// `reactions` OPTIONAL so a model, post or article item satisfies this structurally. That is what
+// lets the collection blocks pass their union straight in, instead of casting at the call site —
+// and a cast at the call site is what would hide a payload that stopped carrying `reactions`.
+type HydratableImage = { id: number; reactions?: { userId: number; reaction: ReviewReactions }[] };
+
+/**
+ * The id lists this surface will ask about, or none at all.
+ *
+ * 🔴 Returning `[]` for a signed-out viewer is load-bearing, not a micro-optimisation:
+ * `reaction.getMyImageReactions` is a `protectedProcedure`, and the front page's majority
+ * traffic is signed out. Without this gate every anonymous visitor fires an UNAUTHORIZED
+ * request per home block.
+ */
+export function reactionQueryChunks(
+  imageIds: number[],
+  userId: number | undefined,
+  enabled: boolean
+): number[][] {
+  if (!userId || !enabled) return [];
+  return chunkIds(imageIds, REACTION_FETCH_CHUNK);
+}
 
 /**
  * Add the viewer's own reactions to images that were served without them.
@@ -30,16 +51,20 @@ export function mergeUserImageReactions<T extends HydratableImage>(
     // same card component the gallery does. Appending blind would give one image two Likes from
     // one user, and `Reactions` counts a reaction as given by finding the first match, so the
     // duplicate is invisible until something sums them.
+    //
+    // `?? []` because the call sites cast: a collection payload that dropped `reactions` from its
+    // image shape would throw here, in the render body of a front-page block, with tsc silent.
+    const existing = image.reactions ?? [];
     const missing = mine.filter(
-      (reaction) => !image.reactions.some((x) => x.userId === userId && x.reaction === reaction)
+      (reaction) => !existing.some((x) => x.userId === userId && x.reaction === reaction)
     );
     if (!missing.length) return image;
 
     changed = true;
     return {
       ...image,
-      reactions: [...image.reactions, ...missing.map((reaction) => ({ userId, reaction }))],
-    };
+      reactions: [...existing, ...missing.map((reaction) => ({ userId, reaction }))],
+    } as T;
   });
 
   return changed ? merged : images;
@@ -53,22 +78,34 @@ export function mergeUserImageReactions<T extends HydratableImage>(
  * cosmetic: `reaction.toggle` acts on the DB row, not on what is drawn, so a viewer who sees
  * their own reaction un-highlighted and clicks it DELETES it.
  *
- * Shaped after `StickerPlacementBatchProvider`: one batched lookup per surface rather than one
- * per card, chunked in ARRIVAL order so a chunk's key stops changing once it is full.
+ * 🔴 CALL THIS ON THE LIST YOU GO ON TO RENDER, and keep it the only binding — pass it straight
+ * into the dedupe rather than holding the un-hydrated array in a variable of its own. Two
+ * bindings is how this silently comes undone: rendering the other one restores the bug in full
+ * while the hook call, and so the guard that reads for it, stay in place.
+ *
+ * COST, measured on prod 2026-09-18: one request per image-rendering surface, and the signed-in
+ * home page has ~6 of them (3 Feed blocks, 2 Collection blocks, 1 FeaturedCollections block
+ * whose `renderCount` is 5 — its picks share this one call). Each is an index-only scan of ~6
+ * shared buffers, 0.04 ms at the real 14-id shape. These queries deliberately do NOT set
+ * `skipBatch`, so they collapse into one request when tRPC batching ramps.
  */
-export function useHydratedImageReactions<T extends HydratableImage>(images: T[]): T[] {
+export function useHydratedImageReactions<T extends HydratableImage>(
+  images: T[],
+  { enabled = true }: { enabled?: boolean } = {}
+): T[] {
   const currentUser = useCurrentUser();
   const userId = currentUser?.id;
 
-  const chunks = useMemo(() => {
-    if (!userId) return [] as number[][];
-    const unique = [...new Set(images.map((image) => image.id))];
-    const result: number[][] = [];
-    for (let i = 0; i < unique.length; i += REACTION_FETCH_CHUNK)
-      result.push(unique.slice(i, i + REACTION_FETCH_CHUNK));
-    return result;
+  const chunks = useMemo(
+    () =>
+      reactionQueryChunks(
+        images.map((image) => image.id),
+        userId,
+        enabled
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [images.map((image) => image.id).join(','), userId]);
+    [images.map((image) => image.id).join(','), userId, enabled]
+  );
 
   const queries = trpc.useQueries((t) =>
     chunks.map((chunk) =>

@@ -1,8 +1,9 @@
 import { createContext, useContext, useMemo } from 'react';
 import type { RemixGalleryCardSummary } from '~/server/services/remix-gallery.service';
-import { chunkStickerIds } from '~/components/Sticker/sticker.util';
+
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { chunkIds } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 
 /** Matches the `imageIds` cap on `getRemixGalleryCardSummariesSchema`. */
@@ -63,7 +64,7 @@ export function RemixGalleryBatchProvider({
   // in ARRIVAL order keeps an earlier chunk's key stable as a feed appends lower
   // ids, where sorting would reshuffle every boundary and refetch the surface.
   const chunks = useMemo(
-    () => (enabled ? chunkStickerIds(imageIds, SUMMARY_FETCH_CHUNK) : []),
+    () => (enabled ? chunkIds(imageIds, SUMMARY_FETCH_CHUNK) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [imageIds.join(','), enabled]
   );

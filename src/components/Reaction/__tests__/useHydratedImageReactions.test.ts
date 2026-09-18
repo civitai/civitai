@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { mergeUserImageReactions } from '~/components/Reaction/useHydratedImageReactions';
+import {
+  REACTION_FETCH_CHUNK,
+  mergeUserImageReactions,
+  reactionQueryChunks,
+} from '~/components/Reaction/useHydratedImageReactions';
+import { getMyImageReactionsSchema } from '~/server/schema/reaction.schema';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 
 const image = (id: number, reactions: { userId: number; reaction: ReviewReactions }[] = []) => ({
@@ -19,9 +24,6 @@ describe('mergeUserImageReactions', () => {
       { userId: VIEWER, reaction: 'Like' },
       { userId: VIEWER, reaction: 'Heart' },
     ]);
-    // `Reactions` matches on userId AND reaction, so a reaction credited to anyone else would
-    // leave the button un-highlighted while looking hydrated in a snapshot.
-    expect(merged[0].reactions.every((r) => r.userId === VIEWER)).toBe(true);
     expect(merged[1].reactions).toEqual([]);
   });
 
@@ -66,5 +68,48 @@ describe('mergeUserImageReactions', () => {
     const merged = mergeUserImageReactions(images, { 2: ['Like'] }, VIEWER);
     expect(merged[0]).toBe(images[0]);
     expect(merged[1]).not.toBe(images[1]);
+  });
+});
+
+describe('mergeUserImageReactions on an item with no reactions field', () => {
+  it('does not throw, and adds the viewer reactions', () => {
+    // The collection blocks hand in a union of image/model/post/article items, so `reactions` is
+    // optional. Before the `?? []` this threw inside the render body of a front-page block.
+    const items = [{ id: 1 } as { id: number; reactions?: never[] }];
+
+    expect(mergeUserImageReactions(items, { 1: ['Like'] }, VIEWER)[0].reactions).toEqual([
+      { userId: VIEWER, reaction: 'Like' },
+    ]);
+  });
+});
+
+describe('reactionQueryChunks', () => {
+  const ids = Array.from({ length: 150 }, (_, i) => i + 1);
+
+  it('asks for nothing when there is no viewer', () => {
+    // `reaction.getMyImageReactions` is a protectedProcedure and most front-page traffic is
+    // signed out, so losing this gate is one UNAUTHORIZED request per home block per visitor.
+    expect(reactionQueryChunks(ids, undefined, true)).toEqual([]);
+  });
+
+  it('asks for nothing when the surface has no images to hydrate', () => {
+    expect(reactionQueryChunks(ids, VIEWER, false)).toEqual([]);
+  });
+
+  it('chunks a signed-in viewer ids without dropping any', () => {
+    const chunks = reactionQueryChunks(ids, VIEWER, true);
+
+    expect(chunks.map((c) => c.length)).toEqual([100, 50]);
+    expect(chunks.flat()).toEqual(ids);
+  });
+
+  it('keeps every chunk inside what the server will accept', () => {
+    // Two copies of one number: the chunk size here and the `.max()` on the input schema. If they
+    // diverge the chunk fails zod, React Query swallows it, and the grid silently stays
+    // un-hydrated — the original bug, with no signal anywhere.
+    const full = Array.from({ length: REACTION_FETCH_CHUNK }, () => 1);
+
+    expect(getMyImageReactionsSchema.safeParse({ imageIds: full }).success).toBe(true);
+    expect(getMyImageReactionsSchema.safeParse({ imageIds: [...full, 2] }).success).toBe(false);
   });
 });
