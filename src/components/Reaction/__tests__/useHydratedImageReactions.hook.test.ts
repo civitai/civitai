@@ -22,12 +22,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * Nothing here is on a timer, so there is no state that can delete itself out from under it.
  *
  * 🔴 WHICH DEP LIST A CASE CAN SEE IS DECIDED BY ITS FIXTURE, so check that before adding one.
- * A case whose `images` is a stable binding can see the `byImageId` and final memos, and CANNOT
- * see the `chunks` memo — its ids never change, so a frozen `chunks` is frozen at the right
- * value. A case that GROWS `images` across a rerender is the only shape that reaches `chunks`,
- * and it cannot see the final memo, because a fresh `images` identity makes that one recompute
- * regardless of its deps. The two shapes are mutually blind. Do not merge them into one case to
- * save a render: that closes one and silently unarms the other.
+ * The rule that generalises: `chunks` has three deps — the id join, `userId`, `entity` — and each
+ * needs something to VARY across a rerender to be seen at all. The other two memos need something
+ * to HOLD STILL, so a case whose `images` identity is fresh each render cannot see them.
+ *
+ * That makes the shapes mutually blind, and merging two of them to save a render closes one while
+ * silently unarming the other. It also means "stable" and "growing" is not an exhaustive pair:
+ * chunk COUNT is its own axis (only the 150-id case reaches multi-chunk handling, and it is not a
+ * duplicate of the single-image one), and `userId` and `entity` are axes NO case varies today —
+ * `useCurrentUser` is a constant mock and every case passes a fixed entity. Dropping either from
+ * the `chunks` deps is green against every case in this file. Recorded rather than closed.
  */
 const VIEWER = 9266475;
 
@@ -191,6 +195,18 @@ describe('useHydratedImageReactions when the pool arrives after the first render
 
     expect(asked.current.map((d) => d.input.imageIds)).toEqual([[142799705]]);
     expect(result.current[0].reactions).toEqual([{ userId: VIEWER, reaction: 'Like' }]);
+
+    // SAME LENGTH, different membership — the property the dep list actually encodes. Keying the
+    // memo on `images.length` instead of the id join is green against a pool that only grows, and
+    // `useApplyHiddenPreferences` hands back the PREVIOUS items during a refetch and then the new
+    // ones, so for a full block — whose size comes from its config rather than its content — a
+    // same-sized swap is the ordinary case, not an exotic one.
+    pool.current = [{ id: 888, reactions: [] }];
+    queryResults.current = [{ data: { 888: ['Cry'] }, dataUpdatedAt: 2 }];
+    rerender();
+
+    expect(asked.current.map((d) => d.input.imageIds)).toEqual([[888]]);
+    expect(result.current[0].reactions).toEqual([{ userId: VIEWER, reaction: 'Cry' }]);
     unmount();
   });
 });
