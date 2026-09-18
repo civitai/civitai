@@ -15,6 +15,12 @@ import { decreaseDate } from '~/utils/date-helpers';
 const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
 const IMAGE_SCANNING_RETRY_LIMIT = 9;
 
+// Minutes a just-created image counts as "submit in flight" (see the double-submit
+// note below). Must stay above the upload-path submit's own ceiling or the window it
+// closes reopens; overshooting costs one cron tick of delay for an image whose submit
+// died without writing the row at all.
+const SUBMIT_IN_FLIGHT_GRACE = 2;
+
 // Hard per-image backstop. The orchestrator submit is bounded per attempt (~15s), but the
 // Flipt flag read before it and the scanJobs UPDATE after it are not, so this keeps one hung
 // image to one concurrency slot. A timed-out image stays queued for a later run.
@@ -148,9 +154,22 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   const rescanDate = decreaseDate(now, env.IMAGE_SCANNING_RETRY_DELAY, 'minutes');
   const errorRetryDate = decreaseDate(now, IMAGE_SCANNING_ERROR_DELAY, 'minutes').getTime();
 
+  // A NULL `scanRequestedAt` does not yet mean "never submitted". The Image INSERT
+  // trigger queues a new image immediately, but `ingestImage` stamps
+  // `scanRequestedAt` only once its upload-path submit returns — up to ~50s later
+  // (3 attempts x the 15s per-attempt abort). A run landing inside that window reads
+  // the NULL as eligible and submits a SECOND workflow for the same image. Measured
+  // 2026-09-18: of 41,865 images scanned in 12h, 166 had two workflows, and 161 of
+  // those were created within 30s of a cron tick (uniform baseline: 9.8%).
+  const submitInFlightDate = decreaseDate(now, SUBMIT_IN_FLIGHT_GRACE, 'minutes');
+  const isSubmitInFlight = (img: IngestImageRow) =>
+    img.ingestion === 'Pending' && !img.scanRequestedAt && img.createdAt > submitInFlightDate;
+
   const pendingImages = images.filter(
     (img) =>
-      img.ingestion === 'Pending' && (!img.scanRequestedAt || img.scanRequestedAt <= rescanDate)
+      img.ingestion === 'Pending' &&
+      !isSubmitInFlight(img) &&
+      (!img.scanRequestedAt || img.scanRequestedAt <= rescanDate)
   );
 
   // Age-out safety net for never-returning Pending scans.
@@ -244,6 +263,10 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
         ) {
           return true;
         }
+        // Skipped this run only because its first submit may still be in flight. It is
+        // neither processed nor waiting on a cooldown, so without this it prunes as
+        // stale — and if that submit died silently, nothing would ever re-drive it.
+        if (isSubmitInFlight(img)) return true;
         // Rescan waiting for the retry delay (and still under the retry cap) - KEEP.
         // Must mirror the rescanImages cooldown above, otherwise a cooled-down
         // Rescan image is neither processed nor waiting and gets wrongly pruned.
@@ -279,8 +302,11 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     return true;
   });
 
+  const submitInFlightCount = images.filter(isSubmitInFlight).length;
+
   console.log({
     pendingImages: pendingImages.length,
+    submitInFlight: submitInFlightCount,
     pendingUserUploads: pendingUserUploads.length,
     pendingBackfill: pendingBackfill.length,
     agedOutPending: agedOutPendingIds.length,
@@ -377,6 +403,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   imageIngestCronCounter.inc({ bucket: 'waitingForRetry' }, waitingForRetryIds.size);
   imageIngestCronCounter.inc({ bucket: 'staleRemoved' }, staleIds.length);
   imageIngestCronCounter.inc({ bucket: 'agedOutPending' }, agedOutPendingIds.length);
+  imageIngestCronCounter.inc({ bucket: 'submitInFlight' }, submitInFlightCount);
 
   // Failed sends = images whose submit was attempted and returned/threw failure,
   // across every lane. Images not reached this run (budget/cancel) are neither sent
@@ -400,6 +427,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
       rescan: rescanImages.length,
       error: errorImages.length,
       agedOutPending: agedOutPendingIds.length,
+      submitInFlight: submitInFlightCount,
       waitingForRetry: waitingForRetryIds.size,
       staleRemoved: staleIds.length,
       failedSends,
@@ -427,6 +455,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     sentRescan: sentRescanIds.length,
     sentError: sentErrorIds.length,
     agedOutPending: agedOutPendingIds.length,
+    submitInFlight: submitInFlightCount,
     waitingForRetry: waitingForRetryIds.size,
     staleRemoved: staleIds.length,
     failedSends,
