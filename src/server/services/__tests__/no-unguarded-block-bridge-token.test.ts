@@ -9,14 +9,17 @@ import { describe, expect, it } from 'vitest';
  * `verifyBlockToken` answers one question — is this a token we signed, not yet expired.
  * It cannot see an uninstall, a toggle-off or a suspended app.
  *
- * 🔴 THIS LIST AND THE FAILURE MESSAGE BELOW BOTH USED TO INCLUDE A BANNED
- * PUBLISHER, UNTIL 2026-09-16. They should not: `authorizeBlockBridgeToken`
- * checks token validity, the revocation marker and `app_blocks.status`, and
- * `toggleBan` writes none of the three. So routing a proc through the guard does
- * NOT contain a ban — a banned publisher's live tokens run to natural `exp`
- * either way — and naming it among the things the guard catches told a developer
- * the opposite at the moment their CI went red. See `block-scope.middleware.ts`
- * for the two-call-site enumeration.
+ * 🔴 A BANNED PUBLISHER IS BACK IN SCOPE, AND THE HISTORY MATTERS. This list and
+ * the failure message below named a banned publisher while nothing wrote a
+ * revocation marker on ban; that was removed on 2026-09-16 because routing a proc
+ * through the guard genuinely did NOT contain a ban. As of clawgate #618 it does:
+ * `toggleBan` calls `revokeBlockInstancesForPublisher`
+ * (`blocks/publisher-ban-revocation.service.ts`), so the marker the guard already
+ * checks is now written on ban too, for every live instance of every block the
+ * banned user OWNS. Note the narrowness before restating it anywhere: a
+ * collaborator seat on somebody else's app is not covered, and containment is on
+ * the NEXT bridge call, not mid-request. See `block-scope.middleware.ts` for the
+ * three-call-site enumeration.
  *
  * The bridge procs each called it directly and checked none of those, so a revoked install
  * kept driving the bridge — orchestrator polls, workflow cancels, and
@@ -1072,7 +1075,9 @@ describe('no unguarded block-bridge token verification', () => {
     expect(codeLinesOnly(' * resolveAppBlockApprovalVerdict(claims) resolves the verdict.')).toBe(
       ''
     );
-    expect(codeLinesOnly('/* BlockRevocation.isRevoked(claims.blockInstanceId) */')).toBe('');
+    expect(
+      codeLinesOnly('/* BlockRevocation.isRevoked(claims.blockInstanceId, claims.sub) */')
+    ).toBe('');
     // …and a line of real CODE survives, or the filter would strip everything and the
     // assertions below would fail for the wrong reason rather than pass for the right one.
     expect(codeLinesOnly('const v = await resolveAppBlockApprovalVerdict(claims);')).toBe(
@@ -1105,7 +1110,15 @@ describe('no unguarded block-bridge token verification', () => {
     // used to read the WHOLE file, which is satisfiable by prose: this very file's
     // docblocks name both `BlockRevocation.isRevoked` and `resolveAppBlockApprovalVerdict`.
     const guardCode = codeLinesOnly(guard);
-    expect(guardCode).toMatch(/BlockRevocation\.isRevoked\(\s*claims\.blockInstanceId\s*\)/);
+    // 🔴 BOTH ARGUMENTS. The second — the token's own `sub` — is what selects the
+    // SUBJECT-SCOPED ban keyspace, and without it a ban on `page_ephemeral-<slug>` either
+    // misses the banned holder or (in the global form this replaced) 403s every OTHER
+    // author holding the same developer-chosen slug. Dropping it type-checks, because the
+    // parameter is optional by design so a caller that lacks a subject degrades rather
+    // than breaks.
+    expect(guardCode).toMatch(
+      /BlockRevocation\.isRevoked\(\s*claims\.blockInstanceId\s*,\s*claims\.sub\s*\)/
+    );
     // 🔴 THE APPROVAL CHECK IS NO LONGER SPELLED IN THIS FILE. The row lookup and the
     // `approved` comparison moved to the shared predicate `resolveAppBlockApprovalVerdict`
     // (`block-approval.service.ts`), which the REST gate resolves through as well, so
