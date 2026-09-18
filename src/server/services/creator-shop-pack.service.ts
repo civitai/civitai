@@ -495,9 +495,9 @@ export const getPackDetail = async ({
   });
   if (!item) throw throwNotFoundError('Pack not found');
   if (item.cosmeticId != null) throw throwBadRequestError('This listing is not a pack');
-  // The same population `updateCreatorShopPack` authorizes, named once: it
-  // decides both who may read a pack that is not on sale and who is answered
-  // about its review state. Two spellings of it drift a tightening apart.
+  // Named once: this decides both who may read a pack that is not on sale and
+  // who is answered about its review state. Two spellings of it drift apart on
+  // the first tightening.
   const canReadPrivateState = !!isModerator || (!!userId && userId === item.addedById);
   // Every other read path in the shop gates on Published. Without this, an id is
   // enough to read an unreviewed or rejected pack's contents and pricing.

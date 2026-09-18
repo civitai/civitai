@@ -307,9 +307,14 @@ describe('public pack detail returns named fields, not the meta column', () => {
   });
 
   it('refuses a pack that is not on sale to anyone but the lister and moderators', async () => {
-    // The same predicate that decides the verdict decides this, so the two
-    // cannot be tightened apart. Both uses are asserted, or a refactor can drop
-    // one of them silently.
+    // The same predicate decides this and the verdict, and this pins the
+    // BEHAVIOUR of both uses — re-splitting the const into two identical
+    // spellings would still pass, so read it as coverage, not as a guarantee
+    // that the rule stays shared.
+    //
+    // The two accepting arms are not decoration: `/pack not found/i` is also the
+    // message when the item is missing entirely, so without them a mis-armed
+    // fixture would satisfy the refusals for the wrong reason.
     shopItemFindUnique.mockResolvedValue(rejectedPack());
     await expect(getPackDetail({ shopItemId: PACK_ID })).rejects.toThrow(/pack not found/i);
     await expect(getPackDetail({ shopItemId: PACK_ID, userId: VISITOR })).rejects.toThrow(
