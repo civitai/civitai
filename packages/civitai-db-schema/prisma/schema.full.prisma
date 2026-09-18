@@ -893,6 +893,10 @@ model HuggingFaceImport {
   userId           Int?
   modelVersionId   Int?
   modelFileId      Int?
+  /// Where this file is headed, recorded before the bytes move so the transfer job can attach it
+  /// itself. `modelVersionId` cannot carry this: it means "attached to", and detaching clears it.
+  attachVersionId  Int?
+  attachType       String?
   /// Worker lease. A transfer outlives any one job run, so a claim plus a heartbeat is what stops two
   /// runs moving the same file and what lets the next run tell "in flight" from "abandoned".
   claimedBy        String?
@@ -906,6 +910,10 @@ model HuggingFaceImport {
   @@unique([repo, revision, filename])
   @@index([status, createdAt])
   @@index([groupName])
+  /// Also `HuggingFaceImport_pending_attach_idx` — a PARTIAL index on ("completedAt") for the attach
+  /// sweep, which Prisma cannot express, so it lives in its migration and will not round-trip here.
+  /// Also `HuggingFaceImport_pending_attach_idx` — a PARTIAL index on ("completedAt") for the attach
+  /// sweep, which Prisma cannot express, so it lives in its migration and will not round-trip here.
 }
 
 enum ModelStatus {

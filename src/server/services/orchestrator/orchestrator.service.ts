@@ -44,6 +44,17 @@ import {
 // explicitly wants to block for the workflow, so we must not abort it early).
 const IMAGE_INGEST_SUBMIT_ATTEMPT_TIMEOUT_MS = 15_000;
 
+/**
+ * The scan submit passes no `wait`, so this is an enqueue: the orchestrator accepts the workflow and
+ * returns. Without a signal it inherits undici's 300s default, and every caller awaits it — the
+ * upload response, and the import job inside its own lock. Sized like its sibling above rather than
+ * to a measured P99, which nothing records for this call.
+ *
+ * A fired timeout throws, which every caller already treats as a transient failure: `scanRequestedAt`
+ * stays null and `scanFilesFallbackJob` re-submits within five minutes.
+ */
+const MODEL_FILE_SCAN_SUBMIT_TIMEOUT_MS = 15_000;
+
 const IMAGE_TAGGING_MODEL =
   'urn:air:siglip2:repository:huggingface:cella110n/cl_tagger_v2@b57909b8e9c63f71e208a26473e7aabdf45ed6b6.tar';
 const IMAGE_TAGGING_THRESHOLD = 0.55;
@@ -781,6 +792,7 @@ export async function createModelFileScanRequest({
 
   const { data, error, response } = await submitWorkflow({
     client: internalOrchestratorClient,
+    signal: AbortSignal.timeout(MODEL_FILE_SCAN_SUBMIT_TIMEOUT_MS),
     body: {
       metadata,
       currencies: [],
