@@ -97,10 +97,10 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-const PRODUCTION_FILES = walk(SRC).filter((f) => {
-  const rel = toRel(f);
-  return !rel.includes('__tests__') && !/\.test\.tsx?$/.test(rel) && !rel.includes('/tests/');
-});
+const isTestPath = (rel: string) =>
+  rel.includes('__tests__') || /\.test\.tsx?$/.test(rel) || rel.includes('/tests/');
+
+const PRODUCTION_FILES = walk(SRC).filter((f) => !isTestPath(toRel(f)));
 
 /**
  * Comment-stripped source for every production file that could POSSIBLY be a call
@@ -159,17 +159,19 @@ describe(`${SYMBOL} seam`, () => {
     expect(rels).toContain(DEFINITION);
     expect(PRODUCTION_FILES.length).toBeGreaterThan(500);
 
-    // `> 500` reads like a scope check and is not one: `src/server` alone clears it five times
-    // over, and both ledgered consumers sit beside the definition — so narrowing the walk to
-    // `src/server` leaves every other assertion in this file green while a consumer added under
-    // `components/` or `pages/` becomes invisible to the ledger for good.
-    const scanned = PRODUCTION_FILES.map(toRel);
-    for (const tree of ['components/', 'pages/', 'utils/']) {
-      expect(
-        scanned.some((rel) => rel.startsWith(tree)),
-        `the walk no longer reaches ${tree} — the ledger cannot see a consumer added there`
-      ).toBe(true);
-    }
+    // `> 500` is not a scope check, and neither is any floor or per-tree membership test: they
+    // pin that the walk REACHES something, where what the ledger needs is that it collected
+    // everything. Dropping `x` from the extension filter, or skipping one directory, leaves any
+    // such check green while whole trees stop being scanned — so the expected side here is
+    // enumerated independently of `walk`, and a narrowing of any kind names the files it lost.
+    const scanned = new Set(PRODUCTION_FILES.map(toRel));
+    const enumerated = readdirSync(SRC, { recursive: true, withFileTypes: true })
+      // `components/ActionIconInput.tsx` is a DIRECTORY, so an extension test alone is not a
+      // file test here.
+      .filter((entry) => entry.isFile())
+      .map((entry) => toRel(join(entry.parentPath, entry.name)))
+      .filter((rel) => /\.tsx?$/.test(rel) && !isTestPath(rel));
+    expect(enumerated.filter((rel) => !scanned.has(rel))).toEqual([]);
   });
 
   // Pinned three ways because the normalisation has two removable halves and they fail on
@@ -202,6 +204,7 @@ describe(`${SYMBOL} seam`, () => {
       `import { ${SYMBOL} } from '~/server/services/blocks/block-gated-images.logic';`,
       `import { ${SYMBOL} as c } from './block-gated-images.logic';`,
       `import * as gate from '../blocks/block-gated-images.logic';`,
+      `import { ${SYMBOL} } from './block-gated-images.logic.js';`,
       `export { ${SYMBOL} } from '~/server/services/blocks/block-gated-images.logic';`,
     ]) {
       expect(verdictFor(source), source).toBe(true);
@@ -235,6 +238,16 @@ describe(`${SYMBOL} seam`, () => {
       'no file names the symbol only in prose — the strip is now unexercised, which is not by ' +
         'itself a bug'
     ).toBeGreaterThan(0);
+
+    // The count above is satisfied by one file, so it cannot say WHICH comment kinds are
+    // stripped: a stripper that stopped handling `//` would still ride on a block-comment
+    // survivor. Both kinds carry a gate in this repo's prose, so both are pinned here.
+    expect(
+      stripSourceComments(`// if (v.status !== 'visible') return;\nconst a = 1;\n`)
+    ).not.toContain(`status !== 'visible'`);
+    expect(stripSourceComments(`/** calls ${SYMBOL}(row, level) */\nconst a = 1;\n`)).not.toContain(
+      `${SYMBOL}(`
+    );
   });
 
   it('has exactly the ledgered call sites — no more, no fewer', () => {
