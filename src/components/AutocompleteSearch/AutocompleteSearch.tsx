@@ -352,6 +352,17 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     indexName,
   ]);
 
+  // Ensure we disable search targets if they are not enabled. Hoisted because the selector's
+  // value is clamped to this set as well as read from it — the two have to be the same list.
+  const enabledTargets = targetData.filter(
+    ({ value }) =>
+      (features.imageSearch ? true : value !== 'images') &&
+      (features.bounties ? true : value !== 'bounties') &&
+      (features.articles ? true : value !== 'articles') &&
+      (features.toolSearch ? true : value !== 'tools') &&
+      (features.comicSearch ? true : value !== 'comics')
+  );
+
   const focusInput = () => inputRef.current?.focus();
   const blurInput = () => inputRef.current?.blur();
 
@@ -480,7 +491,12 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           // CONTROLLED. Uncontrolled, its displayed label is internal state inside the keyed
           // provider, so a target switch would remount it back to whatever the default said
           // while the search really did move — a selector that lies about what it is searching.
-          value={indexNameProp}
+          //
+          // `null` rather than the target when the target is not an OFFERED option: the URL can
+          // point the search at an index whose feature flag is off, and Mantine leaves a
+          // controlled value it cannot resolve showing the PREVIOUS option's label. Blank is
+          // honest about "none of these"; a stale label is the same lie in a different place.
+          value={enabledTargets.some(({ value }) => value === indexNameProp) ? indexNameProp : null}
           aria-label="Search category"
           classNames={{
             root: classes.targetSelectorRoot,
@@ -493,15 +509,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
             className: classes.targetSelectorRightSection,
           }}
           maxDropdownHeight={280}
-          // Ensure we disable search targets if they are not enabled
-          data={targetData.filter(
-            ({ value }) =>
-              (features.imageSearch ? true : value !== 'images') &&
-              (features.bounties ? true : value !== 'bounties') &&
-              (features.articles ? true : value !== 'articles') &&
-              (features.toolSearch ? true : value !== 'tools') &&
-              (features.comicSearch ? true : value !== 'comics')
-          )}
+          data={enabledTargets}
           rightSection={<IconChevronDown size={16} color="currentColor" />}
           style={{ flexShrink: 1 }}
           onChange={(v: string | null) => onTargetChange(v as TKey)}

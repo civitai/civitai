@@ -58,9 +58,12 @@ export function seedCarriedSearchText(carried: string | undefined, refinedQuery:
  * rebuilt helper reports an empty query, so carried text differs from it and gets pushed.
  *
  * @param blocked reasons not to refine at all — a hit was picked from the list, or search is
- *   unavailable. Every input here must appear in the calling effect's dependency array, `blocked`
- *   included: one of its sources outlives the remount, so an effect that cannot re-run when it
- *   clears leaves a populated input over an empty helper query.
+ *   unavailable. 🔴 A source of `blocked` that OUTLIVES the remount must appear in the calling
+ *   effect's dependency array, or a tree that remounted while blocked restores the typed text,
+ *   returns early, and never refines once the block clears — a populated input over an empty
+ *   helper query. `searchErrorState` is such a source (a module-level store) and is listed.
+ *   A source that is per-mount state is reset by the remount and needs no such listing;
+ *   `AutocompleteSearch`'s `selectedItem` is one, and is deliberately not listed.
  */
 export function shouldRefineSearchQuery(
   typed: string,

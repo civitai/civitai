@@ -39,15 +39,33 @@ const INSTANT_SEARCH_ROOTS = {
   'src/components/CollectionSelectModal/CollectionSelectModal.tsx': 'static-index',
 } as const;
 
-/** Every non-test `.tsx` under `src/` that renders an `<InstantSearch>` element, repo-relative. */
+/**
+ * Every non-test `.tsx` under `src/` that renders an `<InstantSearch>` element, repo-relative.
+ *
+ * A full-suite run creates and removes directories under `src/` while this walk is happening, so
+ * an entry can vanish between the listing and the read. Its sibling ledger in this directory
+ * documents that as an OBSERVED hazard — it surfaces as a collection failure, which contributes
+ * zero tests and moves no failure count — so entries that cannot be read are skipped rather than
+ * thrown on.
+ */
 function findInstantSearchRoots(dir = 'src'): string[] {
   const found: string[] = [];
-  for (const entry of readdirSync(path.join(repoRoot, dir), { withFileTypes: true })) {
+  let entries: ReturnType<typeof readdirSync<{ withFileTypes: true }>>;
+  try {
+    entries = readdirSync(path.join(repoRoot, dir), { withFileTypes: true });
+  } catch {
+    return found;
+  }
+  for (const entry of entries) {
     const relPath = `${dir}/${entry.name}`;
     if (entry.isDirectory()) {
       found.push(...findInstantSearchRoots(relPath));
     } else if (entry.name.endsWith('.tsx') && !entry.name.includes('.test.')) {
-      if (read(relPath).includes('<InstantSearch')) found.push(relPath);
+      try {
+        if (read(relPath).includes('<InstantSearch')) found.push(relPath);
+      } catch {
+        continue;
+      }
     }
   }
   return found;
@@ -168,17 +186,34 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     expect(sync).toBeGreaterThan(-1);
     expect(provider).toBeGreaterThan(sync);
 
+    // EXACTLY ONE writer. Hoisting the sync while leaving the old copy in place reintroduces the
+    // whole defect with the assertion above still satisfied — the consolidation-that-forgot-to-
+    // delete shape, which is the likeliest way this comes back.
+    expect([...source.matchAll(/(?:setTargetIndex|onTargetChange)\(searchTarget/g)]).toHaveLength(
+      1
+    );
+
+    // …and it still FOLLOWS navigation. Emptying its dependency array leaves one writer, in the
+    // right place, that only ever runs once.
+    expect(source.slice(sync)).toMatch(
+      /^\s*setTargetIndex\(searchTarget\);\s*\}, \[searchTarget\]\)/
+    );
+
     // …and the selector reads the target rather than holding its own copy of it, which a remount
     // would reset while the search really had moved.
-    expect(source).toContain('value={indexNameProp}');
+    expect(source).toContain('value === indexNameProp) ? indexNameProp : null');
     expect(source).not.toContain('defaultValue={searchTarget}');
   });
 
   it('QuickSearchDropdown drives its index selector from the target it is searching', () => {
     const source = read('src/components/Search/QuickSearchDropdown.tsx');
 
-    expect(source).toContain('value={indexNameProp}');
+    expect(source).toContain('value === indexNameProp) ? indexNameProp : null');
     expect(source).not.toContain('defaultValue={availableIndexes[0]}');
+
+    // A single-option selector is deselectable by default, and the `null` that produces would
+    // move the target off the set the caller supports — for one caller, into a payout path.
+    expect(source).toContain('allowDeselect={false}');
   });
 
   it('AutocompleteSearch re-runs its refine effect when search availability recovers', () => {
@@ -187,10 +222,21 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     // unavailable restores the typed text, returns early, and never refines once the flag clears
     // — a populated box over an empty helper query. Pinned structurally because only a render of
     // the real component could observe it, and that is the browser tier.
-    const source = read('src/components/AutocompleteSearch/AutocompleteSearch.tsx');
+    // Comments stripped first: a dependency array can otherwise satisfy a token search with the
+    // token sitting inside `/* … */`, which is the walk `openingTag` above already guards against.
+    const source = read('src/components/AutocompleteSearch/AutocompleteSearch.tsx')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
     const deps = source.match(/\}, \[debouncedSearch, query, indexName[^\]]*\]/);
 
-    expect(deps?.[0]).toContain('searchErrorState');
+    expect(deps?.[0] ?? '(no refine dependency array matched)').toContain('searchErrorState');
+
+    // And the flag has to still be PASSED to the predicate. The dependency array alone cannot see
+    // that: dropping it from the argument while leaving the token in the deps refines DURING an
+    // outage with this test still green.
+    expect(source).toContain(
+      'shouldRefineSearchQuery(debouncedSearch, query, !!selectedItem || searchErrorState)'
+    );
   });
 });
 
