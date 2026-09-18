@@ -447,6 +447,16 @@ describe('author fee — the viewer-charge seam', () => {
     // side is removed or reworded.
     const declaration = WHATIF_ATTRIBUTION_DECLARATION.replace(/\s+/g, ' ').trim();
 
+    // POSITIVE CONTROL. Every assertion below sits inside a loop over the ledger,
+    // so an emptied ledger would make this test pass having checked nothing. The
+    // neighbouring ledger test would also go red in that case — which is exactly
+    // why this line is here rather than assumed: a guard that only fails because a
+    // DIFFERENT guard fails is green for the wrong reason.
+    expect(Object.keys(NO_FEE_PATHS)).toEqual([
+      'submitCustomComfyWorkflow',
+      'submitPassThroughStepWorkflow',
+    ]);
+
     for (const [pathName, entry] of Object.entries(NO_FEE_PATHS)) {
       const ledgered = entry.whatifAttribution?.trim() ?? '';
       expect(ledgered, `${pathName}: no ledgered reason for the skip`).not.toBe('');
