@@ -103,20 +103,14 @@ const isTestPath = (rel: string) =>
 const PRODUCTION_FILES = walk(SRC).filter((f) => !isTestPath(toRel(f)));
 
 /**
- * Comment-stripped source for every production file that could POSSIBLY be a call
- * site, read once.
+ * The raw-text gate that runs BEFORE `isCallSite` and decides what it ever sees. A strict
+ * superset of both halves of `isCallSite` — you cannot import the module without the literal
+ * `block-gated-images.logic` appearing, nor call the function without `SYMBOL` appearing, and
+ * stripping only ever REMOVES text, so a file lacking both raw cannot gain either. It keeps a
+ * char-by-char scan off the thousands of files that obviously do not matter.
  *
- * The pre-filter is on the RAW text and is a strict superset of both halves of
- * {@link isCallSite}: you cannot import the module without the literal
- * `block-gated-images.logic` appearing, nor call the function without `SYMBOL`
- * appearing — and comment-stripping only ever REMOVES text, so a file that lacks
- * both raw cannot gain either. It exists only to keep a char-by-char scan off the
- * ~1,700 files that obviously do not matter.
- */
-/**
- * The raw-text gate that runs BEFORE `isCallSite` and decides what it ever sees. Named so a
- * control can put a fixture through the same predicate the loop uses: `verdictFor` writes
- * straight into `SOURCE`, so the detector cases run past this stage and cannot constrain it.
+ * Named rather than inlined so a control can put a fixture through the same predicate the loop
+ * uses: `verdictFor` writes straight into `SOURCE` and runs past this stage.
  */
 const couldBeCallSite = (raw: string) =>
   raw.includes('block-gated-images.logic') || raw.includes(SYMBOL);
@@ -204,6 +198,9 @@ describe(`${SYMBOL} seam`, () => {
   // walk's real output (the only one observing what the guard actually keyed the ledger on).
   it('normalises a host-separated rel to the POSIX form the ledger is written in', () => {
     expect(toPosix('server\\services\\blocks\\block-gated-images.logic.ts')).toBe(DEFINITION);
+    // Mixed case, because `toRel` feeds BOTH sides of the equality above — a normalisation that
+    // lowercased (or otherwise mangled) every rel would leave the two sides identically wrong.
+    expect(toRel(join(SRC, 'components', 'AppBlocks', 'x.tsx'))).toBe('components/AppBlocks/x.tsx');
     expect(toRel(join(SRC, 'server', 'services', 'blocks', 'block-gated-images.logic.ts'))).toBe(
       DEFINITION
     );
@@ -247,16 +244,33 @@ describe(`${SYMBOL} seam`, () => {
     expect(SOURCE.has(SYNTHETIC_REL), 'the synthetic source outlived its test').toBe(false);
   });
 
-  // The pre-filter decides what `isCallSite` is ever asked about, and `verdictFor` runs past it,
-  // so nothing above constrains it. Its module half is what admits a consumer that imports
-  // without spelling the symbol — drop that half and a re-exporting barrel never reaches the
-  // detector at all.
+  // The module half is what admits a consumer that imports without spelling the symbol — drop it
+  // and a re-exporting barrel never reaches the detector at all. Every spelling, for the same
+  // reason the detector control carries five: one fixture pins one spelling, and the predicate
+  // can be narrowed to exactly that literal while staying green.
   it('the corpus pre-filter admits a file that names the module but not the symbol', () => {
-    const barrel = `export * from '~/server/services/blocks/block-gated-images.logic';\n`;
-    expect(barrel.includes(SYMBOL)).toBe(false);
-    expect(couldBeCallSite(barrel)).toBe(true);
+    for (const barrel of [
+      `export * from '~/server/services/blocks/block-gated-images.logic';\n`,
+      `export * from './block-gated-images.logic';\n`,
+      `export { something } from '../blocks/block-gated-images.logic';\n`,
+      `export * from './block-gated-images.logic.js';\n`,
+    ]) {
+      expect(barrel.includes(SYMBOL), barrel).toBe(false);
+      expect(couldBeCallSite(barrel), barrel).toBe(true);
+    }
     expect(couldBeCallSite(`const v = ${SYMBOL}(row, level);\n`)).toBe(true);
     expect(couldBeCallSite('export const unrelated = 1;\n')).toBe(false);
+  });
+
+  // The two derivations of the test-path rule are written from each other, so they can agree on
+  // the same mistake and the equality above stays green over both. This is the only thing that
+  // observes the rule itself — the `(^|\/)tests\//` anchor exists because `includes('/tests/')`
+  // matched nothing on a rel with no leading slash.
+  it('classifies test paths', () => {
+    expect(isTestPath('components/Foo/__tests__/Foo.test.tsx')).toBe(true);
+    expect(isTestPath('tests/api/v1/download-url-seam.helper.ts')).toBe(true);
+    expect(isTestPath('server/services/latest-tests.service.ts')).toBe(false);
+    expect(isTestPath('server/services/blocks/block-post.service.ts')).toBe(false);
   });
 
   // The strip runs at load, so nothing reading `SOURCE` can observe that it ran.
@@ -282,6 +296,8 @@ describe(`${SYMBOL} seam`, () => {
     expect(stripSourceComments(`const a = 1; // ${SYMBOL}(row, level);\n`)).not.toContain(
       `${SYMBOL}(`
     );
+    // Every other arm here is a `not.toContain`, which a stripper returning '' satisfies.
+    expect(stripSourceComments(`  // x\nconst a = 1;\n`)).toContain('const a = 1');
     expect(stripSourceComments(`/** calls ${SYMBOL}(row, level) */\nconst a = 1;\n`)).not.toContain(
       `${SYMBOL}(`
     );
