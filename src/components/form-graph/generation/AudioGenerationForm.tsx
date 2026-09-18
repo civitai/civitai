@@ -10,6 +10,7 @@ import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
 import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
 import { audioHub } from '~/shared/form-graph/generation/audio/hub.graph';
+import { yue2ScorePlanningInfo } from '~/shared/constants/yue2.constants';
 
 import { ControllerLabel, PromptLabel, VersionGroupSelector } from './form-helpers';
 import { GateRuleWarnings } from './GateRuleWarnings';
@@ -188,7 +189,7 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
         name="yue2Mode"
         render={({ value, meta, onChange }) => (
           <div className="flex flex-col gap-1">
-            <Input.Label>Score planning</Input.Label>
+            <ControllerLabel label="Score planning" info={yue2ScorePlanningInfo} />
             <SegmentedControlWrapper
               value={value}
               onChange={(v) => onChange(v as typeof value)}

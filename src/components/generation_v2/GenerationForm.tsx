@@ -129,6 +129,7 @@ import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControl
 import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { KlingElementsInput } from './inputs/KlingElementsInput';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { yue2ScorePlanningInfo } from '~/shared/constants/yue2.constants';
 import { triggerPromptEnhance } from '~/components/Generation/PromptEnhance/triggerPromptEnhance';
 import { PromptEnhancePanel } from '~/components/Generation/PromptEnhance/PromptEnhancePanel';
 import { usePromptEnhanceStore } from '~/components/Generation/PromptEnhance/promptEnhanceStore';
@@ -1228,7 +1229,7 @@ export function GenerationForm() {
               name="yue2Mode"
               render={({ value, meta, onChange }) => (
                 <div className="flex flex-col gap-1">
-                  <Input.Label>Score planning</Input.Label>
+                  <ControllerLabel label="Score planning" info={yue2ScorePlanningInfo} />
                   <SegmentedControlWrapper
                     value={value}
                     onChange={(v) => onChange(v as typeof value)}
