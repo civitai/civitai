@@ -35,6 +35,7 @@ import {
   getUserHubForRoute,
   getHubSourceSuggestions,
   deleteUserHub,
+  groupTagIds,
   hubBrowsingLevel,
   hubViewerWhere,
   hubWriterWhere,
@@ -223,6 +224,30 @@ describe('resolveHubSources', () => {
       expect(result?.tagGroups).toEqual([[77]]);
       expect(result?.excluded.userIds).toEqual([11]);
       expect(result?.excluded.tagGroups).toEqual([[78]]);
+    });
+
+    it('scopes groupKey to one side of `exclude` — asserted on groupTagIds DIRECTLY', () => {
+      // 🔴 Called with a MIXED list, which `resolveHubSources` never does: it splits
+      // the rows by polarity and calls this once per side, so a test routed through it
+      // passes whether or not `exclude` is part of the map key. Verified — removing
+      // the polarity from the key leaves the whole resolver suite green.
+      //
+      // The key is the guard against a later refactor folding those two calls into
+      // one. Fold them and this is the only thing standing between a kept-out tag and
+      // the hub's own AND-set.
+      const row = (targetId: number, exclude: boolean, groupKey: number | null) => ({
+        type: UserHubSourceType.Tag,
+        targetId,
+        exclude,
+        groupKey,
+      });
+
+      expect(
+        groupTagIds([row(77, false, 0), row(90, true, 0), row(78, false, 0), row(91, true, 0)])
+      ).toEqual([
+        [77, 78],
+        [90, 91],
+      ]);
     });
 
     it('scopes groupKey to one side of `exclude`', async () => {

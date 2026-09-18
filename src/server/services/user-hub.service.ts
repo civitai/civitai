@@ -856,10 +856,15 @@ async function resolveExcludedSources(
  * kept-out tag into the hub's own AND-set. `groupHubSources` in hub.utils.ts states
  * the same rule over display values.
  *
+ * Exported for `user-hub.service.test.ts`, which calls it with a MIXED list. Through
+ * `resolveHubSources` the polarity scoping is unreachable — the two calls are already
+ * split by polarity, so a test there passes with or without `exclude` in the key, and
+ * would read as coverage of a guard it cannot see.
+ *
  * Groups keep first-appearance order, and a one-member group is indistinguishable from
  * an ungrouped tag. That is what leaves every hub predating the column unchanged.
  */
-function groupTagIds(sources: HubSourceRow[]) {
+export function groupTagIds(sources: HubSourceRow[]) {
   const groups: number[][] = [];
   const byKey = new Map<string, number[]>();
   for (const source of sources) {
