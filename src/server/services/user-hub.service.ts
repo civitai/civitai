@@ -999,6 +999,16 @@ export async function resolveHubSources({
   // each side would otherwise pay for them end to end before the first Meili call.
   const excludedPromise = resolveExcludedSources(negativeSources);
 
+  // 🔴 Nothing outside this function reads `truncated`, and that is a decision rather
+  // than an oversight — Justin's call, 2026-09-18. A hub past the budget serves a
+  // partial feed silently, so the flag was traced and a field on the feed response
+  // costed; it was left alone because no hub is near the line. Measured that day:
+  // of 1,034 hubs holding model sources, ZERO exceed the 750 budget, the worst sums
+  // to 476 versions and the average is 22.4.
+  //
+  // Revisit when that stops being true — the model source cap rising, or one very
+  // large catalogue — because the failure is invisible from the outside: a feed that
+  // is quietly missing content looks exactly like a feed.
   let truncated = false;
   const versionIdsOfModels: number[] = [];
   if (modelIds.length && perModel > 0) {
