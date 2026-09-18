@@ -11,6 +11,7 @@
 
 import { isEqual, omit } from 'lodash-es';
 import { useEffect, useMemo, useReducer, useRef } from 'react';
+import { usePreBoostWhatIf } from '~/components/generation_v2/hooks/usePreBoost';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { NodeError } from '~/libs/data-graph/data-graph';
 import { useGraph } from '~/libs/data-graph/react';
@@ -18,7 +19,6 @@ import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
 import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
 import { applyWhatIfFingerprints } from '~/shared/data-graph/generation/whatif-fingerprints';
 import { defaultWorkflowCost } from '~/shared/orchestrator/workflow-data';
-import { trpc } from '~/utils/trpc';
 import { useDisabledGates } from '~/components/generation_v2/gate-block';
 import { useResourceDataContext } from '../inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '../utils';
@@ -144,13 +144,14 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   const workflowConfig = workflowConfigByKey.get(snapshot?.workflow as string);
   const isNoSubmit = workflowConfig?.noSubmit === true;
 
-  const queryResult = trpc.orchestrator.whatIfFromGraph.useQuery(queryPayload as any, {
+  const { queryResult, preBoost, setPreBoost, download } = usePreBoostWhatIf({
+    revision,
+    queryPayload,
     enabled:
       enabled &&
       !isNoSubmit &&
       !gateBlocked &&
       !!currentUser &&
-      !!queryPayload &&
       !resourcesLoading &&
       !imagesPending,
   });
@@ -160,6 +161,7 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
       queryResult.data ?? {
         cost: defaultWorkflowCost,
         ready: false,
+        preparation: undefined,
         allowMatureContent: false,
         transactions: undefined,
       },
@@ -176,5 +178,8 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
     canEstimateCost,
     gateBlocked,
     validationErrors,
+    preBoost,
+    setPreBoost,
+    download,
   };
 }

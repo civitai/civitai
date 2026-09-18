@@ -124,21 +124,7 @@ vi.mock('@civitai/client', () => {
   `
     .split(/\s+/)
     .filter(Boolean);
-  const mod: Record<string, unknown> = Object.fromEntries(names.map((n) => [n, stub]));
-  // The only export actually CONSTRUCTED by the code under test:
-  // `new TimeSpan(0, 20, 0)` then `.addMinutes(n)` then `.toString([...])`,
-  // used to compute a submit timeout. Nothing here asserts on the value.
-  mod.TimeSpan = class {
-    constructor(public h = 0, public m = 0, public s = 0) {}
-    addMinutes(n: number) {
-      this.m += n;
-      return this;
-    }
-    toString() {
-      return `${this.h}:${this.m}:${this.s}`;
-    }
-  };
-  return mod;
+  return Object.fromEntries(names.map((n) => [n, stub]));
 });
 
 // `vi.hoisted` because `vi.mock` factories are lifted above every top-level

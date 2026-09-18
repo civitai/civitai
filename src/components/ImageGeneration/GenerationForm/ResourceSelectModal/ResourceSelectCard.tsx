@@ -50,6 +50,7 @@ import { isDefined } from '~/utils/type-guards';
 import type { ResourceSelectSource } from '../resource-select.types';
 import { getResourceCompatibility } from '~/components/generation_v2/inputs/ResourceItemContent';
 import { TopRightIcons } from './TopRightIcons';
+import { ResourceResidencyIcon } from '~/components/ResourceLoad/ResourceResidency';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -233,6 +234,11 @@ export function ResourceSelectCard({
                       </div>
                       <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
                       <Group className="absolute bottom-2 right-2 flex items-center gap-1">
+                        {selectSource === 'generation' &&
+                          data.type === ModelType.Checkpoint &&
+                          selectedVersion && (
+                            <ResourceResidencyIcon modelVersionId={selectedVersion.id} />
+                          )}
                         {data.availability === Availability.Private && (
                           <Tooltip
                             label="This is a private model which requires permission to generate with."

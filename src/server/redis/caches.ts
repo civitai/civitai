@@ -607,7 +607,7 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
          LIMIT 1) AS "vaeId",
         COALESCE((
           SELECT gc.covered
-          FROM "GenerationCoverage" gc
+          FROM "GenerationCoverageNext" gc
           WHERE gc."modelVersionId" = mv.id
         ), false) AS covered
       FROM "ModelVersion" mv

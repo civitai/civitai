@@ -24,10 +24,12 @@ vi.mock('~/server/services/orchestrator/assert-workflow-owner', async (importOri
 
 import { Air } from '@civitai/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import {
   estimateResourceLoad,
   getResourceLoadQueue,
   getResourceLoadState,
+  getResourceResidency,
   submitResourceLoad,
 } from '~/server/services/resource-load.service';
 
@@ -71,6 +73,8 @@ beforeEach(() => {
   dbMock.dbRead.modelVersion.findMany.mockResolvedValue([version]);
   // The GenerationCoverageNext lookup — covered by default.
   dbMock.dbRead.$queryRaw.mockResolvedValue([{ modelVersionId: 501 }]);
+  // A cache miss that wins the stampede lock; losing it makes fetchThroughCache sleep and retry.
+  redisMock.redis.setNxKeepTtlWithEx.mockResolvedValue(true);
 });
 
 describe('getResourceLoadState', () => {
@@ -106,6 +110,62 @@ describe('getResourceLoadState', () => {
     const [state] = await getResourceLoadState([501]);
 
     expect(state.availability).toEqual({ status: 'unknown' });
+  });
+
+  it('reads the beta.105 `queued` shape, boosted ETA included', async () => {
+    const queued = {
+      status: 'queued',
+      queuePosition: 3,
+      lane: 'low',
+      etaSeconds: 600,
+      boostedEtaSeconds: 60,
+    };
+    orchestratorReturns(queued);
+
+    const [state] = await getResourceLoadState([501]);
+
+    expect(state.availability).toEqual(queued);
+  });
+});
+
+describe('getResourceResidency', () => {
+  const queued = { status: 'queued', queuePosition: 4, lane: 'normal', etaSeconds: 90 };
+
+  it('returns each version once, with its parsed availability', async () => {
+    orchestratorReturns(queued);
+
+    const result = await getResourceResidency([501, 501]);
+
+    expect(result).toEqual([{ modelVersionId: 501, availability: queued, size: 1024 }]);
+  });
+
+  // The router leaves this open to every signed-in viewer on the strength of the cache, so the
+  // per-version key and the cache hit are the properties that make it safe.
+  it('reads one cache key per version', async () => {
+    orchestratorReturns(queued);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([version, { ...version, id: 502 }]);
+
+    await getResourceResidency([501, 502]);
+
+    const readKeys = redisMock.redis.packed.mGet.mock.calls.flatMap(
+      (call: unknown[]) => (call[0] as string[]) ?? []
+    );
+    expect(readKeys).toEqual(
+      expect.arrayContaining([expect.stringContaining(':501'), expect.stringContaining(':502')])
+    );
+  });
+
+  it('does not ask the orchestrator for a version already cached', async () => {
+    redisMock.redis.packed.mGet.mockResolvedValue([
+      { modelVersionId: 501, availability: { status: 'available', workers: 2 } },
+    ]);
+
+    const result = await getResourceResidency([501]);
+
+    expect(getModelClient).not.toHaveBeenCalled();
+    expect(result).toEqual([
+      { modelVersionId: 501, availability: { status: 'available', workers: 2 } },
+    ]);
   });
 });
 

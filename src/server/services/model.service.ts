@@ -824,7 +824,7 @@ export const getModelsRaw = async ({
 
   if (supportsGeneration) {
     AND.push(
-      Prisma.sql`EXISTS (SELECT 1 FROM "GenerationCoverage" gc WHERE gc."modelId" = m."id" AND gc."covered" = true)`
+      Prisma.sql`EXISTS (SELECT 1 FROM "GenerationCoverageNext" gc WHERE gc."modelId" = m."id" AND gc."covered" = true)`
     );
   }
 

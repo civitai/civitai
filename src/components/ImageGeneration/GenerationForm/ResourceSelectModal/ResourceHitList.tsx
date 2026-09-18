@@ -14,6 +14,8 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import type { TransformedModel } from '~/shared/search/models-transform';
 import { trpc } from '~/utils/trpc';
 import { ResourceSelectCard } from './ResourceSelectCard';
+import { ResidencyBatchProvider } from '~/components/ResourceLoad/ResourceResidency';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { skipBaseModelForOwnTabs } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { useResourceSelectInfinite } from './useResourceSelectInfinite';
 import { isDefined } from '~/utils/type-guards';
@@ -256,53 +258,64 @@ export function ResourceHitList({ query }: { query: string }) {
   // Exclude podium items from the main grid
   const restItems = tab === 'featured' ? filtered.filter((m) => !topItemIds.has(m.id)) : filtered;
 
+  // Checkpoints only, matching the card — nothing else carries a load mark.
+  const residencyIds =
+    selectSource === 'generation'
+      ? [...topItems, ...restItems]
+          .filter((model) => model.type === ModelType.Checkpoint)
+          .map((model) => model.versions[0]?.id)
+          .filter(isDefined)
+      : [];
+
   return (
-    <div className="flex flex-col gap-3 p-3">
-      {hiddenCount > 0 && (
-        <Text c="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
-      )}
+    <ResidencyBatchProvider modelVersionIds={residencyIds}>
+      <div className="flex flex-col gap-3 p-3">
+        {hiddenCount > 0 && (
+          <Text c="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
+        )}
 
-      {topItems.length > 0 && (
-        <div
-          className={clsx(
-            // `minmax(0,350px)`, not a fixed 350px track: a fixed one is wider
-            // than a phone and overflows the pane.
-            '!grid grid-cols-[repeat(auto-fit,minmax(0,350px))] justify-center justify-items-center gap-6 p-3'
-          )}
-        >
-          <div className={cardClasses.winnerFirst}>
-            <ResourceSelectCard data={topItems[0]} selectSource={selectSource} />
+        {topItems.length > 0 && (
+          <div
+            className={clsx(
+              // `minmax(0,350px)`, not a fixed 350px track: a fixed one is wider
+              // than a phone and overflows the pane.
+              '!grid grid-cols-[repeat(auto-fit,minmax(0,350px))] justify-center justify-items-center gap-6 p-3'
+            )}
+          >
+            <div className={cardClasses.winnerFirst}>
+              <ResourceSelectCard data={topItems[0]} selectSource={selectSource} />
+            </div>
+            {topItems.length > 1 && (
+              <div className={cardClasses.winnerSecond}>
+                <ResourceSelectCard data={topItems[1]} selectSource={selectSource} />
+              </div>
+            )}
+            {topItems.length > 2 && (
+              <div className={cardClasses.winnerThird}>
+                <ResourceSelectCard data={topItems[2]} selectSource={selectSource} />
+              </div>
+            )}
           </div>
-          {topItems.length > 1 && (
-            <div className={cardClasses.winnerSecond}>
-              <ResourceSelectCard data={topItems[1]} selectSource={selectSource} />
-            </div>
-          )}
-          {topItems.length > 2 && (
-            <div className={cardClasses.winnerThird}>
-              <ResourceSelectCard data={topItems[2]} selectSource={selectSource} />
-            </div>
-          )}
-        </div>
-      )}
+        )}
 
-      <FillingMasonryGrid>
-        <MasonryColumnsVirtual
-          data={restItems}
-          render={renderCard}
-          imageDimensions={() => ({ width: 450, height: Math.round(450 * (9 / 7)) })}
-          adjustHeight={({ height }) => height + 82}
-          itemId={(x) => x.id}
-        />
-      </FillingMasonryGrid>
+        <FillingMasonryGrid>
+          <MasonryColumnsVirtual
+            data={restItems}
+            render={renderCard}
+            imageDimensions={() => ({ width: 450, height: Math.round(450 * (9 / 7)) })}
+            adjustHeight={({ height }) => height + 82}
+            itemId={(x) => x.id}
+          />
+        </FillingMasonryGrid>
 
-      {items.length > 0 && hasNextPage && (
-        <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetchingNextPage}>
-          <Center style={{ height: 36 }} my="md">
-            <Loader />
-          </Center>
-        </InViewLoader>
-      )}
-    </div>
+        {items.length > 0 && hasNextPage && (
+          <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetchingNextPage}>
+            <Center style={{ height: 36 }} my="md">
+              <Loader />
+            </Center>
+          </InViewLoader>
+        )}
+      </div>
+    </ResidencyBatchProvider>
   );
 }

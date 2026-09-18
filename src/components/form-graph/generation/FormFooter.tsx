@@ -52,6 +52,9 @@ import {
   useInvalidateWhatIf,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { BuzzTypeSelector, useSelectedBuzzType } from '~/components/generation_v2/FormFooter';
+import { DownloadReadyAlert } from '~/components/generation_v2/ResourceAlerts';
+import { resolveBoostSubmitFields } from '~/components/generation_v2/hooks/usePreBoost';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { EcosystemBaseModelWarnings } from '~/components/generation_v2/BaseModelWarnings';
 import { GeneratorMessageWarnings } from './GateRuleWarnings';
 import { StepWarningsNotification } from '~/components/generation_v2/FormFooter';
@@ -301,9 +304,14 @@ function PriorityAlertSpace({
       <QueueSnackbar right={snackbarRight} />
       <GeneratorMessageWarnings />
       <BaseModelWarnings />
+      <DownloadWarning />
       {priorityAlert}
     </>
   );
+}
+
+function DownloadWarning() {
+  return <DownloadReadyAlert whatIf={useWhatIfContext()} />;
 }
 
 function BaseModelWarnings() {
@@ -695,7 +703,15 @@ export function FormFooter({
   const { trackAction } = useTrackEvent();
   const generationContextStore = useGenerationContextStore();
 
-  const { canEstimateCost, validationErrors, data: whatIfData } = useWhatIfContext();
+  const {
+    canEstimateCost,
+    validationErrors,
+    data: whatIfData,
+    preBoost,
+    setPreBoost,
+    download,
+  } = useWhatIfContext();
+  const isMobile = useIsMobile({ type: 'media' });
   const missingFieldMessage = !canEstimateCost ? getMissingFieldMessage(validationErrors) : null;
 
   const [submitError, setSubmitError] = useState<string | undefined>();
@@ -870,6 +886,16 @@ export function FormFooter({
 
     const hasPaidAccess = resourceData.some((x) => x.paidAccess);
 
+    const boostFields = await resolveBoostSubmitFields({
+      preBoost,
+      download,
+      askFirst: !!isMobile,
+    });
+    if (!boostFields) return;
+    // The switch re-prices the whole whatIf, so its fee is already in totalCost; the mobile confirm
+    // is answered after that number was read, so its fee has to be added before the balance check.
+    const boostFee = !preBoost && boostFields.downloadPriority ? download?.boostFee ?? 0 : 0;
+
     const performTransaction = async () => {
       await generateMutation.mutateAsync({
         input: {
@@ -886,8 +912,10 @@ export function FormFooter({
         ...(sourceProvenance.length ? { sourceProvenance } : {}),
         externalId,
         acknowledgedSoftBlock,
+        ...boostFields,
       });
 
+      if (preBoost) setPreBoost(false);
       if (hasPaidAccess) invalidateWhatIf();
 
       // one-shot enhancement workflows clear their media after submit
@@ -911,7 +939,7 @@ export function FormFooter({
       onSubmitSuccess?.();
     };
 
-    conditionalPerformTransaction(totalCost, performTransaction);
+    conditionalPerformTransaction(totalCost + boostFee, performTransaction);
   };
 
   const handleReset = () => {

@@ -1,374 +1,375 @@
 # Paid Model Loading
 
-**Status:** Phase A (server plumbing plus a mod-only test page) is built behind the `resourceLoad`
-flag; no public surface exists. The orchestrator can download and report; it cannot yet charge or
-guarantee residency. State of the work: [checklist](paid-model-loading-checklist.md).
-**Source:** lab call 2026-08-18 (Justin, Koen, Briant), the `@civitai/client` SDK, the
-`civitai-orchestration` source at `9306e7333` — **which is deployed**, so everything described as
-built below is live — and Koen's answers in DM, 2026-09-04 and 2026-09-07.
+Any model the generator supports can be generated with, whether or not it is resident on the
+generation cluster. A job whose resources are not loaded **waits** while they download; downloads are
+**free**, and the cost to the user is the generation queue slot the waiting job holds. Paying buys
+**priority**, not access: a **boost** moves that workflow's pending downloads into the fastest
+download lane.
 
-🔴 **`civitai-orchestration` is not the whole system.** Resource *residency* lives in a second
-repo, `civitai-spine-controller`. Reading only the orchestrator produced a confident, wrong
-conclusion here once already (see What it is), so "verified against source" in this document means
-verified against the orchestrator unless it says otherwise.
-**Tracking:** ClickUp C2–C14, `Synced Team`.
-**Coverage model and audit:** [paid-model-loading-coverage.md](paid-model-loading-coverage.md).
+**Companion:** [paid-model-loading-coverage.md](paid-model-loading-coverage.md) — the coverage model,
+the audit behind it, and every measured number.
+
+**Sources:** the 2026-08-18 lab call and the 2026-09-10 call (Justin, Koen, Briant), Koen's DMs
+(2026-09-04, 09-07, 09-10), the `@civitai/client` and `@civitai/orchestration-client` SDKs, and the
+orchestrator source at `9306e7333`.
+
+> **History.** This file replaces four docs merged on 2026-09-11 — the boost model, the build plan,
+> the implementation checklist and the decisions register. Git history holds them. The explicit
+> *paid load* they described (buy a load, 48-hour residency promise, per-tier daily caps) was
+> superseded on 2026-09-10 by the boost model above; its server path survives as a moderator tool.
 
 ---
 
-## What it is
+## How it works
 
-Any model on the site becomes generatable. If the model is not resident in the generation
-cluster, the user pays to load it in, and — as pitched — we guarantee it stays resident for
-**48 hours**. The orchestrator sets the price, scaled by model size.
+- **Generation is always accepted.** A cold checkpoint no longer blocks a submit.
+- **Downloads are free.** Lanes, the queue slot, and cancellation removing a job's downloads are the
+  abuse controls — not a price.
+- **Boost = the high lane.** `PUT /v2/consumer/workflows/{id}` with `{ downloadPriority: "high" }`,
+  charged to the token's owner. The same call with `whatif=true` prices it without charging, and the
+  fee is `cost.fixed.downloadPriority`.
+- **Three lanes**, each with reserved bandwidth so the lowest never fully stalls: boosted (`high`),
+  members (`normal`), everyone else (`low`). `downloadPriority` only ever goes up, and is separate
+  from the generation `priority` on each step.
+- **Within a lane a position never moves backwards**; a higher lane can still go ahead, so an
+  unboosted ETA is an estimate.
+- **A boost covers the whole workflow** — checkpoint and LoRAs together. Cancelling removes the job's
+  downloads from the queue.
+- **It applies to every resource type.** The orchestrator does not distinguish a checkpoint from a
+  LoRA or from a model's implicit dependencies (a bundled text encoder, a VAE). A model with several
+  dependent files is presented as one thing: the UI shows the resource that will finish last, never
+  "1 of 3".
 
-**Residency exists.** Koen, 2026-09-04: the spine controllers check with each other before evicting
-a resource and refuse to evict anything less than 48h old **unless another spine controller has it**.
-`PrepareResourceJob` gets the resource into the DC and that eviction policy guards its lifetime
-from then on — the code is `ClusterAwareEvictionPolicy.cs` in `civitai-spine-controller`.
-`PinModelJob`, which an earlier reading of this document called the intended primitive, is
-**legacy — Koen: "don't even look at it."**
+## What is built
 
-The "unless another controller has it" clause is benign: Justin, 2026-09-08 — it means the model is
-still downloaded on our servers and available for generation. The copy may move; availability does
-not lapse. **So the surfaces promise the 48 hours as originally pitched.**
+The UI follows Justin's download-boost mockup. Lanes are shown as **Standard** (`low`), **Priority**
+(`normal`, members) and **Express** (`high`, boosted) (`download-lanes.tsx`). The speed shown is the
+orchestrator's `rateLimitBytesPerSecond` (beta.107) for the viewer's own lane — a per-download cap,
+`null` when uncapped, which is what Express is. Other lanes' caps are not reported, so they show none.
+One lanes explainer (`DownloadLanesInfo`) opens from every boost control.
 
-⚠️ Nobody on the site side has read that policy — the repo is private to us here — and nothing
-exposes when a given resource's window ends.
+**Queue card** (`DownloadBoostPanel`). The workflow's own step `preparation` gives its lane,
+position, lane cap and boosted ETA: it is per workflow, while a download is shared by every workflow
+waiting on the model, so the model's live lane is whoever asked highest. A submit reply predates the
+orchestrator queueing anything, so `generateFromGraph` attaches the estimate from a whatIf of the same
+steps (`attachEstimatedPreparation`) — run alongside the submit under a 2s deadline it never holds the
+reply for, and only when the cached residency says a download is already queued or loading for one of
+its models (`unavailable` is the resting state of most of the catalogue, not a queued download). The
+estimate is restated in the high lane only when the submitted workflow actually came back `high`, and
+it carries only what a whatIf can honestly know — the lane and the sizes. Position and ETAs are dropped
+(`asEstimate`): they are measured against a queue the job has not joined, and the card's own poll has
+the orchestrator's within seconds. So a fresh card reads "Waiting on downloads — Standard lane" with
+`—` for position and time, and offers no Boost until the real figures arrive. Later reads and step
+events replace it. While a step has `preparation` or is `preparing`, the card also polls its models'
+live status (`resourceLoad.getDownloadStatus` — uncached, ≤10 versions, 60/min per user) every 10s, for
+transfer progress, ETA and when a model lands; never for lane (`mergeDownloadRow`).
 
-🔴 **The price half is still missing.** The cost function returns a hardcoded zero, so there is no
-size-scaled price to show. See [Orchestrator state](paid-model-loading-checklist.md#orchestrator-state--verified-against-source).
+While a model is not loaded, the pending image tile gives way to a panel: the lane, position (from 1),
+lane speed and ETA of the slowest download, then each unloaded model with its position and ETA,
+progress, or "waiting to start". Its resource chips spin with their size. **A transfer that has just
+started shows progress with no time at all** — until 2% or 64 MB has moved, whichever comes first
+(`ETA_WARMUP_PROGRESS` / `ETA_WARMUP_BYTES`), a stream still ramping up projects from a throughput it
+will not hold, which is how a ten-minute download comes to claim two hours. A model merely *queued*
+behind other downloads is unaffected: nothing has distorted the projection it was given, so it keeps
+its ETA and its offer. When a boost would read as faster, the panel adds the "Skip the free lane"
+pitch, a "Normally → Boosted" comparison and a **Boost this download** Buzz button with its price,
+fetched when the panel renders (`getBoostCost`, 30s stale), so **each boostable card costs one whatIf
+PUT**. For a boost bought on this page, the panel keeps the ETA it would have been. The rules are pure functions in `download-status.ts`. There is no site-wide
+download queue page.
 
-This replaces auctions as the mechanism for getting a checkpoint into the generator.
+**Generator — both forms** (`generation_v2` data-graph and form-graph): when the whatIf reports
+downloads, `DownloadReadyAlert` shows the resource count and size, and — when the boost would read as
+a different number (`isBoostable`) — the "Normally → Boosted" comparison and a **Boost download**
+switch with its price. That same test gates the second whatIf at `downloadPriority: "high"`, so a
+pending download with nothing visible to sell costs no extra whatIf; where it is offered, the price
+shows before the switch is on and flipping it swaps to the already-priced response. The switch is
+pinned to the form revision, so it never carries over to a selection the user has not re-priced, and
+it clears after a submit (`usePreBoostWhatIf`).
 
-Three surfaces show the same state machine: the model version page, the generator, and a navbar
-indicator that links to a full queue page.
+Both render it in the footer, beside the other pre-submit warnings.
+
+**On mobile the full alert is hidden** — it costs too much of the viewport — and the offer is made as a
+confirm on the Generate press instead (`DownloadBoostConfirm`, chosen in `resolveBoostSubmitFields`):
+the wait, the "Normally → Boosted" comparison, then **Boost · N Buzz** or **Continue without boosting**.
+Dismissing it cancels the submit rather than sending it unboosted, since the user chose neither. That
+confirm only opens when there is a boost to sell, so mobile keeps a one-line notice of the wait itself.
+
+**Load indicators**, checkpoints only: inside the model page's **Create** button, on the selected
+checkpoint in both forms, and on checkpoint results in the resource picker. Backed by
+`resourceLoad.getResidency` — signed-in, ≤50 ids, rate-limited, cached 30s per version, and batched
+one request per picker page.
+
+**Moderator tool** at `/moderator/resource-load` (flag `resourceLoad`): the explicit purchase path —
+`resourceLoad.estimate` / `submit`, the flag-gated `getQueue` and uncapped `getState` reads, the
+per-tier caps, the `resource-load:update` signal and the load-complete toast. Kept deliberately (2026-09-11) for pricing and observing a single download.
+
+**Coverage** — every reader of `GenerationCoverage` reads `GenerationCoverageNext` (Prisma `@@map`
+plus the raw-SQL queries), which is what lets a normal user pick a checkpoint that is not loaded.
+
+**Money-path properties worth keeping true:**
+
+- The boost is charged only at the price on the button: `boostWorkflow` re-prices first and
+  refuses, charging nothing, if the price moved or nothing is left to boost.
+- After the charge, a failed read reports the boost as done rather than as an error, so a retry
+  cannot pay twice.
+- A pre-boosted submit sends `downloadPriority` only when a whatIf shows something waiting to
+  download.
+- ETAs shown to users are approximate (`formatDownloadEta`) and never sooner than `ETA_FLOOR_SECONDS`
+  — 2 minutes, in `download-eta.ts`. A wait that runs over reads as a broken promise where one that
+  lands early does not; the cost is that the fastest boosts show no visible gain. The floor is
+  display-only — the raw seconds in `preparation` are untouched — and the moderator page keeps exact
+  figures. One rounding ladder (`etaBucket`) serves both formatters and every comparison, so
+  `downloadSpeedup` can never print a multiple the two numbers beside it do not show.
+- A boost is only offered when it buys time the user can **see**, on two rules that differ because
+  their inputs do. The queue card (`isWorthBoosting` → `boostBuysVisibleTime`) also requires the boost
+  to be faster: its plain ETA is live and its boosted one was measured when the workflow queued, so a
+  download that has since sped up can otherwise quote a "boost" slower than the current wait. The
+  pre-submit offer (`isBoostable`) takes both figures from one whatIf, so it refuses only what the
+  rendered buckets have swallowed — charging for two identical printed numbers.
+- A transfer's ETA is withheld until it has moved enough to be believed, and its boosted ETA with it
+  (`isEtaSettled`, `download-preparation.ts`). Offering a paid boost while refusing to show the wait
+  it shortens would be a charge with no benefit on screen.
+- The mobile confirm's fee is added to the balance check before it runs, since the dialog is answered
+  after the generation's own total was read.
+
+**Timeouts — the site now sends none.** A generation step used to carry a `timeout` built by
+`buildStepTimeout` (20 minutes, 40 for video, +1 per extra resource). A job waiting in the free lane
+can wait far longer than that, and an expired step is not a slow generation, it is a dead one — so
+`createWorkflowStepsFromGraph` stopped setting `timeout`, and the client cutoffs that mirrored it went
+with it: the queue card's "This is taking longer than usual" alert at 5 minutes **and its promise that
+we refund automatically by `createdAt + min(step timeout, 10 min)`** (`QueueItem`), the iterative
+editor's 5-minute warning and 25-minute hard stop (`IterativeImageEditor`), the comics panel poll's
+25-minute `Failed` cutoff (`comics.router.ts`) and its 3-minute modal timeout (`GenerateImageModal`).
+Whatever bound remains is the orchestrator's own; the site still renders the `expired` workflow status
+it produces, and promises nothing about when it arrives.
+
+**App Blocks keeps its step timeouts** (`formatStepTimeout` / `stepTimeoutSeconds` in
+`src/server/services/blocks/workflow.service.ts`) and was deliberately not touched. There the timeout
+is the only deterministic per-job Buzz bound — worst-case Buzz is derived from it and reserved against
+the per-user cap — so removing it would uncap spend, not just uncap waiting. It is per engine, and it
+moves with `maxBuzz`.
 
 ---
 
 ## The orchestrator contract
 
-Everything the site needs is already typed in `@civitai/client`. Read
-`node_modules/@civitai/client/dist/generated/types.gen.d.ts` rather than trusting this section
-once it ages.
+Read `node_modules/@civitai/orchestration-client/dist/generated/types.gen.d.ts` rather than trusting
+this section once it ages. The app's own orchestrator calls still go through the older
+`@civitai/client`, which predates `downloadPriority` and `preparation` — hence the casts around them.
 
-### Resource state — `ResourceInfo.availability`
+### Step preparation — what the card and the alert render
 
-`GET /v2/resources/{air}` returns `ResourceInfo`, whose `availability` is a union discriminated
-on `status`. **There are four states, not the three discussed in the call:**
+From beta.106, `WorkflowStep.preparation` is `WorkflowStepPreparationResource[] | null` — every
+resource the step waits on, **gating resource first**, each with `sizeBytes`, `lane`,
+`queuePosition` (null while transferring), `progress`, `bytesPerSecond`, `etaSeconds` and
+`boostedEtaSeconds` (null once already `high`). The beta.105 summary-object shape is **not** read —
+the orchestrator must be on beta.106 before this ships.
 
-| `status` | Extra fields | Meaning | Site behaviour |
-| --- | --- | --- | --- |
-| `available` | `workers` | resident on N workers | generate normally |
-| `loading` | `progress`, `workers`, `startedAt`, `lastProgressAt`, `etaSeconds` | actively downloading | show progress, subscribe |
-| `unavailable` | `queuePosition` | not resident | queued if `queuePosition != null`, otherwise offer the paid load |
-| `unsupported` | — | the cluster cannot host this resource at all | **never offer a paid load** |
+Raw data enters in three places — the server's step reader, the generation signal handler, and the
+moderator page's load-progress signal — and each validates it against `preparationSchema`
+(`src/shared/orchestrator/download-preparation.ts`). Anything else reads as nothing to download. The
+summary (`DownloadPreparation`) is derived from the gating resource, and an empty list also reads as
+nothing to download: a bare `[]` is truthy, and would put a download panel and a paid Boost on a step
+with nothing to boost.
 
-Two consequences the call's model of this misses:
+beta.106 also adds `WorkflowStep.warnings[]` (so far only `modelDeprecated`, with `retiresAt` and a
+suggested `replacement`). Nothing reads it yet.
 
-- **`queuePosition` lives on `unavailable`, not on `loading`.** "In the queue" and "not loaded at
-  all" are the same status, distinguished only by whether `queuePosition` is null. UI that
-  branches on status alone will conflate them.
-- **`unsupported` is a fourth state.** Selling a load for a resource the cluster can never host is
-  a refund path we would be building on purpose. Gate the purchase CTA on it explicitly.
+It arrives three ways: on the workflow list, on the status refresh, and on step webhook events. A
+preparing step publishes every **10 seconds**, deduplicated at 1% progress.
+
+🔴 **Those events can carry `status: unassigned`.** The signal handler applies their `preparation`
+straight to the cached step and only refetches the workflow when the step's status also changed —
+otherwise every progress webhook would cost one orchestrator read per waiting workflow.
+
+### Resource availability
+
+`GET /v2/resources/{air}` returns `ResourceInfo.availability`, a union on `status`:
+
+| `status` | Extra fields | Meaning |
+| --- | --- | --- |
+| `available` | `workers` | resident |
+| `loading` | `progress`, `workers`, `startedAt`, `lastProgressAt`, `etaSeconds`, `lane`, `bytesPerSecond` | downloading now |
+| `queued` | `queuePosition`, `lane`, `etaSeconds`, `boostedEtaSeconds` | waiting in a lane |
+| `unavailable` | `queuePosition?` | **nothing is pulling it** (from beta.105) |
+| `unsupported` | — | the cluster cannot host it |
+
+🔴 **Two generations of the queued shape both parse.** Before beta.105 a queued resource was
+`unavailable` with a `queuePosition`. `isQueuedAvailability` (beside `resourceAvailabilitySchema`) is
+the one place that rule lives; four screens previously each decided it for themselves. A status this
+build does not know becomes `unknown` — deliberately not folded into `unsupported`, because "the
+cluster will never host this" and "we could not read the answer" need different support answers.
 
 ### Queue listing — `GET /v2/resources?view=queue`
 
-`queryResources({ query: { view: 'queue', cursor?, take? } })` returns a cursor-paged
-`ResourceInfo[]`.
+Cursor-paged `ResourceInfo[]`, merged across providers, de-duped by AIR and ranked server-side. **Do
+not re-rank client-side.** The cursor is an integer offset over a list re-ranked from live state on
+every request, so paging is unstable — show one page and poll it. Each item costs the orchestrator two
+grain calls, so the site clamps `take` to 1..100, default 50 (`getResourceLoadQueueSchema`).
 
-The call recorded this as Koen's one missing piece ("there is no endpoint for a queue… that one I
-missed"). **It has since been built** — verified in `ResourcesController.QueryAsync`.
+### Prices and who charges
 
-Two properties that shape the queue page: the **cursor is an integer offset** over a list that is
-re-ranked from live provider state on every request, so paging is not stable; and each item costs a
-`GetInfoAsync` plus a `GetAvailabilityAsync` grain call, so a 500-item page is a thousand calls.
-Keep `take` small (it is clamped to 1..500, default 100).
+The site never prices this. It submits with the **user's** orchestrator token and the orchestrator
+derives from that bearer who owns the workflow, whose queue it joins and whose Buzz pays.
 
-Koen's caveat about there being **no single global queue** — each provider has its own, and several
-items can legitimately occupy "position 1" — is real, but the endpoint already resolves it: it
-merges every enabled provider, de-dupes by AIR and ranks the result. Justin's "make it look like
-1, 2, 3, 4" is done server-side. Do not rebuild it client-side. A single unreachable provider
-degrades to an empty contribution rather than failing the call.
+🔴 **A user-token submit that creates a workflow must call `assertWorkflowOwner`** — enforced by the
+`no-unguarded-billable-submit` guard, whose exemptions are counted per file. A `whatif` submit creates
+nothing and spends nothing, which is why the two whatIf calls in `orchestration-new.service.ts` are
+exempt. The boost is an **update** to a workflow the token already owns, so the guard does not apply.
 
-### Preparing a resource
+### Signals
 
-`PrepareResourceInput { resource: air }` returns
-`PrepareResourceOutput { resource, preparedAt, provider }`.
+Progress reaches the browser the same way generation does: workflow → signals service → client.
+Load-progress callbacks target `/users/{userId}/signals/` — **never** a `model-version:<id>` group,
+because the orchestrator posts its event body straight through and `workflowId` is
+`<userId>-<timestamp>`, so a broadcast would name the payer. Pinned by a test asserting `/users/` and
+not `/groups/`.
 
-Submittable two ways:
+⚠️ `SignalMessages.SchedulerDownload = 'scheduler:download'` is the generation-history export, not
+this feature.
 
-- as a **standalone** `prepareResource` workflow step, or
-- **implicitly**, by submitting a txt2img step that references a resource that is not resident.
+### Residency (a repo the site does not check out)
 
-While a download progresses, the step publishes a `WorkflowStepEvent` with `status: preparing` and
-a `preparation { resource, queuePosition, progress, etaSeconds }` payload — refreshed every **10
-seconds**, deduplicated so it only publishes when progress moves by 1%.
-
-**Subscribe with `step:*`** — the callback filter is "no event type means all", so `step:*` matches
-`preparing` too, and `getOrchestratorCallbacks` already uses it for generation. ⚠️ The generated
-SDK's `WorkflowCallback.type` union does **not** list `preparing` or `scheduled`: the orchestrator's
-Swagger filter strips both from the advertised enum, so the type looks like the feature is missing
-when it is only unadvertised.
-
-⚠️ The implicit path matters for rate limiting — see below.
-
-### Who charges, and where the price comes from
-
-The site does not price this. It submits a workflow with the **user's** orchestrator token, and
-the orchestrator derives from that bearer who owns the workflow, whose queue it joins and whose
-Buzz pays — the same path generation uses. C2 is enabling exactly that for `prepareResource`.
-
-So the price shown on the CTA should come from a **`whatIf` submit** (`query: { whatif: true }`,
-side-effect-free) of the prepare step, not from a size-to-price table on our side. Reuse
-[workflows.ts](../../src/server/services/orchestrator/workflows.ts); it already carries the
-retry, per-attempt timeout and 503-degrades-to-default-estimate behaviour that a user-facing price
-needs.
-
-🔴 **A user-token submit must call `assertWorkflowOwner`.** This is enforced by the
-`no-unguarded-billable-submit` guard, whose own docstring names the failure mode this feature
-is: "a new paid feature growing its own `submitWorkflow` call, which no reviewer of THAT diff has
-any reason to connect to an incident in a different subsystem." The incident it refers to billed
-roughly a thousand generations to accounts that did not make them.
-
-### Reuse, not rebuild
-
-- `GET /v2/resources/{air}` already has a caller —
-  [`getModelClient`](../../src/server/services/orchestrator/models.ts).
-- **AIR construction from a model version** is `modelVersionToAir`
-  ([resource-air.ts](../../src/server/utils/resource-air.ts)), extracted this phase from the copies
-  in `bustOrchestratorModelCache` and `modelVersionResourceCache`, both now repointed at it. It
-  includes `fileType` from the primary file **only when the caller loaded files** — a caller that
-  resolves files and one that does not are asking about two different AIRs.
-- ⚠️ [`modelVersionResourceCache`](../../src/server/redis/caches.ts) already fetches the whole
-  `ResourceInfo` per version — and caches it for **a day**, then throws `availability` away.
-  Availability must be read fresh. Do not reach for that cache because it looks like it already
-  has what you need.
+Koen, 2026-09-04: the spine controllers check with each other before evicting and refuse to evict
+anything less than 48h old unless another controller has it (`ClusterAwareEvictionPolicy.cs` in
+`civitai-spine-controller`). `PinModelJob` is legacy — "don't even look at it." Nothing exposes *when*
+a resource's window ends, so there is no countdown to build.
 
 ---
 
-## The signal path
+## Coverage, in one paragraph
 
-Same shape as image generation: workflow → our endpoint → signals service → client.
-
-⚠️ `SignalMessages.SchedulerDownload = 'scheduler:download'` already exists and is **not** this
-feature — it is the generation-history export. Do not reuse or shadow it.
-
-**Sending.** Per-user sends and the topic broadcast both live in
-[orchestrator.utils.ts](../../src/server/orchestrator/orchestrator.utils.ts): per-user hits
-`${SIGNALS_ENDPOINT}/users/{userId}/signals/{message}`, and `sendSignalToTopic` hits
-`${SIGNALS_ENDPOINT}/groups/{topic}/signals/{message}` — the same shape chat uses
-([chat.service.ts](../../src/server/services/chat.service.ts)). Route all of it through
-[`withSignals()`](../../src/server/signals/wrapper.ts); an unwrapped fetch to the signals service
-is the exact shape behind the 2026-05-30 event-loop cascade.
-
-**Topic naming.** The convention the call depends on already exists:
-
-```ts
-SignalTopic.ModelVersion = 'model-version'; // src/server/common/enums.ts
-```
-
-and [model-version.utils.ts:152](../../src/components/Model/ModelVersions/model-version.utils.ts#L152)
-already subscribes to `model-version:<id>`. So the site can subscribe to a download by model
-version id with **no new workflow step**, which is exactly what Justin argued for and Koen
-agreed to. A new `SignalMessages` entry is all that is needed on top.
-
-**Subscribing.** `useSignalTopic(topic)` in
-[SignalsProvider.tsx:112](../../src/components/Signals/SignalsProvider.tsx#L112) refcounts
-subscribers per topic and joins/leaves the group automatically.
-`useSignalConnection(message, cb)` receives.
-
-**Client persistence.** What a browser is *watching* lives in `localStorage`, drained on every page
-load (see Decided). That is not the record of a purchase: the orchestrator holds that, as workflows
-tagged `resource-load` queryable with the buyer's token.
-
-⚠️ **Progress for this feature is NOT a topic broadcast.** It goes to `/users/{userId}/signals/`,
-because the orchestrator posts its event body straight through and that body names the paying user.
-The topic convention below is still how the site subscribes to a model version generally — it is
-just not how load progress is delivered.
+`CoveredCheckpoint` — the weekly auction's residency proxy — stops gating. `EcosystemCheckpoints`
+stays (62 of 63 checkpoint defaults ride on it) and `GenerationBaseModel` stays as the base-model
+gate. A checkpoint must carry a **SafeTensor** weight file; Diffusers remains fine for every other
+type. File-less API models are covered and never loadable — "file-less" means *no loadable file*, not
+*no file row*. A model a moderator has taken down or archived (`Model.mode`) is **not covered for any
+type**, which is how moderation blocks generation server-side rather than only greying out a button.
+Zero covered versions lack `RentCivit`, so refusing anything outside coverage inherits the licence
+rule instead of restating it. The numbers, the audit and the readers list are in
+[paid-model-loading-coverage.md](paid-model-loading-coverage.md).
 
 ---
 
-## Rate limits
+## Pre-deploy checklist
 
-Site-side only, deliberately. Anyone can go straight to the orchestrator; the concern is abuse
-*by users on our site*, so that is where the cap belongs.
+Everything here is the deploying engineer's, before this branch merges.
 
-| Tier | Loads per day |
-| --- | --- |
-| Free | 0 — refused by `assertCanRequestLoad` before the limiter is reached |
-| Bronze | 3 |
-| Silver | 6 |
-| Gold / Founder | 10 |
+- [ ] **Confirm the production orchestrator is on beta.107.** Two things need it and they fail
+      differently: beta.106's resource-list `preparation` (an older orchestrator's summary object
+      reads as nothing to download — no panel, no Boost, anywhere), and beta.107's
+      `rateLimitBytesPerSecond` (absent on beta.106, so every lane silently shows no speed while
+      everything else works).
+      *Closes when:* a preparing step's `preparation` from the production orchestrator is an array
+      **and** its entries carry `rateLimitBytesPerSecond`.
+- [ ] **`pnpm run typecheck`, `pnpm run lint`, `pnpm run prettier:write`, and the full
+      `pnpm run test:unit:run` once.** Targeted suites are not a substitute for the last one.
+- [ ] **Run `comment-review` over the diff and `docs-drift-review` over the commits.** The two lanes
+      with no automated gate.
+- [ ] **Manual pass in a browser**, none of which has been exercised: the queue card's download panel
+      with its per-model rows and Boost button (including in the narrow sidebar layout), the lanes
+      explainer, the pre-submit alert and Boost switch in **both** generator forms, compared against
+      the mockup, the Create-button and picker indicators, and — **on a narrow viewport** — that the
+      alert is hidden, that `DownloadBoostConfirm` appears on Generate, and that dismissing it sends
+      nothing rather than submitting unboosted.
+- [ ] **Boost a real queued workflow end to end.**
+      *Closes when:* the workflow reports `downloadPriority: "high"` and `cost.fixed.downloadPriority`
+      was charged.
+- [x] **Apply `20260909180000_generation_coverage_next_safetensor_checkpoints`.** Amended in place
+      2026-09-11 with a top-level `AND m.mode IS NULL` after it had already been applied, so it needed
+      applying again. **Done 2026-09-11**; verified: covered rows 931,496, covered checkpoints 31,486,
+      covered rows whose model carries a `mode` **0**.
+- [x] **`pnpm run db:check-generated`** after the Prisma `@@map` — passes; the only generated change
+      is the Kysely table key.
 
-On top of the daily ladder there is a flat, tier-independent **3 per hour** — burst protection for
-the cluster, not an entitlement, so no plan buys its way out of it.
+⚠️ Migrations here are **applied by hand** (psql/retool). This repo never runs `prisma migrate deploy`.
 
-Free started at 1; Koen suggested members-only to start; Justin settled on 0. Silver was left at
-5–6 on the call and shipped as 6. These are deliberately low and meant to be raised.
+## Post-deploy checklist
 
-The mechanism is the existing `rateLimit()` tRPC middleware
-([middleware.trpc.ts:151](../../src/server/middleware.trpc.ts#L151)). Four properties of it decide
-whether the cap actually holds:
-
-1. **A tier ladder composes correctly.** Per period the *highest* matching limit wins, so
-   declaring all four tiers with `userReq` predicates and letting a gold user match several of
-   them yields 10, not 3.
-2. **`limit: 0` is not the member gate.** It short-circuits cleanly, but the middleware returns
-   early for moderators and in dev/test/preview, so on a preview build nothing else would stand
-   between a free account and a free load. `assertCanRequestLoad()` in the router is the gate.
-3. **It is off by one.** The check is `relevantAttempts > limit`, so a limit of 3 permits 4.
-   Either accept it and write the numbers down as "3 means 4", or fix the comparison — but that
-   comparison is shared with every other limiter in the app, so fixing it changes them all.
-4. **Moderators skip it entirely**, as do dev/test/preview. A mod-only launch therefore ships
-   with no cap at all, and tells us nothing about whether the cap works.
-5. **It fails open.** If the Redis write degrades, the attempt is allowed through and under-counted
-   (`rate-limit-write-degraded`). Acceptable for a cap; worth knowing it is not a hard ceiling.
-6. **Use `onlyCountSuccess: true`.** A purchase that is refused — unsupported resource, already
-   resident, insufficient Buzz — should not burn one of a gold member's ten daily loads.
-
-🔴 **The middleware only guards tRPC procedures.** If a load can be triggered implicitly by
-submitting a generation with a non-resident resource, the cap must also be applied on the
-generation submit path, or it is decorative — a user simply generates instead of pressing the
-button.
-
----
-
-## "Select any model" — the coverage change
-
-The premise of the feature is that the generator stops being restricted to a curated set. As of
-2026-09-08 this is scoped and decided; the full model, the audit and every measured number live in
-[paid-model-loading-coverage.md](paid-model-loading-coverage.md). In short:
-
-- **`CoveredCheckpoint` stops gating.** It is the auction's residency proxy, it has four uses and all
-  four are generation, and removing it *as a conjunct* widens covered checkpoints by roughly two
-  orders of magnitude ([the numbers](paid-model-loading-coverage.md#what-changes-in-numbers)). It
-  remains as a *disjunct* excusing 6 auction-resident checkpoints from the SafeTensor rule, and is
-  deleted with the auction.
-- **`EcosystemCheckpoints` stays.** It is the generator's default model per ecosystem — 62 of the 63
-  checkpoint defaults are covered through it and none through `CoveredCheckpoint`. Removing it would
-  strip the default model from half the supported ecosystems.
-- **`GenerationBaseModel` stays as the gate.** It marks the base models where the orchestrator has
-  extended checkpoint/diffuser support, i.e. where community models can run.
-- **Checkpoints must carry a SafeTensor weight file** (2026-09-09); GGUF, PickleTensor, Diffusers,
-  Core ML, ONNX and unset are all unloadable. Diffusers stays accepted for every other type.
-- **File-less models never touch the loader**, and "file-less" means *no loadable file*, not *no file
-  row* — 36 API models carry a `Training Data` archive and would otherwise read as loadable.
-
-The licence gate survives all of this: **zero covered versions lack `RentCivit`**, and the purchase
-path refuses anything not in coverage, which inherits the rule rather than restating it.
-
-**Loading is for checkpoints.** Size is the reason the loader exists and LoRAs do not have it
-(Justin, 2026-09-08). Earlier drafts of these docs recommended a LoRA-first v1 on the grounds that it
-needed no view change; that was solving the wrong problem and has been removed.
-
-## Auctions
-
-Paid loading replaces auctions *as a way into the cluster*. It does not replace what auctions
-also do.
-
-🔴 **The two were mechanically incompatible.** `CoveredCheckpoint` is populated by
-[handle-auctions.ts](../../src/server/jobs/handle-auctions.ts) — auction winners plus the top weekly
-earners — and the same job **deletes every row not in that set** on each cycle, so a checkpoint
-someone paid to load would lose its coverage at the next auction run.
-
-**Resolved 2026-09-08:** the table stops gating generation entirely, so the conflict goes with it.
-Whether `handle-auctions.ts` keeps writing rows nothing reads is a cleanup question, not a blocker.
-
-Auctions have carried double duty since inception: choosing the week's checkpoints **and**
-promoting content into Featured spaces. That conflation is already a known problem with its own
-task (ClickUp 868gtq1kt) — people bid on ecosystems that will never be generatable, win the
-featured slot, and ask for refunds.
-
-So "retire auctions" (C11) is not one change. It is:
-
-- remove the cluster-residency half, which paid loading replaces, and
-- rehome the featuring/promotion half, which it does not.
-
-Scale: ~89 files under `src/` reference auctions, including the generator's resource-select
-modal, model version details, the app header, and a product tour. C11 should not be scoped before
-868gtq1kt has an answer.
+- [ ] **Reindex models search.** Its indexed `canGenerate` is derived from coverage, so it keeps the
+      old rule until each model is reindexed — and it advertises generatable without saying "needs
+      loading first".
+      *Closes when:* a newly covered checkpoint (e.g. version 1413133) reports `canGenerate: true` in
+      the models index.
+- [ ] **Bring `event-engine-common` onto the new coverage.** Its model feed
+      (`feeds/models.feed.ts`) and model-data cache (`caches/modelData.cache.ts`) still query
+      `GenerationCoverage` in raw SQL, in a separate repo. Either point both at
+      `GenerationCoverageNext`, or redefine `GenerationCoverage` with its body so no reader changes.
+      *Closes when:* both files name the new view, or the two views return the same row count in
+      production.
+- [ ] **Watch the first real boosts.** The orchestrator's price is unconfirmed at volume: check that
+      `cost.fixed.downloadPriority` matches what users were quoted, and that refusals ("price
+      changed", "nothing left to boost") are rare rather than routine.
+- [ ] **Watch the eviction metric** (C13 surfaced it; nothing looks at it). It is the only instrument
+      for the starvation concern — a pile of queued small checkpoints starving popular ones.
+      *Closes when:* it is on a dashboard someone named is watching.
+- [ ] **Watch `getResidency`** — its 120/min rate limit and its cache hit ratio, now that the model
+      page and the picker call it on ordinary page views.
+- [ ] **Set `usageControl = 'ExternalGeneration'` on the 36 mislabelled API versions.** All published,
+      none POI, coverage preserved 36/36; a direct DB write, since the app refuses the value from
+      non-moderators.
+- [ ] **Look at the widened pool consumers** — daily-challenge model selection, App Blocks' workflow
+      service, and the model-list filters in `model.service.ts` and `caches.ts`.
+- [ ] **Delete `getCheckpointGenerationCoverage`** (zero callers) and decide whether
+      `handle-auctions.ts` keeps writing `CoveredCheckpoint` rows nothing reads.
 
 ---
 
-## Open questions
+## Open, with owners
 
-These came out of reading the contract and the code, not out of the call. Each is restated with an
-owner and a closing condition in
-[paid-model-loading-decisions.md](paid-model-loading-decisions.md) — the register to read before
-deciding anything.
-
-1. ✅ **"Select any model"** — decided 2026-09-08, and scoped as Phase 1.6 in the checklist. See
-   [coverage](paid-model-loading-coverage.md).
-2. **A failed load is refunded** (Justin, 2026-09-08) — but *by whom* is unconfirmed. Justin expects
-   the orchestrator to be doing it; nothing has ever exercised that path, because a prepare has
-   never been charged. It is [K3](paid-model-loading-decisions.md#k3-does-the-orchestrator-refund-a-failed-prepare)
-   and it has to be answered with pricing, not after. Bandwidth was measured at ~10 KB/s with LoRAs
-   taking four hours, and `PrepareResourceJob` gives up at 24h, so this is not a rare path.
-3. **Nothing exposes when a resource's 48h window ends.** The spine controllers enforce residency,
-   but no API reports an expiry, so there is no countdown to design even though we now promise the
-   duration.
-4. **Cluster capacity is unknown.** Briant's concern in the call: someone queues a pile of small
-   irrelevant checkpoints and starves the popular ones. The answers on record are that popular
-   models stay resident because workers keep them, plus the rate limits, plus Koen's
-   already-shipped eviction metric (tried to evict, couldn't, last copy). That metric is the only
-   instrument we have, and nothing yet watches it.
-5. **Search does not show load state**, deliberately deferred. Justin: "maybe we won't, for
-   initially."
-6. **Queue-position boosting** is out for v1, and Justin expects it back if bot armies defeat the
-   rate limits.
+| # | Question | Owner | Closes when |
+| --- | --- | --- | --- |
+| C2 | **Pricing.** `PrepareResourceHandler.CalculateCost` returns a hardcoded zero, so the explicit load quotes 0. The boost has its own fee and is unaffected. ([868ktt57p](https://app.clickup.com/t/868ktt57p)) | Koen | a prepare returns a non-zero cost |
+| — | **The boost price itself** — whether it scales with size, is cheaper for members, or applies to LoRAs. The UI reads `cost.fixed.downloadPriority` and computes nothing, so a change needs no site work. | Koen / Justin | the numbers are set |
+| — | **The unboosted ETA.** A whatIf priced at `high` reports the high-lane ETA, so one request may not say how long the user waits *without* boosting. The generator sidesteps it by pricing at the user's own lane. | Koen | confirmed either way |
+| — | **Price shown ≠ price charged, structurally.** The charging `PUT` takes no expected price; we re-price immediately before charging and refuse on a mismatch. An expected-price field on the orchestrator would close the window properly. | Koen | such a field exists, or we accept the re-price |
+| — | **Does an unbounded generation still refund?** The site sends no step `timeout` and the queue card no longer promises an automatic refund. Whether the orchestrator expires a job on its own, after how long, and whether it refunds undelivered images, is unverified — and support has no line to give a user whose job sits in the free lane. | Koen | he states the orchestrator's own expiry and refund behaviour with no step `timeout` set, and it is written into the timeouts paragraph above |
+| K3 | **Does the orchestrator refund a failed prepare?** Never exercised, because no prepare has ever been charged. Matters for the moderator tool, not the boost. | Koen | he answers |
+| 2.5 | **The rate-limit numbers are off by one** — `attempts > limit`, so 3/6/10 permit 4/7/11. Renumber to 2/5/9, or keep and say so. Documented beside the limiter either way; do not "fix" the shared comparison. | whoever closes C10 | renumbered, or the decision taken |
+| 2.6 | **17 base models claim generation support in `basemodel.constants.ts` with no `GenerationBaseModel` row**, and 5 rows exist the constants do not declare. Nothing detects the disagreement. Predates this feature. | unowned | rows added, constants corrected, or a guard pins them |
+| 2.7 | **Diffusers checkpoints lose coverage** (174 of the 2,242) because the loader serves SafeTensor only. Accept as a loader constraint, or teach the loader Diffusers? | Justin | he answers, or it ships narrowed |
+| — | **Load state in search** was deferred, and the coverage widening is the surface that deferral collides with. | Justin | a decision |
+| — | **The `covered` field in `/api/v1/model-versions/mini/[id]` changed meaning** for third-party consumers, unannounced. | Briant / team | announced, or judged not worth it |
+| C11 | **Retire auctions.** Paid loading replaces the cluster-residency half; the featuring half needs rehoming, and that is 868gtq1kt's answer first. ~89 files. | unscoped | 868gtq1kt answers |
+| — | **Phase A ratifications:** the fifth `unknown` state, `estimate` returning `{ cost, priced }`, and `currencies: getAllowedAccountTypes(...)` deciding which Buzz account pays. All live, all cheap to reverse now. | Briant / team | "fine", or name the one to change |
 
 ---
 
-## Decided, do not relitigate
+## Decided — do not relitigate
 
-- Rate limits are site-side, not orchestrator-side.
-- Pay-to-boost queue position is out for v1.
-- Load state in search is deferred.
-- A browser keeps what it is **watching** in `localStorage` and drains that queue on every page
-  load — finished loads raise a toast that must be dismissed, then leave; items that can no longer
-  finish leave; the rest stay subscribed. Items expire at 48h so every one has an exit.
-- The durable record of a **purchased** load is the orchestrator's, not ours: workflows tagged
-  `resource-load`, queried with the buyer's token. Not `localStorage`, not Redis.
-- Progress signals go to the **buyer's own channel**, never to a model-version group — the payload
-  carries `workflowId`, which names the paying user.
-- Bystanders do not get live progress. They get told when the load is ready, on their next visit.
-- Reaching someone who does not come back — real API-level notifications — is a **Phase 2** goal.
-  A different device or a cleared browser getting nothing is accepted.
-- Progress shows in three places: navbar, model version page (below Create), and the generator for
-  the selected resource.
-- A bystander on the model page can subscribe to someone else's in-flight load and be told when it
-  is ready. Load state and the queue are **public reads** — everyone sees them, not only the buyer.
-- `PinModelJob` is legacy and is not part of this feature (Koen, 2026-09-04).
-- The surfaces promise the **48 hours as pitched**. A copy may move between spine controllers inside
-  the window; availability does not lapse (Justin, 2026-09-08).
-- **Loading is for checkpoints.** LoRAs are not large enough to need it.
-- **`CoveredCheckpoint` stops gating generation**; `EcosystemCheckpoints` and `GenerationBaseModel`
-  stay. Coverage means *allowed to generate*; residency is the orchestrator's axis.
-- **Only base models in `GenerationBaseModel` are loadable.** Everything else is out of scope for v1.
-- A checkpoint needs a **SafeTensor** weight file to be loadable (2026-09-09); file-less API models
-  never are, and a GGUF/PickleTensor/Diffusers checkpoint gets a different refusal —
-  `UNLOADABLE_MESSAGES` in `resource-load.service.ts` is the single source of both.
-- A load that never finishes is **refunded**.
-- The purchase path refuses anything **not in `GenerationCoverageNext`** (composed with ecosystem
-  type support by `isGenerationEligible`), which is how the `RentCivit` rule is enforced without
-  restating it. Gating on the live view would refuse every load worth making, since it still requires
-  `CoveredCheckpoint`.
-- The daily cap must also cover the implicit path — a generation submitted against a non-resident
-  resource — or it is decorative. Same quota, not a second one.
-- Free tier gets 0 per day at launch.
-- Rate limits stay site-side only; the orchestrator accepts unlimited prepares from a user token.
-- Concurrent prepares of the same resource are not a concern and need no special handling.
+### The model
 
----
+All of it is in [How it works](#how-it-works), and all of it is decided — none of those bullets is
+open. The one thing not stated there: **one paid lane, so a boost is never outbid.**
 
-## Blocking dependencies
+### Coverage
 
-**C2 — pricing, and enabling charging — blocks all public exposure.** Loading a resource is
-currently free at the orchestrator. Shipping the site surfaces before C2 gives away cluster
-residency. Koen owns it; nothing on the site side should reach production first.
+The rules are in [Coverage, in one paragraph](#coverage-in-one-paragraph) and every one is decided.
+Three that are not stated there: loading is for checkpoints (size is why the loader exists); only base
+models in `GenerationBaseModel` are loadable; and coverage means *allowed to generate*, while residency
+is the orchestrator's axis.
 
-**C14 — the demo-client decision — gates C5 through C8.** Briant's position is that a change this
-large to how generation works should be demonstrated to power users before it is sprinkled through
-the platform. Justin's counter is a small standalone first-party app driving Koen's API end to
-end, or a mod-only launch. Unresolved; Justin owns the decision.
+### Surfaces and delivery
+
+- Load state is a **signed-in read** (`getResidency`). The queue listing and the uncapped `getState`
+  are behind the `resourceLoad` flag and serve the moderator tool alone — the public
+  `/generate/downloads` page was built and removed on this branch (2026-09-16).
+- Progress signals go to the buyer's own channel, never a model-version group.
+- A browser keeps what it is *watching* in `localStorage`, drained on every page load, with a 48h
+  ceiling so every item can leave. The durable record of a purchase is the orchestrator's — workflows
+  tagged `resource-load`, queried with the buyer's token.
+- Bystanders get told when a load is ready, not live progress. Real notifications are Phase 2.
+- Rate limits are site-side only; the orchestrator accepts unlimited prepares from a user token.
+- The explicit purchase path stays as a moderator tool (2026-09-11).
+- `PinModelJob` is legacy and not part of this feature.
+
+## Not being built
+
+- A queue ranking algorithm — the orchestrator merges, de-dupes and ranks.
+- A size→price table — the orchestrator prices; the UI reads `whatif`.
+- A residency countdown — nothing reports when a window ends.
+- A C4-style webhook — closed 2026-09-08; reopens only if Phase 2 notifications need a server-side
+  moment.
+- Load state in search results, for now.
+- Any promise about *arrival* time. Bandwidth into the DC was ~10 KB/s at the 2026-08-18 call, and
+  `PrepareResourceJob` gives up at 24h.

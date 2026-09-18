@@ -7080,6 +7080,7 @@ model GenerationCoverage {
   covered        Boolean
 
   @@id([modelId, modelVersionId])
+  @@map("GenerationCoverageNext")
 }
 
 model UserProfile {

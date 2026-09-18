@@ -28,8 +28,15 @@ import type {
 } from '@civitai/client';
 // The pinned @civitai/client predates preprocessVideo; this comes from
 // orchestration-client.
-import type { PreprocessVideoStepTemplate } from '@civitai/orchestration-client';
-import { TimeSpan } from '@civitai/client';
+import type {
+  Priority as DownloadPriority,
+  PreprocessVideoStepTemplate,
+} from '@civitai/orchestration-client';
+import type { DownloadPreparation } from '~/shared/orchestrator/download-preparation';
+import {
+  attachEstimatedPreparation,
+  normalizePreparation,
+} from '~/shared/orchestrator/download-preparation';
 import { createVideoPreprocessStep } from './ecosystems/video-preprocess.handler';
 import { collectStepWarnings } from './step-warnings';
 import {
@@ -77,6 +84,7 @@ import type { GenerationStatus, GenerationStatusMode } from '~/server/schema/gen
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import {
   getWorkflow,
+  setWorkflowDownloadPriority,
   submitWorkflow,
   updateWorkflow as clientUpdateWorkflow,
 } from '~/server/services/orchestrator/workflows';
@@ -102,12 +110,13 @@ import {
 } from '~/server/services/orchestrator/training/training-epoch-blobs';
 import { mapDataToGraphInput } from './legacy-metadata-mapper';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { sleep, throwBadRequestError } from '~/server/utils/errorHandling';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
 import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { getResourceResidency } from '~/server/services/resource-load.service';
 import { WORKFLOW_TAGS, VID_QUANTITY_BY_TIER } from '~/shared/constants/generation.constants';
 import { includesPoi } from '~/utils/metadata/audit';
 import { BlocklistType } from '~/server/common/enums';
@@ -192,6 +201,7 @@ export type GenerationContext = {
 export type GenerateOptions = {
   input: Record<string, unknown>;
   externalCtx: GenerationCtx;
+  downloadPriority?: DownloadPriority;
 } & GenerationContext;
 
 /** Options for what-if requests */
@@ -203,12 +213,13 @@ export type WhatIfOptions = {
   experimental?: boolean;
   token: string;
   currencies?: BuzzSpendType[];
+  downloadPriority?: DownloadPriority;
 };
 
 /**
  * Step input returned by step creators.
  * Based on WorkflowStepTemplate with required $type and input.
- * Allows optional overrides for priority, timeout, metadata at the creator level.
+ * Allows optional overrides for priority and metadata at the creator level.
  *
  * Step creators that need per-step source metadata (e.g., upscale, remove-bg,
  * or chained workflows) should call `buildResolvedSource` and set the
@@ -219,14 +230,6 @@ type StepInput = WorkflowStepTemplate & {
   /** Pre-computed source metadata from step creators via `buildResolvedSource`. */
   resolvedSource?: { metadata: Record<string, unknown>; imageMetadata: string };
 };
-
-const DEFAULT_STEP_TIMEOUT_MINUTES = 20;
-const VIDEO_STEP_TIMEOUT_MINUTES = 40;
-const VIDEO_STEP_TYPES = new Set(['videoGen', 'videoInterpolation']);
-
-function buildStepTimeout(minutes: number) {
-  return new TimeSpan(0, minutes, 0).toString(['hours', 'minutes', 'seconds']);
-}
 
 /** Ecosystem workflows - GenerationGraphOutput where ecosystem is defined */
 type EcosystemGraphOutput = Extract<GenerationGraphOutput, { ecosystem: string }>;
@@ -1229,7 +1232,6 @@ function buildResolvedSource(
  * - Resource validation (subscription, expired epochs, canGenerate, POI)
  * - POI prompt detection
  * - Private generation detection
- * - Timeout calculation (base 20 min + 1 min per additional resource)
  */
 export async function createWorkflowStepsFromGraph({
   data,
@@ -1342,12 +1344,6 @@ export async function createWorkflowStepsFromGraph({
     seed: 'seed' in data && data.seed != null ? data.seed : randomInt(MAX_RANDOM_SEED),
   };
 
-  // Calculate timeout: base (20 minutes, 40 for video steps) + 1 minute per
-  // additional resource
-  const extraResourceMinutes = Math.max(0, enrichedResources.length + rawAirResources.length - 1);
-  const timeout = buildStepTimeout(DEFAULT_STEP_TIMEOUT_MINUTES + extraResourceMinutes);
-  const videoTimeout = buildStepTimeout(VIDEO_STEP_TIMEOUT_MINUTES + extraResourceMinutes);
-
   // Convert graph output to legacy {resources, params} format for storage.
   // This is the TEMPLATE snapshot — `params.prompt`/`negativePrompt` still
   // contain the user-authored text with literal `#category` references.
@@ -1451,7 +1447,7 @@ export async function createWorkflowStepsFromGraph({
       steps.push(...variantSteps);
     }
 
-    // Wrap with request-level concerns: priority, timeout, outputFormat
+    // Wrap with request-level concerns: priority, outputFormat
     // isPrivateGeneration lives on workflow.metadata, not per-step.
     // `remixOfId` is ALSO copied onto each step's metadata: the orchestrator's
     // `WorkflowStepHandler.GenerateJobsAsync` reads `workflowStep.Metadata["remixOfId"]`
@@ -1472,9 +1468,6 @@ export async function createWorkflowStepsFromGraph({
         outputFormat: (step.input as { outputFormat?: string }).outputFormat ?? data.outputFormat,
       },
       priority: data.priority,
-      // A handler-set timeout wins, so a slow ecosystem can ask for more than the
-      // per-step-type default.
-      timeout: step.timeout ?? (VIDEO_STEP_TYPES.has(step.$type) ? videoTimeout : timeout),
       metadata: isWhatIf
         ? undefined
         : ({
@@ -1749,6 +1742,31 @@ function extractInputImageUrls(data: Record<string, unknown>): string[] | undefi
   return urls.length ? urls : undefined;
 }
 
+/** Long enough for a healthy whatIf, short enough that a slow one never delays a generation. */
+const DOWNLOAD_ESTIMATE_TIMEOUT_MS = 2_000;
+
+/**
+ * Whether a download is already moving for one of this submit's models — the only case where a whatIf
+ * can produce a queue position and an ETA worth showing.
+ *
+ * Deliberately NOT `unavailable`: that is "nothing is pulling it", which is the resting state for most
+ * of the catalogue, so triggering on it would price a second workflow on a large share of all submits
+ * to produce an estimate the orchestrator has no queue for.
+ */
+async function hasQueuedDownloads(data: unknown) {
+  const { model, vae, resources } = data as {
+    model?: { id?: number } | null;
+    vae?: { id?: number } | null;
+    resources?: { id?: number }[] | null;
+  };
+  const ids = [model, vae, ...(resources ?? [])]
+    .map((r) => r?.id)
+    .filter((id): id is number => typeof id === 'number');
+  if (!ids.length) return false;
+  const residency = await getResourceResidency(ids).catch(() => []);
+  return residency.some(({ availability }) => ['loading', 'queued'].includes(availability.status));
+}
+
 /**
  * Submits a generation workflow using generation-graph input.
  *
@@ -1779,6 +1797,7 @@ export async function generateFromGraph({
   track,
   externalId,
   acknowledgedSoftBlock,
+  downloadPriority,
 }: GenerateOptions) {
   const { data, computedKeys } = validateInput(input, externalCtx);
 
@@ -1934,6 +1953,33 @@ export async function generateFromGraph({
         }
       : workflowMetadata;
 
+  const priceDownloads = () =>
+    submitWorkflow({
+      token,
+      body: {
+        steps,
+        experimental,
+        // @ts-ignore - BuzzSpendType is properly supported
+        currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
+      },
+      query: { whatif: true },
+    }).catch(() => undefined);
+
+  // A download boost is a fixed fee, so it is only sent when a whatIf shows something waiting to
+  // download. If that check fails the generation still goes out, unboosted and unbilled for it.
+  const boostWhatIf = downloadPriority ? await priceDownloads() : undefined;
+  const boostDownloads = !!boostWhatIf?.steps?.some((step) => readPreparation(step));
+  // The submit reply predates the orchestrator queueing any download, so the queue card's first
+  // render has nothing to show. A whatIf of the same steps does, and runs alongside the submit.
+  //
+  // 🔴 Never let it hold the reply. A generation that is accepted is the headline property here, and
+  // this only buys the card a head start on numbers its own poll fetches seconds later.
+  const downloadWhatIf =
+    boostWhatIf ??
+    ((await hasQueuedDownloads(data))
+      ? Promise.race([priceDownloads(), sleep(DOWNLOAD_ESTIMATE_TIMEOUT_MS).then(() => undefined)])
+      : Promise.resolve(undefined));
+
   // Submit workflow to orchestrator
   const workflow = (await submitWorkflow({
     token,
@@ -1966,6 +2012,7 @@ export async function generateFromGraph({
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
       externalId,
+      ...(boostDownloads ? { downloadPriority } : {}),
     },
   })) as TextToImageResponse;
 
@@ -1973,6 +2020,14 @@ export async function generateFromGraph({
 
   // Format and return response
   const [formatted] = await formatGenerationResponse2([workflow], { id: userId } as any);
+  const priced = await downloadWhatIf;
+  attachEstimatedPreparation(
+    formatted.steps,
+    (priced?.steps ?? []).map((step) => ({ name: step.name, preparation: readPreparation(step) })),
+    // What the workflow BECAME, not what was asked for: restating an estimate as Express on a
+    // workflow the orchestrator left in the free lane shows the payer a boost they did not get.
+    readDownloadPriority(workflow) === 'high'
+  );
 
   // 🔴 ALSO ON THE REPLY, and deliberately not only via the metadata round-trip.
   // The formatter recovers substitutions from `workflow.metadata`, but only when
@@ -2012,6 +2067,7 @@ export async function whatIfFromGraph({
   experimental,
   token,
   currencies,
+  downloadPriority,
 }: WhatIfOptions) {
   // Provide fallback for fields that don't affect cost estimation.
   // The client excludes content fields (prompt/negativePrompt for image/video,
@@ -2041,6 +2097,7 @@ export async function whatIfFromGraph({
       experimental,
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
+      ...(downloadPriority ? { downloadPriority } : {}),
     },
     query: {
       whatif: true,
@@ -2052,6 +2109,7 @@ export async function whatIfFromGraph({
     const support = workflowStep.queuePosition?.support;
     if (support && support !== 'available') ready = false;
   }
+  const preparation = workflow.steps?.map(readPreparation).find(isDefined);
 
   // Silent checkpoint substitutions from the validation above (#3520 / #3665).
   //
@@ -2072,6 +2130,7 @@ export async function whatIfFromGraph({
     transactions: workflow.transactions?.list,
     cost: workflow.cost,
     ready,
+    preparation,
     // Both additive and OMITTED when empty, matching the App Blocks snapshot contract.
     // 🔴 Consequence a client must know: an absent `modelSubstitutions` means "no
     // substitution" OR "a server that predates this field" — the two are
@@ -2286,6 +2345,11 @@ export type StepMetadataTransformation = {
   resources?: Record<string, unknown>[];
 };
 
+const readPreparation = (step: WorkflowStep) =>
+  normalizePreparation((step as { preparation?: unknown }).preparation);
+const readDownloadPriority = (workflow: Workflow) =>
+  (workflow as { downloadPriority?: DownloadPriority | null }).downloadPriority ?? undefined;
+
 /** Normalized workflow step */
 export interface NormalizedStep {
   $type: string;
@@ -2294,6 +2358,7 @@ export interface NormalizedStep {
   timeout?: string | null;
   completedAt?: string | null;
   queuePosition?: WorkflowStepQueuePosition;
+  preparation?: DownloadPreparation;
   /** Metadata with resolved params/resources */
   metadata: NormalizedStepMetadata;
   /** Output items (image / video / audio) */
@@ -2356,6 +2421,7 @@ export interface NormalizedWorkflow {
   cost: WorkflowCost;
   tags: string[];
   allowMatureContent?: boolean | null;
+  downloadPriority?: DownloadPriority;
   duration?: number;
   /** Workflow-level metadata — the form input snapshot for replay. */
   metadata?: NormalizedWorkflowMetadata;
@@ -2957,6 +3023,7 @@ function formatStep(
     timeout: step.timeout,
     completedAt: step.completedAt,
     queuePosition: step.queuePosition,
+    preparation: readPreparation(step),
     metadata: {
       ...removeEmpty({
         params: finalParams,
@@ -3137,6 +3204,7 @@ export async function formatGenerationResponse2(
       cost: workflow.cost,
       tags: workflow.tags ?? [],
       allowMatureContent: workflow.allowMatureContent,
+      downloadPriority: readDownloadPriority(workflow),
       duration:
         workflow.startedAt && workflow.completedAt
           ? Math.round(
@@ -3372,6 +3440,7 @@ export async function getWorkflowStatusUpdate({
     return {
       id: workflowId,
       status: result.status!,
+      downloadPriority: readDownloadPriority(result),
       steps: result.steps?.map((step) => {
         const metadata = (step.metadata ?? {}) as Record<string, unknown>;
 
@@ -3395,6 +3464,7 @@ export async function getWorkflowStatusUpdate({
           status: step.status,
           completedAt: step.completedAt,
           queuePosition: step.queuePosition,
+          preparation: readPreparation(step),
           output,
           // TEMPORARY: dual-emit under the legacy `images` key for pre-rename clients.
           images: output,
@@ -3403,4 +3473,48 @@ export async function getWorkflowStatusUpdate({
       }),
     };
   }
+}
+
+/** The price of boosting, or null when the orchestrator reports no download fee. */
+export async function getWorkflowBoostCost({
+  token,
+  workflowId,
+}: {
+  token: string;
+  workflowId: string;
+}) {
+  const priced = await setWorkflowDownloadPriority({ token, workflowId, whatif: true });
+  return { cost: priced?.cost?.fixed?.downloadPriority ?? null };
+}
+
+/**
+ * Charges only at the price the user confirmed: the orchestrator's update takes no expected price,
+ * so the boost is re-priced first and refused when the price moved — or when there is nothing left
+ * to boost, which a workflow already in the high lane reports as no download fee.
+ */
+export async function boostWorkflow({
+  token,
+  workflowId,
+  expectedCost,
+  user,
+}: {
+  token: string;
+  workflowId: string;
+  expectedCost: number;
+  user?: SessionUser;
+}) {
+  const { cost } = await getWorkflowBoostCost({ token, workflowId });
+  if (cost == null || cost !== expectedCost) return { boosted: false as const, cost };
+
+  // The update's own reply is the boosted workflow — its lane, position and ETA are the orchestrator's
+  // answer for this boost, so the card never has to infer them. The charge has already gone through,
+  // so a failed read must not report it as a failure.
+  const updated = await setWorkflowDownloadPriority({ token, workflowId });
+  const workflow = await Promise.resolve(
+    updated?.steps?.length ? updated : getWorkflow({ token, path: { workflowId } })
+  )
+    .then((result) => formatGenerationResponse2([result as Workflow], user))
+    .then(([formatted]) => formatted)
+    .catch(() => null);
+  return { boosted: true as const, workflow };
 }

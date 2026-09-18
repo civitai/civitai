@@ -74,12 +74,7 @@ import { AccordionLayout } from './AccordionLayout';
 import { openCompatibilityConfirmModal } from './CompatibilityConfirmModal';
 import { FormFooter, MetadataExtractionFooter } from './FormFooter';
 import { GenerationLayout, GenerationFooter } from './GenerationLayout';
-import {
-  ResourceAlerts,
-  GrokEcosystemAlert,
-  SeedanceImg2VidAlert,
-  ReadyAlert,
-} from './ResourceAlerts';
+import { ResourceAlerts, GrokEcosystemAlert, SeedanceImg2VidAlert } from './ResourceAlerts';
 
 // Input components
 import { BaseModelInput } from './inputs/BaseModelInput';
@@ -773,9 +768,6 @@ export function GenerationForm() {
                 );
               }}
             />
-
-            {/* Ready State Alert - Resources need downloading */}
-            <ReadyAlert />
 
             {/* Generate cover toggle (audio workflows) */}
             <Controller

@@ -7,6 +7,7 @@ import { SignalMessages } from '~/server/common/enums';
 import { createDebouncer } from '~/utils/debouncer';
 import { queryClient, trpc, trpcVanilla } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { normalizePreparation } from '~/shared/orchestrator/download-preparation';
 import type {
   NormalizedStep,
   WorkflowStatusUpdate,
@@ -19,12 +20,48 @@ type CustomWorkflowStepEvent = Omit<WorkflowStepEvent, '$type'> & { $type: 'step
 const debouncer = createDebouncer(100);
 let signalStepEventsDictionary: Record<string, CustomWorkflowStepEvent> = {};
 
+/**
+ * Writes a step event's download progress onto the cached step, and reports whether anything else
+ * about the step changed. A preparing step reports progress every few seconds; refetching the
+ * workflow for each of those would be one orchestrator read per waiting workflow per webhook.
+ */
+export function applyPreparationEvent(
+  data: InfiniteTextToImageRequests | undefined,
+  event: Pick<CustomWorkflowStepEvent, 'workflowId' | 'name' | 'status' | 'preparation'>
+): 'applied' | 'needs-refetch' {
+  let verdict: 'applied' | 'needs-refetch' = 'needs-refetch';
+  for (const page of data?.pages ?? []) {
+    const item = page.items.find((x) => x.id === event.workflowId);
+    if (!item) continue;
+    const step = item.steps.find((x) => x.name === event.name);
+    if (!step) continue;
+    // A status change still needs the full refetch — outputs and errors only arrive there.
+    verdict = step.status === event.status ? 'applied' : 'needs-refetch';
+    step.preparation = normalizePreparation(event.preparation);
+    break;
+  }
+  return verdict;
+}
+
 export const usePollableWorkflowIdsStore = create<{ ids: string[] }>(() => ({ ids: [] }));
 export function useTextToImageSignalUpdate() {
   usePollWorkflows();
 
   return useSignalConnection(SignalMessages.TextToImageUpdate, (data: CustomWorkflowStepEvent) => {
-    if (data.$type === 'step' && data.status !== 'unassigned') {
+    if (data.$type !== 'step') return;
+    if (normalizePreparation(data.preparation)) {
+      const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
+      // An object, not a `let`: the assignment happens inside a callback, which control-flow
+      // analysis cannot see — it would narrow a plain variable to its initial value.
+      const outcome = { verdict: 'needs-refetch' as ReturnType<typeof applyPreparationEvent> };
+      queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
+        produce(state, (old?: InfiniteTextToImageRequests) => {
+          outcome.verdict = applyPreparationEvent(old, data);
+        })
+      );
+      if (outcome.verdict === 'applied') return;
+    }
+    if (data.status !== 'unassigned') {
       signalStepEventsDictionary[data.workflowId] = { ...data };
     }
     debouncer(() => updateSignaledWorkflows());
@@ -35,7 +72,10 @@ type SignaledStep = NonNullable<NonNullable<WorkflowStatusUpdate>['steps']>[numb
 
 /** Applies one refetched step onto the cached step in place — `step` is an immer draft. */
 export function mergeSignaledStep(
-  step: Pick<NormalizedStep, 'status' | 'completedAt' | 'errors' | 'queuePosition' | 'output'>,
+  step: Pick<
+    NormalizedStep,
+    'status' | 'completedAt' | 'errors' | 'queuePosition' | 'preparation' | 'output'
+  >,
   stepMatch: SignaledStep
 ) {
   step.status = stepMatch.status;
@@ -44,6 +84,7 @@ export function mergeSignaledStep(
   // Assigned even when undefined: a step that has left the queue reports no queuePosition, and
   // keeping the old one strands a stale position and ETA on the card for the rest of the session.
   step.queuePosition = stepMatch.queuePosition;
+  step.preparation = stepMatch.preparation;
   // Merge updated images by id, then append ones the client has not seen. Multi-step workflows
   // (e.g. Wan 2.2 interpolation) start the later step with zero images and only materialize
   // outputs on completion, which a per-index loop drops until reload.
@@ -83,6 +124,7 @@ export async function updateWorkflowsStatus(workflowIds: string[]) {
             const update = updates.splice(index, 1)[0];
             if (update && !COMPLETE_STATUSES.includes(item.status)) {
               item.status = update.status;
+              item.downloadPriority = update.downloadPriority;
 
               for (const step of item.steps) {
                 const stepMatch = update.steps?.find((x) => x.name === step.name);

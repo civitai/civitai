@@ -4,10 +4,22 @@ What decides whether a model can be generated with, what decides whether it can 
 audit of the gap between them. Every number here was measured against production on 2026-09-08 and
 the query that produced it is described, so it can be re-run rather than trusted.
 
-Companion to [paid-model-loading.md](paid-model-loading.md) (the contract),
-[paid-model-loading-build-plan.md](paid-model-loading-build-plan.md) (the inventory),
-[paid-model-loading-checklist.md](paid-model-loading-checklist.md) (the state) and
-[paid-model-loading-decisions.md](paid-model-loading-decisions.md) (open decisions).
+Companion to [paid-model-loading.md](paid-model-loading.md) — the feature itself: how the boost
+works, what is built, the open items and the deploy checklists.
+
+This audit matters more under the boost model, not less: the swap to the new view is what lets a
+normal user pick a checkpoint that is not loaded, and so reach the download queue and the boost at
+all.
+
+**The swap is in code, not in the database.** Every reader of `GenerationCoverage` — the Prisma model
+through `@@map`, and the raw-SQL queries — reads `GenerationCoverageNext`, which production already
+has. The swap itself needs no migration, and `GenerationCoverage` is left as it was.
+
+🔴 **`GenerationCoverageNext`'s own body did change, after it had already been applied.**
+`20260909180000_generation_coverage_next_safetensor_checkpoints` was amended in place on 2026-09-11 to
+add a top-level `AND m.mode IS NULL` — a taken-down or archived model is not covered for any type, so
+moderation blocks generation on the server rather than only greying out the Create button. Apply that
+file again by hand; 1,955 versions lose coverage, of which 1,807 are covered by the live view today.
 
 ---
 
@@ -171,7 +183,7 @@ Those 17 line up with the failing defaults above: **those ecosystems work today 
 them, and nothing surfaced the inconsistency because the other table was quietly compensating.
 
 This is a real inconsistency independent of paid loading. It has no owner —
-[decisions 2.6](paid-model-loading-decisions.md#26-the-17-base-model-gap-between-the-constants-and-generationbasemodel).
+[the open items](paid-model-loading.md#open-with-owners) (2.6).
 
 ---
 
@@ -262,7 +274,7 @@ feature needs; worth filing.
 when `covered` stops implying *resident*. The generation gate was read closely; the rest are
 identified and grouped, not yet read line by line.
 
-### 🔴 A — the generation gate. Read this before scheduling the swap.
+### A — the generation gate. The swap has shipped; this is why it was the risky one.
 
 `canGenerate` in [generation.service.ts](../../src/server/services/generation/generation.service.ts)
 is `(resource.covered || explicitCoveredModelVersionIds.includes(id)) && !isUnavailable`, and an
@@ -278,8 +290,11 @@ orchestrator starts the download **implicitly, on submit**.
 implicit path via a generation submit has no cap at all. The gap was already recorded; the coverage
 change turns it from a theoretical bypass into an invitation with 33k entries.
 
-**Sequencing that follows:** the shared rate-limit key on the generation submit path, and C2
-pricing, both land **before** anything reads the new view. Not after, and not in the same change.
+**Superseded by [the boost model](paid-model-loading.md).** Downloads are free there by design, so the
+abuse controls are the download lanes, the queue slot a waiting job occupies, and cancellation removing
+its downloads — not a price or a rate limit on submit. The sequencing this section originally demanded
+(a shared rate-limit key on the generation submit path, and C2 pricing, both landing before anything
+read the new view) was dropped with it: the swap shipped without either.
 
 ### B — search
 
@@ -295,10 +310,10 @@ this widens exactly the surface that has no way to express the difference.
 `generation.selector` and `AutocompleteSearch/renderItems/models.tsx` render a badge or a Generate
 button — mostly correct after the change, since that is where the load CTA belongs.
 
-**`/api/v1/model-versions/mini/[id]` has already been swapped** (2026-09-08). It is what the
-orchestrator reads for `CanGenerate`, and on the live view it made `prepareResource` refuse the very
-checkpoints paid loading exists for — verified on version 3040959. Its `covered` field therefore
-changed meaning for external consumers ahead of everything else, unflagged.
+**`/api/v1/model-versions/mini/[id]` read `GenerationCoverageNext` ahead of the swap** (2026-09-08).
+It is what the orchestrator reads for `CanGenerate`, and on the live view it made `prepareResource`
+refuse the very checkpoints paid loading exists for — verified on version 3040959. Every other
+reader now reads `GenerationCoverageNext` too.
 
 ### D — pools and adjacent consumers
 

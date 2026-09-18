@@ -3,6 +3,7 @@ import type {
   Options,
   SubmitWorkflowData,
   UpdateWorkflowRequest,
+  Workflow,
   WorkflowTemplate,
 } from '@civitai/client';
 import {
@@ -380,10 +381,7 @@ export async function submitWorkflow({
     // undefined") BEFORE the `!response` 503 guard below — surfacing as a raw 500
     // (the exact metric this targets). The `&& error` lets that shape fall through
     // to the 503 mapping instead of crashing.
-    const { messages } = (typeof error !== 'string' && error ? error.errors ?? {} : {}) as {
-      messages?: string[];
-    };
-    let message = messages?.length ? messages.join(',\n') : handleError(error);
+    let message = orchestratorErrorMessage(error);
     if (
       body.allowMatureContent === false &&
       message === 'Prompt requires mature content but workflow does not allow it' &&
@@ -401,76 +399,7 @@ export async function submitWorkflow({
       console.dir(JSON.stringify(body));
       console.log('----Workflow End Error Request Body----');
     }
-    // LOAD-BEARING: `createOrchestratorClient` does NOT set `throwOnError`, so the
-    // @civitai/client RESOLVES (it does NOT reject) when the underlying fetch throws —
-    // a network failure OR a fired per-attempt `AbortSignal.timeout` both come back as
-    // `{ error, response: undefined }`. That means the abort path does NOT hit the
-    // try/catch above; it lands here with `response === undefined`. We must map that to a
-    // retry-able 503 — mirroring the read-path (queryWorkflows/getWorkflow) default —
-    // BEFORE the `response.status` switch below, which would otherwise crash on
-    // `undefined.status` (→ a raw 500, the exact metric this PR targets). A status-less
-    // result is NEVER a valid success: whether it's a recognized network/abort signature
-    // (isUpstreamNetworkError) or any other status-less shape, treat it as transient →
-    // 503 (with the original error preserved as `cause`), never re-throw raw / crash.
-    if (!response) {
-      throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, error);
-    }
-    switch (response.status) {
-      case 400:
-        throw throwBadRequestError(message);
-      case 401:
-        throw throwAuthorizationError(message);
-      case 403:
-        throw throwInsufficientFundsError(message);
-      case 429:
-        // Preserve rate-limit semantics: TOO_MANY_REQUESTS (not a flattened
-        // BAD_REQUEST), so the client can back off AND the tRPC onError Axiom-skip
-        // for TOO_MANY_REQUESTS keeps a 429 storm off the event loop.
-        throw throwRateLimitError(message);
-      default:
-        // An unhandled 4xx from the orchestrator is a client/validation fault
-        // (e.g. "<resource> is not enabled for generation. Please contact …"),
-        // not a server error. Surface it as a 4xx instead of re-throwing a raw
-        // error that tRPC maps to INTERNAL_SERVER_ERROR (500) — that misclassified
-        // generate/whatIf validation rejections as the app's own 500s.
-        if (typeof response.status === 'number' && response.status >= 400 && response.status < 500)
-          throw throwBadRequestError(message);
-        // A genuine upstream 5xx — an orchestrator HTTP 500, or a gateway/LB HTML
-        // error page (which arrives as a 5xx body starting with `<!DOCTYPE`) — is a
-        // TRANSIENT dependency outage, NOT this app's own fault. Mirror the read
-        // paths (queryWorkflows/getWorkflow, above): map it to a retry-able 503
-        // SERVICE_UNAVAILABLE, guarded on the SAME `isUpstreamServerOrNetworkError`
-        // predicate, with the ORIGINAL client error preserved as `cause`.
-        //
-        // Before this the submit switch had NO 503 branch: the old `case 500` and
-        // the 5xx `default` both threw `throwInternalServerError(<string>)`, which
-        // (a) counted a transient orchestrator blip against our 500 SLO and (b)
-        // dropped the structured client error — only a derived STRING survived as
-        // `cause`, which `buildServerFaultErrorLog` renders EMPTY. That is the
-        // causeless-generic-500 signature seen on orchestrator.whatIfFromGraph /
-        // generateFromGraph; this is its submit-path fix and the read-path analogue.
-        if (
-          isUpstreamServerOrNetworkError({
-            clientError: { status: response.status },
-            thrown: error,
-          })
-        )
-          throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, error);
-        // Anything else (a non-4xx/5xx anomaly with no `data` — e.g. a malformed
-        // "success", a genuine bug) stays a 500 so real problems remain visible, but
-        // carry the ORIGINAL client error as `cause` (not a bare string) so
-        // `buildServerFaultErrorLog` can un-mask the real message/stack. We do NOT
-        // blanket-convert to 503 — only recognized transient upstream failures above.
-        // When `error` is nullish here (a 2xx/empty-body anomaly: `!data` +
-        // truthy `response` + `status < 400` + no `error`), synthesize a defined
-        // Error so `throwInternalServerError`'s `(error as any).message` read
-        // (errorHandling.ts) can't itself throw a spurious TypeError — the very
-        // causeless-500 shape this PR exists to kill. A non-nullish `error` flows
-        // through unchanged, cause preserved (Item B).
-        throw throwInternalServerError(
-          error ?? new Error('orchestrator returned no data', { cause: error })
-        );
-    }
+    throwOrchestratorFailure({ error, response, message });
   }
 
   return result.data;
@@ -777,6 +706,109 @@ export async function updateWorkflow({
 
   await clientUpdateWorkflow({ client, path: { workflowId }, body });
   return await getWorkflow({ token, path: { workflowId } });
+}
+
+/**
+ * Moves the workflow's pending downloads to the high lane. With `whatif` the orchestrator prices the
+ * change without charging for it. `@civitai/client`, which every call here goes through, predates
+ * `downloadPriority` and this route's `whatif` query, hence the casts.
+ */
+export async function setWorkflowDownloadPriority({
+  token,
+  workflowId,
+  whatif,
+}: {
+  token: string;
+  workflowId: string;
+  whatif?: boolean;
+}) {
+  const client = createOrchestratorClient(token);
+  const { data, error, response } = await clientUpdateWorkflow({
+    client,
+    path: { workflowId },
+    body: { downloadPriority: 'high' } as UpdateWorkflowRequest,
+    ...(whatif ? { query: { whatif: true } as never } : {}),
+  });
+
+  if (!response?.ok)
+    throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });
+
+  // The 200 body is the updated workflow — with `whatif`, the priced one it would become.
+  return data as (Workflow & { cost?: { fixed?: Record<string, number> | null } }) | undefined;
+}
+
+function orchestratorErrorMessage(error: unknown) {
+  const { messages } = (
+    typeof error !== 'string' && error
+      ? (error as { errors?: { messages?: string[] } }).errors ?? {}
+      : {}
+  ) as { messages?: string[] };
+  return messages?.length
+    ? messages.join(',\n')
+    : handleError(error as Parameters<typeof handleError>[0]);
+}
+
+/** Maps a failed orchestrator write onto the app's errors, so every paid call fails the same way. */
+function throwOrchestratorFailure({
+  error,
+  response,
+  message,
+}: {
+  error: unknown;
+  response: Response | undefined;
+  message: string | undefined;
+}): never {
+  // LOAD-BEARING: `createOrchestratorClient` does NOT set `throwOnError`, so the
+  // @civitai/client RESOLVES (it does NOT reject) when the underlying fetch throws —
+  // a network failure OR a fired per-attempt `AbortSignal.timeout` both come back as
+  // `{ error, response: undefined }`. We must map that to a retry-able 503 — mirroring the
+  // read-path (queryWorkflows/getWorkflow) default — BEFORE the `response.status` switch
+  // below, which would otherwise crash on `undefined.status` (→ a raw 500). A status-less
+  // result is NEVER a valid success: treat it as transient → 503 (with the original error
+  // preserved as `cause`), never re-throw raw / crash.
+  if (!response) {
+    throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, error);
+  }
+  switch (response.status) {
+    case 400:
+      throw throwBadRequestError(message);
+    case 401:
+      throw throwAuthorizationError(message);
+    case 403:
+      throw throwInsufficientFundsError(message);
+    case 429:
+      // Preserve rate-limit semantics: TOO_MANY_REQUESTS (not a flattened
+      // BAD_REQUEST), so the client can back off AND the tRPC onError Axiom-skip
+      // for TOO_MANY_REQUESTS keeps a 429 storm off the event loop.
+      throw throwRateLimitError(message);
+    default:
+      // An unhandled 4xx from the orchestrator is a client/validation fault
+      // (e.g. "<resource> is not enabled for generation. Please contact …"),
+      // not a server error. Surface it as a 4xx instead of re-throwing a raw
+      // error that tRPC maps to INTERNAL_SERVER_ERROR (500).
+      if (typeof response.status === 'number' && response.status >= 400 && response.status < 500)
+        throw throwBadRequestError(message);
+      // A genuine upstream 5xx — an orchestrator HTTP 500, or a gateway/LB HTML
+      // error page (which arrives as a 5xx body starting with `<!DOCTYPE`) — is a
+      // TRANSIENT dependency outage, NOT this app's own fault: a retry-able 503 with the
+      // ORIGINAL client error preserved as `cause`, which `buildServerFaultErrorLog` needs to
+      // un-mask the real message.
+      if (
+        isUpstreamServerOrNetworkError({
+          clientError: { status: response.status },
+          thrown: error,
+        })
+      )
+        throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, error);
+      // Anything else (a non-4xx/5xx anomaly with no `data` — e.g. a malformed
+      // "success", a genuine bug) stays a 500 so real problems remain visible, carrying the
+      // ORIGINAL error as `cause`. When `error` is nullish here, synthesize a defined Error so
+      // `throwInternalServerError`'s `(error as any).message` read can't itself throw a
+      // spurious TypeError.
+      throw throwInternalServerError(
+        error ?? new Error('orchestrator returned no data', { cause: error })
+      );
+  }
 }
 
 export async function updateManyWorkflows({
