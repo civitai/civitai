@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'fs';
-import { join, relative, resolve, sep } from 'path';
+import { join, relative, resolve } from 'path';
 import { stripSourceComments } from '~/components/AppBlocks/stripSourceComments';
 
 /**
@@ -77,13 +77,12 @@ const EXPECTED_CALL_SITES = [
 const MAY_BRANCH_ON_HIDDEN = new Set(['server/services/blocks/block-gated-images.service.ts']);
 
 /**
- * Every literal in this file — the ledger, {@link DEFINITION}, {@link MAY_BRANCH_ON_HIDDEN} —
- * is POSIX, and `relative()` answers in the host's separator. Normalising HERE, at the one
- * place a rel is produced, is what keeps the ledger a list of paths rather than a list of
- * paths-on-Linux: on Windows the un-normalised form made every literal comparison miss, so the
- * walk's own positive control failed and the two real assertions read the empty string.
+ * Every literal in this file is POSIX and `relative()` answers in the host's separator, so a rel
+ * is normalised at the one place it is produced. `replace` rather than `split(sep)`: the latter
+ * is the identity on Linux, which makes the assertion pinning it unfalsifiable on CI.
  */
-const toRel = (full: string) => relative(SRC, full).split(sep).join('/');
+const toPosix = (path: string) => path.replace(/\\/g, '/');
+const toRel = (full: string) => toPosix(relative(SRC, full));
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -142,15 +141,13 @@ describe(`${SYMBOL} seam`, () => {
     expect(PRODUCTION_FILES.length).toBeGreaterThan(500);
   });
 
-  // Pins the normalisation in `toRel`, which is deliberate and looks removable: the ledger
-  // literals are POSIX and `relative()` is not, so a rel carrying the host separator makes
-  // EVERY literal comparison in this file miss — including the control above — and the two
-  // real assertions then pass or fail on the empty string. Deleting the `.split(sep).join('/')`
-  // is invisible on CI (ubuntu) and red for everyone on Windows.
-  it('keys the ledger in POSIX separators whatever the host uses', () => {
-    const rels = [...SOURCE.keys()];
-    expect(rels.length).toBeGreaterThan(0);
-    expect(rels.filter((rel) => rel.includes('\\'))).toEqual([]);
+  // Pins the normalisation, which reads as removable and is not: without it a Windows rel misses
+  // every literal comparison in this file, and the control above then fails on six keys that look
+  // right. Asserted against a hardcoded separated input rather than against the walk's output, so
+  // it reddens on ubuntu too — where `relative()` never produces one to observe.
+  it('normalises a host-separated rel to the POSIX form the ledger is written in', () => {
+    expect(toPosix('server\\services\\blocks\\block-gated-images.logic.ts')).toBe(DEFINITION);
+    expect([...SOURCE.keys()]).toContain(DEFINITION);
   });
 
   // POSITIVE CONTROL for the DETECTOR, not just the walk. A ledger assertion that
@@ -190,6 +187,9 @@ describe(`${SYMBOL} seam`, () => {
       if (MAY_BRANCH_ON_HIDDEN.has(rel)) continue;
       // Comments are already stripped, so the prose ABOVE the gate (which names
       // the wrong spelling in order to forbid it) cannot satisfy or trip this.
+      // A ledger literal that stops matching a key would otherwise leave `code` empty, and the
+      // prohibition below passes free on an empty string while only the positive half reddens.
+      expect(SOURCE.has(rel), rel).toBe(true);
       const code = SOURCE.get(rel) ?? '';
       expect(code).not.toContain(`status === 'hidden'`);
       expect(code).toContain(`status !== 'visible'`);
