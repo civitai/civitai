@@ -41,9 +41,15 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       // the hook actually asked for: `{ imageIds: chunk }` -> `{ imageIds: chunks[0] }` is green
       // against a counting stub, and in production it makes every chunk after the first ask about
       // the first one's ids, so the back half of a large grid never hydrates.
+      // Both arguments, not just the input. `staleTime` is the entire point of sorting the ids —
+      // a repeating key is worthless if nothing holds the answer — and it lives here, in the hook,
+      // where the pure sort tests structurally cannot see it. Capturing half a descriptor leaves
+      // the other half pinned by nothing.
       const descriptors = build({
-        reaction: { getMyImageReactions: (input: unknown) => input },
-      }) as { imageIds: number[] }[];
+        reaction: {
+          getMyImageReactions: (imageIds: unknown, opts: unknown) => ({ imageIds, opts }),
+        },
+      }) as { imageIds: { imageIds: number[] }; opts: { staleTime: number } }[];
       asked.current = descriptors;
       // Mapped, not sliced: a `queryResults` shorter than the descriptor list would silently hand
       // the hook fewer results than `useQueries` can ever return, which is a shape production
@@ -129,12 +135,24 @@ describe('useHydratedImageReactions chunking, through the hook', () => {
     // which is `REACTION_FETCH_CHUNK`, so a block's pool is always one chunk. This covers the day
     // one of those numbers goes up, which is a one-token edit nothing else would connect to this.
     const images = Array.from({ length: 150 }, (_, i) => ({ id: i + 1, reactions: [] }));
-    queryResults.current = [];
+    queryResults.current = [
+      { data: { 1: ['Like'] }, dataUpdatedAt: 1 },
+      { data: { 150: ['Heart'] }, dataUpdatedAt: 1 },
+    ];
 
-    const { unmount } = renderHook(() => useHydratedImageReactions(images, { entity: 'image' }));
+    const { result, unmount } = renderHook(() =>
+      useHydratedImageReactions(images, { entity: 'image' })
+    );
 
-    expect(asked.current.map((input) => input.imageIds.length)).toEqual([100, 50]);
-    expect(asked.current[1].imageIds[0]).toBe(101);
+    expect(asked.current.map((d) => d.imageIds.imageIds.length)).toEqual([100, 50]);
+    expect(asked.current[1].imageIds.imageIds[0]).toBe(101);
+    expect(asked.current[0].opts.staleTime).toBe(60_000);
+
+    // The RESPONSE side, not just the request. Asserting only what was asked leaves
+    // `Object.assign({}, ...queries.map(...))` -> `queries[0]?.data ?? {}` green, which drops
+    // every chunk after the first: images 101+ render un-hydrated and the first click deletes.
+    expect(result.current[0].reactions).toEqual([{ userId: VIEWER, reaction: 'Like' }]);
+    expect(result.current[149].reactions).toEqual([{ userId: VIEWER, reaction: 'Heart' }]);
     unmount();
   });
 });
