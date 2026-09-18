@@ -36,8 +36,8 @@ export type RemixClaimState = {
  * branch where the prompt IS the carrier.
  *
  * 🔴 The only derivation of this rule — reuse it, don't recompute the threshold
- * elsewhere (a server-side check is coming). A second copy that drifts from this
- * one could tell someone their remix still counts when the submit drops it.
+ * elsewhere. A second copy that drifts from this one could tell someone their
+ * remix still counts when the submit drops it.
  */
 export function remixClaimState(
   data: RemixData | null,

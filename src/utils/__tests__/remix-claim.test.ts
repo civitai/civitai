@@ -76,31 +76,34 @@ describe('remixClaimHolds', () => {
 });
 
 /**
- * The `holds` boolean is what the footers submit; `reason` is what a surface
- * would tell someone. Every test above asserts only the boolean, so `reason`
- * could be swapped between any two values and stay green.
- *
- * The pair below is the one that matters, and it is a decision rather than an
- * implementation detail: **an empty prompt is someone mid-edit, not someone who
- * has drifted.** Both are `holds: false`, so nothing distinguishes them except
- * this. Report `drifted` for a cleared box and the copy accuses a person of
- * changing their mind at the moment they cleared it to retype.
+ * What the restricted account typed with four of the seed's eleven tags left —
+ * a real remix that has moved on. Scores 0.2969 against the seed.
  */
+const PARTIAL_PROMPT =
+  '1girl, 1boy, creampie, bed, forest, waterfall, sunlight, castle, epic fantasy';
+
+/** Two tags changed out of eleven. Scores 0.7601 — changed a lot, still counts. */
+const NEAR_PROMPT =
+  'netorare, cuckold pov, 1girl, 1boy, creampie, bed, bedroom, day, plain background';
+
 describe('remixClaimState reasons', () => {
   const state = (form: Parameters<typeof remixClaimState>[1]) =>
     remixClaimState(useRemixStore.getState().data, form);
 
-  // Asserted field by field rather than with `toMatchObject`, which truncates
-  // to `expected { holds: false, ...(3) } to match object { holds: false, ...(3) }`
-  // and never names the value that was wrong. The point of these tests is the
-  // reason string, so the failure has to print it.
-  it('reports a rewritten prompt as drifted, scored, carried by the prompt', () => {
+  it('reports no remix at all as none, carrying and scoring nothing', () => {
+    const none = remixClaimState(null, { prompt: SEEDED_PROMPT });
+    expect(none.reason).toBe('none');
+    expect(none.carrier).toBeNull();
+    expect(none.holds).toBe(false);
+    expect(none.score).toBeNull();
+  });
+
+  it('reports a rewritten prompt as drifted, carried by the prompt', () => {
     seedRemix();
-    const drifted = state({ prompt: UNRELATED_PROMPT });
+    const drifted = state({ prompt: PARTIAL_PROMPT });
     expect(drifted.reason).toBe('drifted');
     expect(drifted.carrier).toBe('prompt');
     expect(drifted.holds).toBe(false);
-    expect(drifted.score).toBeLessThan(0.75);
   });
 
   it('reports a cleared prompt as uncarried, NOT drifted, and does not score it', () => {
@@ -112,6 +115,15 @@ describe('remixClaimState reasons', () => {
     expect(cleared.score).toBeNull();
   });
 
+  it('reports a remix that seeded no prompt as uncarried, carrying nothing', () => {
+    seedRemix('   ');
+    const unseeded = state({ prompt: SEEDED_PROMPT });
+    expect(unseeded.reason).toBe('uncarried');
+    expect(unseeded.carrier).toBeNull();
+    expect(unseeded.holds).toBe(false);
+    expect(unseeded.score).toBeNull();
+  });
+
   it('separates an expired claim from a drifted one, neither scored', () => {
     seedRemix(SEEDED_PROMPT, Date.now() - REMIX_CLAIM_TTL - 1);
     const expired = state({ prompt: SEEDED_PROMPT });
@@ -120,19 +132,37 @@ describe('remixClaimState reasons', () => {
     expect(expired.score).toBeNull();
   });
 
-  it('scores a surviving prompt claim and leaves a media claim unscored', () => {
+  it('leaves a media claim unscored and unreasoned', () => {
     seedRemix();
-    const kept = state({ prompt: `${SEEDED_PROMPT}, masterpiece` });
-    expect(kept.reason).toBeNull();
-    expect(kept.carrier).toBe('prompt');
-    expect(kept.holds).toBe(true);
-    expect(kept.score).toBeGreaterThanOrEqual(0.75);
-
-    // `null` here means not applicable, never zero — a surface reading it as a
-    // number would render a media remix as maximally drifted.
     const media = state({ prompt: 'pan left', video: { url: 'https://x/1.mp4' } });
     expect(media.carrier).toBe('media');
+    expect(media.reason).toBeNull();
     expect(media.holds).toBe(true);
     expect(media.score).toBeNull();
+  });
+
+  it('keeps a prompt that changed a lot but not enough, and scores it', () => {
+    seedRemix();
+    const near = state({ prompt: NEAR_PROMPT });
+    expect(near.reason).toBeNull();
+    expect(near.carrier).toBe('prompt');
+    expect(near.holds).toBe(true);
+    expect(near.score).toBeGreaterThanOrEqual(0.75);
+  });
+
+  it('scores a nearer prompt above a further one, and a disjoint one at the floor', () => {
+    seedRemix();
+    // `toBeLessThan(0.75)` on a disjoint prompt passed for free: it shares no
+    // token with the seed, so every term is 0 and any bounded wrong answer
+    // satisfies it. Ordering is the property that cannot be satisfied by
+    // accident — `?? -1` so a null breaks the chain rather than reading as 0.
+    const near = state({ prompt: NEAR_PROMPT }).score ?? -1;
+    const partial = state({ prompt: PARTIAL_PROMPT }).score ?? -1;
+    const disjoint = state({ prompt: UNRELATED_PROMPT }).score ?? -1;
+
+    expect(near).toBeGreaterThan(partial);
+    expect(partial).toBeGreaterThan(disjoint);
+    expect(partial).toBeLessThan(0.75);
+    expect(disjoint).toBe(0);
   });
 });
