@@ -105,6 +105,7 @@ export default ModEndpoint(async function updateIndexSync(
         failedIds: syncResult.failedIds,
         droppedIds: syncResult.droppedIds,
         droppedIdSample: syncResult.droppedIdSample,
+        handledWithoutDocument: syncResult.handledWithoutDocument,
         error: `${syncResult.failedIds} ids in ${syncResult.failedTasks} of ${syncResult.totalTasks} batches failed to index`,
       });
       return;

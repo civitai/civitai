@@ -115,7 +115,11 @@ export class TaskQueue {
    * indexed. Summaries rather than tasks — see `FailedTaskRecord`.
    */
   failedTasks: FailedTaskRecord[];
-  /** Ids pulled that produced no document, across every completed task. */
+  /**
+   * Ids pulled that produced no document, across every completed task. True total, with one
+   * stated exception: a batch whose accounting threw contributes 0 here and says so at
+   * `console.error` — never losing a write to observe it is the trade.
+   */
   droppedIdCount: number;
   /** Up to `DROPPED_ID_SAMPLE_LIMIT` of those ids, for naming them in a log line. */
   droppedIdSample: (number | string)[];

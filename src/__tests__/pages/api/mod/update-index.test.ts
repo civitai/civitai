@@ -123,6 +123,9 @@ describe('/api/mod/update-index', () => {
       totalTasks: 5,
       failedTasks: 4,
       failedIds: 1200,
+      droppedIds: 6,
+      droppedIdSample: [11, 12],
+      handledWithoutDocument: 4,
     });
 
     const { status, body } = await runRequest({
@@ -137,15 +140,28 @@ describe('/api/mod/update-index', () => {
       index: COLLECTIONS_SEARCH_INDEX,
       failedTasks: 4,
       failedIds: 1200,
+      // Same fields as the success body: a caller should not have to branch on the status code to
+      // find out how many ids produced nothing.
+      droppedIds: 6,
+      droppedIdSample: [11, 12],
+      handledWithoutDocument: 4,
     });
   });
 
-  it('keeps the success response unchanged when every batch succeeded', async () => {
+  // This case used to assert the success body was exactly `{ status: 'ok' }`, and that contract
+  // was changed on purpose: a bare `ok` over a run that wrote nothing for the ids it was handed is
+  // the signal that let two documents survive a 280k-id repair. The numbers are the point now, so
+  // this pins them rather than tolerating them — `toEqual`, not `toMatchObject`, or the fields the
+  // change exists for would go unasserted.
+  it('reports the drop counts in the success body, not a bare ok', async () => {
     updateSync.mockResolvedValue({
       indexName: COLLECTIONS_SEARCH_INDEX,
       totalTasks: 5,
       failedTasks: 0,
       failedIds: 0,
+      droppedIds: 2,
+      droppedIdSample: [7, 9],
+      handledWithoutDocument: 3,
     });
 
     const { status, body } = await runRequest({
@@ -153,8 +169,18 @@ describe('/api/mod/update-index', () => {
       updateIds: '1,2,3',
     });
 
+    // A drop is not a failure: the endpoint cannot tell a row the index legitimately does not want
+    // from a repair that did not land, and 500ing on the first would teach an operator to ignore
+    // the second.
     expect(status).toBe(200);
-    expect(body).toEqual({ status: 'ok' });
+    expect(body).toEqual({
+      status: 'ok',
+      index: COLLECTIONS_SEARCH_INDEX,
+      totalTasks: 5,
+      droppedIds: 2,
+      droppedIdSample: [7, 9],
+      handledWithoutDocument: 3,
+    });
   });
 
   it('routes the requested index to updateSync with the requested ids', async () => {

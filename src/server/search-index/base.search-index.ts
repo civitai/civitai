@@ -188,14 +188,18 @@ const accountForBatch = (
  * reads the number out of `updateSync`'s return value instead.
  */
 const logDroppedIds = (indexName: string, caller: string, queue: TaskQueue) => {
-  if (queue.droppedIdCount === 0 && queue.handledWithoutDocumentIdCount === 0) return;
-  const handled = queue.handledWithoutDocumentIdCount
-    ? `; ${queue.handledWithoutDocumentIdCount} handled without a document`
-    : '';
+  const parts: string[] = [];
+  if (queue.droppedIdCount > 0)
+    parts.push(
+      `${queue.droppedIdCount} ids produced no document (sample: ${queue.droppedIdSample
+        .slice(0, 20)
+        .join(', ')})`
+    );
+  if (queue.handledWithoutDocumentIdCount > 0)
+    parts.push(`${queue.handledWithoutDocumentIdCount} handled without a document`);
+  if (!parts.length) return;
   console.log(
-    `createSearchIndexUpdateProcessor :: ${caller} :: ${indexName} :: ${
-      queue.droppedIdCount
-    } ids produced no document (sample: ${queue.droppedIdSample.slice(0, 20).join(', ')})${handled}`
+    `createSearchIndexUpdateProcessor :: ${caller} :: ${indexName} :: ${parts.join('; ')}`
   );
 };
 
@@ -235,13 +239,16 @@ const processSearchIndexTask = async (
       if (!pulledData) {
         // Nothing to transform or push — but for a TARGETED batch that is not "nothing to do", it
         // is every requested id producing no document, by a different route than the transform
-        // drop below. `images` and `metrics-images` return null here for an empty pull, so without
-        // this the two highest-volume indexes report zero drops on ids that no longer pull at all.
-        // STEP 0 ONLY, deliberately. A falsy pull at step 0 proves nothing was ever pulled, so
-        // nothing can have been written. A falsy pull at a LATER step is overloaded — some
-        // processors use it to mean "the step sequence ran out" rather than "no rows" — and this
-        // cannot tell those apart from here, so it reports the case it can prove and leaves the
-        // other uncounted rather than guessing and crying wolf.
+        // drop below. `users`, `comics`, `tools` and `metrics-images` all return null here for an
+        // empty pull, so without this the WORST case — every requested id producing nothing — was
+        // the one case reporting zero.
+        // STEP 0 ONLY, deliberately. A falsy pull at step 0 proves nothing was ever pulled, and no
+        // `pullData` in this directory writes to an index, so nothing can have been written. A
+        // falsy pull at a LATER step is overloaded: some processors use it to mean "the step
+        // sequence ran out" rather than "no rows". Both such returns are unreachable under today's
+        // `pullSteps` counts, so this excludes nothing that happens — it is written this way so
+        // that lowering a processor's branch coverage below its step count cannot silently turn
+        // every batch into a reported drop.
         if (t.mode === 'targeted' && t.ids.length && activeStep === 0) task.droppedIds = t.ids;
         context.logger(
           `processSearchIndexTask :: pull :: ${processor.indexName} :: No data pulled. Marking as done.`,
@@ -650,21 +657,25 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         `createSearchIndexUpdateProcessor :: updateSync :: ${indexName} :: Called with ${items.length} items`
       );
       const queue = new TaskQueue('pull', maxQueueSize);
-      const batches = chunk(items, updateSyncChunkSize);
+      // Deduped BEFORE chunking, which is what `update()` and `processQueues()` already do. Doing
+      // it per chunk instead leaves a repeated id counted once per chunk it lands in, so the
+      // guarantee would hold only for callers whose duplicates happened to be adjacent.
+      // Per ACTION, not globally: the same id may legitimately arrive once as an Update and once
+      // as a Delete, and collapsing that pair would change which one runs.
+      const seen = new Set<string>();
+      const dedupedItems = items.filter((item) => {
+        const key = `${item.action ?? SearchIndexUpdateQueueAction.Update}:${item.id}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      const batches = chunk(dedupedItems, updateSyncChunkSize);
       let totalTasks = 0;
 
       for (const batch of batches) {
-        // Deduped like `update()` and `processQueues()` already are. `updateSync` takes an
-        // arbitrary caller array, and a repeated id would otherwise be counted once per copy —
-        // `droppedIds` is documented as the true total, so it must not depend on the caller
-        // having deduped first.
-        const updateIds = [
-          ...new Set(
-            batch
-              .filter((i) => !i.action || i.action === SearchIndexUpdateQueueAction.Update)
-              .map(({ id }) => id)
-          ),
-        ];
+        const updateIds = batch
+          .filter((i) => !i.action || i.action === SearchIndexUpdateQueueAction.Update)
+          .map(({ id }) => id);
         const deleteIds = batch
           .filter((i) => i.action === SearchIndexUpdateQueueAction.Delete)
           .map(({ id }) => id);

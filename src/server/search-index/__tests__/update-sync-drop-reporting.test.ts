@@ -70,7 +70,12 @@ describe('updateSync :: drop reporting', () => {
     expect(pushData.mock.calls[0][1]).toEqual([1, 2, 4, 5, 7].map((id) => ({ id })));
   }, 30_000);
 
-  it('logs the drop count and a sample, which is the only report the void paths get', async () => {
+  // Named for what this case actually drives — `updateSync`, which ALSO returns the number. The
+  // log line's justification is the `update()`/`processQueues()` paths, which return nothing, and
+  // no test drives those (they need a live queue). Do not rename this back into a claim about
+  // them: the call sites at `logDroppedIds(indexName, 'update', …)` and `'processQueues'` can each
+  // be deleted with this suite green.
+  it('logs the drop count and a sample on the path it can drive', async () => {
     const index = buildIndex({
       transformData: async (ids: number[]) => ids.filter((id) => id !== 4).map((id) => ({ id })),
     });
@@ -89,6 +94,10 @@ describe('updateSync :: drop reporting', () => {
 
     expect(result.droppedIds).toBe(0);
     expect(dropLines()).toHaveLength(0);
+    // Not just "no drop line" — no EMPTY line either. Reporting unconditionally would print
+    // `:: test_index ::` with nothing after it on every clean run, which is the noise that makes
+    // the populated line unreadable.
+    expect(logSpy.mock.calls.map(String).filter((l) => / :: test_index :: *$/.test(l))).toEqual([]);
   }, 30_000);
 
   it('reports every id when the transform produces no documents at all', async () => {
@@ -206,6 +215,9 @@ describe('updateSync :: drop reporting', () => {
     expect(result.droppedIdSample).toEqual([5]);
   }, 30_000);
 
+  // Consistency check, not a control: with no hook, `handled` IS the document list, so this
+  // property holds whether or not the guard that produces it exists. Kept because a future
+  // refactor could make the two diverge; do not read it as pinning the guard.
   it('reports no handled-without-document for a processor that has no hook', async () => {
     const index = buildIndex({
       transformData: async (ids: number[]) => ids.filter((id) => id !== 2).map((id) => ({ id })),
@@ -215,6 +227,43 @@ describe('updateSync :: drop reporting', () => {
 
     expect(result.handledWithoutDocument).toBe(0);
     expect(result.droppedIds).toBe(1);
+  }, 30_000);
+
+  it('survives a hook over a shape whose documents cannot be read', async () => {
+    // A processor with a hook whose transform output the generic reader cannot read: the handled
+    // set is known, the document set is not. The count that cannot be computed is reported as
+    // zero, and — the part worth pinning — the drop count that CAN be computed still is.
+    const index = buildIndex({
+      transformData: async (ids: number[]) => ids.filter((id) => id !== 3),
+      getHandledIds: (ids: number[]) => ids,
+    });
+
+    const result = await index.updateSync(updateItems(4));
+
+    expect(result.droppedIds).toBe(1);
+    expect(result.droppedIdSample).toEqual([3]);
+    expect(result.handledWithoutDocument).toBe(0);
+  }, 30_000);
+
+  it('logs the prune count on a run where nothing dropped', async () => {
+    // The common `collections` shape: every id handled, none dropped. The line must still appear
+    // and must not read `0 ids produced no document (sample: )`.
+    const index = buildIndex({
+      transformData: async (ids: number[]) => ({
+        records: [] as { id: number }[],
+        disqualifiedIds: ids,
+      }),
+      getHandledIds: collectionsSearchIndex.getHandledIds,
+    });
+
+    const result = await index.updateSync(updateItems(3));
+
+    expect(result.droppedIds).toBe(0);
+    expect(result.handledWithoutDocument).toBe(3);
+    const lines = logSpy.mock.calls.map(String).filter((l) => l.includes('handled without'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('3 handled without a document');
+    expect(lines[0]).not.toContain('produced no document');
   }, 30_000);
 
   // DECISION, pinned deliberately — do not "fix" this into reporting 3 dropped ids.
@@ -287,10 +336,23 @@ describe('updateSync :: drop reporting', () => {
     expect(result.droppedIdSample).toEqual([9]);
   }, 30_000);
 
-  it('never fails a batch because the accounting threw', async () => {
+  it('counts a repeated id once even when the copies land in different chunks', async () => {
+    // Chunk size 1, so the duplicates cannot share a batch. Deduping per chunk instead of before
+    // chunking passes the case above and fails this one — the guarantee would hold only for
+    // callers whose duplicates happened to be adjacent.
+    const index = buildIndex({ transformData: async () => [], updateSyncChunkSize: 1 });
+
+    const result = await index.updateSync([{ id: 9 }, { id: 9 }]);
+
+    expect(result.droppedIds).toBe(1);
+    expect(result.droppedIdSample).toEqual([9]);
+  }, 30_000);
+
+  it('never fails or alters a batch because the accounting threw', async () => {
     // Observation must not be able to destroy the write it watches: `getHandledIds` is
     // processor-supplied, and a throw inside the task's try would retry and then fail the batch.
     const pushData = vi.fn();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const index = buildIndex({
       getHandledIds: () => {
         throw new Error('a processor hook that is not total');
@@ -302,7 +364,15 @@ describe('updateSync :: drop reporting', () => {
 
     expect(result.failedTasks).toBe(0);
     expect(result.failedIds).toBe(0);
+    // The documents still reach `pushData` intact — a catch that handed on an empty batch would
+    // satisfy every count above while silently writing nothing.
     expect(pushData).toHaveBeenCalledTimes(1);
+    expect(pushData.mock.calls[0][1]).toEqual([1, 2, 3].map((id) => ({ id })));
+    // FAIL OPEN, deliberately: an accounting that cannot run reports nothing rather than reporting
+    // every id, which would cry wolf on every batch of a processor with a broken hook.
+    expect(result.droppedIds).toBe(0);
+    // ...but never silently. The throw is the one thing here that IS an error.
+    expect(errorSpy.mock.calls.map(String).join(' ')).toContain('drop accounting threw');
   }, 30_000);
 });
 
