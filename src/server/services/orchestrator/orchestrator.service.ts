@@ -14,7 +14,7 @@ import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
 import { isProd } from '~/env/other';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { submitWorkflowWithRetry } from '~/server/services/orchestrator/workflows';
 import { hashContent } from '~/server/services/entity-moderation.service';
@@ -191,6 +191,7 @@ export async function createImageIngestionRequest({
 
   // Re-submit transient infra failures (5xx / no-response), reusing the same
   // `externalId` so a 500 that actually created the workflow isn't duplicated.
+  const submitStartedAt = Date.now();
   const result = await submitWorkflowWithRetry(
     {
       client: internalOrchestratorClient,
@@ -222,7 +223,14 @@ export async function createImageIngestionRequest({
       attempts,
       responseStatus: response?.status,
       serverTiming,
-      error,
+      // JSON.stringify(new Error()) is `{}` — Error carries no enumerable own
+      // properties — so logging the error directly recorded nothing at all, and
+      // a no-response submit is exactly the case where its name is the whole
+      // diagnosis (an abort is not a connection reset).
+      error: safeError(error),
+      // Wall time across every attempt. Distinguishes three per-attempt aborts
+      // (~45s) from a fast rejection, which the attempt count alone does not.
+      elapsedMs: Date.now() - submitStartedAt,
     });
   }
 
