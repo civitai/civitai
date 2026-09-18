@@ -1,4 +1,10 @@
 import * as z from 'zod';
+import {
+  BRIDGE_HOSTS,
+  BRIDGE_MESSAGE_BATCH_MAX,
+  BRIDGE_MESSAGE_COUNT_MAX,
+  BRIDGE_MESSAGE_OUTCOMES,
+} from '~/components/AppBlocks/bridgeLabels';
 import { trackedReasons } from '~/utils/login-helpers';
 
 // Both lists mirror the `views` / `daily_views` Enum8 columns, ordered by the ordinal the column stores —
@@ -995,3 +1001,40 @@ export const IMMEDIATE_FLUSH_ACTION_TYPES = new Set<TrackActionInput['type']>([
 export function isImmediateFlushTrackEvent(event: TrackBatchEvent): boolean {
   return event.kind === 'action' && IMMEDIATE_FLUSH_ACTION_TYPES.has(event.data.type);
 }
+
+// ── App Blocks postMessage BRIDGE message counts ─────────────────────────────
+//
+// The wire shape for /api/track/block-message: a COALESCED batch of
+// {appBlockId, type, host, outcome, count} rows, each incrementing
+// `civitai_app_block_bridge_messages_total` by `count`.
+//
+// 🔴 `count` IS WHY THE BEACON IS AFFORDABLE. The bridge's own inbound rate limit
+// is 30 messages/sec/host, so a per-message beacon would be a ~30 req/s/tab
+// channel. The quantity prom needs is a count, and a count aggregates losslessly:
+// the resulting series is byte-identical to a per-message beacon's. The cap keeps
+// one tampered request from asking for an unbounded single increment.
+//
+// 🔴 NOTHING HERE IS A LABEL BOUND. `type` is capped only in LENGTH; the
+// cardinality bound is `boundBridgeMessageType` in the route (clamped against the
+// code-owned protocol inventory), exactly as `appBlockId` is bounded by
+// `boundAppBlockIdLabel` rather than by this schema. A length cap on a public body
+// is not a cardinality bound — 128 characters is still unbounded distinct values.
+export type BlockMessageBatchInput = z.infer<typeof blockMessageBatchSchema>;
+export const blockMessageBatchSchema = z.object({
+  events: z
+    .array(
+      z.object({
+        appBlockId: z.string().trim().min(1).max(256),
+        type: z.string().trim().min(1).max(128),
+        // 🔴 BUILT FROM THE EMITTER'S OWN CONST ARRAYS, never re-spelled. A zod
+        // array rejects WHOLESALE, so an outcome added client-side but not here
+        // would 400 the entire batch and silently destroy every good row riding
+        // with it. Same shape as `IMPRESSION_SURFACES` -> `z.enum(...)` above.
+        host: z.enum(BRIDGE_HOSTS),
+        outcome: z.enum(BRIDGE_MESSAGE_OUTCOMES),
+        count: z.number().int().positive().max(BRIDGE_MESSAGE_COUNT_MAX),
+      })
+    )
+    .min(1)
+    .max(BRIDGE_MESSAGE_BATCH_MAX),
+});
