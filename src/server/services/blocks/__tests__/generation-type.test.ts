@@ -5,6 +5,11 @@ import {
   PASS_THROUGH_TYPE_MAX_CHARS,
 } from '~/server/schema/blocks/workflow.schema';
 import {
+  BLOCK_AUTHOR_FEE_PLATFORM_CONFIG,
+  resolveBlockAuthorFeeParams,
+  type BlockAuthorFeeConfig,
+} from '../author-fee';
+import {
   BLOCK_GENERATION_COARSE_TYPES,
   BLOCK_GENERATION_TYPES,
   BLOCK_IMAGE_GENERATION_SUBTYPES,
@@ -75,10 +80,12 @@ const SP = String.fromCharCode(32);
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('the value grammar — <coarse>:<subtype>, coarse before the FIRST colon', () => {
-  // 🔴 THE LOAD-BEARING RULE OF THE WHOLE WIDENING. A separate (unbuilt)
-  // per-generation-type author fee keys on the COARSE key and must keep working
-  // unchanged as the subtype axis grows. If these go red, that feature silently
-  // stops finding its rate.
+  // 🔴 THE LOAD-BEARING RULE OF THE WHOLE WIDENING. The per-generation-type author
+  // fee keys on the COARSE key and must keep working unchanged as the subtype axis
+  // grows. If these go red, that feature silently stops finding its rate — and it
+  // is no longer hypothetical: `author-fee.ts` (slice 1, dark) resolves its
+  // parameters through `blockGenerationCoarseType` and labels its counters with the
+  // result.
 
   it('the coarse key is exactly these five', () => {
     // Literal, not derived. Widening this set is a wire-contract decision and a
@@ -1225,6 +1232,89 @@ describe('the accepted sets stay DERIVED from the registries', () => {
     // loss in the column.
     for (const id of [...REGISTERED_RECIPE_IDS, ...REGISTERED_STEP_IDS]) {
       expect(id).not.toContain(':');
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CROSS-MODULE SEAM — the FEE is the consumer this namespace exists to protect
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('the author fee groups a pass-through row under `step`, never under a kind key', () => {
+  // 🔴 THIS IS THE ONLY TEST HERE THAT EXERCISES THE ACTUAL CONSUMER, and it was
+  // added when the fee landed on `main` mid-review. Everything else in this file
+  // pins the VALUE; this pins what the fee DOES with it. `author-fee.ts`'s
+  // resolver bounds its key with `isBlockGenerationType`, tries the FULL value,
+  // then falls back to `blockGenerationCoarseType` — so "the namespace keeps a
+  // caller out of another fee group" is a claim about THAT function, and is
+  // otherwise asserted nowhere.
+  //
+  // ⚠️ SCOPED HONESTLY: the fee is DARK (slice 1 moves no money) and the platform
+  // table has ONE entry, so today both a namespaced and a bare value would land on
+  // the default. The exposure becomes live the moment any table carries a kind-key
+  // or a fee-free entry — which slice 3 makes per-app and author-editable. These
+  // fixtures therefore use a config WITH such entries rather than only the
+  // platform one: a test over the single-entry table could not see the hazard.
+
+  /** A config shaped like one slice 3 would let an author write. */
+  const authorConfig: BlockAuthorFeeConfig = {
+    default: { flatBuzz: 7, pctOfBase: 0.07 },
+    byType: [
+      ['textToImage', { flatBuzz: 1, pctOfBase: 0.01 }],
+      ['chat-completion', { flatBuzz: 0, pctOfBase: 0 }],
+      ['step', { flatBuzz: 5, pctOfBase: 0.05 }],
+    ],
+  };
+
+  it("a pass-through $type equal to a KIND KEY does not inherit that key's fee", () => {
+    const passThrough = resolveBlockAuthorFeeParams(authorConfig, 'step:textToImage');
+    expect(passThrough.coarseType).toBe('step');
+    expect(passThrough.source).toBe('coarse');
+    expect(passThrough.params).toEqual({ flatBuzz: 5, pctOfBase: 0.05 });
+    // And the genuine image submit still gets ITS entry — so the two are
+    // distinguishable, which is the whole point.
+    const genuine = resolveBlockAuthorFeeParams(authorConfig, 'textToImage');
+    expect(genuine.coarseType).toBe('textToImage');
+    expect(genuine.params).toEqual({ flatBuzz: 1, pctOfBase: 0.01 });
+    expect(passThrough.params).not.toEqual(genuine.params);
+  });
+
+  it('a pass-through $type equal to a FEE-FREE registry id does not inherit the zero fee', () => {
+    // The sharper direction: an app naming a `$type` that collides with a
+    // zero-fee entry would pay NOTHING if the value were recorded bare.
+    const passThrough = resolveBlockAuthorFeeParams(authorConfig, 'step:chat-completion');
+    expect(passThrough.coarseType).toBe('step');
+    expect(passThrough.params).toEqual({ flatBuzz: 5, pctOfBase: 0.05 });
+    expect(resolveBlockAuthorFeeParams(authorConfig, 'chat-completion').params).toEqual({
+      flatBuzz: 0,
+      pctOfBase: 0,
+    });
+  });
+
+  it('under the PLATFORM config a pass-through row falls to the default, and is labelled `step`', () => {
+    // The state as shipped: one `chat-completion` entry, so the params are the
+    // default — but the coarse LABEL is already `step`, which is what the fee's
+    // counters carry and what makes the population visible before any money moves.
+    const resolved = resolveBlockAuthorFeeParams(
+      BLOCK_AUTHOR_FEE_PLATFORM_CONFIG,
+      'step:imageBackgroundRemoval'
+    );
+    expect(resolved.source).toBe('default');
+    expect(resolved.coarseType).toBe('step');
+    // A bare `step` (a shape-refused `$type`) groups identically — the degrade
+    // costs depth, never the group.
+    expect(resolveBlockAuthorFeeParams(BLOCK_AUTHOR_FEE_PLATFORM_CONFIG, 'step').coarseType).toBe(
+      'step'
+    );
+  });
+
+  it('an out-of-shape `step:` value is refused by the fee resolver too, not grouped', () => {
+    // The fee bounds its key with `isBlockGenerationType`, so a value this module
+    // would refuse gets `coarseType: null` there rather than a guessed group.
+    for (const hostile of ['step:a:b', `step:${'a'.repeat(65)}`, 'step:foo bar']) {
+      const resolved = resolveBlockAuthorFeeParams(authorConfig, hostile);
+      expect(resolved.coarseType).toBeNull();
+      expect(resolved.source).toBe('default');
     }
   });
 });

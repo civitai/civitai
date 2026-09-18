@@ -702,10 +702,17 @@ export function resolveBlockGenerationType(
  * The COARSE key of a persisted value — everything before the first colon.
  *
  * 🔴 THE DECOMPOSITION RULE, EXPORTED SO THERE IS ONE COPY OF IT. The
- * (unbuilt) per-generation-type author fee keys on this, and it must keep
- * working unchanged as the subtype axis grows. Exported rather than left for
- * each reader to open-code `split(':')[0]`, which is the shape that regenerates
- * the same bug at every call site.
+ * per-generation-type author fee keys on this, and it must keep working
+ * unchanged as the subtype axis grows. Exported rather than left for each reader
+ * to open-code `split(':')[0]`, which is the shape that regenerates the same bug
+ * at every call site.
+ *
+ * ⚠️ IT HAS A PRODUCTION CALLER NOW, so this is no longer a helper waiting for
+ * one: `author-fee.ts`'s `resolveBlockAuthorFeeParams` bounds its key with
+ * `isBlockGenerationType`, then tries the FULL value and falls back to THIS
+ * decomposition, and labels its counters `coarse_type` with the result. That is
+ * the reason a `step:` row must never decompose to a kind key — under the
+ * platform table it would inherit that key's fee parameters.
  *
  * Returns `null` for a value this build does not recognise, so a caller cannot
  * key a fee on a string that was never a generation type.
