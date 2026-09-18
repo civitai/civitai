@@ -27,14 +27,24 @@ import { describe, expect, it } from 'vitest';
  * resources stack.
  *
  * So this pins a RELATIONSHIP over the whole population rather than a component:
- * EVERY `recordSpendAttribution` call site must be fed a base, and that base must
- * come from the RAW ORCHESTRATOR RESPONSE — `submitted.cost.base`, hoisted into
- * `realizedBaseCost` — and NEVER from `snapshot`. `BlockWorkflowSnapshot.cost` is
- * deliberately `{ total }` only, because widening that wire shape would publish
- * the platform's cost breakdown to every third-party app; so `snapshot` cannot
- * supply a base, and a `snapshot.cost?.base` in the router would be `undefined`
- * silently. The asserted count makes the ledger fail when the set GROWS (a fourth
- * submit path added without a base) as well as when it SHRINKS.
+ * EVERY `recordSpendAttribution` call site must be fed a base AND the cap flag
+ * that governs whether a fee may be computed on it, and both must come from the
+ * RAW ORCHESTRATOR RESPONSE — `submitted.cost.base` / `submitted.cost.variable`,
+ * hoisted into `realizedBaseCost` / `realizedPriceIsCap` — and NEVER from
+ * `snapshot`. `BlockWorkflowSnapshot.cost` is deliberately `{ total }` only,
+ * because widening that wire shape would publish the platform's cost breakdown to
+ * every third-party app; so `snapshot` cannot supply either, and a
+ * `snapshot.cost?.base` in the router would be `undefined` silently. The asserted
+ * count makes the ledger fail when the set GROWS (a new submit path added without
+ * a base) as well as when it SHRINKS.
+ *
+ * ⚠️ THE COUNT WENT 3 → 4 ON 2026-09-17, AND THAT IS THE GUARD WORKING. A fourth
+ * `recordSpendAttribution` call site — `submitPassThroughStepWorkflow` — landed
+ * on `main` while this change was in review, passing no base. Nothing in this
+ * branch's own commits broke; the ledger caught a call site the branch had never
+ * seen. Bumping the number is only half the fix: the new site is WIRED (base +
+ * cap flag) rather than exempted, because an exemption is what the ledger exists
+ * to make impossible.
  *
  * It is a SOURCE-TEXT guard by necessity: the three call sites are inside a
  * ~9,000-line tRPC router whose handlers cannot be invoked without the whole
@@ -81,11 +91,11 @@ describe('author fee — the spend-attribution seam', () => {
     expect(sites[0]).toContain('workflowId');
   });
 
-  it('there are exactly THREE spend-attribution call sites', () => {
-    // textToImage, customComfy, and the registry-step bridge. A fourth submit
-    // path is a deliberate decision about whether it charges an author fee, so
-    // it should land here rather than silently inherit a skip.
-    expect(sites).toHaveLength(3);
+  it('there are exactly FOUR spend-attribution call sites', () => {
+    // textToImage, customComfy, the registry-step bridge, and the pass-through
+    // step. A new submit path is a deliberate decision about whether it charges
+    // an author fee, so it should land here rather than silently inherit a skip.
+    expect(sites).toHaveLength(4);
   });
 
   it('every call site passes a base generation cost', () => {
@@ -101,13 +111,35 @@ describe('author fee — the spend-attribution seam', () => {
     }
   });
 
-  it('`realizedBaseCost` is read from the orchestrator response `cost.base`', () => {
+  it('every call site passes the CAP FLAG that governs whether a fee may be charged', () => {
+    // 🔴 THE SECOND HALF OF THE SEAM, AND IT FAILS THE SAME WAY THE FIRST DID.
+    // A base alone is not enough to decide a fee: `WorkflowCost.variable` says
+    // the price is a CAP that settles lower, and a percentage of a cap is a fee
+    // on money the viewer gets refunded. A site that hoists the base but drops
+    // the cap flag computes a plausible fee on provisional money — the same
+    // class of silently-wrong number as feeding `buzzAmount`, and equally
+    // invisible downstream, because both are plain Buzz integers.
+    for (const site of sites) {
+      expect(site).toContain('generationPriceIsCap: realizedPriceIsCap');
+      expect(site).not.toMatch(/generationPriceIsCap:\s*(false|true|null|undefined)\b/);
+    }
+  });
+
+  it('`realizedBaseCost` and `realizedPriceIsCap` are read from the orchestrator response', () => {
     // 🔴 The wire shape a block sees (`BlockWorkflowSnapshot.cost`) is
-    // `{ total }` only, so `snapshot` CANNOT supply the base — it has to come
+    // `{ total }` only, so `snapshot` CANNOT supply either — they have to come
     // off the raw submit response. This pins that, and pins the count, so a new
     // submit path cannot hoist a base from the total by copy-paste.
     const assignments = source.match(/realizedBaseCost =\s*\n?\s*typeof submitted\.cost\?\.base/g);
-    expect(assignments).toHaveLength(3);
+    expect(assignments).toHaveLength(4);
     expect(source).not.toMatch(/realizedBaseCost\s*=\s*[^;]*cost\?\.total/);
+
+    const capAssignments = source.match(
+      /realizedPriceIsCap =\s*\n?\s*submitted\.cost\?\.variable === true/g
+    );
+    expect(capAssignments).toHaveLength(4);
+    // `snapshot` has no `variable` either — reading one would be `undefined`,
+    // i.e. "never a cap", which is the fail-OPEN direction.
+    expect(source).not.toMatch(/realizedPriceIsCap\s*=\s*[^;]*snapshot\./);
   });
 });

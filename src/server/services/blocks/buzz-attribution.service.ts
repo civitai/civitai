@@ -349,6 +349,23 @@ export type RecordSpendAttributionInput = {
    * instead of computing against a number that means something else.
    */
   baseGenerationBuzz?: number | null;
+  /**
+   * Optional: the orchestrator's `WorkflowCost.variable` for this workflow —
+   * TRUE when the quoted price is a CAP that may settle lower (at least one step
+   * is post-billed and charged up front at its maximum, with the difference
+   * refunded once the provider reports the actual work delivered).
+   *
+   * 🔴 A CAP-PRICED GENERATION IS OBSERVED AS A SKIP, NOT AS A FEE. A percentage
+   * of a number the viewer will be partly refunded is a fee on money they did
+   * not spend. It gets its OWN skip reason (`price-is-cap`) rather than being
+   * folded into `base-unavailable` — see `BLOCK_AUTHOR_FEE_PRICE_IS_CAP`.
+   *
+   * Like `baseGenerationBuzz` this is read off the RAW orchestrator submit
+   * response, never off `BlockWorkflowSnapshot` (whose `cost` is deliberately
+   * `{ total }` only). Omit it, or pass null/false, and the price is treated as
+   * final. Never persisted.
+   */
+  generationPriceIsCap?: boolean | null;
 };
 
 export type RecordSpendAttributionResult = {
@@ -696,6 +713,10 @@ export async function recordSpendAttribution(
     const authorFee = await observeBlockAuthorFee({
       // 🔴 NOT `buzzAmount` — see the field docs on RecordSpendAttributionInput.
       baseGenerationBuzz: input.baseGenerationBuzz ?? null,
+      // 🔴 A CAP PRICE SUPPRESSES THE FEE, under its own skip reason. Threaded
+      // rather than inferred: nothing downstream of the orchestrator response
+      // can tell a cap apart from a final price.
+      priceIsCap: input.generationPriceIsCap ?? null,
       generationType,
     });
 

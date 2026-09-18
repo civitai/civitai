@@ -321,12 +321,26 @@ export const blockSpendAttributionWriteCounter = registerCounterWithLabels({
 // `coarse_type` is the COARSE generation key (`blockGenerationCoarseType`) or
 // the literal `unknown` — bounded by the step/recipe registries, so the label is
 // low-cardinality by construction and cannot be widened by traffic.
-// `outcome` is which leg governed (`flat` / `pct` / `none`) or `base-unavailable`
-// when the orchestrator surfaced no `WorkflowCost.base` to compute against.
+// `outcome` is which leg governed (`flat` / `pct` / `none`), or one of two
+// counted SKIPS:
+//   `base-unavailable`  the orchestrator surfaced no `WorkflowCost.base` to
+//                       compute against — the RECOVERABLE blind spot.
+//   `price-is-cap`      `WorkflowCost.variable` was true, i.e. the price is a
+//                       CAP that may settle lower (a post-billed step charged
+//                       up front at its maximum and refunded down). No fee is
+//                       computed on one: a percentage of a number the viewer is
+//                       partly refunded is a fee on money they did not spend.
+//                       Kept SEPARATE from `base-unavailable` on purpose — that
+//                       one is a denominator the slice-2 sizing read divides by,
+//                       and a cap-priced generation would not have charged even
+//                       with a base in hand.
+// The `flag-disabled` skip is NOT here: it emits no counter at all by design and
+// is visible only as the Axiom `authorFeeSkipped` field.
 // 🔴 HYPHEN, not underscore, and this is the ONLY place in the repo that
 // enumerates the value set — so it is what an operator writing the slice-2
-// sizing join reads. It is deliberately the SAME string as the Axiom
-// `authorFeeSkipped` field (`BLOCK_AUTHOR_FEE_BASE_UNAVAILABLE` in
+// sizing join reads. Each skip is deliberately the SAME string as the Axiom
+// `authorFeeSkipped` field (`BLOCK_AUTHOR_FEE_BASE_UNAVAILABLE` /
+// `BLOCK_AUTHOR_FEE_PRICE_IS_CAP` in
 // `~/server/services/blocks/author-fee`), because that join is the whole point:
 // querying `outcome="base_unavailable"` returns an empty series, which reads as
 // "no generation lacked a base" rather than "you spelled the label wrong".

@@ -5759,6 +5759,12 @@ export const blocksRouter = router({
       // the raw orchestrator response here and passed to the attribution writer,
       // never surfaced to the block.
       let realizedBaseCost: number | null = null;
+      // `WorkflowCost.variable` — TRUE when the price is a CAP that may settle
+      // lower. Hoisted and threaded for the SAME reason as the base: nothing
+      // downstream of this response can tell a cap apart from a final price, and
+      // the author fee must not be computed on one. See
+      // `BLOCK_AUTHOR_FEE_PRICE_IS_CAP`.
+      let realizedPriceIsCap: boolean | null = null;
       try {
         // Daily-boost autoclaim. Cost cleared the install's budget cap; check
         // whether the user's actual spendable Buzz can pay for it. If they're
@@ -5812,6 +5818,7 @@ export const blocksRouter = router({
         snapshot = snapshotFromWorkflow(submitted, { modelSubstitutions });
         realizedTransactions = submitted.transactions;
         realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
+        realizedPriceIsCap = submitted.cost?.variable === true;
       } catch (e) {
         // No resolved submit → undo the reservation (net-equivalent to the old
         // "only record after a resolved submit" behavior) and propagate. Refund
@@ -6098,6 +6105,10 @@ export const blocksRouter = router({
             // those. Absent → the observation records a skip rather than
             // computing against a number that means something else.
             baseGenerationBuzz: realizedBaseCost,
+            // …and whether that price is a CAP. True → no fee is computed, under
+            // its own skip reason. Threaded from every submit path so the rule
+            // lives in ONE place.
+            generationPriceIsCap: realizedPriceIsCap,
           });
         })().catch(() => {
           /* best-effort: a failed attribution write never breaks submit */
@@ -8055,6 +8066,9 @@ async function submitCustomComfyWorkflow(opts: {
   // for the same reason, and read off the raw response rather than `snapshot`,
   // for the reason spelled out on the txt2img path.
   let realizedBaseCost: number | null = null;
+  // `WorkflowCost.variable` — TRUE when the price is a CAP that may settle lower;
+  // the author fee is skipped on one. Same hoist, same reason.
+  let realizedPriceIsCap: boolean | null = null;
   // Captured just before the orchestrator submit → the server-side proxy for the
   // job's submit instant, so the settle-time wall-clock metric measures
   // submit→terminal-observation (incl. GPU queue-wait). Observability-only.
@@ -8100,6 +8114,7 @@ async function submitCustomComfyWorkflow(opts: {
     snapshot = snapshotFromWorkflow(submitted);
     realizedTransactions = submitted.transactions;
     realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
+    realizedPriceIsCap = submitted.cost?.variable === true;
   } catch (e) {
     await refundBlockBuzzReservation(reservation, ceiling);
     if (appSpendReserve) {
@@ -8272,6 +8287,9 @@ async function submitCustomComfyWorkflow(opts: {
         // never `.total` (which already carries licensing fees and tips) and
         // never `buzzAmount`. Same rule as the txt2img path.
         baseGenerationBuzz: realizedBaseCost,
+        // …and whether that price is a CAP. True → no fee is computed, under its
+        // own skip reason. Same rule, same single place, as the txt2img path.
+        generationPriceIsCap: realizedPriceIsCap,
       });
     })().catch(() => {
       /* best-effort: a failed attribution write never breaks submit */
@@ -9173,6 +9191,9 @@ async function submitStepWorkflow(opts: {
   // for the same reason, and read off the raw response rather than `snapshot`,
   // for the reason spelled out on the txt2img path.
   let realizedBaseCost: number | null = null;
+  // `WorkflowCost.variable` — TRUE when the price is a CAP that may settle lower;
+  // the author fee is skipped on one. Same hoist, same reason.
+  let realizedPriceIsCap: boolean | null = null;
   const submittedAt = Date.now();
   try {
     // `orchestratorStep` + `tags` were built above the quote — the SAME objects
@@ -9193,6 +9214,7 @@ async function submitStepWorkflow(opts: {
     snapshot = snapshotFromWorkflow(submitted);
     realizedTransactions = submitted.transactions;
     realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
+    realizedPriceIsCap = submitted.cost?.variable === true;
   } catch (e) {
     await refundBlockBuzzReservation(reservation, reserveBuzz);
     if (appSpendReserve) {
@@ -9510,6 +9532,9 @@ async function submitStepWorkflow(opts: {
         // never `.total` (which already carries licensing fees and tips) and
         // never `buzzAmount`. Same rule as the txt2img path.
         baseGenerationBuzz: realizedBaseCost,
+        // …and whether that price is a CAP. True → no fee is computed, under its
+        // own skip reason. Same rule, same single place, as the txt2img path.
+        generationPriceIsCap: realizedPriceIsCap,
       });
     })().catch(() => {
       /* best-effort: a failed attribution write never breaks submit */
@@ -9916,6 +9941,20 @@ async function submitPassThroughStepWorkflow(opts: {
   // ── Submit. On ANY throw AFTER reserving, refund the CEILING on ALL keys.
   let snapshot: ReturnType<typeof snapshotFromWorkflow>;
   let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
+  // The orchestrator's BASE cost, for the DARK author-fee observation. Hoisted
+  // for the same reason as `realizedTransactions`, and read off the raw response
+  // rather than `snapshot`, for the reason spelled out on the txt2img path.
+  let realizedBaseCost: number | null = null;
+  // 🔴 `WorkflowCost.variable` — TRUE when the price is a CAP that may settle
+  // lower. THIS PATH IS THE MOTIVATING CASE: its spend basis is
+  // `snapshot.cost?.total ?? ceiling`, i.e. post-billed against a reserved
+  // ceiling, and the settle hook below refunds `ceiling - actual`. Charging an
+  // author fee on the cap would be a fee on money the viewer gets back. The
+  // author fee is therefore SKIPPED on a cap — under its own counted skip
+  // reason, not folded into `base-unavailable`. See
+  // `BLOCK_AUTHOR_FEE_PRICE_IS_CAP`; whether a cap-priced path should EVER
+  // charge, and on what number, is slice 2's to settle.
+  let realizedPriceIsCap: boolean | null = null;
   const submittedAt = Date.now();
   try {
     const submitted = await submitWorkflow({
@@ -9933,6 +9972,8 @@ async function submitPassThroughStepWorkflow(opts: {
     });
     snapshot = snapshotFromWorkflow(submitted);
     realizedTransactions = submitted.transactions;
+    realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
+    realizedPriceIsCap = submitted.cost?.variable === true;
   } catch (e) {
     await refundBlockBuzzReservation(reservation, ceiling);
     if (appSpendReserve) {
@@ -10047,6 +10088,18 @@ async function submitPassThroughStepWorkflow(opts: {
         // (its `.strict()` wire shape has neither).
         modelId: null,
         sharedContentKey: null,
+        // BASE generation cost for the DARK author-fee observation — `.base`,
+        // never `.total` (which already carries licensing fees and tips) and
+        // never `buzzAmount`. Same rule as every other submit path.
+        baseGenerationBuzz: realizedBaseCost,
+        // 🔴 …and whether that price is a CAP. This path quotes a CEILING and
+        // settles down (`snapshot.cost?.total ?? ceiling` above, and the settle
+        // hook refunds `ceiling - actual`), so on a cap-priced step the fee is
+        // deliberately SKIPPED — a percentage of a number the viewer is partly
+        // refunded is a fee on money they did not spend. It is a NAMED,
+        // COUNTED skip (`price-is-cap`), never folded into `base-unavailable`,
+        // and slice 2 owns the question of what a cap-priced path should charge.
+        generationPriceIsCap: realizedPriceIsCap,
       });
     })().catch(() => {
       /* best-effort: a failed attribution write never breaks submit */

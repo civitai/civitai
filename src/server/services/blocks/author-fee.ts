@@ -482,7 +482,7 @@ export function computeBlockAuthorFee(args: {
 }
 
 /** Why an observation produced no computation. */
-export type BlockAuthorFeeSkipReason = 'flag-disabled' | 'base-unavailable';
+export type BlockAuthorFeeSkipReason = 'flag-disabled' | 'base-unavailable' | 'price-is-cap';
 
 /**
  * ONE SPELLING of the missing-base skip, shared by the Prometheus `outcome`
@@ -492,6 +492,36 @@ export type BlockAuthorFeeSkipReason = 'flag-disabled' | 'base-unavailable';
  * is exactly the join that then silently returns nothing.
  */
 export const BLOCK_AUTHOR_FEE_BASE_UNAVAILABLE: BlockAuthorFeeSkipReason = 'base-unavailable';
+
+/**
+ * The CAP-PRICED skip — a THIRD reason, deliberately not either of the other two.
+ *
+ * 🔴 WHY IT IS ITS OWN REASON RATHER THAN A `base-unavailable`. The base IS
+ * available on this path; what is provisional is the PRICE. `base-unavailable`
+ * is one of the two denominators the slice-2 sizing read divides by ("how many
+ * generations did the fee never get to see, and could we recover them?"), and a
+ * cap-priced generation is not recoverable by surfacing a better base — it is a
+ * policy question. Folding a different cause into that population is how a
+ * denominator acquires a silent bias, which is the same rule the `.catch`
+ * discussion in `buzz-attribution.service` states for a contract violation.
+ *
+ * 🔴 WHY THE FEE IS SKIPPED AT ALL. `WorkflowCost.variable` means "this price is
+ * a cap that may settle lower: at least one step is post-billed and charged up
+ * front at its maximum, with the difference refunded once the provider reports
+ * the actual work delivered". The viewer is charged the maximum up front and
+ * refunded down later, so a percentage of that number is a fee on money they did
+ * not ultimately spend, and the flat leg is a toll on a job that may have done
+ * almost nothing. Slice 1 moves no money, so today this only skews the sizing
+ * read — but the sizing read is the entire purpose of slice 1, and slice 2 would
+ * inherit the decision silently if it were left implicit.
+ *
+ * ⚠️ FLAGGED FOR SLICE 2: "no fee on a cap" is the CURRENT answer, made explicit
+ * and testable, NOT a settled policy. The proper treatment (charge on the
+ * settled cost at terminal state, charge on the cap and refund pro rata, or
+ * genuinely charge nothing) is slice 2's to decide — and it now has a counted
+ * population to decide it against instead of an unlabelled blind spot.
+ */
+export const BLOCK_AUTHOR_FEE_PRICE_IS_CAP: BlockAuthorFeeSkipReason = 'price-is-cap';
 
 export type BlockAuthorFeeObservation =
   | { readonly observed: false; readonly reason: BlockAuthorFeeSkipReason }
@@ -560,9 +590,9 @@ export type BlockAuthorFeeObservation =
  * to — three Prometheus counters and the `block-spend-attribution` Axiom line.
  * `block_author_fee_buzz_total / block_author_fee_base_buzz_total` by coarse
  * type gives the realized effective rate; `block_author_fee_observed_total` by
- * `outcome` gives the leg mix plus the `base-unavailable` population — in the
- * SAME spelling the log line's `authorFeeSkipped` uses, so the two instruments
- * join. The OTHER skip — the flag being off — is deliberately silent here and
+ * `outcome` gives the leg mix plus the `base-unavailable` and `price-is-cap`
+ * populations — in the SAME spelling the log line's `authorFeeSkipped` uses, so
+ * the two instruments join. The OTHER skip — the flag being off — is silent here and
  * visible only as `authorFeeSkipped` on the log line, because a gate that has
  * never been turned on must not emit a per-generation metric.
  *
@@ -574,6 +604,12 @@ export type BlockAuthorFeeObservation =
 export async function observeBlockAuthorFee(args: {
   /** 🔴 `WorkflowCost.base`. Absent/unusable → a `base-unavailable` skip. */
   baseGenerationBuzz: number | null | undefined;
+  /**
+   * 🔴 `WorkflowCost.variable` — TRUE means the quoted price is a CAP that may
+   * settle lower. `true` → a `price-is-cap` skip; see
+   * `BLOCK_AUTHOR_FEE_PRICE_IS_CAP` for why no fee is computed on one.
+   */
+  priceIsCap?: boolean | null;
   generationType: unknown;
   config?: BlockAuthorFeeConfig;
 }): Promise<BlockAuthorFeeObservation> {
@@ -582,6 +618,28 @@ export async function observeBlockAuthorFee(args: {
   } catch {
     // A flag read that will not resolve is not permission to charge anyone.
     return { observed: false, reason: 'flag-disabled' };
+  }
+
+  // 🔴 A CAP-PRICED GENERATION IS SKIPPED, AND IT IS CHECKED BEFORE THE BASE.
+  // The order is deliberate: a cap-priced generation that ALSO surfaced no base
+  // must count as `price-is-cap`, not as `base-unavailable`. `base-unavailable`
+  // is the RECOVERABLE blind spot — "the fee would have fired if the orchestrator
+  // had given us a number" — and a cap-priced job would not have fired either
+  // way, so folding it in would overstate exactly the population slice 2 sizes
+  // its recovery work against. It IS counted (unlike `flag-disabled`, which is
+  // deliberately silent) because how much traffic is cap-priced is a number
+  // slice 2 needs; the `unknown` coarse label mirrors the `base-unavailable`
+  // skip, which resolves no type either.
+  if (args.priceIsCap === true) {
+    try {
+      blockAuthorFeeObservedCounter.inc({
+        coarse_type: BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL,
+        outcome: BLOCK_AUTHOR_FEE_PRICE_IS_CAP,
+      });
+    } catch {
+      // swallow — telemetry must never back-pressure the caller
+    }
+    return { observed: false, reason: BLOCK_AUTHOR_FEE_PRICE_IS_CAP };
   }
 
   const base = args.baseGenerationBuzz;

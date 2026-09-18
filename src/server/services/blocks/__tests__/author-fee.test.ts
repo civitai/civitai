@@ -708,6 +708,100 @@ describe('observeBlockAuthorFee — fail-closed dark gate', () => {
     expect(mockBaseBuzz).not.toHaveBeenCalled();
   });
 
+  it('a CAP price charges NOTHING — its own named skip, on a base that WOULD have paid', async () => {
+    // 🔴 THE CAP GUARD, ON AN INPUT NO EARLIER CHECK REJECTS. Flag ON (past the
+    // dark gate), base 640 — the SAME base the `convert-image` case two tests
+    // down pays 32 ⚡ on. So the only thing standing between this generation and
+    // a 32 ⚡ fee is the cap branch; delete that branch and this is a 32 ⚡
+    // observation, not a skip, and this assertion is what says so.
+    //
+    // WHY NO FEE: `WorkflowCost.variable` means the quoted price is a ceiling
+    // that settles lower — the viewer is charged the maximum up front and
+    // refunded the difference. A percentage of that is a fee on money they did
+    // not ultimately spend.
+    mockIsFlipt.mockResolvedValue(true);
+    const r = await observeBlockAuthorFee({
+      baseGenerationBuzz: 640,
+      priceIsCap: true,
+      generationType: 'convert-image',
+    });
+    expect(
+      r,
+      'a CAP-priced generation must record NO fee — a percentage of a cap charges the viewer for money that gets refunded'
+    ).toEqual({ observed: false, reason: 'price-is-cap' });
+    // Counted, not silent: how much traffic is cap-priced is a number slice 2
+    // needs in order to decide what a cap-priced path should charge.
+    expect(mockObserved).toHaveBeenCalledWith({
+      coarse_type: 'unknown',
+      outcome: 'price-is-cap',
+    });
+    // 🔴 And NOT in the `base-unavailable` bucket, which is one of the two
+    // denominators the slice-2 sizing read divides by. Folding a different cause
+    // into it is how that denominator acquires a silent bias.
+    expect(mockObserved).not.toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'base-unavailable' })
+    );
+    // The money counters must stay untouched — a cap-priced generation is not a
+    // zero-fee sample, it is a generation the fee declined to price.
+    expect(mockFeeBuzz).not.toHaveBeenCalled();
+    expect(mockBaseBuzz).not.toHaveBeenCalled();
+  });
+
+  it('a cap-priced generation with NO base is `price-is-cap`, not `base-unavailable`', async () => {
+    // The ORDER of the two checks, pinned. `base-unavailable` is the RECOVERABLE
+    // blind spot — "the fee would have fired if the orchestrator had given us a
+    // number" — and a cap-priced job would not have fired either way. Counting
+    // it there would overstate exactly the population slice 2 sizes its recovery
+    // work against.
+    mockIsFlipt.mockResolvedValue(true);
+    const r = await observeBlockAuthorFee({
+      baseGenerationBuzz: null,
+      priceIsCap: true,
+      generationType: 'convert-image',
+    });
+    expect(r).toEqual({ observed: false, reason: 'price-is-cap' });
+    expect(mockObserved).toHaveBeenCalledWith({
+      coarse_type: 'unknown',
+      outcome: 'price-is-cap',
+    });
+    expect(mockObserved).toHaveBeenCalledTimes(1);
+  });
+
+  it('the CAP branch is FAIL-CLOSED-to-charging only on an explicit `true`', async () => {
+    // The negative arm — without it, a mutant widening the test to any truthy
+    // value (or to `!== false`) would survive, and every ordinary generation
+    // would silently stop being priced. `undefined`/`null`/`false` all mean "the
+    // price is final", which is the majority of traffic.
+    mockIsFlipt.mockResolvedValue(true);
+    for (const priceIsCap of [undefined, null, false] as const) {
+      mockObserved.mockClear();
+      const r = await observeBlockAuthorFee({
+        baseGenerationBuzz: 640,
+        priceIsCap,
+        generationType: 'convert-image',
+      });
+      expect(r, `priceIsCap=${String(priceIsCap)} must still be priced`).toMatchObject({
+        observed: true,
+      });
+      if (!r.observed) throw new Error('unreachable');
+      expect(r.computation.feeBuzz).toBe(32);
+      expect(mockObserved).toHaveBeenCalledWith({ coarse_type: 'convert-image', outcome: 'pct' });
+    }
+  });
+
+  it('the CAP skip is still behind the dark gate — flag OFF emits nothing at all', async () => {
+    // Ordering: the flag is read FIRST. A cap-priced generation with the flag off
+    // is a `flag-disabled` skip and emits no counter, exactly like every other.
+    mockIsFlipt.mockResolvedValue(false);
+    const r = await observeBlockAuthorFee({
+      baseGenerationBuzz: 640,
+      priceIsCap: true,
+      generationType: 'convert-image',
+    });
+    expect(r).toEqual({ observed: false, reason: 'flag-disabled' });
+    expect(mockObserved).not.toHaveBeenCalled();
+  });
+
   it('a genuine ZERO base IS observed, and lands in the `none` bucket', async () => {
     mockIsFlipt.mockResolvedValue(true);
     const r = await observeBlockAuthorFee({ baseGenerationBuzz: 0, generationType: 'textToImage' });

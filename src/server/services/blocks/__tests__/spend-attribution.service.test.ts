@@ -789,6 +789,49 @@ describe('recordSpendAttribution — the author-fee log ledger', () => {
     });
   });
 
+  it('flag ON, a CAP price: `price-is-cap`, and NOT a fee — end to end through the service', async () => {
+    // 🔴 THE SEAM, BEHAVIOURALLY. The structural guard in
+    // `no-divergent-author-fee-base.test.ts` pins that every router call site
+    // THREADS the cap flag; this pins that threading it actually suppresses the
+    // fee, on an input identical to the `fee 32 ⚡` case above except for the
+    // flag. A structural check alone type-checks past a wrong argument.
+    mockIsFlipt.mockResolvedValue(true);
+    await recordSpendAttribution(
+      fakeInput({
+        generationType: 'convert-image',
+        baseGenerationBuzz: 640,
+        generationPriceIsCap: true,
+      })
+    );
+    expect(
+      loggedPayload(),
+      'a cap-priced generation must log a `price-is-cap` skip and NO fee — the same 640 ⚡ base pays 32 ⚡ when the price is final'
+    ).toMatchObject({
+      authorFeeSkipped: 'price-is-cap',
+      authorFeeBuzz: null,
+      authorFeeBaseBuzz: null,
+      authorFeeParamsSource: null,
+    });
+  });
+
+  it('a FINAL price at the same base still pays — the cap flag is the only difference', async () => {
+    // The control arm for the test above, in the same file: without it, a change
+    // that suppressed EVERY fee would leave the cap assertion green.
+    mockIsFlipt.mockResolvedValue(true);
+    await recordSpendAttribution(
+      fakeInput({
+        generationType: 'convert-image',
+        baseGenerationBuzz: 640,
+        generationPriceIsCap: false,
+      })
+    );
+    expect(loggedPayload()).toMatchObject({
+      authorFeeSkipped: null,
+      authorFeeBuzz: 32,
+      authorFeeBaseBuzz: 640,
+    });
+  });
+
   it('reads the dedicated author-fee flag key', async () => {
     mockIsFlipt.mockResolvedValue(false);
     await recordSpendAttribution(fakeInput({ baseGenerationBuzz: 640 }));
