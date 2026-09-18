@@ -46,8 +46,11 @@ import { BLOCK_IMAGE_WORKFLOW_TYPES } from '../workflow.service';
  *     degrading to null) predate the widening. They are kept because they pin
  *     what must NOT change, and they are not counted as regression coverage for
  *     this change.
- *   - Two tests are explicitly labelled INVARIANT GUARD. Nothing has ever
- *     violated them; they would pass on either tree.
+ *   - Two tests are labelled INVARIANT GUARD. Nothing has ever violated them.
+ *     `no registry id contains a colon` passes on either tree; the step-id/kind-key
+ *     collision test is an invariant guard PLUS one assertion that is red at base
+ *     (`BLOCK_WORKFLOW_KIND_GENERATION_TYPES` gained `step` here), and its title
+ *     and body say so rather than claiming the whole test would pass at base.
  *
  * Expected values are pinned as LITERALS throughout — never re-derived from the
  * function under test, and never from the registry entry the assertion is about.
@@ -1189,20 +1192,24 @@ describe('the accepted sets stay DERIVED from the registries', () => {
     expect(BLOCK_GENERATION_TYPES as readonly string[]).not.toContain(emitted);
   });
 
-  it('INVARIANT GUARD (not regression coverage): no registered step id collides with a kind key', () => {
-    // Labelled as an invariant guard because nothing has ever violated it — it
-    // would have passed before this change too. It exists because the ONE-COLUMN
-    // design rests on it: a step id implies `kind: 'step'` only while the two
-    // name spaces stay disjoint, and the registry's own load-time invariants do
-    // not know these strings exist. A step registered as `textToImage` would
-    // make the column ambiguous; this turns that into a red test rather than a
-    // silently ambiguous column.
+  it('INVARIANT GUARD, plus one assertion that is NOT: no registered step id collides with a kind key', () => {
+    // The LOOP is the invariant guard: nothing has ever violated it and it passed
+    // before this change too. It exists because the ONE-COLUMN design rests on it —
+    // a step id implies `kind: 'step'` only while the two name spaces stay
+    // disjoint, and the registry's own load-time invariants do not know these
+    // strings exist. A step registered as `textToImage` would make the column
+    // ambiguous; this turns that into a red test rather than a silent ambiguity.
     //
     // 🔴 IT NOW COVERS `step` TOO, and that is why `BLOCK_PASS_THROUGH_COARSE_TYPE`
     // is a member of the tuple this loops over rather than a constant beside it.
     // A step registered as `step` would make a bare `step` value mean EITHER "a
     // pass-through submit whose `$type` was unusable" OR "the registered step
     // named `step`" — the ambiguity this design's one-column reading forbids.
+    //
+    // ⚠️ AND THAT MAKES THE NEXT LINE REGRESSION COVERAGE, NOT AN INVARIANT GUARD,
+    // which the title used to deny. It is RED at base, where the tuple held only
+    // `textToImage` and `customComfy`. Separated because the two halves have
+    // different standing: the loop would pass on either tree, this one would not.
     expect(BLOCK_WORKFLOW_KIND_GENERATION_TYPES as readonly string[]).toContain('step');
     for (const id of REGISTERED_STEP_IDS) {
       expect(BLOCK_WORKFLOW_KIND_GENERATION_TYPES as readonly string[]).not.toContain(id);
