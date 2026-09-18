@@ -706,10 +706,16 @@ export async function recordSpendAttribution(
     // unreachability argument above is what carries this, and it holds for
     // today's one caller.
     //
-    // 🔴 IF A `.catch` IS EVER REINSTATED it needs a THIRD skip reason of its
-    // own (`observe-failed`, say), never `flag-disabled` and never
-    // `base-unavailable`: both are live denominators, and folding a contract
-    // violation into either is how the sizing read acquires a silent bias.
+    // 🔴 IF A `.catch` IS EVER REINSTATED it needs a NEW skip reason of its own
+    // (`observe-failed`, say) — never ANY existing member of
+    // `BlockAuthorFeeSkipReason`. Every reason in that union is a live
+    // population the slice-2 sizing read divides by or reasons about, and
+    // folding a contract violation into any of them is how a denominator
+    // acquires a silent bias. Stated against the union rather than a list of
+    // names on purpose: this comment previously said "a THIRD reason … never
+    // `flag-disabled` and never `base-unavailable`", and went stale the moment
+    // `price-is-cap` was added — it would now be the FOURTH, and the "never"
+    // list had a hole in it exactly where the newest reason sat.
     const authorFee = await observeBlockAuthorFee({
       // 🔴 NOT `buzzAmount` — see the field docs on RecordSpendAttributionInput.
       baseGenerationBuzz: input.baseGenerationBuzz ?? null,

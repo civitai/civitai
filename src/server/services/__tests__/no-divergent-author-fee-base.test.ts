@@ -130,6 +130,19 @@ describe('author fee — the spend-attribution seam', () => {
     // `{ total }` only, so `snapshot` CANNOT supply either — they have to come
     // off the raw submit response. This pins that, and pins the count, so a new
     // submit path cannot hoist a base from the total by copy-paste.
+    //
+    // 🔴 WHAT THIS GUARD DOES NOT COVER, STATED SO IT IS NOT MISTAKEN FOR
+    // COVERAGE. It pins that the cap flag is read from the RIGHT OBJECT; it says
+    // nothing about the orchestrator declining to send the field at all.
+    // `WorkflowCost.variable` is `?: null | boolean`, so the pinned
+    // `submitted.cost?.variable === true` maps BOTH `undefined` and `null` to
+    // "not a cap" — an absent field is treated as a FINAL PRICE, and the fee is
+    // computed. That is the fail-OPEN direction, the same direction as reading
+    // `snapshot.cost?.variable`, reached by a different route: there the wrong
+    // object is silent, here the right object is. Inert while slice 1 moves no
+    // money; a money question the moment slice 2 settles, and resolving the
+    // tri-state is SLICE 2'S POLICY CALL — this guard deliberately pins the
+    // current shape rather than pre-empting it.
     const assignments = source.match(/realizedBaseCost =\s*\n?\s*typeof submitted\.cost\?\.base/g);
     expect(assignments).toHaveLength(4);
     expect(source).not.toMatch(/realizedBaseCost\s*=\s*[^;]*cost\?\.total/);

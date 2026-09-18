@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -135,6 +137,47 @@ describe('author fee — the platform defaults and ceilings', () => {
       blockAuthorFeeCeilingBasisPoints(BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE)
     );
     expect(BLOCK_AUTHOR_FEE_MAX_PCT_BASIS_POINTS).toBe(10_000);
+  });
+
+  it('the constant is initialised BY THE NAMED FUNCTION, not by an inlined expression', () => {
+    // 🔴 SOURCE-TEXT GUARD, and it exists because the behavioural pins above
+    // CANNOT see the defect it covers. Re-inlining the derivation as
+    // `Math.round(BLOCK_AUTHOR_FEE_MAX_PCT_OF_BASE * SCALE)` leaves
+    // `blockAuthorFeeCeilingBasisPoints` in the file, still floors when called
+    // directly, and still yields 10000 at the shipped policy of 1 — so the
+    // direction cases, the property loop and the linking assertion are all
+    // green while the SHIPPED CONSTANT is once again rounded. Measured: that
+    // exact mutant SURVIVED the whole suite. The `⚠️ DO NOT INLINE IT BACK`
+    // comment on the function was the only thing guarding it, and prose is not
+    // a guard.
+    //
+    // Same technique, same reason, as the router seam guard in
+    // `src/server/services/__tests__/no-divergent-author-fee-base.test.ts`: the
+    // property is about which EXPRESSION ships, which no runtime value can
+    // distinguish while floor and round agree.
+    const source = readFileSync(
+      path.join(process.cwd(), 'src/server/services/blocks/author-fee.ts'),
+      'utf8'
+    );
+
+    // Positive control: without this, a bad path or a renamed constant would
+    // make every assertion below vacuously true over an empty match set.
+    const initialiser = source.match(
+      /export const BLOCK_AUTHOR_FEE_MAX_PCT_BASIS_POINTS[^=]*=([\s\S]*?);/
+    );
+    expect(
+      initialiser,
+      'the ceiling constant was not found in author-fee.ts — guard is scanning the wrong source'
+    ).not.toBeNull();
+
+    expect(
+      initialiser?.[1],
+      'BLOCK_AUTHOR_FEE_MAX_PCT_BASIS_POINTS is no longer initialised by blockAuthorFeeCeilingBasisPoints — the derivation has been INLINED BACK, which makes its rounding direction unreachable from a test'
+    ).toContain('blockAuthorFeeCeilingBasisPoints(');
+    expect(
+      initialiser?.[1],
+      'the ceiling constant’s initialiser performs its own arithmetic — it must delegate to blockAuthorFeeCeilingBasisPoints, whose flooring is what the direction guard above pins'
+    ).not.toMatch(/Math\.\w+|\*|\//);
   });
 
   it('seeds exactly ONE per-type override: chat-completion pays nothing', () => {

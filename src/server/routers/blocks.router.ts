@@ -5764,6 +5764,21 @@ export const blocksRouter = router({
       // downstream of this response can tell a cap apart from a final price, and
       // the author fee must not be computed on one. See
       // `BLOCK_AUTHOR_FEE_PRICE_IS_CAP`.
+      //
+      // 🔴 AN ABSENT FIELD IS TREATED AS A FINAL PRICE, AND THAT IS THE
+      // FAIL-OPEN DIRECTION. `WorkflowCost.variable` is `?: null | boolean`, so
+      // `=== true` collapses a genuine tri-state — cap / not-a-cap / the
+      // orchestrator did not say — into two, and the two it merges are
+      // "not-a-cap" and "unknown". An orchestrator that stops sending the field
+      // therefore silently resumes charging on every cap-priced generation
+      // instead of skipping them; nothing errors and no skip counter moves.
+      // Chosen deliberately over `!== false`, which fails the other way and
+      // would suppress the fee on every path the moment the field went missing.
+      // 🔴 INERT IN SLICE 1 — this observation moves no money, so today the
+      // consequence is only a biased sizing read. It becomes a MONEY question
+      // the moment slice 2 settles, and the tri-state policy (skip on unknown,
+      // charge on unknown, or require the field) is SLICE 2'S TO DECIDE, not
+      // this slice's. Do not quietly pick one here.
       let realizedPriceIsCap: boolean | null = null;
       try {
         // Daily-boost autoclaim. Cost cleared the install's budget cap; check
@@ -9954,6 +9969,11 @@ async function submitPassThroughStepWorkflow(opts: {
   // reason, not folded into `base-unavailable`. See
   // `BLOCK_AUTHOR_FEE_PRICE_IS_CAP`; whether a cap-priced path should EVER
   // charge, and on what number, is slice 2's to settle.
+  //
+  // 🔴 And on THIS path above all: an ABSENT `variable` reads as a final price,
+  // the FAIL-OPEN direction — see the txt2img hoist for why `=== true` merges
+  // "not-a-cap" with "the orchestrator did not say", and why resolving that
+  // tri-state is slice 2's call rather than this slice's.
   let realizedPriceIsCap: boolean | null = null;
   const submittedAt = Date.now();
   try {

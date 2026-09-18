@@ -159,6 +159,11 @@ export const BLOCK_AUTHOR_FEE_BASIS_POINTS_SCALE = 10_000;
  * DIRECTION is reachable from a test at a ceiling the policy constant cannot
  * express — at `1` no assertion about the constant can tell floor from round, so
  * inlining makes the defect unkillable again rather than merely dormant.
+ *
+ * That is ENFORCED, not merely requested: `author-fee.test.ts` reads this file's
+ * source and fails if the constant below is initialised by anything other than a
+ * call to this function. Until it did, re-inlining `Math.round(…)` here survived
+ * the entire suite — every behavioural pin agrees while floor and round agree.
  */
 export function blockAuthorFeeCeilingBasisPoints(maxPctOfBase: number): number {
   return toBasisPoints(maxPctOfBase);
