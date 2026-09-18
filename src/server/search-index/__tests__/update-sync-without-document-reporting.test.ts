@@ -413,7 +413,9 @@ describe('updateSync :: without-document reporting', () => {
     // every id, which would cry wolf on every batch of a processor with a broken hook.
     expect(result.idsWithoutDocument).toBe(0);
     // ...but never silently. The throw is the one thing here that IS an error.
-    expect(errorSpy.mock.calls.map(String).join(' ')).toContain('without-document accounting threw');
+    expect(errorSpy.mock.calls.map(String).join(' ')).toContain(
+      'without-document accounting threw'
+    );
   }, 30_000);
 });
 
