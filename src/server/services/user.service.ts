@@ -2091,14 +2091,22 @@ export const toggleBan = async ({
       // Isolated like every other leg of this fan-out: the marker write must never be
       // able to fail the ban. `revokeInstance` already swallows Redis errors; this
       // catch covers the DB read in front of it.
-      revokeBlockInstancesForPublisher({ userId: id }).catch((error) =>
-        logToAxiom({
-          type: 'error',
-          name: 'ban-user-revoke-block-instances',
-          message: (error as Error).message,
-          error,
-        })
-      ),
+      revokeBlockInstancesForPublisher({ userId: id })
+        .then((revoked) =>
+          logToAxiom({
+            type: 'info',
+            name: 'ban-user-revoke-block-instances',
+            message: `revoked ${revoked} block instance(s) for banned publisher ${id}`,
+          })
+        )
+        .catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'ban-user-revoke-block-instances',
+            message: (error as Error).message,
+            error,
+          })
+        ),
 
       // Group B: External operations (subscription + search indexes)
       Promise.all([
