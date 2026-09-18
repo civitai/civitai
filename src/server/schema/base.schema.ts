@@ -56,8 +56,9 @@ export const INT4_MAX = 2147483647;
  * client input, which then binds straight into the SQL comparison and makes
  * Postgres throw `value out of range for type integer` — surfacing as a raw 500
  * for what is a client fault. Bounding here fails the input parse instead, so
- * the caller gets a 400. Same class, and the same bound, as the
- * `/api/v1/models/[id]` id schema.
+ * the caller gets a 400. Same class as the `/api/v1/models/[id]` id schema —
+ * but NOT the identical bound: that one is `.int().gt(0)`, because an id of `0`
+ * is not a value it issues. The floor here is `.gte(0)`; see below.
  *
  * `.int().gte(0)` is part of that bound and is tighter than "fits in int4":
  * negatives and non-integers are rejected too. `0` is NOT rejected — see below.
@@ -134,7 +135,9 @@ export const INT4_MAX = 2147483647;
  */
 export const keysetCursorSchema = z
   .union([
-    z.bigint().gt(BigInt(0)).lte(BigInt(INT4_MAX)),
+    // Both numeric members carry the SAME floor. Splitting them would mean `0`
+    // parses as a number and 400s as a bigint, for one value on one sort column.
+    z.bigint().gte(BigInt(0)).lte(BigInt(INT4_MAX)),
     z.number().int().gte(0).lte(INT4_MAX),
     z.string(),
     z.date(),

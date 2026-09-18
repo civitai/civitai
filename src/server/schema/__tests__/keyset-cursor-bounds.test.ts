@@ -73,6 +73,16 @@ describe('keysetCursorSchema — numeric bound', () => {
     expect(keysetCursorSchema.safeParse(BigInt(2686725)).success).toBe(true);
   });
 
+  // The bigint and number members must share a floor, or `0` parses as a number
+  // and 400s as a bigint — the same value, the same sort column, two answers.
+  it('accepts bigint zero, matching the number member', () => {
+    expect(keysetCursorSchema.safeParse(BigInt(0)).success).toBe(true);
+  });
+
+  it('rejects a negative bigint', () => {
+    expect(keysetCursorSchema.safeParse(BigInt(-5)).success).toBe(false);
+  });
+
   // A string cursor is deliberately unbounded here. Downstream, `parseCursor`
   // checks the token COUNT and each token's PARSEABILITY — NOT that a token's
   // type matches the column it will be compared against. See the documented
