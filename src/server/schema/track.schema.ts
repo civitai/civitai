@@ -492,23 +492,36 @@ const imageRemixClickSchema = z.object({
 //     dashboard should treat `isRateLimited:true` as the source of truth
 //     for "capacity-bounded click" and ignore `isValid` on those rows.
 //
-//   hasRemixOfId semantics:
-//      'new' (v2): true whenever the generator was opened from the remix
-//                entry point. It no longer gates on prompt similarity — an
+//   hasRemixOfId semantics: THREE definitions across history, not two. The
+//     field is `!!remixOfId` at submit; what lets that id survive to submit has
+//     changed twice, and each change moves the boundary of a roll-up.
+//      'legacy', and 'new' before v5.1.0: gated on a >=0.75 prompt-similarity
+//                score against the remixed image's prompt, on every branch.
+//      'new' from v5.1.0 (#3871): ungated — true whenever the generator was
+//                opened from the remix entry point. The gate went because an
 //                image edit or an image-to-video shares no prompt with its
-//                source, so the old >=0.75 threshold dropped the link exactly
-//                where the derivation was most literal. Historical 'legacy'
-//                and pre-2026-08 'new' rows DO carry that gate, so a roll-up
-//                across that boundary compares two different definitions.
-//                Whether a derivation was actually verified is a separate
-//                field on the image (meta.extra.sourceImageIds), not this one.
-//      'video':  hasRemixOfId is NOT emitted (field absent in the details
-//                payload — see VideoGenerationForm.tsx:153-165, 241-252).
-//                Video form has no prompt-similarity hook yet; add when
-//                video remix analytics matter.
-//     A query GROUP BY hasRemixOfId is safe to roll up across formVersion
-//     'legacy' and 'new', but should EXCLUDE 'video' (the field is missing,
-//     not false) or split it out as its own bucket.
+//                source, so it dropped the link exactly where the derivation
+//                was most literal.
+//      'new' and 'form-graph' from v5.1.101: gated again, but only where the
+//                prompt is the carrier — a form still holding the source media
+//                keeps the id, a pure txt2img must still score >=0.75. The
+//                claim now also expires (REMIX_CLAIM_TTL) and is scoped to the
+//                remix it came from, so these rows additionally stop counting a
+//                source the user left behind hours ago. See
+//                `utils/remix-claim.ts`.
+//     Those versions are the earliest release that could carry each change. The
+//     real boundary in the data is the deploy, which is not knowable from here.
+//      'video':  historical rows only. No emitter has existed since v5.0.1786
+//                (Jun 2026), when the legacy forms went; video now renders
+//                through the same footer as everything else and emits the field
+//                like any other row. An empty 'video' bucket is the end of a
+//                label, NOT a drop in video generation.
+//     Whether a derivation was actually VERIFIED is a different field on the
+//     image (meta.extra.sourceImageIds); this one is only the user's claim.
+//     A GROUP BY hasRemixOfId rolls up across 'legacy', 'new' and 'form-graph'
+//     only if the two definition boundaries above are acceptable for the
+//     question being asked; 'video' rows have the field absent rather than
+//     false, so exclude them or bucket them on their own.
 //
 //   formVersion: absent on rate-limited emits from GenForm — the legacy
 //     image GenForm wrapper and VideoGenerationForm don't have a way to
