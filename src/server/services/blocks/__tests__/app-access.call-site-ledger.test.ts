@@ -111,7 +111,7 @@ const GATE_LEDGER: Record<string, string> = {
     'seat check specifically because beginListingRevision clones the shadow with the ' +
     'PARENT OWNER’s userId, so an editor’s own shadow reads as not-theirs — and that ' +
     'clone is a copy of a copy, which is why reading it directly was doubly wrong.',
-  'src/server/services/blocks/author-fee-settlement.service.ts':
+  'src/server/services/blocks/author-fee-accrual.service.ts':
     'accrueBlockAuthorFee credits the app OWNER only — `oauthClient.userId`, snapshotted ' +
     'onto the row at write time — and is deliberately NOT widened to ACCEPTED ' +
     'collaborators. This is D4 applied to a new earnings surface, not a new decision: ' +

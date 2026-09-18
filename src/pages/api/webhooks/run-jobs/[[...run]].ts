@@ -54,7 +54,6 @@ import {
 } from '~/server/jobs/referral-program-jobs';
 import { prepaidMembershipJobs } from '~/server/jobs/prepaid-membership-jobs';
 import { updateCreatorResourceCompensation } from '~/server/jobs/deliver-creator-compensation';
-import { settleBlockAuthorFeesJob } from '~/server/jobs/settle-block-author-fees';
 import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
 import { deliverPurchasedCosmetics } from '~/server/jobs/deliver-purchased-cosmetics';
 import { dummyJob } from '~/server/jobs/dummy-job';
@@ -196,7 +195,6 @@ export const jobs: Job[] = [
   tempSetMissingNsfwLevel,
   imagesCreatedEvents,
   updateCreatorResourceCompensation,
-  settleBlockAuthorFeesJob,
   confirmMutes,
   botAccountDetection,
   reactionWithdrawalDetection,
