@@ -228,7 +228,7 @@ export async function getPostLookup(postId: number, limit = 200): Promise<PostLo
   // The SAME query Bulk Image Manager runs for a post — that page is where this one's images get
   // actioned, and two builders answering "the images in post N" is how they came to show different
   // flags and different orders for the same image.
-  const batch = await getImagesForPost(postId, limit, 'index');
+  const batch = await getImagesForPost(postId, { limit }, 'index');
 
   return {
     post: { ...post, availability: String(post.availability) },

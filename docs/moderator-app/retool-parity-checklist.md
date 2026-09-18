@@ -504,14 +504,17 @@ browser as user 1290051, not by reading the code.
       now there too — a `ListFilterBar` over the loaded batch with PG / PG-13 / R / X / XXX / Blocked /
       **Unrated**. Unrated is its own entry because `nsfwLevel = 0` means no scanner has judged the image,
       which is a different question from every rating and the one a ticked-everything filter would hide.
-- [x] **A toggle to hide or isolate removed images** (2026-08-12 — "Only ToS'd" / "Hide removed" in the
-      same bar, so it composes with the rating and prompt filters instead of being a mode).
-      Filtering client-side, as Retool did: the batch is one query already paid for, and re-fetching per
-      filter change would discard the selection being assembled. Two consequences handled: `Select all`
+- [x] **A toggle to hide or isolate removed images** — "Only ToS'd" / "Hide removed". Built 2026-08-12 as a
+      client-side filter over the loaded batch, as Retool did; **moved server-side** (`removed=only|hide`,
+      applied in `batchFrom` to rows and count alike) because an account's few removed images sit thousands
+      of rows deep in newest-first order, so filtering the loaded window found none of them. It is a
+      separate control from the rating/prompt bar, which still filters the loaded batch client-side.
+      Changing it is a new batch — `removed` is part of `batchKey` — so it resets paging and clears the
+      selection; a new search does not carry it over. Two consequences handled: `Select all`
       counts the **filtered** set and says so — "**Select all N on screen**" — which is the point of
       filtering to ToS'd before acting; and the bar says "**N selected but not on screen**" whenever the
-      selection outlives the screen, which it can do two ways: the filter hides an image, or the
-      moderator pages past it (selections deliberately survive paging on the suspect grid — the batch
+      selection outlives the screen, which it can do two ways: a rating/prompt filter hides an image, or
+      the moderator pages past it (selections deliberately survive paging on the suspect grid — the batch
       key is the non-paging part of the query string). The removal posts ids, not what is on screen, so
       without it, filtering or paging after selecting is a way to remove 40 images while looking at 12.
 - [x] **Bulk selection helpers** — Select All / Select 100 / Unselect All (2026-08-09, in the shared

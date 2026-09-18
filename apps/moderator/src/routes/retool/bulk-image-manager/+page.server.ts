@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess } from '$lib/server/access';
 import { parseForm, parseIdList, parseQuery, checkboxField } from '$lib/server/query';
-import { BULK_SOURCES } from './sources';
+import { BULK_SOURCES, REMOVED_FILTERS } from './sources';
 import { DEFAULT_LIMIT, MAX_LIMIT, MAX_OFFSET } from './limits';
 import { VIOLATION_TYPES } from '$lib/violations';
 import { MAX_INT4, usersByIds } from '$lib/server/users.service';
@@ -41,16 +41,18 @@ const querySchema = z.object({
   q: z.string().trim().catch(''),
   limit: z.coerce.number().int().min(1).max(MAX_LIMIT).catch(DEFAULT_LIMIT),
   offset: z.coerce.number().int().min(0).max(MAX_OFFSET).catch(0),
+  removed: z.enum(REMOVED_FILTERS).optional().catch(undefined),
 });
 
 export const load: PageServerLoad = async ({ url, locals }) => {
-  const { source, q, limit, offset } = parseQuery(url, querySchema);
+  const { source, q, limit, offset, removed } = parseQuery(url, querySchema);
+  const window = { limit, offset, removed };
   // Reaching the page is an investigation permission; removing content is not.
   const canAct = canAccess(locals.user, '/users');
 
   // Every branch below returns these, including `wide` — this page is one image grid whatever the
   // source resolved to, and a sixth early return that forgot it would render the grid capped.
-  const shell = { source, q, limit, offset, canAct, wide: true };
+  const shell = { source, q, limit, offset, removed: removed ?? null, canAct, wide: true };
 
   if (!q)
     return {
@@ -66,13 +68,13 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   // column from a spreadsheet arrives that way, so both separators are accepted.
   if (source === 'imageIds') {
     const ids = parseIdList(q.replace(/[\s\n]+/g, ','));
-    const batch = await getImagesByIds(ids, limit, offset);
+    const batch = await getImagesByIds(ids, window);
     const ownerIds = [...new Set(batch.items.map((i) => i.userId))];
     const owners = [...(await usersByIds(ownerIds))].map(([id, u]) => ({ id, ...u }));
     return {
       ...shell,
       batch,
-      notFound: batch.items.length === 0 && offset === 0,
+      notFound: batch.items.length === 0 && offset === 0 && !removed,
       owners,
       subjectUserId: null,
       subjectImageTotal: null,
@@ -105,14 +107,14 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 
   const batch: BulkBatch =
     source === 'post'
-      ? await getImagesForPost(id, limit, 'newest', offset)
+      ? await getImagesForPost(id, window)
       : source === 'model'
-      ? await getImagesForModel(id, limit, offset)
+      ? await getImagesForModel(id, window)
       : source === 'modelVersion'
-      ? await getImagesForModelVersion(id, limit, offset)
+      ? await getImagesForModelVersion(id, window)
       : source === 'collection'
-      ? await getImagesForCollection(id, limit, offset)
-      : await getImagesForUser(id, limit, source === 'userRemoved', offset);
+      ? await getImagesForCollection(id, window)
+      : await getImagesForUser(id, window, source === 'userRemoved');
 
   // Whose content this batch actually is. A model's images belong to whoever posted them, which is
   // often not the model's owner — so a removal here can touch accounts the moderator did not look up.
@@ -127,7 +129,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   return {
     ...shell,
     batch,
-    notFound: batch.items.length === 0 && offset === 0,
+    notFound: batch.items.length === 0 && offset === 0 && !removed,
     owners,
     subjectUserId,
     subjectImageTotal,

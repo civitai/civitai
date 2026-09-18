@@ -60,6 +60,12 @@ export const unpublishReasons = {
       'Resources intended to depict graphic violence, death, extreme gore, or other forms of extreme content are prohibited under our content guidelines.',
     type: 'policy',
   },
+  'self-harm': {
+    optionLabel: 'Self-harm, body image disorders, or dangerous behavior',
+    notificationMessage:
+      'Resources intended to depict or promote self-harm, suicide, cutting, mutilation, disordered eating such as anorexia or bulimia, or other dangerous behavior are prohibited under our content guidelines.',
+    type: 'policy',
+  },
   beastiality: {
     optionLabel: 'Depiction of "bestiality"',
     notificationMessage:
@@ -158,6 +164,12 @@ export const articleUnpublishReasons = {
     optionLabel: 'Prohibited violent activities',
     notificationMessage:
       'Articles intended to depict graphic violence, death, extreme gore, or other forms of extreme content are prohibited under our content guidelines.',
+    type: 'policy',
+  },
+  'self-harm': {
+    optionLabel: 'Self-harm, body image disorders, or dangerous behavior',
+    notificationMessage:
+      'Articles intended to depict or promote self-harm, suicide, cutting, mutilation, disordered eating such as anorexia or bulimia, or other dangerous behavior are prohibited under our content guidelines.',
     type: 'policy',
   },
   beastiality: {
