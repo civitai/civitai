@@ -1,4 +1,4 @@
-import { ThemeIcon, Tooltip } from '@mantine/core';
+import { Badge } from '@mantine/core';
 import { IconClock2 } from '@tabler/icons-react';
 import { memo } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
@@ -10,6 +10,7 @@ import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { PostReactions } from '~/components/Reaction/Reactions';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
@@ -28,7 +29,7 @@ export function PostsCard({
   const currentUser = useCurrentUser();
   const image = images[0];
   const isOwner = currentUser?.id === user.id;
-  const scheduled = publishedAt && new Date(publishedAt) > new Date();
+  const scheduledAt = publishedAt && new Date(publishedAt) > new Date() ? publishedAt : null;
   return (
     <TwCosmeticWrapper cosmetic={cosmetic?.data} style={cosmetic?.data ? { height } : undefined}>
       <TwCard className="border shadow" style={!cosmetic?.data ? { height } : undefined}>
@@ -56,13 +57,6 @@ export function PostsCard({
                         ) : null
                       }
                     />
-                    {scheduled && (
-                      <Tooltip label="Scheduled">
-                        <ThemeIcon size={30} radius="xl" variant="filled" color="blue">
-                          <IconClock2 size={16} strokeWidth={2.5} />
-                        </ThemeIcon>
-                      </Tooltip>
-                    )}
                   </div>
                 </div>
               )}
@@ -87,6 +81,17 @@ export function PostsCard({
                   />
                 )}
               </NextLink>
+              {(scheduledAt || !publishedAt) && (
+                <Badge
+                  className="absolute bottom-1.5 right-1.5 z-10"
+                  color={scheduledAt ? 'blue' : 'gray'}
+                  variant="filled"
+                  radius="sm"
+                  leftSection={<IconClock2 size={12} strokeWidth={2.5} />}
+                >
+                  {scheduledAt ? <DaysFromNow date={scheduledAt} live /> : 'Draft'}
+                </Badge>
+              )}
               <PostReactions
                 className={classes.reactions}
                 imageCount={imageCount}
