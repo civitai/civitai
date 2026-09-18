@@ -69,6 +69,14 @@ describe('getCommunityCosmetics', () => {
     const { items, totalPages } = await getCommunityCosmetics(baseInput);
     expect(items.map((i) => i.id)).toEqual([2, 1]);
     expect(items[0].meta).toEqual({ purchases: 7, acceptsBlueBuzz: false });
+    // The fixture hands back `_count` whatever the select asked for, so this
+    // asserts the query the code EMITTED. `creatorStorefrontItemSelect` inherits
+    // `_count` by spreading the shared selector and never restates it — redefine
+    // `_count` there for any other relation and the sold count silently goes
+    // undefined here and on the creator storefront.
+    expect(mocks.shopItemFindMany.mock.calls[0][0].select._count).toEqual({
+      select: { purchases: true },
+    });
     expect(totalPages).toBe(1);
   });
 

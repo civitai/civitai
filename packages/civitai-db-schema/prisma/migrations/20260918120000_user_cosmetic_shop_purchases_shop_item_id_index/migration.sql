@@ -34,18 +34,31 @@
 --         Buffers: shared hit=1190
 --
 -- ~3.6 ms and 1,190 buffers to count twenty rows. With the index that becomes an
--- Index Only Scan. The public readers this fixes are `getPackDetail` and
--- `getShopItemById`.
+-- Index Only Scan (verified hypothetically: cost 1693.50 -> 6.35). The readers
+-- this fixes are `getPackDetail` (publicProcedure, unauthenticated) and
+-- `getShopItemById` (the moderator item edit page).
 --
--- On the multi-row paths (/shop sections, creator storefront, community feed) the
--- gain is smaller and is about IO rather than plan shape: the aggregate reads the
--- index (~100 pages) instead of the heap (1,190 pages) and still visits every row.
--- Do not expect it to move the wall clock much there.
+-- 🔴 ON THE MULTI-ROW PATHS IT IS NOT EXPECTED TO HELP AT ALL, and an earlier
+-- draft of this header claimed otherwise. The aggregate still visits every row;
+-- the table is 13 MB and permanently cached, so every buffer in every plan is a
+-- `shared hit` and there is no IO to save; and `relallvisible` is 550 of 1,190
+-- pages (46%), so an index-only scan would still fetch heap pages for the rest.
+-- The 13.7 ms is CPU over 40k in-memory rows and an index cannot take that away
+-- from a whole-table GROUP BY.
+--
+-- The heaviest multi-row consumer is `getCommunityCosmetics` — publicProcedure,
+-- offset-paged, uncached. Under `MostPopular` it carries TWO aggregates over this
+-- table: the one that produces the displayed count and the pre-existing
+-- `orderBy: { purchases: { _count: 'desc' } }`. Postgres does not dedupe them —
+-- measured at two separate 1,190-buffer scans, 24.5 ms against 13.9 ms for one.
+-- That is the path the `groupBy` fix below is owed first, and collapsing the pair
+-- is free once someone is in there.
 --
 -- WHAT THIS DOES NOT FIX, stated so it is a known decision rather than a later
 -- discovery: the aggregate is O(table), not O(page), so the cost grows with the
--- purchases table no matter what is indexed. That table went from ~300 rows/month
--- to ~8,000/month between June and September 2026. The durable fix is a `groupBy`
+-- purchases table no matter what is indexed. Monthly rows: ~200-300 through May
+-- 2026, then 429 in June, 738 in July, 7,775 in August, and September on pace for
+-- ~6,300. The durable fix is a `groupBy`
 -- restricted to the page's ids resolved alongside the `findMany` -- O(page), and
 -- it would genuinely use this index. Not worth doing at 13 ms; `withSoldCount` in
 -- src/server/selectors/cosmetic-shop.selector.ts is the seam to change when it is.
@@ -79,8 +92,15 @@
 -- and run this file again.
 --
 -- 🔴 THEN CONFIRM THE PLAN CHANGED, not just that the statement returned. Re-run
--- the single-item EXPLAIN above and require an Index Only Scan on this index. A
--- remaining Seq Scan there means invalid or missing.
+-- the SINGLE-ITEM EXPLAIN above -- the one with `WHERE si.id = $1` -- and require
+-- an Index Only Scan on this index. A remaining Seq Scan THERE means invalid or
+-- missing.
+--
+-- 🔴 DO NOT RUN THAT CHECK AGAINST A MULTI-ROW PLAN. Those keep their Seq Scan
+-- with the index in place, by design, for the reason above: an index cannot take
+-- a whole-table aggregate off a fully-cached 13 MB table. An abort condition
+-- written against the multi-row plan fires on correct behaviour, and the wall
+-- clock there will read ~13.7 ms before and after. That is success, not failure.
 --
 -- SHAPE: plain single-column, deliberately. `refunded` exists on this table but is
 -- true on 40 of 40,615 rows and the counts carry no `refunded` predicate, so a

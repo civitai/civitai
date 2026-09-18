@@ -511,6 +511,13 @@ describe('getCreatorShop resold section', () => {
 
     expect(cosmetics[0].meta.purchases).toBe(7);
     expect(resold[0].meta.purchases).toBe(7);
+    // Both storefront queries inherit `_count` by spreading the shared selector.
+    // The fixtures hand it back regardless of the select, so assert the query
+    // the code emitted — otherwise redefining `_count` on
+    // `creatorStorefrontItemSelect` reddens nothing.
+    for (const call of mocks.shopItemFindMany.mock.calls.slice(0, 2)) {
+      expect(call[0].select._count).toEqual({ select: { purchases: true } });
+    }
   });
 });
 

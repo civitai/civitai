@@ -359,7 +359,7 @@ export const upsertCosmeticShopItem = async ({
     });
   }
 
-  return withSoldCount(item);
+  return item;
 };
 
 /**

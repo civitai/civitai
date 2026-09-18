@@ -231,13 +231,35 @@ describe('upsertCosmeticShopItem — the stored purchase counter', () => {
     expect(data.meta.acceptsBlueBuzz).toBe(true);
   });
 
-  // The value written and the value handed back are different questions: the
-  // write keeps the stored counter, the response reports the rows, like every
-  // other read. Without this the save's own response is the one surface still
-  // serving the counter.
-  it('answers with the row count even though it wrote the stored counter', async () => {
+  /**
+   * The preservation above reads `existingItem.meta`, and the mock hands that
+   * back whatever the fixture says regardless of what the select asked for — so
+   * dropping `meta: true` from the select leaves all of this green while the
+   * real read returns `undefined` and every save writes `purchases: 0`.
+   *
+   * TO WHOEVER IS ABOUT TO DELETE THIS: it is the only thing holding that one
+   * word in the select, and without it the fix above is decorative.
+   */
+  it('asks the database for the stored meta it preserves', async () => {
+    await upsert({ meta: { purchases: 99 } });
+
+    expect(dbMock.dbWrite.cosmeticShopItem.findUnique.mock.calls[0][0].select.meta).toBe(true);
+  });
+
+  /**
+   * The save's response is deliberately NOT passed through `withSoldCount`,
+   * unlike every read path. Its only consumer invalidates the paged query and
+   * discards the payload, so mapping it fixed nothing and pinned a value nobody
+   * reads — which would have handed the next person a red test for correctly
+   * deleting dead code.
+   *
+   * TO WHOEVER IS ABOUT TO ADD `withSoldCount` HERE FOR CONSISTENCY: that is the
+   * decision this assertion exists to record, not an oversight. Without it the
+   * line is unpinned in both directions and either choice passes.
+   */
+  it('hands back what it wrote, not a row-derived count', async () => {
     const saved = await upsert({ meta: { purchases: 99 } });
 
-    expect(saved.meta.purchases).toBe(20);
+    expect(saved.meta.purchases).toBe(STORED_PURCHASES);
   });
 });
