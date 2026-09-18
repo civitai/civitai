@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { join, relative, resolve } from 'path';
 import { stripSourceComments } from '~/components/AppBlocks/stripSourceComments';
 
@@ -85,20 +85,20 @@ const toPosix = (path: string) => path.replace(/\\/g, '/');
 const toRel = (full: string) => toPosix(relative(SRC, full));
 
 function walk(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'node_modules' || entry === '.next') continue;
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === 'node_modules' || entry.name === '.next') continue;
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
       walk(full, out);
       continue;
     }
-    if (/\.tsx?$/.test(entry)) out.push(full);
+    if (/\.tsx?$/.test(entry.name)) out.push(full);
   }
   return out;
 }
 
 const isTestPath = (rel: string) =>
-  rel.includes('__tests__') || /\.test\.tsx?$/.test(rel) || rel.includes('/tests/');
+  rel.includes('__tests__') || /\.test\.tsx?$/.test(rel) || /(^|\/)tests\//.test(rel);
 
 const PRODUCTION_FILES = walk(SRC).filter((f) => !isTestPath(toRel(f)));
 
@@ -113,10 +113,18 @@ const PRODUCTION_FILES = walk(SRC).filter((f) => !isTestPath(toRel(f)));
  * both raw cannot gain either. It exists only to keep a char-by-char scan off the
  * ~1,700 files that obviously do not matter.
  */
+/**
+ * The raw-text gate that runs BEFORE `isCallSite` and decides what it ever sees. Named so a
+ * control can put a fixture through the same predicate the loop uses: `verdictFor` writes
+ * straight into `SOURCE`, so the detector cases run past this stage and cannot constrain it.
+ */
+const couldBeCallSite = (raw: string) =>
+  raw.includes('block-gated-images.logic') || raw.includes(SYMBOL);
+
 const SOURCE = new Map<string, string>();
 for (const full of PRODUCTION_FILES) {
   const raw = readFileSync(full, 'utf8');
-  if (!raw.includes('block-gated-images.logic') && !raw.includes(SYMBOL)) continue;
+  if (!couldBeCallSite(raw)) continue;
   SOURCE.set(toRel(full), stripSourceComments(raw));
 }
 
@@ -139,8 +147,8 @@ const SYNTHETIC_REL = 'server/services/blocks/__synthetic_consumer__.ts';
  * the ledger does not use.
  */
 function verdictFor(source: string): boolean {
-  // The delete below is unconditional, so a real file at this path would be evicted from the
-  // corpus for the rest of the run — the one way this seam could hide a consumer.
+  // The delete is unconditional, so a real file at this rel would be evicted from the corpus
+  // for the rest of the run.
   if (SOURCE.has(SYNTHETIC_REL)) throw new Error(`${SYNTHETIC_REL} exists; pick another rel`);
   SOURCE.set(SYNTHETIC_REL, source);
   try {
@@ -159,19 +167,35 @@ describe(`${SYMBOL} seam`, () => {
     expect(rels).toContain(DEFINITION);
     expect(PRODUCTION_FILES.length).toBeGreaterThan(500);
 
-    // `> 500` is not a scope check, and neither is any floor or per-tree membership test: they
-    // pin that the walk REACHES something, where what the ledger needs is that it collected
-    // everything. Dropping `x` from the extension filter, or skipping one directory, leaves any
-    // such check green while whole trees stop being scanned — so the expected side here is
-    // enumerated independently of `walk`, and a narrowing of any kind names the files it lost.
-    const scanned = new Set(PRODUCTION_FILES.map(toRel));
+    // Enumerated by a different mechanism than `walk`, with the test-path rule spelled out again
+    // rather than shared: sharing `isTestPath` moves both sides together, so widening it hides
+    // whole trees from the ledger with this assertion still green. Equality rather than
+    // containment, so narrowing EITHER side reddens.
+    const scanned = PRODUCTION_FILES.map(toRel).sort();
     const enumerated = readdirSync(SRC, { recursive: true, withFileTypes: true })
-      // `components/ActionIconInput.tsx` is a DIRECTORY, so an extension test alone is not a
-      // file test here.
+      // `components/ActionIconInput.tsx` is a DIRECTORY — an extension test is not a file test.
       .filter((entry) => entry.isFile())
       .map((entry) => toRel(join(entry.parentPath, entry.name)))
-      .filter((rel) => /\.tsx?$/.test(rel) && !isTestPath(rel));
-    expect(enumerated.filter((rel) => !scanned.has(rel))).toEqual([]);
+      .filter(
+        (rel) =>
+          /\.tsx?$/.test(rel) &&
+          !rel.includes('__tests__') &&
+          !/\.test\.tsx?$/.test(rel) &&
+          !/(^|\/)tests\//.test(rel) &&
+          !/(^|\/)(node_modules|\.next)\//.test(rel)
+      )
+      .sort();
+    expect(enumerated.length).toBeGreaterThan(3000);
+    expect(scanned).toEqual(enumerated);
+
+    // Kept beside the equality as a second, differently-failing route: this one names the tree
+    // that went missing, where the equality names four thousand paths.
+    for (const tree of ['components/', 'pages/', 'utils/']) {
+      expect(
+        scanned.some((rel) => rel.startsWith(tree)),
+        `the walk no longer reaches ${tree} — the ledger cannot see a consumer added there`
+      ).toBe(true);
+    }
   });
 
   // Pinned three ways because the normalisation has two removable halves and they fail on
@@ -210,24 +234,32 @@ describe(`${SYMBOL} seam`, () => {
       expect(verdictFor(source), source).toBe(true);
     }
 
-    // The symbol half alone — the other arm of the union. Both spellings, because a dotted-only
-    // arm leaves `.SYMBOL(` a green mutant while losing the bare call a name-preserving
-    // re-export produces.
+    // Both spellings: a dotted-only arm leaves `.SYMBOL(` a green mutant while losing the bare
+    // call a name-preserving re-export produces.
     expect(verdictFor(`gate.${SYMBOL}(row, level);`)).toBe(true);
     expect(verdictFor(`const verdict = ${SYMBOL}(row, level);`)).toBe(true);
 
-    // NEGATIVE controls. The first varies both halves; the second varies only the symbol half,
-    // which is what pins the `(` — without it the detector can degrade from "calls it" to
-    // "mentions it" and stay green.
+    // NEGATIVE controls. The second varies only the symbol half, which pins the `(` — without it
+    // the detector can degrade from "calls it" to "mentions it" and stay green.
     expect(verdictFor('see block-gated-images.logic.ts for the clamp')).toBe(false);
     expect(verdictFor(`const doc = '${SYMBOL}';`)).toBe(false);
 
     expect(SOURCE.has(SYNTHETIC_REL), 'the synthetic source outlived its test').toBe(false);
   });
 
-  // The strip runs at load, so nothing reading `SOURCE` can observe that it ran. This reddens
-  // honestly when the repo stops naming the symbol in prose — then the strip is exercised by
-  // nothing, and the fix is to add a case here rather than to touch the strip.
+  // The pre-filter decides what `isCallSite` is ever asked about, and `verdictFor` runs past it,
+  // so nothing above constrains it. Its module half is what admits a consumer that imports
+  // without spelling the symbol — drop that half and a re-exporting barrel never reaches the
+  // detector at all.
+  it('the corpus pre-filter admits a file that names the module but not the symbol', () => {
+    const barrel = `export * from '~/server/services/blocks/block-gated-images.logic';\n`;
+    expect(barrel.includes(SYMBOL)).toBe(false);
+    expect(couldBeCallSite(barrel)).toBe(true);
+    expect(couldBeCallSite(`const v = ${SYMBOL}(row, level);\n`)).toBe(true);
+    expect(couldBeCallSite('export const unrelated = 1;\n')).toBe(false);
+  });
+
+  // The strip runs at load, so nothing reading `SOURCE` can observe that it ran.
   it('strips comments before the detector reads a file', () => {
     const strippedAMention = [...SOURCE.keys()].filter((rel) => {
       const raw = readFileSync(join(SRC, rel), 'utf8');
@@ -241,10 +273,15 @@ describe(`${SYMBOL} seam`, () => {
 
     // The count above is satisfied by one file, so it cannot say WHICH comment kinds are
     // stripped: a stripper that stopped handling `//` would still ride on a block-comment
-    // survivor. Both kinds carry a gate in this repo's prose, so both are pinned here.
+    // survivor. The line comment is indented and the third case is trailing, because a
+    // line-start-anchored stripper passes a column-0 fixture and is the regression this
+    // module's own header records.
     expect(
-      stripSourceComments(`// if (v.status !== 'visible') return;\nconst a = 1;\n`)
+      stripSourceComments(`  // if (v.status !== 'visible') return;\nconst a = 1;\n`)
     ).not.toContain(`status !== 'visible'`);
+    expect(stripSourceComments(`const a = 1; // ${SYMBOL}(row, level);\n`)).not.toContain(
+      `${SYMBOL}(`
+    );
     expect(stripSourceComments(`/** calls ${SYMBOL}(row, level) */\nconst a = 1;\n`)).not.toContain(
       `${SYMBOL}(`
     );
