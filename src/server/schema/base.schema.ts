@@ -88,8 +88,17 @@ export const INT4_MAX = 2147483647;
  * limit: 0 })` parses. `postId` makes `requiresImageDbPath` true, the sort is
  * `i."index"` ASC, the query runs `LIMIT limit + 1` = 1, and
  * `rawImages.length (1) > limit (0)` promotes that first row to `nextCursor`
- * with `cursorId` = `i."index"`. On a reordered post that value is `0`. Under
- * the previous `.gt(0)` the client's own follow-up cursor came back 400.
+ * with `cursorId` = `i."index"`. On a reordered post that value is `0`.
+ *
+ * Scope of that measurement, so the next reader does not over-read it: the
+ * schema steps were executed (`limit: 0` parses; `requiresImageDbPath` is true;
+ * `{ postId, limit: 0, cursor: 0 }` is REJECTED under `.gt(0)`). The SQL and row
+ * steps are read from source — no database was reachable. One step is neither:
+ * `cursorId` is TYPED `string` but a single-field `int` sort selects the column
+ * raw, so what actually reaches the client is a number. If it were to arrive
+ * back as the string `'0'` instead, the `z.string()` member would accept it and
+ * there would be no 400 — that would change the CONSEQUENCE, not the premise
+ * the previous rationale asserted, which is that no `0` is issuable at all.
  *
  * So the floor is `.gte(0)`. That is the change, not a justification: rejecting
  * `0` was falsifiable and was falsified, and a bound whose only argument has
