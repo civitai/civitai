@@ -1,5 +1,6 @@
 import { readFileSync } from 'fs';
 import { join, resolve } from 'path';
+import ts from 'typescript';
 import { describe, expect, test } from 'vitest';
 import { BRIDGE_NACK_EXEMPT } from '~/components/AppBlocks/bridgeTelemetry';
 
@@ -16,303 +17,339 @@ import { BRIDGE_NACK_EXEMPT } from '~/components/AppBlocks/bridgeTelemetry';
  * 600s human-in-the-loop). A per-handler test cannot cover a handler nobody has
  * written yet.
  *
- * 🔴 THE POPULATION IS EVERY `if` GUARD WHOSE CONDITION TESTS `!token`, AND THE
- * ASSERTION IS ABOUT ITS OWN CONSEQUENT. Two earlier revisions of this file got
- * that wrong in ways that each read as coverage:
+ * 🔴 IT WALKS THE TYPESCRIPT AST, AND THAT IS A ROOT-CAUSE FIX RATHER THAN A
+ * PREFERENCE. Three earlier revisions of this file hand-rolled the parse, and an
+ * adversarial audit found a NEW defect in each one — every finding a parsing bug,
+ * none a logic bug:
  *
- *   - testing for a response ANYWHERE IN THE ENCLOSING HANDLER, which every
- *     handler's SUCCESS path satisfies with its own `send('<X>_RESULT', …)`;
- *   - stripping comments with a REGEX, which ate `cleaned.includes('//')` — real
- *     code inside a string literal — deleting two `)` and a `{` and leaving one
- *     `onMessage(` unmatched. The resulting "handler range" ran 71,358 chars to
- *     EOF, i.e. the paren-bounding this file advertises was inoperative over 76%
- *     of `PageBlockHost.tsx`, and a legitimate lifecycle guard added below that
- *     point failed with a message about dropped requests.
+ *   1. it tested for a response ANYWHERE IN THE ENCLOSING HANDLER, which every
+ *      handler's SUCCESS path satisfies with its own `send('<X>_RESULT', …)`;
+ *   2. it stripped comments with a REGEX, which ate `cleaned.includes('//')` —
+ *      real code inside a string — leaving one `onMessage(` unmatched and a
+ *      "handler range" running 71,358 chars to EOF;
+ *   3. it fixed that with a character scanner but then sliced the CONTENT out of
+ *      the RAW file, so a `// … a nack(…) here would just race the block's own
+ *      retry …` comment inside the branch satisfied the response check and a real
+ *      silent drop passed. A URL regex (`/^https?:\/\//`) was read as a comment
+ *      and blanked the rest of its line; `/['"]/` unbalanced the brackets and
+ *      failed CORRECT code.
  *
- * So the source is first passed through a real STATE-MACHINE scan
- * (`blankNonCode`) that replaces the contents of comments, strings and template
- * literals with spaces while preserving every byte offset. Every paren/brace walk
- * below runs on that, so nothing inside a comment or a string can move a bracket.
- * `the source scan is not corrupting the file` is the self-check that keeps it
- * honest — it is the assertion the regex version would have failed.
+ * Every one of those is a property of hand-parsing a language, so the fix is to
+ * stop: `typescript` is already a dependency, the compiler gives exact nodes, and
+ * comments, strings, template literals and regex literals are simply not
+ * expressions. The checks below are about AST SHAPE only.
  *
  * Guards OUTSIDE any `onMessage` handler are excluded: the hosts legitimately test
  * `!token` in lifecycle effects (init gating, status escalation), where there is no
  * request to answer.
  *
  * 🔴 WHAT IT DOES NOT CLAIM, STATED WIDER THAN IS COMFORTABLE.
- *   - It checks that a RESPONSE CALL is present in the consequent, not that the
- *     response is correct, correlated, or accepted by the SDK's inbound validator.
- *     Those are behavioural claims and they live in the browser suites.
- *   - The population is the literal spelling `!token`. These equally-silent
+ *   - It checks that a RESPONSE CALL is present and unconditional in the branch,
+ *     not that the response is correct, correlated, or accepted by the SDK's
+ *     inbound validator. Those are behavioural claims and they live in the browser
+ *     suites.
+ *   - The population is a test on the identifier `token`. These equally-silent
  *     spellings are NOT in it: `if (token) { …respond… }` with no `else`,
  *     `const t = token; if (!t) return;`, `if (token == null)`, `if (!props.token)`.
  *     A handler written any of those ways passes this file while dropping requests.
- *     Widening the regex without widening the population walk would be worse than
- *     the gap, so it is named here rather than half-closed.
+ *     Widening the condition match without widening the population walk would be
+ *     worse than the gap, so it is named here rather than half-closed.
  */
 
 const REPO_ROOT = resolve(__dirname, '..', '..', '..', '..');
 const HOSTS = ['PageBlockHost.tsx', 'IframeHost.tsx'] as const;
 
-/**
- * Replace the CONTENTS of comments, strings and template literals with spaces,
- * preserving length and newlines so every offset still maps to the real file.
- *
- * 🔴 A REGEX CANNOT DO THIS, and the attempt is what broke the previous revision:
- * `/(^|[^:])\/\/.*$/gm` treats the `//` inside `cleaned.includes('//')` as the
- * start of a comment and deletes the rest of the line — real code. A state machine
- * only enters a comment from CODE state, so a `//` inside a string is just two
- * characters.
- *
- * Regex literals are deliberately NOT tracked (telling a regex from a division
- * needs real parsing). A regex containing an unmatched quote would therefore
- * confuse the scan — which is exactly what the self-check below is for: it fails
- * loudly instead of silently mis-bounding a handler.
- */
-export function blankNonCode(src: string): string {
-  const out = src.split('');
-  let i = 0;
-  const blank = (at: number) => {
-    if (out[at] !== '\n') out[at] = ' ';
-  };
-  while (i < src.length) {
-    const c = src[i];
-    const n = src[i + 1];
-    if (c === '/' && n === '/') {
-      while (i < src.length && src[i] !== '\n') blank(i++);
-      continue;
-    }
-    if (c === '/' && n === '*') {
-      blank(i++);
-      blank(i++);
-      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) blank(i++);
-      blank(i++);
-      blank(i++);
-      continue;
-    }
-    if (c === "'" || c === '"' || c === '`') {
-      i++; // keep the opening quote so the token is still visible as a string
-      while (i < src.length && src[i] !== c) {
-        if (src[i] === '\\') blank(i++);
-        if (i < src.length) blank(i++);
-      }
-      i++; // keep the closing quote
-      continue;
-    }
-    i++;
-  }
-  return out.join('');
+function parse(file: string): ts.SourceFile {
+  const path = join(REPO_ROOT, 'src', 'components', 'AppBlocks', file);
+  return ts.createSourceFile(
+    path,
+    readFileSync(path, 'utf8'),
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    ts.ScriptKind.TSX
+  );
 }
 
-function hostFile(file: string): string {
-  return readFileSync(join(REPO_ROOT, 'src', 'components', 'AppBlocks', file), 'utf8');
+function walk(node: ts.Node, visit: (n: ts.Node) => void): void {
+  visit(node);
+  node.forEachChild((c) => walk(c, visit));
 }
 
-/** A call that puts something on the wire for the block, rather than swallowing the request. */
-const RESPONDS = /\bnack\s*\(|\bsend\s*\(|\.reply\s*\(/;
-
-/** Index just past the `)` / `}` that closes the bracket at `open`. */
-function matchBracket(code: string, open: number, o: '(' | '{', c: ')' | '}'): number {
-  let depth = 0;
-  for (let i = open; i < code.length; i++) {
-    if (code[i] === o) depth++;
-    else if (code[i] === c) {
-      depth--;
-      if (depth === 0) return i + 1;
-    }
-  }
-  return code.length;
-}
-
-type Handler = { start: number; end: number; type: string; inlineFn: boolean };
+type Handler = {
+  /** The registered message type, read from the call's string-literal argument. */
+  type: string;
+  body: ts.Node;
+  /** Was the handler an inline function, rather than a reference to one elsewhere? */
+  inlineFn: boolean;
+};
 
 /**
- * Every `onMessage(...)` registration, bounded by its OWN parentheses.
+ * Every `onMessage('<TYPE>', <handler>)` registration.
  *
- * The generic argument (`onMessage<{ requestId?: unknown }>(`) is skipped by angle
- * depth — with `=>` excluded, because a function type inside the generic would
- * otherwise drive the counter negative and make the call's `(` unfindable, which
- * silently drops the whole handler out of the population.
+ * 🔴 THE TYPE COMES FROM THE ARGUMENT NODE, never from "the first UPPER_SNAKE
+ * token in the call text". The text spelling was satisfiable by a COMMENT, which
+ * let a handler inherit another type's NACK exemption — re-opening the hole this
+ * file exists to close, through the one exempt key that has no parity test.
  */
-function handlers(src: string): Handler[] {
-  const code = blankNonCode(src);
+function handlers(sf: ts.SourceFile): Handler[] {
   const out: Handler[] = [];
-  for (const m of code.matchAll(/\bonMessage\s*[<(]/g)) {
-    let i = (m.index as number) + 'onMessage'.length;
-    let angle = 0;
-    while (i < code.length) {
-      const ch = code[i];
-      if (ch === '<') angle++;
-      else if (ch === '>' && code[i - 1] !== '=') angle--;
-      else if (ch === '(' && angle <= 0) break;
-      i++;
-    }
-    if (i >= code.length) continue;
-    const end = matchBracket(code, i, '(', ')');
-    // The registered type is the first quoted UPPER_SNAKE literal in the call —
-    // read from the ORIGINAL source, since the scan blanked string contents.
-    const typeMatch = /'([A-Z][A-Z_0-9]*)'/.exec(src.slice(i, end));
-    // Is the handler an inline function, or a reference to one declared elsewhere?
-    // A reference is invisible to this file's walk, so it is refused outright.
-    const afterComma = src.slice(i, end).replace(/^\([^,]*,\s*/, '');
+  walk(sf, (n) => {
+    if (!ts.isCallExpression(n)) return;
+    const callee = n.expression;
+    if (!ts.isIdentifier(callee) || callee.text !== 'onMessage') return;
+    const [first, second] = n.arguments;
+    if (!first || !ts.isStringLiteralLike(first)) return;
+    const inlineFn = !!second && (ts.isArrowFunction(second) || ts.isFunctionExpression(second));
     out.push({
-      start: i,
-      end,
-      type: typeMatch ? typeMatch[1] : '<unknown>',
-      inlineFn: /^(async\s*)?(\(|function\b)/.test(afterComma),
+      type: first.text,
+      body: inlineFn ? (second as ts.FunctionLikeDeclaration) : n,
+      inlineFn,
     });
-  }
+  });
   return out;
+}
+
+/** Does this expression test `!token`? */
+function testsNotToken(expr: ts.Expression): boolean {
+  let found = false;
+  walk(expr, (n) => {
+    if (
+      ts.isPrefixUnaryExpression(n) &&
+      n.operator === ts.SyntaxKind.ExclamationToken &&
+      ts.isIdentifier(n.operand) &&
+      n.operand.text === 'token'
+    ) {
+      found = true;
+    }
+  });
+  return found;
+}
+
+/**
+ * A call that puts something on the wire for the block (or, for an exempt type,
+ * records the refusal) — matched on the CALLEE NODE, so an aliased indirection
+ * (`const count = () => reportNoToken(…); … count();`) does not qualify. That
+ * alias is a real bypass shape and it is lint-clean, so the check is deliberately
+ * strict: the call must name the helper directly.
+ */
+function calleeName(call: ts.CallExpression): string | null {
+  const e = call.expression;
+  if (ts.isIdentifier(e)) return e.text;
+  if (ts.isPropertyAccessExpression(e) && ts.isIdentifier(e.name)) return e.name.text;
+  return null;
+}
+
+const RESPONDERS = new Set(['nack', 'send', 'reply']);
+
+/**
+ * Is `call` reached UNCONDITIONALLY from `root`?
+ *
+ * 🔴 THE POINT OF THE WHOLE `REQUEST_TOKEN` PARITY ASSERTION. Every one of these
+ * restores the defect while looking ordinary, and a check that only asks "does the
+ * branch mention the call" passes all of them:
+ *
+ *     if (requestId !== undefined) reportNoToken('REQUEST_TOKEN');
+ *     requestId !== undefined && reportNoToken('REQUEST_TOKEN');
+ *     requestId === undefined ? undefined : reportNoToken('REQUEST_TOKEN');
+ *
+ * An earlier revision tried to catch this by COUNTING `if (` occurrences before
+ * the call. That was both too weak (it saw neither the `&&` nor the ternary) and
+ * too strong (it fired on the payload-shape guard every sibling handler opens
+ * with, so making REQUEST_TOKEN consistent with its siblings broke the test). The
+ * ancestor walk is the property that was actually meant.
+ */
+function isUnconditionalWithin(call: ts.Node, root: ts.Node): boolean {
+  for (let n = call.parent; n && n !== root; n = n.parent) {
+    if (ts.isIfStatement(n) || ts.isConditionalExpression(n) || ts.isSwitchStatement(n))
+      return false;
+    // 🔴 A CALL INSIDE A NESTED FUNCTION IS NOT EXECUTED BY THIS BRANCH — it is
+    // merely mentioned by it. That is what let the alias shape survive:
+    //   const count = () => reportNoToken('REQUEST_TOKEN');
+    //   if (requestId !== undefined) count();
+    // The `if` wraps `count()`, not the arrow, so an ancestor walk from the
+    // reportNoToken call finds no conditional at all. Measured: SURVIVED a
+    // battery in which every other spelling of the same defect went red.
+    if (ts.isFunctionLike(n)) return false;
+    if (ts.isBinaryExpression(n)) {
+      const k = n.operatorToken.kind;
+      if (
+        k === ts.SyntaxKind.AmpersandAmpersandToken ||
+        k === ts.SyntaxKind.BarBarToken ||
+        k === ts.SyntaxKind.QuestionQuestionToken
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 type TokenGuard = {
-  index: number;
-  condition: string;
-  consequent: string;
-  braced: boolean;
-  handler: Handler | null;
-  /** `if (` occurrences inside the handler, before this guard. */
-  enclosingIfsInHandler: number;
+  handler: Handler;
+  stmt: ts.IfStatement;
+  consequent: ts.Statement;
+  /** Is this guard itself nested inside another conditional in the handler? */
+  nested: boolean;
 };
 
-/** Every `if (…!token…) …` guard in `src`, with its own consequent. */
-function tokenGuards(src: string): TokenGuard[] {
-  const code = blankNonCode(src);
-  const hs = handlers(src);
+/** Every `if (…!token…)` guard inside an `onMessage` handler body. */
+function tokenGuards(sf: ts.SourceFile): TokenGuard[] {
   const out: TokenGuard[] = [];
-  for (const m of code.matchAll(/\bif\s*\(/g)) {
-    const open = (m.index as number) + m[0].length - 1;
-    const afterCond = matchBracket(code, open, '(', ')');
-    const condition = src.slice(open, afterCond);
-    // 🔴 THE `[^!]` IS LOAD-BEARING. Without it `hasToken: !!token` — a real
-    // argument in `IframeHost`'s init gate — matches as a `!token` test, dragging
-    // a lifecycle effect into the population and failing for a reason that has
-    // nothing to do with a dropped request. Measured, not anticipated.
-    if (!/(^|[^A-Za-z0-9_$!])!token\b/.test(condition)) continue;
-    let rest = afterCond;
-    while (rest < code.length && /\s/.test(code[rest])) rest++;
-    const braced = code[rest] === '{';
-    // Unbraced single statement — `if (!token) return;`. The `;` is located in the
-    // BLANKED source so one inside a string cannot end the statement early.
-    const end = braced
-      ? matchBracket(code, rest, '{', '}')
-      : code.indexOf(';', rest) === -1
-      ? code.length
-      : code.indexOf(';', rest) + 1;
-    const handler = hs.find((h) => (m.index as number) >= h.start && (m.index as number) < h.end);
-    const before = handler ? code.slice(handler.start, m.index as number) : '';
-    out.push({
-      index: m.index as number,
-      condition,
-      consequent: src.slice(rest, end),
-      braced,
-      handler: handler ?? null,
-      enclosingIfsInHandler: (before.match(/\bif\s*\(/g) ?? []).length,
+  for (const h of handlers(sf)) {
+    if (!h.inlineFn) continue;
+    walk(h.body, (n) => {
+      if (!ts.isIfStatement(n) || !testsNotToken(n.expression)) return;
+      out.push({
+        handler: h,
+        stmt: n,
+        consequent: n.thenStatement,
+        nested: !isUnconditionalWithin(n, h.body),
+      });
     });
   }
   return out;
 }
 
-function inHandler(src: string): TokenGuard[] {
-  return tokenGuards(src).filter((g) => g.handler !== null);
+/** Calls of `name` inside `scope`. */
+function callsTo(scope: ts.Node, name: string): ts.CallExpression[] {
+  const out: ts.CallExpression[] = [];
+  walk(scope, (n) => {
+    if (ts.isCallExpression(n) && calleeName(n) === name) out.push(n);
+  });
+  return out;
 }
 
 /**
- * Does this consequent legally answer nothing?
+ * Does this branch actually PUT SOMETHING ON THE WIRE when it runs?
  *
- * 🔴 THE EXEMPT TYPE MUST BE THE HANDLER'S OWN. Keyed on the bare string, the
- * escape hatch was wider than its docstring: any handler could buy silence by
- * passing `'REQUEST_TOKEN'` — the likeliest route being to copy that handler's
- * guard and forget to change the argument, which ALSO mislabels the telemetry.
+ * 🔴 UNCONDITIONALLY, AND NOT FROM INSIDE A NESTED FUNCTION — the same bar the
+ * exempt-count path is held to. "The branch mentions `send(`" is a weaker claim
+ * than the test's own name ("ANSWERS in its own branch") and is satisfied by a
+ * reply parked in a callback that this branch only registers, which is precisely
+ * the silent drop with extra steps.
  */
+function responds(g: TokenGuard): boolean {
+  let ok = false;
+  walk(g.consequent, (n) => {
+    if (!ts.isCallExpression(n)) return;
+    const name = calleeName(n);
+    if (name && RESPONDERS.has(name) && isUnconditionalWithin(n, g.consequent)) ok = true;
+  });
+  return ok;
+}
+
+/**
+ * The ONE legal way to answer nothing: count the refusal, for a type whose failure
+ * reply the SDK's own validator would drop.
+ *
+ * 🔴 THE EXEMPT TYPE MUST BE THE HANDLER'S OWN, AND THE CALL MUST BE
+ * UNCONDITIONAL. Keyed on the bare string, the hatch was wider than its docstring:
+ * any handler could buy silence by passing another type's name — the likeliest
+ * route being to copy the REQUEST_TOKEN guard and forget to change the argument,
+ * which ALSO mislabels the telemetry.
+ */
+function countsOnlyForExemptType(g: TokenGuard): boolean {
+  if (!Object.prototype.hasOwnProperty.call(BRIDGE_NACK_EXEMPT, g.handler.type)) return false;
+  return callsTo(g.consequent, 'reportNoToken').some(
+    (c) =>
+      c.arguments.length === 1 &&
+      ts.isStringLiteralLike(c.arguments[0]) &&
+      c.arguments[0].text === g.handler.type &&
+      isUnconditionalWithin(c, g.consequent)
+  );
+}
+
 function answersOrIsExempt(g: TokenGuard): boolean {
-  if (RESPONDS.test(g.consequent)) return true;
-  if (!g.handler || !Object.prototype.hasOwnProperty.call(BRIDGE_NACK_EXEMPT, g.handler.type)) {
-    return false;
-  }
-  return new RegExp(`\\breportNoToken\\s*\\(\\s*'${g.handler.type}'`).test(g.consequent);
+  return responds(g) || countsOnlyForExemptType(g);
+}
+
+function describeGuard(g: TokenGuard, sf: ts.SourceFile): string {
+  const { line } = sf.getLineAndCharacterOfPosition(g.stmt.getStart(sf));
+  return `${g.handler.type} (line ${line + 1})`;
 }
 
 describe('no host handler drops a credential-less request silently', () => {
-  test.each(HOSTS)('%s: the source scan is not corrupting the file', (file) => {
-    // 🔴 THE SELF-CHECK THE REGEX VERSION WOULD HAVE FAILED. If the scan mistakes
-    // code for a comment (or a string for code), brackets stop balancing and a
-    // handler range runs away — and every assertion below then measures a file
-    // that does not exist. Both symptoms are pinned: balance, and a bound on the
-    // largest handler.
-    const code = blankNonCode(hostFile(file));
-    const count = (ch: string) => (code.match(new RegExp(`\\${ch}`, 'g')) ?? []).length;
-    expect(count('(')).toBe(count(')'));
-    expect(count('{')).toBe(count('}'));
-    expect(count('[')).toBe(count(']'));
-    const hs = handlers(hostFile(file));
-    expect(hs.length).toBeGreaterThan(0);
-    expect(Math.max(...hs.map((h) => h.end - h.start))).toBeLessThan(8000);
-    expect(hs.filter((h) => h.end >= code.length)).toEqual([]);
+  test.each(HOSTS)('%s: the AST walk finds the handlers it is meant to', (file) => {
+    // POSITIVE CONTROL. Every assertion below is of the form "none of the found
+    // guards is bad", which a walk that found NOTHING satisfies vacuously — the
+    // single most likely way this file could read as coverage while providing
+    // none. `typescript` also parses `.tsx` only when told to, and a wrong
+    // ScriptKind yields a tree with no call expressions rather than an error.
+    const sf = parse(file);
+    const hs = handlers(sf);
+    expect(hs.length).toBeGreaterThan(5);
+    expect(hs.map((h) => h.type)).toContain('REQUEST_TOKEN');
+    expect(tokenGuards(sf).length).toBeGreaterThan(0);
   });
 
   test.each(HOSTS)('%s: every handler is registered with an INLINE function', (file) => {
-    // A handler hoisted into a `useCallback` and passed by reference is invisible
-    // to every walk in this file — its `!token` guard lives outside the
-    // registration's parentheses. Refusing the shape keeps the population
-    // complete; it is a real restriction on the hosts, and a cheap one.
-    const byRef = handlers(hostFile(file))
+    // A handler hoisted into a `useCallback` and passed by reference puts its
+    // `!token` guard outside the registration, where `tokenGuards` cannot see it.
+    // Refusing the shape keeps the population complete.
+    const byRef = handlers(parse(file))
       .filter((h) => !h.inlineFn)
       .map((h) => h.type);
     expect(byRef).toEqual([]);
   });
 
-  test.each(HOSTS)('%s: every in-handler `!token` guard ANSWERS in its own consequent', (file) => {
-    const guards = inHandler(hostFile(file));
-    // POSITIVE CONTROL for the parse. A walk that matched nothing would make the
-    // `every` below vacuously true, and the guard would read as coverage while
-    // providing none.
-    expect(guards.length).toBeGreaterThan(0);
-    const silent = guards
+  test.each(HOSTS)('%s: every in-handler `!token` guard ANSWERS in its own branch', (file) => {
+    const sf = parse(file);
+    const silent = tokenGuards(sf)
       .filter((g) => !answersOrIsExempt(g))
-      .map((g) => `${g.handler?.type}: ${g.condition.replace(/\s+/g, ' ').slice(0, 60)}`);
+      .map((g) => describeGuard(g, sf));
     expect(silent).toEqual([]);
   });
 
-  test.each(HOSTS)('%s: no in-handler `!token` guard is an UNBRACED one-liner', (file) => {
-    // Belt to the population walk: the unbraced shape is how the original silent
-    // drops were written, and forbidding it keeps every consequent a block a
-    // future reader has to look inside.
-    const unbraced = inHandler(hostFile(file))
-      .filter((g) => !g.braced)
-      .map((g) => `${g.handler?.type}`);
-    expect(unbraced).toEqual([]);
+  test.each(HOSTS)('%s: no `!token` guard is nested inside another conditional', (file) => {
+    // A guard reached only on some other condition is a guard that does not always
+    // run. It is also how the `requestId`-gated count kept coming back.
+    const sf = parse(file);
+    const nested = tokenGuards(sf)
+      .filter((g) => g.nested)
+      .map((g) => describeGuard(g, sf));
+    expect(nested).toEqual([]);
   });
 
   test('lifecycle `!token` guards OUTSIDE a handler exist and are deliberately excluded', () => {
-    // The exclusion is real, so it is asserted rather than assumed: if this set
-    // ever empties, the filter has stopped discriminating and the in-handler
+    // The exclusion is real, so it is asserted rather than assumed: if this count
+    // ever reaches zero, the filter has stopped discriminating and the in-handler
     // assertions above are being applied to the whole file by accident.
-    const src = hostFile('PageBlockHost.tsx');
-    expect(tokenGuards(src).length).toBeGreaterThan(inHandler(src).length);
+    const sf = parse('PageBlockHost.tsx');
+    let all = 0;
+    walk(sf, (n) => {
+      if (ts.isIfStatement(n) && testsNotToken(n.expression)) all++;
+    });
+    expect(all).toBeGreaterThan(tokenGuards(sf).length);
   });
 
   test('the PageBlockHost population is the size the behavioural suites believe it is', () => {
     // 🔴 A LEDGER, NOT A TASTE CHECK. It fails when the set GROWS (a new handler
-    // nobody has looked at) *and* when it SHRINKS (a handler deleted or its guard
-    // quietly moved somewhere this parse cannot see). Either direction means the
-    // behavioural coverage and the code have drifted, and the point is that a
-    // human reads this line again before changing the number.
-    const guards = inHandler(hostFile('PageBlockHost.tsx'));
+    // nobody has looked at) *and* when it SHRINKS (a handler deleted, or its guard
+    // moved somewhere this walk does not reach). Either direction means the
+    // behavioural coverage and the code have drifted.
+    //
+    // 🔴 BUMPING THESE NUMBERS IS NOT THE FIX FOR A RED RUN. The `silent` and
+    // `nested` assertions above are the ones that carry meaning; this one exists so
+    // a human looks. If those two are red, changing these numbers hides a defect.
+    const sf = parse('PageBlockHost.tsx');
+    const guards = tokenGuards(sf);
     expect(guards).toHaveLength(31);
-    // 19 route through the shared `nack` helper added with the bridge counter
-    // (reply + count in one call); 11 keep a bespoke error variant that predates
-    // it (the `{ok,error}` and `settlement.reply` shapes) and call
-    // `reportNoToken` alongside it; 1 — REQUEST_TOKEN — counts only, because the
-    // protocol has no sendable failure reply for it.
-    expect(guards.filter((g) => /\bnack\s*\(/.test(g.consequent))).toHaveLength(19);
-    expect(guards.filter((g) => /\breportNoToken\s*\(/.test(g.consequent))).toHaveLength(12);
-    // 🔴 EVERY refusal reaches the counter — this is the relationship the metric's
-    // own help text asserts ("a handler ran and refused because the block
-    // credential was falsy") and the one a partial migration silently breaks.
+    // 19 route through the shared `nack` helper (reply + count in one call); 11
+    // keep a bespoke error variant that predates it and call `reportNoToken`
+    // alongside it; 1 — REQUEST_TOKEN — counts only, because the protocol has no
+    // sendable failure reply for it.
+    expect(guards.filter((g) => callsTo(g.consequent, 'nack').length > 0)).toHaveLength(19);
+    expect(guards.filter((g) => callsTo(g.consequent, 'reportNoToken').length > 0)).toHaveLength(
+      12
+    );
+    // 🔴 EVERY refusal reaches the counter — the relationship the metric's own help
+    // text asserts, and the one a partial migration silently breaks.
     expect(
-      guards.filter((g) => /\bnack\s*\(|\breportNoToken\s*\(/.test(g.consequent))
+      guards.filter(
+        (g) =>
+          callsTo(g.consequent, 'nack').length > 0 ||
+          callsTo(g.consequent, 'reportNoToken').length > 0
+      )
     ).toHaveLength(31);
   });
 
@@ -323,22 +360,17 @@ describe('no host handler drops a credential-less request silently', () => {
     // reply the SDK validator would drop, so the count is its ONLY observable; a
     // host that counts it only when a `requestId` happens to be present reports
     // nothing on the requestId-less shape the protocol explicitly allows.
-    const guards = inHandler(hostFile(file)).filter((g) => g.handler?.type === 'REQUEST_TOKEN');
-    // Selected by the HANDLER'S REGISTERED TYPE, not by the string appearing in a
-    // consequent: the string spelling matched the first guard mentioning
-    // REQUEST_TOKEN anywhere, so an unrelated earlier guard could satisfy the whole
-    // parity test while the real handler went unexamined.
+    const sf = parse(file);
+    const guards = tokenGuards(sf).filter((g) => g.handler.type === 'REQUEST_TOKEN');
     expect(guards, `${file} has no REQUEST_TOKEN !token guard`).toHaveLength(1);
-    const guard = guards[0];
-    expect(guard.consequent).toMatch(/reportNoToken\('REQUEST_TOKEN'\)/);
-    // No `if` inside the consequent before the report…
-    expect(guard.consequent.slice(0, guard.consequent.indexOf('reportNoToken'))).not.toMatch(
-      /\bif\s*\(/
+    const g = guards[0];
+    const reports = callsTo(g.consequent, 'reportNoToken').filter(
+      (c) =>
+        c.arguments.length === 1 &&
+        ts.isStringLiteralLike(c.arguments[0]) &&
+        c.arguments[0].text === 'REQUEST_TOKEN'
     );
-    // …and no `if` WRAPPING the guard either. Hoisting the old
-    // `if (requestId !== undefined)` one level out restores exactly the defect
-    // this test exists for, and an assertion that only reads inside the consequent
-    // cannot see it. The `!token` guard must be the handler's FIRST `if`.
-    expect(guard.enclosingIfsInHandler).toBe(0);
+    expect(reports).toHaveLength(1);
+    expect(isUnconditionalWithin(reports[0], g.consequent)).toBe(true);
   });
 });
