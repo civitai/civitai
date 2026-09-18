@@ -8,7 +8,6 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { hubSourceKindLabel, kindColor } from '~/components/Hubs/hub.utils';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import type { HubTemplate } from '~/server/schema/user-hub.schema';
-import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { parseCivitaiUrlSafe } from '~/utils/civitai-url';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -50,22 +49,23 @@ function RowAvatar({ item }: { item: Suggestion }) {
   );
 }
 
-type Kind = 'all' | HubSourceValue['type'];
-
-const kinds: { value: Kind; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: UserHubSourceType.User, label: 'Creators' },
-  { value: UserHubSourceType.Model, label: 'Models' },
-  { value: UserHubSourceType.Tag, label: 'Tags' },
+// Named for what a person recognises, not for the query behind them. "My models" is
+// separate from bookmarks on purpose: a creator does not think of their own catalogue
+// as something they saved.
+//
+// Tags are deliberately NOT a tab. There is no list of yours to browse — only the
+// site's biggest tags, and one of those matched 1,920 of the last 2,000 images, so a
+// one-click list of them builds a hub that is the whole site. Tags are searchable.
+const tabs: { template: HubTemplate; label: string }[] = [
+  { template: 'following', label: 'Creators' },
+  { template: 'my-models', label: 'My models' },
+  { template: 'bookmarks', label: 'Bookmarked' },
 ];
 
-// Named for what a person recognises, not for the query behind them. "Your models"
-// is separate from bookmarks on purpose: a creator does not think of their own
-// catalogue as something they saved.
-const groupLabels: Record<HubTemplate, string> = {
-  following: 'Creators you follow',
-  'my-models': 'Your models',
-  bookmarks: 'Models you bookmarked',
+const emptyTab: Record<HubTemplate, string> = {
+  following: 'You are not following anyone yet — search for creators above.',
+  'my-models': 'You have no published models yet.',
+  bookmarks: 'Nothing bookmarked yet — search for models above.',
 };
 
 // What a group shows before you type. Enough to say what kind of thing belongs here;
@@ -113,7 +113,6 @@ function Row({
 }
 
 function Group({
-  label,
   total,
   template,
   items,
@@ -123,7 +122,6 @@ function Group({
   onAddMany,
   remaining,
 }: {
-  label: string;
   total?: number;
   template?: HubTemplate;
   items: Suggestion[];
@@ -158,14 +156,10 @@ function Group({
   return (
     <div className="flex flex-col border-b border-gray-3 last:border-b-0 dark:border-dark-4">
       <div className="flex items-center gap-2 bg-gray-1 px-3 py-1.5 dark:bg-dark-7">
-        <Text size="xs" fw={600} c="dimmed" lineClamp={1}>
-          {label}
+        <Text size="xs" c="dimmed" lineClamp={1}>
+          Showing {Math.min(items.length, PREVIEW_ROWS)} of{' '}
+          {abbreviateNumber(total ?? items.length)}
         </Text>
-        {!!total && (
-          <Text size="xs" c="dimmed" className="shrink-0">
-            {abbreviateNumber(total)}
-          </Text>
-        )}
         {!!template && !!onAddMany && bulkCount > 0 && (
           <Button
             size="compact-xs"
@@ -228,7 +222,7 @@ export function HubSourceInput({
   showSuggestions?: boolean;
 }) {
   const [query, setQuery] = useState('');
-  const [kind, setKind] = useState<Kind>('all');
+  const [tab, setTab] = useState<HubTemplate>('following');
   const [debounced] = useDebouncedValue(query, 400);
   const term = debounced.trim();
 
@@ -249,9 +243,7 @@ export function HubSourceInput({
   });
 
   const named = (items: (Omit<Suggestion, 'alias'> & { alias: string | null })[]) =>
-    items
-      .filter((item) => (kind === 'all' ? true : item.type === kind))
-      .map((item) => ({ ...item, alias: item.alias ?? '' }));
+    items.map((item) => ({ ...item, alias: item.alias ?? '' }));
 
   const results: Suggestion[] = url
     ? resolved.data
@@ -278,50 +270,81 @@ export function HubSourceInput({
         onChange={(event) => setQuery(event.currentTarget.value)}
       />
 
-      {!!showSuggestions && (
-        <div className="flex flex-wrap gap-1.5">
-          {kinds.map((option) => (
-            <UnstyledButton
-              key={option.value}
-              onClick={() => setKind(option.value)}
-              className={clsx(
-                'rounded-full border px-3 py-1 text-xs font-semibold',
-                kind === option.value
-                  ? 'border-blue-6 bg-blue-6 text-white'
-                  : 'border-gray-3 hover:bg-gray-1 dark:border-dark-4 dark:hover:bg-dark-6'
-              )}
-            >
-              {option.label}
-            </UnstyledButton>
+      {!!results.length && (
+        <div className="overflow-hidden rounded-md border border-gray-3 dark:border-dark-4">
+          {results.map((item) => (
+            <Row
+              key={`${item.type}-${item.targetId}`}
+              item={item}
+              added={isAdded(item)}
+              onToggle={() => (isAdded(item) ? onRemove(item) : add(item))}
+            />
           ))}
         </div>
       )}
 
-      {(!!results.length || (!term && !!showSuggestions)) && (
-        <div className="overflow-hidden rounded-md border border-gray-3 dark:border-dark-4">
-          {term
-            ? results.map((item) => (
-                <Row
-                  key={`${item.type}-${item.targetId}`}
-                  item={item}
-                  added={isAdded(item)}
-                  onToggle={() => (isAdded(item) ? onRemove(item) : add(item))}
-                />
-              ))
-            : (groups.data ?? []).map((group) => (
-                <Group
-                  key={group.template}
-                  label={groupLabels[group.template]}
-                  template={group.template}
-                  total={group.total}
-                  items={named(group.items)}
-                  isAdded={isAdded}
-                  onAdd={add}
-                  onRemove={onRemove}
-                  onAddMany={onAddMany}
-                  remaining={remaining}
-                />
-              ))}
+      {!term && !!showSuggestions && (
+        <div className="flex flex-col gap-2">
+          {/* A shelf, not a mode: the search box above covers every kind whatever is
+              selected here, which is what the old type tabs got wrong. */}
+          <div className="flex flex-wrap gap-1.5">
+            {tabs.map((option) => {
+              const group = groups.data?.find((item) => item.template === option.template);
+              return (
+                <UnstyledButton
+                  key={option.template}
+                  onClick={() => setTab(option.template)}
+                  className={clsx(
+                    'flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold',
+                    tab === option.template
+                      ? 'border-blue-6 bg-blue-6 text-white'
+                      : 'border-gray-3 hover:bg-gray-1 dark:border-dark-4 dark:hover:bg-dark-6'
+                  )}
+                >
+                  {option.label}
+                  {!!group?.total && (
+                    <span className={tab === option.template ? 'opacity-80' : 'opacity-60'}>
+                      {abbreviateNumber(group.total)}
+                    </span>
+                  )}
+                </UnstyledButton>
+              );
+            })}
+          </div>
+
+          <div className="overflow-hidden rounded-md border border-gray-3 dark:border-dark-4">
+            {groups.isLoading ? (
+              <div className="flex items-center gap-2 px-3 py-4">
+                <Loader size="xs" />
+                <Text size="xs" c="dimmed">
+                  Loading…
+                </Text>
+              </div>
+            ) : (
+              (() => {
+                const group = groups.data?.find((item) => item.template === tab);
+                if (!group?.items.length)
+                  return (
+                    <Text size="xs" c="dimmed" className="px-3 py-4">
+                      {emptyTab[tab]}
+                    </Text>
+                  );
+
+                return (
+                  <Group
+                    template={group.template}
+                    total={group.total}
+                    items={named(group.items)}
+                    isAdded={isAdded}
+                    onAdd={add}
+                    onRemove={onRemove}
+                    onAddMany={onAddMany}
+                    remaining={remaining}
+                  />
+                );
+              })()
+            )}
+          </div>
         </div>
       )}
 
