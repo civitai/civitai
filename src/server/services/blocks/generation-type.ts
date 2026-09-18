@@ -247,14 +247,25 @@ export const CUSTOM_COMFY_GENERATION_SUBTYPES: readonly string[] = [
  * Max characters of a pass-through SUBTYPE — i.e. of the submitted `$type`.
  *
  * 🔴 MUST EQUAL the wire bound `PASS_THROUGH_TYPE_MAX_CHARS` in
- * `~/server/schema/blocks/workflow.schema`, and it is a LITERAL here rather than
- * an import for the same reason `IMAGE_SUBTYPE_BY_WORKFLOW`'s left side is: this
- * module is pulled in by `buzz-attribution.service` on the fire-and-forget spend
- * path and must stay import-light, while `workflow.schema` pulls in zod and the
- * whole block wire surface. `generation-type.test.ts` imports both and pins them
- * equal in BOTH directions — a wire cap that grows past this one would silently
- * degrade every long `$type` to a bare `step`, which is a depth loss no error
- * reports.
+ * `~/server/schema/blocks/workflow.schema`. `generation-type.test.ts` imports
+ * both and pins them equal in BOTH directions — a wire cap that grows past this
+ * one would silently degrade every long `$type` to a bare `step`, which is a
+ * depth loss no error reports.
+ *
+ * It is a LITERAL here rather than an import to keep this module import-light on
+ * the fire-and-forget spend path (`buzz-attribution.service` pulls it in). ⚠️ BE
+ * EXACT ABOUT WHAT THAT BUYS — a draft of this comment said `workflow.schema`
+ * "pulls in zod and the whole block wire surface", and review MEASURED that
+ * false: every runtime module `workflow.schema` imports is ALREADY in this
+ * module's graph via `./recipes` and `./steps` (zod included). Importing it would
+ * add exactly ONE module — `workflow.schema` itself, whose cost is evaluating its
+ * own ~60 zod builders at load. That is a real cost and a narrow one, and it is
+ * WEAKER than the `IMAGE_SUBTYPE_BY_WORKFLOW` precedent, where `workflow.service`
+ * genuinely does drag in the generation-graph pipeline. The copy is defensible
+ * because the seam test pins it; do not cite this precedent for a copy that has
+ * no such test. The repo's default one directory over is the opposite —
+ * `steps/chat-completion.step.ts`'s `MAX_TOOL_NAME_CHARS` says "Import this; do
+ * not write the number again."
  */
 export const BLOCK_PASS_THROUGH_SUBTYPE_MAX_CHARS = 64;
 
@@ -272,6 +283,30 @@ export const BLOCK_PASS_THROUGH_SUBTYPE_MAX_CHARS = 64;
  * killable through this one expression: drop the anchors and `step:a:b` is
  * accepted; drop the `{1,N}` and a 65-char `$type` is; widen the class and
  * `step:a b` is. `generation-type.test.ts` asserts all three.
+ *
+ * 🔴 THE CHARACTER CLASS IS A FOURTH PROPERTY, AND IT IS THE ONE WITH NO LIVE
+ * GUARD. Non-empty, colon-free and length-capped are the properties this bound was
+ * asked for; excluding whitespace, control bytes, non-ASCII and every other
+ * punctuation mark is an additional narrowing, chosen because the token is
+ * caller-supplied and lands in a fee-keyed column. It is not free: the cap has a
+ * BIDIRECTIONAL SEAM TEST against the wire schema precisely because a drifting cap
+ * would silently cost depth in an unbackfillable column — and that argument
+ * applies word for word to the class, which can only be pinned against a SNAPSHOT
+ * of the upstream population (`generation-type.test.ts` asserts the 50 measured
+ * `$type` keys all match it), never against upstream itself. So: if the
+ * orchestrator ever ships a `$type` containing a character outside this class,
+ * every submit of it records the bare `step` and NOTHING REPORTS IT. That is the
+ * same failure mode the cap's seam test exists to prevent, accepted here because
+ * no in-repo signal can see it (the same reason there is no membership bound) and
+ * because a JSON discriminator outside `[A-Za-z0-9._-]` would be extraordinary.
+ * Revisit the class before the population does.
+ *
+ * ⚠️ CASE IS PRESERVED, NOT FOLDED, and that differs from the denylist one module
+ * over (`isPlatformInternalStepType` lowercases, deliberately). Right for this
+ * axis: the column records what the app SUBMITTED, and folding case would invent a
+ * value nobody sent. The cost is that `step:imageGen` and `step:imagegen` are two
+ * stored values for one upstream capability, so a future per-subtype rollup should
+ * fold case at READ time. The coarse key is unaffected, so no fee is.
  *
  * 🔴 THE COLON-FREE PROPERTY IS STRUCTURAL AGAIN, not a separate guard: `:` is
  * not in the class, so the at-most-one-colon rule of THE VALUE GRAMMAR holds on
@@ -298,8 +333,14 @@ const BLOCK_PASS_THROUGH_SUBTYPE_PATTERN = new RegExp(
   `^[A-Za-z0-9._-]{1,${BLOCK_PASS_THROUGH_SUBTYPE_MAX_CHARS}}$`
 );
 
-/** True iff `subtype` is a shape-valid pass-through subtype. Total, non-throwing. */
-export function isBlockPassThroughSubtype(subtype: string): boolean {
+/**
+ * True iff `subtype` is a shape-valid pass-through subtype. Total, non-throwing.
+ *
+ * MODULE-PRIVATE on purpose: the bound callers must use is `isBlockGenerationType`
+ * (which consults this), never this predicate on its own — a caller that
+ * shape-checked a subtype in isolation would have skipped the coarse key.
+ */
+function isBlockPassThroughSubtype(subtype: string): boolean {
   return BLOCK_PASS_THROUGH_SUBTYPE_PATTERN.test(subtype);
 }
 
@@ -468,12 +509,23 @@ export function isBlockGenerationType(value: unknown): value is BlockGenerationT
  * dropping to it costs depth and nothing else, whereas returning `null` would
  * throw away a fact that is certainly correct. Returns `null` only when the
  * coarse key itself is not one this build knows.
+ *
+ * 🔴 THE GUARD IS `typeof subtype === 'string'`, NOT `subtype !== null`, AND THE
+ * DIFFERENCE IS A MEASURED DEFECT THE OPEN AXIS INTRODUCED. With the `!== null`
+ * form, `compose('step', undefined as never)` interpolates the STRING
+ * `"undefined"` and the shape test accepts it, so the one constructor mints
+ * `step:undefined` into a fee-bearing column — verified by execution, not
+ * reasoned. It was harmless while every subtype axis was a closed set
+ * (`textToImage:undefined` is in no set, so it degraded), which is exactly why
+ * the widening is what makes it reachable. Unreachable from the resolver today
+ * (its own `typeof $type !== 'string'` guard runs first), and pinned here anyway
+ * because this function is the one place a future writer will call.
  */
 export function composeBlockGenerationType(
   coarse: string,
   subtype: string | null
 ): BlockGenerationType | null {
-  if (subtype !== null) {
+  if (typeof subtype === 'string') {
     const composed = `${coarse}:${subtype}`;
     if (isBlockGenerationType(composed)) return composed;
   }
@@ -549,6 +601,15 @@ export type BlockGenerationTypeContext = {
  * it cannot type — a malformed body, a `kind` this build does not know, a
  * `step` id that is not registered here, or a `kind: 'step'` body that matches
  * NEITHER arm (no registry id and no string `$type`).
+ *
+ * ⚠️ "TOTAL" IS SCOPED TO JSON-SHAPED INPUT, and saying so is more useful than
+ * implying more. A body carrying an own ACCESSOR on `kind`, `step`, `$type`,
+ * `mode` or `recipe` propagates whatever that getter throws — this function reads
+ * properties, it does not sandbox them. Unreachable through the wire, where the
+ * value is `JSON.parse`d (which cannot create accessors) and then REBUILT by a
+ * `.strict()` zod object; and true of the pre-existing `kind`/`step` reads too,
+ * so the pass-through arm widens the input surface rather than the claim. Same
+ * scoping `containsAirReference` documents one module over, for the same reason.
  *
  * NULL is a real, expected value. A row whose type could not be resolved is
  * better left untyped than stamped with a guess: a wrong type is worse than a

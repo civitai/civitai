@@ -10548,20 +10548,22 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
     // End-to-end rather than a resolver unit test: what proves the wiring is
     // live is reading what the real handler actually passed.
     it('stamps the generation type as `step:<submitted $type>` on the spend attribution', async () => {
-      mockRecordSpendAttribution.mockClear();
       mockVerifyBlockToken.mockResolvedValue(ptClaims());
       happyUser();
       ptQuoting(5, 5);
       await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
-      await new Promise((r) => setTimeout(r, 0));
-      expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+      // `vi.waitFor`, matching every other spend-attribution assertion in this
+      // file — a bare `setTimeout(0)` races the fire-and-forget write on a busy box.
+      await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
       const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
       // Literal, never re-derived from the resolver under test.
       expect(stamped).toBe('step:imageBackgroundRemoval');
-      // NULL is what this used to be, and it is the whole defect.
-      expect(stamped).not.toBeNull();
-      // The coarse key a per-generation-type fee looks up.
-      expect(String(stamped).split(':')[0]).toBe('step');
+      // 🔴 `toBeUndefined`, NOT `toBeNull`. The pre-change code OMITTED the field,
+      // so it arrived here as `undefined` — and `expect(undefined).not.toBeNull()`
+      // PASSES, i.e. the one assertion written to name the defect was the one that
+      // could not see it. (NULL is what the column then held, because the writer
+      // re-checks and degrades; that is a different value one layer down.)
+      expect(stamped).not.toBeUndefined();
     });
 
     it('NAMESPACES a $type that collides with a kind key — never bare `textToImage`', async () => {
@@ -10570,7 +10572,6 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       // (measured against `WorkflowStepTemplate.discriminator.mapping`), so a bare
       // `$type` here would be indistinguishable from a genuine
       // `kind:'textToImage'` submit — and priced as one.
-      mockRecordSpendAttribution.mockClear();
       mockVerifyBlockToken.mockResolvedValue(ptClaims());
       happyUser();
       ptQuoting(5, 5);
@@ -10578,11 +10579,10 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
         blockToken: 'tok',
         body: ptBody({ $type: 'textToImage' }),
       });
-      await new Promise((r) => setTimeout(r, 0));
+      await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
       const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
       expect(stamped).toBe('step:textToImage');
       expect(stamped).not.toBe('textToImage');
-      expect(String(stamped).split(':')[0]).not.toBe('textToImage');
     });
 
     it('DEGRADES to the bare `step` for a wire-legal but unusable $type', async () => {
@@ -10592,13 +10592,11 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       // pass-through submit happened, which is shallower and never wrong. The
       // write is fire-and-forget off an already-billed submit, so this must
       // degrade rather than throw.
-      mockRecordSpendAttribution.mockClear();
       mockVerifyBlockToken.mockResolvedValue(ptClaims());
       happyUser();
       ptQuoting(5, 5);
       await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: 'a:b' }) });
-      await new Promise((r) => setTimeout(r, 0));
-      expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
       expect(mockRecordSpendAttribution.mock.calls[0][0].generationType).toBe('step');
     });
 

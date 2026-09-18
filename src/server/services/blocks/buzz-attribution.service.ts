@@ -312,15 +312,24 @@ export type RecordSpendAttributionInput = {
   /**
    * Optional APP-FACING generation type for this spend, as
    * `<coarse>` or `<coarse>:<subtype>` — e.g. `textToImage:img2img-edit`,
-   * `customComfy:seamless-pano-360`, `customComfy:inline`, or a bare registered
-   * STEP ID (`convert-image`, `chat-completion`). NEVER the orchestrator's
-   * internal `$type`. The COARSE key is everything before the FIRST colon and is
-   * what a per-generation-type fee keys on; `blockGenerationCoarseType` is the
-   * one place that decomposition lives. Resolved by the caller from the
-   * submitted workflow body via `resolveBlockGenerationType`; omit (or pass
-   * null) when it cannot be resolved, which persists NULL. Typed as the union
-   * rather than `string` so a future caller cannot stamp an arbitrary value on a
-   * money/audit row.
+   * `customComfy:seamless-pano-360`, `customComfy:inline`, a bare registered
+   * STEP ID (`convert-image`, `chat-completion`), or `step:<orchestrator $type>`
+   * on the PASS-THROUGH step arm. The COARSE key is everything before the FIRST
+   * colon and is what a per-generation-type fee keys on;
+   * `blockGenerationCoarseType` is the one place that decomposition lives.
+   * Resolved by the caller from the submitted workflow body via
+   * `resolveBlockGenerationType`; omit (or pass null) when it cannot be
+   * resolved, which persists NULL. Typed as the union rather than `string` so a
+   * future caller cannot stamp an arbitrary value on a money/audit row.
+   *
+   * 🔴 ONE ARM'S SUBTYPE IS CALLER-SUPPLIED, AND A FEE MUST KEY ON THE COARSE KEY
+   * FOR EXACTLY THAT REASON. This doc used to say "NEVER the orchestrator's
+   * internal `$type`", and that is now true of every arm EXCEPT the pass-through
+   * one, which has no app-facing id at all — the `$type` is what the app wrote,
+   * bounded by SHAPE only (see `generation-type.ts`'s THE ONE OPEN AXIS). So for
+   * a `step:` value the segment after the colon is app-chosen, while the coarse
+   * key is always the literal `step`. Keying anything on the FULL value would let
+   * a caller choose its own group; `blockGenerationCoarseType` is the bound.
    */
   generationType?: BlockGenerationType | null;
   /**
@@ -526,9 +535,17 @@ export async function recordSpendAttribution(
   // enumerate. It no longer is: the value now INTERPOLATES registry ids, so the
   // only complete statement of what is legal is `isBlockGenerationType`'s shape
   // test — coarse key in the closed set, and the segment after the first colon
-  // in the closed set that key allows. A caller assembling a value by hand (a
-  // cast, a future writer, a string built from a registry lookup) type-checks
-  // and is still refused here.
+  // in the closed set that key allows, EXCEPT under the `step` coarse key, whose
+  // subtype axis is open and bounded by shape (a caller-supplied orchestrator
+  // `$type`; see `generation-type.ts`'s THE ONE OPEN AXIS). A caller assembling a
+  // value by hand (a cast, a future writer, a string built from a registry
+  // lookup) type-checks and is still refused here.
+  //
+  // 🔴 AND THE TYPE IS NOW STRICTLY WIDER THAN THE RUNTIME BOUND, which makes
+  // this line load-bearing rather than belt-and-braces: `BlockGenerationType`
+  // includes the template literal `step:${string}`, because no type can express
+  // "matches this regex". So `'step:a b'` and a 200-char subtype both TYPE-CHECK
+  // at every call site and are refused only here and in the producer.
   const generationType = isBlockGenerationType(input.generationType) ? input.generationType : null;
 
   // Resolve + snapshot the app owner (mirrors recordAttribution). The
@@ -744,7 +761,15 @@ export async function recordSpendAttribution(
         // whether it resolved to a creditable author. Both are opaque/ids only.
         sharedContentKeyPresent: sharedContentKey != null,
         contentAuthorUserId,
-        // Bounded (registry-derived or null), so it is safe as a log field.
+        // 🔴 SHAPE-bounded or null — NOT "registry-derived", which is what this
+        // line used to claim and is no longer true of one arm. A `step:` value's
+        // subtype is a caller-supplied orchestrator `$type`, bounded by
+        // `isBlockGenerationType` to ≤64 chars of `[A-Za-z0-9._-]` and nothing
+        // else. Safe as a log FIELD for the reason that bound excludes newlines,
+        // control bytes, quotes and whitespace — but do NOT read this as licence
+        // to make it a metric LABEL or an object KEY: the subtype is app-chosen
+        // and open-ended, so it has no cardinality budget and admits prototype
+        // key names.
         generationType,
         status,
         voidedReason,

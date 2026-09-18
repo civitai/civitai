@@ -8,6 +8,7 @@ import {
   BLOCK_GENERATION_COARSE_TYPES,
   BLOCK_GENERATION_TYPES,
   BLOCK_IMAGE_GENERATION_SUBTYPES,
+  BLOCK_PASS_THROUGH_COARSE_TYPE,
   BLOCK_PASS_THROUGH_SUBTYPE_MAX_CHARS,
   BLOCK_WORKFLOW_KIND_GENERATION_TYPES,
   blockGenerationCoarseType,
@@ -27,9 +28,16 @@ import { BLOCK_IMAGE_WORKFLOW_TYPES } from '../workflow.service';
  * NOTE ON WHAT THESE ARE. Three populations, deliberately labelled apart:
  *
  *   - The PASS-THROUGH assertions (`step:<$type>`, and the shape bound on the one
- *     open axis) are REGRESSION coverage for a SECOND widening: they are red on
- *     the commit before it, where a pass-through submit resolved to `null` and
- *     recorded nothing. They are marked out in their own two describes.
+ *     open axis) are REGRESSION coverage for a SECOND widening: a pass-through
+ *     submit used to resolve to `null` and record nothing. They are marked out in
+ *     their own two describes. ⚠️ NOT ALL OF THEM ARE REGRESSION COVERAGE, and an
+ *     earlier draft of this line over-claimed that they all were: three of them —
+ *     "refuses a SECOND colon", "refuses whitespace, control characters and
+ *     non-ASCII", and "is CASE-SENSITIVE on the coarse key" — hold on the
+ *     pre-change semantics too, because there `step` was not a coarse key at all
+ *     and every `step:` value was refused for that reason instead. They are kept
+ *     as BOUNDS (each one kills a distinct mutation of the shape test), not
+ *     counted as evidence the widening works.
  *
  *   - The SUBTYPE assertions (everything asserting a value with a colon in it,
  *     plus the shape bounds on `isBlockGenerationType`) are REGRESSION coverage
@@ -50,11 +58,14 @@ import { BLOCK_IMAGE_WORKFLOW_TYPES } from '../workflow.service';
 /**
  * A single space, BUILT rather than typed inside a quote.
  *
- * Several fixtures below pin that leading / trailing whitespace is refused, and a
- * space inside a string literal is invisible in review and in a diff — the one
- * character an editor or a formatter can silently normalise away, which would
- * turn those assertions into duplicates of the un-spaced case without anything
- * going red. Naming it keeps the fixture legible.
+ * Purely for REVIEWER LEGIBILITY, and only where the space is at an EDGE: a
+ * fixture like `' imageGen'` or `'imageGen '` reads identically to the un-spaced
+ * string in a diff, so the assertion's whole point is invisible. Mid-string spaces
+ * (`'foo bar'`) are legible as written and stay literal.
+ *
+ * ⚠️ NOT a formatter defence — Prettier does not rewrite string-literal contents,
+ * and a trailing-whitespace trimmer works on line ends, not before a closing
+ * quote. An earlier draft of this comment claimed that and it is not true.
  */
 const SP = String.fromCharCode(32);
 
@@ -534,6 +545,44 @@ describe('resolveBlockGenerationType — the pass-through arm records step:<$typ
     expect(resolveBlockGenerationType({ kind: 'step', params: {} })).toBeNull();
   });
 
+  it('the arm discriminator is `step === undefined` EXACTLY — not falsy, not non-string', () => {
+    // 🔴 THE MUTATION THIS EXISTS FOR, and every fixture above is blind to it.
+    // `if (!step)` / `if (step == null)` / `if (typeof step !== 'string')` all look
+    // like tidier spellings of the same guard, and all three route a body with a
+    // JUNK `step` into the pass-through arm. Paired with a perfectly good `$type`
+    // that records `step:<$type>` for a body whose contract answer is `null` —
+    // invented from a body that matches NEITHER wire arm. The junk table's
+    // `step: 7` / `step: null` cases cannot see it, because they carry no `$type`
+    // and so hit the `typeof $type !== 'string'` guard either way.
+    for (const badStep of [7, null, '', {}, false, ['convert-image']]) {
+      expect(
+        resolveBlockGenerationType({ kind: 'step', step: badStep, $type: 'imageGen', params: {} })
+      ).toBeNull();
+    }
+    // An OWN key whose value is `undefined` IS the pass-through arm — the wire
+    // schema's discriminator is the VALUE, not the key's absence, so a resolver
+    // "tidied" to `'step' in body` would send every own-key pass-through body back
+    // to NULL with the router suite still green.
+    expect(
+      resolveBlockGenerationType({ kind: 'step', step: undefined, $type: 'imageGen', maxBuzz: 1 })
+    ).toBe('step:imageGen');
+  });
+
+  it('a REGISTRY body carrying a stray $type still resolves to its STEP ID', () => {
+    // Arm precedence, pinned: the registry id wins. Unreachable through the wire
+    // (both arms are `.strict()`, so a body naming both is rejected by both), but
+    // this resolver's whole posture is defence-in-depth over `unknown`, and
+    // swapping the two arms would otherwise survive the suite.
+    expect(
+      resolveBlockGenerationType({
+        kind: 'step',
+        step: 'convert-image',
+        $type: 'imageGen',
+        params: {},
+      })
+    ).toBe('convert-image');
+  });
+
   it('accepts a prototype-key-shaped $type — and that is a DECISION, not an oversight', () => {
     // The prototype-key discipline elsewhere in this file is about LOOKUPS: a
     // `getStep('toString')` / `getRecipe('toString')` index returns a truthy
@@ -567,6 +616,113 @@ describe('the pass-through SHAPE bound is the only bound on that axis', () => {
     expect(isBlockGenerationType('step:convert-image')).toBe(true);
     expect(isBlockGenerationType('step:a.b')).toBe(true);
     expect(isBlockGenerationType('step:a_b')).toBe(true);
+    // 🔴 AND A DIGIT, which every other fixture in this file lacks. Without one,
+    // narrowing the class to `[A-Za-z._-]` SURVIVES a fully green suite, and the
+    // next upstream `$type` carrying a digit silently degrades to a bare `step`.
+    expect(isBlockGenerationType('step:imageGen2')).toBe(true);
+    expect(isBlockGenerationType('step:sd35')).toBe(true);
+    expect(isBlockGenerationType('step:0')).toBe(true);
+  });
+
+  it('admits EVERY character of the class and NO other printable ASCII', () => {
+    // 🔴 THE CLASS AS A WHITELIST, ENUMERATED — because sampling its complement
+    // leaves the whole widening family alive: adding `+ ~ % @ # * , ; " ( ) [ ] |`
+    // (or anything else) to the class turns no other test in this file red. Both
+    // directions, mechanically, so the guard is as wide as its own name.
+    const allowed = new Set(
+      'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-'.split('')
+    );
+    const admitted: string[] = [];
+    const refused: string[] = [];
+    for (let code = 0x20; code <= 0x7e; code += 1) {
+      const ch = String.fromCharCode(code);
+      (isBlockGenerationType(`step:${ch}`) ? admitted : refused).push(ch);
+    }
+    // 26 + 26 + 10 + 3 = 65 allowed; 95 printable ASCII (0x20–0x7E), so 30 are
+    // refused. Both counts literal, so a class that widens OR narrows is visible
+    // as a number rather than only as a set difference.
+    expect(admitted.length).toBe(65);
+    expect(refused.length).toBe(30);
+    expect(new Set(admitted)).toEqual(allowed);
+    for (const ch of refused) expect(allowed.has(ch)).toBe(false);
+  });
+
+  it('admits every ORCHESTRATOR $type we measured — the class costs no fidelity', () => {
+    // 🔴 THE CLOSEST THING TO A SEAM THIS AXIS CAN HAVE, and the honest limit is
+    // stated rather than hidden: the character class's "no legitimate submit loses
+    // its subtype" claim rests on an EXTERNAL measurement, so it can only be
+    // pinned against a SNAPSHOT. This is the full 50-key
+    // `WorkflowStepTemplate.discriminator.mapping` of
+    // `https://orchestration.civitai.com/openapi/v2-consumers.json`, measured
+    // 2026-09-17. It fails if the class is narrowed (that is its job); it CANNOT
+    // see upstream adding a `$type` with an out-of-class character — the residual
+    // the module header records as accepted and unguardable from in here.
+    const LIVE_STEP_TYPES = [
+      'aceStepAudio',
+      'ageClassification',
+      'audioCaptioning',
+      'blobArchive',
+      'chatCompletion',
+      'comfy',
+      'comfyNodepackSnapshot',
+      'composeMedia',
+      'convertImage',
+      'customComfy',
+      'echo',
+      'imageBackgroundRemoval',
+      'imageGen',
+      'imageResourceTraining',
+      'imageScanning',
+      'imageToSvg',
+      'imageUpload',
+      'imageUpscaler',
+      'mediaCaptioning',
+      'mediaHash',
+      'mediaRating',
+      'miniMaxMusic3',
+      'model3DPreview',
+      'modelClamScan',
+      'modelHash',
+      'modelParseMetadata',
+      'modelPickleScan',
+      'polyGen',
+      'preprocessImage',
+      'preprocessVideo',
+      'promptEnhancement',
+      'qwenImageBench',
+      'shieldstralModeration',
+      'textToImage',
+      'textToSpeech',
+      'training',
+      'transcode',
+      'transcription',
+      'videoBackgroundRemoval',
+      'videoEnhancement',
+      'videoFrameExtraction',
+      'videoGen',
+      'videoInterpolation',
+      'videoMetadata',
+      'videoUpscaler',
+      'wdTagging',
+      'webScrape',
+      'webSearch',
+      'xGuardModeration',
+      'yuE2',
+    ];
+    // The count is asserted so a truncated fixture cannot pass as a full sweep.
+    expect(LIVE_STEP_TYPES.length).toBe(50);
+    expect(new Set(LIVE_STEP_TYPES).size).toBe(50);
+    for (const $type of LIVE_STEP_TYPES) {
+      expect(isBlockGenerationType(`step:${$type}`)).toBe(true);
+      expect(resolveBlockGenerationType({ kind: 'step', $type, input: {}, maxBuzz: 1 })).toBe(
+        `step:${$type}`
+      );
+    }
+    // The longest key measured was 22 chars — well inside the 64 cap, which is
+    // why the cap is not what this fixture is about.
+    expect(Math.max(...LIVE_STEP_TYPES.map((t) => t.length))).toBeLessThan(
+      BLOCK_PASS_THROUGH_SUBTYPE_MAX_CHARS
+    );
   });
 
   it('refuses a SECOND colon — the value stays a two-field record', () => {
@@ -624,18 +780,45 @@ describe('the pass-through SHAPE bound is the only bound on that axis', () => {
     expect(composeBlockGenerationType('step', '')).toBe('step');
     expect(composeBlockGenerationType('step', 'a'.repeat(65))).toBe('step');
     expect(composeBlockGenerationType('step', null)).toBe('step');
+    // 🔴 `undefined`, NOT JUST `null`, AND THIS ONE WAS A REAL DEFECT. With a
+    // `subtype !== null` guard the template interpolates the STRING "undefined",
+    // which the shape test ACCEPTS — so the one constructor minted
+    // `step:undefined` into a fee-bearing column. Harmless while every subtype
+    // axis was closed (`textToImage:undefined` is in no set), i.e. the open axis
+    // is what made it reachable. Off-type on purpose: the signature says
+    // `string | null`, and the point is that a `as never` caller cannot mint it.
+    expect(composeBlockGenerationType('step', undefined as never)).toBe('step');
+    expect(composeBlockGenerationType('textToImage', undefined as never)).toBe('textToImage');
   });
 
-  it('SEAM: the subtype cap equals the WIRE `$type` cap, in BOTH directions', () => {
+  it('SEAM: the subtype cap equals the WIRE `$type` cap', () => {
     // 🔴 `generation-type.ts` carries its own literal copy of this number (it is
     // on the fire-and-forget spend path and must stay import-light). A wire cap
     // raised past that copy would silently degrade every long `$type` to a bare
     // `step` — a depth loss in a column that can never be backfilled, and
-    // nothing else would report it. Fails on GROWTH and on SHRINKAGE alike.
+    // nothing else would report it.
+    //
+    // ONE equality, not the same equality written twice: `toBe` is symmetric, so
+    // a reversed second assertion states nothing new. What makes this fail on
+    // GROWTH and on SHRINKAGE alike is the equality plus the LITERAL below — the
+    // literal is what stops the pair drifting together to a new value unnoticed.
     expect(BLOCK_PASS_THROUGH_SUBTYPE_MAX_CHARS).toBe(PASS_THROUGH_TYPE_MAX_CHARS);
-    expect(PASS_THROUGH_TYPE_MAX_CHARS).toBe(BLOCK_PASS_THROUGH_SUBTYPE_MAX_CHARS);
-    // Literal too, so the pair cannot drift together to a new value unnoticed.
     expect(BLOCK_PASS_THROUGH_SUBTYPE_MAX_CHARS).toBe(64);
+  });
+
+  it('SEAM: the coarse key IS the wire `kind` literal', () => {
+    // 🔴 OTHERWISE NOTHING TIES THEM. Every unit fixture hand-builds `kind:'step'`
+    // and never parses, so renaming the wire discriminator would leave this whole
+    // suite green while the resolver's `kind === 'step'` branch stopped matching
+    // any real body. Parsing with the constant is what joins the two.
+    const parsed = blockPassThroughStepBodySchema.safeParse({
+      kind: BLOCK_PASS_THROUGH_COARSE_TYPE,
+      $type: 'imageGen',
+      input: {},
+      maxBuzz: 1,
+    });
+    expect(parsed.success).toBe(true);
+    expect(BLOCK_PASS_THROUGH_COARSE_TYPE).toBe('step');
   });
 
   it('SEAM: the degrade path is REACHABLE FROM THE WIRE, not merely defensive', () => {
@@ -645,28 +828,34 @@ describe('the pass-through SHAPE bound is the only bound on that axis', () => {
     // another fee group — PARSES, reaches the submit, and is bounded only here.
     // If this ever stops parsing, the shape bound becomes unreachable defence and
     // the tests above become invariant guards; that is worth knowing either way.
-    for (const hostile of ['a:b', 'textToImage:txt2img', 'foo bar', 'a'.repeat(64)]) {
-      const parsed = blockPassThroughStepBodySchema.safeParse({
-        kind: 'step',
-        $type: hostile,
-        input: {},
-        maxBuzz: 1,
-      });
+    // 🔴 THE RESOLVER IS RUN ON `parsed.data`, NOT ON A HAND-BUILT TWIN. The claim
+    // is about what a PARSED body resolves to, and zod REBUILDS the object — a
+    // hand-built literal would assert that claim about a different value that
+    // merely looks the same.
+    const parse = ($type: string) =>
+      blockPassThroughStepBodySchema.safeParse({ kind: 'step', $type, input: {}, maxBuzz: 1 });
+
+    // Wire-legal AND shape-refused: these are the ones the degrade path exists for.
+    // `textToImage:txt2img` is the sharp one — it would forge a value under
+    // another fee group if the subtype were taken raw.
+    for (const hostile of ['a:b', 'textToImage:txt2img', 'foo bar', `imageGen${SP}`]) {
+      const parsed = parse(hostile);
       expect(parsed.success).toBe(true);
+      if (parsed.success) expect(resolveBlockGenerationType(parsed.data)).toBe('step');
     }
-    // And the resolver's answer for the parsed body is the degraded key, except
-    // at the cap where the subtype survives.
-    expect(resolveBlockGenerationType({ kind: 'step', $type: 'a:b', input: {}, maxBuzz: 1 })).toBe(
-      'step'
-    );
-    expect(
-      resolveBlockGenerationType({
-        kind: 'step',
-        $type: 'textToImage:txt2img',
-        input: {},
-        maxBuzz: 1,
-      })
-    ).toBe('step');
+
+    // Wire-legal AND shape-accepted at the boundary: the same parse path keeps its
+    // subtype, so the assertions above are about the SHAPE bound and not about the
+    // parse merely failing.
+    const atCap = 'a'.repeat(64);
+    const parsedAtCap = parse(atCap);
+    expect(parsedAtCap.success).toBe(true);
+    if (parsedAtCap.success)
+      expect(resolveBlockGenerationType(parsedAtCap.data)).toBe(`step:${atCap}`);
+
+    // And one past the cap is refused by the WIRE, not by the shape bound — the
+    // two bounds meet exactly here, which is what the cap SEAM test above pins.
+    expect(parse('a'.repeat(65)).success).toBe(false);
   });
 });
 
