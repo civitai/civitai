@@ -111,6 +111,18 @@ const GATE_LEDGER: Record<string, string> = {
     'seat check specifically because beginListingRevision clones the shadow with the ' +
     'PARENT OWNER’s userId, so an editor’s own shadow reads as not-theirs — and that ' +
     'clone is a copy of a copy, which is why reading it directly was doubly wrong.',
+  'src/server/services/blocks/author-fee-accrual.service.ts':
+    'accrueBlockAuthorFee credits the app OWNER only — `oauthClient.userId`, snapshotted ' +
+    'onto the row at write time — and is deliberately NOT widened to ACCEPTED ' +
+    'collaborators. This is D4 applied to a new earnings surface, not a new decision: ' +
+    'earnings reads are appOwnerUserId-keyed precisely so an ex-owner keeps the money ' +
+    'they accrued before transferring an app away, and widening the WRITE would make ' +
+    'that impossible to express — a row would owe several people with no split anyone ' +
+    'has specified. Resolving the owner at SETTLEMENT instead would be worse still: it ' +
+    'would retroactively re-route earnings on every ownership transfer. NO mod bypass ' +
+    '(D1) and none is meaningful here — this is not a gate a caller passes through, it ' +
+    'is a payee resolution. If collaborator revenue-sharing is ever specified it belongs ' +
+    'as an explicit split on top of this row, not as a widened owner lookup.',
   'src/server/services/blocks/app-analytics.service.ts':
     'getOwnedAppBlocks resolves the permitted-id SET (owned + seated) instead of ' +
     '`app: { userId }`. Safe to widen HERE because every downstream aggregate filters ' +

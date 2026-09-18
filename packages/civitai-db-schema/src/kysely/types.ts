@@ -878,6 +878,68 @@ export type BlockAttributionPayout = {
   row_count: number;
   created_at: Generated<Timestamp>;
 };
+export type BlockAuthorFeeAccrual = {
+  id: string;
+  /**
+   * Orchestrator workflow id — the idempotency anchor. A resubmit of the same
+   * workflow must never charge or accrue twice.
+   */
+  workflow_id: string;
+  app_id: string;
+  app_block_id: string;
+  /**
+   * 🔴 Resolved at WRITE time, never at settlement. An app that changes hands
+   * must not retroactively move earnings already accrued to the previous owner
+   * (`app-ownership-transfer.service.ts` is the precedent). Resolving the owner
+   * in the settlement query would do exactly that.
+   */
+  app_owner_user_id: number;
+  /**
+   * The viewer who paid. What the self-dealing exclusion is measured against,
+   * and what slice 2b's refund path will join on to reverse a fee.
+   */
+  viewer_user_id: number;
+  /**
+   * 🔴 D6 — a viewer spending blue Buzz pays in blue and the author receives
+   * blue (non-withdrawable). The settlement job groups by this and never
+   * coerces to yellow; defaulting it would silently convert non-withdrawable
+   * Buzz into withdrawable earnings. No `@default` for that reason.
+   */
+  buzz_type: string;
+  /**
+   * Whole Buzz owed to the author, always > 0 — pinned by a CHECK. There is no
+   * negative row: the clawback was retired in round 0 (zero production callers,
+   * and its carry-forward arm unreachable until something had settled). Slice 2b
+   * adds it together with the refund path that drives it.
+   */
+  fee_buzz: number;
+  /**
+   * The pricing inputs, kept so a disputed charge can be explained without
+   * re-deriving it from a workflow that may no longer exist.
+   */
+  base_generation_buzz: number;
+  flat_leg_buzz: number;
+  pct_leg_buzz: number;
+  governing_leg: string;
+  /**
+   * The resolved '<coarse>' or '<coarse>:<subtype>' the fee was priced under.
+   * NULL when the type could not be resolved — the fee still applies, falling
+   * to the app's default (see `resolveBlockAuthorFeeParams`).
+   */
+  generation_type: string | null;
+  /**
+   * 'accrued' | 'settled'.
+   */
+  status: Generated<string>;
+  /**
+   * The externalTransactionId this row settled under, so a row traces to the
+   * exact mint. NULL until settled; a CHECK keeps it and `settledAt` in step
+   * with `status`.
+   */
+  settlement_key: string | null;
+  accrued_at: Generated<Timestamp>;
+  settled_at: Timestamp | null;
+};
 export type BlockBuzzAttribution = {
   id: string;
   user_id: number;
@@ -4482,6 +4544,7 @@ export type DB = {
   Bid: Bid;
   BidRecurring: BidRecurring;
   block_attribution_payout: BlockAttributionPayout;
+  block_author_fee_accrual: BlockAuthorFeeAccrual;
   block_buzz_attribution: BlockBuzzAttribution;
   block_scope_invocations: BlockScopeInvocation;
   block_spend_attribution: BlockSpendAttribution;

@@ -458,6 +458,7 @@ type Bundle = {
   requestsTotal: Counter<string>;
   requestDurationSeconds: Histogram<string>;
   rendersTotal: Counter<string>;
+  bridgeMessagesTotal: Counter<string>;
   customComfyActualBuzz: Histogram<string>;
   customComfyWallclockSeconds: Histogram<string>;
   capLimitsDegradedTotal: Counter<string>;
@@ -625,6 +626,52 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     'civitai_app_block_renders_total',
     'App Block host render/impression outcomes by app, slot, result (ok|error), and error_class (none when ok; timeout|fatal|no_token|error|error_boundary|token_lost_midsession|other on error)',
     ['app_block_id', 'slot_id', 'result', 'error_class']
+  );
+
+  // ── postMessage BRIDGE message outcomes ──────────────────────────────────────
+  //
+  // 🔴 THE SERIES `renders_total` STRUCTURALLY CANNOT BE. `renders_total` fires
+  // ONCE PER HOST MOUNT and reports the settled MOUNT outcome, so every failure
+  // after BLOCK_READY is invisible to it — and every one of the bridge's five
+  // silent drop paths lives after ready. Measured 2026-09-18: a `custom-generators`
+  // gallery read was dead end-to-end while 100% of render series across all 11
+  // rendering apps read `result=ok, error_class=none`, for the full 15-day
+  // retention. A perfect green dashboard the entire time the defect was live. Do
+  // not treat these two counters as overlapping: one grades the LAUNCH, this one
+  // grades the CONVERSATION.
+  //
+  // 🔴 READ `handled` AS THE DENOMINATOR, NEVER THE ERROR COUNTS ALONE. A falling
+  // `no_handler` rate and a falling traffic rate are the same observation without
+  // it (the bare-count trap the `step_price_check` counter's `quoted`/`absent` pair
+  // above exists to avoid). Alert on a RATIO.
+  //
+  // 🔴 `no_handler` IS NOT UNIFORMLY A BUG — read it WITH `host`. A page-only
+  // message arriving at the model slot (`GET_VIEWER`, `GET_IMAGES_BY_IDS`,
+  // `OPEN_IMAGE_UPLOAD`, …) is an EXPECTED refusal that the parity inventory
+  // declares N/A for `IframeHost`; the same type unhandled on `PageBlockHost` is a
+  // real missing bridge. The `host` label values are the parity inventory's own
+  // file names precisely so the series joins to `INVENTORY[type][host]` with no
+  // mapping table in between.
+  //
+  // Cardinality: (A+1) x (46+1) x 2 x 5 ~= 23,970 at A=50 approved apps, where
+  // `boundAppBlockIdLabel` adds exactly one extra value, 'other' (it returns the
+  // id or 'other', nothing else — do not copy the '+2' the launch histograms use,
+  // which is wrong for the same reason). That is the largest App
+  // Block label set in this module and it is the one number to re-derive before
+  // adding a label here. It is acceptable only because BOTH multiplicands are
+  // hard-bounded by code-owned sets — `type` by `boundBridgeMessageType` against
+  // the protocol INVENTORY, `host`/`outcome` by zod enums on the beacon body — so
+  // a scripted client cannot move it at all, and because in practice the reachable
+  // product is far smaller (an app uses a handful of message types, on one host).
+  // 🔴 DO NOT ADD `slot_id`, `block_instance_id`, OR ANY REQUEST-SCOPED FIELD:
+  // prom-client retains every distinct label set in the Node heap forever across
+  // ~130 scraped pods (the --max-old-space-size exit-139 OOM class). Attribution
+  // beyond these four belongs in a log line.
+  const bridgeMessagesTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_bridge_messages_total',
+    "App Block host<-block postMessage bridge dispatch outcomes by app, message type, host, and outcome. handled = at least one registered handler was invoked (THE DENOMINATOR — read every other value as a ratio against it, never as a bare count); no_handler = this host registers no handler for the type, so a REQUEST-style message would hang to its SDK timeout (30s default / 120s workflow / 600s human-in-the-loop) — READ IT WITH `host`, because a page-only message refused by IframeHost is the DECLARED design (see hostHandlerParity INVENTORY) while the same type unhandled on PageBlockHost is a missing bridge; rate_limited = the 30 msg/sec inbound budget was exhausted; deduped = the same requestId arrived twice inside the 5s dedup window; no_token = a handler ran and refused because the block credential was falsy. `type` is clamped to the code-owned protocol inventory (unknown -> 'other') and `app_block_id` to the approved-app set (unknown -> 'other'); this beacon is public and browser-reachable, so neither is ever taken raw from the body. NOT comparable to civitai_app_block_renders_total, which fires once per MOUNT and is structurally blind to everything after BLOCK_READY",
+    ['app_block_id', 'type', 'host', 'outcome']
   );
 
   // ── customComfy per-engine runtime/cost (App Blocks `customComfy` bridge) ────
@@ -941,6 +988,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     requestsTotal,
     requestDurationSeconds,
     rendersTotal,
+    bridgeMessagesTotal,
     customComfyActualBuzz,
     customComfyWallclockSeconds,
     capLimitsDegradedTotal,

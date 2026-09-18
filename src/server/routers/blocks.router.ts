@@ -16,6 +16,10 @@ import {
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
 import { authorizeBlockBridgeToken } from '~/server/services/blocks/block-bridge-auth.service';
+// THE App-Blocks kill-switch for a block-token subject. Lives in a service, not here,
+// because `src/pages/api/v1/blocks/me.ts` is its other caller and a Next API route must
+// not import this router. See that module's docblock for why a second copy is banned.
+import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
 import { assertSharedWriteTrust } from '~/server/services/blocks/block-write-trust.service';
 import {
   BLOCK_POST_DETAIL_MAX,
@@ -394,108 +398,6 @@ async function assertAppEditAccess(
   // The owner is already in hand from the proc's own AppBlock select — passed through
   // so the gate costs ZERO extra queries on the owner path.
   await assertAccess({ appBlockId: block.id, ownerUserId: block.app?.userId, userId });
-}
-
-/**
- * App-Blocks flag gate for the BLOCK-TOKEN-authed runtime procs
- * (estimate/submit/poll/cancelWorkflow, updateUserSettings).
- *
- * WHY THIS EXISTS — `enforceAppBlocksFlag` (the middleware) evaluates the flag
- * against `ctx.user` (the request's SESSION user). These procs are
- * `publicProcedure` authenticated by a BLOCK JWT, NOT a civitai.com session: a
- * page-host call carries a session, but a `dev:live` (localhost) call is
- * block-token-only and has NO session cookie → `ctx.user` is `undefined`. The
- * live `app-blocks-enabled` flag is base-`false` with a `moderators` segment, so
- * a no-user (global) eval can never match the segment → resolves `false` →
- * UNAUTHORIZED "App Blocks not enabled", even when the token's subject IS a
- * moderator. The flag must therefore be evaluated against the TOKEN's subject
- * user, not `ctx.user`.
- *
- * The flag stays a real kill-switch (a flip still shuts these procs down) — we
- * only fix the IDENTITY it's evaluated against. This does NOT widen access: with
- * the flag base-`false` + `moderators`/cohort segments as it is today, it resolves
- * `true` only for an in-segment subject and a non-mod outside the cohort resolves
- * `false` → blocked. An ANONYMOUS token (`sub:'anon'`) never reaches this function
- * at all — each of its 16 call sites runs `parseSubjectUserId(claims.sub)` and
- * throws UNAUTHORIZED on `null` first, so the no-subject case handled below is a
- * VANISHED user, not an anon caller. There are **16** such parse sites, not 17:
- * the 17th gate call is `assertViewerIsAppDeveloper`, which shares the parse site
- * of the enabled-gate call immediately above it rather than adding one, so the two
- * sets OVERLAP and must not be added. (No raw-occurrence total is recorded here,
- * and none should be: a grep for either identifier also matches this docblock's
- * own prose and the import at the top of the file, and for the gate it matches a
- * DIFFERENT function of the same name in `apps.router.ts`. Nor is a re-derivation
- * command given — the obvious one contains the identifier it searches for, so it
- * matches the very line it is written on and returns one too many. Enumerate the
- * call sites if you need the number; this paragraph has now been wrong four
- * rounds running, each time by writing a figure down.)
- * `authorizeBlockBridgeToken` (caller) already rejected invalid/expired
- * tokens, revoked instances and non-approved apps before this runs — the "revoked"
- * half of that sentence used to be false, because the caller ran a bare
- * `verifyBlockToken`, which never checked it. Every other belt (the per-scope
- * consent checks, budget cap, daily Buzz cap, the per-(user, app) consent budget,
- * reserveBlockBuzzSpend, getOrchestratorToken, forced-SFW) is unchanged — this
- * only swaps which identity the FLAG sees.
- *
- * Resolves the FULL server-side SessionUser via `sessionClient.getSessionUserById`
- * (the hub-backed resolver; never a client-supplied value) so the segment match
- * can't be spoofed AND every property `buildFliptContext` consumes is real.
- *
- * ## Why the full SessionUser, not a trimmed `{ id, isModerator }` cast
- *
- * `isAppBlocksEnabled({ user })` feeds `user` to `buildFliptContext`, which
- * reads `id`, `isModerator`, AND `tier` (deriving `isMember` from `tier`). A
- * trimmed `getUserById({ select: { id, isModerator } })` cast to SessionUser
- * (the #2740 shape) leaves `tier` undefined → the Flipt context carries the
- * type-default `tier:'free'` / `isMember:'false'` instead of the user's real
- * subscription tier. That is correct TODAY only because the live
- * `app-blocks-enabled` flag segments solely on `isModerator`. The moment the
- * flag is widened to segment on `tier`/region, a stale-`free` context would
- * silently mis-gate a paying user. Resolving the real SessionUser here (whose
- * `tier` is derived from the highest active subscription — not a User column,
- * so it CANNOT be fetched by widening the select) makes the gate stay correct
- * across any future widening. Pre-GA security review hardening.
- */
-async function assertAppBlocksEnabledForTokenUser(userId: number): Promise<void> {
-  // Full, authoritative SessionUser (cached; tier derived from active
-  // subscriptions) so buildFliptContext sees the user's REAL tier/isMember, not
-  // type-defaults. getSessionUserById returns the package SessionUser (loosely
-  // typed at this boundary — cast as bearer-token.ts does) or null for a vanished
-  // user. This is the LAST identity-shaped belt on most runtime procs now that the
-  // author gate is off them, so its fail-closed posture is not backed up by a
-  // second one — do not weaken it.
-  const user = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
-  // 🔴 REFUSE AN UNHYDRATABLE SUBJECT OUTRIGHT, before the flag is consulted.
-  // This used to pass `{ user: user ?? undefined }`, and the comment derived the
-  // denial from "global eval → flag false → blocked". The premise holds (a no-user
-  // eval carries entityId 'global' and an empty context, which no segment can
-  // match) but the conclusion came from `app-blocks-enabled` being base-`false`,
-  // not from the segment miss: a global eval returns the flag's own base value, so
-  // a base-`enabled: true` GA flip would have let a token whose subject no longer
-  // resolves through this gate. `isAppBlocksEnabled`'s no-user branch is KEPT for
-  // its real machine caller, so the refusal has to live here. Mechanism + the
-  // measurement against the real wasm engine: GLOBAL-EVAL SEMANTICS in
-  // `app-blocks-flag.ts`. Distinct message so the two refusals stay separable.
-  //
-  // 🔴 WATCHLISTED as `block-token-subject-refusal` in
-  // `scripts/compiled-branch-watchlist.mjs`. Unlike a type-level guard, this is a pure
-  // runtime branch, so a bundler that drops it re-opens the exposure with the source
-  // still correct — which is precisely what shipped in release 5.1.18 (civitai#3983).
-  // MOVING this branch is fine — the gate resolves its anchor from source at run time,
-  // so line numbers do not matter. DELETING it fails the production Docker build at
-  // `assert-compiled-branches.mjs`. And 🔴 REWORDING THE MESSAGE BELOW IS A WATCHLIST
-  // EDIT: that exact string IS this entry's anchor, so changing it makes the gate exit 2
-  // ("no line contains this anchor") — a failure that reads like gate breakage rather
-  // than like the copy change that caused it. Update the entry in the same commit.
-  if (!user) {
-    throw new TRPCError({
-      code: 'UNAUTHORIZED',
-      message: 'runtime block token subject could not be resolved',
-    });
-  }
-  if (!(await isAppBlocksEnabled({ user }))) {
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
-  }
 }
 
 /**
@@ -6308,14 +6210,75 @@ export const blocksRouter = router({
    * db read — the ban/mute lookup hits the PRIMARY, so a hammering block must be
    * bounded) → the /blocks/me identity read.
    *
-   * The identity read mirrors src/pages/api/v1/blocks/me.ts EXACTLY: `dbWrite`
-   * (NOT the replica) so a banned/muted-during-replication-lag viewer can't
-   * surface as active; 404 (NOT_FOUND) on a vanished/deleted user; 403
-   * (FORBIDDEN) on a banned viewer (a token minted just before a ban is valid
-   * for up to ~15min — reject here as a second line of defense); a muted viewer
-   * passes through with `status: 'muted'` so the block can suppress write UI.
-   * `buzzBudget` is surfaced from the token claim (if present) so a block can
-   * clamp UI without a second call — same shape /me returns.
+   * ## WHAT THIS SHARES WITH `src/pages/api/v1/blocks/me.ts`, AND WHAT IT DOES NOT
+   *
+   * 🔴 THIS BLOCK SAID THE TWO MIRRORED EACH OTHER "EXACTLY" AND THAT WAS FALSE FOR
+   * MONTHS. `me.ts` carried a hardcoded `if (!user.isModerator) → 403` and NO
+   * App-Blocks flag gate; this proc had the flag gate and no mod literal. So for a
+   * hand-allowlisted NON-moderator inside the live `app-blocks-enabled` audience the
+   * REST door 403'd while this one returned 200 — invisible only because the audience
+   * was mostly moderators, and guaranteed to surface for every user admitted by the GA
+   * widen. Resolved 2026-09-18 by DROPPING the literal (Flipt is the gate) and giving
+   * `me.ts` this proc's flag gate and rate limiter. Both now run the SAME
+   * `assertAppBlocksEnabledForTokenUser`, imported from
+   * `~/server/services/blocks/block-token-access.service` rather than spelled twice,
+   * and the same `checkBlockCatalogRateLimit` bucket.
+   *
+   * SHARED — and this list is exactly what `blocks.router.me-parity.test.ts` EXERCISES,
+   * not a superset of it. Each item below is a case in that file, driving both doors with
+   * one subject and comparing the whole verdict:
+   *   - the App-Blocks kill-switch on the token subject (one shared implementation);
+   *   - the catalog rate-limit bucket, same helper, same key, same position;
+   *   - `dbWrite` (NOT the replica), so a banned/muted-during-replication-lag viewer
+   *     cannot surface as active;
+   *   - refusal on a vanished/deleted user, and on a banned viewer (a token minted just
+   *     before a ban is valid for up to ~15min);
+   *   - a muted viewer passing through with `status: 'muted'`;
+   *   - the same `{ id, username, status, buzzBudget }` body.
+   *
+   * ⚠️ NOT SHARED. An earlier draft of this block listed the scope check and the non-anon
+   * subject check under SHARED — they are NOT, and saying so re-made the same kind of
+   * unbacked promise the "EXACTLY" claim was. Both doors REFUSE in every case below; what
+   * differs is the status, the text, or where the belt lives. None is an allow/deny
+   * inversion, and none is pinned by the parity test, which says so in its own header.
+   *   - THE PRE-BELTS ARE NOT THE SAME SET. Token validity, revocation and
+   *     approved-status are common (this proc via `authorizeBlockBridgeToken`; the REST
+   *     door inside `withBlockScope`, before its handler is entered). But `withBlockScope`
+   *     ALSO runs `enforceContextBinding`, which this proc has no equivalent of: it is
+   *     deny-by-default over every scope on the token, so a token carrying an unknown
+   *     scope, or `models:read:self` bound to a modelId the request does not name, is
+   *     refused on REST and admitted here. The REST door is the stricter one.
+   *   - THE CONSENT SCOPE REFUSAL differs in text: REST answers 403
+   *     `missing required scope: user:read:self` (from the wrapper), this proc 403
+   *     `block lacks user:read:self scope`. Same code, same decision.
+   *   - THE ANON-SUBJECT REFUSAL differs in status: REST 403, this proc 401. ⚠️ It does
+   *     NOT differ in the way an earlier revision of this block claimed. That revision
+   *     quoted `me.ts`'s handler literal (`Anonymous block tokens may not call
+   *     /blocks/me`), which PRODUCTION NEVER EMITS: `me.ts` declares
+   *     `requiredScope: 'user:read:self'`, so `withBlockScope` runs
+   *     `enforceContextBinding` first, and that refuses an anon subject holding a `:self`
+   *     scope with `user:read:self requires authenticated subject`. The handler's own
+   *     branch is unreachable defence-in-depth. The 403-vs-401 difference is real; the
+   *     text quoted for it was not.
+   *   - 🔴 A MALFORMED `sub` DIVERGES ON NEITHER DOOR, and an earlier revision of this
+   *     block asserted it did — that this proc let `parseSubjectUserId`'s bare
+   *     `ForbiddenError` escape as a 500, called it "a pre-existing gap", and invited a
+   *     fix. That was WRONG, and wrong in the more dangerous direction: it reported a
+   *     live 500-leak that cannot occur, in the document a maintainer treats as
+   *     authoritative. `verifyBlockToken` rejects any `sub` that is not `anon` or
+   *     `user:<1-12 digits>` BEFORE returning claims (`isValidSubject`,
+   *     `block-scope.middleware.ts`), and BOTH doors go through it — this proc via
+   *     `authorizeBlockBridgeToken`, the REST door via the wrapper. So a malformed `sub`
+   *     is a 401 `invalid block token` on both, and both handlers' malformed-`sub`
+   *     branches are unreachable belt-and-braces. Do not "fix" either one.
+   *   - HOW A REFUSAL IS SPELLED. This proc throws `TRPCError`; `me.ts` writes an HTTP
+   *     status. For the kill-switch branch that status is DERIVED from this side's code
+   *     via tRPC's own `getHTTPStatusCodeFromError`; every other status on that route is
+   *     a literal that agrees with this one by inspection. `me.ts` deliberately does NOT
+   *     echo the gate's message — see its comment for the two reasons — so the parity
+   *     test compares STATUS, not text, on that one branch.
+   *   - `me.ts` additionally answers 405 on a non-GET and 401 on absent claims. Neither
+   *     is reachable through tRPC, which has no method and no claim-less call.
    */
   getMyViewer: publicProcedure
     // Block-JWT-authed (no session for dev:live) — flag evaluated against the

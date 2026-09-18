@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as LoggingClient from '~/server/logging/client';
 
 const {
   mockDbWrite,
@@ -37,7 +38,12 @@ vi.mock('~/server/services/orchestrator/client', () => ({
   internalOrchestratorClient: {},
 }));
 
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
+// Spread the original: `safeError` is real, pure serialization logic the submit-failure
+// log depends on, and a hand-listed factory silently dropped it.
+vi.mock('~/server/logging/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof LoggingClient>()),
+  logToAxiom: mockLogToAxiom,
+}));
 
 vi.mock('~/shared/utils/air', () => ({ stringifyAIR: mockStringifyAIR }));
 
@@ -690,6 +696,30 @@ describe('createImageIngestionRequest', () => {
 
     expect(result.useImageScanning).toBe(flagOn);
     expect(mockLogToAxiom).toHaveBeenCalledWith(expect.objectContaining({ name, imageId: 1 }));
+  });
+
+  // A no-response submit is the one case where the error's identity IS the diagnosis, and
+  // `JSON.stringify(new Error())` is `{}` — so logging the error object recorded nothing.
+  it('serializes an Error from a failed submit instead of logging an empty object', async () => {
+    vi.useRealTimers();
+    mockSubmitWorkflow.mockResolvedValue({
+      data: undefined,
+      error: new Error('The operation was aborted due to timeout'),
+      response: undefined,
+    });
+
+    await createImageIngestionRequest({ imageId: 1, url: 'image-key' });
+
+    const logged = mockLogToAxiom.mock.calls.at(-1)?.[0];
+    expect(JSON.stringify(logged?.error)).not.toBe('{}');
+    expect(logged?.error).toEqual(
+      expect.objectContaining({
+        name: 'Error',
+        message: 'The operation was aborted due to timeout',
+      })
+    );
+    // Tells three 15s aborts apart from an instant rejection; the attempt count cannot.
+    expect(typeof logged?.elapsedMs).toBe('number');
   });
 
   it('submits one imageScanning step when the flag is on', async () => {
