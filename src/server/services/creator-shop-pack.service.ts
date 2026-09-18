@@ -495,17 +495,16 @@ export const getPackDetail = async ({
   });
   if (!item) throw throwNotFoundError('Pack not found');
   if (item.cosmeticId != null) throw throwBadRequestError('This listing is not a pack');
+  // The same population `updateCreatorShopPack` authorizes, named once: it
+  // decides both who may read a pack that is not on sale and who is answered
+  // about its review state. Two spellings of it drift a tightening apart.
+  const canReadPrivateState = !!isModerator || (!!userId && userId === item.addedById);
   // Every other read path in the shop gates on Published. Without this, an id is
   // enough to read an unreviewed or rejected pack's contents and pricing.
-  if (
-    item.status !== CosmeticShopItemStatus.Published &&
-    !isModerator &&
-    (!userId || userId !== item.addedById)
-  )
+  if (item.status !== CosmeticShopItemStatus.Published && !canReadPrivateState)
     throw throwNotFoundError('Pack not found');
 
   const packMeta = (item.meta ?? {}) as CosmeticShopItemMeta;
-  const canReadReviewState = !!isModerator || (!!userId && userId === item.addedById);
 
   const snapshotByCosmetic = new Map(item.members.map((m) => [m.cosmeticId, m.floorAmount]));
   const resolved = await resolvePackMembers(item.members.map((m) => m.cosmeticId));
@@ -558,7 +557,7 @@ export const getPackDetail = async ({
     // rejected pack from an ordinary archived one. Derived here rather than
     // client-side, and answered only for the two viewers whose editor asks the
     // question — everyone else gets no answer rather than a false one.
-    lastReviewWasRejection: canReadReviewState
+    lastReviewWasRejection: canReadPrivateState
       ? wasLastReviewARejection(packMeta.history)
       : undefined,
     // A member the pack no longer resolves is a member that can't be sold; the

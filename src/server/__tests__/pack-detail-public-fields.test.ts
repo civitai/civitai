@@ -21,7 +21,6 @@ import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enum
 
 const shopItemFindUnique = vi.fn();
 const shopItemFindMany = vi.fn();
-const packMemberFindMany = vi.fn();
 const ownedFindMany = vi.fn();
 const purchaseGroupBy = vi.fn();
 const resaleFindMany = vi.fn();
@@ -32,7 +31,6 @@ vi.mock('~/server/db/client', () => ({
       findUnique: (...a: unknown[]) => shopItemFindUnique(...a),
       findMany: (...a: unknown[]) => shopItemFindMany(...a),
     },
-    cosmeticShopItemCosmetic: { findMany: (...a: unknown[]) => packMemberFindMany(...a) },
     userCosmeticShopPurchaseCosmetic: { groupBy: (...a: unknown[]) => purchaseGroupBy(...a) },
     userCosmetic: { findMany: (...a: unknown[]) => ownedFindMany(...a) },
     userCosmeticShopItemResale: { findMany: (...a: unknown[]) => resaleFindMany(...a) },
@@ -115,6 +113,38 @@ const WITHHELD = [
   String(PAYEE_SENTINEL),
 ];
 
+// A pack whose last REVIEW rejected, with a later non-review entry after it so
+// the helper cannot pass by reading the last entry. The status is a parameter
+// because an unauthorized caller never reaches the return on a non-Published
+// pack — the gate above throws first — so the gating test needs a Published one
+// to have anything to assert about.
+const rejectedPack = (status = CosmeticShopItemStatus.Archived) => ({
+  id: PACK_ID,
+  cosmeticId: null,
+  title: 'A pack',
+  description: null,
+  unitAmount: 8800,
+  status,
+  listed: false,
+  availableQuantity: null,
+  meta: {
+    ...META,
+    history: [
+      { at: 'then', userId: MODERATOR_ID, kind: 'reviewed', action: 'approve' },
+      {
+        at: 'later',
+        userId: MODERATOR_ID,
+        kind: 'reviewed',
+        action: 'reject',
+        note: 'note-sentinel-70018',
+      },
+      { at: 'later still', userId: LISTER, kind: 'edited' },
+    ],
+  },
+  addedById: LISTER,
+  members: [{ cosmeticId: MEMBER, floorAmount: 2600 }],
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   shopItemFindUnique.mockResolvedValue({
@@ -130,7 +160,6 @@ beforeEach(() => {
     addedById: LISTER,
     members: [{ cosmeticId: MEMBER, floorAmount: 2600 }],
   });
-  packMemberFindMany.mockResolvedValue([{ cosmeticId: MEMBER, floorAmount: 2600, cosmetic }]);
   shopItemFindMany.mockResolvedValue([
     {
       id: 9101,
@@ -171,6 +200,11 @@ describe('public pack detail returns named fields, not the meta column', () => {
     const detail = await getPackDetail({ shopItemId: PACK_ID });
     // The meta listing above fences one sub-object. This fences the response,
     // so a field lifted out of the blob to the top level fails too.
+    //
+    // `lastReviewWasRejection` is expected PRESENT with an undefined value for a
+    // caller who is not answered — `JSON.stringify` drops it, so it never
+    // reaches the wire. If you change the service to omit the key instead, that
+    // is an improvement and this listing is what you edit.
     expect(Object.keys(detail).sort()).toEqual([
       'amountDue',
       'availableQuantity',
@@ -187,6 +221,27 @@ describe('public pack detail returns named fields, not the meta column', () => {
       'title',
       'unavailableCount',
       'unitAmount',
+    ]);
+  });
+
+  it('returns only the member fields the contents panel renders', async () => {
+    const detail = await getPackDetail({ shopItemId: PACK_ID });
+    // The value fence below catches a whole listing passed through; this catches
+    // one named field lifted onto a member, whose value no sentinel knows.
+    expect(Object.keys(detail.members[0]).sort()).toEqual([
+      'acceptsBlueBuzz',
+      'consumable',
+      'cosmeticId',
+      'creatorUsername',
+      'currentListPrice',
+      'data',
+      'discount',
+      'isOwn',
+      'listPrice',
+      'name',
+      'owned',
+      'type',
+      'uses',
     ]);
   });
 
@@ -218,6 +273,12 @@ describe('public pack detail returns named fields, not the meta column', () => {
   });
 
   it('answers the review verdict only for the lister and for moderators', async () => {
+    // A REJECTING fixture, so each authorized arm expects `true`. With an
+    // approving one every arm expects `false`, and a service that hardcodes
+    // `false` satisfies the whole test — which is how this pairs with the
+    // rejection test below. Neither is redundant; deleting either disarms the
+    // other.
+    shopItemFindUnique.mockResolvedValue(rejectedPack(CosmeticShopItemStatus.Published));
     expect(
       (await getPackDetail({ shopItemId: PACK_ID })).lastReviewWasRejection,
       'an anonymous caller gets no answer, not a false one'
@@ -227,44 +288,43 @@ describe('public pack detail returns named fields, not the meta column', () => {
     ).toBeUndefined();
     expect(
       (await getPackDetail({ shopItemId: PACK_ID, userId: LISTER })).lastReviewWasRejection
-    ).toBe(false);
+    ).toBe(true);
     expect(
       (await getPackDetail({ shopItemId: PACK_ID, userId: MODERATOR_ID, isModerator: true }))
         .lastReviewWasRejection
+    ).toBe(true);
+    // A moderator context with no userId: without this arm the gate could be
+    // rewritten as `!!userId && (...)` and every other arm still passes.
+    expect(
+      (await getPackDetail({ shopItemId: PACK_ID, isModerator: true })).lastReviewWasRejection
+    ).toBe(true);
+  });
+
+  it('reports no rejection to the lister when the last verdict approved', async () => {
+    expect(
+      (await getPackDetail({ shopItemId: PACK_ID, userId: LISTER })).lastReviewWasRejection
     ).toBe(false);
   });
 
-  it('reports a rejection to the lister when the last verdict rejected', async () => {
-    shopItemFindUnique.mockResolvedValue({
-      id: PACK_ID,
-      cosmeticId: null,
-      title: 'A pack',
-      description: null,
-      unitAmount: 8800,
-      status: CosmeticShopItemStatus.Archived,
-      listed: false,
-      availableQuantity: null,
-      meta: {
-        ...META,
-        history: [
-          { at: 'then', userId: MODERATOR_ID, kind: 'reviewed', action: 'approve' },
-          { at: 'later', userId: MODERATOR_ID, kind: 'edited' },
-          {
-            at: 'later still',
-            userId: MODERATOR_ID,
-            kind: 'reviewed',
-            action: 'reject',
-            note: 'note-sentinel-70018',
-          },
-        ],
-      },
-      addedById: LISTER,
-      members: [{ cosmeticId: MEMBER, floorAmount: 2600 }],
-    });
+  it('refuses a pack that is not on sale to anyone but the lister and moderators', async () => {
+    // The same predicate that decides the verdict decides this, so the two
+    // cannot be tightened apart. Both uses are asserted, or a refactor can drop
+    // one of them silently.
+    shopItemFindUnique.mockResolvedValue(rejectedPack());
+    await expect(getPackDetail({ shopItemId: PACK_ID })).rejects.toThrow(/pack not found/i);
+    await expect(getPackDetail({ shopItemId: PACK_ID, userId: VISITOR })).rejects.toThrow(
+      /pack not found/i
+    );
+    expect((await getPackDetail({ shopItemId: PACK_ID, userId: LISTER })).id).toBe(PACK_ID);
+    expect((await getPackDetail({ shopItemId: PACK_ID, isModerator: true })).id).toBe(PACK_ID);
+  });
+
+  it('reads the last verdict rather than the last entry', async () => {
+    shopItemFindUnique.mockResolvedValue(rejectedPack());
     const detail = await getPackDetail({ shopItemId: PACK_ID, userId: LISTER });
     expect(detail.lastReviewWasRejection).toBe(true);
-    // The verdict, not the presence of entries: the last entry here is not a
-    // review, and the approve arm is the test above.
+    // The fixture's last entry is an edit, not a review, and its rejecting entry
+    // carries a note that must not travel with the verdict.
     expect(JSON.stringify(detail)).not.toContain('note-sentinel-70018');
   });
 });
@@ -291,8 +351,7 @@ describe('the rejection verdict is derived once, on the server', () => {
   });
 
   // The whitelist is shared with the storefront sanitizers. Two lists over one
-  // column is how a field ends up published on one path and not the other,
-  // which is the shape this endpoint had.
+  // column is how a field ends up published on one path and not the other.
   it('spreads the shared pack display whitelist', () => {
     expect(
       serviceSource,

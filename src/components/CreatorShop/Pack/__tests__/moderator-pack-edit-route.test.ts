@@ -509,7 +509,10 @@ describe('the moderator cosmetic-store pack edit route', () => {
       modalSource,
       'The rejected-vs-archived split must use the server-derived verdict, not restate ' +
         'the rule — an archived-after-rejection pack is NOT restorable.'
-    ).toContain('CosmeticShopItemStatus.Archived && !!existing.lastReviewWasRejection');
+      // Whitespace-tolerant: the line is four characters under prettier's width,
+      // so a longer identifier anywhere in it wraps the `&&` and a literal
+      // substring would report a dropped operator that nobody dropped.
+    ).toMatch(/Archived\s*&&\s*!!existing\.lastReviewWasRejection/);
     // Optional-chained, because `existing.meta?.history` is the spelling this
     // file's own idiom would reach for and it does not contain `meta.history`.
     expect(
