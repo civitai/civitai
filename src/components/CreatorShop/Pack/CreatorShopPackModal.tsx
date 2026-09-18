@@ -35,7 +35,6 @@ import { FeeSection } from '~/components/CreatorShop/Submit/FeeSection';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
-import { wasLastReviewARejection } from '~/server/services/creator-shop.data';
 import {
   PACK_MAX_MEMBERS,
   PACK_MIN_MEMBERS,
@@ -201,14 +200,13 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
   // fix the server would have accepted and makes turning blue OFF the only way
   // out of an edit that never touched it.
   const blueChanged = acceptsBlueBuzz !== !!existing?.meta.acceptsBlueBuzz;
-  // Archiving OVERWRITES status, so the history is the only thing that tells a
-  // rejected pack from an ordinary archived one — see `wasLastReviewARejection`.
-  // Without it the alert tells a moderator to restore a pack whose restore the
-  // server refuses as REJECTED_IS_FINAL.
+  // Archiving OVERWRITES status, so the review verdict is the only thing that
+  // tells a rejected pack from an ordinary archived one. Without it the alert
+  // tells a moderator to restore a pack whose restore the server refuses as
+  // REJECTED_IS_FINAL.
   const wasRejected =
     existing?.status === CosmeticShopItemStatus.Rejected ||
-    (existing?.status === CosmeticShopItemStatus.Archived &&
-      wasLastReviewARejection(existing.meta.history));
+    (existing?.status === CosmeticShopItemStatus.Archived && !!existing.lastReviewWasRejection);
   const uneditableStatus = wasRejected || existing?.status === CosmeticShopItemStatus.Archived;
   const canSubmit =
     // An edit saves what `getPack` returned, never the caller's seed.

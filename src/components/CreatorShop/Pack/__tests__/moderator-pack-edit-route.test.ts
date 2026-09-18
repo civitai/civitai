@@ -490,16 +490,26 @@ describe('the moderator cosmetic-store pack edit route', () => {
         'exactly the condition the payload and the server use.'
     ).toContain('const blueChanged = acceptsBlueBuzz !== !!existing?.meta.acceptsBlueBuzz;');
 
-    // Archiving OVERWRITES status, so the history is the only thing that separates
-    // a rejected pack from an ordinary archived one. Without the history term the
-    // alert tells a moderator to restore a pack whose restore the server refuses
-    // as REJECTED_IS_FINAL — the dead end this derivation exists to remove, and it
-    // was pinned by nothing.
+    // Archiving OVERWRITES status, so the review verdict is the only thing that
+    // separates a rejected pack from an ordinary archived one. Without this term
+    // the alert tells a moderator to restore a pack whose restore the server
+    // refuses as REJECTED_IS_FINAL — the dead end this derivation exists to
+    // remove, and it was pinned by nothing.
+    //
+    // The derivation MOVED to the server (getPackDetail) rather than being
+    // dropped: the endpoint is public, so the history it reads must not leave
+    // the server. Restating the rule from client-side history — the shape this
+    // pinned before — would put it back. If you are deleting this, check
+    // `pack-detail-public-fields.test.ts` first: it is the other half.
     expect(
       modalSource,
-      'The rejected-vs-archived split must use wasLastReviewARejection, not restate ' +
+      'The rejected-vs-archived split must use the server-derived verdict, not restate ' +
         'the rule — an archived-after-rejection pack is NOT restorable.'
-    ).toContain('wasLastReviewARejection(existing.meta.history)');
+    ).toContain('!!existing.lastReviewWasRejection');
+    expect(
+      modalSource,
+      'The editor must not read review history client-side — the endpoint that feeds it is public.'
+    ).not.toContain('meta.history');
     expect(
       modalSource,
       'The alert must choose its copy from wasRejected, or the two arms can be swapped back.'
