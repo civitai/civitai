@@ -253,8 +253,10 @@ export const APP_BLOCKS_RUNTIME_FLAG = 'app-blocks-runtime-enabled';
  *   no-user caller of THIS helper starts passing. That is the intended reading
  *   for a kill-switch, and it is why the identity-shaped callers must not route a
  *   missing subject through it — see GLOBAL-EVAL SEMANTICS at the top of this
- *   file, and `blocks.router.ts::assertAppBlocksEnabledForTokenUser`, which
- *   refuses an unhydratable subject before it gets here.
+ *   file, and `block-token-access.service.ts::assertAppBlocksEnabledForTokenUser`,
+ *   which refuses an unhydratable subject before it gets here. (That helper lived
+ *   in `blocks.router.ts` until 2026-09-18; it moved to a service so the REST
+ *   route `/api/v1/blocks/me` could share the one implementation.)
  *
  * The FLAG_OVERRIDE/local-overrides env exists for unit tests + local dev that
  * need to flip the flag without standing up Flipt.
