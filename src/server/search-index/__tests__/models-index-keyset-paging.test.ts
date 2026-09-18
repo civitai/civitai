@@ -60,6 +60,9 @@ type PagingFake = {
   pageSql: () => string[];
   /** The bind values of each page query, in order. The half `pageSql` cannot show. */
   pageValues: () => unknown[][];
+  /** The MIN/MAX bounds statement, which produces the `startId`/`endId` the rebuild pages over. */
+  boundsSql: () => string[];
+  boundsValues: () => unknown[][];
 };
 
 /**
@@ -68,10 +71,11 @@ type PagingFake = {
  * in the order the query asked for, and an OFFSET query with no ORDER BY is answered in id order
  * anyway — the OFFSET arm is given the benefit of the doubt on purpose.
  *
- * 🔴 IT REFUSES A QUERY IT CANNOT READ rather than defaulting. A fake that answers an
- * unrecognised statement is worse than no fake: inline the page size as a literal and a
- * `?? members.size` default would hand back the whole set on page one, at which point the
- * headline case passes under an OFFSET implementation too and stops discriminating anything.
+ * 🔴 IT REFUSES A QUERY IT CANNOT READ rather than defaulting, and that now covers BOTH
+ * statements. A fake that answers an unrecognised statement is worse than no fake: a
+ * `?? members.size` default handed back the whole set on page one, and a hardcoded bounds row
+ * answered a query nobody was reading - each of which let a mutation of the real statement pass
+ * every case in this file.
  *
  * `onPage` runs after a page has been answered, and is where a case mutates membership.
  */
@@ -79,10 +83,31 @@ const makeFake = (members: Set<number>, onPage?: (page: number) => void): Paging
   let pages = 0;
   const sql: string[] = [];
   const binds: unknown[][] = [];
+  const boundsSql: string[] = [];
+  const boundsBinds: unknown[][] = [];
 
   const $queryRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const text = renderTag(strings, values);
-    if (text.includes('MIN(id)')) return [{ startId: 1, endId: 1_000_000 }];
+    if (text.includes('MIN(id)')) {
+      // Derived from the members, never constant. A hardcoded row here made the whole bounds
+      // query invisible: swapping its MIN/MAX aliases, or deleting it outright, left every case
+      // green while production stopped indexing newly created models.
+      boundsSql.push(text);
+      boundsBinds.push(values);
+      const ids = [...members];
+      // Answer the aggregate the statement ASKED for. Returning a constant row, or even the
+      // right numbers under fixed names, cannot see a swapped MIN/MAX alias - and that swap
+      // makes `endId - startId` negative, which silently stops every newly created model from
+      // being indexed.
+      const aggregateFor = (alias: string) => {
+        const match = text.match(new RegExp(String.raw`(MIN|MAX)\(id\)\s+as\s+"${alias}"`, 'i'));
+        if (!match) {
+          throw new Error(`bounds fake found no aggregate aliased "${alias}" in: ${text}`);
+        }
+        return match[1].toUpperCase() === 'MIN' ? Math.min(...ids) : Math.max(...ids);
+      };
+      return [{ startId: aggregateFor('startId'), endId: aggregateFor('endId') }];
+    }
 
     pages += 1;
     if (pages > PAGE_CAP) {
@@ -128,6 +153,8 @@ const makeFake = (members: Set<number>, onPage?: (page: number) => void): Paging
     pageQueries: () => pages,
     pageSql: () => sql,
     pageValues: () => binds,
+    boundsSql: () => boundsSql,
+    boundsValues: () => boundsBinds,
   };
 };
 
@@ -254,6 +281,51 @@ describe('prepareModelsBatches paging', () => {
    */
   it('is the function the models index processor actually runs', () => {
     expect(modelsSearchIndex.prepareBatches).toBe(prepareModelsBatches);
+  });
+
+  /**
+   * `startId`/`endId` are the OTHER half of what this function returns, and the half the file
+   * ignored for six review rounds. `base.search-index.ts` turns them into the range fan-out
+   * (`Math.ceil((endId - startId) / batchSize)`) on both the delta and the rebuild path, so they
+   * are how newly created models get indexed at all. Swapping the MIN/MAX aliases makes that
+   * span negative and silently indexes nothing new; deleting the bounds query guts the rebuild.
+   * Both of those passed every other case in this file.
+   */
+  it('returns the real id bounds, with the aggregates the right way round', async () => {
+    // Deliberately not symmetric and not starting at 1: a swapped alias has to produce a
+    // different number, and a fixture like 1..N makes too many wrong answers look right.
+    const fake = makeFake(new Set(range(5, 90)));
+
+    const { startId, endId } = await prepareModelsBatches(fake.ctx, LAST_UPDATED_AT);
+
+    expect(startId).toBe(5);
+    expect(endId).toBe(90);
+  });
+
+  it('scopes the bounds query to the eligible set and the caller watermark', async () => {
+    const fake = makeFake(new Set(range(5, 90)));
+
+    await prepareModelsBatches(fake.ctx, LAST_UPDATED_AT);
+
+    expect(fake.boundsSql()).toHaveLength(1);
+    const [bounds] = fake.boundsSql();
+    expect(whereClausesOf(bounds)).toEqual([
+      'status = ?::"ModelStatus" AND availability != ?::"Availability" AND "createdAt" >= ? ;',
+    ]);
+    // `"createdAt"` here against `"updatedAt"` on the page query is deliberate and pre-existing:
+    // the bounds describe the newly-created span, the page query the edited set. Pinned so a
+    // one-word change between the two statements cannot pass unnoticed.
+    // The watermark reaches this statement inside a conditional `Prisma.sql` fragment, not as a
+    // bare scalar - so it is asserted through that shape. Drop the fragment and there is no third
+    // bind to destructure, which is the failure this is here to produce.
+    const [status, availability, createdAt] = fake.boundsValues()[0] as [
+      string,
+      string,
+      { values: unknown[] }
+    ];
+    expect(status).toBe(ModelStatus.Published);
+    expect(availability).toBe(Availability.Unsearchable);
+    expect(createdAt.values).toEqual([LAST_UPDATED_AT]);
   });
 
   it('issues no page query at all on a full rebuild', async () => {
