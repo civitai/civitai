@@ -12,15 +12,20 @@ function revokedKey(blockInstanceId: string) {
 }
 
 /**
- * Per-blockInstanceId token revocation, written when an install is
- * uninstalled or toggled off. Tokens for the revoked instance are rejected by
- * the block-scope middleware until the marker's TTL elapses.
+ * Per-blockInstanceId token revocation, written when an install is uninstalled,
+ * toggled off, or its publisher is banned. Tokens for the revoked instance are
+ * rejected by the block-scope middleware until the marker's TTL elapses.
  *
- * 🔴 THIS LIST USED TO INCLUDE "or the publisher is banned", AND NO SUCH WRITER
- * EXISTS. `revokeInstance` has exactly two production call sites, both in
- * `block-registry.service.ts` — `uninstallFromModel` and `toggleEnabled(false)`.
- * No ban path writes a marker (see `block-scope.middleware.ts`), yet this
- * docblock described one as shipped. Do not reason about a ban path from here.
+ * 🔴 THE BAN LEG IS REAL NOW — AND THIS DOCBLOCK HAS CLAIMED IT BEFORE IT WAS.
+ * It once listed "or the publisher is banned" with no such writer in the tree,
+ * and was then corrected to say no ban path writes a marker. As of clawgate #618
+ * a writer exists, so the correction is stale in turn. `revokeInstance` has
+ * exactly THREE production call sites: `uninstallFromModel` and
+ * `toggleEnabled(false)` (both `block-registry.service.ts`), and
+ * `revokeBlockInstancesForPublisher`
+ * (`blocks/publisher-ban-revocation.service.ts`), reached from `toggleBan`.
+ * Read that writer's docblock before reasoning about the ban path: it covers
+ * blocks the banned user OWNS, not ones they hold a collaborator seat on.
  *
  * This is a deliberately coarse-grained revocation primitive (per-instance,
  * not per-jti). A per-jti denylist is heavier infra and gains little for v1

@@ -38,11 +38,15 @@ import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-a
  *   2. REVOCATION — a Redis GET, so it is the cheap check and it runs before the DB
  *      read. It is also the one that responds to a user action (uninstall /
  *      toggle-off) within seconds rather than at the next approval change.
- *      🔴 NOT publisher ban, which this line claimed until 2026-09-16: no ban
- *      path writes a revocation marker. `revokeInstance` has exactly two
- *      production call sites — `uninstallFromModel` and `toggleEnabled(false)`,
- *      both in `block-registry.service.ts` — so a ban is NOT contained within
- *      seconds here; a banned publisher's live tokens run to natural `exp`.
+ *      🔴 A PUBLISHER BAN IS NOW ALSO CONTAINED HERE, and this line has been
+ *      wrong in both directions before — it claimed the ban leg until 2026-09-16
+ *      with no writer in the tree, then said no ban path writes a marker. As of
+ *      clawgate #618 `toggleBan` calls `revokeBlockInstancesForPublisher`
+ *      (`blocks/publisher-ban-revocation.service.ts`), the third production call
+ *      site of `revokeInstance` alongside `uninstallFromModel` and
+ *      `toggleEnabled(false)`. It marks every live instance of every block the
+ *      banned user OWNS, so those tokens are refused on their next bridge call
+ *      rather than running to natural `exp`.
  *   3. APPROVED STATUS — the backing `app_blocks` row must still say `approved`.
  *
  * Each step fails closed EXCEPT revocation, which fails OPEN by construction inside

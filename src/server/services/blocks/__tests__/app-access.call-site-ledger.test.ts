@@ -232,6 +232,19 @@ const GATE_LEDGER: Record<string, string> = {
     'it is masked today because both HTTP callers require isModerator. If that is ever ' +
     'opened to non-mod authors it becomes a slug-hijack vector and needs an explicit ' +
     'owner (or collaborator) check.',
+  'src/server/services/blocks/publisher-ban-revocation.service.ts':
+    'NOT a caller-identity gate, and DELIBERATELY NOT WIDENED — the inverse direction ' +
+    'from every other entry here. `app: { userId }` selects the BANNED PUBLISHER’s own ' +
+    'apps so `toggleBan` can revoke their live block instances. Widening it to "any app ' +
+    'this user can reach" would let a ban on a seated EDITOR revoke every live token of ' +
+    'an app owned by somebody who was not banned — a moderation action against one ' +
+    'account taking down another account’s product. So here an editor seat must NOT ' +
+    'expand the set: banning the OWNER is the case this closes. 🔴 It reads the ' +
+    'DENORMALIZED-free side on purpose (AppBlock → OauthClient.userId, the canonical ' +
+    'owner for an onsite block), and it resolves no AppListing, so D5 does not apply. If ' +
+    'this ever needs to cover OFF-SITE listings it must go through ' +
+    'resolveCanonicalListingOwner rather than growing a second spelling here — but ' +
+    'off-site apps mint no block token, so there is nothing to revoke.',
   'src/server/services/blocks/user-app-surface.service.ts':
     'NOT an access gate at all — an owner SUPPRESSION on a read of the viewer’s OWN data. ' +
     'listMyScopeGrants’ activity leg skips a row when AppBlock.app.userId === the viewer, ' +

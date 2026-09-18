@@ -133,6 +133,7 @@ import type {
 } from './../schema/user.schema';
 import { removeUserContentFromSearchIndex } from '~/server/meilisearch/util';
 import { cancelSubscription, reinstateSubscription } from '~/server/services/stripe.service';
+import { revokeBlockInstancesForPublisher } from '~/server/services/blocks/publisher-ban-revocation.service';
 export const getUsersByIds = async (userIds: number[]) => {
   const users = await dbRead.user.findMany({
     where: { id: { in: userIds } },
@@ -2076,6 +2077,26 @@ export const toggleBan = async ({
           type: 'error',
           name: 'ban-user-delete-user-links',
           message: (error as Error).message,
+        })
+      ),
+
+      // Revoke every live App Block instance of every block this user PUBLISHES.
+      // `invalidateSession` above ends their own browser sessions; it does not touch
+      // a block token, which is a separate RS256 JWT the runtime guards check against
+      // a per-instance Redis marker. Without this the tokens their blocks already hold
+      // keep authenticating against the REST and tRPC bridges until natural `exp` —
+      // 900s by default, 14400s for a `dev` token. See the writer's own docblock for
+      // what is and is not in that set (owner only, not seated collaborators).
+      //
+      // Isolated like every other leg of this fan-out: the marker write must never be
+      // able to fail the ban. `revokeInstance` already swallows Redis errors; this
+      // catch covers the DB read in front of it.
+      revokeBlockInstancesForPublisher({ userId: id }).catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'ban-user-revoke-block-instances',
+          message: (error as Error).message,
+          error,
         })
       ),
 

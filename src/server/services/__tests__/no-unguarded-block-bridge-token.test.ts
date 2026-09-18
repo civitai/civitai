@@ -9,14 +9,17 @@ import { describe, expect, it } from 'vitest';
  * `verifyBlockToken` answers one question — is this a token we signed, not yet expired.
  * It cannot see an uninstall, a toggle-off or a suspended app.
  *
- * 🔴 THIS LIST AND THE FAILURE MESSAGE BELOW BOTH USED TO INCLUDE A BANNED
- * PUBLISHER, UNTIL 2026-09-16. They should not: `authorizeBlockBridgeToken`
- * checks token validity, the revocation marker and `app_blocks.status`, and
- * `toggleBan` writes none of the three. So routing a proc through the guard does
- * NOT contain a ban — a banned publisher's live tokens run to natural `exp`
- * either way — and naming it among the things the guard catches told a developer
- * the opposite at the moment their CI went red. See `block-scope.middleware.ts`
- * for the two-call-site enumeration.
+ * 🔴 A BANNED PUBLISHER IS BACK IN SCOPE, AND THE HISTORY MATTERS. This list and
+ * the failure message below named a banned publisher while nothing wrote a
+ * revocation marker on ban; that was removed on 2026-09-16 because routing a proc
+ * through the guard genuinely did NOT contain a ban. As of clawgate #618 it does:
+ * `toggleBan` calls `revokeBlockInstancesForPublisher`
+ * (`blocks/publisher-ban-revocation.service.ts`), so the marker the guard already
+ * checks is now written on ban too, for every live instance of every block the
+ * banned user OWNS. Note the narrowness before restating it anywhere: a
+ * collaborator seat on somebody else's app is not covered, and containment is on
+ * the NEXT bridge call, not mid-request. See `block-scope.middleware.ts` for the
+ * three-call-site enumeration.
  *
  * The bridge procs each called it directly and checked none of those, so a revoked install
  * kept driving the bridge — orchestrator polls, workflow cancels, and

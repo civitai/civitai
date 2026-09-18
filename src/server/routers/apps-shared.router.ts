@@ -156,11 +156,13 @@ export async function resolveSharedContext(
 
   // Per-instance revocation — the missing containment leg (audit M-1). The REST
   // `withBlockScope` path enforces this; the tRPC shared path must too, so an
-  // uninstalled / toggled-off instance can't keep writing until token expiry.
-  // Mirrors block-scope.middleware's check. (Was "/ publisher-banned": there is
-  // no publisher-ban marker writer. `revokeInstance` has exactly two production
-  // call sites, `uninstallFromModel` and `toggleEnabled(false)`, both in
-  // `block-registry.service.ts`. Do not reason about a ban path from here.)
+  // uninstalled / toggled-off / publisher-banned instance can't keep writing
+  // until token expiry. Mirrors block-scope.middleware's check. (The ban leg is
+  // new as of clawgate #618 — `revokeInstance` now has three production call
+  // sites: `uninstallFromModel` and `toggleEnabled(false)`, both in
+  // `block-registry.service.ts`, plus `revokeBlockInstancesForPublisher` in
+  // `blocks/publisher-ban-revocation.service.ts`. Read `block-scope.middleware.ts`
+  // before reasoning about the ban path from here.)
   if (await BlockRevocation.isRevoked(claims.blockInstanceId)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'block instance revoked' });
   }

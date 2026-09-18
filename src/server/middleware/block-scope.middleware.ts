@@ -901,26 +901,35 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     res.on('finish', recordBlockMetric);
     res.on('close', recordBlockMetric);
 
-    // H-2: per-instance revocation check. Uninstall and toggleEnabled(false)
-    // write a marker that lives for one full token lifetime. Tokens for revoked
-    // instances are rejected here before the wrapped handler runs. Fail-open on
-    // Redis incidents.
+    // H-2: per-instance revocation check. Uninstall, toggleEnabled(false) and a
+    // publisher ban each write a marker that lives for one full token lifetime.
+    // Tokens for revoked instances are rejected here before the wrapped handler
+    // runs. Fail-open on Redis incidents.
     //
-    // 🔴 THIS LINE USED TO READ "and (Phase 2) publisher-ban all write a marker",
-    // and other files cite THIS comment as the authority that a ban does not.
-    // The "(Phase 2)" was carrying that whole meaning, and it could not: the main
-    // verb said all three DO write one, and "(Phase 2)" labels shipped things
-    // elsewhere in this tree. The fact, by enumeration: `revokeInstance` has
-    // exactly two production call sites, `uninstallFromModel` and
-    // `toggleEnabled(false)` (both `block-registry.service.ts`). `toggleBan`
-    // (`user.service.ts`) writes NONE of the three things this guard checks —
-    // it does plenty else (unpublishes the user's models, cancels the
-    // subscription, blocks media, invalidates sessions), so do not read this as
-    // "a ban only logs you out"; the point is narrower and only about THIS
-    // guard. `block-approval.service.ts` never consults owner ban state. So
-    // banning a
-    // publisher does NOT revoke that publisher's live block tokens; they run to
-    // natural `exp`. Do not re-add a ban to this list without adding the writer.
+    // 🔴 THE BAN LEG IS NEW, AND OTHER FILES CITE THIS COMMENT AS THE AUTHORITY ON
+    // IT — keep the enumeration here honest or they all go stale together.
+    // History, because this line has been wrong in both directions: it once read
+    // "and (Phase 2) publisher-ban all write a marker" while NO ban writer existed,
+    // and was then corrected to say a ban writes none of the three. As of
+    // clawgate #618 the writer exists, so the correction is itself now stale.
+    // By enumeration, `revokeInstance` has exactly THREE production call sites:
+    // `uninstallFromModel` and `toggleEnabled(false)` (both
+    // `block-registry.service.ts`), and `revokeBlockInstancesForPublisher`
+    // (`blocks/publisher-ban-revocation.service.ts`), which `toggleBan`
+    // (`user.service.ts`) calls in its ban fan-out.
+    //
+    // 🔴 WHAT THE BAN LEG COVERS IS NARROWER THAN "a banned user's tokens stop
+    // working". It marks every live instance of every block the banned user OWNS
+    // (`app.userId`) — deliberately not apps they merely hold a collaborator seat
+    // on, which would take down another account's product. And it is asynchronous
+    // with respect to a request already in flight: a token minted before the ban is
+    // refused on its NEXT call here, not mid-call.
+    //
+    // `block-approval.service.ts` still never consults owner ban state — the
+    // approved-status gate below is a separate signal, and a ban does not flip
+    // `app_blocks.status`.
+    //
+    // Do not re-add a fourth cause to this list without adding its writer.
     if (await BlockRevocation.isRevoked(claims.blockInstanceId)) {
       res.status(403).json({ error: 'block instance revoked' });
       return;

@@ -122,24 +122,28 @@ export async function getGrantedScopes(opts: {
  * per-`blockInstanceId` Redis marker checked on the block-scope path — but read
  * what actually sets it before relying on it:
  *
- *  - 🔴 NO CALL SITE EXISTS WHOSE *PURPOSE* IS REVOCATION — which is a narrower
- *    claim than either of the two this paragraph has already got wrong. It
- *    first said `BlockRevocation` was "operator-invoked" (false), and the
- *    correction then said "there is no admin router, no tRPC procedure and no
- *    script" (ALSO false, on the middle term). What the tree actually shows:
+ *  - 🔴 EXACTLY ONE CALL SITE EXISTS WHOSE *PURPOSE* IS REVOCATION, and it is new
+ *    — this paragraph has already been wrong twice about what writes a marker.
+ *    It first said `BlockRevocation` was "operator-invoked" (false), then that
+ *    "there is no admin router, no tRPC procedure and no script" (also false, on
+ *    the middle term), then that no call site's purpose was revocation (true
+ *    until clawgate #618). What the tree shows now:
  *
- *    `revokeInstance` has exactly two production call sites, both in
+ *    `revokeInstance` has three production call sites. Two are in
  *    `block-registry.service.ts` — `uninstallFromModel` and
- *    `toggleEnabled(false)` — and in both the marker is a SIDE EFFECT
- *    of a different operation. But both are reachable over tRPC
- *    (`blocks.router.ts:1848`, `:1810`, both `protectedProcedure`), and
- *    `assertCanManageBlocks` early-returns for moderators (`:1521`), so a
- *    moderator CAN cause a marker deliberately, against any user's install on
- *    any model.
+ *    `toggleEnabled(false)` — and in both the marker is a SIDE EFFECT of a
+ *    different operation. Both are reachable over tRPC (`blocks.router.ts`,
+ *    `protectedProcedure`), and `assertCanManageBlocks` early-returns for
+ *    moderators, so a moderator CAN cause a marker deliberately, against any
+ *    user's install on any model. The third —
+ *    `revokeBlockInstancesForPublisher`
+ *    (`blocks/publisher-ban-revocation.service.ts`, called from `toggleBan`) —
+ *    IS there to revoke: it marks every live instance of every block the banned
+ *    user owns, and leaves the installs themselves alone.
  *
- *    So the useful statement is not "nobody can write one" but: **there is no
- *    endpoint that revokes a token without also uninstalling or disabling the
- *    install.** Every route to a marker has a separate, user-visible outcome.
+ *    So: two routes to a marker carry a separate, user-visible outcome
+ *    (uninstall / disable); the third is a moderation action against the
+ *    publisher, not against the install.
  *
  *    🔴 HOW OFTEN THE MIDDLEWARE'S 403 BRANCH IS ACTUALLY EXERCISED IS NOT
  *    ESTABLISHED, AND THIS COMMENT NO LONGER GUESSES. Two successive drafts
