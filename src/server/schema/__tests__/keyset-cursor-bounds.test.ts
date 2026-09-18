@@ -17,6 +17,10 @@ import { getAllModelsSchema } from '~/server/schema/model.schema';
  * `model.getAll`) lives in `src/server/utils/pagination-helpers.ts` and is
  * pinned in `src/server/utils/pagination-helpers.test.ts` — no magnitude bound
  * can catch that one, because the offending values are ordinary in-range ints.
+ *
+ * 🔴 Neither this bound nor that guard closes the COMPOSITE-STRING shape of the
+ * same fault (`"165997|123"` on a date-headed sort). That residual is open and
+ * is pinned as such in `src/server/utils/pagination-helpers.test.ts`.
  */
 
 describe('keysetCursorSchema — numeric bound', () => {
@@ -55,7 +59,11 @@ describe('keysetCursorSchema — numeric bound', () => {
     expect(keysetCursorSchema.safeParse(BigInt(2686725)).success).toBe(true);
   });
 
-  it('leaves a composite string cursor untouched (tokens are validated per-field downstream)', () => {
+  // A string cursor is deliberately unbounded here. Downstream, `parseCursor`
+  // checks the token COUNT and each token's PARSEABILITY — NOT that a token's
+  // type matches the column it will be compared against. See the documented
+  // residual in pagination-helpers.test.ts.
+  it('leaves a composite string cursor untouched', () => {
     const result = keysetCursorSchema.safeParse('2024-01-15 12:00:00|2686725');
     expect(result.success).toBe(true);
     expect(result.data).toBe('2024-01-15 12:00:00|2686725');

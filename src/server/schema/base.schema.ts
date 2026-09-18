@@ -56,16 +56,33 @@ export const INT4_MAX = 2147483647;
  * the caller gets a 400. Same class, and the same bound, as the
  * `/api/v1/models/[id]` id schema.
  *
- * NOTE: this bound covers the MAGNITUDE half of the class only. An *in-range*
- * number is still the wrong shape for a multi-field sort, and binding it to a
- * `timestamp` sort column (e.g. `mm."lastVersionAt"` on model Newest/Oldest)
- * makes Postgres throw `date/time field value out of range`. That is an arity
- * problem, not a magnitude one, and is rejected in `parseCursor` — see
- * `src/server/utils/pagination-helpers.ts`.
+ * `.int().gt(0)` is part of that bound and is strictly tighter than "fits in
+ * int4": zero, negatives and non-integers are rejected too. Safe, because every
+ * one of those columns is an autoincrement `Int` starting at 1, so no cursor
+ * this server issues can be any of them.
  *
- * A string cursor is left unbounded on purpose: the composite form carries
- * timestamps and `|` separators, and its tokens are validated per-field in
- * `parseCursor`.
+ * NOTE: this bound covers the MAGNITUDE half of the class only, and read the
+ * next paragraph before treating the other half as closed. An *in-range* number
+ * bound to a `timestamp` sort column (e.g. `mm."lastVersionAt"` on model
+ * Newest/Oldest) makes Postgres throw `date/time field value out of range`.
+ * That is an arity/shape problem, not a magnitude one, so no bound here can
+ * catch it.
+ *
+ * `parseCursor` (`src/server/utils/pagination-helpers.ts`) rejects the BARE
+ * SCALAR shape of that — a number/bigint/Date where the sort needs N values.
+ * 🔴 It does NOT reject the COMPOSITE-STRING shape: a hand-built `"165997|123"`
+ * on a date-headed sort has the right token COUNT, and `parseCursor` decides
+ * date-vs-numeric per token by whether the token contains `-`, so the numeric
+ * head token is bound to the timestamp column and Postgres throws exactly as
+ * before. That is a KNOWN, open residual — closing it needs per-field type
+ * information the sort string does not carry. It is pinned as a documented gap
+ * in `src/server/utils/pagination-helpers.test.ts`; do not read this schema, or
+ * `parseCursor`'s guards, as covering it.
+ *
+ * A string cursor is therefore left unbounded on purpose: the composite form
+ * carries timestamps and `|` separators. `parseCursor` validates a string
+ * cursor's token COUNT and each token's PARSEABILITY — never that a token's
+ * type is coherent with the column it will be compared against.
  */
 export const keysetCursorSchema = z
   .union([

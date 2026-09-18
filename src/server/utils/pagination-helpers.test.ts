@@ -117,7 +117,38 @@ describe('parseCursor (via getCursor) — scalar cursor on a multi-field sort', 
   });
 });
 
-describe('parseCursorClauses — scalar cursor on a multi-field sort (the model.getAll caller)', () => {
+/**
+ * 🔴 DOCUMENTED OPEN RESIDUAL — this test pins a KNOWN FAULT, not correct behaviour.
+ *
+ * The scalar guard above closes only the bare-number/bigint/Date shape. A
+ * hand-built COMPOSITE cursor has the right token COUNT, and `parseCursor`
+ * decides date-vs-numeric per token by whether the token contains `-`, so a
+ * numeric head token on a date-headed sort is still bound to the TIMESTAMP
+ * column and Postgres still throws `date/time field value out of range`.
+ *
+ * Closing it needs per-field TYPE information that the sort string does not
+ * carry — the fix is to thread the sort fields' types through
+ * `getCursor`/`getCursorClauses`, which is a wider change than the defect this
+ * file's guard was added for.
+ *
+ * When that lands, this test will fail. That is the point: replace it with an
+ * `expectBadRequest(...)` rather than deleting it.
+ */
+describe('parseCursor (via getCursorClauses) — KNOWN GAP: composite numeric token on a date column', () => {
+  it('still binds a numeric head token to a timestamp sort column (NOT yet rejected)', () => {
+    const { strict } = getCursorClauses(
+      'mm."lastVersionAt" DESC NULLS LAST, p."modelId" DESC',
+      '165997|123'
+    );
+    const values = (strict as unknown as { values: unknown[] }).values;
+    // 165997 reaches the SQL comparison against `lastVersionAt` — the exact
+    // binding that makes Postgres throw. No guard rejects it today.
+    expect(values).toContain(165997);
+    expect(values.some((v) => v instanceof Date)).toBe(false);
+  });
+});
+
+describe('getCursorClauses — scalar cursor on a multi-field sort (the model.getAll caller)', () => {
   // getModelsRaw uses getCursorClauses, not getCursor. Same parseCursor inside,
   // but pin it separately so a future divergence can't reopen the hole.
   const NEWEST = 'mm."lastVersionAt" DESC NULLS LAST, p."modelId" DESC';
