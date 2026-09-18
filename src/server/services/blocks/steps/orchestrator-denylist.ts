@@ -136,7 +136,9 @@ export const PLATFORM_INTERNAL_STEP_TYPES: readonly string[] = Object.freeze([
  * genuinely unmutatable from outside, where the retracted `Object.freeze(Set)`
  * only looked as though it did.
  */
-const PLATFORM_INTERNAL_LOOKUP = new Set<string>(PLATFORM_INTERNAL_STEP_TYPES);
+const PLATFORM_INTERNAL_LOOKUP = new Set<string>(
+  PLATFORM_INTERNAL_STEP_TYPES.map((t) => t.toLowerCase())
+);
 
 /**
  * Thrown when a block reaches for a platform-internal `$type`.
@@ -161,9 +163,26 @@ export class PlatformInternalStepTypeError extends Error {
   }
 }
 
-/** True when `stepType` is platform-internal and must never be app-submittable. */
+/**
+ * True when `stepType` is platform-internal and must never be app-submittable.
+ *
+ * 🔴 CASE-FOLDED, and that is load-bearing rather than tidy. On the pass-through
+ * `kind:'step'` arm this denylist is the ONLY control, and the value it sees is
+ * a caller-supplied string forwarded verbatim to an orchestrator this repo does
+ * not own. An exact `Set.has()` therefore let `'XGuardModeration'` through — a
+ * complete bypass of the control if that orchestrator happens to match `$type`
+ * case-insensitively, which is not knowable from here and not ours to assume in
+ * either direction. Folding case makes the guard hold for BOTH answers.
+ *
+ * It denies a strict SUPERSET of what it denied before, and that widening is
+ * safe by measurement rather than by hope: all 50 `$type` keys in the live
+ * `WorkflowStepTemplate.discriminator.mapping` are distinct when lowercased
+ * (measured 2026-09-17 — 50 keys, 50 distinct-lowercased), so folding cannot
+ * make an ALLOWED type collide with a denied one. Re-measure that before adding
+ * an entry whose lowercasing could collide with a legitimate type.
+ */
 export function isPlatformInternalStepType(stepType: string): boolean {
-  return PLATFORM_INTERNAL_LOOKUP.has(stepType);
+  return PLATFORM_INTERNAL_LOOKUP.has(stepType.toLowerCase());
 }
 
 /**
