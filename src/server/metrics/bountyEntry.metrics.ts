@@ -46,10 +46,7 @@ export const bountyEntryMetrics = createMetricProcessor({
 
 async function getReactionTasks(ctx: MetricProcessorRunContext) {
   log('getReactionTasks', ctx.lastUpdate);
-  const excludedFilter = snippets.excludedReactorFilter(
-    await getMetricExcludedUserIdsOrThrow(),
-    'r."userId"'
-  );
+  const excludedFilter = snippets.excludedReactorFilter(await getMetricExcludedUserIdsOrThrow());
   const affected = await getAffected(ctx)`
     -- get recent bounty entry reactions
     SELECT
@@ -66,16 +63,23 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
     const metrics = await getMetricJson(ctx)`
       -- Aggregate bounty entry reaction metrics into JSON
       WITH metric_data AS (
+        -- Driven from the affected ids with a LEFT JOIN, not from the reaction rows: an
+        -- entry whose remaining reactions are all excluded must come back as zero rather
+        -- than as no row, because a missing row means "no change" downstream and the
+        -- pre-exclusion total would survive the recompute. timeframeSum scores an
+        -- outer-joined NULL as 0, so the empty case sums to zero rather than counting a
+        -- reaction that is not there.
         SELECT
-          r."bountyEntryId",
+          be.id AS "bountyEntryId",
           tf.timeframe,
           ${snippets.reactionTimeframes()}
-        FROM "BountyEntryReaction" r
-        JOIN "BountyEntry" be ON be.id = r."bountyEntryId" -- ensure the bountyEntry exists
+        FROM unnest(${ids}::int[]) AS affected(id)
+        JOIN "BountyEntry" be ON be.id = affected.id -- ensure the bountyEntry exists
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE r."bountyEntryId" = ANY(${ids}::int[])
-        ${excludedFilter}
-        GROUP BY r."bountyEntryId", tf.timeframe
+        LEFT JOIN "BountyEntryReaction" r
+          ON r."bountyEntryId" = be.id
+          ${excludedFilter}
+        GROUP BY be.id, tf.timeframe
       )
       SELECT jsonb_agg(
         jsonb_build_object(

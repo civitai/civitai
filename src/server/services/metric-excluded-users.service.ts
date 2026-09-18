@@ -31,7 +31,7 @@ export async function getMetricExcludedUserIds(): Promise<number[]> {
   try {
     return await fetchExcludedUserIds();
   } catch (error) {
-    reportUnavailable(error);
+    reportUnavailable(error, 'falling back to an unfiltered count');
     return [];
   }
 }
@@ -49,7 +49,15 @@ export async function getMetricExcludedUserIds(): Promise<number[]> {
  */
 export async function getMetricExcludedUserIdsOrThrow(): Promise<number[]> {
   if (!clickhouse) throw new Error('clickhouse client unavailable');
-  return fetchExcludedUserIds();
+  try {
+    return await fetchExcludedUserIds();
+  } catch (error) {
+    // Reported as well as thrown. The rejection surfaces only as a generic job-error for
+    // whichever metric set happened to call first, which does not say that the metric
+    // jobs are stalled or why.
+    reportUnavailable(error, 'skipping the metric run');
+    throw error;
+  }
 }
 
 async function fetchExcludedUserIds(): Promise<number[]> {
@@ -61,8 +69,9 @@ async function fetchExcludedUserIds(): Promise<number[]> {
       `;
       // > 0 because `Number(null)` is 0, not NaN: a null column would otherwise
       // enter the list as user 0 and silently suppress whatever writes that id.
-      // `isFinite` is belt-and-braces here, kept for parity with the identical
-      // guard in metric-reaction-repair.service.ts and the event-engine copy.
+      // `isFinite` is belt-and-braces here, matching the event-engine copy.
+      // metric-reaction-repair.service.ts reads the same rows WITHOUT this coercion,
+      // which is inert only because no row has a null userId today.
       return rows.map((r) => Number(r.userId)).filter((id) => Number.isFinite(id) && id > 0);
     },
     // Passed explicitly, not because it differs from fetchThroughCache's default —
@@ -88,13 +97,13 @@ async function fetchExcludedUserIds(): Promise<number[]> {
  * busiest write path into a log amplifier exactly when infrastructure is degraded.
  */
 let unavailable = false;
-function reportUnavailable(error: unknown) {
+function reportUnavailable(error: unknown, outcome: string) {
   if (unavailable) return;
   unavailable = true;
   logToAxiom({
     type: 'warning',
     name: 'metric-excluded-users-unavailable',
-    message: 'Falling back to an unfiltered count',
+    message: `Exclusion list unavailable, ${outcome}`,
     details: { error: (error as Error)?.message },
   }).catch(() => undefined);
 }

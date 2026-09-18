@@ -5,6 +5,7 @@ import {
   executeRefresh,
   getAffected,
   getEntityMetricTasks,
+  reactionCountKeys,
   snippets,
 } from '~/server/metrics/metric-helpers';
 import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
@@ -95,10 +96,7 @@ export const postMetrics = createMetricProcessor({
 
 async function getReactionTasks(ctx: MetricContext) {
   log('getReactionTasks', ctx.lastUpdate);
-  const excludedFilter = snippets.excludedReactorFilter(
-    await getMetricExcludedUserIdsOrThrow(),
-    'r."userId"'
-  );
+  const excludedFilter = snippets.excludedReactorFilter(await getMetricExcludedUserIdsOrThrow());
   const affectedImages = await ctx.ch.$query<{ imageId: number }>`
     -- get recent images with reactions
     SELECT DISTINCT entityId as imageId
@@ -129,9 +127,25 @@ async function getReactionTasks(ctx: MetricContext) {
   });
   await limitConcurrency(postFetchTasks, 3);
 
-  const tasks = chunk([...affected], 100).map((ids, i) => async () => {
+  // Sorted because the query below bounds the chunk with
+  // `BETWEEN ids[0] AND ids[ids.length - 1]`. `affected` is a Set in insertion order, so
+  // an unsorted chunk whose first id exceeds its last matches NOTHING — and with the
+  // zero-seeding below, a chunk that matches nothing would write zeros over real counts.
+  const tasks = chunk(
+    [...affected].sort((a, b) => a - b),
+    100
+  ).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getReactionTasks', i + 1, 'of', tasks.length);
+    // An entity whose remaining reactions are all excluded yields NO ROW from the
+    // aggregate below, and a missing row means "no change" to every writer downstream —
+    // so the pre-exclusion total would survive even a full recompute. Seeding zeros
+    // first makes the absence of a row mean zero; the aggregate overwrites whatever it
+    // does return.
+    for (const id of ids) {
+      const row = (ctx.updates[id] ??= { [ctx.idKey]: id });
+      for (const key of reactionCountKeys) row[key] ??= 0;
+    }
     await getMetrics(ctx)`
       -- get post reaction metrics
       SELECT

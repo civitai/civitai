@@ -61,7 +61,12 @@ function timeframeSum(
   additionalConditions = '',
   timeframeAlias = 'tf'
 ) {
-  const conditionCheck = additionalConditions ? `WHEN NOT (${additionalConditions}) THEN 0` : '';
+  // `IS NOT TRUE` rather than `NOT (...)` so an outer-joined row, where the condition is
+  // NULL rather than false, scores 0 instead of falling through to the AllTime arm and
+  // counting a reaction that is not there. Identical for every inner-joined caller.
+  const conditionCheck = additionalConditions
+    ? `WHEN (${additionalConditions}) IS NOT TRUE THEN 0`
+    : '';
   additionalConditions =
     additionalConditions && !additionalConditions.startsWith('AND')
       ? `AND ${additionalConditions}`
@@ -122,6 +127,15 @@ function reactionTimeframes(reactionElementAlias = 'r', timeframeAlias = 'tf') {
     .join(',\n');
 }
 
+/**
+ * The metric columns a reaction aggregate writes. Exported because a job has to seed
+ * them to zero for the entities the aggregate will not return a row for — see the
+ * `seedZeroReactionCounts` comments at the call sites.
+ */
+export const reactionCountKeys = Object.keys(ReviewReactions).map(
+  (reaction) => `${reaction.toLowerCase()}Count`
+);
+
 const reactionMetricNames = Object.keys(ReviewReactions)
   .map((reaction) => `"${reaction.toLowerCase()}Count"`)
   .join(', ');
@@ -131,32 +145,31 @@ const reactionMetricUpserts = Object.keys(ReviewReactions)
   .join(', ');
 
 /**
- * `AND <column> NOT IN (...)` for the metric-excluded users, or `''` when the list is
+ * `AND r."userId" NOT IN (...)` for the metric-excluded users, or `''` when the list is
  * empty. Emitted as literal SQL rather than a bound parameter because the reaction
  * queries run through `templateHandler`, which interpolates; a string is the one value
- * both handlers pass through verbatim, so one snippet serves both.
+ * both template handlers pass through verbatim, so one snippet serves both.
  *
- * Non-integer ids throw. They cannot reach here from
- * `getMetricExcludedUserIdsOrThrow`, which already coerces — but this builds SQL text,
- * and dropping an unexpected id would silently keep counting that user's reactions,
- * which is the bug this exists to fix.
+ * The column is hardcoded rather than a parameter. Every reaction aggregate aliases its
+ * reaction table `r`, and a parameter here would be raw SQL text that the integer guard
+ * beside it does not cover — while reading as though it did. A caller passing the wrong
+ * alias (`i."userId"` in the post job, which joins `Image i`) is valid SQL that filters
+ * by the post's OWNER instead of the reactor.
+ *
+ * Non-integer ids throw. They cannot reach here from `getMetricExcludedUserIdsOrThrow`,
+ * which already coerces — but this builds SQL text, and dropping an unexpected id would
+ * silently keep counting that user's reactions, which is the bug this exists to fix.
  */
-function excludedReactorFilter(excludedUserIds: number[], column: string) {
+function excludedReactorFilter(excludedUserIds: number[]) {
   if (!excludedUserIds.length) return '';
-  return `AND ${column} NOT IN (${excludedReactorIdList(excludedUserIds)})`;
-}
-
-/** The same ids as a bare literal list, for a call site that needs `IN` as well. */
-function excludedReactorIdList(excludedUserIds: number[]) {
   for (const id of excludedUserIds) {
     if (!Number.isInteger(id)) throw new Error(`non-integer excluded user id: ${id}`);
   }
-  return excludedUserIds.join(',');
+  return `AND r."userId" NOT IN (${excludedUserIds.join(',')})`;
 }
 
 export const snippets = {
   excludedReactorFilter,
-  excludedReactorIdList,
   reactionTimeframes,
   timeframeSum,
   timeframeCount,
