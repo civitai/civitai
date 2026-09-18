@@ -15,6 +15,7 @@ import {
 import {
   addUserHubSource,
   getHubSourceCandidates,
+  getHubSourceGroups,
   deleteUserHub,
   followUserHub,
   getFollowedHubs,
@@ -66,6 +67,11 @@ export const userHubRouter = router({
     .input(upsertUserHubSchema)
     .mutation(({ input, ctx }) =>
       upsertUserHub({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+  sourceGroups: userHubProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .query(({ ctx }) =>
+      getHubSourceGroups({ userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
   sourceCandidates: userHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })

@@ -719,6 +719,7 @@ export async function getHubSourceState({
 const hubTemplateNames: Record<HubTemplate, string> = {
   'my-models': 'Images on my models',
   following: 'Creators I follow',
+  bookmarks: 'Models I bookmarked',
 };
 
 /**
@@ -741,6 +742,18 @@ async function hubTemplateSources({
       orderBy: { createdAt: 'desc' },
       take: hubLimits.sourcesPerHub,
     });
+    return models.map((model, index) => ({
+      type: UserHubSourceType.Model,
+      targetId: model.id,
+      alias: model.name,
+      enabled: true,
+      exclude: false,
+      index,
+    }));
+  }
+
+  if (template === 'bookmarks') {
+    const models = await bookmarkedModels({ userId, take: hubLimits.sourcesPerHub });
     return models.map((model, index) => ({
       type: UserHubSourceType.Model,
       targetId: model.id,
@@ -856,7 +869,103 @@ async function countHubTemplateCandidates({
       where: { userId, status: ModelStatus.Published, deletedAt: null },
     });
 
+  if (template === 'bookmarks') return bookmarkedModelIds(userId).then((ids) => ids.length);
+
   return dbRead.userEngagement.count({ where: { userId, type: UserEngagementType.Follow } });
+}
+
+/**
+ * Models this viewer kept but did not make: the bookmark collection and the bell,
+ * which the "favourite" button sets together. Their OWN models are excluded — those
+ * are their own group, and a creator seeing their catalogue twice was the complaint.
+ */
+async function bookmarkedModelIds(userId: number) {
+  const bookmarkCollection = await dbRead.collection.findFirst({
+    where: { userId, type: CollectionType.Model, mode: CollectionMode.Bookmark },
+    select: { id: true },
+  });
+
+  const [engaged, bookmarked] = await Promise.all([
+    dbRead.modelEngagement.findMany({
+      where: { userId, type: ModelEngagementType.Notify },
+      select: { modelId: true },
+      orderBy: { createdAt: 'desc' },
+    }),
+    bookmarkCollection
+      ? dbRead.collectionItem.findMany({
+          where: { collectionId: bookmarkCollection.id, modelId: { not: null } },
+          select: { modelId: true },
+          orderBy: { id: 'desc' },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  return [
+    ...new Set([
+      ...engaged.map((row) => row.modelId),
+      ...bookmarked.flatMap((row) => (row.modelId ? [row.modelId] : [])),
+    ]),
+  ];
+}
+
+async function bookmarkedModels({ userId, take }: { userId: number; take: number }) {
+  const ids = await bookmarkedModelIds(userId);
+  if (!ids.length) return [];
+
+  const models = await dbRead.model.findMany({
+    // A bookmark or a bell outlives the model going private or back to draft, and the
+    // owner's own models belong to the group above this one.
+    where: { id: { in: ids }, userId: { not: userId }, ...visibleModel(userId) },
+    select: { id: true, name: true },
+    take,
+  });
+
+  const position = new Map(ids.map((id, index) => [id, index]));
+  return models.sort((a, b) => (position.get(a.id) ?? 0) - (position.get(b.id) ?? 0));
+}
+
+/**
+ * What the picker offers before anything is typed, in the three groups a person
+ * recognises: who they follow, what they made, what they kept. Split here rather than
+ * in the component because the split is a query — owned and bookmarked models arrive
+ * as one list from the suggestions arm, and a creator does not think of their own
+ * catalogue as a bookmark.
+ */
+export async function getHubSourceGroups({
+  userId,
+  isModerator,
+}: {
+  userId: number;
+  isModerator?: boolean;
+}) {
+  const [followed, owned, bookmarked, followedTotal, ownedTotal, bookmarkedIds] = await Promise.all(
+    [
+      getHubSourceSuggestions({ userId, type: UserHubSourceType.User, isModerator }),
+      dbRead.model.findMany({
+        where: { userId, status: ModelStatus.Published, deletedAt: null },
+        select: { id: true, name: true },
+        orderBy: { createdAt: 'desc' },
+        take: SUGGESTIONS_LIMIT,
+      }),
+      bookmarkedModels({ userId, take: SUGGESTIONS_LIMIT }),
+      countHubTemplateCandidates({ template: 'following', userId }),
+      countHubTemplateCandidates({ template: 'my-models', userId }),
+      bookmarkedModelIds(userId),
+    ]
+  );
+
+  const asModels = (models: { id: number; name: string }[]) =>
+    models.map((model) => ({
+      type: UserHubSourceType.Model,
+      targetId: model.id,
+      alias: model.name,
+    }));
+
+  return [
+    { template: 'following' as const, items: followed, total: followedTotal },
+    { template: 'my-models' as const, items: asModels(owned), total: ownedTotal },
+    { template: 'bookmarks' as const, items: asModels(bookmarked), total: bookmarkedIds.length },
+  ];
 }
 
 export async function followUserHub({ key, userId }: { key: string; userId: number }) {

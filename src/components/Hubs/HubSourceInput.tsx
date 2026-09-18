@@ -22,6 +22,15 @@ const kinds: { value: Kind; label: string }[] = [
   { value: UserHubSourceType.Tag, label: 'Tags' },
 ];
 
+// Named for what a person recognises, not for the query behind them. "Your models"
+// is separate from bookmarks on purpose: a creator does not think of their own
+// catalogue as something they saved.
+const groupLabels: Record<HubTemplate, string> = {
+  following: 'Creators you follow',
+  'my-models': 'Your models',
+  bookmarks: 'Models you bookmarked',
+};
+
 // What a group shows before you type. Enough to say what kind of thing belongs here;
 // the rest is a search away, and at p90 568 follows a full list never was the answer.
 const PREVIEW_ROWS = 5;
@@ -167,14 +176,9 @@ export function HubSourceInput({
     { url: url as string },
     { enabled: !disabled && !!url }
   );
-  const followed = trpc.userHub.sourceSuggestions.useQuery(
-    { type: UserHubSourceType.User },
-    { enabled: !disabled && !!showSuggestions && !term }
-  );
-  const owned = trpc.userHub.sourceSuggestions.useQuery(
-    { type: UserHubSourceType.Model },
-    { enabled: !disabled && !!showSuggestions && !term }
-  );
+  const groups = trpc.userHub.sourceGroups.useQuery(undefined, {
+    enabled: !disabled && !!showSuggestions && !term,
+  });
 
   const named = (
     items: { type: HubSourceValue['type']; targetId: number; alias: string | null }[]
@@ -229,37 +233,28 @@ export function HubSourceInput({
 
       {(!!results.length || (!term && !!showSuggestions)) && (
         <div className="overflow-hidden rounded-md border border-gray-3 dark:border-dark-4">
-          {term ? (
-            results.map((item) => (
-              <Row
-                key={`${item.type}-${item.targetId}`}
-                item={item}
-                added={isAdded(item)}
-                onAdd={() => add(item)}
-              />
-            ))
-          ) : (
-            <>
-              <Group
-                label="Creators you follow"
-                template="following"
-                items={named(followed.data ?? [])}
-                isAdded={isAdded}
-                onAdd={add}
-                onAddMany={onAddMany}
-                remaining={remaining}
-              />
-              <Group
-                label="Models you own or bookmarked"
-                template="my-models"
-                items={named(owned.data ?? [])}
-                isAdded={isAdded}
-                onAdd={add}
-                onAddMany={onAddMany}
-                remaining={remaining}
-              />
-            </>
-          )}
+          {term
+            ? results.map((item) => (
+                <Row
+                  key={`${item.type}-${item.targetId}`}
+                  item={item}
+                  added={isAdded(item)}
+                  onAdd={() => add(item)}
+                />
+              ))
+            : (groups.data ?? []).map((group) => (
+                <Group
+                  key={group.template}
+                  label={groupLabels[group.template]}
+                  template={group.template}
+                  total={group.total}
+                  items={named(group.items)}
+                  isAdded={isAdded}
+                  onAdd={add}
+                  onAddMany={onAddMany}
+                  remaining={remaining}
+                />
+              ))}
         </div>
       )}
 

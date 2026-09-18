@@ -11,7 +11,7 @@ vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   throwOnBlockedUserContent: blockedTextMock,
 }));
 
-import { getHubSourceCandidates } from '~/server/services/user-hub.service';
+import { getHubSourceCandidates, getHubSourceGroups } from '~/server/services/user-hub.service';
 import { hubLimits } from '~/server/schema/user-hub.schema';
 import { ModelStatus, UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -177,6 +177,45 @@ describe('getHubSourceCandidates', () => {
     expect(result.sources.map((source) => [source.targetId, source.alias])).toEqual([
       [3, 'fine'],
       [4, null],
+    ]);
+  });
+});
+
+describe('getHubSourceGroups', () => {
+  it('keeps the viewer own models out of the bookmarked group', async () => {
+    // Asserted on the QUERY: a mocked Prisma returns the rows either way, and a
+    // creator seeing their own catalogue listed twice — once as theirs, once as
+    // something they saved — is what the split exists to stop.
+    dbMock.dbRead.collection.findFirst.mockResolvedValue({ id: 3 });
+    dbMock.dbRead.collectionItem.findMany.mockResolvedValue([{ modelId: 8 }]);
+    dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([]);
+    findModels.mockResolvedValue([]);
+
+    await getHubSourceGroups({ userId: 5 });
+
+    const bookmarkedQuery = findModels.mock.calls
+      .map((call) => call[0] as { where?: { userId?: unknown } })
+      .find((call) => typeof call.where?.userId === 'object');
+
+    expect(bookmarkedQuery?.where?.userId).toEqual({ not: 5 });
+  });
+
+  it('returns the three groups the picker renders, each with what there was', async () => {
+    countModels.mockResolvedValue(312);
+    countFollows.mockResolvedValue(568);
+    dbMock.dbRead.collection.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.modelEngagement.findMany.mockResolvedValue([]);
+    findModels.mockResolvedValue([]);
+
+    const groups = await getHubSourceGroups({ userId: 5 });
+
+    // The totals are what the group headers and the bulk actions are drawn from —
+    // "Creators you follow · 568 · Add 50" is a lie the moment they come from the
+    // preview instead.
+    expect(groups.map((group) => [group.template, group.total])).toEqual([
+      ['following', 568],
+      ['my-models', 312],
+      ['bookmarks', 0],
     ]);
   });
 });

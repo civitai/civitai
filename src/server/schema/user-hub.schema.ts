@@ -235,7 +235,7 @@ export type SetUserHubOrderInput = z.infer<typeof setUserHubOrderSchema>;
 // A hub built from something the user already has, rather than from an empty one they
 // then have to fill. The template names WHAT to gather; the sources it resolves to are
 // a point-in-time copy, so a model published afterwards is not in the hub.
-export const hubTemplateSchema = z.enum(['my-models', 'following']);
+export const hubTemplateSchema = z.enum(['my-models', 'following', 'bookmarks']);
 
 export type HubTemplate = z.infer<typeof hubTemplateSchema>;
 
