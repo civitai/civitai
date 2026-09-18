@@ -1,8 +1,6 @@
 import type { AutocompleteProps } from '@mantine/core';
 import { Group, Select } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
-import { withUserHydration } from '~/components/Search/userHydration';
 import { IconChevronDown } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { InstantSearch, useSearchBox } from 'react-instantsearch';
@@ -21,29 +19,17 @@ import { reverseSearchIndexMap, searchIndexMap } from '~/components/Search/searc
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { useHitsTransformed } from '~/components/Search/search.utils2';
 import { IndexToLabel } from '~/components/Search/useSearchState';
-import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { IMAGES_SEARCH_INDEX, TOOLS_SEARCH_INDEX } from '~/server/common/constants';
 import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { paired } from '~/utils/type-guards';
 import { searchClient } from '~/components/Search/search.client';
-import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
+import { quickSearchClient } from '~/components/Search/quick-search.client';
 import { BrowsingLevelFilter } from './CustomSearchComponents';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import classes from './QuickSearchDropdown.module.scss';
 import { truncate } from 'lodash-es';
-
-// Wrapped so a Meili outage degrades this dropdown to an empty result set
-// instead of an uncaught `MeiliSearchCommunicationError`. Fails quietly (no
-// banner) — the header quick-search just shows nothing during a blip.
-const meilisearch = withUserHydration(
-  createResilientSearchClient(
-    instantMeiliSearch(env.NEXT_PUBLIC_SEARCH_HOST as string, env.NEXT_PUBLIC_SEARCH_CLIENT_KEY, {
-      primaryKey: 'id',
-    })
-  )
-);
 
 // TODO: These styles were taken from the original SearchBar component. We should probably migrate that searchbar to use this component.
 // const useStyles = createStyles((theme) => ({
@@ -162,7 +148,7 @@ export const QuickSearchDropdown = ({
 
   return (
     <InstantSearch
-      searchClient={disableInitialSearch ? searchClient : meilisearch}
+      searchClient={disableInitialSearch ? searchClient : quickSearchClient}
       indexName={indexName}
       future={{ preserveSharedStateOnUnmount: true }}
     >

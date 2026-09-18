@@ -22,19 +22,13 @@ import React, {
   useState,
   Fragment,
 } from 'react';
-import type { InstantSearchProps, SearchBoxProps } from 'react-instantsearch';
+import type { SearchBoxProps } from 'react-instantsearch';
 import { InstantSearch, useInstantSearch, useSearchBox } from 'react-instantsearch';
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { slugit } from '~/utils/string-helpers';
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
-import { withUserHydration } from '~/components/Search/userHydration';
-import { env } from '~/env/client';
-import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
+import { autocompleteSearchClient } from '~/components/Search/autocomplete.client';
 import { quoteMeiliValue } from '~/components/Search/meili-filter';
-import {
-  autocompleteAvailability,
-  useAutocompleteAvailabilityStore,
-} from '~/components/Search/search-availability.store';
+import { useAutocompleteAvailabilityStore } from '~/components/Search/search-availability.store';
 import { ModelSearchItem } from '~/components/AutocompleteSearch/renderItems/models';
 import { ArticlesSearchItem } from '~/components/AutocompleteSearch/renderItems/articles';
 import { UserSearchItem } from '~/components/AutocompleteSearch/renderItems/users';
@@ -71,55 +65,11 @@ import { useDomainColor } from '~/hooks/useDomainColor';
 import { useCheckProfanity } from '~/hooks/useCheckProfanity';
 import { useBenignPhrases } from '~/hooks/useBenignPhrases';
 
-const meilisearch = instantMeiliSearch(
-  env.NEXT_PUBLIC_SEARCH_HOST as string,
-  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
-  { primaryKey: 'id' }
-);
-
 type Props = Omit<AutocompleteProps, 'data' | 'onSubmit'> & {
   onClear?: VoidFunction;
   onSubmit?: VoidFunction;
   searchBoxProps?: SearchBoxProps;
 };
-
-// Wrapped so a Meili outage degrades to empty results instead of an uncaught
-// `MeiliSearchCommunicationError`. On fallback it flips the autocomplete
-// availability flag so the dropdown shows its "Error" item (the swallowed error
-// never reaches `useInstantSearch().status`, so we can't key off that).
-const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
-  createResilientSearchClient(
-  {
-    ...meilisearch,
-    search(requests) {
-      // Prevent making a request if there is no query
-      // @see https://www.algolia.com/doc/guides/building-search-ui/going-further/conditional-requests/react/#detecting-empty-search-requests
-      // @see https://github.com/algolia/react-instantsearch/issues/1111#issuecomment-496132977
-      if (requests.every(({ params }) => !params?.query)) {
-        return Promise.resolve({
-          results: requests.map(() => ({
-            hits: [],
-            nbHits: 0,
-            nbPages: 0,
-            page: 0,
-            processingTimeMS: 0,
-            hitsPerPage: 0,
-            exhaustiveNbHits: false,
-            query: '',
-            params: '',
-          })),
-        });
-      }
-
-      return meilisearch.search(requests);
-    },
-  },
-  {
-    onError: () => autocompleteAvailability.setUnavailable(true),
-    onSuccess: () => autocompleteAvailability.setUnavailable(false),
-  }
-)
-);
 
 const DEFAULT_DROPDOWN_ITEM_LIMIT = 6;
 
@@ -167,7 +117,7 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
 
   return (
     <InstantSearch
-      searchClient={searchClient}
+      searchClient={autocompleteSearchClient}
       indexName={searchIndexMap[targetIndex as keyof typeof searchIndexMap]}
       future={{ preserveSharedStateOnUnmount: false }}
     >
@@ -700,4 +650,3 @@ const IndexRenderItem: Record<SearchIndexKey, React.ComponentType<any>> = {
   tools: ToolSearchItem,
   comics: ComicsSearchItem,
 };
-
