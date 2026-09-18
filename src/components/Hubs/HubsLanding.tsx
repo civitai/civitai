@@ -8,7 +8,6 @@ import {
   IconWorld,
 } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useRouter } from 'next/router';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { describeHubSources, hubUrl } from '~/components/Hubs/hub.utils';
 import HubUpsertModal from '~/components/Hubs/HubUpsertModal';
@@ -18,7 +17,6 @@ import type { HubTemplate } from '~/server/schema/user-hub.schema';
 import { hubLimits } from '~/server/schema/user-hub.schema';
 import type { UserHubSummary } from '~/server/services/user-hub.service';
 import { Availability } from '~/shared/utils/prisma/enums';
-import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 const HUBS_ARTICLE_URL = '/articles/34441';
@@ -128,20 +126,9 @@ function SectionHeading({ title, aside }: { title: string; aside?: React.ReactNo
 
 export function HubsLanding() {
   const currentUser = useCurrentUser();
-  const router = useRouter();
-  const queryUtils = trpc.useUtils();
 
   const { data: hubs = [], isLoading } = trpc.userHub.getAll.useQuery(undefined, {
     enabled: !!currentUser,
-  });
-
-  const createFromTemplate = trpc.userHub.createFromTemplate.useMutation({
-    onSuccess: async (hub) => {
-      await queryUtils.userHub.getAll.invalidate();
-      await router.push(hubUrl(hub));
-    },
-    onError: (error) =>
-      showErrorNotification({ title: 'Could not build that hub', error: new Error(error.message) }),
   });
 
   const atHubLimit = hubs.length >= hubLimits.hubsPerUser;
@@ -198,13 +185,11 @@ export function HubsLanding() {
                     variant="light"
                     color={color}
                     disabled={atHubLimit}
-                    loading={
-                      createFromTemplate.isPending &&
-                      createFromTemplate.variables?.template === template
+                    onClick={() =>
+                      dialogStore.trigger({ component: HubUpsertModal, props: { template } })
                     }
-                    onClick={() => createFromTemplate.mutate({ template })}
                   >
-                    Create it
+                    Start with these
                   </Button>
                 </LoginRedirect>
               }

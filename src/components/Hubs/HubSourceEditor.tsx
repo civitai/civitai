@@ -135,6 +135,20 @@ export function HubSourceEditor({
     onChange([...value, { type, targetId, alias, enabled: true, exclude, index: value.length }]);
   };
 
+  // A group's "Add 50" — everything that still fits, in the order it was gathered.
+  // Capped here rather than refused, because overrunning is the expected case for the
+  // people these actions are for: 568 follows, 50 slots.
+  const addMany = (incoming: HubSourceValue[]) => {
+    const room = maxSources - included.length;
+    if (room <= 0) return;
+
+    const fresh = incoming.filter((source) => !held(source.type, source.targetId));
+    const taken = fresh.slice(0, room).map((source) => ({ ...source, exclude: false }));
+    if (!taken.length) return;
+
+    onChange([...value, ...taken].map((source, index) => ({ ...source, index })));
+  };
+
   const remove = (source: HubSourceValue) =>
     onChange(value.filter((s) => !(s.type === source.type && s.targetId === source.targetId)));
 
@@ -145,9 +159,12 @@ export function HubSourceEditor({
           What goes in it
         </Text>
         <HubSourceInput
+          showSuggestions
           disabled={disabled}
+          remaining={maxSources - included.length}
           isAdded={(source) => !!held(source.type, source.targetId)}
           onAdd={(source) => addSource(source, false)}
+          onAddMany={addMany}
         />
       </div>
 
@@ -170,7 +187,7 @@ export function HubSourceEditor({
 
       {!!included.length && (
         <Text size="xs" c="dimmed">
-          {included.length} of {maxSources}
+          {included.length} of {maxSources} — creators, models and tags share one budget
         </Text>
       )}
 
@@ -207,6 +224,7 @@ export function HubSourceEditor({
             autoFocus
             disabled={disabled}
             placeholder="Search what to keep out — or paste a link"
+            remaining={maxExclusions - excluded.length}
             isAdded={(source) => !!held(source.type, source.targetId)}
             onAdd={(source) => addSource(source, true)}
           />

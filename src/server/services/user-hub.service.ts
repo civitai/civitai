@@ -387,14 +387,18 @@ export async function upsertUserHub({
   ...input
 }: UpsertUserHubInput & { userId: number; isModerator?: boolean }) {
   const writable = hubWriterWhere({ userId, isModerator });
-  const { id, sources, description, filters, ...data } = input;
+  const { id, sources: submitted, description, filters, ...data } = input;
 
-  // `sources[].alias` too: it is user-supplied, it is written by this same call, and a guard that
-  // scans only some of its writer's fields is invisible to a test that counts CALLS.
-  await throwOnBlockedUserContent(
-    [data.name, description, ...(sources?.map((source) => source.alias) ?? [])],
-    { isModerator, surface: 'userHub' }
-  );
+  // The hub's OWN text — the two fields this caller wrote — refuses the save.
+  await throwOnBlockedUserContent([data.name, description], { isModerator, surface: 'userHub' });
+
+  // Aliases are scanned too, but they lose the LABEL rather than the save. They are
+  // other people's usernames and stored model names, arriving by the dozen from a
+  // starting point or a picker, and a hub is now filled before it is saved: one
+  // refusal used to take the whole curated list with it, naming neither the offender
+  // nor a way to drop it. Nulling stores nothing blocked — the identity is
+  // `targetId`, the alias is decoration — so the guard holds and the save survives.
+  const sources = submitted && (await withoutBlockedAliases(submitted, { isModerator }));
 
   if (sources) {
     const duplicate = new Set<string>();
@@ -790,47 +794,69 @@ async function hubTemplateSources({
  * only to find the offenders. `userHubTemplate` rather than `userHub` so the staged
  * enforcement rollout can tell text a user typed from text a template gathered.
  */
-async function withoutBlockedAliases(sources: UserHubSourceInput[]) {
+async function withoutBlockedAliases(
+  sources: UserHubSourceInput[],
+  { isModerator }: { isModerator?: boolean } = {}
+) {
+  const options = { isModerator, surface: 'userHubTemplate' };
   try {
     await throwOnBlockedUserContent(
       sources.map((source) => source.alias),
-      { surface: 'userHubTemplate' }
+      options
     );
     return sources;
   } catch {
-    const kept: UserHubSourceInput[] = [];
+    const scrubbed: UserHubSourceInput[] = [];
     for (const source of sources) {
       try {
-        await throwOnBlockedUserContent(source.alias, { surface: 'userHubTemplate' });
-        kept.push(source);
+        await throwOnBlockedUserContent(source.alias, options);
+        scrubbed.push(source);
       } catch {
-        // The source is left out; the hub is still built from the rest.
+        // The source stays — the person chose it — but its label does not. It falls
+        // back to the target id, which is unlovely and vanishingly rare.
+        scrubbed.push({ ...source, alias: null });
       }
     }
-    return kept.map((source, index) => ({ ...source, index }));
+    return scrubbed;
   }
 }
 
-export async function createHubFromTemplate({
+/**
+ * What a starting point would put in a hub: the sources, and how many there were to
+ * choose from. It creates NOTHING — the modal opens holding these and the ordinary
+ * save path writes them, so nobody gets a hub they have not seen.
+ *
+ * `total` is the count before the cap, which is what lets the editor say "your 50
+ * most recent follows — 518 more did not fit". That shortfall reaches nobody today.
+ */
+export async function getHubSourceCandidates({
   template,
   userId,
 }: CreateHubFromTemplateInput & { userId: number }) {
-  const gathered = await hubTemplateSources({ template, userId });
-  const sources = await withoutBlockedAliases(gathered);
+  const [gathered, total] = await Promise.all([
+    hubTemplateSources({ template, userId }),
+    countHubTemplateCandidates({ template, userId }),
+  ]);
 
-  // A hub with nothing in it is the state the templates exist to avoid, and the
-  // caller can say which template came up empty.
-  if (!sources.length)
-    throw throwBadRequestError(
-      template === 'my-models'
-        ? 'You have no published models to build a hub from yet'
-        : 'You are not following anyone yet'
-    );
+  return {
+    name: hubTemplateNames[template],
+    sources: await withoutBlockedAliases(gathered),
+    total,
+  };
+}
 
-  // Through `upsertUserHub` rather than a create of its own: the hub cap, the
-  // blocklist and the source rules are enforced there, and a second create path
-  // would be a second place to keep them.
-  return upsertUserHub({ userId, name: hubTemplateNames[template], sources });
+// Counted apart from the gather, which stops at the cap: the two numbers together are
+// the point — what fits, and what there was.
+async function countHubTemplateCandidates({
+  template,
+  userId,
+}: CreateHubFromTemplateInput & { userId: number }) {
+  if (template === 'my-models')
+    return dbRead.model.count({
+      where: { userId, status: ModelStatus.Published, deletedAt: null },
+    });
+
+  return dbRead.userEngagement.count({ where: { userId, type: UserEngagementType.Follow } });
 }
 
 export async function followUserHub({ key, userId }: { key: string; userId: number }) {

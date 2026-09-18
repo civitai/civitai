@@ -1,7 +1,9 @@
 import {
+  Alert,
   Button,
   Divider,
   Group,
+  Loader,
   Modal,
   Stack,
   Switch,
@@ -10,9 +12,10 @@ import {
   TextInput,
 } from '@mantine/core';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
+import type { HubTemplate } from '~/server/schema/user-hub.schema';
 import { HubSourceEditor } from '~/components/Hubs/HubSourceEditor';
 import { BrowsingLevelsInput } from '~/components/BrowsingLevel/BrowsingLevelInput';
 import { useSortAvailability } from '~/components/Filters/useSortAvailability';
@@ -27,7 +30,15 @@ import { trpc } from '~/utils/trpc';
 export default function HubUpsertModal({
   hub,
   duplicateOf,
+  template,
 }: {
+  /**
+   * A starting point from the landing page. The sources are FETCHED and shown here
+   * rather than written straight to a new hub: nobody should get a hub they have not
+   * seen, and the shortfall when a template cannot fit everything is only legible
+   * next to the things that did fit.
+   */
+  template?: HubTemplate;
   /** Omitted to create. */
   hub?: {
     id: number;
@@ -75,6 +86,27 @@ export default function HubUpsertModal({
   const canEditSources = !editing || hub.isOwner;
   const sourcesChanged = JSON.stringify(sources) !== initial.sources;
 
+  // The starting point's sources, dropped into the same fields someone would fill by
+  // hand.
+  const candidates = trpc.userHub.sourceCandidates.useQuery(
+    { template: template as HubTemplate },
+    { enabled: !!template }
+  );
+
+  // Applied ONCE. A refetch — a refocus, an invalidate — would otherwise throw away
+  // whatever the person has pruned since the modal opened, which is the whole point
+  // of showing them the list before it is saved.
+  const applied = useRef(false);
+  useEffect(() => {
+    if (!candidates.data || applied.current) return;
+    applied.current = true;
+    setSources(candidates.data.sources);
+    setName((current) => current || candidates.data.name);
+  }, [candidates.data]);
+  const candidateShortfall = candidates.data
+    ? candidates.data.total - candidates.data.sources.length
+    : 0;
+
   const upsert = trpc.userHub.upsert.useMutation({
     onSuccess: async (saved) => {
       // Closed first: invalidating the feed waits on its refetch, and nothing this
@@ -89,6 +121,14 @@ export default function HubUpsertModal({
         error: new Error(error.message),
       }),
   });
+
+  // A starting point that found nothing explains itself here, where the search box
+  // to fix it by hand is already on screen.
+  const emptyMessage = !template
+    ? 'Add a creator, model or tag to start filling this hub.'
+    : template === 'my-models'
+    ? 'You have no published models yet — search for anything else you want in here.'
+    : 'You are not following anyone yet — search for the creators you want in here.';
 
   const trimmed = name.trim();
 
@@ -179,12 +219,35 @@ export default function HubUpsertModal({
         {canEditSources && (
           <>
             <Divider label="Sources" labelPosition="left" />
-            <HubSourceEditor
-              value={sources}
-              onChange={setSources}
-              disabled={upsert.isPending}
-              emptyMessage="Add a creator, model or tag to start filling this hub."
-            />
+            {candidates.isFetching ? (
+              <Group gap="xs">
+                <Loader size="sm" />
+                <Text size="sm" c="dimmed">
+                  Gathering {template === 'my-models' ? 'your models' : 'the creators you follow'}…
+                </Text>
+              </Group>
+            ) : (
+              <HubSourceEditor
+                value={sources}
+                onChange={setSources}
+                disabled={upsert.isPending}
+                emptyMessage={emptyMessage}
+              />
+            )}
+
+            {/* The number is the count BEFORE the cap, so this is the shortfall a
+                template used to swallow. Deliberately not arithmetic about the cap:
+                the gathered list can also be short because a blocked alias was
+                dropped, and a sentence claiming otherwise would sometimes be wrong. */}
+            {candidateShortfall > 0 && (
+              <Alert color="yellow" variant="light" p="xs">
+                <Text size="xs">
+                  Filled with {sources.length} of your {candidates.data?.total}{' '}
+                  {template === 'my-models' ? 'models' : 'follows'} — the rest did not fit. Remove a
+                  few to make room for models or tags.
+                </Text>
+              </Alert>
+            )}
           </>
         )}
 

@@ -14,7 +14,7 @@ import {
 } from '~/server/schema/user-hub.schema';
 import {
   addUserHubSource,
-  createHubFromTemplate,
+  getHubSourceCandidates,
   deleteUserHub,
   followUserHub,
   getFollowedHubs,
@@ -67,10 +67,10 @@ export const userHubRouter = router({
     .mutation(({ input, ctx }) =>
       upsertUserHub({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
-  createFromTemplate: userHubProcedure
-    .meta({ requiredScope: TokenScope.UserWrite })
+  sourceCandidates: userHubProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
     .input(createHubFromTemplateSchema)
-    .mutation(({ input, ctx }) => createHubFromTemplate({ ...input, userId: ctx.user.id })),
+    .query(({ input, ctx }) => getHubSourceCandidates({ ...input, userId: ctx.user.id })),
   addSource: userHubProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(addUserHubSourceSchema)
