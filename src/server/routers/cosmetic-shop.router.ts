@@ -47,7 +47,9 @@ export const cosmeticShopRouter = router({
     .query(({ input }) => {
       return getPaginatedCosmeticShopItems(input);
     }),
-  getShopItemById: protectedProcedure
+  // Editor reads: the whole item, the way the upsert form round-trips it. Same
+  // rung as the list views beside them.
+  getShopItemById: moderatorProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
     .input(getByIdSchema)
     .query(({ input }) => {
@@ -77,7 +79,7 @@ export const cosmeticShopRouter = router({
   getAllSections: moderatorProcedure.input(getAllCosmeticShopSections).query(({ input }) => {
     return getShopSections(input);
   }),
-  getSectionById: protectedProcedure
+  getSectionById: moderatorProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
     .input(getByIdSchema)
     .query(({ input }) => {
