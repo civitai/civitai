@@ -80,7 +80,7 @@ type SearchIndexProcessor = {
    * Ids a transformed batch ACCOUNTS FOR, when that is not the same as the ids of the documents
    * in it. A processor needs this only when it handles an id by some means other than writing a
    * document — `collections` deletes the ids it disqualifies, which is a handled id with no
-   * document. Without the override those ids would be reported as silently dropped.
+   * document. Without the override those ids would be reported as having produced nothing.
    */
   getHandledIds?: (transformedData: any) => (number | string)[];
   client?: MeiliSearch | null;
@@ -120,7 +120,7 @@ const readDocumentIds = (
       if (typeof id === 'number' || typeof id === 'string') ids.push(id);
     }
     // A non-empty array holding no objects is not a batch of documents — it is a shape this
-    // cannot read, and saying "0 documents" about it would report every requested id as dropped.
+    // cannot read, and saying "0 documents" about it would report every requested id as unwritten.
     // An EMPTY array is the opposite: it is a readable answer, and the answer is none.
     if (value.length > 0 && !sawDocument) return undefined;
     return ids;
@@ -154,7 +154,7 @@ const accountForBatch = (
   requestedIds: (number | string)[] | undefined,
   transformedData: any
 ): {
-  droppedIds?: (number | string)[];
+  idsWithoutDocument?: (number | string)[];
   handledWithoutDocumentIds?: (number | string)[];
 } => {
   if (!requestedIds?.length) return {};
@@ -162,19 +162,19 @@ const accountForBatch = (
   const handled = processor.getHandledIds ? processor.getHandledIds(transformedData) : documentIds;
   if (!handled) return {};
   const handledSet = new Set(handled.map(String));
-  const droppedIds = requestedIds.filter((id) => !handledSet.has(String(id)));
+  const idsWithoutDocument = requestedIds.filter((id) => !handledSet.has(String(id)));
 
-  // What `getHandledIds` subtracts from the drop count, kept visible instead of silent. A hook is
+  // What `getHandledIds` subtracts from the count, kept visible instead of silent. A hook is
   // the one way a processor can make an id stop being reported, which is the shape of the defect
   // this accounting exists to catch, moved one layer up: if `collections` ever prunes an id it
   // should not have, only this number shows it happened. A processor with no hook reports none of
   // these, because for it "handled" and "carries a document" are the same set.
-  if (!processor.getHandledIds || !documentIds) return { droppedIds };
+  if (!processor.getHandledIds || !documentIds) return { idsWithoutDocument };
   const documentIdSet = new Set(documentIds.map(String));
   const handledWithoutDocumentIds = requestedIds.filter(
     (id) => handledSet.has(String(id)) && !documentIdSet.has(String(id))
   );
-  return { droppedIds, handledWithoutDocumentIds };
+  return { idsWithoutDocument, handledWithoutDocumentIds };
 };
 
 /**
@@ -187,11 +187,13 @@ const accountForBatch = (
  * run and train its reader to ignore it. This is a measurement; a caller that asked for a repair
  * reads the number out of `updateSync`'s return value instead.
  */
-const logDroppedIds = (indexName: string, caller: string, queue: TaskQueue) => {
+const logIdsWithoutDocument = (indexName: string, caller: string, queue: TaskQueue) => {
   const parts: string[] = [];
-  if (queue.droppedIdCount > 0)
+  if (queue.idsWithoutDocumentCount > 0)
     parts.push(
-      `${queue.droppedIdCount} ids produced no document (sample: ${queue.droppedIdSample
+      `${
+        queue.idsWithoutDocumentCount
+      } ids produced no document (sample: ${queue.idsWithoutDocumentSample
         .slice(0, 20)
         .join(', ')})`
     );
@@ -247,7 +249,7 @@ const processSearchIndexTask = async (
       if (!pulledData) {
         // Nothing to transform or push — but for a TARGETED batch that is not "nothing to do", it
         // is every requested id producing no document, by a different route than the transform
-        // drop below. `users`, `comics`, `tools` and `metrics-images` all return null here for an
+        // route below. `users`, `comics`, `tools` and `metrics-images` all return null here for an
         // empty pull, so without this the WORST case — every requested id producing nothing — was
         // the one case reporting zero.
         // STEP 0 ONLY, deliberately. A falsy pull at step 0 proves nothing was ever pulled, and no
@@ -256,8 +258,9 @@ const processSearchIndexTask = async (
         // sequence ran out" rather than "no rows". Both such returns are unreachable under today's
         // `pullSteps` counts, so this excludes nothing that happens — it is written this way so
         // that lowering a processor's branch coverage below its step count cannot silently turn
-        // every batch into a reported drop.
-        if (t.mode === 'targeted' && t.ids.length && activeStep === 0) task.droppedIds = t.ids;
+        // every batch into a batch reported as writing nothing.
+        if (t.mode === 'targeted' && t.ids.length && activeStep === 0)
+          task.idsWithoutDocument = t.ids;
         context.logger(
           `processSearchIndexTask :: pull :: ${processor.indexName} :: No data pulled. Marking as done.`,
           start ? (Date.now() - start) / 1000 : 'unknown duration'
@@ -293,24 +296,24 @@ const processSearchIndexTask = async (
       // task would retry three times and then be reported as failed — an accounting helper
       // destroying the very write it exists to watch. `getHandledIds` is processor-supplied, so
       // it is the one call in this chain that is not ours.
-      let droppedIds: (number | string)[] | undefined;
+      let idsWithoutDocument: (number | string)[] | undefined;
       let handledWithoutDocumentIds: (number | string)[] | undefined;
       try {
-        ({ droppedIds, handledWithoutDocumentIds } = accountForBatch(
+        ({ idsWithoutDocument, handledWithoutDocumentIds } = accountForBatch(
           processor,
           requestedIds,
           transformedData
         ));
       } catch (e) {
         console.error(
-          `processSearchIndexTask :: transform :: ${processor.indexName} :: drop accounting threw; the batch is unaffected`,
+          `processSearchIndexTask :: transform :: ${processor.indexName} :: without-document accounting threw; the batch is unaffected`,
           e
         );
       }
-      if (droppedIds?.length) {
+      if (idsWithoutDocument?.length) {
         context.logger(
-          `processSearchIndexTask :: transform :: ${processor.indexName} :: ${droppedIds.length} of ${requestedIds?.length} requested ids produced no document`,
-          droppedIds.slice(0, 10)
+          `processSearchIndexTask :: transform :: ${processor.indexName} :: ${idsWithoutDocument.length} of ${requestedIds?.length} requested ids produced no document`,
+          idsWithoutDocument.slice(0, 10)
         );
       }
       return {
@@ -319,7 +322,7 @@ const processSearchIndexTask = async (
         index: task.index,
         total: task.total,
         idCount: task.idCount,
-        droppedIds,
+        idsWithoutDocument,
         handledWithoutDocumentIds,
         data: transformedData,
       } as PushTask;
@@ -362,19 +365,19 @@ export type SearchIndexUpdateSyncResult = {
   failedIds: number;
   /**
    * Ids that were pulled but produced no document — nothing was written for them and nothing
-   * failed. A repair that reports `failedIds: 0` alongside a nonzero `droppedIds` did not repair
+   * failed. A repair that reports `failedIds: 0` alongside a nonzero `idsWithoutDocument` did not repair
    * those ids, and before this existed there was no number that said so.
    */
-  droppedIds: number;
+  idsWithoutDocument: number;
   /**
-   * Up to `DROPPED_ID_SAMPLE_LIMIT` of those ids. A SAMPLE, deliberately: `droppedIds` is the
+   * Up to `WITHOUT_DOCUMENT_SAMPLE_LIMIT` of those ids. A SAMPLE, deliberately: `idsWithoutDocument` is the
    * count to act on, and a caller that needs all of them should read the log line per batch.
    */
-  droppedIdSample: (number | string)[];
+  idsWithoutDocumentSample: (number | string)[];
   /**
    * Ids a processor's `getHandledIds` accounted for although no document carries them — a
    * `collections` prune, today. Reported rather than subtracted into silence: the hook is the one
-   * way an id can stop being counted as dropped, so this is the only number that would show a
+   * way an id can stop being counted here, so this is the only number that would show a
    * processor pruning ids it should not have.
    */
   handledWithoutDocument: number;
@@ -569,7 +572,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
 
       await Promise.all(workers);
 
-      logDroppedIds(indexName, 'update', queue);
+      logIdsWithoutDocument(indexName, 'update', queue);
 
       // Commit queues:
       await queuedUpdates.commit();
@@ -652,8 +655,8 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
           totalTasks: 0,
           failedTasks: 0,
           failedIds: 0,
-          droppedIds: 0,
-          droppedIdSample: [],
+          idsWithoutDocument: 0,
+          idsWithoutDocumentSample: [],
           handledWithoutDocument: 0,
         };
       }
@@ -732,12 +735,12 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         totalTasks,
         failedTasks: queue.failedTasks.length,
         failedIds: queue.failedIdCount,
-        droppedIds: queue.droppedIdCount,
-        droppedIdSample: queue.droppedIdSample,
+        idsWithoutDocument: queue.idsWithoutDocumentCount,
+        idsWithoutDocumentSample: queue.idsWithoutDocumentSample,
         handledWithoutDocument: queue.handledWithoutDocumentIdCount,
       };
 
-      logDroppedIds(indexName, 'updateSync', queue);
+      logIdsWithoutDocument(indexName, 'updateSync', queue);
 
       if (result.failedTasks > 0) {
         console.error(
@@ -824,7 +827,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
 
         await Promise.all(workers);
 
-        logDroppedIds(indexName, 'processQueues', queue);
+        logIdsWithoutDocument(indexName, 'processQueues', queue);
 
         await queuedUpdates.commit();
       }

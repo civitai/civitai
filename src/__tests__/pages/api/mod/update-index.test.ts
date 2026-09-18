@@ -123,8 +123,8 @@ describe('/api/mod/update-index', () => {
       totalTasks: 5,
       failedTasks: 4,
       failedIds: 1200,
-      droppedIds: 6,
-      droppedIdSample: [11, 12],
+      idsWithoutDocument: 6,
+      idsWithoutDocumentSample: [11, 12],
       handledWithoutDocument: 4,
     });
 
@@ -142,8 +142,8 @@ describe('/api/mod/update-index', () => {
       failedIds: 1200,
       // Same fields as the success body: a caller should not have to branch on the status code to
       // find out how many ids produced nothing.
-      droppedIds: 6,
-      droppedIdSample: [11, 12],
+      idsWithoutDocument: 6,
+      idsWithoutDocumentSample: [11, 12],
       handledWithoutDocument: 4,
     });
   });
@@ -159,8 +159,8 @@ describe('/api/mod/update-index', () => {
       totalTasks: 5,
       failedTasks: 0,
       failedIds: 0,
-      droppedIds: 2,
-      droppedIdSample: [7, 9],
+      idsWithoutDocument: 2,
+      idsWithoutDocumentSample: [7, 9],
       handledWithoutDocument: 3,
     });
 
@@ -177,8 +177,8 @@ describe('/api/mod/update-index', () => {
       status: 'ok',
       index: COLLECTIONS_SEARCH_INDEX,
       totalTasks: 5,
-      droppedIds: 2,
-      droppedIdSample: [7, 9],
+      idsWithoutDocument: 2,
+      idsWithoutDocumentSample: [7, 9],
       handledWithoutDocument: 3,
     });
   });

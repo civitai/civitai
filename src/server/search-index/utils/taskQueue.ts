@@ -22,31 +22,30 @@ type BaseTask = {
    * Targeted tasks only: the ids this task was asked to index. Set on the transform task, where
    * it is the only place the requested ids and the produced documents are both in hand — a pull
    * task has no documents yet and a push task no longer knows what was asked for. Carried no
-   * further: the push task keeps `droppedIds` instead, which is bounded by the drop rather than
-   * by the batch.
+   * further: the push task keeps `idsWithoutDocument` instead, which is usually far smaller.
    */
   requestedIds?: (number | string)[];
   /**
    * Requested ids that produced no document, so nothing about them reached the index and nothing
    * reports it as a failure. Set on the push task by the transform step, or on the pull task
    * itself when a targeted pull comes back empty at step 0. Usually far smaller than the batch,
-   * but it CAN equal it — a batch every one of whose ids dropped is the case this exists for.
+   * but it CAN equal it — a batch none of whose ids produced a document is the case this exists for.
    */
-  droppedIds?: (number | string)[];
+  idsWithoutDocument?: (number | string)[];
   /**
    * Requested ids a processor's `getHandledIds` accounted for although no document carries them —
    * `collections` deleting a pruned document, today. Carried so the count stays VISIBLE rather
-   * than being subtracted into the silence `droppedIds` exists to break.
+   * than being subtracted into the silence `idsWithoutDocument` exists to break.
    */
   handledWithoutDocumentIds?: (number | string)[];
 };
 
 /**
- * Dropped ids are retained as a SAMPLE, not a list: a transform that drops a whole batch would
+ * These ids are retained as a SAMPLE, not a list: a transform that writes nothing for a whole batch would
  * otherwise hold the batch's id list for the life of the queue, and the count is what a caller
- * acts on. `droppedIdCount` is always the true total.
+ * acts on. `idsWithoutDocumentCount` is always the true total.
  */
-export const DROPPED_ID_SAMPLE_LIMIT = 100;
+export const WITHOUT_DOCUMENT_SAMPLE_LIMIT = 100;
 
 export type PullTask = BaseTask &
   (
@@ -120,9 +119,9 @@ export class TaskQueue {
    * stated exception: a batch whose accounting threw contributes 0 here and says so at
    * `console.error` — never losing a write to observe it is the trade.
    */
-  droppedIdCount: number;
-  /** Up to `DROPPED_ID_SAMPLE_LIMIT` of those ids, for naming them in a log line. */
-  droppedIdSample: (number | string)[];
+  idsWithoutDocumentCount: number;
+  /** Up to `WITHOUT_DOCUMENT_SAMPLE_LIMIT` of those ids, for naming them in a log line. */
+  idsWithoutDocumentSample: (number | string)[];
   /** Ids a processor hook accounted for with no document, across every completed task. */
   handledWithoutDocumentIdCount: number;
   /**
@@ -148,8 +147,8 @@ export class TaskQueue {
     };
     this.maxQueueSize = maxQueueSize;
     this.failedTasks = [];
-    this.droppedIdCount = 0;
-    this.droppedIdSample = [];
+    this.idsWithoutDocumentCount = 0;
+    this.idsWithoutDocumentSample = [];
     this.handledWithoutDocumentIdCount = 0;
     this.retrying = 0;
   }
@@ -215,20 +214,20 @@ export class TaskQueue {
   completeTask(task: Task): void {
     this.processing.delete(task);
     // Collected here rather than at the transform step so a batch that never reaches the index is
-    // not reported as dropped: a push that permanently fails goes through `failTask`, and its ids
-    // belong to `failedIdCount`. A retried push carries the same `droppedIds` and is counted on
+    // not counted here: a push that permanently fails goes through `failTask`, and its ids
+    // belong to `failedIdCount`. A retried push carries the same `idsWithoutDocument` and is counted on
     // the attempt that succeeds, once.
-    if (task.droppedIds?.length) this.recordDroppedIds(task.droppedIds);
+    if (task.idsWithoutDocument?.length) this.recordIdsWithoutDocument(task.idsWithoutDocument);
     if (task.handledWithoutDocumentIds?.length)
       this.handledWithoutDocumentIdCount += task.handledWithoutDocumentIds.length;
     this.updateTaskStatus(task, 'completed');
   }
 
-  private recordDroppedIds(ids: (number | string)[]): void {
-    this.droppedIdCount += ids.length;
+  private recordIdsWithoutDocument(ids: (number | string)[]): void {
+    this.idsWithoutDocumentCount += ids.length;
     for (const id of ids) {
-      if (this.droppedIdSample.length >= DROPPED_ID_SAMPLE_LIMIT) break;
-      this.droppedIdSample.push(id);
+      if (this.idsWithoutDocumentSample.length >= WITHOUT_DOCUMENT_SAMPLE_LIMIT) break;
+      this.idsWithoutDocumentSample.push(id);
     }
   }
 
