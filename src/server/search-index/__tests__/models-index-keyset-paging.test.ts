@@ -1,17 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 
 // Pure string helpers, no module graph — safe to import statically above the vi.mock below.
-import { renderTag, whereClausesOf } from './sql-shape.test-utils';
+import { norm, renderTag, whereClausesOf } from './sql-shape.test-utils';
 
 import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 
 /**
- * THE MODELS DELTA SCAN MUST NOT LOSE A ROW TO A CONCURRENT EDIT.
+ * THE MODELS DELTA SCAN MUST NOT LOSE A ROW WHEN IT PAGES.
  *
  * `prepareModelsBatches` pages the set of models whose `updatedAt` is at or after the last run.
- * That set is re-evaluated on every page, and it is not stable: roughly 1,659 published models
- * are edited per day, so a multi-page scan meets concurrent edits as a matter of routine. An
- * edit that unpublishes a model — or flips it to Unsearchable — takes a row OUT of the set.
+ * That set is re-evaluated on every page and it is not stable: an edit that unpublishes a model,
+ * or flips it to Unsearchable, takes a row OUT of it mid-scan.
+ *
+ * This needs MORE THAN ONE PAGE to bite, which the steady state does not reach - the models
+ * sync runs every 15 minutes, and at ~1,659 published edits a day a window holds about 17 rows
+ * against a 2,000-row page. (No cron string here on purpose: the slash-star-slash in one closes
+ * this comment, which is how this paragraph first shipped broken.)
+ * It bites on a wide window: a stale watermark after an outage or deploy gap, a rebuild, or a
+ * bulk write touching `updatedAt` on more than 2,000 rows. Inside such a run the skip does not
+ * need a concurrent edit at all - the old query had no `ORDER BY` over a parallel seq scan, and
+ * `synchronize_seqscans` alone can cut successive OFFSET pages out of different row orderings.
+ * An earlier version of this comment cited that edits-per-day figure for the opposite claim.
  *
  * 🔴 THE DECISION THIS FILE PINS IS KEYSET PAGING, NOT ORDERING. The first case below runs the
  * fake with the members kept in id order at every page, which is the most charitable possible
@@ -233,6 +242,7 @@ describe('prepareModelsBatches paging', () => {
     await prepareModelsBatches(fake.ctx, LAST_UPDATED_AT);
 
     const [first] = fake.pageSql();
+    expect(norm(first)).toContain('SELECT id FROM "Model"');
     expect(whereClausesOf(first)).toEqual([
       'status = ?::"ModelStatus" AND availability != ?::"Availability" AND "updatedAt" >= ? AND id > ?',
     ]);
@@ -309,6 +319,9 @@ describe('prepareModelsBatches paging', () => {
 
     expect(fake.boundsSql()).toHaveLength(1);
     const [bounds] = fake.boundsSql();
+    // `whereClausesOf` starts at WHERE, so the table and the aggregates are outside everything
+    // else here asserts: `FROM "ModelVersion"` would bound a different entity's ids, silently.
+    expect(norm(bounds)).toContain('SELECT MIN(id) as "startId", MAX(id) as "endId" FROM "Model"');
     expect(whereClausesOf(bounds)).toEqual([
       'status = ?::"ModelStatus" AND availability != ?::"Availability" AND "createdAt" >= ? ;',
     ]);
@@ -335,5 +348,38 @@ describe('prepareModelsBatches paging', () => {
 
     expect(updateIds).toHaveLength(0);
     expect(fake.pageQueries()).toBe(0);
+  });
+
+  /**
+   * 🔴 THE REBUILD PATH IS THE ONE WHERE `startId`/`endId` ARE THE ENTIRE OUTPUT, and until this
+   * case existed it was also the only path asserting nothing about them. The case above passes on
+   * an empty `updateIds` and no page query - which is equally what a rebuild that does nothing at
+   * all looks like. Returning `{ startId: 0, endId: 0, updateIds: [] }` early for a missing
+   * watermark satisfied it, and made `Math.ceil((endId - startId) / batchSize)` zero: a whole
+   * index rebuild that creates no batches and indexes nothing.
+   */
+  it('still bounds the whole id range on a full rebuild', async () => {
+    const fake = makeFake(new Set(range(5, 90)));
+
+    const { startId, endId } = await prepareModelsBatches(fake.ctx);
+
+    expect(startId).toBe(5);
+    expect(endId).toBe(90);
+    expect(fake.boundsSql()).toHaveLength(1);
+    // No watermark, so the conditional fragment is the EMPTY `Prisma.sql` - still passed as a
+    // bind, contributing no text and no values of its own. Asserted through that shape rather
+    // than trimmed away, because "the fragment is empty" and "the fragment is gone" are the two
+    // states this case exists to tell apart.
+    expect(whereClausesOf(fake.boundsSql()[0])).toEqual([
+      'status = ?::"ModelStatus" AND availability != ?::"Availability" ;',
+    ]);
+    const [status, availability, watermark] = fake.boundsValues()[0] as [
+      string,
+      string,
+      { values: unknown[] }
+    ];
+    expect(status).toBe(ModelStatus.Published);
+    expect(availability).toBe(Availability.Unsearchable);
+    expect(watermark.values).toEqual([]);
   });
 });
