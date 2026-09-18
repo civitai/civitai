@@ -12,24 +12,10 @@ import { stripSourceComments } from '~/components/AppBlocks/stripSourceComments'
  * for everyone else. Every OTHER consumer must keep treating anything that is not
  * `visible` as a refusal, and must do so by spelling the test `!== 'visible'`: a
  * gate written `=== 'hidden'` was correct while the verdict had two members and
- * silently ADMITS a `pending` image now. That is not a bug in either file on its
- * own — each one type-checks, each one's unit tests pass — so it is exactly the
- * class of defect a per-file suite cannot see.
- *
- * A call site is detected by the IMPORT SPECIFIER as well as by the symbol's
- * spelling, because an aliased import — `classifyGatedImageForViewer as classify`
- * — walks a spelling-only check, which is what the ledger used to be.
- *
- * The limit, so nobody trusts it further than it goes: a consumer reached through
- * a re-exporting barrel matches NEITHER half. The barrel itself matches the `from`
- * clause and joins the ledger, so the hop still fails this suite — one file away
- * from the consumer that actually gates. No such barrel exists today.
+ * silently ADMITS a `pending` image now.
  *
  * The BEHAVIOURAL half lives with each consumer and is deliberately not duplicated
- * here: `block-post.service.test.ts` proves the public-Post adoption gate refuses
- * a `Pending`-ingestion and an unrated (`nsfwLevel: 0`) image, and
- * `block-gated-images.service.test.ts` proves the grid withholds the url from
- * every viewer but the image's own author.
+ * here — see `block-post.service.test.ts` and `block-gated-images.service.test.ts`.
  */
 
 const SRC = resolve(__dirname, '../../../..'); // …/src
@@ -111,9 +97,13 @@ for (const full of PRODUCTION_FILES) {
 }
 
 /**
- * A file is a call site if it IMPORTS the logic module (alias-proof) OR names the
- * symbol in call position (namespace import / re-export). Either alone is
- * walkable; the union is what the ledger asserts.
+ * A file is a call site if it IMPORTS the logic module or names the symbol in call
+ * position. The import half covers every shape that carries a `from '…logic'` clause —
+ * a renamed import, a namespace import, a re-export — so the symbol half's own
+ * contribution is the call whose file carries no such clause: one reached through a
+ * name-preserving barrel. Only a barrel hop that ALSO renames escapes both, and the
+ * barrel itself joins the ledger, so that hop fails this suite one file away from the
+ * consumer that gates.
  */
 function isCallSite(rel: string): boolean {
   if (rel === DEFINITION) return false;
@@ -147,11 +137,10 @@ describe(`${SYMBOL} seam`, () => {
   it('the file walk actually reaches the module under test', () => {
     const rels = [...SOURCE.keys()];
     expect(rels).toContain(DEFINITION);
-    // `verdictFor` seeds `SOURCE` directly, so every detector fixture runs PAST the corpus loop
-    // and none can observe it narrowing. Scoping that loop by the substring `blocks` is green
-    // for a second reason worth keeping separate: every corpus member already carries that
-    // token, so the filter excludes nothing — inert rather than caught. Re-derive from the same
-    // walk instead: a filter added to the LOOP makes the two disagree.
+    // `verdictFor` seeds `SOURCE` directly, so no detector fixture runs the corpus loop and none
+    // can observe it narrowing by path. Every corpus member's path also contains the token
+    // `blocks`, so narrowing the loop by that token excludes nothing and stays green. Re-derive
+    // from the same walk instead: a filter added to the LOOP makes the two disagree.
     // Both shared inputs are pinned elsewhere — `PRODUCTION_FILES` by the enumeration equality
     // above, `couldBeCallSite` by its own case — so deleting either makes this one vacuous.
     const expectedCorpus = PRODUCTION_FILES.filter((full) =>
