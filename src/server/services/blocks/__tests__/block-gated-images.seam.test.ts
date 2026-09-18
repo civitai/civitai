@@ -141,13 +141,16 @@ describe(`${SYMBOL} seam`, () => {
     expect(PRODUCTION_FILES.length).toBeGreaterThan(500);
   });
 
-  // Pins the normalisation, which reads as removable and is not: without it a Windows rel misses
-  // every literal comparison in this file, and the control above then fails on six keys that look
-  // right. Asserted against a hardcoded separated input rather than against the walk's output, so
-  // it reddens on ubuntu too — where `relative()` never produces one to observe.
+  // Three assertions because the normalisation has two removable halves and they fail on
+  // different hosts: the helper's body (caught on any host, hardcoded input), the call to it
+  // inside `toRel` (caught on Windows, where `join` produces a separator to fold), and the
+  // walk's real output (the only one observing what the guard actually keyed the ledger on).
   it('normalises a host-separated rel to the POSIX form the ledger is written in', () => {
     expect(toPosix('server\\services\\blocks\\block-gated-images.logic.ts')).toBe(DEFINITION);
-    expect([...SOURCE.keys()]).toContain(DEFINITION);
+    expect(toRel(join(SRC, 'server', 'services', 'blocks', 'block-gated-images.logic.ts'))).toBe(
+      DEFINITION
+    );
+    expect([...SOURCE.keys()].filter((rel) => rel.includes('\\'))).toEqual([]);
   });
 
   // POSITIVE CONTROL for the DETECTOR, not just the walk. A ledger assertion that
@@ -183,8 +186,12 @@ describe(`${SYMBOL} seam`, () => {
   });
 
   it("no consumer gates on `=== 'hidden'` — a `pending` image would walk past it", () => {
-    for (const rel of EXPECTED_CALL_SITES) {
-      if (MAY_BRANCH_ON_HIDDEN.has(rel)) continue;
+    const targets = EXPECTED_CALL_SITES.filter((rel) => !MAY_BRANCH_ON_HIDDEN.has(rel));
+    // Named rather than counted: allow-listing the last consumer, or emptying the ledger, would
+    // otherwise leave this case iterating nothing and reporting green.
+    expect(targets).toEqual(['server/services/blocks/block-post.service.ts']);
+
+    for (const rel of targets) {
       // Comments are already stripped, so the prose ABOVE the gate (which names
       // the wrong spelling in order to forbid it) cannot satisfy or trip this.
       // A ledger literal that stops matching a key would otherwise leave `code` empty, and the
