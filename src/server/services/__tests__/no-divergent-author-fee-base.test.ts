@@ -5,7 +5,17 @@ import { describe, expect, it } from 'vitest';
 /**
  * THE SEAM GUARD — and the only guard in this change that is RED at `origin/main`.
  *
- * `computeBlockAuthorFee` is hermetically covered by `author-fee.test.ts`, and
+ * It lives HERE, under the `no-*.test.ts` convention-guard name, rather than
+ * beside the module it protects: this is a source-text structural guard over a
+ * call-site population, which is exactly the class `src/server/services/__tests__/no-*.test.ts`
+ * exists for. `no-lint-rules-script-drift` only scans THIS directory for THIS
+ * name shape, so a guard of this class parked anywhere else is invisible to the
+ * ratchet and is not run by the fast `pnpm run test:lint-rules` selector — it
+ * would surface only in the full unit suite, minutes later, in a file nobody
+ * was looking at.
+ *
+ * `computeBlockAuthorFee` is hermetically covered by
+ * `src/server/services/blocks/__tests__/author-fee.test.ts`, and
  * `recordSpendAttribution` has its own suite. Both can be green while the
  * feature is inert, because the defect lives in the seam neither of them owns:
  * the author fee is a percentage of `WorkflowCost.base`, and the spend path's
@@ -17,9 +27,14 @@ import { describe, expect, it } from 'vitest';
  * resources stack.
  *
  * So this pins a RELATIONSHIP over the whole population rather than a component:
- * EVERY `recordSpendAttribution` call site must be fed a base, and it must be
- * `snapshot.cost?.base`. The asserted count makes the ledger fail when the set
- * GROWS (a fourth submit path added without a base) as well as when it SHRINKS.
+ * EVERY `recordSpendAttribution` call site must be fed a base, and that base must
+ * come from the RAW ORCHESTRATOR RESPONSE — `submitted.cost.base`, hoisted into
+ * `realizedBaseCost` — and NEVER from `snapshot`. `BlockWorkflowSnapshot.cost` is
+ * deliberately `{ total }` only, because widening that wire shape would publish
+ * the platform's cost breakdown to every third-party app; so `snapshot` cannot
+ * supply a base, and a `snapshot.cost?.base` in the router would be `undefined`
+ * silently. The asserted count makes the ledger fail when the set GROWS (a fourth
+ * submit path added without a base) as well as when it SHRINKS.
  *
  * It is a SOURCE-TEXT guard by necessity: the three call sites are inside a
  * ~9,000-line tRPC router whose handlers cannot be invoked without the whole

@@ -5,16 +5,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *
  *   fee = max(flatBuzz, pctOfBase × base_generation_buzz)
  *
- * WHAT THIS SUITE IS, STATED HONESTLY. `author-fee.ts` is a NEW module, so every
- * test below is NEW-FEATURE coverage, not regression coverage: none of them
- * could have been red at `origin/main` for any reason except the import failing.
- * The claim that these guards are real is carried by the MUTATION SWEEP recorded
- * in the PR body — each rule below was broken on purpose and the naming test is
- * the one that went red. Two guards here are labelled INVARIANT GUARD where they
- * pin a property the code has always had rather than one this change introduced.
+ * WHAT THIS SUITE IS, STATED HONESTLY. `author-fee.ts` is a NEW module, so most
+ * tests below are NEW-FEATURE coverage, not regression coverage: they could not
+ * have been red at `origin/main` for any reason except the import failing. The
+ * claim that these guards are real is carried by the MUTATION SWEEP recorded in
+ * the PR body — each rule below was broken on purpose and the naming test is the
+ * one that went red. Guards labelled INVARIANT GUARD pin a property the code has
+ * always had rather than one this change introduced.
  *
- * The one genuinely red-at-base guard for this change lives in
- * `author-fee.spend-seam.test.ts`, which pins the router call sites.
+ * THE EXCEPTION is `the PLATFORM table, as production resolves it`: those cases
+ * pass NO `config` argument, so they exercise `BLOCK_AUTHOR_FEE_PLATFORM_CONFIG`
+ * itself, and they were RED at the revision that shipped `byType: []` (the
+ * chat-completion cases returned the 1 ⚡ / 5% default). They are regression
+ * coverage for the seeded table, not fixture coverage.
+ *
+ * The other genuinely red-at-base guard for this change is
+ * `src/server/services/__tests__/no-divergent-author-fee-base.test.ts`, which
+ * pins the router call sites.
  *
  * Every expected value below is a LITERAL computed by hand from the rule, never
  * from the implementation. The fixtures deliberately avoid the module's own
@@ -59,8 +66,88 @@ describe('author fee — the platform defaults and ceilings', () => {
     });
   });
 
-  it('ships NO per-type overrides — the per-type axis is an author setting (slice 3)', () => {
-    expect(BLOCK_AUTHOR_FEE_PLATFORM_CONFIG.byType).toEqual([]);
+  it('seeds exactly ONE per-type override: chat-completion pays nothing', () => {
+    expect(BLOCK_AUTHOR_FEE_PLATFORM_CONFIG.byType).toEqual([
+      ['chat-completion', { flatBuzz: 0, pctOfBase: 0 }],
+    ]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE SEEDED PLATFORM TABLE IS PRODUCTION BEHAVIOUR, not a fixture. Every test
+// in this block calls `computeBlockAuthorFee` with NO `config` argument, so it
+// exercises `BLOCK_AUTHOR_FEE_PLATFORM_CONFIG` — the object the one production
+// caller actually uses. RED at the previous revision, whose `byType` was `[]`.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('author fee — the PLATFORM table, as production resolves it', () => {
+  // 640 ⚡ is none of the module's constants and its 5% (32) is not either, so a
+  // mutant reaching for a constant instead of the configured value cannot pass.
+  const BASE = 640;
+
+  it('a chat-completion charges NOTHING — the seeded override, no config argument', () => {
+    const r = computeBlockAuthorFee({
+      baseGenerationBuzz: BASE,
+      generationType: 'chat-completion',
+    });
+    expect(r.feeBuzz).toBe(0);
+    expect(r.flatLegBuzz).toBe(0);
+    expect(r.pctLegBuzz).toBe(0);
+    expect(r.governingLeg).toBe('none');
+    expect(r.source).toBe('type');
+    expect(r.coarseType).toBe('chat-completion');
+  });
+
+  it('…while a SAME-BASE generation of another type pays the default 5%', () => {
+    // 5% of 640 = 32. Same base, different type, different answer — which is the
+    // whole point of the per-type axis being live.
+    const r = computeBlockAuthorFee({ baseGenerationBuzz: BASE, generationType: 'convert-image' });
+    expect(r.feeBuzz).toBe(32);
+    expect(r.pctLegBuzz).toBe(32);
+    expect(r.flatLegBuzz).toBe(1);
+    expect(r.governingLeg).toBe('pct');
+    expect(r.source).toBe('default');
+  });
+
+  it('…and an image generation at the same base pays the same default 32 ⚡', () => {
+    const r = computeBlockAuthorFee({
+      baseGenerationBuzz: BASE,
+      generationType: 'textToImage:img2img',
+    });
+    expect(r.feeBuzz).toBe(32);
+    expect(r.source).toBe('default');
+  });
+
+  it('the chat-completion zero is the OVERRIDE, not a zero base — a cheap image still pays', () => {
+    // 7 ⚡ base: the flat leg governs everywhere the override does not apply.
+    expect(
+      computeBlockAuthorFee({ baseGenerationBuzz: 7, generationType: 'chat-completion' }).feeBuzz
+    ).toBe(0);
+    expect(
+      computeBlockAuthorFee({ baseGenerationBuzz: 7, generationType: 'textToImage' }).feeBuzz
+    ).toBe(1);
+  });
+
+  it('`source` is genuinely VARIABLE in production — both arms are reachable', () => {
+    // The property item 4's log-field decision rests on: with an empty `byType`
+    // this was a compile-time constant 'default'.
+    const sources = new Set(
+      (['chat-completion', 'convert-image', 'textToImage:txt2img', null] as const).map(
+        (t) => computeBlockAuthorFee({ baseGenerationBuzz: BASE, generationType: t }).source
+      )
+    );
+    expect([...sources].sort()).toEqual(['default', 'type']);
+  });
+
+  it('`clamped` is NOT variable in production — every platform leg is inside the ceiling', () => {
+    // INVARIANT GUARD, and the evidence for DROPPING `authorFeeParamsClamped`
+    // from the Axiom line: no input to the production config can set it.
+    for (const t of ['chat-completion', 'convert-image', 'textToImage:img2img', null]) {
+      for (const base of [0, 7, 20, BASE, 4000]) {
+        expect(computeBlockAuthorFee({ baseGenerationBuzz: base, generationType: t }).clamped).toBe(
+          false
+        );
+      }
+    }
   });
 });
 
@@ -449,6 +536,42 @@ describe('observeBlockAuthorFee — fail-closed dark gate', () => {
     expect(r).toMatchObject({ observed: true });
     expect(mockObserved).toHaveBeenCalledWith({ coarse_type: 'textToImage', outcome: 'none' });
     expect(mockFeeBuzz).toHaveBeenCalledWith({ coarse_type: 'textToImage' }, 0);
+  });
+
+  it('a chat-completion reaches the counters as an OBSERVED zero, not as a skip', async () => {
+    // End-to-end through the production entry point with NO config override: the
+    // seeded platform table must be what answers. A zero-fee generation is still
+    // a generation the fee SAW — it lands in the `none` bucket and contributes a
+    // base to the denominator, which is how the sizing read can tell "charged
+    // nothing" apart from "never looked".
+    mockIsFlipt.mockResolvedValue(true);
+    const r = await observeBlockAuthorFee({
+      baseGenerationBuzz: 640,
+      generationType: 'chat-completion',
+    });
+    expect(r).toMatchObject({ observed: true });
+    if (!r.observed) throw new Error('unreachable');
+    expect(r.computation.feeBuzz).toBe(0);
+    expect(r.computation.source).toBe('type');
+    expect(mockObserved).toHaveBeenCalledWith({
+      coarse_type: 'chat-completion',
+      outcome: 'none',
+    });
+    expect(mockFeeBuzz).toHaveBeenCalledWith({ coarse_type: 'chat-completion' }, 0);
+    expect(mockBaseBuzz).toHaveBeenCalledWith({ coarse_type: 'chat-completion' }, 640);
+  });
+
+  it('a same-base convert-image reaches the counters with the default 32 ⚡', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    const r = await observeBlockAuthorFee({
+      baseGenerationBuzz: 640,
+      generationType: 'convert-image',
+    });
+    expect(r).toMatchObject({ observed: true });
+    if (!r.observed) throw new Error('unreachable');
+    expect(r.computation.feeBuzz).toBe(32);
+    expect(r.computation.source).toBe('default');
+    expect(mockFeeBuzz).toHaveBeenCalledWith({ coarse_type: 'convert-image' }, 32);
   });
 
   it('a throwing counter never propagates to the caller', async () => {

@@ -63,6 +63,19 @@ vi.mock('~/server/logging/client', () => ({
   },
 }));
 
+// The DARK author-fee gate reads Flipt through `app-blocks-flag`. Everything
+// else in that module stays REAL (a wholesale mock would make the gate's own
+// wiring untested — see `no-wholesale-module-mock`); only the evaluator is
+// controlled, so both arms of the gate are reachable from this suite.
+const mockIsFlipt = vi.hoisted(() => vi.fn());
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  // `Record<string, unknown>` rather than `typeof import(…)`: this repo's eslint
+  // forbids `import()` type annotations, and the partial-mock guard accepts
+  // either spelling.
+  const actual = await importOriginal<Record<string, unknown>>();
+  return { ...actual, isFlipt: (...args: unknown[]) => mockIsFlipt(...args) };
+});
+
 // Spy on computeSpendShare so the track-only contract is testable: the write
 // must NEVER call it (the bounty is deferred to payout). Everything else from
 // rate-card stays real.
@@ -162,6 +175,9 @@ beforeEach(() => {
   refundAppBountySpy.mockReset();
   mockAppsQuery.mockReset();
   mockRequireAppsDb.mockReset();
+  // Default: every flag OFF — the as-merged production state for the author fee.
+  mockIsFlipt.mockReset();
+  mockIsFlipt.mockResolvedValue(false);
   // Default: app exists, owned by a different user than the spender.
   mockDbRead.oauthClient.findUnique.mockResolvedValue({
     id: APP_ID,
@@ -663,5 +679,119 @@ describe('recordSpendAttribution — generation type', () => {
     expect(data.status).toBe('voided');
     expect(data.voidedReason).toBe('self_spend');
     expect(data.generationType).toBe('convert-image');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE AUTHOR-FEE LOG LEDGER.
+//
+// A guard on the SET of `authorFee*` fields on the `block-spend-attribution`
+// Axiom line, not on any one of them. The rule it pins: ONE INSTRUMENT PER
+// PROPERTY. Three Prometheus counters already carry fee / base / governing-leg
+// by `coarse_type`, so this line exists only for what those cannot express — a
+// per-`appBlockId`, per-`isSelfSpend`, per-full-`generationType` cut, plus the
+// flag-disabled population, which emits no counter at all by design.
+//
+// It fails when the set GROWS (a constant like `authorFeeParamsClamped`, or a
+// duplicate of a counter like `authorFeeLeg`, gets added back) AND when it
+// SHRINKS (a denominator the sizing read divides by is dropped). A guard on one
+// field would catch neither direction.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('recordSpendAttribution — the author-fee log ledger', () => {
+  const AUTHOR_FEE_LOG_FIELDS = [
+    'authorFeeBaseBuzz',
+    'authorFeeBuzz',
+    'authorFeeParamsSource',
+    'authorFeeSkipped',
+  ];
+
+  function loggedPayload(): Record<string, unknown> {
+    expect(mockLog).toHaveBeenCalled();
+    return mockLog.mock.calls[0][0] as Record<string, unknown>;
+  }
+
+  it('logs EXACTLY these four author-fee fields — no more, no fewer', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    await recordSpendAttribution(
+      fakeInput({ generationType: 'convert-image', baseGenerationBuzz: 640 })
+    );
+    expect(
+      Object.keys(loggedPayload())
+        .filter((k) => k.startsWith('authorFee'))
+        .sort()
+    ).toEqual(AUTHOR_FEE_LOG_FIELDS);
+  });
+
+  it('the dimensions the counters CANNOT carry are on the same line', async () => {
+    // The whole justification for keeping a per-row fee at all: the counters are
+    // labelled by `coarse_type` only, so this is the only place the fee can be
+    // cut by app or by self-spend.
+    mockIsFlipt.mockResolvedValue(true);
+    await recordSpendAttribution(
+      fakeInput({ generationType: 'convert-image', baseGenerationBuzz: 640 })
+    );
+    const payload = loggedPayload();
+    expect(payload.appBlockId).toBe(APP_BLOCK_ID);
+    expect(payload.isSelfSpend).toBe(false);
+    expect(payload.generationType).toBe('convert-image');
+  });
+
+  it('flag ON, a defaulted type: fee 32 ⚡ off a 640 ⚡ base, source `default`', async () => {
+    // 5% of 640 = 32, by hand from the rule — not read back off the module.
+    mockIsFlipt.mockResolvedValue(true);
+    await recordSpendAttribution(
+      fakeInput({ generationType: 'convert-image', baseGenerationBuzz: 640 })
+    );
+    expect(loggedPayload()).toMatchObject({
+      authorFeeSkipped: null,
+      authorFeeBuzz: 32,
+      authorFeeBaseBuzz: 640,
+      authorFeeParamsSource: 'default',
+    });
+  });
+
+  it('flag ON, a chat-completion at the SAME base: fee 0, source `type`', async () => {
+    // The seeded platform override, observed end-to-end through the service.
+    mockIsFlipt.mockResolvedValue(true);
+    await recordSpendAttribution(
+      fakeInput({ generationType: 'chat-completion', baseGenerationBuzz: 640 })
+    );
+    expect(loggedPayload()).toMatchObject({
+      authorFeeSkipped: null,
+      authorFeeBuzz: 0,
+      authorFeeBaseBuzz: 640,
+      authorFeeParamsSource: 'type',
+    });
+  });
+
+  it('flag OFF (the as-merged state): the row is named as a flag-disabled skip', async () => {
+    // `authorFeeSkipped` is the ONLY instrument for this population — no counter
+    // is emitted on the disabled path — and it is one of the two denominators
+    // the slice-2 sizing read divides by.
+    mockIsFlipt.mockResolvedValue(false);
+    await recordSpendAttribution(
+      fakeInput({ generationType: 'convert-image', baseGenerationBuzz: 640 })
+    );
+    expect(loggedPayload()).toMatchObject({
+      authorFeeSkipped: 'flag-disabled',
+      authorFeeBuzz: null,
+      authorFeeBaseBuzz: null,
+      authorFeeParamsSource: null,
+    });
+  });
+
+  it('flag ON but NO base: its own named skip, never folded into flag-disabled', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    await recordSpendAttribution(fakeInput({ generationType: 'convert-image' }));
+    expect(loggedPayload()).toMatchObject({
+      authorFeeSkipped: 'base-unavailable',
+      authorFeeBuzz: null,
+    });
+  });
+
+  it('reads the dedicated author-fee flag key', async () => {
+    mockIsFlipt.mockResolvedValue(false);
+    await recordSpendAttribution(fakeInput({ baseGenerationBuzz: 640 }));
+    expect(mockIsFlipt).toHaveBeenCalledWith('app-blocks-author-fee-enabled');
   });
 });

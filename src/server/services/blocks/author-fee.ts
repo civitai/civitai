@@ -1,3 +1,9 @@
+import {
+  blockAuthorFeeBaseBuzzCounter,
+  blockAuthorFeeBuzzCounter,
+  blockAuthorFeeObservedCounter,
+} from '~/server/prom/client';
+import { isAppBlocksAuthorFeeEnabled } from '~/server/services/app-blocks-flag';
 import { blockGenerationCoarseType, isBlockGenerationType } from './generation-type';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -11,13 +17,43 @@ import { blockGenerationCoarseType, isBlockGenerationType } from './generation-t
 //
 //   fee = max(flatBuzz, pctOfBase × base_generation_buzz)
 //
+// ── THE `max` COMBINATOR IS OPERATOR-SPECIFIED, NOT DERIVED ─────────────────
+// Verbatim brief: "make it a 'largest of flat or percent'". Not `flat + pct`,
+// not a percentage with a floor expressed some other way. Recorded here because
+// a requirements audit flagged the combinator as UNATTRIBUTED — which it was,
+// only because the reviewer had not been given this line. It is settled; the
+// next reader should not re-open it.
+//
 // 🔴 THIS IS NOT A RATE CARD, AND DELIBERATELY DOES NOT LIVE IN `rate-card.ts`.
-// A `RateCard` describes how PLATFORM revenue is split with an author out of
-// money the viewer already spent. This fee is new money the viewer pays to the
-// author, with no platform share — an opposite-direction quantity that happens
-// to be expressed as a percentage. Folding it into `RATE_CARD_V6` would put two
-// unrelated economics in one immutable snapshot and make "which percent is
-// this?" a reading exercise at every call site.
+// ⚠️ BUT NOT FOR THE REASON AN EARLIER REVISION OF THIS COMMENT GAVE. That
+// revision argued that a rate card "splits PLATFORM revenue" while this is new
+// money to the author with no platform share. `RATE_CARD_V4`'s own ACCOUNTING
+// MODEL note refutes it: the spend bounty a card already carries is "a SEPARATE
+// platform expense paid ON TOP … NOT a slice carved out of the viewer's money",
+// and the spend table deliberately omits the purchase table's three-way
+// conservation CHECK. A card already holds exactly this shape, so "it is not a
+// split" is not a reason. The two REAL reasons:
+//
+//   1. LIFECYCLE — IMMUTABLE PLATFORM SNAPSHOT vs MUTABLE PER-APP SETTING. A
+//      `RateCard` is "NEVER mutated in place"; changing a number means a new
+//      version constant, and a row stamps `rate_card_version` at WRITE TIME and
+//      "pays out under its own snapshot for the lifetime of the row". There is
+//      one `ACTIVE_RATE_CARD` for the whole platform. This fee is PER-APP,
+//      AUTHOR-SET and MUTABLE: in slice 3 an author edits it and the very next
+//      generation charges the new number. One card per app is not ugly, it is
+//      structurally impossible — the version string on a row names a
+//      platform-wide document, not an app's current setting.
+//
+//   2. UNITS — PERCENT-OF-USD-CENTS vs BUZZ INTEGERS. Every card field is a
+//      percentage applied to CENTS (`publisherSharePctByScope` is a % of
+//      `gross_cents - provider_fee_cents`; `spendSharePct` is a % of the
+//      spend's USD value), and a flat BUZZ leg has no expression in that unit at
+//      all. Worse, the card's per-row CENT FLOORING is precisely the defect that
+//      made the bounty pay $0.00: at 10 Buzz per cent (`buzzSpendToUsdCents`)
+//      and `spendSharePct: 5`, `computeSpendShare` returns **0 cents for every
+//      generation under 200 ⚡** — i.e. for most of them. Computing in Buzz and
+//      flooring ONCE, at the end, is what the basis-point arithmetic below
+//      exists for.
 //
 // ── SLICE 1 IS DARK. IT COMPUTES AND OBSERVES; IT MOVES NO MONEY. ───────────
 // Settlement onto the licensing-fee rail is slice 2; the author-facing config
@@ -138,14 +174,27 @@ export const BLOCK_AUTHOR_FEE_DEFAULT_PARAMS: BlockAuthorFeeParams = {
 
 /**
  * The PLATFORM configuration — what slice 1 uses for every app, including the
- * ones that already exist. Deliberately carries NO per-type overrides: the
- * per-type axis is an AUTHOR setting, and there is no author-facing way to set
- * it until slice 3. The empty table is the resolver's real, exercised input, not
- * a placeholder for a table that should have been populated here.
+ * ones that already exist.
+ *
+ * `chat-completion` → 0/0, i.e. NO FEE. This is Justin's motivating example
+ * ("nothing on chat completions") implemented as a PLATFORM DEFAULT rather than
+ * left for each author to discover in slice 3. Chat completion is the
+ * highest-frequency generation type an app runs — a conversational block bills
+ * one per turn — so a 1 ⚡ flat floor on each is a per-message toll rather than
+ * a fee on a generation. The platform charges nothing there until an author
+ * says otherwise.
+ *
+ * 🔴 THE TABLE BEING NON-EMPTY IS WHAT MAKES THE RESOLVER LIVE IN PRODUCTION.
+ * An earlier revision shipped `byType: []` with a comment calling the empty
+ * table "the resolver's real, exercised input". It was not: with no entries
+ * EVERY production lookup fell to the default, the `type` and `coarse` arms of
+ * `resolveBlockAuthorFeeParams` were unreachable outside its own unit tests,
+ * and `source` was a compile-time constant `'default'`. A precedence rule that
+ * production never executes is not configuration, it is dead code with a test.
  */
 export const BLOCK_AUTHOR_FEE_PLATFORM_CONFIG: BlockAuthorFeeConfig = {
   default: BLOCK_AUTHOR_FEE_DEFAULT_PARAMS,
-  byType: [],
+  byType: [['chat-completion', { flatBuzz: 0, pctOfBase: 0 }]],
 };
 
 /** Params after the platform ceiling has been applied, in computable units. */
@@ -359,12 +408,25 @@ export type BlockAuthorFeeObservation =
  * The ONE production entry point, and the dark gate.
  *
  * 🔴 FAIL-CLOSED AND FIRST. The flag is read before anything else happens —
- * before the base is inspected, before any parameter is resolved, before the
- * telemetry module is even imported. With `app-blocks-author-fee-enabled` off,
- * absent, or Flipt unreachable, `isFlipt` answers `false` and this returns
- * immediately, so the computation is unreachable from every production path and
- * emits no signal at all. The flag does not exist in Flipt as this merges, which
- * makes the as-merged behaviour fully dark.
+ * before the base is inspected and before any parameter is resolved. With
+ * `app-blocks-author-fee-enabled` off, absent, or Flipt unreachable, `isFlipt`
+ * answers `false` and this returns immediately, so the computation is
+ * unreachable from every production path and emits no signal at all. The flag
+ * does not exist in Flipt as this merges, which makes the as-merged behaviour
+ * fully dark.
+ *
+ * ⚠️ AN EARLIER REVISION ALSO CLAIMED THE FLAG IS READ "before the telemetry
+ * module is even imported", and used `await import()` for both dependencies to
+ * make that true. IT WAS NOT TRUE AND THE INDIRECTION DEFERRED NOTHING: the
+ * sole caller `buzz-attribution.service` STATICALLY imports
+ * `~/server/prom/client`, and `blocks.router` — which imports that service —
+ * statically imports `app-blocks-flag`. Both modules are already in the module
+ * cache before this function is entered, so the dynamic form bought no
+ * deferral, and the `.catch(() => ({ …: null }))` fallback it carried was
+ * unreachable. Both are ordinary static imports now and the claim is deleted
+ * rather than reworded. What IS still true is the ORDER of the statements
+ * below, which is what the flag-off test asserts: no counter is touched on the
+ * disabled path.
  *
  * OPERATOR NOTE: create `app-blocks-author-fee-enabled` as a PLAIN GLOBAL
  * BOOLEAN with no segment. This evaluates globally (entityId `'global'`, empty
@@ -396,22 +458,11 @@ export async function observeBlockAuthorFee(args: {
   config?: BlockAuthorFeeConfig;
 }): Promise<BlockAuthorFeeObservation> {
   try {
-    const { isAppBlocksAuthorFeeEnabled } = await import('~/server/services/app-blocks-flag');
     if (!(await isAppBlocksAuthorFeeEnabled())) return { observed: false, reason: 'flag-disabled' };
   } catch {
-    // A flag module that will not load is not permission to charge anyone.
+    // A flag read that will not resolve is not permission to charge anyone.
     return { observed: false, reason: 'flag-disabled' };
   }
-
-  const {
-    blockAuthorFeeBaseBuzzCounter,
-    blockAuthorFeeBuzzCounter,
-    blockAuthorFeeObservedCounter,
-  } = await import('~/server/prom/client').catch(() => ({
-    blockAuthorFeeBaseBuzzCounter: null,
-    blockAuthorFeeBuzzCounter: null,
-    blockAuthorFeeObservedCounter: null,
-  }));
 
   const base = args.baseGenerationBuzz;
   // 🔴 A MISSING BASE IS A SKIP, NOT A ZERO. Treating it as 0 would silently
@@ -420,7 +471,7 @@ export async function observeBlockAuthorFee(args: {
   // outcome so the blind spot is a number rather than an absence.
   if (typeof base !== 'number' || !Number.isFinite(base)) {
     try {
-      blockAuthorFeeObservedCounter?.inc({
+      blockAuthorFeeObservedCounter.inc({
         coarse_type: BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL,
         outcome: 'base_unavailable',
       });
@@ -438,15 +489,12 @@ export async function observeBlockAuthorFee(args: {
 
   const coarseLabel = computation.coarseType ?? BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL;
   try {
-    blockAuthorFeeObservedCounter?.inc({
+    blockAuthorFeeObservedCounter.inc({
       coarse_type: coarseLabel,
       outcome: computation.governingLeg,
     });
-    blockAuthorFeeBuzzCounter?.inc({ coarse_type: coarseLabel }, computation.feeBuzz);
-    blockAuthorFeeBaseBuzzCounter?.inc(
-      { coarse_type: coarseLabel },
-      computation.baseGenerationBuzz
-    );
+    blockAuthorFeeBuzzCounter.inc({ coarse_type: coarseLabel }, computation.feeBuzz);
+    blockAuthorFeeBaseBuzzCounter.inc({ coarse_type: coarseLabel }, computation.baseGenerationBuzz);
   } catch {
     // swallow — telemetry must never back-pressure the caller
   }
