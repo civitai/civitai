@@ -993,9 +993,16 @@ export type BlockSpendAttribution = {
   app_block_id: string;
   block_instance_id: string;
   model_id: number | null;
+  /**
+   * Always the 'unrated' sentinel — the write path hardcodes it. No rate card
+   * is applied to a spend row, and nothing re-stamps it (the backpay that would
+   * have is removed). Measured in production 2026-09-18: 601/601 rows 'unrated'.
+   */
   rate_card_version: string;
   /**
-   * The spend rev-share percentage stamped at write time.
+   * Always 0. This was the spend rev-share percentage stamped at write time,
+   * for the removed platform-funded bounty; the write path now hardcodes 0 and
+   * the column is retained only to keep the row shape + CHECK constraints.
    */
   spend_share_pct: number;
   app_owner_share_cents: number;
