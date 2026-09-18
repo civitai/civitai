@@ -1,6 +1,7 @@
 import { milestoneNotificationFix } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import { getModelCommentThreadUrl } from '~/utils/comment-url-helpers';
 import { humanizeList } from '~/utils/humanizer';
 
 const commentReactionMilestones = [5, 10, 20, 50, 100] as const;
@@ -14,7 +15,10 @@ export const reactionNotifications = createNotificationProcessor({
     category: NotificationCategory.Milestone,
     prepareMessage: ({ details }) => ({
       message: `Your comment on ${details.modelName} has received ${details.reactionCount} reactions`,
-      url: `/models/${details.modelId}?dialog=commentThread&commentId=${details.rootCommentId}`,
+      url: getModelCommentThreadUrl({
+        modelId: details.modelId,
+        commentId: details.rootCommentId,
+      }),
     }),
     prepareQuery: ({ lastSent }) => `
       WITH milestones AS (

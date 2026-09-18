@@ -1,5 +1,6 @@
 import type { MenuProps } from '@mantine/core';
-import { ActionIcon, Menu, Text } from '@mantine/core';
+import { Menu, Text } from '@mantine/core';
+import { useClipboard } from '@mantine/hooks';
 import { closeAllModals, closeModal, openConfirmModal } from '@mantine/modals';
 import {
   IconDotsVertical,
@@ -8,6 +9,7 @@ import {
   IconEye,
   IconEyeOff,
   IconFlag,
+  IconLink,
   IconLock,
   IconLockOpen,
   IconBan,
@@ -25,7 +27,8 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { CommentGetAllItem } from '~/types/router';
-import { showErrorNotification } from '~/utils/notifications';
+import { getModelCommentThreadUrl } from '~/utils/comment-url-helpers';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function CommentDiscussionMenu({
@@ -38,6 +41,7 @@ export function CommentDiscussionMenu({
   const queryUtils = trpc.useUtils();
   const dialog = useDialogContext();
   const user = useCurrentUser();
+  const clipboard = useClipboard();
 
   const isMod = user?.isModerator ?? false;
   const isOwner = comment.user.id === user?.id;
@@ -188,6 +192,16 @@ export function CommentDiscussionMenu({
     togglePinCommentMutation.mutate({ id: comment.id });
   };
 
+  const handleCopyLink = () => {
+    clipboard.copy(
+      `${window.location.origin}${getModelCommentThreadUrl({
+        modelId: comment.modelId,
+        commentId: comment.id,
+      })}`
+    );
+    showSuccessNotification({ message: 'Comment link copied to clipboard' });
+  };
+
   return (
     <Menu position="bottom-end" withinPortal {...props}>
       <Menu.Target>
@@ -280,6 +294,9 @@ export function CommentDiscussionMenu({
             </LoginRedirect>
           </>
         )}
+        <Menu.Item leftSection={<IconLink size={14} stroke={1.5} />} onClick={handleCopyLink}>
+          Copy link
+        </Menu.Item>
       </Menu.Dropdown>
     </Menu>
   );
