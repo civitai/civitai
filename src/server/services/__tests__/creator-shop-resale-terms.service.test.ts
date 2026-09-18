@@ -119,6 +119,7 @@ const shopItemRow = (id: number) => ({
   meta: { sellableByOthers: true, sellerShare: 0 },
   cosmetic: { id: id * 10, name: `Cosmetic ${id}`, type: 'Badge', data: {} },
   addedBy: { id: CREATOR_ID, username: 'creator', image: null },
+  _count: { purchases: 0 },
 });
 
 describe('listing someone else’s item records the terms it was listed under', () => {
@@ -484,6 +485,32 @@ describe('getCreatorShop resold section', () => {
     expect(resoldWhere().status).toBe('Published');
     expect(resoldWhere().listed).toBe(true);
     expect(resoldWhere().meta).toEqual({ path: ['sellableByOthers'], equals: true });
+  });
+
+  /**
+   * Both storefront sanitizers, against a fixture where the purchase rows and
+   * `meta.purchases` disagree. Without this, reverting either of them to the
+   * counter reddens nothing in this file — the sold count is not otherwise
+   * asserted on the storefront path.
+   */
+  it('reports the purchase rows as the sold count, not the meta counter', async () => {
+    const withCounterDrift = (id: number) => ({
+      ...shopItemRow(id),
+      meta: { sellableByOthers: true, sellerShare: 0, purchases: 3 },
+      _count: { purchases: 7 },
+    });
+    mocks.resaleFindMany.mockResolvedValue([{ shopItemId: SHOP_ITEM_ID, sellerShare: 20 }]);
+    mocks.shopItemFindMany
+      .mockResolvedValueOnce([withCounterDrift(SHOP_ITEM_ID)])
+      .mockResolvedValueOnce([withCounterDrift(SHOP_ITEM_ID)]);
+
+    const { cosmetics, resold } = await getCreatorShop({
+      userId: RESELLER_ID,
+      viewerId: RESELLER_ID,
+    });
+
+    expect(cosmetics[0].meta.purchases).toBe(7);
+    expect(resold[0].meta.purchases).toBe(7);
   });
 });
 

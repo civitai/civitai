@@ -132,6 +132,7 @@ const rejectedPack = (status = CosmeticShopItemStatus.Archived) => ({
   },
   addedById: LISTER,
   members: [{ cosmeticId: MEMBER, floorAmount: 2600 }],
+  _count: { purchases: 0 },
 });
 
 // The canonical mock resets once per FILE, not per test, so these three
@@ -152,6 +153,10 @@ beforeEach(() => {
     meta: META,
     addedById: LISTER,
     members: [{ cosmeticId: MEMBER, floorAmount: 2600 }],
+    // Deliberately unequal to `META.purchases`: the sold count comes from the
+    // purchase rows, and a fixture where the two agree cannot show which one
+    // the response carried.
+    _count: { purchases: 9 },
   });
   shopItemFindMany.mockResolvedValue([
     {
@@ -255,7 +260,8 @@ describe('public pack detail returns named fields, not the meta column', () => {
       coverTiles: ['a.png'],
       packMemberCount: 1,
       acceptsBlueBuzz: true,
-      purchases: 3,
+      // The row count, not `META.purchases`, which this fixture sets to 3.
+      purchases: 9,
     });
   });
 

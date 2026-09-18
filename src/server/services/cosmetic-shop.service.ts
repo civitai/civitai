@@ -31,7 +31,7 @@ import type {
 } from '~/server/schema/cosmetic-shop.schema';
 import { computeCreatorShopSplit, PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
+import { cosmeticShopItemSelect, withSoldCount } from '~/server/selectors/cosmetic-shop.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
   createBuzzTransaction,
@@ -88,10 +88,13 @@ export const getShopItemById = async ({ id }: GetByIdInput) => {
     },
     select: cosmeticShopItemSelect,
   } as const;
-  return dbRead.cosmeticShopItem.findUniqueOrThrow(shopItemFindArgs).catch(() => {
-    dbReadFallbackCounter.inc({ entity: 'cosmeticShopItem', caller: 'getShopItemById' });
-    return dbWrite.cosmeticShopItem.findUniqueOrThrow(shopItemFindArgs);
-  });
+  return dbRead.cosmeticShopItem
+    .findUniqueOrThrow(shopItemFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'cosmeticShopItem', caller: 'getShopItemById' });
+      return dbWrite.cosmeticShopItem.findUniqueOrThrow(shopItemFindArgs);
+    })
+    .then(withSoldCount);
 };
 
 export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticShopItemInput) => {
@@ -143,7 +146,11 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
 
   const count = await dbRead.cosmeticShopItem.count({ where });
 
-  return getPagingData({ items, count: (count as number) ?? 0 }, limit, page);
+  return getPagingData(
+    { items: items.map(withSoldCount), count: (count as number) ?? 0 },
+    limit,
+    page
+  );
 };
 
 export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
@@ -778,6 +785,7 @@ export const getShopSectionsWithItems = async ({
       .filter((s) => s.items.length > 0 || (s.meta as CosmeticShopSectionMeta | null)?.communityHub)
       .map((section) => ({
         ...section,
+        items: section.items.map((i) => ({ ...i, shopItem: withSoldCount(i.shopItem) })),
         image: !!section.image
           ? {
               ...section.image,

@@ -1,0 +1,76 @@
+-- ============================================================
+-- Index the FK every displayed sold count now counts over
+-- ============================================================
+-- `UserCosmeticShopPurchases` has had exactly one index since it was created --
+-- the primary key on `buzzTransactionId`. Nothing indexes `shopItemId`, which is
+-- the column every `_count: { purchases: true }` groups by. So each count is a
+-- sequential scan of the whole table.
+--
+-- WHAT WAS MEASURED (production replica, 2026-09-18, 40,583 rows / 13 MB), over
+-- the 60 items a shop page renders:
+--
+--   EXPLAIN (ANALYZE, BUFFERS)
+--   SELECT si.id,
+--          (SELECT count(*) FROM "UserCosmeticShopPurchases" u
+--            WHERE u."shopItemId" = si.id)
+--     FROM "CosmeticShopItem" si
+--    WHERE si.status = 'Published' AND si.listed LIMIT 60;
+--
+--   =>  Seq Scan on "UserCosmeticShopPurchases" u
+--         (actual time=0.212..2.222 rows=62.67 loops=60)
+--         Rows Removed by Filter: 40520
+--         Buffers: shared hit=71400
+--       Execution Time: 140.144 ms
+--
+--   The same query without the count: Execution Time 0.044 ms, 3 buffers.
+--
+-- WHY NOW. The sold count shown on a listing used to come from `meta.purchases`,
+-- a denormalised counter in the item's JSONB that drifts (47 of 1,902 listings
+-- disagreed with the rows when this was measured). The reads now use the rows,
+-- which is what the sold-out gate, the quantity floor, the delete guard and the
+-- MostPopular sort have always used. This index is what makes that affordable.
+--
+-- It is also owed independently of that change: those existing row-count readers
+-- are paying the same seq scan today, the MostPopular sort worst of all.
+--
+-- ORDER: APPLY THIS BEFORE THE DEPLOY. Not because a reader would 500 without it
+-- -- no column is added, which is exactly why this is an index and not a
+-- `purchaseCount` column -- but so the first shop page served after the deploy is
+-- not the one that discovers the seq scan. Stated explicitly because "apply
+-- before deploy" without a reason gets reordered by whoever holds the release.
+--
+-- Apply to DEV as well as production, or the next person to measure a shop query
+-- on a dev box finds the seq scan and reports a regression that isn't one.
+--
+-- 🔴 APPLIED BY HAND. Feed this file to psql on STDIN, so each statement runs in
+-- its own implicit transaction -- `CONCURRENTLY` cannot run inside a transaction
+-- block, and a multi-statement `-c` would wrap it in one. It takes SHARE UPDATE
+-- EXCLUSIVE, not ACCESS EXCLUSIVE: it does not block reads or writes.
+--
+-- 🔴 `IF NOT EXISTS` WILL HAPPILY SKIP A BROKEN INDEX. A cancelled or timed-out
+-- CONCURRENTLY build leaves an INVALID index behind -- it exists, it is never
+-- used, and nothing cleans it up -- so a second run of this file reports success
+-- over it. Confirm validity rather than completion:
+--
+--   SELECT indexrelid::regclass, indisvalid FROM pg_index
+--    WHERE indexrelid = '"UserCosmeticShopPurchases_shopItemId_idx"'::regclass;
+--   -- note the embedded quotes: regclass::text renders a mixed-case identifier
+--   -- QUOTED, so comparing it to the bare name silently matches nothing.
+--
+-- If `indisvalid` is false:
+--   DROP INDEX CONCURRENTLY IF EXISTS "UserCosmeticShopPurchases_shopItemId_idx";
+-- and run this file again.
+--
+-- 🔴 THEN CONFIRM THE PLAN CHANGED, not just that the statement returned. Re-run
+-- the EXPLAIN above and require an Index Scan on this index. A remaining Seq Scan
+-- across 60 correlated lookups of ~25 rows each means invalid or missing, not a
+-- planner preference -- on a table this small the planner may legitimately prefer
+-- a seq scan for a whole-table query, but not for that shape.
+--
+-- The name is Prisma's own (`Table_column_idx`), matching `@@index([shopItemId])`
+-- in schema.full.prisma and the sibling `UserCosmeticShopPurchaseCosmetic_cosmeticId_idx`.
+-- A hand-picked name here would read as schema drift forever.
+SET statement_timeout = 0;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "UserCosmeticShopPurchases_shopItemId_idx"
+  ON "UserCosmeticShopPurchases" ("shopItemId");

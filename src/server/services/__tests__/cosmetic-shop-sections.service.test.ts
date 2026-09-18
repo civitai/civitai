@@ -46,7 +46,10 @@ const officialItem = {
     // Listed by a moderator — addedById is NOT null for official items.
     addedById: 999,
     cosmetic: { id: 10, createdById: null },
-    meta: {},
+    // The counter and the rows disagree on purpose: /shop hands `meta` to the
+    // client as-is, so the row count has to be written onto it here.
+    meta: { purchases: 2 },
+    _count: { purchases: 5 },
   },
 };
 
@@ -103,6 +106,14 @@ describe('getShopSectionsWithItems viewer gating', () => {
 
     expect(sections).toHaveLength(1);
     expect(sections[0].items[0].shopItem.title).toBe('Official badge');
+  });
+
+  // /shop is the one surface with no meta whitelist to change, so the wiring —
+  // not just the helper — is what has to be pinned. Reverting the `.map` in the
+  // section return reddens nothing without this.
+  it('serves the purchase rows as the sold count, not the meta counter', async () => {
+    const sections = await getShopSectionsWithItems({});
+    expect(sections[0].items[0].shopItem.meta.purchases).toBe(5);
   });
 
   it('non-mod with the creatorShop flag: creator items are not filtered out, status guard stays', async () => {

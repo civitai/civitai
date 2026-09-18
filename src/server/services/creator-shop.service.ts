@@ -1147,7 +1147,7 @@ export const getCreatorShop = async ({
   const sanitize = (item: (typeof items)[number]) => ({
     ...item,
     meta: {
-      purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0,
+      purchases: item._count.purchases,
       acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
       ...packDisplayMeta(item.meta as CosmeticShopItemMeta | null),
     },
@@ -1158,7 +1158,7 @@ export const getCreatorShop = async ({
   const sanitizeResold = (item: (typeof resoldItems)[number]) => ({
     ...item,
     meta: {
-      purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0,
+      purchases: item._count.purchases,
       sellerShare:
         resaleShares.get(item.id) ?? (item.meta as CosmeticShopItemMeta)?.sellerShare ?? 0,
       acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
@@ -1355,7 +1355,7 @@ export const getCommunityCosmetics = async ({
   const items = raw.map((item) => ({
     ...item,
     meta: {
-      purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0,
+      purchases: item._count.purchases,
       acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
       ...packDisplayMeta(item.meta as CosmeticShopItemMeta | null),
     },

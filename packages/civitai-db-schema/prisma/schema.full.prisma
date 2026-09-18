@@ -4560,6 +4560,12 @@ model UserCosmeticShopPurchases {
   // reconstruct it after the fact. See UserCosmeticShopPurchaseMeta.
   meta              Json?
   components        UserCosmeticShopPurchaseCosmetic[]
+
+  // Every displayed sold count is a `_count` over this FK. Without the index it
+  // is a seq scan of the whole table per listing: 60 items cost 140 ms and
+  // 71,400 buffers on the replica, against 0.044 ms for the same query with no
+  // count. Applied by hand — see the migration beside this schema.
+  @@index([shopItemId])
 }
 
 model UserCosmeticShopPurchaseCosmetic {

@@ -99,6 +99,7 @@ beforeEach(() => {
     meta: { purchases: 0 },
     addedById: LISTER,
     members: memberRows.map(({ cosmeticId, floorAmount }) => ({ cosmeticId, floorAmount })),
+    _count: { purchases: 0 },
   });
   packMemberFindMany.mockResolvedValue(
     memberRows.map((row) => ({ ...row, cosmetic: cosmeticFor(row.cosmeticId) }))
@@ -237,5 +238,70 @@ describe('getPackDetail agrees with what the purchase charges', () => {
     const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
     expect(detail.unavailableCount).toBe(1);
     await expect(charge(BUYER)).rejects.toThrow(/no longer available/i);
+  });
+});
+
+/**
+ * `meta.purchases` and the `UserCosmeticShopPurchase` rows are two live answers
+ * to "how many sold", and they disagree on 47 of 1,902 prod listings. The rows
+ * are the one the sold-out gate, the quantity floor, the delete guard and the
+ * MostPopular sort have always used; the counter is bumped outside the purchase
+ * transaction, so a concurrent buy loses an increment and a rolled-back buy
+ * keeps one.
+ *
+ * TO WHOEVER IS ABOUT TO DELETE THIS: the fixture is prod item 74, "Fairy Pony
+ * (Limited Edition)" — quantity 20, counter 0, twenty purchase rows. Reading the
+ * counter renders "20 remaining" on a sold-out pack behind a buy button that
+ * throws. Putting `packMeta.purchases` back is what these assertions exist to
+ * catch, so if one fails, the read moved back to the counter.
+ */
+describe('the sold count is the purchase rows, not the meta counter', () => {
+  const soldOutWithStaleCounter = () =>
+    shopItemFindUnique.mockResolvedValue({
+      id: PACK_ID,
+      cosmeticId: null,
+      title: 'A pack',
+      description: null,
+      unitAmount: PRICE,
+      status: CosmeticShopItemStatus.Published,
+      listed: true,
+      availableQuantity: 20,
+      // The two disagree, and by more than an off-by-one: a fixture where they
+      // agree passes under either derivation and tests nothing.
+      meta: { purchases: 0 },
+      addedById: LISTER,
+      members: memberRows.map(({ cosmeticId, floorAmount }) => ({ cosmeticId, floorAmount })),
+      _count: { purchases: 20 },
+    });
+
+  it('reports the row count when the counter understates it', async () => {
+    soldOutWithStaleCounter();
+    const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
+    expect(detail.meta.purchases).toBe(20);
+  });
+
+  it('leaves no stock on an item the rows have sold out', async () => {
+    soldOutWithStaleCounter();
+    const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
+    expect((detail.availableQuantity ?? 0) - detail.meta.purchases).toBe(0);
+  });
+
+  it('reports the row count when the counter overstates it', async () => {
+    shopItemFindUnique.mockResolvedValue({
+      id: PACK_ID,
+      cosmeticId: null,
+      title: 'A pack',
+      description: null,
+      unitAmount: PRICE,
+      status: CosmeticShopItemStatus.Published,
+      listed: true,
+      availableQuantity: 20,
+      meta: { purchases: 13 },
+      addedById: LISTER,
+      members: memberRows.map(({ cosmeticId, floorAmount }) => ({ cosmeticId, floorAmount })),
+      _count: { purchases: 4 },
+    });
+    const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
+    expect(detail.meta.purchases).toBe(4);
   });
 });
