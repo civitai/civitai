@@ -18,7 +18,34 @@ type BaseTask = {
    * failing can be attributed back to a number of documents that were never indexed.
    */
   idCount?: number;
+  /**
+   * Targeted tasks only: the ids this task was asked to index. Set on the transform task, where
+   * it is the only place the requested ids and the produced documents are both in hand — a pull
+   * task has no documents yet and a push task no longer knows what was asked for. Carried no
+   * further: the push task keeps `idsWithoutDocument` instead, which is usually far smaller.
+   */
+  requestedIds?: (number | string)[];
+  /**
+   * Requested ids that produced no document, so nothing about them reached the index and nothing
+   * reports it as a failure. Set on the push task by the transform step, or on the pull task
+   * itself when a targeted pull comes back empty at step 0. Usually far smaller than the batch,
+   * but it CAN equal it — a batch none of whose ids produced a document is the case this exists for.
+   */
+  idsWithoutDocument?: (number | string)[];
+  /**
+   * Requested ids a processor's `getHandledIds` accounted for although no document carries them —
+   * `collections` deleting a pruned document, today. Carried so the count stays VISIBLE rather
+   * than being subtracted into the silence `idsWithoutDocument` exists to break.
+   */
+  handledWithoutDocumentIds?: (number | string)[];
 };
+
+/**
+ * These ids are retained as a SAMPLE, not a list: a transform that writes nothing for a whole batch would
+ * otherwise hold the batch's id list for the life of the queue, and the count is what a caller
+ * acts on. `idsWithoutDocumentCount` is always the true total.
+ */
+export const WITHOUT_DOCUMENT_SAMPLE_LIMIT = 100;
 
 export type PullTask = BaseTask &
   (
@@ -88,6 +115,16 @@ export class TaskQueue {
    */
   failedTasks: FailedTaskRecord[];
   /**
+   * Ids pulled that produced no document, across every completed task. True total, with one
+   * stated exception: a batch whose accounting threw contributes 0 here and says so at
+   * `console.error` — never losing a write to observe it is the trade.
+   */
+  idsWithoutDocumentCount: number;
+  /** Up to `WITHOUT_DOCUMENT_SAMPLE_LIMIT` of those ids, for naming them in a log line. */
+  idsWithoutDocumentSample: (number | string)[];
+  /** Ids a processor hook accounted for with no document, across every completed task. */
+  handledWithoutDocumentIdCount: number;
+  /**
    * Tasks that are between "failed" and "back on a queue" — see `failTask`. Counted by
    * `isQueueEmpty` so the workers cannot all exit during the retry backoff.
    */
@@ -110,6 +147,9 @@ export class TaskQueue {
     };
     this.maxQueueSize = maxQueueSize;
     this.failedTasks = [];
+    this.idsWithoutDocumentCount = 0;
+    this.idsWithoutDocumentSample = [];
+    this.handledWithoutDocumentIdCount = 0;
     this.retrying = 0;
   }
 
@@ -173,7 +213,22 @@ export class TaskQueue {
 
   completeTask(task: Task): void {
     this.processing.delete(task);
+    // Collected here rather than at the transform step so a batch that never reaches the index is
+    // not counted here: a push that permanently fails goes through `failTask`, and its ids
+    // belong to `failedIdCount`. A retried push carries the same `idsWithoutDocument` and is counted on
+    // the attempt that succeeds, once.
+    if (task.idsWithoutDocument?.length) this.recordIdsWithoutDocument(task.idsWithoutDocument);
+    if (task.handledWithoutDocumentIds?.length)
+      this.handledWithoutDocumentIdCount += task.handledWithoutDocumentIds.length;
     this.updateTaskStatus(task, 'completed');
+  }
+
+  private recordIdsWithoutDocument(ids: (number | string)[]): void {
+    this.idsWithoutDocumentCount += ids.length;
+    for (const id of ids) {
+      if (this.idsWithoutDocumentSample.length >= WITHOUT_DOCUMENT_SAMPLE_LIMIT) break;
+      this.idsWithoutDocumentSample.push(id);
+    }
   }
 
   async failTask(task: Task): Promise<void> {
