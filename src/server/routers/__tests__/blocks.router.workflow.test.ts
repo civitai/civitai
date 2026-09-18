@@ -10540,6 +10540,68 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       );
     });
 
+    // 🔴 THE GENERATION TYPE. Until this arm passed one, EVERY pass-through
+    // generation recorded `generation_type: NULL` — the value was simply not
+    // handed to the writer, and NULL is a legitimate value in that column, so
+    // nothing surfaced it. An untyped spend event can never be typed
+    // retrospectively, and the per-generation-type author fee keys on this.
+    // End-to-end rather than a resolver unit test: what proves the wiring is
+    // live is reading what the real handler actually passed.
+    it('stamps the generation type as `step:<submitted $type>` on the spend attribution', async () => {
+      mockRecordSpendAttribution.mockClear();
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+      const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
+      // Literal, never re-derived from the resolver under test.
+      expect(stamped).toBe('step:imageBackgroundRemoval');
+      // NULL is what this used to be, and it is the whole defect.
+      expect(stamped).not.toBeNull();
+      // The coarse key a per-generation-type fee looks up.
+      expect(String(stamped).split(':')[0]).toBe('step');
+    });
+
+    it('NAMESPACES a $type that collides with a kind key — never bare `textToImage`', async () => {
+      // 🔴 THE REASON THE VALUE IS PREFIXED, asserted at the call site the money
+      // flows through. `textToImage` is itself a live orchestrator `$type`
+      // (measured against `WorkflowStepTemplate.discriminator.mapping`), so a bare
+      // `$type` here would be indistinguishable from a genuine
+      // `kind:'textToImage'` submit — and priced as one.
+      mockRecordSpendAttribution.mockClear();
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ptBody({ $type: 'textToImage' }),
+      });
+      await new Promise((r) => setTimeout(r, 0));
+      const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
+      expect(stamped).toBe('step:textToImage');
+      expect(stamped).not.toBe('textToImage');
+      expect(String(stamped).split(':')[0]).not.toBe('textToImage');
+    });
+
+    it('DEGRADES to the bare `step` for a wire-legal but unusable $type', async () => {
+      // `$type` is `z.string().min(1).max(64)` with no character class, so `a:b`
+      // PARSES and reaches this submit. A second colon would break the value
+      // grammar, so the subtype is dropped — the row still records that a
+      // pass-through submit happened, which is shallower and never wrong. The
+      // write is fire-and-forget off an already-billed submit, so this must
+      // degrade rather than throw.
+      mockRecordSpendAttribution.mockClear();
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: 'a:b' }) });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1);
+      expect(mockRecordSpendAttribution.mock.calls[0][0].generationType).toBe('step');
+    });
+
     it('IDEMPOTENCY: a replayed submit does not double-charge', async () => {
       mockVerifyBlockToken.mockResolvedValue(ptClaims());
       happyUser();
