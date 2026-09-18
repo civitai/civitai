@@ -197,6 +197,47 @@ const FULL_SUITE_REASON =
   'committing; for that single run (or when the user explicitly asked for a full run), prefix the ' +
   'command with FULL_SUITE=1.';
 
+// A full-program `tsc` run directly, instead of through `pnpm run typecheck`. Two reasons, and the
+// second would hold even if the first went away:
+//   1. It skips the typecheck lane of the dev-server queue, so several agents doing it at once is
+//      N single-core 8 GB heaps pegging the box — the condition the lane exists to prevent.
+//   2. It is the WRONG CHECK. tsc at node's default heap can abort part-way with ZERO diagnostics
+//      and a log that reads as clean; scripts/typecheck.mjs raises the heap and names that crash.
+//      Measured: a file with 8 real errors reported "No errors found" under `npx tsc -p
+//      tsconfig.json` and 8 errors under `pnpm run typecheck`.
+// Narrow runs are left alone: a sub-project (`-p tsconfig.scripts.json`, which the scripts gate
+// itself recommends), named files, `--build`, and informational flags. TYPECHECK_DIRECT=1 is the
+// deliberate opt-out for diagnosing tsc itself.
+const TSC_INVOCATION = new RegExp(
+  String.raw`^\s*(?:\w+=\S*\s+)*(?:` +
+    String.raw`(?:(?:pnpm|yarn|bun)\s+(?:exec|dlx)\s+|npx\s+|\.?[\\/]?node_modules[\\/]\.bin[\\/])?tsc(?=\s|$)` +
+    String.raw`|node\s+(?:--\S+\s+)*\S*typescript[\\/]lib[\\/]tsc\.js\b)`
+);
+const TSC_ROOT_PROJECT = /^(?:\.[\\/]?|(?:\.[\\/])?tsconfig\.json)$/;
+const TSC_NOT_A_CHECK = /(?:^|\s)(?:-v|--version|-h|--help|--init|--showConfig|--all|-b|--build)\b/;
+
+export function directRootTypecheck(command) {
+  if (/TYPECHECK_DIRECT\s*=\s*1|\$env:TYPECHECK_DIRECT/.test(command)) return false;
+  return command.split(/[;&|\n]+/).some((seg) => {
+    if (!TSC_INVOCATION.test(seg)) return false;
+    if (TSC_NOT_A_CHECK.test(seg)) return false;
+    const tokens = seg.trim().split(/\s+/).map((t) => t.replace(/^['"]|['"]$/g, ''));
+    // Named source files make tsc ignore tsconfig entirely: a narrow check of those files only.
+    if (tokens.some((t) => !t.startsWith('-') && /\.(?:[cm]?tsx?|d\.ts)$/.test(t))) return false;
+    const at = tokens.findIndex((t) => /^(?:-p|--project)(?:=|$)/.test(t));
+    if (at === -1) return true;
+    const inline = tokens[at].includes('=') ? tokens[at].split('=')[1] : tokens[at + 1];
+    return TSC_ROOT_PROJECT.test(inline ?? '');
+  });
+}
+
+const DIRECT_TSC_REASON =
+  'Direct full-program tsc blocked: use `pnpm run typecheck`. That script queues the run in the ' +
+  "dev-server typecheck lane (several agents' 8 GB tsc heaps at once is what pegs the box), and it " +
+  'is also the only form that cannot report a crashed run as clean — plain tsc at the default ' +
+  'heap can abort with zero diagnostics. A sub-project (`-p tsconfig.scripts.json`) or named ' +
+  'files still run directly. To diagnose tsc itself, prefix the command with TYPECHECK_DIRECT=1.';
+
 // Patterns that would kill Claude Code or critical processes - BLOCK OUTRIGHT
 const DANGEROUS_PATTERNS = [
   { pattern: /taskkill\s+\/\/F\s+\/\/IM\s+node\.exe/i, reason: 'This would kill all Node.js processes including Claude Code itself' },
@@ -288,6 +329,17 @@ stdin.on('end', () => {
           hookEventName: 'PreToolUse',
           permissionDecision: 'deny',
           permissionDecisionReason: FULL_SUITE_REASON,
+        }
+      }));
+      process.exit(0);
+    }
+
+    if (directRootTypecheck(command)) {
+      console.log(JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: DIRECT_TSC_REASON,
         }
       }));
       process.exit(0);

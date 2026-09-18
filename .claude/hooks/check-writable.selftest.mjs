@@ -6,7 +6,7 @@
  * only mentions a port must all run untouched.
  */
 
-import { fullUnitSuiteRun, unboundedDevRequest } from './check-writable.mjs';
+import { directRootTypecheck, fullUnitSuiteRun, unboundedDevRequest } from './check-writable.mjs';
 
 let failures = 0;
 const check = (name, cmd, expectBlocked) => {
@@ -56,6 +56,35 @@ const checkSuite = (name, cmd, expectBlocked) => {
   if (!pass) failures++;
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}  blocked=${blocked} want=${expectBlocked}`);
 };
+
+const checkTsc = (name, cmd, expectBlocked) => {
+  const blocked = directRootTypecheck(cmd);
+  const pass = blocked === expectBlocked;
+  if (!pass) failures++;
+  console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}  blocked=${blocked} want=${expectBlocked}`);
+};
+
+checkTsc('npx tsc --noEmit', 'npx tsc --noEmit', true);
+checkTsc('pnpm exec tsc', 'pnpm exec tsc --noEmit', true);
+checkTsc('root project named', 'npx tsc --noEmit -p tsconfig.json', true);
+checkTsc('root project as dot', 'pnpm exec tsc --noEmit --project .', true);
+checkTsc('root project, = form', 'npx tsc --noEmit --project=./tsconfig.json', true);
+checkTsc('.bin path', 'node_modules/.bin/tsc --noEmit', true);
+checkTsc('windows .bin path', '.\\node_modules\\.bin\\tsc --noEmit', true);
+checkTsc('node on tsc.js with a heap flag', 'node --max-old-space-size=8192 node_modules/typescript/lib/tsc.js --noEmit', true);
+checkTsc('env prefix does not hide it', 'NODE_OPTIONS=--max-old-space-size=8192 npx tsc --noEmit', true);
+checkTsc('chained after something', 'git status && npx tsc --noEmit', true);
+
+checkTsc('the repo script itself', 'pnpm run typecheck', false);
+checkTsc('scripts sub-project (the gate recommends it)', 'pnpm exec tsc --noEmit -p tsconfig.scripts.json', false);
+checkTsc('app sub-project', 'npx tsc --noEmit -p apps/notifications/tsconfig.json', false);
+checkTsc('named files', 'npx tsc --noEmit src/utils/a.ts src/utils/b.tsx', false);
+checkTsc('version', 'npx tsc --version', false);
+checkTsc('build mode', 'npx tsc -b packages/civitai-auth', false);
+checkTsc('opt-out marker', 'TYPECHECK_DIRECT=1 npx tsc --noEmit', false);
+checkTsc('opt-out marker, powershell', '$env:TYPECHECK_DIRECT=1; npx tsc --noEmit', false);
+checkTsc('prose mentioning it', 'echo "never run npx tsc --noEmit here"', false);
+checkTsc('tsc-alias is not tsc', 'npx tsc-alias -p tsconfig.json', false);
 
 checkSuite('bare full unit run', 'pnpm run test:unit:run', true);
 checkSuite('full run with worker cap', 'pnpm run test:unit:run --max-workers=8', true);
