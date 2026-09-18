@@ -28,10 +28,11 @@ const DEFINITION = 'server/services/blocks/block-gated-images.logic.ts';
 
 /**
  * An `import … from '<anything>/block-gated-images.logic'` — the alias-proof half
- * of the detection. Matches the `~/`-rooted, relative and extensionless spellings
- * alike, and (because the source is comment-stripped first) cannot be satisfied by
- * prose that merely names the module. `export … from` is matched by the same
- * `from` clause, so a re-export is a call site too.
+ * of the detection. Matches any prefix, `~/`-rooted or relative, with no extension
+ * or a `.ts`/`.tsx`/`.js`/`.jsx` one and nothing else, and (because the source is
+ * comment-stripped first) cannot be satisfied by prose that merely names the module.
+ * `export … from` is matched by the same `from` clause, so a re-export is a call
+ * site too.
  */
 const LOGIC_MODULE_IMPORT = /from\s*['"][^'"]*block-gated-images\.logic(?:\.[jt]sx?)?['"]/;
 
@@ -103,9 +104,7 @@ for (const full of PRODUCTION_FILES) {
  * position. Each half pins a SPELLING: a `from` clause in the forms listed on
  * `LOGIC_MODULE_IMPORT`, and the literal `SYMBOL(`. Escaping both takes a file that
  * writes neither — reaching the module some way that regex does not list (a barrel, an
- * `import()`, an unlisted extension) AND reaching the function under another name. A
- * barrel hop still reddens at the barrel. The rest redden nowhere, unless the file is
- * already a ledgered consumer, which must still carry its `status !== 'visible'`.
+ * `import()`, an unlisted extension) AND reaching the function under another name.
  */
 function isCallSite(rel: string): boolean {
   if (rel === DEFINITION) return false;
