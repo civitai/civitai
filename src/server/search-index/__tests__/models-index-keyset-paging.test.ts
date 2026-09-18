@@ -49,8 +49,14 @@ type PagingFake = {
 
 /**
  * A minimal `"Model"` table that answers whichever paging shape the query asks for, so the same
- * fixture can be run against the keyset form and against a reverted OFFSET form. It always
- * returns rows in id order — the OFFSET arm is given the benefit of the doubt on purpose.
+ * fixture can be run against the keyset form and against a reverted OFFSET form. Rows come back
+ * in the order the query asked for, and an OFFSET query with no ORDER BY is answered in id order
+ * anyway — the OFFSET arm is given the benefit of the doubt on purpose.
+ *
+ * 🔴 IT REFUSES A QUERY IT CANNOT READ rather than defaulting. A fake that answers an
+ * unrecognised statement is worse than no fake: inline the page size as a literal and a
+ * `?? members.size` default would hand back the whole set on page one, at which point the
+ * headline case passes under an OFFSET implementation too and stops discriminating anything.
  *
  * `onPage` runs after a page has been answered, and is where a case mutates membership.
  */
@@ -77,15 +83,24 @@ const makeFake = (members: Set<number>, onPage?: (page: number) => void): Paging
       return Number(values[index]);
     };
 
-    const limit = valueBefore(/LIMIT\s*$/) ?? members.size;
-    const ordered = [...members].sort((a, b) => a - b);
+    const limit = valueBefore(/LIMIT\s*$/);
+    if (limit === undefined) {
+      throw new Error(`paging fake found no LIMIT value in: ${text}`);
+    }
+
+    const descending = /ORDER BY id\s+DESC/i.test(text);
+    const ordered = [...members].sort((a, b) => (descending ? b - a : a - b));
 
     const offset = valueBefore(/OFFSET\s*$/);
     const after = valueBefore(/\bid\s*>\s*$/);
+    if (offset === undefined && after === undefined) {
+      throw new Error(`paging fake recognised neither an OFFSET nor an id cursor in: ${text}`);
+    }
+
     const page =
       offset !== undefined
         ? ordered.slice(offset, offset + limit)
-        : ordered.filter((id) => id > (after ?? 0)).slice(0, limit);
+        : ordered.filter((id) => id > (after as number)).slice(0, limit);
 
     onPage?.(pages);
     return page.map((id) => ({ id }));
@@ -114,7 +129,15 @@ describe('prepareModelsBatches paging', () => {
       if (page === 1) members.delete(unpublishedMidScan);
     });
 
-    const { updateIds } = await prepareModelsBatches(fake.ctx, LAST_UPDATED_AT);
+    const { updateIds, batchSize } = await prepareModelsBatches(fake.ctx, LAST_UPDATED_AT);
+
+    // Negative control: keyset paging is SUPPOSED to be unmoved by the mid-scan edit, so every
+    // assertion below reads the same whether or not the edit landed. Without this line a dead
+    // `onPage` would leave the case quietly testing a static set.
+    expect(members.has(unpublishedMidScan)).toBe(false);
+    // If the production page size moves, the drift names itself here instead of surfacing as a
+    // page-count or length failure that reads like a paging bug.
+    expect(batchSize).toBe(READ_BATCH_SIZE);
 
     expect(updateIds).toContain(firstOnSecondPage);
     expect(updateIds).toHaveLength(total);
@@ -137,7 +160,10 @@ describe('prepareModelsBatches paging', () => {
     await prepareModelsBatches(fake.ctx, LAST_UPDATED_AT);
 
     const [first] = fake.pageSql();
-    expect(first).toMatch(/ORDER BY id/);
+    // ASCENDING specifically: `ORDER BY id DESC` would walk the cursor backwards from the top of
+    // the table and re-select nearly the same rows forever, and `/ORDER BY id/` alone matches it.
+    expect(first).toMatch(/ORDER BY id\s+LIMIT/);
+    expect(first).not.toMatch(/DESC/i);
     expect(first).toMatch(/AND id > /);
     expect(first).not.toMatch(/OFFSET/);
   });

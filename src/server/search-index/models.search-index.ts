@@ -464,6 +464,10 @@ export async function getModelSearchIndexRecords(ids: number[]): Promise<ModelSe
  * and shifts every later OFFSET page down, so a model that was eligible for the whole scan is
  * silently never indexed. Ordering the OFFSET query would not have helped: ids are immutable and
  * a keyset cursor only moves forward, which is what makes the skip unreachable rather than rare.
+ *
+ * A row that ENTERS the set below the cursor is deliberately left for the next run: the processor
+ * stamps its watermark with the time the scan STARTED, not the time it finished, so anything
+ * edited mid-scan falls inside the next window.
  */
 export const prepareModelsBatches = async (
   { db, logger }: SearchIndexContext,
