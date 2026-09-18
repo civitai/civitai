@@ -1075,7 +1075,9 @@ describe('no unguarded block-bridge token verification', () => {
     expect(codeLinesOnly(' * resolveAppBlockApprovalVerdict(claims) resolves the verdict.')).toBe(
       ''
     );
-    expect(codeLinesOnly('/* BlockRevocation.isRevoked(claims.blockInstanceId) */')).toBe('');
+    expect(
+      codeLinesOnly('/* BlockRevocation.isRevoked(claims.blockInstanceId, claims.sub) */')
+    ).toBe('');
     // …and a line of real CODE survives, or the filter would strip everything and the
     // assertions below would fail for the wrong reason rather than pass for the right one.
     expect(codeLinesOnly('const v = await resolveAppBlockApprovalVerdict(claims);')).toBe(
@@ -1108,7 +1110,15 @@ describe('no unguarded block-bridge token verification', () => {
     // used to read the WHOLE file, which is satisfiable by prose: this very file's
     // docblocks name both `BlockRevocation.isRevoked` and `resolveAppBlockApprovalVerdict`.
     const guardCode = codeLinesOnly(guard);
-    expect(guardCode).toMatch(/BlockRevocation\.isRevoked\(\s*claims\.blockInstanceId\s*\)/);
+    // 🔴 BOTH ARGUMENTS. The second — the token's own `sub` — is what selects the
+    // SUBJECT-SCOPED ban keyspace, and without it a ban on `page_ephemeral-<slug>` either
+    // misses the banned holder or (in the global form this replaced) 403s every OTHER
+    // author holding the same developer-chosen slug. Dropping it type-checks, because the
+    // parameter is optional by design so a caller that lacks a subject degrades rather
+    // than breaks.
+    expect(guardCode).toMatch(
+      /BlockRevocation\.isRevoked\(\s*claims\.blockInstanceId\s*,\s*claims\.sub\s*\)/
+    );
     // 🔴 THE APPROVAL CHECK IS NO LONGER SPELLED IN THIS FILE. The row lookup and the
     // `approved` comparison moved to the shared predicate `resolveAppBlockApprovalVerdict`
     // (`block-approval.service.ts`), which the REST gate resolves through as well, so

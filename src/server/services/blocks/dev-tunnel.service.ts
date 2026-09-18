@@ -1,4 +1,5 @@
 import { env } from '~/env/server';
+import { sAddWithExpireGe } from '~/server/redis/atomic';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { newBlockInstanceId } from '~/server/utils/app-block-ids';
 import {
@@ -847,16 +848,28 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
   // able to find this tunnel, so any failure here must degrade revocation COVERAGE
   // rather than fail a developer's tunnel start.
   //
+  // 🔴 ONE ATOMIC EVAL, NOT `sAdd` + `expire`. This was written as that pair inside a
+  // single swallowing catch, which `sAddWithExpireGe`'s own docblock calls racy: a
+  // failure between the two — a sentinel failover is the documented case on this exact
+  // client, see `packages/civitai-redis/src/sys-inflight.ts` — lands the SADD and drops
+  // the EXPIRE, leaving a TTL-LESS set that then accumulates every blockId this user
+  // ever tunnels. Every later ban would emit `page_ephemeral-<blockId>` for all of them,
+  // and the index's own TTL guarantee below would be false. The EVAL form makes
+  // "member added, no TTL" unreachable, and its EXPIRE is a FLOOR (GE) so a concurrent
+  // start cannot shorten the set beneath a member that needs it.
+  //
   // 🔴 try/catch, NOT a trailing `.catch()`. A rejected promise is only one of the ways
-  // this can fail — if the client ever lacks `sAdd`, the CALL throws synchronously and a
-  // `.catch()` attached to its result never runs, so the throw escapes and takes the
-  // tunnel start with it. That is the opposite of what this block is for, and it is the
-  // shape that broke the dev-tunnel suite the moment these two lines were added.
+  // this can fail — if the client ever lacks the method, the CALL throws synchronously
+  // and a `.catch()` attached to its result never runs, so the throw escapes and takes
+  // the tunnel start with it. That is the opposite of what this block is for, and it is
+  // the shape that broke the dev-tunnel suite the moment these lines were added.
   try {
-    await Promise.all([
-      sysRedis.sAdd(userTunnelIndexKey(params.userId), params.blockId),
-      sysRedis.expire(userTunnelIndexKey(params.userId), DEV_TUNNEL_HARD_SECONDS),
-    ]);
+    await sAddWithExpireGe(
+      sysRedis,
+      userTunnelIndexKey(params.userId),
+      params.blockId,
+      DEV_TUNNEL_HARD_SECONDS
+    );
   } catch {
     // A ban may not be able to see this tunnel; the tunnel itself is unaffected.
   }

@@ -949,7 +949,10 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // `app_blocks.status`.
     //
     // Do not re-add a fourth cause to this list without adding its writer.
-    if (await BlockRevocation.isRevoked(claims.blockInstanceId)) {
+    // `claims.sub` verbatim: the subject-scoped ban keyspace exists because
+    // `page_ephemeral-<slug>` is NOT globally unique across users, so a global marker
+    // there would refuse an innocent author's own tunnel. See `bannedSubjectKey`.
+    if (await BlockRevocation.isRevoked(claims.blockInstanceId, claims.sub)) {
       // 🔴 THE ONLY SIGNAL THIS REFUSAL EMITS. `recordScopeInvocation` registers its
       // `res.on('finish')` handler further down, AFTER this early return, so a revocation
       // 403 has never been able to write a `block_scope_invocations` row — the audit

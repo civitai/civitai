@@ -196,10 +196,16 @@ const commentV2UpdateMany = dbMock.dbWrite.commentV2.updateMany;
 async function mint(
   blockInstanceId: string,
   blockId: string,
-  appBlockId = OWNED_APP_BLOCK_IDS[0]
+  appBlockId = OWNED_APP_BLOCK_IDS[0],
+  // 🔴 THE TOKEN'S SUBJECT, AND IT IS LOAD-BEARING FOR ONE SHAPE. `page_ephemeral-<slug>`
+  // is revoked under a SUBJECT-SCOPED key, because the slug is developer-chosen and two
+  // authors can hold live tunnels on the same unclaimed one. A ban therefore refuses the
+  // banned holder's token and NOT another author's identical instance id — so these
+  // fixtures have to say whose token they are.
+  userId = 7
 ): Promise<string> {
   const { token } = await BlockTokenService.sign({
-    userId: 7,
+    userId,
     blockId,
     appId: APP_ID,
     appBlockId,
@@ -437,8 +443,14 @@ describe('AC-2 — EVERY live instance of EVERY block the publisher owns', () =>
     if (id.startsWith('bus_view_')) return 'viewer_personal subscription';
     if (id.startsWith('pdb_')) return 'platform-default promotion';
     if (id.startsWith('page_ephemeral-')) return 'ephemeral app over a live dev tunnel (4h)';
-    if (id.startsWith('page_pubreq_')) return 'dev-token pending submission, DOUBLE prefix (4h)';
-    if (id.startsWith('page_pubreq')) return 'mod review preview, single prefix (4h)';
+    // 🔴 ORDER: the DOUBLE-prefixed id is `page_pubreq_pubreq_<ULID>` and the mod review
+    // preview is `page_pubreq_<ULID>` — so BOTH start `page_pubreq_`, and testing that
+    // first made the mod-review branch unreachable: both printed the dev-token label,
+    // which read as the newly-covered shape being absent. Discriminate on the second
+    // `pubreq_`, not on a prefix one is a prefix of.
+    if (id.startsWith('page_pubreq_pubreq_'))
+      return 'dev-token pending submission, DOUBLE prefix (4h)';
+    if (id.startsWith('page_pubreq_')) return 'mod review preview, single prefix (4h)';
     if (id.startsWith('page_')) return 'approved full-page surface';
     return 'stored pinned install';
   };
@@ -451,7 +463,11 @@ describe('AC-2 — EVERY live instance of EVERY block the publisher owns', () =>
       (id) => [id, describeShape(id)] as const
     )
   )('refuses the SYNTHESISED id %s (%s)', async (instanceId) => {
-    const token = await mint(instanceId, PINNED[0].blockId);
+    // An ephemeral id is revoked under a SUBJECT-SCOPED key, so its token must be the
+    // BANNED author's — which is also the only way it is ever minted (the dev token is
+    // self-bound to the tunnel owner).
+    const holder = instanceId.startsWith('page_ephemeral-') ? PUBLISHER_ID : undefined;
+    const token = await mint(instanceId, PINNED[0].blockId, OWNED_APP_BLOCK_IDS[0], holder);
 
     const before = await driveRest(token);
     expect(before.res.statusCode, 'the token was already refused before the ban').toBe(200);
@@ -482,8 +498,13 @@ describe('AC-2 — EVERY live instance of EVERY block the publisher owns', () =>
     // The BAN keyspace, not the install one — naming the wrong constant here would make
     // this assertion pass against a writer that wrote install markers, which is the very
     // downgrade F1 was about.
-    const expected = ALL_INSTANCE_IDS.map(
-      (id) => `${REDIS_KEYS.BLOCKS.REVOKED_INSTANCE_BAN}:${id}`
+    const expected = ALL_INSTANCE_IDS.map((id) =>
+      // The ephemeral shape is written SUBJECT-SCOPED; everything else is global. Naming
+      // the wrong keyspace here would let a writer that global-marked an ephemeral id —
+      // the shape that 403s an innocent author — pass this assertion.
+      EPHEMERAL_SURFACE_IDS.includes(id)
+        ? `${REDIS_KEYS.BLOCKS.REVOKED_INSTANCE_BAN}:user:${PUBLISHER_ID}:${id}`
+        : `${REDIS_KEYS.BLOCKS.REVOKED_INSTANCE_BAN}:${id}`
     ).sort();
     expect(
       [...store.keys()].sort(),
@@ -749,6 +770,93 @@ describe('F1 — a consumer toggling an install off and on cannot undo a ban', (
       keys.length,
       'the ban and install markers share a key — one can overwrite the other'
     ).toBe(2);
+  });
+});
+
+/**
+ * 🔴 R3-2 — BANNING ONE AUTHOR MUST NOT 403 ANOTHER AUTHOR'S IDENTICAL TUNNEL.
+ *
+ * `page_ephemeral-<slug>` is the one instance id that is NOT globally unique. The slug is
+ * developer-chosen; `resolveEphemeralDevPageBlock` refuses only a slug already claimed by
+ * an AppBlock row or a pending request and never consults tunnels, while `startDevTunnel`
+ * enforces uniqueness per `(user, blockId)` ONLY. So two authors can hold live tunnels on
+ * the same unclaimed slug and BOTH mint `page_ephemeral-demo`.
+ *
+ * With a GLOBAL ban marker, banning X refused Y's own dev tunnel for up to 4h — Y having
+ * done nothing. The marker is subject-scoped for this shape, so the ban lands on the
+ * holder it names and nobody else. The reaper widens the window that made this reachable:
+ * its orphan branch has no session record to read a userId/blockId from, so it cannot
+ * `sRem`, and a stale member can outlive its session — which is now harmless precisely
+ * because the marker it produces is scoped to its own owner.
+ */
+describe('R3-2 — a ban does not reach another author’s identical ephemeral id', () => {
+  const SHARED_SLUG = TUNNELLED_BLOCK_IDS[0];
+  const SHARED_ID = `page_ephemeral-${SHARED_SLUG}`;
+  const INNOCENT_USER_ID = PUBLISHER_ID + 1;
+
+  it('refuses the BANNED author’s token and SERVES the innocent author’s', async () => {
+    const bannedToken = await mint(
+      SHARED_ID,
+      PINNED[0].blockId,
+      OWNED_APP_BLOCK_IDS[0],
+      PUBLISHER_ID
+    );
+    const innocentToken = await mint(
+      SHARED_ID,
+      PINNED[0].blockId,
+      OWNED_APP_BLOCK_IDS[0],
+      INNOCENT_USER_ID
+    );
+
+    // Both work before the ban — otherwise the innocent 200 below proves nothing.
+    expect((await driveRest(bannedToken)).res.statusCode).toBe(200);
+    expect((await driveRest(innocentToken)).res.statusCode).toBe(200);
+
+    await banPublisher();
+
+    expect(
+      (await driveRest(bannedToken)).res.statusCode,
+      'the banned author’s own ephemeral token was NOT refused'
+    ).toBe(403);
+    const innocent = await driveRest(innocentToken);
+    expect(
+      innocent.res.statusCode,
+      'banning one author 403d a DIFFERENT, un-banned author holding the same ' +
+        'developer-chosen slug — the ban marker for this shape is not subject-scoped'
+    ).toBe(200);
+    expect(innocent.handler).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The mechanism, asserted directly: no GLOBAL key is written for this shape. Without
+   * this, a writer that wrote BOTH keys would satisfy the behavioural test above while
+   * still refusing every other holder.
+   */
+  it('writes no GLOBAL marker for an ephemeral id', async () => {
+    await banPublisher();
+
+    const globalKey = `${REDIS_KEYS.BLOCKS.REVOKED_INSTANCE_BAN}:${SHARED_ID}`;
+    expect(
+      [...store.keys()].filter((k) => k === globalKey),
+      'a global ban marker for a developer-chosen slug refuses every author holding it'
+    ).toEqual([]);
+  });
+
+  /** And the unban clears the scoped key it wrote, not a global one it did not. */
+  it('unbanning restores the banned author’s ephemeral token', async () => {
+    const token = await mint(SHARED_ID, PINNED[0].blockId, OWNED_APP_BLOCK_IDS[0], PUBLISHER_ID);
+    await banPublisher();
+    expect((await driveRest(token)).res.statusCode).toBe(403);
+
+    userFindUnique.mockResolvedValue({
+      bannedAt: ALREADY_BANNED_AT,
+      meta: {},
+      username: 'publisher',
+      email: null,
+    });
+    await banPublisher(); // the UNBAN branch
+
+    expect((await driveRest(token)).res.statusCode).toBe(200);
   });
 });
 

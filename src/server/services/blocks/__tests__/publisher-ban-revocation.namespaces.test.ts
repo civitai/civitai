@@ -55,7 +55,16 @@ const SOURCE = readFileSync(join(process.cwd(), WRITER), 'utf8');
  * constructed cannot satisfy the emission check below. That is the exact failure this
  * guard exists for — the broken version described all five namespaces accurately in a
  * comment while emitting one. */
-const CODE = SOURCE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+/**
+ * Comments removed. ONE definition, used by the writer-source checks below AND by the
+ * mint-site ledger — a second ad-hoc copy is how the ledger came to run over raw source
+ * and accept a comment as a construction.
+ */
+export function stripComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
+
+const CODE = stripComments(SOURCE);
 
 describe('the ban writer is closed over every blockInstanceId namespace', () => {
   it('POSITIVE CONTROL: the comment stripper left real code behind', () => {
@@ -207,7 +216,11 @@ describe('the ban writer is closed over every blockInstanceId namespace', () => 
    * fixture would simply assert the id the writer invented.
    */
   it('every prefix the writer constructs is one the parser recognises', () => {
-    const emitted = [...CODE.matchAll(/`([a-z_]+)\$\{/g)].map((m) => m[1]);
+    // 🔴 `[a-z_-]`, WITH THE HYPHEN. This was `[a-z_]+`, which cannot match
+    // `page_ephemeral-` — so the one prefix whose spelling is hyphenated was absent from
+    // this guard's results entirely, and a typo'd `page_ephemral-${blockId}` was invisible
+    // to the very check whose sentence claims to catch exactly that.
+    const emitted = [...CODE.matchAll(/`([a-z_-]+)\$\{/g)].map((m) => m[1]);
     expect(
       emitted.length,
       'the writer constructs no ids at all — this check is inert'
@@ -444,16 +457,39 @@ describe('canonicallyOwnedAppBlock is resolveCanonicalListingOwner, branch for b
  * EXISTING file grew a new shape internally; nothing static can, short of parsing. What it
  * does is make the population of constructors an enumerated, reviewed set rather than an
  * assumption, which is the half that was missing.
+ *
+ * 🔴 THE RESIDUAL, STATED TRUE OF WHAT SHIPS. This ledger previously claimed its only
+ * blind spot was "an EXISTING file grew a new shape internally". That was three ways too
+ * narrow, and all three were demonstrated:
+ *   - it walked `.ts` ONLY, while the two real constructors are `.tsx` — the ephemeral
+ *     shape was minted in a file the population excluded (now `.ts` + `.tsx`);
+ *   - `MINT_RE` matched `PAGE_INSTANCE_PREFIX}`, which in `block-tokens/index.ts` occurs
+ *     only inside `!==` COMPARISONS, so that file was ledgered as constructing two
+ *     shapes it does not construct (the pattern is construction-only now);
+ *   - it ran over RAW source, so a single prepended COMMENT satisfied it while the file
+ *     constructed nothing (comments are stripped now, via the same helper the first
+ *     `describe` uses).
+ *
+ * What remains genuinely outside it: an already-ledgered file growing an additional shape
+ * internally, and any construction that does not go through a `blockInstanceId:`/`=`
+ * template or the SQL `AS block_instance_id` alias — e.g. a value assembled in pieces, or
+ * built in a package outside `src/server`, `src/pages` and `src/components`.
  */
 describe('the blockInstanceId MINT-SITE ledger', () => {
   const MINT_SITE_LEDGER: Record<string, string> = {
-    'src/pages/api/v1/block-tokens/index.ts':
-      'The main mint. Builds `page_<appBlockId>` for an approved block (COVERED by the ' +
-      'owned-app-block leg) and `page_ephemeral-<blockId>` for an unsubmitted app running ' +
-      'over a live dev tunnel (COVERED via listActiveDevTunnelBlockIds — an ephemeral app ' +
-      'has no AppBlock row, so the tunnel index is the only server record of it).',
+    'src/pages/apps/dev/[blockId].tsx':
+      'CLIENT-SIDE construction of `page_<appBlockId>` for the dev harness. For an ' +
+      'EPHEMERAL app `appBlockId` IS `ephemeral-<slug>`, so this is where ' +
+      '`page_ephemeral-<slug>` is actually built — COVERED via ' +
+      'listActiveDevTunnelBlockIds (an ephemeral app has no AppBlock row, so the tunnel ' +
+      'index is the only server record of it), and the ban marker for it is ' +
+      'SUBJECT-SCOPED because the slug is not unique across users.',
+    'src/pages/apps/run/[slug]/[[...path]].tsx':
+      'CLIENT-SIDE construction of `page_<appBlockId>` for the run surface. Same two ' +
+      'shapes and the same coverage as the dev harness above.',
     'src/pages/api/v1/blocks/dev-token.ts':
-      'The dev mint. Builds `page_pubreq_<pubreq_ULID>` for a caller-owned PENDING ' +
+      'The dev mint — and, unlike `block-tokens/index.ts`, it really does CONSTRUCT. ' +
+      'Builds `page_pubreq_<pubreq_ULID>` for a caller-owned PENDING ' +
       'submission (COVERED — note the DOUBLE pubreq_, the id already carries the prefix) ' +
       'and `page_local_<slug>` for an app with NO server row of any kind (NOT COVERED and ' +
       'not coverable from here — nothing ties that slug to a user; see the writer).',
@@ -466,10 +502,13 @@ describe('the blockInstanceId MINT-SITE ledger', () => {
       '`pdb_ || pdb.app_block_id`. COVERED by the subscription and app-block legs.',
   };
 
-  const MINT_RE =
-    /blockInstanceId:\s*`|blockInstanceId = `|AS block_instance_id|PAGE_INSTANCE_PREFIX\}/;
+  // 🔴 CONSTRUCTION ONLY. The earlier form also matched `PAGE_INSTANCE_PREFIX}`, which
+  // appears in `block-tokens/index.ts` purely inside `!==` COMPARISONS — so that file was
+  // ledgered as a constructor of two shapes it does not construct, and the ledger's
+  // population was wrong in a way that read as coverage.
+  const MINT_RE = /blockInstanceId:\s*`|blockInstanceId = `|AS block_instance_id/;
 
-  const MINT_ROOTS = ['src/server', 'src/pages'];
+  const MINT_ROOTS = ['src/server', 'src/pages', 'src/components'];
   const mintWalk = (dir: string): string[] => {
     const out: string[] = [];
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -477,7 +516,17 @@ describe('the blockInstanceId MINT-SITE ledger', () => {
       if (entry.isDirectory()) {
         if (entry.name === '__tests__' || entry.name === 'node_modules') continue;
         out.push(...mintWalk(full));
-      } else if (entry.name.endsWith('.ts') && !entry.name.includes('.test.')) {
+      } else if (
+        // 🔴 `.tsx` TOO. This read `.endsWith('.ts')`, and the two REAL constructors of
+        // `page_<appBlockId>` — which for an ephemeral app IS `page_ephemeral-<slug>` —
+        // are `src/pages/apps/dev/[blockId].tsx` and
+        // `src/pages/apps/run/[slug]/[[...path]].tsx`. So the shape this PR went to the
+        // trouble of covering was minted in a file the ledger's own population excluded:
+        // a probe constructing a brand-new shape passed as a `.tsx` while the
+        // byte-identical `.ts` failed, with the extension the only variable.
+        (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) &&
+        !entry.name.includes('.test.')
+      ) {
         out.push(full);
       }
     }
@@ -485,7 +534,13 @@ describe('the blockInstanceId MINT-SITE ledger', () => {
   };
   const ALL_MINT_FILES = MINT_ROOTS.flatMap((r) => mintWalk(join(process.cwd(), r)));
 
-  const MINT_SITES = ALL_MINT_FILES.filter((f) => MINT_RE.test(readFileSync(f, 'utf8')))
+  // 🔴 COMMENTS STRIPPED, the same discipline the first `describe` in this file applies
+  // and states. `MINT_RE` ran over RAW source, so replacing the real constructions with a
+  // helper turned the ledger red and then ONE PREPENDED COMMENT LINE turned it green
+  // again — with the file constructing nothing. A ledger a comment can satisfy is none.
+  const MINT_SITES = ALL_MINT_FILES.filter((f) =>
+    MINT_RE.test(stripComments(readFileSync(f, 'utf8')))
+  )
     .map((f) => relative(process.cwd(), f).split(sep).join('/'))
     .sort();
 

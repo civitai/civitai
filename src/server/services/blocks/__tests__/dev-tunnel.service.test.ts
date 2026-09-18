@@ -17,6 +17,8 @@ const {
   mockNewId,
 } = vi.hoisted(() => {
   const store = new Map<string, string>();
+  // TTL floors recorded by the `eval` fake, so a test can assert the index really got one.
+  const evalTtls = new Map<string, number>();
   return {
     store,
     mockK8sFetch: vi.fn(),
@@ -72,6 +74,21 @@ const {
         return removed;
       }),
       sMembers: vi.fn(async (k: string) => JSON.parse(store.get(k) ?? '[]') as string[]),
+      // `sAddWithExpireGe` is an EVAL, so the index write lands here rather than on
+      // `sAdd`. This EXECUTES the script's effect against the same store — SADD the
+      // member, record the TTL floor — rather than returning a canned reply, so a test
+      // that reads the member back is measuring a real write. A stub returning 1 would
+      // let every assertion below pass with the index never populated.
+      eval: vi.fn(async (_script: string, opts: { keys: string[]; arguments: string[] }) => {
+        const [key] = opts.keys;
+        const [member, ttl] = opts.arguments;
+        const cur = new Set(JSON.parse(store.get(key) ?? '[]') as string[]);
+        const added = cur.has(member) ? 0 : 1;
+        cur.add(member);
+        store.set(key, JSON.stringify([...cur]));
+        evalTtls.set(key, Number(ttl));
+        return added;
+      }),
     },
     mockEnv: {
       APPS_DOMAIN: 'civit.ai',
@@ -121,6 +138,8 @@ import {
   reserveDevSessionBuzz,
   startDevTunnel,
   stopDevTunnel,
+  stopDevTunnelForUserBlock,
+  listActiveDevTunnelBlockIds,
   reapExpiredDevTunnels,
   touchDevTunnelActivity,
   __resetDevTunnelDnsCacheForTest,
@@ -132,6 +151,13 @@ import {
 import { DEV_HOST_LABEL_REGEX } from '~/server/services/blocks/dev-tunnel-session';
 
 const PUBKEY = 'ssh-ed25519 AAAAC3NzaExampleBytes0123456789abcdef dev@laptop';
+
+// The index tests below drive the REAL startDevTunnel / teardown pair rather than poking
+// the fake, so they fail if the index write is removed from the service.
+const TEST_USER_ID = 555;
+const TEST_BLOCK_ID = 'my-app';
+const startTunnel = () =>
+  startDevTunnel({ userId: TEST_USER_ID, blockId: TEST_BLOCK_ID, sshPublicKey: PUBKEY });
 
 function okRes(body = '{}') {
   return { ok: true, status: 200, text: async () => body };
@@ -239,6 +265,67 @@ describe('manifest builders (SSRF-safe, server-derived host)', () => {
     // Labels retain the RAW sessionId so the reaper's label-selector delete matches.
     expect(mw.metadata.labels['civitai.com/dev-tunnel-session']).toBe(realId);
     expect(ir.metadata.labels['civitai.com/dev-tunnel-session']).toBe(realId);
+  });
+});
+
+/**
+ * 🔴 THE DEV-TUNNEL INDEX — THE SEAM A PUBLISHER BAN READS.
+ *
+ * An EPHEMERAL app (unsubmitted, running over a tunnel) has no `AppBlock` row, no publish
+ * request and no listing, so a live tunnel session is the ONLY server record that it
+ * exists. `revokeBlockInstancesForPublisher` reads this index to turn a ban into a
+ * `page_ephemeral-<blockId>` revocation marker.
+ *
+ * These tests exist because the index-write block was, briefly, payload that NOTHING could
+ * fail on: deleting it outright left 707 files / 12,806 tests green. Both sides were
+ * hermetically tested — the revocation writer mocked `listActiveDevTunnelBlockIds` at the
+ * seam, and this suite had been given `sAdd`/`sRem`/`sMembers` on its fake with not one
+ * assertion using them — so the seam itself was owned by nobody. They assert the
+ * RELATIONSHIP: what `startDevTunnel` writes is what `listActiveDevTunnelBlockIds` reads,
+ * and what `teardownSession` removes.
+ */
+describe('the dev-tunnel index a ban enumerates', () => {
+  it('startDevTunnel makes the blockId readable by listActiveDevTunnelBlockIds', async () => {
+    await startTunnel();
+
+    expect(
+      await listActiveDevTunnelBlockIds(TEST_USER_ID),
+      'a live tunnel is invisible to listActiveDevTunnelBlockIds — a ban on this author ' +
+        'cannot revoke their page_ephemeral-<blockId> token, which lives 4h'
+    ).toEqual([TEST_BLOCK_ID]);
+  });
+
+  it('writes the index ATOMICALLY — one EVAL, not a SADD + EXPIRE pair', async () => {
+    await startTunnel();
+
+    // `sAddWithExpireGe` is an EVAL. The racy pair it replaced could land the SADD and
+    // drop the EXPIRE on a failover, leaving a TTL-less set that accumulates every
+    // blockId the user ever tunnels — and every later ban would then emit a marker for
+    // all of them.
+    expect(sysRedis.eval).toHaveBeenCalledTimes(1);
+    expect(sysRedis.sAdd, 'the non-atomic SADD is back').not.toHaveBeenCalled();
+  });
+
+  it('teardown removes the member, so a stopped tunnel is not re-revoked', async () => {
+    await startTunnel();
+    expect(await listActiveDevTunnelBlockIds(TEST_USER_ID)).toEqual([TEST_BLOCK_ID]);
+
+    await stopDevTunnelForUserBlock(TEST_USER_ID, TEST_BLOCK_ID);
+
+    expect(await listActiveDevTunnelBlockIds(TEST_USER_ID)).toEqual([]);
+  });
+
+  it('reads EMPTY for a user with no tunnels — the negative control', async () => {
+    expect(await listActiveDevTunnelBlockIds(TEST_USER_ID + 1)).toEqual([]);
+  });
+
+  it('fails OPEN to an empty list when the index read throws', async () => {
+    await startTunnel();
+    sysRedis.sMembers.mockRejectedValueOnce(new Error('redis is down'));
+
+    // A ban must never be failable by this read. The cost is a coverage gap, which is
+    // the same direction every other leg of the ban fan-out degrades in.
+    expect(await listActiveDevTunnelBlockIds(TEST_USER_ID)).toEqual([]);
   });
 });
 

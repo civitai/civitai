@@ -125,7 +125,8 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
   // Per-instance revocation. Keyed on the token's OWN `blockInstanceId` claim, never on
   // anything the caller sent. Dev and review-sandbox tokens carry a synthetic but stable
   // instance id minted for exactly this purpose, so they are covered too.
-  if (await BlockRevocation.isRevoked(claims.blockInstanceId)) {
+  // `claims.sub` verbatim — same reason as the REST wrapper; see `bannedSubjectKey`.
+  if (await BlockRevocation.isRevoked(claims.blockInstanceId, claims.sub)) {
     // Same counter the REST wrapper emits, different `surface` label — both guards read
     // the same primitive, and a series that could not tell them apart would leave you
     // unable to say which half of the surface refused. See the counter's own comment for

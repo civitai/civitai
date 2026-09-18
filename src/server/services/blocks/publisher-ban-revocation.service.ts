@@ -1,5 +1,5 @@
 import { dbWrite } from '~/server/db/client';
-import { BlockRevocation } from '~/server/services/block-revocation.service';
+import { BlockRevocation, subjectForUserId } from '~/server/services/block-revocation.service';
 import { listActiveDevTunnelBlockIds } from '~/server/services/blocks/dev-tunnel.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
@@ -192,7 +192,9 @@ export function canonicallyOwnedAppBlock(userId: number) {
  * Reads the PRIMARY. The ban's own `bannedAt` write has already landed there, and an
  * install created seconds before the ban is exactly the row replica lag would hide.
  */
-async function resolvePublisherInstanceIds(userId: number): Promise<string[]> {
+async function resolvePublisherInstanceIds(
+  userId: number
+): Promise<{ global: string[]; subjectScoped: string[] }> {
   const [subscriptions, appBlocks, pendingRequests, tunnelledBlockIds] = await Promise.all([
     dbWrite.blockUserSubscription.findMany({
       where: { appBlock: canonicallyOwnedAppBlock(userId) },
@@ -241,10 +243,18 @@ async function resolvePublisherInstanceIds(userId: number): Promise<string[]> {
     instanceIds.add(`page_pubreq_${id}`);
     instanceIds.add(`page_${id}`);
   }
+
+  // 🔴 SUBJECT-SCOPED, AND SEPARATELY, BECAUSE THIS ID IS NOT GLOBALLY UNIQUE. The slug
+  // in `page_ephemeral-<slug>` is developer-chosen and only checked against AppBlock
+  // rows and pending requests, never against other tunnels, so two authors can hold
+  // live tunnels on the same unclaimed slug and both mint the same instance id. A
+  // GLOBAL marker would refuse the other author's own dev tunnel for up to 4h for a
+  // ban that has nothing to do with them. See `bannedSubjectKey`.
+  const subjectScopedIds = new Set<string>();
   for (const blockId of tunnelledBlockIds) {
-    instanceIds.add(`page_ephemeral-${blockId}`);
+    subjectScopedIds.add(`page_ephemeral-${blockId}`);
   }
-  return [...instanceIds];
+  return { global: [...instanceIds], subjectScoped: [...subjectScopedIds] };
 }
 
 /**
@@ -277,17 +287,21 @@ export async function revokeBlockInstancesForPublisher({
 }: {
   userId: number;
 }): Promise<number> {
-  const instanceIds = await resolvePublisherInstanceIds(userId);
+  const { global, subjectScoped } = await resolvePublisherInstanceIds(userId);
+  const subject = subjectForUserId(userId);
 
   // `limitConcurrency` keeps N continuously in flight. A hand-rolled
   // `for (i += N) { await Promise.all(slice) }` is a BARRIER — every batch waits on
   // its slowest member — which is not what the ceiling above says it is.
   await limitConcurrency(
-    instanceIds.map((id) => () => BlockRevocation.revokeInstanceForBan(id)),
+    [
+      ...global.map((id) => () => BlockRevocation.revokeInstanceForBan(id)),
+      ...subjectScoped.map((id) => () => BlockRevocation.revokeInstanceForBan(id, { subject })),
+    ],
     REVOKE_CONCURRENCY
   );
 
-  return instanceIds.length;
+  return global.length + subjectScoped.length;
 }
 
 /**
@@ -317,12 +331,16 @@ export async function clearBlockInstancesForPublisher({
 }: {
   userId: number;
 }): Promise<number> {
-  const instanceIds = await resolvePublisherInstanceIds(userId);
+  const { global, subjectScoped } = await resolvePublisherInstanceIds(userId);
+  const subject = subjectForUserId(userId);
 
   await limitConcurrency(
-    instanceIds.map((id) => () => BlockRevocation.clearBanInstance(id)),
+    [
+      ...global.map((id) => () => BlockRevocation.clearBanInstance(id)),
+      ...subjectScoped.map((id) => () => BlockRevocation.clearBanInstance(id, { subject })),
+    ],
     REVOKE_CONCURRENCY
   );
 
-  return instanceIds.length;
+  return global.length + subjectScoped.length;
 }

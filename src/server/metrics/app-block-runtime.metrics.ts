@@ -246,7 +246,7 @@ export type AppBlockRevocationSurface = (typeof APP_BLOCK_REVOCATION_SURFACES)[n
  *
  * 🔴 THE NAMESPACE IS THE LABEL THAT EARNS ITS KEEP. A revocation gap is always
  * namespace-shaped: clawgate #618 shipped a writer covering one namespace of five while
- * every comment claimed all of them, and a later round found `page_` was really three
+ * every comment claimed all of them, and later rounds found `page_` was really FIVE
  * mint shapes. A refusal counter split this way makes "this surface has never once
  * refused" a readable, falsifiable statement per namespace instead of one flat number.
  */

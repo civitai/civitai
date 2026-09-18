@@ -207,10 +207,15 @@ describe('bridge guard — revocation', () => {
     });
   });
 
-  it('checks the token claim, not client input', async () => {
+  it('checks the token claim, not client input — instance AND subject', async () => {
     mockIsRevoked.mockResolvedValue(false);
     await caller().getMyBuzzBalance({ blockToken: 't' });
-    expect(mockIsRevoked).toHaveBeenCalledWith('bki_test');
+    // 🔴 THE SUBJECT IS THE SECOND ARGUMENT AND IT COMES FROM THE TOKEN TOO. It selects
+    // the subject-scoped ban keyspace, which exists because `page_ephemeral-<slug>` is
+    // not unique across users: a global marker there refuses an innocent author's own
+    // dev tunnel. Passing anything client-supplied here would let a caller pick whose
+    // revocation they are checked against.
+    expect(mockIsRevoked).toHaveBeenCalledWith('bki_test', 'user:42');
   });
 
   it('refuses BEFORE the app-block read — revocation is the cheaper check and runs first', async () => {
