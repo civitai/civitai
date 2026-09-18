@@ -76,6 +76,14 @@ const EXPECTED_CALL_SITES = [
  *  every state explicitly rather than by a binary refusal). */
 const MAY_BRANCH_ON_HIDDEN = new Set(['server/services/blocks/block-gated-images.service.ts']);
 
+/**
+ * Every literal in this file is POSIX and `relative()` answers in the host's separator, so a rel
+ * is normalised at the one place it is produced. `replace` rather than `split(sep)`: the latter
+ * is the identity on Linux, which makes the assertion pinning it unfalsifiable on CI.
+ */
+const toPosix = (path: string) => path.replace(/\\/g, '/');
+const toRel = (full: string) => toPosix(relative(SRC, full));
+
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     if (entry === 'node_modules' || entry === '.next') continue;
@@ -90,7 +98,7 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 const PRODUCTION_FILES = walk(SRC).filter((f) => {
-  const rel = relative(SRC, f);
+  const rel = toRel(f);
   return !rel.includes('__tests__') && !/\.test\.tsx?$/.test(rel) && !rel.includes('/tests/');
 });
 
@@ -109,7 +117,7 @@ const SOURCE = new Map<string, string>();
 for (const full of PRODUCTION_FILES) {
   const raw = readFileSync(full, 'utf8');
   if (!raw.includes('block-gated-images.logic') && !raw.includes(SYMBOL)) continue;
-  SOURCE.set(relative(SRC, full), stripSourceComments(raw));
+  SOURCE.set(toRel(full), stripSourceComments(raw));
 }
 
 /**
@@ -131,6 +139,18 @@ describe(`${SYMBOL} seam`, () => {
     const rels = [...SOURCE.keys()];
     expect(rels).toContain(DEFINITION);
     expect(PRODUCTION_FILES.length).toBeGreaterThan(500);
+  });
+
+  // Three assertions because the normalisation has two removable halves and they fail on
+  // different hosts: the helper's body (caught on any host, hardcoded input), the call to it
+  // inside `toRel` (caught on Windows, where `join` produces a separator to fold), and the
+  // walk's real output (the only one observing what the guard actually keyed the ledger on).
+  it('normalises a host-separated rel to the POSIX form the ledger is written in', () => {
+    expect(toPosix('server\\services\\blocks\\block-gated-images.logic.ts')).toBe(DEFINITION);
+    expect(toRel(join(SRC, 'server', 'services', 'blocks', 'block-gated-images.logic.ts'))).toBe(
+      DEFINITION
+    );
+    expect([...SOURCE.keys()].filter((rel) => rel.includes('\\'))).toEqual([]);
   });
 
   // POSITIVE CONTROL for the DETECTOR, not just the walk. A ledger assertion that
@@ -166,10 +186,17 @@ describe(`${SYMBOL} seam`, () => {
   });
 
   it("no consumer gates on `=== 'hidden'` — a `pending` image would walk past it", () => {
-    for (const rel of EXPECTED_CALL_SITES) {
-      if (MAY_BRANCH_ON_HIDDEN.has(rel)) continue;
+    const targets = EXPECTED_CALL_SITES.filter((rel) => !MAY_BRANCH_ON_HIDDEN.has(rel));
+    // Named rather than counted: allow-listing the last consumer, or emptying the ledger, would
+    // otherwise leave this case iterating nothing and reporting green.
+    expect(targets).toEqual(['server/services/blocks/block-post.service.ts']);
+
+    for (const rel of targets) {
       // Comments are already stripped, so the prose ABOVE the gate (which names
       // the wrong spelling in order to forbid it) cannot satisfy or trip this.
+      // A ledger literal that stops matching a key would otherwise leave `code` empty, and the
+      // prohibition below passes free on an empty string while only the positive half reddens.
+      expect(SOURCE.has(rel), rel).toBe(true);
       const code = SOURCE.get(rel) ?? '';
       expect(code).not.toContain(`status === 'hidden'`);
       expect(code).toContain(`status !== 'visible'`);
