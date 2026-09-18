@@ -31,6 +31,8 @@ vi.mock('~/server/services/buzz.service', () => ({
 
 import { accrueBlockAuthorFee, settleBlockAuthorFees } from '../author-fee-settlement.service';
 import type { BlockAuthorFeeComputation } from '../author-fee';
+import { BuzzApiError } from '@civitai/buzz';
+import { TRPCError } from '@trpc/server';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockDbRead = dbMock.dbRead;
@@ -514,18 +516,32 @@ describe('settleBlockAuthorFees', () => {
     expect(mockCreateMany).toHaveBeenCalledTimes(2);
     expect(result.rowsSettled).toBe(1);
     const logged = mockLog.mock.calls.map((c: any) => c[0].message);
-    expect(logged).toContain('settled rows could not be flipped — money moved, rows still accrued');
+    expect(logged).toContain(
+      'settled rows may not have been flipped — mint landed, flip did not confirm'
+    );
+    // The one counter that means money moved without a settled row.
+    expect(result.flipFailures).toBe(1);
   });
 
   it('logs the buzz STATUS on a dropped mint, not just the mapped message', async () => {
     // mapError collapses every non-2xx into one generic TRPCError message, so a
     // permanent 400 and a transient 503 otherwise produce byte-identical lines
     // forever. Unpinned, a mutant nulling this field SURVIVED the sweep.
-    const err = Object.assign(new Error('An unexpected error ocurred, please try again later'), {
-      status: 400,
-    });
+    // 🔴 THE FIXTURE MUST BE A REAL `BuzzApiError`, AND THE ASSERTION MUST READ THE
+    // VALUE. An earlier version of this test used a plain Error carrying a
+    // `status` property and asserted `toHaveProperty('threwStatus')` — a
+    // single-argument existence check. `getBuzzApiStatus` returns undefined for
+    // that shape, so the field logged `null`, and a mutant replacing the whole
+    // expression with `null` SURVIVED while the test passed. It was reported as
+    // closing that gap and did not.
     oneDay([accrual()]);
-    mockCreateMany.mockRejectedValueOnce(err);
+    mockCreateMany.mockRejectedValueOnce(
+      new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'An unexpected error ocurred, please try again later',
+        cause: new BuzzApiError(503, 'Service Unavailable'),
+      })
+    );
 
     await settleBlockAuthorFees({ date: RUN });
 
@@ -533,7 +549,7 @@ describe('settleBlockAuthorFees', () => {
       .map((c: any) => c[0])
       .find((l: any) => l.message === 'bucket mint did not land — left accrued for retry');
     expect(drop).toBeDefined();
-    expect(drop).toHaveProperty('threwStatus');
+    expect(drop.threwStatus).toBe(503);
   });
 
   it('bounds the loop from maxDays when maxIterations is not supplied', async () => {
@@ -580,6 +596,30 @@ describe('settleBlockAuthorFees', () => {
     expect(mockCreateMany.mock.calls[0][0][0].externalTransactionId).toContain('2026-09-16');
   });
 
+  it('🔴 a day on which every bucket DROPPED is not counted productive', async () => {
+    // The second stuck arm. The oversized arm was excluded because it continues
+    // before the counter; this one reached it, so a permanently-rejected owner
+    // burned one productive-day slot per day and thirty of them would stop
+    // settlement for everyone — the failure the productive count exists to
+    // prevent, named by its comment but not covered by its test.
+    days([
+      [new Date('2026-09-13T09:00:00Z'), [accrual({ id: 'a', appOwnerUserId: 111 })]],
+      [new Date('2026-09-14T09:00:00Z'), [accrual({ id: 'b', appOwnerUserId: 111 })]],
+      [new Date('2026-09-15T09:00:00Z'), [accrual({ id: 'c', appOwnerUserId: 222, feeBuzz: 5 })]],
+    ]);
+    mockCreateMany
+      .mockResolvedValueOnce({ transactions: [], conflicts: [] }) // day 1 dropped
+      .mockResolvedValueOnce({ transactions: [], conflicts: [] }) // day 2 dropped
+      .mockResolvedValueOnce({ transactions: [{ id: 'tx' }], conflicts: [] });
+
+    // maxDays: 1 — the two dropped days must not consume it.
+    const result = await settleBlockAuthorFees({ date: RUN, maxDays: 1 });
+
+    expect(mockCreateMany).toHaveBeenCalledTimes(3);
+    expect(result.rowsSettled).toBe(1);
+    expect(mockCreateMany.mock.calls[2][0][0].externalTransactionId).toContain('2026-09-15');
+  });
+
   it('maxIterations bounds the loop when every day is stuck', async () => {
     mockDbWrite.blockAuthorFeeAccrual.findFirst.mockResolvedValue({
       accruedAt: new Date('2026-09-15T09:00:00Z'),
@@ -605,6 +645,12 @@ describe('settleBlockAuthorFees', () => {
     mockDbWrite.blockAuthorFeeAccrual.findFirst.mockResolvedValue(null);
     const result = await settleBlockAuthorFees({ date: RUN });
     expect(mockCreateMany).not.toHaveBeenCalled();
-    expect(result).toEqual({ buckets: 0, rowsSettled: 0, buzzMinted: 0, daysTruncated: 0 });
+    expect(result).toEqual({
+      buckets: 0,
+      rowsSettled: 0,
+      buzzMinted: 0,
+      daysTruncated: 0,
+      flipFailures: 0,
+    });
   });
 });

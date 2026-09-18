@@ -74,7 +74,8 @@ export const settleBlockAuthorFeesJob = createJob(
 
     log(
       `Settled ${result.rowsSettled} row(s) across ${result.buckets} bucket(s), ` +
-        `${result.buzzMinted} buzz minted, ${result.daysTruncated} day(s) skipped as oversized`
+        `${result.buzzMinted} buzz minted, ${result.daysTruncated} day(s) skipped as oversized, ` +
+        `${result.flipFailures} flip failure(s)`
     );
   }
 );

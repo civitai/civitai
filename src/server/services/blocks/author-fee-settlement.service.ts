@@ -279,6 +279,18 @@ export type SettleBlockAuthorFeesResult = {
   buzzMinted: number;
   /** Accrual days skipped because they exceeded `limit` and could not be settled whole. */
   daysTruncated: number;
+  /**
+   * Buckets whose mint landed but whose flip threw.
+   *
+   * 🔴 THE ONE COUNTER THAT MEANS MONEY MOVED WITHOUT A SETTLED ROW. Before the
+   * flip was wrapped, such a throw failed the whole job and was loud. Wrapping it
+   * fixed the liveness problem and made the failure SILENT — a systemic flip
+   * failure (pool exhaustion, a lock, a statement timeout on an `IN` list of up to
+   * `limit` ids) would otherwise report `rowsSettled: 0` on a job that returns
+   * success, every night, while money leaves on day one of each bucket. Alert on
+   * this being non-zero.
+   */
+  flipFailures: number;
 };
 
 /**
@@ -336,6 +348,7 @@ export async function settleBlockAuthorFees(args: {
   let rowsSettled = 0;
   let buzzMinted = 0;
   let daysTruncated = 0;
+  let flipFailures = 0;
 
   // 🔴 A MONOTONIC CURSOR, AND IT IS WHAT MAKES THE LOOP TERMINATE. An earlier
   // revision re-selected "the oldest unsettled day" every iteration with nothing
@@ -430,7 +443,15 @@ export async function settleBlockAuthorFees(args: {
 
     const payable = [...byBucket.values()];
     buckets += payable.length;
-    productiveDays += 1;
+    // 🔴 COUNTED AFTER THE BUCKET LOOP, CONDITIONAL ON SOMETHING LANDING — see the
+    // increment below. An earlier revision counted here, before a single mint was
+    // attempted, which delivered only HALF of what its own comment promised: the
+    // oversized arm was excluded (it continues above this point) but the
+    // persistently-rejected-owner arm was not. A day on which every bucket dropped
+    // still burned a productive-day slot, so thirty such days would exhaust the
+    // budget and stop settlement for everyone — exactly the failure the productive
+    // count was added to prevent.
+    let landedAny = false;
 
     // 🔴 ONE BUCKET PER CALL, so a drop is ATTRIBUTABLE. `createBuzzTransactionMany`
     // reports only counts and opaque ids, so a batch that under-reconciles cannot
@@ -507,12 +528,20 @@ export async function settleBlockAuthorFees(args: {
             buzzType: bucket.buzzType,
             buzz: bucket.totalBuzz,
             // 🔴 THE STATUS, NOT JUST THE MESSAGE. `buzzService` is constructed with
-            // a `mapError`, so every non-2xx arrives here as a TRPCError whose
-            // message is the fixed string "An unexpected error ocurred, please try
-            // again later" — a permanent 400 and a transient 503 produce BYTE-
-            // IDENTICAL log lines, repeated daily forever, so the permanent one is
-            // indistinguishable from noise. `getBuzzApiStatus` reads the real
-            // status back through the wrapper.
+            // a `mapError` whose `default` branch collapses every status it does
+            // not name into the fixed string "An unexpected error ocurred, please
+            // try again later". `getBuzzApiStatus` reads the real status back
+            // through the TRPCError's `cause`.
+            //
+            // ⚠️ AN EARLIER REVISION MOTIVATED THIS WITH "a permanent 400 and a
+            // transient 503 produce BYTE-IDENTICAL log lines", AND 400 IS THE ONE
+            // STATUS FOR WHICH THAT IS FALSE: `mapError` names 400, 404 and 409
+            // explicitly ("Your request is invalid", "Not found", "There is a
+            // conflict with the transaction"), so those three were already
+            // distinguishable. The fix is still worth having — 401, 403, 408, 429,
+            // 500, 502 and 503 all fall to `default` and genuinely are identical,
+            // so a permanent auth failure and a transient outage were the
+            // indistinguishable pair. The example was wrong, not the reason.
             threwStatus: getBuzzApiStatus(threw) ?? null,
             threw: threw instanceof Error ? threw.message : threw ? String(threw) : null,
           },
@@ -541,21 +570,41 @@ export async function settleBlockAuthorFees(args: {
           {
             name: BLOCK_AUTHOR_FEE_LOG_NAME,
             type: 'error',
-            message: 'settled rows could not be flipped — money moved, rows still accrued',
+            // A connection drop AFTER the UPDATE commits raises here with the rows
+            // already flipped, so "rows still accrued" would be the opposite of
+            // the truth on a line an operator acts on. This says only what the
+            // code can observe.
+            message: 'settled rows may not have been flipped — mint landed, flip did not confirm',
             accrualDay: bucket.accrualDay,
             appOwnerUserId: bucket.appOwnerUserId,
             settlementKey: key,
+            // The one case where money actually moved — so the amount belongs on
+            // the line. Reconciling "how much left the platform with no settled
+            // row" should not require the Buzz service.
+            buzz: bucket.totalBuzz,
             error: error instanceof Error ? error.message : String(error),
           },
           'civitai-prod'
         ).catch(() => undefined);
+        flipFailures += 1;
         continue;
       }
       rowsSettled += count;
-      // Only for rows THIS run flipped — a concurrent run that got there first
-      // returns 0, and counting it would log a payment this run did not make.
+      landedAny = true;
+      // Counts Buzz only for rows THIS run flipped.
+      //
+      // ⚠️ IT IS NOT THE TEST THE OLD COMMENT CLAIMED ("a payment this run did not
+      // make"). `count > 0` cannot distinguish a fresh mint from a CONFLICT on a
+      // key an earlier run already paid — and the wrapped flip below makes that
+      // ordinary rather than exotic: a run whose flip throws leaves rows accrued,
+      // and the next run conflicts, flips them, and adds the total here. The
+      // cross-run sum stays correct (the failing run added nothing), so this is a
+      // reporting imprecision, not money. Stated rather than reworded, because the
+      // exact claim is what a reader would otherwise rely on.
       if (count > 0) buzzMinted += bucket.totalBuzz;
     }
+
+    if (landedAny) productiveDays += 1;
   }
 
   logToAxiom(
@@ -567,11 +616,12 @@ export async function settleBlockAuthorFees(args: {
       rowsSettled,
       buzzMinted,
       daysTruncated,
+      flipFailures,
     },
     'civitai-prod'
   ).catch(() => undefined);
 
-  return { buckets, rowsSettled, buzzMinted, daysTruncated };
+  return { buckets, rowsSettled, buzzMinted, daysTruncated, flipFailures };
 }
 
 /** Midnight UTC of the day `d` falls in. */
