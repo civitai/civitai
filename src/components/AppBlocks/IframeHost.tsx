@@ -1648,8 +1648,10 @@ export function IframeHost({
         // carrying no `requestId` is an explicitly documented protocol shape (the
         // success path below answers it with a `TOKEN_REFRESH` push), so gating
         // the count on one would report NOTHING for it — and the count is this
-        // branch's only observable. `PageBlockHost` does the identical thing;
-        // `noSilentTokenDrop.test.ts` asserts both hosts, unconditionally.
+        // branch's only observable. `PageBlockHost` does the identical thing, and
+        // the two must stay in step by hand: there is no test asserting the
+        // relationship (see the PR description for why the structural guard that
+        // would have was removed rather than shipped).
         reportNoToken('REQUEST_TOKEN');
         return;
       }
