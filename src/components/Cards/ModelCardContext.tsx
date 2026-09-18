@@ -1,13 +1,32 @@
+import type { SaleDiscountKind } from '@civitai/buzz';
 import type { ReactNode } from 'react';
-import { createContext, useContext, useMemo } from 'react';
-import { MODEL_SALE_IDS_PER_QUERY } from '~/shared/zod/model-sale.schema';
+import { createContext, useContext, useMemo, useRef } from 'react';
+import { MODEL_SALE_IDS_PER_REQUEST } from '~/server/schema/model-sale.schema';
 import { chunkIds } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 
-type SalesByModelId = Record<
-  number,
-  { endsAt: Date; discountType: 'Fixed' | 'Percent'; discountAmount: number }
->;
+/**
+ * `discountType` is `SaleDiscountKind` from the package the server declares this procedure's output
+ * with, not a local `'Fixed' | 'Percent'` restatement — the merge below is only type-checked by the
+ * `as` on it, so a restatement would silently narrow away a third member the server had added.
+ */
+type ModelSale = { endsAt: Date; discountType: SaleDiscountKind; discountAmount: number };
+type SalesByModelId = Record<number, ModelSale>;
+
+/**
+ * 🔴 RE-APPLY THE END EDGE ON THE CLIENT. The server evaluates both edges of the window against
+ * `now` per request, but the client holds the answer: an arrival-order chunk key is stable once its
+ * block is full, so a feed that stays mounted can keep serving a resolved map. `endsAt` was on the
+ * wire already and NOTHING branched on it — the badge only ever formatted it — so a sale that ended
+ * kept advertising a discount that the model page and the charge path both refuse.
+ *
+ * Re-wrapped rather than compared directly: `endsAt` arrives as a `Date` or an ISO string depending
+ * on the response serializer, which is why `ModelVersionSaleBadge` types it `Date | string` too.
+ */
+const stillRunning = (sale: ModelSale, now: number) => new Date(sale.endsAt).getTime() > now;
+
+const runningSalesOnly = (sales: SalesByModelId, now: number): SalesByModelId =>
+  Object.fromEntries(Object.entries(sales).filter(([, sale]) => stillRunning(sale, now)));
 
 type Context = {
   useModelVersionRedirect?: boolean;
@@ -44,7 +63,10 @@ export const useModelSaleBadge = (modelId: number, skip: boolean) => {
     { ids: [modelId] },
     { enabled: !skip, staleTime: 60_000 }
   );
-  return data?.[modelId];
+  const sale = data?.[modelId];
+  // Same end-edge re-check as the batched hook — a card outside a provider caches its answer for
+  // `staleTime` too, so the badge must not outlive the window it is advertising.
+  return sale && stillRunning(sale, Date.now()) ? sale : undefined;
 };
 
 /**
@@ -55,9 +77,10 @@ export const useModelSaleBadge = (modelId: number, skip: boolean) => {
  * of ~100 cards, and from there EVERY call 400d — so the badge silently vanished from the whole
  * grid for anyone who scrolled, on a money surface, invisibly to anything watching 5xx.
  *
- * Chunking is the fix rather than a bigger cap: the resolver's work is per-id (one Redis GET each,
- * plus a five-table `IN (…)` for the misses) on a PUBLIC procedure, so the cap is the only bound
- * on it. See `~/shared/zod/model-sale.schema`.
+ * Chunking is the fix rather than a bigger cap: the resolver's work is per-id — one Redis GET each
+ * — on a PUBLIC procedure, so the cap is the only bound on it. The chunk is deliberately SMALLER
+ * than the cap and matched to the feed's page size; `~/server/schema/model-sale.schema` has the
+ * arithmetic for why, and it is not "as big as allowed".
  *
  * The shared chunker, not a third copy of it — its own tests pin the property this depends on and
  * does not spell out in code: chunking in ARRIVAL order keeps an earlier chunk's key stable as the
@@ -66,26 +89,35 @@ export const useModelSaleBadge = (modelId: number, skip: boolean) => {
  */
 export const useModelSaleBadges = (modelIds: number[]) => {
   const chunks = useMemo(
-    () => chunkIds(modelIds, MODEL_SALE_IDS_PER_QUERY),
+    () => chunkIds(modelIds, MODEL_SALE_IDS_PER_REQUEST),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [modelIds.join(',')]
   );
 
   const queries = trpc.useQueries((t) =>
-    chunks.map((chunk) =>
-      t.model.getActiveSales({ ids: chunk }, { staleTime: 60_000, placeholderData: (prev) => prev })
-    )
+    chunks.map((chunk) => t.model.getActiveSales({ ids: chunk }, { staleTime: 60_000 }))
   );
 
-  return useMemo(() => {
-    // `undefined` while nothing has arrived, exactly as the single query returned — a consumer
-    // reads "no sale yet", not "no sale". A partly-loaded surface merges what it has, so badges
-    // appear per chunk instead of the whole grid waiting on the slowest one.
+  const merged = useMemo(() => {
+    // A partly-loaded surface merges what it has, so badges appear per chunk instead of the whole
+    // grid waiting on the slowest one. `undefined` — not `{}` — while nothing has arrived, so a
+    // consumer reads "no sale yet" rather than "no sale".
     const loaded = queries.map((query) => query.data).filter((data) => !!data);
     if (!loaded.length) return undefined;
-    return Object.assign({}, ...loaded) as SalesByModelId;
+    return runningSalesOnly(Object.assign({}, ...loaded) as SalesByModelId, Date.now());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queries.map((query) => query.dataUpdatedAt).join(',')]);
+
+  // 🔴 KEEP-PREVIOUS BY HAND, because `placeholderData` DOES NOT WORK UNDER `useQueries`. Measured
+  // against the installed @tanstack/query-core: `QueriesObserver` matches previous observers by
+  // `queryHash` only, so a key change builds a FRESH `QueryObserver` whose
+  // `#lastQueryWithDefinedData` is empty and `placeholderData: (prev) => prev` resolves to
+  // `undefined`. `useQuery` keeps one observer for the component's life and does carry it across —
+  // which is why the option worked before this hook fanned out, and silently stopped when it did.
+  // Without this the whole grid's badges blank for the round trip on every page of scroll.
+  const lastLoaded = useRef<SalesByModelId | undefined>(undefined);
+  if (merged) lastLoaded.current = merged;
+  return merged ?? lastLoaded.current;
 };
 
 export const ModelCardContextProvider = ({

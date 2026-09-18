@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { getActiveSalesSchema } from '~/shared/zod/model-sale.schema';
+import { getActiveSalesSchema } from '~/server/schema/model-sale.schema';
 import { getActiveSalesForModels } from '~/server/services/paid-access.service';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
