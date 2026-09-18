@@ -575,32 +575,61 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     ]);
 
     // 🔴 THE HEURISTIC THAT GOES INERT UNDER THE SEAM MUTANT, AT ITS FIRING POINT. TWO staged
-    // uploads a minute apart is (2-1)/(3-1) = 0.5 on the volume half and nothing on the burst half.
-    // The count is deliberately the SMALLEST that scores anything: a fixture further up the ramp
-    // saturates to 1, and a saturated expectation cannot separate "the evidence arrived" from "the
-    // heuristic returns its ceiling", which is the seam mutant this case exists for.
-    // Read off the reason's `id=0.00` clause, so the expectation is the RENDERED two-decimal form.
-    // Exact rather than approximate: the rendering is part of what a moderator sees, and a value
-    // assertion with slack would pass on a heuristic scoring 0.5049.
-    expect(sub['asset-staging']).toBe(0.5);
+    // uploads a minute apart saturates the volume half at 1 and scores nothing on the burst half.
+    // Read off the reason's `id=0.00` clause, so the expectation is the RENDERED two-decimal form —
+    // which is what a moderator sees. ⚠️ Do not read the exact matcher as buying precision: the
+    // sub-score is rendered with `toFixed(2)` before `subScoresOf` parses it back, so the renderer
+    // sets the resolution and a heuristic scoring 0.999 renders `1.00` and passes this line. What
+    // discriminates a near-miss is the confidence assertion below, on its own — measured, a
+    // `score * 0.999` mutant reaches it and fails with `expected 0.24975 to be close to 0.25`. The
+    // `count: 1` control at the foot of this case catches a constant CEILING, which is a different
+    // mutant; it does not see a near-miss, and an earlier wording here credited it with both.
+    //
+    // 🔴 THIS EXPECTATION IS NOW THE HEURISTIC'S CEILING, AND THAT USED TO BE DELIBERATELY AVOIDED
+    // HERE. While the volume ramp rose to a boundary of 3, two uploads landed mid-ramp at 0.5, and
+    // a mid-ramp value separates "the evidence arrived" from "the heuristic returns its ceiling".
+    // The ramp now saturates AT the firing point (see `STAGED_ONE_AT`), so no count this fixture
+    // can carry is mid-ramp and that separation is no longer available from one run. It is restored
+    // below by a second run at a count the heuristic must score ZERO on: a mutant returning a
+    // constant ceiling fails there, which is the property this case would otherwise have lost.
+    expect(sub['asset-staging']).toBe(1);
     // 🔴 AND THE THREE RING HEURISTICS SCORE NOTHING, which is the point of the case: this account
     // is on the board because of its OWN uploads, with no other account involved anywhere in the
     // run. No previous heuristic could have produced this finding.
     expect(sub['posting-velocity']).toBe(0);
     expect(sub['registration-cluster']).toBe(0);
     expect(sub['content-templating']).toBe(0);
-    // 🔴 AND THE FIRING POINT ITSELF, THROUGH THE WHOLE RUN. One of four heuristics at 0.5 blends
-    // to 0.125, against a shipped cut of 0.1125 — so two staged uploads is a row a moderator
-    // actually receives. `heuristics.test.ts` pins the same property against the registry and the
-    // partition directly; this asserts it survives the run's real reader, evidence layer, scorer
-    // and report rendering, which is the composition no unit case builds.
-    expect(finding?.confidence).toBeCloseTo(0.125, 12);
+    // 🔴 AND THE FIRING POINT ITSELF, THROUGH THE WHOLE RUN. One of four heuristics at 1 blends to
+    // 0.25, against a shipped cut of 0.1125 — so two staged uploads is a row a moderator actually
+    // receives. `heuristics.test.ts` pins the same property against the registry and the partition
+    // directly; this asserts it survives the run's real reader, evidence layer, scorer and report
+    // rendering, which is the composition no unit case builds.
+    expect(finding?.confidence).toBeCloseTo(0.25, 12);
     expect(finding?.confidence as number).toBeGreaterThanOrEqual(MIN_REPORTED_CONFIDENCE);
+    // ⚠️ The `findingsReported` line is a cohort-size check, NOT part of the firing-point claim —
+    // this scenario runs with `minConfidence: 0`, so every scored member is emitted whatever it
+    // scored and this count cannot distinguish a reported account from a suppressed one. What
+    // carries "a row a moderator actually receives" is the `>= MIN_REPORTED_CONFIDENCE` line above.
     expect((await scenario.result).findingsReported).toBe(3);
 
     // The reason names WHAT was seen, not merely that something was.
     expect(finding?.reason).toContain('no generation metadata');
     expect(finding?.reason).toContain('attached to no post');
+
+    // 🔴 THE NEGATIVE CONTROL THE SATURATED EXPECTATION ABOVE COSTS THIS CASE OTHERWISE. Same run,
+    // same wiring, ONE staged upload per member instead of two — below the firing point, so the
+    // heuristic must score nothing. A mutant that returns the heuristic's ceiling without reading
+    // the evidence passes every assertion above and fails here.
+    //
+    // Asserted on the SUB-SCORE and the confidence rather than on `findingsReported`: this scenario
+    // runs with `minConfidence: 0`, so every scored member is emitted whatever it scored, and a
+    // finding count would be measuring the option rather than the heuristic.
+    const below = stagingRun(stagedEvidence(1, false));
+    await below.result;
+    const belowFinding = below.reports[0].findings.find((f) => f.userId === 1);
+    expect(belowFinding).toBeDefined();
+    expect(subScoresOf(belowFinding as { reason: string })['asset-staging']).toBe(0);
+    expect(belowFinding?.confidence).toBe(0);
   });
 
   it('🔴 the SAME-SECOND half moves the COUNTERS and NOT the score — the arm is inert, not absent', async () => {
@@ -608,15 +637,18 @@ describe('🔴 the seam between the evidence and the scoring', () => {
     //
     // 🔴 THIS CASE USED TO ASSERT THE OPPOSITE, AND THE CHANGE IS THE POINT. While the burst
     // boundaries sat tighter than the volume ones (4 against 8) the same-second run scored HIGHER
-    // on the board, and this case pinned that. Both pairs are now (1, 3) — derived from the same
-    // reporting cut — and a same-second group is a SUBSET of the staged rows, so the burst half can
-    // never exceed the volume half and `max` resolves to `volume` for every account. The honest
-    // statement is therefore an EQUALITY on the score and a DIFFERENCE on the counters, and writing
-    // it the old way would be a guard asserting behaviour the shipped code does not have.
+    // on the board, and this case pinned that. A same-second group is a SUBSET of the staged rows
+    // and the volume ramp is at or above the burst ramp at every input, so the burst half can never
+    // exceed the volume half and `max` resolves to `volume` for every account. The honest statement
+    // is therefore an EQUALITY on the score and a DIFFERENCE on the counters, and writing it the
+    // old way would be a guard asserting behaviour the shipped code does not have.
     //
-    // TWO uploads per member, not three: two is the firing point, so the shared score is the ramp's
-    // midpoint 0.5 rather than its ceiling. An equality asserted at saturation would hold for the
-    // uninteresting reason that both halves had run out of range.
+    // 🔴 THE EQUALITY IS AT SATURATION NOW, AND THAT WEAKENS IT — SAID HERE RATHER THAN LEFT IN THE
+    // GREEN. The volume ramp saturates at the firing point (see `STAGED_ONE_AT`), so there is no
+    // count at which these two runs could be compared mid-ramp, and a mutant that saturated a half
+    // would land on the same 1. The DISCRIMINATION MOVED TO THE COUNTERS, which is also where the
+    // arm's only remaining product is: the spread run must report `fired_burst` 0 against
+    // `fired_volume` 3, which a burst half that saturated or ignored its boundary cannot do.
     const spread = stagingRun(stagedEvidence(2, false));
     const spreadResult = await spread.result;
     const burst = stagingRun(stagedEvidence(2, true));
@@ -626,16 +658,27 @@ describe('🔴 the seam between the evidence and the scoring', () => {
       subScoresOf(s.reports[0].findings.find((f) => f.userId === 1) as { reason: string })[
         'asset-staging'
       ];
-    // Rendered to two decimals in the reason clause: (2-1)/(3-1) = 0.5 on the volume half in BOTH
-    // runs, and the burst half contributes nothing visible even when it is fully engaged. Neither 0
-    // nor 1, so a mutant that saturates or zeroes a half still cannot land on it.
-    expect(scoreOf(spread)).toBe(0.5);
-    expect(scoreOf(burst)).toBe(0.5);
+    // Rendered to two decimals in the reason clause: the volume half saturates at its boundary of
+    // two in BOTH runs, and the burst half contributes nothing visible even when it is fully
+    // engaged. A mutant that zeroed the VOLUME half fails here — `scoreOf` reads 0 out of the
+    // rendered reason clause against an expected 1. (NOT because the finding would disappear: this
+    // scenario runs with `minConfidence: 0`, so a member scoring 0 is still emitted, which the
+    // negative control in the sibling case relies on.) 🔴 A mutant that zeroed the BURST half does
+    // NOT fail here — `max` is identically `volume`, so `scoreOf` still reads 1 and both lines pass;
+    // its first failure is the `fired_burst` counter below. Nor does one that saturates either half.
+    // That is precisely why the counters carry this case rather than these two lines.
+    expect(scoreOf(spread)).toBe(1);
+    expect(scoreOf(burst)).toBe(1);
 
     // 🔴 THE COUNTERS ARE WHERE THE BURST HALF STILL EXISTS, AND THEY ARE NOW ITS ONLY PRODUCT
     // BESIDES THE MODERATOR CLAUSE. This is what the shadow phase reads to answer whether
     // same-second concentration separates at all — and therefore whether the arm should be
-    // re-tightened below the volume boundary or deleted. Without the decomposition that question
+    // re-shaped or deleted — NOT "re-tightened below the volume boundary", which this sentence said
+    // until the volume ramp became a step at two. A tighter `BURST_ONE_AT` no longer moves any
+    // score. (It is NOT impossible, which an earlier wording of this correction claimed: a burst
+    // pair of (0, 1) is a legal pair strictly below the volume boundary and does revive the arm —
+    // by dropping `zeroAt`, which is what breaks the dominance, not by tightening `oneAt`. See
+    // `BURST_ONE_AT`.) Without the decomposition that question
     // has no number behind it, which is the failure that kept a zero-firing comment source alive
     // for five runs one heuristic over.
     expect(burstResult.counters['heuristic:asset-staging:fired_burst']).toBe(3);
