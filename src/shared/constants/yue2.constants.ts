@@ -1,3 +1,8 @@
+export const yue2MusicModeOptions = [
+  { label: 'Simple', value: 'simple' as const },
+  { label: 'Custom', value: 'custom' as const },
+];
+
 export const yue2ModeOptions = [
   { label: 'Melody + chords', value: 'full' as const },
   { label: 'Melody only', value: 'melody' as const },

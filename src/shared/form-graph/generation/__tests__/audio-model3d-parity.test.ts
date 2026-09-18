@@ -54,20 +54,36 @@ const CONTEXTS: [string, GenerationCtx][] = [
 const IMAGE = { url: 'https://example.com/a.png', width: 1280, height: 720 };
 
 const AUDIO_SHAPES: AnyRecord[] = [
-  { musicDescription: 'synth-pop', lyrics: '[verse] Morning light', seed: 0 },
   {
+    yue2MusicMode: 'custom',
+    musicDescription: 'synth-pop',
+    lyrics: '[verse] Morning light',
+    seed: 0,
+  },
+  {
+    yue2MusicMode: 'custom',
     musicDescription: 'synth-pop',
     lyrics: '[verse] Morning light',
     yue2Mode: 'melody',
     yue2Abc: 'X:1\nK:C\nC D E G |',
   },
   {
+    yue2MusicMode: 'custom',
     musicDescription: 'synth-pop',
     lyrics: '[verse] Morning light',
     yue2Mode: 'off',
     yue2Abc: 'X:1\nK:C\nC D E G |',
   },
-  { musicDescription: '   ', lyrics: '   ' },
+  { yue2MusicMode: 'custom', musicDescription: '   ', lyrics: '   ' },
+  {
+    yue2MusicMode: 'simple',
+    prompt: 'an upbeat song',
+    musicDescription: 'stale description',
+    lyrics: 'stale lyrics',
+    yue2Mode: 'off',
+    yue2Abc: 'X:1\nK:C\nC D E G |',
+    steps: 80,
+  },
 
   { prompt: 'an upbeat song' },
   { prompt: '' },
@@ -77,6 +93,7 @@ const AUDIO_SHAPES: AnyRecord[] = [
   {
     aceAudioMode: 'custom',
     minimaxMusicMode: 'custom',
+    yue2MusicMode: 'custom',
     musicDescription: 'synthwave with heavy bass',
     lyrics: '[Verse] la la la',
     title: 'Test Track',
@@ -86,8 +103,14 @@ const AUDIO_SHAPES: AnyRecord[] = [
     instrumentalWeight: 0.7,
     vocalWeight: 0.2,
   },
-  { aceAudioMode: 'custom', minimaxMusicMode: 'custom' },
-  { aceAudioMode: 'custom', minimaxMusicMode: 'custom', musicDescription: 'jazz', bpm: 500 },
+  { aceAudioMode: 'custom', minimaxMusicMode: 'custom', yue2MusicMode: 'custom' },
+  {
+    aceAudioMode: 'custom',
+    minimaxMusicMode: 'custom',
+    yue2MusicMode: 'custom',
+    musicDescription: 'jazz',
+    bpm: 500,
+  },
   // cover image vs generateCover (Ace); ignored fields elsewhere
   { prompt: 'an upbeat song', images: [IMAGE] },
   { prompt: 'an upbeat song', generateCover: true, images: [IMAGE] },

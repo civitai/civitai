@@ -109,6 +109,20 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
       />
       <Controller
         graph={audioHub}
+        name="yue2MusicMode"
+        render={({ value, meta, onChange }) => (
+          <div className="flex flex-col gap-1">
+            <Input.Label>Mode</Input.Label>
+            <SegmentedControlWrapper
+              value={value}
+              onChange={(v) => onChange(v as typeof value)}
+              data={meta?.options?.map((o) => ({ label: o.label, value: o.value })) ?? []}
+            />
+          </div>
+        )}
+      />
+      <Controller
+        graph={audioHub}
         name="prompt"
         render={({ value, meta, onChange, error }) => (
           <PromptEditorShell
@@ -117,7 +131,7 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
                 store={store}
                 prompt={value}
                 label="Prompt"
-                info="Describe the song concept in plain English — a chat model drafts the lyrics, music description, BPM, and key from it."
+                info="Describe the song concept in plain English — a chat model drafts the music description and lyrics for you."
                 required={meta?.required}
               />
             }

@@ -30,6 +30,7 @@ const ctx = {
 const base = {
   workflow: 'txt2music',
   ecosystem: 'YuE2',
+  yue2MusicMode: 'custom',
   musicDescription: 'Warm synth-pop, female vocals, 105 BPM',
   lyrics: '[verse]\nMorning light is on the water',
   seed: 42,
@@ -54,6 +55,86 @@ describe.each([
     expect(parsed.data.ecosystem).toBe('YuE2');
     return dispatch(parsed.data, ctx);
   }
+
+  it('defaults to a single prompt and drops inactive Custom controls', () => {
+    const parsed = parse({
+      ...base,
+      yue2MusicMode: undefined,
+      prompt: 'A hopeful synth-pop song about sunrise',
+      steps: 80,
+      yue2Mode: 'off',
+      yue2Abc: 'X:1\nK:C\nC D E G |',
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data).toMatchObject({ yue2MusicMode: 'simple', duration: 120 });
+    for (const key of ['musicDescription', 'lyrics', 'steps', 'yue2Mode', 'yue2Abc']) {
+      expect(parsed.data).not.toHaveProperty(key);
+    }
+  });
+
+  it('requires only the prompt in Simple mode', () => {
+    const parsed = parse({ workflow: 'txt2music', ecosystem: 'YuE2', prompt: '   ' });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) expect(Object.keys(parsed.errors)).toEqual(['prompt']);
+  });
+
+  it('drafts lyrics with the same hidden chat step and schema as MiniMax', async () => {
+    const prompt = 'A hopeful synth-pop song about sunrise';
+    const result = await submit({ yue2MusicMode: 'simple', prompt, duration: 60 });
+    expect(result.map((step) => step.$type)).toEqual(['chatCompletion', 'yuE2']);
+    const [chat, music] = result;
+    expect(chat).toMatchObject({
+      metadata: { suppressOutput: true },
+      input: {
+        model: 'gpt-4o-mini',
+        temperature: 0.9,
+        responseFormat: {
+          type: 'json_schema',
+          jsonSchema: {
+            name: 'song_concept',
+            strict: true,
+            schema: {
+              type: 'object',
+              properties: { caption: { type: 'string' }, lyrics: { type: 'string' } },
+              required: ['caption', 'lyrics'],
+              additionalProperties: false,
+            },
+          },
+        },
+      },
+    });
+    expect(music.input).toEqual({
+      style: { $ref: '$0', path: 'output.parsed.caption' },
+      lyrics: { $ref: '$0', path: 'output.parsed.lyrics' },
+      seed: 42,
+      maxDuration: 60,
+      steps: 32,
+      mode: 'full',
+    });
+
+    const minimax = parse({
+      workflow: 'txt2music',
+      ecosystem: 'MiniMaxMusic3',
+      prompt,
+      duration: 60,
+    });
+    if (!minimax.success) throw new Error(JSON.stringify(minimax.errors));
+    if (!('ecosystem' in minimax.data)) throw new Error('Missing ecosystem');
+    expect((await dispatch(minimax.data, ctx))[0]).toEqual(chat);
+  });
+
+  it('uses automatic score planning and default steps despite stale Custom values', async () => {
+    const [, music] = await submit({
+      yue2MusicMode: 'simple',
+      prompt: 'A hopeful synth-pop song',
+      yue2Mode: 'off',
+      yue2Abc: 'X:1\nK:C\nC D E G |',
+      steps: 80,
+    });
+    expect(music.input).toMatchObject({ mode: 'full', steps: 32 });
+    expect(music.input).not.toHaveProperty('abc');
+  });
 
   it('sends required text and the live contract defaults without a resource override', async () => {
     const steps = await submit();
