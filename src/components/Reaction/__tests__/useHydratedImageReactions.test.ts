@@ -89,15 +89,15 @@ describe('reactionQueryChunks', () => {
   it('asks for nothing when there is no viewer', () => {
     // `reaction.getMyImageReactions` is a protectedProcedure and most front-page traffic is
     // signed out, so losing this gate is one UNAUTHORIZED request per home block per visitor.
-    expect(reactionQueryChunks(ids, undefined, true)).toEqual([]);
+    expect(reactionQueryChunks(ids, undefined, 'image')).toEqual([]);
   });
 
-  it('asks for nothing when the surface is not an image surface', () => {
-    expect(reactionQueryChunks(ids, VIEWER, false)).toEqual([]);
+  it.each(['model', 'post', 'article'] as const)('asks for nothing on a %s surface', (entity) => {
+    expect(reactionQueryChunks(ids, VIEWER, entity)).toEqual([]);
   });
 
   it('chunks a signed-in viewer ids without dropping any', () => {
-    const chunks = reactionQueryChunks(ids, VIEWER, true);
+    const chunks = reactionQueryChunks(ids, VIEWER, 'image');
 
     expect(chunks.map((c) => c.length)).toEqual([100, 50]);
     expect(chunks.flat()).toEqual(ids);
@@ -106,10 +106,13 @@ describe('reactionQueryChunks', () => {
   it('asks in a stable order, so a second visit to the page can reuse the answer', () => {
     // Every home block shuffles its pool on mount. Without the sort the query key is different
     // every time and `staleTime` protects nothing — the same ids are re-fetched on every visit.
-    const shuffled = [...ids].sort(() => Math.random() - 0.5);
+    //
+    // REVERSED rather than randomised: a random permutation can come back near-identity, and a
+    // control that is only almost-surely red is not a control.
+    const reversed = [...ids].reverse();
 
-    expect(reactionQueryChunks(shuffled, VIEWER, true)).toEqual(
-      reactionQueryChunks(ids, VIEWER, true)
+    expect(reactionQueryChunks(reversed, VIEWER, 'image')).toEqual(
+      reactionQueryChunks(ids, VIEWER, 'image')
     );
   });
 
@@ -117,7 +120,7 @@ describe('reactionQueryChunks', () => {
     // The pool belongs to the React Query cache, and `useShuffled` already copies before shuffling
     // for the same reason.
     const caller = [3, 1, 2];
-    reactionQueryChunks(caller, VIEWER, true);
+    reactionQueryChunks(caller, VIEWER, 'image');
 
     expect(caller).toEqual([3, 1, 2]);
   });

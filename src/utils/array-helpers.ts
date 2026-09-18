@@ -99,6 +99,10 @@ export function indexOfOr<T>(array: T[], value: T, or: number) {
  *
  * Every id lands in exactly one chunk, so no collection is silently truncated to
  * the first.
+ *
+ * A caller that never appends may sort before calling — `reactionQueryChunks` does, to make its
+ * key repeat across mounts. That belongs at the caller, not here: the paging callers need the
+ * order they hand over left alone.
  */
 export function chunkIds(ids: number[], size: number): number[][] {
   const unique = [...new Set(ids)];

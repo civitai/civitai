@@ -12,6 +12,9 @@ export const REACTION_FETCH_CHUNK = 100;
 // and a cast at the call site is what would hide a payload that stopped carrying `reactions`.
 type HydratableImage = { id: number; reactions?: { userId: number; reaction: ReviewReactions }[] };
 
+/** The entity types a home block's items can be. Only one of them carries reactions. */
+export type HydratableEntity = 'image' | 'model' | 'post' | 'article';
+
 /**
  * The id lists this surface will ask about, or none at all.
  *
@@ -19,13 +22,19 @@ type HydratableImage = { id: number; reactions?: { userId: number; reaction: Rev
  * `reaction.getMyImageReactions` is a `protectedProcedure`, and the front page's majority
  * traffic is signed out. Without this gate every anonymous visitor fires an UNAUTHORIZED
  * request per home block.
+ *
+ * 🔴 Takes the ENTITY, not a boolean the caller derives. `enabled: type === 'image'` was one rule
+ * restated at three call sites, and a call site's argument is the one thing no test here can see:
+ * review found a one-token flip that switched hydration off on the front page with every check in
+ * this repo still green. Passing `entity: type` cannot be got subtly wrong, and the union type
+ * makes a mistyped `'images'` a compile error rather than a silent no-op.
  */
 export function reactionQueryChunks(
   imageIds: number[],
   userId: number | undefined,
-  enabled: boolean
+  entity: HydratableEntity
 ): number[][] {
-  if (!userId || !enabled) return [];
+  if (!userId || entity !== 'image') return [];
   // SORTED here, and deliberately not inside `chunkIds`, whose contract is insertion order: its
   // other callers page, and a feed that appends lower ids would have every chunk boundary shift
   // under it. A home block is the opposite — it never appends, it asks about its whole pool, and
@@ -117,7 +126,10 @@ export function mergeUserImageReactions<T extends HydratableImage>(
  */
 export function useHydratedImageReactions<T extends HydratableImage>(
   images: T[],
-  { enabled = true }: { enabled?: boolean } = {}
+  // REQUIRED, with no default. A default of `'image'` would be the same hazard one level up:
+  // changing it to anything else switches hydration off at every call site that relied on it,
+  // in one token, with nothing red. Required means the compiler makes each block say it.
+  { entity }: { entity: HydratableEntity }
 ): T[] {
   const currentUser = useCurrentUser();
   const userId = currentUser?.id;
@@ -127,10 +139,10 @@ export function useHydratedImageReactions<T extends HydratableImage>(
       reactionQueryChunks(
         images.map((image) => image.id),
         userId,
-        enabled
+        entity
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [images.map((image) => image.id).join(','), userId, enabled]
+    [images.map((image) => image.id).join(','), userId, entity]
   );
 
   const queries = trpc.useQueries((t) =>

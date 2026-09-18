@@ -197,19 +197,20 @@ function ImageFeedGrid({
     data: rotated,
   });
   // The block's payload is shared between viewers, so it arrives with `reactions: []` for
-  // everyone. Hydrated BEFORE the cap, and passed straight in rather than held in a binding of
-  // its own: the capped list is then the only array in scope, so there is no un-hydrated one
-  // left to render by mistake. Before the cap also keeps the query key stable — the cap depends
-  // on what earlier blocks claimed, which changes as they resolve.
-  const visible = useDedupedCappedItems(
-    useHydratedImageReactions(filtered, { enabled: !loadingPreferences }),
-    {
-      order,
-      entity: 'image',
-      rows,
-      maxPerUser,
-    }
-  );
+  // everyone. Passed straight into the cap rather than held in a binding of its own, which
+  // removes the INVITED mistake of rendering the un-hydrated list — not every one: `filtered` is
+  // still in scope, and so is what `ImagesProvider` is handed below.
+  //
+  // BEFORE the cap because the cap depends on what earlier blocks claimed through a shared store,
+  // so it changes as they resolve — hydrating after it re-keyed the query and stranded the answer.
+  // It does NOT buy the detail dialog anything: the dialog browses the capped list, which is
+  // hydrated wherever this sits.
+  const visible = useDedupedCappedItems(useHydratedImageReactions(filtered, { entity: 'image' }), {
+    order,
+    entity: 'image',
+    rows,
+    maxPerUser,
+  });
 
   if (loadingPreferences) return <FeedSkeleton rows={rows} />;
 

@@ -87,14 +87,20 @@ describe('home blocks hydrate the viewer reactions their shared payload cannot c
       path.resolve(__dirname, '../../routers/reaction.router.ts'),
       'utf8'
     );
-    const rung = router.match(/getMyImageReactions:\s*(\w+)/)?.[1];
+    // EVERY occurrence, not `match`'s first. That file is comment-dense, and a doc comment above
+    // the declaration that quotes it — the natural thing a future editor writes — would satisfy a
+    // first-match check while the declaration underneath said something else. Nobody has to act in
+    // bad faith: one PR rewords the comment, a later one loosens the rung, and both are green.
+    const rungs = [...router.matchAll(/getMyImageReactions:\s*(\w+)/g)].map((m) => m[1]);
 
-    expect(rung, 'reaction.router.ts no longer declares getMyImageReactions').toBeDefined();
-    expect([
-      'protectedProcedure',
-      'guardedProcedure',
-      'verifiedProcedure',
-      'moderatorProcedure',
-    ]).toContain(rung);
+    expect(rungs, 'reaction.router.ts no longer declares getMyImageReactions').not.toEqual([]);
+    for (const rung of rungs) {
+      expect([
+        'protectedProcedure',
+        'guardedProcedure',
+        'verifiedProcedure',
+        'moderatorProcedure',
+      ]).toContain(rung);
+    }
   });
 });
