@@ -104,8 +104,8 @@ const PRODUCTION_FILES = walk(SRC).filter((f) => !isTestPath(toRel(f)));
 
 /**
  * The raw-text gate that runs BEFORE `isCallSite` and decides what it ever sees. A strict
- * superset of both halves of `isCallSite` — you cannot import the module without the literal
- * `block-gated-images.logic` appearing, nor call the function without `SYMBOL` appearing, and
+ * superset of both halves of `isCallSite` — the import half needs the literal
+ * `block-gated-images.logic`, the call half needs `SYMBOL`, and
  * stripping only ever REMOVES text, so a file lacking both raw cannot gain either. It keeps a
  * char-by-char scan off the thousands of files that obviously do not matter.
  *
@@ -140,15 +140,15 @@ const SYNTHETIC_REL = 'server/services/blocks/__synthetic_consumer__.ts';
  * predicate extracted out of `isCallSite`: that leaves the rule in two places and pins the copy
  * the ledger does not use.
  */
-function verdictFor(source: string): boolean {
+function verdictFor(source: string, rel: string = SYNTHETIC_REL): boolean {
   // The delete is unconditional, so a real file at this rel would be evicted from the corpus
   // for the rest of the run.
-  if (SOURCE.has(SYNTHETIC_REL)) throw new Error(`${SYNTHETIC_REL} exists; pick another rel`);
-  SOURCE.set(SYNTHETIC_REL, source);
+  if (SOURCE.has(rel)) throw new Error(`${rel} exists; pick another rel`);
+  SOURCE.set(rel, source);
   try {
-    return isCallSite(SYNTHETIC_REL);
+    return isCallSite(rel);
   } finally {
-    SOURCE.delete(SYNTHETIC_REL);
+    SOURCE.delete(rel);
   }
 }
 
@@ -198,8 +198,8 @@ describe(`${SYMBOL} seam`, () => {
   // walk's real output (the only one observing what the guard actually keyed the ledger on).
   it('normalises a host-separated rel to the POSIX form the ledger is written in', () => {
     expect(toPosix('server\\services\\blocks\\block-gated-images.logic.ts')).toBe(DEFINITION);
-    // Mixed case, because `toRel` feeds BOTH sides of the equality above — a normalisation that
-    // lowercased (or otherwise mangled) every rel would leave the two sides identically wrong.
+    // Mixed case: `toRel` produces BOTH sides of the walk-coverage equality, so a normalisation
+    // that lowercased every rel would leave them identically wrong and still equal.
     expect(toRel(join(SRC, 'components', 'AppBlocks', 'x.tsx'))).toBe('components/AppBlocks/x.tsx');
     expect(toRel(join(SRC, 'server', 'services', 'blocks', 'block-gated-images.logic.ts'))).toBe(
       DEFINITION
@@ -241,13 +241,21 @@ describe(`${SYMBOL} seam`, () => {
     expect(verdictFor('see block-gated-images.logic.ts for the clamp')).toBe(false);
     expect(verdictFor(`const doc = '${SYMBOL}';`)).toBe(false);
 
+    // The REL is an input to `isCallSite` too, and every fixture above uses one inside
+    // `server/services/blocks/` — as does every real corpus file, so the ledger cannot see it
+    // either. Without this, scoping the detector to that directory is green while a consumer
+    // added under `components/` or `pages/` never joins the ledger.
+    expect(verdictFor(aliased, 'components/AppBlocks/SomeGrid.tsx')).toBe(true);
+    expect(verdictFor(aliased, 'pages/api/v1/blocks/images.ts')).toBe(true);
+
     expect(SOURCE.has(SYNTHETIC_REL), 'the synthetic source outlived its test').toBe(false);
   });
 
   // The module half is what admits a consumer that imports without spelling the symbol — drop it
   // and a re-exporting barrel never reaches the detector at all. Every spelling, for the same
-  // reason the detector control carries five: one fixture pins one spelling, and the predicate
-  // can be narrowed to exactly that literal while staying green.
+  // reason the detector control enumerates spellings: one fixture pins one spelling, and the
+  // predicate can be narrowed to exactly that literal while staying green. (A substring test
+  // cannot tell the relative forms apart — the rooted/relative pair is what discriminates.)
   it('the corpus pre-filter admits a file that names the module but not the symbol', () => {
     for (const barrel of [
       `export * from '~/server/services/blocks/block-gated-images.logic';\n`,
@@ -287,7 +295,7 @@ describe(`${SYMBOL} seam`, () => {
 
     // The count above is satisfied by one file, so it cannot say WHICH comment kinds are
     // stripped: a stripper that stopped handling `//` would still ride on a block-comment
-    // survivor. The line comment is indented and the third case is trailing, because a
+    // survivor. The line comment is indented and the second is trailing, because a
     // line-start-anchored stripper passes a column-0 fixture and is the regression this
     // module's own header records.
     expect(
@@ -296,7 +304,7 @@ describe(`${SYMBOL} seam`, () => {
     expect(stripSourceComments(`const a = 1; // ${SYMBOL}(row, level);\n`)).not.toContain(
       `${SYMBOL}(`
     );
-    // Every other arm here is a `not.toContain`, which a stripper returning '' satisfies.
+    // The other `stripSourceComments` arms are all `not.toContain`, which `() => ''` satisfies.
     expect(stripSourceComments(`  // x\nconst a = 1;\n`)).toContain('const a = 1');
     expect(stripSourceComments(`/** calls ${SYMBOL}(row, level) */\nconst a = 1;\n`)).not.toContain(
       `${SYMBOL}(`
