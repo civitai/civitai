@@ -71,6 +71,7 @@ import {
   TurnstileWidget,
 } from '~/components/TurnstileWidget/TurnstileWidget';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { buzzAmountToUnitAmount } from '~/shared/utils/buzz-charge';
 import { BuzzTypeSelector } from '~/components/Buzz/BuzzPurchase/BuzzTypeSelector';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { GreenEnvironmentRedirect } from '~/components/Purchase/GreenEnvironmentRedirect';
@@ -387,7 +388,7 @@ export const BuzzPurchaseImproved = ({
     if (minBuzzAmount) {
       setSelectedPrice(null);
       setActiveControl('customAmount');
-      setCustomAmount(Math.max(Math.ceil(minBuzzAmount / 10), effectiveMinCharge));
+      setCustomAmount(Math.max(buzzAmountToUnitAmount(minBuzzAmount), effectiveMinCharge));
     }
   }, [packages, minBuzzAmount, selectedPrice]);
 
@@ -592,20 +593,17 @@ export const BuzzPurchaseImproved = ({
                                   const newCustomBuzzAmount = value ? Number(value) : undefined;
                                   setCustomBuzzAmount(newCustomBuzzAmount);
                                   if (newCustomBuzzAmount) {
-                                    // Ceil, because the charge is in whole cents and the
-                                    // `unitAmount` schema now rejects a fraction outright
-                                    // (Stripe answers one with `Invalid integer`). This field
-                                    // is free-typed, so a Buzz amount that is not a multiple
-                                    // of 10 — 10,004 — divides to 1000.4. The USD field beside
-                                    // it needs no such guard: NumberInputWrapper already
-                                    // applies `Math.ceil(value * 100)` to a `format="currency"`
-                                    // input. Ceil rather than round, to match the
-                                    // minBuzzAmount derivation above and to never charge less
-                                    // than the Buzz granted. The submitted Buzz amount is
-                                    // derived back from this value, so the pair stays
-                                    // consistent with the server's
-                                    // `unitAmount === buzzAmount / 10` check.
-                                    setCustomAmount(Math.ceil(newCustomBuzzAmount / 10));
+                                    // This field is free-typed, so a Buzz amount that is
+                                    // not a multiple of 10 — 10,004 — divides to 1000.4
+                                    // cents, which Stripe answers with `Invalid integer`.
+                                    // `buzzAmountToUnitAmount` owns the rule (and why it
+                                    // ceils); it is the only derivation that reaches every
+                                    // provider, Stripe's `.int()` covering Stripe alone.
+                                    // The USD field beside this one needs no such guard:
+                                    // NumberInputWrapper already applies
+                                    // `Math.ceil(value * 100)` to a `format="currency"`
+                                    // input.
+                                    setCustomAmount(buzzAmountToUnitAmount(newCustomBuzzAmount));
                                   } else {
                                     setCustomAmount(undefined);
                                   }
