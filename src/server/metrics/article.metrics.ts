@@ -14,7 +14,13 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { createLogger } from '~/utils/logging';
 import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { executeRefresh, getAffected, getEntityMetricTasks } from '~/server/metrics/metric-helpers';
+import {
+  executeRefresh,
+  getAffected,
+  getEntityMetricTasks,
+  snippets,
+} from '~/server/metrics/metric-helpers';
+import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
 import type { ArticleMetric } from '~/shared/utils/prisma/models';
 import { templateHandler } from '~/server/db/db-helpers';
 
@@ -105,6 +111,10 @@ export const articleMetrics = createMetricProcessor({
 
 async function getReactionTasks(ctx: MetricContext) {
   log('getReactionTasks', ctx.lastUpdate);
+  const excludedFilter = snippets.excludedReactorFilter(
+    await getMetricExcludedUserIdsOrThrow(),
+    'r."userId"'
+  );
   const affected = await getAffected(ctx)`
     -- get recent article reactions
     SELECT
@@ -129,6 +139,7 @@ async function getReactionTasks(ctx: MetricContext) {
       FROM "ArticleReaction" r
       WHERE r."articleId" IN (${ids})
         AND r."articleId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
+        ${excludedFilter}
       GROUP BY r."articleId"
     `;
     log('getReactionTasks', i + 1, 'of', tasks.length, 'done');

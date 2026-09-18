@@ -1,7 +1,13 @@
 import { chunk } from 'lodash-es';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { executeRefresh, getAffected, getEntityMetricTasks } from '~/server/metrics/metric-helpers';
+import {
+  executeRefresh,
+  getAffected,
+  getEntityMetricTasks,
+  snippets,
+} from '~/server/metrics/metric-helpers';
+import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
 import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
@@ -89,6 +95,10 @@ export const postMetrics = createMetricProcessor({
 
 async function getReactionTasks(ctx: MetricContext) {
   log('getReactionTasks', ctx.lastUpdate);
+  const excludedFilter = snippets.excludedReactorFilter(
+    await getMetricExcludedUserIdsOrThrow(),
+    'r."userId"'
+  );
   const affectedImages = await ctx.ch.$query<{ imageId: number }>`
     -- get recent images with reactions
     SELECT DISTINCT entityId as imageId
@@ -136,6 +146,7 @@ async function getReactionTasks(ctx: MetricContext) {
       JOIN "Image" i ON i.id = r."imageId"
       WHERE i."postId" IN (${ids})
         AND i."postId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
+        ${excludedFilter}
       GROUP BY i."postId"
     `;
     log('getReactionTasks', i + 1, 'of', tasks.length, 'done');

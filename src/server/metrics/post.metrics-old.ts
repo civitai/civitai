@@ -2,6 +2,7 @@ import { chunk } from 'lodash-es';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
+import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
 import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
@@ -144,6 +145,10 @@ export async function update(baseCtx: MetricProcessorRunContext) {
 
 async function getReactionTasks(ctx: MetricContext) {
   log('getReactionTasks', ctx.lastUpdate);
+  const excludedFilter = snippets.excludedReactorFilter(
+    await getMetricExcludedUserIdsOrThrow(),
+    'r."userId"'
+  );
   const affectedImages = await ctx.ch.$query<{ imageId: number }>`
       SELECT DISTINCT entityId as imageId
       FROM entityMetricEvents_month
@@ -188,6 +193,7 @@ async function getReactionTasks(ctx: MetricContext) {
       CROSS JOIN (SELECT unnest(enum_range('AllTime'::"MetricTimeframe", NULL)) AS "timeframe") tf
       WHERE i."postId" IN (${ids})
         AND i."postId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
+        ${excludedFilter}
       GROUP BY i."postId", tf.timeframe
     `;
     log('getReactionTasks', i + 1, 'of', tasks.length, 'done');

@@ -10,6 +10,7 @@ import {
   snippets,
 } from '~/server/metrics/metric-helpers';
 import { chunk } from 'lodash-es';
+import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
 
 const log = createLogger('metrics:bounty');
 
@@ -45,6 +46,10 @@ export const bountyEntryMetrics = createMetricProcessor({
 
 async function getReactionTasks(ctx: MetricProcessorRunContext) {
   log('getReactionTasks', ctx.lastUpdate);
+  const excludedFilter = snippets.excludedReactorFilter(
+    await getMetricExcludedUserIdsOrThrow(),
+    'r."userId"'
+  );
   const affected = await getAffected(ctx)`
     -- get recent bounty entry reactions
     SELECT
@@ -69,6 +74,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
         JOIN "BountyEntry" be ON be.id = r."bountyEntryId" -- ensure the bountyEntry exists
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
         WHERE r."bountyEntryId" = ANY(${ids}::int[])
+        ${excludedFilter}
         GROUP BY r."bountyEntryId", tf.timeframe
       )
       SELECT jsonb_agg(

@@ -7,9 +7,9 @@ import { logToAxiom } from '~/server/logging/client';
 /**
  * Users suppressed from metrics by the reaction-abuse detector
  * (`/api/admin/reaction-abuse`). Every ClickHouse path that produces a metric total
- * filters them, and as of #4584 so does the event-engine's Redis cache — but a
- * Postgres `count()` over `ImageReaction` does not, which is why the reaction
- * milestone fires on numbers no displayed count agrees with.
+ * filters them, as of #4584 so does the event-engine's Redis cache, and the reaction
+ * sums in `src/server/metrics/*.metrics.ts` read this list through
+ * `getMetricExcludedUserIdsOrThrow`.
  *
  * These accounts are NOT banned, deleted or muted: the list suppresses metrics only.
  */
@@ -29,36 +29,56 @@ export async function getMetricExcludedUserIds(): Promise<number[]> {
   if (!clickhouse) return [];
 
   try {
-    const cached = await fetchThroughCache(
-      REDIS_KEYS.CACHES.METRIC_EXCLUDED_USERS,
-      async () => {
-        const rows = await clickhouse!.$query<{ userId: number }>`
-          SELECT userId FROM metricExcludedUsers FINAL WHERE active = 1
-        `;
-        // > 0 because `Number(null)` is 0, not NaN: a null column would otherwise
-        // enter the list as user 0 and silently suppress whatever writes that id.
-        // `isFinite` is belt-and-braces here, kept for parity with the identical
-        // guard in metric-reaction-repair.service.ts and the event-engine copy.
-        return rows.map((r) => Number(r.userId)).filter((id) => Number.isFinite(id) && id > 0);
-      },
-      // Passed explicitly, not because it differs from fetchThroughCache's default —
-      // it does not — but so a change to that default cannot silently widen this past
-      // the "within ~5 min" the admin endpoint promises.
-      { ttl: CACHE_TTL }
-    );
-
-    // The cache read is the one failure this function's own try does NOT cover:
-    // `fetchThroughCache` returns any present `data` unvalidated, and a `null` would
-    // reach the caller's `.length` outside this catch — a thrown TypeError, which the
-    // caller's `.catch(handleLogError)` turns into the silent skip this whole design
-    // exists to avoid. Validate the shape rather than trust the type.
-    if (!Array.isArray(cached)) throw new Error('cached exclusion list was not an array');
-    unavailable = false;
-    return cached;
+    return await fetchExcludedUserIds();
   } catch (error) {
     reportUnavailable(error);
     return [];
   }
+}
+
+/**
+ * Same list, but a read failure rejects instead of degrading to `[]`.
+ *
+ * The lenient reader above is right for the notification path, where an unfiltered
+ * count is a wrong number shown once. It is wrong for a metric job: the Postgres
+ * reaction sums never decay, so a total written unfiltered during an outage stays
+ * wrong until that entity happens to receive another reaction — which for a quiet
+ * post is never. `createMetricProcessor` calls `setLastUpdate()` and `queue.commit()`
+ * only after `update()` resolves, so rejecting leaves the cursor and the queue where
+ * they were and the window is recomputed on the next run.
+ */
+export async function getMetricExcludedUserIdsOrThrow(): Promise<number[]> {
+  if (!clickhouse) throw new Error('clickhouse client unavailable');
+  return fetchExcludedUserIds();
+}
+
+async function fetchExcludedUserIds(): Promise<number[]> {
+  const cached = await fetchThroughCache(
+    REDIS_KEYS.CACHES.METRIC_EXCLUDED_USERS,
+    async () => {
+      const rows = await clickhouse!.$query<{ userId: number }>`
+        SELECT userId FROM metricExcludedUsers FINAL WHERE active = 1
+      `;
+      // > 0 because `Number(null)` is 0, not NaN: a null column would otherwise
+      // enter the list as user 0 and silently suppress whatever writes that id.
+      // `isFinite` is belt-and-braces here, kept for parity with the identical
+      // guard in metric-reaction-repair.service.ts and the event-engine copy.
+      return rows.map((r) => Number(r.userId)).filter((id) => Number.isFinite(id) && id > 0);
+    },
+    // Passed explicitly, not because it differs from fetchThroughCache's default —
+    // it does not — but so a change to that default cannot silently widen this past
+    // the "within ~5 min" the admin endpoint promises.
+    { ttl: CACHE_TTL }
+  );
+
+  // `fetchThroughCache` returns any present `data` unvalidated, so a `null` would
+  // otherwise reach a caller's `.length` as a thrown TypeError from outside the
+  // lenient reader's catch — which its caller's `.catch(handleLogError)` turns into
+  // the silent skip that design exists to avoid. Validate the shape rather than
+  // trust the type.
+  if (!Array.isArray(cached)) throw new Error('cached exclusion list was not an array');
+  unavailable = false;
+  return cached;
 }
 
 /**

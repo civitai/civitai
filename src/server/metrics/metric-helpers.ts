@@ -130,7 +130,33 @@ const reactionMetricUpserts = Object.keys(ReviewReactions)
   .map((reaction) => `"${reaction.toLowerCase()}Count" = EXCLUDED."${reaction.toLowerCase()}Count"`)
   .join(', ');
 
+/**
+ * `AND <column> NOT IN (...)` for the metric-excluded users, or `''` when the list is
+ * empty. Emitted as literal SQL rather than a bound parameter because the reaction
+ * queries run through `templateHandler`, which interpolates; a string is the one value
+ * both handlers pass through verbatim, so one snippet serves both.
+ *
+ * Non-integer ids throw. They cannot reach here from
+ * `getMetricExcludedUserIdsOrThrow`, which already coerces — but this builds SQL text,
+ * and dropping an unexpected id would silently keep counting that user's reactions,
+ * which is the bug this exists to fix.
+ */
+function excludedReactorFilter(excludedUserIds: number[], column: string) {
+  if (!excludedUserIds.length) return '';
+  return `AND ${column} NOT IN (${excludedReactorIdList(excludedUserIds)})`;
+}
+
+/** The same ids as a bare literal list, for a call site that needs `IN` as well. */
+function excludedReactorIdList(excludedUserIds: number[]) {
+  for (const id of excludedUserIds) {
+    if (!Number.isInteger(id)) throw new Error(`non-integer excluded user id: ${id}`);
+  }
+  return excludedUserIds.join(',');
+}
+
 export const snippets = {
+  excludedReactorFilter,
+  excludedReactorIdList,
   reactionTimeframes,
   timeframeSum,
   timeframeCount,
