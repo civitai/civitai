@@ -312,43 +312,33 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
 
       const now = Date.now();
 
-      // ── THE FIFTH SILENCE, reported by the only party that can see it ────────
+      // ── The one drop path this host cannot observe, reported by the block ────
       // The block's transport refused one of OUR replies at its own trust boundary
       // and dropped it, so its request is now hanging to the SDK timeout. We cannot
-      // observe that ourselves: the SDK's validator runs in the iframe AFTER we have
-      // replied, so from here the exchange completed and the `handled` below already
-      // counted it. `BLOCK_MESSAGE_REJECTED` (@civitai/app-sdk/blocks, fire-and-
-      // forget, no requestId) is the block telling us.
+      // see that: the SDK's validator runs in the iframe AFTER we replied, so from
+      // here the exchange completed and the `handled` below already counted it.
+      // `BLOCK_MESSAGE_REJECTED` is the block telling us. Why the label is the
+      // REQUEST and not the rejected reply, how to read the series, and what this
+      // does NOT cover are all in `bridgeLabels.ts` — stated once, there, because an
+      // earlier revision of this block restated them here and the copy had already
+      // drifted from the original inside this very commit.
       //
-      // 🔴 THE LABEL COMES FROM THE PAYLOAD, NOT THE MESSAGE TYPE. `payload.type` is
-      // the block→host REQUEST left hanging (`GET_IMAGES_BY_IDS`), which is what an
-      // operator needs and — not incidentally — the only spelling that survives
-      // `boundBridgeMessageType`: the INVENTORY it clamps against holds no `*_RESULT`
-      // key, so the rejected REPLY's type would collapse to `'other'`. It is
-      // block-supplied and therefore untrusted, so it is clamped HERE.
+      // 🔴 THE LABEL IS CLAMPED HERE, AT THE EXTRACTION SITE, NOT LEFT TO THE SINK.
+      // The other `report(...)` callers pass `data.type` and let
+      // `recordBridgeMessage` clamp on the way out; that is not enough for a value
+      // pulled out of an untrusted payload, because `onOutcome` is a seam — every
+      // browser test in `usePostMessageOutcomes.browser.test.tsx` supplies its own
+      // sink, and with the clamp downstream one of them observed the raw
+      // `NOT_A_REAL_MESSAGE`. Clamping here makes the value this branch emits the
+      // value that lands in the series, whatever the sink; the default sink clamps
+      // again, idempotently.
       //
-      // 🔴 CLAMPED AT THE EXTRACTION SITE, NOT LEFT TO THE SINK — and that is a
-      // correction, not belt-and-braces. The other `report(...)` callers pass
-      // `data.type`, which `recordBridgeMessage` clamps on the way out; but
-      // `onOutcome` is a documented SEAM (every browser test supplies its own sink,
-      // and `report`'s whole job is to be sink-agnostic), so a value pulled out of
-      // an untrusted payload and bounded only by the default sink is bounded by
-      // nothing a reader of this branch can see. Measured while writing
-      // `usePostMessageOutcomes.browser.test.tsx`: with the clamp downstream, the
-      // test's own sink observed the raw `NOT_A_REAL_MESSAGE`. Clamping here makes
-      // the value this branch emits the value that lands in the series, whatever
-      // the sink; the default sink clamps again, idempotently.
-      //
-      // 🔴 EXACTLY ONE INCREMENT, AND NOT `handled`. Returning here keeps the report
-      // itself out of the `handled` denominator — one rejection must move one series
-      // by one, or the counter double-books and stops being readable as a rate.
-      //
-      // ABOVE the rate limiter and the dedup map, deliberately, for the same reason
-      // the `no_handler` branch is: a flood of junk must not burn the 30 msg/sec
-      // budget legitimate BLOCK_ERROR reporting needs. Magnitude is consequently
-      // unbounded here, as it already is for `no_handler`/`deduped` — see
-      // `BRIDGE_MESSAGE_COUNT_MAX`. Dedup would also be actively wrong: these carry
-      // no `requestId`, and two rejections of the same type are two facts.
+      // 🔴 EXACTLY ONE INCREMENT, AND NOT `handled` — returning here keeps the report
+      // out of the denominator, or one rejection moves two series by one and every
+      // ratio read against `handled` goes quietly wrong. ABOVE the limiter and the
+      // dedup map, for the same reason the `no_handler` branch is: a flood of junk
+      // must not burn the budget legitimate BLOCK_ERROR reporting needs. Dedup would
+      // also be wrong — these carry no `requestId`, and two rejections are two facts.
       if (data.type === 'BLOCK_MESSAGE_REJECTED') {
         const rejected = (data.payload as { type?: unknown } | null | undefined)?.type;
         report(

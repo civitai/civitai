@@ -180,7 +180,7 @@ export function flushBridgeMessages(): void {
   // fires the series reads "enormous" instead of "rejected" — see
   // `BRIDGE_MESSAGE_COUNT_MAX` for why the ceiling is a SANITY bound and not, as
   // an earlier revision of this comment claimed, a figure no real client can
-  // reach: three of the five outcomes are reported above the bridge's inbound
+  // reach: four of the six outcomes are reported above the bridge's inbound
   // limiter and are not bounded by it at all.
   const events = [...counts.values()]
     .slice(0, BRIDGE_MESSAGE_BATCH_MAX)

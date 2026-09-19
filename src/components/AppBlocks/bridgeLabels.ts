@@ -2,7 +2,7 @@
  * App Blocks BRIDGE telemetry — the label sets and wire bounds, and NOTHING ELSE.
  *
  * 🔴 IT IS A SEPARATE MODULE FROM `bridgeTelemetry.ts` FOR ONE MEASURED REASON:
- * `bridgeTelemetry` imports `hostHandlerParity`'s 46-key `INVENTORY` (~6.7 KB
+ * `bridgeTelemetry` imports `hostHandlerParity`'s 47-key `INVENTORY` (~6.8 KB
  * minified) to bound the `type` label. `src/server/schema/track.schema.ts` needs
  * the label ENUMS so the beacon's zod schema and the emitter cannot drift — and
  * `track.schema` is imported by `TrackView` on pages that mount no block at all,
@@ -35,9 +35,13 @@
  *   no_token     — a handler ran, found no usable block credential, and refused.
  *   validator_rejected
  *                — the BLOCK refused our reply at its own trust boundary and
- *                  dropped it, so its request hangs to the SDK timeout. The fifth
- *                  silence, and the only one of the five with a confirmed
- *                  production incident.
+ *                  dropped it, so its request hangs to the SDK timeout. The only
+ *                  outcome here with a confirmed production incident behind it.
+ *                  ⚠️ NOT "the fifth and final" silence — the SDK's own
+ *                  `handleMessage` still drops silently and uncounted on an origin
+ *                  mismatch, on a malformed envelope, and on a well-formed reply
+ *                  whose `requestId` matches no pending request. This value covers
+ *                  the validator path only.
  *
  * 🔴 `no_token` is reported BY THE HANDLER, not by the dispatcher — the dispatcher
  * has no idea a token exists. It rides the same counter because an operator asking
@@ -59,10 +63,16 @@
  *    deliberate UNDERCOUNT on a sustained break. Read it as *which types are being
  *    rejected and when it started*, never as an exact total.
  *
- * ⚠️ ADDING THIS SIXTH VALUE GREW THE COUNTER'S LABEL PRODUCT BY 20% —
- * (approved apps + 1) x 47 x 2 x 6. `/api/track/block-message`'s docblock asks for
- * that product to be read before a label is added; an outcome VALUE is the cheaper
- * axis than a fifth label, which is why this arrived as one.
+ * ⚠️ ADDING THIS SIXTH VALUE GREW THE COUNTER'S WORST-CASE LABEL PRODUCT BY 22.6%,
+ * not the 20% an earlier revision of this line claimed: the outcome axis alone is
+ * +20%, but `BLOCK_MESSAGE_REJECTED` also added an INVENTORY key, so the type axis
+ * moved too. Re-derived at 50 approved apps: (50+1) x 48 x 2 x 6 = 29,376, against
+ * 51 x 47 x 2 x 5 = 23,970 before. Both include the `'other'` slot each axis adds —
+ * that line's `x 47` omitted it. `/api/track/block-message`'s docblock asks for the
+ * product to be read before a label is added; an outcome VALUE is the cheaper axis
+ * than a fifth label, which is why this arrived as one. ⚠️ And it is a CEILING, not
+ * allocated heap: nothing pre-initialises the label space, so the sixth value costs
+ * zero series until a rejection actually occurs.
  */
 export const BRIDGE_MESSAGE_OUTCOMES = [
   'handled',
@@ -102,7 +112,7 @@ export const BRIDGE_MESSAGE_BATCH_MAX = 200;
  * 🔴 IT IS A SANITY CEILING, NOT A RATE CONTROL, AND THE DIFFERENCE MATTERS. An
  * earlier revision of this comment derived it as "30 msg/sec × a 10 s flush window
  * = 300 legitimate max, so nothing real can reach it". That derivation is wrong
- * for THREE of the five outcomes and was cited as justification in two other
+ * for FOUR of the six outcomes and was cited as justification in two other
  * files, so it is corrected here rather than quietly dropped:
  *
  *   - `handled` and `no_token` are the only two the bridge's 30 msg/sec inbound

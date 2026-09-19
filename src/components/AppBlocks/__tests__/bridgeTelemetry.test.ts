@@ -79,10 +79,18 @@ describe('the label enums are closed', () => {
   });
 
   test('BLOCK_MESSAGE_REJECTED is an INVENTORY key, so the label bound admits it', () => {
-    // It arrives as an ordinary inbound bridge message, so `boundBridgeMessageType`
-    // sees its type like any other. Not in INVENTORY ⇒ the dispatcher's own
-    // `no_handler` bookkeeping for it would read `'other'`, and the entry is also
-    // what documents that no per-host handler exists for it.
+    // 🔴 ITS PURPOSE IS THE COMPILE-TIME GATE, AND NOTHING ELSE TODAY. An earlier
+    // revision of this comment justified the entry by the dispatcher's `no_handler`
+    // bookkeeping — a path the same change makes UNREACHABLE, because the new
+    // `BLOCK_MESSAGE_REJECTED` branch returns above the `no_handler` branch. The
+    // real reason is `hostHandlerParity.ts`'s one-directional gate: every type in
+    // the PUBLISHED SDK's block→host union must be an INVENTORY key, so this entry
+    // is what lets this repo bump `@civitai/app-sdk` past the version that adds the
+    // message. It is also where the N/A rationale for both hosts is documented.
+    // ⚠️ Keeping it does widen what the public beacon admits by one label value
+    // nothing legitimate can emit — `boundBridgeMessageType` now passes
+    // `'BLOCK_MESSAGE_REJECTED'` through for a forged POST instead of clamping it to
+    // `'other'`. Bounded and harmless, but it is a real cost of the entry.
     expect(Object.prototype.hasOwnProperty.call(INVENTORY, 'BLOCK_MESSAGE_REJECTED')).toBe(true);
     expect(boundBridgeMessageType('BLOCK_MESSAGE_REJECTED')).toBe('BLOCK_MESSAGE_REJECTED');
     // Fire-and-forget: nothing awaits it, so there is nothing to NACK. A reply

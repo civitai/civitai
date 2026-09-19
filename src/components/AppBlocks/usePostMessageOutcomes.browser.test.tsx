@@ -17,9 +17,11 @@ import type { BridgeMessageOutcome } from '~/components/AppBlocks/bridgeTelemetr
  * then UNREGISTER it and prove the SAME message now reports `no_handler`. One
  * variable moves, both arms are read, and the before/after pair is the evidence.
  *
- * The four DISPATCHER outcomes are all exercised against the real hook. The fifth,
- * `no_token`, is a HANDLER-side report and is pinned on the hosts themselves, in
- * `PageBlockHostNoTokenNack.browser.test.tsx` — which asserts BOTH the reply the
+ * FIVE of the six outcomes are dispatcher-side and are all exercised against the
+ * real hook here — including `validator_rejected`, which the dispatcher produces
+ * from the block's own `BLOCK_MESSAGE_REJECTED` report rather than observing.
+ * `no_token` is the one HANDLER-side report and is pinned on the hosts themselves,
+ * in `PageBlockHostNoTokenNack.browser.test.tsx` — which asserts BOTH the reply the
  * handler sends and the row that reaches the real beacon buffer, because those
  * are produced by different lines and a test of one says nothing about the other.
  */
@@ -283,15 +285,26 @@ describe('usePostMessage bridge outcome counter', () => {
 
   test.each([
     ['a type the protocol does not declare', { type: 'NOT_A_REAL_MESSAGE' }],
+    // `{ type: 42 }` and `{}` reach the SAME branch (the `typeof !== 'string'` arm),
+    // so only one of them is kept — each row costs a full renderWithProviders +
+    // iframe mount in chromium. `undefined` is distinct: it exercises the `?.`, and
+    // without it that dereference throws.
     ['a non-string type', { type: 42 }],
-    ['no type at all', {}],
     ['no payload at all', undefined],
   ])('clamps %s to `other` rather than minting a series', async (_label, payload) => {
     // The payload is BLOCK-supplied and the value becomes a prom label on a host
     // that retains every distinct label set in heap forever, so the clamp is the
-    // security property of this branch, not tidiness. `report` ->
-    // `recordBridgeMessage` -> `boundBridgeMessageType` does the clamping; this
-    // pins that the branch actually routes through it.
+    // security property of this branch, not tidiness.
+    //
+    // 🔴 THE CLAMP UNDER TEST IS THE ONE IN THE BRANCH, NOT THE SINK'S. These tests
+    // supply their own `onOutcome`, so `recordBridgeMessage` — and the
+    // `boundBridgeMessageType` call inside it — never runs. An earlier revision of
+    // this comment said the clamping happened downstream in the sink, which would
+    // tell a reader the branch's own `boundBridgeMessageType(...)` is dead code and
+    // safe to delete; deleting it reddens these four rows, and the failure would
+    // then read as "the test is wrong". The branch clamps itself, on purpose,
+    // because `onOutcome` is a seam and a value pulled from an untrusted payload
+    // must not be bounded only by the default sink.
     const recorded: Recorded[] = [];
     await mount({ onOutcome: (e) => recorded.push(e), registered: true });
     postFromBlock('BLOCK_MESSAGE_REJECTED', payload);
