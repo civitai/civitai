@@ -7807,7 +7807,17 @@ export const getMyImages = async ({
 
   try {
     const media = await dbRead.image.findMany({
-      select: { id: true, url: true, meta: true, createdAt: true, type: true },
+      // `metadata` carries a video's duration, which the crucible picker needs to grey out clips
+      // over a crucible's maxClipSeconds before the user spends a click on them.
+      select: {
+        id: true,
+        url: true,
+        meta: true,
+        metadata: true,
+        createdAt: true,
+        type: true,
+        nsfwLevel: true,
+      },
       where: {
         userId,
         type: {

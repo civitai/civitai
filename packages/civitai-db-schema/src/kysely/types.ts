@@ -133,6 +133,7 @@ import type {
   ShopifyMerchOrderStatus,
   OutboxEntity,
   UserHubSourceType,
+  CrucibleStatus,
 } from './enums';
 
 export type Account = {
@@ -2282,6 +2283,42 @@ export type CosmeticShopSectionItem = {
 export type CoveredCheckpoint = {
   model_id: number;
   version_id: number;
+};
+export type Crucible = {
+  id: Generated<number>;
+  userId: number;
+  name: string;
+  description: string | null;
+  imageId: number | null;
+  nsfwLevel: Generated<number>;
+  contentType: Generated<MediaType>;
+  entryFee: Generated<number>;
+  seededPrizePool: Generated<number>;
+  entryLimit: Generated<number>;
+  maxTotalEntries: number | null;
+  minViewSeconds: number | null;
+  maxClipSeconds: number | null;
+  prizePositions: Generated<unknown>;
+  allowedResources: unknown | null;
+  duration: Generated<number>;
+  startAt: Timestamp | null;
+  endAt: Timestamp | null;
+  status: Generated<CrucibleStatus>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+  buzzTransactionId: string | null;
+  seedTransactionId: string | null;
+};
+export type CrucibleEntry = {
+  id: Generated<number>;
+  crucibleId: number;
+  userId: number;
+  imageId: number;
+  score: Generated<number>;
+  voteCount: Generated<number>;
+  position: number | null;
+  buzzTransactionId: string | null;
+  createdAt: Generated<Timestamp>;
 };
 export type CryptoDeposit = {
   paymentId: string;
@@ -4639,6 +4676,8 @@ export type DB = {
   CosmeticShopSection: CosmeticShopSection;
   CosmeticShopSectionItem: CosmeticShopSectionItem;
   CoveredCheckpoint: CoveredCheckpoint;
+  Crucible: Crucible;
+  CrucibleEntry: CrucibleEntry;
   CryptoDeposit: CryptoDeposit;
   CryptoTransaction: CryptoTransaction;
   CryptoWallet: CryptoWallet;

@@ -7,6 +7,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // background paths (no request context) can gate on the same Flipt flag the
   // tRPC `isFlagProtected('articleRatingDispute')` endpoints use.
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
+  // The crucible CRONS only. Deliberately NOT the `crucible` fliptKey the user-facing
+  // surface uses: that flag is base-`false` + segment rollout, so a no-user background
+  // evaluation matches nothing and reads its base — the jobs would never run. This is the
+  // `challenge-platform-enabled` shape instead (base `true`, no rollouts), where the base IS
+  // the switch. Separate from `crucible` on purpose: hiding the feature must not strand the
+  // entry fees of crucibles already in flight, so stopping payouts is its own decision.
+  CRUCIBLE_JOBS_ENABLED = 'crucible-jobs-enabled',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from

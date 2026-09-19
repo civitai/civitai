@@ -99,6 +99,12 @@ export const navRegistry: NavRegistryEntry[] = [
     visible: (ctx) => ctx.features.challengePlatform,
   },
   {
+    key: 'crucibles',
+    url: '/crucibles',
+    defaultGroup: 'bar',
+    visible: (ctx) => ctx.features.crucible,
+  },
+  {
     key: 'apps',
     url: '/apps',
     defaultGroup: 'bar',
