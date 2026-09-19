@@ -109,9 +109,27 @@ describe('getShopSectionsWithItems viewer gating', () => {
   });
 
   it('serves the purchase rows as the sold count, not the meta counter', async () => {
-    dbMock.dbRead.$queryRaw.mockImplementation(soldCountsFake({ 1: 5 }));
+    // Several items across two sections with distinct counts: one item alone
+    // passes an impl that hands every item the first one's count.
+    const withItem = (id: number) => ({
+      ...officialItem,
+      shopItem: { ...officialItem.shopItem, id },
+    });
+    mocks.sectionFindMany.mockResolvedValue([
+      { ...sectionRow, items: [officialItem, withItem(2)] },
+      { ...sectionRow, id: 6, items: [withItem(3)] },
+    ]);
+    dbMock.dbRead.$queryRaw.mockImplementation(soldCountsFake({ 1: 5, 2: 8, 3: 11 }));
     const sections = await getShopSectionsWithItems({});
-    expect(sections[0].items[0].shopItem.meta.purchases).toBe(5);
+    expect(
+      sections.map((s) => s.items.map((i) => [i.shopItem.id, i.shopItem.meta.purchases]))
+    ).toEqual([
+      [
+        [1, 5],
+        [2, 8],
+      ],
+      [[3, 11]],
+    ]);
     // Mocks ignore `select`, so only this sees a whole-table `_count` re-added here.
     expect(
       mocks.sectionFindMany.mock.calls[0][0].select.items.select.shopItem.select._count
@@ -232,13 +250,16 @@ describe('getSectionById serves the row count too', () => {
       id: 5,
       title: 'Badges',
       image: null,
-      items: [{ shopItem: { id: 74, meta: { purchases: 2 } } }],
+      items: [
+        { shopItem: { id: 74, meta: { purchases: 2 } } },
+        { shopItem: { id: 75, meta: { purchases: 2 } } },
+      ],
     });
-    dbMock.dbRead.$queryRaw.mockImplementation(soldCountsFake({ 74: 5 }));
+    dbMock.dbRead.$queryRaw.mockImplementation(soldCountsFake({ 74: 5, 75: 9 }));
 
     const section = await getSectionById({ id: 5 });
 
-    expect(section.items[0].shopItem.meta.purchases).toBe(5);
+    expect(section.items.map((i) => i.shopItem.meta.purchases)).toEqual([5, 9]);
     expect(
       dbMock.dbRead.cosmeticShopSection.findUniqueOrThrow.mock.calls.at(-1)?.[0].select.items.select
         .shopItem.select._count

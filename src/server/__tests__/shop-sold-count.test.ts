@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
-import { getSoldCounts, withSoldCount } from '~/server/services/cosmetic-shop-sold-count';
+import {
+  getSoldCounts,
+  withSoldCount,
+  withSoldCounts,
+} from '~/server/services/cosmetic-shop-sold-count';
 import { soldCountsFake } from '~/test-utils/soldCountsFake';
 
 /**
@@ -94,6 +98,21 @@ describe('getSoldCounts', () => {
       'SELECT "shopItemId", COUNT(*)::int AS sold FROM "UserCosmeticShopPurchases" ' +
         'WHERE "shopItemId" = ANY($1::int[]) GROUP BY "shopItemId"'
     );
+  });
+
+  // `withSoldCounts` backs the moderator paged list and the item editor. One item
+  // alone passes an impl that hands every item the first one's count.
+  it('withSoldCounts gives each item its own count, and 0 for none', async () => {
+    const out = await withSoldCounts([
+      { id: 1, meta: {} },
+      { id: 2, meta: {} },
+      { id: 3, meta: { purchases: 6 } },
+    ]);
+    expect(out.map((i) => [i.id, i.meta.purchases])).toEqual([
+      [1, 3],
+      [2, 9],
+      [3, 0],
+    ]);
   });
 
   it('skips the query for an empty page', async () => {

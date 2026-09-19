@@ -59,8 +59,10 @@ describe('getCreatorShopManageItems', () => {
     dbMock.dbRead.cosmeticShopItem.findMany.mockResolvedValue([]);
     await getCreatorShopManageItems({ userId: 11 });
 
-    expect(
-      dbMock.dbRead.cosmeticShopItem.findMany.mock.calls[0][0].select._count.select
-    ).not.toHaveProperty('purchases');
+    // Also pins the deleted-account filter: the fixture's `resellerCount` is
+    // hand-written, so nothing else sees it go.
+    expect(dbMock.dbRead.cosmeticShopItem.findMany.mock.calls[0][0].select._count).toEqual({
+      select: { resales: { where: { user: { deletedAt: null } } } },
+    });
   });
 });
