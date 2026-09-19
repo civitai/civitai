@@ -13,7 +13,8 @@
 
 import { EventEmitter } from 'events';
 import { spawn, execFileSync } from 'child_process';
-import { closeSync, openSync, readSync, unlinkSync } from 'fs';
+import { closeSync, existsSync, openSync, readSync, unlinkSync } from 'fs';
+import { fileURLToPath } from 'url';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
@@ -211,6 +212,27 @@ export function workerCapArgv(maxWorkers, args) {
   return [`--max-workers=${maxWorkers}`];
 }
 
+export const CACHE_MODES = ['off', 'shadow'];
+
+// The daemon lives in the primary checkout, so this is the primary's copy of the reporter — the
+// same file for every worktree's run, whichever branch that worktree is on. It imports node
+// builtins only, which is what makes running it against another tree's suite safe.
+export const SHADOW_REPORTER = fileURLToPath(
+  new URL('../../../../scripts/test-cache/reporter.mjs', import.meta.url)
+);
+
+/**
+ * The reporter arguments a queued unit run should carry. Naming any `--reporter` replaces vitest's
+ * default, so a caller who named none gets `default` back beside the shadow one — otherwise turning
+ * the shadow on would silently strip every queued run's normal output.
+ */
+export function cacheReporterArgv(cacheMode, args, reporterPath = SHADOW_REPORTER) {
+  if (cacheMode !== 'shadow') return [];
+  if (!existsSync(reporterPath)) return [];
+  const named = args.some((a) => /^--reporter(?:=|$)/.test(String(a)));
+  return [...(named ? [] : ['--reporter=default']), `--reporter=${reporterPath}`];
+}
+
 export function defaultStartRun({
   worktree,
   args,
@@ -218,12 +240,20 @@ export function defaultStartRun({
   onExit,
   maxWorkers = null,
   kind = DEFAULT_KIND,
+  cacheMode = 'off',
 }) {
   const emitter = new EventEmitter();
   const isWindows = process.platform === 'win32';
   const pnpm = isWindows ? 'pnpm.cmd' : 'pnpm';
   const { script, capWorkers } = RUN_KINDS[normalizeKind(kind)];
-  const argv = ['run', script, ...args, ...(capWorkers ? workerCapArgv(maxWorkers, args) : [])];
+  const argv = [
+    'run',
+    script,
+    ...args,
+    ...(capWorkers ? workerCapArgv(maxWorkers, args) : []),
+    // Unit runs only: the reporter is a vitest reporter, and tsc would reject the flag.
+    ...(capWorkers ? cacheReporterArgv(cacheMode, args) : []),
+  ];
 
   onLog('info', `> ${pnpm} ${argv.join(' ')}`);
 
@@ -354,6 +384,7 @@ export class TestQueue {
     const {
       concurrency = DEFAULT_CONCURRENCY,
       maxWorkers = DEFAULT_MAX_WORKERS,
+      cacheMode = 'off',
       startRun = defaultStartRun,
       now = () => Date.now(),
       abandonAfterMs = DEFAULT_ABANDON_AFTER_MS,
@@ -364,6 +395,7 @@ export class TestQueue {
 
     this.limits = normalizeLimits(concurrency);
     this.maxWorkers = normalizeMaxWorkers(maxWorkers);
+    this.cacheMode = normalizeCacheMode(cacheMode);
     this.startRun = startRun;
     this.now = now;
     this.abandonAfterMs = abandonAfterMs;
@@ -489,6 +521,12 @@ export class TestQueue {
    * Takes effect on the NEXT run to start, never on one already running — the width is fixed when
    * vitest is spawned. Nothing here kills a run to resize it.
    */
+  /** Like the worker cap: applies to the next run to start, never to one already running. */
+  setCacheMode(value) {
+    this.cacheMode = normalizeCacheMode(value);
+    return this.cacheMode;
+  }
+
   setMaxWorkers(value) {
     this.maxWorkers = normalizeMaxWorkers(value);
     return this.maxWorkers;
@@ -651,6 +689,7 @@ export class TestQueue {
         onExit,
         maxWorkers: this.maxWorkers,
         kind: run.kind,
+        cacheMode: this.cacheMode,
       });
     } catch (err) {
       // A runner that reported an exit and then threw has already produced a verdict; overwriting
@@ -740,6 +779,7 @@ export class TestQueue {
       running: this.runningFor(run.kind),
       concurrency: this.limits[run.kind],
       maxWorkers: this.maxWorkers,
+      cacheMode: this.cacheMode,
       paused: this.limits[run.kind] === 0,
       enqueuedAt: run.enqueuedAt,
       startedAt: run.startedAt,
@@ -761,6 +801,14 @@ export class TestQueue {
  * workers, and vitest's own resolution treats a falsy value as "unset" — so a 0 that slipped
  * through here would silently restore the uncapped pool the setting exists to prevent.
  */
+function normalizeCacheMode(value) {
+  const mode = value === undefined || value === null || value === '' ? 'off' : String(value);
+  if (!CACHE_MODES.includes(mode)) {
+    throw new Error(`cacheMode must be one of ${CACHE_MODES.join(', ')}, got: ${value}`);
+  }
+  return mode;
+}
+
 function normalizeMaxWorkers(value) {
   if (value === null || value === undefined || value === '') return null;
   const parsed = typeof value === 'number' ? value : parseInt(value, 10);

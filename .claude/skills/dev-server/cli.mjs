@@ -663,6 +663,11 @@ async function cmdTest(sub, rest) {
         const inline = rest[typecheckAt].split('=')[1];
         body.typecheckConcurrency = Number(inline !== undefined ? inline : rest[typecheckAt + 1]);
       }
+      const cacheAt = rest.findIndex((a) => /^--cache(=|$)/.test(a));
+      if (cacheAt !== -1) {
+        const inline = rest[cacheAt].split('=')[1];
+        body.cacheMode = inline !== undefined ? inline : rest[cacheAt + 1];
+      }
       const capAt = rest.findIndex((a) => /^--max-workers(=|$)/.test(a));
       if (capAt !== -1) {
         const inline = rest[capAt].split('=')[1];
@@ -1062,6 +1067,7 @@ Commands:
   test config [n]     Show or set the concurrency limit (0 pauses the queue)
                       [--max-workers <n>|none] also caps each run's vitest pool
                       [--typecheck <n>] sets the typecheck lane's limit
+                      [--cache off|shadow] records what a result cache would skip
   wt stale            List worktrees whose PR merged (read-only)
   wt rm <path>        Remove a worktree safely (unlinks junctions first)
                       [--stop-server] [--force]

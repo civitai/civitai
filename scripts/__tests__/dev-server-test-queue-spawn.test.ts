@@ -11,7 +11,7 @@ vi.mock('child_process', async (importOriginal) => ({
 
 // Lives under scripts/ because the daemon is not part of the app's module graph — same arrangement
 // as the rest of the queue's tests.
-const { defaultStartRun, TestQueue } = await import(
+const { defaultStartRun, TestQueue, cacheReporterArgv, SHADOW_REPORTER } = await import(
   '../../.claude/skills/dev-server/scripts/test-queue.mjs'
 );
 
@@ -159,5 +159,73 @@ describe("the queue caps each run's vitest pool", () => {
   // slipped through would silently restore the uncapped pool this setting exists to prevent.
   it('refuses a width of zero rather than treating it as a pause', () => {
     expect(() => new TestQueue({ concurrency: 1, maxWorkers: 0 })).toThrow(/integer >= 1/);
+  });
+});
+
+/**
+ * Shadow mode rides on the fleet's real queued runs, so the one thing it must not do is change
+ * them. Naming any `--reporter` replaces vitest's default — so a caller who named none has to get
+ * `default` back, or turning the shadow on silently strips every queued run's normal output.
+ */
+describe('shadow cache reporter on queued runs', () => {
+  const argvOf = (call: number) => spawn.mock.calls[call][1] as string[];
+  const start = (opts: Record<string, unknown>) => {
+    const handle = defaultStartRun({
+      worktree: '/repo',
+      args: [],
+      onLog: () => undefined,
+      onExit: () => undefined,
+      ...opts,
+    }) as EventEmitter & { dispose: () => void };
+    handle.dispose();
+  };
+
+  it('adds nothing while the cache is off', () => {
+    start({ cacheMode: 'off' });
+    expect(argvOf(0)).toEqual(['run', 'test:unit:run']);
+  });
+
+  it('keeps the default reporter beside the shadow one when the caller named none', () => {
+    start({ cacheMode: 'shadow' });
+    expect(argvOf(0)).toEqual([
+      'run',
+      'test:unit:run',
+      '--reporter=default',
+      `--reporter=${SHADOW_REPORTER}`,
+    ]);
+  });
+
+  it('adds only the shadow reporter when the caller chose their own', () => {
+    start({ cacheMode: 'shadow', args: ['--reporter=json'] });
+    expect(argvOf(0)).toEqual([
+      'run',
+      'test:unit:run',
+      '--reporter=json',
+      `--reporter=${SHADOW_REPORTER}`,
+    ]);
+  });
+
+  it('never hands the vitest reporter to a typecheck', () => {
+    start({ cacheMode: 'shadow', kind: 'typecheck' });
+    expect(argvOf(0)).toEqual(['run', 'typecheck']);
+  });
+
+  // A checkout without the reporter file must degrade to a plain run, never to a vitest that
+  // cannot load its reporter and fails every queued suite.
+  it('adds nothing when the reporter file is absent', () => {
+    expect(cacheReporterArgv('shadow', [], '/nowhere/reporter.mjs')).toEqual([]);
+  });
+
+  it("hands the queue's cache mode to the runner it starts", () => {
+    const startRun = vi.fn<(opts: { cacheMode: string }) => EventEmitter>(() => new EventEmitter());
+    const queue = new TestQueue({ concurrency: 1, cacheMode: 'shadow', startRun }) as unknown as {
+      request: (run: { worktree: string; args: string[] }) => unknown;
+    };
+    queue.request({ worktree: '/repo', args: [] });
+    expect(startRun.mock.calls[0][0]).toMatchObject({ cacheMode: 'shadow' });
+  });
+
+  it('refuses an unknown cache mode', () => {
+    expect(() => new TestQueue({ concurrency: 1, cacheMode: 'on' })).toThrow(/cacheMode must be/);
   });
 });
