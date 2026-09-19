@@ -557,9 +557,3 @@ export async function resolveProvenance({
     driftedImageIds: driftedImageIdsFromProvenance(token, userId),
   };
 }
-
-export async function resolveVerifiedSourceImageIds(
-  args: Parameters<typeof resolveProvenance>[0]
-): Promise<number[] | null> {
-  return (await resolveProvenance(args)).sourceImageIds;
-}
