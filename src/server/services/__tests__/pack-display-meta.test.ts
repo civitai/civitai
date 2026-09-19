@@ -4,10 +4,9 @@ import { describe, expect, it } from 'vitest';
 import { packDisplayMeta } from '../creator-shop.data';
 
 /**
- * `packDisplayMeta` decides which parts of a shop item's meta the storefront
- * cards and the pack detail endpoint publish. All four of its call sites are
- * reached by a public procedure — `getShop`, `getCommunityCosmetics` and
- * `getPack`.
+ * `packDisplayMeta` decides which parts of a shop item's meta the pack cards
+ * publish. Its one caller is `shopItemDisplayMeta`, which every shop surface
+ * publishes through.
  *
  * So a field added here for one card is a field added to all of them. The
  * listing below is the place that trade gets made deliberately: adding a field

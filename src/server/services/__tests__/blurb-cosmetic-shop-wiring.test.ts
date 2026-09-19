@@ -265,7 +265,7 @@ describe('upsertCosmeticShopItem — the stored purchase counter', () => {
 
   /**
    * The save's response is deliberately NOT passed through `withSoldCount`,
-   * unlike every read path. Its only consumer invalidates the paged query and
+   * unlike the editor reads. Its only consumer invalidates the paged query and
    * discards the payload, so mapping it fixed nothing and pinned a value nobody
    * reads — which would have handed the next person a red test for correctly
    * deleting dead code.

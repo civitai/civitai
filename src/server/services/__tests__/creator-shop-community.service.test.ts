@@ -69,6 +69,8 @@ describe('getCommunityCosmetics', () => {
     const { items, totalPages } = await getCommunityCosmetics(baseInput);
     expect(items.map((i) => i.id)).toEqual([2, 1]);
     expect(items[0].meta).toEqual({ purchases: 7, acceptsBlueBuzz: false });
+    // `toEqual` skips undefined-valued keys; the key list does not.
+    expect(Object.keys(items[0].meta).sort()).toEqual(['acceptsBlueBuzz', 'purchases']);
     // `creatorStorefrontItemSelect` inherits `_count` by spreading the shared
     // selector and never restates it. Redefining `_count` there for another
     // relation is already a compile error at all three read sites, so this is a

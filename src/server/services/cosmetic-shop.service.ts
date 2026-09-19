@@ -48,6 +48,7 @@ import {
 import { validateStickerCosmetic } from '~/server/services/cosmetic.service';
 import { getPackMembers, purchaseCosmeticPack } from '~/server/services/cosmetic-pack.service';
 import { delistPacksContaining } from '~/server/services/creator-shop-pack.service';
+import { shopItemDisplayMeta } from '~/server/services/creator-shop.data';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import {
   getCosmeticArtworkUrl,
@@ -803,7 +804,18 @@ export const getShopSectionsWithItems = async ({
       .filter((s) => s.items.length > 0 || (s.meta as CosmeticShopSectionMeta | null)?.communityHub)
       .map((section) => ({
         ...section,
-        items: section.items.map((i) => ({ ...i, shopItem: withSoldCount(i.shopItem) })),
+        // Cards and checkout read the shared display list, the same one the
+        // creator storefront and the community feed publish.
+        items: section.items.map((item) => ({
+          ...item,
+          shopItem: {
+            ...item.shopItem,
+            meta: shopItemDisplayMeta(
+              item.shopItem.meta as CosmeticShopItemMeta | null,
+              item.shopItem._count.purchases
+            ),
+          },
+        })),
         image: !!section.image
           ? {
               ...section.image,
