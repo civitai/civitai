@@ -56,8 +56,15 @@ const { sendNotificationsJob } = await import('~/server/jobs/send-notifications'
 function countingCte(sql: string) {
   const start = sql.indexOf('affected_value AS (');
   expect(start, 'the milestone query no longer has an affected_value CTE').toBeGreaterThan(-1);
-  const end = sql.indexOf('), ', start);
-  return sql.slice(start, end === -1 ? undefined : end);
+  // Bounded by the NEXT CTE header, and required to find one. Falling back to the end of
+  // the query failed open: put the separator's CTE name on its own line and move the
+  // filter into a CTE that counts nothing, and the slice ran on to include it — measured
+  // green before this.
+  const next = /\)\s*,\s*\w+\s+AS\s*\(/g;
+  next.lastIndex = start + 'affected_value AS ('.length;
+  const end = next.exec(sql)?.index ?? -1;
+  expect(end, 'could not find where the affected_value CTE ends').toBeGreaterThan(start);
+  return sql.slice(start, end);
 }
 
 function milestoneSql(key: string) {
