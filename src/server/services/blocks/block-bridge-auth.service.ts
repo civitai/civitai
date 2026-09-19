@@ -202,7 +202,12 @@ async function assertAppBlockApproved(claims: BlockTokenClaims): Promise<void> {
   if (verdict === 'not_found') {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'app block not found' });
   }
-  if (verdict === 'not_approved') {
+  if (verdict === 'not_approved' || verdict === 'tunnel_lookup_failed') {
+    // 🔴 THE SAME REFUSAL FOR BOTH, DELIBERATELY — identical code AND identical message.
+    // `tunnel_lookup_failed` is a separate verdict so the REST counter can attribute it,
+    // not so the caller can tell the two apart: a block that learned "the dev-tunnel cache
+    // is down" rather than "not approved" would be a state oracle on infrastructure, for
+    // no benefit to it. The split is for the operator, not the bearer.
     throw new TRPCError({ code: 'FORBIDDEN', message: 'app block is not approved' });
   }
   // Compile-time exhaustiveness: a verdict added to the shared union fails to build here

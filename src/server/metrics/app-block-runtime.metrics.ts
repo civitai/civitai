@@ -301,6 +301,20 @@ export const APP_BLOCK_REST_APPROVAL_VERDICT_REASONS = [
   'not_approved',
   'not_found',
   'lookup_failed',
+  /**
+   * The dev-tunnel re-check could not be completed (clawgate #571). Refuses like
+   * `not_approved`, counted separately so a cache incident is not indistinguishable from
+   * the stale-dev-token population that verdict exists to create — which matters more
+   * here than it would elsewhere, because application-container logs are not collected on
+   * this deployment, so this label is the whole signal for that leg.
+   *
+   * ⚠️ THIS LIST IS A THIRD EDIT SITE, NOT DERIVED. It is a hand-maintained union
+   * alongside `AppBlockApprovalVerdict` and the two callers' mappings; a new verdict needs
+   * all four. The compiler does force it — `recordBlockRestApprovalVerdict(approval)` in
+   * `block-scope.middleware` fails to type-check until the label exists — so this cannot
+   * be forgotten silently, but it is easy to be surprised by.
+   */
+  'tunnel_lookup_failed',
 ] as const;
 export type AppBlockRestApprovalVerdictReason =
   (typeof APP_BLOCK_REST_APPROVAL_VERDICT_REASONS)[number];

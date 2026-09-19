@@ -167,7 +167,11 @@ import { subjectForUserId } from '~/server/services/block-token-subject';
  * 🔴 POSTURE, and it is NOT uniform — read the two cases separately, because a single
  * "fail-closed" sentence over both was wrong in the direction that costs availability.
  *
- *   - THE READ FAILED (`lookup_failed`) → FAIL-CLOSED, 503 on REST. A replica we cannot
+ *   - THE READ FAILED (`lookup_failed`) → FAIL-CLOSED, 503 on REST — ⚠️ on most
+ *     routes. It is ROUTE-DEPENDENT: the five declaring `onApprovalLookupFailure:
+ *     'serve'` are SERVED instead, by their own choice. Stating it flat is the same
+ *     shape of wrong claim this file has now had to correct twice for the neighbouring
+ *     verdict, so it is spelled out rather than rounded off. A replica we cannot
  *     reach leaves us unable to establish that the app is allowed to run at all. That is
  *     the OPPOSITE of the revocation check one step earlier, deliberately:
  *     `BlockRevocation.isRevoked` fails OPEN by construction — a Redis incident must not
@@ -218,7 +222,32 @@ import { subjectForUserId } from '~/server/services/block-token-subject';
  * same argument one step weaker — their bodies are public but maturity-clamped per
  * token, so a block does not get strictly nothing extra there.
  */
-export type AppBlockApprovalVerdict = 'ok' | 'dev_exempt' | 'not_approved' | 'not_found';
+export type AppBlockApprovalVerdict =
+  | 'ok'
+  | 'dev_exempt'
+  | 'not_approved'
+  | 'not_found'
+  /**
+   * 🔴 THE DEV-TUNNEL RE-CHECK COULD NOT BE COMPLETED. Refuses exactly like
+   * `not_approved` on both callers — it is NOT a softer verdict — but it is a SEPARATE
+   * one so the refusal is attributable.
+   *
+   * ⚠️ IT EXISTS BECAUSE A LOG WAS THE WRONG ANSWER HERE, AND THE REASON IS SPECIFIC TO
+   * THIS DEPLOYMENT: **application-container logs are not collected**, which
+   * `app-block-runtime.metrics.ts` states twice and uses as the basis for its own design
+   * ("the `console.error` shape used elsewhere in the repo would be invisible to a later
+   * investigator"). An earlier round of this change answered the silent-swallow problem
+   * with a throttled `console.warn` and argued that log was the signal separating a cache
+   * incident from the stale-token population. It is not — nobody can read it. Folding
+   * these into `not_approved` therefore leaves a sysRedis fault looking exactly like the
+   * narrowing working, on the one series anybody watches.
+   *
+   * NOT `lookup_failed`, which would be the lazy reuse: that verdict means the REPLICA
+   * read failed, maps to 503, and is SERVED on the five routes declaring
+   * `onApprovalLookupFailure: 'serve'`. Both would be wrong here — a cache fault blamed
+   * on the database, and a non-approved app served on some routes.
+   */
+  | 'tunnel_lookup_failed';
 
 /**
  * THE PREDICATE. The only place in the App Blocks runtime that resolves the backing
@@ -368,11 +397,14 @@ export async function resolveAppBlockApprovalVerdict(
     // recorded here rather than left for someone to rediscover from a support ticket.
     return (await getActiveDevTunnel(ownerUserId, claims.blockId)) ? 'dev_exempt' : 'not_approved';
   } catch (err) {
-    // LOGGED, not swallowed — see `tunnelFailureLog`. The verdict is still the fail-closed
-    // one, but an incident on this leg must be distinguishable from the stale-token
-    // population that shares its verdict.
+    // 🔴 ITS OWN VERDICT, NOT `not_approved`. Both refuse identically, so this is not a
+    // softer outcome — it is an ATTRIBUTABLE one. Sharing `not_approved` would put a
+    // sysRedis fault on the same series as every legitimate stale-token refusal, i.e. on
+    // the one signal this whole change ships to be watched on, where it would read as the
+    // narrowing working. The log below is kept for environments that collect container
+    // logs; on THIS deployment they are not collected, so the counter is the signal.
     tunnelFailureLog.warn(err);
-    return 'not_approved';
+    return 'tunnel_lookup_failed';
   }
 }
 
@@ -420,13 +452,22 @@ export async function resolveRestApprovalVerdict(
  * UNTHROTTLED, so that throttle only bounds the prose. Do not add a metric there and do
  * not read a suppressed log as a suppressed verdict.
  *
- * ⚠️ THAT IS NOT TRUE OF THE SECOND CONSUMER, AND THIS CONSTANT NOW SITS ABOVE BOTH.
- * `tunnelFailureLog`'s failures resolve to `not_approved`, which has NO dedicated
- * `reason=` label — they share the series with every legitimate stale-token refusal. So
- * for that leg the throttled log IS the only signal, and a suppressed line really is lost
- * information rather than redundant prose. Same 60s window, opposite relationship to the
- * metrics; the window is shared because the rate argument is identical, not because the
- * observability story is.
+ * ⚠️ THE SAME HOLDS FOR THE SECOND CONSUMER, AND THIS CONSTANT NOW SITS ABOVE BOTH.
+ * `tunnelFailureLog`'s failures carry their own `reason="tunnel_lookup_failed"` label,
+ * unthrottled like every other verdict, so suppressing a line there loses prose and not
+ * information either. (An earlier draft argued the opposite — that the log was that leg's
+ * only signal — which is what the dedicated verdict exists to make untrue.)
+ *
+ * ⚠️ THE WINDOW IS SHARED FOR CONVENIENCE, NOT BECAUSE THE RATE ARGUMENT IS THE SAME, and
+ * a previous version of this line claimed it was. They are very different: the replica
+ * logger's case is fleet-wide simultaneity — every block REST request on every pod fails
+ * at once — while the tunnel logger is reachable only on the dev + real-row + NOT-approved
+ * path, i.e. one owner debugging one non-approved app. By this repo's own reasoning that
+ * second shape does not need throttling at all (`block-scope.middleware` leaves its
+ * `not_found` line unthrottled precisely because it "is bounded by one app's traffic
+ * rather than the whole fleet's"). 60s is kept anyway because it costs nothing now that
+ * the counter carries the signal, and one window is one thing to reason about — but if
+ * this log ever becomes load-bearing again, that is the assumption to revisit first.
  */
 const LOOKUP_FAILURE_LOG_WINDOW_MS = 60_000;
 
@@ -482,25 +523,22 @@ function warnLookupFailed(err: unknown): void {
  * watched on, and the one the predicate's docblock calls the operator's only view of the
  * 4h window closing. A sysRedis fault would then have read as the narrowing working.
  *
- * ⚠️ DELIBERATELY A LOG AND NOT A NEW VERDICT — AND THE FIRST VERSION OF THIS PARAGRAPH
- * GAVE THE WRONG REASON, IN THE FAIL-OPEN DIRECTION. It claimed "the REST mapping for an
- * unknown verdict is 503". It is not: `withBlockScope`'s chain is `not_approved` → 403,
- * `lookup_failed` → 503, and then an `else` that asserts `approval satisfies 'not_found'`,
- * logs "SERVING (observe-only)" and **falls through to the handler**. So REST's runtime
- * default for a verdict it does not recognise is to SERVE, and it would additionally log
- * the request as a missing row, which it would not be. The bridge is the opposite — a
- * `satisfies never` followed by an unconditional FORBIDDEN. Two callers, two opposite
- * unknown-verdict postures; a paragraph telling the next author that REST refuses would
- * have sent them the wrong way.
+ * ⚠️ THE LOG IS THE SECONDARY SIGNAL, AND TWO EARLIER DRAFTS OF THIS PARAGRAPH HAD THAT
+ * BACKWARDS. The first said the tunnel leg needed no verdict because "the REST mapping for
+ * an unknown verdict is 503" — false, and false in the fail-open direction: REST's chain is
+ * `not_approved` → 403, `lookup_failed` → 503, then an `else` asserting
+ * `approval satisfies 'not_found'` that logs "SERVING (observe-only)" and falls through to
+ * the handler, so its runtime default for an unrecognised verdict is to SERVE. The second
+ * corrected that but still argued this log was what separated a cache incident from the
+ * stale-token population — which it cannot be, because **application-container logs are
+ * not collected on this deployment** (`app-block-runtime.metrics.ts` says so twice and
+ * designs around it). A signal nobody can read is not a signal.
  *
- * THE REAL REASONS, now that they are stated correctly: a new union member must be mapped
- * by BOTH callers (the compile error at REST's `satisfies` is what forces that, and it
- * does force it), and REST's runtime default on the way there is service rather than
- * refusal. Note the honest counterpoint, since the original sentence also inverted it: a
- * dedicated verdict WOULD be better attribution than this log, because it would carry its
- * own `reason=` label instead of sharing `not_approved`. The log is the cheaper answer,
- * not the better-instrumented one. If this leg ever needs alerting rather than forensics,
- * the verdict is the right change — made deliberately, with both mappings updated.
+ * So the leg got the verdict it needed: `tunnel_lookup_failed`, refusing identically to
+ * `not_approved` on both callers but counted under its own `reason=` label. THIS log is
+ * kept because it costs nothing and is genuinely useful anywhere container logs ARE
+ * collected (local, and any future deployment that turns them on) — but it is no longer
+ * load-bearing, and nothing above should be read as claiming it is.
  */
 const tunnelFailureLog = makeThrottledWarn('[block-scope] dev-tunnel re-check failed');
 

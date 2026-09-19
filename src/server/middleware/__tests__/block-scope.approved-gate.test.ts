@@ -787,13 +787,17 @@ describe('withBlockScope — the gate on the real request path', () => {
       expect(handler).not.toHaveBeenCalled();
       expect(res.statusCode).toBe(403);
       expect(res.body).toEqual({ error: 'app block is not approved' });
-      expect(recordVerdictMock.mock.calls).toEqual([['not_approved']]);
-      // 🔴 AND IT IS LOGGED, WHICH IS THE HALF THAT NEARLY SHIPPED MISSING. The verdict a
-      // cache fault produces here is `not_approved` — the SAME series this change ships to
-      // be watched on — so without a log an incident on this leg is indistinguishable from
-      // the stale-token population the change exists to create, and would read as the
-      // narrowing working. The message is asserted distinctly from the replica-read log
-      // ("approved-status lookup failed") so the two failure modes stay separable.
+      // 🔴 ITS OWN LABEL, AND THIS IS THE ASSERTION THAT MATTERS. Folded into
+      // `not_approved` a sysRedis fault would land on the exact series this change ships
+      // to be watched on and read as the narrowing working. Two earlier rounds answered
+      // that with a throttled `console.warn` instead — which cannot work on this
+      // deployment, because application-container logs are not collected
+      // (`app-block-runtime.metrics.ts` says so twice and designs around it). The counter
+      // is the signal; asserting the label here is what stops it being folded back.
+      expect(recordVerdictMock.mock.calls).toEqual([['tunnel_lookup_failed']]);
+      // The log is kept for environments that DO collect container logs, and is asserted
+      // distinctly from the replica-read message ("approved-status lookup failed") so the
+      // two failure modes stay separable there too — but it is no longer the signal.
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn.mock.calls[0][0]).toContain('[block-scope] dev-tunnel re-check failed');
       expect(warn.mock.calls[0][0]).toContain('redis client exploded synchronously');

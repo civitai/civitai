@@ -151,21 +151,32 @@ describe('civitai_app_block_rest_approval_verdicts_total', () => {
     }
   });
 
-  it('🔴 the reason union is EXACTLY these three values — 3 series is the whole budget', () => {
+  it('🔴 the reason union is EXACTLY these four values — 4 series is the whole budget', () => {
     // Literal, not derived: this is the number an operator's cardinality budget is sized
     // against, and the union is simultaneously the metric label AND the non-`ok` half of
-    // `AppBlockApprovalVerdict | 'lookup_failed'`, so a fourth verdict added on the service
+    // `AppBlockApprovalVerdict | 'lookup_failed'`, so a new verdict added on the service
     // side has to come through here.
+    //
+    // ⚠️ WENT FROM THREE TO FOUR WITH clawgate #571, AND THE GUARD WORKING IS WHY.
+    // `tunnel_lookup_failed` is the dev-tunnel re-check failing. It refuses exactly like
+    // `not_approved` and could have shared its label for free — which is precisely what
+    // this test exists to make someone argue for rather than default into. The argument
+    // against sharing: that series is the one the dev-token narrowing ships to be watched
+    // on, so a sysRedis fault folded into it reads as the narrowing working, and on this
+    // deployment there is no log to fall back on (application-container logs are not
+    // collected). One more series is the price of being able to tell an incident from the
+    // population it would otherwise hide in.
     expect([...APP_BLOCK_REST_APPROVAL_VERDICT_REASONS]).toEqual([
       'not_approved',
       'not_found',
       'lookup_failed',
+      'tunnel_lookup_failed',
     ]);
   });
 
-  it('🔴 emits AT MOST 3 series no matter how many verdicts land', async () => {
-    // The end-state assertion the label-name check implies: drive 300 verdicts across
-    // every reason and the scrape still carries 3 lines for this metric.
+  it('🔴 emits AT MOST 4 series no matter how many verdicts land', async () => {
+    // The end-state assertion the label-name check implies: drive 400 verdicts across
+    // every reason and the scrape still carries 4 lines for this metric.
     for (let i = 0; i < 100; i++) {
       for (const reason of APP_BLOCK_REST_APPROVAL_VERDICT_REASONS) {
         recordBlockRestApprovalVerdict(reason);
@@ -175,8 +186,13 @@ describe('civitai_app_block_rest_approval_verdicts_total', () => {
       get(): Promise<{ values: Array<{ labels: Record<string, string> }> }>;
     };
     const { values } = await metric.get();
-    expect(values).toHaveLength(3);
+    expect(values).toHaveLength(4);
     expect(await readReason('not_found')).toBe(100);
+    // The new label is driven too, not merely declared — a reason in the union that no
+    // caller ever emits would leave this assertion passing on 3 real series plus a
+    // phantom, which is the shape that makes a cardinality budget wrong in the reassuring
+    // direction.
+    expect(await readReason('tunnel_lookup_failed')).toBe(100);
   });
 
   it('is idempotent to register — a double module import does not throw', () => {

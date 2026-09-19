@@ -1010,7 +1010,17 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     const approval = await resolveRestApprovalVerdict(claims);
     if (approval !== 'ok' && approval !== 'dev_exempt') {
       recordBlockRestApprovalVerdict(approval);
-      if (approval === 'not_approved') {
+      if (approval === 'not_approved' || approval === 'tunnel_lookup_failed') {
+        // 🔴 BOTH REFUSE 403, WITH THE SAME BODY — the split is for the COUNTER, which
+        // has already recorded the distinct `reason=` two lines above. A bearer learning
+        // that the dev-tunnel cache is down rather than that the app is not approved
+        // would be an infrastructure oracle with no benefit to it.
+        //
+        // ⚠️ NOT ROUTED THROUGH `lookup_failed`, which is the reuse that would look
+        // tidier: that verdict answers 503 and is SERVED on the routes declaring
+        // `onApprovalLookupFailure: 'serve'`. A non-approved app must not be served on
+        // any route because a CACHE read failed, and a cache fault must not be reported
+        // as a replica fault. Refusing here keeps both halves honest.
         res.status(403).json({ error: 'app block is not approved' });
         return;
       }
