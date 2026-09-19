@@ -130,6 +130,21 @@ function propExpression(tag: string, prop: string): string | null {
  */
 const INDEX_TRACKS_TARGET_EXPRESSION = /^searchIndexMap\[\s*targetIndex\b/;
 
+/**
+ * The expression a provider receives, resolved one hop when it is a hoisted local `const` — which
+ * is how the dropdowns write it. Both the inline and the hoisted form are correct code, so a check
+ * that reads only one of them rejects the other; this is what lets the callers assert the SHAPE
+ * without also dictating where it is written.
+ *
+ * Only ever called with a bare identifier (the caller tests for that), so nothing here needs
+ * regex-escaping. The optional `:type` tolerates an annotated declaration.
+ */
+function resolveOneHop(source: string, expression: string): string {
+  if (!/^[A-Za-z_$][\w$]*$/.test(expression)) return expression;
+  const declaration = source.match(new RegExp(`const ${expression}\\s*(?::[^=]+)?=\\s*([^;\\n]+)`));
+  return declaration?.[1].trim() ?? expression;
+}
+
 describe('the InstantSearch roots', () => {
   it('is the set this ledger accounts for', () => {
     // Derived from the tree, so the ledger fails when the population grows OR shrinks — a new
@@ -148,7 +163,7 @@ describe('the InstantSearch roots', () => {
     }
 
     it(`${relPath} keys its provider on the very expression it passes as indexName`, () => {
-      const source = read(relPath);
+      const source = stripComments(read(relPath));
       const tag = openingTag(source);
       const indexName = propExpression(tag, 'indexName');
       const key = propExpression(tag, 'key');
@@ -158,21 +173,27 @@ describe('the InstantSearch roots', () => {
       expect(indexName).toBeTruthy();
       expect(key).toBe(indexName);
 
-      // `SearchLayout` is the one root the per-dropdown `INDEX_TRACKS_TARGET` check below cannot
-      // reach, and without something here nothing stops BOTH its props being pinned to the same
-      // constant: `key === indexName` would still hold and every search page would search one
-      // index. Its index is a PROP, so say that positively — the expression must be the parameter
-      // the component destructures.
+      // `SearchLayout` is the one root the per-dropdown check below cannot reach, and without
+      // something here nothing stops BOTH its props being pinned to the same constant:
+      // `key === indexName` would still hold and every search page would search one index. Its
+      // index is a PROP, so say that positively — the expression has to REFERENCE that prop.
       //
-      // Positively on purpose. The first attempt enumerated constant SPELLINGS to reject, which
-      // is the hole `INDEX_TRACKS_TARGET`'s own docblock warns about two paragraphs above: an
-      // imported `MODELS_SEARCH_INDEX` walked straight through it. It also REJECTED a correct
-      // dynamic expression written inline, which is the shape `AutocompleteSearch` had before
-      // this change — a guard that fails on correct code as well as passing broken code.
+      // Positively, and about the reference rather than about the declaration site. Two earlier
+      // attempts failed in opposite directions: enumerating constant SPELLINGS to reject let an
+      // imported `MODELS_SEARCH_INDEX` through, and requiring the expression to appear inside a
+      // literal `export function SearchLayout({…})` rejected correct code — a normalisation hop,
+      // and the `export const` style both sibling roots already use.
+      //
+      // Resolved one hop ONLY when the expression does not already reference the prop: this file
+      // also holds an unrelated `const indexName = Object.keys(uiState)?.[0]`, and resolving
+      // unconditionally binds to that and reddens a healthy root.
       if (relPath === 'src/components/Search/SearchLayout.tsx') {
-        expect(source).toMatch(
-          new RegExp(`export function SearchLayout\\(\\{[^}]*\\b${indexName}\\b`)
-        );
+        const referencesProp = /\bindexName\b/;
+        const indexSource = referencesProp.test(indexName as string)
+          ? (indexName as string)
+          : resolveOneHop(source, indexName as string);
+
+        expect(indexSource).toMatch(referencesProp);
       }
     });
   }
@@ -229,11 +250,8 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     for (const relPath of dropdowns) {
       const source = stripComments(read(relPath));
       const expression = propExpression(openingTag(source), 'indexName') ?? '';
-      const derivation = /^[A-Za-z_$][\w$]*$/.test(expression)
-        ? source.match(new RegExp(`const ${expression} =\\s*([^;\\n]+)`))?.[1] ?? expression
-        : expression;
 
-      expect(derivation, relPath).toMatch(INDEX_TRACKS_TARGET_EXPRESSION);
+      expect(resolveOneHop(source, expression), relPath).toMatch(INDEX_TRACKS_TARGET_EXPRESSION);
     }
   });
 
@@ -255,9 +273,10 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     expect(autocomplete).toContain('onChange={(v: string | null) => onTargetChange(v as TKey)}');
     expect(autocomplete).toContain('onTargetChange={handleTargetChange}');
 
-    // …and the hop between them. Without this the chain is pinned at both ends and open in the
-    // middle on this component only — the sibling's equivalent is covered by its `fallbackIndex`
-    // line below, which is what made the asymmetry hard to see.
+    // …and the hop between them, which was pinned at both ends and open in the middle on this
+    // component only. The sibling's middle hop is asserted below as a free-floating substring —
+    // weaker, since it is not tied to the handler, and deliberately left that way: tightening it
+    // symmetrically would reject a correct consolidation into a shared handler factory.
     expect(autocomplete).toMatch(
       /const handleTargetChange = \(value: SearchIndexKey\) => \{\s*setTargetIndex\(value\);\s*\};/
     );
