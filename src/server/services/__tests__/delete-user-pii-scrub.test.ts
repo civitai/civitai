@@ -41,10 +41,10 @@ const WRITE_PATHS = [
   () => ['dbWrite.$queryRawUnsafe', dbMock.dbWrite.$queryRawUnsafe] as const,
   () => ['dbWrite.user.upsert', dbMock.dbWrite.user.upsert] as const,
 ];
-// NOT covered: pgDbWrite and kyselyWrite (which runs over it), user.updateManyAndReturn, and
-// any `tx.*` write inside an interactive $transaction callback — these tests mock $transaction
-// to return its argument unrun, so such writes are never recorded. Add a path above if one of
-// these starts writing customerId.
+// NOT covered: pgDbWrite and kyselyWrite (which runs over it), and user.updateManyAndReturn.
+// Writes inside an interactive $transaction ARE covered: the shared mock runs the callback
+// against dbMock.dbWrite, so a `tx.user.update` lands on the paths above. Add a path above
+// if one of the uncovered ones starts writing customerId.
 
 /** Labels of the covered dbWrite calls whose arguments mention `needle`. */
 const dbWriteCallsMentioning = (needle: string) => {
@@ -64,7 +64,13 @@ const dbWriteCallsMentioning = (needle: string) => {
   return hits;
 };
 
-/** The data object of the soft-delete update (the one inside the transaction). */
+/** Index of the soft-delete update (the one carrying deletedAt) in user.update.mock.calls. */
+const softDeleteIndex = () =>
+  user.update.mock.calls.findIndex(
+    ([arg]) => (arg as { data?: Record<string, unknown> })?.data?.deletedAt !== undefined
+  );
+
+/** The data object of the soft-delete update. */
 const softDeleteData = () => {
   const call = user.update.mock.calls.find(
     ([arg]) => (arg as { data?: Record<string, unknown> })?.data?.deletedAt !== undefined
@@ -83,7 +89,6 @@ beforeEach(() => {
   dbMock.dbWrite.userEngagement.deleteMany.mockResolvedValue({ count: 0 });
   dbMock.dbWrite.userProfile.deleteMany.mockResolvedValue({ count: 0 });
   dbMock.dbWrite.userLink.deleteMany.mockResolvedValue({ count: 0 });
-  dbMock.dbWrite.$transaction.mockImplementation(async (ops: unknown) => ops);
   vi.spyOn(userFollowsCache, 'bust').mockResolvedValue(undefined);
 });
 
@@ -114,7 +119,7 @@ describe('deleteUser — what the soft delete scrubs', () => {
     });
   });
 
-  it('removes the profile and links INSIDE the transaction', async () => {
+  it('soft-deletes and removes the profile and links INSIDE one transaction', async () => {
     await deleteUser();
 
     // Outside it they stop being atomic with the soft delete: a failure between the two
@@ -124,6 +129,9 @@ describe('deleteUser — what the soft delete scrubs', () => {
     const [ops] = dbMock.dbWrite.$transaction.mock.calls[0] as [unknown[]];
     expect(ops).toContain(dbMock.dbWrite.userProfile.deleteMany.mock.results[0].value);
     expect(ops).toContain(dbMock.dbWrite.userLink.deleteMany.mock.results[0].value);
+    // The soft delete itself too: without this, awaiting the user.update outside the array
+    // passed every test here, including the ones that say "inside the transaction".
+    expect(ops).toContain(user.update.mock.results[softDeleteIndex()].value);
   });
 });
 
@@ -136,6 +144,8 @@ describe('deleteUser — payment-provider ids', () => {
     // moving the null after the cancels was tried and reverted, because with seven live Paddle
     // subscriptions it bought a live API call per deletion for almost nothing to cancel.
     expect(softDeleteData()).toHaveProperty('paddleCustomerId', null);
+    const [ops] = dbMock.dbWrite.$transaction.mock.calls[0] as [unknown[]];
+    expect(ops).toContain(user.update.mock.results[softDeleteIndex()].value);
   });
 
   it('does NOT purge the Stripe customerId — deleting it breaks our own webhook', async () => {
@@ -213,6 +223,16 @@ describe('deleteUser — payment-provider ids', () => {
     } as never);
 
     expect(dbWriteCallsMentioning('customerId')).toEqual(['dbWrite.user.upsert']);
+  });
+
+  it('CONTROL: the scan sees a customerId write inside an interactive $transaction', async () => {
+    // Only true because the shared mock runs the callback. A test-local override returning
+    // its argument unrun used to hide exactly this route.
+    await dbMock.dbWrite.$transaction(async (tx: typeof dbMock.dbWrite) =>
+      tx.user.update({ where: { id: USER_ID }, data: { customerId: null } })
+    );
+
+    expect(dbWriteCallsMentioning('customerId')).toEqual(['dbWrite.user.update']);
   });
 
   it('CONTROL: the scan sees a customerId write via tagged raw SQL', () => {
