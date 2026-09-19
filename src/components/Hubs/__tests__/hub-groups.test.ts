@@ -191,9 +191,9 @@ describe('group edits touch the whole group, or exactly one tag', () => {
   ];
 
   it('removes ONE tag from the hub without taking its group with it', () => {
-    // The chip ✕ and the card's trash are one click apart. Swapping them deletes the
-    // whole AND-set, and the card simply vanishes — which reads exactly like the trash
-    // button having been pressed.
+    // Dropping one member must leave the rest of the AND-set standing. (The chip ✕ and
+    // the whole-group ✕ no longer co-render — this branch's chip shows the group one
+    // only at a single member — so they can no longer be swapped for each other.)
     //
     // It deletes rather than ungroups. That was tried the other way and Justin called
     // it weird on sight: a ✕ that leaves the tag behind as a new card does not look
@@ -225,5 +225,37 @@ describe('the group copy', () => {
 
   it('states the exclude rule under the chips, and has no include counterpart', () => {
     expect(excludeGroupRule).toBe('Only block when all of these match');
+  });
+});
+
+// 🔴 Tag ids and creator/model ids are separate sequences that collide freely, so every
+// one of these lookups has to key on the TYPE as well as the id. The property used to
+// be pinned by `hub-session.store.test.ts`'s toggleSource block; that store is gone, and
+// the property moved here without its coverage. Both cases below pass against an
+// id-only match, which is the whole reason they exist.
+describe('a tag id is not a creator id', () => {
+  it('removes the tag, not the creator that happens to share its id', () => {
+    const value = [
+      source({ targetId: 78 }),
+      source({ targetId: 78, type: UserHubSourceType.User, index: 1 }),
+    ];
+
+    expect(removeHubTag(value, 78).map((s) => s.type)).toEqual([UserHubSourceType.User]);
+  });
+
+  it('does not read a creator as the tag already being held', () => {
+    // An id-only match reports the creator as `held`, so the function returns early
+    // WITHOUT appending the tag — a click that does nothing — and stamps the creator
+    // row with the group's key, carrying a tag AND-set key into the write path.
+    const value = [
+      source({ targetId: 77, groupKey: 0 }),
+      source({ targetId: 42, type: UserHubSourceType.User, index: 1 }),
+    ];
+
+    const next = addTagToHubGroup(value, groupOf(value), { targetId: 42, alias: 'swimsuit' });
+
+    expect(next).toHaveLength(3);
+    expect(next[2]).toMatchObject({ type: UserHubSourceType.Tag, targetId: 42, groupKey: 0 });
+    expect(next[1]).toMatchObject({ type: UserHubSourceType.User, groupKey: null });
   });
 });

@@ -16,7 +16,7 @@ import {
   removeHubGroup,
   removeHubTag,
 } from '~/components/Hubs/hub.utils';
-import { hubLimits } from '~/server/schema/user-hub.schema';
+import { hubLimits, hubSourceKey } from '~/server/schema/user-hub.schema';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 
@@ -51,7 +51,7 @@ function AddToGroup({
   exclude?: boolean;
   disabled?: boolean;
   isAdded: (source: { type: UserHubSourceType; targetId: number }) => boolean;
-  onSelect: (item: { targetId: number; alias: string }) => void;
+  onSelect: (item: { type: UserHubSourceType; targetId: number; alias: string }) => void;
   onRemove: (target: { type: UserHubSourceType; targetId: number }) => void;
 }) {
   const [opened, setOpened] = useState(false);
@@ -73,7 +73,7 @@ function AddToGroup({
           <Popover.Target>
             <UnstyledButton
               disabled={disabled}
-              aria-label="Require another tag"
+              aria-label={groupAddHint(exclude)}
               onClick={() => setOpened((open) => !open)}
               className="shrink-0 text-gray-6 hover:text-gray-9 dark:text-dark-2 dark:hover:text-white"
             >
@@ -214,7 +214,7 @@ export function HubSourceEditor({
   const excluded = value.filter((source) => source.exclude);
 
   const held = (type: UserHubSourceType, targetId: number) =>
-    value.find((source) => source.type === type && source.targetId === targetId);
+    findHubSource(value, { type, targetId });
 
   const atCap = (exclude: boolean) => {
     const count = exclude ? excluded.length : included.length;
@@ -269,7 +269,18 @@ export function HubSourceEditor({
    * rather than adding a row, so the cap is only spent on a genuinely new one — and
    * the caller owns both checks because only it can say why a click was refused.
    */
-  const addToGroup = (group: HubSourceGroup, item: { targetId: number; alias: string }) => {
+  const addToGroup = (
+    group: HubSourceGroup,
+    item: { type: UserHubSourceType; targetId: number; alias: string }
+  ) => {
+    if (item.type !== UserHubSourceType.Tag) {
+      showErrorNotification({
+        title: 'Tags only',
+        error: new Error('Only tags can be required together. Add that to the hub itself instead.'),
+      });
+      return;
+    }
+
     const target = { type: UserHubSourceType.Tag, targetId: item.targetId };
     const existing = findHubSource(value, target);
     const exclude = !!group.sources[0].exclude;
@@ -313,7 +324,7 @@ export function HubSourceEditor({
   // A row in the list toggles, so taking something back out does not mean hunting
   // down its chip.
   const removeByTarget = (target: { type: UserHubSourceType; targetId: number }) =>
-    onChange(value.filter((s) => !(s.type === target.type && s.targetId === target.targetId)));
+    onChange(value.filter((source) => hubSourceKey(source) !== hubSourceKey(target)));
 
   const chipsFor = (sources: HubSourceValue[], exclude: boolean) =>
     groupHubSources(sources).map((group) => {
@@ -332,10 +343,7 @@ export function HubSourceEditor({
               <AddToGroup
                 exclude={exclude}
                 disabled={disabled}
-                isAdded={(source) =>
-                  members.has(`${source.type}:${source.targetId}`) ||
-                  !!held(source.type, source.targetId)
-                }
+                isAdded={(source) => members.has(hubSourceKey(source))}
                 onSelect={(item) => addToGroup(group, item)}
                 onRemove={(target) => onChange(removeHubTag(value, target.targetId))}
               />

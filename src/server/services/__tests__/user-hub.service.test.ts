@@ -656,6 +656,38 @@ describe('tag sources are restricted to the browsable vocabulary', () => {
     });
   });
 
+  it('offers the picker the SAME vocabulary the write path enforces', async () => {
+    // 🔴 The two must be ONE rule, and the textual guard in
+    // `hub-moderation-tag-vocabulary.test.ts` cannot prove that: it only proves the
+    // service mentions the constant SOMEWHERE, and the write-path query above keeps
+    // that line alive on its own. Drop `hubTagWhere` from the tag search and the guard
+    // stays green while the picker starts offering unlisted, adminOnly and System tags.
+    // This is the half that watches the search.
+    findTags.mockResolvedValue([]);
+
+    await getHubSourceScope({ scope: 'tags', query: 'drag', userId: 5 });
+
+    expect(findTags.mock.calls[0][0].where).toEqual({
+      name: { contains: 'drag', mode: 'insensitive' },
+      unlisted: false,
+      adminOnly: false,
+      target: { hasEvery: [TagTarget.Image] },
+      type: { in: [TagType.UserGenerated, TagType.Label, TagType.Moderation] },
+    });
+  });
+
+  it('hands a moderation label back rather than dropping it after the query', async () => {
+    // The post-query half. A narrowing added AFTER the read leaves the `where` above
+    // untouched, so only the rows that come back can catch it.
+    findTags.mockResolvedValue([
+      { ...imageTag({ id: 91, name: 'sexy', type: TagType.Moderation }), metrics: [] },
+    ]);
+
+    const result = await getHubSourceScope({ scope: 'tags', query: 'sex', userId: 5 });
+
+    expect(result.items.map((item) => item.targetId)).toEqual([91]);
+  });
+
   it('refuses a tag the query did not return, whatever the reason', async () => {
     // The behavioural half: whether a row was withheld for being unlisted, admin-only,
     // the wrong type or the wrong target, the service sees the same thing — an id it

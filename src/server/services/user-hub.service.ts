@@ -1655,18 +1655,15 @@ async function assertExcludedModelsFit(modelIds: number[]) {
 }
 
 /**
- * Which tags a hub may be keyed on, in either direction. The tag table is not a
- * vocabulary of subjects — it also carries the moderation labels the scanners write
- * and the system tags the site runs on, and a hub addressed by id would otherwise
- * reach every one of them.
+ * Which tags a hub may be keyed on, in either direction, as a `where` fragment. The tag
+ * table is not a vocabulary of subjects — it also carries the moderation labels the
+ * scanners write and the system tags the site runs on, and a hub addressed by id would
+ * otherwise reach every one of them.
  *
- * Moderation labels are part of that vocabulary as of 2026-09-17; System tags are not.
- * `HUB_TAG_SOURCE_FILTER` carries the reasoning for both.
- */
-/**
- * The vocabulary rule as a `where` fragment, so the add path and the paste-a-link
- * path cannot disagree about what a hub may be keyed on. `HUB_TAG_SOURCE_FILTER` is
- * the values; this is the query that applies them.
+ * All three paths share it — the picker's tag tab, the add path and paste-a-link — so
+ * none of them can offer what another refuses. `HUB_TAG_SOURCE_FILTER` is the values
+ * and carries the reasoning, including why moderation labels are in as of 2026-09-17
+ * and System tags are not.
  */
 const hubTagWhere = {
   unlisted: false,

@@ -340,20 +340,23 @@ export function HubSourceInput({
                       : tab?.empty}
                   </Text>
                   {/* A scoped search that finds nothing cannot say why from the inside —
-                    "wrong drawer" is invisible unless the other drawers are checked. */}
-                  {elsewhere.map((match) => {
-                    const other = tabs.find((item) => item.scope === match.scope);
-                    if (!other) return null;
-                    return (
-                      <UnstyledButton
-                        key={match.scope}
-                        onClick={() => setScope(match.scope)}
-                        className="text-xs font-semibold text-blue-5"
-                      >
-                        {match.count} in {other.label} →
-                      </UnstyledButton>
-                    );
-                  })}
+                      "wrong drawer" is invisible unless the other drawers are checked.
+                      Never when a tab is PINNED: there is no strip to return by, and the
+                      caller that pinned it reads every pick as that one kind. */}
+                  {!only &&
+                    elsewhere.map((match) => {
+                      const other = tabs.find((item) => item.scope === match.scope);
+                      if (!other) return null;
+                      return (
+                        <UnstyledButton
+                          key={match.scope}
+                          onClick={() => setScope(match.scope)}
+                          className="text-xs font-semibold text-blue-5"
+                        >
+                          {match.count} in {other.label} →
+                        </UnstyledButton>
+                      );
+                    })}
                 </div>
               )}
 
