@@ -185,6 +185,9 @@ describe('the reaction-counts-unknown kill switch', () => {
     );
 
     await expect.element(page.getByTestId('row')).toBeInTheDocument();
+    // `Reactions` returning null leaves the row with NO children. An empty wrapper div
+    // would also have empty text, so text alone depends on the tip badge being mounted.
+    expect(document.querySelector('[data-testid="row"]')?.childElementCount).toBe(0);
     expect(rowText()).toBe('');
     expect(placeholder()).toBeNull();
   });
