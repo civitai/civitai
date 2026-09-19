@@ -36,6 +36,7 @@ const {
   mockGetSessionUser,
   mockIsRevoked,
   mockListMyBlockWorkflows,
+  mockGetActiveDevTunnel,
 } = vi.hoisted(() => ({
   mockIsAppBlocksEnabled: vi.fn(),
   mockVerifyBlockToken: vi.fn(),
@@ -45,6 +46,7 @@ const {
   mockGetSessionUser: vi.fn(),
   mockIsRevoked: vi.fn(),
   mockListMyBlockWorkflows: vi.fn(),
+  mockGetActiveDevTunnel: vi.fn(),
 }));
 
 vi.mock('~/server/services/app-blocks-flag', () => ({
@@ -67,6 +69,16 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
 }));
 vi.mock('~/server/services/block-revocation.service', () => ({
   BlockRevocation: { isRevoked: (...a: unknown[]) => mockIsRevoked(...a) },
+}));
+// The dev-tunnel re-check the approval predicate performs for a dev token on a REAL,
+// NOT-approved row. Reached through `await import(...)` inside the predicate — stubbed at
+// the specifier, which intercepts the dynamic form identically. `importOriginal` spread
+// rather than a hand-listed factory: this module has many other exports, and a factory
+// naming only one of them fails to LOAD as soon as anything in the graph imports a second,
+// with a green typecheck and an error far from the change.
+vi.mock('~/server/services/blocks/dev-tunnel.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  getActiveDevTunnel: (...a: unknown[]) => mockGetActiveDevTunnel(...a),
 }));
 vi.mock('~/server/services/blocks/block-workflows.service', () => ({
   listMyBlockWorkflows: (...a: unknown[]) => mockListMyBlockWorkflows(...a),
@@ -130,6 +142,8 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const mockDbRead = dbMock.dbRead;
+/** The OWNER lookup the approval predicate performs in its dev + non-approved branch. */
+const mockOauthFindUnique = mockDbRead.oauthClient.findUnique;
 
 function validClaims(over: Record<string, unknown> = {}) {
   return {
@@ -180,6 +194,13 @@ beforeEach(() => {
   // below is attributable to the one condition that test flips.
   mockIsRevoked.mockResolvedValue(false);
   mockDbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_test', status: 'approved' });
+  // The app's OWNER, matching `validClaims().sub` (`user:42`), so the ownership belt is
+  // satisfied by default and every refusal below stays attributable to the one condition
+  // its test flips. Resolved separately from the row — see the predicate for why it is not
+  // a nested relation select.
+  mockOauthFindUnique.mockResolvedValue({ userId: 42 });
+  // Default world: NO active dev tunnel — the exempting condition is opted INTO.
+  mockGetActiveDevTunnel.mockResolvedValue(null);
 });
 
 describe('bridge guard — revocation', () => {
@@ -251,22 +272,6 @@ describe('bridge guard — approved status', () => {
     });
   });
 
-  /**
-   * The one exemption, and the reason it is not a hole: `/api/v1/block-tokens`'s
-   * `tryDevTunnelOwnedNonApprovedMint` mints a dev token carrying the app's REAL ids for
-   * an app that is deliberately NOT approved — a suspended/pending/deprecated app stays
-   * runnable by its OWNER in the owner's own dev tunnel (self-bound, forced-SFW,
-   * budget-capped, tunnel-gated, never public). Enforcing the approved status on a `dev`
-   * token would break that documented path. Revocation still binds — see below.
-   */
-  it('skips the approved check for a dev token, which may legitimately be non-approved', async () => {
-    mockVerifyBlockToken.mockResolvedValue(validClaims({ dev: true }));
-    mockDbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_test', status: 'suspended' });
-    await expect(caller().getMyBuzzBalance({ blockToken: 't' })).resolves.toMatchObject({
-      blue: 1,
-    });
-  });
-
   it('still revokes a dev token — the exemption is the approved check only', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ dev: true }));
     mockIsRevoked.mockResolvedValue(true);
@@ -274,6 +279,142 @@ describe('bridge guard — approved status', () => {
       code: 'FORBIDDEN',
       message: 'block instance revoked',
     });
+  });
+});
+
+/**
+ * 🔴 THE DEV-TOKEN EXEMPTION, ON THE BRIDGE (clawgate #571).
+ *
+ * This block replaces a single test that read *"skips the approved check for a dev token,
+ * which may legitimately be non-approved"* and asserted a 200 for `dev: true` against a
+ * `suspended` row. That test was true about the code and wrong about the property: the
+ * `dev` claim is stamped by SIX mint paths, of which only three may legitimately run a
+ * non-approved app, so the guard exempted all six — for the 4h dev lifetime, 16× the
+ * 900s default, on all fifteen bridge procedures.
+ *
+ * WHAT IS PINNED HERE is the split, on the surface the card is about. The fixture subject
+ * is `user:42` throughout (`validClaims`), so `app.userId` is what moves between the
+ * owner and non-owner cases, and the dev tunnel is what moves between populations A and E.
+ * Every case below drives a REAL bridge procedure through the real guard, and each names
+ * the population it stands for so a future reader can tell coverage from decoration.
+ */
+describe('bridge guard — the dev-token populations', () => {
+  it('POPULATION E: owner + ACTIVE dev tunnel on a suspended app still drives the bridge', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ dev: true }));
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ status: 'suspended' });
+    mockOauthFindUnique.mockResolvedValue({ userId: 42 });
+    mockGetActiveDevTunnel.mockResolvedValue({ sessionId: 's', userId: 42, blockId: 'blk_test' });
+    await expect(caller().getMyBuzzBalance({ blockToken: 't' })).resolves.toMatchObject({
+      blue: 1,
+    });
+    // 🔴 THE POSITIVE HALF OF THE SEAM, asserted HERE rather than borrowed from the
+    // predicate's own suite. The predicate reaches `getActiveDevTunnel` through
+    // `await import(...)`; if that dynamic import ever escaped this file's `vi.mock` the
+    // real redis-backed function would run, return null, and this test would fail — but
+    // only this assertion proves the mocked one was CALLED, with the owner id resolved
+    // from the row and the token's own blockId, never anything a caller could choose.
+    // `appId` and `blockId` are deliberately different strings, so an argument swap dies.
+    expect(mockGetActiveDevTunnel).toHaveBeenCalledWith(42, 'blk_test');
+  });
+
+  /**
+   * 🔴 THE DEFECT. Population A — a `dev:live` token whose mint REQUIRED
+   * `status: 'approved'`, still live after a moderator suspension. Identical in every
+   * respect to the test above except the absent dev tunnel, which is the only thing that
+   * ever separated it from population E.
+   */
+  it('POPULATION A: owner with NO dev tunnel is REFUSED on a suspended app', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ dev: true }));
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ status: 'suspended' });
+    mockOauthFindUnique.mockResolvedValue({ userId: 42 });
+    mockGetActiveDevTunnel.mockResolvedValue(null);
+    await expect(caller().getMyBuzzBalance({ blockToken: 't' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'app block is not approved',
+    });
+  });
+
+  /**
+   * The same refusal on a SECOND procedure, because the exemption was never per-proc —
+   * it sat in the one guard all fifteen go through, so pinning one proc would understate
+   * both the defect and the fix.
+   */
+  it('POPULATION A: the refusal is the guard, not the procedure — listMyWorkflows too', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ dev: true }));
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ status: 'suspended' });
+    mockOauthFindUnique.mockResolvedValue({ userId: 42 });
+    mockGetActiveDevTunnel.mockResolvedValue(null);
+    await expect(caller().listMyWorkflows({ blockToken: 't' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'app block is not approved',
+    });
+  });
+
+  it('a dev token whose subject is not the CURRENT owner is refused, tunnel or not', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ dev: true }));
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ status: 'suspended' });
+    mockOauthFindUnique.mockResolvedValue({ userId: 99 });
+    mockGetActiveDevTunnel.mockResolvedValue({ sessionId: 's', userId: 42, blockId: 'blk_test' });
+    await expect(caller().getMyBuzzBalance({ blockToken: 't' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'app block is not approved',
+    });
+  });
+
+  /**
+   * 🔴 CRITERION 5 — the moderator review sandbox, on the bridge. A run-for-real review
+   * token belongs to a MODERATOR, not the owner, and names a pending app; it must keep
+   * working, and it must do so from its own signed claim rather than by accident. Every
+   * other exempting condition is absent here: a suspended row owned by someone else, and
+   * no dev tunnel.
+   */
+  it('POPULATION F′: a run-for-real REVIEW token still drives the bridge on a non-approved app', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ dev: true, reviewRunForReal: true }));
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ status: 'suspended' });
+    mockOauthFindUnique.mockResolvedValue({ userId: 99 });
+    mockGetActiveDevTunnel.mockResolvedValue(null);
+    await expect(caller().getMyBuzzBalance({ blockToken: 't' })).resolves.toMatchObject({
+      blue: 1,
+    });
+    // From the claim alone — the row is never read.
+    expect(mockDbRead.appBlock.findUnique).not.toHaveBeenCalled();
+  });
+
+  /**
+   * POPULATIONS B / C / D / F — the synthetic-id mints. No backing row, so nothing to be
+   * approved; on the bridge this is the branch that would otherwise answer NOT_FOUND and
+   * silently kill the pending / local-manifest / ephemeral-tunnel sandboxes.
+   */
+  it('POPULATIONS B–D/F: a dev token with NO backing row still drives the bridge', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ dev: true }));
+    mockDbRead.appBlock.findUnique.mockResolvedValue(null);
+    await expect(caller().getMyBuzzBalance({ blockToken: 't' })).resolves.toMatchObject({
+      blue: 1,
+    });
+  });
+
+  /**
+   * The corresponding NON-dev case is unchanged and stays a 404 — pinned next to its dev
+   * sibling because the two verdicts for a missing row now diverge inside one function,
+   * and a reader comparing them needs both in view.
+   */
+  it('a NON-dev token with no backing row is still NOT_FOUND, not exempt', async () => {
+    mockDbRead.appBlock.findUnique.mockResolvedValue(null);
+    await expect(caller().getMyBuzzBalance({ blockToken: 't' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('an APPROVED app with a dev token needs no exemption and never looks for a tunnel', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ dev: true }));
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ status: 'approved' });
+    mockOauthFindUnique.mockResolvedValue({ userId: 42 });
+    await expect(caller().getMyBuzzBalance({ blockToken: 't' })).resolves.toMatchObject({
+      blue: 1,
+    });
+    // The cost claim in the predicate's docblock: only the dev + real-row + NOT-approved
+    // path pays the tunnel lookup.
+    expect(mockGetActiveDevTunnel).not.toHaveBeenCalled();
   });
 });
 

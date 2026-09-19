@@ -123,6 +123,24 @@ const GATE_LEDGER: Record<string, string> = {
     '(D1) and none is meaningful here — this is not a gate a caller passes through, it ' +
     'is a payee resolution. If collaborator revenue-sharing is ever specified it belongs ' +
     'as an explicit split on top of this row, not as a widened owner lookup.',
+  'src/server/services/blocks/block-approval.service.ts':
+    'resolveAppBlockApprovalVerdict resolves the app owner — `oauthClient.findUnique` on ' +
+    '`claims.appId`, read as `app?.userId` — to decide whether a `dev` token may bypass ' +
+    'the approved-status check on a REAL, NOT-approved row: the ' +
+    'owner-dev-tunnel case (clawgate #571). It is a SEPARATE query rather than a nested ' +
+    'select on the row read, because without `relationJoins` a nested relation is a ' +
+    'second round trip anyway and would bill every bridge call and every REST request ' +
+    'for a column only this branch consults. DELIBERATELY OWNER-ONLY, and the reason is ' +
+    'that it is a MIRROR rather than a policy of its own: the only mint that can issue ' +
+    'such a token, `resolveOwnedNonApprovedPageBlock`, resolves `where: { app: { userId ' +
+    '} }` — owner-only, not widened to seats. Widening THIS read to ACCEPTED ' +
+    'collaborators would exempt a class of token the mint can never produce, i.e. it ' +
+    'would only ever loosen the gate for a stale token, never enable a real editor ' +
+    'workflow. If collaborator dev tunnels are ever specified, the MINT is what changes ' +
+    'first and this read follows it — never the other way round. NO mod bypass (D1): a ' +
+    'moderator reviewing a non-approved app already has its own exemption, the signed ' +
+    '`reviewRunForReal` claim answered before this read, so a mod override here would ' +
+    'be a second, weaker path to the same thing.',
   'src/server/services/blocks/app-analytics.service.ts':
     'getOwnedAppBlocks resolves the permitted-id SET (owned + seated) instead of ' +
     '`app: { userId }`. Safe to widen HERE because every downstream aggregate filters ' +

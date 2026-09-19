@@ -145,6 +145,17 @@ export async function resolveSharedContext(
     });
   }
 
+  // 🔴 THE STRICTEST OF THE THREE RESOLVERS THAT READ THIS ROW, AND DELIBERATELY SO.
+  // The other two are `resolveAppBlockApprovalVerdict`
+  // (`~/server/services/blocks/block-approval.service`), the shared predicate for the REST
+  // middleware and the tRPC bridge, which exempts a run-for-real review token, a token
+  // with no backing row, and an owner with a live dev tunnel; and `resolveStorageContext`
+  // (`apps.router`), which exempts only the run-for-real review token. This one exempts
+  // NOTHING, because shared storage is cross-user, app-global state and the review mint
+  // never grants `apps:storage:shared:*` at all — so there is no case here to exempt, not
+  // a disagreement about what approval means. Do not "align" these three without deciding
+  // it; the reconciliation and its rationale are ledgered, and enforced on both growth and
+  // shrink, in `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts`.
   const block = await dbRead.appBlock.findUnique({
     where: { appId_blockId: { appId: claims.appId, blockId: claims.blockId } },
     select: { id: true, status: true },

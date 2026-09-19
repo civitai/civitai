@@ -386,6 +386,17 @@ async function resolveStorageContext(
     };
   }
 
+  // 🔴 STRICTER THAN THE SHARED PREDICATE, AND THAT IS A STATEMENT ABOUT THIS TARGET
+  // RATHER THAN ABOUT APPROVAL. The run-for-real branch above is this resolver's ONLY
+  // exemption. `resolveAppBlockApprovalVerdict`
+  // (`~/server/services/blocks/block-approval.service`) — the shared predicate behind the
+  // REST middleware and the tRPC bridge — also exempts a token with no backing row and an
+  // owner running a suspended app in their own live dev tunnel; neither can apply here,
+  // because per-user KV has to resolve to a REAL Postgres schema and a plain dev token
+  // names none. `resolveSharedContext` (`apps-shared.router`) is stricter still and
+  // exempts nothing. Three rules, one policy plus two structural narrowings — ledgered
+  // with their rationales, and enforced on growth and shrink, in
+  // `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts`.
   const block = await dbRead.appBlock.findUnique({
     where: { appId_blockId: { appId: claims.appId, blockId: claims.blockId } },
     select: { id: true, status: true },
