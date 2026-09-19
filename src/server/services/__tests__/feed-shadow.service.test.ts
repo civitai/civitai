@@ -83,6 +83,15 @@ describe('mapSearchInputToFeedQuery', () => {
     expect(q('Oldest').get('before')).toBeNull();
   });
 
+  it('pages a bare offset cursor like an offset|entry one, without freezing the set', () => {
+    for (const cursor of ['400', 400]) {
+      const m = mapSearchInputToFeedQuery({ ...base, sort: 'Newest', cursor });
+      const q = new URLSearchParams(m.ok ? m.query : '');
+      expect(q.get('offset')).toBe('400');
+      expect(q.get('before')).toBeNull();
+    }
+  });
+
   it('names the first thing it cannot express', () => {
     const reason = (i: Record<string, unknown>) => {
       const m = mapSearchInputToFeedQuery({ ...base, ...i });
