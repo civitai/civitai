@@ -373,14 +373,22 @@ describe('the dropdown roots carry the typed text across that remount', () => {
 
     // EXACTLY ONE writer. Hoisting the sync while leaving the old copy in place reintroduces the
     // whole defect with the assertion above still satisfied — the consolidation-that-forgot-to-
-    // delete shape, which is the likeliest way this comes back.
+    // delete shape, which is the likeliest way this comes back. Note that the `indexOf` check
+    // above does NOT screen that shape out: the hoisted copy is still present, so it succeeds and
+    // execution reaches this line. This count is the only thing that sees the leftover.
     //
-    // `setTargetIndex` alone. This used to alternate with `onTargetChange`, the spelling the PR
-    // base used before the handler was lifted out of the inner component; no source file spells
-    // it any more (it survives only in this file's prose), and the arm could not have
-    // discriminated anyway — a revert to the base spelling fails the `indexOf` assertion above
-    // before reaching this line.
-    expect([...source.matchAll(/setTargetIndex\(searchTarget/g)]).toHaveLength(1);
+    // Counted on the ARGUMENT, not on a list of callee spellings. A leftover copy is spelled with
+    // whatever name the boundary it crossed carried — at the PR base that was
+    // `onTargetChange(searchTarget as TKey)`, plumbed as a prop into the inner component — so an
+    // alternation of the names known today goes blind the moment a third one appears. Any call
+    // taking `searchTarget` is counted instead; today the sync itself is the only one. The cost is
+    // real and accepted: a future LEGITIMATE reader of `searchTarget` reddens this too. Re-pin it
+    // deliberately then — do not loosen the count back to one spelling.
+    expect(
+      [...source.matchAll(/[A-Za-z_$][\w$]*\(\s*searchTarget\b/g)].map((m) => m[0]),
+      'AutocompleteSearch: expected exactly one call taking `searchTarget` — a second is the ' +
+        'leftover copy a hoist forgot to delete'
+    ).toHaveLength(1);
 
     // …and it still FOLLOWS navigation. Emptying its dependency array leaves one writer, in the
     // right place, that only ever runs once. The array only has to CONTAIN `searchTarget` —

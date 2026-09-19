@@ -467,9 +467,16 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const focusInput = () => inputRef.current?.focus();
   const blurInput = () => inputRef.current?.blur();
 
-  // Submitting a search and pressing Escape are the two ways a user says they are finished with
-  // what they typed, so both discard the carried copy as well as blurring. One function rather
-  // than the line written at each call site: the two must not drift apart.
+  // The two "done" signals that blur this input from here — submitting a search, and pressing
+  // Escape — discard the carried copy as well as blurring. One function rather than the line
+  // written at each call site: the two must not drift apart.
+  //
+  // 🔴 NOT the whole set of ways a user finishes with what they typed. Picking a hit from the
+  // dropdown (`handleItemClick` below) navigates and fires the same `onSubmit?.()`, and discards
+  // nothing of its own. Whether the carrier survives it is then decided by the URL-follow effect
+  // in the outer component: emptied when the landing path moves `searchTarget`, kept when it does
+  // not. That is the same residue that effect already describes, not a separate decision taken
+  // here — so do not read this pair as an exhaustive list.
   //
   // Deliberately NOT inside `blurInput`, which this is now the only caller of — so the two
   // placements are behaviourally identical at this head. `blurInput` is a DOM verb and the
