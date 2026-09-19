@@ -138,7 +138,11 @@ export async function findOrCreateUser(
         // victim's real login into this account (takeover). Mirrors the emailVerified gate just below.
         email: profile.email && profile.emailVerified ? profile.email : null,
         username: null,
-        name: profile.name ?? null,
+        // Deliberately never persisted: the OAuth provider's name is unverified, user-controlled,
+        // and outlives a (soft) account deletion. It still seeds the username below, from the profile.
+        // The live NCMEC path (csam.service-new.ts) reads it only as the REPORTER's firstName, so staff
+        // accounts created from here on file reports without one — expected; they carry their email.
+        name: null,
         // Legacy behavior: never store the provider's avatar — users set their own profile picture, and an
         // unmoderated provider avatar shouldn't be displayed by default.
         image: null,
