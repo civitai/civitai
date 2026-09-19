@@ -154,9 +154,8 @@ describe('deleteUser — payment-provider ids', () => {
     // Deliberate, and the reason is not local to this file, so read it before "fixing" it:
     // deleteUser's own cancelSubscription calls stripe.subscriptions.del, and the resulting
     // customer.subscription.deleted is resolved by findFirst({ where: { customerId } }) in
-    // upsertSubscription (stripe.service.ts:601-616). That throws before reaching either
-    // customerSubscription.delete below it, so nulling customerId here leaves the row `active`
-    // forever while Stripe retries the webhook for days.
+    // upsertSubscription, which throws before reaching either customerSubscription.delete
+    // below it, so Stripe retries the webhook for days.
     //
     // The GDPR scrub purges it instead, and must scrub Stripe FIRST: once the id is gone the
     // customer record cannot be found again.
