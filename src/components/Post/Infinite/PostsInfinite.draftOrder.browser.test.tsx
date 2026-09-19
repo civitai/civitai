@@ -94,6 +94,24 @@ function Feed({ draftOnly }: { draftOnly: boolean }) {
 const cards = () => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="post"]'));
 const renderedIds = () => cards().map((card) => Number(card.getAttribute('data-id')));
 const columnCount = () => new Set(cards().map((card) => card.getBoundingClientRect().left)).size;
+
+// Document order is not reading order: `direction: rtl`, a grid `order`, or CSS columns
+// flowing DOWN each column all keep the ids in sequence while the queue reads wrongly.
+// The first row is taken by DOM INDEX, not by shared `top` — selecting it by `top` let a
+// column-major layout pass, since the head of every column shares the first card's top.
+function expectRowMajor(elements: HTMLElement[]) {
+  const boxes = elements.map((element) => element.getBoundingClientRect());
+  const n = new Set(boxes.map((box) => box.left)).size;
+  const firstRow = boxes.slice(0, n);
+  expect(firstRow.map((box) => box.top)).toEqual(firstRow.map(() => boxes[0].top));
+  expect(firstRow.map((box) => box.left)).toEqual(
+    firstRow
+      .map((box) => box.left)
+      .slice()
+      .sort((a, b) => a - b)
+  );
+  expect(boxes[n].top).toBeGreaterThan(boxes[0].top);
+}
 const serverOrder = posts.map((post) => post.id);
 // What height-balanced masonry does to that order in this harness's three columns.
 const MASONRY_ORDER = [1, 6, 10, 2, 4, 8, 3, 5, 7, 9];
@@ -108,19 +126,31 @@ describe('drafts feed order', () => {
     // here rather than passing vacuously. Keep it AFTER the order check: a column-balanced
     // layout should be reported as the wrong order, not as an unmeasurable one.
     expect(columnCount()).toBeGreaterThan(1);
+    expectRowMajor(cards());
+  });
 
-    // Document order is not reading order: `direction: rtl` or a grid `order` would keep the
-    // ids above in sequence while the queue read backwards. Assert the geometry too.
-    const boxes = cards().map((card) => card.getBoundingClientRect());
-    const firstRow = boxes.filter((box) => box.top === boxes[0].top);
-    expect(firstRow.length).toBe(columnCount());
-    expect(firstRow.map((box) => box.left)).toEqual(
-      firstRow
-        .map((box) => box.left)
-        .slice()
-        .sort((a, b) => a - b)
+  test('the row-major check rejects a layout that flows down the columns', async () => {
+    // CSS columns keep DOM order and put the head of each column on the first card's top,
+    // which is exactly what the earlier top-based check let through.
+    renderWithProviders(
+      <div style={{ columnCount: 3, columnGap: 16, width: 948 }}>
+        {heights.map((height, i) => (
+          <div
+            key={i}
+            data-testid="post"
+            data-id={i + 1}
+            style={{ height, breakInside: 'avoid', marginBottom: 16 }}
+          />
+        ))}
+      </div>
     );
-    expect(boxes[columnCount()].top).toBeGreaterThan(boxes[0].top);
+
+    await vi.waitFor(() => expect(cards().length).toBe(heights.length));
+    expect(renderedIds()).toEqual(serverOrder);
+    // It must be rejected for its geometry, with the fixture genuinely in three columns —
+    // not because a one-column fixture or an index past the end threw something else.
+    expect(columnCount()).toBe(3);
+    expect(() => expectRowMajor(cards())).toThrow(/to deeply equal/);
   });
 
   test('leaves the published feed on masonry', async () => {
@@ -152,8 +182,8 @@ describe('drafts feed order', () => {
 
     await vi.waitFor(() => expect(cards().length).toBeGreaterThan(0));
     expect(cards().length).toBeLessThan(60);
-    // Bounded from below too: a collapsed window — one row, or columnCount briefly 0 — is a
-    // feed that goes blank on scroll, and it satisfies every upper bound.
+    // Bounded from below too: a window collapsed to one row is a feed that goes blank on
+    // scroll, and it satisfies every upper bound. (Zero cards is the waitFor's to catch.)
     expect(cards().length).toBeGreaterThanOrEqual(columnCount() * 2);
     expect(renderedIds()[0]).toBe(1);
   });
