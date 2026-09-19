@@ -57,14 +57,50 @@ describe('boundBridgeMessageType (the `type` label bound)', () => {
 });
 
 describe('the label enums are closed', () => {
-  test('outcomes are exactly the five the dispatcher can produce', () => {
+  test('outcomes are exactly the six a bridge message can end in', () => {
+    // 🔴 THE WHOLE LIST, IN ORDER, NOT A `toContain` — this is the wire contract
+    // the beacon's `z.enum(BRIDGE_MESSAGE_OUTCOMES)` is built from, and a zod
+    // array rejects WHOLESALE: an outcome the emitter sends and the schema does
+    // not know 400s the entire batch and destroys every good row riding with it.
+    //
+    // Five of the six are reported by code in this repo. `validator_rejected` is
+    // the exception and deliberately so: it is SELF-REPORTED by the block over
+    // `BLOCK_MESSAGE_REJECTED`, because the SDK's validator runs in the iframe
+    // after this host has already replied — from here that exchange is `handled`,
+    // so no branch in `usePostMessage` could ever detect it unaided.
     expect([...BRIDGE_MESSAGE_OUTCOMES]).toEqual([
       'handled',
       'no_handler',
       'rate_limited',
       'deduped',
       'no_token',
+      'validator_rejected',
     ]);
+  });
+
+  test('BLOCK_MESSAGE_REJECTED is an INVENTORY key, so the label bound admits it', () => {
+    // It arrives as an ordinary inbound bridge message, so `boundBridgeMessageType`
+    // sees its type like any other. Not in INVENTORY ⇒ the dispatcher's own
+    // `no_handler` bookkeeping for it would read `'other'`, and the entry is also
+    // what documents that no per-host handler exists for it.
+    expect(Object.prototype.hasOwnProperty.call(INVENTORY, 'BLOCK_MESSAGE_REJECTED')).toBe(true);
+    expect(boundBridgeMessageType('BLOCK_MESSAGE_REJECTED')).toBe('BLOCK_MESSAGE_REJECTED');
+    // Fire-and-forget: nothing awaits it, so there is nothing to NACK. A reply
+    // would itself run the validator this message exists to report on.
+    expect(INVENTORY.BLOCK_MESSAGE_REJECTED.request).toBe(false);
+    expect(nackReplyTypeFor('BLOCK_MESSAGE_REJECTED')).toBeNull();
+  });
+
+  test('the `type` a rejection REPORTS survives the bound; the reply type it replaces does not', () => {
+    // 🔴 THIS IS THE MEASUREMENT BEHIND THE DESIGN, not a restatement of it. The
+    // SDK sends the hanging block→host REQUEST rather than the rejected reply
+    // precisely because INVENTORY holds no `*_RESULT` key — so a reply type would
+    // clamp to `'other'` here and collapse every rejection in the protocol onto a
+    // single label. If a future INVENTORY ever gains reply types, this test is the
+    // one that should make someone revisit that choice.
+    expect(boundBridgeMessageType('GET_IMAGES_BY_IDS')).toBe('GET_IMAGES_BY_IDS');
+    expect(boundBridgeMessageType('IMAGES_RESULT')).toBe('other');
+    expect(Object.keys(INVENTORY).filter((t) => t.endsWith('_RESULT'))).toEqual([]);
   });
 
   test("hosts are the parity inventory's own host keys, so a series joins to it", () => {

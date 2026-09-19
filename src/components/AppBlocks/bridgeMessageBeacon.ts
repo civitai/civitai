@@ -55,8 +55,8 @@ const FLUSH_INTERVAL_MS = 10_000;
 
 /**
  * Distinct-key cap — a SAFETY BOUND on the browser-side map, not a tuning knob.
- * The key space is (apps on the page) x (46 protocol types + other) x (2 hosts) x
- * (5 outcomes), and a page hosts one or two blocks, so a real page sits in the low
+ * The key space is (apps on the page) x (47 protocol types + other) x (2 hosts) x
+ * (6 outcomes), and a page hosts one or two blocks, so a real page sits in the low
  * tens. Hitting this cap means something is generating unbounded distinct types
  * (they clamp to `other` server-side, so prom is safe either way) — flush early and
  * keep the map small rather than grow it.

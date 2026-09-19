@@ -239,6 +239,91 @@ describe('usePostMessage bridge outcome counter', () => {
     replies.stop();
   });
 
+  // ── The FIFTH silence: the block refused OUR reply ─────────────────────────
+  // Not a dispatcher outcome we can observe — the SDK's validator runs in the
+  // iframe AFTER we replied, so we already counted that exchange `handled`. The
+  // block reports it over `BLOCK_MESSAGE_REJECTED` and the dispatcher translates.
+
+  test('BLOCK_MESSAGE_REJECTED reports validator_rejected against the HANGING REQUEST, exactly once', async () => {
+    const recorded: Recorded[] = [];
+    await mount({ onOutcome: (e) => recorded.push(e), registered: true });
+
+    postFromBlock('BLOCK_MESSAGE_REJECTED', { type: 'GET_IMAGES_BY_IDS' });
+    await vi.waitFor(() => {
+      if (countOf(recorded, 'validator_rejected', 'GET_IMAGES_BY_IDS') !== 1) {
+        throw new Error('not counted yet');
+      }
+    });
+
+    // 🔴 EXACTLY ONE ROW, AND NOT `handled`. The report is consumed by the
+    // dispatcher above the subscriber lookup, so it must not also land in the
+    // `handled` denominator — one rejection moving two series by one would make
+    // every ratio read against `handled` quietly wrong.
+    expect(recorded).toEqual([
+      {
+        appBlockId: 'apb_test',
+        host: 'IframeHost',
+        type: 'GET_IMAGES_BY_IDS',
+        outcome: 'validator_rejected',
+      },
+    ]);
+  });
+
+  test('NEGATIVE CONTROL: a healthy exchange reports no validator_rejected at all', async () => {
+    // The arm that makes the test above a measurement rather than a claim: the
+    // same harness, a normal handled message, and the new series stays at zero.
+    const recorded: Recorded[] = [];
+    await mount({ onOutcome: (e) => recorded.push(e), registered: true });
+    postFromBlock('GET_VIEWER', { requestId: 'rq_healthy' });
+    await vi.waitFor(() => {
+      if (countOf(recorded, 'handled') !== 1) throw new Error('no handled yet');
+    });
+    expect(recorded.filter((r) => r.outcome === 'validator_rejected')).toEqual([]);
+  });
+
+  test.each([
+    ['a type the protocol does not declare', { type: 'NOT_A_REAL_MESSAGE' }],
+    ['a non-string type', { type: 42 }],
+    ['no type at all', {}],
+    ['no payload at all', undefined],
+  ])('clamps %s to `other` rather than minting a series', async (_label, payload) => {
+    // The payload is BLOCK-supplied and the value becomes a prom label on a host
+    // that retains every distinct label set in heap forever, so the clamp is the
+    // security property of this branch, not tidiness. `report` ->
+    // `recordBridgeMessage` -> `boundBridgeMessageType` does the clamping; this
+    // pins that the branch actually routes through it.
+    const recorded: Recorded[] = [];
+    await mount({ onOutcome: (e) => recorded.push(e), registered: true });
+    postFromBlock('BLOCK_MESSAGE_REJECTED', payload);
+    await vi.waitFor(() => {
+      if (recorded.length === 0) throw new Error('nothing recorded');
+    });
+    expect(recorded).toEqual([
+      { appBlockId: 'apb_test', host: 'IframeHost', type: 'other', outcome: 'validator_rejected' },
+    ]);
+  });
+
+  test('a rejection flood is counted in full and never answered', async () => {
+    // The branch sits ABOVE the inbound limiter and the dedup map, for the same
+    // reason `no_handler` does: a flood of junk must not burn the 30 msg/sec budget
+    // legitimate BLOCK_ERROR reporting needs. So all 45 are counted (the SDK side
+    // is where the emit budget lives), none are deduped — they carry no requestId,
+    // and two rejections of one type are two facts — and nothing goes back on the
+    // wire, because there is nothing to answer.
+    const recorded: Recorded[] = [];
+    await mount({ onOutcome: (e) => recorded.push(e), registered: true });
+    const replies = listenOnBlock();
+    for (let i = 0; i < 45; i++) postFromBlock('BLOCK_MESSAGE_REJECTED', { type: 'GET_VIEWER' });
+    await vi.waitFor(() => {
+      if (countOf(recorded, 'validator_rejected') !== 45) throw new Error('not all counted yet');
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(countOf(recorded, 'rate_limited')).toBe(0);
+    expect(countOf(recorded, 'deduped')).toBe(0);
+    expect(replies.all()).toEqual([]);
+    replies.stop();
+  });
+
   test('a throwing outcome sink cannot break the bridge it observes', async () => {
     // Telemetry that can abort dispatch would re-create the exact silent drop it
     // was added to remove — and it would do it on the busiest path.

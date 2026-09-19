@@ -37,8 +37,8 @@ import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 // unbounded label here is an OOM (exit-139) vector, not a tidiness issue.
 //
 // 🔴 BOUNDED IS NOT THE SAME AS SMALL — READ THE PRODUCT BEFORE ADDING A LABEL.
-// The domain is (approved apps + 1) x 47 x 2 x 5: ~24k series per pod at 50
-// approved apps, roughly 7x the existing `renders_total` product and the largest
+// The domain is (approved apps + 1) x 48 x 2 x 6: ~29k series per pod at 50
+// approved apps, roughly 9x the existing `renders_total` product and the largest
 // App Block label set in the module. It is bounded, and CARDINALITY is the property
 // this route enforces — that is the prom-heap axis, and it is genuinely closed. So
 // a fifth label is not a free addition, and neither is a laxer clamp.

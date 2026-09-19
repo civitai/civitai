@@ -33,10 +33,36 @@
  *   rate_limited — the 30 msg/sec inbound budget was exhausted.
  *   deduped      — the same `requestId` arrived twice inside the 5s dedup window.
  *   no_token     — a handler ran, found no usable block credential, and refused.
+ *   validator_rejected
+ *                — the BLOCK refused our reply at its own trust boundary and
+ *                  dropped it, so its request hangs to the SDK timeout. The fifth
+ *                  silence, and the only one of the five with a confirmed
+ *                  production incident.
  *
  * 🔴 `no_token` is reported BY THE HANDLER, not by the dispatcher — the dispatcher
  * has no idea a token exists. It rides the same counter because an operator asking
  * "why did this block stall" needs one series, not two.
+ *
+ * 🔴 `validator_rejected` IS REPORTED BY THE BLOCK, NOT OBSERVED BY US, AND THAT IS
+ * NOT A GAP WE CAN CLOSE. The SDK's `internal/validate.ts` shape-checks every
+ * inbound payload IN THE IFRAME, i.e. after this host has already replied — from
+ * here the exchange completed and the dispatcher counts it `handled`. So the only
+ * party that can see it is the block, which now says so with a fire-and-forget
+ * `BLOCK_MESSAGE_REJECTED` (`@civitai/app-sdk/blocks`); `usePostMessage` turns that
+ * into this outcome. Two consequences to read the series with:
+ *  - the `type` on it is the BLOCK→HOST REQUEST left hanging (`GET_IMAGES_BY_IDS`),
+ *    not the rejected reply (`IMAGES_RESULT`). Deliberate: `boundBridgeMessageType`
+ *    bounds the label against `hostHandlerParity`'s INVENTORY, which holds no
+ *    `*_RESULT` key, so a reply type would clamp to `'other'` and collapse every
+ *    rejection onto one label;
+ *  - the SDK budgets its reports (30 per 10s per transport), so the count is a
+ *    deliberate UNDERCOUNT on a sustained break. Read it as *which types are being
+ *    rejected and when it started*, never as an exact total.
+ *
+ * ⚠️ ADDING THIS SIXTH VALUE GREW THE COUNTER'S LABEL PRODUCT BY 20% —
+ * (approved apps + 1) x 47 x 2 x 6. `/api/track/block-message`'s docblock asks for
+ * that product to be read before a label is added; an outcome VALUE is the cheaper
+ * axis than a fifth label, which is why this arrived as one.
  */
 export const BRIDGE_MESSAGE_OUTCOMES = [
   'handled',
@@ -44,6 +70,7 @@ export const BRIDGE_MESSAGE_OUTCOMES = [
   'rate_limited',
   'deduped',
   'no_token',
+  'validator_rejected',
 ] as const;
 export type BridgeMessageOutcome = (typeof BRIDGE_MESSAGE_OUTCOMES)[number];
 

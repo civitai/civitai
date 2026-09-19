@@ -3,6 +3,7 @@ import type { RefObject } from 'react';
 import { buildBridgeNackReply } from './bridgeNackReply';
 import { recordBridgeMessage } from './bridgeMessageBeacon';
 import {
+  boundBridgeMessageType,
   BRIDGE_NACK_NO_HANDLER,
   BRIDGE_NACK_NO_TOKEN,
   type BridgeHost,
@@ -214,13 +215,18 @@ export function resolveOutboundTargetOrigin(
  *     and from a merely slow host;
  *   - NACKs an unhandled REQUEST-style message instead of returning silently, so
  *     a block gets an error in milliseconds instead of hanging to a 30s / 120s /
- *     600s SDK timeout.
+ *     600s SDK timeout;
+ *   - translates the block's own `BLOCK_MESSAGE_REJECTED` into
+ *     `outcome="validator_rejected"`. That is the FIFTH drop path and the only one
+ *     no code here can observe: the SDK's validator runs in the iframe AFTER this
+ *     host has replied, so the same exchange is already counted `handled`. The
+ *     block is the only witness, so it reports and we count.
  *
  * 🔴 EVERY DROP PATH MUST REPORT. A branch added here that `return`s without a
  * `report(...)` re-creates the exact silence this module was instrumented to
  * remove, and it will look fine in review because the counter still exists.
- * `usePostMessageOutcomes.browser.test.tsx` pins the outcome for each of the
- * four dispatcher paths, driving the real hook.
+ * `usePostMessageOutcomes.browser.test.tsx` pins the outcome for each dispatcher
+ * path, driving the real hook.
  */
 export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResult {
   const {
@@ -305,6 +311,52 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       if (!data || typeof data !== 'object' || typeof data.type !== 'string') return;
 
       const now = Date.now();
+
+      // ── THE FIFTH SILENCE, reported by the only party that can see it ────────
+      // The block's transport refused one of OUR replies at its own trust boundary
+      // and dropped it, so its request is now hanging to the SDK timeout. We cannot
+      // observe that ourselves: the SDK's validator runs in the iframe AFTER we have
+      // replied, so from here the exchange completed and the `handled` below already
+      // counted it. `BLOCK_MESSAGE_REJECTED` (@civitai/app-sdk/blocks, fire-and-
+      // forget, no requestId) is the block telling us.
+      //
+      // 🔴 THE LABEL COMES FROM THE PAYLOAD, NOT THE MESSAGE TYPE. `payload.type` is
+      // the block→host REQUEST left hanging (`GET_IMAGES_BY_IDS`), which is what an
+      // operator needs and — not incidentally — the only spelling that survives
+      // `boundBridgeMessageType`: the INVENTORY it clamps against holds no `*_RESULT`
+      // key, so the rejected REPLY's type would collapse to `'other'`. It is
+      // block-supplied and therefore untrusted, so it is clamped HERE.
+      //
+      // 🔴 CLAMPED AT THE EXTRACTION SITE, NOT LEFT TO THE SINK — and that is a
+      // correction, not belt-and-braces. The other `report(...)` callers pass
+      // `data.type`, which `recordBridgeMessage` clamps on the way out; but
+      // `onOutcome` is a documented SEAM (every browser test supplies its own sink,
+      // and `report`'s whole job is to be sink-agnostic), so a value pulled out of
+      // an untrusted payload and bounded only by the default sink is bounded by
+      // nothing a reader of this branch can see. Measured while writing
+      // `usePostMessageOutcomes.browser.test.tsx`: with the clamp downstream, the
+      // test's own sink observed the raw `NOT_A_REAL_MESSAGE`. Clamping here makes
+      // the value this branch emits the value that lands in the series, whatever
+      // the sink; the default sink clamps again, idempotently.
+      //
+      // 🔴 EXACTLY ONE INCREMENT, AND NOT `handled`. Returning here keeps the report
+      // itself out of the `handled` denominator — one rejection must move one series
+      // by one, or the counter double-books and stops being readable as a rate.
+      //
+      // ABOVE the rate limiter and the dedup map, deliberately, for the same reason
+      // the `no_handler` branch is: a flood of junk must not burn the 30 msg/sec
+      // budget legitimate BLOCK_ERROR reporting needs. Magnitude is consequently
+      // unbounded here, as it already is for `no_handler`/`deduped` — see
+      // `BRIDGE_MESSAGE_COUNT_MAX`. Dedup would also be actively wrong: these carry
+      // no `requestId`, and two rejections of the same type are two facts.
+      if (data.type === 'BLOCK_MESSAGE_REJECTED') {
+        const rejected = (data.payload as { type?: unknown } | null | undefined)?.type;
+        report(
+          boundBridgeMessageType(typeof rejected === 'string' ? rejected : ''),
+          'validator_rejected'
+        );
+        return;
+      }
 
       // Subscriber lookup before rate-limit/dedup budget consumption. A flood
       // of {type:'GARBAGE'} with no handler shouldn't burn the 30/s budget and
