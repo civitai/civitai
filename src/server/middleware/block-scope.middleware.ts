@@ -68,9 +68,18 @@ export interface BlockTokenClaims {
   /** Advisory: the color domain the token was minted on (`green`|`blue`|`red`). */
   domain?: string;
   /**
-   * DEV-TOKEN marker — present (true) ONLY on tokens minted by the mod-gated
+   * DEV-TOKEN marker. ⚠️ THIS USED TO SAY "ONLY on tokens minted by the mod-gated
    * dev-token endpoint (`/api/v1/blocks/dev-token`) for the `dev:live` localhost
-   * harness. It selects the per-token-type max-age cap in `verifyBlockToken`
+   * harness", and that is wrong in the direction that matters: the claim is stamped
+   * unconditionally by `signDevScopedPageToken`, which is reached by SIX mint paths
+   * across `/api/v1/blocks/dev-token` (approved / pending / local-manifest),
+   * `/api/v1/block-tokens` (ephemeral tunnel / owner-non-approved tunnel) and the tRPC
+   * review-sandbox mint. So `dev === true` identifies a LIFETIME class, not a caller and
+   * not a capability — reading it as "the dev:live harness" is how a guard came to exempt
+   * all six from the approved-status check (clawgate #571). Anything deciding
+   * AUTHORIZATION on this claim must narrow it further; see
+   * `resolveAppBlockApprovalVerdict` for the population table.
+   * It selects the per-token-type max-age cap in `verifyBlockToken`
    * (4h for dev, 15min for every other token). The claim is only trustworthy
    * BECAUSE the signature (RS256, our kid) is verified before it's read — a
    * forged `dev:true` can't pass the signature gate. The claim is optional and

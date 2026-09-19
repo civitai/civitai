@@ -34,6 +34,18 @@ vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => 
   ...((await importOriginal()) as Record<string, unknown>),
   recordBlockRestApprovalVerdict: recordVerdictMock,
 }));
+/**
+ * The dev-tunnel lookup the predicate re-derives for a dev token on a REAL, NOT-approved
+ * row. Stubbed rather than run for real because the real one is two sysRedis GETs against
+ * the k8s-backed tunnel control plane — the SEAM is what this suite is about. Note the
+ * predicate reaches it through `await import(...)`; `vi.mock` intercepts that exactly as
+ * it does a static import, which is itself worth pinning: the dynamic form is there to
+ * keep the k8s client off the REST middleware's load graph, not to dodge the seam.
+ */
+const { tunnelMock } = vi.hoisted(() => ({ tunnelMock: vi.fn() }));
+vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
+  getActiveDevTunnel: (...a: unknown[]) => tunnelMock(...a),
+}));
 
 import { dbMock } from '~/__tests__/mocks';
 import { withBlockScope } from '../block-scope.middleware';
@@ -56,9 +68,14 @@ const APP_ID = 'app_gate';
 const BLOCK_ID = 'blk_gate';
 const SCOPE = 'user:read:self';
 
-async function mint(opts: { dev?: boolean } = {}): Promise<string> {
+/** The app owner in every fixture below, unless a test deliberately diverges from it. */
+const OWNER_ID = 42;
+
+async function mint(
+  opts: { dev?: boolean; reviewRunForReal?: boolean; userId?: number } = {}
+): Promise<string> {
   const { token } = await BlockTokenService.sign({
-    userId: 42,
+    userId: opts.userId ?? OWNER_ID,
     blockId: BLOCK_ID,
     appId: APP_ID,
     appBlockId: 'apb_gate',
@@ -66,6 +83,7 @@ async function mint(opts: { dev?: boolean } = {}): Promise<string> {
     scopes: [SCOPE],
     ctx: {},
     ...(opts.dev ? { dev: true } : {}),
+    ...(opts.reviewRunForReal ? { reviewRunForReal: true } : {}),
   } as Parameters<typeof BlockTokenService.sign>[0]);
   return token;
 }
@@ -135,6 +153,11 @@ beforeEach(() => {
   findUniqueMock.mockReset();
   isFliptMock.mockImplementation(async (flag: string) => flag === 'app-blocks-runtime-enabled');
   isRevokedMock.mockImplementation(async () => false);
+  // Default world: NO active dev tunnel. The exempting condition must be opted INTO by
+  // the tests that are about it, so a test that forgets fails closed rather than
+  // inheriting an exemption from a previous case.
+  tunnelMock.mockReset();
+  tunnelMock.mockResolvedValue(null);
 });
 
 describe('resolveRestApprovalVerdict — the predicate on its own', () => {
@@ -182,17 +205,128 @@ describe('resolveRestApprovalVerdict — the predicate on its own', () => {
     // a second, looser `where` key alongside it.
     expect(findUniqueMock.mock.calls[0][0]).toEqual({
       where: { appId_blockId: { appId: APP_ID, blockId: BLOCK_ID } },
-      select: { status: true },
+      select: { status: true, app: { select: { userId: true } } },
     });
   });
 
-  it('a dev token is exempt AND does not even read the DB', async () => {
-    findUniqueMock.mockResolvedValue({ status: 'suspended' });
-    expect(await resolveRestApprovalVerdict({ ...claims, dev: true })).toBe('dev_exempt');
-    // The second half is what pins the exemption as a SHORT-CIRCUIT rather than a
-    // post-hoc override — and it is also the cost claim in the docblock (a dev token
-    // skips the replica read).
+  /**
+   * 🔴 THE DEV EXEMPTION IS NO LONGER A SHORT-CIRCUIT, AND THAT IS THE FIX (clawgate
+   * #571). This test asserted the opposite until now — `dev: true` returned `dev_exempt`
+   * against a `suspended` row WITHOUT reading it, so the verdict was independent of the
+   * app's status for the whole 4h dev lifetime. The read is what makes the verdict
+   * status-dependent, so "a dev token skips the DB read" was a description of the hole.
+   */
+  it('a dev token no longer skips the read — the row is what decides', async () => {
+    findUniqueMock.mockResolvedValue({ status: 'suspended', app: { userId: 42 } });
+    await resolveRestApprovalVerdict({ ...claims, sub: 'user:42', dev: true });
+    expect(findUniqueMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a dev token on an APPROVED row → ok, without needing any exemption', async () => {
+    findUniqueMock.mockResolvedValue({ status: 'approved', app: { userId: 42 } });
+    expect(await resolveRestApprovalVerdict({ ...claims, sub: 'user:42', dev: true })).toBe('ok');
+    // Not `dev_exempt`: an approved app is approved. Pinning the verdict NAME here is
+    // what stops a future "just exempt dev again" from passing this file — it would
+    // still serve, but the counter would stop being able to say why.
+    expect(tunnelMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * POPULATION B / C / D / F — the synthetic-id mints (`pubreq_…`, `page_local_…`,
+   * `ephemeral-…`). They sign an `appId` that is not an `OauthClient.id`, so the unique
+   * resolves to nothing. They have no row to be approved and must keep running; this is
+   * the half of the old blanket exemption that was load-bearing.
+   */
+  it('a dev token with NO backing row stays exempt — nothing to be approved', async () => {
+    findUniqueMock.mockResolvedValue(null);
+    expect(await resolveRestApprovalVerdict({ ...claims, sub: 'user:42', dev: true })).toBe(
+      'dev_exempt'
+    );
+  });
+
+  /**
+   * 🔴 POPULATION F′ — the moderator run-for-real review sandbox. Answered from the signed
+   * claim BEFORE the read, because a review token names a `pubreq_` id that resolves to
+   * no row. The `not.toHaveBeenCalled()` half is the one that matters: it pins this as a
+   * claim-driven decision rather than an accident of the row being missing, so the
+   * sandbox keeps working even if a `pubreq_` id ever did resolve to something.
+   */
+  it('a run-for-real REVIEW token is exempt from the claim alone, before any read', async () => {
+    findUniqueMock.mockResolvedValue({ status: 'suspended', app: { userId: 9999 } });
+    expect(
+      await resolveRestApprovalVerdict({ ...claims, sub: 'user:7', dev: true, reviewRunForReal: true })
+    ).toBe('dev_exempt');
     expect(findUniqueMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 POPULATION E — the owner dev-tunnel mint. The case the exemption exists FOR: an
+   * app that is deliberately suspended/pending/deprecated stays runnable by its OWNER
+   * inside the owner's OWN active dev tunnel, so they can diagnose it back into review.
+   */
+  it('POPULATION E: owner + ACTIVE dev tunnel on a suspended app → exempt', async () => {
+    findUniqueMock.mockResolvedValue({ status: 'suspended', app: { userId: 42 } });
+    tunnelMock.mockResolvedValue({ sessionId: 'sess_1', userId: 42, blockId: BLOCK_ID });
+    expect(await resolveRestApprovalVerdict({ ...claims, sub: 'user:42', dev: true })).toBe(
+      'dev_exempt'
+    );
+    // Keyed on the OWNER id resolved from the row and the token's own blockId — never on
+    // anything a caller could choose.
+    expect(tunnelMock).toHaveBeenCalledWith(42, BLOCK_ID);
+  });
+
+  /**
+   * 🔴 POPULATION A — THE DEFECT. A `dev:live` token minted through
+   * `/api/v1/blocks/dev-token`'s approved mode, whose mint REQUIRED `status: 'approved'`.
+   * It is owner-held and claim-identical to population E; the only thing separating them
+   * is the active dev tunnel E's mint requires and A's does not. Before clawgate #571
+   * this returned `dev_exempt` and kept driving the bridge for up to 4h after a
+   * moderator suspension.
+   */
+  it('POPULATION A: owner but NO active dev tunnel on a suspended app → not_approved', async () => {
+    findUniqueMock.mockResolvedValue({ status: 'suspended', app: { userId: 42 } });
+    tunnelMock.mockResolvedValue(null);
+    expect(await resolveRestApprovalVerdict({ ...claims, sub: 'user:42', dev: true })).toBe(
+      'not_approved'
+    );
+  });
+
+  /**
+   * Ownership can TRANSFER. A dev token outstanding against an app that has changed
+   * hands must not stay exempt on the strength of the previous owner's subject — and the
+   * tunnel lookup must not even be reached, since it is keyed on the CURRENT owner.
+   */
+  it('a dev token whose subject is NOT the current owner → not_approved, no tunnel read', async () => {
+    findUniqueMock.mockResolvedValue({ status: 'suspended', app: { userId: 99 } });
+    tunnelMock.mockResolvedValue({ sessionId: 'sess_1', userId: 42, blockId: BLOCK_ID });
+    expect(await resolveRestApprovalVerdict({ ...claims, sub: 'user:42', dev: true })).toBe(
+      'not_approved'
+    );
+    expect(tunnelMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * FAILS CLOSED on a partial row. The ownership comparison is `claims.sub !==
+   * \`user:${ownerUserId}\``, so a row whose `app` did not come back must refuse rather
+   * than compare against `user:undefined` — and an `anon`-subject dev token can never
+   * match a numeric owner either.
+   */
+  it('fails closed when the row came back with no app relation', async () => {
+    findUniqueMock.mockResolvedValue({ status: 'suspended' });
+    tunnelMock.mockResolvedValue({ sessionId: 'sess_1' });
+    expect(await resolveRestApprovalVerdict({ ...claims, sub: 'user:42', dev: true })).toBe(
+      'not_approved'
+    );
+    expect(tunnelMock).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for an anon-subject dev token — `anon` matches no owner', async () => {
+    findUniqueMock.mockResolvedValue({ status: 'suspended', app: { userId: 42 } });
+    tunnelMock.mockResolvedValue({ sessionId: 'sess_1' });
+    expect(await resolveRestApprovalVerdict({ ...claims, sub: 'anon', dev: true })).toBe(
+      'not_approved'
+    );
+    expect(tunnelMock).not.toHaveBeenCalled();
   });
 
   /**
@@ -446,15 +580,51 @@ describe('withBlockScope — the gate on the real request path', () => {
 
   /**
    * 🔴 THE MODERATOR REVIEW SANDBOX, which is the reason the exemption exists and the
-   * thing a gate without one would break. A run-for-real review token is `dev: true`, and
-   * review is the ONE surface that must work on a non-approved app.
+   * thing a too-tight narrowing would break — QUIETLY, since review would simply stop
+   * being possible for pending apps and nothing would say so. Criterion 5 of clawgate
+   * #571: this is the guard against the bad direction and is pinned on the REAL request
+   * path, not only at the predicate.
+   *
+   * Note the fixture: a moderator (`user:7`) who is NOT the app's owner, on a suspended
+   * row, with NO active dev tunnel — i.e. every other exempting condition absent, so the
+   * `reviewRunForReal` claim is provably the only reason this serves.
    */
-  it('a DEV token on a SUSPENDED app still runs — the review sandbox is not broken', async () => {
-    findUniqueMock.mockResolvedValue({ status: 'suspended' });
+  it('POSITIVE: a run-for-real REVIEW token still runs on a SUSPENDED app', async () => {
+    findUniqueMock.mockResolvedValue({ status: 'suspended', app: { userId: OWNER_ID } });
+    tunnelMock.mockResolvedValue(null);
+    const { handler, res } = await drive(await mint({ dev: true, reviewRunForReal: true, userId: 7 }));
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(200);
+    // Answered from the signed claim, before the row is even read.
+    expect(findUniqueMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * POPULATION E on the real request path — the owner running their own suspended app
+   * inside their own active dev tunnel. The other half of "do not break the thing the
+   * exemption exists for".
+   */
+  it('POSITIVE: the OWNER with an ACTIVE dev tunnel still runs on a SUSPENDED app', async () => {
+    findUniqueMock.mockResolvedValue({ status: 'suspended', app: { userId: OWNER_ID } });
+    tunnelMock.mockResolvedValue({ sessionId: 'sess_1', userId: OWNER_ID, blockId: BLOCK_ID });
     const { handler, res } = await drive(await mint({ dev: true }));
     expect(handler).toHaveBeenCalledTimes(1);
     expect(res.statusCode).toBe(200);
-    expect(findUniqueMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 THE DEFECT, on the real request path. Population A: a `dev:live` token minted while
+   * the app was approved, still inside its 4h lifetime, after a moderator suspension —
+   * same owner, same claims as the test directly above, and the ONLY difference is the
+   * absent dev tunnel. Before clawgate #571 this served a 200.
+   */
+  it('NEGATIVE: a stale dev token with NO tunnel is 403d on a SUSPENDED app', async () => {
+    findUniqueMock.mockResolvedValue({ status: 'suspended', app: { userId: OWNER_ID } });
+    tunnelMock.mockResolvedValue(null);
+    const { handler, res } = await drive(await mint({ dev: true }));
+    expect(handler).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toEqual({ error: 'app block is not approved' });
   });
 });
 
