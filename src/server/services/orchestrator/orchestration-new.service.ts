@@ -1240,6 +1240,7 @@ export async function createWorkflowStepsFromGraph({
   sourceMetadataMap,
   remixOfId,
   sourceImageIds,
+  driftedImageIds,
   isGreen,
   orchestratorToken,
 }: {
@@ -1262,6 +1263,8 @@ export async function createWorkflowStepsFromGraph({
    * from. See remix-provenance.ts.
    */
   sourceImageIds?: number[];
+  /** Prompt-reuse sources that drifted; recorded for copy, never a derivation. */
+  driftedImageIds?: number[];
   /**
    * Site context — `.com` (SFW) vs `.red` (NSFW). Passed into the snippet
    * resolver so it can filter category rows by `nsfwLevel` and never surface
@@ -1373,8 +1376,12 @@ export async function createWorkflowStepsFromGraph({
   const needsSourceMetadata = workflowConfigByKey.get(data.workflow)?.enhancement === true;
 
   const provenance =
-    !isWhatIf && user?.id && sourceImageIds?.length
-      ? signProvenance({ userId: user.id, sourceImageIds })
+    !isWhatIf && user?.id && (sourceImageIds?.length || driftedImageIds?.length)
+      ? signProvenance({
+          userId: user.id,
+          sourceImageIds: sourceImageIds ?? [],
+          driftedImageIds,
+        })
       : undefined;
 
   // Build source context for workflows with source lineage (not needed for what-if)
@@ -1792,7 +1799,7 @@ export async function generateFromGraph({
   // orchestrator blob before submit, so the URL route alone reports nothing for
   // the flow the Remix menu drives (measured: 98 on-site URLs survived out of
   // 2,526 on the engine that button picks).
-  const sourceImageIds = await unionSourceImageIds({
+  const { sourceImageIds, driftedImageIds } = await unionSourceImageIds({
     urlSourceImageIds: await resolveSourceImageIds(inputImages),
     tokens: sourceProvenance,
     userId,
@@ -1887,6 +1894,7 @@ export async function generateFromGraph({
     sourceMetadataMap,
     remixOfId,
     sourceImageIds,
+    driftedImageIds,
     isGreen,
     orchestratorToken: token,
   });

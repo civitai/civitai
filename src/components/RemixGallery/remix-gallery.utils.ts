@@ -73,6 +73,11 @@ export function galleryDialogImages(imageId: number, items: RemixGalleryItem[]) 
 export type FreeSubmissionInputs = {
   /** The server resolved this remix as derived from the host image. */
   verified: boolean;
+  /**
+   * The server saw this start from the host's prompt, then drift past the
+   * threshold. Only changes the refusal's wording; it never makes free available.
+   */
+  drifted?: boolean;
   /** What the creator accepts. `0` is them taking none — a setting, not a queue. */
   freeSlots: number;
   /** What is left right now. Stale by construction; the mutation re-counts. */
@@ -136,6 +141,7 @@ const allowanceResetLabel = (resetsAt: Date | string) =>
  */
 export function freeSubmissionOffer({
   verified,
+  drifted = false,
   freeSlots,
   freeSlotsRemaining,
   allowanceRemaining,
@@ -143,6 +149,14 @@ export function freeSubmissionOffer({
   resetsAt,
   paidOpen,
 }: FreeSubmissionInputs): { available: boolean; reason: string | null } {
+  if (!verified && drifted)
+    return {
+      available: false,
+      reason: paidOpen
+        ? "We can see this started from this image's prompt, but it has changed too much to count as a remix of it. You can still submit it with Buzz."
+        : "We can see this started from this image's prompt, but it has changed too much to count as a remix of it — and this creator is not taking paid submissions either.",
+    };
+
   if (!verified)
     return {
       available: false,

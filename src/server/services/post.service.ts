@@ -96,8 +96,9 @@ import { isValidAIGeneration } from '~/utils/image-utils';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import {
-  resolveVerifiedSourceImageIds,
+  resolveProvenance,
   sanitizeProvenance,
+  storedDriftedImageIds,
   storedSourceImageIds,
 } from '~/server/services/orchestrator/remix-provenance';
 import { getMetadata } from '~/utils/metadata';
@@ -1329,16 +1330,18 @@ export const addPostImage = async ({
   }
 
   const { generationWorkflowId, ...imageProps } = props;
-  const verifiedSourceImageIds = await resolveVerifiedSourceImageIds({
-    userId: user.id,
-    provenance: (meta?.extra as { provenance?: unknown } | undefined)?.provenance,
-    workflowId: generationWorkflowId,
-  });
+  const { sourceImageIds: verifiedSourceImageIds, driftedImageIds: verifiedDriftedImageIds } =
+    await resolveProvenance({
+      userId: user.id,
+      provenance: (meta?.extra as { provenance?: unknown } | undefined)?.provenance,
+      workflowId: generationWorkflowId,
+    });
 
   const partialResult = await createImage({
     ...imageProps,
     meta,
     verifiedSourceImageIds,
+    verifiedDriftedImageIds,
     userId: user.id,
     toolIds: toolId ? [toolId] : undefined,
     techniqueIds: techniqueId ? [techniqueId] : undefined,
@@ -1468,7 +1471,8 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   const meta = metaProvided
     ? sanitizeProvenance(
         image.meta as Record<string, unknown> | null | undefined,
-        storedSourceImageIds(currentImage.meta)
+        storedSourceImageIds(currentImage.meta),
+        storedDriftedImageIds(currentImage.meta)
       )
     : undefined;
 

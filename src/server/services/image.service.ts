@@ -6031,6 +6031,7 @@ export async function createImage({
   techniqueIds,
   skipIngestion,
   verifiedSourceImageIds,
+  verifiedDriftedImageIds,
   ...image
 }: ImageSchema & {
   userId: number;
@@ -6041,6 +6042,8 @@ export async function createImage({
    * here, so a new image path can't grant itself provenance by accident.
    */
   verifiedSourceImageIds?: number[] | null;
+  /** Same rule: a prompt-reuse near-miss the server recorded, for copy only. */
+  verifiedDriftedImageIds?: number[] | null;
 }) {
   /**
    * 🔴 THE ROW MUST NOT OUTLIVE ITS MEDIA — so ask the store before writing it.
@@ -6205,7 +6208,8 @@ export async function createImage({
 
   const meta = sanitizeProvenance(
     image.meta as Record<string, unknown> | null | undefined,
-    verifiedSourceImageIds
+    verifiedSourceImageIds,
+    verifiedDriftedImageIds
   );
   const result = await dbWrite.image.create({
     data: {

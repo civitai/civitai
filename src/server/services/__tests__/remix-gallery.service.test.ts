@@ -3229,7 +3229,7 @@ describe('the free eligibility listing', () => {
       imageIds: [REMIX_IMAGE],
     });
 
-  beforeEach(() => queryRaw.mockResolvedValue([{ id: REMIX_IMAGE }]));
+  beforeEach(() => queryRaw.mockResolvedValue([{ id: REMIX_IMAGE, verified: true }]));
 
   it('answers only for the viewer’s OWN images', async () => {
     // The predicate this asserts is the whole reason the endpoint is not an
@@ -3322,7 +3322,23 @@ describe('the free eligibility listing', () => {
       allowance: { used: 1, remaining: 0, resetsAt: new Date('2026-03-04') },
       usedHere: true,
       verifiedImageIds: [REMIX_IMAGE],
+      driftedImageIds: [],
     });
+  });
+
+  /**
+   * A row that matched only on the drift record is copy, not eligibility: it must
+   * land in `driftedImageIds` and never in `verifiedImageIds`.
+   */
+  it('keeps drift-only rows out of the verified list', async () => {
+    queryRaw.mockResolvedValue([
+      { id: REMIX_IMAGE, verified: false },
+      { id: REMIX_IMAGE + 1, verified: true },
+    ]);
+
+    const result = await eligibility();
+    expect(result.verifiedImageIds).toEqual([REMIX_IMAGE + 1]);
+    expect(result.driftedImageIds).toEqual([REMIX_IMAGE]);
   });
 
   it('asks the never-twice question about THIS surface and THIS host', async () => {
