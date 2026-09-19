@@ -53,23 +53,35 @@
  * here the exchange completed and the dispatcher counts it `handled`. So the only
  * party that can see it is the block, which now says so with a fire-and-forget
  * `BLOCK_MESSAGE_REJECTED` (`@civitai/app-sdk/blocks`); `usePostMessage` turns that
- * into this outcome. Two consequences to read the series with:
+ * into this outcome. THREE things to read the series with — and an earlier revision
+ * of this line said "two" while carrying three bullets, which is the same
+ * headline-outran-its-own-list defect corrected in `BRIDGE_MESSAGE_COUNT_MAX` below,
+ * re-made by the commit that corrected it there:
  *  - the `type` on it is the BLOCK→HOST REQUEST left hanging (`GET_IMAGES_BY_IDS`),
  *    not the rejected reply (`IMAGES_RESULT`). Deliberate: `boundBridgeMessageType`
  *    bounds the label against `hostHandlerParity`'s INVENTORY, which holds no
  *    `*_RESULT` key, so a reply type would clamp to `'other'` and collapse every
  *    rejection onto one label;
- *  - it is NOT undercounted, and an earlier revision of this line said it was. The
- *    SDK shipped a 30-per-10s emit budget and then DELETED it: a cap there made a
- *    flood read SMALL, which is the one shape of wrongness this very file rejects a
- *    few paragraphs down. Magnitude here is unbounded exactly as it is for
- *    `no_handler` and `deduped`.
+ *  - it is NOT undercounted, and an earlier revision of this line said it was. A
+ *    30-per-10s emit budget was written on the SDK side and removed BEFORE either
+ *    half merged — it never reached a published package, so no bundle in the field
+ *    carries one and there is no older population that undercounts. (Stated
+ *    precisely because "shipped, then deleted" — the previous wording — reads as
+ *    release history and would tell an operator the opposite.) A cap there made a
+ *    flood read SMALL, the one shape of wrongness this very file rejects a few
+ *    paragraphs down. Magnitude here is unbounded exactly as it is for `no_handler`
+ *    and `deduped`;
  *  - 🔴 A ZERO IS NOT EVIDENCE OF HEALTH, and this is the caveat that matters. The
  *    emitter lives in each block's OWN bundle (every app pins
- *    `@civitai/blocks-react` itself), so the series stays at zero until every app
- *    has been rebuilt AND redeployed against a version that carries it — not merely
- *    until the package publishes. A flat-zero diagnostic read as health is the exact
- *    failure this outcome exists to end.
+ *    `@civitai/blocks-react` itself), so a zero is per-APP and never fleet-wide:
+ *    **read it with `app_block_id`**. For a given app, zero means "no rejections"
+ *    OR "this app has not shipped a carrying `blocks-react`", and the two are
+ *    indistinguishable from the series alone. 🔴 OTHER APPS REPORTING DOES NOT
+ *    SETTLE IT — the counter goes non-zero the moment the FIRST rebuilt app hits a
+ *    rejection, so "the fleet has picked it up" is exactly the wrong inference to
+ *    draw from a non-zero total while another app's slice sits at zero. A flat-zero
+ *    diagnostic read as health is the failure this outcome exists to end, and
+ *    reading it fleet-wide re-creates it one level up.
  *
  * ⚠️ ADDING THIS SIXTH VALUE GREW THE COUNTER'S WORST-CASE LABEL PRODUCT BY 22.6%,
  * not the 20% an earlier revision of this line claimed: the outcome axis alone is

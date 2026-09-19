@@ -18,14 +18,26 @@ import {
  * dispatcher branch below keys on this string, and so do its tests — so a bare
  * literal on both sides means an SDK RENAME silently disables the branch, returns
  * the series to zero, and falsifies `hostHandlerParity`'s entry for it with nothing
- * red anywhere. `satisfies keyof typeof INVENTORY` makes that a TYPE ERROR: the
- * parity inventory is this repo's record of the protocol, and it is already in this
- * module's import graph, so the binding costs nothing.
+ * red anywhere. `satisfies keyof typeof INVENTORY` binds the two, and the inventory
+ * is already in this module's import graph so the binding costs nothing.
  *
- * ⚠️ It binds to the INVENTORY, which can legitimately run AHEAD of the published
- * SDK — so this catches a rename that reaches the inventory, not one that has only
- * happened upstream. The upstream half is `hostHandlerParity`'s own one-directional
- * gate against the installed union.
+ * 🔴 BUT BE PRECISE ABOUT WHAT IT CATCHES — it is NARROWER than "an SDK rename is a
+ * type error", which is what an earlier revision of this comment claimed. It fires
+ * only on a rename that reaches the inventory AND DROPS THE OLD KEY. That matters
+ * because `hostHandlerParity`'s coverage gate is ONE-DIRECTIONAL by design — the
+ * inventory MAY carry keys ahead of the published dist, and today it carries three
+ * — so the documented, gate-satisfying way to track an upstream rename is to ADD
+ * the new key and leave the old one until the published dist catches up. In exactly
+ * that state this binding stays green, the branch below never fires, and
+ * `validator_rejected` returns to a permanent zero which the HELP string now tells
+ * a reader to interpret as a rollout gap. That is the silent-dead-branch failure
+ * this binding was added to end, surviving it.
+ *
+ * It is still strictly better than the bare literal it replaced — it catches an
+ * outright key deletion and a typo in either place. But NOTHING here closes the
+ * add-and-keep window, and no better guard was reached for: the honest statement is
+ * that the window is open, not a fresh justification for a guard that does not
+ * cover it.
  */
 const BLOCK_MESSAGE_REJECTED = 'BLOCK_MESSAGE_REJECTED' satisfies keyof typeof INVENTORY;
 

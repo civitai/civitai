@@ -301,7 +301,7 @@ describe('usePostMessage bridge outcome counter', () => {
     // `boundBridgeMessageType` call inside it — never runs. An earlier revision of
     // this comment said the clamping happened downstream in the sink, which would
     // tell a reader the branch's own `boundBridgeMessageType(...)` is dead code and
-    // safe to delete; deleting it reddens every row below, and the failure would
+    // safe to delete; deleting it reddens every row in the table above, and the failure would
     // then read as "the test is wrong". The branch clamps itself, on purpose,
     // because `onOutcome` is a seam and a value pulled from an untrusted payload
     // must not be bounded only by the default sink.
