@@ -92,6 +92,8 @@ const evalSortKey = (expr: string, row: Row): number => {
       return row.publishedAt.getTime();
     // A LITERAL copy of the SQL, never the imported constant: labelled with the constant, any
     // edit to the SQL still matched here and the pager checked this model against itself.
+    // This pins the SQL's spelling only. Changing it means rewriting the body below to model the
+    // new SQL AND re-running that SQL against a real database: nothing here executes it.
     case `(CASE WHEN p."publishedAt" IS NULL THEN 1e15 + extract(epoch from p."createdAt") * 1000 ELSE -extract(epoch from p."publishedAt") * 1000 END)::float8`:
       return row.publishedAt ? -row.publishedAt.getTime() : 1e15 + row.createdAt.getTime();
     case 'ci."id"':
@@ -99,7 +101,9 @@ const evalSortKey = (expr: string, row: Row): number => {
         throw new Error(`row ${row.id} has no collectionItemId under ${expr}`);
       return row.collectionItemId;
     default:
-      throw new Error(`post-sort pager cannot evaluate sort expression: ${expr}`);
+      throw new Error(
+        `post-sort pager cannot evaluate sort expression: ${expr} — model it in evalSortKey, and check the SQL itself against a database; this pager never runs it`
+      );
   }
 };
 
