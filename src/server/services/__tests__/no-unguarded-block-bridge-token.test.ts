@@ -346,7 +346,8 @@ const LITERAL_SENTINEL = '\u0000';
  *       1-2 and 3-4, so in ``logger.info(`call ${`authorizeBlockBridgeToken(t)`} done`)``
  *       it emits the INNER literal's body as code — a FAKE guard call that satisfies
  *       `THE RELATIONSHIP`, which is finding (2) reached through a literal instead of a
- *       comment. There are 21 nested templates under `src/pages/api` today.
+ *       comment. Measured 2026-09-19: 35 nested template literals across 14 files under
+ *       `src/pages/api`, so this is an ordinary shape rather than an exotic one.
  *   (b) A REGEX LITERAL desyncs it. `blocks.router.ts` contains `/^https?:\/\//` TWICE:
  *       the `\/\/` yields an adjacent `//`, which a lexer reads as a line comment and
  *       discards the rest of the line. An earlier draft of this docstring claimed "none
@@ -1820,7 +1821,8 @@ describe('no unguarded block-bridge token verification', () => {
     // A lexer pairs backticks 1-2 and 3-4, so the INNER literal's body comes out as code.
     // Measured: `procsReachingGuard` returned the proc, i.e. a procedure that verifies
     // nothing read as reaching the guard — finding (2) reached through a literal instead of
-    // a comment, and not exotic: 21 nested templates exist under src/pages/api today.
+    // a comment, and not exotic: measured 2026-09-19, 35 nested template literals across 14
+    // files under src/pages/api.
     const nested = [
       'export const r = router({',
       '  evilProc: publicProcedure',

@@ -383,7 +383,8 @@ const LITERAL_SENTINEL = '\u0000';
  *       1-2 and 3-4, so in ``logger.info(`call ${`authorizeBlockBridgeToken(t)`} done`)``
  *       it emits the INNER literal's body as code — a FAKE guard call that satisfies
  *       `THE RELATIONSHIP`, which is finding (2) reached through a literal instead of a
- *       comment. There are 21 nested templates under `src/pages/api` today.
+ *       comment. Measured 2026-09-19: 35 nested template literals across 14 files under
+ *       `src/pages/api`, so this is an ordinary shape rather than an exotic one.
  *   (b) A REGEX LITERAL desyncs it. `blocks.router.ts` contains `/^https?:\/\//` TWICE:
  *       the `\/\/` yields an adjacent `//`, which a lexer reads as a line comment and
  *       discards the rest of the line. An earlier draft of this docstring claimed "none
@@ -941,7 +942,8 @@ describe('the REST route scan can actually see what it claims to', () => {
     // A hand-rolled lexer pairs backticks 1-2 and 3-4, which INVERTS the code and literal
     // regions of a nested template and emits the inner body as code. Measured on an earlier
     // draft: a fake `resolveRestApprovalVerdict(...)` written this way counted as a call.
-    // There are 21 nested templates under src/pages/api today, so this is not an exotic shape.
+    // Measured 2026-09-19: 35 nested template literals across 14 files under src/pages/api,
+    // so this is an ordinary shape rather than an exotic one.
     const nested = ['const m = `outer ${`resolveRestApprovalVerdict(a)`} tail`;'].join('\n');
     expect(countCalls(REST_VERDICT_CALL_RE, stripNonCode(nested))).toBe(0);
     // …and the interpolation of a REAL call is still code, which the lexer also got wrong,
