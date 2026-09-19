@@ -32,12 +32,15 @@ import { stripComments, stripCommentsAndStrings } from '../../../../test/strip-c
  *   Pay it — re-reading the state guards is the point, and it makes the claim
  *   machine-readable rather than a sentence asking the next author to remember.
  *
- *   GROW — a cadence PHRASE scan over the money surfaces, so a THIRD such sentence on a
- *   file nobody listed also fails. The SHRINK half only ever knew about files it was told
- *   about by name, and being told about two of three is how this shipped.
+ *   GROW — an exact ledger of the files that render settlement buckets, so a THIRD money
+ *   surface on a file nobody listed also fails. The SHRINK half only ever knew about files
+ *   it was told about by name, and being told about two of three is how this shipped. It is
+ *   a STRUCTURAL ledger and not a cadence-phrase scan for a measured reason recorded at
+ *   that test.
  *
  *   STATE — the copy is only true while the rail is unwired and the job writes nothing, so
- *   both are asserted directly rather than trusted.
+ *   both are asserted directly rather than trusted. The rail half is an exact per-file
+ *   OCCURRENCE ledger over RAW text, for the polarity reason recorded at that test.
  *
  * If you are here because you WIRED the payout rail: the `payout rail is still unwired`
  * guard is the one that should have failed first. Both copy strings may then legitimately
@@ -51,18 +54,17 @@ const REPO_ROOT = join(__dirname, '../../../..');
  * headline — "no production caller" — wider than what it measures: a rail wired from
  * `packages/`, `apps/` or `scripts/` would leave it green while money moved.
  *
- * STILL NOT COVERED, stated rather than implied: a renaming import
- * (`import { mintPayoutForOwner as mint }`) and a computed member access. Closing those
- * needs a type-aware pass, which is a bigger thing than the defect — and the realistic
- * wiring point is the job named in this file, which the identifier scan does see.
+ * Because the ledger counts occurrences of the bare IDENTIFIER in raw text, the shapes a
+ * call-shaped regex misses are covered here without a type-aware pass: a renaming import,
+ * a bare callback reference (`rows.map(mintPayoutForOwner)`), `.call`/`.apply` and a
+ * computed access all add an occurrence, and the import statement itself is the tripwire.
  */
 const CALLER_ROOTS = ['src', 'packages', 'apps', 'scripts'];
 
 /**
- * The user-facing surfaces that render App Blocks money. This is the ledger's GROW half:
- * a new payout-cadence sentence anywhere in these trees fails, not just a reword of the
- * two strings pinned below. Without it the guard only ever knew about files it was told
- * about by name, which is the condition that let one wrong sentence become three.
+ * The trees searched for surfaces that show a user App Blocks money. The GROW half pins the
+ * SET of such files, so a new one has to be looked at rather than silently inheriting — or
+ * failing to inherit — the accrual disclosure the existing two carry.
  */
 const MONEY_COPY_ROOTS = ['src/components/AppBlocks', 'src/components/Apps', 'src/pages/apps'];
 
@@ -94,21 +96,21 @@ const rel = (p: string) =>
     .join('/');
 
 /**
- * 🔴 Comments AND strings come out before any structural scan, via the shared
- * `test/strip-comments` module rather than a local copy — that module exists precisely
- * because this technique was re-derived at a second site and lost a case. Both hazards
- * are live here:
+ * 🔴 WHERE STRIPPING IS AND IS NOT USED, because the choice is polarity-dependent.
  *
- *   - COMMENTS: the payout job's header contains the literal
- *     `mintPayoutForOwner({ appOwnerUserId, periodKey })` as the instruction for wiring it
- *     later. It is call-SHAPED, so without stripping, "the rail is wired" would be
- *     permanently — and wrongly — true.
- *   - STRINGS: a name inside a string literal is never a call either, and that is the
- *     false positive one syntax over.
+ * Stripping (via the shared `test/strip-comments` — not a local copy, since that module
+ * exists precisely because the technique was re-derived at a second site and lost a case)
+ * is used only for assertions of the form "this code is NOT here", on files already pinned
+ * by name: the two prose mentions of the mint, and the payout job's write scan. There,
+ * dropping comments is what stops the job header's call-SHAPED wiring instruction from
+ * reading as a live call.
  *
- * The shared helper is also biased toward over-stripping, which turns a miss RED rather
- * than silently green — the safe direction, and why each scan below carries a positive
- * control that the thing being counted was actually found.
+ * It is NOT used for the mint LEDGER, which scans raw text. That module documents itself as
+ * biased toward over-stripping because over-stripping "turns the guard RED, which is the
+ * safe direction" — true for its other callers, which assert a call IS present. For a guard
+ * asserting ABSENCE the same bias turns it GREEN, so the inherited argument inverts. The
+ * ledger therefore never strips, and each scan carries a positive control that what it
+ * counts was actually found.
  */
 
 /**
@@ -121,6 +123,19 @@ function jsxText(block: string) {
   return block
     .replace(/\{'\s*'\}/g, ' ')
     .replace(/<[^>]*>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Flatten a JSDoc block to its sentence text: drop the `*` leaders and collapse whitespace,
+ * so a claim can be pinned WHOLE without the pin also encoding where prettier happened to
+ * wrap the line. Same reasoning as `jsxText` — normalise the presentation, keep the words.
+ */
+function prose(block: string) {
+  return block
+    .replace(/^\s*\/\*\*|\*\/\s*$/g, '')
+    .replace(/^[ \t]*\*[ \t]?/gm, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -154,50 +169,111 @@ describe('app earnings copy does not promise a payout pipeline that does not run
     }
   });
 
-  it('the payout rail is still unwired — no production caller mints a payout', () => {
+  it('the payout rail is still unwired — an exact ledger of every mention of the mint', () => {
     // 🔴 The STATE half, and the one that licenses the copy below. It is deliberately its
     // own test so it fails for its OWN reason: if it lived with the copy assertions, an
     // earlier string mismatch would throw first and this would never be evaluated.
+    //
+    // 🔴 THIS SCANS RAW TEXT, AND THAT IS THE WHOLE DESIGN. `test/strip-comments` documents
+    // itself as biased toward over-stripping because that "turns the guard RED, which is the
+    // safe direction" — true for its other callers, which assert a call IS present. THIS
+    // guard asserts the opposite, so for it over-stripping turns the guard GREEN: a real call
+    // the stripper ate would read as "no caller". The inherited safety argument INVERTS here.
+    // (Measured: a `/*` inside a `//` comment, or a regex literal ending `\/`, hides real
+    // code in ~105 files across these roots — including files under services/blocks/, the
+    // payout rail's own neighbourhood.)
+    //
+    // So the ledger is built from untouched file text and pins an exact OCCURRENCE COUNT per
+    // file. Any new reference — a call, an import, an alias, a bare callback reference,
+    // `.call`/`.apply`, a computed access — changes a count or adds a file, and fails. That
+    // is strictly stronger than a call-shaped regex over stripped text, and it has no blind
+    // spot to disclose.
     const files = CALLER_ROOTS.flatMap((d) => walk(join(REPO_ROOT, d)));
-    // Tree-walk positive control: an empty or misrooted walk finds no callers either, and
-    // would read as "the rail is unwired" no matter what the tree contains.
+    // Walk positive controls, one per root: a misrooted or empty walk finds no mentions
+    // either, and would read as "the rail is unwired" no matter what the tree holds. The
+    // total alone cannot see a dropped root — `src` by itself clears any plausible threshold.
     expect(files.length).toBeGreaterThan(3000);
-    expect(files.map(rel)).toContain(REVENUE_PANEL);
+    for (const probe of [
+      REVENUE_PANEL,
+      'packages/civitai-db/src/kysely.ts',
+      'apps/moderator/svelte.config.js.d.ts',
+      'scripts/typecheck.mjs',
+    ]) {
+      expect(
+        files.map(rel).some((f) => f === probe || f.startsWith(probe.split('/')[0] + '/'))
+      ).toBe(true);
+    }
 
-    const declarations: string[] = [];
-    const callers: string[] = [];
-    const re = new RegExp(String.raw`(function\s+)?\b${PAYOUT_MINT}\b\s*[({]`, 'g');
+    const mentions = new Map<string, number>();
+    const ident = new RegExp(String.raw`\b${PAYOUT_MINT}\b`, 'g');
     for (const f of files) {
       const r = rel(f);
       if (/\.test\.tsx?$/.test(r) || r.includes('__tests__/')) continue;
-      const code = stripCommentsAndStrings(readFileSync(f, 'utf8'));
-      re.lastIndex = 0;
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(code))) (m[1] ? declarations : callers).push(r);
+      const n = (readFileSync(f, 'utf8').match(ident) ?? []).length;
+      if (n > 0) mentions.set(r, n);
     }
 
-    // Positive control on the scan itself: the mint must be FOUND, or "no callers" is just
-    // a regex that matches nothing — indistinguishable from a probe wired to nothing.
-    expect(declarations).toEqual(['src/server/services/blocks/buzz-attribution.service.ts']);
-    // If this fails, the payout rail has a caller. The accrual copy pinned below is then
-    // stale in the opposite direction and must be revisited.
-    expect(callers).toEqual([]);
+    // 🔴 THE LEDGER. Fails when the set GROWS (a new file references the mint) or SHRINKS
+    // (a listed mention disappears, so this ledger is stale and its counts mean nothing).
+    // The declaration's own file is the positive control: if the scan is wired to nothing,
+    // this entry vanishes and the assertion fails rather than passing clean.
+    expect(Object.fromEntries([...mentions].sort())).toEqual({
+      // The declaration itself — the only writer of `paidOutAt`/`payoutId`.
+      'src/server/services/blocks/buzz-attribution.service.ts': 1,
+      // Prose only: the header's design note, incl. a call-SHAPED wiring instruction.
+      'src/server/jobs/bulk-payout-block-attributions.ts': 3,
+      // Prose only: a comment about the `(app_owner_user_id, period_key)` UNIQUE.
+      'src/server/services/blocks/app-ownership-transfer.service.ts': 1,
+    });
+
+    // ...and the two prose entries must still be PROSE. Counts alone cannot tell a comment
+    // from code, so this is the half that says the mentions are not calls. Over-stripping
+    // can only make this assertion pass more easily, which is why it is a secondary check
+    // behind the raw ledger rather than the guard itself.
+    for (const f of [
+      'src/server/jobs/bulk-payout-block-attributions.ts',
+      'src/server/services/blocks/app-ownership-transfer.service.ts',
+    ]) {
+      expect(stripCommentsAndStrings(read(f))).not.toMatch(ident);
+    }
   });
 
   it('the weekly job still writes nothing', () => {
     // The job IS registered and DOES run, so "the cron is off" is not why the cadence copy
     // was false. What makes it false is that the run body only reads and logs — asserted
     // here rather than inferred from the header comment, which is itself prose.
+    // Every write idiom this repo's jobs actually use — Prisma, the `pgDb*` raw clients and
+    // the Kysely builder. `\bdbWrite\b` alone does NOT cover `pgDbWrite`, and `.update(` does
+    // NOT cover Kysely's `.updateTable(`; both shapes are live in other job files.
+    const WRITE_IDIOMS = [
+      /\b(db|pgDb|kyselyDb)Write\b/,
+      /\.(update|updateMany|create|createMany|upsert|delete|deleteMany|updateTable|insertInto|deleteFrom)\s*\(/,
+      /\$execute(Raw|RawUnsafe)|\$queryRaw(Unsafe)?/,
+    ];
+    // 🔴 POSITIVE CONTROL ON THE NEGATIVES. A `not.toMatch` that CANNOT fire is
+    // indistinguishable from one that found nothing, so each pattern is first shown to match
+    // a synthetic line it must catch. Without this a typo'd pattern reports the job clean.
+    const MUST_CATCH = [
+      'await pgDbWrite.query("UPDATE x SET y")',
+      'await kyselyDb.updateTable("t").set({ a: 1 }).execute()',
+      'await dbWrite.$executeRawUnsafe(sql)',
+    ];
+    for (const sample of MUST_CATCH) {
+      expect(WRITE_IDIOMS.some((re) => re.test(sample))).toBe(true);
+    }
+
     const job = stripCommentsAndStrings(read('src/server/jobs/bulk-payout-block-attributions.ts'));
     // Positive control: the read path must be FOUND, or every "no write" assertion below is
     // just a regex matching nothing over a file that failed to load.
     expect(job).toMatch(/dbRead\./);
-    expect(job).not.toMatch(/\bdbWrite\b/);
-    expect(job).not.toMatch(
-      /\.(update|updateMany|create|createMany|upsert|delete|deleteMany)\s*\(/
-    );
-    // Raw-SQL escape hatches, which the Prisma-method list above cannot see.
-    expect(job).not.toMatch(/\$execute(Raw|RawUnsafe)|\$queryRaw(Unsafe)?/);
+    for (const re of WRITE_IDIOMS) expect(job).not.toMatch(re);
+
+    // 🔴 AND NO INDIRECTION. The idiom list above cannot see `await flipRowsToPaidOut(rows)`
+    // — a helper whose body does the write. The job's whole run body is small and its only
+    // awaited calls are the read and the log, so pin THAT rather than trusting the list to
+    // be exhaustive: any new awaited call here is a write candidate and must be looked at.
+    const awaited = [...job.matchAll(/await\s+([A-Za-z_$][\w$.]*)\s*\(/g)].map((m) => m[1]).sort();
+    expect(awaited).toEqual(['dbRead.blockBuzzAttribution.groupBy']);
   });
 
   it('/apps/revenue subtitle states accrual, pinned whole', () => {
@@ -210,8 +286,11 @@ describe('app earnings copy does not promise a payout pipeline that does not run
     const panel = read(REVENUE_PANEL);
     // Anchored to the card it annotates, so the assertion cannot be satisfied by the string
     // appearing anywhere else in the file.
-    const card = panel.slice(panel.indexOf('Confirmed (unpaid)'));
-    const label = /label="([^"]*)"/.exec(card)?.[1];
+    const at = panel.indexOf('Confirmed (unpaid)');
+    // Without this the anchor's absence gives `slice(-1)` — one character — and the failure
+    // reads as a copy mismatch rather than "the card this guard targets is gone".
+    expect(at).toBeGreaterThan(-1);
+    const label = /label="([^"]*)"/.exec(panel.slice(at))?.[1];
     expect(label).toBe(CONFIRMED_TOOLTIP);
   });
 
@@ -230,42 +309,60 @@ describe('app earnings copy does not promise a payout pipeline that does not run
       /appDeveloperProcedure\s*=\s*protectedProcedure\.use\(hasAppBlocksAuthor\)/
     );
     expect(trpc).toMatch(/hasAppBlocksAuthor[\s\S]{0,400}FORBIDDEN/);
-    // ...and the docblock must name it. Deliberately NOT a negative grep for the retracted
-    // sentence: the rewrite QUOTES that sentence so the next reader knows what was wrong, so
-    // a "must not contain" test would forbid the clearest way to document the correction.
-    expect(read(EARNINGS_PANEL)).toMatch(/appDeveloperProcedure/);
-    expect(read(EARNINGS_PANEL)).toMatch(/appBlocksAuthor/);
+    // ...and the docblock must CARRY THE CORRECTION, pinned whole like the two copy strings.
+    // Deliberately NOT a negative grep for the retracted sentence: the rewrite QUOTES that
+    // sentence so the next reader knows what was wrong, so a "must not contain" test would
+    // forbid the clearest way to document the correction. But two bare `toMatch` identifier
+    // probes would be weaker than this test's NAME claims — a docblock re-asserting the
+    // retracted claim while still naming both identifiers would pass. Pinning the sentence
+    // is what makes the name true.
+    const docblock = read(EARNINGS_PANEL).slice(0, read(EARNINGS_PANEL).indexOf('function '));
+    expect(docblock.length).toBeGreaterThan(0); // anchor control
+    const CORRECTION =
+      'so it throws FORBIDDEN for any caller outside the `appBlocksAuthor` cohort, ' +
+      'accepted editor or not.';
+    expect(prose(docblock)).toContain(CORRECTION);
+    // The disclosure must not be quietly narrowed to today's gate: the reason it stays wide
+    // is that the cohort is a runtime flag, and that reason has to survive in the file.
+    expect(prose(docblock)).toContain('DO NOT SOFTEN THE DISCLOSURE TO MATCH THAT GATE.');
   });
 
-  it('GROW half: no surface promises a payout CADENCE', () => {
-    // 🔴 The SHRINK half is the two whole-string pins above — they fail if either sentence
-    // is reworded. This is the other direction: nothing fails when a THIRD cadence sentence
-    // appears on a surface nobody listed, which is exactly how one wrong claim became three.
-    // A phrase scan is walkable in a way the whole-string pins are not; it is the cheap
-    // complement to them, not a replacement, and it is scoped to the money surfaces.
-    const CADENCE =
-      /next payout|batched\s+(weekly|daily|monthly)|paid out\s+(weekly|daily|monthly)|payouts?\s+are\s+(batched|sent|issued|processed)|will be (included in|paid)/i;
-
-    // Positive control: the regex must catch the two sentences this PR removed. Without it a
-    // typo in the pattern yields a clean sweep that measured nothing.
-    expect('Payouts are batched weekly; see').toMatch(CADENCE);
-    expect('Will be included in your next payout.').toMatch(CADENCE);
-    // Negative control: the legitimate bucket labels and the new accrual copy must NOT trip
-    // it, or the guard is unlandable and gets deleted rather than obeyed.
-    expect('Refunds, chargebacks, and self-purchases. Not paid out.').not.toMatch(CADENCE);
-    expect(CONFIRMED_TOOLTIP).not.toMatch(CADENCE);
-    expect(SUBTITLE).not.toMatch(CADENCE);
-
+  it('GROW half: the set of surfaces rendering settlement buckets is a known ledger', () => {
+    // 🔴 The SHRINK half is the two whole-string pins above — they fail if either sentence is
+    // reworded. This is the other direction: nothing fails when a THIRD money surface appears
+    // on a file nobody listed, which is the condition that let one wrong claim become three.
+    //
+    // 🔴 DELIBERATELY A STRUCTURAL LEDGER, NOT A CADENCE-PHRASE SCAN. A phrase scan was
+    // written first and MEASURED before being discarded: ten realistic re-promises evaded it
+    // ("Payouts run weekly", "disbursed every Monday", "Funds are transferred weekly",
+    // "You get paid every week"), while six TRUE statements tripped it — including
+    // "Payouts are processed manually until the automated rail lands" and anything using
+    // "will be paid". It also read raw text, so a comment quoting the retracted sentence as
+    // documentation would have failed the build, which is the unlandable-guard shape that
+    // gets a guard deleted rather than obeyed. English cadence is not a regex problem.
+    //
+    // What IS checkable is the population. These two bucket labels are the settlement
+    // vocabulary, and this PR's scope deliberately keeps them stable, so they are a reliable
+    // marker for "this file shows a user money that may or may not have been disbursed".
+    // A third such surface fails here, and its author then has to decide — consciously —
+    // whether it needs the accrual disclosure the other two carry.
+    const BUCKET_LABELS = ['Confirmed (unpaid)', 'Paid out'];
     const files = MONEY_COPY_ROOTS.flatMap((d) => walk(join(REPO_ROOT, d)));
-    expect(files.length).toBeGreaterThan(50); // walk positive control
+    // Walk positive control: an empty walk yields an empty set, which would "equal" nothing
+    // and pass if the expectation below were also empty. It is not — but prove the walk ran.
+    expect(files.length).toBeGreaterThan(50);
+    expect(files.map(rel)).toContain(REVENUE_PANEL);
 
-    const offenders = files
+    const surfaces = files
       .filter((f) => !/\.test\.tsx?$/.test(rel(f)) && !rel(f).includes('__tests__/'))
-      .filter((f) => CADENCE.test(readFileSync(f, 'utf8')))
+      .filter((f) => {
+        const src = readFileSync(f, 'utf8');
+        return BUCKET_LABELS.every((l) => src.includes(l));
+      })
       .map(rel)
       .sort();
-    // If this fails, a new sentence promises a disbursement schedule. Either the rail is now
-    // wired (the state guard above should have failed first), or the sentence is untrue.
-    expect(offenders).toEqual([]);
+
+    // Non-empty by construction, so this cannot be a vacuous "no matches" pass.
+    expect(surfaces).toEqual([EARNINGS_PANEL, REVENUE_PANEL].sort());
   });
 });
