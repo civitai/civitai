@@ -297,9 +297,9 @@ export const serverSchema = z
     REDIS_CLUSTER_ROUTING_RETRY_BACKOFF_MAX_MS: z.coerce.number().default(150),
 
     // Upper bound (ms) on a single ClickHouse image-metrics read in the feed/SSR
-    // hot path (getImageMetricsObject). The @clickhouse/client default
-    // request_timeout is 30000ms, so a saturated/cold-cache-miss metric read would
-    // otherwise park ~30s and blow the SSR deadline (the surrounding try/catch
+    // hot path (getImageMetricsObject). The client's own `request_timeout` is
+    // 300000ms, so a saturated/cold-cache-miss metric read would otherwise park for
+    // MINUTES and blow the SSR deadline (the surrounding try/catch
     // CANNOT catch a hang). The CH metric query (entityMetricDailyAgg_v2) is
     // genuinely slow — ~4.6s p50 / ~11s p99 — so on a cold cache miss the timeout
     // fires and we fail SOFT to empty metrics, yielding TRANSIENT zeros. That
@@ -309,7 +309,7 @@ export const serverSchema = z
     // Default 3000ms — snappy SSR over correctness on the first cold render.
     // .int().positive() so a misconfigured 0 / negative fails fast at BOOT instead
     // of silently disabling the guard (withTimeoutFallback passes through unbounded
-    // when ms<=0 → the exact ~30s hang this exists to prevent, with no signal).
+    // when ms<=0 → the exact multi-minute hang this exists to prevent, with no signal).
     CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS: z.coerce.number().int().positive().default(3000),
     // Per-read deadline for `/api/user/settings`, which `_app` self-fetches on every SSR
     // render. Must stay well under `APP_SETTINGS_FETCH_TIMEOUT_MS` (8s): a response the

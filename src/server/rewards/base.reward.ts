@@ -181,7 +181,7 @@ export function createBuzzEvent<T>({
               `,
               format: 'JSONEachRow',
             })
-            .then((x) => x.json<{ total: number }[]>())) ?? []
+            .then((x) => x.json<{ total: number }>())) ?? []
         : [];
      */
 

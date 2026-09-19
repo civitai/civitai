@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // getImageMetricsObject is the metric leg of the getAllImages 12-way Promise.all
 // fan-out on the image feed / SSR hot path. It reads counts from ClickHouse via
-// MetricService.fetch, which has NO request-level timeout beyond the
-// @clickhouse/client 30s default — and a try/catch CANNOT catch a hang. We bound
-// it with withTimeoutFallback so a wedged read fails SOFT to empty metrics
-// instead of parking ~30s and blowing the SSR deadline.
+// MetricService.fetch, which has NO request-level timeout beyond the shared
+// client's `request_timeout` of 300s — and a try/catch CANNOT catch a hang. We
+// bound it with withTimeoutFallback so a wedged read fails SOFT to empty metrics
+// instead of parking for minutes and blowing the SSR deadline.
 //
 // We mock the smallest seams: the event-engine-common MetricService class (so
 // only its `.fetch` is controlled) plus the db/redis/clickhouse clients and env
@@ -106,7 +106,7 @@ describe('getImageMetricsObject ClickHouse timeout fail-soft', () => {
     const result = await getImageMetricsObject([{ id: 1 }, { id: 2 }]);
     const elapsed = Date.now() - start;
 
-    // The contract: it RESOLVES (does not park ~30s) with the fail-soft shape —
+    // The contract: it RESOLVES (does not park for minutes) with the fail-soft shape —
     // an empty `{}` metrics map maps to all-null counts per id (callers treat
     // null fields as "no metrics"). The key assertion is that it returns fast and
     // never throws.

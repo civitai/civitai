@@ -5079,10 +5079,10 @@ export const getImageMetricsObject = async (
   try {
     const ids = data.map((d) => d.id);
 
-    // The ClickHouse read has NO request-level timeout other than the
-    // @clickhouse/client 30s default, and a try/catch CANNOT catch a hang. Bound
+    // The ClickHouse read has NO request-level timeout other than the client's own
+    // `request_timeout` (300s), and a try/catch CANNOT catch a hang. Bound
     // it here so a saturated/cold-miss metric read fails SOFT to empty metrics
-    // (callers treat missing ids as null) instead of parking ~30s and blowing the
+    // (callers treat missing ids as null) instead of parking for minutes and blowing the
     // SSR deadline. Empty `{}` matches the existing catch fallback.
     const timeoutMs = env.CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS;
     // Narrow type flows from this call (`fetch('Image', …)` → Record<number,

@@ -131,8 +131,10 @@ workstreams from `docs/plans/monorepo-migration.md` (in the watcher repo):
    consumed by BOTH this app and the monolith, then delete the vendored `src/common` here and the monolith's
    root `event-engine-common` submodule. Note the two EEC copies are at **different commits** today
    (this app `49b0d4f`; the monolith submodule `7a0c4b0`) — reconcile before sharing.
-5. **ClickHouse version** — `@clickhouse/client` is `1.12` here vs `0.2.2` at the monorepo root; only needs
-   reconciling if adopting `@civitai/clickhouse`.
+5. **ClickHouse client** — both this app and the monorepo root are on `@clickhouse/client` 1.x now, so
+   there is no version split left to reconcile. What remains is that this app builds its own client with
+   `createClient` rather than going through `@civitai/clickhouse`, so it takes the library's defaults
+   where the shared client pins them.
 6. **Meilisearch** — keep this app's own client, or factor a `@civitai/meilisearch` package.
 7. ~~**DevOps (Zach):** add a Tekton tag-webhook trigger + a `release-app.mjs`/`release:event-engine`
    entry + the k8s Deployment/HPA/secret (port from the legacy `k8s/09-metric-watcher-app.yml`). The
