@@ -15,6 +15,7 @@ function fakeRunner(rows: {
   columns?: unknown[];
   foreignKeys?: unknown[];
   uniqueIndexes?: unknown[];
+  views?: unknown[];
 }): CatalogQueryRunner & { schemas: string[] } {
   const schemas: string[] = [];
   return {
@@ -24,6 +25,10 @@ function fakeRunner(rows: {
       if (text.includes('pg_constraint')) return { rows: (rows.foreignKeys ?? []) as R[] };
       if (text.includes('pg_index')) return { rows: (rows.uniqueIndexes ?? []) as R[] };
       if (text.includes('pg_attribute a')) return { rows: (rows.columns ?? []) as R[] };
+      // Tables and views differ only by their relkind list, so route on that rather than on
+      // the relation names — otherwise the view query falls through and is answered with the
+      // TABLE rows, which reads as a working view capture on a fake that never had one.
+      if (text.includes("'v', 'm'")) return { rows: (rows.views ?? []) as R[] };
       return { rows: (rows.tables ?? []) as R[] };
     },
   };
@@ -33,7 +38,18 @@ describe('readCatalog', () => {
   it('passes the requested schema to every query', async () => {
     const runner = fakeRunner({});
     await readCatalog(runner, 'some_schema');
-    expect(runner.schemas).toEqual(Array(4).fill('some_schema'));
+    expect(runner.schemas).toEqual(Array(5).fill('some_schema'));
+  });
+
+  it('captures views separately from tables', async () => {
+    const catalog = await readCatalog(
+      fakeRunner({
+        tables: [{ table_name: 'Model' }],
+        views: [{ table_name: 'ModelStat' }],
+      })
+    );
+    expect(catalog.tables).toEqual(['Model']);
+    expect(catalog.views).toEqual(['ModelStat']);
   });
 
   it('reads nullability from is_not_null, not a reserved-word alias', async () => {
