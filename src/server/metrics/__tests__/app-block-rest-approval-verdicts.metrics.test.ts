@@ -129,9 +129,11 @@ describe('civitai_app_block_rest_approval_verdicts_total', () => {
     recordBlockRestApprovalVerdict('not_found');
     recordBlockRestApprovalVerdict('lookup_failed');
     // The fourth reason is driven here too, so the title's count and the case's coverage
-    // are the same number. It was left out when the reason was added — the title said
-    // four while the body drove three, which is a coverage claim wider than the test, the
-    // same shape this file corrects two cases below.
+    // are the same number. Two separate slips, one commit apart: the body was not extended
+    // when the reason was added (under-covered, but the title still said three, so the case
+    // claimed nothing it did not prove), and the title was bumped to four in the following
+    // docs pass — which is where it became a coverage claim wider than the test. The same
+    // shape is corrected in the `emits AT MOST 4 series` case below.
     recordBlockRestApprovalVerdict('tunnel_lookup_failed');
 
     expect(await readReason('not_approved')).toBe(1);
