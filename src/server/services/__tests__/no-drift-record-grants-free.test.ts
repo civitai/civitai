@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
  * A prompt-reuse remix whose prompt drifted is recorded (`driftedImageIds` in the
  * signed token, `meta.extra.driftedFromImageIds` on the image) so the gallery can
  * say why free was refused. It travels beside the verified sources through every
- * layer \u2014 union, re-sign, upload, sanitize, the eligibility SQL \u2014 and at each one
+ * layer — union, re-sign, upload, sanitize, the eligibility SQL — and at each one
  * a single swapped name or key would turn "drifted" into "verified" and open the
  * free remix-gallery submission. None of those swaps fails a behavioural test:
  * the SQL is mocked, and the re-sign and upload sites have no harness.
@@ -22,7 +22,8 @@ const between = (src: string, start: string, end: string) => {
   const i = src.indexOf(start);
   expect(i, `${start} not found`).toBeGreaterThan(-1);
   const j = src.indexOf(end, i + start.length);
-  return src.slice(i, j === -1 ? undefined : j);
+  expect(j, `end of ${start} not found`).toBeGreaterThan(-1);
+  return src.slice(i, j);
 };
 
 describe('the drift record never grants a free submission', () => {
@@ -54,6 +55,15 @@ describe('the drift record never grants a free submission', () => {
     expect(provenance).not.toMatch(/new Set\(\[[^\]]*fromPrompt\.drifted/);
 
     const submit = read('services/orchestrator/orchestration-new.service.ts');
+    expect(submit).toContain(
+      'const { sourceImageIds, driftedImageIds } = await unionSourceImageIds({'
+    );
+    const build = between(
+      submit,
+      'tags: assemblyTags,\n  } = await createWorkflowStepsFromGraph({',
+      '});'
+    );
+    expect(build).toMatch(/\n\s*sourceImageIds,\n\s*driftedImageIds,\n/);
     const sign = between(submit, 'signProvenance({', '})');
     expect(sign).toMatch(/sourceImageIds: sourceImageIds \?\? \[\],/);
     expect(sign).toMatch(/\bdriftedImageIds,/);
@@ -65,7 +75,12 @@ describe('the drift record never grants a free submission', () => {
     expect(post).toMatch(
       /\{\s*sourceImageIds: verifiedSourceImageIds,\s*driftedImageIds: verifiedDriftedImageIds\s*\}/
     );
-    expect(post).not.toMatch(/verifiedSourceImageIds:\s*verifiedDriftedImageIds/);
+    const create = between(post, 'await createImage({', '});');
+    expect(create).toMatch(/\n\s*verifiedSourceImageIds,\n\s*verifiedDriftedImageIds,\n/);
+    // The edit path carries both stored lists across a rewrite of meta, in order.
+    expect(post).toMatch(
+      /storedSourceImageIds\(currentImage\.meta\),\s*storedDriftedImageIds\(currentImage\.meta\)\s*\)/
+    );
 
     const image = read('services/image.service.ts');
     expect(image).toMatch(/verifiedSourceImageIds,\s*verifiedDriftedImageIds\s*\)/);
