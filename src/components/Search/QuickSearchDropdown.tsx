@@ -308,6 +308,14 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
             .map((index) => ({ label: IndexToLabel[searchIndexMap[index]], value: index }))}
           rightSection={<IconChevronDown size={16} color="currentColor" />}
           onChange={(value) => onIndexNameChange(value as TIndex)}
+          // Mantine's `Select` is deselectable by default, so clicking the only option a caller
+          // offers clears it and hands `null` to the change handler — which falls back to
+          // `models`. The caller then keeps reading the picked entity as the type its
+          // `supportedIndexes` named, while the dropdown is really searching a different index.
+          // `CosmeticShopItemUpsertForm` passes `supportedIndexes={['users']}` and writes what is
+          // picked into `meta.paidToUserIds`, the "Funds Distribution" set, so the mismatch is not
+          // a display bug there.
+          allowDeselect={false}
         />
       )}
       <ClearableAutoComplete
