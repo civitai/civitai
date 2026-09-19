@@ -46,8 +46,8 @@ const officialItem = {
     // Listed by a moderator — addedById is NOT null for official items.
     addedById: 999,
     cosmetic: { id: 10, createdById: null },
-    // The counter and the rows disagree on purpose: /shop hands `meta` to the
-    // client as-is, so the row count has to be written onto it here.
+    // The counter and the rows disagree on purpose: /shop must publish the row
+    // count, never the stored counter.
     meta: { purchases: 2 },
     _count: { purchases: 5 },
   },
@@ -108,9 +108,8 @@ describe('getShopSectionsWithItems viewer gating', () => {
     expect(sections[0].items[0].shopItem.title).toBe('Official badge');
   });
 
-  // /shop is the one surface with no meta whitelist to change, so the wiring —
-  // not just the helper — is what has to be pinned. Reverting the `.map` in the
-  // section return reddens nothing without this.
+  // The wiring, not just the helper, is what has to be pinned: reverting the
+  // `.map` in the section return reddens nothing without this.
   it('serves the purchase rows as the sold count, not the meta counter', async () => {
     const sections = await getShopSectionsWithItems({});
     expect(sections[0].items[0].shopItem.meta.purchases).toBe(5);
@@ -220,9 +219,9 @@ describe('getShopSectionsWithItems viewer gating', () => {
 
 /**
  * The moderator section editor's read. It serves `cosmeticShopItemSelect` with
- * `meta` as-is, exactly like /shop, so it needs the same overwrite — and its
- * consumer renders no sold count today, which is precisely why nothing else
- * would notice it being left out.
+ * the whole `meta`, so it needs the row-count overwrite — and its consumer
+ * renders no sold count today, which is precisely why nothing else would notice
+ * it being left out.
  */
 describe('getSectionById serves the row count too', () => {
   it('reports the rows, not the counter, on the items it returns', async () => {

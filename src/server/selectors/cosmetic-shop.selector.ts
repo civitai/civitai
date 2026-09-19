@@ -35,11 +35,9 @@ export const cosmeticShopItemSelect = Prisma.validator<Prisma.CosmeticShopItemSe
 });
 
 /**
- * For the read paths that hand `meta` to the client as-is rather than through a
- * whitelist. Those clients read `meta.purchases`, so the row count has to land
- * on that key or they keep the drifting counter while the sanitized paths move
- * — the same `<ShopItem>` renders both, and it would show two different numbers
- * for one item depending on which page you reached it from.
+ * For the editor reads, which hand back the whole `meta` rather than the display
+ * list. They read `meta.purchases`, so the row count has to land on that key or
+ * an editor shows the drifting counter while every buyer surface shows rows.
  */
 export const withSoldCount = <T extends { meta: unknown; _count: { purchases: number } }>(
   item: T
