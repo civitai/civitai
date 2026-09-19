@@ -76,9 +76,10 @@ export function createClickhouseClient(
     // slow request into a hung one.
     max_open_connections: Infinity,
     // 1.x defaults to 30_000. 0.2.x resolved 300_000 at runtime, which its own JSDoc contradicted
-    // (`client-common/dist/client.js` read `config.request_timeout ?? 300000`). Jobs on this client
-    // run multi-minute queries with no bound of their own; the hot feed read has its own much
-    // tighter one (CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS). Above 60_000 and without
+    // (`client-common/dist/client.js` read `config.request_timeout ?? 300000`). Held for parity,
+    // not need: some job paths here set no bound of their own, but prod ran no app query past 20s
+    // in the 24h measured before the upgrade. The hot feed read has its own much tighter bound
+    // (CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS). Above 60_000 and without
     // `send_progress_in_http_headers`, 1.x warns at construction that a long request_timeout can
     // itself surface as a socket hang up past a load balancer's idle timeout.
     request_timeout: 300_000,
