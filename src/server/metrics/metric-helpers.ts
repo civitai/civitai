@@ -6,6 +6,7 @@ import { parameterizedTemplateHandler, templateHandler } from '~/server/db/db-he
 import type { JobContext } from '~/server/jobs/job';
 import { createLogger } from '~/utils/logging';
 import { buildEntityMetricPerDaySource } from '~/server/flipt/client';
+import { excludedReactorFilter } from '~/shared/utils/excluded-reactor-filter';
 
 const log = createLogger('metric-helpers');
 
@@ -143,30 +144,6 @@ const reactionMetricNames = Object.keys(ReviewReactions)
 const reactionMetricUpserts = Object.keys(ReviewReactions)
   .map((reaction) => `"${reaction.toLowerCase()}Count" = EXCLUDED."${reaction.toLowerCase()}Count"`)
   .join(', ');
-
-/**
- * `AND r."userId" NOT IN (...)` for the metric-excluded users, or `''` when the list is
- * empty. Emitted as literal SQL rather than a bound parameter because the reaction
- * queries run through `templateHandler`, which interpolates; a string is the one value
- * both template handlers pass through verbatim, so one snippet serves both.
- *
- * The column is hardcoded rather than a parameter. Every reaction aggregate aliases its
- * reaction table `r`, and a parameter here would be raw SQL text that the integer guard
- * beside it does not cover — while reading as though it did. A caller passing the wrong
- * alias (`i."userId"` in the post job, which joins `Image i`) is valid SQL that filters
- * by the post's OWNER instead of the reactor.
- *
- * Non-integer ids throw. They cannot reach here from `getMetricExcludedUserIdsOrThrow`,
- * which already coerces — but this builds SQL text, and dropping an unexpected id would
- * silently keep counting that user's reactions, which is the bug this exists to fix.
- */
-function excludedReactorFilter(excludedUserIds: number[]) {
-  if (!excludedUserIds.length) return '';
-  for (const id of excludedUserIds) {
-    if (!Number.isInteger(id)) throw new Error(`non-integer excluded user id: ${id}`);
-  }
-  return `AND r."userId" NOT IN (${excludedUserIds.join(',')})`;
-}
 
 export const snippets = {
   excludedReactorFilter,

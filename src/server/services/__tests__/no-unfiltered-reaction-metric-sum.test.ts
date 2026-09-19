@@ -30,17 +30,31 @@ import { describe, expect, it } from 'vitest';
 const repoRoot = path.resolve(__dirname, '../../../..');
 
 /**
- * Two directories, two different correct readers, so the scan carries which is which.
+ * Two directories, two different correct ways to get the list, so the scan carries which
+ * is which.
  *
- * A metric job must use the throwing reader: it writes a total that nothing later
- * recomputes, so degrading to an unfiltered count on a failed read would be permanent.
- * A notification must use the lenient one: degrading to the pre-exclusion count is how
- * it behaved before, and the alternative is a milestone that silently never fires.
+ * A metric job reads it itself, through the THROWING reader: it writes a total that
+ * nothing later recomputes, so degrading to an unfiltered count on a failed read would be
+ * permanent. A notification processor cannot read it at all — the processor files are in
+ * the client graph, where the reader's ClickHouse import is forbidden and a dynamic import
+ * does not help — so the server-only runner reads it with the LENIENT reader and passes it
+ * in. Degrading to the pre-exclusion count is how the milestones behaved before; the
+ * alternative is one that silently never fires.
  */
 const SCOPES = [
-  { dir: 'src/server/metrics', reader: 'getMetricExcludedUserIdsOrThrow' },
-  { dir: 'src/server/notifications', reader: 'getMetricExcludedUserIds' },
+  {
+    dir: 'src/server/metrics',
+    reader: 'getMetricExcludedUserIdsOrThrow',
+    build: 'snippets.excludedReactorFilter(await getMetricExcludedUserIdsOrThrow())',
+  },
+  {
+    dir: 'src/server/notifications',
+    reader: null,
+    build: 'excludedReactorFilter(excludedUserIds ?? [])',
+  },
 ] as const;
+
+const NOTIFICATION_RUNNER = 'src/server/jobs/send-notifications.ts';
 
 /**
  * Reaction tables whose count is NOT expected to filter, with the reason. Both belong to
@@ -79,7 +93,13 @@ const EXEMPT_SITES = [
   'src/server/notifications/reaction.notifications.ts:CommentReaction',
 ] as const;
 
-type Site = { rel: string; table: string; literal: string; reader: string };
+type Site = {
+  rel: string;
+  table: string;
+  literal: string;
+  reader: string | null;
+  build: string;
+};
 
 /** Odd-indexed chunks of a backtick split are the template literals. */
 function templateLiterals(text: string) {
@@ -116,7 +136,7 @@ for (const scope of SCOPES) {
       // reaction table through a LEFT JOIN, so a FROM-only match loses exactly the site
       // whose shape changed most.
       for (const [, table] of literal.matchAll(/(?:FROM|JOIN)\s+"(\w+Reaction)"/g)) {
-        sites.push({ rel, table, literal, reader: scope.reader });
+        sites.push({ rel, table, literal, reader: scope.reader, build: scope.build });
       }
     }
   }
@@ -183,23 +203,19 @@ describe('no unfiltered reaction count', () => {
     ).toEqual([]);
   });
 
-  it('every filtering file reads the list through the reader its scope requires', () => {
+  it('every filtering file gets the list the way its scope requires', () => {
     // The two readers differ by a suffix, so the lenient one is matched only where
     // `OrThrow` does not follow it.
+    const lenient = /getMetricExcludedUserIds(?!OrThrow)/;
     const offenders = [...new Set(covered.map((s) => s.rel))]
       .map((rel) => ({ rel, site: covered.find((s) => s.rel === rel)! }))
       .filter(({ rel, site }) => {
         const text = fileText.get(rel)!;
         if (site.reader === 'getMetricExcludedUserIdsOrThrow') {
-          return (
-            !text.includes('getMetricExcludedUserIdsOrThrow') ||
-            /getMetricExcludedUserIds(?!OrThrow)/.test(text)
-          );
+          return !text.includes('getMetricExcludedUserIdsOrThrow') || lenient.test(text);
         }
-        return (
-          !/getMetricExcludedUserIds(?!OrThrow)/.test(text) ||
-          text.includes('getMetricExcludedUserIdsOrThrow')
-        );
+        // A notification processor must not import either reader: it is client-graph code.
+        return lenient.test(text) || text.includes('getMetricExcludedUserIdsOrThrow');
       })
       .map(({ rel }) => rel);
 
@@ -207,29 +223,39 @@ describe('no unfiltered reaction count', () => {
       offenders,
       'A metric job must read the list with `getMetricExcludedUserIdsOrThrow` — a lenient read ' +
         'turns an outage into a permanently unfiltered total, because the jobs only revisit an ' +
-        'entity that receives another reaction. A notification must read it with the lenient ' +
-        '`getMetricExcludedUserIds`, so a failed read degrades to the old count rather than to ' +
-        'no notification.'
+        'entity that receives another reaction. A notification processor must not read it at ' +
+        'all: it is in the client graph, and the runner passes the list in.'
     ).toEqual([]);
   });
 
-  it('builds the filter from a DIRECT await of the reader', () => {
+  it('the notification runner reads the list leniently and passes it to every processor', () => {
+    // The processors default a missing list to [], which is the lenient posture — so a
+    // runner that stopped passing it would degrade EVERY milestone to unfiltered, silently.
+    // This is the one place that decides whether they are filtered at all.
+    const runner = readFileSync(path.join(repoRoot, NOTIFICATION_RUNNER), 'utf8');
+    expect(runner).toMatch(/const excludedUserIds = await getMetricExcludedUserIds\(\);/);
+    expect(runner).not.toContain('getMetricExcludedUserIdsOrThrow');
+    expect(runner).toMatch(/prepareQuery\?\.\(\{[\s\S]*?excludedUserIds,[\s\S]*?\}\)/);
+  });
+
+  it('builds the filter from exactly the expression its scope requires', () => {
     // Prohibiting `.catch` was not enough: `.then(x => x).catch(() => [])` and a plain
-    // `try { … } catch { /* degrade */ }` around the call both restore the whole defect
-    // and were measured green against a name-based check. So require the exact
+    // `try { … } catch { /* degrade */ }` around the strict call both restore the whole
+    // defect and were measured green against a name-based check. So require the exact
     // expression instead of enumerating the ways to avoid it — anything that routes the
-    // read through a variable has somewhere to swallow the rejection.
+    // strict read through a variable has somewhere to swallow the rejection.
     const offenders = [...new Set(covered.map((s) => s.rel))].filter((rel) => {
       const site = covered.find((s) => s.rel === rel)!;
-      return !fileText.get(rel)!.includes(`snippets.excludedReactorFilter(await ${site.reader}())`);
+      return !fileText.get(rel)!.includes(site.build);
     });
 
     expect(
       offenders,
-      'These files must build the filter as ' +
-        '`snippets.excludedReactorFilter(await <reader>())`, with no intermediate variable. ' +
-        'A try/catch or a .catch around the strict read is the lenient reader written the ' +
-        'long way: if the list cannot be read, the run must fail so the cursor does not advance.'
+      'A metric job must build the filter as ' +
+        '`snippets.excludedReactorFilter(await getMetricExcludedUserIdsOrThrow())`, with no ' +
+        'intermediate variable: a try/catch or .catch around the strict read is the lenient ' +
+        'reader written the long way. A notification processor must build it as ' +
+        '`excludedReactorFilter(excludedUserIds ?? [])` from the list the runner passes in.'
     ).toEqual([]);
   });
 

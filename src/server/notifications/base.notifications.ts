@@ -98,6 +98,13 @@ export type NotificationProcessorRunInput = {
   lastSent: string;
   lastSentDate: Date;
   clickhouse: CustomClickHouseClient | undefined;
+  /**
+   * Read once per job run by the server-only runner and passed in, because the processor
+   * files are in the client graph and cannot import the reader. Optional so a processor
+   * that ignores it needs no fixture change; a reaction milestone that reads it defaults
+   * to `[]`, which is the lenient posture those notifications want anyway.
+   */
+  excludedUserIds?: number[];
 };
 
 export function createNotificationProcessor(processor: Record<string, NotificationProcessor>) {

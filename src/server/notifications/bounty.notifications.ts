@@ -1,8 +1,7 @@
 import { milestoneNotificationFix } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
-import { snippets } from '~/server/metrics/metric-helpers';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-users.service';
+import { excludedReactorFilter } from '~/shared/utils/excluded-reactor-filter';
 
 const reactionMilestones = [5, 10, 20, 50, 100] as const;
 
@@ -149,12 +148,12 @@ export const bountyNotifications = createNotificationProcessor({
       }" has reached ${details.reactionCount.toLocaleString()} reactions`,
       url: `/bounties/${details.bountyId}/entries/${details.bountyEntryId}`,
     }),
-    prepareQuery: async ({ lastSent }) => {
+    prepareQuery: async ({ lastSent, excludedUserIds }) => {
       // Same rule as the displayed bounty-entry count, and the lenient reader for the
       // same reason as the article milestone: degrade to the pre-exclusion number rather
       // than to silence. The reaction table is aliased `r` because that is the alias
       // `excludedReactorFilter` emits.
-      const excludedFilter = snippets.excludedReactorFilter(await getMetricExcludedUserIds());
+      const excludedFilter = excludedReactorFilter(excludedUserIds ?? []);
       return `
       WITH milestones AS (
         SELECT * FROM (VALUES ${reactionMilestones.map((x) => `(${x})`).join(', ')}) m(value)

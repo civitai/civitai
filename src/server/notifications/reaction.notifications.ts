@@ -1,8 +1,7 @@
 import { milestoneNotificationFix } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
-import { snippets } from '~/server/metrics/metric-helpers';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-users.service';
+import { excludedReactorFilter } from '~/shared/utils/excluded-reactor-filter';
 import { getModelCommentThreadUrl } from '~/utils/comment-url-helpers';
 import { humanizeList } from '~/utils/humanizer';
 
@@ -109,12 +108,12 @@ export const reactionNotifications = createNotificationProcessor({
 
       return { message, url: `/articles/${details.articleId}` };
     },
-    prepareQuery: async ({ lastSent }) => {
+    prepareQuery: async ({ lastSent, excludedUserIds }) => {
       // The displayed article count filters metric-suppressed accounts; a milestone that
       // did not would congratulate someone on a number their own page never shows. The
       // LENIENT reader on purpose — a failed read here degrades to the pre-exclusion
       // count, which is how this fired before, rather than to no notification at all.
-      const excludedFilter = snippets.excludedReactorFilter(await getMetricExcludedUserIds());
+      const excludedFilter = excludedReactorFilter(excludedUserIds ?? []);
       return `
       WITH milestones AS (
         SELECT * FROM (VALUES ${articleReactionMilestones.map((x) => `(${x})`).join(', ')}) m(value)
