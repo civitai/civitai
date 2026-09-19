@@ -17,9 +17,11 @@ import type { BridgeMessageOutcome } from '~/components/AppBlocks/bridgeTelemetr
  * then UNREGISTER it and prove the SAME message now reports `no_handler`. One
  * variable moves, both arms are read, and the before/after pair is the evidence.
  *
- * The four DISPATCHER outcomes are all exercised against the real hook. The fifth,
- * `no_token`, is a HANDLER-side report and is pinned on the hosts themselves, in
- * `PageBlockHostNoTokenNack.browser.test.tsx` — which asserts BOTH the reply the
+ * FIVE of the six outcomes are dispatcher-side and are all exercised against the
+ * real hook here — including `validator_rejected`, which the dispatcher produces
+ * from the block's own `BLOCK_MESSAGE_REJECTED` report rather than observing.
+ * `no_token` is the one HANDLER-side report and is pinned on the hosts themselves,
+ * in `PageBlockHostNoTokenNack.browser.test.tsx` — which asserts BOTH the reply the
  * handler sends and the row that reaches the real beacon buffer, because those
  * are produced by different lines and a test of one says nothing about the other.
  */
@@ -236,6 +238,103 @@ describe('usePostMessage bridge outcome counter', () => {
     });
     await new Promise((r) => setTimeout(r, 50));
     expect(replies.of('VIEWER_RESULT')).toHaveLength(30);
+    replies.stop();
+  });
+
+  // ── The FIFTH silence: the block refused OUR reply ─────────────────────────
+  // Not a dispatcher outcome we can observe — the SDK's validator runs in the
+  // iframe AFTER we replied, so we already counted that exchange `handled`. The
+  // block reports it over `BLOCK_MESSAGE_REJECTED` and the dispatcher translates.
+
+  test('BLOCK_MESSAGE_REJECTED reports validator_rejected against the HANGING REQUEST, exactly once', async () => {
+    const recorded: Recorded[] = [];
+    await mount({ onOutcome: (e) => recorded.push(e), registered: true });
+
+    postFromBlock('BLOCK_MESSAGE_REJECTED', { type: 'GET_IMAGES_BY_IDS' });
+    await vi.waitFor(() => {
+      if (countOf(recorded, 'validator_rejected', 'GET_IMAGES_BY_IDS') !== 1) {
+        throw new Error('not counted yet');
+      }
+    });
+
+    // 🔴 EXACTLY ONE ROW, AND NOT `handled`. The report is consumed by the
+    // dispatcher above the subscriber lookup, so it must not also land in the
+    // `handled` denominator — one rejection moving two series by one would make
+    // every ratio read against `handled` quietly wrong.
+    expect(recorded).toEqual([
+      {
+        appBlockId: 'apb_test',
+        host: 'IframeHost',
+        type: 'GET_IMAGES_BY_IDS',
+        outcome: 'validator_rejected',
+      },
+    ]);
+  });
+
+  test('NEGATIVE CONTROL: a healthy exchange reports no validator_rejected at all', async () => {
+    // The arm that makes the test above a measurement rather than a claim: the
+    // same harness, a normal handled message, and the new series stays at zero.
+    const recorded: Recorded[] = [];
+    await mount({ onOutcome: (e) => recorded.push(e), registered: true });
+    postFromBlock('GET_VIEWER', { requestId: 'rq_healthy' });
+    await vi.waitFor(() => {
+      if (countOf(recorded, 'handled') !== 1) throw new Error('no handled yet');
+    });
+    expect(recorded.filter((r) => r.outcome === 'validator_rejected')).toEqual([]);
+  });
+
+  test.each([
+    ['a type the protocol does not declare', { type: 'NOT_A_REAL_MESSAGE' }],
+    // `{ type: 42 }` and `{}` reach the SAME branch (the `typeof !== 'string'` arm),
+    // so only one of them is kept — each row costs a full renderWithProviders +
+    // iframe mount in chromium. `undefined` is distinct: it exercises the `?.`, and
+    // without it that dereference throws.
+    ['a non-string type', { type: 42 }],
+    ['no payload at all', undefined],
+  ])('clamps %s to `other` rather than minting a series', async (_label, payload) => {
+    // The payload is BLOCK-supplied and the value becomes a prom label on a host
+    // that retains every distinct label set in heap forever, so the clamp is the
+    // security property of this branch, not tidiness.
+    //
+    // 🔴 THE CLAMP UNDER TEST IS THE ONE IN THE BRANCH, NOT THE SINK'S. These tests
+    // supply their own `onOutcome`, so `recordBridgeMessage` — and the
+    // `boundBridgeMessageType` call inside it — never runs. An earlier revision of
+    // this comment said the clamping happened downstream in the sink, which would
+    // tell a reader the branch's own `boundBridgeMessageType(...)` is dead code and
+    // safe to delete; deleting it reddens every row below, and the failure would
+    // then read as "the test is wrong". The branch clamps itself, on purpose,
+    // because `onOutcome` is a seam and a value pulled from an untrusted payload
+    // must not be bounded only by the default sink.
+    const recorded: Recorded[] = [];
+    await mount({ onOutcome: (e) => recorded.push(e), registered: true });
+    postFromBlock('BLOCK_MESSAGE_REJECTED', payload);
+    await vi.waitFor(() => {
+      if (recorded.length === 0) throw new Error('nothing recorded');
+    });
+    expect(recorded).toEqual([
+      { appBlockId: 'apb_test', host: 'IframeHost', type: 'other', outcome: 'validator_rejected' },
+    ]);
+  });
+
+  test('a rejection flood is counted in full and never answered', async () => {
+    // The branch sits ABOVE the inbound limiter and the dedup map, for the same
+    // reason `no_handler` does: a flood of junk must not burn the 30 msg/sec budget
+    // legitimate BLOCK_ERROR reporting needs. So all 45 are counted (the SDK side
+    // has no emit budget either, so this is the real magnitude), none are deduped
+    // — they carry no requestId,
+    // and two rejections of one type are two facts — and nothing goes back on the
+    // wire, because there is nothing to answer.
+    const recorded: Recorded[] = [];
+    await mount({ onOutcome: (e) => recorded.push(e), registered: true });
+    const replies = listenOnBlock();
+    for (let i = 0; i < 45; i++) postFromBlock('BLOCK_MESSAGE_REJECTED', { type: 'GET_VIEWER' });
+    await vi.waitFor(() => {
+      if (countOf(recorded, 'validator_rejected') !== 45) throw new Error('not all counted yet');
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(countOf(recorded, 'rate_limited')).toBe(0);
+    expect(countOf(recorded, 'deduped')).toBe(0);
+    expect(replies.all()).toEqual([]);
     replies.stop();
   });
 

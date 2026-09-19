@@ -55,8 +55,8 @@ const FLUSH_INTERVAL_MS = 10_000;
 
 /**
  * Distinct-key cap — a SAFETY BOUND on the browser-side map, not a tuning knob.
- * The key space is (apps on the page) x (46 protocol types + other) x (2 hosts) x
- * (5 outcomes), and a page hosts one or two blocks, so a real page sits in the low
+ * The key space is (apps on the page) x (47 protocol types + other) x (2 hosts) x
+ * (6 outcomes), and a page hosts one or two blocks, so a real page sits in the low
  * tens. Hitting this cap means something is generating unbounded distinct types
  * (they clamp to `other` server-side, so prom is safe either way) — flush early and
  * keep the map small rather than grow it.
@@ -180,7 +180,7 @@ export function flushBridgeMessages(): void {
   // fires the series reads "enormous" instead of "rejected" — see
   // `BRIDGE_MESSAGE_COUNT_MAX` for why the ceiling is a SANITY bound and not, as
   // an earlier revision of this comment claimed, a figure no real client can
-  // reach: three of the five outcomes are reported above the bridge's inbound
+  // reach: four of the six outcomes are reported above the bridge's inbound
   // limiter and are not bounded by it at all.
   const events = [...counts.values()]
     .slice(0, BRIDGE_MESSAGE_BATCH_MAX)

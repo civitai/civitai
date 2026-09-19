@@ -11,7 +11,11 @@ import { INVENTORY } from './hostHandlerParity';
  *   2. rate limited (>30 msg/sec)          — `console.warn` only
  *   3. deduped (same requestId within 5s)  — silent
  *   4. a handler ran but the block token was falsy — silent `return`
- *   5. the reply failed the SDK's validator — SDK-side `console.warn` only
+ *   5. the reply failed the SDK's validator — SDK-side `console.warn` only, and
+ *      INVISIBLE from here: that check runs in the iframe AFTER we replied, so this
+ *      host counted the same exchange `handled`. Now self-reported by the block
+ *      over `BLOCK_MESSAGE_REJECTED` -> `outcome="validator_rejected"`, which is
+ *      the only route there is; see `bridgeLabels.ts` for how to read it
  *
  * `civitai_app_block_renders_total` cannot see any of them: it fires ONCE per
  * host mount and reports the settled MOUNT outcome, so every failure that

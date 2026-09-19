@@ -2,7 +2,7 @@
  * App Blocks BRIDGE telemetry — the label sets and wire bounds, and NOTHING ELSE.
  *
  * 🔴 IT IS A SEPARATE MODULE FROM `bridgeTelemetry.ts` FOR ONE MEASURED REASON:
- * `bridgeTelemetry` imports `hostHandlerParity`'s 46-key `INVENTORY` (~6.7 KB
+ * `bridgeTelemetry` imports `hostHandlerParity`'s 47-key `INVENTORY` (several KB
  * minified) to bound the `type` label. `src/server/schema/track.schema.ts` needs
  * the label ENUMS so the beacon's zod schema and the emitter cannot drift — and
  * `track.schema` is imported by `TrackView` on pages that mount no block at all,
@@ -33,10 +33,54 @@
  *   rate_limited — the 30 msg/sec inbound budget was exhausted.
  *   deduped      — the same `requestId` arrived twice inside the 5s dedup window.
  *   no_token     — a handler ran, found no usable block credential, and refused.
+ *   validator_rejected
+ *                — the BLOCK refused our reply at its own trust boundary and
+ *                  dropped it, so its request hangs to the SDK timeout. The only
+ *                  outcome here with a confirmed production incident behind it.
+ *                  ⚠️ NOT "the fifth and final" silence — the SDK's own
+ *                  `handleMessage` still drops silently and uncounted on an origin
+ *                  mismatch, on a malformed envelope, and on a well-formed reply
+ *                  whose `requestId` matches no pending request. This value covers
+ *                  the validator path only.
  *
  * 🔴 `no_token` is reported BY THE HANDLER, not by the dispatcher — the dispatcher
  * has no idea a token exists. It rides the same counter because an operator asking
  * "why did this block stall" needs one series, not two.
+ *
+ * 🔴 `validator_rejected` IS REPORTED BY THE BLOCK, NOT OBSERVED BY US, AND THAT IS
+ * NOT A GAP WE CAN CLOSE. The SDK's `internal/validate.ts` shape-checks every
+ * inbound payload IN THE IFRAME, i.e. after this host has already replied — from
+ * here the exchange completed and the dispatcher counts it `handled`. So the only
+ * party that can see it is the block, which now says so with a fire-and-forget
+ * `BLOCK_MESSAGE_REJECTED` (`@civitai/app-sdk/blocks`); `usePostMessage` turns that
+ * into this outcome. Two consequences to read the series with:
+ *  - the `type` on it is the BLOCK→HOST REQUEST left hanging (`GET_IMAGES_BY_IDS`),
+ *    not the rejected reply (`IMAGES_RESULT`). Deliberate: `boundBridgeMessageType`
+ *    bounds the label against `hostHandlerParity`'s INVENTORY, which holds no
+ *    `*_RESULT` key, so a reply type would clamp to `'other'` and collapse every
+ *    rejection onto one label;
+ *  - it is NOT undercounted, and an earlier revision of this line said it was. The
+ *    SDK shipped a 30-per-10s emit budget and then DELETED it: a cap there made a
+ *    flood read SMALL, which is the one shape of wrongness this very file rejects a
+ *    few paragraphs down. Magnitude here is unbounded exactly as it is for
+ *    `no_handler` and `deduped`.
+ *  - 🔴 A ZERO IS NOT EVIDENCE OF HEALTH, and this is the caveat that matters. The
+ *    emitter lives in each block's OWN bundle (every app pins
+ *    `@civitai/blocks-react` itself), so the series stays at zero until every app
+ *    has been rebuilt AND redeployed against a version that carries it — not merely
+ *    until the package publishes. A flat-zero diagnostic read as health is the exact
+ *    failure this outcome exists to end.
+ *
+ * ⚠️ ADDING THIS SIXTH VALUE GREW THE COUNTER'S WORST-CASE LABEL PRODUCT BY 22.6%,
+ * not the 20% an earlier revision of this line claimed: the outcome axis alone is
+ * +20%, but `BLOCK_MESSAGE_REJECTED` also added an INVENTORY key, so the type axis
+ * moved too. Re-derived at 50 approved apps: (50+1) x 48 x 2 x 6 = 29,376, against
+ * 51 x 47 x 2 x 5 = 23,970 before. Both include the `'other'` slot each axis adds —
+ * that line's `x 47` omitted it. `/api/track/block-message`'s docblock asks for the
+ * product to be read before a label is added; an outcome VALUE is the cheaper axis
+ * than a fifth label, which is why this arrived as one. ⚠️ And it is a CEILING, not
+ * allocated heap: nothing pre-initialises the label space, so the sixth value costs
+ * zero series until a rejection actually occurs.
  */
 export const BRIDGE_MESSAGE_OUTCOMES = [
   'handled',
@@ -44,6 +88,7 @@ export const BRIDGE_MESSAGE_OUTCOMES = [
   'rate_limited',
   'deduped',
   'no_token',
+  'validator_rejected',
 ] as const;
 export type BridgeMessageOutcome = (typeof BRIDGE_MESSAGE_OUTCOMES)[number];
 
@@ -75,19 +120,20 @@ export const BRIDGE_MESSAGE_BATCH_MAX = 200;
  * 🔴 IT IS A SANITY CEILING, NOT A RATE CONTROL, AND THE DIFFERENCE MATTERS. An
  * earlier revision of this comment derived it as "30 msg/sec × a 10 s flush window
  * = 300 legitimate max, so nothing real can reach it". That derivation is wrong
- * for THREE of the five outcomes and was cited as justification in two other
+ * for FOUR of the six outcomes and was cited as justification in two other
  * files, so it is corrected here rather than quietly dropped:
  *
  *   - `handled` and `no_token` are the only two the bridge's 30 msg/sec inbound
  *     limiter bounds at all — ~300 per key per 10 s window, and higher than that
  *     whenever the window stretches (see below).
- *   - `no_handler` and `deduped` are reported ABOVE that limiter, deliberately (a
- *     flood of unhandled junk must not burn the budget that legitimate
- *     BLOCK_ERROR reporting needs — see `usePostMessage`).
+ *   - `no_handler`, `deduped` and `validator_rejected` are reported ABOVE that
+ *     limiter, deliberately (a flood of unhandled junk must not burn the budget that
+ *     legitimate BLOCK_ERROR reporting needs — see `usePostMessage`).
+ *     `validator_rejected` is doubly unbounded: its emitter carries no cap either.
  *   - `rate_limited` is by construction only recorded for messages that exceeded
  *     the budget.
  *
- * So on those three a block in a postMessage loop — a buggy render loop calling an
+ * So on those four a block in a postMessage loop — a buggy render loop calling an
  * SDK method is the ordinary, non-malicious case — can drive one key far past any
  * cap. The window is not a hard 10 s either: after the first flush a backgrounded
  * tab's `setTimeout` is throttled to 1/s or 1/min.
@@ -96,7 +142,7 @@ export const BRIDGE_MESSAGE_BATCH_MAX = 200;
  * exactly counted: above it the client CLAMPS (never drops the batch, never 400s
  * it), so the series reads "enormous" instead of "wrong". 100,000 is ~333× the
  * limiter-bounded ceiling and well clear of a throttled tab's stretched window, so
- * on the two bounded outcomes it cannot fire at all. On the other three it can, by
+ * on the two bounded outcomes it cannot fire at all. On the other four it can, by
  * construction — a block in a `postMessage` loop is exactly the case those
  * outcomes exist to reveal, and truncating a flood to a huge number is the
  * intended outcome rather than a limitation. Do not read the value as a claim
