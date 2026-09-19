@@ -61,12 +61,23 @@
  *    not the rejected reply (`IMAGES_RESULT`). Deliberate: `boundBridgeMessageType`
  *    bounds the label against `hostHandlerParity`'s INVENTORY, which holds no
  *    `*_RESULT` key, so a reply type would clamp to `'other'` and collapse every
- *    rejection onto one label. 🔴 BUT `type="other"` ON THIS OUTCOME DOES NOT MEAN
- *    "an unrecognised type" — it means the SDK could not name a hanging request,
- *    which covers a rejected host PUSH (nothing was awaiting it, so nothing hangs)
- *    AND a reply it could not attribute to one of its own pending requests. Those
- *    two share the bucket, so `other` is the one value on this outcome you cannot
- *    read as "a request is hanging";
+ *    rejection onto one label. 🔴 `type="other"` IS THEREFORE OVERLOADED ON THIS
+ *    OUTCOME — it does NOT only mean "an unrecognised type", and an earlier revision
+ *    of this line said it does not mean that AT ALL, two lines below asserting the
+ *    clamp that produces exactly that case. FOUR things reach it:
+ *      (a) the SDK rejected a host PUSH — nothing was awaiting it, so nothing hangs;
+ *      (b) the SDK could not attribute the reply to one of its own pending requests
+ *          (no readable `requestId`, or one naming a request awaiting another type);
+ *      (c) the block named a type this host's INVENTORY does not declare, or named
+ *          nothing — `usePostMessage`'s own `boundBridgeMessageType` clamp;
+ *      (d) the SDK's `boundBlockToParentMessageType` clamped an undeclared
+ *          `requestType` while a request genuinely DOES hang.
+ *    So `other` is the one value here you cannot read either way: not as "a request
+ *    is hanging" (a and c may hang nothing) and not as "nothing is hanging" (b and d
+ *    may). ⚠️ (c) is reachable today only for a malformed or undeclared value — the
+ *    SDK's 47-entry type array and this repo's 47-key INVENTORY were measured EQUAL
+ *    at both current heads, so no legitimate protocol type clamps. That equality is
+ *    a measurement across two moving repos, not an invariant;
  *  - it is NOT undercounted, and an earlier revision of this line said it was. A
  *    30-per-10s emit budget was written on the SDK side and removed BEFORE either
  *    half merged — it never reached a published package, so no bundle in the field
