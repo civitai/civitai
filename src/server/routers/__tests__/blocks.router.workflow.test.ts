@@ -227,7 +227,13 @@ vi.mock('~/server/services/blocks/user-app-surface.service', () => ({
   recordScopeInvocation: vi.fn(async () => undefined),
 }));
 
-vi.mock('~/server/middleware/block-scope.middleware', () => ({
+// Spread the ORIGINAL rather than replacing the module: `blocks.router.ts` also
+// imports `blockPerCallBudget` from here, and every submit gate's budget
+// comparison goes through it. Stubbing the module wholesale drops that export,
+// so each gate would compare against `undefined` — and `x > undefined` is
+// always false, i.e. the budget gate silently stops rejecting anything.
+vi.mock('~/server/middleware/block-scope.middleware', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   verifyBlockToken: mockVerifyBlockToken,
   parseSubjectUserId: (...args: unknown[]) => mockParseSubjectUserId(...args),
 }));

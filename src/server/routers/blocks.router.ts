@@ -12,6 +12,7 @@ import { FORGEJO_ORG } from '~/server/services/blocks/forgejo.service';
 import { logToAxiom } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import {
+  blockPerCallBudget,
   parseSubjectUserId,
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
@@ -5500,7 +5501,7 @@ export const blocksRouter = router({
       // record. There are FOUR below, all returning this same whatIf `cost` and
       // no workflow id the caller could poll to learn the answer later:
       //
-      //   1. insufficient per-call budget            (`cost > claims.buzzBudget`)
+      //   1. insufficient per-call budget            (`cost > perCallBudget`)
       //   2. per-user daily / review-session Buzz cap (`total > buzzCap`)
       //   3. per-app aggregate spend + velocity cap   (G8, `!appSpend.allowed`)
       //   4. dev-tunnel per-session spend backstop    (F4, `!reserved.allowed`)
@@ -5569,7 +5570,12 @@ export const blocksRouter = router({
       // reading the orchestrator's own number, not one this line inflated.
       const quotedGenerationBuzz = whatIfResult.cost?.total ?? 0;
       const cost = quotedGenerationBuzz + reservedAuthorFeeBuzz;
-      if (cost > claims.buzzBudget) {
+      // `pricesAuthorFee: true` — `cost` carries the author fee (line above).
+      // The helper returns `claims.buzzBudget` either way, so this comparison is
+      // unchanged; the flag classifies the gate, it does not price it. See
+      // `blockPerCallBudget`.
+      const perCallBudget = blockPerCallBudget(claims, { pricesAuthorFee: true });
+      if (cost > perCallBudget) {
         return {
           snapshot: {
             // Non-empty sentinel: the block SDK validator drops empty-workflowId
@@ -5579,7 +5585,9 @@ export const blocksRouter = router({
             workflowId: 'failed',
             status: 'failed' as const,
             cost: { total: cost },
-            error: `insufficient buzz budget: estimate ${cost} exceeds budget ${claims.buzzBudget}`,
+            // Quotes the ceiling that was actually compared, so the sentence
+            // stays true if that ceiling ever stops being the raw claim.
+            error: `insufficient buzz budget: estimate ${cost} exceeds budget ${perCallBudget}`,
             // Additive + omitted when empty, exactly like every other snapshot
             // site, so this reply is byte-identical whenever nothing was
             // substituted.
@@ -8128,13 +8136,19 @@ async function submitCustomComfyWorkflow(opts: {
   // `cost > buzzBudget` gate. Because the timeout caps the job at `maxBuzz` and we
   // require `maxBuzz <= buzzBudget`, the per-call budget CANNOT be exceeded.
   // Deterministic, no orchestrator round-trip.
-  if (ceiling > claims.buzzBudget) {
+  // 🔴 `pricesAuthorFee: false` — THIS PATH CHARGES NO AUTHOR FEE (no pre-submit
+  // `cost.base` to price one from), so `ceiling` is a raw generation price. The
+  // helper returns `claims.buzzBudget` either way, so this comparison is
+  // unchanged; the flag records that a raised ceiling must never reach here. See
+  // `blockPerCallBudget`.
+  const perCallBudget = blockPerCallBudget(claims, { pricesAuthorFee: false });
+  if (ceiling > perCallBudget) {
     return {
       snapshot: {
         workflowId: 'failed',
         status: 'failed' as const,
         cost: { total: ceiling },
-        error: `insufficient buzz budget: recipe ceiling ${ceiling} exceeds budget ${claims.buzzBudget}`,
+        error: `insufficient buzz budget: recipe ceiling ${ceiling} exceeds budget ${perCallBudget}`,
       },
     };
   }
@@ -9345,13 +9359,16 @@ async function submitStepWorkflow(opts: {
 
   // (1) Pre-submit gate against the token's per-call budget — now enforced
   // against the ORCHESTRATOR'S OWN NUMBER, not a declared constant.
-  if (reserveBuzz > claims.buzzBudget) {
+  // `pricesAuthorFee: true` — `reserveBuzz` carries the author fee (line above).
+  // Classification only; the helper returns `claims.buzzBudget` either way.
+  const perCallBudget = blockPerCallBudget(claims, { pricesAuthorFee: true });
+  if (reserveBuzz > perCallBudget) {
     return {
       snapshot: {
         workflowId: 'failed',
         status: 'failed' as const,
         cost: { total: reserveBuzz },
-        error: `insufficient buzz budget: step price ${reserveBuzz} exceeds budget ${claims.buzzBudget}`,
+        error: `insufficient buzz budget: step price ${reserveBuzz} exceeds budget ${perCallBudget}`,
       },
     };
   }
@@ -10164,13 +10181,21 @@ async function submitPassThroughStepWorkflow(opts: {
   const ceiling = Math.max(body.maxBuzz, quotedBuzz ?? body.maxBuzz);
 
   // (1) STATIC pre-submit gate against the token's per-call budget.
-  if (ceiling > claims.buzzBudget) {
+  //
+  // 🔴 `pricesAuthorFee: false` — this path charges no author fee, and `ceiling`
+  // is not merely compared here: it is what `reserveBlockBuzzSpendForClaims`
+  // reserves below and what the terminal settle bills against. That is why the
+  // classification matters even though it changes nothing today — a ceiling
+  // raised above what the app declared would be BILLED here, not just compared.
+  // The helper returns `claims.buzzBudget` either way. See `blockPerCallBudget`.
+  const perCallBudget = blockPerCallBudget(claims, { pricesAuthorFee: false });
+  if (ceiling > perCallBudget) {
     return {
       snapshot: {
         workflowId: 'failed',
         status: 'failed' as const,
         cost: { total: ceiling },
-        error: `insufficient buzz budget: step ceiling ${ceiling} exceeds budget ${claims.buzzBudget}`,
+        error: `insufficient buzz budget: step ceiling ${ceiling} exceeds budget ${perCallBudget}`,
       },
     };
   }
