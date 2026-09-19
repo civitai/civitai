@@ -187,8 +187,8 @@ every file it read, and the lockfile/configs. Results are shared between worktre
 
 A random ~5% of the unchanged files run anyway. If one of those fails, the cache predicted a pass it could not
 deliver — a **false skip** — and it trips itself off (`TRIPPED.json` in the cache dir) until a human looks.
-**Known blind spot:** environment variables are not part of the key. Never on in CI; never applied to a run
-that names files. Code and details: `scripts/test-cache/`.
+**Known blind spot:** environment variables are not part of the key. Never on in CI; a run that filters
+files (a filename, directory or substring) is never trimmed. Code and details: `scripts/test-cache/`.
 
 #### Worker count: uncapped by default, `VITEST_MAX_WORKERS` / `--max-workers` to size it
 A suite uses Vitest's own worker count (`cpus - 1` in run mode, `floor(cpus / 2)` in watch; the browser pool `min(12, cpus - 1)`).
@@ -714,7 +714,7 @@ about your change, whatever the summary says.
 On a queued run with the result cache on, that file can be absent from the output for a legitimate reason:
 it was skipped as unchanged since it last passed. The `[test-cache]` line names how many files were skipped.
 To apply this check, confirm the file either ran with a nonzero count or is not in your diff's reach —
-or run it by name, which never goes through the cache.
+or run it by its full filename, which never goes through the cache.
 
 **A fresh worktree also has no `.envrc`.** It's gitignored, so it never comes with the checkout, and you silently
 get system Node instead of the flake's pinned version. Measured (when the flake still shipped node 22): system

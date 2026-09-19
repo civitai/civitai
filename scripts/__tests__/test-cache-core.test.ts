@@ -8,25 +8,38 @@ import * as Core from '../test-cache/core.mjs';
 type Node = { id: string; importedModules: Set<Node> };
 type Fingerprint = (rel: string) => string;
 
-const { closureOf, toRel, isCoveredElsewhere, alwaysRuns, keyFor, makeFingerprinter, mode } =
-  Core as unknown as {
-    closureOf: (
-      g: { getModuleById: (id: string) => Node | undefined },
-      id: string
-    ) => Set<string> | null;
-    toRel: (id: string, root: string) => string | null;
-    isCoveredElsewhere: (rel: string | null) => boolean;
-    alwaysRuns: (source: string) => boolean;
-    keyFor: (a: {
-      salt: string;
-      project: string;
-      testRel: string;
-      entries: string[];
-      fingerprint: Fingerprint;
-    }) => string;
-    makeFingerprinter: (root: string) => Fingerprint;
-    mode: (env: Record<string, string | undefined>) => string;
-  };
+const {
+  closureOf,
+  toRel,
+  isCoveredElsewhere,
+  alwaysRuns,
+  keyFor,
+  makeFingerprinter,
+  mode,
+  shadowCandidates,
+  changedSince,
+  tripped,
+} = Core as unknown as {
+  closureOf: (
+    g: { getModuleById: (id: string) => Node | undefined },
+    id: string
+  ) => Set<string> | null;
+  toRel: (id: string, root: string) => string | null;
+  isCoveredElsewhere: (rel: string | null) => boolean;
+  alwaysRuns: (source: string) => boolean;
+  keyFor: (a: {
+    salt: string;
+    project: string;
+    testRel: string;
+    entries: string[];
+    fingerprint: Fingerprint;
+  }) => string;
+  makeFingerprinter: (root: string) => Fingerprint;
+  mode: (env: Record<string, string | undefined>) => string;
+  shadowCandidates: (rel: string) => string[];
+  changedSince: (root: string, rel: string, sinceMs: number) => boolean;
+  tripped: (dir: string) => { at: string } | null;
+};
 
 function graphOf(edges: Record<string, string[]>) {
   const nodes = new Map<string, Node>();
@@ -107,9 +120,13 @@ describe('the key', () => {
 
 describe('tests that always run', () => {
   it.each([
-    ["spawn(process.execPath, ['x.mjs']);"],
+    ["import { execSync } from 'node:child_process';"],
+    ["import * as cp from 'child_process';"],
+    ["const { Worker } = require('worker_threads');"],
     ['const m = await import(`./pages/${name}`);'],
     ['const m = await import(target);'],
+    // The form this repo uses, which the first version of the pattern let through.
+    ['return import(/* @vite-ignore */ file);'],
     ["const files = globSync('src/**/*.ts');"],
     ["import fg from 'fast-glob';"],
   ])('recognises %s', (source) => {
@@ -118,12 +135,15 @@ describe('tests that always run', () => {
 
   // Plain file reads are no longer a reason to always run: the tracker records them into the key.
   // A literal dynamic import is in the module graph.
-  it.each([["readFileSync('src/x.ts', 'utf8');"], ["await import('./dep');"]])(
-    'leaves %s cacheable',
-    (source) => {
-      expect(alwaysRuns(source)).toBe(false);
-    }
-  );
+  // `regex.exec(` is not a process: the call-name pattern this replaced matched it in
+  // src/__tests__/setup.ts, which every test loads, and nothing was cacheable at all.
+  it.each([
+    ["readFileSync('src/x.ts', 'utf8');"],
+    ["await import('./dep');"],
+    ['const m = /^a(b)$/.exec(input);'],
+  ])('leaves %s cacheable', (source) => {
+    expect(alwaysRuns(source)).toBe(false);
+  });
 });
 
 // CI must always run everything: it is the check that still runs when nothing local does.
@@ -136,5 +156,55 @@ describe('when the cache is active', () => {
     expect(mode({})).toBe('off');
     expect(mode({ CIVITAI_TEST_CACHE: 'yes' })).toBe('off');
     expect(mode({ CIVITAI_TEST_CACHE: 'on' })).toBe('on');
+  });
+});
+
+describe('what a key must see besides content', () => {
+  // `./foo` resolving to `foo/index.ts` is overtaken by a new `foo.ts` without any file in the
+  // dependency list changing.
+  it('names the files that would shadow an index module or an extension', () => {
+    const c = shadowCandidates('src/foo/index.ts');
+    expect(c).toContain('src/foo.ts');
+    expect(c).toContain('src/foo/index.tsx');
+    expect(c).not.toContain('src/foo/index.ts');
+  });
+
+  it('changes when a shadowing file appears', () => {
+    const root = mkdtempSync(join(tmpdir(), 'test-cache-shadow-'));
+    mkdirSync(join(root, 'src/foo'), { recursive: true });
+    writeFileSync(join(root, 't.test.ts'), 't');
+    writeFileSync(join(root, 'src/foo/index.ts'), 'i');
+    const k = () =>
+      keyFor({
+        salt: 's',
+        project: 'unit',
+        testRel: 't.test.ts',
+        entries: ['src/foo/index.ts'],
+        fingerprint: makeFingerprinter(root),
+      });
+    const before = k();
+    writeFileSync(join(root, 'src/foo.ts'), 'f');
+    expect(k()).not.toBe(before);
+  });
+
+  // The key is computed at the END of a run; an input written after the run started is not what
+  // ran. Measured by review: without this an edit made during a queued suite was recorded as passing.
+  it('sees a file written after a given instant, and a directory whose subtree gained a file', () => {
+    const root = mkdtempSync(join(tmpdir(), 'test-cache-mtime-'));
+    mkdirSync(join(root, 'd/deep'), { recursive: true });
+    writeFileSync(join(root, 'a.ts'), 'a');
+    const since = Date.now() + 60_000;
+    expect(changedSince(root, 'a.ts', since)).toBe(false);
+    expect(changedSince(root, 'a.ts', 0)).toBe(true);
+    expect(changedSince(root, 'd', since)).toBe(false);
+    expect(changedSince(root, 'missing.ts', 0)).toBe(false);
+  });
+
+  // A half-written marker must read as tripped, never as "safe to skip".
+  it('treats an unreadable trip marker as tripped', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'test-cache-trip-'));
+    expect(tripped(dir)).toBeNull();
+    writeFileSync(join(dir, 'TRIPPED.json'), '{"at": "2026');
+    expect(tripped(dir)).not.toBeNull();
   });
 });

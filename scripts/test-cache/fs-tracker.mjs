@@ -51,10 +51,18 @@ if (mode() !== 'off') {
     'opendirSync',
     'opendir',
     'createReadStream',
+    'accessSync',
+    'access',
+    'openSync',
+    'open',
+    'realpathSync',
+    'realpath',
+    'readlinkSync',
+    'readlink',
   ]) {
     wrap(fs, name);
   }
-  for (const name of ['readFile', 'readdir', 'stat', 'lstat', 'opendir']) {
+  for (const name of ['readFile', 'readdir', 'stat', 'lstat', 'opendir', 'open', 'access', 'realpath', 'readlink']) {
     wrap(fs.promises, name);
   }
   syncBuiltinESMExports();

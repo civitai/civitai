@@ -180,9 +180,10 @@ const unitTestConfig = {
   exclude: ['node_modules', 'tests/**/*'], // Exclude Playwright tests
   // The fs tracker records which files each test reads, for the result cache. It is loaded only
   // when the queue turned the cache on (CIVITAI_TEST_CACHE) and never in CI — see scripts/test-cache.
+  // Tracker FIRST, so reads made while the main setup file loads are recorded too.
   setupFiles: [
-    'src/__tests__/setup.ts',
     ...(testCacheMode() !== 'off' ? ['scripts/test-cache/fs-tracker.mjs'] : []),
+    'src/__tests__/setup.ts',
   ],
   // Several unit tests cold-`await import(...)` a large Next API-page / service
   // module graph (mocked I/O, but a real ~9–16s TS transform). With the suite's

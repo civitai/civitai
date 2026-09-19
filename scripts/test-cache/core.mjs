@@ -35,15 +35,31 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 
 // Inputs every test depends on that no import edge or file read records. This cache's own code is
 // among them: a fix to how reads are captured must invalidate everything recorded without it.
-const GLOBAL_INPUTS = ['pnpm-lock.yaml', 'vitest.config.mts', 'tsconfig.json'];
+// `node_modules/.pnpm/lock.yaml` is what pnpm actually INSTALLED, which a rebased tree that skipped
+// `pnpm install` does not share with its lockfile. The package.json files carry `exports` maps, and a
+// symlinked workspace package resolves through them — the lockfile does not record `exports`.
+const GLOBAL_INPUTS = [
+  'pnpm-lock.yaml',
+  'node_modules/.pnpm/lock.yaml',
+  'package.json',
+  'vitest.config.mts',
+  'tsconfig.json',
+];
+const WORKSPACE_DIRS = ['packages', 'apps'];
 const OWN_CODE = ['core.mjs', 'fs-tracker.mjs', 'sequencer.mjs', 'reporter.mjs'];
 
 // What stays uncacheable even with file reads tracked: a child process reads what it likes, and a
 // dynamic import whose specifier is computed is invisible to the module graph. 19 files, 0.7% of
 // modelled worker time, measured 2026-09-19.
 const ALWAYS_RUN_SOURCE = [
-  /\b(?:spawn|spawnSync|execSync|execFileSync|execFile)\(/,
-  /import\(\s*(?:`[^`]*\$\{|[A-Za-z_$])/,
+  // IMPORTING a process or thread module, not calling one by name: a call pattern cannot see
+  // `cp.execSync(` or a destructured alias, and `exec(` matched every `regex.exec(` in the repo —
+  // measured: src/__tests__/setup.ts tripped it and nothing was cacheable at all.
+  /\bfrom\s+['"](?:node:)?(?:child_process|worker_threads|cluster)['"]/,
+  /\b(?:require|import)\s*\(\s*['"](?:node:)?(?:child_process|worker_threads|cluster)['"]\s*\)/,
+  // Comments allowed between `import(` and the specifier: `import(/* @vite-ignore */ file)` is the
+  // form this repo actually uses, and the first version of this pattern let it through.
+  /import\(\s*(?:\/\*[\s\S]*?\*\/\s*)*(?:`[^`]*\$\{|[A-Za-z_$])/,
   // A glob's result changes when a MATCHING file is added anywhere, and a pattern is not a path
   // whose state can be fingerprinted.
   /\b(?:globSync|glob|globby|fastGlob|fg)\(|from ['"](?:fast-glob|globby|glob|tinyglobby)['"]/,
@@ -80,6 +96,40 @@ export function isCoveredElsewhere(rel) {
 
 export function alwaysRuns(source) {
   return ALWAYS_RUN_SOURCE.some((re) => re.test(source));
+}
+
+// Reaching one of these anywhere in the graph means a process or thread the key cannot see into.
+// Checked on the graph rather than by pattern, so an aliased or destructured call cannot hide it.
+const OPAQUE_BUILTINS = new Set(['child_process', 'worker_threads', 'cluster']);
+
+export function reachesOpaqueBuiltin(ids) {
+  for (const id of ids) {
+    const bare = String(id).replace(/^node:/, '');
+    if (OPAQUE_BUILTINS.has(bare)) return true;
+  }
+  return false;
+}
+
+const RESOLVABLE_EXTS = ['ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs', 'json'];
+
+/**
+ * Paths whose APPEARANCE would change what an import of `rel` resolves to. `./foo` resolving to
+ * `foo/index.ts` is overtaken by a new `foo.ts`; `foo.ts` is overtaken by an extension ahead of it.
+ * Neither edits a file already in the dependency list, so without these the key cannot see it.
+ * Only these siblings, not the whole directory: a listing would invalidate every test near any
+ * new file.
+ */
+export function shadowCandidates(rel) {
+  const m = /^(.*?)([^/]+)\.([^./]+)$/.exec(rel);
+  if (!m) return [];
+  const [, dir, name, ext] = m;
+  if (!RESOLVABLE_EXTS.includes(ext)) return [];
+  const out = RESOLVABLE_EXTS.filter((e) => e !== ext).map((e) => `${dir}${name}.${e}`);
+  if (name === 'index' && dir) {
+    const parent = dir.replace(/\/$/, '');
+    for (const e of RESOLVABLE_EXTS) out.push(`${parent}.${e}`);
+  }
+  return out;
 }
 
 /** Transitive imports in one vite environment's module graph. null when the root is absent. */
@@ -140,6 +190,20 @@ function listTree(abs) {
   return out.sort();
 }
 
+function workspaceManifests(root) {
+  const out = [];
+  for (const ws of WORKSPACE_DIRS) {
+    let names = [];
+    try {
+      names = readdirSync(join(root, ws));
+    } catch {
+      continue;
+    }
+    for (const n of names.sort()) out.push(`${ws}/${n}/package.json`);
+  }
+  return out;
+}
+
 export function globalSalt(root, vitestVersion, fingerprint = makeFingerprinter(root)) {
   const own = OWN_CODE.map((f) => {
     try {
@@ -155,6 +219,7 @@ export function globalSalt(root, vitestVersion, fingerprint = makeFingerprinter(
       process.platform,
       vitestVersion,
       GLOBAL_INPUTS.map((f) => [f, fingerprint(f)]),
+      workspaceManifests(root).map((f) => [f, fingerprint(f)]),
       own,
     ])
   );
@@ -162,11 +227,37 @@ export function globalSalt(root, vitestVersion, fingerprint = makeFingerprinter(
 
 /** The key. `entries` is every repo-relative path the file depends on; order does not matter. */
 export function keyFor({ salt, project, testRel, entries, fingerprint }) {
-  const parts = [...new Set(entries)]
-    .filter((rel) => !isCoveredElsewhere(rel))
-    .sort()
-    .map((rel) => `${rel}\0${fingerprint(rel)}`);
-  return sha([salt, project, testRel, fingerprint(testRel), ...parts].join('\n'));
+  const deps = [...new Set(entries)].filter((rel) => !isCoveredElsewhere(rel)).sort();
+  const parts = deps.map((rel) => `${rel}\0${fingerprint(rel)}`);
+  // Only the shadow candidates that EXIST, so the common case (none) adds nothing to fingerprint.
+  const shadows = [...new Set(deps.flatMap(shadowCandidates))]
+    .filter((rel) => fingerprint(rel) !== 'missing')
+    .sort();
+  return sha([salt, project, testRel, fingerprint(testRel), ...parts, '--shadows--', ...shadows].join('\n'));
+}
+
+/**
+ * Whether `rel` was modified at or after `sinceMs`. A directory counts as modified when any
+ * directory in its subtree was — that is what moves when a file is added, removed or renamed.
+ * Used to refuse recording a pass whose inputs changed while the run was in flight: the key is
+ * computed from disk at the END of a run, and an agent editing during a queued suite would
+ * otherwise have its edit recorded as the version that passed. Measured by review: exactly that.
+ */
+export function changedSince(root, rel, sinceMs) {
+  const abs = join(root, rel);
+  let st;
+  try {
+    st = statSync(abs);
+  } catch {
+    return false; // absent now; its absence is what the key records
+  }
+  if (st.mtimeMs >= sinceMs || st.ctimeMs >= sinceMs) return true;
+  if (!st.isDirectory()) return false;
+  for (const e of readdirSync(abs, { withFileTypes: true })) {
+    if (!e.isDirectory() || e.name === 'node_modules' || e.name === '.git') continue;
+    if (changedSince(root, `${rel}/${e.name}`, sinceMs)) return true;
+  }
+  return false;
 }
 
 export const identity = (project, testRel) => sha(`${project}\0${testRel}`);
@@ -220,10 +311,25 @@ export function writeRecord(dir, project, testRel, record) {
 
 export const trippedPath = (dir) => join(dir, 'TRIPPED.json');
 
+/** A marker that exists but cannot be parsed still means tripped — the safe reading of a half-write. */
 export function tripped(dir) {
+  const p = trippedPath(dir);
+  if (!existsSync(p)) return null;
   try {
-    return JSON.parse(readFileSync(trippedPath(dir), 'utf8'));
+    return JSON.parse(readFileSync(p, 'utf8'));
   } catch {
-    return null;
+    return { at: 'unknown (marker unreadable)', falseSkips: [] };
   }
+}
+
+export function writeTripped(dir, body) {
+  const p = trippedPath(dir);
+  const tmp = `${p}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(body, null, 2));
+  renameSync(tmp, p);
+}
+
+/** Every record of a file — used on a false skip, so clearing TRIPPED cannot revive the same skip. */
+export function forget(dir, project, testRel) {
+  rmSync(join(dir, 'rec', identity(project, testRel)), { recursive: true, force: true });
 }
