@@ -90,19 +90,28 @@ type SubmissionImage = {
  * Parameterised by alias rather than written twice, for the reason `hostIsMinor`
  * is: a hand-written duplicate is exactly the shape that drifts silently.
  */
-const sourceImageIdsSql = (alias = 'i') => {
+const extraIdArraySql = (key: 'sourceImageIds' | 'driftedFromImageIds', alias: string) => {
   const t = Prisma.raw(`"${alias}"`);
+  const k = Prisma.raw(`'${key}'`);
   return Prisma.sql`ARRAY(
     SELECT (value #>> '{}')::int
     FROM jsonb_array_elements(
       CASE
-        WHEN jsonb_typeof(${t}.meta -> 'extra' -> 'sourceImageIds') = 'array'
-        THEN ${t}.meta -> 'extra' -> 'sourceImageIds'
+        WHEN jsonb_typeof(${t}.meta -> 'extra' -> ${k}) = 'array'
+        THEN ${t}.meta -> 'extra' -> ${k}
         ELSE '[]'::jsonb
       END
     )
   )`;
 };
+
+const sourceImageIdsSql = (alias = 'i') => extraIdArraySql('sourceImageIds', alias);
+
+/**
+ * Prompt-reuse sources whose prompt drifted, written only by `sanitizeProvenance`.
+ * Read for COPY: it explains a refused free submission and never grants one.
+ */
+const driftedFromImageIdsSql = (alias = 'i') => extraIdArraySql('driftedFromImageIds', alias);
 
 /**
  * The old-standard provenance field, as an int, or NULL when it is not one.
@@ -2017,7 +2026,7 @@ export async function getRemixGalleryFreeEligibility({
   /** The candidates on screen. Bounded by the schema. */
   imageIds: number[];
 }) {
-  const [allowance, usedHere, verified] = await Promise.all([
+  const [allowance, usedHere, candidates] = await Promise.all([
     getFreePlacementAllowance({ placerId }),
     hasUsedFreePlacementOn({
       placerId,
@@ -2026,8 +2035,8 @@ export async function getRemixGalleryFreeEligibility({
       targetId: hostImageId,
     }),
     imageIds.length
-      ? dbRead.$queryRaw<{ id: number }[]>`
-          SELECT i.id
+      ? dbRead.$queryRaw<{ id: number; verified: boolean }[]>`
+          SELECT i.id, ${hostImageId} = ANY(${sourceImageIdsSql()}) AS verified
           FROM "Image" i
           WHERE i.id IN (${Prisma.join(imageIds)})
             AND i."userId" = ${placerId}
@@ -2036,7 +2045,10 @@ export async function getRemixGalleryFreeEligibility({
             -- sanitizeProvenance wrote after verifying a signed token or the
             -- workflow itself. A submitter editing their own image's meta cannot
             -- put one here, which is what makes the free gate mean anything.
-            AND ${hostImageId} = ANY(${sourceImageIdsSql()})
+            AND (
+              ${hostImageId} = ANY(${sourceImageIdsSql()})
+              OR ${hostImageId} = ANY(${driftedFromImageIdsSql()})
+            )
         `
       : [],
   ]);
@@ -2045,7 +2057,9 @@ export async function getRemixGalleryFreeEligibility({
     allowance,
     /** Free is once per gallery per placer, ever — not once per day. */
     usedHere,
-    verifiedImageIds: verified.map((row) => row.id),
+    verifiedImageIds: candidates.filter((row) => row.verified).map((row) => row.id),
+    /** Started from this host's prompt but drifted past the threshold. Copy only. */
+    driftedImageIds: candidates.filter((row) => !row.verified).map((row) => row.id),
   };
 }
 

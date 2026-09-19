@@ -121,6 +121,12 @@ type ProvenancePayload = {
    * for 30 days — keeps verifying on the path it was issued for.
    */
   k?: ProvenanceKind;
+  /**
+   * Sources the user reused a prompt from whose prompt then drifted past the
+   * threshold. Never grants anything: read only to tell the submitter why a free
+   * submission was refused, instead of the generic "we can't check" line.
+   */
+  d?: number[];
 };
 
 const UUID_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -204,14 +210,17 @@ export async function resolveSourceImageIds(urls?: string[]): Promise<number[]> 
 export function signProvenance({
   userId,
   sourceImageIds,
+  driftedImageIds = [],
   kind = 'job',
 }: {
   userId: number;
   sourceImageIds: number[];
+  /** See `ProvenancePayload.d`. */
+  driftedImageIds?: number[];
   /** See `ProvenanceKind`. Defaults to `job` — only the mint may ask for `mint`. */
   kind?: ProvenanceKind;
 }): string | undefined {
-  if (!userId || !sourceImageIds.length) return undefined;
+  if (!userId || (!sourceImageIds.length && !driftedImageIds.length)) return undefined;
 
   const payload: ProvenancePayload = {
     v: VERSION,
@@ -223,6 +232,7 @@ export function signProvenance({
     // `job`, so a kind that failed to serialise would be a silent promotion to the
     // strongest audience rather than a token that fails its audience check.
     ...(kind !== 'job' ? { k: kind } : {}),
+    ...(driftedImageIds.length ? { d: driftedImageIds.slice(0, MAX_SOURCE_IMAGES) } : {}),
   };
 
   const key = provenanceKey();
@@ -243,6 +253,13 @@ export function signProvenance({
   ].join('.');
 }
 
+/** Ids from an untrusted array: positive integers only, bounded. */
+function cleanIds(value: unknown): number[] | null {
+  if (!Array.isArray(value)) return null;
+  const ids = value.filter((id): id is number => Number.isInteger(id) && (id as number) > 0);
+  return ids.length ? ids.slice(0, MAX_SOURCE_IMAGES) : null;
+}
+
 /**
  * Returns the source image ids a token vouches for, or null for anything that
  * doesn't verify against this user. Never throws — an unreadable token is an
@@ -259,6 +276,20 @@ export function verifyProvenance(
    */
   expect: ProvenanceKind = 'job'
 ): number[] | null {
+  return cleanIds(openProvenance(token, userId, expect)?.s);
+}
+
+/** The drifted sources a `job` token records, for copy only — see `ProvenancePayload.d`. */
+export function driftedImageIdsFromProvenance(token: unknown, userId: number): number[] | null {
+  return cleanIds(openProvenance(token, userId, 'job')?.d);
+}
+
+/** Decrypts and checks a token; the payload only if every check passes. */
+function openProvenance(
+  token: unknown,
+  userId: number,
+  expect: ProvenanceKind
+): ProvenancePayload | null {
   if (typeof token !== 'string') return null;
 
   const [prefix, iv, ciphertext, tag] = token.split('.');
@@ -300,8 +331,7 @@ export function verifyProvenance(
     if (!Number.isFinite(age) || age < -MAX_CLOCK_SKEW_SECONDS || age > MAX_TOKEN_AGE_SECONDS)
       return null;
 
-    const ids = payload.s.filter((id) => Number.isInteger(id) && id > 0);
-    return ids.length ? ids.slice(0, MAX_SOURCE_IMAGES) : null;
+    return payload;
   } catch {
     return null;
   }
@@ -318,13 +348,13 @@ export function verifyProvenance(
  * `updateWorkflow`/`patch` mutations let them do — writes something that fails
  * verification instead of something we believe.
  */
-export async function sourceImageIdsFromWorkflow({
+async function provenanceTokenFromWorkflow({
   userId,
   workflowId,
 }: {
   userId: number;
   workflowId: string;
-}): Promise<number[] | null> {
+}): Promise<unknown> {
   try {
     const token = await getOrchestratorToken(
       userId,
@@ -334,8 +364,7 @@ export async function sourceImageIdsFromWorkflow({
       }
     );
     const workflow = await getWorkflow({ token, path: { workflowId } });
-    const claimed = (workflow?.metadata as { provenance?: unknown } | null | undefined)?.provenance;
-    return verifyProvenance(claimed, userId);
+    return (workflow?.metadata as { provenance?: unknown } | null | undefined)?.provenance;
   } catch (error) {
     logToAxiom({
       name: 'remix-provenance',
@@ -359,7 +388,9 @@ export async function sourceImageIdsFromWorkflow({
  */
 export function sanitizeProvenance<T extends Record<string, unknown> | null | undefined>(
   meta: T,
-  verified?: number[] | null
+  verified?: number[] | null,
+  /** Same rule as `verified`: only a server-verified value is ever written back. */
+  drifted?: number[] | null
 ): T {
   if (!meta) return meta;
 
@@ -370,24 +401,40 @@ export function sanitizeProvenance<T extends Record<string, unknown> | null | un
     typeof rawExtra === 'object' && rawExtra !== null
       ? (rawExtra as Record<string, unknown>)
       : undefined;
-  const carriesClaim = !!extra && ('provenance' in extra || 'sourceImageIds' in extra);
-  if (!carriesClaim && !verified?.length) return meta;
+  const carriesClaim =
+    !!extra &&
+    ('provenance' in extra || 'sourceImageIds' in extra || 'driftedFromImageIds' in extra);
+  if (!carriesClaim && !verified?.length && !drifted?.length) return meta;
 
-  const { provenance: _token, sourceImageIds: _claimed, ...rest } = extra ?? {};
+  const {
+    provenance: _token,
+    sourceImageIds: _claimed,
+    driftedFromImageIds: _drifted,
+    ...rest
+  } = extra ?? {};
 
   return {
     ...meta,
-    extra: { ...rest, ...(verified?.length ? { sourceImageIds: verified } : {}) },
+    extra: {
+      ...rest,
+      ...(verified?.length ? { sourceImageIds: verified } : {}),
+      ...(drifted?.length ? { driftedFromImageIds: drifted } : {}),
+    },
   } as T;
 }
 
 /** The ids already verified for a stored image, to carry across an edit of its meta. */
 export function storedSourceImageIds(meta: unknown): number[] | null {
   const extra = (meta as { extra?: unknown } | null | undefined)?.extra;
-  const value = (extra as { sourceImageIds?: unknown } | null | undefined)?.sourceImageIds;
-  if (!Array.isArray(value)) return null;
-  const ids = value.filter((id): id is number => Number.isInteger(id) && (id as number) > 0);
-  return ids.length ? ids.slice(0, MAX_SOURCE_IMAGES) : null;
+  return cleanIds((extra as { sourceImageIds?: unknown } | null | undefined)?.sourceImageIds);
+}
+
+/** The drifted sources already recorded for a stored image, to carry across an edit. */
+export function storedDriftedImageIds(meta: unknown): number[] | null {
+  const extra = (meta as { extra?: unknown } | null | undefined)?.extra;
+  return cleanIds(
+    (extra as { driftedFromImageIds?: unknown } | null | undefined)?.driftedFromImageIds
+  );
 }
 
 /**
@@ -423,7 +470,7 @@ export async function unionSourceImageIds({
    * simply cannot be spent there, because there is nothing to compare.
    */
   prompt?: string;
-}): Promise<number[]> {
+}): Promise<{ sourceImageIds: number[]; driftedImageIds: number[] }> {
   // `mint`, not the default: this is the submit path, and the only tokens a
   // client may present here are the ones the mint issued for an image they
   // clicked Remix on. Whatever survives is re-signed as `job` by the caller.
@@ -433,10 +480,13 @@ export async function unionSourceImageIds({
 
   const fromPrompt = await promptDerivedIds({ tokens, userId, prompt });
 
-  return [...new Set([...urlSourceImageIds, ...fromTokens, ...fromPrompt])].slice(
-    0,
-    MAX_SOURCE_IMAGES
-  );
+  const sourceImageIds = [
+    ...new Set([...urlSourceImageIds, ...fromTokens, ...fromPrompt.derived]),
+  ].slice(0, MAX_SOURCE_IMAGES);
+  // A source that another route verified is not a near-miss, whatever the prompt did.
+  const driftedImageIds = fromPrompt.drifted.filter((id) => !sourceImageIds.includes(id));
+
+  return { sourceImageIds, driftedImageIds };
 }
 
 /**
@@ -459,31 +509,37 @@ async function promptDerivedIds({
   tokens?: string[];
   userId: number;
   prompt?: string;
-}): Promise<number[]> {
-  if (!prompt?.trim() || !tokens?.length) return [];
+}): Promise<{ derived: number[]; drifted: number[] }> {
+  const none = { derived: [], drifted: [] };
+  if (!prompt?.trim() || !tokens?.length) return none;
 
   const claimed = [
     ...new Set(tokens.flatMap((token) => verifyProvenance(token, userId, 'prompt') ?? [])),
   ].slice(0, MAX_SOURCE_IMAGES);
-  if (!claimed.length) return [];
+  if (!claimed.length) return none;
 
   const metas = await imageMetaCache.fetch(claimed);
 
   // Iterates `claimed`, not the cache's keys: what a token spends is bounded by
   // what the token named, whatever else a lookup returns.
-  return claimed.filter((id) => {
+  const derived: number[] = [];
+  const drifted: number[] = [];
+  for (const id of claimed) {
     const sourcePrompt = metas[id]?.meta?.prompt;
-    if (typeof sourcePrompt !== 'string' || !sourcePrompt.trim()) return false;
-    return promptDerivationHolds(sourcePrompt, prompt).holds;
-  });
+    // No comparable prompt — hidden, or never had one — is neither derived nor
+    // drifted. Recording it as drifted would say something about a hidden prompt.
+    if (typeof sourcePrompt !== 'string' || !sourcePrompt.trim()) continue;
+    (promptDerivationHolds(sourcePrompt, prompt).holds ? derived : drifted).push(id);
+  }
+  return { derived, drifted };
 }
 
 /**
- * The single entry point the upload path uses. Signed token first — it needs no
+ * What the upload path records, from the signed token first — it needs no
  * network call and survives a download/re-upload round trip — then the workflow
  * read for anything that arrived without one.
  */
-export async function resolveVerifiedSourceImageIds({
+export async function resolveProvenance({
   userId,
   provenance,
   workflowId,
@@ -491,9 +547,19 @@ export async function resolveVerifiedSourceImageIds({
   userId: number;
   provenance?: unknown;
   workflowId?: string;
-}): Promise<number[] | null> {
-  const signed = verifyProvenance(provenance, userId);
-  if (signed) return signed;
-  if (!workflowId) return null;
-  return sourceImageIdsFromWorkflow({ userId, workflowId });
+}): Promise<{ sourceImageIds: number[] | null; driftedImageIds: number[] | null }> {
+  const token =
+    openProvenance(provenance, userId, 'job') || !workflowId
+      ? provenance
+      : await provenanceTokenFromWorkflow({ userId, workflowId });
+  return {
+    sourceImageIds: verifyProvenance(token, userId),
+    driftedImageIds: driftedImageIdsFromProvenance(token, userId),
+  };
+}
+
+export async function resolveVerifiedSourceImageIds(
+  args: Parameters<typeof resolveProvenance>[0]
+): Promise<number[] | null> {
+  return (await resolveProvenance(args)).sourceImageIds;
 }

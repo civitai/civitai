@@ -32,14 +32,21 @@ vi.mock('~/env/client', () => ({
 }));
 
 const {
+  driftedImageIdsFromProvenance,
+  resolveProvenance,
   resolveSourceImageIds,
   resolveVerifiedSourceImageIds,
   sanitizeProvenance,
   signProvenance,
+  storedDriftedImageIds,
   storedSourceImageIds,
   unionSourceImageIds,
   verifyProvenance,
 } = await import('~/server/services/orchestrator/remix-provenance');
+
+/** The verified half of a submit's provenance, which is what most cases assert. */
+const unionIds = async (...args: Parameters<typeof unionSourceImageIds>) =>
+  (await unionSourceImageIds(...args)).sourceImageIds;
 
 const UUID_A = '11111111-2222-3333-4444-555555555555';
 const IMAGE_HOST = 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA';
@@ -274,21 +281,19 @@ describe('unionSourceImageIds', () => {
   it('recovers the link when the url route found nothing', async () => {
     const token = signProvenance({ userId: USER, sourceImageIds: [7], kind: 'mint' });
 
-    expect(
-      await unionSourceImageIds({ urlSourceImageIds: [], tokens: [token!], userId: USER })
-    ).toEqual([7]);
+    expect(await unionIds({ urlSourceImageIds: [], tokens: [token!], userId: USER })).toEqual([7]);
   });
 
   it('keeps url-derived ids when there is no token', async () => {
-    expect(await unionSourceImageIds({ urlSourceImageIds: [7, 8], userId: USER })).toEqual([7, 8]);
+    expect(await unionIds({ urlSourceImageIds: [7, 8], userId: USER })).toEqual([7, 8]);
   });
 
   it('does not double-count an image both routes name', async () => {
     const token = signProvenance({ userId: USER, sourceImageIds: [7], kind: 'mint' });
 
-    expect(
-      await unionSourceImageIds({ urlSourceImageIds: [7, 9], tokens: [token!], userId: USER })
-    ).toEqual([7, 9]);
+    expect(await unionIds({ urlSourceImageIds: [7, 9], tokens: [token!], userId: USER })).toEqual([
+      7, 9,
+    ]);
   });
 
   /**
@@ -306,7 +311,7 @@ describe('unionSourceImageIds', () => {
       kind: 'mint',
     });
 
-    const ids = await unionSourceImageIds({ urlSourceImageIds, tokens: [token!], userId: USER });
+    const ids = await unionIds({ urlSourceImageIds, tokens: [token!], userId: USER });
 
     expect(ids).toHaveLength(8);
     expect(ids).toEqual([1, 2, 3, 4, 5, 6, 101, 102]);
@@ -320,14 +325,12 @@ describe('unionSourceImageIds', () => {
   it('ignores a token issued to a different user', async () => {
     const token = signProvenance({ userId: USER + 1, sourceImageIds: [7], kind: 'mint' });
 
-    expect(
-      await unionSourceImageIds({ urlSourceImageIds: [], tokens: [token!], userId: USER })
-    ).toEqual([]);
+    expect(await unionIds({ urlSourceImageIds: [], tokens: [token!], userId: USER })).toEqual([]);
   });
 
   it('treats an unreadable token as no signal rather than an error', async () => {
     expect(
-      await unionSourceImageIds({
+      await unionIds({
         urlSourceImageIds: [9],
         tokens: ['not-a-token', '', 'p1.a.b.c'],
         userId: USER,
@@ -363,7 +366,7 @@ describe('unionSourceImageIds', () => {
     });
 
     const submit = (prompt?: string, tokens = [promptToken()]) =>
-      unionSourceImageIds({ urlSourceImageIds: [], tokens, userId: USER, prompt });
+      unionIds({ urlSourceImageIds: [], tokens, userId: USER, prompt });
 
     it('spends when the submitted prompt still derives from the source', async () => {
       expect(await submit(`${SOURCE_PROMPT}, warm tones`)).toEqual([7]);
@@ -391,7 +394,7 @@ describe('unionSourceImageIds', () => {
      */
     it('does not spend, or look up, when the submission carries no prompt', async () => {
       expect(
-        await unionSourceImageIds({ urlSourceImageIds: [9], tokens: [promptToken()], userId: USER })
+        await unionIds({ urlSourceImageIds: [9], tokens: [promptToken()], userId: USER })
       ).toEqual([9]);
       expect(metaFetch).not.toHaveBeenCalled();
     });
@@ -483,9 +486,7 @@ describe('provenance kind separates the mint from a real job', () => {
   it('accepts a mint token on the submit path', async () => {
     const minted = signProvenance({ userId: USER, sourceImageIds: [7], kind: 'mint' })!;
 
-    expect(
-      await unionSourceImageIds({ urlSourceImageIds: [], tokens: [minted], userId: USER })
-    ).toEqual([7]);
+    expect(await unionIds({ urlSourceImageIds: [], tokens: [minted], userId: USER })).toEqual([7]);
   });
 
   /**
@@ -497,9 +498,7 @@ describe('provenance kind separates the mint from a real job', () => {
   it('refuses a job token presented as a submit input', async () => {
     const job = signProvenance({ userId: USER, sourceImageIds: [7] })!;
 
-    expect(
-      await unionSourceImageIds({ urlSourceImageIds: [], tokens: [job], userId: USER })
-    ).toEqual([]);
+    expect(await unionIds({ urlSourceImageIds: [], tokens: [job], userId: USER })).toEqual([]);
   });
 
   /**
@@ -517,5 +516,125 @@ describe('provenance kind separates the mint from a real job', () => {
 
     expect(verifyProvenance(legacy, USER)).toEqual([7]);
     expect(await resolveVerifiedSourceImageIds({ userId: USER, provenance: legacy })).toEqual([7]);
+  });
+});
+
+/**
+ * A prompt-reuse token whose prompt drifted is recorded so the gallery can say
+ * WHY free was refused. The record must never become a derivation: it is read
+ * for wording only, and every assertion here pins it staying out of
+ * `sourceImageIds`.
+ */
+describe('drifted prompt remixes are recorded for copy only', () => {
+  const USER = 42;
+  const SOURCE_PROMPT = 'a cat wearing a blue hat, oil painting, soft light, detailed fur';
+  const DRIFTED = 'industrial machinery blueprint, technical schematic, monochrome';
+
+  const promptToken = (ids = [7]) =>
+    signProvenance({ userId: USER, sourceImageIds: ids, kind: 'prompt' })!;
+
+  beforeEach(() => {
+    metaFetch.mockReset();
+    metaFetch.mockResolvedValue({ 7: { id: 7, meta: { prompt: SOURCE_PROMPT } } });
+  });
+
+  it('records a drifted source separately from the verified ones', async () => {
+    expect(
+      await unionSourceImageIds({
+        urlSourceImageIds: [],
+        tokens: [promptToken()],
+        userId: USER,
+        prompt: DRIFTED,
+      })
+    ).toEqual({ sourceImageIds: [], driftedImageIds: [7] });
+  });
+
+  it('records nothing as drifted when the prompt still derives', async () => {
+    expect(
+      await unionSourceImageIds({
+        urlSourceImageIds: [],
+        tokens: [promptToken()],
+        userId: USER,
+        prompt: SOURCE_PROMPT,
+      })
+    ).toEqual({ sourceImageIds: [7], driftedImageIds: [] });
+  });
+
+  /** Saying "your prompt changed too much" about a hidden prompt says something about it. */
+  it('does not record a hidden source as drifted', async () => {
+    metaFetch.mockResolvedValue({ 7: { id: 7, meta: null } });
+
+    expect(
+      (
+        await unionSourceImageIds({
+          urlSourceImageIds: [],
+          tokens: [promptToken()],
+          userId: USER,
+          prompt: DRIFTED,
+        })
+      ).driftedImageIds
+    ).toEqual([]);
+  });
+
+  it('does not call a source drifted when another route verified it', async () => {
+    const mint = signProvenance({ userId: USER, sourceImageIds: [7], kind: 'mint' })!;
+
+    expect(
+      await unionSourceImageIds({
+        urlSourceImageIds: [],
+        tokens: [mint, promptToken()],
+        userId: USER,
+        prompt: DRIFTED,
+      })
+    ).toEqual({ sourceImageIds: [7], driftedImageIds: [] });
+  });
+
+  /**
+   * A generation whose only signal is a near-miss still needs a token, or the
+   * record never reaches the upload. It must verify to NO sources.
+   */
+  it('signs a drift-only token that verifies to no source', () => {
+    const token = signProvenance({ userId: USER, sourceImageIds: [], driftedImageIds: [7] });
+
+    expect(token).toBeDefined();
+    expect(verifyProvenance(token, USER)).toBeNull();
+    expect(driftedImageIdsFromProvenance(token, USER)).toEqual([7]);
+  });
+
+  /** The record rides only the audited `job` token, never a click token. */
+  it('reads drifted ids from job tokens only', () => {
+    const mint = signProvenance({
+      userId: USER,
+      sourceImageIds: [9],
+      driftedImageIds: [7],
+      kind: 'mint',
+    });
+    expect(driftedImageIdsFromProvenance(mint, USER)).toBeNull();
+    expect(driftedImageIdsFromProvenance('not-a-token', USER)).toBeNull();
+  });
+
+  it('carries the record through the upload resolve', async () => {
+    const token = signProvenance({ userId: USER, sourceImageIds: [], driftedImageIds: [7] });
+
+    expect(await resolveProvenance({ userId: USER, provenance: token })).toEqual({
+      sourceImageIds: null,
+      driftedImageIds: [7],
+    });
+  });
+
+  /**
+   * The field is client-writable meta like every other; only a server-verified
+   * value may land. Otherwise anyone could get the "we can see this started
+   * from…" wording by editing their own image.
+   */
+  it('strips a client-authored record and writes only the verified one', () => {
+    const meta = { prompt: 'x', extra: { driftedFromImageIds: [99] } };
+
+    expect(sanitizeProvenance(meta)).toEqual({ prompt: 'x', extra: {} });
+    expect(sanitizeProvenance(meta, null, [7])).toEqual({
+      prompt: 'x',
+      extra: { driftedFromImageIds: [7] },
+    });
+    expect(storedDriftedImageIds({ extra: { driftedFromImageIds: [7] } })).toEqual([7]);
   });
 });

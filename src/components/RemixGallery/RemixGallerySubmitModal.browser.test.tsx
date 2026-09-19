@@ -193,6 +193,7 @@ const freeIsOffered = () => {
   };
   mocks.eligibility = {
     verifiedImageIds: [MINE],
+    driftedImageIds: [],
     usedHere: false,
     allowance: { used: 0, remaining: 1, resetsAt: new Date('2026-03-04') },
   };
@@ -462,6 +463,19 @@ describe('an unverified remix on an ordinarily-priced gallery', () => {
     // be on the screen.
     await expect.element(page.getByText(/can still be submitted with Buzz/i)).toBeInTheDocument();
     await expect.element(page.getByTestId('buzz-submit')).toBeInTheDocument();
+  });
+
+  /**
+   * Justin's ask: someone who started from this image's prompt and drifted is told
+   * THAT, where the generic "where we can check" line would otherwise say we could
+   * not check at all.
+   */
+  test('names prompt drift in place of the generic line', async () => {
+    mocks.eligibility = { ...mocks.eligibility, verifiedImageIds: [], driftedImageIds: [MINE] };
+    await openAndPick();
+
+    await expect.element(page.getByText(/changed too much/i)).toBeInTheDocument();
+    await expect.element(page.getByText(/where we can check/i)).not.toBeInTheDocument();
   });
 });
 

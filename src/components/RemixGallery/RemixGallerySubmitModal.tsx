@@ -105,6 +105,7 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
 
   const offer = freeSubmissionOffer({
     verified: selected != null && !!freeInfo?.verifiedImageIds.includes(selected),
+    drifted: selected != null && !!freeInfo?.driftedImageIds.includes(selected),
     freeSlots: visibility?.freeSlots ?? 0,
     freeSlotsRemaining: visibility?.freeSlotsRemaining ?? 0,
     allowanceRemaining: freeInfo?.allowance.remaining ?? 0,
@@ -193,6 +194,7 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                       ? null
                       : freeRefusalExplanation({
                           verified: standing.verifiedImageIds.includes(selected),
+                          drifted: standing.driftedImageIds.includes(selected),
                           freeSlots: space.freeSlots,
                           freeSlotsRemaining: space.freeSlotsRemaining,
                           allowanceRemaining: standing.allowance.remaining,

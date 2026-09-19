@@ -302,6 +302,39 @@ describe('freeSubmissionOffer', () => {
     expect(reason).toMatch(/where we can check/i);
   });
 
+  /**
+   * A drifted prompt remix gets its own sentence instead of the generic one —
+   * the generic line tells someone who DID start here that we could not check.
+   */
+  it('names drift as the reason when the server recorded it', () => {
+    const paid = freeSubmissionOffer({ ...eligible, verified: false, drifted: true });
+    expect(paid.available).toBe(false);
+    expect(paid.reason).toMatch(/changed too much/i);
+    expect(paid.reason).not.toMatch(/where we can check/i);
+    expect(paid.reason).toMatch(/submit it with Buzz/i);
+
+    const closed = freeSubmissionOffer({
+      ...eligible,
+      verified: false,
+      drifted: true,
+      paidOpen: false,
+    });
+    expect(closed.reason).toMatch(/changed too much/i);
+    expect(closed.reason).toMatch(/not taking paid submissions/i);
+    expect(closed.reason).not.toMatch(/with Buzz/i);
+  });
+
+  /** Drift is wording only: it can never make free available or outrank a real rung. */
+  it('ignores the drift record once the remix is verified', () => {
+    expect(freeSubmissionOffer({ ...eligible, drifted: true })).toEqual({
+      available: true,
+      reason: null,
+    });
+    expect(freeSubmissionOffer({ ...eligible, drifted: true, usedHere: true }).reason).toMatch(
+      /already used a free submission/i
+    );
+  });
+
   it('tells the two meanings of "no slots remaining" apart', () => {
     // `freeSlotsRemaining: 0` covers both "this creator takes none" and "they
     // are all held right now" — the resolver short-circuits the count at zero
