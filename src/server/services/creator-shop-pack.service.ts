@@ -550,13 +550,9 @@ export const getPackDetail = async ({
     status: item.status,
     listed: item.listed,
     availableQuantity: item.availableQuantity,
-    // Named fields, not the column, and the same whitelist the storefront
-    // sanitizers spread — a second list here is a list that stops agreeing.
-    meta: {
-      purchases: item._count.purchases,
-      acceptsBlueBuzz: packMeta.acceptsBlueBuzz ?? false,
-      ...packDisplayMeta(packMeta),
-    },
+    // Named fields, not the column, and the same list every other shop surface
+    // publishes — a second list here is a list that stops agreeing.
+    meta: shopItemDisplayMeta(packMeta, item._count.purchases),
     // Archiving overwrites `status`, so this is the only thing that tells a
     // rejected pack from an ordinary archived one. Derived here rather than
     // client-side, and answered only for the two viewers whose editor asks the

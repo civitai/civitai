@@ -54,8 +54,9 @@ export const packDisplayMeta = (meta: CosmeticShopItemMeta | null) => ({
 // The item meta a shop card and its checkout read. Every surface that publishes
 // an item to a buyer goes through this one list. An item's editors (its owner
 // and moderators) read the column itself; the moderator form writes it back.
-export const shopItemDisplayMeta = (meta: CosmeticShopItemMeta | null) => ({
-  purchases: meta?.purchases ?? 0,
+// `soldCount` is the purchase-row count, never the stored `meta.purchases`.
+export const shopItemDisplayMeta = (meta: CosmeticShopItemMeta | null, soldCount: number) => ({
+  purchases: soldCount,
   acceptsBlueBuzz: meta?.acceptsBlueBuzz ?? false,
   ...packDisplayMeta(meta),
 });

@@ -1146,11 +1146,7 @@ export const getCreatorShop = async ({
   // payout/fee internals.
   const sanitize = (item: (typeof items)[number]) => ({
     ...item,
-    meta: {
-      purchases: item._count.purchases,
-      acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
-      ...packDisplayMeta(item.meta as CosmeticShopItemMeta | null),
-    },
+    meta: shopItemDisplayMeta(item.meta as CosmeticShopItemMeta | null, item._count.purchases),
   });
   const cosmetics = items.map(sanitize);
   // Resold items keep the seller share so the buyer can see the split at
@@ -1158,7 +1154,7 @@ export const getCreatorShop = async ({
   const sanitizeResold = (item: (typeof resoldItems)[number]) => ({
     ...item,
     meta: {
-      purchases: item._count.purchases,
+      ...shopItemDisplayMeta(item.meta as CosmeticShopItemMeta | null, item._count.purchases),
       sellerShare:
         resaleShares.get(item.id) ?? (item.meta as CosmeticShopItemMeta)?.sellerShare ?? 0,
     },
@@ -1352,11 +1348,7 @@ export const getCommunityCosmetics = async ({
   // Same meta sanitation as the storefront.
   const items = raw.map((item) => ({
     ...item,
-    meta: {
-      purchases: item._count.purchases,
-      acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
-      ...packDisplayMeta(item.meta as CosmeticShopItemMeta | null),
-    },
+    meta: shopItemDisplayMeta(item.meta as CosmeticShopItemMeta | null, item._count.purchases),
   }));
   return getPagingData({ items, count }, limit, page);
 };

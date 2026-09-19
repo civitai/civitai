@@ -75,6 +75,8 @@ const sectionRow = {
         addedById: 999,
         cosmetic: { id: 10, createdById: null },
         meta: storedMeta,
+        // Deliberately not the stored counter (12): the cards show sold rows.
+        _count: { purchases: 5 },
       },
     },
   ],
@@ -113,7 +115,7 @@ describe('the shop section list publishes only the card fields of an item meta',
 
   it('keeps the values the cards render', async () => {
     expect(await firstItemMeta()).toEqual({
-      purchases: 12,
+      purchases: 5,
       acceptsBlueBuzz: true,
       coverUrl: 'cover.png',
       packMemberCount: 4,
@@ -130,6 +132,6 @@ describe('the shop section list publishes only the card fields of an item meta',
       },
     ]);
 
-    expect(await firstItemMeta()).toEqual({ purchases: 0, acceptsBlueBuzz: false });
+    expect(await firstItemMeta()).toEqual({ purchases: 5, acceptsBlueBuzz: false });
   });
 });

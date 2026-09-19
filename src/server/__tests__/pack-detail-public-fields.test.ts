@@ -370,6 +370,6 @@ describe('the rejection verdict is derived once, on the server', () => {
     expect(
       serviceSource,
       'The pack display fields must come from shopItemDisplayMeta, not a second hand-written list.'
-    ).toContain('meta: shopItemDisplayMeta(packMeta),');
+    ).toContain('meta: shopItemDisplayMeta(packMeta, item._count.purchases),');
   });
 });

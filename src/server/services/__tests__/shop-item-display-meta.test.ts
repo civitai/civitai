@@ -39,7 +39,7 @@ describe('shopItemDisplayMeta publishes the card fields and nothing else', () =>
   });
 
   it('returns exactly the display keys for a fully populated item', () => {
-    expect(Object.keys(shopItemDisplayMeta(fullMeta)).sort()).toEqual([
+    expect(Object.keys(shopItemDisplayMeta(fullMeta, 7)).sort()).toEqual([
       'acceptsBlueBuzz',
       'coverTiles',
       'coverUrl',
@@ -48,9 +48,11 @@ describe('shopItemDisplayMeta publishes the card fields and nothing else', () =>
     ]);
   });
 
-  it('carries the display values through unchanged', () => {
-    expect(shopItemDisplayMeta(fullMeta)).toEqual({
-      purchases: 7,
+  // The fixture's stored counter is 7; the sold count passed in is 11. The
+  // published number must be the one passed in.
+  it('carries the display values through, with the sold count as purchases', () => {
+    expect(shopItemDisplayMeta(fullMeta, 11)).toEqual({
+      purchases: 11,
       acceptsBlueBuzz: true,
       coverUrl: 'cover.png',
       coverTiles: ['a.png', 'b.png'],
@@ -58,7 +60,7 @@ describe('shopItemDisplayMeta publishes the card fields and nothing else', () =>
     });
   });
 
-  it('defaults the two always-present keys for a null meta', () => {
-    expect(shopItemDisplayMeta(null)).toEqual({ purchases: 0, acceptsBlueBuzz: false });
+  it('defaults acceptsBlueBuzz for a null meta and still carries the sold count', () => {
+    expect(shopItemDisplayMeta(null, 3)).toEqual({ purchases: 3, acceptsBlueBuzz: false });
   });
 });
