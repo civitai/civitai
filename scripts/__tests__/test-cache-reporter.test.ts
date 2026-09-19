@@ -124,6 +124,34 @@ describe('recording a pass', () => {
     expect(records('a.test.ts')).toBe(1);
   });
 
+  /**
+   * The control above, shaped like a REAL test file — the shape the fakes first left out. Every real
+   * test probes a snapshot path in a `__snapshots__` directory that usually never existed, and its
+   * setup closure reaches Redis code where `'cluster'` is an ordinary value. Review measured each of
+   * those, separately, making every one of the repo's 1880 unit tests unrecordable while the plain
+   * control stayed green.
+   */
+  it('records a file shaped like a real one: snapshot probe, and a setup closure mentioning cluster', () => {
+    write('src/a.test.ts');
+    write('src/__tests__/setup.ts');
+    write('packages/redis/client.ts', "export const opts = { client: 'cluster' };");
+    const abs = (r: string) => fwd(join(root, r));
+    const m = testModule('src/a.test.ts', {
+      reads: ['src/__snapshots__/a.test.ts.snap'],
+      setupFiles: ['src/__tests__/setup.ts'],
+    });
+    const g = m.project.vite.environments.ssr.moduleGraph as ReturnType<typeof graphOf>;
+    const setupGraph = graphOf({
+      [abs('src/a.test.ts')]: [],
+      [abs('src/__tests__/setup.ts')]: [abs('packages/redis/client.ts')],
+    });
+    m.project.vite.environments.ssr.moduleGraph = {
+      getModuleById: (id: string) => g.getModuleById(id) ?? setupGraph.getModuleById(id),
+    };
+    run([m]);
+    expect(records('src/a.test.ts')).toBe(1);
+  });
+
   it('refuses a file whose input changed after the run started', () => {
     write('a.test.ts');
     write('dep.ts');

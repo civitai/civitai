@@ -55,10 +55,12 @@ const ALWAYS_RUN_SOURCE = [
   // IMPORTING a process or thread module, not calling one by name: a call pattern cannot see
   // `cp.execSync(` or a destructured alias, and `exec(` matched every `regex.exec(` in the repo —
   // measured: src/__tests__/setup.ts tripped it and nothing was cacheable at all.
-  // The module NAME anywhere as a string, not a particular import syntax: review found
-  // `createRequire(...)('child_process')`, `process.getBuiltinModule('node:child_process')` and
-  // `from"node:child_process"` (no space) all walking past syntax-specific patterns.
-  /['"`](?:node:)?(?:child_process|worker_threads|cluster)['"`]/,
+  // The module name in any IMPORT-SHAPED position: `from`, `import(`, `require(`,
+  // `getBuiltinModule(`, or a call on a call (`createRequire(...)('child_process')`). Review found
+  // each of those walking past a narrower pattern. NOT the bare quoted word: `'cluster'` is an
+  // ordinary value in this repo's Redis and telemetry code, which every test's setup reaches —
+  // measured, that made 1880 of 1880 unit tests uncacheable.
+  /(?:\bfrom|\bimport\s*\(|\brequire\s*\(|\bgetBuiltinModule\s*\(|\)\s*\()\s*['"`](?:node:)?(?:child_process|worker_threads|cluster)['"`]/,
   // Wrappers that spawn for you. None is a direct dependency today; this keeps one from arriving
   // unnoticed, since node_modules is never scanned.
   /['"`](?:execa|cross-spawn|tinyexec|nano-spawn|zx)['"`]/,
@@ -243,14 +245,19 @@ export function changedSince(root, rel, sinceMs) {
     st = statSync(abs);
   } catch {
     // Absent now. If it was deleted or renamed DURING the run, the test ran with it and the key
-    // would record its absence — review confirmed that as a false skip. Removing a file moves its
-    // directory's mtime, so ask the directory.
-    const parent = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '.';
-    try {
-      const p = statSync(join(root, parent));
-      return p.mtimeMs >= sinceMs || p.ctimeMs >= sinceMs;
-    } catch {
-      return true;
+    // would record its absence — review confirmed that as a false skip. A removal moves the mtime of
+    // the NEAREST SURVIVING ancestor, so ask that one. Not "parent missing means changed": every
+    // test probes `__snapshots__/<file>.snap` in a directory that usually never existed, and that
+    // reading refused every record in the repo.
+    let parent = rel;
+    for (;;) {
+      parent = parent.includes('/') ? parent.slice(0, parent.lastIndexOf('/')) : '.';
+      try {
+        const p = statSync(join(root, parent));
+        return p.mtimeMs >= sinceMs || p.ctimeMs >= sinceMs;
+      } catch {
+        if (parent === '.') return true;
+      }
     }
   }
   if (st.mtimeMs >= sinceMs || st.ctimeMs >= sinceMs) return true;

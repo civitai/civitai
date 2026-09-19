@@ -141,6 +141,10 @@ describe('tests that always run', () => {
     ["readFileSync('src/x.ts', 'utf8');"],
     ["await import('./dep');"],
     ['const m = /^a(b)$/.exec(input);'],
+    // `'cluster'` is an ordinary value in this repo's Redis and telemetry code, reached by every
+    // test's setup. Matching the bare word made all 1880 unit tests uncacheable.
+    ["const opts = { client: 'cluster' };"],
+    ["// Module not found: Can't resolve 'cluster'"],
   ])('leaves %s cacheable', (source) => {
     expect(alwaysRuns(source)).toBe(false);
   });
@@ -228,6 +232,19 @@ describe('what a key must see besides content', () => {
 
     // The test ran WITH the file. Recording its absence would skip it green next time — confirmed
     // by review as a false skip before this existed.
+    // Every test probes `__snapshots__/<file>.snap`, a directory that usually never existed.
+    // Reading a missing parent as "changed" refused every record in the repo.
+    it('does not count a probe into a directory that never existed', () => {
+      const { root, since } = setup();
+      expect(changedSince(root, 'd/__snapshots__/x.test.ts.snap', since)).toBe(false);
+    });
+
+    it('sees a whole directory removed after the run started', () => {
+      const { root, since } = setup();
+      rmSync(join(root, 'd'), { recursive: true });
+      expect(changedSince(root, 'd/deep/x.ts', since)).toBe(true);
+    });
+
     it('sees a file deleted after the run started', () => {
       const { root, since } = setup();
       rmSync(join(root, 'h/gone.ts'));

@@ -198,7 +198,9 @@ export default class TestCacheReporter {
       // The fs tracker is instrumentation, not an input: its closure (this cache's own code, which
       // imports child_process) is covered by the salt. Walking it marked EVERY test as reaching a
       // child process and recorded nothing at all — measured, which made every control vacuous.
-      if (core.toRel(setup, root)?.startsWith('scripts/test-cache/')) continue;
+      // Exactly the tracker, not its directory: the end-to-end fixture's own setup file lives under
+      // scripts/test-cache/ too, and a directory-wide exclusion silently skipped scanning it.
+      if (core.toRel(setup, root) === 'scripts/test-cache/fs-tracker.mjs') continue;
       const s = core.closureOf(graph, setup);
       if (s === null) return void (row.why = 'setup file not in module graph');
       ids.add(setup);
@@ -227,7 +229,13 @@ export default class TestCacheReporter {
     const key = core.keyFor({ salt, project, testRel, entries: kept, fingerprint });
     // The key is computed from disk at the END of the run. An input modified after the run
     // started is not what ran — recording it would certify the edited version as passing.
-    const moved = kept.find((rel) => core.changedSince(root, rel, since - 2000));
+    // Memoised per run: `since` is fixed and every fingerprint is taken before its first check.
+    // Unmemoised it measured ~19s of synchronous work at the end of a full run.
+    this.movedMemo ??= new Map();
+    const moved = kept.find((rel) => {
+      if (!this.movedMemo.has(rel)) this.movedMemo.set(rel, core.changedSince(root, rel, since - 2000));
+      return this.movedMemo.get(rel);
+    });
     if (moved) return void (row.why = `changed during the run: ${moved}`);
 
     core.writeRecord(dir, project, testRel, { key, entries: kept, at: new Date().toISOString(), ms: row.ms });
