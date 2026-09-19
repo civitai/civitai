@@ -91,9 +91,11 @@ const featureFlags = createFeatureFlags({
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
   // metric timeout (hundreds to thousands a day), so this is the kill switch if the
-  // badge proves noisier than the silent zero. availability ['mod'] is the Flipt-DOWN
-  // fallback; Flipt is authoritative when the flag exists.
-  reactionCountsUnknown: { availability: ['mod'], fliptKey: 'reaction-counts-unknown' },
+  // badge proves noisier than the silent zero.
+  // 🔴 `[]`, not `['mod']`: the client's `isEnabledSync` swallows "flag not found" and
+  // falls through to this static list, so `['mod']` would switch it on for every
+  // moderator at deploy, before the flag exists in Flipt. See `appListingsPublicExternal`.
+  reactionCountsUnknown: { availability: [], fliptKey: 'reaction-counts-unknown' },
   // Perf: emit the COMPACT wire shape for `hiddenPreferences.getHidden` (id-only
   // arrays for the model / model3d / explicit-image sets instead of
   // `{ id, hidden: true }` objects). `getHidden` returns a user's ENTIRE hidden

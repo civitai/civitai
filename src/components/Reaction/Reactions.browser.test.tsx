@@ -55,6 +55,10 @@ vi.mock('~/components/Buzz/InteractiveTipBuzzButton', async (importOriginal) => 
 import { renderWithProviders } from '../../../test/component-setup';
 import { Reactions } from '~/components/Reaction/Reactions';
 
+// Every case uses its own `entityId`. The reaction and buzz-tipping stores are module
+// scope and never reset, so a case that reused an id after a click would inherit the
+// toggled state.
+
 // All four reactions resolved, and nobody reacted. A REAL zero.
 const allZero = { likeCount: 0, heartCount: 0, laughCount: 0, cryCount: 0 };
 
@@ -122,15 +126,27 @@ describe('the reaction-counts-unknown kill switch', () => {
   // OFF has to be indistinguishable from before this change: the server still marks
   // the counts unknown, and the component must ignore it. Each case pairs with the
   // identical fixture flag-ON elsewhere in this file, which renders the placeholder.
+  // `targetUserId` on every OFF case so the tip badge mounts: it reads the same unknown
+  // mark, and a switch that left it dashed would be half-pulled on exactly the event it
+  // exists for.
   test('OFF: an unknown count on a card renders nothing, exactly like a zero', async () => {
     mocks.flags = { reactionCountsUnknown: false };
     renderRow(
-      <Reactions entityType="image" entityId={13} reactions={[]} metrics={allZero} metricsUnknown />
+      <Reactions
+        entityType="image"
+        entityId={13}
+        reactions={[]}
+        metrics={allZero}
+        targetUserId={99}
+        metricsUnknown
+      />
     );
 
     await expect.element(page.getByRole('button', { name: 'Add reaction' })).toBeInTheDocument();
     expect(placeholder()).toBeNull();
     expect(badges().length).toBe(0);
+    expect(rowText()).toContain('0');
+    expect(rowText()).not.toContain('–');
   });
 
   test('OFF: an unknown count expanded renders 0, not a dash', async () => {
@@ -141,6 +157,7 @@ describe('the reaction-counts-unknown kill switch', () => {
         entityId={14}
         reactions={[]}
         metrics={allZero}
+        targetUserId={99}
         metricsUnknown
         showAll
       />
@@ -149,6 +166,27 @@ describe('the reaction-counts-unknown kill switch', () => {
     await expect.element(page.getByRole('button', { name: 'Like reaction' })).toBeInTheDocument();
     expect(badges().every((b) => b.textContent?.includes('0'))).toBe(true);
     expect(rowText()).not.toContain('–');
+  });
+
+  test('OFF + readonly: an unknown count still renders nothing at all', async () => {
+    // Readonly surfaces return null when nobody reacted. The unknown state forces the
+    // row through that gate, and only the gated value may do it.
+    mocks.flags = { reactionCountsUnknown: false };
+    renderRow(
+      <Reactions
+        entityType="image"
+        entityId={16}
+        reactions={[]}
+        metrics={allZero}
+        targetUserId={99}
+        metricsUnknown
+        readonly
+      />
+    );
+
+    await expect.element(page.getByTestId('row')).toBeInTheDocument();
+    expect(rowText()).toBe('');
+    expect(placeholder()).toBeNull();
   });
 
   test('a flags object WITHOUT the key reads as off', async () => {
@@ -176,8 +214,8 @@ describe('a READONLY surface', () => {
     );
 
     // Absorbing: readonly suppresses the add-reaction button too, so the row is empty
-    // and stays empty. Asserted after the unknown case below has proven the same
-    // fixture CAN produce a placeholder.
+    // and stays empty. The unknown case below uses the same fixture and does produce a
+    // placeholder, so an empty row here is the gate working, not a dead render.
     await expect.element(page.getByTestId('row')).toBeInTheDocument();
     expect(badges().length).toBe(0);
     expect(placeholder()).toBeNull();

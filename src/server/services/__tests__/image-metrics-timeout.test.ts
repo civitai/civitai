@@ -121,6 +121,18 @@ describe('getImageMetricsObject ClickHouse timeout fail-soft', () => {
     expect(counterIncMock).toHaveBeenCalledTimes(1);
   });
 
+  it('leaves every id ABSENT when the metric read THROWS, the other failure exit', async () => {
+    // The timeout case above is one of two ways this read fails. A ClickHouse error
+    // reaches the outer catch instead, and must produce the same shape; an entry per id
+    // there would read every non-timeout failure as a real zero.
+    fetchMock.mockRejectedValue(new Error('Socket hang up after 3 retries'));
+
+    const result = await getImageMetricsObject([{ id: 1 }, { id: 2 }]);
+
+    expect(result).toEqual({});
+    expect(counterIncMock).not.toHaveBeenCalled();
+  });
+
   it('CONTROL: a read that ANSWERS with no rows keeps every id present, so a real zero stays known', async () => {
     fetchMock.mockResolvedValue({}); // ClickHouse answered; it simply has no rows
 
