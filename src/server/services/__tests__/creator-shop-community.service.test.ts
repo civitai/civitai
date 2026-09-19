@@ -44,6 +44,9 @@ const itemRow = (id: number, meta: Record<string, unknown> = {}) => ({
   addedById: 11,
   meta: { purchases: 3, submissionTxId: 'tx-1', sellerShare: 20, imageHash: 'abc', ...meta },
   cosmetic: { id: id * 10, name: `Cosmetic ${id}`, type: 'Badge', createdById: 11 },
+  // Deliberately disagrees with `meta.purchases` above: the rows are the sold
+  // count, and a fixture where the two agree passes under either derivation.
+  _count: { purchases: 7 },
 });
 
 const baseInput = { limit: 40, page: 1, sort: CosmeticShopSort.Newest };
@@ -65,7 +68,15 @@ describe('getCommunityCosmetics', () => {
     mocks.shopItemCount.mockResolvedValue(2);
     const { items, totalPages } = await getCommunityCosmetics(baseInput);
     expect(items.map((i) => i.id)).toEqual([2, 1]);
-    expect(items[0].meta).toEqual({ purchases: 3, acceptsBlueBuzz: false });
+    expect(items[0].meta).toEqual({ purchases: 7, acceptsBlueBuzz: false });
+    // `creatorStorefrontItemSelect` inherits `_count` by spreading the shared
+    // selector and never restates it. Redefining `_count` there for another
+    // relation is already a compile error at all three read sites, so this is a
+    // readable second signal rather than the gate — it names the relation the
+    // storefront depends on, which `TS2339` does not.
+    expect(mocks.shopItemFindMany.mock.calls[0][0].select._count).toEqual({
+      select: { purchases: true },
+    });
     expect(totalPages).toBe(1);
   });
 

@@ -27,7 +27,7 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 }));
 
 import { PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
-import { getShopSectionsWithItems } from '../cosmetic-shop.service';
+import { getSectionById, getShopSectionsWithItems } from '../cosmetic-shop.service';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 dbMock.dbRead.cosmeticShopSection.findMany.mockImplementation((...args: unknown[]) =>
@@ -46,7 +46,10 @@ const officialItem = {
     // Listed by a moderator — addedById is NOT null for official items.
     addedById: 999,
     cosmetic: { id: 10, createdById: null },
-    meta: {},
+    // The counter and the rows disagree on purpose: /shop hands `meta` to the
+    // client as-is, so the row count has to be written onto it here.
+    meta: { purchases: 2 },
+    _count: { purchases: 5 },
   },
 };
 
@@ -103,6 +106,14 @@ describe('getShopSectionsWithItems viewer gating', () => {
 
     expect(sections).toHaveLength(1);
     expect(sections[0].items[0].shopItem.title).toBe('Official badge');
+  });
+
+  // /shop is the one surface with no meta whitelist to change, so the wiring —
+  // not just the helper — is what has to be pinned. Reverting the `.map` in the
+  // section return reddens nothing without this.
+  it('serves the purchase rows as the sold count, not the meta counter', async () => {
+    const sections = await getShopSectionsWithItems({});
+    expect(sections[0].items[0].shopItem.meta.purchases).toBe(5);
   });
 
   it('non-mod with the creatorShop flag: creator items are not filtered out, status guard stays', async () => {
@@ -204,5 +215,26 @@ describe('getShopSectionsWithItems viewer gating', () => {
       { items: { some: {} } },
       { meta: { path: ['communityHub'], equals: true } },
     ]);
+  });
+});
+
+/**
+ * The moderator section editor's read. It serves `cosmeticShopItemSelect` with
+ * `meta` as-is, exactly like /shop, so it needs the same overwrite — and its
+ * consumer renders no sold count today, which is precisely why nothing else
+ * would notice it being left out.
+ */
+describe('getSectionById serves the row count too', () => {
+  it('reports the rows, not the counter, on the items it returns', async () => {
+    dbMock.dbRead.cosmeticShopSection.findUniqueOrThrow.mockResolvedValue({
+      id: 5,
+      title: 'Badges',
+      image: null,
+      items: [{ shopItem: { id: 74, meta: { purchases: 2 }, _count: { purchases: 5 } } }],
+    });
+
+    const section = await getSectionById({ id: 5 });
+
+    expect(section.items[0].shopItem.meta.purchases).toBe(5);
   });
 });

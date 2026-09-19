@@ -4719,6 +4719,12 @@ model UserCosmeticShopPurchases {
   // reconstruct it after the fact. See UserCosmeticShopPurchaseMeta.
   meta              Json?
   components        UserCosmeticShopPurchaseCosmetic[]
+
+  // Every displayed sold count is a `_count` over this FK, which Prisma resolves
+  // as one whole-table GROUP BY per query. Without the index a single-item read
+  // still scans the table to count one item's rows. Applied by hand — the
+  // migration beside this schema carries the plans and what the index does not fix.
+  @@index([shopItemId])
 }
 
 model UserCosmeticShopPurchaseCosmetic {

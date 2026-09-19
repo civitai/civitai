@@ -31,7 +31,7 @@ import type {
 } from '~/server/schema/cosmetic-shop.schema';
 import { computeCreatorShopSplit, PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
+import { cosmeticShopItemSelect, withSoldCount } from '~/server/selectors/cosmetic-shop.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
   createBuzzTransaction,
@@ -88,10 +88,13 @@ export const getShopItemById = async ({ id }: GetByIdInput) => {
     },
     select: cosmeticShopItemSelect,
   } as const;
-  return dbRead.cosmeticShopItem.findUniqueOrThrow(shopItemFindArgs).catch(() => {
-    dbReadFallbackCounter.inc({ entity: 'cosmeticShopItem', caller: 'getShopItemById' });
-    return dbWrite.cosmeticShopItem.findUniqueOrThrow(shopItemFindArgs);
-  });
+  return dbRead.cosmeticShopItem
+    .findUniqueOrThrow(shopItemFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'cosmeticShopItem', caller: 'getShopItemById' });
+      return dbWrite.cosmeticShopItem.findUniqueOrThrow(shopItemFindArgs);
+    })
+    .then(withSoldCount);
 };
 
 export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticShopItemInput) => {
@@ -143,7 +146,11 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
 
   const count = await dbRead.cosmeticShopItem.count({ where });
 
-  return getPagingData({ items, count: (count as number) ?? 0 }, limit, page);
+  return getPagingData(
+    { items: items.map(withSoldCount), count: (count as number) ?? 0 },
+    limit,
+    page
+  );
 };
 
 export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
@@ -229,6 +236,7 @@ export const upsertCosmeticShopItem = async ({
           id: true,
           cosmeticId: true,
           addedById: true,
+          meta: true,
           _count: {
             select: {
               purchases: true,
@@ -288,11 +296,27 @@ export const upsertCosmeticShopItem = async ({
     // Spread conditionally: `undefined` means "leave the column alone" to Prisma, and `null`
     // clears it — neither should be overwritten with the empty string expansion returns.
     ...(cosmeticShopItem.description != null && { description: expansion.html }),
+    // The editor seeds its form from a read, and reads now serve the row count in
+    // `meta.purchases`, so saving any unrelated field would write that derived
+    // value into the stored counter. Keep whatever is stored: only a purchase
+    // moves it. (Create has no stored value and sets its own `meta` below.)
+    ...(id &&
+      cosmeticShopItem.meta != null && {
+        meta: {
+          ...cosmeticShopItem.meta,
+          purchases: (existingItem?.meta as CosmeticShopItemMeta | null)?.purchases ?? 0,
+        },
+      }),
     availableQuantity,
     availableTo,
     availableFrom,
     archivedAt: archived ? new Date() : null,
   };
+
+  // Without `_count`: the response is not mapped through `withSoldCount` (see the
+  // return below), so nothing reads it — and selecting it here would run a
+  // whole-table aggregate on the PRIMARY inside an open write transaction.
+  const { _count: _unusedOnWrite, ...writeSelect } = cosmeticShopItemSelect;
 
   const item = await dbWrite.$transaction(
     async (tx) => {
@@ -300,7 +324,7 @@ export const upsertCosmeticShopItem = async ({
         ? await tx.cosmeticShopItem.update({
             where: { id },
             data,
-            select: cosmeticShopItemSelect,
+            select: writeSelect,
           })
         : await tx.cosmeticShopItem.create({
             data: {
@@ -311,7 +335,7 @@ export const upsertCosmeticShopItem = async ({
                 purchases: 0,
               },
             },
-            select: cosmeticShopItemSelect,
+            select: writeSelect,
           });
 
       if (expansion.evaluated)
@@ -466,6 +490,7 @@ export const getSectionById = async ({ id }: GetByIdInput) => {
 
   return {
     ...section,
+    items: section.items.map((i) => ({ ...i, shopItem: withSoldCount(i.shopItem) })),
     image: !!section.image
       ? {
           ...section.image,
@@ -778,6 +803,7 @@ export const getShopSectionsWithItems = async ({
       .filter((s) => s.items.length > 0 || (s.meta as CosmeticShopSectionMeta | null)?.communityHub)
       .map((section) => ({
         ...section,
+        items: section.items.map((i) => ({ ...i, shopItem: withSoldCount(i.shopItem) })),
         image: !!section.image
           ? {
               ...section.image,
