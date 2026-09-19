@@ -192,6 +192,7 @@ function MyApp(props: CustomAppProps) {
                 left={Component.left}
                 right={Component.right}
                 subNav={Component.subNav}
+                pageNav={Component.pageNav}
                 scrollable={Component.scrollable}
                 header={Component.header}
                 footer={Component.footer}
