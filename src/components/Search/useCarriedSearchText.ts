@@ -21,14 +21,28 @@ import { useCallback, useState } from 'react';
  * fire again. That is what re-RUNS the search on the new index rather than only re-displaying the
  * text.
  *
- * @returns the current text, and a setter that writes the carrier as well as the state. Every write
- *   has to go through that setter — a bare `setState` leaves the carrier holding stale text, which
- *   the next remount would then restore over the newer value.
+ * @returns three things: the current text; a setter that writes the carrier as well as the state;
+ *   and a display-only clear that empties the visible text and LEAVES the carrier alone.
+ *
+ *   Every write of a value goes through the setter — a bare `setState` would leave the carrier
+ *   holding stale text, which the next remount would restore over the newer value.
+ *
+ *   The display-only clear is the deliberate exception, and it exists for one caller: the blur
+ *   handler on `AutocompleteSearch`'s input. Clicking the category selector blurs that input, so a
+ *   blur that wrote `''` through the setter would empty the carrier a moment BEFORE the switch it
+ *   is meant to survive — which is what made the carry inert on that component. A blur is the
+ *   browser moving focus, not the user asking to discard what they typed; an explicit clear (the
+ *   input's clear button) still goes through the setter and does discard it.
+ *
+ *   The cost is a window where the input reads empty while the carrier still holds text, so the
+ *   NEXT remount re-seeds text the user last saw cleared. The owner of `carriedRef` is what bounds
+ *   that window: `AutocompleteSearch` empties the ref itself when a navigation — rather than a pick
+ *   from the selector — changes the target, so only a selector-driven remount re-seeds.
  */
 export function useCarriedSearchText(
   carriedRef: MutableRefObject<string>,
   refinedQuery: string
-): [string, (value: string) => void] {
+): [string, (value: string) => void, () => void] {
   const [text, setText] = useState(() => seedCarriedSearchText(carriedRef.current, refinedQuery));
 
   const write = useCallback(
@@ -39,7 +53,9 @@ export function useCarriedSearchText(
     [carriedRef]
   );
 
-  return [text, write];
+  const clearDisplayedText = useCallback(() => setText(''), []);
+
+  return [text, write, clearDisplayedText];
 }
 
 /**

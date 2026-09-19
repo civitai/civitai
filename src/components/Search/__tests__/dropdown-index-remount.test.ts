@@ -37,13 +37,24 @@ const stripComments = (source: string) =>
  * fallback reinstates the wrong-label lie the clamp exists to prevent. Neither is visible to a
  * check on the `.some(…)` call.
  *
- * ⚠️ Spelling-pinned, and measured at EXACTLY 100 characters in both files against
- * `printWidth: 100`. A rename of `indexNameProp`/`enabledTargets`, or one more level of
- * indentation, makes prettier break the expression across lines and this goes red for a pure
- * formatting change. Re-pin the new spelling; do not loosen it back to the predicate alone.
+ * Compared with `containsIgnoringWhitespace`, never `toContain`. This is one expression against
+ * `printWidth: 100`, and it has already sat at EXACTLY 100 characters once: a rename, or one more
+ * level of indentation, makes prettier re-wrap it and a literal check then goes red about a clamp
+ * that is still correct. Only the whitespace is forgiven — every identifier, operator and branch
+ * still has to be there, in order. Re-pin a renamed spelling; do not loosen it to the predicate.
  */
 const SELECTOR_VALUE_CLAMP =
-  'value={enabledTargets.some(({ value }) => value === indexNameProp) ? indexNameProp : null}';
+  'value={enabledTargets.some(({ value }) => value === targetIndex) ? targetIndex : null}';
+
+/**
+ * Containment with every whitespace character removed from BOTH sides. Prettier breaks a long JSX
+ * attribute inside its own braces as well as between attributes, so collapsing runs to a single
+ * space does not survive a wrap — removing whitespace entirely does, and for an expression pinned
+ * character-for-character it gives up nothing: no mutation of this kind is reachable by adding or
+ * removing whitespace alone.
+ */
+const containsIgnoringWhitespace = (source: string, needle: string) =>
+  source.replace(/\s+/g, '').includes(needle.replace(/\s+/g, ''));
 
 /**
  * Every `<InstantSearch>` root in the app, and what each is required to do about the index it
@@ -221,8 +232,12 @@ describe('the dropdown roots carry the typed text across that remount', () => {
       // WIRED to the input below. Calling it and seeding from `useState(query)` beside it, or
       // leaving the declaration in place and rendering `value={query}`, each revert the whole
       // mechanism while a check on the call alone stays green.
-      expect(source).toContain(
-        'const [search, setSearch] = useCarriedSearchText(carriedSearchText, query)'
+      //
+      // The third binding is optional because only one of the two takes it: `AutocompleteSearch`
+      // needs the display-only clear for its blur handler, and `QuickSearchDropdown` has no blur
+      // clear to give it to. Both spellings are correct; pinning one would reject the other.
+      expect(source).toMatch(
+        /const \[search, setSearch(?:, clearDisplayedText)?\] = useCarriedSearchText\(\s*carriedSearchText,\s*query\s*\)/
       );
       expect(source).toContain('value={search}');
       expect(source).toContain('setSearch(value)');
@@ -257,28 +272,49 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     // keeps calling `setTargetIndex` — and the exactly-one-writer count cannot see it, because
     // `onTargetChange(v as TKey)` is not that pattern.
     // ⚠️ Every assertion here except `setTargetIndex(value ?? fallbackIndex)` is an INVARIANT
-    // GUARD: all four handler spellings are present unchanged at the PR base. Keying the provider
-    // is what put them at risk — a consolidation of the two `setTargetIndex` writers this change
-    // created would take one of them out — so they are worth pinning, but the red-at-base of this
-    // test is attributable to the fallback spelling alone, not to the claim in its title.
+    // GUARD: an equivalent handler chain is present at the PR base. Keying the provider is what
+    // put it at risk — a consolidation of the two `setTargetIndex` writers this change created
+    // would take one of them out — so it is worth pinning, but the red-at-base of this test is
+    // attributable to the fallback spelling alone, not to the claim in its title.
+    //
+    // The selector now lives in the same component as the handler (it was lifted out of the keyed
+    // subtree so a key change cannot destroy the control mid-click), so the chain is one hop, not
+    // the three it used to be: `onChange` → `handleTargetChange` → `setTargetIndex`.
     const autocomplete = stripComments(
       read('src/components/AutocompleteSearch/AutocompleteSearch.tsx')
     );
-    expect(autocomplete).toContain('onChange={(v: string | null) => onTargetChange(v as TKey)}');
-    expect(autocomplete).toContain('onTargetChange={handleTargetChange}');
-
-    // …and the hop between them, which was pinned at both ends and open in the middle on this
-    // component only. The sibling's middle hop is asserted below as a free-floating substring —
-    // weaker, since it is not tied to the handler, and deliberately left that way: tightening it
-    // symmetrically would reject a correct consolidation into a shared handler factory.
+    expect(autocomplete).toContain(
+      'onChange={(v: string | null) => handleTargetChange(v as SearchIndexKey)}'
+    );
     expect(autocomplete).toMatch(
       /const handleTargetChange = \(value: SearchIndexKey\) => \{\s*setTargetIndex\(value\);\s*\};/
     );
 
     const quickSearch = stripComments(read('src/components/Search/QuickSearchDropdown.tsx'));
-    expect(quickSearch).toContain('onChange={(value) => onIndexNameChange(value as TIndex)}');
-    expect(quickSearch).toContain('onIndexNameChange={handleTargetChange}');
+    expect(quickSearch).toContain(
+      'onChange={(value) => handleTargetChange(value as SearchIndexKey)}'
+    );
     expect(quickSearch).toContain('setTargetIndex(value ?? fallbackIndex)');
+  });
+
+  it('both selectors are rendered ABOVE the provider a target switch rebuilds', () => {
+    // `<InstantSearch>` returns `null` until its own start effect has run, so the render a key
+    // change commits has NO subtree at all. A selector inside it is therefore unmounted and
+    // rebuilt by the very click that switched the index, and the focus that click put on it lands
+    // on `<body>`. Above the provider it survives its own change handler.
+    //
+    // File-order, like the carrier check above: a spelling-and-position claim, not a tree one.
+    // That is what this tier can see, and it is the property that broke.
+    for (const relPath of dropdowns) {
+      const source = stripComments(read(relPath));
+      const selector = source.indexOf('<Select');
+      const provider = source.indexOf('<InstantSearch');
+
+      expect(selector, `${relPath}: no <Select> found`).toBeGreaterThan(-1);
+      expect(provider, `${relPath}: <Select> is not written above <InstantSearch>`).toBeGreaterThan(
+        selector
+      );
+    }
   });
 
   it('both refine gates go through the one predicate, negation included', () => {
@@ -329,7 +365,10 @@ describe('the dropdown roots carry the typed text across that remount', () => {
 
     // …and the selector reads the target rather than holding its own copy of it, which a remount
     // would reset while the search really had moved.
-    expect(source).toContain(SELECTOR_VALUE_CLAMP);
+    expect(
+      containsIgnoringWhitespace(source, SELECTOR_VALUE_CLAMP),
+      `AutocompleteSearch: selector value clamp not found — expected ${SELECTOR_VALUE_CLAMP}`
+    ).toBe(true);
     expect(source).toContain('data={enabledTargets}');
     expect(source).not.toContain('defaultValue={searchTarget}');
 
@@ -341,12 +380,45 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     expect(source).toContain('allowDeselect={false}');
   });
 
+  it('AutocompleteSearch blurs without emptying the carrier, and clears it on navigation', () => {
+    // MEASURED DEFECT, and the reason the carry did nothing on this component: reaching the
+    // category selector requires blurring the input, and the blur handler was the CLEAR handler —
+    // so `''` was written through the carrier a moment before every selector-driven switch.
+    //
+    // Two halves, and each is wrong without the other. The blur now empties the display only; the
+    // URL-follow effect empties the carrier, so the text survives a pick from the selector and
+    // nothing else. Without the second half, text abandoned at a blur reappears — and is searched
+    // again — the next time navigation moves the target.
+    const source = stripComments(read('src/components/AutocompleteSearch/AutocompleteSearch.tsx'));
+
+    expect(source).toContain('onBlur={handleBlur}');
+    expect(source).toContain('onClear={handleClear}');
+    expect(source).not.toContain('onBlur={handleClear}');
+
+    // `onClear?.()` in BOTH, and that is not a duplication to tidy away: on mobile `AppHeader`
+    // passes `onSearchDone`, so it is what closes the search overlay. A refactor that routes the
+    // blur past it leaves the overlay stuck open.
+    expect(source).toMatch(
+      /const handleClear = \(\) => \{\s*setSearch\(''\);\s*onClear\?\.\(\);\s*\};/
+    );
+    expect(source).toMatch(
+      /const handleBlur = \(\) => \{\s*clearDisplayedText\(\);\s*onClear\?\.\(\);\s*\};/
+    );
+
+    // The bound: the carrier is emptied when the URL moves the target, immediately before the
+    // writer that triggers that remount, so only a selector pick re-seeds.
+    expect(source).toMatch(/carriedSearchText\.current = '';\s*setTargetIndex\(searchTarget\);/);
+  });
+
   it('QuickSearchDropdown drives its index selector from the target it is searching', () => {
     const source = stripComments(read('src/components/Search/QuickSearchDropdown.tsx'));
 
-    expect(source).toContain(SELECTOR_VALUE_CLAMP);
+    expect(
+      containsIgnoringWhitespace(source, SELECTOR_VALUE_CLAMP),
+      `QuickSearchDropdown: selector value clamp not found — expected ${SELECTOR_VALUE_CLAMP}`
+    ).toBe(true);
     expect(source).toContain('data={enabledTargets}');
-    expect(source).not.toContain('defaultValue={availableIndexes[0]}');
+    expect(source).not.toContain('defaultValue={enabledTargets[0]}');
 
     // DELIBERATELY UNCOVERED, said out loud rather than left as a silent omission: the
     // `startingIndex ?? supportedIndexes[0] ?? 'models'` fallback. Its INITIAL-value arm is
@@ -388,6 +460,8 @@ type Harness = {
   ) => Promise<void>;
   text: () => string;
   type: (value: string) => Promise<void>;
+  /** What the input's blur handler does: empty the display, leave the carrier alone. */
+  blur: () => Promise<void>;
   refinedWith: () => string[];
 };
 
@@ -405,6 +479,7 @@ function mount(carried: boolean): Harness {
   roots.push(root);
 
   let write: ((value: string) => void) | null = null;
+  let clearDisplay: (() => void) | null = null;
   const refined: string[] = [];
 
   function Child({
@@ -420,6 +495,10 @@ function mount(carried: boolean): Harness {
     const viaState = React.useState(helperQuery);
     const [text, setText] = carried ? viaCarrier : viaState;
     write = setText;
+    // The blur path, per arm. Carried: the hook's display-only clear. The negative-control arm has
+    // no carrier to spare, so its blur is just an empty write — which is also what the CARRIED arm
+    // did before this was split, and what made the carry inert on `AutocompleteSearch`.
+    clearDisplay = carried ? viaCarrier[2] : () => viaState[1]('');
 
     // The helper's own query. Per-mount, so a keyed remount hands the child a rebuilt helper
     // reporting whatever it was constructed with — `''` in production.
@@ -456,6 +535,9 @@ function mount(carried: boolean): Harness {
     type: async (value) => {
       await act(async () => write?.(value));
     },
+    blur: async () => {
+      await act(async () => clearDisplay?.());
+    },
     refinedWith: () => [...refined],
   };
 }
@@ -484,6 +566,46 @@ describe('useCarriedSearchText', () => {
     await harness.render('articles_v6');
 
     expect(harness.refinedWith()).toEqual(['dreamshaper', 'dreamshaper']);
+  });
+
+  it('survives the blur that reaching the category selector requires', async () => {
+    // THE PATH THE FEATURE EXISTS FOR, and the one it did not cover. Clicking the selector blurs
+    // the input first, so the blur happens BEFORE the index switch, every time. A blur that wrote
+    // `''` through the carrier therefore emptied it a moment before the remount that was supposed
+    // to restore it, and the whole carry was inert on `AutocompleteSearch`.
+    //
+    // The input still empties on blur — that is unchanged, and asserted here — but the carried
+    // copy is what the remount reads.
+    const harness = mount(true);
+    await harness.render('models_v9');
+    await harness.type('dreamshaper');
+
+    await harness.blur();
+    expect(harness.text()).toBe('');
+
+    await harness.render('articles_v6');
+
+    expect(harness.text()).toBe('dreamshaper');
+    // …and it is pushed into the rebuilt helper, so the new index is actually searched for it
+    // rather than the text merely reappearing. The `''` in the middle is the blur reaching the
+    // helper, which is what empties the results behind a blurred input today.
+    expect(harness.refinedWith()).toEqual(['dreamshaper', '', 'dreamshaper']);
+  });
+
+  it('NEGATIVE CONTROL — the same sequence with the blur written THROUGH the carrier loses the text', async () => {
+    // Identical to the test above except for one step: the empty value goes through the ordinary
+    // setter instead of the display-only clear. That is exactly what the blur handler used to do,
+    // and it drops the text on the very switch the carry exists for — so the difference the test
+    // above measures is the split itself, not something the carrier gave you either way. Same
+    // carrier, same remount, same assertions; one setter apart.
+    const harness = mount(true);
+    await harness.render('models_v9');
+    await harness.type('dreamshaper');
+
+    await harness.type('');
+    await harness.render('articles_v6');
+
+    expect(harness.text()).toBe('');
   });
 
   it('NEGATIVE CONTROL — the same remount drops the text, and refines nothing, without the carrier', async () => {

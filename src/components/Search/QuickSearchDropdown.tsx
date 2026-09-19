@@ -155,12 +155,15 @@ export const QuickSearchDropdown = ({
   dropdownItemLimit = 5,
   startingIndex,
   disableInitialSearch,
+  showIndexSelect = true,
   ...props
 }: QuickSearchDropdownProps) => {
-  // The target has to stay inside the set the selector OFFERS, at both ends. A bare `models`
-  // fallback can leave the component searching an index the caller never supported — a caller
-  // that passes `['users']` gets a users picker whose hits are models — and now that the selector
-  // is controlled by this value, a target outside the offered set also blanks the control.
+  const features = useFeatureFlags();
+  // The target is clamped to `supportedIndexes` — the set the CALLER declared, which is not
+  // necessarily the set the selector offers: the offered list below narrows it further by feature
+  // flag, and this fallback does not. A bare `models` fallback would leave the component searching
+  // an index the caller never supported — a caller that passes `['users']` gets a users picker
+  // whose hits are models.
   //
   // Every current caller either passes `startingIndex` or supports `models` first, so the
   // INITIAL value below is unchanged at every call site today. The reachable path is the
@@ -178,58 +181,92 @@ export const QuickSearchDropdown = ({
 
   const indexName = searchIndexMap[targetIndex];
 
-  return (
-    <InstantSearch
-      // Needs re-render, the same way `SearchLayout` does it. Otherwise the search fires with the
-      // previous index's parameters: react-instantsearch sets the new index and searches in its
-      // render body, before the children that own `filters` have re-rendered.
-      key={indexName}
-      searchClient={disableInitialSearch ? searchClient : meilisearch}
-      indexName={indexName}
-      future={{ preserveSharedStateOnUnmount: true }}
-    >
-      <BrowsingLevelFilter
-        indexKey={targetIndex}
-        filters={filters}
-        hitsPerPage={dropdownItemLimit}
-      />
+  // Ensure we disable search targets if they are not enabled. Hoisted because the selector's
+  // value is clamped to this set as well as read from it — the two have to be the same list.
+  const enabledTargets = (props.supportedIndexes ?? [])
+    .filter(
+      (value) =>
+        (features.imageSearch ? true : searchIndexMap[value] !== IMAGES_SEARCH_INDEX) &&
+        (features.toolSearch ? true : searchIndexMap[value] !== TOOLS_SEARCH_INDEX) &&
+        (features.articles ? true : value !== 'articles')
+    )
+    .map((index) => ({ label: IndexToLabel[searchIndexMap[index]], value: index }));
 
-      <QuickSearchDropdownContent
-        {...props}
-        indexName={targetIndex}
-        onIndexNameChange={handleTargetChange}
-        dropdownItemLimit={dropdownItemLimit}
-        carriedSearchText={carriedSearchText}
-      />
-    </InstantSearch>
+  return (
+    <Group className={classes.wrapper} gap={0} wrap="nowrap">
+      {!!showIndexSelect && (
+        /*
+          ABOVE the keyed provider, and that placement is the point. `<InstantSearch>` returns
+          `null` until its own effect has started the search, so a key change commits one render in
+          which the whole subtree is gone. Inside it, the control the user just clicked would be
+          destroyed and rebuilt by their own click — focus lands on `<body>`. It consumes nothing
+          from the provider's context, so nothing is lost by lifting it out.
+        */
+        <Select
+          className="shrink"
+          classNames={{
+            root: classes.targetSelectorRoot,
+            input: classes.targetSelectorInput,
+            section: classes.targetSelectorRightSection,
+          }}
+          maxDropdownHeight={280}
+          // CONTROLLED, so the displayed label cannot drift from the index being searched.
+          //
+          // `null` rather than the target when the target is not an OFFERED option: Mantine leaves
+          // a controlled value it cannot resolve showing the PREVIOUS option's label, which is a
+          // lie about what is being searched. Blank is honest about "none of these".
+          value={enabledTargets.some(({ value }) => value === targetIndex) ? targetIndex : null}
+          data={enabledTargets}
+          rightSection={<IconChevronDown size={16} color="currentColor" />}
+          onChange={(value) => handleTargetChange(value as SearchIndexKey)}
+        />
+      )}
+      <InstantSearch
+        // Needs re-render, the same way `SearchLayout` does it. Otherwise the search fires with the
+        // previous index's parameters: react-instantsearch sets the new index and searches in its
+        // render body, before the children that own `filters` have re-rendered.
+        key={indexName}
+        searchClient={disableInitialSearch ? searchClient : meilisearch}
+        indexName={indexName}
+        future={{ preserveSharedStateOnUnmount: true }}
+      >
+        <BrowsingLevelFilter
+          indexKey={targetIndex}
+          filters={filters}
+          hitsPerPage={dropdownItemLimit}
+        />
+
+        <QuickSearchDropdownContent
+          {...props}
+          indexName={targetIndex}
+          dropdownItemLimit={dropdownItemLimit}
+          carriedSearchText={carriedSearchText}
+        />
+      </InstantSearch>
+    </Group>
   );
 };
 
 function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   indexName: indexNameProp,
-  onIndexNameChange,
   onItemSelected,
   filters,
   supportedIndexes,
   dropdownItemLimit = 5,
-  showIndexSelect = true,
   placeholder,
   onHits,
   carriedSearchText,
   ...autocompleteProps
 }: QuickSearchDropdownProps & {
   indexName: TIndex;
-  onIndexNameChange: (indexName: TIndex) => void;
   carriedSearchText: React.MutableRefObject<string>;
 }) {
   // const currentUser = useCurrentUser();
   const { query, refine: setQuery, isSearchStalled } = useSearchBox();
   const { hits, results } = useHitsTransformed<TIndex>();
-  const features = useFeatureFlags();
   const [search, setSearch] = useCarriedSearchText(carriedSearchText, query);
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const isSubmittingOptionRef = useRef(false);
-  const availableIndexes = supportedIndexes ?? [];
 
   const indexName = results?.index
     ? reverseSearchIndexMap[results.index as ReverseSearchIndexKey]
@@ -310,98 +347,63 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   // request itself. `isSearchStalled` alone leaves the first 300ms looking like a dead input.
   const loading = search.length > 0 && (search !== query || isSearchStalled);
 
-  // Ensure we disable search targets if they are not enabled. Hoisted because the selector's
-  // value is clamped to this set as well as read from it — the two have to be the same list.
-  const enabledTargets = availableIndexes
-    .filter(
-      (value) =>
-        (features.imageSearch ? true : searchIndexMap[value] !== IMAGES_SEARCH_INDEX) &&
-        (features.toolSearch ? true : searchIndexMap[value] !== TOOLS_SEARCH_INDEX) &&
-        (features.articles ? true : value !== 'articles')
-    )
-    .map((index) => ({ label: IndexToLabel[searchIndexMap[index]], value: index }));
-
   return (
-    <Group className={classes.wrapper} gap={0} wrap="nowrap">
-      {!!showIndexSelect && (
-        <Select
-          className="shrink"
-          classNames={{
-            root: classes.targetSelectorRoot,
-            input: classes.targetSelectorInput,
-            section: classes.targetSelectorRightSection,
-          }}
-          maxDropdownHeight={280}
-          // CONTROLLED. Uncontrolled, its displayed label is internal state inside the keyed
-          // provider, so a target switch would remount it back to the first supported index
-          // while the search really did move — a selector that lies about what it is searching.
-          //
-          // `null` rather than the target when the target is not an OFFERED option: Mantine leaves
-          // a controlled value it cannot resolve showing the PREVIOUS option's label, which is the
-          // same lie in a different place. Blank is honest about "none of these".
-          value={enabledTargets.some(({ value }) => value === indexNameProp) ? indexNameProp : null}
-          data={enabledTargets}
-          rightSection={<IconChevronDown size={16} color="currentColor" />}
-          onChange={(value) => onIndexNameChange(value as TIndex)}
-        />
-      )}
-      <ClearableAutoComplete
-        key={indexName}
-        classNames={classes}
-        placeholder={placeholder ?? 'Search Civitai'}
-        type="search"
-        maxDropdownHeight={300}
-        // TODO: Mantine7
-        // nothingFound={
-        //   !hits.length ? (
-        //     <Stack gap={0} align="center">
-        //       <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
-        //     </Stack>
-        //   ) : undefined
-        // }
-        limit={
-          results && results.nbHits > dropdownItemLimit
-            ? dropdownItemLimit + 1 // Allow one more to show more results option
-            : dropdownItemLimit
+    <ClearableAutoComplete
+      key={indexName}
+      classNames={classes}
+      placeholder={placeholder ?? 'Search Civitai'}
+      type="search"
+      maxDropdownHeight={300}
+      // TODO: Mantine7
+      // nothingFound={
+      //   !hits.length ? (
+      //     <Stack gap={0} align="center">
+      //       <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
+      //     </Stack>
+      //   ) : undefined
+      // }
+      limit={
+        results && results.nbHits > dropdownItemLimit
+          ? dropdownItemLimit + 1 // Allow one more to show more results option
+          : dropdownItemLimit
+      }
+      defaultValue={query}
+      value={search}
+      data={items}
+      onChange={(value) => {
+        // Ignore onChange events that happen during option submission
+        if (isSubmittingOptionRef.current) {
+          isSubmittingOptionRef.current = false;
+          return;
         }
-        defaultValue={query}
-        value={search}
-        data={items}
-        onChange={(value) => {
-          // Ignore onChange events that happen during option submission
-          if (isSubmittingOptionRef.current) {
-            isSubmittingOptionRef.current = false;
-            return;
-          }
-          setSearch(value);
-        }}
-        onClear={() => setSearch('')}
-        // onBlur={() => (!isMobile ? onClear?.() : undefined)}
-        onOptionSubmit={(value) => {
-          const item = getItemFromValue(value);
-          if (item) {
-            // Set flag before calling onItemSelected to prevent onChange from overwriting
-            isSubmittingOptionRef.current = true;
+        setSearch(value);
+      }}
+      onClear={() => setSearch('')}
+      // onBlur={() => (!isMobile ? onClear?.() : undefined)}
+      onOptionSubmit={(value) => {
+        const item = getItemFromValue(value);
+        if (item) {
+          // Set flag before calling onItemSelected to prevent onChange from overwriting
+          isSubmittingOptionRef.current = true;
 
-            onItemSelected(
-              {
-                entityId: item.hit.id,
-                entityType: SearchIndexEntityTypes[searchIndexMap[indexName]],
-              },
-              item.hit as any
-            );
+          onItemSelected(
+            {
+              entityId: item.hit.id,
+              entityType: SearchIndexEntityTypes[searchIndexMap[indexName]],
+            },
+            item.hit as any
+          );
 
-            setSearch('');
-          }
-        }}
-        renderOption={renderOption}
-        // prevent default filtering behavior
-        filter={({ options }) => options}
-        clearable={query.length > 0}
-        loading={loading}
-        {...autocompleteProps}
-      />
-    </Group>
+          setSearch('');
+        }
+      }}
+      renderOption={renderOption}
+      // prevent default filtering behavior
+      filter={({ options }) => options}
+      clearable={query.length > 0}
+      loading={loading}
+      {...autocompleteProps}
+    />
   );
 }
 

@@ -93,36 +93,36 @@ type Props = Omit<AutocompleteProps, 'data' | 'onSubmit'> & {
 // never reaches `useInstantSearch().status`, so we can't key off that).
 const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
   createResilientSearchClient(
-  {
-    ...meilisearch,
-    search(requests) {
-      // Prevent making a request if there is no query
-      // @see https://www.algolia.com/doc/guides/building-search-ui/going-further/conditional-requests/react/#detecting-empty-search-requests
-      // @see https://github.com/algolia/react-instantsearch/issues/1111#issuecomment-496132977
-      if (requests.every(({ params }) => !params?.query)) {
-        return Promise.resolve({
-          results: requests.map(() => ({
-            hits: [],
-            nbHits: 0,
-            nbPages: 0,
-            page: 0,
-            processingTimeMS: 0,
-            hitsPerPage: 0,
-            exhaustiveNbHits: false,
-            query: '',
-            params: '',
-          })),
-        });
-      }
+    {
+      ...meilisearch,
+      search(requests) {
+        // Prevent making a request if there is no query
+        // @see https://www.algolia.com/doc/guides/building-search-ui/going-further/conditional-requests/react/#detecting-empty-search-requests
+        // @see https://github.com/algolia/react-instantsearch/issues/1111#issuecomment-496132977
+        if (requests.every(({ params }) => !params?.query)) {
+          return Promise.resolve({
+            results: requests.map(() => ({
+              hits: [],
+              nbHits: 0,
+              nbPages: 0,
+              page: 0,
+              processingTimeMS: 0,
+              hitsPerPage: 0,
+              exhaustiveNbHits: false,
+              query: '',
+              params: '',
+            })),
+          });
+        }
 
-      return meilisearch.search(requests);
+        return meilisearch.search(requests);
+      },
     },
-  },
-  {
-    onError: () => autocompleteAvailability.setUnavailable(true),
-    onSuccess: () => autocompleteAvailability.setUnavailable(false),
-  }
-)
+    {
+      onError: () => autocompleteAvailability.setUnavailable(true),
+      onSuccess: () => autocompleteAvailability.setUnavailable(false),
+    }
+  )
 );
 
 const DEFAULT_DROPDOWN_ITEM_LIMIT = 6;
@@ -140,6 +140,7 @@ const targetData = [
 
 export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
   const browsingSettingsAddons = useBrowsingSettingsAddons();
+  const features = useFeatureFlags();
   const [targetIndex, setTargetIndex] = useState<SearchIndexKey>('models');
   const handleTargetChange = (value: SearchIndexKey) => {
     setTargetIndex(value);
@@ -158,6 +159,12 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
   const currentSection = pathname.split('/')[1] || 'models';
   const searchTarget = targetData.find((t) => t.value === currentSection)?.value ?? 'models';
   useEffect(() => {
+    // A navigation is not the switch the carry exists for. The input's blur handler empties the
+    // visible text WITHOUT emptying the carrier (a blur is how you reach the category selector at
+    // all), so text a user typed and walked away from would otherwise reappear — and be searched
+    // again — on the next link they follow into another section. Only a pick from the selector
+    // leaves the carrier loaded, and a pick does not change `searchTarget`.
+    carriedSearchText.current = '';
     setTargetIndex(searchTarget);
   }, [searchTarget]);
 
@@ -186,25 +193,73 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
 
   const resolvedIndexName = searchIndexMap[targetIndex as keyof typeof searchIndexMap];
 
+  // Ensure we disable search targets if they are not enabled. Hoisted because the selector's
+  // value is clamped to this set as well as read from it — the two have to be the same list.
+  const enabledTargets = targetData.filter(
+    ({ value }) =>
+      (features.imageSearch ? true : value !== 'images') &&
+      (features.bounties ? true : value !== 'bounties') &&
+      (features.articles ? true : value !== 'articles') &&
+      (features.toolSearch ? true : value !== 'tools') &&
+      (features.comicSearch ? true : value !== 'comics')
+  );
+
   return (
-    <InstantSearch
-      // Needs re-render, the same way `SearchLayout` does it. Otherwise the search fires with the
-      // previous index's parameters: react-instantsearch sets the new index and searches in its
-      // render body, before the children that own `filters` have re-rendered.
-      key={resolvedIndexName}
-      searchClient={searchClient}
-      indexName={resolvedIndexName}
-      future={{ preserveSharedStateOnUnmount: false }}
-    >
-      <AutocompleteSearchContent
-        {...props}
-        indexName={targetIndex}
-        ref={ref}
-        onTargetChange={handleTargetChange}
-        baseFilters={filters}
-        carriedSearchText={carriedSearchText}
+    <Group className={classes.wrapper} gap={0} wrap="nowrap">
+      {/*
+        ABOVE the keyed provider, and that placement is the point. `<InstantSearch>` returns `null`
+        until its own effect has started the search, so a key change commits one render in which
+        the whole subtree is gone. Inside it, the control the user just clicked would be destroyed
+        and rebuilt by their own click — focus lands on `<body>`. It consumes nothing from the
+        provider's context, so nothing is lost by lifting it out.
+      */}
+      <Select
+        // CONTROLLED. Uncontrolled, its displayed label is internal state, so a target switch
+        // driven from anywhere else — the URL-follow effect above — would leave it showing a
+        // category the search has moved off: a selector that lies about what it is searching.
+        //
+        // `null` rather than the target when the target is not an OFFERED option: the URL can
+        // point the search at an index whose feature flag is off, and Mantine leaves a
+        // controlled value it cannot resolve showing the PREVIOUS option's label. Blank is
+        // honest about "none of these"; a stale label is the same lie in a different place.
+        value={enabledTargets.some(({ value }) => value === targetIndex) ? targetIndex : null}
+        aria-label="Search category"
+        classNames={{
+          root: classes.targetSelectorRoot,
+          input: classes.targetSelectorInput,
+          option: classes.targetSelectorOption,
+          options: classes.targetSelectorOptions,
+          dropdown: classes.targetSelectorDropdown,
+        }}
+        rightSectionProps={{
+          className: classes.targetSelectorRightSection,
+        }}
+        maxDropdownHeight={280}
+        data={enabledTargets}
+        rightSection={<IconChevronDown size={16} color="currentColor" />}
+        style={{ flexShrink: 1 }}
+        onChange={(v: string | null) => handleTargetChange(v as SearchIndexKey)}
+        autoComplete="off"
+        allowDeselect={false}
       />
-    </InstantSearch>
+      <InstantSearch
+        // Needs re-render, the same way `SearchLayout` does it. Otherwise the search fires with the
+        // previous index's parameters: react-instantsearch sets the new index and searches in its
+        // render body, before the children that own `filters` have re-rendered.
+        key={resolvedIndexName}
+        searchClient={searchClient}
+        indexName={resolvedIndexName}
+        future={{ preserveSharedStateOnUnmount: false }}
+      >
+        <AutocompleteSearchContent
+          {...props}
+          indexName={targetIndex}
+          ref={ref}
+          baseFilters={filters}
+          carriedSearchText={carriedSearchText}
+        />
+      </InstantSearch>
+    </Group>
   );
 });
 
@@ -212,7 +267,6 @@ AutocompleteSearch.displayName = 'AutocompleteSearch';
 
 type AutocompleteSearchProps<T extends SearchIndexKey> = Props & {
   indexName: T;
-  onTargetChange: (target: T) => void;
   baseFilters: string[];
   carriedSearchText: React.MutableRefObject<string>;
 };
@@ -224,7 +278,6 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     className,
     searchBoxProps,
     indexName: indexNameProp,
-    onTargetChange,
     baseFilters,
     carriedSearchText,
     ...autocompleteProps
@@ -237,7 +290,6 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const router = useRouter();
   const isMobile = useIsMobile();
-  const features = useFeatureFlags();
   const inputRef = useRef<HTMLInputElement>(null);
   const domainColor = useDomainColor();
 
@@ -252,7 +304,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     : indexNameProp;
 
   const [selectedItem, setSelectedItem] = useState<ComboboxData[number] | null>(null);
-  const [search, setSearch] = useCarriedSearchText(carriedSearchText, query);
+  const [search, setSearch, clearDisplayedText] = useCarriedSearchText(carriedSearchText, query);
   const [queryFilters, setQueryFilters] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
@@ -402,17 +454,6 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     indexName,
   ]);
 
-  // Ensure we disable search targets if they are not enabled. Hoisted because the selector's
-  // value is clamped to this set as well as read from it — the two have to be the same list.
-  const enabledTargets = targetData.filter(
-    ({ value }) =>
-      (features.imageSearch ? true : value !== 'images') &&
-      (features.bounties ? true : value !== 'bounties') &&
-      (features.articles ? true : value !== 'articles') &&
-      (features.toolSearch ? true : value !== 'tools') &&
-      (features.comicSearch ? true : value !== 'comics')
-  );
-
   const focusInput = () => inputRef.current?.focus();
   const blurInput = () => inputRef.current?.blur();
 
@@ -433,8 +474,20 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     onSubmit?.();
   };
 
+  // The explicit clear — the input's clear button. The user asked for the text to go, so the
+  // carrier goes with it.
   const handleClear = () => {
     setSearch('');
+    onClear?.();
+  };
+
+  // Blur empties the input the same way it always has, but leaves the carried copy alone. Reaching
+  // the category selector REQUIRES blurring this input, so a blur that wrote through `setSearch`
+  // emptied the carrier immediately before every selector-driven index switch — the one path the
+  // carry exists for. `onClear?.()` still fires, unchanged: on mobile it is what closes the search
+  // overlay (`AppHeader` passes `onSearchDone`), and that is not ours to change here.
+  const handleBlur = () => {
+    clearDisplayedText();
     onClear?.();
   };
 
@@ -536,186 +589,155 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
         filters={[...baseFilters, queryFilters]}
         hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT}
       />
-      <Group className={classes.wrapper} gap={0} wrap="nowrap">
-        <Select
-          // CONTROLLED. Uncontrolled, its displayed label is internal state inside the keyed
-          // provider, so a target switch would remount it back to whatever the default said
-          // while the search really did move — a selector that lies about what it is searching.
-          //
-          // `null` rather than the target when the target is not an OFFERED option: the URL can
-          // point the search at an index whose feature flag is off, and Mantine leaves a
-          // controlled value it cannot resolve showing the PREVIOUS option's label. Blank is
-          // honest about "none of these"; a stale label is the same lie in a different place.
-          value={enabledTargets.some(({ value }) => value === indexNameProp) ? indexNameProp : null}
-          aria-label="Search category"
-          classNames={{
-            root: classes.targetSelectorRoot,
-            input: classes.targetSelectorInput,
-            option: classes.targetSelectorOption,
-            options: classes.targetSelectorOptions,
-            dropdown: classes.targetSelectorDropdown,
-          }}
-          rightSectionProps={{
-            className: classes.targetSelectorRightSection,
-          }}
-          maxDropdownHeight={280}
-          data={enabledTargets}
-          rightSection={<IconChevronDown size={16} color="currentColor" />}
-          style={{ flexShrink: 1 }}
-          onChange={(v: string | null) => onTargetChange(v as TKey)}
-          autoComplete="off"
-          allowDeselect={false}
-        />
-        <ClearableAutoComplete
-          ref={inputRef}
-          key={indexName}
-          className={className}
-          classNames={classes}
-          placeholder="Search Civitai"
-          type="search"
-          limit={
-            results && results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT
-              ? DEFAULT_DROPDOWN_ITEM_LIMIT + 1 // Allow one more to show more results option
-              : DEFAULT_DROPDOWN_ITEM_LIMIT
+      <ClearableAutoComplete
+        ref={inputRef}
+        key={indexName}
+        className={className}
+        classNames={classes}
+        placeholder="Search Civitai"
+        type="search"
+        limit={
+          results && results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT
+            ? DEFAULT_DROPDOWN_ITEM_LIMIT + 1 // Allow one more to show more results option
+            : DEFAULT_DROPDOWN_ITEM_LIMIT
+        }
+        defaultValue={query}
+        value={search}
+        data={items}
+        onChange={(value) => {
+          if (value == null || value === 'View more results') return;
+          setSearch(value);
+        }}
+        onBlur={handleBlur}
+        onClear={handleClear}
+        onKeyDown={getHotkeyHandler([
+          ['Escape', blurInput],
+          ['Enter', handleSubmit],
+        ])}
+        onOptionSubmit={handleItemClick}
+        renderOption={({ option }) => {
+          const { key, ...item } = getItemFromValue(option.value);
+          // Render special states
+          if (key === 'blocked') {
+            return (
+              <Stack gap="xs" align="center">
+                <Text size="sm" align="center">
+                  Your search query contains inappropriate content and has been blocked.
+                </Text>
+                <Text size="xs" align="center">
+                  Please try a different search term.
+                </Text>
+              </Stack>
+            );
           }
-          defaultValue={query}
-          value={search}
-          data={items}
-          onChange={(value) => {
-            if (value == null || value === 'View more results') return;
-            setSearch(value);
-          }}
-          onBlur={handleClear}
-          onClear={handleClear}
-          onKeyDown={getHotkeyHandler([
-            ['Escape', blurInput],
-            ['Enter', handleSubmit],
-          ])}
-          onOptionSubmit={handleItemClick}
-          renderOption={({ option }) => {
-            const { key, ...item } = getItemFromValue(option.value);
-            // Render special states
-            if (key === 'blocked') {
-              return (
-                <Stack gap="xs" align="center">
-                  <Text size="sm" align="center">
-                    Your search query contains inappropriate content and has been blocked.
+          if (key === 'profanity') {
+            return (
+              <Stack gap="xs" align="center">
+                <Text size="sm" align="center">
+                  Your search query contains inappropriate content that violates our community
+                  guidelines.
+                </Text>
+                {profanityAnalysis.matches.length > 0 && (
+                  <Text size="xs" align="center" c="dimmed">
+                    Flagged terms: {profanityAnalysis.matches.join(', ')}
                   </Text>
-                  <Text size="xs" align="center">
-                    Please try a different search term.
-                  </Text>
-                </Stack>
-              );
-            }
-            if (key === 'profanity') {
-              return (
-                <Stack gap="xs" align="center">
-                  <Text size="sm" align="center">
-                    Your search query contains inappropriate content that violates our community
-                    guidelines.
-                  </Text>
-                  {profanityAnalysis.matches.length > 0 && (
-                    <Text size="xs" align="center" c="dimmed">
-                      Flagged terms: {profanityAnalysis.matches.join(', ')}
-                    </Text>
-                  )}
-                  <Text size="xs" align="center">
-                    Please refine your search terms to find appropriate content.
-                  </Text>
-                </Stack>
-              );
-            }
-            if (key === 'disabled') {
-              return (
-                <Stack gap="xs" align="center">
-                  <Text size="sm" align="center">
-                    Your search includes terms tied to real people. Content depicting real people is
-                    filtered from search results.
-                  </Text>
-                </Stack>
-              );
-            }
-            if (key === 'blocked-words') {
-              return (
-                <Stack gap="xs" align="center">
-                  <Text size="sm" align="center">
-                    Your search query contains blocked words and has been filtered.
-                  </Text>
-                  <Text size="xs" align="center">
-                    Please try a different search term.
-                  </Text>
-                </Stack>
-              );
-            }
-            if (key === 'error') {
-              return (
-                <Stack gap="xs" align="center">
-                  <Text size="sm" align="center">
-                    There was an error while performing your request&hellip;
-                  </Text>
-                  <Text size="xs" align="center">
-                    Please try again later
-                  </Text>
-                </Stack>
-              );
-            }
+                )}
+                <Text size="xs" align="center">
+                  Please refine your search terms to find appropriate content.
+                </Text>
+              </Stack>
+            );
+          }
+          if (key === 'disabled') {
+            return (
+              <Stack gap="xs" align="center">
+                <Text size="sm" align="center">
+                  Your search includes terms tied to real people. Content depicting real people is
+                  filtered from search results.
+                </Text>
+              </Stack>
+            );
+          }
+          if (key === 'blocked-words') {
+            return (
+              <Stack gap="xs" align="center">
+                <Text size="sm" align="center">
+                  Your search query contains blocked words and has been filtered.
+                </Text>
+                <Text size="xs" align="center">
+                  Please try a different search term.
+                </Text>
+              </Stack>
+            );
+          }
+          if (key === 'error') {
+            return (
+              <Stack gap="xs" align="center">
+                <Text size="sm" align="center">
+                  There was an error while performing your request&hellip;
+                </Text>
+                <Text size="xs" align="center">
+                  Please try again later
+                </Text>
+              </Stack>
+            );
+          }
 
-            const Render = IndexRenderItem[indexName] ?? ModelSearchItem;
-            return <Render {...item} />;
-          }}
-          rightSection={
-            <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
-              <HoverCard.Target>
-                <Text
-                  component="div"
-                  role="button"
-                  tabIndex={0}
-                  aria-label="Quick search keyboard shortcut"
-                  fw="bold"
-                  style={{
-                    border: `1px solid ${
-                      colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                    }`,
-                    borderRadius: theme.radius.sm,
-                    backgroundColor:
-                      colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-                    color: colorScheme === 'dark' ? theme.colors.gray[5] : theme.colors.gray[6],
-                    textAlign: 'center',
-                    width: 24,
-                    userSelect: 'none',
-                  }}
-                >
-                  /
-                </Text>
-              </HoverCard.Target>
-              <HoverCard.Dropdown>
-                <Text size="sm" c="yellow" fw={500}>
-                  Pro-tip: Quick search faster!
-                </Text>
-                <Text size="xs" lh={1.2}>
-                  Open the quick search without leaving your keyboard by tapping the <Code>/</Code>{' '}
-                  key from anywhere and just start typing.
-                </Text>
-              </HoverCard.Dropdown>
-            </HoverCard>
-          }
-          // prevent default filtering behavior
-          filter={({ options }) => options}
-          clearable={query.length > 0}
-          maxDropdownHeight={isMobile ? 'calc(90vh - var(--header-height))' : 500}
-          {...autocompleteProps}
-        />
-        <LegacyActionIcon
-          className={classes.searchButton}
-          color="gray"
-          variant="filled"
-          size={36}
-          onMouseDown={handleSubmit}
-          aria-label="Search"
-        >
-          <IconSearch size={18} />
-        </LegacyActionIcon>
-      </Group>
+          const Render = IndexRenderItem[indexName] ?? ModelSearchItem;
+          return <Render {...item} />;
+        }}
+        rightSection={
+          <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
+            <HoverCard.Target>
+              <Text
+                component="div"
+                role="button"
+                tabIndex={0}
+                aria-label="Quick search keyboard shortcut"
+                fw="bold"
+                style={{
+                  border: `1px solid ${
+                    colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+                  }`,
+                  borderRadius: theme.radius.sm,
+                  backgroundColor:
+                    colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
+                  color: colorScheme === 'dark' ? theme.colors.gray[5] : theme.colors.gray[6],
+                  textAlign: 'center',
+                  width: 24,
+                  userSelect: 'none',
+                }}
+              >
+                /
+              </Text>
+            </HoverCard.Target>
+            <HoverCard.Dropdown>
+              <Text size="sm" c="yellow" fw={500}>
+                Pro-tip: Quick search faster!
+              </Text>
+              <Text size="xs" lh={1.2}>
+                Open the quick search without leaving your keyboard by tapping the <Code>/</Code>{' '}
+                key from anywhere and just start typing.
+              </Text>
+            </HoverCard.Dropdown>
+          </HoverCard>
+        }
+        // prevent default filtering behavior
+        filter={({ options }) => options}
+        clearable={query.length > 0}
+        maxDropdownHeight={isMobile ? 'calc(90vh - var(--header-height))' : 500}
+        {...autocompleteProps}
+      />
+      <LegacyActionIcon
+        className={classes.searchButton}
+        color="gray"
+        variant="filled"
+        size={36}
+        onMouseDown={handleSubmit}
+        aria-label="Search"
+      >
+        <IconSearch size={18} />
+      </LegacyActionIcon>
     </>
   );
 }
