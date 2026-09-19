@@ -62,8 +62,11 @@ export function seedCarriedSearchText(carried: string | undefined, refinedQuery:
  *   effect's dependency array, or a tree that remounted while blocked restores the typed text,
  *   returns early, and never refines once the block clears — a populated input over an empty
  *   helper query. `searchErrorState` is such a source (a module-level store) and is listed.
- *   A source that is per-mount state is reset by the remount and needs no such listing;
- *   `AutocompleteSearch`'s `selectedItem` is one, and is deliberately not listed.
+ *   A source that is per-mount state is reset by the remount, so leaving it out cannot produce
+ *   THAT failure; `AutocompleteSearch`'s `selectedItem` is one, and is left out. ⚠️ Read narrowly
+ *   — this is not a blessing. Omitting a per-mount source still costs the refine cycle in which
+ *   it is stale: after a hit is picked, the next text change evaluates the guard against the old
+ *   `selectedItem` and skips one refine. Pre-existing there, and not something to reproduce.
  */
 export function shouldRefineSearchQuery(
   typed: string,

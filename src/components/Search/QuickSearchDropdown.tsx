@@ -25,10 +25,6 @@ import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { paired } from '~/utils/type-guards';
 import { searchClient } from '~/components/Search/search.client';
 import { quickSearchClient } from '~/components/Search/quick-search.client';
-import {
-  shouldRefineSearchQuery,
-  useCarriedSearchText,
-} from '~/components/Search/useCarriedSearchText';
 import { BrowsingLevelFilter } from './CustomSearchComponents';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
@@ -143,31 +139,15 @@ export const QuickSearchDropdown = ({
   disableInitialSearch,
   ...props
 }: QuickSearchDropdownProps) => {
-  // The target has to stay inside the set the selector OFFERS, at both ends. A bare `models`
-  // fallback can leave the component searching an index the caller never supported — a caller
-  // that passes `['users']` gets a users picker whose hits are models — and now that the selector
-  // is controlled by this value, a target outside the offered set also blanks the control.
-  //
-  // FORWARD GUARD, not a fix for an observed defect: every current caller either passes
-  // `startingIndex` or supports `models` first, so neither fallback moves any call site today.
-  // The deselect path below is the one that could reach it, and it is closed here too.
-  const fallbackIndex = startingIndex ?? props.supportedIndexes?.[0] ?? 'models';
-  const [targetIndex, setTargetIndex] = useState<SearchIndexKey>(fallbackIndex);
+  const [targetIndex, setTargetIndex] = useState<SearchIndexKey>(startingIndex ?? 'models');
   const handleTargetChange = (value: SearchIndexKey | null) => {
-    setTargetIndex(value ?? fallbackIndex);
+    setTargetIndex(value ?? 'models');
   };
-  // Owned above the keyed search provider below, so it outlives the remount an index switch
-  // causes.
-  const carriedSearchText = useRef('');
 
   const indexName = searchIndexMap[targetIndex];
 
   return (
     <InstantSearch
-      // Needs re-render, the same way `SearchLayout` does it. Otherwise the search fires with the
-      // previous index's parameters: react-instantsearch sets the new index and searches in its
-      // render body, before the children that own `filters` have re-rendered.
-      key={indexName}
       searchClient={disableInitialSearch ? searchClient : quickSearchClient}
       indexName={indexName}
       future={{ preserveSharedStateOnUnmount: true }}
@@ -183,7 +163,6 @@ export const QuickSearchDropdown = ({
         indexName={targetIndex}
         onIndexNameChange={handleTargetChange}
         dropdownItemLimit={dropdownItemLimit}
-        carriedSearchText={carriedSearchText}
       />
     </InstantSearch>
   );
@@ -199,18 +178,16 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   showIndexSelect = true,
   placeholder,
   onHits,
-  carriedSearchText,
   ...autocompleteProps
 }: QuickSearchDropdownProps & {
   indexName: TIndex;
   onIndexNameChange: (indexName: TIndex) => void;
-  carriedSearchText: React.MutableRefObject<string>;
 }) {
   // const currentUser = useCurrentUser();
   const { query, refine: setQuery, isSearchStalled } = useSearchBox();
   const { hits, results } = useHitsTransformed<TIndex>();
   const features = useFeatureFlags();
-  const [search, setSearch] = useCarriedSearchText(carriedSearchText, query);
+  const [search, setSearch] = useState(query);
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const isSubmittingOptionRef = useRef(false);
   const availableIndexes = supportedIndexes ?? [];
@@ -284,7 +261,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   useEffect(() => {
     // Only set the query when the debounced search changes
     // and user didn't select from the list
-    if (!shouldRefineSearchQuery(debouncedSearch, query)) return;
+    if (debouncedSearch === query) return;
 
     setQuery(debouncedSearch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -293,17 +270,6 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   // Covers both halves of the wait: the 300ms debounce before the query is even sent, and the
   // request itself. `isSearchStalled` alone leaves the first 300ms looking like a dead input.
   const loading = search.length > 0 && (search !== query || isSearchStalled);
-
-  // Ensure we disable search targets if they are not enabled. Hoisted because the selector's
-  // value is clamped to this set as well as read from it — the two have to be the same list.
-  const enabledTargets = availableIndexes
-    .filter(
-      (value) =>
-        (features.imageSearch ? true : searchIndexMap[value] !== IMAGES_SEARCH_INDEX) &&
-        (features.toolSearch ? true : searchIndexMap[value] !== TOOLS_SEARCH_INDEX) &&
-        (features.articles ? true : value !== 'articles')
-    )
-    .map((index) => ({ label: IndexToLabel[searchIndexMap[index]], value: index }));
 
   return (
     <Group className={classes.wrapper} gap={0} wrap="nowrap">
@@ -316,22 +282,18 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
             section: classes.targetSelectorRightSection,
           }}
           maxDropdownHeight={280}
-          // CONTROLLED. Uncontrolled, its displayed label is internal state inside the keyed
-          // provider, so a target switch would remount it back to the first supported index
-          // while the search really did move — a selector that lies about what it is searching.
-          //
-          // `null` rather than the target when the target is not an OFFERED option: Mantine leaves
-          // a controlled value it cannot resolve showing the PREVIOUS option's label, which is the
-          // same lie in a different place. Blank is honest about "none of these".
-          value={enabledTargets.some(({ value }) => value === indexNameProp) ? indexNameProp : null}
-          data={enabledTargets}
+          defaultValue={availableIndexes[0]}
+          // Ensure we disable search targets if they are not enabled
+          data={availableIndexes
+            .filter(
+              (value) =>
+                (features.imageSearch ? true : searchIndexMap[value] !== IMAGES_SEARCH_INDEX) &&
+                (features.toolSearch ? true : searchIndexMap[value] !== TOOLS_SEARCH_INDEX) &&
+                (features.articles ? true : value !== 'articles')
+            )
+            .map((index) => ({ label: IndexToLabel[searchIndexMap[index]], value: index }))}
           rightSection={<IconChevronDown size={16} color="currentColor" />}
           onChange={(value) => onIndexNameChange(value as TIndex)}
-          // A single-option selector is otherwise DESELECTABLE, and a deselect hands `null` to the
-          // change handler. Callers read the picked entity as the type their `supportedIndexes`
-          // names — one of them writes it into a Buzz payout recipient set — so silently moving
-          // the target to another index is not a display bug.
-          allowDeselect={false}
         />
       )}
       <ClearableAutoComplete

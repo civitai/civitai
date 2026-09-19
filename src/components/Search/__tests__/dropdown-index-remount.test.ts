@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import type { Dirent } from 'fs';
 import { readdirSync, readFileSync } from 'fs';
 import path from 'path';
 import * as React from 'react';
@@ -19,6 +20,15 @@ const act = (React as unknown as { act: typeof actType }).act;
 
 const repoRoot = path.resolve(__dirname, '../../../..');
 const read = (relPath: string) => readFileSync(path.join(repoRoot, relPath), 'utf8');
+
+/**
+ * Drop comments before any check that COUNTS or LOCATES a token. Prose naming the token satisfies
+ * it otherwise — including, in this file's case, prose written to warn against the mutation the
+ * count exists to catch. Whole-line `//` only, plus block comments, so a `//` inside a string
+ * literal cannot blind the scan.
+ */
+const stripComments = (source: string) =>
+  source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
 /**
  * Every `<InstantSearch>` root in the app, and what each is required to do about the index it
@@ -50,7 +60,7 @@ const INSTANT_SEARCH_ROOTS = {
  */
 function findInstantSearchRoots(dir = 'src'): string[] {
   const found: string[] = [];
-  let entries: ReturnType<typeof readdirSync<{ withFileTypes: true }>>;
+  let entries: Dirent[];
   try {
     entries = readdirSync(path.join(repoRoot, dir), { withFileTypes: true });
   } catch {
@@ -179,7 +189,10 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     // A mount runs every effect, so once the provider is keyed, choosing a category remounts the
     // subtree, the effect sees the URL's section instead of the pick, and reverts it — the header
     // category selector then only ever "works" when it picks what the URL already said.
-    const source = read('src/components/AutocompleteSearch/AutocompleteSearch.tsx');
+    //
+    // Comments stripped: every check below counts or locates a token, and prose naming the token
+    // — including prose warning against the very mutation being counted — would satisfy it.
+    const source = stripComments(read('src/components/AutocompleteSearch/AutocompleteSearch.tsx'));
 
     const sync = source.indexOf('setTargetIndex(searchTarget)');
     const provider = source.indexOf('<InstantSearch');
@@ -194,21 +207,31 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     );
 
     // …and it still FOLLOWS navigation. Emptying its dependency array leaves one writer, in the
-    // right place, that only ever runs once.
+    // right place, that only ever runs once. The array only has to CONTAIN `searchTarget` —
+    // requiring it to be exactly `[searchTarget]` would go red on a legitimate added dependency.
     expect(source.slice(sync)).toMatch(
-      /^\s*setTargetIndex\(searchTarget\);\s*\}, \[searchTarget\]\)/
+      /^\s*setTargetIndex\(searchTarget\);[\s\S]{0,300}?\}, \[[^\]]*\bsearchTarget\b[^\]]*\]\)/
     );
 
     // …and the selector reads the target rather than holding its own copy of it, which a remount
-    // would reset while the search really had moved.
-    expect(source).toContain('value === indexNameProp) ? indexNameProp : null');
+    // would reset while the search really had moved — clamped to the SAME list the options are
+    // built from, since clamping against the unfiltered set is exactly the stale-label defect.
+    // Spelling-pinned: a rename of `indexNameProp`/`enabledTargets` reddens these for a non-defect.
+    expect(source).toContain('enabledTargets.some(({ value }) => value === indexNameProp)');
+    expect(source).toContain('data={enabledTargets}');
     expect(source).not.toContain('defaultValue={searchTarget}');
+
+    // Its change handler casts away the `null` a deselect produces, and unlike the sibling it has
+    // no fallback — `searchIndexMap[null]` is `undefined`, which reaches the provider as an
+    // undefined index. This prop is the whole of that defence.
+    expect(source).toContain('allowDeselect={false}');
   });
 
   it('QuickSearchDropdown drives its index selector from the target it is searching', () => {
-    const source = read('src/components/Search/QuickSearchDropdown.tsx');
+    const source = stripComments(read('src/components/Search/QuickSearchDropdown.tsx'));
 
-    expect(source).toContain('value === indexNameProp) ? indexNameProp : null');
+    expect(source).toContain('enabledTargets.some(({ value }) => value === indexNameProp)');
+    expect(source).toContain('data={enabledTargets}');
     expect(source).not.toContain('defaultValue={availableIndexes[0]}');
 
     // A single-option selector is deselectable by default, and the `null` that produces would
@@ -224,9 +247,7 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     // the real component could observe it, and that is the browser tier.
     // Comments stripped first: a dependency array can otherwise satisfy a token search with the
     // token sitting inside `/* … */`, which is the walk `openingTag` above already guards against.
-    const source = read('src/components/AutocompleteSearch/AutocompleteSearch.tsx')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/^\s*\/\/.*$/gm, '');
+    const source = stripComments(read('src/components/AutocompleteSearch/AutocompleteSearch.tsx'));
     const deps = source.match(/\}, \[debouncedSearch, query, indexName[^\]]*\]/);
 
     expect(deps?.[0] ?? '(no refine dependency array matched)').toContain('searchErrorState');
