@@ -1,5 +1,6 @@
 import { dbRead } from '~/server/db/client';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
+import { subjectForUserId } from '~/server/services/block-token-subject';
 
 /**
  * WHY THIS IS ITS OWN MODULE rather than a private function inside
@@ -95,32 +96,54 @@ import type { BlockTokenClaims } from '~/server/middleware/block-scope.middlewar
  * than unconditional — see the predicate.
  *
  * 🔴 THE EXEMPTION, AND WHY IT IS THREE CASES RATHER THAN ONE BOOLEAN. `dev: true` is
- * stamped in exactly one place (`signDevScopedPageToken`) and reached by six mint paths,
- * so the bare claim says only "one of six things". Three of those must bypass approval
- * and three must not, and the guard now separates them:
+ * stamped in exactly one place — `signDevScopedPageToken`, UNCONDITIONALLY — and that
+ * function is reached by six mint paths, so the bare claim says only "one of six things".
+ * The letters below are used by name in the code; this is their key, and it is the
+ * population table the rest of this file refers to:
  *
- *   BYPASS — (i) the moderator run-for-real review sandbox, which carries its own signed
- *   `reviewRunForReal` claim and is the one population that must run a non-approved app
- *   while not owning it; (ii) every synthetic-id mint (`pubreq_…`, `page_local_…`,
- *   `ephemeral-…`), which has no backing row to be approved; (iii) the owner dev-tunnel
- *   mint (#3285), which signs a REAL `apb_` id for an app that is deliberately
- *   suspended/pending/deprecated — but only while the two preconditions ITS mint enforces
- *   still hold (owner, active tunnel), re-derived here rather than assumed.
+ *   ID  MINT                                              appId / appBlockId       ROW?  MINT NEEDS approved?  VERDICT
+ *   A   `dev-token` approved mode (`dev:live`)            real / real `apb_`       yes   YES                   `ok` while approved; REFUSED once it is not, unless owner+tunnel
+ *   B   `dev-token` pending mode                          `pending-…` / `pubreq_…` no    n/a                   exempt — no row
+ *   C   `dev-token` local-manifest mode                   `local-…` / `page_local_…` no  n/a                   exempt — no row
+ *   D   `tryDevTunnelScopedMint` (ephemeral tunnel)       `ephemeral-…` (both)     no    n/a                   exempt — no row
+ *   E   `tryDevTunnelOwnedNonApprovedMint`                real / real `apb_`       yes   NO — requires NOT approved  exempt IFF owner AND active tunnel
+ *   F   `mintReviewBlockToken` (render-only)              `pending-…` / `pubreq_…` no    requires `pending`    exempt — no row
+ *   F′  `mintReviewBlockToken` (run-for-real)             as F, + `reviewRunForReal`  no  requires `pending`   exempt — from the claim, pre-read
  *
- *   REFUSED — a `dev:live` token minted against an APPROVED app whose status has since
- *   flipped. Its mint required `approved`, so it never had a claim on a non-approved app;
- *   it simply outlived the approval by up to four hours.
+ * A and E are CLAIM-IDENTICAL: same id shapes, same `dev: true`, both owner-held, no
+ * distinguishing field. What separates them is not the token but the preconditions their
+ * mints enforce — E requires an ACTIVE dev tunnel, A does not — which is why the guard
+ * re-derives those rather than reading a flag.
+ *
+ * ⚠️ ONE CASE THE TABLE DOES NOT CAPTURE: an A-class token held by an owner who happens to
+ * have a live tunnel for the same slug IS exempted. That is the deliberate mirror (the
+ * same owner could mint an E token for the same app in the same state), but A and E are
+ * not scope-identical — A clamps against `DEV_TOKEN_SCOPE_ALLOWLIST`, which includes
+ * `apps:storage:read|write`, while E's tunnel allowlist withholds them. The delta is
+ * closed one layer down rather than here: `resolveStorageContext` exempts only
+ * `reviewRunForReal`, so those storage scopes stay inert on a non-approved app.
  *
  * 🔴 WHAT THIS DELIBERATELY DOES NOT RE-CHECK, so the justification is not overstated
  * again. The mint-time belts also include the author / dev-tunnel Flipt flags, forced-SFW,
  * the dev budget cap, and the clamp of scopes to the last moderator-approved snapshot
- * (`approvedScopes`). NONE of those are re-evaluated here. They bound what a stale dev
- * token can DO — self-bound spend, capped per call and per day, and a never-approved app
- * cannot obtain `ai:write:budgeted` at all because `clampTunnelDeclaredScopes([])` cannot
- * invent it — but they are not what this gate decides. Two belts are re-checked; the rest
- * are containment, and are described here as containment rather than as this gate's
- * reasoning. Dev tokens also remain revocable, which is a separate check at each call site
- * and was never exempted.
+ * (`approvedScopes`). NONE of those are re-evaluated here. Two belts are re-checked; the
+ * rest are containment, and are named as containment rather than as this gate's reasoning.
+ *
+ * ⚠️ AND THE CONTAINMENT CLAIM IS SCOPED, because an earlier draft of this paragraph
+ * overstated it in exactly the way the card warned about. *For population E*, a
+ * never-approved app cannot obtain `ai:write:budgeted`: its only scope source is
+ * `clampTunnelDeclaredScopes(app.approvedScopes)`, `approvedScopes` is written only by the
+ * mod-approval flow, and clamping `[]` cannot invent a scope. That is an E-path invariant,
+ * NOT a property of dev tokens. B and C source the un-reviewed pending manifest and the
+ * RAW CLIENT REQUEST BODY respectively, and D sources the tunnel session's declared
+ * grants; none is clamped to any moderator-approved snapshot, and D's brand-new branch
+ * strips spend only while `app-blocks-dev-tunnel-unsubmitted-spend` is OFF. Those three
+ * are bounded instead by the bearer's own `AIServicesWrite` entitlement, self-bound spend,
+ * the per-call dev cap and the per-user daily cap — and they are also the populations this
+ * gate still exempts unconditionally, because they have no row an APPROVAL gate could ever
+ * have decided on. That is the residual surface; it is not closed here and is not claimed
+ * to be. Dev tokens remain revocable regardless — a separate check at each call site,
+ * never exempted.
  *
  * 🔴 HOW THIS RECONCILES WITH THE OTHER TWO RESOLVERS, which apply visibly different
  * rules — they are not three policies, they are one policy plus two structural
@@ -177,12 +200,14 @@ import type { BlockTokenClaims } from '~/server/middleware/block-scope.middlewar
  * surface, not a new class of cost.
  * ⚠️ "A DEV TOKEN SKIPS IT ENTIRELY" WAS TRUE UNTIL clawgate #571 AND IS NOT NOW. A dev
  * token now pays the same read as every other token — the skip WAS the hole, because
- * skipping the read is what made the verdict independent of the row's status. Two things
- * still short-circuit ahead of it: a `reviewRunForReal` token (answered from the claim),
- * and nothing else. The read itself grew one selected column (`app.userId`), which is a
- * join on the FK, not a second query. The genuinely new cost is the dev-tunnel lookup —
- * two sysRedis GETs — and it is reached ONLY on the dev + real-row + NOT-approved path,
- * so no approved app and no non-dev token pays it.
+ * skipping the read is what made the verdict independent of the row's status. Exactly one
+ * thing short-circuits ahead of it: a run-for-real review token, answered from its claims.
+ * The read itself is UNCHANGED — still `select: { status: true }` — and that is
+ * deliberate: the owner column is resolved inside the rare branch instead, because a
+ * nested relation select would have been a second round trip on every request rather than
+ * a wider row (no `relationJoins`; see the predicate). So the new cost is TWO lookups —
+ * one `OauthClient` primary-key read and two sysRedis GETs — both reached ONLY on the dev
+ * + real-row + NOT-approved path. No approved app and no non-dev token pays either.
  *
  * WHAT IT DOES NOT BUY, stated because the gate is uniform and the value is not. The
  * clearest case is `/api/v1/models/:id`: it is dual-auth, and the block-JWT branch
@@ -212,19 +237,22 @@ export async function resolveAppBlockApprovalVerdict(
 ): Promise<AppBlockApprovalVerdict> {
   // POPULATION F′ — the moderator run-for-real review sandbox. The ONE population with a
   // purpose-built discriminator, and the ONE that must run a non-approved app while NOT
-  // being its owner. Answered before the read for the same reason `resolveStorageContext`
-  // answers it first: a review token names a `pubreq_` id that resolves to no row, so the
-  // read could only ever return `not_found`.
-  if (claims.reviewRunForReal === true) return 'dev_exempt';
+  // being its owner. Answered before the read because the review mint signs
+  // `appId: pending-<ULID>`, which is not an `OauthClient.id` and so resolves to no row —
+  // the read could only ever return `not_found`. (The `pubreq_` id everyone reaches for
+  // when explaining this is the `appBlockId`, which this lookup never touches.)
+  //
+  // 🔴 `dev` IS REQUIRED ALONGSIDE IT, even though every mint that stamps
+  // `reviewRunForReal` also stamps `dev`. The card this change answers is about keying
+  // authorization on one signed boolean without narrowing it; taking `reviewRunForReal`
+  // alone would be the same mistake one field over, and would make the exemption WIDER
+  // than the one it replaced. `BlockTokenService.sign` accepts the field independently,
+  // so the pairing is the only thing that closes that dimension, and it costs nothing.
+  if (claims.dev === true && claims.reviewRunForReal === true) return 'dev_exempt';
 
   const block = await dbRead.appBlock.findUnique({
     where: { appId_blockId: { appId: claims.appId, blockId: claims.blockId } },
-    // `app.userId` is the app's OWNER (AppBlock → OauthClient → user). Selected, not
-    // joined for its own sake: it is the ownership belt re-checked below, and reading it
-    // here costs one column on a lookup this path already performs rather than a second
-    // query. `resolveOwnedNonApprovedPageBlock` (block-registry.service.ts) enforces the
-    // SAME `app.userId` at mint — this is that check, re-run at point of use.
-    select: { status: true, app: { select: { userId: true } } },
+    select: { status: true },
   });
 
   // POPULATIONS B / C / D / F — the synthetic-id mints (`pubreq_…`, `page_local_…`,
@@ -266,30 +294,71 @@ export async function resolveAppBlockApprovalVerdict(
   //      expires on its own (30m idle / 8h hard), so a token outliving the debugging
   //      session it was minted for stops being exempt.
   //
-  // Compared against the canonical subject encoding rather than parsed: `sub` is built as
-  // `user:<id>` by the single mint-side encoder (`block-token.service.ts`'s
-  // `input.userId == null ? 'anon' : \`user:${input.userId}\``), and comparing forward
-  // avoids importing the parser from `block-scope.middleware`, which imports THIS module
-  // (the cycle the module docblock above is careful about). `anon` can never match.
-  // `block.app` is optional-chained so a caller stubbing a partial row fails CLOSED.
-  const ownerUserId = block.app?.userId;
-  if (ownerUserId == null || claims.sub !== `user:${ownerUserId}`) return 'not_approved';
+  // 🔴 THE OWNER IS RESOLVED HERE, IN THE BRANCH, AND NOT AS A NESTED SELECT ON THE READ
+  // ABOVE. The obvious spelling — `select: { status: true, app: { select: { userId } } }`
+  // — reads like one widened row and is NOT: the schema's generator block enables only
+  // `previewFeatures = ["metrics"]`, with no `relationJoins`, so Prisma has no join
+  // strategy available and resolves a nested relation with a SECOND round trip. `appId`
+  // is a REQUIRED relation, so unlike a nullable FK that second query cannot be skipped —
+  // it would fire for every token whose row exists, i.e. on every bridge call including
+  // the timer-driven `pollWorkflow` and on every block-JWT REST request, to read a column
+  // only this branch consults. `claims.appId` IS the `OauthClient.id` (it is the FK the
+  // unique is keyed on), so doing it here is the same primary-key lookup Prisma would
+  // have issued, issued only when it is needed. The identical measurement for this
+  // mechanism is recorded in `src/server/selectors/reaction.selector.ts`.
+  const app = await dbRead.oauthClient.findUnique({
+    where: { id: claims.appId },
+    select: { userId: true },
+  });
+  // Compared against the canonical subject encoding rather than parsed. `subjectForUserId`
+  // is the encoder the MINT itself uses, so the guard and the token are the same string by
+  // construction rather than by two hand-typed templates agreeing — which they did not:
+  // this comparison was a third copy of `user:<id>` until the leaf was extracted, and each
+  // copy was pinned only by its own literal, so a suite could not see them diverge.
+  // Comparing forward also avoids importing the PARSER from `block-scope.middleware`,
+  // which imports THIS module. `anon` can never match a numeric owner, and a missing row
+  // fails CLOSED.
+  const ownerUserId = app?.userId;
+  if (ownerUserId == null || claims.sub !== subjectForUserId(ownerUserId)) return 'not_approved';
 
   // Dynamic import, deliberately: `dev-tunnel.service` pulls the k8s control-plane client
   // and the sysRedis surface, and this module is imported STATICALLY by the REST
-  // middleware. Loading it lazily keeps that graph off every non-dev request — the same
-  // reason `tryDevTunnelOwnedNonApprovedMint` imports it this way. Reached only on the
-  // dev + real-row + NOT-approved path, which is rare by construction.
-  const { getActiveDevTunnel } = await import('~/server/services/blocks/dev-tunnel.service');
-  // 🔴 FAILS CLOSED, and that posture is the OPPOSITE of the revocation check one step
-  // earlier — deliberately, and for a different reason than the `lookup_failed` note
-  // above. `getActiveDevTunnel` already swallows a Redis error into `null`, so a cache
-  // incident resolves "no tunnel" and this branch refuses. The population that loses is
-  // owners debugging an app that is ALREADY suspended or pending; nothing user-facing is
-  // served by a non-approved app either way, so the cost of failing closed here is a
-  // degraded developer surface during an incident, not an outage.
-  const tunnel = await getActiveDevTunnel(ownerUserId, claims.blockId);
-  return tunnel ? 'dev_exempt' : 'not_approved';
+  // middleware, which fronts 13 page routes. Loading it lazily keeps that graph out of
+  // every one of those bundles — the same reason `tryDevTunnelOwnedNonApprovedMint` and
+  // all eight `blocks.router` call sites import it this way. Reached only on the dev +
+  // real-row + NOT-approved path.
+  //
+  // 🔴 WRAPPED, BECAUSE "IT CANNOT THROW" WAS ALMOST TRUE AND ALMOST IS NOT A POSTURE.
+  // `getActiveDevTunnel` swallows a rejected read, a `withSysReadDeadline` timeout and a
+  // JSON parse failure — but it attaches `.catch(() => null)` to the RESULT of
+  // `sysRedis.get(...)`, so a SYNCHRONOUS throw from the client (the exact shape
+  // `dev-tunnel.service` warns about twice in its own file) escapes it, as can the
+  // dynamic import itself. Unwrapped, that escape does not fail closed: on REST
+  // `resolveRestApprovalVerdict` catches it as `lookup_failed` → 503, attributing a cache
+  // fault to the replica read and pointing an incident at the wrong subsystem, and on the
+  // bridge it surfaces as a raw internal error instead of a refusal. So the posture is
+  // written rather than inherited.
+  //
+  // FAILING CLOSED HERE IS THE OPPOSITE OF THE REVOCATION CHECK ONE STEP EARLIER, which
+  // fails OPEN by construction, and of the `lookup_failed` case above. That is deliberate:
+  // the population that loses is owners debugging an app that is ALREADY suspended,
+  // pending or deprecated. Nothing user-facing is served by a non-approved app either way,
+  // so the cost is a degraded developer surface during an incident, not an outage.
+  try {
+    const { getActiveDevTunnel } = await import('~/server/services/blocks/dev-tunnel.service');
+    // ⚠️ WHAT ENDS A SESSION EARLY IS THE REAPER, NOT THIS CALL — and its idle clock is
+    // refreshed by ENTRY-document loads only. `dev-tunnel-gate` returns before stamping
+    // `lastActivityAt` on the websocket and subresource branches, so HMR traffic and the
+    // block's own XHR do not count as activity. An owner with the page open and no iframe
+    // re-navigation for 30 minutes therefore loses this exemption MID-SESSION, and the
+    // re-mint does not rescue them because the mint requires the same tunnel. That is the
+    // intended direction — an exemption that outlives the debugging session it was minted
+    // for is the thing this change exists to stop — but the failure is silent, so it is
+    // recorded here rather than left for someone to rediscover from a support ticket.
+    return (await getActiveDevTunnel(ownerUserId, claims.blockId)) ? 'dev_exempt' : 'not_approved';
+  } catch {
+    return 'not_approved';
+  }
 }
 
 /**

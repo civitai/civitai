@@ -17,6 +17,7 @@ import {
   DEV_TOKEN_LIFETIME_SECONDS,
   getBlockTokenVerificationKeysByKid,
 } from '~/server/services/block-token.service';
+import { isValidSubject, USER_SUB_RE } from '~/server/services/block-token-subject';
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 import {
   isBlockActionDetail,
@@ -627,15 +628,14 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
   return null;
 }
 
-// M4: cap digit length to keep `user:<unbounded digits>` from sliding past
-// Number.MAX_SAFE_INTEGER and producing a silent mis-match against ctx.modelId.
-// 12 digits is well above any realistic civitai userId (~10 digits = 9.9B).
-const USER_SUB_RE = /^user:[1-9][0-9]{0,11}$/;
-
-/** True iff `sub` is one of the two valid shapes: `anon` or `user:<positive int>`. */
-export function isValidSubject(sub: string): boolean {
-  return sub === 'anon' || USER_SUB_RE.test(sub);
-}
+// ⚠️ `USER_SUB_RE` and `isValidSubject` MOVED to `~/server/services/block-token-subject`
+// — a zero-import leaf shared with the MINT (`block-token.service`), the revocation
+// writer and the approval guard, so the format has one spelling instead of one per
+// consumer. Re-exported here because this module is where every existing caller imports
+// it from. The regex's own rationale travels with it: capping the digit length keeps
+// `user:<unbounded digits>` from sliding past Number.MAX_SAFE_INTEGER and producing a
+// silent mis-match against ctx.modelId.
+export { isValidSubject };
 
 /**
  * Extracts the userId from a verified `sub` claim. Use AFTER isValidSubject.

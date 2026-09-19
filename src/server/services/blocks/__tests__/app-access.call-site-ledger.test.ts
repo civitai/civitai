@@ -124,9 +124,13 @@ const GATE_LEDGER: Record<string, string> = {
     'is a payee resolution. If collaborator revenue-sharing is ever specified it belongs ' +
     'as an explicit split on top of this row, not as a widened owner lookup.',
   'src/server/services/blocks/block-approval.service.ts':
-    'resolveAppBlockApprovalVerdict reads `app: { userId }` to decide whether a `dev` ' +
-    'token may bypass the approved-status check on a REAL, NOT-approved row — the ' +
-    'owner-dev-tunnel case (clawgate #571). DELIBERATELY OWNER-ONLY, and the reason is ' +
+    'resolveAppBlockApprovalVerdict resolves the app owner — `oauthClient.findUnique` on ' +
+    '`claims.appId`, read as `app?.userId` — to decide whether a `dev` token may bypass ' +
+    'the approved-status check on a REAL, NOT-approved row: the ' +
+    'owner-dev-tunnel case (clawgate #571). It is a SEPARATE query rather than a nested ' +
+    'select on the row read, because without `relationJoins` a nested relation is a ' +
+    'second round trip anyway and would bill every bridge call and every REST request ' +
+    'for a column only this branch consults. DELIBERATELY OWNER-ONLY, and the reason is ' +
     'that it is a MIRROR rather than a policy of its own: the only mint that can issue ' +
     'such a token, `resolveOwnedNonApprovedPageBlock`, resolves `where: { app: { userId ' +
     '} }` — owner-only, not widened to seats. Widening THIS read to ACCEPTED ' +

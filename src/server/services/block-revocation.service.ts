@@ -63,21 +63,22 @@ export function isSubjectScopedInstanceId(blockInstanceId: string): boolean {
 }
 
 /**
- * The token `sub` a given userId mints as. THE ONE PLACE this format is written on the
- * WRITE side — the read side passes `claims.sub` verbatim, so if these two spellings
- * ever disagree the scoped marker silently refuses nobody.
+ * The token `sub` a given userId mints as.
  *
- * Pinned by `__tests__/subject-key-round-trip.test.ts`, which feeds this through
- * `parseSubjectUserId` — the READ side's parser — and back. An earlier version of this
- * sentence claimed that suite already existed; it did not, and the only thing holding the
- * spelling was a hand-typed `:user:<id>:` literal in
- * `services/__tests__/ban-revokes-block-instances.test.ts`. That literal still
- * independently reds on a spelling change and is worth keeping for exactly that reason,
- * but it pins the KEY, not this function.
+ * ⚠️ MOVED to `~/server/services/block-token-subject` and re-exported here so this
+ * module's existing importers are unchanged. The docblock that used to sit on the
+ * definition claimed this was "THE ONE PLACE this format is written on the WRITE side",
+ * and that was FALSE even when written: `block-token.service.ts`'s mint open-coded the
+ * same template, so the ban writer and the thing that actually stamps every JWT were two
+ * copies agreeing by coincidence. clawgate #571's approval guard would have been a
+ * third. The claim is now true, of the leaf — see that module for why it is a leaf.
+ *
+ * Still pinned by `__tests__/subject-key-round-trip.test.ts`, which feeds it through
+ * `parseSubjectUserId` — the READ side's parser — and back; and the hand-typed
+ * `:user:<id>:` literal in `services/__tests__/ban-revokes-block-instances.test.ts`
+ * independently reds on a spelling change, pinning the KEY rather than this function.
  */
-export function subjectForUserId(userId: number): string {
-  return `user:${userId}`;
-}
+export { subjectForUserId } from '~/server/services/block-token-subject';
 
 /**
  * Per-blockInstanceId token revocation, written when an install is uninstalled,
