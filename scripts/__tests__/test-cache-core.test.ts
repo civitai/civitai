@@ -72,6 +72,39 @@ describe('keys are portable between worktrees', () => {
     expect(toRel('file:///C:/Dev/wt/two/src/a.ts', 'C:/Dev/wt/two/')).toBe('src/a.ts');
   });
 
+  // The assertion above was red on POSIX from the moment it landed, because `fileURLToPath`
+  // resolves a Windows file URL to `/C:/...` here and to `C:\...` on Windows. It is the
+  // regression guard for that defect, and a mutation table showed it is also the STRONGEST
+  // one available: of four mutants — normalisation deleted, inverted, prefix-compare broken,
+  // and "strip any leading slash" — it kills the first three.
+  //
+  // 🔴 An earlier draft of this fix added a second regression test asserting that the URL and
+  // path spellings return the SAME key. It was removed rather than kept: it is subsumed. It
+  // kills the deleted-normalisation mutant, which the assertion above already kills, and it
+  // PASSES both the inverted and broken-prefix mutants, because an equality with no anchor is
+  // satisfied when both sides return null. Do not re-add it — an unanchored equality reads as
+  // robustness and is the weaker check.
+  //
+  // What follows is an INVARIANT guard, labelled from what it was MEASURED to do at the
+  // pre-fix commit rather than from what it was written to do: it passes before the fix and
+  // after, so it is NOT regression coverage and must not be counted as any. It earns its
+  // place on a different axis — every other `toRel` assertion in this file is Windows-shaped
+  // while CI and every Linux/macOS dev run POSIX, and it is the only thing that kills the
+  // "strip any leading slash" mutant.
+  it('invariant: POSIX ids are unaffected by the drive-letter normalisation', () => {
+    expect(toRel('/home/u/repo/src/b.ts', '/home/u/repo')).toBe('src/b.ts');
+    expect(toRel('file:///home/u/repo/src/b.ts', '/home/u/repo')).toBe('src/b.ts');
+    expect(toRel('/var/tmp/x.json', '/home/u/repo')).toBeNull();
+    expect(toRel('src/c.ts', '/home/u/repo')).toBe('src/c.ts');
+  });
+
+  // The narrowing above (normalising inside the `file://` branch) is what keeps this true:
+  // a POSIX path whose first segment is a letter and a colon is NOT a platform artefact and
+  // must not be repaired. Measured against the unscoped draft, which returned null here.
+  it('invariant: a POSIX path that merely looks like a drive letter is left alone', () => {
+    expect(toRel('/C:/notes/x.md', '/C:')).toBe('notes/x.md');
+  });
+
   // A read outside the repo (a temp file the test wrote itself) is not an input anyone else shares.
   it('drops absolute paths outside the repo', () => {
     expect(toRel('D:/elsewhere/x.json', 'C:/Dev/wt/one')).toBeNull();
