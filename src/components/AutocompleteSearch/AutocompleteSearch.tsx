@@ -167,10 +167,10 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
     // 🔴 This runs when `searchTarget` CHANGES, which is narrower than "on navigation": the line
     // above collapses every first path segment outside `targetData` to `'models'`, so `/` →
     // `/models/123/slug`, or any move between two such paths, leaves it unchanged and this never
-    // runs. The other two discards are `blurAndDiscardCarriedText` (submit, Escape) and the clear
-    // button, which writes `''` through the setter. Together they narrow the window rather than
-    // closing it, and the remainder is deliberate: text blurred away and then left alone survives
-    // in the carrier until the next pick from the selector re-seeds it.
+    // runs. The other explicit discard is `blurAndDiscardCarriedText`, on submit and on Escape;
+    // separately, emptying the input discards through the setter. Together they narrow the window
+    // rather than closing it, and the remainder is deliberate: text blurred away and then left
+    // alone survives in the carrier until the next pick from the selector re-seeds it.
     carriedSearchText.current = '';
     setTargetIndex(searchTarget);
   }, [searchTarget]);
@@ -471,11 +471,11 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   // what they typed, so both discard the carried copy as well as blurring. One function rather
   // than the line written at each call site: the two must not drift apart.
   //
-  // Deliberately NOT inside `blurInput`. Both of that function's callers are these two paths
-  // today, so the two placements are behaviourally identical at this head — but `blurInput` is a
-  // DOM verb and the discard is a claim about intent, and a third caller that is not a "done"
-  // signal would silently inherit it. (Nothing else blurs: the imperative handle below exposes
-  // `focus` only.)
+  // Deliberately NOT inside `blurInput`, which this is now the only caller of — so the two
+  // placements are behaviourally identical at this head. `blurInput` is a DOM verb and the
+  // discard is a claim about intent: put inside it, a future caller that is not a "done" signal
+  // would inherit the discard silently. (Nothing else blurs at all today: the imperative handle
+  // below exposes `focus` only.)
   //
   // 🔴 And NOT from `handleBlur`. Reaching the category selector requires blurring this input, so
   // a discard there would empty the carrier immediately before the one switch the carry exists

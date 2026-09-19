@@ -376,9 +376,10 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     // delete shape, which is the likeliest way this comes back.
     //
     // `setTargetIndex` alone. This used to alternate with `onTargetChange`, the spelling the PR
-    // base used before the handler was lifted out of the inner component; that name exists nowhere
-    // in `src/` now, and the arm could not have discriminated anyway — a revert to the base
-    // spelling fails the `indexOf` assertion above before reaching this line.
+    // base used before the handler was lifted out of the inner component; no source file spells
+    // it any more (it survives only in this file's prose), and the arm could not have
+    // discriminated anyway — a revert to the base spelling fails the `indexOf` assertion above
+    // before reaching this line.
     expect([...source.matchAll(/setTargetIndex\(searchTarget/g)]).toHaveLength(1);
 
     // …and it still FOLLOWS navigation. Emptying its dependency array leaves one writer, in the
