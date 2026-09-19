@@ -251,6 +251,8 @@ import client from 'prom-client';
 import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
 import { ImagesFeed } from '../../../event-engine-common/feeds';
 import { MetricService } from '../../../event-engine-common/services/metrics';
+import { cacheKeys } from '../../../event-engine-common/utils/cache-keys';
+import type { ImageMetrics } from '../../../event-engine-common/types/metric-types';
 import { CacheService } from '../../../event-engine-common/services/cache';
 import type { IMeilisearch } from '../../../event-engine-common/types/meilisearch-interface';
 import type {
@@ -1535,7 +1537,12 @@ function noteEmptyIdsPage(
 // observable in Prometheus. No label dimension — the timeout has no natural one.
 const imageMetricsClickhouseTimeoutCounter = registerCounter({
   name: 'image_metrics_clickhouse_timeout_total',
-  help: 'getImageMetricsObject ClickHouse read exceeded the soft-fallback timeout (served empty metrics)',
+  help: 'getImageMetricsObject ClickHouse read exceeded the soft-fallback timeout (serves cached counts where warm, omits the id otherwise)',
+});
+
+const imageMetricsStaleCacheTimeoutCounter = registerCounter({
+  name: 'image_metrics_stale_cache_timeout_total',
+  help: 'getImageMetricsObject metric-cache fallback exceeded its own deadline (serves only the ids that landed in time)',
 });
 
 /**
@@ -3387,7 +3394,8 @@ export async function getImagesFromFeedSearch(
     // populatedQuery (the event-engine-common MetricService read). The feed items
     // come from Meili+Postgres; only the display-only engagement metrics are
     // ClickHouse-backed, and they ALREADY fail-open to zero elsewhere
-    // (getImageMetricsObject → {}). But this feed path runs the metric read INSIDE
+    // (getImageMetricsObject serves the cached counts, or omits the id). But this
+    // feed path runs the metric read INSIDE
     // populatedQuery, so a CH connection error (socket hang up / Code 279 / Code
     // 210) thrown there isn't a Meili error → it would fall through to `throw err`
     // → the handler's generic 500. Re-map it to the same retryable 503 as a Meili
@@ -5022,6 +5030,139 @@ type ImageMetricsObject = Record<
  * same way at every one of them or a metrics outage reads as silence on some feeds
  * and as unknown on others.
  */
+// Cache-only read of the `metrics:*` hashes, for the stale arm below.
+//
+// Staleness is bounded by the WATCHER, not by the cache TTL: the event-engine
+// watcher hIncrIfExists-es these same keys as reactions arrive, and the failure
+// this arm exists for is app-to-ClickHouse transport, which leaves that writer
+// running. The TTL bounds eviction, and hot entries slide it.
+//
+// Never write back: a cached zero or unknown would outlive the outage by that
+// TTL. An id with nothing cached stays ABSENT, which is what `statsUnknown`
+// below reports to the client.
+//
+// Plain client on purpose - `redis.packed.hGetAll` hDels every field it fails to
+// decode, and a multi-digit counter string does fail, so that read would gut the hash.
+const STALE_METRIC_CACHE_TIMEOUT_MS = 500;
+
+const getCachedImageMetricsObject = async (ids: number[]): Promise<ImageMetricsObject> => {
+  const uniqueIds = [...new Set(ids)];
+  if (!uniqueIds.length) return {};
+
+  const metricRedis = redis as unknown as IRedisClient;
+
+  // The deadline below serves whatever ARRIVED: racing the aggregate would let one
+  // slow shard discard the N-1 answers already in hand, and this arm only runs when
+  // the tail is already bad.
+  const landed: (Record<string, string> | undefined)[] = new Array(uniqueIds.length);
+  // A metric-redis outage that REJECTS resolves in milliseconds, so the deadline
+  // never fires and the timeout counter never sees it. Without this the loudest
+  // half of an outage is the silent one.
+  let rejected = 0;
+
+  try {
+    // Runs AFTER the outer timeout settled: without its own deadline this await is
+    // bounded only by the redis client's multi-second backstops (cluster per-command
+    // deadline 15s, socket idle 10s), reopening the SSR hazard the outer timeout closes.
+    const reads = Promise.all(
+      uniqueIds.map((id, index) =>
+        metricRedis
+          .hGetAll(cacheKeys.metric('Image', id))
+          .then((hash) => {
+            landed[index] = hash;
+          })
+          // Per id: one rejected key must not discard the other N-1 answers.
+          .catch(() => {
+            rejected += 1;
+          })
+      )
+    );
+
+    await withTimeoutFallback<unknown>(reads, STALE_METRIC_CACHE_TIMEOUT_MS, undefined, () => {
+      imageMetricsStaleCacheTimeoutCounter.inc();
+      logToAxiom(
+        {
+          type: 'warning',
+          name: 'getCachedImageMetrics timeout',
+          message: `Stale metric cache read exceeded ${STALE_METRIC_CACHE_TIMEOUT_MS}ms`,
+          idCount: uniqueIds.length,
+        },
+        'clickhouse'
+      ).catch();
+    });
+
+    if (rejected > 0) {
+      logToAxiom(
+        {
+          type: 'warning',
+          name: 'getCachedImageMetrics rejected',
+          message: `Metric cache read rejected for ${rejected} of ${uniqueIds.length} ids`,
+          idCount: uniqueIds.length,
+        },
+        'clickhouse'
+      ).catch();
+    }
+
+    const result: ImageMetricsObject = {};
+    uniqueIds.forEach((id, index) => {
+      const hash = landed[index];
+      if (!hash || Object.keys(hash).length === 0) return;
+
+      // A `notFound` sentinel is a positive "ClickHouse had no rows", so it
+      // shapes to nulls like any cached value - the same zeros MetricService
+      // itself resolves that id to. Only an absent key is unknown.
+      //
+      // `|| null` here, not only in the shaper: it keeps NaN from ever leaving this
+      // helper, so changing the shaper's `||` to `??` cannot leak one downstream.
+      const count = (value: string | undefined) => Number.parseInt(value ?? '', 10) || null;
+
+      result[id] = shapeImageMetrics(id, {
+        Like: count(hash.Like),
+        Heart: count(hash.Heart),
+        Laugh: count(hash.Laugh),
+        Cry: count(hash.Cry),
+        commentCount: count(hash.commentCount),
+        Collection: count(hash.Collection),
+        tippedAmount: count(hash.tippedAmount),
+      });
+    });
+
+    return result;
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'Failed to getCachedImageMetrics',
+        message: error.message,
+        stack: error.stack,
+        cause: error.cause,
+      },
+      'clickhouse'
+    ).catch();
+    return {};
+  }
+};
+
+// Both arms shape here: a second copy of this field list is how the stale arm
+// silently serves null for a metric someone adds to the fresh arm only.
+// `ImageMetrics` is generated, so a MIS-KEYED field in the stale arm's
+// hand-written list is a compile error. An added metric is not - `Partial`
+// makes every key optional, so the stale arm would serve null for it.
+const shapeImageMetrics = (
+  id: number,
+  m: Partial<Record<keyof ImageMetrics, number | null>> | undefined
+): ImageMetricsObject[number] => ({
+  imageId: id,
+  reactionLike: m?.Like || null,
+  reactionHeart: m?.Heart || null,
+  reactionLaugh: m?.Laugh || null,
+  reactionCry: m?.Cry || null,
+  comment: m?.commentCount || null,
+  collection: m?.Collection || null,
+  buzz: m?.tippedAmount || null,
+});
+
 export function toImageV2Stats(match: ImageMetricsObject[number] | undefined): ImageV2Stats {
   return {
     likeCountAllTime: match?.reactionLike ?? 0,
@@ -5079,21 +5220,12 @@ export const getImageMetricsObject = async (
         'clickhouse'
       ).catch();
     });
-    if (!resolved) return {};
+    // Both failure exits serve the cache: an id it answers for is KNOWN (stale by
+    // at most the watcher's lag), and one it cannot stays absent, which
+    // `toImageV2Stats` reports as `statsUnknown`.
+    if (!resolved) return await getCachedImageMetricsObject(ids);
     const result: ImageMetricsObject = {};
-    for (const id of ids) {
-      const m = metrics[id];
-      result[id] = {
-        imageId: id,
-        reactionLike: m?.Like || null,
-        reactionHeart: m?.Heart || null,
-        reactionLaugh: m?.Laugh || null,
-        reactionCry: m?.Cry || null,
-        comment: m?.commentCount || null,
-        collection: m?.Collection || null,
-        buzz: m?.tippedAmount || null,
-      };
-    }
+    for (const id of ids) result[id] = shapeImageMetrics(id, metrics[id]);
     return result;
   } catch (e) {
     const error = e as Error;
@@ -5107,7 +5239,7 @@ export const getImageMetricsObject = async (
       },
       'clickhouse'
     ).catch();
-    return {};
+    return await getCachedImageMetricsObject(data.map((d) => d.id));
   }
 };
 
