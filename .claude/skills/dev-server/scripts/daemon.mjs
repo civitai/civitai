@@ -181,8 +181,8 @@ function loadSkillConfig() {
         }
         case 'TEST_CACHE_MODE':
           // Degrades rather than throws, like every setting the module-scope queue consumes.
-          if (['off', 'shadow'].includes(value)) config.testCacheMode = value;
-          else if (value) console.error(`Ignoring TEST_CACHE_MODE=${value} (want off or shadow)`);
+          if (['off', 'shadow', 'on'].includes(value)) config.testCacheMode = value;
+          else if (value) console.error(`Ignoring TEST_CACHE_MODE=${value} (want off, shadow or on)`);
           break;
         case 'TEST_MAX_WORKERS': {
           // Same reasoning as TEST_CONCURRENCY above — this feeds a constructor that throws, and

@@ -14,7 +14,6 @@
 import { EventEmitter } from 'events';
 import { spawn, execFileSync } from 'child_process';
 import { closeSync, existsSync, openSync, readSync, unlinkSync } from 'fs';
-import { fileURLToPath } from 'url';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
@@ -212,23 +211,22 @@ export function workerCapArgv(maxWorkers, args) {
   return [`--max-workers=${maxWorkers}`];
 }
 
-export const CACHE_MODES = ['off', 'shadow'];
+export const CACHE_MODES = ['off', 'shadow', 'on'];
 
-// The daemon lives in the primary checkout, so this is the primary's copy of the reporter — the
-// same file for every worktree's run, whichever branch that worktree is on. It imports node
-// builtins only, which is what makes running it against another tree's suite safe.
-export const SHADOW_REPORTER = fileURLToPath(
-  new URL('../../../../scripts/test-cache/reporter.mjs', import.meta.url)
-);
+// The WORKTREE's copy, not the daemon's: the sequencer and fs tracker come from that tree's
+// vitest config, and all three must share one key definition (scripts/test-cache/core.mjs) or
+// every lookup misses. A tree without the files simply runs uncached.
+export const cacheReporterPath = (worktree) => join(worktree, 'scripts', 'test-cache', 'reporter.mjs');
 
 /**
- * The reporter arguments a queued unit run should carry. Naming any `--reporter` replaces vitest's
- * default, so a caller who named none gets `default` back beside the shadow one — otherwise turning
- * the shadow on would silently strip every queued run's normal output.
+ * The reporter arguments a queued unit run should carry. The reporter is passed on the command line
+ * rather than from the config because a caller's own `--reporter` replaces config reporters — and
+ * that would drop the false-skip check while the sequencer went on skipping. Naming any
+ * `--reporter` also replaces vitest's default, so a caller who named none gets `default` back.
  */
-export function cacheReporterArgv(cacheMode, args, reporterPath = SHADOW_REPORTER) {
-  if (cacheMode !== 'shadow') return [];
-  if (!existsSync(reporterPath)) return [];
+export function cacheReporterArgv(cacheMode, args, reporterPath) {
+  if (cacheMode === 'off') return [];
+  if (!reporterPath || !existsSync(reporterPath)) return [];
   const named = args.some((a) => /^--reporter(?:=|$)/.test(String(a)));
   return [...(named ? [] : ['--reporter=default']), `--reporter=${reporterPath}`];
 }
@@ -252,7 +250,7 @@ export function defaultStartRun({
     ...args,
     ...(capWorkers ? workerCapArgv(maxWorkers, args) : []),
     // Unit runs only: the reporter is a vitest reporter, and tsc would reject the flag.
-    ...(capWorkers ? cacheReporterArgv(cacheMode, args) : []),
+    ...(capWorkers ? cacheReporterArgv(cacheMode, args, cacheReporterPath(worktree)) : []),
   ];
 
   onLog('info', `> ${pnpm} ${argv.join(' ')}`);
@@ -275,7 +273,12 @@ export function defaultStartRun({
       // enqueue a second run and wait for it, while this one holds the slot that run needs — a
       // deadlock on every full-suite run, not a race. Concurrency is not the fix: each logical run
       // would need two slots, so N agents starting together still fill them all with waiters.
-      env: { ...process.env, CIVITAI_TEST_QUEUE: '0' },
+      env: {
+        ...process.env,
+        CIVITAI_TEST_QUEUE: '0',
+        // Read by the worktree's vitest config, sequencer, tracker and reporter alike.
+        CIVITAI_TEST_CACHE: RUN_KINDS[normalizeKind(kind)].capWorkers ? cacheMode : 'off',
+      },
       // The same fd twice: one file description, one shared offset, so the two streams append in
       // the order they were actually written. See createOutputCapture.
       stdio: ['ignore', capture.writeFd, capture.writeFd],

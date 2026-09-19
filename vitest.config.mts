@@ -2,6 +2,9 @@ import { defineConfig } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
 import path from 'path';
 
+import { mode as testCacheMode } from './scripts/test-cache/core.mjs';
+import TestCacheSequencer from './scripts/test-cache/sequencer.mjs';
+
 // Worker count is UNCAPPED by default — Vitest's own resolution applies untouched (`cpus - 1` in
 // run mode, `floor(cpus / 2)` in watch; the browser pool sizes itself at `min(12, cpus - 1)`).
 //
@@ -175,7 +178,12 @@ const unitTestConfig = {
   globals: true,
   environment: 'node' as const,
   exclude: ['node_modules', 'tests/**/*'], // Exclude Playwright tests
-  setupFiles: ['src/__tests__/setup.ts'],
+  // The fs tracker records which files each test reads, for the result cache. It is loaded only
+  // when the queue turned the cache on (CIVITAI_TEST_CACHE) and never in CI — see scripts/test-cache.
+  setupFiles: [
+    'src/__tests__/setup.ts',
+    ...(testCacheMode() !== 'off' ? ['scripts/test-cache/fs-tracker.mjs'] : []),
+  ],
   // Several unit tests cold-`await import(...)` a large Next API-page / service
   // module graph (mocked I/O, but a real ~9–16s TS transform). With the suite's
   // worker pool saturated, that legitimate cold transform races for CPU and
@@ -438,6 +446,9 @@ export default defineConfig({
   resolve: { alias },
   test: {
     maxWorkers,
+    // Root-level because vitest builds ONE sequencer for the whole run. It only ever skips files in
+    // the unit projects, and only when the cache is on.
+    ...(testCacheMode() !== 'off' ? { sequence: { sequencer: TestCacheSequencer } } : {}),
     projects: [
       // The `packages/*` suites, referenced by their OWN config files rather than
       // re-declared here. Until this line existed, nothing in CI invoked them: the `unit`
