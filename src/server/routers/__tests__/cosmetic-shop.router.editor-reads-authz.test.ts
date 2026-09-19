@@ -90,6 +90,20 @@ describe('the cosmetic shop editor reads are moderator-only', () => {
       expect(read.mock, 'a scoped token must not reach the editor record').not.toHaveBeenCalled();
     });
 
+    // A procedure with no scope annotation requires every bit of Full. Dropping
+    // any one bit must be refused, whichever annotation someone adds later.
+    it(`${read.name} refuses every token missing one bit of Full`, async () => {
+      for (let bit = 0; bit < 25; bit++) {
+        const caller = cosmeticShopRouter.createCaller(
+          fakeCtx(mod, TokenScope.Full & ~(1 << bit)) as never
+        );
+        await expect(read.call(caller), `token missing bit ${bit}`).rejects.toMatchObject({
+          code: 'FORBIDDEN',
+        });
+      }
+      expect(read.mock).not.toHaveBeenCalled();
+    });
+
     it(`${read.name} refuses an anonymous caller`, async () => {
       const caller = cosmeticShopRouter.createCaller(fakeCtx(undefined) as never);
 
