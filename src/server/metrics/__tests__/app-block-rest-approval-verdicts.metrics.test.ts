@@ -79,6 +79,12 @@ describe('civitai_app_block_rest_approval_verdicts_total', () => {
    *   not_found     — SERVED. A healthy app; the false-positive channel.
    *   lookup_failed — ROUTE-DEPENDENT: 503 on the routes that fail closed, SERVED on the
    *                   five that declare `onApprovalLookupFailure`. Infra, not policy.
+   *   tunnel_lookup_failed
+   *                 — REFUSED 403 on EVERY route. Infra like `lookup_failed`, but a CACHE
+   *                   fault rather than a replica one, and `onApprovalLookupFailure` does
+   *                   NOT cover it: a known non-approved app must not be served anywhere
+   *                   because a cache was down. Separate from `not_approved` so a sysRedis
+   *                   incident is not counted as the dev-token narrowing working.
    *
    * `sum(rate(...))` across the label adds requests that were turned away to requests that
    * were served, so an operator who cannot split by `reason` has a number with no meaning.
@@ -122,10 +128,16 @@ describe('civitai_app_block_rest_approval_verdicts_total', () => {
     recordBlockRestApprovalVerdict('not_found');
     recordBlockRestApprovalVerdict('not_found');
     recordBlockRestApprovalVerdict('lookup_failed');
+    // The fourth reason is driven here too, so the title's count and the case's coverage
+    // are the same number. It was left out when the reason was added — the title said
+    // four while the body drove three, which is a coverage claim wider than the test, the
+    // same shape this file corrects two cases below.
+    recordBlockRestApprovalVerdict('tunnel_lookup_failed');
 
     expect(await readReason('not_approved')).toBe(1);
     expect(await readReason('not_found')).toBe(2);
     expect(await readReason('lookup_failed')).toBe(1);
+    expect(await readReason('tunnel_lookup_failed')).toBe(1);
   });
 
   it('🔴 DECLARES exactly one label, `reason` — the cardinality bound is structural', async () => {

@@ -402,7 +402,11 @@ export async function resolveAppBlockApprovalVerdict(
     // sysRedis fault on the same series as every legitimate stale-token refusal, i.e. on
     // the one signal this whole change ships to be watched on, where it would read as the
     // narrowing working. The log below is kept for environments that collect container
-    // logs; on THIS deployment they are not collected, so the counter is the signal.
+    // logs; on THIS deployment they are not collected, so the counter is the signal —
+    // ⚠️ ON REST. This predicate is shared, and the bridge caller records NO verdict
+    // counter at all, so on that surface the unreadable log is still all there is. See
+    // `tunnelFailureLog` for the full statement; do not read this line as "observable
+    // everywhere" just because you are standing in the shared function.
     tunnelFailureLog.warn(err);
     return 'tunnel_lookup_failed';
   }
@@ -561,8 +565,15 @@ function warnLookupFailed(err: unknown): void {
  * So the leg got the verdict it needed: `tunnel_lookup_failed`, refusing identically to
  * `not_approved` on both callers but counted under its own `reason=` label. THIS log is
  * kept because it costs nothing and is genuinely useful anywhere container logs ARE
- * collected (local, and any future deployment that turns them on) — but it is no longer
- * load-bearing, and nothing above should be read as claiming it is.
+ * collected (local, and any future deployment that turns them on).
+ *
+ * ⚠️ "NO LONGER LOAD-BEARING" IS TRUE ON REST ONLY, and an earlier version of this line
+ * said it flat — which contradicted the paragraph ninety lines above stating that a
+ * tunnel failure reached through the BRIDGE emits no counter and has this line as its
+ * only trace. Both cannot be true of the same logger. On REST the verdict carries the
+ * signal and this is prose; on the bridge it is everything there is, on a deployment that
+ * cannot read it. That asymmetry is the honest description, and it is an argument for
+ * giving the bridge a verdict counter — not for trusting this log.
  */
 const tunnelFailureLog = makeThrottledWarn('[block-scope] dev-tunnel re-check failed');
 
