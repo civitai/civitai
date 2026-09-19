@@ -19,6 +19,7 @@ import {
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useReactionSettingsContext } from '~/components/Reaction/ReactionSettingsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { ReactionEntityType, ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -94,7 +95,7 @@ export function PostReactions({
 export function Reactions({
   reactions,
   metrics,
-  metricsUnknown,
+  metricsUnknown: metricsUnknownFromServer,
   entityType,
   entityId,
   readonly,
@@ -119,6 +120,8 @@ export function Reactions({
     getInitialValueInEffect: true,
   });
   const { buttonStyling, hideReactions } = useReactionSettingsContext();
+  const features = useFeatureFlags();
+  const metricsUnknown = !!metricsUnknownFromServer && !!features.reactionCountsUnknown;
 
   const ignoredKeys = ['tippedAmountCount'];
   const available = availableReactions[entityType];
@@ -201,6 +204,7 @@ export function Reactions({
           <BuzzTippingBadge
             toUserId={targetUserId}
             tippedAmountCount={metrics?.tippedAmountCount ?? 0}
+            countUnknown={metricsUnknown}
             entityType={entityType}
             entityId={entityId}
             hideLoginPopover
@@ -350,7 +354,7 @@ function ReactionBadge({
         {constants.availableReactions[reaction]}
       </Text>{' '}
       {!hideReactionCount && (
-        <Text inherit lh={1} aria-label={countUnknown ? 'count unavailable' : undefined}>
+        <Text inherit lh={1}>
           {countUnknown ? (
             '–'
           ) : (
@@ -364,6 +368,7 @@ function ReactionBadge({
 
 function BuzzTippingBadge({
   tippedAmountCount,
+  countUnknown,
   entityId,
   entityType,
   toUserId,
@@ -371,6 +376,7 @@ function BuzzTippingBadge({
   ...props
 }: {
   tippedAmountCount: number;
+  countUnknown?: boolean;
   toUserId: number;
   entityType: string;
   entityId: number;
@@ -402,7 +408,11 @@ function BuzzTippingBadge({
     >
       <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
       <Text inherit lh={1}>
-        <AnimatedCount value={tippedAmountCount + tippedAmount} resetKey={entityId} />
+        {countUnknown ? (
+          '–'
+        ) : (
+          <AnimatedCount value={tippedAmountCount + tippedAmount} resetKey={entityId} />
+        )}
       </Text>
     </Badge>
   );

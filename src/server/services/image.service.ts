@@ -3334,9 +3334,10 @@ export async function getImagesFromFeedSearch(
         tags: transformedTags,
         // Not derived: this path's stats come from `event-engine-common`'s ImageStats,
         // which has already collapsed an absent metric row to zero and cannot say which
-        // it was. Reachable only from /api/v1/images (JSON), never from a rendered feed,
-        // so nothing renders a wrong unknown state off it. Carrying the flag properly
-        // needs the shape changed in the submodule first.
+        // it was. Type satisfaction only -- `runImageSearch`'s shaper in
+        // image-search.service.ts drops the field on both branches, so neither REST
+        // surface it backs receives it. Carrying the flag properly needs the shape
+        // changed in the submodule first.
         stats: { ...rest.stats, statsUnknown: false },
       };
     });
@@ -5057,7 +5058,15 @@ export const getImageMetricsObject = async (
     // is typed identically (no widening to the full metric union).
     const fetchPromise = getImageMetricService().fetch('Image', ids);
     type ImageMetricMap = Awaited<typeof fetchPromise>;
+    // The two failure exits have to produce the SAME shape, because callers now read
+    // the absence of an id as "unresolved". The loop below writes an entry for every
+    // requested id, so without this flag a timeout would hand back all-null entries
+    // that are present -- i.e. indistinguishable from an image nobody reacted to,
+    // which is the exact confusion this function's callers exist to avoid. The outer
+    // catch already returns {}.
+    let resolved = true;
     const metrics = await withTimeoutFallback(fetchPromise, timeoutMs, {} as ImageMetricMap, () => {
+      resolved = false;
       imageMetricsClickhouseTimeoutCounter.inc();
       logToAxiom(
         {
@@ -5070,6 +5079,7 @@ export const getImageMetricsObject = async (
         'clickhouse'
       ).catch();
     });
+    if (!resolved) return {};
     const result: ImageMetricsObject = {};
     for (const id of ids) {
       const m = metrics[id];

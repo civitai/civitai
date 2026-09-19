@@ -29,6 +29,9 @@ describe('toImageV2Stats', () => {
     const unknown = toImageV2Stats(undefined);
     const zero = toImageV2Stats(answeredWithNoReactions);
 
+    // Both halves stated in this case, so it cannot pass on a mutant that makes
+    // `statsUnknown` undefined rather than true — the comparison below alone would.
+    expect(unknown.statsUnknown).toBe(true);
     expect(zero.statsUnknown).toBe(false);
     // Stated as a comparison rather than two separate assertions: the counts are
     // equal in both, so `statsUnknown` is the ONLY thing carrying the difference. If
@@ -38,20 +41,32 @@ describe('toImageV2Stats', () => {
     expect(zero.statsUnknown).not.toBe(unknown.statsUnknown);
   });
 
-  it('passes real counts through untouched', () => {
+  // Every count distinct, and asserted with toEqual over all nine fields: the helper
+  // now feeds seven call sites, so a single swapped mapping (collection read as
+  // comment, laugh as cry) is a site-wide feed regression. Repeated values or a
+  // partial toMatchObject would let any such swap through.
+  it('maps every count to its own field', () => {
     const stats = toImageV2Stats({
-      ...answeredWithNoReactions,
+      imageId: 1,
       reactionLike: 7,
       reactionHeart: 3,
+      reactionLaugh: 11,
+      reactionCry: 13,
       comment: 2,
+      collection: 17,
       buzz: 500,
     });
 
-    expect(stats).toMatchObject({
+    expect(stats).toEqual({
       likeCountAllTime: 7,
       heartCountAllTime: 3,
+      laughCountAllTime: 11,
+      cryCountAllTime: 13,
       commentCountAllTime: 2,
+      collectedCountAllTime: 17,
       tippedAmountCountAllTime: 500,
+      dislikeCountAllTime: 0,
+      viewCountAllTime: 0,
       statsUnknown: false,
     });
   });

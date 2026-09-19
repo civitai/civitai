@@ -99,18 +99,37 @@ describe('getImageMetricsObject ClickHouse timeout fail-soft', () => {
     expect(counterIncMock).not.toHaveBeenCalled();
   });
 
-  it('fails soft to all-null metrics within the timeout when the metric read HANGS (no parking)', async () => {
+  it('leaves every id ABSENT when the metric read HANGS, so a timeout reads as unresolved', async () => {
     fetchMock.mockImplementation(never); // wedged ClickHouse read
 
     const start = Date.now();
     const result = await getImageMetricsObject([{ id: 1 }, { id: 2 }]);
     const elapsed = Date.now() - start;
 
-    // The contract: it RESOLVES (does not park for minutes) with the fail-soft shape —
-    // an empty `{}` metrics map maps to all-null counts per id (callers treat
-    // null fields as "no metrics"). The key assertion is that it returns fast and
-    // never throws.
+    // Still the original contract: it RESOLVES fast rather than parking for minutes.
     expect(elapsed).toBeLessThan(1000);
+
+    // And the shape this case used to pin -- an entry per id with all-null counts --
+    // is now the thing it must NOT produce. Callers read a MISSING id as "we do not
+    // know" and a present one as an answer, so all-null-but-present made a timeout
+    // indistinguishable from an image nobody reacted to. Both failure exits (this one
+    // and the outer catch) now leave the id absent.
+    expect(result).toEqual({});
+    expect(result[1]).toBeUndefined();
+
+    // the timeout path must increment the soft-fallback counter exactly once
+    expect(counterIncMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('CONTROL: a read that ANSWERS with no rows keeps every id present, so a real zero stays known', async () => {
+    fetchMock.mockResolvedValue({}); // ClickHouse answered; it simply has no rows
+
+    const result = await getImageMetricsObject([{ id: 1 }, { id: 2 }]);
+
+    // The negative arm of the case above: same empty metric map, opposite meaning.
+    // Without this, "timeout leaves ids absent" would also pass on an implementation
+    // that dropped every id unconditionally -- which would turn every real zero on
+    // the site into an unknown.
     for (const id of [1, 2]) {
       expect(result[id]).toEqual({
         imageId: id,
@@ -123,7 +142,6 @@ describe('getImageMetricsObject ClickHouse timeout fail-soft', () => {
         buzz: null,
       });
     }
-    // the timeout path must increment the soft-fallback counter exactly once
-    expect(counterIncMock).toHaveBeenCalledTimes(1);
+    expect(counterIncMock).not.toHaveBeenCalled();
   });
 });

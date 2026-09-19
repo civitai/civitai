@@ -87,6 +87,13 @@ const featureFlags = createFeatureFlags({
   // cosmetic space reservation (worst case = a little dead space, never a
   // functional break), so flipping the flag off is an instant, safe rollback.
   feedReserveCls: { availability: ['mod'], fliptKey: 'feed-reserve-cls' },
+  // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
+  // collapses to. OFF renders exactly today's behaviour: the server still marks the
+  // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
+  // metric timeout (hundreds to thousands a day), so this is the kill switch if the
+  // badge proves noisier than the silent zero. availability ['mod'] is the Flipt-DOWN
+  // fallback; Flipt is authoritative when the flag exists.
+  reactionCountsUnknown: { availability: ['mod'], fliptKey: 'reaction-counts-unknown' },
   // Perf: emit the COMPACT wire shape for `hiddenPreferences.getHidden` (id-only
   // arrays for the model / model3d / explicit-image sets instead of
   // `{ id, hidden: true }` objects). `getHidden` returns a user's ENTIRE hidden
