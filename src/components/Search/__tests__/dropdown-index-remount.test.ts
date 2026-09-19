@@ -31,6 +31,16 @@ const stripComments = (source: string) =>
   source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
 /**
+ * The selector's value, in full. The predicate alone says WHICH list is consulted; the two
+ * branches say what is done with the answer, and both are load-bearing — negating the condition
+ * shows the target only when it is NOT offered, and replacing the `null` with a first-option
+ * fallback reinstates the wrong-label lie the clamp exists to prevent. Neither is visible to a
+ * check on the `.some(…)` call.
+ */
+const SELECTOR_VALUE_CLAMP =
+  'value={enabledTargets.some(({ value }) => value === indexNameProp) ? indexNameProp : null}';
+
+/**
  * Every `<InstantSearch>` root in the app, and what each is required to do about the index it
  * targets. `keyed` roots take a target the user can change at runtime: react-instantsearch-core
  * calls `helper.setIndex(indexName).search()` in its RENDER body, and the provider renders before
@@ -72,7 +82,7 @@ function findInstantSearchRoots(dir = 'src'): string[] {
       found.push(...findInstantSearchRoots(relPath));
     } else if (entry.name.endsWith('.tsx') && !entry.name.includes('.test.')) {
       try {
-        if (read(relPath).includes('<InstantSearch')) found.push(relPath);
+        if (stripComments(read(relPath)).includes('<InstantSearch')) found.push(relPath);
       } catch {
         continue;
       }
@@ -167,7 +177,7 @@ describe('the dropdown roots carry the typed text across that remount', () => {
 
   for (const relPath of dropdowns) {
     it(`${relPath} holds the text above the keyed boundary and seeds the input from it`, () => {
-      const source = read(relPath);
+      const source = stripComments(read(relPath));
 
       const carrierDeclaration = source.indexOf("const carriedSearchText = useRef('')");
       const provider = source.indexOf('<InstantSearch');
@@ -175,13 +185,30 @@ describe('the dropdown roots carry the typed text across that remount', () => {
       expect(provider).toBeGreaterThan(carrierDeclaration);
 
       expect(source).toContain('carriedSearchText={carriedSearchText}');
-      expect(source).toContain('useCarriedSearchText(carriedSearchText, query)');
 
-      // Both refine decisions go through the one predicate, so there is a single place where
-      // "does this tree still owe its text to the helper" is decided.
-      expect(source).toContain('shouldRefineSearchQuery(');
+      // The hook's RESULT has to drive the input, not merely be called. Calling it and then
+      // seeding from `useState(query)` beside it reverts the whole mechanism — the typed text is
+      // per-mount state again — while a check on the call alone stays green.
+      expect(source).toContain(
+        'const [search, setSearch] = useCarriedSearchText(carriedSearchText, query)'
+      );
     });
   }
+
+  it('both refine gates go through the one predicate, negation included', () => {
+    // The leading `!` is the whole gate. Dropping it inverts both effects — they return early
+    // exactly when they should refine — which kills the feature with every other assertion here
+    // satisfied, because a check on the call expression alone cannot see the operator in front
+    // of it. Pinned as the complete `if`, per component, since their blocked arguments differ.
+    expect(
+      stripComments(read('src/components/AutocompleteSearch/AutocompleteSearch.tsx'))
+    ).toContain(
+      'if (!shouldRefineSearchQuery(debouncedSearch, query, !!selectedItem || searchErrorState))'
+    );
+    expect(stripComments(read('src/components/Search/QuickSearchDropdown.tsx'))).toContain(
+      'if (!shouldRefineSearchQuery(debouncedSearch, query)) return;'
+    );
+  });
 
   it('AutocompleteSearch follows the URL section from ABOVE the keyed provider', () => {
     // MEASURED REGRESSION, not a hypothetical. This sync used to live inside the subtree with
@@ -210,33 +237,38 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     // right place, that only ever runs once. The array only has to CONTAIN `searchTarget` —
     // requiring it to be exactly `[searchTarget]` would go red on a legitimate added dependency.
     expect(source.slice(sync)).toMatch(
-      /^\s*setTargetIndex\(searchTarget\);[\s\S]{0,300}?\}, \[[^\]]*\bsearchTarget\b[^\]]*\]\)/
+      /^\s*setTargetIndex\(searchTarget\);[^[\]]{0,300}?\}, \[[^\]]*\bsearchTarget\b[^\]]*\]\)/
     );
 
     // …and the selector reads the target rather than holding its own copy of it, which a remount
-    // would reset while the search really had moved — clamped to the SAME list the options are
-    // built from, since clamping against the unfiltered set is exactly the stale-label defect.
-    // Spelling-pinned: a rename of `indexNameProp`/`enabledTargets` reddens these for a non-defect.
-    expect(source).toContain('enabledTargets.some(({ value }) => value === indexNameProp)');
+    // would reset while the search really had moved.
+    expect(source).toContain(SELECTOR_VALUE_CLAMP);
     expect(source).toContain('data={enabledTargets}');
     expect(source).not.toContain('defaultValue={searchTarget}');
 
-    // Its change handler casts away the `null` a deselect produces, and unlike the sibling it has
-    // no fallback — `searchIndexMap[null]` is `undefined`, which reaches the provider as an
-    // undefined index. This prop is the whole of that defence.
+    // INVARIANT GUARD, not regression coverage: this prop predates the PR here. It is load-bearing
+    // all the same — this change handler casts away the `null` a deselect produces, and unlike the
+    // sibling it has no fallback, so `searchIndexMap[null]` would reach the provider as an
+    // undefined index. It is the unguarded copy that a "these two selectors duplicate props"
+    // tidy-up would delete.
     expect(source).toContain('allowDeselect={false}');
   });
 
   it('QuickSearchDropdown drives its index selector from the target it is searching', () => {
     const source = stripComments(read('src/components/Search/QuickSearchDropdown.tsx'));
 
-    expect(source).toContain('enabledTargets.some(({ value }) => value === indexNameProp)');
+    expect(source).toContain(SELECTOR_VALUE_CLAMP);
     expect(source).toContain('data={enabledTargets}');
     expect(source).not.toContain('defaultValue={availableIndexes[0]}');
 
     // A single-option selector is deselectable by default, and the `null` that produces would
     // move the target off the set the caller supports — for one caller, into a payout path.
     expect(source).toContain('allowDeselect={false}');
+
+    // DELIBERATELY UNCOVERED, said out loud rather than left as a silent omission: the
+    // `startingIndex ?? supportedIndexes[0] ?? 'models'` fallback is a forward guard. No caller
+    // reaches it today (the assertion above closes the only path that could), so reverting it to
+    // a bare `'models'` leaves this suite green, and a test for it would be an invariant guard.
   });
 
   it('AutocompleteSearch re-runs its refine effect when search availability recovers', () => {
