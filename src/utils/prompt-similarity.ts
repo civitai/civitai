@@ -1,3 +1,5 @@
+import { MAX_PROMPT_LENGTH } from '~/shared/constants/generation.constants';
+
 function cleanText(text: string): string[] {
   return text
     .toLowerCase()
@@ -67,12 +69,11 @@ function harmonicMean(a: number, b: number): number {
 export const PROMPT_DERIVATION_THRESHOLD = 0.75;
 
 /**
- * Longer input is truncated before comparison. The similarity is still
- * super-linear in token count, and the server compares against a stored prompt
- * that the upload path does not bound, so this is the CPU ceiling for one check.
- * Matches the generator's own prompt cap, so nothing a user can submit is cut.
+ * The generator's own prompt cap, so nothing a user can submit is cut — but the
+ * server also compares against a stored prompt the upload path does not bound,
+ * and this is the CPU ceiling for one check.
  */
-const MAX_COMPARED_PROMPT_CHARS = 6000;
+const MAX_COMPARED_PROMPT_CHARS = MAX_PROMPT_LENGTH;
 
 function promptSimilarity(p1: string, p2: string) {
   const tokensA = cleanText(p1);
