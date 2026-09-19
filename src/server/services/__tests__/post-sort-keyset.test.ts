@@ -23,12 +23,6 @@ type Row = {
 
 const d = (iso: string) => new Date(iso);
 
-const plusMillennium = (date: Date) => {
-  const out = new Date(date);
-  out.setUTCFullYear(out.getUTCFullYear() + 1000);
-  return out;
-};
-
 // Drafts (publishedAt null) interleaved with scheduled posts (publishedAt in the future),
 // plus a createdAt tie on 102/103 so the id tiebreaker is actually exercised.
 const draftFeed: Row[] = [
@@ -96,9 +90,10 @@ const evalSortKey = (expr: string, row: Row): number => {
     case 'p."publishedAt"':
       if (!row.publishedAt) throw new Error(`row ${row.id} has a null publishedAt under ${expr}`);
       return row.publishedAt.getTime();
-    case DRAFT_QUEUE_SORT_KEY:
-      // timestamp '1970-01-01' - (publishedAt - timestamp '1970-01-01'), i.e. -publishedAt.
-      return row.publishedAt ? -row.publishedAt.getTime() : plusMillennium(row.createdAt).getTime();
+    // A LITERAL copy of the SQL, never the imported constant: labelled with the constant, any
+    // edit to the SQL still matched here and the pager checked this model against itself.
+    case `(CASE WHEN p."publishedAt" IS NULL THEN 1e15 + extract(epoch from p."createdAt") * 1000 ELSE -extract(epoch from p."publishedAt") * 1000 END)::float8`:
+      return row.publishedAt ? -row.publishedAt.getTime() : 1e15 + row.createdAt.getTime();
     case 'ci."id"':
       if (row.collectionItemId === undefined)
         throw new Error(`row ${row.id} has no collectionItemId under ${expr}`);
@@ -270,7 +265,13 @@ describe('getPostSortClauses', () => {
   it('ignores the sort picker for the drafts view, which is a publish queue', () => {
     const queue = getPostSortClauses({ sort: PostSort.Newest, draftOnly: true });
     expect(queue.primarySortProp).toBe(DRAFT_QUEUE_SORT_KEY);
-    for (const sort of [PostSort.Oldest, PostSort.MostComments, PostSort.MostReactions])
+    for (const sort of [
+      PostSort.Oldest,
+      PostSort.MostComments,
+      PostSort.MostReactions,
+      PostSort.MostCollected,
+      PostSort.RecentlyAdded,
+    ])
       expect(getPostSortClauses({ sort, draftOnly: true })).toEqual(queue);
   });
 

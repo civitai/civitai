@@ -130,11 +130,13 @@ describe('drafts feed order', () => {
   });
 
   test('the row-major check rejects a layout that flows down the columns', async () => {
-    // CSS columns keep DOM order and put the head of each column on the first card's top,
-    // which is exactly what the earlier top-based check let through.
+    // CSS columns keep DOM order and put the head of each column on the first card's top.
+    // Short cards first, so column one holds more cards than there are columns: that is the
+    // shape the earlier top-based check let through, and the control below proves it still is.
+    const columnHeights = [40, 40, 40, 40, 40, 300, 300, 300, 300, 300];
     renderWithProviders(
       <div style={{ columnCount: 3, columnGap: 16, width: 948 }}>
-        {heights.map((height, i) => (
+        {columnHeights.map((height, i) => (
           <div
             key={i}
             data-testid="post"
@@ -145,12 +147,25 @@ describe('drafts feed order', () => {
       </div>
     );
 
-    await vi.waitFor(() => expect(cards().length).toBe(heights.length));
+    await vi.waitFor(() => expect(cards().length).toBe(columnHeights.length));
     expect(renderedIds()).toEqual(serverOrder);
     // It must be rejected for its geometry, with the fixture genuinely in three columns —
     // not because a one-column fixture or an index past the end threw something else.
     expect(columnCount()).toBe(3);
     expect(() => expectRowMajor(cards())).toThrow(/to deeply equal/);
+
+    // Control: the previous check, selecting the first row by shared `top`, ACCEPTS this
+    // fixture. Without this the case could pass on a layout no check ever let through.
+    const boxes = cards().map((card) => card.getBoundingClientRect());
+    const byTop = boxes.filter((box) => box.top === boxes[0].top);
+    expect(byTop.length).toBe(columnCount());
+    expect(byTop.map((box) => box.left)).toEqual(
+      byTop
+        .map((box) => box.left)
+        .slice()
+        .sort((a, b) => a - b)
+    );
+    expect(boxes[columnCount()].top).toBeGreaterThan(boxes[0].top);
   });
 
   test('leaves the published feed on masonry', async () => {

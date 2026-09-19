@@ -16,7 +16,7 @@ export type PostSortClauses = {
   singleColumnCursor?: boolean;
 };
 
-export const DRAFT_QUEUE_SORT_KEY = `CASE WHEN p."publishedAt" IS NULL THEN p."createdAt" + interval '1000 years' ELSE timestamp '1970-01-01' - (p."publishedAt" - timestamp '1970-01-01') END`;
+export const DRAFT_QUEUE_SORT_KEY = `(CASE WHEN p."publishedAt" IS NULL THEN 1e15 + extract(epoch from p."createdAt") * 1000 ELSE -extract(epoch from p."publishedAt") * 1000 END)::float8`;
 
 /**
  * ORDER BY / keyset-sort-key selection for `getPostsInfinite`.
@@ -35,6 +35,20 @@ export const getPostSortClauses = ({
   /** Whether the caller joined "CollectionItem" as `ci`, which `RecentlyAdded` orders on. */
   collectionJoined?: boolean;
 }): PostSortClauses => {
+  // The drafts view is a publish queue, so no sort applies to it, Recently Added included:
+  // unscheduled drafts first, newest first, then scheduled posts soonest first. That is two
+  // directions and the keyset cursor takes one, so the key is epoch milliseconds, NEGATED for
+  // scheduled posts and lifted by 1e15 for drafts. Not a mirrored timestamp: nothing bounds
+  // publishedAt on write, and a mirrored date leaves timestamp range for a far-future one.
+  if (draftOnly) {
+    return {
+      orderBy: `${DRAFT_QUEUE_SORT_KEY} DESC, p.id DESC`,
+      primarySortProp: DRAFT_QUEUE_SORT_KEY,
+      isDateSort: false,
+      ascending: false,
+    };
+  }
+
   if (sort === PostSort.RecentlyAdded) {
     // Unreachable from getPostsInfinite, which 400s the sort without a collectionId before it
     // gets here. Throwing rather than falling through to publishedAt because that fallback is
@@ -50,20 +64,6 @@ export const getPostSortClauses = ({
       isDateSort: false,
       ascending: false,
       singleColumnCursor: true,
-    };
-  }
-
-  // The drafts view is a publish queue, so the sort picker does not apply to it: unscheduled
-  // drafts first, newest first, then scheduled posts soonest first. That is two directions,
-  // and the keyset cursor takes one, so scheduled times are MIRRORED about the epoch into a
-  // single descending key, below every draft (which sit a millennium up). Both halves stay
-  // timestamps, so the cursor encodes exactly as the other date sorts do.
-  if (draftOnly) {
-    return {
-      orderBy: `${DRAFT_QUEUE_SORT_KEY} DESC, p.id DESC`,
-      primarySortProp: DRAFT_QUEUE_SORT_KEY,
-      isDateSort: true,
-      ascending: false,
     };
   }
 
