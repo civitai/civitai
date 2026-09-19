@@ -1148,6 +1148,9 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
         email: null,
         username: null,
         name: null,
+        // customerId is deliberately absent: see the webhook test in
+        // __tests__/delete-user-pii-scrub.test.ts before adding it.
+        paddleCustomerId: null,
         image: null,
         profilePictureId: null,
         meta,
@@ -1157,54 +1160,22 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
 
   userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
 
-  // `paddleCustomerId` is purged in the `finally`, so nothing between here and there can
-  // skip it. It cannot go in the transaction above: `cancelSubscriptionPlan` falls back to
-  // reading it when no CustomerSubscription row remains, and while the null sat in that
-  // transaction the fallback could never fire. It also cannot simply follow the cancels —
-  // `bust`, `queueUpdate` and `deleteBasicDataForUser` are unwrapped, so a Redis or
-  // Meilisearch outage would abort the function and leave the id behind. Being in the
-  // transaction made that unskippable for free; `finally` is what buys it back.
-  //
-  // `customerId` is deliberately NOT purged here. Nulling it breaks the Stripe webhook that
-  // this very function triggers: `cancelSubscription` above calls `stripe.subscriptions.del`,
-  // and the resulting `customer.subscription.deleted` is resolved by
-  // `findFirst({ where: { customerId } })` in `upsertSubscription` — which throws before
-  // reaching either `customerSubscription.delete`, so the row would stay `active` forever
-  // while Stripe retried for days. It is purged by the GDPR scrub instead, which must run
-  // against Stripe BEFORE the id is dropped, or those records become unreachable.
-  try {
-    // The engagement rows are gone for real now, so the deleted user's own follow set
-    // has to go with them. Their FOLLOWERS' caches are deliberately left to expire on
-    // their own TTL — a popular account has six figures of them, and what each holds
-    // is an id whose content this same call has already removed.
-    await userFollowsCache.bust(user.id);
+  // The engagement rows are gone for real now, so the deleted user's own follow set
+  // has to go with them. Their FOLLOWERS' caches are deliberately left to expire on
+  // their own TTL — a popular account has six figures of them, and what each holds
+  // is an id whose content this same call has already removed.
+  await userFollowsCache.bust(user.id);
 
-    await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-    await deleteBasicDataForUser(id);
+  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  await deleteBasicDataForUser(id);
 
-    // Cancel their subscription
-    await cancelSubscription({ userId: user.id }).catch((error) =>
-      logToAxiom({ name: 'cancel-stripe-subscription', type: 'error', message: error.message })
-    );
-    await cancelSubscriptionPlan({ userId: user.id }).catch((error) =>
-      logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
-    );
-  } finally {
-    // Caught, so a failure here cannot mask whatever threw in the try. `(error as Error)?.message`
-    // rather than `error.message`: a non-Error rejection would throw inside this handler, and the
-    // finally's own rejection WOULD then replace the try's.
-    await dbWrite.user
-      .update({ where: { id: user.id }, data: { paddleCustomerId: null } })
-      .then(() => userUpdateCounter?.inc({ location: 'user.service:deleteUser:paymentIds' }))
-      .catch((error) =>
-        logToAxiom({
-          name: 'delete-user-purge-payment-ids',
-          type: 'error',
-          message: (error as Error)?.message,
-        })
-      );
-  }
-
+  // Cancel their subscription
+  await cancelSubscription({ userId: user.id }).catch((error) =>
+    logToAxiom({ name: 'cancel-stripe-subscription', type: 'error', message: error.message })
+  );
+  await cancelSubscriptionPlan({ userId: user.id }).catch((error) =>
+    logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
+  );
   await invalidateSession(id, 'moderation');
 
   return result;
@@ -1222,24 +1193,14 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
 /**
  * Restore a soft-deleted user account (the inverse of deleteUser).
  *
- * deleteUser scrubs username, email, name, image, profilePictureId from the User row and sets
- * deletedAt, then purges paddleCustomerId after the subscription cancels (customerId is left for
- * the GDPR scrub — see the comment in deleteUser). It also
- * hard-deletes Account / Session rows, the UserProfile row and every UserLink row, and every
+ * deleteUser scrubs username, email, name, paddleCustomerId, image, profilePictureId from the
+ * User row and sets deletedAt. It also hard-deletes Account / Session / UserProfile / UserLink
+ * rows and every
  * UserEngagement row the account appears in EXCEPT Blocks — those survive precisely so
  * a restore cannot leave someone unblocked without telling them — and reassigns
  * the user's Models to userId = -1.
  * We can only restore what survives the deletion: the User row's scrubbed fields (caller
  * supplies them) and the orphaned Model ownership (via ClickHouse audit).
- *
- * NOT restorable, because the rows are gone and nothing snapshots them: the UserProfile
- * (bio, location, showcase, privacy settings) and every UserLink. A restored account comes
- * back with an empty profile, and its ex-cover image loses the AI-verification exemption that
- * reads through UserProfile. `paddleCustomerId` is not restorable either — the point of purging
- * it is that a deleted account stops resolving to a customer record.
- *
- * `name`, `image` and `profilePictureId` are scrubbed but NOT in RestoreUserInput, so a restore
- * cannot bring them back either; only username and email are supplied by the caller.
  *
  * Images depend on the removal the user chose (`meta.imageRemoval`):
  * - `immediate` — remove-deleted-user-images hard-deletes them, S3 objects included, as it
@@ -1247,6 +1208,9 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
  * - `grace` — that job hides them instead and arms a 7-day purge. This function reverses both,
  *   so restoring inside the window brings the images back.
  * Posts are hard-deleted on the immediate path only and are not recoverable.
+ *
+ * UserProfile and UserLink rows are unrecoverable too, so a restored account comes back with an
+ * empty profile. Nothing restores name.
  *
  * Account (OAuth links) and Session rows are unrecoverable; the user signs in fresh post-restore
  * (email magic-link or OAuth) which creates new rows.

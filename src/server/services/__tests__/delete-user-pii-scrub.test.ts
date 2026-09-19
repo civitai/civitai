@@ -25,12 +25,6 @@ const deleteUser = () =>
     typeof UserService.deleteUser
   >[0]);
 
-/** The user.update carrying the payment-provider purge, as opposed to the soft-delete one. */
-const paymentIdUpdate = () =>
-  user.update.mock.calls.findIndex(
-    ([arg]) => (arg as { data?: Record<string, unknown> })?.data?.paddleCustomerId === null
-  );
-
 /**
  * The write paths this scan covers, named explicitly. `dbMock.dbWrite` is a proxy that
  * materialises delegates on access, so Object.keys() over it enumerates NOTHING — a scan
@@ -47,8 +41,10 @@ const WRITE_PATHS = [
   () => ['dbWrite.$queryRawUnsafe', dbMock.dbWrite.$queryRawUnsafe] as const,
   () => ['dbWrite.user.upsert', dbMock.dbWrite.user.upsert] as const,
 ];
-// NOT covered: pgDbWrite, and any `tx.*` write inside an interactive $transaction callback —
-// these tests mock $transaction to return its argument unrun, so such writes are never recorded.
+// NOT covered: pgDbWrite and kyselyWrite (which runs over it), user.updateManyAndReturn, and
+// any `tx.*` write inside an interactive $transaction callback — these tests mock $transaction
+// to return its argument unrun, so such writes are never recorded. Add a path above if one of
+// these starts writing customerId.
 
 /** Labels of the covered dbWrite calls whose arguments mention `needle`. */
 const dbWriteCallsMentioning = (needle: string) => {
@@ -57,13 +53,12 @@ const dbWriteCallsMentioning = (needle: string) => {
     const [label, fn] = get();
     const calls = (fn as unknown as { mock?: { calls?: unknown[][] } })?.mock?.calls ?? [];
     for (const call of calls) {
-      let serialized: string;
-      try {
-        serialized = JSON.stringify(call) ?? String(call);
-      } catch {
-        serialized = String(call);
-      }
-      if (serialized.includes(needle)) hits.push(label);
+      // BigInt-safe, and no silent fallback: String(call) turns an object into
+      // "[object Object]", which would drop the needle and report a false absence.
+      const serialized = JSON.stringify(call, (_k, v) =>
+        typeof v === 'bigint' ? v.toString() : v
+      );
+      if (serialized?.includes(needle)) hits.push(label);
     }
   }
   return hits;
@@ -132,24 +127,15 @@ describe('deleteUser — what the soft delete scrubs', () => {
   });
 });
 
-describe('deleteUser — paddleCustomerId is purged AFTER the cancels, never before', () => {
-  it('leaves both provider ids alone in the soft-delete update', async () => {
+describe('deleteUser — payment-provider ids', () => {
+  it('nulls paddleCustomerId inside the transaction, as part of the soft delete', async () => {
     await deleteUser();
 
-    // `paddleCustomerId: null` used to sit here. `cancelSubscriptionPlan` falls back to
-    // reading it when no CustomerSubscription row remains, so nulling it in the
-    // transaction meant that fallback could never fire on a deletion.
-    const data = softDeleteData();
-    expect(data).not.toHaveProperty('customerId');
-    expect(data).not.toHaveProperty('paddleCustomerId');
-  });
-
-  it('purges paddleCustomerId in a later update', async () => {
-    await deleteUser();
-
-    expect(paymentIdUpdate()).toBeGreaterThan(-1);
-    const [arg] = user.update.mock.calls[paymentIdUpdate()] as [{ data: Record<string, unknown> }];
-    expect(arg.data).toEqual({ paddleCustomerId: null });
+    // Atomic with the soft delete, so no later failure can leave it behind. This does mean
+    // cancelSubscriptionPlan's no-row fallback, which reads the id, cannot fire on a deletion;
+    // moving the null after the cancels was tried and reverted, because with seven live Paddle
+    // subscriptions it bought a live API call per deletion for almost nothing to cancel.
+    expect(softDeleteData()).toHaveProperty('paddleCustomerId', null);
   });
 
   it('does NOT purge the Stripe customerId — deleting it breaks our own webhook', async () => {
@@ -160,11 +146,11 @@ describe('deleteUser — paddleCustomerId is purged AFTER the cancels, never bef
     // customer.subscription.deleted is resolved by findFirst({ where: { customerId } }) in
     // upsertSubscription (stripe.service.ts:601-616). That throws before reaching either
     // customerSubscription.delete below it, so nulling customerId here leaves the row `active`
-    // forever while Stripe retries the webhook for days — manufacturing the exact
-    // deleted-account-with-a-live-subscription defect this work exists to remove.
+    // forever while Stripe retries the webhook for days.
     //
     // The GDPR scrub purges it instead, and must scrub Stripe FIRST: once the id is gone the
     // customer record cannot be found again.
+    //
     // Every path in WRITE_PATHS, not just user.update: a raw-SQL or updateMany purge
     // reintroduces the identical webhook break, and reaching for raw SQL to null a column is
     // an ordinary thing to do. Each path has a CONTROL test below proving the scan can see it,
@@ -174,7 +160,7 @@ describe('deleteUser — paddleCustomerId is purged AFTER the cancels, never bef
 
   it('CONTROL: the scan sees a customerId write via user.update', () => {
     // An empty-array assertion is the shape that passes forever when the selector is broken,
-    // so the zero above is only worth anything with these two beside it. Not hypothetical: the
+    // so the zero above is only worth anything with these beside it. Not hypothetical: the
     // first version of this scan walked Object.keys(dbMock.dbWrite), which enumerates nothing
     // on a proxy, and returned [] for every input.
     void dbMock.dbWrite.user.update({ where: { id: USER_ID }, data: { customerId: null } });
@@ -194,6 +180,17 @@ describe('deleteUser — paddleCustomerId is purged AFTER the cancels, never bef
     void dbMock.dbWrite.user.updateMany({ where: { id: USER_ID }, data: { customerId: null } });
 
     expect(dbWriteCallsMentioning('customerId')).toEqual(['dbWrite.user.updateMany']);
+  });
+
+  it('CONTROL: the scan still sees customerId when a BigInt is in the same call', () => {
+    // JSON.stringify throws on a BigInt. The previous fallback, String(call), turned the whole
+    // argument into "[object Object]" and dropped the needle — a false absence, not a failure.
+    void dbMock.dbWrite.user.update({
+      where: { id: 1n as never },
+      data: { customerId: null },
+    } as never);
+
+    expect(dbWriteCallsMentioning('customerId')).toEqual(['dbWrite.user.update']);
   });
 
   it('CONTROL: the scan sees a customerId write via $queryRawUnsafe', () => {
@@ -225,54 +222,5 @@ describe('deleteUser — paddleCustomerId is purged AFTER the cancels, never bef
     void dbMock.dbWrite.$executeRaw(['UPDATE "User" SET "customerId" = NULL'] as never);
 
     expect(dbWriteCallsMentioning('customerId')).toEqual(['dbWrite.$executeRaw']);
-  });
-
-  it('purges them even when the steps in between blow up', async () => {
-    // Moving the null out of the transaction gave up a free guarantee: in there it could
-    // not be skipped. `bust`, `queueUpdate` and `deleteBasicDataForUser` are unwrapped,
-    // so without the `finally` a Redis outage aborts deleteUser and leaves the Stripe
-    // pointer live on an account that is already soft-deleted — no retry, no signal, and
-    // the one link this PR exists to cut still standing.
-    vi.spyOn(userFollowsCache, 'bust').mockRejectedValue(new Error('redis down'));
-
-    await expect(deleteUser()).rejects.toThrow('redis down');
-
-    // The PAYLOAD, not merely that some update ran: a finally that fires with the wrong
-    // data would satisfy a bare "an update happened" assertion while purging nothing.
-    expect(
-      paymentIdUpdate(),
-      'no update purged paddleCustomerId — the purge was skipped when an earlier await threw'
-    ).toBeGreaterThan(-1);
-    const [arg] = user.update.mock.calls[paymentIdUpdate()] as [{ data: Record<string, unknown> }];
-    expect(arg.data).toEqual({ paddleCustomerId: null });
-  });
-
-  it('runs that purge AFTER the subscription cancels have read the ids', async () => {
-    await deleteUser();
-
-    // The ORDER is the guarantee, not the end state: an assertion that the id ends up
-    // null passes just as well with the update back inside the transaction, which is
-    // exactly the bug that shipped for paddle.
-    //
-    // Anchored on the read that actually needs the id — cancelSubscriptionPlan's fallback
-    // `user.findUnique` — not on the first cancel to run. The Stripe cancel goes first, so
-    // a purge moved BETWEEN the two cancels would still land after it and pass, while
-    // nulling paddleCustomerId just before the one call that reads it.
-    //
-    // Existence first, order second: collapsed into one comparison, a purge that never ran
-    // indexes invocationCallOrder at -1 and reads as a mis-ordered purge instead.
-    const purgeIndex = paymentIdUpdate();
-    expect(purgeIndex, 'no update purged paddleCustomerId at all').toBeGreaterThan(-1);
-
-    const paddleFallbackRead = dbMock.dbWrite.user.findUnique.mock.invocationCallOrder.at(-1);
-    expect(
-      paddleFallbackRead,
-      'the paddle fallback never read the user, so the order proves nothing'
-    ).toBeDefined();
-
-    expect(
-      user.update.mock.invocationCallOrder[purgeIndex],
-      'paddleCustomerId was purged BEFORE the paddle fallback read it'
-    ).toBeGreaterThan(paddleFallbackRead as number);
   });
 });
