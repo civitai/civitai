@@ -100,11 +100,14 @@ export type NotificationProcessorRunInput = {
   clickhouse: CustomClickHouseClient | undefined;
   /**
    * Read once per job run by the server-only runner and passed in, because the processor
-   * files are in the client graph and cannot import the reader. Optional so a processor
-   * that ignores it needs no fixture change; a reaction milestone that reads it defaults
-   * to `[]`, which is the lenient posture those notifications want anyway.
+   * files are in the client graph and cannot import the reader.
+   *
+   * Required but nullable, not optional: the reaction milestones default a missing list to
+   * `[]`, so a caller that simply omitted the key would ship every milestone unfiltered
+   * without a sound. Required, `tsc` rejects any new caller that forgets it; nullable, a
+   * test can still say `undefined` on purpose.
    */
-  excludedUserIds?: number[];
+  excludedUserIds: number[] | undefined;
 };
 
 export function createNotificationProcessor(processor: Record<string, NotificationProcessor>) {
