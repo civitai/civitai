@@ -216,10 +216,20 @@ import {
   attachModeratedStepTextOutputs,
   runStepModeration,
 } from '~/server/services/blocks/steps/moderation';
-// Instrument-only: records EVERY prepaidFixed step price check at submit —
+// Instrument-only, both of them, and neither ever throws.
+// `recordStepPriceCheck` records EVERY prepaidFixed step price check at submit —
 // `exact` / `over` / `absent` — so a flat "no divergence" line can be told apart
-// from a detector that never ran. Never throws.
-import { recordStepPriceCheck } from '~/server/metrics/app-block-runtime.metrics';
+// from a detector that never ran.
+// `recordBlockPostSubjectRefusal` is the ONLY observability the post preamble's
+// unreadable-subject branch has: application-container logs are not collected for
+// this deployment, so a log line there would be unreadable to any later
+// investigator. Dropping this call silently returns that branch to being
+// undiagnosable — it is not a cosmetic emit.
+import {
+  recordBlockPostSubjectRefusal,
+  recordStepPriceCheck,
+  type AppBlockPostSurface,
+} from '~/server/metrics/app-block-runtime.metrics';
 // Post-paid SETTLE-TO-ACTUAL for customComfy (plan §5.3). `persist*` is awaited in
 // submit (after reserving the ceiling); `settle*` is a best-effort call on the
 // terminal poll/cancel hook. Static import (both are light) — the heavy
@@ -537,14 +547,20 @@ const confirmedImageCountInput = z.number().int().positive().max(100);
  *      keeps the unauthorized path off the auth hub.
  *   3. non-anon subject.
  *   4. the App-Blocks RUNTIME flag, evaluated on the token SUBJECT.
- *   5. the DEDICATED post-creation flag, also on the subject. Separate from (4)
+ *   5. the SUBJECT HYDRATES. Refused on its own terms, with its own message, and
+ *      NOT folded into (6) — see the docblock on the refusal itself.
+ *   6. the DEDICATED post-creation flag, also on the subject. Separate from (4)
  *      on purpose: a GA widening of the runtime flag must not arm public post
  *      creation on the same day, and this is the per-capability kill switch.
  */
 type BlockPostRequestAuth = {
   claims: Awaited<ReturnType<typeof authorizeBlockBridgeToken>>;
   userId: number;
-  subjectUser: SessionUser | null;
+  // NON-NULLABLE ON PURPOSE. Step (5) above refuses a subject that does not
+  // hydrate, so every caller downstream gets a real `SessionUser` and does not
+  // have to re-derive what a `null` here would have meant. Widening this back to
+  // `SessionUser | null` is how the conflated verdict comes back.
+  subjectUser: SessionUser;
 };
 
 /**
@@ -564,7 +580,10 @@ type BlockPostRequestAuth = {
  * phantom call site on whatever function happens to sit above it — measured, and
  * it named `assertAppBlocksEnabledForTokenUser` as a guard caller.
  */
-async function authorizeBlockPostRequest(blockToken: string): Promise<BlockPostRequestAuth> {
+async function authorizeBlockPostRequest(
+  blockToken: string,
+  surface: AppBlockPostSurface
+): Promise<BlockPostRequestAuth> {
   const claims = await authorizeBlockBridgeToken(blockToken);
   // NOT `ai:write:budgeted`. An app authorised to spend the viewer's Buzz on a
   // generation has NOT thereby been authorised to publish under their name — the
@@ -583,9 +602,51 @@ async function authorizeBlockPostRequest(blockToken: string): Promise<BlockPostR
   await assertAppBlocksEnabledForTokenUser(userId);
 
   const subjectUser = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
+  // 🔴 AN UNREADABLE SUBJECT IS ITS OWN REFUSAL, WITH ITS OWN MESSAGE. This used
+  // to read `{ user: subjectUser ?? undefined }` and fall straight into the flag
+  // check below, which meant a `null` here was silently re-reported to the viewer
+  // as "posting from apps is not enabled". It is not: `isAppBlocksPostCreationEnabled`
+  // with no user takes its no-entity arm — entityId 'global', empty context — and a
+  // SEGMENT-scoped rollout (the live shape: `moderators`) cannot match a no-entity
+  // eval, so it answers false. A failed identity read was therefore rendered as a
+  // policy decision, for a viewer the policy may well admit.
+  //
+  // Two different facts, and only one of them is about permission. Separating them
+  // does NOT widen who may post — a subject we cannot read is still refused, and
+  // there is deliberately no retry here (a blind retry on a path that creates a
+  // PUBLIC post under someone's byline is how a duplicate post happens). What
+  // changes is only what the viewer and the operator are told.
+  //
+  // 🔴 THIS IS ALSO A FAIL-CLOSED GUARD IN THE SAME SENSE AS ITS TWO SIBLINGS
+  // (`assertAppBlocksEnabledForTokenUser`, `assertViewerIsAppDeveloper`): the
+  // no-entity arm returns the flag's own BASE value, so under a base-`enabled: true`
+  // GA flip, falling through with no subject would PASS this gate rather than
+  // refuse. Losing this branch re-opens that. It is watchlisted as
+  // `post-subject-refusal` in `scripts/compiled-branch-watchlist.mjs`, so the
+  // message literal below and the condition are both anchors — rewording either is
+  // a watchlist edit in the same commit, not a copy change.
+  //
+  // 🔴 REACHABILITY IS NARROW BUT REAL, AND IS NOT THE JUSTIFICATION ANYWAY. The
+  // kill-switch above already hydrated this subject and refuses a `null`, so
+  // reaching here with one needs the second read to disagree with the first: the
+  // hub-backed resolver is a cached read that falls through to a network fetch on a
+  // miss, and a user genuinely deleted between the two awaits produces it too — the
+  // same narrow window `assertViewerIsAppDeveloper` is tested against. 🔴 DO NOT
+  // ASSERT THAT THIS IS WHAT HAPPENED IN ANY PARTICULAR PRODUCTION REFUSAL. A
+  // subject that hydrated but carried a stale `isModerator`, and a transient Flipt
+  // evaluation failure, both produce the identical observable and neither is
+  // excluded. The counter below is what will let a future investigator tell them
+  // apart; before it, nothing could.
+  if (!subjectUser) {
+    recordBlockPostSubjectRefusal(surface);
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'posting subject could not be resolved, please try again',
+    });
+  }
   // Fail-closed: an ABSENT flag resolves false for everyone, mods included, so
   // the capability is fully dark until a deliberate Flipt flip.
-  if (!(await isAppBlocksPostCreationEnabled({ user: subjectUser ?? undefined }))) {
+  if (!(await isAppBlocksPostCreationEnabled({ user: subjectUser }))) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'posting from apps is not enabled' });
   }
 
@@ -4515,7 +4576,7 @@ export const blocksRouter = router({
   previewPostFromApp: publicProcedure
     .input(z.object({ blockToken: z.string().min(1), ...blockPostPayloadShape }))
     .mutation(async ({ ctx, input }) => {
-      const { claims, userId } = await authorizeBlockPostRequest(input.blockToken);
+      const { claims, userId } = await authorizeBlockPostRequest(input.blockToken, 'preview');
       // NOTE: the CATALOG bucket, not the post bucket. The preview writes
       // nothing, so charging it against the 3-posts/hour ceiling would let a
       // block exhaust its own posting budget by rendering dialogs — and the
@@ -4615,13 +4676,20 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const { claims, userId, subjectUser } = await authorizeBlockPostRequest(input.blockToken);
+      const { claims, userId, subjectUser } = await authorizeBlockPostRequest(
+        input.blockToken,
+        'create'
+      );
 
       // WRITE TRUST. Reused from the shared-storage path. "Verified email" is
       // satisfied by emailVerified OR a linked OAuth account; only query for the
       // link when emailVerified is absent, so a verified-email user pays nothing.
+      // No `subjectUser &&` guard here any more: the preamble refuses an
+      // unhydratable subject outright, so this is a real `SessionUser` by
+      // construction. Re-adding the null check would be dead code that quietly
+      // claims the opposite.
       let hasLinkedOAuth = false;
-      if (subjectUser && !subjectUser.emailVerified) {
+      if (!subjectUser.emailVerified) {
         hasLinkedOAuth = (await dbRead.account.count({ where: { userId } })) > 0;
       }
       assertSharedWriteTrust(subjectUser, hasLinkedOAuth);

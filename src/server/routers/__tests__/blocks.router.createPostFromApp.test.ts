@@ -1,3 +1,4 @@
+import client from 'prom-client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -295,7 +296,164 @@ describe('the shared preamble — createPostFromApp', () => {
       expect(mockPreviewBlockPost).not.toHaveBeenCalled();
     });
   });
+
+  /**
+   * 🔴 THE REGRESSION THIS BLOCK EXISTS FOR: an UNREADABLE SUBJECT AND A FLAG DENIAL
+   * USED TO BE THE SAME REFUSAL.
+   *
+   * The preamble read `isAppBlocksPostCreationEnabled({ user: subjectUser ?? undefined })`,
+   * so a `null` from the session client fell into the flag's no-entity arm — entityId
+   * 'global', empty context. A SEGMENT-scoped rollout (the live shape) cannot match a
+   * no-entity eval, so it answers `false`, and the viewer was told the capability was
+   * switched off when the real state was "we could not read your session". Those are
+   * different facts and only one of them is about permission.
+   *
+   * 🔴 THE FLAG STUB BELOW IS THE LOAD-BEARING PART OF THE FIXTURE, and the default
+   * stub in `beforeEach` (an unconditional `true`) cannot express this defect at all —
+   * under it a null subject sails PAST the gate instead of being mis-refused, so a case
+   * written on the default would be red at both trees for the wrong reason. These cases
+   * therefore re-stub the flag as the real no-entity semantics: `true` with a user,
+   * `false` without one. That is what makes the pre-change tree produce the WRONG
+   * message rather than no message.
+   *
+   * 🔴 WHY `mockResolvedValueOnce` AND NOT A PLAIN `null`. The runtime kill-switch
+   * (`assertAppBlocksEnabledForTokenUser`, NOT mocked in this file) hydrates the same
+   * subject one step earlier and refuses a `null` with its own message, so a subject
+   * that never resolves never reaches the branch under test. Reaching it needs the
+   * SECOND read to disagree with the first — the cached-read-then-network-fetch window,
+   * or a user deleted between the two awaits. Same construction the author gate's own
+   * case uses in `blocks.router.flag-gate-hydrate.test.ts`.
+   *
+   * ⚠️ These cases do NOT claim that this is what produced any particular production
+   * refusal. A subject that hydrated carrying a stale `isModerator`, and a transient
+   * flag-evaluation failure, produce the same observable and are not excluded here.
+   */
+  describe('🔴 an UNREADABLE SUBJECT is not a flag denial', () => {
+    /** The real no-entity semantics of a segment-scoped rollout. */
+    function segmentScopedFlag() {
+      mockIsAppBlocksPostCreationEnabled.mockImplementation(
+        async (opts?: { user?: unknown }) => !!opts?.user
+      );
+    }
+    /** Hydrates for the kill-switch, then vanishes before the post preamble re-reads it. */
+    function vanishesOnSecondRead() {
+      mockGetSessionUser.mockReset();
+      mockGetSessionUser.mockResolvedValueOnce(trustedUser()).mockResolvedValue(null);
+    }
+
+    it('REFUSES with its OWN message — not "posting from apps is not enabled"', async () => {
+      segmentScopedFlag();
+      vanishesOnSecondRead();
+
+      await expect(caller().createPostFromApp(INPUT)).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+        message: 'posting subject could not be resolved, please try again',
+      });
+      expect(mockWriteBlockPost).not.toHaveBeenCalled();
+    });
+
+    it('does NOT reach the flag at all — no no-entity evaluation is performed', async () => {
+      // The other half of the criterion, and the one a message assertion cannot make:
+      // the fix is not "rewrite the copy on the way out", it is "never ask the flag a
+      // question it can only answer wrongly". A no-entity eval returns the flag's BASE
+      // value, so under a base-`enabled: true` widening the old shape would have
+      // PASSED an unresolvable subject through to a public post.
+      segmentScopedFlag();
+      vanishesOnSecondRead();
+
+      await expect(caller().createPostFromApp(INPUT)).rejects.toThrow();
+      expect(mockIsAppBlocksPostCreationEnabled).not.toHaveBeenCalled();
+    });
+
+    it('🔴 STILL REFUSES under a base-enabled flag — the split does not widen who may post', async () => {
+      // Non-goal guard. Separating the two verdicts must not become a fail-open: with
+      // the flag answering `true` to everything (a GA base flip), an unreadable subject
+      // is still turned away, and the write service is still never reached.
+      mockIsAppBlocksPostCreationEnabled.mockResolvedValue(true);
+      vanishesOnSecondRead();
+
+      await expect(caller().createPostFromApp(INPUT)).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+        // The message is asserted here too, not just the code: on the pre-change
+        // tree this case also rejects — with the write-trust guard's own error,
+        // several steps later, after the flag had already said yes. Pinning only
+        // the code would call that red a pass for the wrong reason the moment the
+        // codes happened to agree.
+        message: 'posting subject could not be resolved, please try again',
+      });
+      expect(mockWriteBlockPost).not.toHaveBeenCalled();
+    });
+
+    it('splits the PREVIEW surface the same way', async () => {
+      segmentScopedFlag();
+      vanishesOnSecondRead();
+
+      await expect(caller().previewPostFromApp(INPUT)).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+        message: 'posting subject could not be resolved, please try again',
+      });
+      expect(mockPreviewBlockPost).not.toHaveBeenCalled();
+    });
+
+    it('a FLAG DENIAL keeps its own, unchanged message — the two stay separable', async () => {
+      // The positive control for the split. Without it, every case above is satisfied
+      // by a build that simply renamed the single refusal, which would move the
+      // conflation rather than remove it.
+      segmentScopedFlag();
+      mockGetSessionUser.mockResolvedValue(trustedUser());
+      mockIsAppBlocksPostCreationEnabled.mockResolvedValue(false);
+
+      await expect(caller().createPostFromApp(INPUT)).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'posting from apps is not enabled',
+      });
+    });
+
+    it('is OBSERVABLE — the refusal increments a scraped counter, not just a log line', async () => {
+      // 🔴 CRITERION 4, AND IT IS READ OFF THE REAL DEFAULT REGISTRY BY METRIC NAME.
+      // Application-container stdout is not collected for this deployment, so a
+      // `console.error` here would be unreadable to any later investigator — the
+      // emitter is the only surface that exists. Looked up by STRING rather than by
+      // importing the new symbol, deliberately: that keeps this case runnable against
+      // the pre-change tree, where it fails on a `undefined` registry lookup instead
+      // of on a module-resolution error.
+      //
+      // 🔴 THE EXISTENCE ASSERTION IS NOT DECORATION — WITHOUT IT THIS CASE IS
+      // VACUOUS. `readPostSubjectRefusals` returns NaN when the series is not
+      // registered at all, and `expect(NaN).toBe(NaN)` PASSES (`toBe` is
+      // `Object.is`). Measured: this case went GREEN against the pre-change tree,
+      // where the counter does not exist, until the `toBeDefined()` below was
+      // added. A delta assertion over a lookup that can return NaN cannot tell
+      // "the counter moved" from "there is no counter".
+      segmentScopedFlag();
+      vanishesOnSecondRead();
+
+      const before = await readPostSubjectRefusals('create');
+      await expect(caller().createPostFromApp(INPUT)).rejects.toThrow();
+
+      expect(client.register.getSingleMetric(POST_SUBJECT_REFUSALS)).toBeDefined();
+      const after = await readPostSubjectRefusals('create');
+      expect(Number.isFinite(after)).toBe(true);
+      expect(after).toBe((Number.isFinite(before) ? before : 0) + 1);
+    });
+  });
 });
+
+const POST_SUBJECT_REFUSALS = 'civitai_app_block_post_subject_refusals_total';
+
+/**
+ * Current value of one `{surface}` series of the post-subject refusal counter, or NaN
+ * when the series is not registered. 🔴 NaN is NOT a safe sentinel for a delta check —
+ * see the caller.
+ */
+async function readPostSubjectRefusals(surface: string): Promise<number> {
+  const metric = client.register.getSingleMetric(POST_SUBJECT_REFUSALS) as
+    | { get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }> }
+    | undefined;
+  if (!metric) return Number.NaN;
+  const { values } = await metric.get();
+  return values.find((v) => v.labels.surface === surface)?.value ?? 0;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('write trust', () => {
