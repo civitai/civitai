@@ -122,7 +122,10 @@ function propExpression(tag: string, prop: string): string | null {
  * constant spellings to reject: enumerating spellings caught `searchIndexMap.models` and a string
  * literal while `searchIndexMap['models']` and an imported `IMAGES_SEARCH_INDEX` walked straight
  * through. Matched against the EXPRESSION, so it holds whether that expression is written inline
- * on the provider or hoisted into a local first.
+ * on the provider or hoisted into a local first. Anchored, so it also rejects a WRAPPED form such
+ * as `useMemo(() => searchIndexMap[targetIndex], …)` — correct code, declined rather than
+ * accommodated: memoising a hash lookup is not worth widening a guard for, and the failure is
+ * legible if anyone ever does it.
  *
  * Scoped to the two dropdowns on purpose. `SearchLayout` takes its index as a PROP — dynamic by
  * construction — and an earlier attempt to resolve identifiers generically bound its name to an
@@ -145,6 +148,27 @@ function resolveOneHop(source: string, expression: string): string {
   return declaration?.[1].trim() ?? expression;
 }
 
+/** Everything from a component's declaration onwards, so a same-named binding ABOVE it is out of scope. */
+function componentScope(source: string, componentName: string): string {
+  const start = source.search(new RegExp(`(?:function|const)\\s+${componentName}\\b`));
+  return start === -1 ? source : source.slice(start);
+}
+
+/**
+ * The names a component BINDS in its parameter destructuring, aliases resolved to the local name
+ * (`indexName: indexNameProp` binds `indexNameProp`). Accepts the `function` and `const` forms,
+ * because this ledger's roots use both and a guard must not dictate which.
+ */
+function componentPropBindings(source: string, componentName: string): string[] {
+  const match = source.match(
+    new RegExp(`(?:function|const)\\s+${componentName}\\b[^({]*\\(\\s*\\{([^}]*)\\}`)
+  );
+  return (match?.[1] ?? '')
+    .split(',')
+    .map((entry) => entry.split(':').pop()?.trim() ?? '')
+    .filter((name) => /^[A-Za-z_$][\w$]*$/.test(name));
+}
+
 describe('the InstantSearch roots', () => {
   it('is the set this ledger accounts for', () => {
     // Derived from the tree, so the ledger fails when the population grows OR shrinks — a new
@@ -155,7 +179,7 @@ describe('the InstantSearch roots', () => {
   for (const [relPath, policy] of Object.entries(INSTANT_SEARCH_ROOTS)) {
     if (policy === 'static-index') {
       it(`${relPath} targets a fixed index, so it needs no key`, () => {
-        const tag = openingTag(read(relPath));
+        const tag = openingTag(stripComments(read(relPath)));
         expect(propExpression(tag, 'indexName')).toMatch(/^searchIndexMap\.[A-Za-z]+$/);
         expect(propExpression(tag, 'key')).toBeNull();
       });
@@ -184,16 +208,28 @@ describe('the InstantSearch roots', () => {
       // literal `export function SearchLayout({…})` rejected correct code — a normalisation hop,
       // and the `export const` style both sibling roots already use.
       //
-      // Resolved one hop ONLY when the expression does not already reference the prop: this file
-      // also holds an unrelated `const indexName = Object.keys(uiState)?.[0]`, and resolving
-      // unconditionally binds to that and reddens a healthy root.
+      // Scoped to the component rather than short-circuited. An earlier version skipped the
+      // resolution whenever the expression already contained the token `indexName`, which made
+      // the live case a TAUTOLOGY — the assertion compared the expression against a pattern it
+      // had just been tested against — and let a shadowing `const indexName = 'models_v9'` inside
+      // the component pass with the whole suite green. Slicing from the declaration is what makes
+      // resolution safe here: the unrelated `const indexName = Object.keys(uiState)?.[0]` sits
+      // ABOVE the component and is simply out of scope.
+      //
+      // The required property is a reference to something the component BINDS, not to a
+      // particular name — otherwise the alias idiom both sibling roots already use
+      // (`indexName: indexNameProp`) reddens a healthy root.
       if (relPath === 'src/components/Search/SearchLayout.tsx') {
-        const referencesProp = /\bindexName\b/;
-        const indexSource = referencesProp.test(indexName as string)
-          ? (indexName as string)
-          : resolveOneHop(source, indexName as string);
+        const bindings = componentPropBindings(source, 'SearchLayout');
+        const resolved = resolveOneHop(componentScope(source, 'SearchLayout'), indexName as string);
+        const reference = bindings.find((name) => new RegExp(`\\b${name}\\b`).test(resolved));
 
-        expect(indexSource).toMatch(referencesProp);
+        expect(
+          reference,
+          `SearchLayout's index resolves to \`${resolved}\`, which references none of its props (${bindings.join(
+            ', '
+          )}) — so it is pinned, and every search page searches one index`
+        ).toBeDefined();
       }
     });
   }
