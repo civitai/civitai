@@ -20,8 +20,8 @@ const {
   logToAxiomMock,
 } = vi.hoisted(() => ({
   fetch: vi.fn(),
-  counterIncMock: vi.fn(),
-  staleCounterIncMock: vi.fn(),
+  counterIncMock: vi.fn().mockName('image_metrics_clickhouse_timeout_total'),
+  staleCounterIncMock: vi.fn().mockName('image_metrics_stale_cache_timeout_total'),
   logToAxiomMock: vi.fn(() => Promise.resolve()),
 }));
 
@@ -414,14 +414,24 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
     // never ran, because every other assertion here is an absence.
     expect(result[1]?.reactionLike).toBe(62);
 
-    // `packed.*` is how this codebase writes caches, so a write-back would most
-    // likely be spelled there rather than on the bare client.
-    expect(redisMock.redis.hSet).not.toHaveBeenCalled();
-    expect(redisMock.redis.hSetEx).not.toHaveBeenCalled();
-    expect(redisMock.redis.set).not.toHaveBeenCalled();
-    expect(redisMock.redis.setEx).not.toHaveBeenCalled();
-    expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
-    expect(redisMock.redis.packed.hSet).not.toHaveBeenCalled();
+    // An ALLOWLIST of shapes, not a proof: it cannot see a verb nobody thought of.
+    // `expire` is in it because a TTL slide is the specific thing the comment on the
+    // fallback forbids - it is what makes a cached value outlive the outage - and
+    // `packed.*` because that is how this codebase actually writes caches.
+    for (const write of [
+      redisMock.redis.hSet,
+      redisMock.redis.hSetEx,
+      redisMock.redis.set,
+      redisMock.redis.setEx,
+      redisMock.redis.expire,
+      redisMock.redis.hExpire,
+      redisMock.redis.hIncrBy,
+      redisMock.redis.del,
+      redisMock.redis.packed.set,
+      redisMock.redis.packed.setEx,
+      redisMock.redis.packed.hSet,
+    ])
+      expect(write).not.toHaveBeenCalled();
   });
 
   it('returns no metrics rather than throwing when the cache read ALSO fails', async () => {
