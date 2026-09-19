@@ -2,7 +2,7 @@
  * App Blocks BRIDGE telemetry — the label sets and wire bounds, and NOTHING ELSE.
  *
  * 🔴 IT IS A SEPARATE MODULE FROM `bridgeTelemetry.ts` FOR ONE MEASURED REASON:
- * `bridgeTelemetry` imports `hostHandlerParity`'s 47-key `INVENTORY` (~6.8 KB
+ * `bridgeTelemetry` imports `hostHandlerParity`'s 47-key `INVENTORY` (several KB
  * minified) to bound the `type` label. `src/server/schema/track.schema.ts` needs
  * the label ENUMS so the beacon's zod schema and the emitter cannot drift — and
  * `track.schema` is imported by `TrackView` on pages that mount no block at all,
@@ -59,9 +59,17 @@
  *    bounds the label against `hostHandlerParity`'s INVENTORY, which holds no
  *    `*_RESULT` key, so a reply type would clamp to `'other'` and collapse every
  *    rejection onto one label;
- *  - the SDK budgets its reports (30 per 10s per transport), so the count is a
- *    deliberate UNDERCOUNT on a sustained break. Read it as *which types are being
- *    rejected and when it started*, never as an exact total.
+ *  - it is NOT undercounted, and an earlier revision of this line said it was. The
+ *    SDK shipped a 30-per-10s emit budget and then DELETED it: a cap there made a
+ *    flood read SMALL, which is the one shape of wrongness this very file rejects a
+ *    few paragraphs down. Magnitude here is unbounded exactly as it is for
+ *    `no_handler` and `deduped`.
+ *  - 🔴 A ZERO IS NOT EVIDENCE OF HEALTH, and this is the caveat that matters. The
+ *    emitter lives in each block's OWN bundle (every app pins
+ *    `@civitai/blocks-react` itself), so the series stays at zero until every app
+ *    has been rebuilt AND redeployed against a version that carries it — not merely
+ *    until the package publishes. A flat-zero diagnostic read as health is the exact
+ *    failure this outcome exists to end.
  *
  * ⚠️ ADDING THIS SIXTH VALUE GREW THE COUNTER'S WORST-CASE LABEL PRODUCT BY 22.6%,
  * not the 20% an earlier revision of this line claimed: the outcome axis alone is
@@ -118,13 +126,14 @@ export const BRIDGE_MESSAGE_BATCH_MAX = 200;
  *   - `handled` and `no_token` are the only two the bridge's 30 msg/sec inbound
  *     limiter bounds at all — ~300 per key per 10 s window, and higher than that
  *     whenever the window stretches (see below).
- *   - `no_handler` and `deduped` are reported ABOVE that limiter, deliberately (a
- *     flood of unhandled junk must not burn the budget that legitimate
- *     BLOCK_ERROR reporting needs — see `usePostMessage`).
+ *   - `no_handler`, `deduped` and `validator_rejected` are reported ABOVE that
+ *     limiter, deliberately (a flood of unhandled junk must not burn the budget that
+ *     legitimate BLOCK_ERROR reporting needs — see `usePostMessage`).
+ *     `validator_rejected` is doubly unbounded: its emitter carries no cap either.
  *   - `rate_limited` is by construction only recorded for messages that exceeded
  *     the budget.
  *
- * So on those three a block in a postMessage loop — a buggy render loop calling an
+ * So on those four a block in a postMessage loop — a buggy render loop calling an
  * SDK method is the ordinary, non-malicious case — can drive one key far past any
  * cap. The window is not a hard 10 s either: after the first flush a backgrounded
  * tab's `setTimeout` is throttled to 1/s or 1/min.
@@ -133,7 +142,7 @@ export const BRIDGE_MESSAGE_BATCH_MAX = 200;
  * exactly counted: above it the client CLAMPS (never drops the batch, never 400s
  * it), so the series reads "enormous" instead of "wrong". 100,000 is ~333× the
  * limiter-bounded ceiling and well clear of a throttled tab's stretched window, so
- * on the two bounded outcomes it cannot fire at all. On the other three it can, by
+ * on the two bounded outcomes it cannot fire at all. On the other four it can, by
  * construction — a block in a `postMessage` loop is exactly the case those
  * outcomes exist to reveal, and truncating a flood to a huge number is the
  * intended outcome rather than a limitation. Do not read the value as a claim

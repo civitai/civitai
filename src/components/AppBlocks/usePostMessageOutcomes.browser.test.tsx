@@ -301,7 +301,7 @@ describe('usePostMessage bridge outcome counter', () => {
     // `boundBridgeMessageType` call inside it — never runs. An earlier revision of
     // this comment said the clamping happened downstream in the sink, which would
     // tell a reader the branch's own `boundBridgeMessageType(...)` is dead code and
-    // safe to delete; deleting it reddens these four rows, and the failure would
+    // safe to delete; deleting it reddens every row below, and the failure would
     // then read as "the test is wrong". The branch clamps itself, on purpose,
     // because `onOutcome` is a seam and a value pulled from an untrusted payload
     // must not be bounded only by the default sink.
@@ -320,7 +320,8 @@ describe('usePostMessage bridge outcome counter', () => {
     // The branch sits ABOVE the inbound limiter and the dedup map, for the same
     // reason `no_handler` does: a flood of junk must not burn the 30 msg/sec budget
     // legitimate BLOCK_ERROR reporting needs. So all 45 are counted (the SDK side
-    // is where the emit budget lives), none are deduped — they carry no requestId,
+    // has no emit budget either, so this is the real magnitude), none are deduped
+    // — they carry no requestId,
     // and two rejections of one type are two facts — and nothing goes back on the
     // wire, because there is nothing to answer.
     const recorded: Recorded[] = [];

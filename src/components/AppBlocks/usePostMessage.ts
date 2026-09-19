@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { buildBridgeNackReply } from './bridgeNackReply';
+import { INVENTORY } from './hostHandlerParity';
 import { recordBridgeMessage } from './bridgeMessageBeacon';
 import {
   boundBridgeMessageType,
@@ -9,6 +10,24 @@ import {
   type BridgeHost,
   type BridgeMessageOutcome,
 } from './bridgeTelemetry';
+
+/**
+ * The block→host message that reports an SDK-side validator rejection.
+ *
+ * 🔴 A CONSTANT WITH A COMPILE-TIME BINDING, NOT A BARE LITERAL IN THE `if`. The
+ * dispatcher branch below keys on this string, and so do its tests — so a bare
+ * literal on both sides means an SDK RENAME silently disables the branch, returns
+ * the series to zero, and falsifies `hostHandlerParity`'s entry for it with nothing
+ * red anywhere. `satisfies keyof typeof INVENTORY` makes that a TYPE ERROR: the
+ * parity inventory is this repo's record of the protocol, and it is already in this
+ * module's import graph, so the binding costs nothing.
+ *
+ * ⚠️ It binds to the INVENTORY, which can legitimately run AHEAD of the published
+ * SDK — so this catches a rename that reaches the inventory, not one that has only
+ * happened upstream. The upstream half is `hostHandlerParity`'s own one-directional
+ * gate against the installed union.
+ */
+const BLOCK_MESSAGE_REJECTED = 'BLOCK_MESSAGE_REJECTED' satisfies keyof typeof INVENTORY;
 
 interface UsePostMessageOptions {
   iframeRef: RefObject<HTMLIFrameElement | null>;
@@ -339,7 +358,7 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       // dedup map, for the same reason the `no_handler` branch is: a flood of junk
       // must not burn the budget legitimate BLOCK_ERROR reporting needs. Dedup would
       // also be wrong — these carry no `requestId`, and two rejections are two facts.
-      if (data.type === 'BLOCK_MESSAGE_REJECTED') {
+      if (data.type === BLOCK_MESSAGE_REJECTED) {
         const rejected = (data.payload as { type?: unknown } | null | undefined)?.type;
         report(
           boundBridgeMessageType(typeof rejected === 'string' ? rejected : ''),
