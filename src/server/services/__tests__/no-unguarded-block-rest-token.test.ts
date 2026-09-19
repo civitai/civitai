@@ -390,9 +390,10 @@ const LITERAL_SENTINEL = '\u0000';
  *       discards the rest of the line. An earlier draft of this docstring claimed "none
  *       appears in the files scanned here" — that claim was false when written.
  *   (c) `${...}` INTERPOLATION is real code, and a lexer swallows it into the literal body.
- *       Measured against the compiler over the 345 files these two suites read, that alone
- *       put the lexer's notion of "what is code" at odds with the parser's on roughly half
- *       of them.
+ *       Measured 2026-09-19 over 1,724 files under `src/server` and `src/pages`, the lexer's
+ *       notion of "what is code" disagreed with the parser's on 858 of them — and that wider
+ *       sweep, rather than the 345 these two suites read, is the number actually taken, so
+ *       read it as "this is endemic in the corpus", not as a rate for the scanned set.
  *
  * WHAT IT PRODUCES. Comments are removed. Every string, template part and regex literal is
  * re-delimited as `<sentinel><body><sentinel>`, so the body is still READABLE (needed to pin
