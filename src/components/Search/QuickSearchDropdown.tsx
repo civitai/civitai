@@ -181,8 +181,14 @@ export const QuickSearchDropdown = ({
 
   const indexName = searchIndexMap[targetIndex];
 
-  // Ensure we disable search targets if they are not enabled. Hoisted because the selector's
-  // value is clamped to this set as well as read from it — the two have to be the same list.
+  // The options the selector OFFERS: what the caller declared, narrowed by feature flag. Computed
+  // once here because the render below reads it twice — as `data`, and in the `value` expression
+  // that blanks the label when the target is not one of these.
+  //
+  // Not the same set as the one `fallbackIndex` above falls back into: that one stops at
+  // `supportedIndexes` and is deliberately NOT narrowed by flag, so a flag-disabled
+  // `startingIndex` reaches `targetIndex` and the `value` expression blanks the label rather than
+  // the fallback rewriting the target.
   const enabledTargets = (props.supportedIndexes ?? [])
     .filter(
       (value) =>
@@ -197,10 +203,12 @@ export const QuickSearchDropdown = ({
       {!!showIndexSelect && (
         /*
           ABOVE the keyed provider, and that placement is the point. `<InstantSearch>` returns
-          `null` until its own effect has started the search, so a key change commits one render in
-          which the whole subtree is gone. Inside it, the control the user just clicked would be
-          destroyed and rebuilt by their own click — focus lands on `<body>`. It consumes nothing
-          from the provider's context, so nothing is lost by lifting it out.
+          `null` whenever its search instance is not STARTED, and outside server rendering it is
+          started from a subscription callback that runs after a render has committed — so every
+          fresh provider renders once with no subtree at all, and a key change builds a fresh
+          provider. Inside it, the control the user just clicked would be destroyed and rebuilt by
+          their own click — focus lands on `<body>`. It consumes nothing from the provider's
+          context, so nothing is lost by lifting it out.
         */
         <Select
           className="shrink"
@@ -210,11 +218,20 @@ export const QuickSearchDropdown = ({
             section: classes.targetSelectorRightSection,
           }}
           maxDropdownHeight={280}
-          // CONTROLLED, so the displayed label cannot drift from the index being searched.
+          // CONTROLLED — and the reason this comment used to give is gone, with no replacement
+          // established. That reason was that the selector sat inside the keyed provider, so a
+          // target switch remounted it and reset its internal state; lifting it above the provider
+          // removed the mechanism. `targetIndex` in this component now has exactly one writer,
+          // `handleTargetChange`, reached only from this Select's own `onChange` — so there is no
+          // second source for a displayed label to drift away from. Do not read the sibling in
+          // `AutocompleteSearch` as agreeing: that one has a second writer (a URL-follow effect),
+          // and its identical prop is load-bearing for the reason stated there.
           //
-          // `null` rather than the target when the target is not an OFFERED option: Mantine leaves
-          // a controlled value it cannot resolve showing the PREVIOUS option's label, which is a
-          // lie about what is being searched. Blank is honest about "none of these".
+          // What does still need a `value` is the expression below, which has no uncontrolled
+          // equivalent: `null` rather than the target when the target is not an OFFERED option.
+          // Mantine leaves a controlled value it cannot resolve showing the PREVIOUS option's
+          // label, which is a lie about what is being searched; blank is honest about "none of
+          // these". Reachable, because `fallbackIndex` above is not flag-narrowed.
           value={enabledTargets.some(({ value }) => value === targetIndex) ? targetIndex : null}
           data={enabledTargets}
           rightSection={<IconChevronDown size={16} color="currentColor" />}

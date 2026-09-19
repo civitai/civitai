@@ -35,9 +35,13 @@ import { useCallback, useState } from 'react';
  *   input's clear button) still goes through the setter and does discard it.
  *
  *   The cost is a window where the input reads empty while the carrier still holds text, so the
- *   NEXT remount re-seeds text the user last saw cleared. The owner of `carriedRef` is what bounds
- *   that window: `AutocompleteSearch` empties the ref itself when a navigation — rather than a pick
- *   from the selector — changes the target, so only a selector-driven remount re-seeds.
+ *   NEXT remount re-seeds text the user last saw cleared. This hook cannot bound that window —
+ *   only the owner of `carriedRef` can, by emptying the ref. `AutocompleteSearch` does so on three
+ *   paths: a submitted search, an Escape, and a navigation that CHANGES the section the search
+ *   follows. 🔴 That is a narrowing, not a closure, and the gap is reachable: a navigation which
+ *   leaves that section unchanged fires none of them, so text blurred away and then left alone
+ *   survives until the next remount re-seeds it. Deliberate — the alternative is discarding on
+ *   every blur, which is what made the carry inert.
  */
 export function useCarriedSearchText(
   carriedRef: MutableRefObject<string>,

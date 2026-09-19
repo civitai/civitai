@@ -162,8 +162,15 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
     // A navigation is not the switch the carry exists for. The input's blur handler empties the
     // visible text WITHOUT emptying the carrier (a blur is how you reach the category selector at
     // all), so text a user typed and walked away from would otherwise reappear — and be searched
-    // again — on the next link they follow into another section. Only a pick from the selector
-    // leaves the carrier loaded, and a pick does not change `searchTarget`.
+    // again — in the next section they land in.
+    //
+    // 🔴 This runs when `searchTarget` CHANGES, which is narrower than "on navigation": the line
+    // above collapses every first path segment outside `targetData` to `'models'`, so `/` →
+    // `/models/123/slug`, or any move between two such paths, leaves it unchanged and this never
+    // runs. The other two discards are `blurAndDiscardCarriedText` (submit, Escape) and the clear
+    // button, which writes `''` through the setter. Together they narrow the window rather than
+    // closing it, and the remainder is deliberate: text blurred away and then left alone survives
+    // in the carrier until the next pick from the selector re-seeds it.
     carriedSearchText.current = '';
     setTargetIndex(searchTarget);
   }, [searchTarget]);
@@ -193,8 +200,9 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
 
   const resolvedIndexName = searchIndexMap[targetIndex as keyof typeof searchIndexMap];
 
-  // Ensure we disable search targets if they are not enabled. Hoisted because the selector's
-  // value is clamped to this set as well as read from it — the two have to be the same list.
+  // The options the selector OFFERS: every target, narrowed by feature flag. Computed once here
+  // because the render below reads it twice — as `data`, and in the `value` expression that
+  // blanks the label when the target is not one of these.
   const enabledTargets = targetData.filter(
     ({ value }) =>
       (features.imageSearch ? true : value !== 'images') &&
@@ -208,10 +216,12 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
     <Group className={classes.wrapper} gap={0} wrap="nowrap">
       {/*
         ABOVE the keyed provider, and that placement is the point. `<InstantSearch>` returns `null`
-        until its own effect has started the search, so a key change commits one render in which
-        the whole subtree is gone. Inside it, the control the user just clicked would be destroyed
-        and rebuilt by their own click — focus lands on `<body>`. It consumes nothing from the
-        provider's context, so nothing is lost by lifting it out.
+        whenever its search instance is not STARTED, and outside server rendering it is started
+        from a subscription callback that runs after a render has committed — so every fresh
+        provider renders once with no subtree at all, and a key change builds a fresh provider.
+        Inside it, the control the user just clicked would be destroyed and rebuilt by their own
+        click — focus lands on `<body>`. It consumes nothing from the provider's context, so
+        nothing is lost by lifting it out.
       */}
       <Select
         // CONTROLLED. Uncontrolled, its displayed label is internal state, so a target switch
@@ -457,6 +467,24 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const focusInput = () => inputRef.current?.focus();
   const blurInput = () => inputRef.current?.blur();
 
+  // Submitting a search and pressing Escape are the two ways a user says they are finished with
+  // what they typed, so both discard the carried copy as well as blurring. One function rather
+  // than the line written at each call site: the two must not drift apart.
+  //
+  // Deliberately NOT inside `blurInput`. Both of that function's callers are these two paths
+  // today, so the two placements are behaviourally identical at this head — but `blurInput` is a
+  // DOM verb and the discard is a claim about intent, and a third caller that is not a "done"
+  // signal would silently inherit it. (Nothing else blurs: the imperative handle below exposes
+  // `focus` only.)
+  //
+  // 🔴 And NOT from `handleBlur`. Reaching the category selector requires blurring this input, so
+  // a discard there would empty the carrier immediately before the one switch the carry exists
+  // for — which is what made the carry inert on this component before.
+  const blurAndDiscardCarriedText = () => {
+    carriedSearchText.current = '';
+    blurInput();
+  };
+
   useImperativeHandle(ref, () => ({
     focus: focusInput,
   }));
@@ -468,7 +496,11 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     if (search) {
       router.push(searchPageUrl(), undefined, { shallow: false });
 
-      blurInput();
+      // Inside the `if`, where the blur already was: the carrier is discarded on the branch that
+      // acted on the text. Enter over an EMPTY input — which is what the box reads as after a
+      // blur, since nothing re-seeds it on focus — discards nothing, and that is the same
+      // residue the effect above describes.
+      blurAndDiscardCarriedText();
     }
 
     onSubmit?.();
@@ -611,7 +643,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
         onBlur={handleBlur}
         onClear={handleClear}
         onKeyDown={getHotkeyHandler([
-          ['Escape', blurInput],
+          ['Escape', blurAndDiscardCarriedText],
           ['Enter', handleSubmit],
         ])}
         onOptionSubmit={handleItemClick}

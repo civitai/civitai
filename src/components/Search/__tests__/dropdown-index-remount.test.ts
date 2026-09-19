@@ -49,9 +49,12 @@ const SELECTOR_VALUE_CLAMP =
 /**
  * Containment with every whitespace character removed from BOTH sides. Prettier breaks a long JSX
  * attribute inside its own braces as well as between attributes, so collapsing runs to a single
- * space does not survive a wrap — removing whitespace entirely does, and for an expression pinned
- * character-for-character it gives up nothing: no mutation of this kind is reachable by adding or
- * removing whitespace alone.
+ * space does not survive a wrap — removing whitespace entirely does. What that gives up is real,
+ * but does not reach THIS needle: with whitespace stripped from both sides, sources differing only
+ * inside a string literal compare equal, and a needle whose tokens are separated only by a space
+ * matches a source that has run them together. `SELECTOR_VALUE_CLAMP` contains no string literal,
+ * and every adjacency in it is punctuated rather than whitespace-separated, so neither applies.
+ * Do not reuse this for a needle that does contain a literal.
  */
 const containsIgnoringWhitespace = (source: string, needle: string) =>
   source.replace(/\s+/g, '').includes(needle.replace(/\s+/g, ''));
@@ -143,6 +146,20 @@ function propExpression(tag: string, prop: string): string | null {
  * unrelated `const indexName = Object.keys(uiState)?.[0]` elsewhere in that file.
  */
 const INDEX_TRACKS_TARGET_EXPRESSION = /^searchIndexMap\[\s*targetIndex\b/;
+
+/**
+ * The category `<Select>` element's source, delimited by the provider that follows it. Both
+ * dropdowns render the selector immediately above `<InstantSearch>` — the file-order check below
+ * is what keeps that true — and a brace-counting parse is not worth writing for it: over-reading
+ * to the provider can only make a `not.toMatch` on this region WIDER, never blinder.
+ */
+function selectorSource(source: string): string {
+  const selector = source.indexOf('<Select');
+  const provider = source.indexOf('<InstantSearch');
+  if (selector < 0 || provider < selector)
+    throw new Error('expected a <Select> written above <InstantSearch>');
+  return source.slice(selector, provider);
+}
 
 /**
  * The expression a provider receives, resolved one hop when it is a hoisted local `const` — which
@@ -269,8 +286,9 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     // the selector's value, its options and its deselect behaviour, but nothing pinned that
     // choosing an option arrives at `setTargetIndex`. Neutering either handler leaves manual
     // category switching dead while `AutocompleteSearch` still looks alive — its URL-follow effect
-    // keeps calling `setTargetIndex` — and the exactly-one-writer count cannot see it, because
-    // `onTargetChange(v as TKey)` is not that pattern.
+    // keeps calling `setTargetIndex` — and the exactly-one-writer count further down cannot see
+    // it, because that count matches `setTargetIndex(searchTarget` while the selector's handler
+    // writes `setTargetIndex(value)`.
     // ⚠️ Every assertion here except `setTargetIndex(value ?? fallbackIndex)` is an INVARIANT
     // GUARD: an equivalent handler chain is present at the PR base. Keying the provider is what
     // put it at risk — a consolidation of the two `setTargetIndex` writers this change created
@@ -278,8 +296,10 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     // attributable to the fallback spelling alone, not to the claim in its title.
     //
     // The selector now lives in the same component as the handler (it was lifted out of the keyed
-    // subtree so a key change cannot destroy the control mid-click), so the chain is one hop, not
-    // the three it used to be: `onChange` → `handleTargetChange` → `setTargetIndex`.
+    // subtree so a key change cannot destroy the control mid-click), so the chain is
+    // `onChange` → `handleTargetChange` → `setTargetIndex`. The hop the lift removed is the one
+    // that crossed the component boundary: at the PR base the inner component received an
+    // `onTargetChange` prop and the chain ran through it.
     const autocomplete = stripComments(
       read('src/components/AutocompleteSearch/AutocompleteSearch.tsx')
     );
@@ -298,10 +318,12 @@ describe('the dropdown roots carry the typed text across that remount', () => {
   });
 
   it('both selectors are rendered ABOVE the provider a target switch rebuilds', () => {
-    // `<InstantSearch>` returns `null` until its own start effect has run, so the render a key
-    // change commits has NO subtree at all. A selector inside it is therefore unmounted and
-    // rebuilt by the very click that switched the index, and the focus that click put on it lands
-    // on `<body>`. Above the provider it survives its own change handler.
+    // `<InstantSearch>` returns `null` whenever its search instance is not STARTED, and it is
+    // started from a subscription callback that runs after a render has committed — so every
+    // fresh provider, a key change included, renders once with NO subtree at all. A selector
+    // inside it is therefore unmounted and rebuilt by the very click that switched the index, and
+    // the focus that click put on it lands on `<body>`. Above the provider it survives its own
+    // change handler.
     //
     // File-order, like the carrier check above: a spelling-and-position claim, not a tree one.
     // That is what this tier can see, and it is the property that broke.
@@ -352,9 +374,12 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     // EXACTLY ONE writer. Hoisting the sync while leaving the old copy in place reintroduces the
     // whole defect with the assertion above still satisfied — the consolidation-that-forgot-to-
     // delete shape, which is the likeliest way this comes back.
-    expect([...source.matchAll(/(?:setTargetIndex|onTargetChange)\(searchTarget/g)]).toHaveLength(
-      1
-    );
+    //
+    // `setTargetIndex` alone. This used to alternate with `onTargetChange`, the spelling the PR
+    // base used before the handler was lifted out of the inner component; that name exists nowhere
+    // in `src/` now, and the arm could not have discriminated anyway — a revert to the base
+    // spelling fails the `indexOf` assertion above before reaching this line.
+    expect([...source.matchAll(/setTargetIndex\(searchTarget/g)]).toHaveLength(1);
 
     // …and it still FOLLOWS navigation. Emptying its dependency array leaves one writer, in the
     // right place, that only ever runs once. The array only has to CONTAIN `searchTarget` —
@@ -370,7 +395,14 @@ describe('the dropdown roots carry the typed text across that remount', () => {
       `AutocompleteSearch: selector value clamp not found — expected ${SELECTOR_VALUE_CLAMP}`
     ).toBe(true);
     expect(source).toContain('data={enabledTargets}');
-    expect(source).not.toContain('defaultValue={searchTarget}');
+
+    // …and it holds NO uncontrolled copy of it. INVARIANT GUARD — green at the PR base too. The
+    // PROP, not one spelling of its argument: the previous form named `defaultValue={searchTarget}`
+    // and left `defaultValue={targetIndex}` unguarded, which was MEASURED — both dropdowns take a
+    // typechecking `defaultValue` revert with the round-1 suite fully green. Scoped to the
+    // selector's own source because the text input further down legitimately passes
+    // `defaultValue={query}`.
+    expect(selectorSource(source)).not.toMatch(/\bdefaultValue=/);
 
     // INVARIANT GUARD, not regression coverage: this prop predates the PR here. It is load-bearing
     // all the same — this change handler casts away the `null` a deselect produces, and unlike the
@@ -405,9 +437,43 @@ describe('the dropdown roots carry the typed text across that remount', () => {
       /const handleBlur = \(\) => \{\s*clearDisplayedText\(\);\s*onClear\?\.\(\);\s*\};/
     );
 
-    // The bound: the carrier is emptied when the URL moves the target, immediately before the
-    // writer that triggers that remount, so only a selector pick re-seeds.
+    // ONE of the three discards, and a SPELLING check: the carrier is emptied when the URL moves
+    // the target, immediately before the writer that triggers that remount. The other two —
+    // submit and Escape — are pinned in the test below, on the same terms.
+    //
+    // 🔴 What nothing here covers is that the three are ENOUGH, and they are not. `searchTarget`
+    // collapses every first path segment outside `targetData` to `'models'`, so navigation that
+    // stays within one section fires none of them and text blurred away then left alone survives
+    // to the next selector pick. That is a decision, not an omission; observing it needs a
+    // rendered input and a router, which is the browser tier.
     expect(source).toMatch(/carriedSearchText\.current = '';\s*setTargetIndex\(searchTarget\);/);
+  });
+
+  it('AutocompleteSearch discards the carried text on submit and on Escape', () => {
+    // MEASURED DEFECT at the previous head: the carrier was emptied only when a navigation moved
+    // `searchTarget`, so typing on `/`, clicking away and opening a model left text in the
+    // carrier with no affordance to discard it — the input reads empty and
+    // `clearable={query.length > 0}` removes the clear button — and the next category pick
+    // resurrected that text AND searched for it.
+    //
+    // SPELLING COVERAGE, and it is the only tier available: both paths run through a rendered
+    // Mantine input. A rename reddens this for a non-defect; re-pin the new spelling rather than
+    // loosening the check.
+    const source = stripComments(read('src/components/AutocompleteSearch/AutocompleteSearch.tsx'));
+
+    // Discard and blur in ONE function, so the two "done" paths cannot drift apart.
+    expect(source).toMatch(
+      /const blurAndDiscardCarriedText = \(\) => \{\s*carriedSearchText\.current = '';\s*blurInput\(\);\s*\};/
+    );
+    expect(source).toContain("['Escape', blurAndDiscardCarriedText]");
+    expect(source).toMatch(
+      /const handleSubmit = \(\) => \{[\s\S]{0,400}?blurAndDiscardCarriedText\(\);/
+    );
+
+    // 🔴 The complementary half — that the plain blur handler does NOT discard — is not restated
+    // here. The test above pins `handleBlur`'s body in FULL, which forbids a discard inside it
+    // more tightly than any check written here could, and pins `onBlur={handleBlur}` so the input
+    // cannot be rewired to this function instead. One change should redden one test.
   });
 
   it('QuickSearchDropdown drives its index selector from the target it is searching', () => {
@@ -418,7 +484,16 @@ describe('the dropdown roots carry the typed text across that remount', () => {
       `QuickSearchDropdown: selector value clamp not found — expected ${SELECTOR_VALUE_CLAMP}`
     ).toBe(true);
     expect(source).toContain('data={enabledTargets}');
-    expect(source).not.toContain('defaultValue={enabledTargets[0]}');
+
+    // …and it holds NO uncontrolled copy of the target. 🔴 The previous form here was
+    // `not.toContain('defaultValue={enabledTargets[0]}')`, which DISCRIMINATED NOTHING:
+    // `enabledTargets` is `{ label, value }[]` while Mantine's `SelectProps['defaultValue']` is
+    // `string | null`, so that spelling could never have been written. The plausible reverts —
+    // `defaultValue={fallbackIndex}`, `defaultValue={enabledTargets[0].value}` — typecheck, and
+    // the first was MEASURED to leave the round-1 suite fully green. Pinned on the PROP now,
+    // scoped to the selector's own source because the text input further down legitimately passes
+    // `defaultValue={query}`. INVARIANT GUARD: green at the PR base too.
+    expect(selectorSource(source)).not.toMatch(/\bdefaultValue=/);
 
     // DELIBERATELY UNCOVERED, said out loud rather than left as a silent omission: the
     // `startingIndex ?? supportedIndexes[0] ?? 'models'` fallback. Its INITIAL-value arm is
