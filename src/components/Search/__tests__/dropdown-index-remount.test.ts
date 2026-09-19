@@ -118,17 +118,17 @@ function propExpression(tag: string, prop: string): string | null {
  * pinning it leaves `key` and `indexName` still agreeing (so the ledger below still passes) while
  * the target selector stops switching index at all in production.
  *
- * Asserted on the declaration rather than on the JSX, because both dropdowns hoist the expression
- * into a local and a check on the tag then sees only an identifier. Stated as what a tracking
- * index IS — subscripted by `targetIndex` — rather than as a list of constant spellings to reject:
- * enumerating spellings caught `searchIndexMap.models` and a string literal while
- * `searchIndexMap['models']` and an imported `IMAGES_SEARCH_INDEX` walked straight through.
+ * Stated as what a tracking index IS — subscripted by `targetIndex` — rather than as a list of
+ * constant spellings to reject: enumerating spellings caught `searchIndexMap.models` and a string
+ * literal while `searchIndexMap['models']` and an imported `IMAGES_SEARCH_INDEX` walked straight
+ * through. Matched against the EXPRESSION, so it holds whether that expression is written inline
+ * on the provider or hoisted into a local first.
  *
  * Scoped to the two dropdowns on purpose. `SearchLayout` takes its index as a PROP — dynamic by
  * construction — and an earlier attempt to resolve identifiers generically bound its name to an
  * unrelated `const indexName = Object.keys(uiState)?.[0]` elsewhere in that file.
  */
-const INDEX_TRACKS_TARGET = /const \w+ =\s*searchIndexMap\[\s*targetIndex\b/;
+const INDEX_TRACKS_TARGET_EXPRESSION = /^searchIndexMap\[\s*targetIndex\b/;
 
 describe('the InstantSearch roots', () => {
   it('is the set this ledger accounts for', () => {
@@ -158,13 +158,22 @@ describe('the InstantSearch roots', () => {
       expect(indexName).toBeTruthy();
       expect(key).toBe(indexName);
 
-      // The expression itself must not BE a constant. Cheap, prop-scoped, and it reaches the one
-      // root the per-dropdown `INDEX_TRACKS_TARGET` check below cannot: `SearchLayout` takes its
-      // index as a prop, so nothing else here would stop both props being pinned to the same
-      // constant — `key` and `indexName` would still agree and every search page would search one
-      // index. Identifiers pass untouched, which is what keeps it off the false positive that an
-      // earlier identifier-resolving version hit.
-      expect(indexName).not.toMatch(/^(['"`]|searchIndexMap[.[])/);
+      // `SearchLayout` is the one root the per-dropdown `INDEX_TRACKS_TARGET` check below cannot
+      // reach, and without something here nothing stops BOTH its props being pinned to the same
+      // constant: `key === indexName` would still hold and every search page would search one
+      // index. Its index is a PROP, so say that positively — the expression must be the parameter
+      // the component destructures.
+      //
+      // Positively on purpose. The first attempt enumerated constant SPELLINGS to reject, which
+      // is the hole `INDEX_TRACKS_TARGET`'s own docblock warns about two paragraphs above: an
+      // imported `MODELS_SEARCH_INDEX` walked straight through it. It also REJECTED a correct
+      // dynamic expression written inline, which is the shape `AutocompleteSearch` had before
+      // this change — a guard that fails on correct code as well as passing broken code.
+      if (relPath === 'src/components/Search/SearchLayout.tsx') {
+        expect(source).toMatch(
+          new RegExp(`export function SearchLayout\\(\\{[^}]*\\b${indexName}\\b`)
+        );
+      }
     });
   }
 });
@@ -206,11 +215,25 @@ describe('the dropdown roots carry the typed text across that remount', () => {
   }
 
   it('both dropdowns derive the index they key on from the target', () => {
-    // Its own test rather than a line inside the carrier one, so this mutation class reports under
-    // a title that names it. Pinned at the DECLARATION because both roots pass a hoisted
-    // identifier to the provider, where a check would see only a name.
+    // INVARIANT GUARD, not regression coverage — and it became one when the check learned to
+    // accept the inline form: both roots already derived their index correctly at the PR base, so
+    // this is green there. What the base lacked was the `key`, which the ledger above covers. This
+    // exists because keying the provider makes a constant index silently survivable: `key` and
+    // `indexName` would still agree while the selector stopped switching anything.
+    //
+    // Follows the expression the PROVIDER actually receives, then resolves it one hop if it is a
+    // hoisted identifier — which is how both roots write it today. Both halves are needed and
+    // neither is sufficient: checking only the declaration lets the JSX be pinned to a constant
+    // while an unused tracking `const` sits above it, and checking only the JSX rejects the
+    // equally correct inline form.
     for (const relPath of dropdowns) {
-      expect(stripComments(read(relPath)), relPath).toMatch(INDEX_TRACKS_TARGET);
+      const source = stripComments(read(relPath));
+      const expression = propExpression(openingTag(source), 'indexName') ?? '';
+      const derivation = /^[A-Za-z_$][\w$]*$/.test(expression)
+        ? source.match(new RegExp(`const ${expression} =\\s*([^;\\n]+)`))?.[1] ?? expression
+        : expression;
+
+      expect(derivation, relPath).toMatch(INDEX_TRACKS_TARGET_EXPRESSION);
     }
   });
 
@@ -221,11 +244,23 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     // category switching dead while `AutocompleteSearch` still looks alive — its URL-follow effect
     // keeps calling `setTargetIndex` — and the exactly-one-writer count cannot see it, because
     // `onTargetChange(v as TKey)` is not that pattern.
+    // ⚠️ Every assertion here except `setTargetIndex(value ?? fallbackIndex)` is an INVARIANT
+    // GUARD: all four handler spellings are present unchanged at the PR base. Keying the provider
+    // is what put them at risk — a consolidation of the two `setTargetIndex` writers this change
+    // created would take one of them out — so they are worth pinning, but the red-at-base of this
+    // test is attributable to the fallback spelling alone, not to the claim in its title.
     const autocomplete = stripComments(
       read('src/components/AutocompleteSearch/AutocompleteSearch.tsx')
     );
     expect(autocomplete).toContain('onChange={(v: string | null) => onTargetChange(v as TKey)}');
     expect(autocomplete).toContain('onTargetChange={handleTargetChange}');
+
+    // …and the hop between them. Without this the chain is pinned at both ends and open in the
+    // middle on this component only — the sibling's equivalent is covered by its `fallbackIndex`
+    // line below, which is what made the asymmetry hard to see.
+    expect(autocomplete).toMatch(
+      /const handleTargetChange = \(value: SearchIndexKey\) => \{\s*setTargetIndex\(value\);\s*\};/
+    );
 
     const quickSearch = stripComments(read('src/components/Search/QuickSearchDropdown.tsx'));
     expect(quickSearch).toContain('onChange={(value) => onIndexNameChange(value as TIndex)}');
