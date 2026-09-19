@@ -44,6 +44,8 @@ vi.mock('~/server/db/pgDb', () => ({
       return { result: async () => [], cancel: async () => undefined };
     }),
   },
+  pgDbReadLong: {},
+  pgDbWrite: {},
 }));
 
 const { sendNotificationsJob } = await import('~/server/jobs/send-notifications');
