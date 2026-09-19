@@ -11,11 +11,20 @@ import { trpc } from '~/utils/trpc';
  *
  * 🔴 THIS EXISTS BECAUSE THE INVITE DISCLOSURE PROMISES IT. The owner is told, before
  * sending an invitation, that an accepted editor will be able to see this app's Buzz
- * earnings — and that promise is TRUE at the API, because the proc grants it to any
- * accepted editor with a session. Until this panel there was no surface behind it, and
- * the proc-↔-client seam guard reported it as wired anyway on the strength of a comment.
- * Softening the copy instead would have been the more dangerous fix: an owner would then
- * grant earnings access believing they had not.
+ * earnings. Until this panel there was no surface behind it, and the proc-↔-client seam
+ * guard reported it as wired anyway on the strength of a comment. Softening the copy
+ * instead would have been the more dangerous fix: an owner would then grant earnings
+ * access believing they had not.
+ *
+ * 🔴 THE PROMISE IS NOT YET TRUE FOR EVERY ACCEPTED EDITOR, and this comment used to
+ * claim it was. `getAppEarnings` is an `appDeveloperProcedure` —
+ * `protectedProcedure.use(hasAppBlocksAuthor)` — so it throws FORBIDDEN for any caller
+ * outside the `appBlocksAuthor` cohort, accepted editor or not. Such an editor never
+ * reaches this panel at all: `getAuthoringContext` carries the same middleware, so the
+ * whole page is NotFound for them. What the disclosure describes therefore holds today
+ * only for an accepted editor who is ALSO in the author cohort. Widening it is a
+ * cohort-gate decision, not a copy decision — do not soften the disclosure to match the
+ * gate, and do not assume the gate matches the disclosure.
  *
  * 🔴 NOT a variant of `RevenuePanel`. That one drives `blocks.getMyRevenue`, which is
  * keyed on the snapshotted `appOwnerUserId` and is USER-WIDE — pointing it at an editor
