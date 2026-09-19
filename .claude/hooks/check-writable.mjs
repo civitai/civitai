@@ -162,8 +162,13 @@ export function unboundedDevRequest(command) {
     .filter((seg) => !isBounded(seg));
 }
 
-// The full unit suite (~21,500 tests / ~75s, serialised through the dev-server queue) belongs at
-// the END of a task, once — not between edits. Denied rather than asked, so the redirect reaches
+// The full unit suite belongs at the END of a task, once — not between edits.
+//
+// The numbers below are measured, and the "~75s" they replace was not: a day of the daemon's own
+// queue history (50 full runs, 12 worktrees, 2026-09-17/18) puts the RUN at a median of 549s and
+// the QUEUE WAIT in front of it at a median of 186s, mean 405s, worst 2247s. An agent budgeting a
+// mid-iteration suite run against 75s is off by 7x on the run alone, which is precisely the
+// miscalculation that fills the queue this hook exists to protect. Denied rather than asked, so the redirect reaches
 // the agent at the moment of the mistake instead of interrupting the user. FULL_SUITE=1 is the
 // deliberate opt-in for the single pre-commit run or an explicit user request.
 const VITEST_INVOCATION =
@@ -184,12 +189,54 @@ export function fullUnitSuiteRun(command) {
 }
 
 const FULL_SUITE_REASON =
-  'Full unit suite blocked mid-iteration: it is ~21,500 tests / ~75s and serialised through the ' +
-  "dev-server queue, blocking everyone else's runs. Run only the test files covering your change: " +
+  'Full unit suite blocked mid-iteration: it is ~25,000 tests, ~9 minutes to run, and serialised ' +
+  "through the dev-server queue behind a typical 3-minute wait — blocking everyone else's runs. " +
+  'Run only the test files covering your change: ' +
   "`pnpm exec vitest run --project 'unit*' <files>` — find them with " +
   '`grep -rln \'<symbol>\' src --include=*.test.ts`. The full suite runs ONCE, right before ' +
   'committing; for that single run (or when the user explicitly asked for a full run), prefix the ' +
   'command with FULL_SUITE=1.';
+
+// A full-program `tsc` run directly, instead of through `pnpm run typecheck`. Two reasons, and the
+// second would hold even if the first went away:
+//   1. It skips the typecheck lane of the dev-server queue, so several agents doing it at once is
+//      N single-core 8 GB heaps pegging the box — the condition the lane exists to prevent.
+//   2. It is the WRONG CHECK. tsc at node's default heap can abort part-way with ZERO diagnostics
+//      and a log that reads as clean; scripts/typecheck.mjs raises the heap and names that crash.
+//      Measured: a file with 8 real errors reported "No errors found" under `npx tsc -p
+//      tsconfig.json` and 8 errors under `pnpm run typecheck`.
+// Narrow runs are left alone: a sub-project (`-p tsconfig.scripts.json`, which the scripts gate
+// itself recommends), named files, `--build`, and informational flags. TYPECHECK_DIRECT=1 is the
+// deliberate opt-out for diagnosing tsc itself.
+const TSC_INVOCATION = new RegExp(
+  String.raw`^\s*(?:\w+=\S*\s+)*(?:` +
+    String.raw`(?:(?:pnpm|yarn|bun)\s+(?:exec|dlx)\s+|npx\s+|\.?[\\/]?node_modules[\\/]\.bin[\\/])?tsc(?=\s|$)` +
+    String.raw`|node\s+(?:--\S+\s+)*\S*typescript[\\/]lib[\\/]tsc\.js\b)`
+);
+const TSC_ROOT_PROJECT = /^(?:\.[\\/]?|(?:\.[\\/])?tsconfig\.json)$/;
+const TSC_NOT_A_CHECK = /(?:^|\s)(?:-v|--version|-h|--help|--init|--showConfig|--all|-b|--build)\b/;
+
+export function directRootTypecheck(command) {
+  if (/TYPECHECK_DIRECT\s*=\s*1|\$env:TYPECHECK_DIRECT/.test(command)) return false;
+  return command.split(/[;&|\n]+/).some((seg) => {
+    if (!TSC_INVOCATION.test(seg)) return false;
+    if (TSC_NOT_A_CHECK.test(seg)) return false;
+    const tokens = seg.trim().split(/\s+/).map((t) => t.replace(/^['"]|['"]$/g, ''));
+    // Named source files make tsc ignore tsconfig entirely: a narrow check of those files only.
+    if (tokens.some((t) => !t.startsWith('-') && /\.(?:[cm]?tsx?|d\.ts)$/.test(t))) return false;
+    const at = tokens.findIndex((t) => /^(?:-p|--project)(?:=|$)/.test(t));
+    if (at === -1) return true;
+    const inline = tokens[at].includes('=') ? tokens[at].split('=')[1] : tokens[at + 1];
+    return TSC_ROOT_PROJECT.test(inline ?? '');
+  });
+}
+
+const DIRECT_TSC_REASON =
+  'Direct full-program tsc blocked: use `pnpm run typecheck`. That script queues the run in the ' +
+  "dev-server typecheck lane (several agents' 8 GB tsc heaps at once is what pegs the box), and it " +
+  'is also the only form that cannot report a crashed run as clean — plain tsc at the default ' +
+  'heap can abort with zero diagnostics. A sub-project (`-p tsconfig.scripts.json`) or named ' +
+  'files still run directly. To diagnose tsc itself, prefix the command with TYPECHECK_DIRECT=1.';
 
 // Patterns that would kill Claude Code or critical processes - BLOCK OUTRIGHT
 const DANGEROUS_PATTERNS = [
@@ -282,6 +329,17 @@ stdin.on('end', () => {
           hookEventName: 'PreToolUse',
           permissionDecision: 'deny',
           permissionDecisionReason: FULL_SUITE_REASON,
+        }
+      }));
+      process.exit(0);
+    }
+
+    if (directRootTypecheck(command)) {
+      console.log(JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: DIRECT_TSC_REASON,
         }
       }));
       process.exit(0);
