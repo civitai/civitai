@@ -236,6 +236,20 @@ export const QuickSearchDropdown = ({
           data={enabledTargets}
           rightSection={<IconChevronDown size={16} color="currentColor" />}
           onChange={(value) => handleTargetChange(value as SearchIndexKey)}
+          // Mantine's `Select` is deselectable by default: re-clicking the option that is already
+          // selected clears it and hands `null` to the change handler, which resolves it to
+          // `fallbackIndex`. Where that differs from what the user had selected, a stray click
+          // silently changes WHICH INDEX is searched — `ShowcaseItemsInput` and `AssociateModels`
+          // both offer two indexes and pass no `startingIndex`, so `fallbackIndex` is their FIRST
+          // supported one and re-clicking the second reverts the search to the first.
+          //
+          // The case that originally motivated this prop no longer needs it, and that is worth
+          // saying rather than leaving the stronger claim standing: at
+          // `CosmeticShopItemUpsertForm` — `supportedIndexes={['users']}`, writing picked ids into
+          // `meta.paidToUserIds` — the old handler fell back to a hardcoded `models`, so a deselect
+          // there put model ids into a user-payout list. `fallbackIndex` resolves to `users` at
+          // that caller, which closes it independently of this prop.
+          allowDeselect={false}
         />
       )}
       <InstantSearch
