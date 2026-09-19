@@ -1320,11 +1320,12 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     // user has since swapped out.
     const sourceProvenance = [
       ...(snapshot.images ?? []).map((img) => remixProvenanceStore.getToken(img.url)),
-      // The reuse-prompt entry point's token, which is keyed to no image because
-      // that path seeds none. Sent unconditionally: the server spends it only if
-      // the prompt it validates still derives from the source's, so a form the
-      // user has since rewritten carries a token that buys nothing.
-      remixProvenanceStore.getPromptToken(),
+      // The reuse-prompt entry point's token, keyed to no image because that path
+      // seeds none. It lives exactly as long as the remix claim it came with, so
+      // it inherits that claim's expiry and every place that clears it — a form
+      // reset or a non-remix open. Past that, a similar prompt typed by hand
+      // would otherwise still spend it.
+      remixStore.getData() ? remixProvenanceStore.getPromptToken() : undefined,
     ].filter(isDefined);
 
     // Calculate total cost including tips

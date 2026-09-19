@@ -15,9 +15,12 @@ function buildTFIDF(tokensA: string[], tokensB: string[]): [TFIDFMap, TFIDFMap, 
   const docs = [tokensA, tokensB];
   const vocab = Array.from(new Set([...tokensA, ...tokensB]));
 
+  // Sets, not `Array.includes`: that made this O(vocab × tokens), and one side of
+  // the server's comparison is a stored prompt whose length nothing bounds.
+  const docSets = docs.map((doc) => new Set(doc));
   const docFreq: Record<string, number> = {};
   vocab.forEach((word) => {
-    docFreq[word] = docs.reduce((count, doc) => (doc.includes(word) ? count + 1 : count), 0);
+    docFreq[word] = docSets.reduce((count, set) => (set.has(word) ? count + 1 : count), 0);
   });
 
   function tfidfVector(tokens: string[]): TFIDFMap {
@@ -56,25 +59,22 @@ function harmonicMean(a: number, b: number): number {
 }
 
 /**
- * The one number that decides whether a prompt is still the prompt it started
- * from. `promptDerivationHolds` is the only reader; `promptSimilarity` keeps an
- * overridable `upper` for exploratory callers, and the gate deliberately does
- * not go through it.
- *
- * 🔴 It is not a similarity preference, it is a money gate: a submission that
- * clears it enters a creator's review queue without paying. Do not tune it from
- * a call site, and do not add a second copy — `no-divergent-prompt-derivation`
- * pins this as the sole derivation.
+ * 🔴 A money gate, not a similarity preference: a submission that clears it
+ * enters a creator's review queue without paying. Read only through
+ * `promptDerivationHolds`; `no-divergent-prompt-derivation` fails on a second copy
+ * or a second route to a threshold.
  */
 export const PROMPT_DERIVATION_THRESHOLD = 0.75;
 
-interface SimilarityOptions {
-  /** `adjustedCosine` at or above this counts as similar. */
-  upper?: number;
-}
+/**
+ * Longer input is truncated before comparison. The similarity is still
+ * super-linear in token count, and the server compares against a stored prompt
+ * that the upload path does not bound, so this is the CPU ceiling for one check.
+ * Matches the generator's own prompt cap, so nothing a user can submit is cut.
+ */
+const MAX_COMPARED_PROMPT_CHARS = 6000;
 
-export function promptSimilarity(p1: string, p2: string, opt: SimilarityOptions = {}) {
-  const { upper = PROMPT_DERIVATION_THRESHOLD } = opt;
+function promptSimilarity(p1: string, p2: string) {
   const tokensA = cleanText(p1);
   const tokensB = cleanText(p2);
 
@@ -96,7 +96,7 @@ export function promptSimilarity(p1: string, p2: string, opt: SimilarityOptions 
     cosine,
     containment,
     adjustedCosine,
-    similar: adjustedCosine >= upper,
+    similar: adjustedCosine >= PROMPT_DERIVATION_THRESHOLD,
   };
 }
 
@@ -104,7 +104,7 @@ export function promptSimilarity(p1: string, p2: string, opt: SimilarityOptions 
  * Whether `current` is still derived from `source`.
  *
  * No options parameter, on purpose: this is the derivation the free-submission
- * gate spends, and a caller that could pass its own `upper` would be a second
+ * gate spends, and a caller that could pass its own cutoff would be a second
  * threshold that nothing pins. Both readers — the client's `remixClaimState` and
  * the server's submit-time check — come through here, so they cannot disagree.
  *
@@ -116,6 +116,9 @@ export function promptDerivationHolds(
   source: string,
   current: string
 ): { holds: boolean; score: number } {
-  const { similar, adjustedCosine } = promptSimilarity(source, current);
+  const { similar, adjustedCosine } = promptSimilarity(
+    source.slice(0, MAX_COMPARED_PROMPT_CHARS),
+    current.slice(0, MAX_COMPARED_PROMPT_CHARS)
+  );
   return { holds: similar, score: adjustedCosine };
 }

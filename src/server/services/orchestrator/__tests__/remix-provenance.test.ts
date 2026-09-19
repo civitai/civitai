@@ -5,12 +5,17 @@ import type * as Workflows from '~/server/services/orchestrator/workflows';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const findMany = vi.fn();
+const metaFetch = vi.fn();
 const getWorkflowMock = vi.fn();
 const getTokenMock = vi.fn();
 
 vi.mock('~/server/db/client', async (importOriginal) => ({
   ...(await importOriginal<typeof DbClient>()),
   dbRead: { image: { findMany: (...args: unknown[]) => findMany(...args) } },
+}));
+
+vi.mock('~/server/redis/caches', () => ({
+  imageMetaCache: { fetch: (...args: unknown[]) => metaFetch(...args) },
 }));
 
 vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
@@ -333,78 +338,95 @@ describe('unionSourceImageIds', () => {
   /**
    * The `prompt` kind, whose whole point is that it is CONDITIONAL. Every other
    * token spends on presentation alone; this one spends only if the prompt the
-   * server validated still derives from the source's own prompt.
+   * server validated still derives from the source's own stored prompt.
    *
-   * The source prompt comes from `dbRead`, never from the request, so these mock
-   * the row rather than passing it in — a test that supplied both sides would be
-   * asserting over a value the submitter controls, which is the exact bug the
-   * implementation exists to avoid.
+   * The source prompt is mocked at the cache, never passed in — a test that
+   * supplied both sides would be asserting over a value the submitter controls.
    */
   describe('the prompt kind is conditional', () => {
     const SOURCE_PROMPT = 'a cat wearing a blue hat, oil painting, soft light, detailed fur';
 
-    const promptToken = () =>
-      signProvenance({ userId: USER, sourceImageIds: [7], kind: 'prompt' })!;
+    /** Measured 0.79 and 0.60 against SOURCE_PROMPT: either side of the 0.75 cutoff. */
+    const JUST_DERIVED = 'a cat wearing a red hat, oil painting, warm light, detailed fur';
+    const JUST_DRIFTED = 'a dog wearing a red scarf, oil painting, warm light, detailed fur';
 
-    beforeEach(() => {
-      findMany.mockResolvedValue([{ id: 7, meta: { prompt: SOURCE_PROMPT } }]);
+    const promptToken = (ids = [7]) =>
+      signProvenance({ userId: USER, sourceImageIds: ids, kind: 'prompt' })!;
+
+    const stored = (prompt: string | null, id = 7) => ({
+      [id]: { id, meta: prompt === null ? null : { prompt } },
     });
 
+    beforeEach(() => {
+      metaFetch.mockReset();
+      metaFetch.mockResolvedValue(stored(SOURCE_PROMPT));
+    });
+
+    const submit = (prompt?: string, tokens = [promptToken()]) =>
+      unionSourceImageIds({ urlSourceImageIds: [], tokens, userId: USER, prompt });
+
     it('spends when the submitted prompt still derives from the source', async () => {
+      expect(await submit(`${SOURCE_PROMPT}, warm tones`)).toEqual([7]);
+    });
+
+    it('does NOT spend when the prompt has drifted away from the source', async () => {
       expect(
-        await unionSourceImageIds({
-          urlSourceImageIds: [],
-          tokens: [promptToken()],
-          userId: USER,
-          prompt: `${SOURCE_PROMPT}, warm tones`,
-        })
-      ).toEqual([7]);
+        await submit('industrial machinery blueprint, technical schematic, monochrome')
+      ).toEqual([]);
     });
 
     /**
-     * The gate. A revert that spends the token unconditionally fails HERE and
-     * nowhere else — every other assertion in this describe passes under it.
+     * The cutoff itself, server-side. A disjoint prompt scores 0 and is refused at
+     * any threshold, so without this pair the server could compare against a
+     * cutoff of its own and every other test here would stay green.
      */
-    it('does NOT spend when the prompt has drifted away from the source', async () => {
-      expect(
-        await unionSourceImageIds({
-          urlSourceImageIds: [],
-          tokens: [promptToken()],
-          userId: USER,
-          prompt: 'industrial machinery blueprint, technical schematic, monochrome',
-        })
-      ).toEqual([]);
+    it('decides at the shared cutoff, on both sides of it', async () => {
+      expect(await submit(JUST_DERIVED)).toEqual([7]);
+      expect(await submit(JUST_DRIFTED)).toEqual([]);
     });
 
     /**
      * Not a drift verdict: a workflow with no prompt has nothing to compare, and
      * scoring the empty string would read as total drift by accident.
      */
-    it('does not spend, or query, when the submission carries no prompt', async () => {
-      findMany.mockClear();
-
+    it('does not spend, or look up, when the submission carries no prompt', async () => {
       expect(
-        await unionSourceImageIds({
-          urlSourceImageIds: [9],
-          tokens: [promptToken()],
-          userId: USER,
-        })
+        await unionSourceImageIds({ urlSourceImageIds: [9], tokens: [promptToken()], userId: USER })
       ).toEqual([9]);
-      expect(findMany).not.toHaveBeenCalled();
+      expect(metaFetch).not.toHaveBeenCalled();
     });
 
-    /** A source whose own prompt is gone cannot vouch for anything. */
-    it('does not spend when the source row has no prompt', async () => {
-      findMany.mockResolvedValue([{ id: 7, meta: { prompt: '' } }]);
+    it('does not spend when the source has no prompt', async () => {
+      metaFetch.mockResolvedValue(stored(''));
+      expect(await submit(SOURCE_PROMPT)).toEqual([]);
+    });
 
-      expect(
-        await unionSourceImageIds({
-          urlSourceImageIds: [],
-          tokens: [promptToken()],
-          userId: USER,
-          prompt: SOURCE_PROMPT,
-        })
-      ).toEqual([]);
+    /**
+     * A hidden prompt reaches this code as `meta: null` — the cache applies
+     * `hideMeta`. Refused rather than compared: comparing would make the free/paid
+     * answer a way to test guesses against a prompt its owner hid.
+     */
+    it('does not spend against a source whose prompt is hidden', async () => {
+      metaFetch.mockResolvedValue(stored(null));
+      expect(await submit(SOURCE_PROMPT)).toEqual([]);
+    });
+
+    /** Exactly the ids the token named, in one lookup. */
+    it('looks up only the ids the token named', async () => {
+      await submit(SOURCE_PROMPT);
+
+      expect(metaFetch).toHaveBeenCalledTimes(1);
+      expect(metaFetch).toHaveBeenCalledWith([7]);
+    });
+
+    /**
+     * What spends is bounded by what the token named, not by what a lookup
+     * happened to return. A lookup that answered for a row nobody claimed must not
+     * turn that row into a verified source.
+     */
+    it('ignores rows the token did not name', async () => {
+      metaFetch.mockResolvedValue({ ...stored(SOURCE_PROMPT), ...stored(SOURCE_PROMPT, 8) });
+      expect(await submit(SOURCE_PROMPT)).toEqual([7]);
     });
 
     /**
@@ -422,41 +444,21 @@ describe('unionSourceImageIds', () => {
     /**
      * The audience check on the drift route specifically, which the `job`-token
      * test above cannot reach: that one passes no prompt, so it never enters this
-     * branch at all. Dropping the `'prompt'` argument here would make a `job`
-     * token — the one baked into every public output file — spendable at submit
-     * whenever the prompt happens to match, which is the 41% population.
+     * branch. Without it a `job` token — the one embedded in every public output
+     * file — would spend at submit whenever the prompt happened to match.
      */
     it('refuses a job token on the drift route even when the prompt matches', async () => {
       const job = signProvenance({ userId: USER, sourceImageIds: [7] })!;
-
-      expect(
-        await unionSourceImageIds({
-          urlSourceImageIds: [],
-          tokens: [job],
-          userId: USER,
-          prompt: SOURCE_PROMPT,
-        })
-      ).toEqual([]);
+      expect(await submit(SOURCE_PROMPT, [job])).toEqual([]);
     });
 
     /**
-     * The drift check reads the source prompt from the database. Passing a
-     * matching prompt while the row says something unrelated must still refuse —
+     * A matching request prompt against an unrelated STORED prompt must refuse —
      * otherwise the comparison is happening against the request.
      */
     it('compares against the stored source prompt, not the request', async () => {
-      findMany.mockResolvedValue([
-        { id: 7, meta: { prompt: 'industrial machinery blueprint, monochrome' } },
-      ]);
-
-      expect(
-        await unionSourceImageIds({
-          urlSourceImageIds: [],
-          tokens: [promptToken()],
-          userId: USER,
-          prompt: SOURCE_PROMPT,
-        })
-      ).toEqual([]);
+      metaFetch.mockResolvedValue(stored('industrial machinery blueprint, monochrome'));
+      expect(await submit(SOURCE_PROMPT)).toEqual([]);
     });
   });
 });

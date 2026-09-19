@@ -27,19 +27,45 @@ import { describe, expect, it } from 'vitest';
 
 const ROUTER = path.resolve(__dirname, '../../routers/orchestrator.router.ts');
 
+/**
+ * The `signProvenance` call inside one procedure, and only that procedure. The
+ * slice stops at the next procedure key: without that bound, a procedure whose
+ * own call went missing would be checked against its neighbour's.
+ */
+function signCallIn(src: string, procedure: string) {
+  const start = src.indexOf(`${procedure}:`);
+  expect(start, `${procedure} not found in orchestrator.router.ts`).toBeGreaterThan(-1);
+
+  const rest = src.slice(start + procedure.length + 1);
+  const next = rest.search(/\n {2}\w+: \w*[Pp]rocedure\b/);
+  const handler = next === -1 ? rest : rest.slice(0, next);
+
+  const at = handler.indexOf('signProvenance(');
+  expect(at, `${procedure} no longer calls signProvenance`).toBeGreaterThan(-1);
+  const call = handler.slice(at);
+  return call.slice(0, call.indexOf('}),') + 2);
+}
+
 describe('remix provenance mint audience', () => {
   it("signs its token as 'mint'", () => {
-    const src = fs.readFileSync(ROUTER, 'utf8');
-
-    const handler = src.slice(src.indexOf('mintRemixProvenance:'));
-    expect(handler).not.toBe('');
-
-    // The signProvenance call inside the mint handler, up to its closing brace.
-    const call = handler.slice(handler.indexOf('signProvenance('));
-    const body = call.slice(0, call.indexOf('}),') + 2);
+    const body = signCallIn(fs.readFileSync(ROUTER, 'utf8'), 'mintRemixProvenance');
 
     expect(body).toContain('sourceImageIds: [image.id]');
     expect(body).toMatch(/kind:\s*'mint'/);
+  });
+
+  /**
+   * The reuse-prompt mint. `prompt` is the only CONDITIONAL kind — spent at submit
+   * only if the prompt still derives from the source. Signed `mint` it would spend
+   * unconditionally; signed with no kind it would default to `job` and be
+   * spendable on the upload path. Either way a copied prompt reaches the free
+   * submission with no check, and no behavioural test calls this procedure.
+   */
+  it("signs the reuse-prompt token as 'prompt'", () => {
+    const body = signCallIn(fs.readFileSync(ROUTER, 'utf8'), 'mintPromptProvenance');
+
+    expect(body).toContain('sourceImageIds: [image.id]');
+    expect(body).toMatch(/kind:\s*'prompt'/);
   });
 
   /**

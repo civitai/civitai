@@ -1783,6 +1783,10 @@ export async function generateFromGraph({
   const { data, computedKeys } = validateInput(input, externalCtx);
 
   const inputImages = extractInputImageUrls(data as unknown as Record<string, unknown>);
+  // One read for both consumers below, so the provenance check and the prompt
+  // audit cannot disagree about what was submitted.
+  const prompt = 'prompt' in data && typeof data.prompt === 'string' ? data.prompt : undefined;
+
   // Both routes, because neither covers the other — see `unionSourceImageIds`.
   // The short version: the form re-uploads a remix's on-site source as an
   // orchestrator blob before submit, so the URL route alone reports nothing for
@@ -1792,20 +1796,18 @@ export async function generateFromGraph({
     urlSourceImageIds: await resolveSourceImageIds(inputImages),
     tokens: sourceProvenance,
     userId,
-    // The server's own copy, off the validated graph. A `prompt` token is spent
-    // against this and never against anything the client sent alongside it.
-    prompt: 'prompt' in data && typeof data.prompt === 'string' ? data.prompt : undefined,
+    prompt,
   });
 
   // Audit prompt before generation
-  if ('prompt' in data && typeof data.prompt === 'string' && data.prompt.trim()) {
+  if (prompt?.trim()) {
     const negativePrompt = 'negativePrompt' in data ? (data.negativePrompt as string) : undefined;
     const inputVideo = (
       'video' in data ? (data.video as { url?: string } | null | undefined) : undefined
     )?.url;
     try {
       await auditPromptServer({
-        prompt: data.prompt,
+        prompt,
         negativePrompt,
         userId,
         isGreen: !!isGreen,
@@ -1833,7 +1835,7 @@ export async function generateFromGraph({
       createXGuardModerationRequest({
         mode: 'prompt',
         entityType: 'prompt',
-        positivePrompt: data.prompt,
+        positivePrompt: prompt,
         negativePrompt,
         userId,
         recordForReview: true,
