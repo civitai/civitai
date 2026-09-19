@@ -5,6 +5,7 @@ import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { imageMetaCache } from '~/server/redis/caches';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { promptDerivationHolds } from '~/utils/prompt-similarity';
 
@@ -442,14 +443,13 @@ export async function unionSourceImageIds({
  * The ids a `prompt` token is allowed to spend, which is the only place drift is
  * decided.
  *
- * Read from the database, not from the request: the source image's prompt is the
- * one thing here the submitter does not author, and the CURRENT prompt is taken
- * off the validated graph by the caller. Comparing anything the client sent
- * against anything else the client sent would gate on a value its subject
- * controls on both sides.
+ * The source prompt is the stored one, never the request's: the CURRENT prompt is
+ * taken off the validated graph by the caller, and comparing two values the
+ * client sent would gate on something its subject controls on both sides.
  *
- * Verification runs before the query, so a request full of unverifiable tokens
- * costs decrypt attempts already bounded by the caller and no database work.
+ * 🔴 Through `imageMetaCache`, not a raw read. It is the reader that applies
+ * `hideMeta`, and a raw read would compare against a prompt its owner hid — at
+ * which point the free/paid answer confirms or denies a guess at it.
  */
 async function promptDerivedIds({
   tokens,
@@ -467,18 +467,15 @@ async function promptDerivedIds({
   ].slice(0, MAX_SOURCE_IMAGES);
   if (!claimed.length) return [];
 
-  const sources = await dbRead.image.findMany({
-    where: { id: { in: claimed } },
-    select: { id: true, meta: true },
-  });
+  const metas = await imageMetaCache.fetch(claimed);
 
-  return sources
-    .filter(({ meta }) => {
-      const sourcePrompt = (meta as { prompt?: unknown } | null)?.prompt;
-      if (typeof sourcePrompt !== 'string' || !sourcePrompt.trim()) return false;
-      return promptDerivationHolds(sourcePrompt, prompt).holds;
-    })
-    .map(({ id }) => id);
+  // Iterates `claimed`, not the cache's keys: what a token spends is bounded by
+  // what the token named, whatever else a lookup returns.
+  return claimed.filter((id) => {
+    const sourcePrompt = metas[id]?.meta?.prompt;
+    if (typeof sourcePrompt !== 'string' || !sourcePrompt.trim()) return false;
+    return promptDerivationHolds(sourcePrompt, prompt).holds;
+  });
 }
 
 /**

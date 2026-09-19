@@ -47,10 +47,8 @@ interface RemixProvenanceState {
    * prompt replaces the whole form, so a second reuse supersedes the first
    * rather than joining it.
    *
-   * It is not keyed, and nothing clears it when the user edits the prompt away.
-   * That is deliberate and safe — the server spends this token only if the prompt
-   * it validates still derives from the source's, so a drifted form makes a stale
-   * token inert without the client having to notice.
+   * Read only while the remix claim is fresh (the FormFooters gate on
+   * `remixStore.getData()`), which is what bounds its life on the client.
    */
   promptToken?: Entry;
   setToken: (url: string, token: string) => void;
