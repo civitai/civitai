@@ -66,5 +66,8 @@ describe('prompt derivation has one threshold and one route', () => {
     const src = read(rel);
     expect(src).toMatch(/\bpromptDerivationHolds\(/);
     expect(src).not.toMatch(/\bpromptSimilarity\b/);
+    // The verdict, not the score: comparing `score` to a number of your own is a
+    // second threshold reached through the one allowed function.
+    expect(src).not.toMatch(/\bscore\s*[<>]=?/);
   });
 });

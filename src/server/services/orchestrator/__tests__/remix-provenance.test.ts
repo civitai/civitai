@@ -35,7 +35,6 @@ const {
   driftedImageIdsFromProvenance,
   resolveProvenance,
   resolveSourceImageIds,
-  resolveVerifiedSourceImageIds,
   sanitizeProvenance,
   signProvenance,
   storedDriftedImageIds,
@@ -43,6 +42,10 @@ const {
   unionSourceImageIds,
   verifyProvenance,
 } = await import('~/server/services/orchestrator/remix-provenance');
+
+/** The verified half of what the upload path records. */
+const uploadIds = async (args: Parameters<typeof resolveProvenance>[0]) =>
+  (await resolveProvenance(args)).sourceImageIds;
 
 /** The verified half of a submit's provenance, which is what most cases assert. */
 const unionIds = async (...args: Parameters<typeof unionSourceImageIds>) =>
@@ -177,18 +180,18 @@ describe('signProvenance / verifyProvenance', () => {
   });
 });
 
-describe('resolveVerifiedSourceImageIds', () => {
+describe('resolveProvenance', () => {
   it('takes the ids a valid token vouches for without reading the workflow', async () => {
     const provenance = signProvenance({ userId: 42, sourceImageIds: [7] });
 
-    expect(await resolveVerifiedSourceImageIds({ userId: 42, provenance })).toEqual([7]);
+    expect(await uploadIds({ userId: 42, provenance })).toEqual([7]);
     expect(getWorkflowMock).not.toHaveBeenCalled();
   });
 
   it('refuses a token that belongs to someone else', async () => {
     const provenance = signProvenance({ userId: 1, sourceImageIds: [7] });
 
-    expect(await resolveVerifiedSourceImageIds({ userId: 42, provenance })).toBeNull();
+    expect(await uploadIds({ userId: 42, provenance })).toBeNull();
   });
 
   it('falls back to the workflow, read with the caller’s own token', async () => {
@@ -196,9 +199,7 @@ describe('resolveVerifiedSourceImageIds', () => {
       metadata: { provenance: signProvenance({ userId: 42, sourceImageIds: [11, 12] }) },
     });
 
-    expect(await resolveVerifiedSourceImageIds({ userId: 42, workflowId: 'wf-1' })).toEqual([
-      11, 12,
-    ]);
+    expect(await uploadIds({ userId: 42, workflowId: 'wf-1' })).toEqual([11, 12]);
     expect(getTokenMock).toHaveBeenCalledWith(42, expect.anything());
     expect(getWorkflowMock).toHaveBeenCalledWith(
       expect.objectContaining({ token: 'token', path: { workflowId: 'wf-1' } })
@@ -213,15 +214,13 @@ describe('resolveVerifiedSourceImageIds', () => {
       metadata: { sourceImageIds: [999], provenance: 'forged' },
     });
 
-    expect(await resolveVerifiedSourceImageIds({ userId: 42, workflowId: 'wf-1' })).toBeNull();
+    expect(await uploadIds({ userId: 42, workflowId: 'wf-1' })).toBeNull();
   });
 
   it('resolves nothing when the workflow is not the caller’s to read', async () => {
     getWorkflowMock.mockRejectedValue(new Error('not found'));
 
-    expect(
-      await resolveVerifiedSourceImageIds({ userId: 42, workflowId: 'someone-elses-workflow' })
-    ).toBeNull();
+    expect(await uploadIds({ userId: 42, workflowId: 'someone-elses-workflow' })).toBeNull();
   });
 });
 
@@ -441,7 +440,7 @@ describe('unionSourceImageIds', () => {
       const token = promptToken();
 
       expect(verifyProvenance(token, USER)).toBeNull();
-      expect(await resolveVerifiedSourceImageIds({ userId: USER, provenance: token })).toBeNull();
+      expect(await uploadIds({ userId: USER, provenance: token })).toBeNull();
     });
 
     /**
@@ -480,7 +479,7 @@ describe('provenance kind separates the mint from a real job', () => {
     const minted = signProvenance({ userId: USER, sourceImageIds: [7], kind: 'mint' })!;
 
     expect(verifyProvenance(minted, USER)).toBeNull();
-    expect(await resolveVerifiedSourceImageIds({ userId: USER, provenance: minted })).toBeNull();
+    expect(await uploadIds({ userId: USER, provenance: minted })).toBeNull();
   });
 
   it('accepts a mint token on the submit path', async () => {
@@ -515,7 +514,7 @@ describe('provenance kind separates the mint from a real job', () => {
     const legacy = tokenIssuedAt(Math.floor(Date.now() / 1000) - 60, USER, [7]);
 
     expect(verifyProvenance(legacy, USER)).toEqual([7]);
-    expect(await resolveVerifiedSourceImageIds({ userId: USER, provenance: legacy })).toEqual([7]);
+    expect(await uploadIds({ userId: USER, provenance: legacy })).toEqual([7]);
   });
 });
 

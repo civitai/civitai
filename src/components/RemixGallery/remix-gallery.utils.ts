@@ -149,6 +149,11 @@ export function freeSubmissionOffer({
   resetsAt,
   paidOpen,
 }: FreeSubmissionInputs): { available: boolean; reason: string | null } {
+  // 🔴 Both unverified rungs name the Buzz alternative only when it exists. On
+  // an unpriced or below-floor gallery the paid control is unusable — not
+  // mounted, or mounted disabled when the card falls through to paid — so the
+  // unconditional sentence pointed at a Buzz control nobody can press, for a
+  // submission the server would refuse anyway. Change one tail, change both.
   if (!verified && drifted)
     return {
       available: false,
@@ -160,11 +165,6 @@ export function freeSubmissionOffer({
   if (!verified)
     return {
       available: false,
-      // 🔴 The alternative is only named when it exists. On an unpriced or
-      // below-floor gallery the paid control is unusable — either not mounted at
-      // all, or mounted disabled when the card falls through to paid — so the
-      // unconditional version of this sentence pointed at a Buzz control nobody
-      // can press, for a submission the server would refuse anyway.
       reason: paidOpen
         ? 'Free submissions are for remixes made from this image here on the site, where we can check. Anything else can still be submitted with Buzz.'
         : 'Free submissions are for remixes made from this image here on the site, where we can check — and this creator is not taking paid submissions either.',
