@@ -54,6 +54,16 @@ export interface BlockTokenClaims {
   blockInstanceId: string;
   ctx: Record<string, unknown>;
   scopes: string[];
+  /**
+   * The per-call generation ceiling the app declared (`page.buzzBudgetPerGen` /
+   * `settings.buzz_budget_per_gen`), clamped by the minting resolver.
+   *
+   * 🔴 A SUBMIT GATE READS IT ONLY THROUGH `blockPerCallBudget` — see that
+   * function for what the indirection is and is not doing today. The read
+   * surfaces that merely REPORT the number to the block (`/api/v1/blocks/me`,
+   * `blocks.getMyViewer`) project it directly and are ledgered as such in
+   * `src/server/services/__tests__/no-direct-block-budget-claim-read.test.ts`.
+   */
   buzzBudget?: number;
   /**
    * AUTHORITATIVE color-domain maturity ceiling (bitwise browsing-level flag,
@@ -98,6 +108,68 @@ export interface BlockTokenClaims {
    * if present (a non-boolean is rejected outright; absent → treated as false).
    */
   reviewRunForReal?: boolean;
+}
+
+/**
+ * THE per-call Buzz ceiling a submit gate compares against.
+ *
+ * ── WHAT IT DOES TODAY: NOTHING A CALLER COULD NOT DO INLINE ────────────────
+ * It returns `claims.buzzBudget`, or 0 when no budget was minted. BOTH values of
+ * `pricesAuthorFee` return that same number. Routing the four submit gates
+ * through it is a no-op on behaviour, and that is the entire intent: it
+ * consolidates four copies of one comparison without altering any of them.
+ *
+ * ── WHY IT EXISTS AT ALL ────────────────────────────────────────────────────
+ * The four gates spell the same comparison and are NOT interchangeable. Two of
+ * them add the per-generation author fee into the value they compare; two do not,
+ * because neither has a pre-submit `cost.base` to price a fee from (that split is
+ * documented at `src/server/services/blocks/author-fee-charge.service.ts` and
+ * ledgered in `src/server/services/__tests__/no-divergent-author-fee-base.test.ts`).
+ * Any future change to the ceiling is correct for at most one of those two
+ * populations, so it has to be made somewhere that knows which gate is which.
+ * This is that place; `pricesAuthorFee` is how each gate declares which it is.
+ *
+ * 🔴 THE FLAG IS CLASSIFICATION ONLY, AND HAS NO EFFECT. It changes no value, no
+ * branch reads it, and there is no ceiling decision behind it yet. A gate passing
+ * the "wrong" one is therefore not a defect today, because nothing consumes it.
+ * Do not read its presence as evidence that a difference exists. It is pinned
+ * against the fee call sites by
+ * `src/server/services/__tests__/no-direct-block-budget-claim-read.test.ts` so the
+ * classification cannot drift out of step with the fee before it becomes
+ * load-bearing — which it does the moment any branch reads it.
+ *
+ * 🔴 A RAISED CEILING WAS PROPOSED HERE AND WITHDRAWN. Minting `buzzBudget` ABOVE
+ * the declared ceiling so a fee fits underneath it is sound only where the fee is
+ * inside the compared value, and it was unsound in two ways at once. On the two
+ * fee-free gates the number that clears the gate is the number reserved and
+ * billed, so a raised ceiling spends real viewer Buzz above the ceiling the app's
+ * manifest declared. And on a fee-pricing gate it is equally unsound whenever the
+ * fee prices to zero — which it does for at least one generation type today — so
+ * the headroom is generation headroom no fee ever consumes. The manifest schema
+ * describes that declared number to authors as a safety ceiling against a
+ * compromised app draining the viewer's Buzz, so exceeding it is the one thing it
+ * must not do.
+ *
+ * So a future raised ceiling has to arrive as a SEPARATE claim whose name says it
+ * is granted, read only by a gate that prices the fee into its compared value —
+ * never by widening what `buzzBudget` means, which would hand the money-unsafe
+ * value to every gate written the obvious way.
+ *
+ * Returns 0 when no budget was minted, so a caller that skipped the
+ * `typeof claims.buzzBudget !== 'number'` pre-check still fails CLOSED.
+ */
+export function blockPerCallBudget(
+  claims: Pick<BlockTokenClaims, 'buzzBudget'>,
+  // Classification only, read by no branch today — see the note above. Kept in
+  // the signature so each gate declares its population and the ledger can pin
+  // that declaration against the fee call sites. The directive must stay on the
+  // line immediately above the parameter: anything between them and it silently
+  // applies to the comment instead.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  opts: { pricesAuthorFee: boolean }
+): number {
+  if (typeof claims.buzzBudget !== 'number') return 0;
+  return claims.buzzBudget;
 }
 
 export type BlockScopedNextApiRequest = NextApiRequest & {
