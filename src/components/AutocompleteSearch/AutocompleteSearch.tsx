@@ -27,6 +27,10 @@ import { InstantSearch, useInstantSearch, useSearchBox } from 'react-instantsear
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { slugit } from '~/utils/string-helpers';
 import { autocompleteSearchClient } from '~/components/Search/autocomplete.client';
+import {
+  shouldRefineSearchQuery,
+  useCarriedSearchText,
+} from '~/components/Search/useCarriedSearchText';
 import { quoteMeiliValue } from '~/components/Search/meili-filter';
 import { useAutocompleteAvailabilityStore } from '~/components/Search/search-availability.store';
 import { ModelSearchItem } from '~/components/AutocompleteSearch/renderItems/models';
@@ -91,6 +95,21 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
     setTargetIndex(value);
   };
   const currentUser = useCurrentUser();
+  // Owned above the keyed search provider below, so it outlives the remount an index switch
+  // causes.
+  const carriedSearchText = useRef('');
+
+  // Follow the section the user navigates to. This has to live ABOVE the keyed provider for the
+  // same reason the carrier does: inside it, the effect would run again on the mount that a
+  // target switch causes, read a section the user has not navigated to, and immediately revert
+  // their pick — so the category selector would only ever "work" when it picked what the URL
+  // already said.
+  const pathname = usePathname();
+  const currentSection = pathname.split('/')[1] || 'models';
+  const searchTarget = targetData.find((t) => t.value === currentSection)?.value ?? 'models';
+  useEffect(() => {
+    setTargetIndex(searchTarget);
+  }, [searchTarget]);
 
   const isModels = targetIndex === 'models';
   const isImages = targetIndex === 'images';
@@ -115,10 +134,16 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
       : null,
   ].filter(isDefined);
 
+  const resolvedIndexName = searchIndexMap[targetIndex as keyof typeof searchIndexMap];
+
   return (
     <InstantSearch
+      // Needs re-render, the same way `SearchLayout` does it. Otherwise the search fires with the
+      // previous index's parameters: react-instantsearch sets the new index and searches in its
+      // render body, before the children that own `filters` have re-rendered.
+      key={resolvedIndexName}
       searchClient={autocompleteSearchClient}
-      indexName={searchIndexMap[targetIndex as keyof typeof searchIndexMap]}
+      indexName={resolvedIndexName}
       future={{ preserveSharedStateOnUnmount: false }}
     >
       <AutocompleteSearchContent
@@ -127,6 +152,7 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
         ref={ref}
         onTargetChange={handleTargetChange}
         baseFilters={filters}
+        carriedSearchText={carriedSearchText}
       />
     </InstantSearch>
   );
@@ -138,6 +164,7 @@ type AutocompleteSearchProps<T extends SearchIndexKey> = Props & {
   indexName: T;
   onTargetChange: (target: T) => void;
   baseFilters: string[];
+  carriedSearchText: React.MutableRefObject<string>;
 };
 
 function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
@@ -149,6 +176,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     indexName: indexNameProp,
     onTargetChange,
     baseFilters,
+    carriedSearchText,
     ...autocompleteProps
   }: AutocompleteSearchProps<TKey>,
   ref: React.ForwardedRef<{ focus: () => void }>
@@ -161,9 +189,6 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const isMobile = useIsMobile();
   const features = useFeatureFlags();
   const inputRef = useRef<HTMLInputElement>(null);
-  const pathname = usePathname();
-  const currentSection = pathname.split('/')[1] || 'models';
-  const searchTarget = targetData.find((t) => t.value === currentSection)?.value ?? 'models';
   const domainColor = useDomainColor();
 
   const { status } = useInstantSearch({
@@ -177,7 +202,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     : indexNameProp;
 
   const [selectedItem, setSelectedItem] = useState<ComboboxData[number] | null>(null);
-  const [search, setSearch] = useState(query);
+  const [search, setSearch] = useCarriedSearchText(carriedSearchText, query);
   const [queryFilters, setQueryFilters] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
@@ -327,6 +352,17 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     indexName,
   ]);
 
+  // Ensure we disable search targets if they are not enabled. Hoisted because the selector's
+  // value is clamped to this set as well as read from it — the two have to be the same list.
+  const enabledTargets = targetData.filter(
+    ({ value }) =>
+      (features.imageSearch ? true : value !== 'images') &&
+      (features.bounties ? true : value !== 'bounties') &&
+      (features.articles ? true : value !== 'articles') &&
+      (features.toolSearch ? true : value !== 'tools') &&
+      (features.comicSearch ? true : value !== 'comics')
+  );
+
   const focusInput = () => inputRef.current?.focus();
   const blurInput = () => inputRef.current?.blur();
 
@@ -397,7 +433,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   useEffect(() => {
     // Only set the query when the debounced search changes
     // and user didn't select from the list
-    if (debouncedSearch === query || selectedItem || searchErrorState) return;
+    if (!shouldRefineSearchQuery(debouncedSearch, query, !!selectedItem || searchErrorState))
+      return;
 
     // Check if the query is an AIR
     const air = checkAIR(indexName, debouncedSearch);
@@ -411,21 +448,17 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
     setQuery(cleanedSearch);
     setQueryFilters(filters);
+    // `searchErrorState` is a module-level store, so it is the one input here that SURVIVES the
+    // remount an index switch causes. Without it in the deps, a tree that remounted while search
+    // was unavailable restores the typed text, returns early, and then never refines when the
+    // flag clears — the box reads as populated while the fresh helper's query is still empty.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, query, indexName]);
+  }, [debouncedSearch, query, indexName, searchErrorState]);
 
   // Clear selected item after search changes
   useEffect(() => {
     setSelectedItem(null);
   }, [debouncedSearch]);
-
-  // Change index target when search target changes
-  useEffect(() => {
-    if (indexNameProp !== searchTarget) {
-      onTargetChange(searchTarget as TKey);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchTarget]);
 
   const processHitUrl = (hit: Hit) => {
     switch (indexName) {
@@ -455,7 +488,15 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       />
       <Group className={classes.wrapper} gap={0} wrap="nowrap">
         <Select
-          key={pathname}
+          // CONTROLLED. Uncontrolled, its displayed label is internal state inside the keyed
+          // provider, so a target switch would remount it back to whatever the default said
+          // while the search really did move — a selector that lies about what it is searching.
+          //
+          // `null` rather than the target when the target is not an OFFERED option: the URL can
+          // point the search at an index whose feature flag is off, and Mantine leaves a
+          // controlled value it cannot resolve showing the PREVIOUS option's label. Blank is
+          // honest about "none of these"; a stale label is the same lie in a different place.
+          value={enabledTargets.some(({ value }) => value === indexNameProp) ? indexNameProp : null}
           aria-label="Search category"
           classNames={{
             root: classes.targetSelectorRoot,
@@ -468,16 +509,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
             className: classes.targetSelectorRightSection,
           }}
           maxDropdownHeight={280}
-          defaultValue={searchTarget}
-          // Ensure we disable search targets if they are not enabled
-          data={targetData.filter(
-            ({ value }) =>
-              (features.imageSearch ? true : value !== 'images') &&
-              (features.bounties ? true : value !== 'bounties') &&
-              (features.articles ? true : value !== 'articles') &&
-              (features.toolSearch ? true : value !== 'tools') &&
-              (features.comicSearch ? true : value !== 'comics')
-          )}
+          data={enabledTargets}
           rightSection={<IconChevronDown size={16} color="currentColor" />}
           style={{ flexShrink: 1 }}
           onChange={(v: string | null) => onTargetChange(v as TKey)}
