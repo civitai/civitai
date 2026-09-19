@@ -98,12 +98,18 @@ describe('the unsanitized read paths serve the row count', () => {
     const { items } = await getPaginatedCosmeticShopItems({ page: 1, limit: 60 });
 
     expect(items[0].meta.purchases).toBe(20);
+    // Mocks ignore `select`: without this, re-adding the whole-table `_count` at this
+    // call site leaves every value assertion green.
+    expect(dbMock.dbRead.cosmeticShopItem.findMany.mock.calls[0][0].select._count).toBeUndefined();
   });
 
   it('getShopItemById reports the rows, not the counter', async () => {
     dbMock.dbRead.cosmeticShopItem.findUniqueOrThrow.mockResolvedValue(drifted);
 
     expect((await getShopItemById({ id: 74 })).meta.purchases).toBe(20);
+    expect(
+      dbMock.dbRead.cosmeticShopItem.findUniqueOrThrow.mock.calls[0][0].select._count
+    ).toBeUndefined();
   });
 
   // The mapping sits AFTER the `.catch`, so the replica-fallback result is

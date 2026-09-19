@@ -72,11 +72,28 @@ describe('getSoldCounts', () => {
     const sold = await getSoldCounts([2, 1, 2, 5]);
 
     expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(1);
-    expect(dbMock.dbRead.$queryRaw.mock.calls[0].slice(1)).toContainEqual([2, 1, 5]);
+    expect(dbMock.dbRead.$queryRaw.mock.calls[0].slice(1)).toEqual([[2, 1, 5]]);
     expect([...sold]).toEqual([
       [2, 9],
       [1, 3],
     ]);
+  });
+
+  /**
+   * The service tests all answer through `soldCountsFake`, which cannot tell a count
+   * of purchases from a count of buyers, the right column from the wrong one, or an
+   * int4 from Postgres' int8 `COUNT(*)` — which Prisma returns as a BigInt and which
+   * then throws in `availableQuantity - purchases`. This is the one place that sees
+   * the statement itself.
+   */
+  it('emits exactly the per-item purchase count, cast to int', async () => {
+    await getSoldCounts([1]);
+
+    const strings = dbMock.dbRead.$queryRaw.mock.calls[0][0] as string[];
+    expect(strings.join('$1').replace(/\s+/g, ' ').trim()).toBe(
+      'SELECT "shopItemId", COUNT(*)::int AS sold FROM "UserCosmeticShopPurchases" ' +
+        'WHERE "shopItemId" = ANY($1::int[]) GROUP BY "shopItemId"'
+    );
   });
 
   it('skips the query for an empty page', async () => {

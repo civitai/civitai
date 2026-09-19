@@ -4,9 +4,8 @@ import { dbRead } from '~/server/db/client';
  * Sold counts for exactly the listed shop items, from the purchase rows.
  *
  * Prisma's relation `_count` aggregates the WHOLE purchases table once per query and
- * joins the result, so its cost grows with the table rather than with the page. This
- * is restricted to the ids asked for, which is what lets
- * `UserCosmeticShopPurchases_shopItemId_idx` turn it into an index-only lookup.
+ * joins the result. This groups only the ids asked for; an index on `shopItemId` would
+ * also let it read only their rows, but none exists yet, so it still scans the table.
  * `= ANY(array)` rather than `IN (...)` keeps one statement shape for every page size.
  *
  * Items with no purchases are absent from the map; read them as 0.

@@ -90,7 +90,8 @@ describe('getCommunityCosmetics', () => {
     const soldCall = dbMock.dbRead.$queryRaw.mock.calls.find((c) =>
       (c[0] as string[]).join('').includes('"UserCosmeticShopPurchases"')
     );
-    expect(soldCall?.slice(1)).toContainEqual([2, 1]);
+    expect(soldCall).toBeDefined();
+    expect(soldCall?.slice(1)).toEqual([[2, 1]]);
   });
 
   it('pages by skip/take and reports the page count from the total', async () => {

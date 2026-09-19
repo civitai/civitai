@@ -112,6 +112,10 @@ describe('getShopSectionsWithItems viewer gating', () => {
     dbMock.dbRead.$queryRaw.mockImplementation(soldCountsFake({ 1: 5 }));
     const sections = await getShopSectionsWithItems({});
     expect(sections[0].items[0].shopItem.meta.purchases).toBe(5);
+    // Mocks ignore `select`, so only this sees a whole-table `_count` re-added here.
+    expect(
+      mocks.sectionFindMany.mock.calls[0][0].select.items.select.shopItem.select._count
+    ).toBeUndefined();
   });
 
   it('non-mod with the creatorShop flag: creator items are not filtered out, status guard stays', async () => {
@@ -235,5 +239,9 @@ describe('getSectionById serves the row count too', () => {
     const section = await getSectionById({ id: 5 });
 
     expect(section.items[0].shopItem.meta.purchases).toBe(5);
+    expect(
+      dbMock.dbRead.cosmeticShopSection.findUniqueOrThrow.mock.calls.at(-1)?.[0].select.items.select
+        .shopItem.select._count
+    ).toBeUndefined();
   });
 });
