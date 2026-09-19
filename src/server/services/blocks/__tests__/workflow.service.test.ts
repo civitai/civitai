@@ -127,10 +127,21 @@ describe('snapshotFromWorkflow', () => {
     expect(snap.imageUrls).toEqual(['https://cdn/ok.png']);
   });
 
-  it('emits a non-empty sentinel workflowId for whatif/estimate (no orchestrator id)', () => {
+  it('emits a non-empty sentinel workflowId when an orchestrator id is absent', () => {
     // The block SDK validator drops snapshots with an empty workflowId, which
-    // strands ESTIMATE_RESULT until the 120s timeout (gotcha #55). A whatif
-    // workflow has no id, so the snapshot must carry a non-empty sentinel.
+    // strands ESTIMATE_RESULT until the 120s timeout (gotcha #55), so the
+    // fallback must be non-empty.
+    //
+    // 🔴 THE FIXTURE IS SYNTHETIC AND THE FALLBACK IS CURRENTLY UNREACHABLE.
+    // The orchestrator stamps a server-minted id on EVERY workflow it returns,
+    // whatIf included (`WorkflowGrain.TryInitializeAsync` sets `Id` from the
+    // grain key BEFORE the estimate-only early return), so `workflow.id` is not
+    // observed absent on any path today. An earlier version of this test's name
+    // and comment asserted the opposite — that a whatif workflow has no id —
+    // and that was false. This pins the defensive floor, not an observed case:
+    // the orchestrator's OpenAPI declares `id` optional-and-nullable and its
+    // serializer omits nulls, so a regression would silently drop the field
+    // rather than error.
     const snap = snapshotFromWorkflow(fakeWorkflow({ id: undefined }) as never);
     expect(snap.workflowId).toBe('whatif');
     expect(snap.workflowId.length).toBeGreaterThan(0);

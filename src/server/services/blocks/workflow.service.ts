@@ -201,14 +201,20 @@ export function snapshotFromWorkflow(
     ? extra.modelSubstitutions
     : readModelSubstitutionsFromMetadata(workflow.metadata);
   return {
-    // A whatif/estimate workflow has no orchestrator id. The block SDK's
-    // inbound validator (isValidWorkflowSnapshot) DROPS any snapshot whose
-    // workflowId is an empty string, so an `''` here silently strands the
-    // ESTIMATE_RESULT reply until the 120s transport timeout (the block then
-    // falls back to a "≤ budget" cost). Emit a non-empty sentinel so estimate
-    // replies validate; the block treats estimate results as a cost quote only
-    // and never polls on this id (the request is correlated by requestId, not
-    // workflowId). Submit always carries a real id, so it is unaffected.
+    // The orchestrator stamps a server-minted id on EVERY workflow it returns,
+    // whatIf included (`WorkflowGrain.TryInitializeAsync` sets `Id` from the
+    // grain key before the estimate-only early return), so `workflow.id` is not
+    // observed absent on any path today and this fallback is currently
+    // unreachable. It is kept as a defensive floor because the orchestrator's
+    // OpenAPI declares `id` optional-and-nullable with
+    // `DefaultIgnoreCondition=WhenWritingNull`, so a future regression would
+    // silently OMIT the field rather than error. The floor must be non-empty:
+    // the block SDK's inbound validator (isValidWorkflowSnapshot) DROPS any
+    // snapshot whose workflowId is an empty string, so an `''` here would
+    // silently strand the ESTIMATE_RESULT reply until the 120s transport
+    // timeout (the block then falls back to a "≤ budget" cost). The block
+    // treats estimate results as a cost quote only and never polls on this id
+    // (the request is correlated by requestId, not workflowId).
     workflowId: workflow.id ?? 'whatif',
     status,
     ...(typeof total === 'number' ? { cost: { total } } : {}),
