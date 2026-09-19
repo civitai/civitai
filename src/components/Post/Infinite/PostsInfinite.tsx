@@ -8,6 +8,7 @@ import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { FeedWrapper } from '~/components/Feed/FeedWrapper';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
+import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
 import { PostsCardMemoized } from '~/components/Post/Infinite/PostsCard';
 import { usePostFilters, useQueryPosts } from '~/components/Post/post.utils';
 import type { PostSort } from '~/server/common/enums';
@@ -57,6 +58,9 @@ function PostsInfiniteContent({
   if (!isEqual(filtersRef.current, computedFilters)) filtersRef.current = computedFilters;
   const filters = filtersRef.current;
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
+  // Masonry places each card in the shortest column, so the server's publish order only
+  // survives down a column. A queue has to read left to right, so drafts get the row-major grid.
+  const orderedLayout = !!filters.draftOnly;
 
   const { posts, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryPosts(filters, {
     keepPreviousData: true,
@@ -71,19 +75,29 @@ function PostsInfiniteContent({
       ) : !!posts.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-          <MasonryColumnsVirtual
-            data={posts}
-            imageDimensions={(data) => {
-              const image = data.images[0];
-              const width = image.width ?? 450;
-              const height = image.height ?? 450;
-              return { width, height };
-            }}
-            maxItemHeight={600}
-            render={PostsCardMemoized}
-            itemId={(data) => data.id}
-            withAds={showAds}
-          />
+          {orderedLayout ? (
+            <MasonryGridVirtual
+              data={posts}
+              render={PostsCardMemoized}
+              itemId={(data) => data.id}
+              withAds={showAds}
+              aspectRatio="square"
+            />
+          ) : (
+            <MasonryColumnsVirtual
+              data={posts}
+              imageDimensions={(data) => {
+                const image = data.images[0];
+                const width = image.width ?? 450;
+                const height = image.height ?? 450;
+                return { width, height };
+              }}
+              maxItemHeight={600}
+              render={PostsCardMemoized}
+              itemId={(data) => data.id}
+              withAds={showAds}
+            />
+          )}
           {hasNextPage && (
             <InViewLoader
               loadFn={fetchNextPage}
