@@ -36,6 +36,11 @@ const stripComments = (source: string) =>
  * shows the target only when it is NOT offered, and replacing the `null` with a first-option
  * fallback reinstates the wrong-label lie the clamp exists to prevent. Neither is visible to a
  * check on the `.some(…)` call.
+ *
+ * ⚠️ Spelling-pinned, and measured at EXACTLY 100 characters in both files against
+ * `printWidth: 100`. A rename of `indexNameProp`/`enabledTargets`, or one more level of
+ * indentation, makes prettier break the expression across lines and this goes red for a pure
+ * formatting change. Re-pin the new spelling; do not loosen it back to the predicate alone.
  */
 const SELECTOR_VALUE_CLAMP =
   'value={enabledTargets.some(({ value }) => value === indexNameProp) ? indexNameProp : null}';
@@ -109,19 +114,21 @@ function propExpression(tag: string, prop: string): string | null {
 }
 
 /**
- * Follow a bare identifier to its local `const` initializer, so the checks below see what the
- * index really IS rather than what it is spelled. A root that hoists the expression into a local
- * (both dropdowns do) would otherwise satisfy any check on the tag no matter what the local held
- * — a `const x = searchIndexMap.models` mutant survives the whole file without this.
+ * The index a dropdown root passes must be DERIVED FROM ITS TARGET, not pinned to a constant —
+ * pinning it leaves `key` and `indexName` still agreeing (so the ledger below still passes) while
+ * the target selector stops switching index at all in production.
  *
- * An identifier with no local `const` is a prop or a piece of state (`SearchLayout`'s `indexName`
- * is a prop), which is dynamic by construction; it is returned unchanged and passes.
+ * Asserted on the declaration rather than on the JSX, because both dropdowns hoist the expression
+ * into a local and a check on the tag then sees only an identifier. Stated as what a tracking
+ * index IS — subscripted by `targetIndex` — rather than as a list of constant spellings to reject:
+ * enumerating spellings caught `searchIndexMap.models` and a string literal while
+ * `searchIndexMap['models']` and an imported `IMAGES_SEARCH_INDEX` walked straight through.
+ *
+ * Scoped to the two dropdowns on purpose. `SearchLayout` takes its index as a PROP — dynamic by
+ * construction — and an earlier attempt to resolve identifiers generically bound its name to an
+ * unrelated `const indexName = Object.keys(uiState)?.[0]` elsewhere in that file.
  */
-function resolveIndexExpression(source: string, expression: string): string {
-  if (!/^[A-Za-z_$][\w$]*$/.test(expression)) return expression;
-  const declaration = source.match(new RegExp(`\\bconst ${expression}\\s*=\\s*([^;\\n]+)`));
-  return declaration ? declaration[1].trim() : expression;
-}
+const INDEX_TRACKS_TARGET = /const \w+ = searchIndexMap\[\s*targetIndex\b/;
 
 describe('the InstantSearch roots', () => {
   it('is the set this ledger accounts for', () => {
@@ -151,13 +158,8 @@ describe('the InstantSearch roots', () => {
       expect(indexName).toBeTruthy();
       expect(key).toBe(indexName);
 
-      // And the index has to TRACK something — the inverse of the `static-index` branch's check,
-      // so the two policies are mutually exclusive. Without it, pinning the index to one constant
-      // leaves key and index still agreeing while the target selector stops switching index at
-      // all in production, and every assertion above stays green.
-      const resolved = resolveIndexExpression(source, indexName as string);
-      expect(resolved).not.toMatch(/^searchIndexMap\.[A-Za-z]+$/);
-      expect(resolved).not.toMatch(/^['"`]/);
+      // That the index TRACKS the target — which this check cannot see, since both dropdowns pass
+      // a hoisted identifier here — is asserted per dropdown below, via INDEX_TRACKS_TARGET.
     });
   }
 });
@@ -186,12 +188,19 @@ describe('the dropdown roots carry the typed text across that remount', () => {
 
       expect(source).toContain('carriedSearchText={carriedSearchText}');
 
-      // The hook's RESULT has to drive the input, not merely be called. Calling it and then
-      // seeding from `useState(query)` beside it reverts the whole mechanism — the typed text is
-      // per-mount state again — while a check on the call alone stays green.
+      // The hook's RESULT has to drive the input, not merely be called — declared here, and then
+      // WIRED to the input below. Calling it and seeding from `useState(query)` beside it, or
+      // leaving the declaration in place and rendering `value={query}`, each revert the whole
+      // mechanism while a check on the call alone stays green.
       expect(source).toContain(
         'const [search, setSearch] = useCarriedSearchText(carriedSearchText, query)'
       );
+      expect(source).toContain('value={search}');
+      expect(source).toContain('setSearch(value)');
+
+      // And the index the provider is keyed on tracks the target, rather than being pinned to a
+      // constant that leaves key and index agreeing while the selector stops switching anything.
+      expect(source).toMatch(INDEX_TRACKS_TARGET);
     });
   }
 
@@ -200,10 +209,11 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     // exactly when they should refine — which kills the feature with every other assertion here
     // satisfied, because a check on the call expression alone cannot see the operator in front
     // of it. Pinned as the complete `if`, per component, since their blocked arguments differ.
-    expect(
-      stripComments(read('src/components/AutocompleteSearch/AutocompleteSearch.tsx'))
-    ).toContain(
-      'if (!shouldRefineSearchQuery(debouncedSearch, query, !!selectedItem || searchErrorState))'
+    // `toMatch` on this one, not `toContain`: prettier wraps it across two lines, so the `return`
+    // it guards has to be matched across the break — otherwise neutering the consequent leaves the
+    // effect refining during an outage with the gate itself still spelled correctly.
+    expect(stripComments(read('src/components/AutocompleteSearch/AutocompleteSearch.tsx'))).toMatch(
+      /if \(!shouldRefineSearchQuery\(debouncedSearch, query, !!selectedItem \|\| searchErrorState\)\)\s*return;/
     );
     expect(stripComments(read('src/components/Search/QuickSearchDropdown.tsx'))).toContain(
       'if (!shouldRefineSearchQuery(debouncedSearch, query)) return;'
@@ -284,12 +294,9 @@ describe('the dropdown roots carry the typed text across that remount', () => {
 
     expect(deps?.[0] ?? '(no refine dependency array matched)').toContain('searchErrorState');
 
-    // And the flag has to still be PASSED to the predicate. The dependency array alone cannot see
-    // that: dropping it from the argument while leaving the token in the deps refines DURING an
-    // outage with this test still green.
-    expect(source).toContain(
-      'shouldRefineSearchQuery(debouncedSearch, query, !!selectedItem || searchErrorState)'
-    );
+    // The other half — that the flag is still PASSED to the predicate, which a dependency array
+    // cannot see — is pinned by the refine-gate test above, whose full `if (…)` expression
+    // subsumes it. Deliberately not restated here; one change should redden one test.
   });
 });
 
@@ -435,6 +442,21 @@ describe('useCarriedSearchText', () => {
     await harness.render('articles_v6', { blocked: false });
 
     expect(harness.refinedWith()).toEqual(['dreamshaper', 'dreamshaper']);
+  });
+
+  it('INVARIANT: carried text outranks a non-empty helper query at the hook, not just in the helper', async () => {
+    // Both non-empty at once cannot happen in production — a rebuilt helper always reports `''` —
+    // so this pins a property the bug never violated rather than covering a regression. It earns
+    // its place by being the only thing that can see the hook's own call into
+    // `seedCarriedSearchText` with its arguments SWAPPED: every other case has one of the two
+    // empty, which makes the swap indistinguishable from the correct order.
+    const harness = mount(true);
+    await harness.render('models_v9');
+    await harness.type('dreamshaper');
+
+    await harness.render('articles_v6', { helperQuery: 'restored-from-url' });
+
+    expect(harness.text()).toBe('dreamshaper');
   });
 
   it('seeds a first mount from the helper query, since nothing has been typed yet', async () => {
