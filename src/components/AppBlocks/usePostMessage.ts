@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { buildBridgeNackReply } from './bridgeNackReply';
-import { INVENTORY } from './hostHandlerParity';
+import type { INVENTORY } from './hostHandlerParity';
 import { recordBridgeMessage } from './bridgeMessageBeacon';
 import {
   boundBridgeMessageType,
@@ -23,15 +23,28 @@ import {
  *
  * 🔴 BUT BE PRECISE ABOUT WHAT IT CATCHES — it is NARROWER than "an SDK rename is a
  * type error", which is what an earlier revision of this comment claimed. It fires
- * only on a rename that reaches the inventory AND DROPS THE OLD KEY. That matters
- * because `hostHandlerParity`'s coverage gate is ONE-DIRECTIONAL by design — the
- * inventory MAY carry keys ahead of the published dist, and today it carries three
- * — so the documented, gate-satisfying way to track an upstream rename is to ADD
- * the new key and leave the old one until the published dist catches up. In exactly
- * that state this binding stays green, the branch below never fires, and
- * `validator_rejected` returns to a permanent zero which the HELP string now tells
- * a reader to interpret as a rollout gap. That is the silent-dead-branch failure
- * this binding was added to end, surviving it.
+ * only on a rename that reaches the inventory AND DROPS THE OLD KEY.
+ *
+ * That matters because `hostHandlerParity`'s coverage gate is ONE-DIRECTIONAL by
+ * design: the inventory MAY carry keys ahead of the published dist, and **25 of its
+ * 47 keys are ahead today** — measured against the installed
+ * `@civitai/app-sdk@0.14.0`, whose block→host union declares 22 members. Running
+ * ahead is therefore the NORM here, not a curiosity, so the documented,
+ * gate-satisfying way to track an upstream rename is to ADD the new key and leave
+ * the old one until the published dist catches up. In exactly that state this
+ * binding stays green and the branch below never fires — the silent-dead-branch
+ * failure it was added to end, surviving it.
+ *
+ * ⚠️ Do NOT take that count from `hostHandlerParity.ts:56-58`'s parenthetical, which
+ * an earlier revision of this line did: it names `CANCEL_WORKFLOW`,
+ * `REQUEST_SIGN_IN` and `REQUEST_CONSENT` as the ahead-of-published keys, and all
+ * three are present in 0.14.0 — zero of them is ahead. Measure it.
+ *
+ * ⚠️ And the consequence is worse than an absence, not better: the reports do not
+ * vanish, they land on `no_handler` under the NEW type — unclamped, since it would
+ * be an INVENTORY key — so `validator_rejected` sits at the zero the HELP string
+ * tells a reader to read as a rollout gap while the signal is filed under another
+ * outcome entirely.
  *
  * It is still strictly better than the bare literal it replaced — it catches an
  * outright key deletion and a typo in either place. But NOTHING here closes the

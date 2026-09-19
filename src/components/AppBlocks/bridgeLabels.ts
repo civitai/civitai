@@ -61,7 +61,12 @@
  *    not the rejected reply (`IMAGES_RESULT`). Deliberate: `boundBridgeMessageType`
  *    bounds the label against `hostHandlerParity`'s INVENTORY, which holds no
  *    `*_RESULT` key, so a reply type would clamp to `'other'` and collapse every
- *    rejection onto one label;
+ *    rejection onto one label. 🔴 BUT `type="other"` ON THIS OUTCOME DOES NOT MEAN
+ *    "an unrecognised type" — it means the SDK could not name a hanging request,
+ *    which covers a rejected host PUSH (nothing was awaiting it, so nothing hangs)
+ *    AND a reply it could not attribute to one of its own pending requests. Those
+ *    two share the bucket, so `other` is the one value on this outcome you cannot
+ *    read as "a request is hanging";
  *  - it is NOT undercounted, and an earlier revision of this line said it was. A
  *    30-per-10s emit budget was written on the SDK side and removed BEFORE either
  *    half merged — it never reached a published package, so no bundle in the field
