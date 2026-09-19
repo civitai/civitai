@@ -19,12 +19,14 @@ interface MetadataExtractionState {
   /** Graph-compatible params from the server (includes workflow, ecosystem, prompt, etc.) */
   params: Record<string, unknown> | undefined;
   fileUrl: string | undefined;
+  isVideo: boolean;
   isExtracting: boolean;
   isResolving: boolean;
 
   setMetadata: (metadata: ImageMetaProps | undefined) => void;
   setResolved: (resources: GenerationResource[], params: Record<string, unknown>) => void;
   setFileUrl: (url: string | undefined) => void;
+  setIsVideo: (isVideo: boolean) => void;
   setIsExtracting: (extracting: boolean) => void;
   setIsResolving: (resolving: boolean) => void;
   clear: () => void;
@@ -32,12 +34,19 @@ interface MetadataExtractionState {
 
 const initialState: Pick<
   MetadataExtractionState,
-  'metadata' | 'resolvedResources' | 'params' | 'fileUrl' | 'isExtracting' | 'isResolving'
+  | 'metadata'
+  | 'resolvedResources'
+  | 'params'
+  | 'fileUrl'
+  | 'isVideo'
+  | 'isExtracting'
+  | 'isResolving'
 > = {
   metadata: undefined,
   resolvedResources: [],
   params: undefined,
   fileUrl: undefined,
+  isVideo: false,
   isExtracting: false,
   isResolving: false,
 };
@@ -48,6 +57,7 @@ export const useMetadataExtractionStore = create<MetadataExtractionState>()((set
   setMetadata: (metadata) => set({ metadata }),
   setResolved: (resolvedResources, params) => set({ resolvedResources, params }),
   setFileUrl: (fileUrl) => set({ fileUrl }),
+  setIsVideo: (isVideo) => set({ isVideo }),
   setIsExtracting: (isExtracting) => set({ isExtracting }),
   setIsResolving: (isResolving) => set({ isResolving }),
   clear: () => set(initialState),
