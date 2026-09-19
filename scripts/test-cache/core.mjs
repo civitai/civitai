@@ -55,8 +55,13 @@ const ALWAYS_RUN_SOURCE = [
   // IMPORTING a process or thread module, not calling one by name: a call pattern cannot see
   // `cp.execSync(` or a destructured alias, and `exec(` matched every `regex.exec(` in the repo —
   // measured: src/__tests__/setup.ts tripped it and nothing was cacheable at all.
-  /\bfrom\s+['"](?:node:)?(?:child_process|worker_threads|cluster)['"]/,
-  /\b(?:require|import)\s*\(\s*['"](?:node:)?(?:child_process|worker_threads|cluster)['"]\s*\)/,
+  // The module NAME anywhere as a string, not a particular import syntax: review found
+  // `createRequire(...)('child_process')`, `process.getBuiltinModule('node:child_process')` and
+  // `from"node:child_process"` (no space) all walking past syntax-specific patterns.
+  /['"`](?:node:)?(?:child_process|worker_threads|cluster)['"`]/,
+  // Wrappers that spawn for you. None is a direct dependency today; this keeps one from arriving
+  // unnoticed, since node_modules is never scanned.
+  /['"`](?:execa|cross-spawn|tinyexec|nano-spawn|zx)['"`]/,
   // Comments allowed between `import(` and the specifier: `import(/* @vite-ignore */ file)` is the
   // form this repo actually uses, and the first version of this pattern let it through.
   /import\(\s*(?:\/\*[\s\S]*?\*\/\s*)*(?:`[^`]*\$\{|[A-Za-z_$])/,
@@ -96,18 +101,6 @@ export function isCoveredElsewhere(rel) {
 
 export function alwaysRuns(source) {
   return ALWAYS_RUN_SOURCE.some((re) => re.test(source));
-}
-
-// Reaching one of these anywhere in the graph means a process or thread the key cannot see into.
-// Checked on the graph rather than by pattern, so an aliased or destructured call cannot hide it.
-const OPAQUE_BUILTINS = new Set(['child_process', 'worker_threads', 'cluster']);
-
-export function reachesOpaqueBuiltin(ids) {
-  for (const id of ids) {
-    const bare = String(id).replace(/^node:/, '');
-    if (OPAQUE_BUILTINS.has(bare)) return true;
-  }
-  return false;
 }
 
 const RESOLVABLE_EXTS = ['ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs', 'json'];
@@ -249,7 +242,16 @@ export function changedSince(root, rel, sinceMs) {
   try {
     st = statSync(abs);
   } catch {
-    return false; // absent now; its absence is what the key records
+    // Absent now. If it was deleted or renamed DURING the run, the test ran with it and the key
+    // would record its absence — review confirmed that as a false skip. Removing a file moves its
+    // directory's mtime, so ask the directory.
+    const parent = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '.';
+    try {
+      const p = statSync(join(root, parent));
+      return p.mtimeMs >= sinceMs || p.ctimeMs >= sinceMs;
+    } catch {
+      return true;
+    }
   }
   if (st.mtimeMs >= sinceMs || st.ctimeMs >= sinceMs) return true;
   if (!st.isDirectory()) return false;
@@ -326,7 +328,14 @@ export function writeTripped(dir, body) {
   const p = trippedPath(dir);
   const tmp = `${p}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(body, null, 2));
-  renameSync(tmp, p);
+  try {
+    renameSync(tmp, p);
+  } catch {
+    // Renaming over an existing marker can EPERM on Windows. Already tripped is still tripped;
+    // write in place rather than abort before the offending records are forgotten.
+    writeFileSync(p, JSON.stringify(body, null, 2));
+    rmSync(tmp, { force: true });
+  }
 }
 
 /** Every record of a file — used on a false skip, so clearing TRIPPED cannot revive the same skip. */

@@ -32,10 +32,21 @@ if (mode() !== 'off') {
   const wrap = (obj, name) => {
     const orig = obj[name];
     if (typeof orig !== 'function') return;
-    obj[name] = function (p, ...rest) {
+    const wrapper = function (p, ...rest) {
       note(p);
       return orig.call(this, p, ...rest);
     };
+    // Carry the original's own properties: `fs.realpathSync.native` lives on the function, and
+    // next's lib/realpath.js calls it off-Windows. Dropping it broke that path with the cache on.
+    Object.assign(wrapper, orig);
+    if (typeof orig.native === 'function') {
+      const native = orig.native;
+      wrapper.native = function (p, ...rest) {
+        note(p);
+        return native.call(this, p, ...rest);
+      };
+    }
+    obj[name] = wrapper;
   };
 
   for (const name of [

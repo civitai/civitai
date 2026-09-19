@@ -102,14 +102,22 @@ export default class TestCacheReporter {
     // An unhandled error fails the run without failing any module, so no module's "passed" can be
     // trusted — measured by review: a leaked rejection left its file `passed`, got recorded, and the
     // next run skipped it green. Same for an interrupted run.
-    const runBlock =
-      unhandledErrors?.length > 0
-        ? 'unhandled errors in the run'
-        : reason === 'interrupted'
-          ? 'run interrupted'
-          : this.vitest.config.testNamePattern
-            ? 'name-filtered run'
-            : null;
+    // Narrowed to the files vitest attributes the errors to (VITEST_TEST_PATH, verified present on
+    // a leaked rejection), so one flaky leak does not stop the whole suite recording. An error with
+    // no attribution still blocks everything.
+    const errorFiles = new Set();
+    let unattributed = false;
+    for (const e of unhandledErrors ?? []) {
+      if (e?.VITEST_TEST_PATH) errorFiles.add(core.toRel(e.VITEST_TEST_PATH, root));
+      else unattributed = true;
+    }
+    const runBlock = unattributed
+      ? 'unattributed unhandled error in the run'
+      : reason === 'interrupted'
+        ? 'run interrupted'
+        : this.vitest.config.testNamePattern
+          ? 'name-filtered run'
+          : null;
 
     const fingerprint = core.makeFingerprinter(root);
     const salt = core.globalSalt(root, this.vitest.version, fingerprint);
@@ -129,7 +137,9 @@ export default class TestCacheReporter {
 
     for (const row of rows) {
       try {
-        this.recordOne(row, { root, dir, fingerprint, salt, runBlock, since: state.startedAt, opaqueSource });
+        const block =
+          runBlock ?? (errorFiles.has(row.file) ? 'unhandled error attributed to this file' : null);
+        this.recordOne(row, { root, dir, fingerprint, salt, runBlock: block, since: state.startedAt, opaqueSource });
       } catch (err) {
         row.why = `record failed: ${err?.code ?? err?.message ?? err}`;
       }
@@ -194,31 +204,32 @@ export default class TestCacheReporter {
       ids.add(setup);
       for (const id of s) ids.add(id);
     }
-    // A spawned process or worker reads what it likes, and a computed import is invisible to the
-    // graph — anywhere in the closure, not only in the test file. Measured by review: a helper's
-    // `import(/* @vite-ignore */ file)` loaded a module the key never saw.
-    if (core.reachesOpaqueBuiltin(ids)) return void (row.why = 'reaches child_process / worker_threads');
-
     const entries = new Set([testRel]);
     for (const id of ids) entries.add(core.toRel(id, root));
     for (const p of reads) entries.add(core.toRel(p, root));
     const kept = [...entries].filter((rel) => !core.isCoveredElsewhere(rel));
 
+    // A module in the graph that is gone now was deleted during the run: the test ran WITH it.
+    const graphRels = new Set([...ids].map((id) => core.toRel(id, root)));
+    const vanished = kept.find((rel) => graphRels.has(rel) && fingerprint(rel) === 'missing');
+    if (vanished) return void (row.why = `imported module gone: ${vanished}`);
+
+    // A spawned process or worker reads what it likes, and a computed import is invisible to the
+    // graph — anywhere in the closure, not only in the test file. Measured by review: a helper's
+    // `import(/* @vite-ignore */ file)` loaded a module the key never saw.
     for (const rel of kept) {
       if (/\.[cm]?[jt]sx?$/.test(rel) && opaqueSource(rel)) {
         return void (row.why = `spawns / computed import / glob in ${rel}`);
       }
     }
-    // The key is computed from disk NOW, at the end of the run. An input modified after the run
+    // Key FIRST, then the change check, so an edit landing between the two is caught by the check
+    // instead of being fingerprinted after a check that already passed.
+    const key = core.keyFor({ salt, project, testRel, entries: kept, fingerprint });
+    // The key is computed from disk at the END of the run. An input modified after the run
     // started is not what ran — recording it would certify the edited version as passing.
-    this.movedMemo ??= new Map();
-    const moved = kept.find((rel) => {
-      if (!this.movedMemo.has(rel)) this.movedMemo.set(rel, core.changedSince(root, rel, since - 2000));
-      return this.movedMemo.get(rel);
-    });
+    const moved = kept.find((rel) => core.changedSince(root, rel, since - 2000));
     if (moved) return void (row.why = `changed during the run: ${moved}`);
 
-    const key = core.keyFor({ salt, project, testRel, entries: kept, fingerprint });
     core.writeRecord(dir, project, testRel, { key, entries: kept, at: new Date().toISOString(), ms: row.ms });
     row.recorded = true;
   }

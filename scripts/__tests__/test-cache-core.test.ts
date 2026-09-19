@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
@@ -189,15 +189,50 @@ describe('what a key must see besides content', () => {
 
   // The key is computed at the END of a run; an input written after the run started is not what
   // ran. Measured by review: without this an edit made during a queued suite was recorded as passing.
-  it('sees a file written after a given instant, and a directory whose subtree gained a file', () => {
-    const root = mkdtempSync(join(tmpdir(), 'test-cache-mtime-'));
-    mkdirSync(join(root, 'd/deep'), { recursive: true });
-    writeFileSync(join(root, 'a.ts'), 'a');
-    const since = Date.now() + 60_000;
-    expect(changedSince(root, 'a.ts', since)).toBe(false);
-    expect(changedSince(root, 'a.ts', 0)).toBe(true);
-    expect(changedSince(root, 'd', since)).toBe(false);
-    expect(changedSince(root, 'missing.ts', 0)).toBe(false);
+  describe('what changed during a run', () => {
+    // The tree is built, THEN the "run" starts, so each assertion below moves exactly one thing
+    // past `since`. Not backdated with utimes: that bumps ctime to now, and ctime is checked on
+    // purpose — it is what catches an edit made with a backdated mtime.
+    const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    const setup = () => {
+      const root = mkdtempSync(join(tmpdir(), 'test-cache-mtime-'));
+      mkdirSync(join(root, 'd/deep'), { recursive: true });
+      mkdirSync(join(root, 'h'), { recursive: true });
+      writeFileSync(join(root, 'a.ts'), 'a');
+      writeFileSync(join(root, 'h/gone.ts'), 'g');
+      pause(50);
+      const since = Date.now();
+      pause(50);
+      return { root, since };
+    };
+
+    it('reports nothing for inputs untouched since the run started', () => {
+      const { root, since } = setup();
+      expect(changedSince(root, 'a.ts', since)).toBe(false);
+      expect(changedSince(root, 'd', since)).toBe(false);
+      expect(changedSince(root, 'h/gone.ts', since)).toBe(false);
+    });
+
+    it('sees a file edited after the run started', () => {
+      const { root, since } = setup();
+      writeFileSync(join(root, 'a.ts'), 'a2');
+      expect(changedSince(root, 'a.ts', since)).toBe(true);
+    });
+
+    // A convention guard lists a directory recursively; a file added three levels down counts.
+    it('sees a directory whose subtree gained a file', () => {
+      const { root, since } = setup();
+      writeFileSync(join(root, 'd/deep/new.ts'), 'n');
+      expect(changedSince(root, 'd', since)).toBe(true);
+    });
+
+    // The test ran WITH the file. Recording its absence would skip it green next time — confirmed
+    // by review as a false skip before this existed.
+    it('sees a file deleted after the run started', () => {
+      const { root, since } = setup();
+      rmSync(join(root, 'h/gone.ts'));
+      expect(changedSince(root, 'h/gone.ts', since)).toBe(true);
+    });
   });
 
   // A half-written marker must read as tripped, never as "safe to skip".
