@@ -977,7 +977,7 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // on `resolveRestApprovalVerdict` in
     // `~/server/services/blocks/block-approval.service` — one docblock, not two.
     //
-    // 🔴 WHICH VERDICTS REFUSE IS NOT UNIFORM ACROSS THE THREE, AND FOR ONE OF THEM IT IS
+    // 🔴 WHICH VERDICTS REFUSE IS NOT UNIFORM ACROSS THE FOUR, AND FOR ONE OF THEM IT IS
     // NOT UNIFORM ACROSS ROUTES EITHER.
     //
     //   `not_approved`  — ALWAYS 403, on every route. This branch carries the whole of the
@@ -994,8 +994,19 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     //                     NO row is a HEALTHY app — a row deleted or re-keyed mid-session,
     //                     blockId drift, an id-minting bug — so refusing it would 404 a
     //                     live public endpoint in exchange for closing no takedown path.
+    //   `tunnel_lookup_failed`
+    //                   — ALWAYS 403, on every route, and 🔴 `onApprovalLookupFailure`
+    //                     DOES NOT COVER IT. That option is scoped to `lookup_failed`
+    //                     alone, deliberately: its argument is that a REPLICA read we
+    //                     cannot complete should not take down routes where refusing
+    //                     removes no exposure. This verdict is a CACHE read failing on the
+    //                     dev-tunnel re-check, and the app it guards is already
+    //                     NOT-approved — so serving it would not be tolerating an
+    //                     unknown, it would be serving a known non-approved app because a
+    //                     cache was down. If you are adding a route that wants
+    //                     lookup-failure tolerance, this is the row that does not bend.
     //
-    // All three are COUNTED regardless, before any of them branches. The counter is the
+    // All four are COUNTED regardless, before any of them branches. The counter is the
     // alerting signal and it must not depend on what the route then decided to do.
     //
     // 🔴 The revocation check above fails OPEN and `lookup_failed` here fails CLOSED. That

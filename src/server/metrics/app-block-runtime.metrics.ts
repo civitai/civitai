@@ -226,9 +226,9 @@ export type AppSpendCapRejectionReason = (typeof APP_SPEND_CAP_REJECTION_REASONS
 
 /**
  * The NON-`ok` verdicts of `withBlockScope`'s approved-status gate. Kept as a code-owned
- * union (not a free string) so the `reason` label stays a bounded 3-series set.
+ * union (not a free string) so the `reason` label stays a bounded 4-series set.
  *
- * 🔴 TWO OF THESE REFUSE AND ONE DOES NOT, which is why this is not called `…REFUSALS`:
+ * 🔴 THREE OF THESE REFUSE AND ONE DOES NOT, which is why this is not called `…REFUSALS`:
  * `not_found` is counted and then SERVED. See the counter's own comment for the argument.
  */
 /**
@@ -804,7 +804,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // request whose verdict was NOT `ok`, by reason. `ok` and `dev_exempt` are not
   // counted: they are the steady state and would swamp the series.
   //
-  // 🔴 READ THE `refused?` COLUMN BEFORE ALERTING ON THIS. Two of the three reasons
+  // 🔴 READ THE `refused?` COLUMN BEFORE ALERTING ON THIS. Three of the four reasons
   // refuse and one deliberately does not, so `sum(rate(...))` across the label is a
   // number with no meaning — it adds requests that were turned away to requests that
   // were served. Always split by `reason`.
@@ -825,11 +825,31 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   //                   needs fixing, NOT an authorization event and NOT an outage.
   //                   It is a separate series precisely so that it never has to be
   //                   inferred out of a combined "the gate refused something" number.
-  //   lookup_failed — REFUSED, 503. The replica read threw. Infra, not policy;
-  //                   fail-closed, because a read we cannot complete leaves us
-  //                   unable to establish that the app is allowed to run at all.
+  //   lookup_failed — REFUSED, 503 — on the routes that fail closed; the five
+  //                   declaring `onApprovalLookupFailure: 'serve'` are SERVED, so the
+  //                   outcome is ROUTE-DEPENDENT and this row cannot be read flat. The
+  //                   replica read threw. Infra, not policy; fail-closed by default,
+  //                   because a read we cannot complete leaves us unable to establish
+  //                   that the app is allowed to run at all.
+  //   tunnel_lookup_failed
+  //                 — REFUSED, 403, on every route. The dev-tunnel re-check could not
+  //                   be completed (clawgate #571). Infra, not policy, like
+  //                   `lookup_failed` — but a CACHE fault rather than a replica one, and
+  //                   NOT route-tolerable: `onApprovalLookupFailure` is deliberately
+  //                   scoped to `lookup_failed` alone, because a non-approved app must
+  //                   not be served anywhere on the strength of a cache read failing.
+  //                   It exists as its own reason so a sysRedis incident is not
+  //                   indistinguishable from `not_approved`, which is the series the
+  //                   dev-token narrowing is watched on — folded in, an incident reads
+  //                   as that change working.
+  //                   ⚠️ REST-ONLY, like this whole counter. The tRPC bridge resolves
+  //                   the same verdict and records NOTHING, so a tunnel failure reached
+  //                   through the bridge does not appear here at all. That gap is
+  //                   pre-existing and equally true of `not_approved`; it is called out
+  //                   because the bridge is the higher-rate surface (`pollWorkflow` is
+  //                   timer-driven), so a zero here does not mean the leg is healthy.
   //
-  // 🔴 ONE LABEL, `reason`, over a 3-value code-owned union → 3 series, TOTAL.
+  // 🔴 ONE LABEL, `reason`, over a 4-value code-owned union → 4 series, TOTAL.
   // No `app_block_id`: this fires once per non-ok request with nothing caching or
   // rate-limiting it, and prom-client retains every distinct label set in the Node
   // heap forever across ~130 scraped pods. Attribution belongs in the caller's log
@@ -838,7 +858,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const restApprovalVerdictsTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_rest_approval_verdicts_total',
-    'Non-ok verdicts of the withBlockScope approved-status gate on App Block REST requests, by reason. NOT all refusals — split by reason before alerting: not_approved = the backing app_blocks row is not approved, REFUSED 403 (the gate enforcing a takedown); not_found = a signature-valid token resolved to no app_blocks row, SERVED (observe-only: a healthy app, counted so the false-positive rate is visible); lookup_failed = the replica read threw, and the outcome is ROUTE-DEPENDENT — 503 on the routes that fail closed, SERVED on the five that declare onApprovalLookupFailure. This counter carries ONLY `reason`, so it cannot itself tell refused from served on lookup_failed; which routes serve is the ledger LOOKUP_FAILURE_SERVE_RATIONALE in no-unguarded-block-rest-token.test.ts, and civitai_app_block_requests_total{endpoint,result} is the sibling series that carries endpoint',
+    'Non-ok verdicts of the withBlockScope approved-status gate on App Block REST requests, by reason. NOT all refusals — split by reason before alerting: not_approved = the backing app_blocks row is not approved, REFUSED 403 (the gate enforcing a takedown); not_found = a signature-valid token resolved to no app_blocks row, SERVED (observe-only: a healthy app, counted so the false-positive rate is visible); lookup_failed = the replica read threw, and the outcome is ROUTE-DEPENDENT — 503 on the routes that fail closed, SERVED on the five that declare onApprovalLookupFailure; tunnel_lookup_failed = the dev-tunnel re-check could not be completed (a cache fault, not a replica one), REFUSED 403 on EVERY route because onApprovalLookupFailure does not cover it, kept separate from not_approved so a sysRedis incident is not counted as the dev-token narrowing working. This counter carries ONLY `reason`, so it cannot itself tell refused from served on lookup_failed; which routes serve is the ledger LOOKUP_FAILURE_SERVE_RATIONALE in no-unguarded-block-rest-token.test.ts, and civitai_app_block_requests_total{endpoint,result} is the sibling series that carries endpoint',
     ['reason']
   );
 
@@ -1316,7 +1336,7 @@ export function recordBlockRevocationRefusal(
  *
  * 🔴 TOTAL, like every emitter in this module, and here the reason is sharper than
  * usual: the thing it instruments is an authorization gate on the block REST surface,
- * and two of its three reasons are decided refusals. If a metrics error propagated, a
+ * and three of its four reasons are decided refusals. If a metrics error propagated, a
  * verdict the gate had already settled would leave as an uncaught 500 instead of the
  * 403/503 it chose — or, on `not_found`, would turn a request the gate decided to SERVE
  * into a 500. Either way the observability would change the response it exists to

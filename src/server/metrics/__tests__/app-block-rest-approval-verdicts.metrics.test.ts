@@ -34,7 +34,7 @@ import {
  * 🔴 The cardinality bound is the other load-bearing property, same as the siblings. This
  * counter fires once per non-ok REST request with nothing caching or rate-limiting it,
  * across every scraped pod, and prom-client retains every distinct label set in the Node
- * heap for the process lifetime. One label over a 3-value code-owned union = 3 series,
+ * heap for the process lifetime. One label over a 4-value code-owned union = 4 series,
  * total, forever. Widening it is a code change that has to get past these tests.
  */
 
@@ -72,7 +72,7 @@ describe('civitai_app_block_rest_approval_verdicts_total', () => {
 
   /**
    * 🔴 THE SPLIT IS THE WHOLE VALUE OF THIS SIGNAL, and it is a sharper claim here than on
-   * the sibling counters, because the three reasons do not even agree on whether the
+   * the sibling counters, because the four reasons do not even agree on whether the
    * request was served:
    *
    *   not_approved  — REFUSED 403. The gate working; the only branch carrying its value.
@@ -82,7 +82,7 @@ describe('civitai_app_block_rest_approval_verdicts_total', () => {
    *
    * `sum(rate(...))` across the label adds requests that were turned away to requests that
    * were served, so an operator who cannot split by `reason` has a number with no meaning.
-   * Three separate series is what makes the split possible at all.
+   * Four separate series is what makes the split possible at all.
    *
    * 🔴 BUT SPLITTING BY `reason` NO LONGER SETTLES WHAT HAPPENED, AND THIS DOCBLOCK USED TO
    * SAY IT DID (`lookup_failed — REFUSED 503`). Since the opt-out landed, `lookup_failed`
@@ -117,7 +117,7 @@ describe('civitai_app_block_rest_approval_verdicts_total', () => {
    * attach point sits above the gate — and from `statusToRequestResult`. It is NOT exercised
    * by a test, because the middleware suites stub `res.on` as a no-op.)
    */
-  it('🔴 the three reasons are SEPARATE series — a served not_found never reads as a refusal', async () => {
+  it('🔴 the four reasons are SEPARATE series — a served not_found never reads as a refusal', async () => {
     recordBlockRestApprovalVerdict('not_approved');
     recordBlockRestApprovalVerdict('not_found');
     recordBlockRestApprovalVerdict('not_found');
@@ -188,10 +188,13 @@ describe('civitai_app_block_rest_approval_verdicts_total', () => {
     const { values } = await metric.get();
     expect(values).toHaveLength(4);
     expect(await readReason('not_found')).toBe(100);
-    // The new label is driven too, not merely declared — a reason in the union that no
-    // caller ever emits would leave this assertion passing on 3 real series plus a
-    // phantom, which is the shape that makes a cardinality budget wrong in the reassuring
-    // direction.
+    // ⚠️ THIS ASSERTS THE LOOP DROVE IT, NOT THAT A PRODUCTION CALLER DOES, and an earlier
+    // comment here claimed the stronger thing. The loop iterates the union itself, so a
+    // phantom reason no caller ever emits would satisfy this exactly as well. What pins a
+    // real emitter is `block-scope.approved-gate.test.ts`'s
+    // `expect(recordVerdictMock.mock.calls).toEqual([['tunnel_lookup_failed']])`, in a
+    // different file and against the real middleware. Kept here only as the
+    // cardinality-budget half: 100 increments on a 4th reason still yield one series.
     expect(await readReason('tunnel_lookup_failed')).toBe(100);
   });
 
@@ -207,7 +210,7 @@ describe('civitai_app_block_rest_approval_verdicts_total', () => {
 
   /**
    * 🔴 THE ASSERTION AN ALERT RULE ACTUALLY DEPENDS ON — the exact scrape text, name and
-   * label key and label VALUE, for all three reasons. Every other case in this file would
+   * label key and label VALUE, for all four reasons. Every other case in this file would
    * still pass if the metric were renamed, because they all reach it through
    * `getSingleMetric(METRIC)` with the same constant; this one reads the rendered
    * exposition the scraper sees.

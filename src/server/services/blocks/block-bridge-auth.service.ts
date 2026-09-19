@@ -190,11 +190,19 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
  *     ⚠️ SCOPED TO THE ROW READS SINCE clawgate #571, and this line used to be blanket.
  *     The predicate's dev-tunnel re-check is wrapped at its own call, so a cache fault on
  *     THAT leg no longer reaches here as an internal error — a bridge caller gets
- *     `FORBIDDEN / 'app block is not approved'`, indistinguishable from a real refusal,
- *     plus a throttled warn this path never used to emit. That is deliberate (the verdict
- *     is the fail-closed one either way, and the log is what separates an incident from
- *     the stale-token population), but it IS a behaviour change on this surface and the
- *     argument for it lives in `resolveAppBlockApprovalVerdict`, not here.
+ *     `FORBIDDEN / 'app block is not approved'`, deliberately indistinguishable from a
+ *     real refusal (telling a block that the dev-tunnel cache is down would be an
+ *     infrastructure oracle), plus a throttled warn this path never used to emit.
+ *
+ *     🔴 WHAT SEPARATES THAT INCIDENT FROM A REAL REFUSAL IS THE `tunnel_lookup_failed`
+ *     VERDICT — NOT THE LOG, and an earlier version of this note said the log. It is not
+ *     readable: container logs are not collected on this deployment. But the verdict is
+ *     only half a signal HERE, because **this path records no counter at all** — the
+ *     verdict metric has a single call site, in `withBlockScope`. So on the bridge a
+ *     tunnel-cache fault is genuinely unobservable today. That gap predates this change
+ *     and is equally true of `not_approved`; closing it means giving the bridge a verdict
+ *     counter, which is a metrics change rather than a guard one. Recorded here so the
+ *     next reader does not infer from the REST series that this surface is covered.
  */
 async function assertAppBlockApproved(claims: BlockTokenClaims): Promise<void> {
   const verdict = await resolveAppBlockApprovalVerdict(claims);

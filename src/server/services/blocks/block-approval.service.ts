@@ -411,10 +411,17 @@ export async function resolveAppBlockApprovalVerdict(
 /**
  * THE REST POLICY over that verdict: identical, plus a fail-closed `lookup_failed` for a
  * read that threw. `withBlockScope` maps the result onto status codes, and the mapping is
- * not "ok passes, everything else refuses": `ok` and `dev_exempt` serve, `not_approved`
- * (403) and `lookup_failed` (503) refuse, and `not_found` is counted and SERVED. The
+ * not "ok passes, everything else refuses": `ok` and `dev_exempt` serve; `not_approved`
+ * and `tunnel_lookup_failed` refuse 403 on EVERY route; `lookup_failed` refuses 503 on
+ * most but is SERVED on the five declaring `onApprovalLookupFailure: 'serve'`, so it is
+ * the one row that cannot be read flat; and `not_found` is counted and SERVED. The
  * mapping lives at that call site rather than here, because the bridge maps the same
  * verdicts onto a different policy.
+ *
+ * ⚠️ THIS IS THE CANONICAL COPY — `block-scope.middleware` points here rather than
+ * restating it ("one docblock, not two"). It has twice drifted behind the code it
+ * describes, so if you change the mapping, change it HERE and check the table at that
+ * call site has not quietly grown a second version.
  */
 export async function resolveRestApprovalVerdict(
   claims: BlockTokenClaims
@@ -452,18 +459,34 @@ export async function resolveRestApprovalVerdict(
  * UNTHROTTLED, so that throttle only bounds the prose. Do not add a metric there and do
  * not read a suppressed log as a suppressed verdict.
  *
- * ⚠️ THE SAME HOLDS FOR THE SECOND CONSUMER, AND THIS CONSTANT NOW SITS ABOVE BOTH.
- * `tunnelFailureLog`'s failures carry their own `reason="tunnel_lookup_failed"` label,
- * unthrottled like every other verdict, so suppressing a line there loses prose and not
- * information either. (An earlier draft argued the opposite — that the log was that leg's
- * only signal — which is what the dedicated verdict exists to make untrue.)
+ * ⚠️ THE SAME HOLDS FOR THE SECOND CONSUMER **ON REST ONLY**, AND THIS CONSTANT NOW SITS
+ * ABOVE BOTH. `tunnelFailureLog`'s failures carry their own
+ * `reason="tunnel_lookup_failed"` label, unthrottled like every other verdict — so on the
+ * REST surface, suppressing a line loses prose and not information. (An earlier draft
+ * argued the log was that leg's only signal, which is what the dedicated verdict exists to
+ * make untrue.)
+ *
+ * 🔴 IT IS STILL TRUE ON THE BRIDGE, AND SAYING OTHERWISE WOULD BE THIS CHANGE'S OWN
+ * MISTAKE ONE SURFACE WIDER. `recordBlockRestApprovalVerdict` has ONE production call
+ * site, in `withBlockScope`; `assertAppBlockApproved` resolves the same verdict and
+ * records NOTHING. So a tunnel failure reached through the bridge emits no counter at all
+ * and its only trace is this throttled line — on a deployment that does not collect
+ * container logs. The gap is PRE-EXISTING and equally true of `not_approved` (the bridge
+ * has never recorded a verdict), so it is not something this change introduced and closing
+ * it is a bridge-metrics change rather than a guard one — but the bridge is the
+ * higher-rate surface, `pollWorkflow` being timer-driven, so **a zero on
+ * `reason="tunnel_lookup_failed"` does not mean the leg is healthy.** Read it as a REST
+ * signal, not a system one.
  *
  * ⚠️ THE WINDOW IS SHARED FOR CONVENIENCE, NOT BECAUSE THE RATE ARGUMENT IS THE SAME, and
  * a previous version of this line claimed it was. They are very different: the replica
- * logger's case is fleet-wide simultaneity — every block REST request on every pod fails
- * at once — while the tunnel logger is reachable only on the dev + real-row + NOT-approved
- * path, i.e. one owner debugging one non-approved app. By this repo's own reasoning that
- * second shape does not need throttling at all (`block-scope.middleware` leaves its
+ * logger's case is fleet-wide simultaneity across ALL traffic — every block REST request
+ * on every pod fails at once — while the tunnel logger is reachable only on the dev +
+ * real-row + NOT-approved path, i.e. the dev-tunnel owners. (⚠️ The triggering fault is a
+ * sysRedis incident, which hits every pod at once too, so this is the same simultaneity
+ * over a much smaller POPULATION, not a different shape — an earlier draft of this line
+ * overstated the difference.) By this repo's own reasoning a population that small may not
+ * need throttling at all (`block-scope.middleware` leaves its
  * `not_found` line unthrottled precisely because it "is bounded by one app's traffic
  * rather than the whole fleet's"). 60s is kept anyway because it costs nothing now that
  * the counter carries the signal, and one window is one thing to reason about — but if
@@ -515,9 +538,10 @@ function warnLookupFailed(err: unknown): void {
 
 /**
  * 🔴 THE DEV-TUNNEL LEG'S OWN LOG, AND IT EXISTS BECAUSE THE FIRST VERSION OF THAT LEG HAD
- * NONE. The `try/catch` around the tunnel re-check converts a throw into `not_approved` —
- * which is correct as a VERDICT and was wrong as OBSERVABILITY, because before the wrapper
- * existed such a throw reached `resolveRestApprovalVerdict`, was logged here, and answered
+ * NONE. The `try/catch` around the tunnel re-check converts a throw into
+ * `tunnel_lookup_failed` — correct as a VERDICT, and for two rounds it was `not_approved`,
+ * which was wrong as OBSERVABILITY: before the wrapper existed such a throw reached
+ * `resolveRestApprovalVerdict`, was logged here, and answered
  * `lookup_failed`. Swallowing it silently folded a cache incident into
  * `…verdicts_total{reason="not_approved"}` — the *same* series this change ships to be
  * watched on, and the one the predicate's docblock calls the operator's only view of the
