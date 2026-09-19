@@ -4,14 +4,13 @@ import { TRPCError } from '@trpc/server';
 /**
  * The two editor reads hand back a shop item the way the upsert form
  * round-trips it — the whole record, because the form writes it back wholesale.
- * They belong on the same rung as the list views beside them, and the client
- * hooks that call them already render only for moderators.
+ * They share the rung and token scope of the list views beside them, and the
+ * client hooks that call them render only for moderators.
  *
- * Driven through `createCaller` so the middleware decides, not a source string:
- * a reader who is signed in but not a moderator must be refused.
+ * Driven through `createCaller` so the middleware decides, not a source string.
  *
- * Before moving either back down: a narrower payload is NOT the alternative
- * here. The editor needs the record it saves, so the rung is the control.
+ * A narrower payload is NOT an alternative to the gate: the editor needs the
+ * record it saves, so the rung and scope are the control.
  */
 
 const { mockGetShopItemById, mockGetSectionById } = vi.hoisted(() => ({
@@ -41,12 +40,12 @@ vi.mock('~/server/utils/server-domain', () => ({ isHostForColor: () => false }))
 import { cosmeticShopRouter } from '../cosmetic-shop.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-function fakeCtx(user: unknown) {
+function fakeCtx(user: unknown, tokenScope: number = TokenScope.Full) {
   return {
     acceptableOrigin: true,
     user,
     apiKeyId: null,
-    tokenScope: TokenScope.Full,
+    tokenScope,
     req: { headers: {} } as never,
     res: { setHeader: () => undefined } as never,
     cache: { edgeTTL: 0 },
@@ -78,8 +77,17 @@ describe('the cosmetic shop editor reads are moderator-only', () => {
     it(`${read.name} refuses a signed-in non-moderator`, async () => {
       const caller = cosmeticShopRouter.createCaller(fakeCtx(member) as never);
 
-      await expect(read.call(caller)).rejects.toBeInstanceOf(TRPCError);
+      await expect(read.call(caller)).rejects.toMatchObject({ code: 'FORBIDDEN' });
       expect(read.mock, 'the service must not run for a non-moderator').not.toHaveBeenCalled();
+    });
+
+    it(`${read.name} refuses a moderator's collections-read token`, async () => {
+      const caller = cosmeticShopRouter.createCaller(
+        fakeCtx(mod, TokenScope.CollectionsRead) as never
+      );
+
+      await expect(read.call(caller)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(read.mock, 'a scoped token must not reach the editor record').not.toHaveBeenCalled();
     });
 
     it(`${read.name} refuses an anonymous caller`, async () => {

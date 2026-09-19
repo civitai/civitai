@@ -48,13 +48,10 @@ export const cosmeticShopRouter = router({
       return getPaginatedCosmeticShopItems(input);
     }),
   // Editor reads: the whole item, the way the upsert form round-trips it. Same
-  // rung as the list views beside them.
-  getShopItemById: moderatorProcedure
-    .meta({ requiredScope: TokenScope.CollectionsRead })
-    .input(getByIdSchema)
-    .query(({ input }) => {
-      return getShopItemById(input);
-    }),
+  // rung and token scope as the list views beside them.
+  getShopItemById: moderatorProcedure.input(getByIdSchema).query(({ input }) => {
+    return getShopItemById(input);
+  }),
   upsertCosmetic: moderatorProcedure.input(upsertCosmeticInput).mutation(({ input, ctx }) => {
     // Same gate as the creator path: creating stickers is flag-controlled, even
     // for mods. Rendering and owning them are not.
@@ -79,12 +76,9 @@ export const cosmeticShopRouter = router({
   getAllSections: moderatorProcedure.input(getAllCosmeticShopSections).query(({ input }) => {
     return getShopSections(input);
   }),
-  getSectionById: moderatorProcedure
-    .meta({ requiredScope: TokenScope.CollectionsRead })
-    .input(getByIdSchema)
-    .query(({ input }) => {
-      return getSectionById(input);
-    }),
+  getSectionById: moderatorProcedure.input(getByIdSchema).query(({ input }) => {
+    return getSectionById(input);
+  }),
   upsertShopSection: moderatorProcedure
     .input(upsertCosmeticShopSectionInput)
     .mutation(({ input, ctx }) => {

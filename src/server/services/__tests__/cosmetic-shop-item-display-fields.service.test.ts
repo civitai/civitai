@@ -50,6 +50,11 @@ const storedMeta = {
   autoChecks: [{ key: 'transparency', label: 'Transparency', passed: false, detail: 'why' }],
   imageHash: 'a1b2c3',
   history: [{ action: 'reject', userId: 7, at: '2026-01-01T00:00:00.000Z' }],
+  imageMeta: { width: 512, height: 512, hasTransparency: false },
+  sellableByOthers: true,
+  sellerShare: 30,
+  rightsAffirmation: { userId: 8, affirmedAt: '2026-01-01', version: 1, statement: 's' },
+  takedown: { reason: 'r', moderatorId: 9, at: '2026-01-02' },
 };
 
 const sectionRow = {

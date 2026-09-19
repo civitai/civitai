@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
+import { cosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import { shopItemDisplayMeta } from '../creator-shop.data';
 
 /**
@@ -26,7 +27,16 @@ describe('shopItemDisplayMeta publishes the card fields and nothing else', () =>
     sellerShare: 40,
     sellableByOthers: true,
     history: [{ action: 'reject', userId: 4, at: new Date().toISOString() }],
+    imageMeta: { width: 512, height: 512, hasTransparency: true },
+    rightsAffirmation: { userId: 5, affirmedAt: '2026-01-01', version: 1, statement: 's' },
+    takedown: { reason: 'r', moderatorId: 6, at: '2026-01-02' },
   } as unknown as CosmeticShopItemMeta;
+
+  // The key-set assertions below only see what this fixture carries, so it has
+  // to carry every key the column can hold. A new schema field fails here first.
+  it('fixture carries every key the meta schema declares', () => {
+    expect(Object.keys(fullMeta).sort()).toEqual(Object.keys(cosmeticShopItemMeta.shape).sort());
+  });
 
   it('returns exactly the display keys for a fully populated item', () => {
     expect(Object.keys(shopItemDisplayMeta(fullMeta)).sort()).toEqual([
