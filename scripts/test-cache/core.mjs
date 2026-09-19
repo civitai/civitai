@@ -82,16 +82,23 @@ export const sha = (data) => createHash('sha256').update(data).digest('hex');
 
 export function toRel(id, root) {
   let p = String(id);
-  if (p.startsWith('file://')) p = fileURLToPath(p);
+  if (p.startsWith('file://')) {
+    // 🔴 `fileURLToPath` is PLATFORM-DEPENDENT, and that is what made this function's own
+    // test red on every PR: on Windows `file:///C:/x` yields `C:\x`, but on POSIX it yields
+    // `/C:/x` — a leading slash the drive-letter comparisons below cannot see past, so the
+    // path stopped matching `root` and `isAbsolute` returned null instead of the relative
+    // path. Normalising restores the drive-letter shape those comparisons expect —
+    // the `r.toLowerCase()` prefix test and the `/^[A-Za-z]:\//` guard — whichever
+    // platform resolved the URL.
+    //
+    // 🔴 Scoped to THIS branch deliberately. Applied to every id it would also rewrite a
+    // genuinely POSIX path whose first segment is a letter and a colon: measured,
+    // `toRel('/C:/notes/x.md', '/C:')` returned 'notes/x.md' before and null after. Only a
+    // `file://` id can carry the platform artefact, so only a `file://` id needs the repair,
+    // and confining it here leaves every non-URL input byte-for-byte as it was.
+    p = fileURLToPath(p).replace(/^\/([A-Za-z]:)/, '$1');
+  }
   p = p.split('?')[0].replace(/\\/g, '/');
-  // 🔴 `fileURLToPath` is PLATFORM-DEPENDENT, and that is what made this function's own
-  // test red on every PR: on Windows `file:///C:/x` yields `C:\x`, but on POSIX it yields
-  // `/C:/x` — a leading slash the drive-letter comparisons below cannot see past, so the
-  // path stopped matching `root` and `isAbsolute` returned null instead of the relative
-  // path. Normalising here (not at the call sites) keeps the drive-letter forms below —
-  // the `r.toLowerCase()` prefix test and the `/^[A-Za-z]:\//` guard — reading the same
-  // shape whichever platform resolved the URL.
-  p = p.replace(/^\/([A-Za-z]:)/, '$1');
   const r = root.replace(/\\/g, '/').replace(/\/$/, '');
   if (p.toLowerCase().startsWith(r.toLowerCase() + '/')) return p.slice(r.length + 1);
   return isAbsolute(p) || /^[A-Za-z]:\//.test(p) ? null : p;
