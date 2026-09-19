@@ -72,6 +72,36 @@ describe('keys are portable between worktrees', () => {
     expect(toRel('file:///C:/Dev/wt/two/src/a.ts', 'C:/Dev/wt/two/')).toBe('src/a.ts');
   });
 
+  // The assertion above was red on POSIX from the moment it landed, because `fileURLToPath`
+  // resolves a Windows file URL to `/C:/...` here and to `C:\...` on Windows.
+  //
+  // 🔴 The two below are labelled from what they were MEASURED to do at the pre-fix commit,
+  // not from what they were written to do — the first draft called both "invariant" and that
+  // was wrong about the second. Measured with the fix reverted and this file unchanged:
+  // 2 failed | 32 passed.
+  //
+  // INVARIANT guard (passed before the fix and after): the fix edits the shared prefix of
+  // every path reaching this function, so the POSIX arms need a standing witness that it did
+  // not move them. It is not regression coverage and must not be counted as any.
+  it('invariant: POSIX ids are unaffected by the drive-letter normalisation', () => {
+    expect(toRel('/home/u/repo/src/b.ts', '/home/u/repo')).toBe('src/b.ts');
+    expect(toRel('file:///home/u/repo/src/b.ts', '/home/u/repo')).toBe('src/b.ts');
+    expect(toRel('/var/tmp/x.json', '/home/u/repo')).toBeNull();
+    expect(toRel('src/c.ts', '/home/u/repo')).toBe('src/c.ts');
+  });
+
+  // REGRESSION guard (red at the pre-fix commit, green after) — it pins the STATE the fix
+  // establishes, that the two spellings of one file agree on one key, rather than the
+  // spelling of the fix, which a future refactor may legitimately change. It is deliberately
+  // expressed as an equality between two calls: a mutant that breaks normalisation in either
+  // direction separates them, and no hardcoded expectation has to be kept in step.
+  it('regression: a Windows file URL and the equivalent path agree on one key', () => {
+    const root = 'C:/Dev/wt/three';
+    expect(toRel('file:///C:/Dev/wt/three/src/a.ts', root)).toBe(
+      toRel('C:/Dev/wt/three/src/a.ts', root)
+    );
+  });
+
   // A read outside the repo (a temp file the test wrote itself) is not an input anyone else shares.
   it('drops absolute paths outside the repo', () => {
     expect(toRel('D:/elsewhere/x.json', 'C:/Dev/wt/one')).toBeNull();
