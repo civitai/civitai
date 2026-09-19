@@ -356,7 +356,11 @@ export async function resolveAppBlockApprovalVerdict(
     // for is the thing this change exists to stop — but the failure is silent, so it is
     // recorded here rather than left for someone to rediscover from a support ticket.
     return (await getActiveDevTunnel(ownerUserId, claims.blockId)) ? 'dev_exempt' : 'not_approved';
-  } catch {
+  } catch (err) {
+    // LOGGED, not swallowed — see `tunnelFailureLog`. The verdict is still the fail-closed
+    // one, but an incident on this leg must be distinguishable from the stale-token
+    // population that shares its verdict.
+    tunnelFailureLog.warn(err);
     return 'not_approved';
   }
 }
@@ -405,31 +409,69 @@ export async function resolveRestApprovalVerdict(
  * prose. Do not add a metric here and do not read a suppressed log as a suppressed verdict.
  */
 const LOOKUP_FAILURE_LOG_WINDOW_MS = 60_000;
-let lookupFailureLastLoggedAt = 0;
-let lookupFailureDroppedSinceLastLog = 0;
 
-function warnLookupFailed(err: unknown): void {
-  const now = Date.now();
-  if (
-    lookupFailureLastLoggedAt !== 0 &&
-    now - lookupFailureLastLoggedAt < LOOKUP_FAILURE_LOG_WINDOW_MS
-  ) {
-    lookupFailureDroppedSinceLastLog++;
-    return;
-  }
-  const droppedSinceLastLog = lookupFailureDroppedSinceLastLog;
-  lookupFailureDroppedSinceLastLog = 0;
-  lookupFailureLastLoggedAt = now;
-  // eslint-disable-next-line no-console
-  console.warn(
-    `[block-scope] approved-status lookup failed: ${
-      err instanceof Error ? err.message : String(err)
-    } droppedSinceLastLog=${droppedSinceLastLog} windowMs=${LOOKUP_FAILURE_LOG_WINDOW_MS}`
-  );
+/**
+ * 🔴 ONE THROTTLE IMPLEMENTATION, SEPARATE WINDOWS PER FAILURE MODE. The logic was written
+ * once and open-coded once; there are now two failure modes that need it (the replica read
+ * and the dev-tunnel re-check), and giving them a SHARED window would be wrong in the
+ * expensive direction: two simultaneous incidents would suppress each other, and the one
+ * you did not see would be the one you most needed. Each caller gets its own closure, so
+ * each logs its first occurrence immediately and each reports its own
+ * `droppedSinceLastLog`.
+ */
+function makeThrottledWarn(prefix: string): { warn: (err: unknown) => void; reset: () => void } {
+  let lastLoggedAt = 0;
+  let droppedSinceLastLog = 0;
+  return {
+    warn(err: unknown): void {
+      const now = Date.now();
+      if (lastLoggedAt !== 0 && now - lastLoggedAt < LOOKUP_FAILURE_LOG_WINDOW_MS) {
+        droppedSinceLastLog++;
+        return;
+      }
+      const dropped = droppedSinceLastLog;
+      droppedSinceLastLog = 0;
+      lastLoggedAt = now;
+      // eslint-disable-next-line no-console
+      console.warn(
+        `${prefix}: ${
+          err instanceof Error ? err.message : String(err)
+        } droppedSinceLastLog=${dropped} windowMs=${LOOKUP_FAILURE_LOG_WINDOW_MS}`
+      );
+    },
+    reset(): void {
+      lastLoggedAt = 0;
+      droppedSinceLastLog = 0;
+    },
+  };
 }
 
-/** TEST-ONLY: reset the per-pod log-throttle window so tests don't share state. */
+const lookupFailureLog = makeThrottledWarn('[block-scope] approved-status lookup failed');
+
+function warnLookupFailed(err: unknown): void {
+  lookupFailureLog.warn(err);
+}
+
+/**
+ * 🔴 THE DEV-TUNNEL LEG'S OWN LOG, AND IT EXISTS BECAUSE THE FIRST VERSION OF THAT LEG HAD
+ * NONE. The `try/catch` around the tunnel re-check converts a throw into `not_approved` —
+ * which is correct as a VERDICT and was wrong as OBSERVABILITY, because before the wrapper
+ * existed such a throw reached `resolveRestApprovalVerdict`, was logged here, and answered
+ * `lookup_failed`. Swallowing it silently folded a cache incident into
+ * `…verdicts_total{reason="not_approved"}` — the *same* series this change ships to be
+ * watched on, and the one the predicate's docblock calls the operator's only view of the
+ * 4h window closing. A sysRedis fault would then have read as the narrowing working.
+ *
+ * ⚠️ DELIBERATELY A LOG AND NOT A NEW VERDICT. A `tunnel_lookup_failed` verdict would have
+ * to be mapped by BOTH callers, and the REST mapping for an unknown verdict is `503` —
+ * which is exactly the misattribution (a cache fault blamed on the replica read) this leg
+ * was wrapped to avoid. The verdict stays `not_approved`; the log is what distinguishes
+ * the incident from the population.
+ */
+const tunnelFailureLog = makeThrottledWarn('[block-scope] dev-tunnel re-check failed');
+
+/** TEST-ONLY: reset the per-pod log-throttle windows so tests don't share state. */
 export function __resetApprovalLookupFailureLogThrottleForTests(): void {
-  lookupFailureLastLoggedAt = 0;
-  lookupFailureDroppedSinceLastLog = 0;
+  lookupFailureLog.reset();
+  tunnelFailureLog.reset();
 }

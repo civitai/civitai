@@ -774,11 +774,25 @@ describe('withBlockScope — the gate on the real request path', () => {
     tunnelMock.mockImplementation(() => {
       throw new Error('redis client exploded synchronously');
     });
-    const { handler, res } = await drive(await mint({ dev: true }));
-    expect(handler).not.toHaveBeenCalled();
-    expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ error: 'app block is not approved' });
-    expect(recordVerdictMock.mock.calls).toEqual([['not_approved']]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const { handler, res } = await drive(await mint({ dev: true }));
+      expect(handler).not.toHaveBeenCalled();
+      expect(res.statusCode).toBe(403);
+      expect(res.body).toEqual({ error: 'app block is not approved' });
+      expect(recordVerdictMock.mock.calls).toEqual([['not_approved']]);
+      // 🔴 AND IT IS LOGGED, WHICH IS THE HALF THAT NEARLY SHIPPED MISSING. The verdict a
+      // cache fault produces here is `not_approved` — the SAME series this change ships to
+      // be watched on — so without a log an incident on this leg is indistinguishable from
+      // the stale-token population the change exists to create, and would read as the
+      // narrowing working. The message is asserted distinctly from the replica-read log
+      // ("approved-status lookup failed") so the two failure modes stay separable.
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('[block-scope] dev-tunnel re-check failed');
+      expect(warn.mock.calls[0][0]).toContain('redis client exploded synchronously');
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

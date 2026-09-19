@@ -17,7 +17,7 @@ import {
   DEV_TOKEN_LIFETIME_SECONDS,
   getBlockTokenVerificationKeysByKid,
 } from '~/server/services/block-token.service';
-import { isValidSubject, USER_SUB_RE } from '~/server/services/block-token-subject';
+import { ANON_SUBJECT, isValidSubject, USER_SUB_RE } from '~/server/services/block-token-subject';
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 import {
   isBlockActionDetail,
@@ -644,7 +644,7 @@ export { isValidSubject };
  * via isValidSubject won't see throws in practice.
  */
 export function parseSubjectUserId(sub: string): number | null {
-  if (sub === 'anon') return null;
+  if (sub === ANON_SUBJECT) return null;
   if (!USER_SUB_RE.test(sub)) {
     throw forbidden('malformed sub claim');
   }
@@ -714,7 +714,7 @@ export function enforceContextBinding(claims: BlockTokenClaims, req: NextApiRequ
         // Every :self scope requires an authenticated subject — there's no
         // anonymous "self" to read/tip. user:read:self joined this set
         // when /api/v1/blocks/me switched off buzz:read:self (audit I3).
-        if (claims.sub === 'anon') {
+        if (claims.sub === ANON_SUBJECT) {
           throw forbidden(`${scope} requires authenticated subject`);
         }
         break;
@@ -734,7 +734,7 @@ export function enforceContextBinding(claims: BlockTokenClaims, req: NextApiRequ
         // actual KV read/write happens; this case exists so adding these
         // scopes to BLOCK_SCOPE_TO_OAUTH_BIT does NOT silently reintroduce the
         // fail-open the comment below warns about (audit fix 3 / L-M6).
-        if (claims.sub === 'anon') {
+        if (claims.sub === ANON_SUBJECT) {
           throw forbidden(`${scope} requires authenticated subject`);
         }
         break;
@@ -752,7 +752,7 @@ export function enforceContextBinding(claims: BlockTokenClaims, req: NextApiRequ
         // anon subject here so wiring this scope can't silently fail open (mirrors
         // the apps:storage:write case). The trust gate itself is enforced in
         // `resolveSharedContext`.
-        if (claims.sub === 'anon') {
+        if (claims.sub === ANON_SUBJECT) {
           throw forbidden(`${scope} requires authenticated subject`);
         }
         break;
@@ -769,7 +769,7 @@ export function enforceContextBinding(claims: BlockTokenClaims, req: NextApiRequ
         // the read:private scope) + the maturity clamp; the follow write is
         // self-bound to this subject. No request-shape binding is added here —
         // presence of the scope + a non-anon subject is the middleware check.
-        if (claims.sub === 'anon') {
+        if (claims.sub === ANON_SUBJECT) {
           throw forbidden(`${scope} requires authenticated subject`);
         }
         break;
@@ -788,7 +788,7 @@ export function enforceContextBinding(claims: BlockTokenClaims, req: NextApiRequ
         // omitting it bricks the whole app and reads as a bug in an unrelated
         // endpoint. It must land in the same commit as the
         // BLOCK_SCOPE_TO_OAUTH_BIT entry.
-        if (claims.sub === 'anon') {
+        if (claims.sub === ANON_SUBJECT) {
           throw forbidden(`${scope} requires authenticated subject`);
         }
         break;

@@ -2,8 +2,13 @@ import { dbWrite } from '~/server/db/client';
 import {
   BlockRevocation,
   isSubjectScopedInstanceId,
-  subjectForUserId,
 } from '~/server/services/block-revocation.service';
+// Taken from the LEAF rather than through `block-revocation.service`'s re-export. That
+// module is wholesale-`vi.mock`ed in a dozen suites with a factory exporting only
+// `BlockRevocation`, so importing a second symbol from it resolves to `undefined` in any
+// suite that mocks it while exercising this service for real — the exact shape the leaf
+// was extracted to avoid. Inert today; this keeps it that way.
+import { subjectForUserId } from '~/server/services/block-token-subject';
 import { listActiveDevTunnelBlockIds } from '~/server/services/blocks/dev-tunnel.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
