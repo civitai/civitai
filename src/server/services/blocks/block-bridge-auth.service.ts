@@ -183,10 +183,18 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
  *     first-party postMessage surface reached only through the host page, this is its
  *     long-standing behaviour, and nothing here argued for changing it — so it did not
  *     change. If you make these agree, make it a decision, not a refactor.
- *   - a read that THROWS — propagates from here exactly as it always has, surfacing as
+ *   - a ROW read that THROWS — propagates from here exactly as it always has, surfacing as
  *     the tRPC internal error. The REST gate converts it to a fail-closed 503 instead.
  *     That mapping lives in `resolveRestApprovalVerdict`, which this function does not
  *     call, precisely so the conversion does not reach the bridge.
+ *     ⚠️ SCOPED TO THE ROW READS SINCE clawgate #571, and this line used to be blanket.
+ *     The predicate's dev-tunnel re-check is wrapped at its own call, so a cache fault on
+ *     THAT leg no longer reaches here as an internal error — a bridge caller gets
+ *     `FORBIDDEN / 'app block is not approved'`, indistinguishable from a real refusal,
+ *     plus a throttled warn this path never used to emit. That is deliberate (the verdict
+ *     is the fail-closed one either way, and the log is what separates an incident from
+ *     the stale-token population), but it IS a behaviour change on this surface and the
+ *     argument for it lives in `resolveAppBlockApprovalVerdict`, not here.
  */
 async function assertAppBlockApproved(claims: BlockTokenClaims): Promise<void> {
   const verdict = await resolveAppBlockApprovalVerdict(claims);

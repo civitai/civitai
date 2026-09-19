@@ -774,6 +774,13 @@ describe('withBlockScope — the gate on the real request path', () => {
     tunnelMock.mockImplementation(() => {
       throw new Error('redis client exploded synchronously');
     });
+    // 🔴 RESET THE WINDOW, DO NOT RELY ON BEING FIRST. `toHaveBeenCalledTimes(1)` holds
+    // today only because this is the only test in the file that reaches the tunnel logger,
+    // so it is necessarily that logger's first occurrence. Add a second tunnel-throw case
+    // ABOVE this one and the assertion silently lands inside the 60s window and sees zero
+    // calls — a test that breaks because of where it sits in the file. One line removes
+    // the ordering dependency entirely.
+    __resetApprovalLookupFailureLogThrottleForTests();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
       const { handler, res } = await drive(await mint({ dev: true }));

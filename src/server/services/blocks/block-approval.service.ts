@@ -224,13 +224,24 @@ export type AppBlockApprovalVerdict = 'ok' | 'dev_exempt' | 'not_approved' | 'no
  * THE PREDICATE. The only place in the App Blocks runtime that resolves the backing
  * `app_blocks` row from token claims and decides whether it is approved.
  *
- * 🔴 IT DOES NOT CATCH. A failed read propagates, so each caller keeps its OWN answer to
- * "what does an unreachable replica mean here" rather than inheriting one: REST converts
- * it to a 503 in `resolveRestApprovalVerdict` below, and the bridge lets it propagate as
- * it always has. Catching HERE would have silently changed the bridge's behaviour on a
- * replica incident — from the raw error it surfaces today to a swallowed one plus a log
- * line the bridge never emitted — which is exactly the kind of drift consolidating two
- * copies is supposed to prevent, not introduce.
+ * 🔴 IT DOES NOT CATCH **THE ROW READS**. A failed `appBlock` or `oauthClient` read
+ * propagates, so each caller keeps its OWN answer to "what does an unreachable replica
+ * mean here" rather than inheriting one: REST converts it to a 503 in
+ * `resolveRestApprovalVerdict` below, and the bridge lets it propagate as it always has.
+ * Catching those HERE would silently change the bridge's behaviour on a replica incident —
+ * from the raw error it surfaces today to a swallowed one plus a log line the bridge never
+ * emitted — which is exactly the kind of drift consolidating two copies is supposed to
+ * prevent, not introduce.
+ *
+ * ⚠️ THE DEV-TUNNEL RE-CHECK IS THE ONE EXCEPTION, AND THIS HEADING USED TO DENY IT
+ * BLANKET-STYLE. That leg (clawgate #571) IS wrapped, and it does exactly what the
+ * paragraph above calls the anti-pattern: swallows, logs a line the bridge never emitted,
+ * and answers a verdict. The difference that makes it the right call there and the wrong
+ * one here is the SUBJECT: an unreachable replica means "we cannot establish whether this
+ * app may run at all", which is a different question per caller; an unreachable dev-tunnel
+ * cache means "this owner has no live tunnel", which is the same answer everywhere and is
+ * the fail-closed one. The exception is deliberate, it is argued at the `catch` itself,
+ * and it is scoped to that one call — do not widen it to the reads.
  */
 export async function resolveAppBlockApprovalVerdict(
   claims: BlockTokenClaims
@@ -404,9 +415,18 @@ export async function resolveRestApprovalVerdict(
  * line rate is this rate times the pod count, which is the intended bound (a per-pod signal
  * is what tells you whether the incident is partial or total), not an oversight.
  *
- * 🔴 THE COUNT IS NOT THE ALERTING SIGNAL. `civitai_app_block_rest_approval_verdicts_total{reason="lookup_failed"}`
- * is, and it is UNTHROTTLED — every failure increments it. This throttle only bounds the
- * prose. Do not add a metric here and do not read a suppressed log as a suppressed verdict.
+ * 🔴 THE COUNT IS NOT THE ALERTING SIGNAL — FOR THE REPLICA-READ LOGGER.
+ * `civitai_app_block_rest_approval_verdicts_total{reason="lookup_failed"}` is, and it is
+ * UNTHROTTLED, so that throttle only bounds the prose. Do not add a metric there and do
+ * not read a suppressed log as a suppressed verdict.
+ *
+ * ⚠️ THAT IS NOT TRUE OF THE SECOND CONSUMER, AND THIS CONSTANT NOW SITS ABOVE BOTH.
+ * `tunnelFailureLog`'s failures resolve to `not_approved`, which has NO dedicated
+ * `reason=` label — they share the series with every legitimate stale-token refusal. So
+ * for that leg the throttled log IS the only signal, and a suppressed line really is lost
+ * information rather than redundant prose. Same 60s window, opposite relationship to the
+ * metrics; the window is shared because the rate argument is identical, not because the
+ * observability story is.
  */
 const LOOKUP_FAILURE_LOG_WINDOW_MS = 60_000;
 
@@ -462,11 +482,25 @@ function warnLookupFailed(err: unknown): void {
  * watched on, and the one the predicate's docblock calls the operator's only view of the
  * 4h window closing. A sysRedis fault would then have read as the narrowing working.
  *
- * ⚠️ DELIBERATELY A LOG AND NOT A NEW VERDICT. A `tunnel_lookup_failed` verdict would have
- * to be mapped by BOTH callers, and the REST mapping for an unknown verdict is `503` —
- * which is exactly the misattribution (a cache fault blamed on the replica read) this leg
- * was wrapped to avoid. The verdict stays `not_approved`; the log is what distinguishes
- * the incident from the population.
+ * ⚠️ DELIBERATELY A LOG AND NOT A NEW VERDICT — AND THE FIRST VERSION OF THIS PARAGRAPH
+ * GAVE THE WRONG REASON, IN THE FAIL-OPEN DIRECTION. It claimed "the REST mapping for an
+ * unknown verdict is 503". It is not: `withBlockScope`'s chain is `not_approved` → 403,
+ * `lookup_failed` → 503, and then an `else` that asserts `approval satisfies 'not_found'`,
+ * logs "SERVING (observe-only)" and **falls through to the handler**. So REST's runtime
+ * default for a verdict it does not recognise is to SERVE, and it would additionally log
+ * the request as a missing row, which it would not be. The bridge is the opposite — a
+ * `satisfies never` followed by an unconditional FORBIDDEN. Two callers, two opposite
+ * unknown-verdict postures; a paragraph telling the next author that REST refuses would
+ * have sent them the wrong way.
+ *
+ * THE REAL REASONS, now that they are stated correctly: a new union member must be mapped
+ * by BOTH callers (the compile error at REST's `satisfies` is what forces that, and it
+ * does force it), and REST's runtime default on the way there is service rather than
+ * refusal. Note the honest counterpoint, since the original sentence also inverted it: a
+ * dedicated verdict WOULD be better attribution than this log, because it would carry its
+ * own `reason=` label instead of sharing `not_approved`. The log is the cheaper answer,
+ * not the better-instrumented one. If this leg ever needs alerting rather than forensics,
+ * the verdict is the right change — made deliberately, with both mappings updated.
  */
 const tunnelFailureLog = makeThrottledWarn('[block-scope] dev-tunnel re-check failed');
 
