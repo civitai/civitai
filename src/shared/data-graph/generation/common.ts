@@ -9,7 +9,7 @@ import z from 'zod';
 import { videoValueSchema, videoMetadataSchema } from './media-schemas';
 import { snippetReferenceSchema, type SnippetReferenceValue } from '../schemas/snippet-schema';
 
-export const MAX_PROMPT_LENGTH = 6000;
+export { MAX_PROMPT_LENGTH };
 export const MAX_NEGATIVE_PROMPT_LENGTH = 6000;
 import {
   baseModelByName,
@@ -20,7 +20,7 @@ import {
   getGenerationSupport,
   filterCompatibleResources,
 } from '~/shared/constants/basemodel.constants';
-import { MAX_SEED, samplers } from '~/shared/constants/generation.constants';
+import { MAX_PROMPT_LENGTH, MAX_SEED, samplers } from '~/shared/constants/generation.constants';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import { unselectableVersionIds } from './gates';

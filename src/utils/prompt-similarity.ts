@@ -1,4 +1,4 @@
-import { MAX_PROMPT_LENGTH } from '~/shared/data-graph/generation/common';
+import { MAX_PROMPT_LENGTH } from '~/shared/constants/generation.constants';
 
 function cleanText(text: string): string[] {
   return text

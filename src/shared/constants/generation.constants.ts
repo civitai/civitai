@@ -814,3 +814,6 @@ function getUpperLowerLimits(value: number) {
     ),
   ];
 }
+
+/** The generator's prompt cap. Here rather than in the data-graph so light modules can read it. */
+export const MAX_PROMPT_LENGTH = 6000;
