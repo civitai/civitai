@@ -5022,14 +5022,6 @@ type ImageMetricsObject = Record<
   }
 >;
 
-/**
- * The one place an `ImageMetricsObject` entry becomes a feed `stats` block.
- *
- * Seven call sites derived this independently, all reading `match?.x ?? 0`, which
- * is why `statsUnknown` lives here: the absent-vs-zero decision has to be made the
- * same way at every one of them or a metrics outage reads as silence on some feeds
- * and as unknown on others.
- */
 // Cache-only read of the `metrics:*` hashes, for the stale arm below.
 //
 // Staleness is bounded by the WATCHER, not by the cache TTL: the event-engine
@@ -5163,6 +5155,14 @@ const shapeImageMetrics = (
   buzz: m?.tippedAmount || null,
 });
 
+/**
+ * The one place an `ImageMetricsObject` entry becomes a feed `stats` block.
+ *
+ * Seven call sites derived this independently, all reading `match?.x ?? 0`, which
+ * is why `statsUnknown` lives here: the absent-vs-zero decision has to be made the
+ * same way at every one of them or a metrics outage reads as silence on some feeds
+ * and as unknown on others.
+ */
 export function toImageV2Stats(match: ImageMetricsObject[number] | undefined): ImageV2Stats {
   return {
     likeCountAllTime: match?.reactionLike ?? 0,
@@ -5191,8 +5191,7 @@ export const getImageMetricsObject = async (
     // The ClickHouse read has NO request-level timeout other than the client's own
     // `request_timeout` (300s), and a try/catch CANNOT catch a hang. Bound
     // it here so a saturated/cold-miss metric read fails SOFT to empty metrics
-    // (callers treat missing ids as null) instead of parking for minutes and blowing the
-    // SSR deadline. Empty `{}` matches the existing catch fallback.
+    // instead of parking for minutes and blowing the SSR deadline.
     const timeoutMs = env.CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS;
     // Narrow type flows from this call (`fetch('Image', …)` → Record<number,
     // ImageMetrics>); withTimeoutFallback infers T from it so the empty fallback
@@ -5203,8 +5202,7 @@ export const getImageMetricsObject = async (
     // the absence of an id as "unresolved". The loop below writes an entry for every
     // requested id, so without this flag a timeout would hand back all-null entries
     // that are present -- i.e. indistinguishable from an image nobody reacted to,
-    // which is the exact confusion this function's callers exist to avoid. The outer
-    // catch already returns {}.
+    // which is the exact confusion this function's callers exist to avoid.
     let resolved = true;
     const metrics = await withTimeoutFallback(fetchPromise, timeoutMs, {} as ImageMetricMap, () => {
       resolved = false;

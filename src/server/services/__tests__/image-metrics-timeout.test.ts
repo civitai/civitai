@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as LoggingClient from '~/server/logging/client';
 
 // getImageMetricsObject is the metric leg of the getAllImages 12-way Promise.all
 // fan-out on the image feed / SSR hot path. It reads counts from ClickHouse via
@@ -34,8 +35,15 @@ vi.mock('~/server/prom/client', async (importOriginal) => {
   return {
     ...actual,
     registerCounter: ({ name }: { name: string }) => ({
+      // Both counters keyed by NAME. A catch-all would let any OTHER counter in
+      // image.service's import graph answer for this one, and the
+      // `not.toHaveBeenCalled` assertions below would break for an unrelated reason.
       inc:
-        name === 'image_metrics_stale_cache_timeout_total' ? staleCounterIncMock : counterIncMock,
+        name === 'image_metrics_stale_cache_timeout_total'
+          ? staleCounterIncMock
+          : name === 'image_metrics_clickhouse_timeout_total'
+          ? counterIncMock
+          : vi.fn(),
     }),
   };
 });
@@ -43,7 +51,7 @@ vi.mock('~/server/prom/client', async (importOriginal) => {
 // The rejection path's only signal is a log line, so the sink has to be visible to
 // pin it. Spread the real module: image.service logs from several other paths.
 vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/logging/client')>()),
+  ...(await importOriginal<typeof LoggingClient>()),
   logToAxiom: logToAxiomMock,
 }));
 
@@ -115,8 +123,10 @@ describe('getImageMetricsObject ClickHouse timeout fail-soft', () => {
       collection: 4,
       buzz: 100,
     });
-    // happy path must NOT count a soft-fallback
+    // happy path must NOT count a soft-fallback, and must not touch the cache:
+    // reading it unconditionally would add N round trips to the SSR hot path.
     expect(counterIncMock).not.toHaveBeenCalled();
+    expect(redisMock.redis.hGetAll).not.toHaveBeenCalled();
   });
 
   it('leaves every id ABSENT when the metric read HANGS and the cache is COLD', async () => {
@@ -164,6 +174,7 @@ describe('getImageMetricsObject ClickHouse timeout fail-soft', () => {
     // Without this, "timeout leaves ids absent" would also pass on an implementation
     // that dropped every id unconditionally -- which would turn every real zero on
     // the site into an unknown.
+    expect(redisMock.redis.hGetAll).not.toHaveBeenCalled();
     for (const id of [1, 2]) {
       expect(result[id]).toEqual({
         imageId: id,
@@ -283,13 +294,13 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
       return CACHED[key] ?? {};
     });
 
-    const result = await getImageMetricsObject([{ id: 1 }, { id: 2 }]);
+    const result = await getImageMetricsObject([{ id: 1 }, { id: 1 }, { id: 2 }]);
 
     expect(result[1]?.reactionLike).toBe(62);
     expect(result[2]).toBeUndefined();
 
     // The rejection's only signal. Counted per KEY, not per call, and the
-    // denominator is the de-duplicated id set.
+    // denominator is the DE-DUPLICATED id set - hence three ids in, 'of 2' out.
     const rejectionLogs = logToAxiomMock.mock.calls.filter(
       ([payload]) => (payload as { name?: string })?.name === 'getCachedImageMetrics rejected'
     );
@@ -363,6 +374,24 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
     expect(staleCounterIncMock).not.toHaveBeenCalled();
   });
 
+  it('keeps each id with its own counts when the replies arrive OUT OF ORDER', async () => {
+    fetchMock.mockRejectedValue(new Error('Socket hang up after 3 retries'));
+    // Replies across cluster shards do not arrive in request order. Collecting
+    // them by completion instead of by index hands one image's counts to another,
+    // silently, and every other case here resolves in call order.
+    redisMock.redis.hGetAll.mockImplementation((key: string) =>
+      key === 'metrics:Image:1'
+        ? new Promise((resolve) => setTimeout(() => resolve(CACHED[key]), 50))
+        : Promise.resolve(CACHED[key] ?? {})
+    );
+
+    const result = await getImageMetricsObject([{ id: 1 }, { id: 3 }]);
+
+    // Both land inside the deadline, in reverse order.
+    expect(result[1]?.reactionLike).toBe(62);
+    expect(result[3]?.reactionLike).toBe(8);
+  });
+
   it('reads each id once when the caller repeats one, and keeps the ids aligned', async () => {
     fetchMock.mockRejectedValue(new Error('Socket hang up after 3 retries'));
 
@@ -379,11 +408,20 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
   it('writes NOTHING to the cache on the fallback path', async () => {
     fetchMock.mockRejectedValue(new Error('Socket hang up after 3 retries'));
 
-    await getImageMetricsObject([{ id: 1 }, { id: 2 }]);
+    const result = await getImageMetricsObject([{ id: 1 }, { id: 2 }]);
 
+    // Positive control: without this the case passes even when the fallback
+    // never ran, because every other assertion here is an absence.
+    expect(result[1]?.reactionLike).toBe(62);
+
+    // `packed.*` is how this codebase writes caches, so a write-back would most
+    // likely be spelled there rather than on the bare client.
     expect(redisMock.redis.hSet).not.toHaveBeenCalled();
     expect(redisMock.redis.hSetEx).not.toHaveBeenCalled();
     expect(redisMock.redis.set).not.toHaveBeenCalled();
+    expect(redisMock.redis.setEx).not.toHaveBeenCalled();
+    expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
+    expect(redisMock.redis.packed.hSet).not.toHaveBeenCalled();
   });
 
   it('returns no metrics rather than throwing when the cache read ALSO fails', async () => {
@@ -391,5 +429,8 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
     redisMock.redis.hGetAll.mockRejectedValue(new Error('redis down'));
 
     await expect(getImageMetricsObject([{ id: 1 }])).resolves.toEqual({});
+    // Otherwise this passes against a fallback that was never reached - `{}` is
+    // also what the unmodified function returns.
+    expect(redisMock.redis.hGetAll).toHaveBeenCalledTimes(1);
   });
 });
