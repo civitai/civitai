@@ -17,6 +17,7 @@ vi.mock('~/server/prom/client', async (importOriginal) => ({
 
 import { getPaginatedCosmeticShopItems, getShopItemById } from '../cosmetic-shop.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { soldCountsFake } from '~/test-utils/soldCountsFake';
 
 const capturedWhere = () =>
   dbMock.dbRead.cosmeticShopItem.findMany.mock.calls[0][0].where as Record<string, unknown>;
@@ -68,7 +69,7 @@ describe('getPaginatedCosmeticShopItems archived filter', () => {
 
 /**
  * Both of these return `meta` to the client as-is, so the row count is written
- * onto `meta.purchases` by `withSoldCount` rather than by a whitelist. Nothing
+ * onto `meta.purchases` by `withSoldCounts` rather than by a whitelist. Nothing
  * else executes those two call sites: removing either mapping leaves every other
  * suite green.
  *
@@ -80,7 +81,6 @@ describe('the unsanitized read paths serve the row count', () => {
     id: 74,
     title: 'Fairy Pony',
     meta: { purchases: 0 },
-    _count: { purchases: 20 },
   };
 
   beforeEach(() => {
@@ -89,6 +89,7 @@ describe('the unsanitized read paths serve the row count', () => {
     dbMock.dbRead.cosmeticShopItem.count.mockResolvedValue(1);
     dbMock.dbRead.cosmeticShopItem.findUniqueOrThrow.mockReset();
     dbMock.dbWrite.cosmeticShopItem.findUniqueOrThrow.mockReset();
+    dbMock.dbRead.$queryRaw.mockImplementation(soldCountsFake({ 74: 20 }));
   });
 
   it('getPaginatedCosmeticShopItems reports the rows, not the counter', async () => {
@@ -97,12 +98,18 @@ describe('the unsanitized read paths serve the row count', () => {
     const { items } = await getPaginatedCosmeticShopItems({ page: 1, limit: 60 });
 
     expect(items[0].meta.purchases).toBe(20);
+    // Mocks ignore `select`: without this, re-adding the whole-table `_count` at this
+    // call site leaves every value assertion green.
+    expect(dbMock.dbRead.cosmeticShopItem.findMany.mock.calls[0][0].select._count).toBeUndefined();
   });
 
   it('getShopItemById reports the rows, not the counter', async () => {
     dbMock.dbRead.cosmeticShopItem.findUniqueOrThrow.mockResolvedValue(drifted);
 
     expect((await getShopItemById({ id: 74 })).meta.purchases).toBe(20);
+    expect(
+      dbMock.dbRead.cosmeticShopItem.findUniqueOrThrow.mock.calls[0][0].select._count
+    ).toBeUndefined();
   });
 
   // The mapping sits AFTER the `.catch`, so the replica-fallback result is

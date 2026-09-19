@@ -264,15 +264,10 @@ describe('upsertCosmeticShopItem — the stored purchase counter', () => {
   });
 
   /**
-   * The save's response is deliberately NOT passed through `withSoldCount`,
-   * unlike the editor reads. Its only consumer invalidates the paged query and
-   * discards the payload, so mapping it fixed nothing and pinned a value nobody
-   * reads — which would have handed the next person a red test for correctly
-   * deleting dead code.
-   *
-   * Records the decision. It is not the gate: the write path's select has
-   * `_count` destructured off, so passing that row to `withSoldCount` fails its
-   * `_count: { purchases: number }` constraint at compile time.
+   * The save's response is deliberately NOT passed through `withSoldCounts`,
+   * unlike every read path. Its only consumer invalidates the paged query and
+   * discards the payload, so mapping it would spend a query on a value nobody
+   * reads.
    */
   it('hands back what it wrote, not a row-derived count', async () => {
     const saved = await upsert({ meta: { purchases: 99 } });
