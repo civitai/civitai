@@ -9,13 +9,25 @@
  */
 
 import type {
+  ImageGenStepTemplate,
   ImageJobNetworkParams,
   PreprocessImageStepTemplate,
   Scheduler,
   TextToImageStepTemplate,
 } from '@civitai/client';
+import type {
+  ComfyFlux1CreateImageGenInput,
+  Flux1ProImageGenInput,
+  Flux1ProUltraImageGenInput,
+} from '@civitai/orchestration-client';
 import { maxRandomSeed } from '~/server/common/constants';
-import { fluxUltraAir, samplersToSchedulers } from '~/shared/constants/generation.constants';
+import {
+  fluxUltraAir,
+  getClosestFluxUltraAspectRatioLabel,
+  samplersToComfySamplers,
+  samplersToSchedulers,
+} from '~/shared/constants/generation.constants';
+import { removeEmpty } from '~/utils/object-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { ControlNetsNodeValue } from '~/shared/data-graph/generation/common';
@@ -74,7 +86,7 @@ function getFluxMode(modelId?: number): FluxMode {
  */
 export const createFluxInput = defineHandler<
   FluxCtx,
-  (TextToImageStepTemplate | PreprocessImageStepTemplate)[]
+  (TextToImageStepTemplate | ImageGenStepTemplate | PreprocessImageStepTemplate)[]
 >((data, ctx) => {
   if (!data.aspectRatio) throw new Error('Aspect ratio is required for Flux workflows');
 
@@ -97,7 +109,9 @@ export const createFluxInput = defineHandler<
 
   // Handle ultra mode - uses different step input structure
   if (fluxMode === 'ultra') {
-    return [createFluxUltraInput(data, seed)];
+    return [
+      ctx.useImageGen ? createFluxUltraImageGen(data, seed) : createFluxUltraInput(data, seed),
+    ];
   }
 
   // Build additionalNetworks from resources (not for pro mode)
@@ -118,6 +132,56 @@ export const createFluxInput = defineHandler<
     (data as { controlNets?: ControlNetsNodeValue }).controlNets,
     ctx.baseStepIndex
   );
+
+  if (ctx.useImageGen) {
+    if (fluxMode === 'pro') {
+      const input: Flux1ProImageGenInput = {
+        engine: 'flux1-pro',
+        model: 'pro',
+        prompt: data.prompt,
+        width: data.aspectRatio.width,
+        height: data.aspectRatio.height,
+        seed,
+        quantity,
+        outputFormat: data.outputFormat,
+      };
+      return [
+        ...preprocessSteps,
+        { $type: 'imageGen', input: removeEmpty(input) } as ImageGenStepTemplate,
+      ];
+    }
+
+    if (!data.model) throw new Error('Model is required for Flux imageGen workflows');
+
+    const comfy = samplersToComfySamplers['undefined'];
+    const input: ComfyFlux1CreateImageGenInput = {
+      engine: 'comfy',
+      ecosystem: 'flux1',
+      operation: 'createImage',
+      model: ctx.airs.getOrThrow(data.model.id),
+      prompt: data.prompt,
+      width: data.aspectRatio.width,
+      height: data.aspectRatio.height,
+      steps,
+      cfgScale,
+      sampler: comfy.sampler,
+      scheduler: comfy.scheduler,
+      seed,
+      quantity,
+      outputFormat: data.outputFormat,
+      loras: Object.keys(additionalNetworks).length
+        ? Object.fromEntries(
+            Object.entries(additionalNetworks).map(([air, v]) => [air, v.strength ?? 1])
+          )
+        : undefined,
+      ...(controlNets.length ? { controlNets } : {}),
+    };
+
+    return [
+      ...preprocessSteps,
+      { $type: 'imageGen', input: removeEmpty(input) } as ImageGenStepTemplate,
+    ];
+  }
 
   const genStep: TextToImageStepTemplate = {
     $type: 'textToImage',
@@ -140,6 +204,23 @@ export const createFluxInput = defineHandler<
 
   return [...preprocessSteps, genStep];
 });
+
+function createFluxUltraImageGen(data: FluxCtx, seed: number): ImageGenStepTemplate {
+  const input: Flux1ProUltraImageGenInput = {
+    engine: 'flux1-pro',
+    model: 'ultra',
+    prompt: data.prompt,
+    aspectRatio: getClosestFluxUltraAspectRatioLabel(
+      data.aspectRatio!.width,
+      data.aspectRatio!.height
+    ) as Flux1ProUltraImageGenInput['aspectRatio'],
+    raw: 'fluxUltraRaw' in data ? (data.fluxUltraRaw as boolean) : false,
+    seed,
+    quantity: data.quantity ?? 1,
+    outputFormat: data.outputFormat,
+  };
+  return { $type: 'imageGen', input: removeEmpty(input) };
+}
 
 /**
  * Creates step input for Flux Ultra mode.
