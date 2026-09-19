@@ -128,7 +128,7 @@ function propExpression(tag: string, prop: string): string | null {
  * construction — and an earlier attempt to resolve identifiers generically bound its name to an
  * unrelated `const indexName = Object.keys(uiState)?.[0]` elsewhere in that file.
  */
-const INDEX_TRACKS_TARGET = /const \w+ = searchIndexMap\[\s*targetIndex\b/;
+const INDEX_TRACKS_TARGET = /const \w+ =\s*searchIndexMap\[\s*targetIndex\b/;
 
 describe('the InstantSearch roots', () => {
   it('is the set this ledger accounts for', () => {
@@ -158,8 +158,13 @@ describe('the InstantSearch roots', () => {
       expect(indexName).toBeTruthy();
       expect(key).toBe(indexName);
 
-      // That the index TRACKS the target — which this check cannot see, since both dropdowns pass
-      // a hoisted identifier here — is asserted per dropdown below, via INDEX_TRACKS_TARGET.
+      // The expression itself must not BE a constant. Cheap, prop-scoped, and it reaches the one
+      // root the per-dropdown `INDEX_TRACKS_TARGET` check below cannot: `SearchLayout` takes its
+      // index as a prop, so nothing else here would stop both props being pinned to the same
+      // constant — `key` and `indexName` would still agree and every search page would search one
+      // index. Identifiers pass untouched, which is what keeps it off the false positive that an
+      // earlier identifier-resolving version hit.
+      expect(indexName).not.toMatch(/^(['"`]|searchIndexMap[.[])/);
     });
   }
 });
@@ -197,12 +202,36 @@ describe('the dropdown roots carry the typed text across that remount', () => {
       );
       expect(source).toContain('value={search}');
       expect(source).toContain('setSearch(value)');
-
-      // And the index the provider is keyed on tracks the target, rather than being pinned to a
-      // constant that leaves key and index agreeing while the selector stops switching anything.
-      expect(source).toMatch(INDEX_TRACKS_TARGET);
     });
   }
+
+  it('both dropdowns derive the index they key on from the target', () => {
+    // Its own test rather than a line inside the carrier one, so this mutation class reports under
+    // a title that names it. Pinned at the DECLARATION because both roots pass a hoisted
+    // identifier to the provider, where a check would see only a name.
+    for (const relPath of dropdowns) {
+      expect(stripComments(read(relPath)), relPath).toMatch(INDEX_TRACKS_TARGET);
+    }
+  });
+
+  it('picking a category reaches the state the index is derived from', () => {
+    // The counterpart of the input wiring above, and the same hole one level up: the suite pins
+    // the selector's value, its options and its deselect behaviour, but nothing pinned that
+    // choosing an option arrives at `setTargetIndex`. Neutering either handler leaves manual
+    // category switching dead while `AutocompleteSearch` still looks alive — its URL-follow effect
+    // keeps calling `setTargetIndex` — and the exactly-one-writer count cannot see it, because
+    // `onTargetChange(v as TKey)` is not that pattern.
+    const autocomplete = stripComments(
+      read('src/components/AutocompleteSearch/AutocompleteSearch.tsx')
+    );
+    expect(autocomplete).toContain('onChange={(v: string | null) => onTargetChange(v as TKey)}');
+    expect(autocomplete).toContain('onTargetChange={handleTargetChange}');
+
+    const quickSearch = stripComments(read('src/components/Search/QuickSearchDropdown.tsx'));
+    expect(quickSearch).toContain('onChange={(value) => onIndexNameChange(value as TIndex)}');
+    expect(quickSearch).toContain('onIndexNameChange={handleTargetChange}');
+    expect(quickSearch).toContain('setTargetIndex(value ?? fallbackIndex)');
+  });
 
   it('both refine gates go through the one predicate, negation included', () => {
     // The leading `!` is the whole gate. Dropping it inverts both effects — they return early
