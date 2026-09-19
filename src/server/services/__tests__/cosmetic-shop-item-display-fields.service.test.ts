@@ -25,6 +25,7 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 
 import { getShopSectionsWithItems } from '../cosmetic-shop.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { soldCountsFake } from '~/test-utils/soldCountsFake';
 
 dbMock.dbRead.cosmeticShopSection.findMany.mockImplementation((...args: unknown[]) =>
   (mocks.sectionFindMany as (...a: unknown[]) => unknown)(...args)
@@ -75,8 +76,6 @@ const sectionRow = {
         addedById: 999,
         cosmetic: { id: 10, createdById: null },
         meta: storedMeta,
-        // Deliberately not the stored counter (12): the cards show sold rows.
-        _count: { purchases: 5 },
       },
     },
   ],
@@ -93,6 +92,8 @@ describe('the shop section list publishes only the card fields of an item meta',
     mocks.sectionFindMany.mockResolvedValue([sectionRow]);
     mocks.getBlockedPairIds.mockReset();
     mocks.getBlockedPairIds.mockResolvedValue([]);
+    // Deliberately not the stored counter (12): the cards show sold rows.
+    dbMock.dbRead.$queryRaw.mockImplementation(soldCountsFake({ 42: 5 }));
   });
 
   it('returns exactly the display keys to an anonymous viewer', async () => {

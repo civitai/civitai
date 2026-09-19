@@ -24,6 +24,7 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 import { CosmeticShopSort } from '~/server/common/enums';
 import { getCommunityCosmetics } from '../creator-shop.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { soldCountsFake } from '~/test-utils/soldCountsFake';
 dbMock.dbRead.cosmeticShopItem.findMany.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindMany as (...a: unknown[]) => unknown)(...args)
 );
@@ -44,9 +45,6 @@ const itemRow = (id: number, meta: Record<string, unknown> = {}) => ({
   addedById: 11,
   meta: { purchases: 3, submissionTxId: 'tx-1', sellerShare: 20, imageHash: 'abc', ...meta },
   cosmetic: { id: id * 10, name: `Cosmetic ${id}`, type: 'Badge', createdById: 11 },
-  // Deliberately disagrees with `meta.purchases` above: the rows are the sold
-  // count, and a fixture where the two agree passes under either derivation.
-  _count: { purchases: 7 },
 });
 
 const baseInput = { limit: 40, page: 1, sort: CosmeticShopSort.Newest };
@@ -66,20 +64,33 @@ describe('getCommunityCosmetics', () => {
   it('strips payout/fee internals from item meta', async () => {
     mocks.shopItemFindMany.mockResolvedValue([itemRow(2), itemRow(1)]);
     mocks.shopItemCount.mockResolvedValue(2);
+    // Disagrees with the fixture's `meta.purchases` of 3: the rows are the sold
+    // count, and a fixture where the two agree passes under either derivation.
+    dbMock.dbRead.$queryRaw.mockImplementation(soldCountsFake({ 2: 7, 1: 4 }));
     const { items, totalPages } = await getCommunityCosmetics(baseInput);
     expect(items.map((i) => i.id)).toEqual([2, 1]);
     expect(items[0].meta).toEqual({ purchases: 7, acceptsBlueBuzz: false });
     // `toEqual` skips undefined-valued keys; the key list does not.
     expect(Object.keys(items[0].meta).sort()).toEqual(['acceptsBlueBuzz', 'purchases']);
-    // `creatorStorefrontItemSelect` inherits `_count` by spreading the shared
-    // selector and never restates it. Redefining `_count` there for another
-    // relation is already a compile error at all three read sites, so this is a
-    // readable second signal rather than the gate — it names the relation the
-    // storefront depends on, which `TS2339` does not.
-    expect(mocks.shopItemFindMany.mock.calls[0][0].select._count).toEqual({
-      select: { purchases: true },
-    });
+    expect(items[1].meta.purchases).toBe(4);
     expect(totalPages).toBe(1);
+  });
+
+  /**
+   * TO WHOEVER IS ABOUT TO PUT `_count` BACK ON THE SELECT: Prisma resolves a
+   * relation `_count` by aggregating the WHOLE purchases table, once per query.
+   * Under MostPopular the `orderBy` already carries one of those, and Postgres
+   * does not dedupe a second. The value comes from `getSoldCounts`, restricted
+   * to this page's ids.
+   */
+  it('reads the sold count for the page only, never via a whole-table `_count`', async () => {
+    mocks.shopItemFindMany.mockResolvedValue([itemRow(2), itemRow(1)]);
+    await getCommunityCosmetics({ ...baseInput, sort: CosmeticShopSort.MostPopular });
+    expect(mocks.shopItemFindMany.mock.calls[0][0].select._count).toBeUndefined();
+    const soldCall = dbMock.dbRead.$queryRaw.mock.calls.find((c) =>
+      (c[0] as string[]).join('').includes('"UserCosmeticShopPurchases"')
+    );
+    expect(soldCall?.slice(1)).toContainEqual([2, 1]);
   });
 
   it('pages by skip/take and reports the page count from the total', async () => {

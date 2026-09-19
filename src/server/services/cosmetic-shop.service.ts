@@ -31,7 +31,12 @@ import type {
 } from '~/server/schema/cosmetic-shop.schema';
 import { computeCreatorShopSplit, PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import { cosmeticShopItemSelect, withSoldCount } from '~/server/selectors/cosmetic-shop.selector';
+import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
+import {
+  getSoldCounts,
+  withSoldCount,
+  withSoldCounts,
+} from '~/server/services/cosmetic-shop-sold-count';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
   createBuzzTransaction,
@@ -95,7 +100,7 @@ export const getShopItemById = async ({ id }: GetByIdInput) => {
       dbReadFallbackCounter.inc({ entity: 'cosmeticShopItem', caller: 'getShopItemById' });
       return dbWrite.cosmeticShopItem.findUniqueOrThrow(shopItemFindArgs);
     })
-    .then(withSoldCount);
+    .then(async (item) => (await withSoldCounts([item]))[0]);
 };
 
 export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticShopItemInput) => {
@@ -145,13 +150,12 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
     orderBy: { createdAt: 'desc' },
   });
 
-  const count = await dbRead.cosmeticShopItem.count({ where });
+  const [withSold, count] = await Promise.all([
+    withSoldCounts(items),
+    dbRead.cosmeticShopItem.count({ where }),
+  ]);
 
-  return getPagingData(
-    { items: items.map(withSoldCount), count: (count as number) ?? 0 },
-    limit,
-    page
-  );
+  return getPagingData({ items: withSold, count: (count as number) ?? 0 }, limit, page);
 };
 
 export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
@@ -314,18 +318,13 @@ export const upsertCosmeticShopItem = async ({
     archivedAt: archived ? new Date() : null,
   };
 
-  // Without `_count`: the response is not mapped through `withSoldCount` (see the
-  // return below), so nothing reads it — and selecting it here would run a
-  // whole-table aggregate on the PRIMARY inside an open write transaction.
-  const { _count: _unusedOnWrite, ...writeSelect } = cosmeticShopItemSelect;
-
   const item = await dbWrite.$transaction(
     async (tx) => {
       const saved = id
         ? await tx.cosmeticShopItem.update({
             where: { id },
             data,
-            select: writeSelect,
+            select: cosmeticShopItemSelect,
           })
         : await tx.cosmeticShopItem.create({
             data: {
@@ -336,7 +335,7 @@ export const upsertCosmeticShopItem = async ({
                 purchases: 0,
               },
             },
-            select: writeSelect,
+            select: cosmeticShopItemSelect,
           });
 
       if (expansion.evaluated)
@@ -488,10 +487,14 @@ export const getSectionById = async ({ id }: GetByIdInput) => {
     dbReadFallbackCounter.inc({ entity: 'cosmeticShopSection', caller: 'getSectionById' });
     return dbWrite.cosmeticShopSection.findUniqueOrThrow(sectionFindArgs);
   });
+  const sold = await getSoldCounts(section.items.map((i) => i.shopItem.id));
 
   return {
     ...section,
-    items: section.items.map((i) => ({ ...i, shopItem: withSoldCount(i.shopItem) })),
+    items: section.items.map((i) => ({
+      ...i,
+      shopItem: withSoldCount(i.shopItem, sold.get(i.shopItem.id) ?? 0),
+    })),
     image: !!section.image
       ? {
           ...section.image,
@@ -797,6 +800,7 @@ export const getShopSectionsWithItems = async ({
       placement: 'asc',
     },
   });
+  const sold = await getSoldCounts(sections.flatMap((s) => s.items.map((i) => i.shopItem.id)));
 
   return (
     sections
@@ -812,7 +816,7 @@ export const getShopSectionsWithItems = async ({
             ...item.shopItem,
             meta: shopItemDisplayMeta(
               item.shopItem.meta as CosmeticShopItemMeta | null,
-              item.shopItem._count.purchases
+              sold.get(item.shopItem.id) ?? 0
             ),
           },
         })),

@@ -52,6 +52,7 @@ import {
   updateCreatorShopItem,
 } from '../creator-shop.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { soldCountsFake } from '~/test-utils/soldCountsFake';
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
 );
@@ -119,7 +120,6 @@ const shopItemRow = (id: number) => ({
   meta: { sellableByOthers: true, sellerShare: 0 },
   cosmetic: { id: id * 10, name: `Cosmetic ${id}`, type: 'Badge', data: {} },
   addedBy: { id: CREATOR_ID, username: 'creator', image: null },
-  _count: { purchases: 0 },
 });
 
 describe('listing someone else’s item records the terms it was listed under', () => {
@@ -527,31 +527,26 @@ describe('getCreatorShop resold section', () => {
    * asserted on the storefront path.
    */
   it('reports the purchase rows as the sold count, not the meta counter', async () => {
+    const OWN_ITEM_ID = SHOP_ITEM_ID + 1;
     const withCounterDrift = (id: number) => ({
       ...shopItemRow(id),
       meta: { sellableByOthers: true, sellerShare: 0, purchases: 3 },
-      _count: { purchases: 7 },
     });
     mocks.resaleFindMany.mockResolvedValue([{ shopItemId: SHOP_ITEM_ID, sellerShare: 20 }]);
     mocks.shopItemFindMany
-      .mockResolvedValueOnce([withCounterDrift(SHOP_ITEM_ID)])
+      .mockResolvedValueOnce([withCounterDrift(OWN_ITEM_ID)])
       .mockResolvedValueOnce([withCounterDrift(SHOP_ITEM_ID)]);
+    mocks.queryRaw.mockImplementation(soldCountsFake({ [OWN_ITEM_ID]: 7, [SHOP_ITEM_ID]: 5 }));
 
     const { cosmetics, resold } = await getCreatorShop({
       userId: RESELLER_ID,
       viewerId: RESELLER_ID,
     });
 
+    // Distinct ids and counts, so a count read for only one of the two
+    // queries' items shows up as a 0 on the other.
     expect(cosmetics[0].meta.purchases).toBe(7);
-    expect(resold[0].meta.purchases).toBe(7);
-    // Both storefront queries carry `_count` by spreading the shared selector.
-    // Redefining it there is already a compile error; this is the readable
-    // version of that failure. Only the first call is checked — both pass the
-    // same `creatorStorefrontItemSelect` object, so a second assertion would be
-    // the identical reference.
-    expect(mocks.shopItemFindMany.mock.calls[0][0].select._count).toEqual({
-      select: { purchases: true },
-    });
+    expect(resold[0].meta.purchases).toBe(5);
   });
 });
 

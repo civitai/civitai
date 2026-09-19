@@ -30,6 +30,7 @@ import { PACK_FILTER_VALUE } from '~/server/schema/creator-shop.schema';
 import { getSectionById, getShopSectionsWithItems } from '../cosmetic-shop.service';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { soldCountsFake } from '~/test-utils/soldCountsFake';
 dbMock.dbRead.cosmeticShopSection.findMany.mockImplementation((...args: unknown[]) =>
   (mocks.sectionFindMany as (...a: unknown[]) => unknown)(...args)
 );
@@ -49,7 +50,6 @@ const officialItem = {
     // The counter and the rows disagree on purpose: /shop must publish the row
     // count, never the stored counter.
     meta: { purchases: 2 },
-    _count: { purchases: 5 },
   },
 };
 
@@ -109,6 +109,7 @@ describe('getShopSectionsWithItems viewer gating', () => {
   });
 
   it('serves the purchase rows as the sold count, not the meta counter', async () => {
+    dbMock.dbRead.$queryRaw.mockImplementation(soldCountsFake({ 1: 5 }));
     const sections = await getShopSectionsWithItems({});
     expect(sections[0].items[0].shopItem.meta.purchases).toBe(5);
   });
@@ -227,8 +228,9 @@ describe('getSectionById serves the row count too', () => {
       id: 5,
       title: 'Badges',
       image: null,
-      items: [{ shopItem: { id: 74, meta: { purchases: 2 }, _count: { purchases: 5 } } }],
+      items: [{ shopItem: { id: 74, meta: { purchases: 2 } } }],
     });
+    dbMock.dbRead.$queryRaw.mockImplementation(soldCountsFake({ 74: 5 }));
 
     const section = await getSectionById({ id: 5 });
 
