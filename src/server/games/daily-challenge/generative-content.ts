@@ -60,7 +60,8 @@ function pickClient(model: string) {
 
 // $/M-token rates for models used in the daily-challenge pipeline (verified 2026-07-13).
 // estimateBuzzCost returns 0 for any model absent here — notably the Civitai-hosted urn:air:*
-// models, which don't report token usage through the orchestrator's completion endpoint yet.
+// models. The orchestrator does return `usage` for those; it is civitai-llm's
+// ChatCompletionResponse type that omits the field, so it never reaches this file.
 export const MODEL_BUZZ_RATES: Record<string, { input: number; output: number }> = {
   [AI_MODELS.GPT_5_NANO]: { input: 0.05, output: 0.4 },
   [AI_MODELS.GPT_4O_MINI]: { input: 0.15, output: 0.6 },
@@ -91,9 +92,10 @@ export function estimateBuzzCost(model: string, usage: TokenUsage): number {
 
 /**
  * Route a JSON completion to the model's client and normalize the usage shape. Civitai-hosted
- * models (urn:air:*) go through the orchestrator client, which doesn't report token usage —
- * estimateBuzzCost returns 0 for those regardless (no MODEL_BUZZ_RATES entry), so the zeroed
- * usage never under/over-counts tracked spend.
+ * models (urn:air:*) do report usage; civitai-llm discards it, so the zeros below are this
+ * repo's doing rather than the orchestrator's. Harmless only because estimateBuzzCost returns 0
+ * for those models anyway (no MODEL_BUZZ_RATES entry) — giving them a rate without first
+ * plumbing usage through would silently price every call at zero.
  */
 export async function getCompletionWithUsage<T>(
   model: AIModel,
