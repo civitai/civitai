@@ -1,115 +1,84 @@
--- ============================================================
--- Index the FK every displayed sold count now aggregates over
--- ============================================================
--- `UserCosmeticShopPurchases` has had exactly one index since it was created --
--- the primary key on `buzzTransactionId`. Nothing indexes `shopItemId`, which is
--- the column every `_count: { select: { purchases: true } }` groups by.
+-- Index the FK every displayed sold count aggregates over.
 --
--- WHAT PRISMA ACTUALLY EMITS, because the shape decides what the index is worth.
--- A relation `_count` in a `select` is NOT a correlated per-row subquery. It is a
--- LEFT JOIN to a subquery that aggregates the WHOLE related table once:
+-- `UserCosmeticShopPurchases` has had one index since it was created: the primary
+-- key on `buzzTransactionId`. Nothing indexes `shopItemId`, which is what every
+-- `_count: { select: { purchases: true } }` groups by.
 --
---   SELECT ..., COALESCE(a."_aggr_count_purchases", 0)
---     FROM "CosmeticShopItem" si
---     LEFT JOIN (SELECT "shopItemId", COUNT(*) AS "_aggr_count_purchases"
---                  FROM "UserCosmeticShopPurchases" GROUP BY "shopItemId") a
---       ON a."shopItemId" = si.id
+-- Prisma resolves a relation `_count` as a LEFT JOIN to a subquery that aggregates
+-- the WHOLE related table once, not a correlated per-row subquery. So the cost is
+-- one aggregate per QUERY, independent of page size. Measured on the replica
+-- 2026-09-18: 1,190 buffers, ~14 ms, over a 9.3 MB heap that is permanently cached
+-- (every buffer in every plan is a `shared hit`, zero reads).
 --
--- So the cost is one full aggregate per QUERY and is independent of how many
--- items the page renders.
+-- WHERE THIS INDEX PAYS: the single-item reads. `WHERE si.id = $1` still scans all
+-- 40,600 rows to count one item's, because the planner pushes the qual into the
+-- subquery and then has nothing to use. `getPackDetail` (publicProcedure,
+-- unauthenticated) and `getShopItemById` (protectedProcedure, consumed by the
+-- moderator item edit page) both do this.
 --
--- MEASURED (production replica, 2026-09-18, 40,615 rows / 13 MB), over every
--- published listed item:
+-- WHAT IT DOES NOT FIX: the aggregate is O(table), not O(page), so cost grows with
+-- the table regardless of indexing. The durable fix is a `groupBy` restricted to the
+-- page's ids -- and that is BLOCKED ON THIS INDEX: measured, a groupBy over 60 ids
+-- is still a whole-table seq scan today, and becomes a ~9-cost index-only nested
+-- loop with the index. `withSoldCount` in src/server/selectors/cosmetic-shop.selector.ts
+-- is the seam. The heaviest per-call consumer is `getCommunityCosmetics`, which under
+-- MostPopular carries TWO of these aggregates -- one for the value, one for the
+-- `orderBy` -- confirmed by reading Prisma's emitted SQL, and Postgres does not dedupe
+-- them. `getShop` runs one aggregate but at higher volume.
 --
---   HashAggregate <- Seq Scan on "UserCosmeticShopPurchases" (rows=40615, loops=1)
---     Buffers: shared hit=1190
---   Execution Time: 13.701 ms
+-- 🔴 NOT APPROVED. DO NOT APPLY THIS YET.
 --
--- 🔴 WHERE THIS INDEX ACTUALLY PAYS: the SINGLE-ITEM reads, not the shop page.
--- With `WHERE si.id = $1` the planner pushes the qual into the subquery and then
--- has nothing to use, so it still scans all 40,615 rows:
+-- This file is committed for review and history, not as an instruction. The owner's
+-- answer to the request to apply it was: Prisma emits poor SQL here, so replace the
+-- query with raw SQL FIRST and re-measure -- the index may not be needed at all. That
+-- measurement has not been done as of this commit.
 --
---   ->  Seq Scan on "UserCosmeticShopPurchases" u
---         (cost=0.00..1693.50 rows=9) (actual time=0.012..3.605 rows=20.00)
---         Buffers: shared hit=1190
+-- The doubled aggregate this header describes is a Prisma artifact, not a database
+-- necessity, which is what makes that the right order.
 --
--- ~3.6 ms and 1,190 buffers to count twenty rows. With the index that becomes an
--- Index Only Scan (verified hypothetically: cost 1693.50 -> 6.35). The readers
--- this fixes are `getPackDetail` (publicProcedure, unauthenticated) and
--- `getShopItemById` (the moderator item edit page).
+-- What is NOT in question is the single-item read: counting one item's rows by
+-- scanning 40,600 is a missing index rather than a bad query, and no rewrite fixes
+-- that. So the likely outcome is that this file survives with a smaller
+-- justification. Confirm with a measurement before anyone acts on it.
 --
--- 🔴 ON THE MULTI-ROW PATHS IT IS NOT EXPECTED TO HELP AT ALL, and an earlier
--- draft of this header claimed otherwise. The aggregate still visits every row;
--- the table is 13 MB and permanently cached, so every buffer in every plan is a
--- `shared hit` and there is no IO to save; and `relallvisible` is 550 of 1,190
--- pages (46%), so an index-only scan would still fetch heap pages for the rest.
--- The 13.7 ms is CPU over 40k in-memory rows and an index cannot take that away
--- from a whole-table GROUP BY.
+-- IF AND WHEN IT IS APPROVED: apply BEFORE the deploy. Not because a reader would
+-- 500 without it -- no column is added, which is why this is an index and not a
+-- `purchaseCount` column -- but so the single-item reads are not served at ~4 ms of
+-- pure scan each from the moment it lands. A slowdown, not a brownout. Apply to DEV
+-- too.
 --
--- The heaviest multi-row consumer is `getCommunityCosmetics` — publicProcedure,
--- offset-paged, uncached. Under `MostPopular` it carries TWO aggregates over this
--- table: the one that produces the displayed count and the pre-existing
--- `orderBy: { purchases: { _count: 'desc' } }`. Postgres does not dedupe them —
--- measured at two separate 1,190-buffer scans, 24.5 ms against 13.9 ms for one.
--- That is the path the `groupBy` fix below is owed first, and collapsing the pair
--- is free once someone is in there.
+-- 🔴 APPLIED BY HAND. Feed this file to psql on STDIN so each statement runs in its
+-- own implicit transaction: `CONCURRENTLY` cannot run inside a transaction block and
+-- a multi-statement `-c` would wrap it in one. Takes SHARE UPDATE EXCLUSIVE, not
+-- ACCESS EXCLUSIVE -- it blocks neither reads nor writes.
 --
--- WHAT THIS DOES NOT FIX, stated so it is a known decision rather than a later
--- discovery: the aggregate is O(table), not O(page), so the cost grows with the
--- purchases table no matter what is indexed. Monthly rows: ~200-300 through May
--- 2026, then 429 in June, 738 in July, 7,775 in August, and September on pace for
--- ~6,300. The durable fix is a `groupBy`
--- restricted to the page's ids resolved alongside the `findMany` -- O(page), and
--- it would genuinely use this index. Not worth doing at 13 ms; `withSoldCount` in
--- src/server/selectors/cosmetic-shop.selector.ts is the seam to change when it is.
---
--- ORDER: APPLY THIS BEFORE THE DEPLOY. Not because a reader would 500 without it
--- -- no column is added, which is exactly why this is an index and not a
--- `purchaseCount` column -- but so the single-item reads above are not served at
--- 3.6 ms of pure scan each from the moment the deploy lands. It is a slowdown,
--- not a brownout: the shop page barely notices.
---
--- Apply to DEV as well as production, or the next person to measure a shop query
--- on a dev box finds the seq scan and reports a regression that isn't one.
---
--- 🔴 APPLIED BY HAND. Feed this file to psql on STDIN, so each statement runs in
--- its own implicit transaction -- `CONCURRENTLY` cannot run inside a transaction
--- block, and a multi-statement `-c` would wrap it in one. It takes SHARE UPDATE
--- EXCLUSIVE, not ACCESS EXCLUSIVE: it does not block reads or writes.
---
--- 🔴 `IF NOT EXISTS` WILL HAPPILY SKIP A BROKEN INDEX. A cancelled or timed-out
--- CONCURRENTLY build leaves an INVALID index behind -- it exists, it is never
--- used, and nothing cleans it up -- so a second run of this file reports success
--- over it. Confirm validity rather than completion:
+-- 🔴 `IF NOT EXISTS` WILL SKIP A BROKEN INDEX. A cancelled CONCURRENTLY build leaves
+-- an INVALID index behind that is never used and never cleaned up, so a second run of
+-- this file reports success over it. Confirm validity, not completion:
 --
 --   SELECT indexrelid::regclass, indisvalid FROM pg_index
 --    WHERE indexrelid = '"UserCosmeticShopPurchases_shopItemId_idx"'::regclass;
---   -- note the embedded quotes: regclass::text renders a mixed-case identifier
---   -- QUOTED, so comparing it to the bare name silently matches nothing.
+--   -- the embedded quotes matter: regclass::text renders a mixed-case identifier
+--   -- QUOTED, so comparing against the bare name silently matches nothing.
 --
--- If `indisvalid` is false:
---   DROP INDEX CONCURRENTLY IF EXISTS "UserCosmeticShopPurchases_shopItemId_idx";
--- and run this file again.
+-- If false: DROP INDEX CONCURRENTLY IF EXISTS "UserCosmeticShopPurchases_shopItemId_idx";
+-- then run this file again.
 --
--- 🔴 THEN CONFIRM THE PLAN CHANGED, not just that the statement returned. Re-run
--- the SINGLE-ITEM EXPLAIN above -- the one with `WHERE si.id = $1` -- and require
--- an Index Only Scan on this index. A remaining Seq Scan THERE means invalid or
--- missing.
+-- 🔴 THE PLAN CHECK, AND WHICH PLAN TO RUN IT ON. Check the SINGLE-ITEM read
+-- (`WHERE si.id = $1`): it must go from a Seq Scan to an index scan of ANY kind on
+-- this index. A remaining Seq Scan there means invalid or missing -- that is the
+-- abort condition.
 --
--- 🔴 DO NOT RUN THAT CHECK AGAINST A MULTI-ROW PLAN. Those keep their Seq Scan
--- with the index in place, by design, for the reason above: an index cannot take
--- a whole-table aggregate off a fully-cached 13 MB table. An abort condition
--- written against the multi-row plan fires on correct behaviour, and the wall
--- clock there will read ~13.7 ms before and after. That is success, not failure.
+-- Do NOT judge it on a multi-row plan. Those DO change -- the planner flips the
+-- whole-table aggregate to an Index Only Scan (measured hypothetically, 1,592.80 ->
+-- 1,427.09) -- but it is ~10% of an estimate on a fully cached table with only 46% of
+-- pages all-visible, so expect the wall clock to read about the same before and after.
+-- The plan changing there is not a signal in either direction.
 --
--- SHAPE: plain single-column, deliberately. `refunded` exists on this table but is
--- true on 40 of 40,615 rows and the counts carry no `refunded` predicate, so a
--- partial index would not be used and would save nothing. `INCLUDE` buys nothing
--- either -- the aggregate is COUNT(*), so this is already index-only.
---
--- The name is Prisma's own (`Table_column_idx`), matching `@@index([shopItemId])`
--- in schema.full.prisma and the sibling `UserCosmeticShopPurchaseCosmetic_cosmeticId_idx`.
--- A hand-picked name here would read as schema drift forever.
+-- SHAPE: plain single-column, deliberately. `refunded` exists but is true on 40 rows,
+-- and the counts carry no `refunded` predicate, so a partial index would not be used.
+-- `INCLUDE` buys nothing: the aggregate is COUNT(*), so this is already index-only.
+-- The name is Prisma's own, matching `@@index([shopItemId])` in schema.full.prisma.
 SET statement_timeout = 0;
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS "UserCosmeticShopPurchases_shopItemId_idx"

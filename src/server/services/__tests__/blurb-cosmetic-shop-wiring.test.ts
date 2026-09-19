@@ -135,6 +135,22 @@ describe('upsertCosmeticShopItem — blurb expansion', () => {
       EXPANDED_HTML
     );
   });
+
+  /**
+   * The create-side twin of "only a purchase moves the stored counter". A new
+   * listing has sold nothing, and `purchases` is client-supplied on the upsert
+   * input, so the zero has to be imposed rather than trusted.
+   *
+   * Nothing else sees this one: deleting `purchases: 0` from the create branch
+   * leaves 603 tests green and typechecks clean, because `meta` is Json.
+   */
+  it('starts a new listing at zero sold, whatever the client posted', async () => {
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue(null);
+
+    await upsert({ id: undefined, meta: { purchases: 99 } });
+
+    expect(dbMock.dbWrite.cosmeticShopItem.create.mock.calls[0][0].data.meta.purchases).toBe(0);
+  });
 });
 
 describe('upsertCosmeticShopItem — blurb reconciliation', () => {
@@ -232,13 +248,14 @@ describe('upsertCosmeticShopItem — the stored purchase counter', () => {
   });
 
   /**
-   * The preservation above reads `existingItem.meta`, and the mock hands that
-   * back whatever the fixture says regardless of what the select asked for — so
-   * dropping `meta: true` from the select leaves all of this green while the
-   * real read returns `undefined` and every save writes `purchases: 0`.
+   * A fast second signal, NOT the gate. Dropping `meta: true` from the select is
+   * already a compile error — Prisma narrows the row to the select, so
+   * `existingItem.meta` stops existing and the read is `TS2339` on a named line.
+   * This just fails in a second rather than after a typecheck, and says why.
    *
-   * TO WHOEVER IS ABOUT TO DELETE THIS: it is the only thing holding that one
-   * word in the select, and without it the fix above is decorative.
+   * It would stop covering anything if that select's typing were ever loosened —
+   * a hand-written type, an `as` cast, a widened shared constant — because a
+   * mock hands back whatever the fixture says regardless of what was asked for.
    */
   it('asks the database for the stored meta it preserves', async () => {
     await upsert({ meta: { purchases: 99 } });
@@ -253,9 +270,9 @@ describe('upsertCosmeticShopItem — the stored purchase counter', () => {
    * reads — which would have handed the next person a red test for correctly
    * deleting dead code.
    *
-   * TO WHOEVER IS ABOUT TO ADD `withSoldCount` HERE FOR CONSISTENCY: that is the
-   * decision this assertion exists to record, not an oversight. Without it the
-   * line is unpinned in both directions and either choice passes.
+   * Records the decision. It is not the gate: the write path's select has
+   * `_count` destructured off, so passing that row to `withSoldCount` fails its
+   * `_count: { purchases: number }` constraint at compile time.
    */
   it('hands back what it wrote, not a row-derived count', async () => {
     const saved = await upsert({ meta: { purchases: 99 } });

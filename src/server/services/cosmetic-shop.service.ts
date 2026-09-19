@@ -313,13 +313,18 @@ export const upsertCosmeticShopItem = async ({
     archivedAt: archived ? new Date() : null,
   };
 
+  // Without `_count`: the response is not mapped through `withSoldCount` (see the
+  // return below), so nothing reads it — and selecting it here would run a
+  // whole-table aggregate on the PRIMARY inside an open write transaction.
+  const { _count: _unusedOnWrite, ...writeSelect } = cosmeticShopItemSelect;
+
   const item = await dbWrite.$transaction(
     async (tx) => {
       const saved = id
         ? await tx.cosmeticShopItem.update({
             where: { id },
             data,
-            select: cosmeticShopItemSelect,
+            select: writeSelect,
           })
         : await tx.cosmeticShopItem.create({
             data: {
@@ -330,7 +335,7 @@ export const upsertCosmeticShopItem = async ({
                 purchases: 0,
               },
             },
-            select: cosmeticShopItemSelect,
+            select: writeSelect,
           });
 
       if (expansion.evaluated)
