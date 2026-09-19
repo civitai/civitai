@@ -29,9 +29,9 @@ import type { InstantSearchProps } from 'react-instantsearch';
  * is returned verbatim (only `onSuccess` is invoked to clear any prior banner).
  */
 
-export type SearchClient = NonNullable<InstantSearchProps['searchClient']>;
-export type SearchMethod = SearchClient['search'];
-export type SearchRequests = Parameters<SearchMethod>[0];
+type SearchClient = NonNullable<InstantSearchProps['searchClient']>;
+type SearchMethod = SearchClient['search'];
+type SearchRequests = Parameters<SearchMethod>[0];
 type FacetRequests = Parameters<NonNullable<SearchClient['searchForFacetValues']>>[0];
 
 // Lower-cased substrings that identify a Meili communication / network / connectivity
@@ -77,52 +77,6 @@ export const MEILI_QUERY_ERROR_TYPE = 'MeiliSearchQueryError';
 
 /** Distinct query errors reported per client instance, so a bad filter can't beacon per keystroke. */
 const MAX_REPORTED_QUERY_ERRORS = 10;
-
-/**
- * Per-client-instance report budget, shared by every search-client wrapper that beacons.
- *
- * Returns a predicate that is true the FIRST time it sees a signature and false afterwards,
- * and false once `max` distinct signatures have been admitted. One home for the policy, so a
- * later change to it (sampling, a lower cap, a redaction rule) cannot land on one wrapper and
- * miss the other — `searchFilterGuard.ts` is the second caller.
- */
-export function createErrorReportCap(max = MAX_REPORTED_QUERY_ERRORS) {
-  const seen = new Set<string>();
-  return (signature: string) => {
-    if (seen.has(signature) || seen.size >= max) return false;
-    seen.add(signature);
-    return true;
-  };
-}
-
-/**
- * Push one exception to Faro RUM under an explicit `type`, and mirror it to the console.
- *
- * 🔴 The `type` REPLACES the exception's class in Faro, and `~/utils/faro/classifyException`
- * keys its `chunkload` / `meili` rules off that field — a type matching no rule is kept and
- * tagged `error_category: real`. Both search types do that deliberately; check
- * `classifyException.ts` before introducing a third.
- *
- * Faro only runs in production for a sampled session, so the console line is the only signal a
- * developer building a malformed query locally ever gets. Reporting must never break a render,
- * so everything here is best-effort.
- */
-export function pushSearchClientError(
-  error: unknown,
-  type: string,
-  context: Record<string, string>,
-  consoleMessage: string,
-  consoleDetail?: Record<string, unknown>
-) {
-  try {
-    const pushError = faro?.api?.pushError?.bind(faro.api);
-    pushError?.(error instanceof Error ? error : new Error(String(error)), { type, context });
-  } catch {
-    // Reporting must never break the search render.
-  }
-
-  console.error(`[${type}] ${consoleMessage}`, consoleDetail ?? {});
-}
 
 function toLowerString(value: unknown): string {
   if (typeof value === 'string') return value.toLowerCase();
@@ -192,8 +146,9 @@ function indexNamesOf(requests: readonly unknown[] | undefined): string {
 }
 
 /**
- * Report a backend-rejected query to Faro RUM (where it lands untagged, i.e.
- * `error_category: real`) AND the console.
+ * Report to Faro RUM (where it lands untagged, i.e. `error_category: real`) AND the
+ * console: Faro only runs in production for a sampled session, so the console line is
+ * the only signal a developer building a malformed filter locally ever gets.
  *
  * Carries index names but never the user's query.
  */
@@ -202,17 +157,24 @@ function reportQueryError(error: unknown, requests: readonly unknown[] | undefin
   const code = (error as { code?: unknown })?.code;
   const httpStatus = (error as { httpStatus?: unknown })?.httpStatus;
 
-  pushSearchClientError(
+  try {
+    const pushError = faro?.api?.pushError?.bind(faro.api);
+    pushError?.(error instanceof Error ? error : new Error(String(error)), {
+      type: MEILI_QUERY_ERROR_TYPE,
+      context: {
+        ...(typeof code === 'string' && code ? { code } : {}),
+        ...(typeof httpStatus === 'number' ? { httpStatus: String(httpStatus) } : {}),
+        ...(indexes ? { indexes } : {}),
+      },
+    });
+  } catch {
+    // Reporting must never break the search render.
+  }
+
+  console.error(`[${MEILI_QUERY_ERROR_TYPE}] Meilisearch rejected our query`, {
+    indexes,
     error,
-    MEILI_QUERY_ERROR_TYPE,
-    {
-      ...(typeof code === 'string' && code ? { code } : {}),
-      ...(typeof httpStatus === 'number' ? { httpStatus: String(httpStatus) } : {}),
-      ...(indexes ? { indexes } : {}),
-    },
-    'Meilisearch rejected our query',
-    { indexes, error }
-  );
+  });
 }
 
 /**
@@ -220,22 +182,20 @@ function reportQueryError(error: unknown, requests: readonly unknown[] | undefin
  * incoming requests. Matches the shape react-instantsearch expects (mirrors the
  * empty-query short-circuit already used in `search.client.ts`).
  */
-export function emptySearchResult() {
+function emptySearchResults(requests: SearchRequests) {
   return {
-    hits: [],
-    nbHits: 0,
-    nbPages: 0,
-    page: 0,
-    processingTimeMS: 0,
-    hitsPerPage: 0,
-    exhaustiveNbHits: false,
-    query: '',
-    params: '',
+    results: (requests ?? []).map(() => ({
+      hits: [],
+      nbHits: 0,
+      nbPages: 0,
+      page: 0,
+      processingTimeMS: 0,
+      hitsPerPage: 0,
+      exhaustiveNbHits: false,
+      query: '',
+      params: '',
+    })),
   };
-}
-
-export function emptySearchResults(requests: SearchRequests) {
-  return { results: (requests ?? []).map(() => emptySearchResult()) };
 }
 
 function emptyFacetResults(requests: readonly unknown[]) {
@@ -272,14 +232,17 @@ export function createResilientSearchClient<T extends SearchClient>(
   options: ResilientSearchClientOptions = {}
 ): T {
   const { retries = 1, retryDelayMs = 250, onError, onSuccess } = options;
-  const shouldReport = createErrorReportCap();
+  const reportedSignatures = new Set<string>();
 
   const handleFailure = (error: unknown, requests: readonly unknown[] | undefined) => {
     if (!isMeiliApiError(error)) {
       onError?.(error);
       return;
     }
-    if (!shouldReport(errorSignature(error))) return;
+    const signature = errorSignature(error);
+    if (reportedSignatures.has(signature) || reportedSignatures.size >= MAX_REPORTED_QUERY_ERRORS)
+      return;
+    reportedSignatures.add(signature);
     reportQueryError(error, requests);
   };
 

@@ -68,10 +68,10 @@ const INSTANT_SEARCH_ROOTS = {
  * Every non-test `.tsx` under `src/` that renders an `<InstantSearch>` element, repo-relative.
  *
  * A full-suite run creates and removes directories under `src/` while this walk is happening, so
- * an entry can vanish between the listing and the read. Its sibling ledger in this directory
- * documents that as an OBSERVED hazard — it surfaces as a collection failure, which contributes
- * zero tests and moves no failure count — so entries that cannot be read are skipped rather than
- * thrown on.
+ * an entry can vanish between the listing and the read. That is an OBSERVED hazard, not a
+ * hypothetical one, and it surfaces as a COLLECTION failure — which contributes zero tests and
+ * moves no failure count, so it reads as "nothing to see". Entries that cannot be read are
+ * therefore skipped rather than thrown on.
  */
 function findInstantSearchRoots(dir = 'src'): string[] {
   const found: string[] = [];
@@ -348,14 +348,12 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     expect(source).toContain('data={enabledTargets}');
     expect(source).not.toContain('defaultValue={availableIndexes[0]}');
 
-    // A single-option selector is deselectable by default, and the `null` that produces would
-    // move the target off the set the caller supports — for one caller, into a payout path.
-    expect(source).toContain('allowDeselect={false}');
-
     // DELIBERATELY UNCOVERED, said out loud rather than left as a silent omission: the
-    // `startingIndex ?? supportedIndexes[0] ?? 'models'` fallback is a forward guard. No caller
-    // reaches it today (the assertion above closes the only path that could), so reverting it to
-    // a bare `'models'` leaves this suite green, and a test for it would be an invariant guard.
+    // `startingIndex ?? supportedIndexes[0] ?? 'models'` fallback. Its INITIAL-value arm is
+    // unreachable — every caller either passes `startingIndex` or supports `models` first — and
+    // its deselect arm needs a rendered Mantine `Select` to reach, which is the browser tier.
+    // So reverting it to a bare `'models'` leaves this suite green. Stated rather than pinned:
+    // a spelling check here would be an invariant guard wearing a regression guard's title.
   });
 
   it('AutocompleteSearch re-runs its refine effect when search availability recovers', () => {

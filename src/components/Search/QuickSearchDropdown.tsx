@@ -1,6 +1,8 @@
 import type { AutocompleteProps } from '@mantine/core';
 import { Group, Select } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
+import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { withUserHydration } from '~/components/Search/userHydration';
 import { IconChevronDown } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { InstantSearch, useSearchBox } from 'react-instantsearch';
@@ -19,12 +21,13 @@ import { reverseSearchIndexMap, searchIndexMap } from '~/components/Search/searc
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { useHitsTransformed } from '~/components/Search/search.utils2';
 import { IndexToLabel } from '~/components/Search/useSearchState';
+import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { IMAGES_SEARCH_INDEX, TOOLS_SEARCH_INDEX } from '~/server/common/constants';
 import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { paired } from '~/utils/type-guards';
 import { searchClient } from '~/components/Search/search.client';
-import { quickSearchClient } from '~/components/Search/quick-search.client';
+import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import {
   shouldRefineSearchQuery,
   useCarriedSearchText,
@@ -34,6 +37,17 @@ import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tool
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import classes from './QuickSearchDropdown.module.scss';
 import { truncate } from 'lodash-es';
+
+// Wrapped so a Meili outage degrades this dropdown to an empty result set
+// instead of an uncaught `MeiliSearchCommunicationError`. Fails quietly (no
+// banner) — the header quick-search just shows nothing during a blip.
+const meilisearch = withUserHydration(
+  createResilientSearchClient(
+    instantMeiliSearch(env.NEXT_PUBLIC_SEARCH_HOST as string, env.NEXT_PUBLIC_SEARCH_CLIENT_KEY, {
+      primaryKey: 'id',
+    })
+  )
+);
 
 // TODO: These styles were taken from the original SearchBar component. We should probably migrate that searchbar to use this component.
 // const useStyles = createStyles((theme) => ({
@@ -148,9 +162,11 @@ export const QuickSearchDropdown = ({
   // that passes `['users']` gets a users picker whose hits are models — and now that the selector
   // is controlled by this value, a target outside the offered set also blanks the control.
   //
-  // FORWARD GUARD, not a fix for an observed defect: every current caller either passes
-  // `startingIndex` or supports `models` first, so neither fallback moves any call site today.
-  // The deselect path below is the one that could reach it, and it is closed here too.
+  // Every current caller either passes `startingIndex` or supports `models` first, so the
+  // INITIAL value below is unchanged at every call site today. The reachable path is the
+  // deselect one: Mantine's single-select is deselectable, so `onChange` can hand the change
+  // handler `null`, and a bare `'models'` fallback would then move a `supportedIndexes={['users']}`
+  // picker onto the models index.
   const fallbackIndex = startingIndex ?? props.supportedIndexes?.[0] ?? 'models';
   const [targetIndex, setTargetIndex] = useState<SearchIndexKey>(fallbackIndex);
   const handleTargetChange = (value: SearchIndexKey | null) => {
@@ -168,7 +184,7 @@ export const QuickSearchDropdown = ({
       // previous index's parameters: react-instantsearch sets the new index and searches in its
       // render body, before the children that own `filters` have re-rendered.
       key={indexName}
-      searchClient={disableInitialSearch ? searchClient : quickSearchClient}
+      searchClient={disableInitialSearch ? searchClient : meilisearch}
       indexName={indexName}
       future={{ preserveSharedStateOnUnmount: true }}
     >
@@ -327,11 +343,6 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
           data={enabledTargets}
           rightSection={<IconChevronDown size={16} color="currentColor" />}
           onChange={(value) => onIndexNameChange(value as TIndex)}
-          // A single-option selector is otherwise DESELECTABLE, and a deselect hands `null` to the
-          // change handler. Callers read the picked entity as the type their `supportedIndexes`
-          // names — one of them writes it into a Buzz payout recipient set — so silently moving
-          // the target to another index is not a display bug.
-          allowDeselect={false}
         />
       )}
       <ClearableAutoComplete
