@@ -282,6 +282,21 @@ export function revocationNamespaceLabel(blockInstanceId: unknown): AppBlockRevo
   return 'other';
 }
 
+/**
+ * The two post-from-app doors whose shared preamble can refuse an unhydratable
+ * token subject: `blocks.createPostFromApp` (the write) and
+ * `blocks.previewPostFromApp` (the read-only dry run).
+ *
+ * 🔴 THE SPLIT IS LOAD-BEARING AND NOT COSMETIC. Both procs run the identical
+ * preamble, so a combined number would leave an operator unable to say whether a
+ * spike cost anyone a real post. A refused `create` is a post the viewer intended
+ * to make and did not get; a refused `preview` cost them a dialog. Those warrant
+ * different urgency, and the label is the only thing that can tell them apart —
+ * there is no per-request log to fall back on for this deployment.
+ */
+export const APP_BLOCK_POST_SURFACES = ['preview', 'create'] as const;
+export type AppBlockPostSurface = (typeof APP_BLOCK_POST_SURFACES)[number];
+
 export const APP_BLOCK_REST_APPROVAL_VERDICT_REASONS = [
   'not_approved',
   'not_found',
@@ -465,6 +480,7 @@ type Bundle = {
   spendCapRejectionsTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
   revocationRefusalsTotal: Counter<string>;
+  postSubjectRefusalsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
   launchTotalSeconds: Histogram<string>;
   launchPhaseSeconds: Histogram<string>;
@@ -828,6 +844,42 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['surface', 'namespace']
   );
 
+  // ── POST-FROM-APP: UNREADABLE SUBJECT ────────────────────────────────────────
+  // 🔴 THIS BRANCH WAS PREVIOUSLY INDISTINGUISHABLE FROM A FLAG DENIAL, AND THAT IS
+  // THE DEFECT THIS COUNTER EXISTS TO MAKE READABLE. `authorizeBlockPostRequest`
+  // used to pass an unhydratable subject on to the post-creation flag as
+  // `{ user: undefined }` — the no-entity arm — and a segment-scoped rollout
+  // answers `false` to a no-entity eval, so the viewer was told "posting from apps
+  // is not enabled" whenever their session could not be read. Two different facts,
+  // one message; only one of them is about permission.
+  //
+  // 🔴 A LOG LINE WOULD NOT HAVE SATISFIED THIS. Application-container stdout is
+  // not collected into the log store for this deployment, so a `console.error` on
+  // this branch is unreadable to any later investigator — the exact reason the
+  // 2026-09-19 refusal could not be attributed to a mechanism at all. A scraped
+  // counter is the only surface that exists here today.
+  //
+  // 🔴 ONE LABEL, `surface`, over a 2-value code-owned union → 2 series, TOTAL. No
+  // `app_block_id` and no user id: this fires once per refused post/preview attempt
+  // with nothing caching it, and prom-client retains every distinct label set in
+  // the Node heap for the process lifetime across every scraped pod. Same
+  // alert-on-the-metric / attribute-from-the-log split as the two counters above —
+  // except that here the log half does not exist yet, so read this series as a RATE
+  // signal only and do not expect to identify WHICH viewer was refused from it.
+  //
+  // 🔴 WHAT A ZERO DOES AND DOES NOT MEAN. Zero is the healthy steady state — a
+  // subject that hydrates never reaches the emitter — so "nothing has gone wrong"
+  // and "the emitter is inert" are the same observation on this series alone. That
+  // is why the registration itself is pinned by a real-registry scrape in
+  // `app-block-post-subject-refusals.metrics.test.ts` rather than left to the
+  // caller-level test.
+  const postSubjectRefusalsTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_post_subject_refusals_total',
+    "Post-from-app requests refused because the token subject did not hydrate to a SessionUser, by surface. surface: create = blocks.createPostFromApp, preview = blocks.previewPostFromApp. This is NOT a flag denial and must never be read as one — a flag denial does not increment this series at all, and the two refusals carry different messages on purpose. A non-zero rate means viewers who may well be entitled to post were turned away by an identity read that failed, so alert on the RATE, not on a single event. Carries no app or user label (cardinality); per-viewer attribution is not available on this deployment because application-container logs are not collected, so this counter is the whole signal. Zero is also the healthy steady state, so a flat zero cannot by itself distinguish 'nothing failed' from 'the emitter is inert' — the registration is pinned by a real-registry test instead",
+    ['surface']
+  );
+
   // ── `kind: 'step'` prepaidFixed PRICE CHECK ──────────────────────────────────
   // 🔴 Instruments whether the registry's DECLARED price still matches what the
   // orchestrator actually bills for a `prepaidFixed` step type. A declared price
@@ -995,6 +1047,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     spendCapRejectionsTotal,
     restApprovalVerdictsTotal,
     revocationRefusalsTotal,
+    postSubjectRefusalsTotal,
     stepPriceCheckTotal,
     launchTotalSeconds,
     launchPhaseSeconds,
@@ -1264,6 +1317,34 @@ export function recordBlockRestApprovalVerdict(reason: AppBlockRestApprovalVerdi
     restApprovalVerdictsTotal.inc({ reason });
   } catch {
     /* instrument-only — never let a metrics error change the response the gate chose */
+  }
+}
+
+/**
+ * Fail-soft emit of one post-from-app refusal caused by a token subject that did not
+ * hydrate. Called from the shared post preamble in `blocks.router.ts`.
+ *
+ * 🔴 TOTAL, like every emitter here, and for the usual reason: the refusal is already
+ * decided by the time this runs, so a metrics error must not convert a chosen 401 into
+ * an uncaught 500.
+ *
+ * 🔴 THIS IS THE ONLY OBSERVABILITY THIS BRANCH HAS. Application-container logs are not
+ * collected for this deployment, so the `console.error` shape used elsewhere in the repo
+ * would be invisible to a later investigator. Deleting this call does not fail a type
+ * check and does not fail any test that only asserts the thrown error — it silently
+ * returns the branch to being unobservable, which is the state that made the 2026-09-19
+ * refusal unattributable. `app-block-post-subject-refusals.metrics.test.ts` is what
+ * stops that.
+ *
+ * COST: one in-heap counter increment, only on the refusal path. A fleet whose subjects
+ * all hydrate emits zero.
+ */
+export function recordBlockPostSubjectRefusal(surface: AppBlockPostSurface): void {
+  try {
+    const { postSubjectRefusalsTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    postSubjectRefusalsTotal.inc({ surface });
+  } catch {
+    /* instrument-only — never let a metrics error change the refusal the gate chose */
   }
 }
 
