@@ -12,9 +12,10 @@ vi.mock('@clickhouse/client', async (importOriginal) => ({
 /**
  * 🔴 IF YOU ARE HERE TO DELETE THESE, READ THIS FIRST.
  *
- * `tsc` pins the option NAMES — the config is an inline literal, so a renamed or removed
- * option is a type error. Nothing but this pins the VALUES, and every one of them is a
- * plain value that the typechecker, the linter and every other suite accept either way.
+ * `tsc` catches a MISSPELLED top-level or `keep_alive` option, because the config is an
+ * inline literal. It catches nothing else here: every option is optional, so a removed one
+ * compiles, and `clickhouse_settings` accepts any string key, so a misspelled setting
+ * compiles too. The values, and the settings key below, are protected by this file alone.
  *
  * `@clickhouse/client` 1.x resolves three of these differently from the 0.2.x the repo
  * ran until the 1.x upgrade, which deliberately held each at its pre-upgrade value so the
@@ -34,9 +35,9 @@ describe('shared ClickHouse client transport config', () => {
   function buildConfig() {
     createClient.mockClear();
     createClickhouseClient({ host: 'http://clickhouse.invalid:8123' });
-    // Not decoration: without it, a factory that stopped calling createClient — or started
-    // building a second, unpinned client — would surface as a TypeError on `calls[0]` that
-    // reads like a broken test file rather than a changed client.
+    // Not decoration. A factory that stopped calling createClient would otherwise fail as a
+    // TypeError on `calls[0]`, which reads like a broken test file; one that built a second,
+    // unpinned client would otherwise pass silently on the first.
     expect(createClient).toHaveBeenCalledTimes(1);
     return createClient.mock.calls[0][0] as Record<string, unknown>;
   }

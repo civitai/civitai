@@ -59,13 +59,13 @@ export function createClickhouseClient(
     // socket is retired before the server closes it out from under the next request.
     //
     // 🔴 `eagerly_destroy_stale_sockets` is NOT a pin — it is a deliberate non-default, and
-    // 0.2.x had no equivalent. 0.2.x enforced its TTL at socket ASSIGNMENT and put a 3-attempt
-    // retry behind that check; 1.x removed the retry entirely and stamps the clock at RELEASE, so
-    // the age it measures excludes the query's own duration and is strictly more permissive. This
-    // sweep is the closest 1.x offers, not a restoration: leaving it false would ship less socket
-    // protection than production has today, and `false` is no more neutral than `true`. It
-    // therefore CONFOUNDS the before/after socket-hangup comparison on ClickUp 868m6uc51, and that
-    // is recorded there.
+    // 0.2.x had no equivalent. With `retry_on_expired_socket: true`, which this client set, 0.2.x
+    // checked socket age at ASSIGNMENT and retried up to 3 times behind that check; 1.x removed
+    // that option and the retry with it, and stamps the clock at RELEASE, so the age it measures
+    // excludes the query's own duration and is strictly more permissive. This sweep is the closest
+    // 1.x offers, not a restoration: leaving it false would ship less socket protection than
+    // production had, and `false` is no more neutral than `true`. So any change in the socket
+    // hang-up rate after the upgrade is the version and this flag together.
     keep_alive: { enabled: true, idle_socket_ttl: 2500, eagerly_destroy_stale_sockets: true },
     // The three values below are pins: 0.2.x resolved each to exactly this and 1.x resolves it to
     // something else, so setting them keeps the upgrade a transport change and nothing else.
