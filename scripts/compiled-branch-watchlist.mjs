@@ -154,4 +154,21 @@ export const COMPILED_BRANCH_WATCHLIST = [
       },
     ],
   },
+  {
+    id: 'post-subject-refusal',
+    module: 'src/server/routers/blocks.router.ts',
+    why: "`authorizeBlockPostRequest` refuses a post/preview whose token subject does not hydrate, BEFORE consulting `app-blocks-post-creation`. Lost, it falls back to the shape this branch replaced — the flag evaluated with no entity and no context, which returns the flag's BASE value rather than a deny. Under a base-`enabled: true` GA flip of post creation, a token whose subject no longer resolves would then be allowed to publish a PUBLIC, feed-visible post under that subject's byline. Same hazard as `shared-storage-subject-refusal` and `block-token-subject-refusal`, on the one surface where the consequence is public content rather than a read. NB the TypeScript cannot cover this: `BlockPostRequestAuth.subjectUser` is non-nullable, so deleting the branch in SOURCE is a type error — which is exactly why only an emitted-output gate can see a bundler dropping it.",
+    control: [
+      {
+        code: 'isAppBlocksPostCreationEnabled({ user: subjectUser }',
+        why: 'the flag call immediately after the refusal — same function, known to survive. Unmapped means the gate is looking at a build that never emitted this function, not at a violation. Stops before the closing paren so argument reflow cannot move it off this line.',
+      },
+    ],
+    required: [
+      {
+        code: 'if (!subjectUser) {',
+        why: "the refusal's own CONDITION rather than a payload inside it, per rule 2 of this file's header — a condition cannot be interned from another site. It is unique in this module today (the sibling `assertViewerIsAppDeveloper` refusal spells its binding `user`, not `subjectUser`); if a second `subjectUser` null-check is ever added to this router, re-point this anchor at the message literal instead, which is unique app-wide.",
+      },
+    ],
+  },
 ];

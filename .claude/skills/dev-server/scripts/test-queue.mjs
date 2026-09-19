@@ -13,7 +13,7 @@
 
 import { EventEmitter } from 'events';
 import { spawn, execFileSync } from 'child_process';
-import { closeSync, openSync, readSync, unlinkSync } from 'fs';
+import { closeSync, existsSync, openSync, readSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
@@ -211,6 +211,26 @@ export function workerCapArgv(maxWorkers, args) {
   return [`--max-workers=${maxWorkers}`];
 }
 
+export const CACHE_MODES = ['off', 'shadow', 'on'];
+
+// The WORKTREE's copy, not the daemon's: the sequencer and fs tracker come from that tree's
+// vitest config, and all three must share one key definition (scripts/test-cache/core.mjs) or
+// every lookup misses. A tree without the files simply runs uncached.
+export const cacheReporterPath = (worktree) => join(worktree, 'scripts', 'test-cache', 'reporter.mjs');
+
+/**
+ * The reporter arguments a queued unit run should carry. The reporter is passed on the command line
+ * rather than from the config because a caller's own `--reporter` replaces config reporters — and
+ * that would drop the false-skip check while the sequencer went on skipping. Naming any
+ * `--reporter` also replaces vitest's default, so a caller who named none gets `default` back.
+ */
+export function cacheReporterArgv(cacheMode, args, reporterPath) {
+  if (cacheMode === 'off') return [];
+  if (!reporterPath || !existsSync(reporterPath)) return [];
+  const named = args.some((a) => /^--reporter(?:=|$)/.test(String(a)));
+  return [...(named ? [] : ['--reporter=default']), `--reporter=${reporterPath}`];
+}
+
 export function defaultStartRun({
   worktree,
   args,
@@ -218,12 +238,20 @@ export function defaultStartRun({
   onExit,
   maxWorkers = null,
   kind = DEFAULT_KIND,
+  cacheMode = 'off',
 }) {
   const emitter = new EventEmitter();
   const isWindows = process.platform === 'win32';
   const pnpm = isWindows ? 'pnpm.cmd' : 'pnpm';
   const { script, capWorkers } = RUN_KINDS[normalizeKind(kind)];
-  const argv = ['run', script, ...args, ...(capWorkers ? workerCapArgv(maxWorkers, args) : [])];
+  const argv = [
+    'run',
+    script,
+    ...args,
+    ...(capWorkers ? workerCapArgv(maxWorkers, args) : []),
+    // Unit runs only: the reporter is a vitest reporter, and tsc would reject the flag.
+    ...(capWorkers ? cacheReporterArgv(cacheMode, args, cacheReporterPath(worktree)) : []),
+  ];
 
   onLog('info', `> ${pnpm} ${argv.join(' ')}`);
 
@@ -245,7 +273,12 @@ export function defaultStartRun({
       // enqueue a second run and wait for it, while this one holds the slot that run needs — a
       // deadlock on every full-suite run, not a race. Concurrency is not the fix: each logical run
       // would need two slots, so N agents starting together still fill them all with waiters.
-      env: { ...process.env, CIVITAI_TEST_QUEUE: '0' },
+      env: {
+        ...process.env,
+        CIVITAI_TEST_QUEUE: '0',
+        // Read by the worktree's vitest config, sequencer, tracker and reporter alike.
+        CIVITAI_TEST_CACHE: RUN_KINDS[normalizeKind(kind)].capWorkers ? cacheMode : 'off',
+      },
       // The same fd twice: one file description, one shared offset, so the two streams append in
       // the order they were actually written. See createOutputCapture.
       stdio: ['ignore', capture.writeFd, capture.writeFd],
@@ -354,6 +387,7 @@ export class TestQueue {
     const {
       concurrency = DEFAULT_CONCURRENCY,
       maxWorkers = DEFAULT_MAX_WORKERS,
+      cacheMode = 'off',
       startRun = defaultStartRun,
       now = () => Date.now(),
       abandonAfterMs = DEFAULT_ABANDON_AFTER_MS,
@@ -364,6 +398,7 @@ export class TestQueue {
 
     this.limits = normalizeLimits(concurrency);
     this.maxWorkers = normalizeMaxWorkers(maxWorkers);
+    this.cacheMode = normalizeCacheMode(cacheMode);
     this.startRun = startRun;
     this.now = now;
     this.abandonAfterMs = abandonAfterMs;
@@ -489,6 +524,12 @@ export class TestQueue {
    * Takes effect on the NEXT run to start, never on one already running — the width is fixed when
    * vitest is spawned. Nothing here kills a run to resize it.
    */
+  /** Like the worker cap: applies to the next run to start, never to one already running. */
+  setCacheMode(value) {
+    this.cacheMode = normalizeCacheMode(value);
+    return this.cacheMode;
+  }
+
   setMaxWorkers(value) {
     this.maxWorkers = normalizeMaxWorkers(value);
     return this.maxWorkers;
@@ -651,6 +692,7 @@ export class TestQueue {
         onExit,
         maxWorkers: this.maxWorkers,
         kind: run.kind,
+        cacheMode: this.cacheMode,
       });
     } catch (err) {
       // A runner that reported an exit and then threw has already produced a verdict; overwriting
@@ -740,6 +782,7 @@ export class TestQueue {
       running: this.runningFor(run.kind),
       concurrency: this.limits[run.kind],
       maxWorkers: this.maxWorkers,
+      cacheMode: this.cacheMode,
       paused: this.limits[run.kind] === 0,
       enqueuedAt: run.enqueuedAt,
       startedAt: run.startedAt,
@@ -761,6 +804,14 @@ export class TestQueue {
  * workers, and vitest's own resolution treats a falsy value as "unset" — so a 0 that slipped
  * through here would silently restore the uncapped pool the setting exists to prevent.
  */
+function normalizeCacheMode(value) {
+  const mode = value === undefined || value === null || value === '' ? 'off' : String(value);
+  if (!CACHE_MODES.includes(mode)) {
+    throw new Error(`cacheMode must be one of ${CACHE_MODES.join(', ')}, got: ${value}`);
+  }
+  return mode;
+}
+
 function normalizeMaxWorkers(value) {
   if (value === null || value === undefined || value === '') return null;
   const parsed = typeof value === 'number' ? value : parseInt(value, 10);

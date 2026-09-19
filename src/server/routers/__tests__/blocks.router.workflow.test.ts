@@ -132,8 +132,14 @@ const {
 const { mockRecordStepPriceCheck } = vi.hoisted(() => ({
   mockRecordStepPriceCheck: vi.fn(() => undefined),
 }));
+// A bare factory, so every symbol the router imports from this module must be listed
+// here or it resolves to `undefined` and the router throws the moment it is called.
+// `recordBlockPostSubjectRefusal` is only reached on the post preamble's unreadable-
+// subject branch, which this suite does not drive — it is listed so that stays true by
+// construction rather than by luck.
 vi.mock('~/server/metrics/app-block-runtime.metrics', () => ({
   recordStepPriceCheck: (...a: unknown[]) => mockRecordStepPriceCheck(...(a as [])),
+  recordBlockPostSubjectRefusal: () => undefined,
 }));
 
 vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({

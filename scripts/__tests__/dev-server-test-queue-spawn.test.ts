@@ -11,7 +11,7 @@ vi.mock('child_process', async (importOriginal) => ({
 
 // Lives under scripts/ because the daemon is not part of the app's module graph — same arrangement
 // as the rest of the queue's tests.
-const { defaultStartRun, TestQueue } = await import(
+const { defaultStartRun, TestQueue, cacheReporterArgv, cacheReporterPath } = await import(
   '../../.claude/skills/dev-server/scripts/test-queue.mjs'
 );
 
@@ -159,5 +159,82 @@ describe("the queue caps each run's vitest pool", () => {
   // slipped through would silently restore the uncapped pool this setting exists to prevent.
   it('refuses a width of zero rather than treating it as a pause', () => {
     expect(() => new TestQueue({ concurrency: 1, maxWorkers: 0 })).toThrow(/integer >= 1/);
+  });
+});
+
+/**
+ * The cache rides on the fleet's real queued runs, so the one thing its wiring must not do is change
+ * them. Naming any `--reporter` replaces vitest's default — so a caller who named none has to get
+ * `default` back, or turning the cache on silently strips every queued run's normal output.
+ */
+describe('result cache on queued runs', () => {
+  const argvOf = (call: number) => spawn.mock.calls[call][1] as string[];
+  const envOf = (call: number) =>
+    (spawn.mock.calls[call][2] as { env: Record<string, string> }).env;
+  // The repo's own tree, so the reporter file really exists and the argv is not vacuously empty.
+  const worktree = process.cwd();
+  const reporter = cacheReporterPath(worktree);
+  const start = (opts: Record<string, unknown>) => {
+    const handle = defaultStartRun({
+      worktree,
+      args: [],
+      onLog: () => undefined,
+      onExit: () => undefined,
+      ...opts,
+    }) as EventEmitter & { dispose: () => void };
+    handle.dispose();
+  };
+
+  it('adds nothing and tells the run the cache is off while it is off', () => {
+    start({ cacheMode: 'off' });
+    expect(argvOf(0)).toEqual(['run', 'test:unit:run']);
+    expect(envOf(0).CIVITAI_TEST_CACHE).toBe('off');
+  });
+
+  it('keeps the default reporter beside the cache one when the caller named none', () => {
+    start({ cacheMode: 'on' });
+    expect(argvOf(0)).toEqual([
+      'run',
+      'test:unit:run',
+      '--reporter=default',
+      `--reporter=${reporter}`,
+    ]);
+    expect(envOf(0).CIVITAI_TEST_CACHE).toBe('on');
+  });
+
+  it('adds only the cache reporter when the caller chose their own', () => {
+    start({ cacheMode: 'shadow', args: ['--reporter=json'] });
+    expect(argvOf(0)).toEqual([
+      'run',
+      'test:unit:run',
+      '--reporter=json',
+      `--reporter=${reporter}`,
+    ]);
+  });
+
+  // tsc would reject a vitest reporter, and the cache has nothing to skip in a typecheck.
+  it('leaves a typecheck untouched', () => {
+    start({ cacheMode: 'on', kind: 'typecheck' });
+    expect(argvOf(0)).toEqual(['run', 'typecheck']);
+    expect(envOf(0).CIVITAI_TEST_CACHE).toBe('off');
+  });
+
+  // A tree without the cache files runs uncached rather than as a vitest that cannot load its
+  // reporter and fails every queued suite.
+  it('adds nothing when the reporter file is absent', () => {
+    expect(cacheReporterArgv('on', [], '/nowhere/reporter.mjs')).toEqual([]);
+  });
+
+  it("hands the queue's cache mode to the runner it starts", () => {
+    const startRun = vi.fn<(opts: { cacheMode: string }) => EventEmitter>(() => new EventEmitter());
+    const queue = new TestQueue({ concurrency: 1, cacheMode: 'on', startRun }) as unknown as {
+      request: (run: { worktree: string; args: string[] }) => unknown;
+    };
+    queue.request({ worktree: '/repo', args: [] });
+    expect(startRun.mock.calls[0][0]).toMatchObject({ cacheMode: 'on' });
+  });
+
+  it('refuses an unknown cache mode', () => {
+    expect(() => new TestQueue({ concurrency: 1, cacheMode: 'yes' })).toThrow(/cacheMode must be/);
   });
 });

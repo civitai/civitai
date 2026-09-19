@@ -175,6 +175,21 @@ as running all of it. Two source files gave the identical number.
 count: when 17 tests fail across 7 files, `git stash` and re-run those same files to see whether they
 already failed on `main`. On Windows several do — see the portability notes below.
 
+#### Queued unit runs can be served from a result cache
+
+When the dev-server queue has the cache on (`cli.mjs test config --cache on`), a queued `test:unit:run`
+skips every test file whose inputs are unchanged since it last passed — its source, every module it imports,
+every file it read, and the lockfile/configs. Results are shared between worktrees. It prints what it did:
+
+```
+[test-cache] 1880 test files: 41 ran, 1839 skipped as unchanged since they last passed. 92 unchanged file(s) re-run to verify; false skips: 0.
+```
+
+A random ~5% of the unchanged files run anyway. If one of those fails, the cache predicted a pass it could not
+deliver — a **false skip** — and it trips itself off (`TRIPPED.json` in the cache dir) until a human looks.
+**Known blind spot:** environment variables are not part of the key. Never on in CI; a run that filters
+files (a filename, directory or substring) is never trimmed. Code and details: `scripts/test-cache/`.
+
 #### Worker count: uncapped by default, `VITEST_MAX_WORKERS` / `--max-workers` to size it
 A suite uses Vitest's own worker count (`cpus - 1` in run mode, `floor(cpus / 2)` in watch; the browser pool `min(12, cpus - 1)`).
 
@@ -697,6 +712,11 @@ It doesn't report red, it reports nothing, and a run that collected nothing stil
 as a pass to anyone checking an exit code or skimming a summary. **Validate any worktree test run by confirming
 that file collected a nonzero count** — it was 308 tests on one base. If it reports 0, the run tells you nothing
 about your change, whatever the summary says.
+
+On a queued run with the result cache on, that file can be absent from the output for a legitimate reason:
+it was skipped as unchanged since it last passed. The `[test-cache]` line names how many files were skipped.
+To apply this check, confirm the file either ran with a nonzero count or is not in your diff's reach —
+or run it by its full filename, which never goes through the cache.
 
 **A fresh worktree also has no `.envrc`.** It's gitignored, so it never comes with the checkout, and you silently
 get system Node instead of the flake's pinned version. Measured (when the flake still shipped node 22): system

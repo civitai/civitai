@@ -1141,12 +1141,19 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
         type: { not: UserEngagementType.Block },
       },
     }),
+    // deleteMany, not delete: most accounts have no row here, and `delete` throws on a
+    // miss. The FK cascade never fires for either of these because this is a SOFT delete.
+    dbWrite.userProfile.deleteMany({ where: { userId: user.id } }),
+    dbWrite.userLink.deleteMany({ where: { userId: user.id } }),
     dbWrite.user.update({
       where: { id: user.id },
       data: {
         deletedAt: new Date(),
         email: null,
         username: null,
+        name: null,
+        // customerId is deliberately absent: see the webhook test in
+        // __tests__/delete-user-pii-scrub.test.ts before adding it.
         paddleCustomerId: null,
         image: null,
         profilePictureId: null,
@@ -1190,8 +1197,9 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
 /**
  * Restore a soft-deleted user account (the inverse of deleteUser).
  *
- * deleteUser scrubs username, email, paddleCustomerId, image, profilePictureId from the User row
- * and sets deletedAt. It also hard-deletes Account / Session rows and every
+ * deleteUser scrubs username, email, name, paddleCustomerId, image, profilePictureId from the
+ * User row and sets deletedAt. It also hard-deletes Account / Session / UserProfile / UserLink
+ * rows and every
  * UserEngagement row the account appears in EXCEPT Blocks — those survive precisely so
  * a restore cannot leave someone unblocked without telling them — and reassigns
  * the user's Models to userId = -1.
@@ -1204,6 +1212,9 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
  * - `grace` — that job hides them instead and arms a 7-day purge. This function reverses both,
  *   so restoring inside the window brings the images back.
  * Posts are hard-deleted on the immediate path only and are not recoverable.
+ *
+ * UserProfile and UserLink rows are unrecoverable too, so a restored account comes back with an
+ * empty profile. Nothing restores name.
  *
  * Account (OAuth links) and Session rows are unrecoverable; the user signs in fresh post-restore
  * (email magic-link or OAuth) which creates new rows.

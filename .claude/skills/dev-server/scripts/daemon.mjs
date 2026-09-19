@@ -89,6 +89,7 @@ function loadSkillConfig() {
     testConcurrency: 1,
     typecheckConcurrency: 1,
     testMaxWorkers: null,
+    testCacheMode: 'off',
     prodGroups: [],
   };
 
@@ -178,6 +179,11 @@ function loadSkillConfig() {
           else if (value) console.error(`Ignoring TYPECHECK_CONCURRENCY=${value} (want an integer >= 0)`);
           break;
         }
+        case 'TEST_CACHE_MODE':
+          // Degrades rather than throws, like every setting the module-scope queue consumes.
+          if (['off', 'shadow', 'on'].includes(value)) config.testCacheMode = value;
+          else if (value) console.error(`Ignoring TEST_CACHE_MODE=${value} (want off, shadow or on)`);
+          break;
         case 'TEST_MAX_WORKERS': {
           // Same reasoning as TEST_CONCURRENCY above — this feeds a constructor that throws, and
           // the queue is built at module scope, so a typo would stop the daemon binding at all.
@@ -2016,6 +2022,7 @@ const testQueue = new TestQueue({
     typecheck: skillConfig.typecheckConcurrency,
   },
   maxWorkers: skillConfig.testMaxWorkers,
+  cacheMode: skillConfig.testCacheMode,
 });
 
 // A tracked session owns its port whatever its status says. Status is a report the daemon
@@ -2634,6 +2641,7 @@ async function main() {
                 testQueue.setConcurrency(parsed.typecheckConcurrency, 'typecheck');
               }
               if (parsed.maxWorkers !== undefined) testQueue.setMaxWorkers(parsed.maxWorkers);
+              if (parsed.cacheMode !== undefined) testQueue.setCacheMode(parsed.cacheMode);
             } catch (err) {
               res.writeHead(400);
               res.end(JSON.stringify({ error: err.message }));
@@ -2645,6 +2653,7 @@ async function main() {
             concurrency: testQueue.concurrency,
             typecheckConcurrency: testQueue.concurrencyFor('typecheck'),
             maxWorkers: testQueue.maxWorkers,
+            cacheMode: testQueue.cacheMode,
             paused: testQueue.paused,
             queued: testQueue.order.length,
             running: testQueue.running.size,
