@@ -41,7 +41,8 @@ import type { BlockAuthorFeeComputation } from './author-fee';
 // Its cost with the flag off is one `dbWrite` `findUnique` per terminal
 // observation that is NOT `succeeded` — all three observers gate on
 // `TERMINAL_BLOCK_WORKFLOW_STATUSES.has(status) && status !== 'succeeded'`, so
-// the ordinary completing generation never reaches it — plus every cancel.
+// the ordinary completing generation never reaches it, and the two cancel paths
+// carry that same compound guard rather than calling unconditionally.
 // Behaviourally inert today (the table is empty, so it returns `no-accrual` and
 // moves nothing), but it is a real query on a real path and the claim has to say
 // so.

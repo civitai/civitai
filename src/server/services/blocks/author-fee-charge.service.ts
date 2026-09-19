@@ -471,17 +471,23 @@ export type ReverseBlockAuthorFeeResult =
         /**
          * The row's `status` column reads `settled` — the flip confirmed.
          *
-         * 🔴 UNREACHABLE IN PRODUCTION AS THE TWO GUARDS ARE ORDERED TODAY, AND
-         * AN OPERATOR ALERTING ON ITS LOG LINE (`fee already settled — not
-         * reversed`) WOULD GET PERMANENT SILENCE. The eligibility guard runs
+         * 🔴 UNREACHABLE UNDER CORRECT CLOCKS AS THE TWO GUARDS ARE ORDERED
+         * TODAY, so its log line (`fee already settled — not reversed`) should be
+         * NEAR-SILENT — and if it DOES fire, app-clock skew is the first thing to
+         * suspect, not the thing to rule out. The eligibility guard runs
          * FIRST, and the only writer of `status = 'settled'` is the settlement
          * flip, which can only touch rows it scanned — rows with
          * `accruedAt < utcDayStart(runClock)`, i.e. exactly the rows the
          * eligibility guard has already refused. Reaching this arm therefore
-         * needs the settling app's clock to sit a whole UTC day ahead of the
-         * reversing app's (app-clock skew across midnight), or a manual
+         * needs `utcDayStart(T_reverser) <= accruedAt < utcDayStart(T_settler)`:
+         * the two app clocks only have to land on DIFFERENT UTC DAYS, NOT a whole
+         * day apart. Against the 02:30 UTC settlement schedule a ~2.5 h lag on the
+         * reversing app's clock suffices, and in the abstract a sub-second
+         * straddle of midnight does — an ordinary NTP failure on one pod, not an
+         * exotic one. A manual
          * `settleBlockAuthorFees({ date })` run with a date AHEAD of the
-         * reverser's clock — the precondition recorded on `settlementBoundary`.
+         * reverser's clock reaches it too — the precondition recorded on
+         * `settlementBoundary`.
          * Kept as a second layer whose ordering-independence is pinned by test,
          * not as an ordinary operational distinction.
          */

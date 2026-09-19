@@ -531,11 +531,14 @@ describe('reverseBlockAuthorFee — the fee follows the refund', () => {
     // this state arises "if a settlement run is mid-flight", and mid-flight is NOT
     // sufficient. The flip only ever writes rows the scan selected, i.e. rows
     // whose accrual day is already COMPLETE, and the eligibility guard refuses
-    // those first. So `already-settled` is unreachable in production as the guards
-    // are ordered today: reaching it needs the settling app's clock a whole UTC
-    // day ahead of the reversing app's, or a manual `settleBlockAuthorFees({ date
-    // })` run with a future date. An operator alerting on its log line would get
-    // permanent silence. The refusal must still hold without the day guard having
+    // those first. So `already-settled` is unreachable under correct clocks as the
+    // guards are ordered today: reaching it needs
+    // `utcDayStart(T_reverser) <= accruedAt < utcDayStart(T_settler)` — the two
+    // app clocks landing on DIFFERENT UTC days, NOT a whole day apart, which
+    // against the 02:30 UTC schedule takes only ~2.5 h of lag on the reversing
+    // app's clock — or a manual `settleBlockAuthorFees({ date })` run with a
+    // future date. Its log line should therefore be near-silent; if it fires,
+    // suspect clock skew first. The refusal must still hold without the day guard having
     // caught it — they are different claims — and that ordering-independence is
     // what this test pins.
     mockDbWrite.blockAuthorFeeAccrual.findUnique.mockResolvedValue({

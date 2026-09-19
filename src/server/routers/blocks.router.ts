@@ -8480,17 +8480,20 @@ async function submitCustomComfyWorkflow(opts: {
   // no generation to attribute), mirroring the txt2img guard.
   //
   // 🔴 SPEND ATTRIBUTION IS DELIBERATELY SKIPPED FOR THE 'whatif' SENTINEL ID ON
-  // THIS PATH, AND THAT IS A BEHAVIOUR CHANGE RATHER THAN A NO-OP. This path
-  // charges no author fee, so the fee's argument for the exclusion — one shared
-  // idempotency key and one UNIQUE accrual row across every viewer — does not
-  // apply here. What applies is the same collision one table over:
-  // `recordSpendAttribution` is idempotent on (workflowId, appBlockId), so under
-  // one shared sentinel the FIRST such submit takes the row and every later one
-  // FROM ANY VIEWER collapses into it — cross-viewer rows in a payout-relevant
-  // table. Skipping is the direction that writes no wrong row; the cost, stated
-  // rather than assumed away, is that a real submit whose orchestrator response
-  // carried no workflow id now writes NO attribution row at all where it
-  // previously wrote one keyed on the sentinel. Ledgered in `NO_FEE_PATHS` in
+  // THIS PATH, AND THAT EXCLUSION IS A DEFENSIVE GUARD RATHER THAN AN ACTIVE
+  // BEHAVIOUR CHANGE. The orchestrator stamps a server-minted id on every
+  // workflow it returns, whatIf included, so `snapshot.workflowId` is never the
+  // sentinel on this path and no attribution row is dropped today. The guard
+  // exists so that IF the orchestrator ever returned an id-less workflow — which
+  // its OpenAPI permits and its null-omitting serializer would make silent —
+  // every viewer's submit would not collapse into one `recordSpendAttribution`
+  // row keyed on a shared sentinel: that table is idempotent on (workflowId,
+  // appBlockId), so the FIRST such submit would take the row and every later one
+  // FROM ANY VIEWER would fold into it — cross-viewer rows in a payout-relevant
+  // table. Skipping is the direction that writes no wrong row. This path charges
+  // no author fee, so the fee's own argument for the exclusion — one shared
+  // idempotency key and one UNIQUE accrual row across every viewer — is not what
+  // applies here. Ledgered in `NO_FEE_PATHS` in
   // `src/server/services/__tests__/no-divergent-author-fee-base.test.ts`.
   const spendWorkflowId = snapshot.workflowId;
   if (
@@ -10414,15 +10417,18 @@ async function submitPassThroughStepWorkflow(opts: {
   }
 
   // 🔴 SPEND ATTRIBUTION IS DELIBERATELY SKIPPED FOR THE 'whatif' SENTINEL ID ON
-  // THIS PATH, AND THAT IS A BEHAVIOUR CHANGE RATHER THAN A NO-OP. Same reasoning
-  // as customComfy, and for the same reason it is NOT the fee's reasoning: this
-  // path charges no author fee, so there is no shared idempotency key and no
-  // UNIQUE accrual row at stake — only `recordSpendAttribution`, which is
-  // idempotent on (workflowId, appBlockId) and would therefore collapse every
-  // sentinel-id submit FROM ANY VIEWER into one row of a payout-relevant table.
-  // The cost is the same and is equally deliberate: a real submit whose
-  // orchestrator response carried no workflow id now writes NO attribution row.
-  // Ledgered in `NO_FEE_PATHS` in
+  // THIS PATH, AND THAT EXCLUSION IS A DEFENSIVE GUARD RATHER THAN AN ACTIVE
+  // BEHAVIOUR CHANGE. Same reasoning as customComfy: the orchestrator stamps a
+  // server-minted id on every workflow it returns, whatIf included, so
+  // `snapshot.workflowId` is never the sentinel on this path and no attribution
+  // row is dropped today. The guard exists so that IF the orchestrator ever
+  // returned an id-less workflow — which its OpenAPI permits and its
+  // null-omitting serializer would make silent — every viewer's submit would not
+  // collapse into one `recordSpendAttribution` row keyed on a shared sentinel,
+  // that table being idempotent on (workflowId, appBlockId). And for the same
+  // reason as customComfy it is NOT the fee's reasoning: this path charges no
+  // author fee, so there is no shared idempotency key and no UNIQUE accrual row
+  // at stake. Ledgered in `NO_FEE_PATHS` in
   // `src/server/services/__tests__/no-divergent-author-fee-base.test.ts`.
   const spendWorkflowId = snapshot.workflowId;
   if (

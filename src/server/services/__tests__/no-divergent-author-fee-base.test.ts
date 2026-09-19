@@ -238,14 +238,15 @@ describe('author fee — the spend-attribution seam', () => {
  *
  * 🔴 IT IS PINNED AS A WHOLE NORMALISED SENTENCE, NOT AS KEYWORDS, because the
  * artefact under test is prose: a guard on words is walkable by rewording, and
- * this sentence exists precisely to stop the exclusion being re-described as a
- * no-op by a later editor. A cosmetic reword fails this test — that is the price
+ * this sentence exists precisely to keep the exclusion's standing — a DEFENSIVE
+ * guard that drops no row today — stated at the guard rather than re-invented by
+ * a later editor in either direction. A cosmetic reword fails this test — that is the price
  * of a machine-checkable claim, and it is the price this arc has already paid
  * twice by not charging it.
  */
 const WHATIF_ATTRIBUTION_DECLARATION =
   "SPEND ATTRIBUTION IS DELIBERATELY SKIPPED FOR THE 'whatif' SENTINEL ID ON THIS PATH, AND " +
-  'THAT IS A BEHAVIOUR CHANGE RATHER THAN A NO-OP.';
+  'THAT EXCLUSION IS A DEFENSIVE GUARD RATHER THAN AN ACTIVE BEHAVIOUR CHANGE.';
 
 const NO_FEE_PATHS: Record<string, { charges: number; reason: string; whatifAttribution: string }> =
   {
@@ -255,9 +256,12 @@ const NO_FEE_PATHS: Record<string, { charges: number; reason: string; whatifAttr
         'The fee’s reason for excluding the sentinel (one shared idempotency key, one UNIQUE ' +
         'accrual row) does not apply to a path that charges no fee. What applies is that ' +
         '`recordSpendAttribution` is idempotent on (workflowId, appBlockId), so one shared ' +
-        'sentinel id collapses every viewer’s submit into one row of a payout-relevant table. ' +
-        'The accepted cost: a real submit whose orchestrator response carried no workflow id ' +
-        'writes NO attribution row, where before this change it wrote one keyed on the sentinel.',
+        'sentinel id would collapse every viewer’s submit into one row of a payout-relevant ' +
+        'table. DEFENSIVE, NOT ACTIVE: the orchestrator stamps a server-minted id on every ' +
+        'workflow it returns (whatIf included), so the sentinel is never observed here and no ' +
+        'attribution row is dropped today. The guard exists because the orchestrator’s OpenAPI ' +
+        'declares `id` optional-and-nullable and its null-omitting serializer would make a ' +
+        'regression SILENT rather than loud.',
       reason:
         'POST-PAID. customComfy takes no whatIf quote at all — its ceiling IS the app’s declared ' +
         '`maxBuzz`, stamped as the step timeout the orchestrator enforces — so there is no ' +
@@ -269,9 +273,10 @@ const NO_FEE_PATHS: Record<string, { charges: number; reason: string; whatifAttr
       whatifAttribution:
         'Same as customComfy, and not the fee’s reasoning for the same reason: this path ' +
         'charges no fee, so only `recordSpendAttribution`’s (workflowId, appBlockId) ' +
-        'idempotency is at stake, and one shared sentinel id collapses every viewer’s submit ' +
-        'into one row. Same accepted cost: a submit whose response carried no workflow id writes ' +
-        'NO attribution row.',
+        'idempotency is at stake, and one shared sentinel id would collapse every viewer’s ' +
+        'submit into one row. DEFENSIVE, NOT ACTIVE, for the same reason: the orchestrator ' +
+        'stamps an id on every workflow it returns, so the sentinel is never observed and no ' +
+        'attribution row is dropped today.',
       reason:
         'POST-PAID, same as customComfy. Its pre-submit quote goes through ' +
         '`quotePassThroughStepBuzz`, which returns `cost.total` and nothing else, so there is no ' +
@@ -435,12 +440,14 @@ describe('author fee — the viewer-charge seam', () => {
     // FOUR MARKERS. On the two priced paths the exclusion is a FEE argument: one
     // shared sentinel id means one shared idempotency key and one UNIQUE accrual
     // row across every viewer. On these two paths no fee is charged, so that
-    // argument does not apply and the clause's only effect is that
+    // argument does not apply and the clause's only effect would be that
     // `recordSpendAttribution` — a payout-relevant table — stops being written for
-    // a real submit whose orchestrator response carried no workflow id. That is a
-    // behaviour change against `dce428a492`, and the loop above cannot express it:
-    // it would follow silently if someone "fixed" the loop, because it holds these
-    // paths to the same clause for a reason that is not theirs.
+    // a submit whose orchestrator response carried no workflow id. That effect is
+    // LATENT, not active: the orchestrator stamps a server-minted id on every
+    // workflow it returns (whatIf included), so the sentinel is never observed on
+    // these paths and no row is dropped today. The loop above cannot express any
+    // of it: it would follow silently if someone "fixed" the loop, because it
+    // holds these paths to the same clause for a reason that is not theirs.
     //
     // So the DECISION is pinned where it can be read: a verbatim declaration at
     // the guard, tied to a ledger entry carrying its own reason, failing if either
