@@ -586,4 +586,30 @@ describe('/api/v1/blocks/me and blocks.getMyViewer return the SAME authorization
     expect(rest).toEqual(trpc);
     expect(rest).toEqual({ outcome: 'refuse', status: 404, message: 'User not found' });
   });
+
+  /**
+   * 🔴 BOTH DOORS REPORT THE DECLARED CEILING, NOT THE GRANTED ONE.
+   *
+   * `BlockTokenService.sign` mints `buzzBudget` as the declared budget plus the
+   * author-fee headroom, and stamps the declared number beside it. The granted
+   * sum is neither a price a block may quote nor Buzz it can spend, so both read
+   * surfaces project `buzzBudgetDeclared ?? buzzBudget`.
+   *
+   * Every other fixture in this file sets `buzzBudget` ALONE, so all of them take
+   * the legacy fallback and none executes the primary arm — a reversal of that
+   * chain was green across the whole repo. This is the parity half of the same
+   * case in `src/tests/api/v1/blocks/me.test.ts`: it pins that the two doors do
+   * not drift on WHICH claim they report, which is the drift this file exists for.
+   */
+  it('J: with both budget claims present, both doors report the DECLARED ceiling', async () => {
+    claimsBox.claims = fakeClaims({ buzzBudget: 210, buzzBudgetDeclared: 200 });
+
+    const { rest, trpc } = await bothDoors(userRow({ isModerator: false }));
+
+    expect(rest).toEqual(trpc);
+    expect(rest).toEqual({
+      outcome: 'allow',
+      body: { id: SUBJECT_ID, username: 'viewer', status: 'active', buzzBudget: 200 },
+    });
+  });
 });

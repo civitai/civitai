@@ -53,7 +53,23 @@ export interface BlockTokenClaims {
   blockInstanceId: string;
   ctx: Record<string, unknown>;
   scopes: string[];
+  /**
+   * The DECLARED per-call ceiling plus the author-fee HEADROOM
+   * `BlockTokenService.sign` grants on top of it.
+   *
+   * 🔴 READ IT ONLY THROUGH `blockPerCallBudget`. It is the right ceiling for a
+   * gate that prices the author fee INTO the value it compares, and the wrong one
+   * for a gate that does not — see that function.
+   */
   buzzBudget?: number;
+  /**
+   * The DECLARED per-call ceiling the app's manifest / install settings asked
+   * for, before the author-fee headroom. Absent on a token minted before the
+   * grant shipped, and absent whenever `buzzBudget` is.
+   *
+   * 🔴 READ IT ONLY THROUGH `blockPerCallBudget`, never directly in a gate.
+   */
+  buzzBudgetDeclared?: number;
   /**
    * AUTHORITATIVE color-domain maturity ceiling (bitwise browsing-level flag,
    * from `domainBrowsingCeiling`) stamped at mint. The block generation path
@@ -88,6 +104,56 @@ export interface BlockTokenClaims {
    * if present (a non-boolean is rejected outright; absent → treated as false).
    */
   reviewRunForReal?: boolean;
+}
+
+/**
+ * THE per-call Buzz ceiling a gate must compare against — the ONE place that
+ * decides which of the two budget claims applies.
+ *
+ * ── WHY THERE ARE TWO, AND WHY PICKING THE WRONG ONE COSTS REAL MONEY ───────
+ * `BlockTokenService.sign` mints `buzzBudget` as the declared ceiling PLUS the
+ * largest author fee that ceiling could ever attract, so that an app sized at
+ * its own declared ceiling is not rejected once the fee is charged. The grant is
+ * sound ONLY for a gate whose compared value already INCLUDES that fee:
+ *
+ *   `pricesAuthorFee: true`  → compare against declared + allowance.
+ *       The fee is inside the number being compared, so the allowance is
+ *       consumed by the fee and nothing else. `generation + fee <= declared +
+ *       allowance` holds for every generation that passes today's gate.
+ *
+ *   `pricesAuthorFee: false` → compare against the DECLARED ceiling.
+ *       🔴 A fee-free gate compares raw generation price. Handing it the granted
+ *       ceiling would hand the app the allowance as GENERATION headroom that no
+ *       fee will ever consume — real viewer Buzz above the approved manifest
+ *       ceiling, on every call, permanently. That is not a rounding detail: the
+ *       value that clears the pass-through gate is the value reserved and billed.
+ *
+ * Two of the four submit gates price a fee and two do not, and that split is
+ * deliberate and documented at `src/server/services/blocks/author-fee-charge.service.ts`
+ * — neither fee-free path has a pre-submit `cost.base` to price a fee from, so
+ * neither reserves one, so neither charges one. A token cannot tell the paths
+ * apart, which is exactly why the CALLER states which kind it is.
+ *
+ * A fee-free gate therefore behaves EXACTLY as it did before the grant existed.
+ *
+ * ⚠️ IF YOU ADD A FEE TO A PATH, FLIP ITS FLAG IN THE SAME COMMIT. The ledger in
+ * `author-fee-budget-headroom.test.ts` asserts the two counts still agree with
+ * the number of `quoteBlockAuthorFee` call sites, and fails when either moves.
+ *
+ * Returns 0 when no budget was minted, so a caller that skipped the
+ * `typeof claims.buzzBudget !== 'number'` pre-check still fails CLOSED.
+ */
+export function blockPerCallBudget(
+  claims: Pick<BlockTokenClaims, 'buzzBudget' | 'buzzBudgetDeclared'>,
+  opts: { pricesAuthorFee: boolean }
+): number {
+  if (typeof claims.buzzBudget !== 'number') return 0;
+  if (opts.pricesAuthorFee) return claims.buzzBudget;
+  // Legacy tokens (minted before the grant) carry no declared claim; their
+  // `buzzBudget` IS the declared ceiling, so the fallback is exact, not lenient.
+  return typeof claims.buzzBudgetDeclared === 'number'
+    ? claims.buzzBudgetDeclared
+    : claims.buzzBudget;
 }
 
 export type BlockScopedNextApiRequest = NextApiRequest & {

@@ -227,7 +227,13 @@ vi.mock('~/server/services/blocks/user-app-surface.service', () => ({
   recordScopeInvocation: vi.fn(async () => undefined),
 }));
 
-vi.mock('~/server/middleware/block-scope.middleware', () => ({
+// Spread the ORIGINAL rather than replacing the module: `blocks.router.ts` also
+// imports `blockPerCallBudget` from here, and that function is the one place
+// deciding WHICH per-call budget claim each submit gate enforces. Stubbing the
+// module wholesale would either crash on the missing export or, worse, let a
+// hand-written stand-in diverge from the rule the gates actually run.
+vi.mock('~/server/middleware/block-scope.middleware', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   verifyBlockToken: mockVerifyBlockToken,
   parseSubjectUserId: (...args: unknown[]) => mockParseSubjectUserId(...args),
 }));

@@ -3,6 +3,7 @@ import { SignJWT } from 'jose';
 import { env } from '~/env/server';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { BLOCK_TOKEN_LIFETIMES_SECONDS } from '~/server/services/block-token-lifetimes';
+import { blockAuthorFeeUpperBound } from '~/server/services/blocks/author-fee';
 
 // L7 (audit-10): shared issuer/audience constants exported for the
 // middleware so a typo in one place can't desynchronize sign-vs-verify.
@@ -150,6 +151,14 @@ export interface SignBlockTokenInput {
   blockInstanceId: string;
   scopes: string[];
   ctx: Record<string, unknown>;
+  /**
+   * The DECLARED per-call generation ceiling (`page.buzzBudgetPerGen` /
+   * `settings.buzz_budget_per_gen`), already clamped by the caller's resolver.
+   *
+   * 🔴 THIS IS NOT WHAT LANDS IN THE `buzzBudget` CLAIM. `sign` adds the
+   * author-fee headroom on top — see the long note at the stamp site. Callers
+   * pass, log and echo the DECLARED number.
+   */
   buzzBudget?: number;
   /**
    * The color domain the token was minted on (`green` | `blue` | `red`), or
@@ -258,8 +267,73 @@ export class BlockTokenService {
       ctx: input.ctx,
       scopes: input.scopes,
     };
+    // ── PER-CALL BUZZ BUDGET, PLUS AUTHOR-FEE HEADROOM ──────────────────────
+    //
+    // 🔴 THE SIGNED `buzzBudget` IS THE *EFFECTIVE* CEILING, NOT THE DECLARED
+    // ONE, AND THE GRANT HAPPENS HERE BECAUSE THIS IS THE ONLY PLACE THE CLAIM
+    // IS EVER WRITTEN. Five call sites mint this claim (the prod host mint, two
+    // dev-tunnel mints, the dev-token endpoint and the mod review-sandbox
+    // run-for-real token) through two resolvers, and every one of them ends up
+    // on this line. Granting at a resolver instead would be a grant applied at
+    // SOME mint sites and not others the moment a sixth is added — the exact
+    // defect shape this codebase has hit before with hand-built token envelopes.
+    //
+    // WHAT IT FIXES. A fee-pricing submit gate compares
+    // `generation + authorFee` against this claim, and every manifest in the wild
+    // declared `page.buzzBudgetPerGen` when `budget` meant "the generation price",
+    // because no fee existed. The bound's derivation and the sufficiency proof
+    // are on `blockAuthorFeeUpperBound`; the rejection it prevents is described
+    // there and in `public/schemas/app-block/v1.json`.
+    //
+    // 🔴 THE GRANT IS UNCONDITIONAL — IT IS NOT GATED ON THE AUTHOR-FEE FLAG,
+    // AND THAT IS THE POINT. A flag-gated grant would be absent from every token
+    // minted BEFORE the flag flips, so flipping it would break those apps until
+    // each re-minted. Granting unconditionally lets this ship and fully deploy
+    // AHEAD of any flip, which is the only safe dependency order. NOT a bug to
+    // "tidy up" later by adding a flag read here.
+    //
+    // 🔴 WHAT THE UNCONDITIONAL GRANT COSTS, STATED ACCURATELY. While the fee is
+    // off, a fee-pricing gate compares `generation + 0` against the granted
+    // ceiling, so such an app may price a generation up to `declared + allowance`
+    // — at most `max(1 ⚡, 5% of budget)` above what its manifest declared.
+    // ⚠️ AN EARLIER VERSION OF THIS COMMENT CLAIMED THE ALLOWANCE "can only ever
+    // be consumed by a fee the platform levies". THAT WAS FALSE, and falsest
+    // exactly where it mattered: two of the four submit gates price no fee at
+    // all, and on one of them the value that clears the gate is the value
+    // reserved and BILLED. Those two gates therefore do NOT read this claim —
+    // they read the declared one, via `blockPerCallBudget`, which is where that
+    // whole rule now lives. With that split in place the sentence is true again
+    // for every gate that reads this claim.
+    //
+    // 🔴 IT MAY EXCEED `BUZZ_BUDGET_CAP` (1000 prod / 250 dev), DELIBERATELY.
+    // `input.buzzBudget` arrives already clamped by its resolver, so a 1000-budget
+    // app signs 1050. Clamping AFTER the grant would silently delete the grant for
+    // exactly the apps sitting at the cap — the worst-affected class — while every
+    // signal reported success. The overshoot is bounded by the allowance and is
+    // reachable only on a gate that prices a fee, per the paragraph above.
+    //
+    // `buzzBudgetDeclared` is NOT decoration: it is the ceiling the two fee-free
+    // gates enforce, and the number the app-facing read surfaces report.
+    //
+    // 🔴 THE `try` IS A BLAST-RADIUS GUARD, NOT DEFENSIVE NOISE. Everywhere else
+    // the fee computation runs behind a swallow (`observeBlockAuthorFee`,
+    // `quoteBlockAuthorFee`) so a bad fee config degrades to "no fee". `sign` has
+    // no such wrapper, and `clampBlockAuthorFeeParams` dereferences its argument
+    // unguarded — so once slice 3 makes this config per-app and author-editable,
+    // one malformed entry would take down EVERY App Block token mint rather than
+    // just the fee. Falling back to no grant restores exactly the pre-grant
+    // behaviour, which is the safe direction: an app can be rejected, never
+    // over-billed.
     if (typeof input.buzzBudget === 'number') {
-      claims.buzzBudget = input.buzzBudget;
+      const declared = input.buzzBudget;
+      let allowance = 0;
+      try {
+        allowance = blockAuthorFeeUpperBound(declared);
+      } catch {
+        allowance = 0;
+      }
+      claims.buzzBudget = declared + allowance;
+      claims.buzzBudgetDeclared = declared;
     }
     // Maturity enforcement claims. `maxBrowsingLevel` is the authoritative
     // server-minted ceiling the block submit/estimate path clamps generation
@@ -352,7 +426,14 @@ export class BlockTokenService {
   static getJwks(): {
     keys: Array<{ kty: string; use: string; alg: string; kid: string; n: string; e: string }>;
   } {
-    const keys: Array<{ kty: string; use: string; alg: string; kid: string; n: string; e: string }> = [];
+    const keys: Array<{
+      kty: string;
+      use: string;
+      alg: string;
+      kid: string;
+      n: string;
+      e: string;
+    }> = [];
     const current = loadPublicKey();
     const next = loadNextPublicKey();
     for (const k of next ? [current, next] : [current]) {

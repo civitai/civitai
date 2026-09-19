@@ -40,11 +40,11 @@ describe('BlockTokenService.sign — JWT round-trip', () => {
     expect(header.alg).toBe('RS256');
     expect(header.kid).toBeTruthy();
 
-    const { payload } = await jwtVerify(
-      result.token,
-      publicKey,
-      { issuer: 'civitai', audience: 'civitai-app-block', algorithms: ['RS256'] }
-    );
+    const { payload } = await jwtVerify(result.token, publicKey, {
+      issuer: 'civitai',
+      audience: 'civitai-app-block',
+      algorithms: ['RS256'],
+    });
     expect(payload.sub).toBe('user:42');
     expect(payload.blockInstanceId).toBe('bki_test');
     expect(payload.scopes).toEqual(['models:read:self']);
@@ -52,6 +52,12 @@ describe('BlockTokenService.sign — JWT round-trip', () => {
     expect(payload.buzzBudget).toBeUndefined();
   });
 
+  // 🔴 THE SIGNED `buzzBudget` IS THE GRANTED CEILING, not the declared one —
+  // the declared number is kept beside it as `buzzBudgetDeclared`. The grant's
+  // behaviour, its sufficiency proof and which gates may read which claim are
+  // pinned in
+  // `src/server/services/blocks/__tests__/author-fee-budget-headroom.test.ts`;
+  // this case only pins that both claims are stamped, and only when supplied.
   it('includes buzzBudget only when supplied', async () => {
     const { BlockTokenService } = await import('../block-token.service');
     const withBudget = await BlockTokenService.sign({
@@ -69,7 +75,8 @@ describe('BlockTokenService.sign — JWT round-trip', () => {
       audience: 'civitai-app-block',
       algorithms: ['RS256'],
     });
-    expect(payload.buzzBudget).toBe(200);
+    expect(payload.buzzBudget).toBe(210);
+    expect(payload.buzzBudgetDeclared).toBe(200);
   });
 
   it('stamps reviewRunForReal:true ONLY when supplied (absent otherwise)', async () => {
@@ -247,7 +254,13 @@ describe('JWT classic attacks', () => {
     // Attempt to sign the same claims with HS256 using the public PEM bytes
     // as the symmetric secret. jose accepts the signing call; jwtVerify
     // with algorithms:['RS256'] rejects.
-    const hsToken = await new SignJWT({ blockId: 'b', appId: 'a', blockInstanceId: 'bki', scopes: [], ctx: {} })
+    const hsToken = await new SignJWT({
+      blockId: 'b',
+      appId: 'a',
+      blockInstanceId: 'bki',
+      scopes: [],
+      ctx: {},
+    })
       .setProtectedHeader({ alg: 'HS256' })
       .setIssuer('civitai')
       .setAudience('civitai-app-block')

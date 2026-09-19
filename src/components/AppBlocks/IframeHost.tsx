@@ -1432,8 +1432,17 @@ export function IframeHost({
   // Must stay in lockstep with the server's `resolveBuzzBudget`
   // (src/pages/api/v1/block-tokens/index.ts): require an INTEGER (not merely a
   // finite number) so a fractional / Infinity / NaN value falls back to the
-  // default here exactly as the server mints it — otherwise the UI would show a
-  // per-gen budget the server never signed.
+  // default here exactly as the server mints it.
+  //
+  // 🔴 IT MIRRORS `resolveBuzzBudget`, NOT THE SIGNED CLAIM, AND THAT IS NOW A
+  // REAL DISTINCTION. `BlockTokenService.sign` mints `buzzBudget` as the declared
+  // ceiling plus author-fee headroom, so the signed claim is deliberately LARGER
+  // than this number. Showing the declared ceiling is correct — it is the most a
+  // generation may be PRICED at, which is the question a block asks — and it is
+  // what `/api/v1/blocks/me` and `blocks.getMyViewer` report too. (An earlier
+  // version of this comment said the risk was "showing a per-gen budget the
+  // server never signed"; that is now the deliberate design, so the thing to keep
+  // in lockstep is the RESOLVER, not the claim.)
   const buzzBudget = useMemo<number | undefined>(() => {
     if (!grantedScopes.includes('ai:write:budgeted')) return undefined;
     const raw = install.publisherSettings?.buzz_budget_per_gen;

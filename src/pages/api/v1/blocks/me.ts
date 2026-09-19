@@ -236,7 +236,14 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     status: user.muted ? 'muted' : 'active',
     // buzzBudget is the per-call spend cap the block was issued with —
     // surfaces here so the block can clamp UI without a second API call.
-    buzzBudget: claims.buzzBudget ?? null,
+    //
+    // 🔴 THE DECLARED CEILING, NOT THE GRANTED ONE. `claims.buzzBudget` carries
+    // the declared budget plus author-fee headroom; reporting that sum would tell
+    // an app it can afford a generation the fee then pushes over the gate. The
+    // declared number answers the question a block is actually asking — how
+    // expensive may my generation be. A refusal message quotes the other one, on
+    // purpose; see the gate in `blocks.router.ts`.
+    buzzBudget: claims.buzzBudgetDeclared ?? claims.buzzBudget ?? null,
   });
 });
 

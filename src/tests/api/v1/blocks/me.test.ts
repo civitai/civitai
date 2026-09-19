@@ -323,4 +323,24 @@ describe('GET /api/v1/blocks/me', () => {
     expect(res._getStatusCode()).toBe(200);
     expect((res._getJSONData() as { buzzBudget: number | null }).buzzBudget).toBeNull();
   });
+
+  /**
+   * 🔴 THE DECLARED CEILING WINS — and until this case existed, nothing in the
+   * repo executed that arm. Every other fixture here sets `buzzBudget` alone, so
+   * they all take the legacy `?? claims.buzzBudget` fallback, and a reversal of
+   * the chain to `claims.buzzBudget ?? claims.buzzBudgetDeclared` was green
+   * everywhere — reinstating exactly the over-report this projection exists to
+   * prevent.
+   *
+   * `BlockTokenService.sign` mints `buzzBudget` as declared + author-fee
+   * headroom (200 → 210), so a real token carries BOTH claims and they differ.
+   * A block asking "how expensive may my generation be" must be told 200.
+   */
+  it('reports the DECLARED ceiling, not the granted one, when both claims are present', async () => {
+    claimsBox.claims = fakeClaims({ buzzBudget: 210, buzzBudgetDeclared: 200 });
+    const { req, res } = createMocks();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect((res._getJSONData() as { buzzBudget: number | null }).buzzBudget).toBe(200);
+  });
 });

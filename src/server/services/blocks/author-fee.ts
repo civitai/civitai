@@ -341,6 +341,105 @@ export function clampBlockAuthorFeeParams(
   return { flatBuzz, pctBasisPoints, clamped };
 }
 
+/**
+ * The LARGEST fee any generation priced at or below `budgetBuzz` can attract,
+ * under any generation type this config can resolve.
+ *
+ * ── WHY IT EXISTS ───────────────────────────────────────────────────────────
+ * The per-call gate an app block submits against is `generation + fee <= budget`
+ * (`blocks.router.ts`, the `cost > claims.buzzBudget` exits). Every manifest in
+ * the wild declared `page.buzzBudgetPerGen` when `budget` meant "the generation
+ * price", because no fee existed — so an app sized at its own ceiling is
+ * rejected OUTRIGHT the moment a fee is charged, and the rejection is total: no
+ * workflow is created, the viewer gets nothing, and it stays broken for every
+ * viewer until the author ships a new manifest version and it is re-approved
+ * (`public/schemas/app-block/v1.json`, the `buzzBudgetPerGen` description says
+ * exactly this). It is measured, not hypothetical: of the apps with real
+ * traffic, one has a declared budget equal to its maximum observed generation
+ * cost — ANY fee of 1 ⚡ or more rejects it — and a second clears its ceiling by
+ * exactly zero.
+ *
+ * The fix is to mint the token with HEADROOM: `declared + thisFunction(declared)`.
+ * `BlockTokenService.sign` is where that happens, and it is the only place, so
+ * no mint site can be missed.
+ *
+ * ── WHY THAT IS SUFFICIENT, AS A PROOF RATHER THAN A SAMPLE ─────────────────
+ *   1. the gate accepts iff `generation <= budget` (today, with no fee);
+ *   2. the percentage leg prices off `base`, and `base <= generation`;
+ *   3. `fee(base)` is NON-DECREASING in `base` — it is `max(constant, floor(base
+ *      × pct))`, and both legs are non-decreasing — so `base <= budget` gives
+ *      `fee(base) <= fee(budget)`;
+ *   4. this function returns `max over every configured params pair of
+ *      fee(budget)`, so `fee(base) <= thisFunction(budget)` whatever the
+ *      generation type resolves to;
+ *   5. therefore `generation + fee <= budget + thisFunction(budget)` for every
+ *      input that passes a gate that prices the fee in.
+ *
+ * NO GENERATION THAT PASSES SUCH A GATE TODAY CAN BE REJECTED AFTER THE GRANT.
+ *
+ * 🔴 STEP 2 IS THE ONE PREMISE THIS FILE DOES NOT OWN, AND IT IS RECORDED AS
+ * OPEN TWENTY LINES ABOVE THIS ONE — do not read the proof as stronger than the
+ * module's own note. `generation` is `WorkflowCost.total` and `base` is
+ * `WorkflowCost.base`; total carries the licensing fees and the tips on top of
+ * base, but the orchestrator's docs do not say whether `factors`/`fixed` are
+ * folded into base, and nothing states `total >= base`. If a factor were ever a
+ * multiplier below 1, `total < base` and `fee(base)` could exceed the bound.
+ * ⚠️ THE FAILURE DIRECTION IS THE SAFE ONE: an app gets REJECTED — the very bug
+ * this exists to remove — never over-billed. So this is an incompleteness in the
+ * proof, not a hole in the money path. Settle it against the orchestrator rather
+ * than by reasoning here, and only then delete this paragraph.
+ *
+ * 🔴 THE BOUND AND THE CHARGE MUST BE COMPUTED FROM THE SAME CONFIG. Step 4 says
+ * "every configured params pair" — of the config passed HERE. `computeBlockAuthorFee`
+ * and `quoteBlockAuthorFee` both accept a `config` override, and the mint calls this
+ * with the platform config only. The day a per-app config reaches the charge path
+ * (slice 3), it has to reach the mint too or step 4 silently stops holding.
+ *
+ * 🔴 IT MAXIMIZES OVER THE WHOLE TABLE, NOT JUST `config.default`. The
+ * generation type is not known at mint time — the token is signed long before
+ * any workflow is described — so a per-type override that charges MORE than the
+ * default would break the bound if the default alone were used. Today's platform
+ * table holds one override and it charges LESS (`chat-completion` → 0/0), so the
+ * maximum is numerically the default; that is a fact about today's config, not a
+ * property of the code, and this loop is what keeps step 4 true when the table
+ * changes.
+ *
+ * 🔴 IT CLAMPS EACH PAIR THROUGH `clampBlockAuthorFeeParams` AND FLOORS THE
+ * PERCENT LEG THE SAME WAY `computeBlockAuthorFee` DOES. The bound has to be
+ * computed in the same arithmetic as the thing it bounds; a bound derived from
+ * the RAW `pctOfBase` float would sit above or below the basis-point value the
+ * fee is actually computed from, and either direction is a defect (below breaks
+ * the guarantee, above over-grants).
+ *
+ * A non-finite / non-positive budget yields 0 — the same degenerate treatment
+ * `computeBlockAuthorFee` gives a zero base, so a token that carries a
+ * meaningless budget is byte-identical to what it was before the grant existed.
+ */
+export function blockAuthorFeeUpperBound(
+  budgetBuzz: number,
+  config: BlockAuthorFeeConfig = BLOCK_AUTHOR_FEE_PLATFORM_CONFIG
+): number {
+  const usable =
+    typeof budgetBuzz === 'number' && Number.isFinite(budgetBuzz) && budgetBuzz > 0
+      ? Math.floor(budgetBuzz)
+      : 0;
+  if (usable === 0) return 0;
+
+  const pairs: BlockAuthorFeeParams[] = [
+    config.default,
+    ...(config.byType ?? []).map(([, params]) => params),
+  ];
+
+  let bound = 0;
+  for (const pair of pairs) {
+    const { flatBuzz, pctBasisPoints } = clampBlockAuthorFeeParams(pair);
+    const pctLeg = Math.floor((usable * pctBasisPoints) / BLOCK_AUTHOR_FEE_BASIS_POINTS_SCALE);
+    const fee = Math.max(flatBuzz, pctLeg);
+    if (fee > bound) bound = fee;
+  }
+  return bound;
+}
+
 /** Which level of the config answered the lookup. */
 export type BlockAuthorFeeParamsSource = 'type' | 'coarse' | 'default';
 
