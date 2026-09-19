@@ -108,8 +108,6 @@ describe('getShopSectionsWithItems viewer gating', () => {
     expect(sections[0].items[0].shopItem.title).toBe('Official badge');
   });
 
-  // The wiring, not just the helper, is what has to be pinned: reverting the
-  // `.map` in the section return reddens nothing without this.
   it('serves the purchase rows as the sold count, not the meta counter', async () => {
     const sections = await getShopSectionsWithItems({});
     expect(sections[0].items[0].shopItem.meta.purchases).toBe(5);

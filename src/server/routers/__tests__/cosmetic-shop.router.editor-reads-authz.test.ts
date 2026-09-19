@@ -4,8 +4,6 @@ import { TRPCError } from '@trpc/server';
 /**
  * The two editor reads hand back a shop item the way the upsert form
  * round-trips it — the whole record, because the form writes it back wholesale.
- * They share the rung and token scope of the list views beside them, and the
- * client hooks that call them render only for moderators.
  *
  * Driven through `createCaller` so the middleware decides, not a source string.
  *

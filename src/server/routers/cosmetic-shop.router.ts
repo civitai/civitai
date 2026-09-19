@@ -47,8 +47,7 @@ export const cosmeticShopRouter = router({
     .query(({ input }) => {
       return getPaginatedCosmeticShopItems(input);
     }),
-  // Editor reads: the whole item, the way the upsert form round-trips it. Same
-  // rung and token scope as the list views beside them.
+  // Editor reads: the whole item, the way the upsert form round-trips it.
   getShopItemById: moderatorProcedure.input(getByIdSchema).query(({ input }) => {
     return getShopItemById(input);
   }),
