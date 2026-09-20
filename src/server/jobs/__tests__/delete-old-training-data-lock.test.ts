@@ -15,8 +15,14 @@ import { describe, expect, it, vi } from 'vitest';
  *
  * WHY BOTH OPTIONS OR NEITHER. A longer `lockExpiration` alone is inert — the disconnect throws
  * the budget away before it can govern anything. `keepLockOnDisconnect` alone leaves the lock
- * expiring five minutes in, long before the first retry. Every case below therefore exists to fail
- * when EITHER half is reverted.
+ * expiring five minutes in, long before the first retry.
+ *
+ * ⚠ AN EARLIER DRAFT OF THIS HEADER SAID "every case below therefore exists to fail when EITHER
+ * half is reverted". That was false of most of them, and it is the kind of sentence that stops a
+ * reader checking. What each case actually covers: the first two and the handler pair fail when a
+ * half is reverted; the ceiling, exact-pin, CONTROL and dispatch cases do not, and are not meant
+ * to — they pin the sizing argument, the deliberate-choice-of-value, the harness itself, and the
+ * seam that lets any of it reach a run.
  *
  * The generic both-arms contract for the disconnect handler, and the check that the route still
  * installs it in a position where it can fire, live in `job-disconnect-lock.test.ts`.
@@ -73,11 +79,20 @@ describe('delete-old-training-data asks for a lock that outlasts the caller’s 
     // attempt would be sizing against attempts that only exist while the bug does.
     //
     // 🔴 A MULTIPLE, NOT `> CUT`, AND THE DIFFERENCE IS THE WHOLE GUARD. The constant is the
-    // moment the caller ABANDONS; the retry POSTs after that plus a backoff that is a range rather
-    // than a constant. So `lock > cut` is satisfied by a lock ONE SECOND past the cut, which
-    // expires before the retry it is supposed to outlive — measured: at 3601 this case stayed
-    // green and only the exact pin below caught it. Two times the cut is the least margin that
-    // cannot be satisfied by a value inside the backoff window.
+    // moment the caller ABANDONS; the retry POSTs at that moment plus the caller's retry backoff,
+    // observed at about a minute. So `lock > cut` is satisfied by a lock ONE SECOND past the cut,
+    // which expires before the retry it is supposed to outlive — measured: at 3601 this case
+    // stayed green and only the exact pin below caught it.
+    //
+    // ⚠ WHY `2 *` SPECIFICALLY: IT IS A ROUND NUMBER FAR PAST THE FLOOR, NOT A DERIVED BOUND, AND
+    // SAYING SO IS THE POINT. The real floor is cut + backoff, i.e. about a minute of margin; two
+    // times the cut is roughly sixty times that. An earlier draft of this comment claimed `2 *`
+    // was "the least margin that cannot be satisfied by a value inside the backoff window" — false
+    // on this file's own evidence, since the docblock on CALLER_CUT_SECONDS quantifies the backoff
+    // four lines from where that draft called it unquantifiable. You are the third writer to
+    // explain this multiple; the first two both supplied a derivation that did not exist. If you
+    // find yourself reaching for a better reason than "round number, comfortably past the floor",
+    // that is the failure repeating — the margin is a choice, and it does not need one.
     expect(DELETE_OLD_TRAINING_DATA_LOCK_SECONDS).toBeGreaterThanOrEqual(
       2 * DELETE_OLD_TRAINING_DATA_CALLER_CUT_SECONDS
     );
@@ -167,17 +182,27 @@ describe('the options above can actually reach a run', () => {
         .filter((line) => !line.trim().startsWith('//'))
         .join('\n');
 
-    expect(live(source)).toContain(
-      "import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';"
+    expect(live(source)).toMatch(
+      /^import \{ deleteOldTrainingData \} from '~\/server\/jobs\/delete-old-training-data';$/m
     );
+
+    // 🔴 BOTH SLICE MARKERS ARE ASSERTED BEFORE THE SLICE IS TAKEN. `indexOf` returns -1 for a
+    // marker that has moved, and `slice(-1)` silently yields the tail of the FILE rather than the
+    // array — so the entry could then be matched from anywhere below it and the guard would pass
+    // while pointing at nothing. A -1 must fail loudly here, not widen the haystack.
+    const arrayStart = source.indexOf('export const jobs: Job[] = [');
+    const arrayEnd = source.indexOf('const log = createLogger');
+    expect(arrayStart).toBeGreaterThan(-1);
+    expect(arrayEnd).toBeGreaterThan(arrayStart);
+
     // Membership in the exported array, not merely the import — an unused import type-checks.
-    const jobsArray = live(
-      source.slice(
-        source.indexOf('export const jobs: Job[] = ['),
-        source.indexOf('const log = createLogger')
-      )
-    );
+    const jobsArray = live(source.slice(arrayStart, arrayEnd));
     expect(jobsArray).not.toHaveLength(0);
-    expect(jobsArray).toMatch(/^\s*deleteOldTrainingData,\s*$/m);
+
+    // A TRAILING comment is legal on a live entry and must not read as de-registration. `live()`
+    // only drops lines that START with `//`, so without allowing one here the perfectly ordinary
+    // `deleteOldTrainingData, // daily` fails with the SAME message a real removal produces —
+    // measured. Leading `//` is still caught: those lines are gone before this runs.
+    expect(jobsArray).toMatch(/^\s*deleteOldTrainingData,\s*(\/\/.*)?$/m);
   });
 });

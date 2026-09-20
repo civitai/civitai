@@ -21,12 +21,16 @@ type OldTrainingRow = {
  * is abandoned just under an hour in, and the next attempt POSTs about a minute later.
  *
  * 🔴 THIS IS THE CUT, NOT THE RETRY'S POST, AND THE DIFFERENCE IS WHY THE FLOOR BELOW IS A MULTIPLE
- * RATHER THAN A BARE `>`. The moment that actually matters is the retry's POST, which lands after
- * the cut plus the caller's own backoff — and that backoff is a RANGE, not a constant, so there is
- * no honest literal for it. The cut is the one precisely-known quantity (it is the configured
- * timeout), it is strictly EARLIER than the POST, and so it is a conservative stand-in. What it
- * cannot do is carry a `lock > cut` comparison: a lock one second past the cut satisfies that and
- * still expires before the retry arrives.
+ * RATHER THAN A BARE `>`. The moment that actually matters is the retry's POST, which lands at the
+ * cut plus the caller's own retry backoff — observed at about a minute.
+ *
+ * ⚠ THE CUT IS AN **UNDER**-ESTIMATE OF THAT MOMENT, WHICH FOR A FLOOR IS THE UNSAFE DIRECTION, NOT
+ * THE SAFE ONE. An earlier draft of this paragraph called it "a conservative stand-in" — precisely
+ * backwards, and self-refuting two lines later. A floor built from a quantity that is strictly
+ * EARLIER than the moment it stands for under-constrains: `lock > cut` is satisfied by a lock one
+ * second past the cut, which expires before the retry it exists to outlive. The cut is used anyway
+ * because it is the one precisely-known quantity here (it is the configured timeout), but it is
+ * used WITH a margin for exactly this reason, never on its own.
  *
  * 🔴 WHY THE **FIRST** RETRY AND NOT THE LAST, WHICH IS THE INTUITIVE ANSWER AND IS WRONG. Today
  * four attempts run per trigger, so it is tempting to size against the whole ladder. But a retry
@@ -83,18 +87,22 @@ export const DELETE_OLD_TRAINING_DATA_CALLER_CUT_SECONDS = 60 * 60;
  * first retry has been answered 200 the caller is done for the day, so NOTHING POSTS again until
  * the next tick 24h later: a hold of two hours and a hold of six block exactly the same set of
  * requests, namely none. So the value is chosen at the top of the flat region rather than the
- * bottom — it absorbs a `WebhookTimeoutMinutes` raised several-fold without anyone having to
- * remember this file. ⚠ An earlier draft of this block asserted the opposite — that a longer hold
- * costs more because an alive-but-wedged run holds it longer. That is false here for the same
- * reason: the wedged run's day has no further caller to block. Do not re-derive it.
+ * bottom — it absorbs a raised `WebhookTimeoutMinutes` without anyone having to remember this
+ * file. ⚠ Concretely, and stated as a bound rather than as "several-fold" because the guard that
+ * enforces it moved: the floor test requires the lock to be at least twice the cut, so at this
+ * value a cut raised as far as THREE HOURS still passes. Past that the test fails and this file
+ * has to be re-argued, which is the intent. ⚠ An earlier draft of this block asserted the opposite
+ * about cost — that a longer hold costs more because an alive-but-wedged run holds it longer. That
+ * is false here for the same reason: the wedged run's day has no further caller to block. Do not
+ * re-derive it.
  *
  * ⚠ ONE CALLER A LONG HOLD *DOES* TURN AWAY, corrected from an earlier draft of this block that
  * said the escape hatch covers it. A human re-triggering the job from the scheduler's dashboard
  * gets the 200 "Job already running" for as long as the hold lasts: the scheduler builds its
- * trigger URL with `run` and `wait` only, so `noCheck` — which would bypass the lock — is NOT on
- * that path. It is reachable only by calling the webhook directly. That is a real cost of a long
- * hold; it is a cost to an OPERATOR retrying by hand, not to the schedule, which is why it does not
- * move the value.
+ * trigger URL with `run`, `wait` and its auth token only, so `noCheck` — which would bypass the
+ * lock — is NOT on that path. It is reachable only by calling the webhook directly. That is a real
+ * cost of a long hold; it is a cost to an OPERATOR retrying by hand, not to the schedule, which is
+ * why it does not move the value.
  *
  * The ceiling is the cron period, and that one is real: stay well below 24h so a hold can never
  * reach the next SCHEDULED run. (A pod that dies pays nothing either way — the redis key carries a
@@ -114,7 +122,15 @@ export const DELETE_OLD_TRAINING_DATA_CALLER_CUT_SECONDS = 60 * 60;
  * net-new progress. Going from four passes a day to one therefore removes throughput in principle.
  * Measured before shipping this, it removes NONE in practice — every row currently eligible fails
  * its delete and none is ever marked purged, so all four passes achieve nothing and one pass
- * achieves the same nothing. 🔴 THAT IS A STATEMENT ABOUT TODAY AND IT EXPIRES. Whoever repairs
+ * achieves the same nothing.
+ *
+ * 🔴 HOW TO RE-TEST THAT, BECAUSE A CLAIM WITH NO INSTRUMENT IS THE ONE THAT ROTS SILENTLY: take
+ * this job's own eligibility predicate — the `WHERE` clause below, minus its `dataPurged` term —
+ * and group it by `dataPurged`. Compare the newest `completedAt` in each arm. If the purged arm's
+ * newest is far older than the unpurged arm's newest, nothing has been purged since that date and
+ * the paragraph above still holds; if the two track each other, purging is working again and this
+ * whole caveat is spent. (At the time of writing the purged arm's newest trailed the unpurged
+ * arm's by months.) 🔴 THAT IS A STATEMENT ABOUT TODAY AND IT EXPIRES. Whoever repairs
  * the delete path must re-ask it, because from that moment a single serial pass per day is the
  * whole throughput: the query takes no `LIMIT`, the walk is one awaited delete plus one awaited
  * update per row, and a row whose delete throws is never marked purged and so returns every day
