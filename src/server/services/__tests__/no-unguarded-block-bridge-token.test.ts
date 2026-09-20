@@ -392,11 +392,25 @@ const LITERAL_SENTINEL = '\u0000';
  *     trivia leaking out as code — and it is real. The OVER-strip direction is the mirror
  *     image and `unresolved` is structurally blind to it: over-stripping REMOVES candidates,
  *     so it produces an EMPTY `unresolved`, which is exactly what every assertion in this
- *     file expects to see. MEASURED: with `stripNonCode` over-stripping — a comment blanking
- *     the remainder of its own line — the whole suite stayed GREEN at 32/32. What covers it
- *     is a control that requires real code to SURVIVE, which is
- *     `an annotated argument KEEPS its schema identifier` below; `unresolved` being empty
- *     against the real router is evidence about under-stripping and nothing else.
+ *     file expects to see. What covers it is a control that requires real code to SURVIVE,
+ *     which is `an annotated argument KEEPS its schema identifier` below; `unresolved` being
+ *     empty against the real router is evidence about under-stripping and nothing else.
+ *
+ *     🔴 AND THE GAP WAS IN THE EMPTIED VIEW SPECIFICALLY. Stated that precisely because the
+ *     first version of this paragraph claimed "the whole suite stayed GREEN at 32/32" for "an
+ *     over-strip" without saying WHERE the over-strip was applied — and a reviewer who
+ *     implemented the sentence as written, in the shared normaliser, measured a RED and was
+ *     right to challenge it. That is this file's own failure mode: a docstring claiming more
+ *     than the measurement behind it. The two variants, both blanking the remainder of a
+ *     comment's own line, differ only in which function they patch:
+ *       - in `stripNonCode` ALONE, leaving `codeWithLiterals` untouched — the pre-change
+ *         suite passed 32/32. NOT caught.
+ *       - in the SHARED `normaliseSource`, so both views over-strip — the pre-change suite
+ *         went red on `the normalisers preserve the line structure exactly`. CAUGHT.
+ *     The asymmetry IS the finding, and it is mechanical: that control asserts code after a
+ *     same-line block comment survives `codeWithLiterals`, and code BEFORE a line comment
+ *     survives `stripNonCode`. So the KEPT view had a survival assertion and the EMPTIED view
+ *     had none — which is the hole `an annotated argument KEEPS its schema identifier` fills.
  *   - `ts.createSourceFile` is error-TOLERANT: a syntactically invalid module still yields a
  *     tree, and the ranges recovered from it are whatever the parser made of the wreckage.
  *     Every file these suites read also has to compile, so this is not load-bearing here.
@@ -1539,8 +1553,13 @@ describe('the bridge scan can actually see what it claims to', () => {
     // control asserts `schemaIdentifiers(arg)` is `[]`, and `UNREADABLE` carries no comment
     // and no string, so it never exercises the removal at all.
     //
-    // MEASURED before this control existed: over-stripping `stripNonCode` so that a comment
-    // blanks the remainder of its own line left the suite GREEN at 32 passed / 32.
+    // MEASURED before this control existed, and stated with the mutation site named because
+    // the first draft of this comment did not name it: an over-strip applied to
+    // `stripNonCode` ALONE — blanking the remainder of a comment's own line, with
+    // `codeWithLiterals` left untouched — left the pre-change suite GREEN at 32 passed / 32.
+    // The SAME over-strip applied to the shared `normaliseSource` instead is CAUGHT at base,
+    // by `the normalisers preserve the line structure exactly`. The emptied view is the half
+    // that had no survival assertion; see the LIMITS block on `stripNonCode` for the pair.
     //
     // The fixture carries all three things at once — a comment, a string, and an imported
     // identifier — and the comment and the string each name a DIFFERENT schema-shaped word, so
