@@ -71,6 +71,37 @@ export type PaymentIntentCreationSchema = z.infer<typeof paymentIntentCreationSc
 export const paymentIntentCreationSchema = z.object({
   unitAmount: z
     .number()
+    // Stripe amounts are in the currency's MINOR unit and must be whole: `amount: 1000.4`
+    // comes back as `Invalid integer: 1000.4`, which surfaced as a 500. A fraction arrives
+    // honestly — the purchase form derives cents from the Buzz amount by dividing by 10, so
+    // any Buzz amount that is not a multiple of 10 lands here — and the service-side tamper
+    // guard (`unitAmount === metadata.buzzAmount / 10`) agrees with it, so nothing further
+    // down the Stripe path looks at whether the number is whole.
+    //
+    // Scope, per SCHEMA and not per file — the distinction is load-bearing, because two of
+    // these files hold more than one schema with a `unitAmount`. Carrying the same `.int()`:
+    // coinbase's `createBuzzChargeSchema`, emerchantpay's `createBuzzChargeSchema` and
+    // paddle's `transactionCreateSchema`. So the whole-minor-unit rule is no longer
+    // Stripe-only on the ROUTE inputs. Their other bounds still differ and this route remains
+    // the tightest — coinbase's declares no lower or upper bound at all, so it accepts a
+    // negative or a 1e15 `unitAmount` where the `.min`/`.max` below reject both.
+    //
+    // 🔴 STILL UNBOUNDED, and recorded here because deleting the stale table that used to say
+    // so left it written down nowhere: paddle's `buzzPurchaseMetadataSchema.unitAmount` is
+    // `z.coerce.number().positive()` — no `.int()`, no `.max()` — and it is NESTED inside the
+    // bounded `transactionCreateSchema`, so "paddle is covered" is true of the route input and
+    // false of the metadata. `paymentIntentMetadataSchema` in THIS file has the same shape.
+    // Both are inert only because the services rebuild metadata server-side
+    // (`paddle.service.ts` via `getBuzzTransactionMetadata`) rather than forwarding the
+    // client's. Forward it instead — a one-line refactor — and a fractional
+    // `metadata.unitAmount` reaches the provider. Do not read the shared `.int()` as parity.
+    //
+    // No line numbers, deliberately: this repo DOES pin doc-vs-tree claims in places
+    // (`no-lint-rules-script-drift.test.ts` pins literal sentences and asserts referenced
+    // paths exist; `no-stale-moderator-route-probe.test.ts` pins route paths), but nothing
+    // checks a `file:LINE` reference written inside a source comment — and the four that
+    // stood here were falsified inside this same PR.
+    .int({ message: 'The transaction amount must be a whole number of cents' })
     .min(constants.buzz.minChargeAmount, {
       message: `The minimum transaction amount is $${(constants.buzz.minChargeAmount / 100).toFixed(
         2

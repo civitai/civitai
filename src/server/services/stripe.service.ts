@@ -1353,8 +1353,45 @@ export const getPaymentIntent = async ({
   }
 
   if (unitAmount !== metadata.buzzAmount / 10) {
-    // Safeguard against tampering with the amount on the client side
-    throw new Error('There was an error while creating your order. Please try again later.');
+    // Safeguard against tampering with the amount on the client side.
+    //
+    // Typed rather than a bare `Error`: `getTRPCErrorFromUnknown` maps a plain Error to
+    // INTERNAL_SERVER_ERROR, so rejected input on this route answered with a 500 — the same
+    // defect class as the fractional amount above. This is an exposed authenticated
+    // procedure. The condition is unchanged; only its type.
+    //
+    // 🔴 The demotion costs this guard its only COUNTER, which is why the explicit log
+    // below is not optional. `recordTrpcError` (`server/prom/http-errors.ts`) increments
+    // `civitai_app_http_errors_total` only for `status >= 500`, and the central error log
+    // tags a 4xx `type:'info'` — so as a BAD_REQUEST this fires no metric and leaves the
+    // error stream entirely. A scripted probe hunting for a window where the guard is
+    // bypassable would otherwise be invisible.
+    //
+    // 🔴 Named `-mismatch`, NOT `-tamper`, and deliberately so. Tampering is the motivating case
+    // but it is not the only way to arrive here: `buzzPriceMetadataSchema.buzzAmount` is an
+    // INDEPENDENT value with a sibling `bonusDescription`, and the form submits
+    // `selectedPrice.buzzAmount ?? unitAmount * 10` — so a Stripe buzz Price configured with bonus
+    // Buzz (charge 1000, credit 11000) trips this condition from an ordinary package click. No
+    // such Price exists today (all five live buzz Prices carry empty metadata, checked
+    // 2026-09-19), so this is latent rather than active; but naming the event after the malicious
+    // reading would attach the word "tamper" — and an innocent buyer's userId — to whoever
+    // configures the next bonus package.
+    logToAxiom(
+      {
+        name: 'buzz-purchase-amount-mismatch',
+        type: 'warning',
+        message: 'rejected a buzz purchase whose unitAmount did not match metadata.buzzAmount',
+        userId: user.id,
+        submittedUnitAmount: unitAmount,
+        submittedBuzzAmount: metadata.buzzAmount,
+        expectedUnitAmount: metadata.buzzAmount / 10,
+      },
+      'webhooks'
+    ).catch(() => null);
+
+    throw throwBadRequestError(
+      'There was an error while creating your order. Please try again later.'
+    );
   }
 
   // FIN-1: App Blocks revenue attribution is client-forgeable end-to-end —
