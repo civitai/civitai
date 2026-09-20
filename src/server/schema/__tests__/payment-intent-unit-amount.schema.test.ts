@@ -72,10 +72,18 @@ describe('paymentIntentCreationSchema — unitAmount must be a whole minor unit'
 });
 
 /**
- * The second route by which a fraction could have reached Stripe was
- * `createBuzzSessionSchema.customAmount`, handed over as `unit_amount: customAmount * 100`.
- * That whole path — schema, service, controller, tRPC procedure and the client hook wrapper —
- * is DELETED in this change rather than validated: it had zero call sites and was annotated
- * DEAD CODE in two places, so hardening it would have been hardening an exposed,
- * authenticated Stripe-calling surface nobody exercises. There is nothing left to bound.
+ * The second route by which a fraction can reach Stripe is
+ * `createBuzzSessionSchema.customAmount`, handed over as `unit_amount: customAmount * 100`
+ * (`stripe.service.ts`). It is NOT bounded here and it is NOT bounded anywhere: the schema
+ * declares `.min()` only, so `customAmount: 500.004` parses, reaches
+ * `checkout.sessions.create` as `unit_amount: 50000.4`, and comes back `Invalid integer` —
+ * the same 500 this file exists to close, on a different route.
+ *
+ * It is left alone here because the whole path — schema, service, controller, tRPC procedure
+ * and the client hook wrapper — is DELETED by #4955, which is split out of this change and
+ * merges separately. Hardening a surface that is about to be removed would be wasted work.
+ *
+ * 🔴 So until #4955 lands, `stripe.createBuzzSession` remains an exposed, authenticated,
+ * Stripe-calling procedure with an unbounded amount. If #4955 is closed unmerged rather than
+ * merged, this route needs `.int()` and a `.max()` and that is not optional.
  */

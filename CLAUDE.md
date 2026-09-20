@@ -211,7 +211,7 @@ Use a top-level `import type * as PromClient` — an inline `typeof import('...'
 **Before widening a mock, check whether the import edge is needed at all.** A failing suite may be telling you the code pulled in a dependency it doesn't want, not that the mock is too narrow, and widening it would hide that. (Bit us twice in one day, Aug 2026, on two branches; one of those three suites was fixed by extracting the helpers into their own module instead.)
 
 #### Convention guards run as tests
-Several repo conventions are enforced by tests, not by eslint. 39 live in `src/server/services/__tests__/no-*.test.ts` — `no-agent-ground-truth-write`, `no-coerce-boolean-in-api`,
+Several repo conventions are enforced by tests, not by eslint. 40 live in `src/server/services/__tests__/no-*.test.ts` — `no-agent-ground-truth-write`, `no-coerce-boolean-in-api`,
 `no-direct-shared-module-mock` (the shared-mock ratchet, see `docs/testing/shared-module-mocks.md`),
 `no-divergent-author-fee-base` (every `recordSpendAttribution` call site must pass the App Blocks author fee the orchestrator's `submitted.cost.base`, never the snapshot and never the gross `buzzAmount` — the three are indistinguishable positive Buzz integers, so a percentage of the wrong one takes a cut of another creator's licensing fee),
 `no-divergent-can-generate-derivation` (coverage alone is not canGenerate — the ecosystem must also support the model TYPE, and the pair is composed only in `isGenerationEligible`),
@@ -222,7 +222,11 @@ token there is spendable on the upload path, which is the free remix-gallery sub
 `no-lint-rules-script-drift`,
 `no-menu-target-tooltip-nesting` (a `Tooltip` INSIDE `Menu.Target` steals the ref the menu needs and
 the trigger silently stops opening — six sites had it independently),
-`no-module-scope-cache`, `no-pk-addressed-engagement-write`, `no-server-infra-in-app-graph`,
+`no-module-scope-cache`,
+`no-open-coded-buzz-cents` (the Buzz-to-cents division has one home — reverting the purchase
+form's call site to a bare `/ 10` re-introduced the production bug and survived the entire
+suite, so the call-site set and the server tamper guard's ratio are pinned to the shared
+constant), `no-pk-addressed-engagement-write`, `no-server-infra-in-app-graph`,
 `no-sharp-outside-native-project`, `no-ssr-divergent-media-query`, `no-stale-moderator-route-probe`, `no-static-html2canvas-import`,
 `no-unbounded-paging-fake`, `no-unbumped-draft-status-write` (a raw-SQL write that moves a Model
 into `Draft` must set `"updatedAt" = now()`, or `remove-old-drafts` can cascade-delete it with no
@@ -254,7 +258,7 @@ was last audited, on 2026-08-24, and were wired in then. **Add a new guard to th
 you write it**, and don't read a green `test:lint-rules` as "all guards passed" without checking the directory
 against the script.
 
-`test:lint-rules` names 44 files today.
+`test:lint-rules` names 45 files today.
 
 The count above, the count in the list, and the list itself are what went stale three times, so
 `no-lint-rules-script-drift` fails when they disagree with the directory or the script. It reads two exact

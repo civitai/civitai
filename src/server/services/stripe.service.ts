@@ -1292,6 +1292,28 @@ export const getPaymentIntent = async ({
     // defect class as the fractional amount above. The pair is unreachable through the UI
     // (both values derive from one field), but this is an exposed authenticated procedure.
     // The condition is unchanged; only its type.
+    //
+    // 🔴 The demotion costs this guard its only COUNTER, which is why the explicit log
+    // below is not optional. `recordTrpcError` (`server/prom/http-errors.ts`) increments
+    // `civitai_app_http_errors_total` only for `status >= 500`, and the central error log
+    // tags a 4xx `type:'info'` — so as a BAD_REQUEST this fires no metric and leaves the
+    // error stream entirely. A scripted probe hunting for a window where the guard is
+    // bypassable would otherwise be invisible. Logged at `warning` because, unlike the
+    // fractional amount above, a mismatched pair cannot be produced by the UI at all:
+    // reaching here means someone built the request by hand.
+    logToAxiom(
+      {
+        name: 'buzz-purchase-amount-tamper',
+        type: 'warning',
+        message: 'rejected a buzz purchase whose unitAmount did not match metadata.buzzAmount',
+        userId: user.id,
+        submittedUnitAmount: unitAmount,
+        submittedBuzzAmount: metadata.buzzAmount,
+        expectedUnitAmount: metadata.buzzAmount / 10,
+      },
+      'webhooks'
+    ).catch(() => null);
+
     throw throwBadRequestError(
       'There was an error while creating your order. Please try again later.'
     );

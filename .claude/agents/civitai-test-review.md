@@ -178,14 +178,16 @@ Worked examples of both fixes: the two retry tests in
 
 ### Convention guards
 
-39 live in `src/server/services/__tests__/no-*.test.ts`:
+40 live in `src/server/services/__tests__/no-*.test.ts`:
 `no-agent-ground-truth-write`, `no-coerce-boolean-in-api`, `no-direct-shared-module-mock`,
 `no-divergent-author-fee-base` (every `recordSpendAttribution` call site must pass the App Blocks author fee the orchestrator's `submitted.cost.base`, never the snapshot and never the gross `buzzAmount`), `no-divergent-can-generate-derivation`, `no-divergent-generation-submit-payload` (the two generation footers must submit the same payload keys — the form-graph lane silently dropped `sourceProvenance`, so its remixes lost the only VERIFIED half of their provenance while the unverified `remixOfId` went through), `no-divergent-model-recency-derivation` (the New/Updated card rule and its day-old cutoff each have one definition — three cards restated them, and when the paid badge took ModelCard's single status slot only that copy knew, so a paid model published minutes ago showed "Paid" on the feed and "New" in the resource picker), `no-divergent-paid-gate-derivation` (the feed and the search index must derive the paid badge from one helper, never two copies of the query), `no-divergent-safetensor-rule` (the coverage view and `checkLoadable` state the checkpoint SafeTensor rule twice and nothing executes the SQL, so the two literals and the checkpoint scoping are pinned textually), `no-doubled-free-slot-noun`, `no-hand-typed-redis-key-constants` (the Redis key-constant
 ratchet — hand-typed `REDIS_KEYS` in an allowlisted mock had drifted 15 times), `no-io-in-transaction`,
 `no-job-kind-on-remix-mint`, `no-lint-rules-script-drift`,
 `no-menu-target-tooltip-nesting` (a `Tooltip` INSIDE `Menu.Target` steals the ref the menu needs and
 the trigger silently stops opening),
-`no-module-scope-cache`, `no-pk-addressed-engagement-write`, `no-server-infra-in-app-graph`,
+`no-module-scope-cache`, `no-open-coded-buzz-cents` (the Buzz-to-cents division has one home —
+reverting the purchase form's call site to a bare `/ 10` re-introduced the production bug and
+survived the entire suite), `no-pk-addressed-engagement-write`, `no-server-infra-in-app-graph`,
 `no-sharp-outside-native-project`, `no-ssr-divergent-media-query`, `no-stale-moderator-route-probe`, `no-static-html2canvas-import`,
 `no-unbounded-paging-fake`, `no-unbumped-draft-status-write`, `no-unguarded-billable-submit` (a user-token orchestrator submit must have its
 owner checked — see `assertWorkflowOwner`),
@@ -208,7 +210,7 @@ fail only in a full-suite run. Five were missing when this was last audited, on 
 wired in then. If the diff adds a guard, check it was wired into the script, and don't treat a green
 `test:lint-rules` as "all guards passed".
 
-`test:lint-rules` names 44 files today.
+`test:lint-rules` names 45 files today.
 
 Both numbers and the list are checked by `no-lint-rules-script-drift`, which reads the two phrasings
 above literally — edit the numbers, not the shapes.

@@ -31,7 +31,13 @@ describe('buzzAmountToUnitAmount', () => {
     }
   });
 
-  it('pins the Buzz-per-cent ratio the server tamper check re-derives', () => {
+  // Named for what it actually does. It asserts a LOCAL constant against a literal and
+  // touches no server code — the server's `/ 10` in `getPaymentIntent` is an independent
+  // literal, so this can neither detect nor locate a divergence between the two. That
+  // relationship is pinned by
+  // `src/server/services/__tests__/no-open-coded-buzz-cents.test.ts`, which reads the guard
+  // out of the service source and compares it to this constant.
+  it('pins the local Buzz-per-cent ratio constant', () => {
     expect(BUZZ_PER_USD_CENT).toBe(10);
   });
 });
