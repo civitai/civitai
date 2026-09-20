@@ -15,8 +15,9 @@ export const createBuzzChargeSchema = z.object({
   //
   // 🔴 The service-side tamper check (`unitAmount !== buzzAmount / 10`) does NOT catch this:
   // both values come from the same division, so a fractional pair is perfectly self-consistent
-  // and the check passes — structurally, for every non-multiple of ten, not at some sampled
-  // rate. This line is the only thing on this route that rejects the fraction.
+  // and the check passes — structurally, for every non-multiple of ten the double arithmetic
+  // represents exactly, not at some sampled rate. This line is the only thing on this route
+  // that rejects the fraction.
   unitAmount: z.number().int('The transaction amount must be a whole number of cents'),
   buzzAmount: z.number(),
 });
