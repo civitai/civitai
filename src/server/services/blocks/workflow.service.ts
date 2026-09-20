@@ -217,15 +217,24 @@ export function snapshotFromWorkflow(
     }
   }
   const orchestratorTotal = workflow.cost?.total;
-  // Only a FINITE POSITIVE addition moves the number. A NaN/Infinity would
+  // Only a WHOLE, POSITIVE addition moves the number. A NaN/Infinity would
   // propagate into the reported price silently, and a negative one would make
   // the block show LESS than it will be charged — the one direction this whole
   // change exists to remove.
+  //
+  // 🔴 `isInteger`, NOT JUST `isFinite` — BUZZ IS WHOLE AND THE TYPE DOES NOT SAY
+  // SO. `additionalCostBuzz: number` accepts a fraction, and today's only caller
+  // passes `computation.feeBuzz`, an integer by construction — so the constraint
+  // is true by accident of the caller, which is exactly the kind of guarantee
+  // that stops being true when a second caller appears. Checked here rather than
+  // documented, because the wrong outcome is a fractional Buzz price on the wire
+  // with nothing objecting. (`isInteger` implies `isFinite`, which is why that
+  // leg is gone rather than kept alongside.)
   const additional = extra?.additionalCostBuzz;
   const total =
     typeof orchestratorTotal === 'number' &&
     typeof additional === 'number' &&
-    Number.isFinite(additional) &&
+    Number.isInteger(additional) &&
     additional > 0
       ? orchestratorTotal + additional
       : orchestratorTotal;

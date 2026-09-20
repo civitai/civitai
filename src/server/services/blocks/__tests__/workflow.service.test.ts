@@ -2810,12 +2810,23 @@ describe('snapshotFromWorkflow — additionalCostBuzz', () => {
     );
   });
 
-  it('🔴 IGNORES a non-finite addend rather than propagating it', () => {
-    // Kills the deletion of `Number.isFinite`. `42 + NaN` is `NaN`, which would
-    // travel to the block as a cost and render as a price. Both spellings are
-    // driven: `NaN` fails `isFinite` by value, `Infinity` by magnitude, and a
-    // guard written as `!Number.isNaN` catches only the first.
-    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) {
+  it('🔴 IGNORES a non-finite or fractional addend rather than propagating it', () => {
+    // `42 + NaN` is `NaN`, which would travel to the block as a cost and render
+    // as a price.
+    //
+    // ⚠️ ONLY THE `Infinity` CASE KILLS THE `Number.isFinite` DELETION, AND THE
+    // COMMENT USED TO CLAIM BOTH DID. `NaN > 0` is already `false`, so the
+    // `additional > 0` leg rejects NaN whether or not `isFinite` is present — the
+    // NaN input is a second witness to the outcome, not a second mutation killed.
+    // Kept because the two failure modes read differently to whoever is here next,
+    // and labelled so it is not counted twice.
+    //
+    // 🔴 `2.5` IS THE CASE THAT KILLS THE `isInteger`→`isFinite` WEAKENING, AND IT
+    // IS THE ONLY ONE THAT CAN. Buzz is whole; the parameter's type is `number`
+    // and says nothing about it. A fractional addend is finite, positive, and
+    // would put `44.5` on the wire as a price — so it passes every other leg of
+    // the guard and is invisible to the two inputs above.
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, 2.5]) {
       expect(
         snapshotFromWorkflow(fakeWorkflow() as never, { additionalCostBuzz: bad }).cost,
         `addend ${bad} reached the reported total`

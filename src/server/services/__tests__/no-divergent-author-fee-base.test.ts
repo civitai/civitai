@@ -6,6 +6,7 @@ import {
   declRegions,
   enclosingDecl,
   MONEY_MARKERS,
+  moneyIdentifiersIn,
   moneyMarkersIn,
   sourceDecls,
   structuralQuoteRole,
@@ -83,6 +84,29 @@ const enclosingSubmitPath = enclosingDecl;
 const pathRegions = declRegions;
 
 /**
+ * `haystack` contains `needle` as a COMPLETE expression, not as a prefix of a
+ * longer identifier.
+ *
+ * 🔴 A BARE `toContain` ON AN IDENTIFIER IS NOT A PIN, AND THIS FILE LEARNED
+ * THAT THE EXPENSIVE WAY ON A NEIGHBOURING ASSERTION. `typeDerivation` was
+ * ledgered as a PREFIX of the call it pins and a mutant that dropped the call's
+ * second argument survived 733/733. Every other per-site pin here has the same
+ * shape one level down: `toContain('generationType: blockGenerationType')` is
+ * satisfied by `generationType: blockGenerationTypeOverride`, and
+ * `toContain('generationType: step.id')` by `step.idFallback`. Both mutants
+ * type-check, and only one of them (the unused local) has an unrelated lint
+ * backstop.
+ *
+ * So the match is followed by a negative lookahead for anything that would make
+ * it a longer identifier or member access. The `(` case is deliberately NOT
+ * excluded — `suppressQuoteLogs: true` and friends legitimately abut `,`/`)`.
+ */
+function containsExpression(haystack: string, needle: string): boolean {
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`${escaped}(?![\\w.])`).test(haystack);
+}
+
+/**
  * EVERY `quoteBlockAuthorFee` CALL SITE, BY THE ROLE IT PLAYS — and the roles are
  * the point, not the count.
  *
@@ -126,6 +150,16 @@ const pathRegions = declRegions;
  * alone says nothing about what `blockGenerationType` was computed from, and the
  * two txt2img sites derive it from DIFFERENT bodies — which is precisely how the
  * disclosed key could come to differ from the charged one.
+ *
+ * 🔴 AND ON THE ESTIMATE ARMS THIS LEDGER IS THE *ONLY* EVIDENCE OF THE KEY —
+ * SAID PLAINLY, BECAUSE THE READER WOULD OTHERWISE ASSUME OTHERWISE. The platform
+ * config holds ONE override (`chat-completion` → 0/0) and the router passes no
+ * injectable `config`, so no test drives either estimate arm to an overridden
+ * type. Every non-overridden type therefore produces an identical fee, and a
+ * mutant swapping one for another is behaviourally INVISIBLE — measured, it
+ * survives the whole battery on everything except this pin. That is the reason
+ * `typeExpr` is matched as a complete expression rather than a substring: a
+ * structural pin carrying the sole weight cannot also be loose.
  *
  * 🔴 `disclosedBy` PAIRS EACH RESERVING SITE WITH THE ARM THAT SHOWS ITS PRICE.
  * Roles alone are a per-site property, and per-site properties cannot express the
@@ -707,9 +741,10 @@ describe('author fee — the viewer-charge seam', () => {
     // The floor is set below today's count so ordinary churn does not trip it,
     // and ABOVE the narrow form's, so silently reverting the widening is red.
     const decls = sourceDecls(source);
-    expect(decls.length, 'the declaration walk collapsed — regions are meaningless').toBeGreaterThan(
-      90
-    );
+    expect(
+      decls.length,
+      'the declaration walk collapsed — regions are meaningless'
+    ).toBeGreaterThan(90);
     for (const name of Object.keys(QUOTE_SITE_LEDGER)) {
       expect(decls.map((d) => d.name)).toContain(name);
     }
@@ -730,7 +765,9 @@ describe('author fee — the viewer-charge seam', () => {
     // Fails when the population GROWS (a new quote site with no declared role)
     // and when it SHRINKS (a ledgered site deleted) — the same both-directions
     // contract the spend-attribution ledger above carries.
-    expect(new Set(quoteOwners.map((q) => q.path))).toEqual(new Set(Object.keys(QUOTE_SITE_LEDGER)));
+    expect(new Set(quoteOwners.map((q) => q.path))).toEqual(
+      new Set(Object.keys(QUOTE_SITE_LEDGER))
+    );
     expect(quoteOwners).toHaveLength(Object.keys(QUOTE_SITE_LEDGER).length);
     for (const entry of Object.values(QUOTE_SITE_LEDGER)) {
       expect(entry.reason.length).toBeGreaterThan(40);
@@ -746,8 +783,14 @@ describe('author fee — the viewer-charge seam', () => {
     // shape catches a new site whose ledger entry was written to match it.
     for (const { path: owner, site } of quoteOwners) {
       const ledgered = QUOTE_SITE_LEDGER[owner];
-      expect(site).toContain(ledgered.baseExpr);
-      expect(site).toContain(ledgered.capExpr);
+      expect(
+        containsExpression(site, ledgered.baseExpr),
+        `${owner}: baseExpr is not the ledgered '${ledgered.baseExpr}' (as a complete expression)`
+      ).toBe(true);
+      expect(
+        containsExpression(site, ledgered.capExpr),
+        `${owner}: capExpr is not the ledgered '${ledgered.capExpr}' (as a complete expression)`
+      ).toBe(true);
       expect(site).not.toContain('snapshot');
       expect(ledgered.baseExpr).toMatch(/^baseGenerationBuzz: \w+\??\.cost\?\.base$/);
       expect(ledgered.capExpr).toMatch(/^priceIsCap: \w+\??\.cost\?\.variable$/);
@@ -770,10 +813,12 @@ describe('author fee — the viewer-charge seam', () => {
     for (const { path: owner, site } of quoteOwners) {
       const ledgered = QUOTE_SITE_LEDGER[owner];
       expect(
-        site,
+        containsExpression(site, ledgered.typeExpr),
         `${owner}: generationType is not the ledgered '${ledgered.typeExpr}' — this is the fee's ` +
-          'lookup key, so a changed spelling prices a different override than the ledger claims'
-      ).toContain(ledgered.typeExpr);
+          'lookup key, so a changed spelling prices a different override than the ledger claims. ' +
+          'Matched as a COMPLETE expression: a bare substring test passes for ' +
+          `'${ledgered.typeExpr}Override'.`
+      ).toBe(true);
       // A CLOSED SET of spellings: a new one must be ledgered deliberately rather
       // than inherited from whatever identifier happened to be in scope.
       expect(
@@ -865,7 +910,31 @@ describe('author fee — the viewer-charge seam', () => {
     // A disclosing site must not itself claim a partner — the arrow has one
     // direction, and a cycle would satisfy the set comparison above.
     for (const [name, entry] of disclosing) {
-      expect(entry.disclosedBy, `${name} is disclosing and must not name a disclosing arm`).toBeUndefined();
+      expect(
+        entry.disclosedBy,
+        `${name} is disclosing and must not name a disclosing arm`
+      ).toBeUndefined();
+    }
+
+    // 🔴 AND THE PAIRING NAMES THE RIGHT PARTNER, NOT MERELY *A* PARTNER. Every
+    // assertion above reads only this ledger, so SWAPPING the two partners —
+    // `submitWorkflow` disclosed by `estimateStepWorkflow` and vice versa —
+    // satisfied all of them: both exist, both are disclosing, each is claimed
+    // once, neither is a cycle. What was actually proved was
+    // `|reserving| === |disclosing|` plus a 1-1 map between literals in this
+    // file, while the title claims the arm shows ITS price.
+    //
+    // The correspondence is pinned on a property that is real and already
+    // load-bearing: a pair must quote the fee under the SAME lookup key, which is
+    // exactly what the `generationType` guard above exists to protect. A swap
+    // pairs `blockGenerationType` against `step.id` and is red here.
+    for (const [name, entry] of reserving) {
+      expect(
+        QUOTE_SITE_LEDGER[entry.disclosedBy!].typeExpr,
+        `${name} is paired with '${entry.disclosedBy}', but the two quote the fee under ` +
+          'DIFFERENT generation-type keys — so the arm that shows the price is not the arm that ' +
+          'price belongs to'
+      ).toBe(entry.typeExpr);
     }
   });
 
@@ -877,96 +946,168 @@ describe('author fee — the viewer-charge seam', () => {
     // Conversely a submit path that lost its charge would price a fee nobody is
     // ever billed and accrue nothing to the author.
     //
-    // ⚠️ THE MARKERS ARE THE ONES VISIBLE IN THIS FILE, AND THE TITLE SAYS ONLY
-    // WHAT THEY COVER. `accrueBlockAuthorFee` was in this list for one revision
-    // and the guard went red on `submitWorkflow`: accrual is called by
-    // `chargeBlockAuthorFee` INSIDE the service, so no router region can contain
-    // it and the marker asserted something this corpus cannot see. It is covered
-    // transitively by `chargeBlockAuthorFee(` and directly by the service's own
-    // suite. A guard whose name is wider than its body reads as coverage while
-    // providing none, so the name lost the clause rather than the body faking it.
+    // 🔴 THE DISCLOSING HALF IS THE STRONG CLAIM, AND IT IS THE ONE STATED
+    // EXHAUSTIVELY: a disclosing region contains NOT ONE of the router's money
+    // primitives — not a reservation, not a charge, not a refund, not a settle.
+    // The reserving half asserts only that money moves at all; WHICH primitives
+    // each reserving path must use is pinned per path by
+    // `🔴 THE FEE IS INSIDE THE NUMBER EVERY RESERVATION READS` above, because it
+    // genuinely differs between them (measured: `submitWorkflow` calls 7 of the
+    // 15, `submitStepWorkflow` calls 9).
     //
-    // 🔴 THE LIST IS NOW THE SHARED ONE, AND IT USED TO BE TWO ENTRIES SHORT — SO
-    // THIS GUARD'S OWN TITLE WAS FALSE. It knew `chargeBlockAuthorFee(` and
-    // `reserveAppSpend(` only, while `reserveBlockBuzzSpendForClaims(` and
-    // `reserveDevSessionBuzz(` — both named as reservation primitives thirty
-    // lines above, in THIS file — were absent. Measured: inserting
-    // `await reserveBlockBuzzSpendForClaims(claims, userId, 999);` into the
-    // DISCLOSING `estimateStepWorkflow` region left 821/821 green with this test
-    // reporting ✓, under the title "a DISCLOSING quote reserves nothing and
-    // charges nothing". A reserving call on an unbounded, un-idempotent estimate
-    // arm is the single worst thing this file exists to prevent, and it was the
-    // one shape the guard could not see.
+    // ⚠️ THAT ASYMMETRY IS THE FIX FOR A HOLE THIS GUARD SHIPPED TWICE. The list
+    // was two entries, then four, and each time a mutant used a primitive it did
+    // not name to reserve on the DISCLOSING estimate arm and survived the whole
+    // battery — under this exact title. The second survivor was a one-line
+    // `await reserveBlockBuzzSpend(userId, 999);`, a module-level function in the
+    // same router with `userId` already in scope. The cause was not the entries
+    // that were missing but the rule that kept them out: the role test demanded a
+    // reserving region contain EVERY marker, which capped the list at the
+    // INTERSECTION of the reserving paths and made completing it impossible. Any
+    // hand-widening of a capped list has the same half-life; the population is now
+    // DERIVED from the router, by the test below.
+    //
+    // ⚠️ `accrueBlockAuthorFee` is deliberately absent. It is called by
+    // `chargeBlockAuthorFee` INSIDE the service, so no router region can contain
+    // it; a marker for it asserted something this corpus cannot see, and the
+    // guard went red on `submitWorkflow`. Covered transitively by the charge and
+    // directly by the service's own suite.
     for (const [name, { role }] of Object.entries(QUOTE_SITE_LEDGER)) {
       const region = regions.get(name);
       expect(region, `no region for ${name} — the slicer is wrong`).toBeDefined();
-      for (const marker of MONEY_MARKERS) {
+      const found = moneyMarkersIn(region!);
+      if (role === 'disclosing') {
         expect(
-          region!.includes(marker),
-          `${name} is ledgered '${role}' but ${role === 'disclosing' ? 'contains' : 'is missing'} ${marker}`
-        ).toBe(role === 'reserving');
+          found,
+          `${name} is ledgered 'disclosing' but its region moves money: ${found.join(', ')}. A ` +
+            'reservation or charge on an estimate arm debits a viewer for a price quote, on a ' +
+            'surface with no rate limit, no idempotency key and nothing to reverse.'
+        ).toEqual([]);
+      } else {
+        expect(
+          found.length,
+          `${name} is ledgered 'reserving' but its region calls no money primitive at all — it ` +
+            'prices a fee nobody is ever billed, and accrues nothing to the author'
+        ).toBeGreaterThan(0);
       }
-      // …and the same question asked of the region as a WHOLE, so a region that
-      // is neither all-markers nor none is reported as MIXED rather than
-      // producing four separate per-marker failures that each look like a typo.
+      // The same question asked of the region as a whole, so the ledgered role and
+      // the structural role are compared rather than merely co-existing.
       expect(
         structuralQuoteRole(region!),
-        `${name} is ledgered '${role}' but its region contains ${moneyMarkersIn(region!).length} of ` +
-          `${MONEY_MARKERS.length} money primitives (${moneyMarkersIn(region!).join(', ') || 'none'}) ` +
-          '— a path that reserves some money and not the rest is neither role'
+        `${name} is ledgered '${role}' but its region reads as the other role`
       ).toBe(role);
     }
   });
 
-  it('the money-marker list is COMPLETE against the reservations this file names', () => {
-    // 🔴 THE POSITIVE CONTROL ON THE LIST ITSELF, because the defect above was a
-    // MISSING ENTRY and no assertion over the list's contents can catch that.
-    // `🔴 THE FEE IS INSIDE THE NUMBER EVERY RESERVATION READS` asserts, twenty
-    // lines above, that the folded fee is passed to exactly three reservation
-    // calls. Every one of those three must therefore be a money marker — if this
-    // file can name a reservation in one test and not know it in another, the
-    // classification is guesswork.
-    for (const reservation of [
-      'reserveBlockBuzzSpendForClaims(',
-      'reserveAppSpend(',
-      'reserveDevSessionBuzz(',
-    ]) {
-      expect(
-        MONEY_MARKERS as readonly string[],
-        `${reservation} is asserted as a reservation above but is not a money marker — a ` +
-          'disclosing region could grow it and stay green'
-      ).toContain(reservation);
-    }
-    // The charge completes the set; a region holding it moves money outright.
-    expect(MONEY_MARKERS as readonly string[]).toContain('chargeBlockAuthorFee(');
-    // 🔴 AND THE MARKERS ARE REACHABLE IN THIS CORPUS. A marker naming something
-    // no router region can contain (the `accrueBlockAuthorFee` case above) is a
-    // guard that can only ever be satisfied vacuously, so each one is shown to
-    // be FOUND on the reserving side before its absence is read as evidence on
-    // the disclosing side.
-    for (const marker of MONEY_MARKERS) {
-      expect(source, `${marker} appears nowhere in the router — it cannot discriminate`).toContain(
-        marker
-      );
-    }
+  it('🔴 every money primitive in the router is CLASSIFIED — the list is derived, not curated', () => {
+    // 🔴 THE GUARD THAT REPLACES A HAND-MAINTAINED LIST, AND THE ONE WHOSE ABSENCE
+    // LET THE SAME DEFECT SHIP TWICE. The previous version of this test restated
+    // the three reservation names the list already held and asserted they were
+    // present — self-consistent, and therefore blind to the only failure that
+    // matters here, which is an entry that was never added. A test titled
+    // COMPLETE whose body checks self-consistency is the "description wider than
+    // the implementation" shape this whole file exists to hunt.
+    //
+    // So the population is ENUMERATED from the router by naming shape, and every
+    // identifier found must be classified: either a money marker, or an explicit
+    // exclusion carrying a reason. Both directions fail —
+    //   GROWTH  — a new `reserve*`/`charge*`/`refund*` helper is red until someone
+    //             decides which it is, so it cannot be reached from a disclosing
+    //             region in the meantime.
+    //   SHRINK  — a marker whose call sites all disappear is red too, because a
+    //             marker that matches nothing discriminates nothing and would sit
+    //             in the list looking like coverage.
+    //
+    // ⚠️ THE PATTERN IS A NAMING CONVENTION, AND THAT IS A REAL LIMIT: a money
+    // helper named outside it (`takeBuzz`, `applyFee`) is invisible here. It is
+    // stated rather than papered over — the convention holds for all 15 today,
+    // and the exclusion ledger is where a counter-example gets recorded.
+    const NOT_MONEY: Record<string, string> = {
+      // Empty today: every identifier the pattern finds really does move or
+      // commit Buzz. An entry here must say why its subject does not.
+    };
+
+    const found = moneyIdentifiersIn(source);
+    // Positive control: the enumeration really ran. A pattern that matched
+    // nothing would make the set comparison below trivially satisfiable by an
+    // empty marker list.
+    expect(found.length, 'no money identifiers found — the pattern is wrong').toBeGreaterThan(10);
+
+    const markers = MONEY_MARKERS.map((m) => m.slice(0, -1));
+    // No identifier may be both a marker and an exclusion.
+    expect(
+      markers.filter((m) => m in NOT_MONEY),
+      'an identifier is both a money marker and excluded from being one'
+    ).toEqual([]);
+    expect(
+      found.sort(),
+      'the router calls a money primitive this list does not classify (or lists one the router no ' +
+        'longer calls). Add it to MONEY_MARKERS, or to NOT_MONEY with a reason — an unclassified ' +
+        'primitive can be called from a DISCLOSING estimate arm and every role guard stays green.'
+    ).toEqual([...markers, ...Object.keys(NOT_MONEY)].sort());
   });
 
-  it('🔴 exactly the DISCLOSING quotes suppress the payee skip logs', () => {
+  it('🔴 exactly the DISCLOSING quotes suppress the quote path log writes', () => {
     // Those logs do an unconditional `console.error` (a SYNCHRONOUS write when
     // stderr is a pipe) plus an HTTP ingest, and the estimate path is unbounded —
     // per parameter change, no rate limit — while a submit is once per real
     // generation. So the flag belongs on exactly the disclosing arms.
     //
-    // BOTH DIRECTIONS. A reserving site that grew it would silence the skip
+    // BOTH DIRECTIONS. A reserving site that grew it would silence the
     // diagnostics on the path that MOVES MONEY, where they are the only record
     // that a fee was priced and then declined. A disclosing site that lost it
     // puts a synchronous write back on the unbounded surface.
+    //
+    // ⚠️ THE FLAG WAS RENAMED, AND THE RENAME IS THE FINDING. It was
+    // `suppressSkipLogs`, and that name was the reason it reached only
+    // `resolveBlockAuthorFeePayee`'s two SKIP lines while `quoteBlockAuthorFee`'s
+    // own `catch` — the arm that fires when the DB is failing, i.e. at the worst
+    // possible rate — kept writing. Two independent review lanes found the same
+    // gap. The name now describes the whole quote path, which is what the flag
+    // has to cover for the sentence above to be true.
     for (const { path: owner, site } of quoteOwners) {
       expect(
-        site.includes('suppressSkipLogs: true'),
-        `${owner} is ledgered '${QUOTE_SITE_LEDGER[owner].role}' — its suppressSkipLogs is wrong`
+        containsExpression(site, 'suppressQuoteLogs: true'),
+        `${owner} is ledgered '${QUOTE_SITE_LEDGER[owner].role}' — its suppressQuoteLogs is wrong`
       ).toBe(QUOTE_SITE_LEDGER[owner].role === 'disclosing');
     }
+  });
+
+  it('🔴 the suppression covers EVERY log write on the quote path, not just the skips', () => {
+    // 🔴 A COVERAGE GUARD ON THE FLAG ITSELF, because the defect was a flag whose
+    // NAME was narrower than the claim made for it. The guard above pins WHICH
+    // call sites pass the flag; nothing pinned WHAT it reaches, so
+    // `quoteBlockAuthorFee`'s own `catch` wrote unconditionally on the unbounded
+    // surface while every source-text check stayed green.
+    //
+    // The property: inside `quoteBlockAuthorFee`, every `logToAxiom(` is behind
+    // the flag. Asserted over the FUNCTION's own region so a log added to a
+    // neighbour is not counted, and both halves are checked — the count of log
+    // sites and the count of guards on them — because a guard added without a log
+    // site, or a log site added without a guard, are different mistakes.
+    const chargeService = blankComments(
+      readFileSync(
+        path.join(process.cwd(), 'src/server/services/blocks/author-fee-charge.service.ts'),
+        'utf8'
+      )
+    );
+    const start = chargeService.indexOf('export async function quoteBlockAuthorFee(');
+    expect(start, 'quoteBlockAuthorFee not found — the matcher is wrong').toBeGreaterThan(-1);
+    const end = chargeService.indexOf('\nexport ', start + 1);
+    const region = chargeService.slice(start, end === -1 ? chargeService.length : end);
+
+    // Positive control: the region really contains the thing under test.
+    const logSites = [...region.matchAll(/logToAxiom\(/g)];
+    expect(logSites.length, 'no logToAxiom in quoteBlockAuthorFee — the slice is wrong').toBe(1);
+    expect(
+      region,
+      'quoteBlockAuthorFee writes a log that the disclosure flag does not gate — on the estimate ' +
+        'arms that is an unbounded synchronous stderr write, and this arm fires when the database ' +
+        'is already failing'
+    ).toContain('if (!args.suppressQuoteLogs) {');
+    // …and the flag is actually FORWARDED to the payee resolver, or the skip
+    // lines it is named for keep writing while this guard reads green.
+    expect(region).toContain('suppressSkipLogs: args.suppressQuoteLogs');
   });
 
   it('🔴 on a RESERVING path the order is price → reserve → charge', () => {
@@ -1028,7 +1169,27 @@ describe('author fee — the viewer-charge seam', () => {
     // the enumeration above cannot see if it invents a third one.
     for (const [name, { role }] of Object.entries(QUOTE_SITE_LEDGER)) {
       if (role !== 'reserving') continue;
-      expect(regions.get(name)!).not.toMatch(/snapshot\.cost[^)]*\+/);
+      // 🔴 `[^)]*` CANNOT CROSS A `)`, AND THE IDIOMATIC MUTATION HAS ONE.
+      // `cost: { total: (snapshot.cost?.total ?? 0) + reservedAuthorFeeBuzz }` —
+      // the natural spelling, not a contrived one — puts a `)` between the read
+      // and the `+`, so this negative passed over exactly the code it names. So
+      // did `Math.max(0, snapshot.cost?.total ?? 0) + fee`.
+      //
+      // ⚠️ THE WINDOW IS BOUNDED TO ONE LINE, AND THE FIRST WIDENING WAS NOT.
+      // `[\s\S]{0,120}` spans newlines, so it paired a legitimate
+      // `snapshot.cost?.total` read with an unrelated `+` a few lines below and
+      // matched — a guard that goes red on correct code is one someone loosens
+      // until it cannot go red at all. The mutation is a single expression, so
+      // `[^\n]` is the right class: it crosses parens but never lines. Checked
+      // against three negative controls (a bare read, a read with a `+` on the
+      // NEXT line, and the real `settle({ ceiling, realized: snapshot.cost … })`
+      // call) as well as the three mutation spellings.
+      expect(
+        regions.get(name)!,
+        `${name} is a RESERVING path and adds something to a snapshot.cost read — the reported ` +
+          'total there is the realized GENERATION cost, and the settle/refund arithmetic ' +
+          'downstream is taken against it'
+      ).not.toMatch(/snapshot\.cost[^\n]{0,160}?\+/);
     }
   });
 

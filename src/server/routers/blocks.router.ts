@@ -5313,7 +5313,7 @@ export const blocksRouter = router({
         workflowLabel: 'estimate',
         // Unbounded surface — see the flag's own note. The skip lines it silences
         // are re-derived at the submit, once per real generation.
-        suppressSkipLogs: true,
+        suppressQuoteLogs: true,
       });
       // #3520: the ESTIMATE reports the substitution too — a block that quotes a
       // cost for model A and is silently priced for model B has the same
@@ -9187,7 +9187,7 @@ async function estimateStepWorkflow(opts: {
     viewerUserId: userId,
     workflowLabel: 'estimate',
     // Unbounded surface — see the flag's own note on `quoteBlockAuthorFee`.
-    suppressSkipLogs: true,
+    suppressQuoteLogs: true,
   });
   const shownBuzz = shownGenerationBuzz + (authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0);
 
@@ -9238,7 +9238,10 @@ async function quoteStepBuzz(opts: {
   step: ReturnType<typeof resolveBlockStep>;
   orchestratorStep: ReturnType<typeof buildStepOrchestratorStep>;
   userId: number;
-}): Promise<{ quotedBuzz: number; whatIfResult: Awaited<ReturnType<typeof submitWorkflow>> } | null> {
+}): Promise<{
+  quotedBuzz: number;
+  whatIfResult: Awaited<ReturnType<typeof submitWorkflow>>;
+} | null> {
   const { ctx, claims, step, orchestratorStep, userId } = opts;
   try {
     const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);

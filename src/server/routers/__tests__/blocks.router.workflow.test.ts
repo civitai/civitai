@@ -10734,6 +10734,13 @@ describe('blocks workflow — author-fee price disclosure', () => {
    * Distinctness among the OTHER fixture numbers buys nothing against a mutant
    * that hardcodes the single value they all assert — the control is to feed a
    * base the constant CANNOT produce and watch the output move. 5% of 640 = 32.
+   *
+   * ⚠️ THE DISTINCTNESS IS GUARANTEED BY THE TWO ARMS ASSERTING DIFFERENT SUMS,
+   * NOT BY AN ASSERTION ABOUT THESE CONSTANTS. An `expect(EXPECTED_FEE_2).not
+   * .toBe(EXPECTED_FEE)` used to sit in the step regression test; it compared two
+   * literals in this file, so no mutation of any production file could redden it.
+   * It was fixture integrity wearing a control's clothes — the shape the note a
+   * hundred lines above condemns — and it is gone rather than kept as decoration.
    */
   const FEE_BASE_2 = 640;
   const EXPECTED_FEE_2 = 32;
@@ -10905,7 +10912,38 @@ describe('blocks workflow — author-fee price disclosure', () => {
       // 🔴 A DIFFERENT BASE FROM THE TXT2IMG ARM ON PURPOSE — see FEE_BASE_2.
       // A `feeBuzz` hardcoded to either arm's expected value is red on the other.
       expect(result.snapshot.cost).toEqual({ total: 4 + EXPECTED_FEE_2 });
-      expect(EXPECTED_FEE_2).not.toBe(EXPECTED_FEE);
+    });
+
+    it('🔴 still reserves NOTHING — a disclosing quote moves no money', async () => {
+      // 🔴 THE BEHAVIOURAL BACKSTOP ON THE ARM THAT MOST NEEDED ONE, AND IT WAS
+      // THE ONE ARM WITHOUT IT. Its txt2img twin has had this since the first
+      // revision; this arm did not — and this arm is exactly where the source-text
+      // role guard was twice measured blind, both times to a reservation grown
+      // right here.
+      //
+      // 🔴 IT IS WIDER THAN THE SOURCE-TEXT GUARD BY CONSTRUCTION, WHICH IS THE
+      // POINT OF HAVING BOTH. The redis filter is a PREFIX, so it catches every
+      // `system:blocks:` reservation — per-call budget, consent budget, per-app
+      // cap, dev session, review-run-for-real — including primitives no marker
+      // list names. A structural guard can only forbid the spellings it knows; a
+      // behavioural one forbids the effect. The list is derived now, but a list
+      // and an effect fail differently and neither subsumes the other.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      feeLive();
+      stepQuoting({ total: 4, base: FEE_BASE_2 });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+
+      // Positive control: the fee really was priced on this run, so the zeroes
+      // below are a claim about a LIVE fee path and not about a quote that
+      // silently did nothing.
+      expect(result.snapshot.cost).toEqual({ total: 4 + EXPECTED_FEE_2 });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(
+        mockSysRedis.incrBy.mock.calls.filter((c) => String(c[0]).startsWith('system:blocks:'))
+      ).toHaveLength(0);
     });
 
     it('the fee is ADDED OUTSIDE the max(floor, quoted), never folded into it', async () => {
@@ -10947,7 +10985,11 @@ describe('blocks workflow — author-fee price disclosure', () => {
 
     it('customComfy estimate returns the recipe display estimate, fee-free', async () => {
       mockVerifyBlockToken.mockResolvedValue(
-        validClaims({ ctx: { entityType: 'none', slotId: 'page' }, appBlockId: 'apb_test', buzzBudget: 500 })
+        validClaims({
+          ctx: { entityType: 'none', slotId: 'page' },
+          appBlockId: 'apb_test',
+          buzzBudget: 500,
+        })
       );
       happyUser();
       feeLive();
@@ -10968,7 +11010,11 @@ describe('blocks workflow — author-fee price disclosure', () => {
 
     it('pass-through estimate is fee-free', async () => {
       mockVerifyBlockToken.mockResolvedValue(
-        validClaims({ ctx: { entityType: 'none', slotId: 'page' }, appBlockId: 'apb_test', buzzBudget: 50 })
+        validClaims({
+          ctx: { entityType: 'none', slotId: 'page' },
+          appBlockId: 'apb_test',
+          buzzBudget: 50,
+        })
       );
       happyUser();
       feeLive();

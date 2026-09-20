@@ -5,7 +5,6 @@ import {
   blankComments,
   declRegions,
   enclosingDecl,
-  moneyMarkersIn,
   structuralQuoteRole,
 } from '~/test-utils/routerSourceRegions';
 
@@ -388,20 +387,15 @@ describe('the four submit gates are routed through one helper', () => {
     // guard (a `reserveBlockBuzzSpendForClaims` inserted into
     // `estimateStepWorkflow` survived the whole battery).
     //
-    // `structuralQuoteRole` reads the region's own MONEY PRIMITIVES instead: all
-    // of them is reserving, none of them is disclosing, and anything between is
-    // `null` — a real answer that must fail rather than default to a bucket.
+    // `structuralQuoteRole` reads the region's own MONEY PRIMITIVES instead: a
+    // region that calls ANY of them reserves, one that calls NONE discloses. The
+    // disclosing side is the exhaustive claim and it is the one that matters — an
+    // estimate arm must touch no reservation, charge, refund or settle at all.
     const regions = declRegions(router);
     const roleOf = (owner: string) => {
       const region = regions.get(owner);
       expect(region, `no region for ${owner} — the region slicer is wrong`).toBeDefined();
-      const role = structuralQuoteRole(region!);
-      expect(
-        role,
-        `${owner} contains ${moneyMarkersIn(region!).join(', ') || 'no'} money primitives — it ` +
-          'neither reserves fully nor reserves nothing, so it classifies as neither role'
-      ).not.toBeNull();
-      return role!;
+      return structuralQuoteRole(region!);
     };
     const reserving = quoteOwners.filter((owner) => roleOf(owner) === 'reserving');
     const disclosing = quoteOwners.filter((owner) => roleOf(owner) === 'disclosing');
@@ -444,9 +438,50 @@ describe('the four submit gates are routed through one helper', () => {
     }
 
     expect(reserving).toHaveLength(2);
+
+    // 🔴 THE SET, NOT THE COUNT — AND THE COUNT WAS WALKABLE BY A SWAP. This read
+    // `count(/pricesAuthorFee:\s*true\b/) === reserving.length`, i.e. 2 === 2.
+    // Setting `pricesAuthorFee: false` on `submitStepWorkflow` (which DOES price a
+    // fee) and `true` on `submitPassThroughStepWorkflow` (which does not) flips
+    // two flags and moves neither number, so the ledger stayed green over an
+    // exactly-inverted classification. Nothing else can catch it: the flag's own
+    // consumer does not branch on it yet — that is the whole point of it, a place
+    // for a future ceiling decision to know WHICH gate is asking — so no
+    // behavioural test in the repo witnesses it either. A ledger that counts
+    // cannot attribute, and attribution is the entire content of this flag.
+    //
+    // So each gate's flag is resolved to its OWN enclosing path and the mapping is
+    // compared as a set against the reserving quote owners. A swap now names both
+    // paths it moved.
+    const feePricingGates = [...router.matchAll(/pricesAuthorFee:\s*(true|false)\b/g)].map((m) => ({
+      owner: enclosingDecl(router, m.index),
+      prices: m[1] === 'true',
+    }));
     expect(
-      (router.match(/pricesAuthorFee:\s*true\b/g) ?? []).length,
-      'a submit path priced a fee without flipping its gate flag, or the reverse'
-    ).toBe(reserving.length);
+      feePricingGates.length,
+      'no pricesAuthorFee gates found — the matcher is wrong'
+    ).toBeGreaterThan(0);
+    for (const { owner } of feePricingGates) {
+      expect(owner, 'a pricesAuthorFee gate sits at module scope').not.toBe('<module scope>');
+    }
+    expect(
+      feePricingGates
+        .filter((g) => g.prices)
+        .map((g) => g.owner)
+        .sort(),
+      'the paths whose budget gate declares `pricesAuthorFee: true` are not the paths that ' +
+        'actually take a RESERVING fee quote. A gate classified against the wrong path is a ' +
+        'ceiling decision made about the wrong money.'
+    ).toEqual([...reserving].sort());
+    // …and the false half is named too, so a gate that simply LOST its flag is
+    // red rather than silently leaving the true-set correct. These are the two
+    // post-paid paths: no pre-submit `cost.base`, so no fee can be priced on them.
+    expect(
+      feePricingGates
+        .filter((g) => !g.prices)
+        .map((g) => g.owner)
+        .sort(),
+      'a fee-free submit gate is missing, or one gained a fee quote without flipping its flag'
+    ).toEqual(['submitCustomComfyWorkflow', 'submitPassThroughStepWorkflow']);
   });
 });
