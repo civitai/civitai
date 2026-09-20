@@ -205,10 +205,12 @@ export async function persistCustomComfySettle(input: {
 // 🔴 AND A THIRD COUNTER THAT CROSSES USERS: `appSpendKey` is
 // `appSpendDailyKey(appBlockId)` — per-APP, no user in the key. A strand
 // therefore eats the app's SHARED daily ceiling for every other user of it.
-// That is moot for a suspension (the app is down anyway) but it applies to BOTH
-// live-app populations below — `cancelAppWorkflow` AND the closed tab, which is
-// the larger of the two: one user's unsettled ceiling degrades everyone else's
-// submits on that app until the window rolls.
+// That is moot for a SUSPENSION (the app is down for everyone anyway) and for a
+// publisher BAN, but it applies to every population where the app stays LIVE —
+// a single viewer uninstalling, the closed tab, and `cancelAppWorkflow`: one
+// user's unsettled ceiling degrades everyone else's submits on that app until
+// the window rolls. No ranking is offered between those three; nobody measured
+// their relative sizes.
 //
 // 🔴 AND THE WINDOW IS THE RESERVATION COUNTER'S TTL, NOT THIS RECORD'S. Both
 // are 25h, but they are armed at different instants: `reserveCumulativeBuzzKey`
@@ -258,9 +260,11 @@ export async function persistCustomComfySettle(input: {
 //      population, because it counts every budgeted submit and not only the
 //      ones that write a settle record. ⚠️ That record-writing population is
 //      WIDER than customComfy: `persistCustomComfySettle` has three call sites
-//      in `blocks.router.ts` — customComfy and the pass-through step, both
-//      UNCONDITIONAL, plus the `postPaidSettle`-gated registry step in (3). It
-//      is still a strict subset of 585, so the inference holds. ⚠️ It is a MEAN,
+//      in `blocks.router.ts` — customComfy and the pass-through step, neither
+//      gated on a plan flag (both still sit behind a real `workflowId`, so a
+//      `whatif` or failed submit writes nothing), plus the `postPaidSettle`-gated
+//      registry step in (3). It is still a strict subset of 585, so the
+//      inference holds. ⚠️ It is a MEAN,
 //      so it is NOT an upper bound on the PEAK — a peak day is higher by an
 //      amount nobody derived, and the mean is the weaker figure in the
 //      direction of the re-open trigger below. Net-new scheduled infrastructure
@@ -282,8 +286,10 @@ export async function persistCustomComfySettle(input: {
 // shape visible; it did not create it, and this decision does nothing for it.
 // There is no server-side completion callback to fall back on: the orchestrator's
 // `workflow-completed` handler updates the read-model only, and the router
-// records that it is not wired to fire. Together with `cancelAppWorkflow` above,
-// this is the larger population, and it stays open.
+// records that it is not wired to fire. Together with `cancelAppWorkflow` above
+// it is plausibly the larger population — plausibly, because nobody measured it;
+// the argument for the decision does not rest on that, and it stays open either
+// way.
 //
 // WHAT WOULD CHANGE THIS. Either of these reopens it as a real fix — a
 // settle-only carve-out through the guard, or an out-of-band reconciler, which
