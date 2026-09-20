@@ -2775,3 +2775,72 @@ describe('resolveBlockPollWaitSeconds', () => {
     expect(20 - MAX_BLOCK_POLL_WAIT_SECONDS).toBeGreaterThanOrEqual(5);
   });
 });
+
+/**
+ * `snapshotFromWorkflow`'s `additionalCostBuzz` — the App Blocks author fee's
+ * half of the viewer-facing price disclosure.
+ *
+ * 🔴 THIS SUITE EXISTS BECAUSE THE GUARDS IT DESCRIBES WERE UNTESTED WHILE A
+ * PRODUCTION COMMENT CLAIMED THEM. The comment at the implementation says a
+ * negative addition would "make the block show LESS than it will be charged —
+ * the one direction this whole change exists to remove", and that a non-finite
+ * one must not propagate. Neither was pinned: mutating `additional > 0` to
+ * `additional !== 0`, and deleting the `Number.isFinite` check, each left the
+ * entire 586-test battery green. A comment is a claim; these are the assertions
+ * behind it.
+ */
+describe('snapshotFromWorkflow — additionalCostBuzz', () => {
+  it('ADDS a positive addend to the reported total', () => {
+    const snap = snapshotFromWorkflow(fakeWorkflow() as never, { additionalCostBuzz: 7 });
+    expect(snap.cost).toEqual({ total: 49 });
+  });
+
+  it('is a no-op when omitted — every existing caller is byte-identical', () => {
+    expect(snapshotFromWorkflow(fakeWorkflow() as never).cost).toEqual({ total: 42 });
+    expect(snapshotFromWorkflow(fakeWorkflow() as never, {}).cost).toEqual({ total: 42 });
+  });
+
+  it('🔴 IGNORES a NEGATIVE addend — it may never shrink the shown price', () => {
+    // The mutation this kills: `additional > 0` → `additional !== 0`, which would
+    // report 32 against a 42 debit. Showing less than the viewer is charged is
+    // precisely the defect the disclosure exists to remove, so the arithmetic
+    // must be one-directional rather than merely "additive".
+    expect(snapshotFromWorkflow(fakeWorkflow() as never, { additionalCostBuzz: -10 }).cost).toEqual(
+      { total: 42 }
+    );
+  });
+
+  it('🔴 IGNORES a non-finite addend rather than propagating it', () => {
+    // Kills the deletion of `Number.isFinite`. `42 + NaN` is `NaN`, which would
+    // travel to the block as a cost and render as a price. Both spellings are
+    // driven: `NaN` fails `isFinite` by value, `Infinity` by magnitude, and a
+    // guard written as `!Number.isNaN` catches only the first.
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(
+        snapshotFromWorkflow(fakeWorkflow() as never, { additionalCostBuzz: bad }).cost,
+        `addend ${bad} reached the reported total`
+      ).toEqual({ total: 42 });
+    }
+  });
+
+  it('🔴 does NOT invent a cost when the orchestrator reported none', () => {
+    // Reporting a bare fee as if it were the price is worse than reporting
+    // nothing: `cost` is omitted entirely when the workflow carries no total, and
+    // a block reading an absent cost falls back to its own handling.
+    const snap = snapshotFromWorkflow(fakeWorkflow({ cost: undefined }) as never, {
+      additionalCostBuzz: 9,
+    });
+    expect(snap.cost).toBeUndefined();
+  });
+
+  it('composes with modelSubstitutions rather than replacing them', () => {
+    // Both live on the same `extra` bag; a mutant that read one and dropped the
+    // other would be invisible to either field's own test.
+    const snap = snapshotFromWorkflow(fakeWorkflow() as never, {
+      additionalCostBuzz: 3,
+      modelSubstitutions: [{ requested: 1, served: 2 }] as never,
+    });
+    expect(snap.cost).toEqual({ total: 45 });
+    expect(snap.modelSubstitutions).toHaveLength(1);
+  });
+});
