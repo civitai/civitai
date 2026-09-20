@@ -1,6 +1,14 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { describe, expect, it } from 'vitest';
 
 import * as Core from '../test-cache/core.mjs';
@@ -116,6 +124,18 @@ describe('keys are portable between worktrees', () => {
     expect(isCoveredElsewhere('crypto')).toBe(true);
     expect(isCoveredElsewhere('src/server/services/image.service.ts')).toBe(false);
   });
+
+  // A vite virtual id is not a path, so fingerprinting it returns `missing` and the reporter reads
+  // that as "a module this test imported was deleted mid-run" — a correct refusal for a real file
+  // and nonsense for an id no path can name. It cost every happy-dom test its record.
+  // The pair matters: the second half is what keeps the scheme rule from swallowing repo files.
+  it('ignores a vite virtual id without ignoring anything that names a file', () => {
+    expect(isCoveredElsewhere('__vite-browser-external:crypto')).toBe(true);
+    expect(isCoveredElsewhere('\0__vite-browser-external:crypto')).toBe(true);
+    expect(isCoveredElsewhere('virtual:my-plugin/entry')).toBe(true);
+    expect(isCoveredElsewhere('src/hooks/useDateLocale.ts')).toBe(false);
+    expect(isCoveredElsewhere('scripts/test-cache/core.mjs')).toBe(false);
+  });
 });
 
 describe('the key', () => {
@@ -163,6 +183,9 @@ describe('tests that always run', () => {
     ['const m = await import(`~/server/${name}`);'],
     ['const m = await import(`@civitai/ui/${name}`);'],
     ['const m = await import(`node:${mod}`);'],
+    // The interpolated expression survives the strip. Erasing the whole call instead would hide a
+    // spawn inside it, which is the one thing these patterns exist to catch.
+    ["const m = await import(`dayjs/${require('child_process') ? 'a' : 'b'}.js`);"],
     // The form this repo uses, which the first version of the pattern let through.
     ['return import(/* @vite-ignore */ file);'],
     ["const files = globSync('src/**/*.ts');"],
@@ -188,6 +211,26 @@ describe('tests that always run', () => {
     ['const m = await import(`dayjs/locale/${tag}.js`);'],
   ])('leaves %s cacheable', (source) => {
     expect(alwaysRuns(source)).toBe(false);
+  });
+
+  /**
+   * The bare-specifier rule excludes first-party code by NAME — `@civitai/*` — so it is only sound
+   * while that is what a workspace package is called. An unscoped or differently-scoped workspace
+   * package would read as a node_modules specifier while symlinking into `packages/`, and a test
+   * importing it could then be skipped over a change to its source.
+   */
+  it('assumes every workspace package is @civitai/-scoped, so check that it is', () => {
+    const repo = resolve(__dirname, '../..');
+    const names = ['packages', 'apps'].flatMap((dir) =>
+      readdirSync(join(repo, dir), { withFileTypes: true })
+        .filter((e) => e.isDirectory() && existsSync(join(repo, dir, e.name, 'package.json')))
+        .map((e) => JSON.parse(readFileSync(join(repo, dir, e.name, 'package.json'), 'utf8')).name)
+    );
+
+    // Without this the assertion below passes over an empty list — the directories are read off
+    // disk, and a rename or a wrong root would otherwise report all-clear.
+    expect(names.length).toBeGreaterThan(10);
+    expect(names.filter((n: string) => !n.startsWith('@civitai/'))).toEqual([]);
   });
 });
 

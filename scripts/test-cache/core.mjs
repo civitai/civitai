@@ -102,7 +102,11 @@ export function toRel(id, root) {
     // `fileURLToPath` would have produced on the host that wrote it, so fall back to it.
     try {
       p = fileURLToPath(p);
-    } catch {
+    } catch (err) {
+      // ONLY the cross-platform spelling. Any other failure is a malformed id, and swallowing it
+      // would turn a refused record into a record written without that dependency — the false-skip
+      // shape. A URL this host cannot name cannot be a local file, so it lands as null below.
+      if (err?.code !== 'ERR_INVALID_FILE_URL_PATH') throw err;
       p = decodeURIComponent(new URL(p).pathname);
     }
     p = p.replace(/^\/([A-Za-z]:)/, '$1');
@@ -139,12 +143,15 @@ export function isCoveredElsewhere(rel) {
  * site, and it alone made 44 test files uncacheable.
  */
 const BARE_COMPUTED_IMPORT = new RegExp(
-  String.raw`import\(\s*(?:/\*[\s\S]*?\*/\s*)*\x60(?!@civitai/)[A-Za-z@][^\x60$:]*\$\{[^\x60]*\x60\s*\)`,
+  String.raw`import\(\s*(?:/\*[\s\S]*?\*/\s*)*\x60(?!@civitai/)[A-Za-z@][^\x60$:]*(\$\{[^\x60]*)\x60\s*\)`,
   'g'
 );
 
 export function alwaysRuns(source) {
-  return ALWAYS_RUN_SOURCE.some((re) => re.test(source.replace(BARE_COMPUTED_IMPORT, '')));
+  // The interpolated EXPRESSION is kept, only the import call around it goes. Dropping the whole
+  // call would erase a spawn inside it — `` import(`dayjs/${require('child_process') ? a : b}.js`) ``
+  // read as cacheable, which is the one thing the patterns below exist to catch.
+  return ALWAYS_RUN_SOURCE.some((re) => re.test(source.replace(BARE_COMPUTED_IMPORT, '$1')));
 }
 
 const RESOLVABLE_EXTS = ['ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs', 'json'];
