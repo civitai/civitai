@@ -125,8 +125,19 @@ import { describe, expect, it } from 'vitest';
  *
  *   - `guardIsImportedAndUnshadowed` is deliberately over-broad in the same way
  *     `bindingsOf` is: ONE function-local `const authorizeBlockBridgeToken` anywhere in a
- *     file empties that file's ENTIRE guard population and turns the ledger red. Loud and
- *     fail-closed.
+ *     file empties that file's ENTIRE guard population and turns the ledger red. A
+ *     NAMESPACE import of the guard module does the same. Loud and fail-closed.
+ *   - 🔴 THREE SHAPES STILL SCORE `conditional: false` WHILE THE GUARD MAY NOT RUN, and
+ *     they are listed because the conditionality axis has now been "closed" three rounds
+ *     running and is not: an OPTIONAL CALL does not evaluate its arguments when its
+ *     receiver is nullish (`await helper?.run(await guard(t))`); a GET ACCESSOR body is not
+ *     a function boundary to `ownerOf`, which counts only `ArrowFunction` and
+ *     `FunctionExpression`, so a guard inside one reads as `depth === 1`; and a LABELLED
+ *     BLOCK with an early `break` can skip the guard without any node in
+ *     `CONDITIONAL_STATEMENT_KINDS`. All three are fail-OPEN. None appears in
+ *     `blocks.router.ts` today, and each is a narrow, deliberate spelling rather than
+ *     something a maintainer writes by accident — which is the reason they are recorded
+ *     here rather than chased.
  *   - A settle performed by writing the Redis key directly rather than through this
  *     function. That is a different shape entirely and no ledger over this symbol can see
  *     it; `no-hand-typed-redis-key-constants.test.ts` is what covers hand-typed keys.
@@ -487,17 +498,22 @@ function isTrpcProcedure(pa: ts.PropertyAssignment): boolean {
 }
 
 /**
- * Node kinds between a call and its owner that make the call CONDITIONAL — i.e. present in
- * the source but not necessarily executed. Statement forms (`if` / `try` / `switch` / the
- * loops / `catch`) and EXPRESSION forms (`?:` and the short-circuiting `&&` / `||` / `??`)
- * are both here, so `flag && (await guard())` is conditional exactly like
- * `if (flag) { await guard(); }` is.
+ * STATEMENT forms only — `if` / `try` / `switch` / the loops / `catch`. A call anywhere
+ * inside one of these may not run, whichever child it sits in, so no operand test applies.
  *
- * ⚠️ An earlier revision of this docstring said the two expression forms were deliberately
- * ABSENT and were handled by a helper called `isConditionalExpressionLike`. Both halves were
- * false — they are in the list, and no such helper has ever existed anywhere in the repo.
- * The code was right and the comment was wrong, which is the worse direction: this is the
- * comment a maintainer reads before editing the list.
+ * 🔴 THE EXPRESSION FORMS ARE NOT HERE, AND THAT IS THE POINT. `?:` and the short-circuiting
+ * operators are conditional for SOME operands and not others — `guard(t) && x` and the
+ * CONDITION of a ternary always run — so they live in `SHORT_CIRCUIT_TOKENS` and
+ * `crossesConditional` below, which read which operand the call is in.
+ *
+ * ⚠️ Two earlier revisions of this docstring were wrong about its own list, in opposite
+ * directions, which is why it now says what is NOT here as well as what is. The first
+ * claimed the expression forms were absent and handled by a helper called
+ * `isConditionalExpressionLike` — no such helper has ever existed. The second, written when
+ * they genuinely were in the list, said they were "both here"; it was left in place when
+ * they were moved out, so it read as a retraction that was itself false. This is the
+ * comment a maintainer reads before editing the list, and the list they would edit for a
+ * short-circuit operator is no longer this one.
  */
 const CONDITIONAL_STATEMENT_KINDS: ((n: ts.Node) => boolean)[] = [
   ts.isIfStatement,
@@ -633,6 +649,9 @@ function ownerOf(node: ts.Node): Attribution {
   return { owner: '<module scope>', ownerId: -1, kind: 'module-scope', depth, conditional };
 }
 
+/** The promise methods `isEnforcedCall` peels before judging. Only some of them swallow. */
+const PROMISE_CHAIN_METHODS = ['then', 'catch', 'finally'];
+
 /**
  * Does this call's REJECTION reach its caller? — i.e. is the guard actually enforcing?
  *
@@ -648,16 +667,24 @@ function ownerOf(node: ts.Node): Attribution {
  * before the guard can have thrown. A position check cannot see any of them, because the
  * call sits exactly where an enforcing guard would.
  *
- * So the call must be `await`ed (or `return`ed from an async procedure, which propagates
- * the rejection to the caller just as well), and must not be the receiver of a
- * `.catch` / `.then` / `.finally`.
+ * THE RULE, as the body implements it: the call must be `await`ed (or `return`ed, which
+ * propagates the rejection to the caller just as well), and any promise chain on it must
+ * not SWALLOW — `.catch(…)` does, `.then(…)` does when given an onRejected (or a spread
+ * that might be one), `.finally(…)` never does.
  *
- * KNOWN FALSE-RED, fail-closed and stated: splitting the call from its await
- * (`const p = guard(t); const claims = await p;`) reads as unenforced here. The scan does
- * not follow a promise through a binding.
+ * ⚠️ An earlier revision of this paragraph said the call "must not be the receiver of a
+ * `.catch` / `.then` / `.finally`" AT ALL. That is no longer the rule — a one-argument
+ * `.then` and a `.finally` are enforcing — and the earlier BODY that implemented it was
+ * INERT anyway (a member-access parent can never also be an await, so the await
+ * requirement already rejected everything the clause caught).
+ *
+ * KNOWN FALSE-REDS, all fail-closed and stated: splitting the call from its await
+ * (`const p = guard(t); const claims = await p;`) or putting it through a call
+ * (`await Promise.resolve(guard(t))`) reads as unenforced — the scan follows transparent
+ * wrappers and a promise chain, not a promise through a binding or a call. And a
+ * RETHROWING `.catch(e => { throw e })` reads as swallowing, the expression twin of the
+ * rethrowing `try/catch` already listed in the header's limits.
  */
-const PROMISE_CHAIN_METHODS = ['then', 'catch', 'finally'];
-
 function isEnforcedCall(node: ts.CallExpression): boolean {
   let current: ts.Node = node;
   let parent: ts.Node | undefined = current.parent;
@@ -701,10 +728,19 @@ function isEnforcedCall(node: ts.CallExpression): boolean {
         ts.isCallExpression(call) &&
         call.expression === parent
       ) {
-        // `.catch(…)` always swallows. `.then(onOk, onErr)` swallows only with a second
-        // argument; a one-argument `.then` propagates the rejection. `.finally` never does.
+        // `.catch(…)` swallows unless it rethrows — treated as swallowing either way,
+        // which is fail-CLOSED (a rethrowing `.catch` reads as unenforced; see the limits
+        // list). `.then(onOk, onErr)` swallows only when it is given an onRejected;
+        // a one-argument `.then` propagates the rejection and `.finally` never swallows.
+        // 🔴 A SPREAD IS ONE ARGUMENT NODE, so an arity test alone let
+        // `.then(...handlers)` — which may carry an onRejected — score as enforcing.
         if (method === 'catch') swallowed = true;
-        if (method === 'then' && call.arguments.length >= 2) swallowed = true;
+        if (
+          method === 'then' &&
+          (call.arguments.length >= 2 || call.arguments.some(ts.isSpreadElement))
+        ) {
+          swallowed = true;
+        }
         current = call;
         parent = call.parent;
         continue;
@@ -732,14 +768,18 @@ type GuardSite = Attribution & { pos: number; enforced: boolean };
  *     resolves to `GUARD_MODULE`. ⚠️ The previous revision checked only that SOME named
  *     import bound the name and never read the specifier at all, contradicting this very
  *     docstring. MEASURED: `import { verifyBlockToken as authorizeBlockBridgeToken } from
- *     '…/block-token.service'` and an import from a package that does not resolve at all
+ *     '…/block-token-access.service'` and an import from a package that does not resolve
  *     both scored as a live guard. The settle side has resolved rigorously since round 1
  *     (`resolveSpec(...) === SETTLE_MODULE`, with its own wrong-module control); this is
  *     the same standard, applied to the other half.
- *   `!shadowed` — no `const`/`let`/`var`/`function` of that name anywhere in the module.
- *     With the import requirement above, a MODULE-SCOPE shadow cannot coexist (TypeScript
- *     rejects the duplicate identifier), so what this actually covers is a NESTED,
- *     block-scoped shadow in a file that does import the guard.
+ *   `!shadowed` — no `const`/`let`/`var`/`function` DECLARATION of that name anywhere in
+ *     the module. With the import requirement above, a MODULE-SCOPE shadow cannot coexist
+ *     (TypeScript rejects the duplicate identifier), so what this actually covers is a
+ *     NESTED, block-scoped one in a file that does import the guard. ⚠️ Read that list
+ *     literally: a PARAMETER, a binding element, a `class` or a `catch (e)` binding of that
+ *     name is also a shadow and is NOT detected. None is live — a resolver parameter of
+ *     that name is TS-invalid, one in a nested helper is `depth > 1`, and a catch binding
+ *     is `conditional` — but the gap is in the code, not merely in the phrasing.
  *
  * A file failing either has its guard population treated as EMPTY, which turns
  * `THE RELATIONSHIP` red rather than quietly accepting the substitute. Note the
@@ -1259,11 +1299,19 @@ export const r = router({
     const claims = cache.get(input.blockToken) ?? (await ${GUARD}(input.blockToken));
     return claims;
   }),
+  ternaryBranch: publicProcedure.mutation(async ({ input }) => {
+    const claims = cached ? cached : await ${GUARD}(input.blockToken);
+    return claims;
+  }),
 });`
     );
+    // 🔴 BOTH HALVES OF THE TERNARY RULE. Pinning only the CONDITION left the
+    // `whenTrue`/`whenFalse` clause unkilled: measured, replacing it with `return false`
+    // kept the whole file green, because the condition case satisfies the mutant too.
     expect(guards.map((g) => `${g.owner}=${g.conditional}`).sort()).toEqual([
       'leftOperand=false',
       'rightOperand=true',
+      'ternaryBranch=true',
       'ternaryCondition=false',
     ]);
   });
@@ -1286,6 +1334,9 @@ export const r = router({
   }),
   chainThenOneArg: publicProcedure.mutation(async ({ input }) => {
     return await ${GUARD}(input.blockToken).then((c) => c);
+  }),
+  chainThenSpread: publicProcedure.mutation(async ({ input }) => {
+    return await ${GUARD}(input.blockToken).then(...handlers);
   }),
   chainFinally: publicProcedure.mutation(async ({ input }) => {
     return await ${GUARD}(input.blockToken).finally(() => {});
@@ -1311,6 +1362,10 @@ export const r = router({
       'chainCatch=false',
       'chainFinally=true',
       'chainThenOneArg=true',
+      // 🔴 A SPREAD IS ONE ARGUMENT NODE, so an arity test alone scored this as enforcing
+      // while `handlers` may carry an onRejected. Measured: without the spread check the
+      // whole file stayed green.
+      'chainThenSpread=false',
       'chainThenTwoArgs=false',
       'computedCatch=false',
       'throughCast=true',
@@ -1351,8 +1406,11 @@ export const r = router({
     );
     expect(unresolvable.guards).toEqual([]);
     // 🔴 THE THIRD CASE, WHICH THE FIRST TWO CANNOT PIN: the module is RIGHT and the
-    // imported name is WRONG — some other export of the guard's own module aliased onto
-    // its name. Measured: without this, deleting the imported-name comparison left 29/29.
+    // imported name is WRONG — a name that is NOT the guard, imported from the guard's
+    // own module and aliased onto the guard's name. (That module exports exactly one
+    // symbol today, so the imported name here is deliberately one that does not exist;
+    // the scan never checks that it does, and the point is the alias, not the export.)
+    // Measured: without this, deleting the imported-name comparison left 29/29.
     const aliasedWithinGuardModule = scanSource(
       FIXTURE_REL,
       `import { resolveAppBlockApprovalVerdict as ${GUARD} } from '~/server/services/blocks/block-bridge-auth.service';

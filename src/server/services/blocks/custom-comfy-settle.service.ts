@@ -205,12 +205,15 @@ export async function persistCustomComfySettle(input: {
 // 🔴 AND A THIRD COUNTER THAT CROSSES USERS: `appSpendKey` is
 // `appSpendDailyKey(appBlockId)` — per-APP, no user in the key. A strand
 // therefore eats the app's SHARED daily ceiling for every other user of it.
-// That is moot for a SUSPENSION (the app is down for everyone anyway) and for a
-// publisher BAN, but it applies to every population where the app stays LIVE —
-// a single viewer uninstalling, the closed tab, and `cancelAppWorkflow`: one
-// user's unsettled ceiling degrades everyone else's submits on that app until
-// the window rolls. No ranking is offered between those three; nobody measured
-// their relative sizes.
+// A SUSPENSION or a publisher BAN mutes it only while it lasts — lift either
+// inside the window and the strand is still eating that ceiling, the same
+// "inside the window" case the consent-budget bullet above contemplates. It
+// bites unconditionally for every PER-USER revocation, where the app stays live
+// for everyone else: an uninstall, a `toggleEnabled(false)` disable (which calls
+// `revokeInstance` exactly as an uninstall does), the closed tab, and
+// `cancelAppWorkflow`. One user's unsettled ceiling degrades everyone else's
+// submits on that app until the window rolls. No ranking is offered between
+// those; nobody measured their relative sizes.
 //
 // 🔴 AND THE WINDOW IS THE RESERVATION COUNTER'S TTL, NOT THIS RECORD'S. Both
 // are 25h, but they are armed at different instants: `reserveCumulativeBuzzKey`
