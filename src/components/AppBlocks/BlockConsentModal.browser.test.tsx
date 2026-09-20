@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -21,13 +21,26 @@ vi.mock('~/components/Dialog/DialogProvider', () => ({
 // half of this component is entirely about WHAT IS SENT, and a render-only assertion
 // cannot see the difference between "omit the key" and "send null", which is the one
 // distinction the server acts on.
-const { mutate } = vi.hoisted(() => ({ mutate: vi.fn() }));
+const { mutate, feeQuery } = vi.hoisted(() => ({
+  mutate: vi.fn(),
+  // 🔴 A WHOLESALE MODULE MOCK GOES STALE SILENTLY, AND THIS ONE ALREADY DID.
+  // The component now also calls `trpc.blocks.getAuthorFeeDisclosure.useQuery`;
+  // a mock that does not export it throws `useQuery is not a function` at render
+  // — i.e. the component under test cannot mount at all, which is a failure that
+  // looks like a component bug rather than a stale fixture. Driven per-test via
+  // `feeQuery.data`; the DEFAULT is the as-merged posture (fee dark → no data →
+  // nothing rendered), so every pre-existing assertion in this file is unchanged.
+  feeQuery: { data: undefined as unknown },
+}));
 
 vi.mock('~/utils/trpc', () => ({
   trpc: {
     blocks: {
       grantScopes: {
         useMutation: () => ({ mutate, isPending: false }),
+      },
+      getAuthorFeeDisclosure: {
+        useQuery: () => ({ data: feeQuery.data }),
       },
     },
   },
@@ -249,5 +262,128 @@ describe('BlockConsentModal — per-app spend limit', () => {
     await input.fill('999999');
     await expect.element(page.getByRole('button', { name: 'Allow' })).toBeDisabled();
     expect(mutate).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * THE AUTHOR-FEE NOTICE — the platform-owned half of the price disclosure.
+ *
+ * WHY IT IS HERE AND NOT ONLY ON THE RUN PRICE. The two estimate arms now add
+ * the fee to the total they return, so the number an app shows before a run is
+ * the number the viewer is debited. That makes the price honest and leaves the
+ * fee INVISIBLE AS A FEE — the viewer sees a bigger number and cannot tell the
+ * app takes a cut. This notice is the only surface that says so, and it is one
+ * the platform renders rather than the app's own bundle.
+ *
+ * NEW-FEATURE coverage, stated honestly: the notice did not exist at
+ * `origin/main`. What it pins is the GATING — it must not appear when the fee is
+ * dark, and must not appear for a consent that cannot lead to a charge.
+ */
+describe('BlockConsentModal — per-generation author fee notice', () => {
+  const LIVE_FEE = { disclose: true, flatBuzz: 1, pctBasisPoints: 500, quotesFigureSafely: true };
+
+  // 🔴 RESET, NOT INHERIT. `feeQuery` is hoisted and module-scoped, so without
+  // this the fee state leaks into whatever runs next — green today only because
+  // file order puts the pre-existing describes first. Under `--sequence.shuffle`
+  // a pre-existing test would render the notice and fail for a reason that has
+  // nothing to do with it.
+  beforeEach(() => {
+    feeQuery.data = undefined;
+  });
+
+  function renderConsent(scopes: string[] = [SPEND]) {
+    renderWithProviders(
+      <BlockConsentModal
+        appBlockId="app-fee"
+        blockName="Tip Jar"
+        missingScopes={scopes}
+        onGranted={vi.fn()}
+      />
+    );
+  }
+
+  test('states the RULE, with figures served from the fee config', async () => {
+    feeQuery.data = LIVE_FEE;
+    renderConsent();
+    const notice = page.getByTestId('block-consent-author-fee');
+    await expect.element(notice).toBeInTheDocument();
+    await expect.element(notice).toHaveTextContent('at most 1 Buzz or 5% of that cost');
+    // 🔴 THE RULE, NOT A BARE PERCENTAGE. The fee is max(flat, pct × base), so a
+    // lone "5%" is WRONG on a cheap generation — at a base of 10 the 5% leg
+    // floors to 0 and the viewer pays the 1 ⚡ flat leg instead.
+    await expect.element(notice).toHaveTextContent('whichever is larger');
+    // 🔴 POSSIBILITY, NOT ASSERTION. The disclosure is platform-wide and takes no
+    // app id, so it cannot know whether THIS app ever charges — a customComfy-only
+    // or pass-through-only app never does, nor does a self-dealing author.
+    await expect.element(notice).toHaveTextContent('can include a developer fee');
+    await expect.element(notice).toHaveTextContent('Not every generation is charged one.');
+  });
+
+  test('is honest about what the author receives', async () => {
+    // Both money hops preserve the Buzz account type, so a viewer spending
+    // non-withdrawable Buzz funds a non-withdrawable credit.
+    feeQuery.data = LIVE_FEE;
+    renderConsent();
+    const notice = page.getByTestId('block-consent-author-fee');
+    await expect.element(notice).toHaveTextContent('non-withdrawable');
+    // And honest about what the PLATFORM controls: the price it quotes the app,
+    // not what the app's own bundle chooses to render.
+    await expect.element(notice).toHaveTextContent('adds the fee to the run price it quotes');
+  });
+
+  test('🔴 renders NOTHING while the fee is dark (the as-merged posture)', async () => {
+    feeQuery.data = { disclose: false };
+    renderConsent();
+    // The rest of the consent screen still renders — this asserts the notice is
+    // absent, not that the modal failed to mount.
+    await expect.element(page.getByRole('button', { name: 'Allow' })).toBeInTheDocument();
+    expect(page.getByTestId('block-consent-author-fee').elements()).toHaveLength(0);
+  });
+
+  test('🔴 renders NOTHING when the query has not answered', async () => {
+    // Loading, errored, or disabled. An absent answer must never fall back to
+    // asserting a fee — a consent screen that promises a charge the platform
+    // does not take is the same defect as one that hides a charge it does.
+    feeQuery.data = undefined;
+    renderConsent();
+    await expect.element(page.getByRole('button', { name: 'Allow' })).toBeInTheDocument();
+    expect(page.getByTestId('block-consent-author-fee').elements()).toHaveLength(0);
+  });
+
+  test('🔴 renders NOTHING for a consent that cannot lead to a charge', async () => {
+    // The fee exists only on generation paths, which need the spend scope. A
+    // charge notice on a profile-read consent would describe a charge this app
+    // cannot make.
+    feeQuery.data = LIVE_FEE;
+    renderConsent(['user:read:self']);
+    await expect.element(page.getByRole('button', { name: 'Allow' })).toBeInTheDocument();
+    expect(page.getByTestId('block-consent-author-fee').elements()).toHaveLength(0);
+  });
+
+  test('drops the figure when the config is no longer describable by one', async () => {
+    // Unreachable at today's platform config, and that is the point: a charging
+    // override must change WHICH sentence renders rather than silently making a
+    // rendered number wrong.
+    feeQuery.data = { ...LIVE_FEE, quotesFigureSafely: false };
+    renderConsent();
+    const notice = page.getByTestId('block-consent-author-fee');
+    await expect.element(notice).toHaveTextContent('depends on the generation type');
+    await expect.element(notice).not.toHaveTextContent('at most 1 Buzz');
+  });
+
+  test('the notice precedes the daily-limit control', async () => {
+    // A price the viewer is agreeing to must be readable before the cap they
+    // choose; reading the cap first invites setting a limit without knowing what
+    // a run costs.
+    feeQuery.data = LIVE_FEE;
+    renderConsent();
+    // Settle the render through the retrying matcher FIRST — `.elements()` is a
+    // synchronous snapshot and reads an empty list if it runs before the mount.
+    await expect.element(page.getByTestId('block-consent-author-fee')).toBeInTheDocument();
+    const notice = page.getByTestId('block-consent-author-fee').elements()[0];
+    const budget = page.getByTestId('block-consent-budget').elements()[0];
+    expect(notice).toBeDefined();
+    expect(budget).toBeDefined();
+    expect(notice.compareDocumentPosition(budget) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

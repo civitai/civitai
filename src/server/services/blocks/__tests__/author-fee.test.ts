@@ -42,6 +42,7 @@ import {
   blockAuthorFeeCeilingBasisPoints,
   clampBlockAuthorFeeParams,
   computeBlockAuthorFee,
+  describeBlockAuthorFee,
   resolveBlockAuthorFeeParams,
   type BlockAuthorFeeConfig,
 } from '../author-fee';
@@ -897,5 +898,130 @@ describe('observeBlockAuthorFee — fail-closed dark gate', () => {
     await expect(
       observeBlockAuthorFee({ baseGenerationBuzz: 137, generationType: 'textToImage' })
     ).resolves.toMatchObject({ observed: true });
+  });
+});
+
+/**
+ * `describeBlockAuthorFee` — what a VIEWER-FACING surface may say about the
+ * configuration.
+ *
+ * NEW-FEATURE coverage, stated honestly: this function did not exist at
+ * `origin/main`, so nothing here was red there except the import. What these
+ * pin is the PROJECTION property — the disclosure must be derived from the same
+ * constant the charge is computed from, and must refuse to be described by one
+ * figure in exactly the cases where one figure would be false. The red-at-base
+ * regression for this change lives in
+ * `src/server/routers/__tests__/blocks.router.workflow.test.ts`.
+ */
+describe('describeBlockAuthorFee', () => {
+  it('reports the platform default pair as production resolves it', () => {
+    // No `config` argument — this reads BLOCK_AUTHOR_FEE_PLATFORM_CONFIG itself,
+    // so it is a claim about what ships, not about a fixture.
+    const fee = describeBlockAuthorFee();
+    expect(fee.flatBuzz).toBe(BLOCK_AUTHOR_FEE_DEFAULT_FLAT_BUZZ);
+    expect(fee.pctBasisPoints).toBe(BLOCK_AUTHOR_FEE_DEFAULT_PCT_OF_BASE * 10_000);
+    expect(fee.chargesAnything).toBe(true);
+  });
+
+  it('🔴 the shipped config is describable by ONE figure', () => {
+    // The live posture the consent screen depends on: every override is
+    // fee-FREE, so "at most flat or pct%" genuinely bounds every generation
+    // type. The day an override charges above the default this goes red, which
+    // is the point — the screen must switch to the figure-free wording rather
+    // than keep rendering a number that has stopped being true.
+    const fee = describeBlockAuthorFee();
+    expect(fee.chargingOverrideTypes).toEqual([]);
+    expect(fee.feeFreeTypes).toEqual(['chat-completion']);
+  });
+
+  it('classifies an override that prices ABOVE the default as CHARGING', () => {
+    const fee = describeBlockAuthorFee({
+      default: { flatBuzz: 1, pctOfBase: 0.05 },
+      byType: [
+        ['chat-completion', { flatBuzz: 0, pctOfBase: 0 }],
+        ['customComfy', { flatBuzz: 9, pctOfBase: 0.2 }],
+      ],
+    });
+    expect(fee.feeFreeTypes).toEqual(['chat-completion']);
+    expect(fee.chargingOverrideTypes).toEqual(['customComfy']);
+  });
+
+  it('an override with ONE non-zero leg is charging, not fee-free', () => {
+    // 🔴 THE `&&` THIS KILLS. A classifier written with `||` would file a
+    // `{ flat: 0, pct: 0.2 }` override as fee-FREE and then let the screen claim
+    // the default bounds it. The two fixtures differ in WHICH leg is set so a
+    // mutant that only inspects one of them survives neither.
+    const flatOnly = describeBlockAuthorFee({
+      default: { flatBuzz: 1, pctOfBase: 0.05 },
+      byType: [['customComfy', { flatBuzz: 3, pctOfBase: 0 }]],
+    });
+    const pctOnly = describeBlockAuthorFee({
+      default: { flatBuzz: 1, pctOfBase: 0.05 },
+      byType: [['customComfy', { flatBuzz: 0, pctOfBase: 0.2 }]],
+    });
+    expect(flatOnly.chargingOverrideTypes).toEqual(['customComfy']);
+    expect(pctOnly.chargingOverrideTypes).toEqual(['customComfy']);
+  });
+
+  it('a config that charges NOTHING anywhere reports `chargesAnything: false`', () => {
+    // The suppression case: a screen must not say "this app charges a fee" when
+    // no configured type can produce one.
+    const fee = describeBlockAuthorFee({
+      default: { flatBuzz: 0, pctOfBase: 0 },
+      byType: [['chat-completion', { flatBuzz: 0, pctOfBase: 0 }]],
+    });
+    expect(fee.chargesAnything).toBe(false);
+  });
+
+  it('a zero DEFAULT still charges when an override does', () => {
+    // `chargesAnything` is the union over the whole config, not a property of
+    // `default` alone — a mutant reading only the default answers `false` here
+    // and suppresses a disclosure for an app that really does charge.
+    const fee = describeBlockAuthorFee({
+      default: { flatBuzz: 0, pctOfBase: 0 },
+      byType: [['customComfy', { flatBuzz: 4, pctOfBase: 0 }]],
+    });
+    expect(fee.chargesAnything).toBe(true);
+  });
+
+  it('CLAMPS before classifying, so an unusable leg is fee-free not charging', () => {
+    // `computeBlockAuthorFee` clamps first and a non-finite leg collapses to 0
+    // there, so such an override charges nothing. A classifier that read the raw
+    // params would call `NaN > 0` false for the flat leg but would file a
+    // negative percentage as charging — either way the disclosure and the
+    // computation would disagree about what "prices nothing" means.
+    const fee = describeBlockAuthorFee({
+      default: { flatBuzz: 1, pctOfBase: 0.05 },
+      byType: [['customComfy', { flatBuzz: Number.NaN, pctOfBase: -3 }]],
+    });
+    expect(fee.chargingOverrideTypes).toEqual([]);
+    expect(fee.feeFreeTypes).toEqual(['customComfy']);
+  });
+
+  it('CLAMPS the reported default to the platform ceilings', () => {
+    // A future per-app config is author input; the figure a consent screen
+    // renders must be the one the platform will actually honour, not the one an
+    // author asked for.
+    const fee = describeBlockAuthorFee({
+      default: { flatBuzz: 10_000, pctOfBase: 5 },
+      byType: [],
+    });
+    expect(fee.flatBuzz).toBe(BLOCK_AUTHOR_FEE_MAX_FLAT_BUZZ);
+    expect(fee.pctBasisPoints).toBe(BLOCK_AUTHOR_FEE_MAX_PCT_BASIS_POINTS);
+  });
+
+  it('is IDEMPOTENT across calls', () => {
+    // ⚠️ RETITLED, BECAUSE THE OLD NAME ("is PURE — it reads no flag") CLAIMED
+    // COVERAGE IT DID NOT PROVIDE. Nothing here manipulates a flag or varies an
+    // argument, and a mutation making the function genuinely impure (a
+    // module-level counter changing its answer) left THIS test green while five
+    // others killed it. There is no mutation it uniquely catches.
+    //
+    // The purity property is real and is enforced STRUCTURALLY instead: this
+    // function is SYNC and `isAppBlocksAuthorFeeEnabled` is ASYNC, so a flag read
+    // cannot compile into it. That is a stronger guarantee than a test, and it is
+    // why no test is written for it.
+    const before = describeBlockAuthorFee();
+    expect(describeBlockAuthorFee()).toEqual(before);
   });
 });

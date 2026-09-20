@@ -497,6 +497,80 @@ export function computeBlockAuthorFee(args: {
   };
 }
 
+/**
+ * What a VIEWER-FACING surface may say about this configuration, derived from the
+ * configuration itself rather than written as prose beside it.
+ *
+ * 🔴 WHY THIS IS A FUNCTION AND NOT A SENTENCE IN A COMPONENT. The sibling money
+ * sentence on the same consent screen —
+ * `BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY` in `block-scope.constants.ts` — records
+ * FIVE successive wordings that each shipped FALSE, and concludes with a
+ * structural rule rather than a better form of words: that sentence asserts no
+ * figure, because the quantity it described (the reservation space) has no short
+ * true description. The fee is the OPPOSITE case and the distinction is the whole
+ * reason a figure is allowed here: `max(flatBuzz, pctOfBase × base)` IS the
+ * complete rule, it lives in exactly one constant, and this function reads that
+ * constant. A renderer that interpolates these fields cannot drift from the
+ * computation, because moving the config moves both.
+ *
+ * ⚠️ IT DESCRIBES THE `default` PAIR, WHICH IS THE RULE ONLY WHILE EVERY OVERRIDE
+ * IS FEE-FREE. `byType` can in principle price a type ABOVE the default, and then
+ * "the greater of X or Y%" is no longer a true description of what the viewer may
+ * be charged. That case is REPORTED (`chargingOverrideTypes`) rather than
+ * silently mis-described, so the caller can fall back to the figure-free wording
+ * the precedent above prescribes. It is empty at today's platform config; the
+ * field exists so a future override cannot make a rendered sentence wrong.
+ *
+ * SYNC, PURE AND TOTAL — no flag read, no I/O. The FLAG is a separate question
+ * from the SHAPE, and the caller owns it: this function answers "what does this
+ * configuration price?", never "is the fee live?".
+ */
+export type BlockAuthorFeeDisclosure = {
+  /** Clamped flat leg applying to every generation type without an override. */
+  readonly flatBuzz: number;
+  /** Clamped percentage leg in basis points (1 bp = 0.01%). */
+  readonly pctBasisPoints: number;
+  /** Configured types this config prices at nothing at all. Sorted, may be empty. */
+  readonly feeFreeTypes: readonly string[];
+  /**
+   * Configured types priced ABOVE nothing by an override — the shape a sentence
+   * quoting the default CANNOT describe. Empty today; non-empty means a renderer
+   * must not name a figure.
+   */
+  readonly chargingOverrideTypes: readonly string[];
+  /** False when NO configured type can produce a non-zero fee. */
+  readonly chargesAnything: boolean;
+};
+
+export function describeBlockAuthorFee(
+  config: BlockAuthorFeeConfig = BLOCK_AUTHOR_FEE_PLATFORM_CONFIG
+): BlockAuthorFeeDisclosure {
+  const base = clampBlockAuthorFeeParams(config.default);
+  const feeFreeTypes: string[] = [];
+  const chargingOverrideTypes: string[] = [];
+
+  // 🔴 CLAMPED BEFORE IT IS CLASSIFIED, so the disclosure and the computation
+  // agree on what "prices nothing" means. `computeBlockAuthorFee` clamps first
+  // too, and a leg that is not a usable number collapses to 0 there — so an
+  // override of `{ flatBuzz: NaN, pctOfBase: NaN }` charges nothing and must be
+  // reported as fee-free, not as a charging override.
+  for (const [type, params] of config.byType ?? []) {
+    const { flatBuzz, pctBasisPoints } = clampBlockAuthorFeeParams(params);
+    (flatBuzz <= 0 && pctBasisPoints <= 0 ? feeFreeTypes : chargingOverrideTypes).push(type);
+  }
+
+  return {
+    flatBuzz: base.flatBuzz,
+    pctBasisPoints: base.pctBasisPoints,
+    feeFreeTypes: feeFreeTypes.sort(),
+    chargingOverrideTypes: chargingOverrideTypes.sort(),
+    // A config whose default charges nothing can still charge through an
+    // override, so this is the union and not a property of `default` alone.
+    chargesAnything:
+      base.flatBuzz > 0 || base.pctBasisPoints > 0 || chargingOverrideTypes.length > 0,
+  };
+}
+
 /** Why an observation produced no computation. */
 export type BlockAuthorFeeSkipReason = 'flag-disabled' | 'base-unavailable' | 'price-is-cap';
 

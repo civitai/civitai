@@ -108,9 +108,14 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import {
   isAppBlocksAuthorEnabled,
+  isAppBlocksAuthorFeeEnabled,
   isAppBlocksEnabled,
   isAppBlocksPostCreationEnabled,
 } from '~/server/services/app-blocks-flag';
+// Pure + sync + total: reads the fee CONFIG and reports what a viewer-facing
+// surface may say about it. No flag read of its own — the flag is asked
+// separately at the one procedure that serves this to the consent screen.
+import { describeBlockAuthorFee } from '~/server/services/blocks/author-fee';
 import { rateLimit } from '~/server/middleware.trpc';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
@@ -3056,6 +3061,84 @@ export const blocksRouter = router({
   // could never spend their buzz. The grant stays bounded to the app's approved
   // manifest ∩ approvedScopes ceiling below, and writes only the caller's own
   // grant row.
+  /**
+   * What the CONSENT SCREEN may tell the viewer about the per-generation author
+   * fee, before they approve the app.
+   *
+   * 🔴 WHY THIS IS A SERVER READ AND NOT THE `features` PAYLOAD. ⚠️ AN EARLIER
+   * REVISION OF THIS NOTE GAVE THE WRONG REASON — it argued that a `features`
+   * mirror would evaluate the flag under a USER context and so could disagree
+   * with the global one the charge path reads. `app-blocks-flag.ts` has already
+   * measured that seam for this exact flag family and reached the opposite
+   * conclusion: the divergence is "irrelevant for a plain base-enabled boolean
+   * (both sides resolve the same)" and bites only under a percentage rollout or
+   * an `isLoggedIn`-keyed rule. `app-blocks-author-fee-enabled` is documented
+   * there as a plain global boolean with no segment, so the two shapes agree.
+   *
+   * THE REASON THAT ACTUALLY HOLDS IS SIMPLER AND STRONGER: `FeatureAccess` is
+   * `Record<FeatureFlagKey, boolean>` — it carries booleans and NOTHING ELSE, so
+   * it cannot carry the figures this screen has to render. A mirror would add a
+   * SECOND evaluation of the same flag and purchase nothing. One read, one
+   * source: this procedure calls `isAppBlocksAuthorFeeEnabled()`, the exact
+   * function `quoteBlockAuthorFee` calls, so the screen cannot claim a fee the
+   * charge path would not take, nor stay silent about one it would.
+   *
+   * 🔴 AND WHY THE NUMBERS ARE SERVED RATHER THAN SPELLED IN THE COMPONENT.
+   * `~/server/services/blocks/author-fee` is not importable from a client
+   * component (it statically imports the prom client and the Flipt-backed flag
+   * module), and a second copy of the figures under `src/shared/constants` would
+   * be a copy that can drift from the one the fee is computed with. Serving them
+   * makes the rendered sentence a projection of the computation's own config.
+   *
+   * ── DECISION 3: IS A ZERO FEE DISCLOSED? NO, AT BOTH GRANULARITIES. ────────
+   * CONFIG-WIDE: `disclose: false` is returned — rather than the shape with
+   * zeros — for BOTH "the flag is off" and "this configuration prices nothing at
+   * all", because the renderer's decision is the same in both cases and giving
+   * it two ways to spell one outcome is how a renderer ends up handling only one
+   * of them.
+   * PER-TYPE: a type configured to 0 (`chat-completion` is 0/0 today) produces
+   * `{charge:false, reason:'zero-fee'}` at the estimate sites, which adds nothing
+   * to the shown total — the ABSENCE of a charge, not a charge of zero, matching
+   * the rule the accrual writer already applies. The consent copy does not
+   * enumerate the zero types either: their ids are internal keys a viewer has no
+   * vocabulary for, and "Not every generation is charged one" covers them along
+   * with the three OTHER ways a generation goes unfeed (a fee-free submit path, a
+   * self-dealing author, a degraded quote) that an enumeration would miss.
+   *
+   * A flag read that will not resolve is not permission to state a fee: it fails
+   * closed to `false`, matching `quoteBlockAuthorFee`.
+   */
+  getAuthorFeeDisclosure: protectedProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    const off = { disclose: false as const };
+    if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return off;
+    try {
+      if (!(await isAppBlocksAuthorFeeEnabled())) return off;
+      // 🔴 INSIDE THE TRY, THOUGH IT IS PURE AND TOTAL TODAY. It reads a code
+      // constant now; slice 3 makes the config AUTHOR-SUPPLIED, and a malformed
+      // entry would then 500 the consent screen instead of degrading to the
+      // silent no-notice every other arm here takes.
+      const fee = describeBlockAuthorFee();
+      if (!fee.chargesAnything) return off;
+      return {
+        disclose: true as const,
+        flatBuzz: fee.flatBuzz,
+        pctBasisPoints: fee.pctBasisPoints,
+        // 🔴 RESOLVED TO A BOOLEAN HERE, AND THE TYPE LIST IS DELIBERATELY NOT
+        // SHIPPED. `false` means an override prices some type ABOVE the default,
+        // so "at most X or Y%" is no longer a true description and the screen
+        // must state the rule WITHOUT a figure. Always `true` at today's config
+        // (whose one override is fee-FREE); the field exists so a future
+        // override cannot silently make a rendered number wrong. The type IDS
+        // behind it stay server-side — no renderer consumes them, and shipping a
+        // field nothing reads is the "type-only declaration" shape this change
+        // exists to avoid.
+        quotesFigureSafely: fee.chargingOverrideTypes.length === 0,
+      };
+    } catch {
+      return off;
+    }
+  }),
+
   grantScopes: protectedProcedure
     .use(enforceAppBlocksFlag)
     .input(
@@ -5216,7 +5299,7 @@ export const blocksRouter = router({
         user,
         whatIf: true,
       });
-      const workflow = await submitWorkflow({
+      const whatIfResult = await submitWorkflow({
         token,
         body: {
           steps: [step],
@@ -5226,10 +5309,91 @@ export const blocksRouter = router({
         },
         query: { whatif: true },
       });
+      // ── 🔴 THE ESTIMATE PRICES THE AUTHOR FEE TOO, AND THIS IS A DISCLOSING
+      //    QUOTE, NOT A RESERVING ONE. Nothing here gates, reserves, debits or
+      //    accrues; the returned number is added to the cost the block is shown
+      //    and then discarded. The submit runs its OWN quote (`:5557`) and that
+      //    one is what money is taken against.
+      //
+      // WHY IT HAS TO EXIST. The submit adds the fee to `cost` BEFORE every
+      // guardrail, so with the fee live a viewer shown `N` is debited `N + fee`
+      // — and where the app's token budget sits near the price, the submit is
+      // refused outright with `insufficient buzz budget`, which reads to the
+      // viewer as a broken app rather than as a price. Correcting the TOTAL is
+      // what makes the shown number true for EVERY existing app with no
+      // app-side change; an itemised field would be inert until each
+      // third-party author wrote a renderer for it.
+      //
+      // 🔴 THE PAYEE LOOKUP IS ACCEPTED, NOT SKIPPED, ON THIS UNBOUNDED PATH.
+      // `quoteBlockAuthorFee` resolves the payee (one `dbRead.oauthClient
+      // .findUnique` by primary key, two columns) and a disclosure-only variant
+      // that skipped it would be cheaper. It is not used, because the skipped
+      // arm is SELF-DEALING: an author running their own app is not charged,
+      // and a variant that cannot see that would quote them a fee they will
+      // never pay — on the surface whose entire job is to predict the charge,
+      // to the population that exercises it most. Re-creating estimate/submit
+      // divergence one layer down is the defect this change removes, not a
+      // saving. The read is also gated behind the flag AND behind a non-zero
+      // computed fee, so it costs nothing while the fee is dark, and when it is
+      // live it is one indexed row against an orchestrator round-trip this
+      // handler has already paid for.
+      //
+      // 🔴 WHAT THIS NUMBER IS AND IS NOT. It is a QUOTE, not a price lock.
+      // Estimate and submit are two independent whatIfs seconds apart, so the
+      // quoted price can differ from the charged one and NOTHING HERE BOUNDS
+      // THAT.
+      //
+      // ⚠️ THE ONE GUARANTEE, STATED AT THE WIDTH IT ACTUALLY HOLDS. An earlier
+      // revision of this comment said the two sites "agree whenever the base
+      // does". That is a SUFFICIENCY claim and it is false: base agreement is
+      // necessary, not sufficient. FOUR inputs can move between the two quotes —
+      // `cost.base`, `cost.variable` (a cap-priced submit charges nothing while
+      // the estimate showed a fee, or the reverse), the PAYEE (an ownership
+      // transfer in between is exactly what `chargeBlockAuthorFee` re-resolves
+      // for), and the FLAG itself, which is read separately at each site and is
+      // operator-flippable.
+      //
+      // What IS established, and all that is: `chargeBlockAuthorFee` clamps the
+      // debit to `min(reserved, realized)` where `reserved` is the SUBMIT's own
+      // quote — so the viewer is never billed past what the SUBMIT's budget gate
+      // was measured against. THIS estimate is not that bound and must not be
+      // described as one.
+      //
+      // Degradation is CORRELATED, not guaranteed: when the orchestrator cannot
+      // supply a base the fee is not priced HERE, and the submit — which quotes
+      // the same orchestrator — typically cannot price one either, so both show
+      // and charge no fee together. Typically, not always.
+      //
+      // ⚠️ ONE SHAPE WHERE THE SHOWN NUMBER SITS BELOW THE DEBIT, RECORDED
+      // BECAUSE IT IS NOT CLOSED. If the orchestrator returns `cost.base` but no
+      // `cost.total`, `snapshotFromWorkflow` omits `cost` entirely (there is no
+      // total to correct, and inventing one would report a fee AS the price)
+      // while the submit gates and reserves `0 + fee`. The block is then shown no
+      // price at all rather than a low one, which is the recoverable direction —
+      // but it is a divergence, not an absence of one.
+      const blockGenerationType = resolveBlockGenerationType(input.body, {
+        imageWorkflowType: generateInput.workflow,
+      });
+      const authorFeeQuote = await quoteBlockAuthorFee({
+        baseGenerationBuzz: whatIfResult.cost?.base,
+        priceIsCap: whatIfResult.cost?.variable,
+        generationType: blockGenerationType,
+        appId: claims.appId,
+        viewerUserId: userId,
+        workflowLabel: 'estimate',
+        // Unbounded surface — see the flag's own note. The skip lines it silences
+        // are re-derived at the submit, once per real generation.
+        suppressSkipLogs: true,
+      });
       // #3520: the ESTIMATE reports the substitution too — a block that quotes a
       // cost for model A and is silently priced for model B has the same
       // detectability problem as the submit, one step earlier.
-      return { snapshot: snapshotFromWorkflow(workflow, { modelSubstitutions }) };
+      return {
+        snapshot: snapshotFromWorkflow(whatIfResult, {
+          modelSubstitutions,
+          additionalCostBuzz: authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0,
+        }),
+      };
     }),
 
   /**
@@ -9016,7 +9180,12 @@ async function estimateStepWorkflow(opts: {
   const plan = planStepSpend(step, params, variant);
   const orchestratorStep = buildStepOrchestratorStep(step, params, plan);
 
-  const quotedBuzz = await quoteStepBuzz({ ctx, claims, step, orchestratorStep, userId });
+  const stepQuote = await quoteStepBuzz({ ctx, claims, step, orchestratorStep, userId });
+  const quotedBuzz = stepQuote?.quotedBuzz ?? null;
+  // `undefined` when the orchestrator round-trip degraded. The fee quote below
+  // reads it with `?.`, so an absent quote prices no fee — the same degradation
+  // the shown price already takes (it falls back to `declaredBuzz`).
+  const whatIfResult = stepQuote?.whatIfResult;
 
   // 🔴 NEVER SHOW LESS THAN THE SUBMIT WILL RESERVE. The submit gates and
   // reserves `max(Math.ceil(plan.reserveBuzz), quotedBuzz)`, so an estimate that
@@ -9061,7 +9230,36 @@ async function estimateStepWorkflow(opts: {
   // It stays as the no-quote FALLBACK, where it is the entry's own declared
   // display estimate and is what the block was shown before this change.
   const submitFloorBuzz = Math.ceil(plan.reserveBuzz);
-  const shownBuzz = Math.max(submitFloorBuzz, quotedBuzz ?? declaredBuzz);
+  const shownGenerationBuzz = Math.max(submitFloorBuzz, quotedBuzz ?? declaredBuzz);
+
+  // ── 🔴 DISCLOSING QUOTE — the step arm's half of the same correction made on
+  //    the txt2img estimate. See the long note at that site for why the payee
+  //    lookup is accepted, what this number is (a quote, not a price lock), and
+  //    why the TOTAL is corrected rather than an itemised field added.
+  //
+  // 🔴 `generationType: step.id` — byte-identical to `submitStepWorkflow`'s own
+  // quote. The registered STEP ID is the fee's lookup key on this path, and it
+  // is what makes `chat-completion`'s 0/0 override apply to the disclosure
+  // exactly as it applies to the charge. Resolving it any other way here would
+  // price the disclosure under a different key than the charge.
+  //
+  // ⚠️ THE FLOOR IS A GENERATION-SIDE FLOOR AND THE FEE IS ADDED OUTSIDE IT.
+  // `max(submitFloorBuzz, quoted)` is the submit's own GENERATION reservation
+  // expression; the submit then adds its fee to that same expression
+  // (`reserveBuzz = reserveGenerationBuzz + reservedAuthorFeeBuzz`). Folding the
+  // fee inside the `max` would let a large fee be swallowed by the floor and
+  // under-display.
+  const authorFeeQuote = await quoteBlockAuthorFee({
+    baseGenerationBuzz: whatIfResult?.cost?.base,
+    priceIsCap: whatIfResult?.cost?.variable,
+    generationType: step.id,
+    appId: claims.appId,
+    viewerUserId: userId,
+    workflowLabel: 'estimate',
+    // Unbounded surface — see the flag's own note on `quoteBlockAuthorFee`.
+    suppressSkipLogs: true,
+  });
+  const shownBuzz = shownGenerationBuzz + (authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0);
 
   return {
     snapshot: {
@@ -9110,7 +9308,7 @@ async function quoteStepBuzz(opts: {
   step: ReturnType<typeof resolveBlockStep>;
   orchestratorStep: ReturnType<typeof buildStepOrchestratorStep>;
   userId: number;
-}): Promise<number | null> {
+}): Promise<{ quotedBuzz: number; whatIfResult: Awaited<ReturnType<typeof submitWorkflow>> } | null> {
   const { ctx, claims, step, orchestratorStep, userId } = opts;
   try {
     const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
@@ -9132,7 +9330,13 @@ async function quoteStepBuzz(opts: {
       return null;
     }
     recordStepPriceCheck(step.id, 'estimate_quoted');
-    return Math.ceil(total);
+    // 🔴 THE WHOLE RESPONSE, NOT JUST THE ROUNDED TOTAL. The caller prices the
+    // AUTHOR FEE off `cost.base` / `cost.variable`, and those are exactly the
+    // two fields a `number` return threw away — which is why this path could not
+    // disclose the fee before. `cost.total` alone is the wrong basis: the fee is
+    // a percentage of BASE, and `total` already carries per-resource licensing
+    // fees, the lineage fee and tips (see `no-divergent-author-fee-base`).
+    return { quotedBuzz: Math.ceil(total), whatIfResult: quote };
   } catch {
     recordStepPriceCheck(step.id, 'estimate_absent');
     return null;

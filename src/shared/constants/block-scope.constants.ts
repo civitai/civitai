@@ -25,6 +25,12 @@
  */
 
 import { TokenScope } from './token-scope.constants';
+// Client-safe: `number-helpers` imports only a Prisma enum, and two other
+// `src/shared/constants` modules already depend on it. Used rather than
+// re-spelling `parseFloat(v.toFixed(2))` / a comma-grouping loop inline — the
+// basis-points→percent render already exists twice elsewhere in `src/` and each
+// copy rounds differently, which is the drift this import declines to add to.
+import { formatToLeastDecimals, numberWithCommas } from '~/utils/number-helpers';
 
 /**
  * Sentinel value for scopes that intentionally do not require an OAuth-bitmask
@@ -283,6 +289,118 @@ export const BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY =
   'Buzz/day is a low limit. Each generation reserves Buzz up front, and is refused if that ' +
   'reservation exceeds your remaining limit for the day — so a low limit can make an app look ' +
   'broken.';
+
+/**
+ * The INVARIANT tail of the per-generation author-fee notice on the consent
+ * screen. The caller supplies the figure sentence before it — generated from the
+ * fee config, never written here — and this states the two things that are true
+ * of the fee on every path regardless of what the figure is.
+ *
+ * 🔴 WHY A FIGURE IS PERMITTED IN THIS NOTICE WHEN THE BUDGET WARNING ABOVE
+ * FORBIDS ONE. That warning's rule ("this sentence asserts no figure") is not a
+ * house style — it is a consequence of the reservation space having no short
+ * true description, which is why five wordings of it shipped false. The fee is
+ * the opposite: `max(flatBuzz, pctOfBase × base)` IS its complete rule, it lives
+ * in ONE constant (`BLOCK_AUTHOR_FEE_PLATFORM_CONFIG`), and the figures are
+ * SERVED from that constant by `blocks.getAuthorFeeDisclosure` rather than typed
+ * into a component. A figure that is a projection of the computation cannot
+ * drift from it. A figure that is prose can, and that is the whole difference.
+ *
+ * 🔴 THE AUTHOR-PAYMENT CLAUSE IS A CLAIM ABOUT WHAT THE AUTHOR RECEIVES, AND
+ * THIS IS THE HONEST FORM OF IT. Both money hops preserve the account type —
+ * `chargeBlockAuthorFee` debits and credits with `fromAccountType === toAccountType
+ * === buzzType`, and `settleBlockAuthorFees` pays the author out of the same
+ * per-`buzzType` bucket. So a viewer spending non-withdrawable Buzz funds a
+ * non-withdrawable credit. Saying "the developer earns Buzz" without that would
+ * imply withdrawable earnings the viewer's spend cannot produce.
+ *
+ * ⚠️ IT ASSERTS NOTHING ABOUT WHEN THE AUTHOR IS PAID. The debit is at submit and
+ * the credit is a daily settlement run, and a reversed generation never settles
+ * — so "the developer is paid" as an immediate event would be false. "is paid in
+ * the same kind of Buzz" is a claim about the CURRENCY only, deliberately.
+ *
+ * 🔴 "NOT EVERY GENERATION IS CHARGED ONE" IS LOAD-BEARING AND REPLACED A
+ * SENTENCE THAT WAS FLATLY FALSE. An earlier revision opened "This app charges a
+ * developer fee on each generation" and closed "It is already included in the
+ * cost shown before each run". Review found FOUR reachable states falsifying one
+ * or both, and the disclosure this procedure serves is PLATFORM-WIDE — it takes
+ * no app id, so it cannot know any of them:
+ *   · a customComfy-only or pass-through-only app NEVER charges a fee — both
+ *     paths are ledgered `charges: 0` for want of a pre-submit `cost.base` — yet
+ *     both request `ai:write:budgeted`, so the notice renders for them;
+ *   · a SELF-DEALING author running their own app is never charged
+ *     (`resolveBlockAuthorFeePayee`), and ~91% of today's spend population is
+ *     exactly that;
+ *   · a fee-free generation type (`chat-completion` is 0/0) charges nothing;
+ *   · on a degraded orchestrator quote no fee is priced at all.
+ *
+ * 🔴 AND "INCLUDED IN THE COST SHOWN" WAS NEVER THE PLATFORM'S TO PROMISE. What
+ * the platform controls is the number it QUOTES; a third-party app's own bundle
+ * decides what to render, and may show a cached or hardcoded figure instead. The
+ * clause now says what Civitai does ("adds the fee to the run price it quotes
+ * this app") and what that enables ("so the app can show you the full amount"),
+ * which are both true even when the app renders something else.
+ */
+export const BLOCK_CONSENT_AUTHOR_FEE_BODY =
+  'Not every generation is charged one. Civitai adds the fee to the run price it quotes this ' +
+  'app, so the app can show you the full amount before you run — and the author is paid in the ' +
+  'same kind of Buzz you spend, so Buzz that cannot be withdrawn stays non-withdrawable for them.';
+
+/**
+ * The whole notice when the fee config CANNOT be described by one figure — i.e.
+ * an override prices some generation type above the default, so "at most X or
+ * Y%" would be false.
+ *
+ * 🔴 THIS IS THE BUDGET-WARNING RULE APPLIED AS A FALLBACK, NOT DEAD CODE. It is
+ * unreachable at today's platform config (whose only override is fee-FREE) and
+ * exists so that adding a charging override changes which sentence renders
+ * instead of silently making a rendered number wrong. `quotesFigureSafely` on
+ * `blocks.getAuthorFeeDisclosure` is the switch.
+ */
+export const BLOCK_CONSENT_AUTHOR_FEE_RULE_ONLY =
+  'Generations you run in this app can include a developer fee set by the app’s author, on top ' +
+  'of the generation’s own cost. The amount depends on the generation type. ' +
+  BLOCK_CONSENT_AUTHOR_FEE_BODY;
+
+/**
+ * Render the figure sentence from the served fee configuration.
+ *
+ * 🔴 "CAN INCLUDE", NOT "CHARGES" — see the four falsifying states listed on
+ * `BLOCK_CONSENT_AUTHOR_FEE_BODY`. The disclosure is platform-wide and cannot
+ * know whether THIS app ever charges, so the only honest mood is possibility.
+ *
+ * 🔴 "AT MOST" IS EXACT, NOT HEDGING, AND IT IS EARNED BY `quotesFigureSafely`.
+ * The served figures are the config's DEFAULT pair, which applies to every
+ * generation type carrying no override, and the caller only reaches this branch
+ * when no override charges ABOVE the default — so the default pair genuinely
+ * bounds every type.
+ *
+ * ⚠️ IT ALSO CARRIES A SECOND, WEAKER BOUND THAT MUST NOT BE DROPPED. The
+ * percentage leg is computed on `WorkflowCost.base`, while "the generation's
+ * cost" as a viewer reads it is `total` — which additionally carries per-resource
+ * licensing fees, the lineage fee and tips. The sentence is true because
+ * `base <= total` makes the stated figure an upper bound; it would be FALSE if
+ * "at most" were ever edited out. That is pinned by a test rather than left to
+ * this note, because `author-fee.ts` records that whether `factors`/`fixed` fold
+ * into `base` was never settled with the orchestrator — so `base <= total` is
+ * assumed here, not established.
+ *
+ * The percentage is rendered from BASIS POINTS via the repo's own
+ * `formatToLeastDecimals`, so 550 reads `5.5%` rather than being rounded to a
+ * whole number the config does not say.
+ */
+export function blockConsentAuthorFeeSentence(fee: {
+  flatBuzz: number;
+  pctBasisPoints: number;
+}): string {
+  const pct = `${formatToLeastDecimals(fee.pctBasisPoints / 100)}%`;
+  return (
+    `Generations you run in this app can include a developer fee set by the app’s author, on ` +
+    `top of the generation’s own cost: at most ${numberWithCommas(fee.flatBuzz)} Buzz or ${pct} ` +
+    `of that cost, whichever is larger. ` +
+    BLOCK_CONSENT_AUTHOR_FEE_BODY
+  );
+}
 
 /**
  * Membership test against the authoritative scope vocabulary.

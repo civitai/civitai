@@ -37,7 +37,7 @@ const { mockLog } = vi.hoisted(() => ({
   mockLog: vi.fn(),
 }));
 
-import { accrueBlockAuthorFee } from '../author-fee-accrual.service';
+import { accrueBlockAuthorFee, resolveBlockAuthorFeePayee } from '../author-fee-accrual.service';
 import type { BlockAuthorFeeComputation } from '../author-fee';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -196,5 +196,92 @@ describe('accrueBlockAuthorFee', () => {
       generationType: null,
     });
     expect(result).toEqual({ accrued: false, reason: 'error' });
+  });
+});
+
+/**
+ * `suppressSkipLogs` — the DISCLOSURE callers' log switch.
+ *
+ * 🔴 THIS SUITE EXISTS BECAUSE A STRUCTURAL GUARD SURVIVED THE MUTATION THAT
+ * BROKE IT. `no-divergent-author-fee-base.test.ts` pins that exactly the two
+ * DISCLOSING quote sites pass `suppressSkipLogs: true` — a source-text check on
+ * the CALL. Making this function ignore the argument entirely (a one-line
+ * `const suppressSkipLogs = false;` shadowing the destructure) left that guard,
+ * and all 619 tests, completely green: the call site still read correctly while
+ * the flag did nothing. That is the "a structural check type-checks past a wrong
+ * argument" hole this file's sibling ledger names, reproduced exactly.
+ *
+ * So the pair is deliberate and BOTH halves are required: the ledger owns WHICH
+ * sites pass it, and these own WHETHER IT DOES ANYTHING.
+ *
+ * Why the flag is worth having at all: both skip arms call `logToAxiom`, which
+ * does an unconditional `console.error` — a synchronous write when stderr is a
+ * pipe, which it is in a container — plus an HTTP ingest. The two ESTIMATE arms
+ * that resolve the payee are unbounded (per parameter change, no rate limit),
+ * and this file's own note records that ~91% of the spend population is operator
+ * self-testing, i.e. the self-dealing arm is the hot one.
+ */
+describe('resolveBlockAuthorFeePayee — suppressSkipLogs', () => {
+  beforeEach(() => mockLog.mockClear());
+
+  /** The two arms that log. Each is a distinct branch, so both are driven. */
+  const SKIP_ARMS = [
+    { arm: 'self-dealing', owner: VIEWER_ID, reason: 'self-dealing' },
+    { arm: 'app-missing', owner: null, reason: 'app-missing' },
+  ] as const;
+
+  for (const { arm, owner, reason } of SKIP_ARMS) {
+    it(`logs the ${arm} skip by DEFAULT (positive control)`, async () => {
+      // 🔴 THE POSITIVE CONTROL IS NOT OPTIONAL HERE. Without it, "0 log calls"
+      // under suppression is indistinguishable from a probe wired to nothing —
+      // a resolver that never logged on either path would pass the suppression
+      // assertion below while proving nothing.
+      mockDbRead.oauthClient.findUnique.mockResolvedValue(
+        owner === null ? null : { id: APP_ID, userId: owner }
+      );
+      const result = await resolveBlockAuthorFeePayee({
+        appId: APP_ID,
+        viewerUserId: VIEWER_ID,
+        workflowId: WORKFLOW_ID,
+      });
+      expect(result).toEqual({ payee: false, reason });
+      expect(mockLog).toHaveBeenCalledTimes(1);
+    });
+
+    it(`🔴 suppresses the ${arm} skip log, and returns the SAME answer`, async () => {
+      mockDbRead.oauthClient.findUnique.mockResolvedValue(
+        owner === null ? null : { id: APP_ID, userId: owner }
+      );
+      const result = await resolveBlockAuthorFeePayee({
+        appId: APP_ID,
+        viewerUserId: VIEWER_ID,
+        workflowId: WORKFLOW_ID,
+        suppressSkipLogs: true,
+      });
+      // 🔴 THE RESOLUTION IS UNCHANGED. The flag governs what is WRITTEN, never
+      // what is RETURNED — a variant that changed the answer would re-create
+      // estimate/submit divergence one layer down, which is the exact defect the
+      // disclosure exists to remove.
+      expect(result).toEqual({ payee: false, reason });
+      expect(mockLog).not.toHaveBeenCalled();
+    });
+  }
+
+  it('never logs on the PAYEE-FOUND path, with or without the flag', () => {
+    // Establishes that the two tests above are about the SKIP arms specifically,
+    // not about the function being chatty in general.
+    const happy = async (suppress?: boolean) => {
+      mockLog.mockClear();
+      mockDbRead.oauthClient.findUnique.mockResolvedValue({ id: APP_ID, userId: OWNER_ID });
+      const r = await resolveBlockAuthorFeePayee({
+        appId: APP_ID,
+        viewerUserId: VIEWER_ID,
+        workflowId: WORKFLOW_ID,
+        suppressSkipLogs: suppress,
+      });
+      expect(r).toEqual({ payee: true, appOwnerUserId: OWNER_ID });
+      expect(mockLog).not.toHaveBeenCalled();
+    };
+    return Promise.all([happy(undefined), happy(true)]);
   });
 });

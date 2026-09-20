@@ -197,8 +197,31 @@ export async function resolveBlockAuthorFeePayee(args: {
   viewerUserId: number;
   /** Carried onto the log lines only, so a skip is traceable to a generation. */
   workflowId: string;
+  /**
+   * Suppress the two SKIP log lines below. The RESOLUTION is unaffected — this
+   * changes what is written, never what is returned.
+   *
+   * 🔴 IT EXISTS FOR THE DISCLOSURE CALLERS, AND THE REASON IS VOLUME, NOT NOISE.
+   * The two ESTIMATE arms now resolve the payee so a self-dealing author is not
+   * quoted a fee they will never pay. An estimate is fired per parameter change
+   * by third-party block code over `postMessage` and carries no rate limit and no
+   * idempotency key, whereas a submit is one call per real generation. Both skip
+   * arms below call `logToAxiom`, which is NOT a cheap no-op: it does an
+   * unconditional `console.error` — a SYNCHRONOUS write on the event loop when
+   * stderr is a pipe, which it is in a container — plus an HTTP ingest. Leaving
+   * them on would put that on an unbounded surface, and this file's own note
+   * records that ~91% of the spend population to date is operator self-testing,
+   * i.e. the self-dealing arm is precisely the hot one.
+   *
+   * Nothing is lost: both skips are re-derived at the SUBMIT, where
+   * `chargeBlockAuthorFee` re-resolves the payee once per real generation and
+   * logs there. And the lines this suppresses would have been unattributable
+   * anyway — a whatIf has no workflow id, so every one of them carries the same
+   * constant label and differs only by timestamp.
+   */
+  suppressSkipLogs?: boolean;
 }): Promise<BlockAuthorFeePayee> {
-  const { appId, viewerUserId, workflowId } = args;
+  const { appId, viewerUserId, workflowId, suppressSkipLogs } = args;
 
   // Resolve + snapshot the app owner. 🔴 AT WRITE TIME, never at settlement: an
   // app that changes hands must not retroactively move earnings already accrued
@@ -208,16 +231,18 @@ export async function resolveBlockAuthorFeePayee(args: {
     select: { id: true, userId: true },
   });
   if (!app?.userId) {
-    logToAxiom(
-      {
-        name: BLOCK_AUTHOR_FEE_LOG_NAME,
-        type: 'warning',
-        message: 'accrual skipped: app or owner missing',
-        workflowId,
-        appId,
-      },
-      'civitai-prod'
-    ).catch(() => undefined);
+    if (!suppressSkipLogs) {
+      logToAxiom(
+        {
+          name: BLOCK_AUTHOR_FEE_LOG_NAME,
+          type: 'warning',
+          message: 'accrual skipped: app or owner missing',
+          workflowId,
+          appId,
+        },
+        'civitai-prod'
+      ).catch(() => undefined);
+    }
     return { payee: false, reason: 'app-missing' };
   }
 
@@ -231,17 +256,19 @@ export async function resolveBlockAuthorFeePayee(args: {
   // self-testing, so this arm is expected to be hot early and should not be
   // mistaken for the fee failing.
   if (app.userId === viewerUserId) {
-    logToAxiom(
-      {
-        name: BLOCK_AUTHOR_FEE_LOG_NAME,
-        type: 'info',
-        message: 'accrual skipped: self-dealing',
-        workflowId,
-        appId,
-        appOwnerUserId: app.userId,
-      },
-      'civitai-prod'
-    ).catch(() => undefined);
+    if (!suppressSkipLogs) {
+      logToAxiom(
+        {
+          name: BLOCK_AUTHOR_FEE_LOG_NAME,
+          type: 'info',
+          message: 'accrual skipped: self-dealing',
+          workflowId,
+          appId,
+          appOwnerUserId: app.userId,
+        },
+        'civitai-prod'
+      ).catch(() => undefined);
+    }
     return { payee: false, reason: 'self-dealing' };
   }
 

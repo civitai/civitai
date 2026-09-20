@@ -14,11 +14,13 @@ import { useState } from 'react';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
+  BLOCK_CONSENT_AUTHOR_FEE_RULE_ONLY,
   BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY,
   BLOCK_CONSENT_BUDGET_LOW_WARN_PER_DAY,
   BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
+  blockConsentAuthorFeeSentence,
   isSensitiveBlockScope,
 } from '~/shared/constants/block-scope.constants';
 import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
@@ -104,6 +106,48 @@ export default function BlockConsentModal({
     parsedBudget <= BLOCK_CONSENT_BUDGET_MAX_PER_DAY;
   const budgetBlocksSubmit = grantsSpend && limitEnabled && !budgetValid;
 
+  // ── PER-GENERATION AUTHOR FEE — the PLATFORM-OWNED half of the disclosure.
+  //
+  // The other half is the run price itself: the two estimate arms now add the
+  // fee to the total they return, so the number an app displays before a run is
+  // the number the viewer is debited. That makes the price honest but leaves the
+  // fee INVISIBLE AS A FEE — the viewer sees a larger number and cannot tell the
+  // app takes a cut. This notice is the only surface that says so, and it is on
+  // a screen the platform renders rather than one the app's own bundle does.
+  //
+  // 🔴 SERVER-EVALUATED, NOT `useFeatureFlags()`. `app-blocks-author-fee-enabled`
+  // is a plain global Flipt boolean; the `features` payload evaluates under a
+  // USER context, which is a different shape that can disagree with the global
+  // one the charge path reads. This query calls the charge path's own flag
+  // function, so the screen cannot promise a fee that is not taken.
+  //
+  // ⚠️ SCOPED TO `grantsSpend`, AND THE GAP IS DELIBERATE. The fee only exists on
+  // generation paths, which need `ai:write:budgeted`; rendering it on a consent
+  // for, say, a profile read would be a charge notice for an app that cannot
+  // charge. The cost is that a viewer who granted spend BEFORE this shipped does
+  // not see this notice again — for them the corrected run price is the
+  // disclosure. Widening to "any consent by an app holding spend" needs the
+  // GRANTED set, which this modal is not given (it receives `missingScopes`).
+  const feeDisclosure = trpc.blocks.getAuthorFeeDisclosure.useQuery(undefined, {
+    enabled: grantsSpend,
+    // The config moves on a deploy and the flag on an operator action; neither
+    // needs a refetch mid-modal, and a consent screen must not flicker.
+    staleTime: 5 * 60 * 1000,
+    // 🔴 SILENT ON FAILURE, NEVER GUESSING. `undefined` renders nothing at all —
+    // the same outcome as the flag being off. A retry loop behind a modal that
+    // blocks a generation is worse than an absent sentence, and an errored query
+    // must not fall back to asserting a fee.
+    retry: false,
+  });
+  // 🔴 `grantsSpend` IS RE-CHECKED HERE, NOT LEFT TO `enabled`, AND A TEST CAUGHT
+  // THE DIFFERENCE. `enabled: false` stops a FETCH; it does not make `data`
+  // undefined. This query takes no input, so every consent modal in the session
+  // shares ONE cache entry — once any spend consent has populated it, a later
+  // modal for a profile-read consent reads that cached data straight through a
+  // disabled query and renders a charge notice for an app that cannot charge.
+  // `enabled` is the fetch optimisation; this is the gate.
+  const fee = grantsSpend && feeDisclosure.data?.disclose ? feeDisclosure.data : undefined;
+
   return (
     <Modal
       {...dialog}
@@ -134,6 +178,17 @@ export default function BlockConsentModal({
             );
           })}
         </List>
+        {fee ? (
+          // ABOVE the daily-limit control on purpose: this is a PRICE the viewer
+          // is agreeing to, the control below is a cap they choose. Reading the
+          // cap first invites setting a limit without knowing what each run
+          // costs.
+          <Text size="xs" c="dimmed" data-testid="block-consent-author-fee">
+            {fee.quotesFigureSafely
+              ? blockConsentAuthorFeeSentence(fee)
+              : BLOCK_CONSENT_AUTHOR_FEE_RULE_ONLY}
+          </Text>
+        ) : null}
         {grantsSpend ? (
           <Stack gap="xs" data-testid="block-consent-budget">
             <Switch

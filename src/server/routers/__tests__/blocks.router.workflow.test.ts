@@ -38,6 +38,7 @@ const {
   mockGetSessionUser,
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
+  mockIsAppBlocksAuthorFeeEnabled,
   mockDailyBoostApply,
   mockDailyBoostGetDetails,
   mockGetUserBuzzAccounts,
@@ -83,6 +84,15 @@ const {
   mockIsAppBlocksAuthorEnabled: vi.fn(
     async (opts?: { user?: { isModerator?: boolean } }) => !!opts?.user?.isModerator
   ),
+  // 🔴 ADDED TO A WHOLESALE MODULE MOCK THAT WAS MISSING IT, AND THE ABSENCE WAS
+  // INVISIBLE. `quoteBlockAuthorFee` calls `isAppBlocksAuthorFeeEnabled()` inside
+  // a try/catch that degrades to `flag-disabled`, so the mock not exporting it
+  // meant every fee path in this suite was taking the CATCH arm — the fee looked
+  // dark for the wrong reason, and a test that turned it on would have had no way
+  // to. Defaulting to `false` reproduces the previous outcome exactly (the same
+  // `flag-disabled` quote) so no existing expectation moves; the fee tests below
+  // drive it to `true` explicitly.
+  mockIsAppBlocksAuthorFeeEnabled: vi.fn(async () => false),
   mockDailyBoostApply: vi.fn(async () => undefined),
   mockDailyBoostGetDetails: vi.fn(async () => ({
     awarded: 0,
@@ -458,6 +468,7 @@ const { completeKeys } = vi.hoisted(() => {
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
   isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
+  isAppBlocksAuthorFeeEnabled: mockIsAppBlocksAuthorFeeEnabled,
 }));
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: {
@@ -10669,5 +10680,406 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect((err as TRPCError).code).toBe('BAD_REQUEST');
       expect((err as TRPCError).message).toMatch(/invalid params for step 'convert-image'/);
     });
+  });
+});
+
+/**
+ * THE VIEWER-FACING PRICE DISCLOSURE FOR THE PER-GENERATION AUTHOR FEE.
+ *
+ * 🔴 WHAT WAS BROKEN, AND WHY A GREEN SUITE DID NOT SAY SO. The submit paths add
+ * the author fee to `cost` before every guardrail, so once the fee flag flips a
+ * viewer shown `N` is debited `N + fee`. Worse, the app's token carries a
+ * per-call Buzz ceiling and the fee is INSIDE that gate, so an app sized near
+ * its ceiling is refused outright with `insufficient buzz budget` — which reaches
+ * the viewer as "the app is broken" rather than as a price. Nothing failed,
+ * because every estimate test asserted the orchestrator's own number and the
+ * estimate never asked about the fee at all.
+ *
+ * So the regression is exactly: the total an ESTIMATE returns must include the
+ * fee the SUBMIT will charge. Red at `origin/main` on the two priceable arms.
+ *
+ * 🔴 THE FLAG DEFAULTS TO `false` FOR THE WHOLE SUITE AND IS DRIVEN TO `true`
+ * ONLY HERE. That keeps every other expectation in this file byte-identical and
+ * makes these tests the only ones whose subject is the fee.
+ *
+ * 🔴 THE FEE IS COMPUTED FOR REAL. Only the FLAG and the PAYEE LOOKUP are
+ * mocked; `computeBlockAuthorFee` runs against the live platform config, so
+ * these assertions pin the wiring rather than a stub's return. The fixture base
+ * (200) is chosen so the fee (10) is distinct from the generation totals (12, 4)
+ * and from the asserted sums (22, 14) — a fixture whose numbers collide with the
+ * constant cannot see a mutant that hardcodes it.
+ */
+describe('blocks workflow — author-fee price disclosure', () => {
+  /** The app owner. NOT the viewer (`user:42`), or the quote skips self-dealing. */
+  const APP_OWNER_ID = 777;
+  /** `cost.base` on the whatIf. 5% of 200 = 10, which beats the 1 ⚡ flat leg. */
+  const FEE_BASE = 200;
+  /** What `computeBlockAuthorFee` returns for that base on the default config. */
+  const EXPECTED_FEE = 10;
+  /**
+   * A SECOND base, used by the step arm — and the reason it exists is a measured
+   * hole, not symmetry.
+   *
+   * 🔴 EVERY PRICEABLE ASSERTION IN THIS SUITE USED ONE BASE, SO A MUTANT THAT
+   * HARDCODED `feeBuzz = 10` INSIDE `quoteBlockAuthorFee` SURVIVED ALL 441 TESTS.
+   * Distinctness among the OTHER fixture numbers buys nothing against a mutant
+   * that hardcodes the single value they all assert — the control is to feed a
+   * base the constant CANNOT produce and watch the output move. 5% of 640 = 32.
+   */
+  const FEE_BASE_2 = 640;
+  const EXPECTED_FEE_2 = 32;
+
+  function feeLive() {
+    mockIsAppBlocksAuthorFeeEnabled.mockResolvedValue(true);
+    mockDbRead.oauthClient.findUnique.mockResolvedValue({
+      id: 'app_test',
+      userId: APP_OWNER_ID,
+    });
+  }
+
+  describe('txt2img estimate (a PRICEABLE arm)', () => {
+    function whatIfCosting(cost: Record<string, unknown> | undefined) {
+      mockSubmitWorkflow.mockResolvedValue({
+        id: '',
+        status: 'succeeded',
+        steps: [],
+        ...(cost ? { cost } : {}),
+      });
+    }
+
+    it('🔴 REGRESSION: the returned total INCLUDES the author fee', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      happyVersionLookup();
+      happyUser();
+      feeLive();
+      whatIfCosting({ total: 12, base: FEE_BASE });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+
+      // Pre-change this was `{ total: 12 }` — the orchestrator's number alone.
+      expect(result.snapshot.cost).toEqual({ total: 12 + EXPECTED_FEE });
+    });
+
+    it('prices the fee off `cost.base`, NEVER off `cost.total`', async () => {
+      // 🔴 THE MUTATION THIS EXISTS TO KILL, and it is invisible when the two
+      // numbers agree. `total` already carries per-resource licensing fees, the
+      // lineage fee and tips, so a fee taken on it is a cut of another creator's
+      // money. Here total(12) and base(200) are wildly different, so a site
+      // reading `total` would produce 1 (the flat leg wins at 12) instead of 10.
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      happyVersionLookup();
+      happyUser();
+      feeLive();
+      whatIfCosting({ total: 12, base: FEE_BASE });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.cost).toEqual({ total: 22 });
+    });
+
+    it('adds NOTHING when the price is a CAP (`cost.variable`)', async () => {
+      // A cap-priced generation is billed up front and refunded down, so the
+      // charge path takes no fee on it — and the disclosure must agree, or the
+      // estimate over-quotes a fee that is never charged.
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      happyVersionLookup();
+      happyUser();
+      feeLive();
+      whatIfCosting({ total: 12, base: FEE_BASE, variable: true });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.cost).toEqual({ total: 12 });
+    });
+
+    it('adds NOTHING when the whatIf carries no `base`', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      happyVersionLookup();
+      happyUser();
+      feeLive();
+      whatIfCosting({ total: 12 });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.cost).toEqual({ total: 12 });
+    });
+
+    it('adds NOTHING when the flag is OFF (the as-merged posture)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      happyVersionLookup();
+      happyUser();
+      mockIsAppBlocksAuthorFeeEnabled.mockResolvedValue(false);
+      mockDbRead.oauthClient.findUnique.mockResolvedValue({
+        id: 'app_test',
+        userId: APP_OWNER_ID,
+      });
+      whatIfCosting({ total: 12, base: FEE_BASE });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.cost).toEqual({ total: 12 });
+    });
+
+    it('adds NOTHING for a SELF-DEALING author viewing their own app', async () => {
+      // 🔴 THIS IS THE DECISION THE PAYEE LOOKUP BUYS. A disclosure-only variant
+      // that skipped `resolveBlockAuthorFeePayee` to save a query would quote the
+      // app's own author a fee they are never charged — on the surface whose job
+      // is to predict the charge, to the population that exercises it most.
+      // Viewer `user:42` IS the owner here.
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      happyVersionLookup();
+      happyUser();
+      mockIsAppBlocksAuthorFeeEnabled.mockResolvedValue(true);
+      mockDbRead.oauthClient.findUnique.mockResolvedValue({ id: 'app_test', userId: 42 });
+      whatIfCosting({ total: 12, base: FEE_BASE });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.cost).toEqual({ total: 12 });
+    });
+
+    it('still reserves NOTHING — a disclosing quote moves no money', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      happyVersionLookup();
+      happyUser();
+      feeLive();
+      whatIfCosting({ total: 12, base: FEE_BASE });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(
+        mockSysRedis.incrBy.mock.calls.filter((c) => String(c[0]).startsWith('system:blocks:'))
+      ).toHaveLength(0);
+    });
+  });
+
+  describe('registry-step estimate (the OTHER priceable arm)', () => {
+    const STEP_ID = 'convert-image';
+
+    function stepClaims() {
+      return validClaims({
+        ctx: { entityType: 'none', slotId: 'page' },
+        appBlockId: 'apb_test',
+        buzzBudget: 500,
+      });
+    }
+    function stepBody() {
+      return {
+        kind: 'step' as const,
+        step: STEP_ID,
+        params: {
+          image: 'https://image.civitai.com/source.png',
+          output: { format: 'webp', quality: 90 },
+        },
+      };
+    }
+    /** whatIf quote carrying a base; the real submit is never reached here. */
+    function stepQuoting(cost: Record<string, unknown>) {
+      mockSubmitWorkflow.mockImplementation(async (opts: { query?: { whatif?: boolean } }) =>
+        opts?.query?.whatif === true
+          ? { id: 'wf_quote', status: 'unassigned', steps: [], cost }
+          : { id: 'wf_step_1', status: 'processing', steps: [], cost: { total: 4 } }
+      );
+    }
+
+    it('🔴 REGRESSION: the shown total INCLUDES the author fee', async () => {
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      feeLive();
+      stepQuoting({ total: 4, base: FEE_BASE_2 });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+      // max(declared floor 1, quoted 4) = 4, plus the fee. Pre-change: 4.
+      // 🔴 A DIFFERENT BASE FROM THE TXT2IMG ARM ON PURPOSE — see FEE_BASE_2.
+      // A `feeBuzz` hardcoded to either arm's expected value is red on the other.
+      expect(result.snapshot.cost).toEqual({ total: 4 + EXPECTED_FEE_2 });
+      expect(EXPECTED_FEE_2).not.toBe(EXPECTED_FEE);
+    });
+
+    it('the fee is ADDED OUTSIDE the max(floor, quoted), never folded into it', async () => {
+      // 🔴 A fee folded inside the `max` would be SWALLOWED whenever the floor
+      // wins. Quoting 0 makes the floor (1) win, so a correct implementation
+      // shows 1 + 10 and the folded mutant shows max(1, 0 + 10) = 10.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      feeLive();
+      stepQuoting({ total: 0, base: FEE_BASE });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot.cost).toEqual({ total: 1 + EXPECTED_FEE });
+    });
+
+    it('adds NOTHING when the orchestrator quote DEGRADES', async () => {
+      // No whatIf ⇒ no `cost.base` ⇒ no fee priced, and the shown generation
+      // price already falls back to the declared estimate. Degradation is
+      // correlated with the submit's, not bounded by it.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      feeLive();
+      mockSubmitWorkflow.mockRejectedValue(new Error('orchestrator down'));
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.estimateWorkflow({ blockToken: 'tok', body: stepBody() });
+      expect(result.snapshot.cost).toEqual({ total: 1 });
+    });
+  });
+
+  describe('the two NON-priceable arms are UNCHANGED', () => {
+    // 🔴 THESE ARE POST-PAID AND LEDGERED AS NO-FEE PATHS. Neither has a
+    // pre-submit `cost.base`, so neither RESERVES a fee and neither CHARGES one —
+    // and a disclosure that quoted one anyway would show a price no submit takes,
+    // which is the same defect as under-display with the sign flipped. The flag
+    // and the payee are live in both tests, so a fee appearing here is a real
+    // failure and not an untested default.
+
+    it('customComfy estimate returns the recipe display estimate, fee-free', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ ctx: { entityType: 'none', slotId: 'page' }, appBlockId: 'apb_test', buzzBudget: 500 })
+      );
+      happyUser();
+      feeLive();
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.estimateWorkflow({
+        blockToken: 'tok',
+        body: {
+          kind: 'customComfy' as const,
+          recipe: 'seamless-pano-360',
+          params: { prompt: 'a sunset over mountains', engine: 'zimage-turbo' },
+        },
+      });
+      // zimage-turbo display estimate, unchanged — NOT 20 + 10.
+      expect(result.snapshot.cost).toEqual({ total: 20 });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('pass-through estimate is fee-free', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ ctx: { entityType: 'none', slotId: 'page' }, appBlockId: 'apb_test', buzzBudget: 50 })
+      );
+      happyUser();
+      feeLive();
+      mockSubmitWorkflow.mockImplementation(async (opts: { query?: { whatif?: boolean } }) =>
+        opts?.query?.whatif === true
+          ? { id: 'wf_quote', status: 'unassigned', steps: [], cost: { total: 5, base: FEE_BASE } }
+          : { id: 'wf_pt_1', status: 'processing', steps: [], cost: { total: 5 } }
+      );
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.estimateWorkflow({
+        blockToken: 'tok',
+        body: {
+          kind: 'step' as const,
+          $type: 'imageBackgroundRemoval',
+          input: { prompt: 'a cat' },
+          maxBuzz: 20,
+        },
+      });
+      // 🔴 20 IS `maxBuzz`, NOT THE QUOTE — this arm shows the app's declared
+      // ceiling, which is exactly why it has no `cost.base` to price a fee from
+      // and is ledgered as a no-fee path. The number is the pre-change one; a
+      // fee added here would read 30. (The first expectation asserted 5, the
+      // quote's total, and went red: the arm never showed the quote at all.)
+      expect(result.snapshot.cost).toEqual({ total: 20 });
+
+      // 🔴 THE REAL NON-VACUITY CONTROL, AND IT REPLACED A FAKE ONE. This line
+      // used to read `expect(EXPECTED_FEE).toBeGreaterThan(0)` — i.e.
+      // `expect(10).toBeGreaterThan(0)`, which NO mutation of any production file
+      // can turn red. Labelled a control, it read as one while providing none,
+      // which is worse than having no control at all because it stops anyone
+      // adding a real one.
+      //
+      // A real control drives a PRICEABLE arm through the SAME live flag, payee
+      // and base in this same test, and watches the fee actually appear. If that
+      // goes 12 (no fee) the zero above is meaningless and this test says so.
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      happyVersionLookup();
+      mockSubmitWorkflow.mockResolvedValue({
+        id: '',
+        status: 'succeeded',
+        steps: [],
+        cost: { total: 12, base: FEE_BASE },
+      });
+      const priced = await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(priced.snapshot.cost, 'the control priced no fee — this test proves nothing').toEqual({
+        total: 12 + EXPECTED_FEE,
+      });
+    });
+  });
+});
+
+/**
+ * `blocks.getAuthorFeeDisclosure` — the procedure the consent screen reads.
+ *
+ * 🔴 THIS SUITE EXISTS BECAUSE THE PROCEDURE HAD ZERO EXECUTABLE COVERAGE. The
+ * only test file naming it was `BlockConsentModal.browser.test.tsx`, which MOCKS
+ * it — so the browser tests were evidence about the renderer and read as evidence
+ * about the disclosure decision. Two mutations proved the gap: forcing
+ * `quotesFigureSafely` to `true`, and deleting the `if (!enabled) return off`
+ * flag gate entirely, each left the whole battery green.
+ *
+ * The second is the one that matters. The procedure's own docblock calls it
+ * 🔴 load-bearing that "the screen cannot claim a fee the charge path would not
+ * take" — i.e. the consent screen must not announce a fee while the flag is dark.
+ * Nothing tested it.
+ */
+describe('blocks.getAuthorFeeDisclosure', () => {
+  const caller = () =>
+    blocksRouter.createCaller({ ...fakeCtx(), user: { id: 42, isModerator: true } } as never);
+
+  it('🔴 serves NOTHING while the fee flag is dark (the as-merged posture)', () => {
+    mockIsAppBlocksAuthorFeeEnabled.mockResolvedValue(false);
+    return expect(caller().getAuthorFeeDisclosure()).resolves.toEqual({ disclose: false });
+  });
+
+  it('🔴 serves the figures when the flag is LIVE (positive control)', async () => {
+    // Without this the "dark" assertion above is indistinguishable from a
+    // procedure wired to nothing — a permanent `{disclose:false}` would satisfy
+    // it forever.
+    mockIsAppBlocksAuthorFeeEnabled.mockResolvedValue(true);
+    const result = await caller().getAuthorFeeDisclosure();
+    // 🔴 THE PLATFORM CONFIG AS PRODUCTION RESOLVES IT, not a fixture: 1 ⚡ flat
+    // and 5% (500 bp). A mutant serving a hardcoded pair is red here.
+    expect(result).toEqual({
+      disclose: true,
+      flatBuzz: 1,
+      pctBasisPoints: 500,
+      quotesFigureSafely: true,
+    });
+  });
+
+  it('🔴 fails CLOSED when the flag read throws', async () => {
+    // A flag that will not resolve is not permission to state a price. The
+    // consent screen renders nothing, exactly as if the fee were off.
+    mockIsAppBlocksAuthorFeeEnabled.mockRejectedValue(new Error('flipt unreachable'));
+    await expect(caller().getAuthorFeeDisclosure()).resolves.toEqual({ disclose: false });
+  });
+
+  it('serves nothing when App Blocks itself is disabled for the viewer', async () => {
+    // `enforceAppBlocksFlag`'s query arm sets `_appBlocksDisabled` rather than
+    // throwing, so the handler must honour it instead of answering anyway.
+    mockIsAppBlocksEnabled.mockResolvedValue(false);
+    mockIsAppBlocksAuthorFeeEnabled.mockResolvedValue(true);
+    await expect(caller().getAuthorFeeDisclosure()).resolves.toEqual({ disclose: false });
+    mockIsAppBlocksEnabled.mockResolvedValue(true);
+  });
+
+  it('🔴 never leaks the fee-free TYPE IDS to the client', async () => {
+    // `describeBlockAuthorFee` knows them; the wire payload deliberately does
+    // not. No renderer consumes them, and shipping a field nothing reads is the
+    // "type-only declaration" shape this whole change exists to avoid.
+    mockIsAppBlocksAuthorFeeEnabled.mockResolvedValue(true);
+    const result = await caller().getAuthorFeeDisclosure();
+    expect(Object.keys(result).sort()).toEqual([
+      'disclose',
+      'flatBuzz',
+      'pctBasisPoints',
+      'quotesFigureSafely',
+    ]);
+    expect(JSON.stringify(result)).not.toContain('chat-completion');
   });
 });

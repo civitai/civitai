@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   APP_BLOCK_OAUTH_CLIENT_ID_PREFIX,
+  BLOCK_CONSENT_AUTHOR_FEE_BODY,
+  BLOCK_CONSENT_AUTHOR_FEE_RULE_ONLY,
+  blockConsentAuthorFeeSentence,
   assertSensitiveScopesJustified,
   BLOCK_SCOPE_TO_OAUTH_BIT,
   deriveOauthBitmaskFromBlockScopes,
@@ -351,5 +354,109 @@ describe('block-scope.constants', () => {
         validateBlockScopesAgainstOauthClient(['buzz:read:self'], ceiling).valid
       ).toBe(false);
     });
+  });
+});
+
+/**
+ * The consent screen's AUTHOR-FEE sentence, which is GENERATED from the fee
+ * configuration rather than written as prose.
+ *
+ * 🔴 WHY THAT MATTERS ENOUGH TO TEST. The sibling money sentence in the same file
+ * (`BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY`) records five wordings that each
+ * shipped FALSE, and the cure was to forbid figures there. A figure IS permitted
+ * here only because it is a projection of the one constant the fee is computed
+ * from — so what has to be pinned is the PROJECTION, not the words: the figures
+ * must move when the config moves, and the sentence must degrade to the
+ * figure-free form when the config stops being describable by one figure.
+ */
+describe('blockConsentAuthorFeeSentence', () => {
+  const platform = { flatBuzz: 1, pctBasisPoints: 500 };
+
+  it('renders the served figures, not hardcoded ones', () => {
+    expect(blockConsentAuthorFeeSentence(platform)).toContain('at most 1 Buzz or 5% of');
+  });
+
+  it('🔴 the figures MOVE with the configuration', () => {
+    // The mutation this kills: a sentence that reads the right fields but
+    // interpolates a literal. Both legs differ from the platform values AND from
+    // each other, so a hardcoded 1 or 5 cannot survive.
+    const moved = blockConsentAuthorFeeSentence({ flatBuzz: 7, pctBasisPoints: 1250 });
+    expect(moved).toContain('at most 7 Buzz or 12.5% of');
+    expect(moved).not.toContain('1 Buzz');
+    // 🔴 ANCHORED ON `or `, NOT A BARE `'5%'` — `12.5%` CONTAINS `5%`, so the
+    // bare form failed against a correct implementation. That is the substring
+    // trap this assertion is about: a negative that can match the very value it
+    // is meant to distinguish from proves nothing in either direction.
+    expect(moved).not.toContain('or 5%');
+  });
+
+  it('renders basis points at sub-percent resolution, without rounding to a whole', () => {
+    // 550 bp is 5.5%. A `Math.round(bp / 100)` would render 6% — a figure the
+    // config does not say, in the direction that over-states the fee.
+    expect(blockConsentAuthorFeeSentence({ ...platform, pctBasisPoints: 550 })).toContain('5.5%');
+  });
+
+  it('🔴 claims only that a fee CAN apply, never that this app charges one', () => {
+    // 🔴 THE DEFECT REVIEW CAUGHT. An earlier wording opened "This app charges a
+    // developer fee on each generation", and the disclosure is PLATFORM-WIDE —
+    // it takes no app id. Four reachable states falsify the categorical form: a
+    // customComfy-only or pass-through-only app (both ledgered `charges: 0`), a
+    // SELF-DEALING author, a fee-free generation type, and a degraded quote.
+    for (const sentence of [
+      blockConsentAuthorFeeSentence(platform),
+      BLOCK_CONSENT_AUTHOR_FEE_RULE_ONLY,
+    ]) {
+      expect(sentence).toContain('can include a developer fee');
+      expect(sentence).toContain('Not every generation is charged one.');
+      expect(sentence).not.toContain('This app charges');
+      expect(sentence).not.toContain('on each generation:');
+    }
+  });
+
+  it('🔴 keeps "at most", which is the only thing making the percentage TRUE', () => {
+    // The percentage leg is computed on `WorkflowCost.base`; a viewer reads "the
+    // generation's cost" as `total`, which also carries per-resource licensing
+    // fees, the lineage fee and tips. The figure is an UPPER BOUND, and editing
+    // out "at most" turns it into a false equality. Pinned rather than left to a
+    // comment, because `base <= total` is assumed here and not established.
+    expect(blockConsentAuthorFeeSentence(platform)).toContain('at most 1 Buzz or 5% of that cost');
+  });
+
+  it('never names a raw generation-type id', () => {
+    // Viewers have no vocabulary for `chat-completion`. "Not every generation is
+    // charged one" reports that free cases EXIST — and covers the three other
+    // ways a generation goes unfeed that an enumeration of types would miss —
+    // without leaking an internal key onto a consent screen.
+    expect(blockConsentAuthorFeeSentence(platform)).not.toContain('chat-completion');
+    expect(BLOCK_CONSENT_AUTHOR_FEE_RULE_ONLY).not.toContain('chat-completion');
+  });
+
+  it('🔴 both wordings carry the invariant tail, including the Buzz-type honesty', () => {
+    // Both money hops preserve the account type (`fromAccountType ===
+    // toAccountType` on the charge AND the settlement), so a viewer spending
+    // non-withdrawable Buzz funds a non-withdrawable credit. A sentence that
+    // said "the developer earns Buzz" without this implies withdrawable earnings
+    // the viewer's spend cannot produce.
+    for (const sentence of [
+      blockConsentAuthorFeeSentence(platform),
+      BLOCK_CONSENT_AUTHOR_FEE_RULE_ONLY,
+    ]) {
+      expect(sentence).toContain(BLOCK_CONSENT_AUTHOR_FEE_BODY);
+      expect(sentence).toContain('non-withdrawable');
+      // 🔴 WHAT CIVITAI DOES, NOT WHAT THE APP SHOWS. The earlier wording —
+      // "already included in the cost shown before each run" — was a claim about
+      // a THIRD-PARTY renderer the platform does not control, and false on the
+      // degraded-quote path. The platform controls the number it QUOTES.
+      expect(sentence).toContain('adds the fee to the run price it quotes this app');
+      expect(sentence).not.toContain('included in the cost shown');
+    }
+  });
+
+  it('🔴 the figure-free fallback asserts NO figure', () => {
+    // It is the branch taken when an override prices a type above the default,
+    // i.e. exactly when "at most X or Y%" would be false. A digit in it would
+    // re-introduce the class the budget warning's docblock exists to forbid.
+    expect(BLOCK_CONSENT_AUTHOR_FEE_RULE_ONLY).not.toMatch(/\d/);
+    expect(BLOCK_CONSENT_AUTHOR_FEE_RULE_ONLY).toContain('depends on the generation type');
   });
 });

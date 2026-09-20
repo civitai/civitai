@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
+import { enclosingDecl } from '~/test-utils/routerSourceRegions';
 
 /**
  * NO SUBMIT GATE READS `claims.buzzBudget` DIRECTLY — every one of them goes
@@ -393,20 +394,62 @@ describe('the four submit gates are routed through one helper', () => {
     expect(sites).toHaveLength(4);
   });
 
-  it('the fee-pricing population agrees with the fee call sites', () => {
+  it('the fee-pricing population agrees with the RESERVING fee call sites', () => {
     // 🔴 THE RELATIONSHIP, not a component: a path that GROWS a fee without
     // flipping its flag, or flips a flag without wiring a fee, moves exactly one
     // of these two numbers. Both are read from the same file so neither can be
     // satisfied by the other's population.
+    //
+    // 🔴 THE POPULATION IS RESERVING QUOTES, NOT ALL QUOTES — AND COUNTING ALL OF
+    // THEM IS A BUG THIS GUARD BRIEFLY HAD. `quoteBlockAuthorFee` is now called
+    // from the two ESTIMATE arms as well, to DISCLOSE the fee in the price the
+    // block is shown. Those quotes reserve nothing and gate nothing, so they have
+    // no `blockPerCallBudget` call to flip a flag on: a raw count of quote sites
+    // compared against the `pricesAuthorFee: true` count is comparing two
+    // different populations and can only be made green by breaking one of them.
+    // `pricesAuthorFee` classifies BUDGET GATES, and only a submit path has one.
+    //
+    // The split is by ENCLOSING DECLARATION, which is the same discriminator
+    // `no-divergent-author-fee-base.test.ts` ledgers each site's role with — so
+    // a disclosing quote that moved into a submit path (or the reverse) is red in
+    // both files rather than silently re-partitioned here.
     const router = blankComments(
       readFileSync(path.join(SRC, 'server/routers/blocks.router.ts'), 'utf8')
     );
-    const feeQuotes = router.match(/quoteBlockAuthorFee\(\{/g) ?? [];
-    expect(feeQuotes.length, 'no fee quotes found — the matcher is wrong').toBeGreaterThan(0);
-    expect(feeQuotes).toHaveLength(2);
+    // ANY `*Procedure` spelling — the router also declares `moderatorProcedure`
+    // and `appDeveloperProcedure` handlers, and skipping them resolves an offset
+    // inside one to the PREVIOUS public/protected procedure. Kept byte-identical
+    // to `no-divergent-author-fee-base.test.ts`'s `PATH_DECL` on purpose: the
+    // comment below claims the two guards share a discriminator, and two copies
+    // that can drift would make that claim false the first time one is fixed.
+    // 🔴 ONE DISCRIMINATOR, SHARED — this test's own comment above claims the
+    // split "is the same discriminator `no-divergent-author-fee-base.test.ts`
+    // ledgers each site's role with". Two independently-maintained copies of a
+    // regex cannot support that sentence: the first person to fix one leaves the
+    // other wrong and both stay green. `enclosingDecl` is that one copy.
+    const quoteOwners = [...router.matchAll(/quoteBlockAuthorFee\(\{/g)].map((m) =>
+      enclosingDecl(router, m.index)
+    );
+    expect(quoteOwners.length, 'no fee quotes found — the matcher is wrong').toBeGreaterThan(0);
+    // Positive control on the SPLIT itself: a discriminator that resolved
+    // everything to one bucket would make the comparison below vacuous. Both
+    // buckets must be non-empty, which is a fact about today's router and is
+    // exactly what makes the number on the left meaningful.
+    const reserving = quoteOwners.filter((owner) => owner.startsWith('submit'));
+    const disclosing = quoteOwners.filter((owner) => owner.startsWith('estimate'));
+    expect(reserving.length, 'no reserving quote — the discriminator is wrong').toBeGreaterThan(0);
+    expect(disclosing.length, 'no disclosing quote — the discriminator is wrong').toBeGreaterThan(
+      0
+    );
+    expect(
+      reserving.length + disclosing.length,
+      'a fee quote sits in neither a submit nor an estimate path'
+    ).toBe(quoteOwners.length);
+
+    expect(reserving).toHaveLength(2);
     expect(
       (router.match(/pricesAuthorFee:\s*true\b/g) ?? []).length,
       'a submit path priced a fee without flipping its gate flag, or the reverse'
-    ).toBe(feeQuotes.length);
+    ).toBe(reserving.length);
   });
 });

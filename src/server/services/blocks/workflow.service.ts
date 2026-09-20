@@ -93,7 +93,32 @@ export function snapshotFromWorkflow(
    * request's own collector is in scope and is authoritative for that exact
    * validation (and where, on the estimate path, nothing was persisted at all).
    */
-  extra?: { modelSubstitutions?: BlockWorkflowSnapshot['modelSubstitutions'] }
+  extra?: {
+    modelSubstitutions?: BlockWorkflowSnapshot['modelSubstitutions'];
+    /**
+     * Whole Buzz to ADD to the reported `cost.total`, for a charge the viewer
+     * will incur that the orchestrator's own cost does not include — today only
+     * the App Blocks per-generation AUTHOR FEE, on the two ESTIMATE arms.
+     *
+     * 🔴 IT WIDENS THE NUMBER, NEVER THE WIRE SHAPE. `cost` stays `{ total }`:
+     * adding an itemised `authorFee` field would publish a cost breakdown to
+     * every third-party app, which is the thing this projection deliberately
+     * does not do, and it would also be INERT — an itemised field discloses
+     * nothing until each third-party author writes a renderer for it, whereas a
+     * corrected total is read by every app that already displays a price.
+     *
+     * 🔴 AND IT IS AN ESTIMATE-ONLY ARGUMENT. A SUBMIT must not pass it: there
+     * the orchestrator's realized `cost.total` is the generation's own price and
+     * the settle/refund arithmetic downstream (`snapshot.cost?.total ?? ceiling`)
+     * is taken against it, so inflating it there would refund the fee back into
+     * every cap while the fee stands. Pinned by
+     * `no-divergent-author-fee-base.test.ts`.
+     *
+     * Ignored when the workflow reports no cost at all — there is no total to
+     * correct, and inventing one would report a fee as if it were the price.
+     */
+    additionalCostBuzz?: number;
+  }
 ): BlockWorkflowSnapshot {
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
   const imageUrls: string[] = [];
@@ -191,7 +216,19 @@ export function snapshotFromWorkflow(
       }
     }
   }
-  const total = workflow.cost?.total;
+  const orchestratorTotal = workflow.cost?.total;
+  // Only a FINITE POSITIVE addition moves the number. A NaN/Infinity would
+  // propagate into the reported price silently, and a negative one would make
+  // the block show LESS than it will be charged — the one direction this whole
+  // change exists to remove.
+  const additional = extra?.additionalCostBuzz;
+  const total =
+    typeof orchestratorTotal === 'number' &&
+    typeof additional === 'number' &&
+    Number.isFinite(additional) &&
+    additional > 0
+      ? orchestratorTotal + additional
+      : orchestratorTotal;
   const spentAccountType = primaryDebitedAccountType(workflow.transactions);
   // #3520 — prefer the CALLER-SUPPLIED record (the submit/estimate reply, where
   // the request's own collector is still in scope and is authoritative for this

@@ -131,6 +131,20 @@ export async function quoteBlockAuthorFee(args: {
   viewerUserId: number;
   /** Log-only; a whatIf has no workflow id, so callers pass a stable label. */
   workflowLabel: string;
+  /**
+   * DISCLOSURE-ONLY caller: the result is shown to a viewer and then discarded,
+   * never gated, reserved or charged against.
+   *
+   * 🔴 IT CHANGES NO PRICING, AND THAT IS THE POINT — every arm below runs
+   * identically. It suppresses only `resolveBlockAuthorFeePayee`'s two SKIP LOG
+   * lines, because the estimate path is unbounded (per-keystroke, no rate limit)
+   * while a submit is once per generation, and those lines are neither free nor
+   * attributable there. A variant that changed what is RETURNED would re-create
+   * estimate/submit divergence one layer down, which is the exact defect the
+   * disclosure exists to remove; the flag is named for what it does so it cannot
+   * be mistaken for one.
+   */
+  suppressSkipLogs?: boolean;
   config?: BlockAuthorFeeConfig;
 }): Promise<BlockAuthorFeeQuote> {
   try {
@@ -172,6 +186,7 @@ export async function quoteBlockAuthorFee(args: {
       appId: args.appId,
       viewerUserId: args.viewerUserId,
       workflowId: args.workflowLabel,
+      suppressSkipLogs: args.suppressSkipLogs,
     });
     if (!payee.payee) return { charge: false, reason: payee.reason };
 

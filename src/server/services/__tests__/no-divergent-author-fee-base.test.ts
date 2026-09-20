@@ -1,6 +1,12 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
+import {
+  blankComments,
+  declRegions,
+  enclosingDecl,
+  sourceDecls,
+} from '~/test-utils/routerSourceRegions';
 
 /**
  * THE SEAM GUARD — and the only guard in this change that is RED at `origin/main`.
@@ -61,27 +67,91 @@ function spendAttributionCallSites(source: string): string[] {
 }
 
 /**
- * The nearest enclosing SUBMIT PATH name for an offset in the router source —
- * either a tRPC procedure (`  submitWorkflow: publicProcedure`) or a module-level
- * helper (`async function submitStepWorkflow(`).
+ * The nearest enclosing SUBMIT PATH name for an offset in the router source, and
+ * the router sliced into one region per path.
  *
- * Used to key the charge ledger below by PATH rather than by file: every submit
- * path in this repo lives in this one file, so the per-file count that
- * `no-unguarded-billable-submit.test.ts` keys on cannot discriminate between
- * them.
+ * 🔴 BOTH COME FROM THE SHARED `routerSourceRegions` MODULE, NOT A LOCAL COPY.
+ * `no-direct-block-budget-claim-read.test.ts` asserts that its reserving/
+ * disclosing split uses "the same discriminator" this file ledgers roles with —
+ * a claim two independently-maintained regexes cannot support. See that module's
+ * header for the `\w+Procedure` widening and why it mattered.
  */
-const PATH_DECL = /^(?:async function (\w+)\(| {2}(\w+): (?:public|protected)Procedure)/gm;
+const enclosingSubmitPath = enclosingDecl;
+const pathRegions = declRegions;
 
-function enclosingSubmitPath(source: string, offset: number): string {
-  PATH_DECL.lastIndex = 0;
-  let name = '<module scope>';
-  for (;;) {
-    const m = PATH_DECL.exec(source);
-    if (!m || m.index >= offset) break;
-    name = m[1] ?? m[2];
-  }
-  return name;
-}
+/**
+ * EVERY `quoteBlockAuthorFee` CALL SITE, BY THE ROLE IT PLAYS — and the roles are
+ * the point, not the count.
+ *
+ * 🔴 WHY A COUNT WOULD BE THE WRONG GUARD HERE. This assertion used to read
+ * `expect(quotes).toHaveLength(2)`, which was exactly right while every quote
+ * moved money. It stopped being right the moment the two ESTIMATE arms began
+ * quoting the fee to DISPLAY it: bumping 2 → 4 would keep the file green while
+ * losing the only distinction that matters, and the very next reader could wire a
+ * reservation onto a disclosing site, or a disclosure onto a reserving one,
+ * without a single assertion moving. This file has walked into that once already
+ * — see the reversal guard below, whose previous version "COUNTED THE WRONG
+ * POPULATION … the population that exists rather than the one that should".
+ *
+ * So each site is LEDGERED with its role, and the role is then CHECKED against
+ * what its enclosing path actually does:
+ *
+ *   'reserving'  — the quote's result is folded into a number that is gated and
+ *                  reserved, and the path later CHARGES. Money moves. Exactly
+ *                  the two SUBMIT paths that have a pre-submit `cost.base`.
+ *   'disclosing' — the quote's result is added to a number that is SHOWN to the
+ *                  block and then thrown away. The path reserves nothing,
+ *                  charges nothing and accrues nothing. A disclosing site that
+ *                  grew any of those three is a fee being taken from a surface
+ *                  the viewer was told was an estimate.
+ *
+ * `baseExpr`/`capExpr` are ledgered per site rather than asserted as one shared
+ * string because the step ESTIMATE reads through an optional whatIf (the
+ * orchestrator round-trip may have degraded, in which case no fee is priced),
+ * so its spelling genuinely differs. The RELATIONSHIP is asserted separately and
+ * uniformly: every site reads base AND cap from a `.cost?.` of a whatIf
+ * response, and no site reads `snapshot`.
+ */
+const QUOTE_SITE_LEDGER: Record<
+  string,
+  { role: 'reserving' | 'disclosing'; baseExpr: string; capExpr: string; reason: string }
+> = {
+  submitWorkflow: {
+    role: 'reserving',
+    baseExpr: 'baseGenerationBuzz: whatIfResult.cost?.base',
+    capExpr: 'priceIsCap: whatIfResult.cost?.variable',
+    reason:
+      'txt2img submit. The quote is added to `cost` BEFORE the per-call budget gate, the ' +
+      'per-user cap, the consent budget, the per-app cap and the dev-tunnel backstop, and is ' +
+      'the ceiling `chargeBlockAuthorFee` is held to.',
+  },
+  submitStepWorkflow: {
+    role: 'reserving',
+    baseExpr: 'baseGenerationBuzz: whatIfResult.cost?.base',
+    capExpr: 'priceIsCap: whatIfResult.cost?.variable',
+    reason:
+      'registry-step submit. Same placement: `reserveBuzz = reserveGenerationBuzz + ' +
+      'reservedAuthorFeeBuzz`, gated and reserved before the orchestrator submit.',
+  },
+  estimateWorkflow: {
+    role: 'disclosing',
+    baseExpr: 'baseGenerationBuzz: whatIfResult.cost?.base',
+    capExpr: 'priceIsCap: whatIfResult.cost?.variable',
+    reason:
+      'txt2img ESTIMATE. Added to the snapshot total the block is shown so the quoted price ' +
+      'is the price charged. Reserves nothing — the submit runs its own quote, and THAT one ' +
+      'is what money is taken against.',
+  },
+  estimateStepWorkflow: {
+    role: 'disclosing',
+    baseExpr: 'baseGenerationBuzz: whatIfResult?.cost?.base',
+    capExpr: 'priceIsCap: whatIfResult?.cost?.variable',
+    reason:
+      'registry-step ESTIMATE. Optional-chained because `quoteStepBuzz` returns null when the ' +
+      'orchestrator round-trip degrades; an absent whatIf prices no fee, exactly as the shown ' +
+      'generation price already falls back to the declared floor.',
+  },
+};
 
 /** Every `<fn>({ … })` argument object in the router source, braces balanced. */
 function callSites(source: string, opener: string): string[] {
@@ -108,7 +178,7 @@ function callSites(source: string, opener: string): string[] {
 }
 
 describe('author fee — the spend-attribution seam', () => {
-  const source = readFileSync(ROUTER, 'utf8');
+  const source = blankComments(readFileSync(ROUTER, 'utf8'));
   const sites = spendAttributionCallSites(source);
 
   it('the extractor itself finds call sites (positive control)', () => {
@@ -285,7 +355,16 @@ const NO_FEE_PATHS: Record<string, { charges: number; reason: string; whatifAttr
   };
 
 describe('author fee — the viewer-charge seam', () => {
-  const source = readFileSync(ROUTER, 'utf8');
+  // 🔴 TWO VIEWS OF ONE FILE, AND THE SPLIT IS LOAD-BEARING IN BOTH DIRECTIONS.
+  // `source` is comment-BLANKED and is what every CODE guard reads: a structural
+  // check over raw text is walkable by a comment — `// await chargeBlockAuthorFee({`
+  // left four money guards green while the fee stopped being debited, and the
+  // `await`-adjacency check's 6-byte lookbehind matches `// await ` just as well.
+  // `rawSource` keeps the comments and is read ONLY by the guards whose subject
+  // IS a comment (the no-fee paths must DECLARE their exemption in prose).
+  // Blanking those too made them fail for the opposite reason.
+  const rawSource = readFileSync(ROUTER, 'utf8');
+  const source = blankComments(rawSource);
   const charges = callSites(source, 'chargeBlockAuthorFee({');
   const quotes = callSites(source, 'quoteBlockAuthorFee({');
 
@@ -477,7 +556,11 @@ describe('author fee — the viewer-charge seam', () => {
       const markerAt = submitMarkers[markerIndex];
       expect(markerAt, `${pathName}: spend marker not found`).toBeGreaterThan(fnAt);
 
-      const preamble = source
+      // 🔴 `rawSource`, NOT `source` — this slice's whole subject IS the comment,
+      // and the blanked view is all spaces here. Byte offsets are identical
+      // between the two views (blanking preserves positions), so the offsets
+      // computed above index both correctly.
+      const preamble = rawSource
         .slice(fnAt, markerAt)
         .replace(/^\s*\/\/ ?/gm, '')
         .replace(/\s+/g, ' ');
@@ -538,21 +621,211 @@ describe('author fee — the viewer-charge seam', () => {
     expect(source).not.toMatch(/ceiling:\s*reserveBuzz\b/);
   });
 
-  it('🔴 both quotes are priced off the WHATIF response, before anything is reserved', () => {
-    expect(quotes).toHaveLength(2);
-    for (const site of quotes) {
-      expect(site).toContain('baseGenerationBuzz: whatIfResult.cost?.base');
-      expect(site).toContain('priceIsCap: whatIfResult.cost?.variable');
+  /** The path owning each `quoteBlockAuthorFee({`, paired with its source slice. */
+  const quoteOwners = [...source.matchAll(/quoteBlockAuthorFee\(\{/g)].map((m) => ({
+    path: enclosingSubmitPath(source, m.index),
+    site: callSites(source.slice(m.index), 'quoteBlockAuthorFee({')[0],
+  }));
+  const regions = pathRegions(source);
+
+  it('comment-stripping did not eat real code, and sees every declaration (controls)', () => {
+    // 🔴 THE STRIPPER IS AN INSTRUMENT, SO IT IS VALIDATED BEFORE ITS VERDICT IS
+    // READ. If `blankComments` ate real source, every assertion in this describe
+    // would go vacuously green over an empty population.
+    expect(source).toContain('quoteBlockAuthorFee({');
+    expect(source).toContain('chargeBlockAuthorFee({');
+    expect(source).toContain('reserveAppSpend(');
+    // …and the NEGATIVE half: prose mentioning these functions must be GONE, or
+    // a region check is red on a docblock rather than on code. The router's own
+    // new comments discuss `chargeBlockAuthorFee` inside the ESTIMATE regions.
+    expect(source).not.toContain('THE AUTHOR FEE IS PRICED INTO');
+
+    // 🔴 A DECLARATION COUNT, so a future builder name (`someNewProcedure`)
+    // cannot silently shrink the population every region check is taken over.
+    // Measured: the pre-widening `(?:public|protected)Procedure` form captured
+    // 42 of 189 two-space keys, and `uninstallFromModel`'s region then swallowed
+    // 27 procedures whole.
+    // Measured at this revision: the widened `\w+Procedure` form finds 106
+    // declarations where the old `(?:public|protected)Procedure` form found 72.
+    // The floor is set below today's count so ordinary churn does not trip it,
+    // and ABOVE the narrow form's, so silently reverting the widening is red.
+    const decls = sourceDecls(source);
+    expect(decls.length, 'the declaration walk collapsed — regions are meaningless').toBeGreaterThan(
+      90
+    );
+    for (const name of Object.keys(QUOTE_SITE_LEDGER)) {
+      expect(decls.map((d) => d.name)).toContain(name);
     }
-    // ORDERING, on the txt2img path: price → reserve → charge. A quote taken
-    // after the reservation would be a number nothing was gated on, which is the
-    // defect this whole block exists to make impossible.
-    const firstQuote = source.indexOf('quoteBlockAuthorFee({');
-    const firstReserve = source.indexOf('reserveAppSpend(');
-    const firstCharge = source.indexOf('chargeBlockAuthorFee({');
-    expect(firstQuote).toBeGreaterThan(-1);
-    expect(firstQuote).toBeLessThan(firstReserve);
-    expect(firstReserve).toBeLessThan(firstCharge);
+  });
+
+  it('the quote-owner locator resolves every quote to a real path (positive control)', () => {
+    // Without this a locator that answered `<module scope>` for everything would
+    // make the ledger fail for the wrong reason, or — if `<module scope>` were
+    // ever ledgered — pass vacuously.
+    expect(quoteOwners.length).toBeGreaterThan(0);
+    for (const { path: owner, site } of quoteOwners) {
+      expect(owner).not.toBe('<module scope>');
+      expect(site).toContain('appId: claims.appId');
+    }
+  });
+
+  it('🔴 every fee quote is LEDGERED, and the ledger names every quote', () => {
+    // Fails when the population GROWS (a new quote site with no declared role)
+    // and when it SHRINKS (a ledgered site deleted) — the same both-directions
+    // contract the spend-attribution ledger above carries.
+    expect(new Set(quoteOwners.map((q) => q.path))).toEqual(new Set(Object.keys(QUOTE_SITE_LEDGER)));
+    expect(quoteOwners).toHaveLength(Object.keys(QUOTE_SITE_LEDGER).length);
+    for (const entry of Object.values(QUOTE_SITE_LEDGER)) {
+      expect(entry.reason.length).toBeGreaterThan(40);
+    }
+  });
+
+  it('🔴 every quote is priced off a WHATIF response — never off `snapshot`', () => {
+    // THE RELATIONSHIP, asserted uniformly over all four regardless of role. The
+    // fee is a percentage of `WorkflowCost.base`; `snapshot.cost` is `{ total }`
+    // only, so a `snapshot.cost?.base` here is `undefined` SILENTLY and the fee
+    // quietly stops being priced. Both the per-site spelling and the shape are
+    // checked: the spelling catches a site pointed at the wrong object, the
+    // shape catches a new site whose ledger entry was written to match it.
+    for (const { path: owner, site } of quoteOwners) {
+      const ledgered = QUOTE_SITE_LEDGER[owner];
+      expect(site).toContain(ledgered.baseExpr);
+      expect(site).toContain(ledgered.capExpr);
+      expect(site).not.toContain('snapshot');
+      expect(ledgered.baseExpr).toMatch(/^baseGenerationBuzz: \w+\??\.cost\?\.base$/);
+      expect(ledgered.capExpr).toMatch(/^priceIsCap: \w+\??\.cost\?\.variable$/);
+    }
+  });
+
+  it('🔴 a DISCLOSING quote reserves nothing and charges nothing', () => {
+    // 🔴 THIS IS THE GUARD THE OLD `toHaveLength(2)` CANNOT EXPRESS, AND THE
+    // REASON THE COUNT WAS REPLACED RATHER THAN BUMPED TO 4. An estimate arm is
+    // reached at unbounded frequency with no idempotency key and no reservation
+    // to reverse; a charge grown there would debit a viewer for a price quote.
+    // Conversely a submit path that lost its charge would price a fee nobody is
+    // ever billed and accrue nothing to the author.
+    //
+    // ⚠️ THE MARKERS ARE THE ONES VISIBLE IN THIS FILE, AND THE TITLE SAYS ONLY
+    // WHAT THEY COVER. `accrueBlockAuthorFee` was in this list for one revision
+    // and the guard went red on `submitWorkflow`: accrual is called by
+    // `chargeBlockAuthorFee` INSIDE the service, so no router region can contain
+    // it and the marker asserted something this corpus cannot see. It is covered
+    // transitively by `chargeBlockAuthorFee(` and directly by the service's own
+    // suite. A guard whose name is wider than its body reads as coverage while
+    // providing none, so the name lost the clause rather than the body faking it.
+    const MONEY_MARKERS = ['chargeBlockAuthorFee(', 'reserveAppSpend('];
+    for (const [name, { role }] of Object.entries(QUOTE_SITE_LEDGER)) {
+      const region = regions.get(name);
+      expect(region, `no region for ${name} — the slicer is wrong`).toBeDefined();
+      for (const marker of MONEY_MARKERS) {
+        expect(
+          region!.includes(marker),
+          `${name} is ledgered '${role}' but ${role === 'disclosing' ? 'contains' : 'is missing'} ${marker}`
+        ).toBe(role === 'reserving');
+      }
+    }
+  });
+
+  it('🔴 exactly the DISCLOSING quotes suppress the payee skip logs', () => {
+    // Those logs do an unconditional `console.error` (a SYNCHRONOUS write when
+    // stderr is a pipe) plus an HTTP ingest, and the estimate path is unbounded —
+    // per parameter change, no rate limit — while a submit is once per real
+    // generation. So the flag belongs on exactly the disclosing arms.
+    //
+    // BOTH DIRECTIONS. A reserving site that grew it would silence the skip
+    // diagnostics on the path that MOVES MONEY, where they are the only record
+    // that a fee was priced and then declined. A disclosing site that lost it
+    // puts a synchronous write back on the unbounded surface.
+    for (const { path: owner, site } of quoteOwners) {
+      expect(
+        site.includes('suppressSkipLogs: true'),
+        `${owner} is ledgered '${QUOTE_SITE_LEDGER[owner].role}' — its suppressSkipLogs is wrong`
+      ).toBe(QUOTE_SITE_LEDGER[owner].role === 'disclosing');
+    }
+  });
+
+  it('the disclosure DERIVES quotesFigureSafely — it does not assert it', () => {
+    // ⚠️ A SPELLED GUARD, AND LABELLED AS ONE. `quotesFigureSafely` is `true` for
+    // the shipped config (whose only override is fee-FREE), so hardcoding it to
+    // `true` is BEHAVIOURALLY INVISIBLE — a mutant doing exactly that survives
+    // the whole battery, because no reachable input distinguishes the literal
+    // from the expression. Confirmed by mutation, not assumed.
+    //
+    // The property is still worth pinning: the field exists precisely so that
+    // ADDING a charging override switches the consent screen to the figure-free
+    // wording instead of leaving a rendered number silently wrong. A literal
+    // would make that switch dead on arrival, and the failure would first appear
+    // as false money copy on a consent screen.
+    //
+    // So this checks the EXPRESSION, and the value it is derived FROM is covered
+    // behaviourally by `describeBlockAuthorFee`'s own suite, which drives
+    // charging and fee-free overrides directly. Structural + behavioural halves,
+    // neither sufficient alone.
+    expect(source).toContain('quotesFigureSafely: fee.chargingOverrideTypes.length === 0');
+    expect(source).not.toMatch(/quotesFigureSafely:\s*(?:true|false)\b/);
+  });
+
+  it('🔴 on a RESERVING path the order is price → reserve → charge', () => {
+    // Scoped to the path's OWN region. Measured against the whole file this read
+    // `indexOf` over every occurrence, so once an estimate arm gained the
+    // textually-first quote the assertion still passed — while no longer saying
+    // anything about the submit path it names. A quote taken after the
+    // reservation is a number nothing was gated on.
+    for (const [name, { role }] of Object.entries(QUOTE_SITE_LEDGER)) {
+      if (role !== 'reserving') continue;
+      const region = regions.get(name)!;
+      const quoteAt = region.indexOf('quoteBlockAuthorFee({');
+      const reserveAt = region.indexOf('reserveAppSpend(');
+      const chargeAt = region.indexOf('chargeBlockAuthorFee({');
+      expect(quoteAt, `${name}: no quote`).toBeGreaterThan(-1);
+      expect(reserveAt, `${name}: no reservation`).toBeGreaterThan(-1);
+      expect(chargeAt, `${name}: no charge`).toBeGreaterThan(-1);
+      expect(quoteAt, `${name}: quoted after reserving`).toBeLessThan(reserveAt);
+      expect(reserveAt, `${name}: reserved after charging`).toBeLessThan(chargeAt);
+    }
+  });
+
+  it('🔴 only an ESTIMATE arm may add the fee to the total it reports', () => {
+    // The disclosure's other half. On a SUBMIT the reported total is the realized
+    // GENERATION cost, and the settle/refund arithmetic downstream is taken
+    // against it (`snapshot.cost?.total ?? ceiling`), so adding the fee there
+    // would refund the fee back into every cap while the fee stands.
+    //
+    // 🔴 THE POPULATION IS "EVERY SITE THAT ADDS A QUOTED FEE TO A REPORTED
+    // PRICE", NOT ONE SPELLING OF IT — AND THE NARROW VERSION OF THIS GUARD WAS
+    // WALKABLE. It enumerated `additionalCostBuzz:` alone, which is how the
+    // TXT2IMG estimate inflates; the STEP estimate adds its fee with a plain
+    // `shownGenerationBuzz + …`, so the guard covered 1 of the 2 arms this change
+    // introduced, and a submit path inflating its own `snapshot.cost` directly
+    // was invisible to it. Both spellings are enumerated here, and the title now
+    // says what the body checks.
+    //
+    // ⚠️ THE RESERVATION SPELLING IS DELIBERATELY NOT IN THIS POPULATION.
+    // `authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0` appears on the SUBMIT
+    // paths too, where it feeds `reservedAuthorFeeBuzz` — a gate input, not a
+    // reported price. Matching it here made this guard red on correct code, which
+    // is how the narrower expression below was arrived at.
+    const inflators = [
+      ...[...source.matchAll(/additionalCostBuzz:/g)],
+      ...[...source.matchAll(/shownGenerationBuzz \+ \(authorFeeQuote/g)],
+    ].map((m) => enclosingSubmitPath(source, m.index));
+    expect(inflators.length, 'no inflator found — the matcher is wrong').toBeGreaterThan(0);
+    // Both spellings must be present, or one half of the matcher is dead and the
+    // guard silently narrows back to what it used to be.
+    expect(source).toContain('additionalCostBuzz:');
+    expect(source).toContain('shownGenerationBuzz + (authorFeeQuote');
+    for (const owner of inflators) {
+      expect(QUOTE_SITE_LEDGER[owner]?.role, `${owner} adds a fee to a reported total`).toBe(
+        'disclosing'
+      );
+    }
+    // 🔴 AND THE RESERVING PATHS' OWN REPORTED TOTALS ARE UNTOUCHED. A submit
+    // that added the fee to `snapshot.cost` — by any spelling — is the mutation
+    // the enumeration above cannot see if it invents a third one.
+    for (const [name, { role }] of Object.entries(QUOTE_SITE_LEDGER)) {
+      if (role !== 'reserving') continue;
+      expect(regions.get(name)!).not.toMatch(/snapshot\.cost[^)]*\+/);
+    }
   });
 
   it('🔴 EVERY procedure that cancels a workflow also reverses the fee', () => {
