@@ -405,8 +405,11 @@ export const BuzzPurchaseImproved = ({
     }
   }, [selectedBuzzType, features.isGreen, minBuzzAmount, serverDomains.green, syncAccount]);
 
+  // Same derivation as the effect above that seeds `customAmount`, so the placeholder shows the
+  // amount the user will actually be charged. Previously an un-ceiled `/ 10`: for a fractional
+  // minimum the placeholder advertised one price and the seeded field held a higher one.
   const minBuzzAmountPrice = minBuzzAmount
-    ? Math.max(minBuzzAmount / 10, effectiveMinCharge)
+    ? Math.max(buzzAmountToUnitAmount(minBuzzAmount), effectiveMinCharge)
     : effectiveMinCharge;
 
   // If no buzz type is selected, show selection screen

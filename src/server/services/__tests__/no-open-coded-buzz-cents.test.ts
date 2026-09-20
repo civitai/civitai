@@ -1,4 +1,4 @@
-import { readFileSync } from 'fs';
+import { readdirSync, readFileSync, statSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 
@@ -7,100 +7,157 @@ import { BUZZ_PER_USD_CENT, buzzAmountToUnitAmount } from '~/shared/utils/buzz-c
 /**
  * THE SEAM GUARD for the Buzz-to-cents derivation.
  *
- * `buzz-charge.test.ts` covers the helper hermetically and four independent mutations of it
- * die there. That suite is nonetheless blind to the defect that actually shipped, because the
- * defect is not IN the helper — it is in whether the one production call site still CALLS it.
+ * `buzz-charge.test.ts` covers the helper hermetically. That suite is blind to the defect that
+ * actually shipped, because the defect is not IN the helper — it is whether the value handed to
+ * `stripe.getPaymentIntent` was produced BY it.
  *
- * Measured during the round-1 audit of #4952: reverting
- * `BuzzPurchaseImproved.tsx` to the pre-fix expression `setCustomAmount(newCustomBuzzAmount / 10)`
- * — i.e. re-introducing the production bug verbatim — left the helper's own suite, the schema
- * suite and both stripe service suites GREEN (17/17), and also passed
- * `no-unguarded-billable-submit`, `no-divergent-generation-submit-payload` and
- * `no-divergent-author-fee-base`. Nothing in the repo caught it. The user-visible result of
- * that revert is worse than the bug it replaced: with `.int()` now on
- * `paymentIntentCreationSchema.unitAmount`, a Buzz amount that is not a multiple of ten no
- * longer 500s at Stripe — it is rejected at our own trust boundary, so the Pay Now button
- * fails for every such amount.
+ * Measured: reverting the purchase form's call site to `/ 10` re-introduces the production bug and
+ * leaves the helper suite, the schema suite and both stripe service suites green. Nothing else in
+ * the repo catches it. With `.int()` now on `paymentIntentCreationSchema.unitAmount` that revert is
+ * worse than the original defect — instead of 500ing at Stripe, a non-multiple-of-ten Buzz amount
+ * is rejected at our own trust boundary, so Pay Now fails outright.
  *
- * So this pins a RELATIONSHIP over a call-site population rather than a component, which is
- * what `src/server/services/__tests__/no-*.test.ts` exists for. It is a SOURCE-TEXT guard by
- * necessity: the call site lives inside a ~1,200-line Mantine component whose `onChange` cannot
- * be invoked without mounting the whole purchase form, and this repo's component project is
- * pinned to a Playwright browser build that does not run on every dev host — a behavioural test
- * here would be skipped exactly where it is needed. `buzz-charge.test.ts` carries the
- * behavioural half; a structural check alone would type-check past a wrong argument, which is
- * why the arithmetic identity is asserted below too.
+ * 🔴 WHAT THIS GUARD ANCHORS ON, AND WHY IT MOVED IN ROUND 3.
+ * Round 2's version keyed on `setCustomAmount(...)` call sites. A delta audit defeated it with two
+ * one-line mutants that both put the bug back:
+ *   - a parenthesised sub-expression between the setter's open paren and the division, which the
+ *     old `[^)]*` character class could not cross; and
+ *   - rewriting the WIRE VALUE at `const unitAmount = ...` directly, leaving both helper call
+ *     sites intact so the call-count ledger stayed satisfied.
+ * The lesson is that the call sites are not the seam — the single expression whose value reaches
+ * the payment intent is. So this pins THAT expression verbatim, and separately asserts that the
+ * live form contains no open-coded cents division at all. A guard that enumerates call sites can
+ * always be walked around by adding one more; a guard that pins the one value that leaves the
+ * component cannot.
+ *
+ * It is a SOURCE-TEXT guard by necessity: the derivation lives inside a ~1,200-line Mantine
+ * component whose handlers cannot be invoked without mounting the whole purchase form.
+ * `buzz-charge.test.ts` carries the behavioural half.
  */
 
 const REPO = process.cwd();
-const FORM = path.join(REPO, 'src/components/Buzz/BuzzPurchase/BuzzPurchaseImproved.tsx');
+const FORM_REL = 'src/components/Buzz/BuzzPurchase/BuzzPurchaseImproved.tsx';
+const FORM = path.join(REPO, FORM_REL);
 const STRIPE_SERVICE = path.join(REPO, 'src/server/services/stripe.service.ts');
 const HELPER = path.join(REPO, 'src/shared/utils/buzz-charge.ts');
 
 /**
- * Every production (non-test) module that imports the helper. Asserted as an exact SET so the
- * ledger fails when it GROWS — a second derivation site added without this guard being
- * revisited — as well as when it SHRINKS.
+ * The legacy purchase component. It open-codes the derivation twice and is NOT fixed here because
+ * it is dead — asserted below rather than assumed, so that if anything ever imports it again this
+ * guard fails instead of silently tolerating a second live derivation.
  */
-const EXPECTED_IMPORTERS = ['src/components/Buzz/BuzzPurchase/BuzzPurchaseImproved.tsx'];
+const DEAD_LEGACY_REL = 'src/components/Buzz/BuzzPurchase.tsx';
 
-/** Strip line and block comments so a mention in prose cannot satisfy — or trip — a check. */
+/**
+ * Strip block comments and line comments, INCLUDING trailing ones.
+ *
+ * Round 2's version stripped only whole-line `//` comments while claiming to strip all of them, so
+ * behaviour-correct code carrying a trailing comment could fail the guard and a trailing comment
+ * could satisfy a required count. `[^\n]` before the `//` keeps this from eating the `//` in a URL
+ * only when it follows a colon, which is the case that occurs in this corpus.
+ */
 function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, (_m, lead: string) => lead);
 }
 
-describe('the Buzz-to-cents derivation has exactly one home', () => {
-  it('is called at every site in the purchase form that derives cents from a Buzz amount', () => {
+/** Every `.ts`/`.tsx` file under `src/`, excluding tests. */
+function walkSources(dir: string, acc: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    if (entry === 'node_modules' || entry === '__tests__') continue;
+    const full = path.join(dir, entry);
+    if (statSync(full).isDirectory()) walkSources(full, acc);
+    else if (/\.tsx?$/.test(entry) && !/\.test\.tsx?$/.test(entry)) acc.push(full);
+  }
+  return acc;
+}
+
+describe('the value handed to getPaymentIntent comes from the helper', () => {
+  it('pins the wire-value derivation verbatim', () => {
     const code = stripComments(readFileSync(FORM, 'utf-8'));
 
-    // Both live derivations: the min-amount entry path and the free-typed Buzz field.
-    const calls = code.match(/buzzAmountToUnitAmount\(/g) ?? [];
-    expect(calls).toHaveLength(2);
+    // The ONE expression whose value reaches `stripe.getPaymentIntent`. Pinned whole, normalised
+    // for whitespace: it may come only from a selected package's price or from `customAmount`,
+    // and `customAmount` is only ever written by the helper (asserted below). Any edit here —
+    // including one that derives cents from the raw Buzz field — fails.
+    const normalised = code.replace(/\s+/g, ' ');
+    expect(normalised).toContain(
+      'const unitAmount = (selectedPrice?.unitAmount ?? customAmount) as number;'
+    );
+  });
 
-    // The import must be the real one, not a local shadow.
+  it('has no open-coded cents division anywhere in the live form', () => {
+    const code = stripComments(readFileSync(FORM, 'utf-8'));
+
+    // Not scoped to a setter. Round 2's setter-scoped regex had a parenthesis hole; this one asks
+    // the simpler question — does this file divide by the Buzz ratio at all? After the round-3 fix
+    // to the min-amount placeholder the answer is no, so the expected count is ZERO and any
+    // reintroduction in any shape fails. Tailwind class strings like `dark:border-white/10` are
+    // excluded by requiring the divisor to end the token.
+    const divisions = code.match(/\/\s*(?:10|BUZZ_PER_USD_CENT)\b(?!\s*[\w/-])/g) ?? [];
+    expect(divisions).toEqual([]);
+  });
+
+  it('routes every cents derivation through the helper', () => {
+    const code = stripComments(readFileSync(FORM, 'utf-8'));
+
+    // EXACT, not `>=`. A `toBeGreaterThanOrEqual(2)` here let a mutant that simply DELETES one
+    // call site survive, because three sites minus one still satisfies it — caught by this
+    // round's own battery, which is the whole reason the count is pinned rather than bounded.
+    // The three live derivations: the min-amount seed, the min-amount placeholder, and the
+    // free-typed Buzz field. Fails when the set SHRINKS (a derivation stopped using the helper)
+    // and when it GROWS (a new one this guard has never been pointed at).
+    expect((code.match(/buzzAmountToUnitAmount\(/g) ?? []).length).toBe(3);
     expect(code).toMatch(
       /import\s*\{[^}]*\bbuzzAmountToUnitAmount\b[^}]*\}\s*from\s*'~\/shared\/utils\/buzz-charge'/
     );
   });
 
-  it('is not open-coded anywhere in the purchase form — the mutation that survived the suite', () => {
+  it('allows the inverse derivation in either spelling', () => {
     const code = stripComments(readFileSync(FORM, 'utf-8'));
+    // The USD field multiplies to get Buzz; that direction cannot produce a fraction. Round 2
+    // hardcoded `* 10` here, which turned the guard RED on the correct single-sourcing change to
+    // `* BUZZ_PER_USD_CENT` — telling a developer they had open-coded something when they had just
+    // stopped doing so. Both spellings are accepted.
+    expect(code).toMatch(
+      /setCustomBuzzAmount\(\s*newCustomAmount\s*\*\s*(10|BUZZ_PER_USD_CENT)\s*\)/
+    );
+  });
+});
 
-    // `setCustomAmount(<anything> / 10)` and `/ BUZZ_PER_USD_CENT` are the two spellings of
-    // the reverted bug. Pinning the ASSIGNMENT rather than the bare division keeps unrelated
-    // arithmetic in this large component from tripping the guard.
-    const openCoded = code.match(/setCustomAmount\(\s*[^)]*\/\s*(10|BUZZ_PER_USD_CENT)\b/g) ?? [];
-    expect(openCoded).toEqual([]);
+describe('the helper has exactly one live importer', () => {
+  it('discovers importers by walking src/, not by re-reading a fixed list', () => {
+    // Round 2 "asserted the set" by filtering the expected list against itself, so it could only
+    // ever shrink — a NEW importer with an open-coded division passed silently. This walks.
+    const importers = walkSources(path.join(REPO, 'src'))
+      .filter((f) => stripComments(readFileSync(f, 'utf-8')).includes('buzzAmountToUnitAmount'))
+      .map((f) => path.relative(REPO, f).split(path.sep).join('/'))
+      .filter((rel) => rel !== 'src/shared/utils/buzz-charge.ts')
+      .sort();
 
-    // The inverse direction is legitimate and must NOT be caught by the rule above: the USD
-    // field derives a Buzz amount by multiplying. Asserted so a later tightening that breaks
-    // it fails here rather than silently forbidding a correct line.
-    expect(code).toMatch(/setCustomBuzzAmount\(\s*newCustomAmount\s*\*\s*10\s*\)/);
+    // Exact set: fails when it GROWS (a second derivation site that this guard has never been
+    // pointed at) as well as when it shrinks.
+    expect(importers).toEqual([FORM_REL]);
   });
 
-  it('has exactly the expected production importers', () => {
-    // Walk the two directories that could plausibly hold a second caller rather than the whole
-    // tree: a full-tree walk here is slow and, more importantly, would silently start passing
-    // if the helper moved. If the helper moves, this list is what fails.
-    const importers = EXPECTED_IMPORTERS.filter((rel) =>
-      readFileSync(path.join(REPO, rel), 'utf-8').includes('buzzAmountToUnitAmount')
-    );
-    expect(importers).toEqual(EXPECTED_IMPORTERS);
+  it('the legacy purchase component is still dead', () => {
+    // It open-codes the derivation twice. That is tolerable only while nothing imports it, so the
+    // deadness is asserted rather than assumed.
+    const legacy = path.posix.basename(DEAD_LEGACY_REL, '.tsx');
+    const importers = walkSources(path.join(REPO, 'src'))
+      .filter((f) => path.relative(REPO, f).split(path.sep).join('/') !== DEAD_LEGACY_REL)
+      .filter((f) => {
+        const src = stripComments(readFileSync(f, 'utf-8'));
+        return new RegExp(`from\\s*'[^']*/${legacy}'`).test(src);
+      });
+    expect(importers).toEqual([]);
   });
 });
 
 describe('the ratio the server re-derives matches the one the client applies', () => {
-  /**
-   * The previous spelling of this check asserted `BUZZ_PER_USD_CENT === 10` and nothing else,
-   * while its name claimed it pinned "the ratio the server tamper check re-derives". It did
-   * not: the server's copy is an independent literal, so changing it broke production while
-   * this test stayed green, and changing the constant turned this test red while the server
-   * was unaffected. It could neither detect nor locate a divergence. This pins the
-   * RELATIONSHIP instead.
-   */
   it('the server tamper guard still divides by the same ratio', () => {
     const service = stripComments(readFileSync(STRIPE_SERVICE, 'utf-8'));
-
     const guard = service.match(/unitAmount\s*!==\s*metadata\.buzzAmount\s*\/\s*(\d+)/);
     expect(guard, 'the getPaymentIntent amount-tamper guard should still be present').not.toBe(
       null
@@ -109,7 +166,6 @@ describe('the ratio the server re-derives matches the one the client applies', (
   });
 
   it('the helper and the constant agree arithmetically, not just textually', () => {
-    // The behavioural half: a structural check above would type-check past a wrong argument.
     expect(buzzAmountToUnitAmount(BUZZ_PER_USD_CENT * 100)).toBe(100);
     expect(BUZZ_PER_USD_CENT).toBe(10);
   });
