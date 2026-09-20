@@ -30,7 +30,7 @@ vi.mock('~/utils/s3-utils', () => ({
 }));
 
 import {
-  DELETE_OLD_TRAINING_DATA_FIRST_RETRY_SECONDS,
+  DELETE_OLD_TRAINING_DATA_CALLER_CUT_SECONDS,
   DELETE_OLD_TRAINING_DATA_LOCK_SECONDS,
   deleteOldTrainingData,
 } from '~/server/jobs/delete-old-training-data';
@@ -65,18 +65,25 @@ describe('delete-old-training-data asks for a lock that outlasts the caller’s 
     // shrinking the yardstick satisfies any ratio for any lock value — and the exact mutant this
     // case exists to kill, a lock cut back under the caller's timeout, would survive a one-token
     // edit to the constant it is supposedly measured against.
-    expect(DELETE_OLD_TRAINING_DATA_FIRST_RETRY_SECONDS).toBe(60 * 60);
+    expect(DELETE_OLD_TRAINING_DATA_CALLER_CUT_SECONDS).toBe(60 * 60);
 
     // 🔴 The FIRST retry, not the last of the four seen today. A retry that finds the lock held is
     // answered 200, the caller scores that as success, and a caller that did not fail does not
     // retry again — so the first suppressed retry ends the ladder. Sizing against the fourth
     // attempt would be sizing against attempts that only exist while the bug does.
-    expect(DELETE_OLD_TRAINING_DATA_LOCK_SECONDS).toBeGreaterThan(
-      DELETE_OLD_TRAINING_DATA_FIRST_RETRY_SECONDS
+    //
+    // 🔴 A MULTIPLE, NOT `> CUT`, AND THE DIFFERENCE IS THE WHOLE GUARD. The constant is the
+    // moment the caller ABANDONS; the retry POSTs after that plus a backoff that is a range rather
+    // than a constant. So `lock > cut` is satisfied by a lock ONE SECOND past the cut, which
+    // expires before the retry it is supposed to outlive — measured: at 3601 this case stayed
+    // green and only the exact pin below caught it. Two times the cut is the least margin that
+    // cannot be satisfied by a value inside the backoff window.
+    expect(DELETE_OLD_TRAINING_DATA_LOCK_SECONDS).toBeGreaterThanOrEqual(
+      2 * DELETE_OLD_TRAINING_DATA_CALLER_CUT_SECONDS
     );
   });
 
-  it('stays far enough below the cron period that a hold cannot reach a scheduled run', () => {
+  it('is below the cron period, so a hold cannot reach a scheduled run', () => {
     // Asserting the SCHEDULE as well as the number is what makes this a relationship rather than
     // two unrelated literals: if the cron is ever made faster, this fails instead of silently
     // comparing the lock against a period the job no longer runs at.
@@ -147,15 +154,30 @@ describe('the options above can actually reach a run', () => {
     // options tests nor the handler tests own. It cannot tell you the lookup behaves correctly.
     const source = readFileSync(RUN_JOBS_ROUTE, 'utf8');
 
-    expect(source).toContain(
+    // 🔴 COMMENTED-OUT LINES ARE STRIPPED FIRST, AND THAT IS THE POINT OF THIS CASE, NOT TIDINESS.
+    // De-registration in this file is done by COMMENTING THE ENTRY OUT, not by deleting it —
+    // `// refreshImageGenerationCoverage,` and `// processCreatorProgramImageGenerationRewards,`
+    // are both sitting in the very array this reads. A plain substring test therefore passes
+    // happily over `// deleteOldTrainingData,`: measured, that mutant left all seven cases green
+    // while the job was in fact unreachable, i.e. the guard was blind to the ONLY de-registration
+    // shape this repo actually uses. Strip the comments, then require a whole LINE.
+    const live = (block: string) =>
+      block
+        .split('\n')
+        .filter((line) => !line.trim().startsWith('//'))
+        .join('\n');
+
+    expect(live(source)).toContain(
       "import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';"
     );
     // Membership in the exported array, not merely the import — an unused import type-checks.
-    const jobsArray = source.slice(
-      source.indexOf('export const jobs: Job[] = ['),
-      source.indexOf('const log = createLogger')
+    const jobsArray = live(
+      source.slice(
+        source.indexOf('export const jobs: Job[] = ['),
+        source.indexOf('const log = createLogger')
+      )
     );
     expect(jobsArray).not.toHaveLength(0);
-    expect(jobsArray).toContain('deleteOldTrainingData,');
+    expect(jobsArray).toMatch(/^\s*deleteOldTrainingData,\s*$/m);
   });
 });

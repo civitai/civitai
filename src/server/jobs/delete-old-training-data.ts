@@ -14,12 +14,19 @@ type OldTrainingRow = {
 };
 
 /**
- * When the caller's FIRST retry of a day's trigger arrives — the only moment the lock below has to
- * survive.
+ * When the caller ABANDONS the trigger request — the client-side timeout itself.
  *
- * The external scheduler holds the trigger request open under a client-side timeout and retries a
- * fixed number of times when that fires. Observed in production over several consecutive days: the
- * request is abandoned just under an hour in, and the next attempt POSTs about a minute later.
+ * The external scheduler holds the trigger request open under that timeout and retries a fixed
+ * number of times when it fires. Observed in production over several consecutive days: the request
+ * is abandoned just under an hour in, and the next attempt POSTs about a minute later.
+ *
+ * 🔴 THIS IS THE CUT, NOT THE RETRY'S POST, AND THE DIFFERENCE IS WHY THE FLOOR BELOW IS A MULTIPLE
+ * RATHER THAN A BARE `>`. The moment that actually matters is the retry's POST, which lands after
+ * the cut plus the caller's own backoff — and that backoff is a RANGE, not a constant, so there is
+ * no honest literal for it. The cut is the one precisely-known quantity (it is the configured
+ * timeout), it is strictly EARLIER than the POST, and so it is a conservative stand-in. What it
+ * cannot do is carry a `lock > cut` comparison: a lock one second past the cut satisfies that and
+ * still expires before the retry arrives.
  *
  * 🔴 WHY THE **FIRST** RETRY AND NOT THE LAST, WHICH IS THE INTUITIVE ANSWER AND IS WRONG. Today
  * four attempts run per trigger, so it is tempting to size against the whole ladder. But a retry
@@ -34,7 +41,7 @@ type OldTrainingRow = {
  * client-side timeout moves this moment later, and the lock has to be re-argued rather than
  * silently left behind.
  */
-export const DELETE_OLD_TRAINING_DATA_FIRST_RETRY_SECONDS = 60 * 60;
+export const DELETE_OLD_TRAINING_DATA_CALLER_CUT_SECONDS = 60 * 60;
 
 /**
  * How long this job may hold its run lock, overriding `createJob`'s five-minute default.
@@ -67,21 +74,27 @@ export const DELETE_OLD_TRAINING_DATA_FIRST_RETRY_SECONDS = 60 * 60;
  * timeout and — on the evidence above, where no attempt has been seen to finish inside it — would
  * never complete a pass at all. Same reasoning as `process-csam.ts`.
  *
- * WHY THIS VALUE. The floor is the first retry's POST, above: hold the lock through that one
- * moment and the ladder ends there. Six hours is six times it — deliberately far more than the
+ * WHY THIS VALUE. The floor is the first retry's POST: hold the lock through that one moment and
+ * the ladder ends there. Six hours is six times the caller's cut — deliberately far more than the
  * floor needs, for a reason worth stating plainly, because the obvious framing of "headroom
  * against uncertainty" would be false:
  *
  * 🔴 BETWEEN THE FLOOR AND THE CRON PERIOD THE COST OF A LONGER HOLD IS FLAT, NOT RISING. Once the
  * first retry has been answered 200 the caller is done for the day, so NOTHING POSTS again until
  * the next tick 24h later: a hold of two hours and a hold of six block exactly the same set of
- * requests, namely none. The only caller a longer hold can turn away is a human triggering the job
- * by hand, and `?noCheck=true` bypasses the lock outright. So the value is chosen at the top of the
- * flat region rather than the bottom — it absorbs a `WebhookTimeoutMinutes` raised several-fold
- * without anyone having to remember this file. ⚠ An earlier draft of this block asserted the
- * opposite — that a longer hold costs more because an alive-but-wedged run holds it longer. That is
- * false here for the same reason: the wedged run's day has no further caller to block. Do not
- * re-derive it.
+ * requests, namely none. So the value is chosen at the top of the flat region rather than the
+ * bottom — it absorbs a `WebhookTimeoutMinutes` raised several-fold without anyone having to
+ * remember this file. ⚠ An earlier draft of this block asserted the opposite — that a longer hold
+ * costs more because an alive-but-wedged run holds it longer. That is false here for the same
+ * reason: the wedged run's day has no further caller to block. Do not re-derive it.
+ *
+ * ⚠ ONE CALLER A LONG HOLD *DOES* TURN AWAY, corrected from an earlier draft of this block that
+ * said the escape hatch covers it. A human re-triggering the job from the scheduler's dashboard
+ * gets the 200 "Job already running" for as long as the hold lasts: the scheduler builds its
+ * trigger URL with `run` and `wait` only, so `noCheck` — which would bypass the lock — is NOT on
+ * that path. It is reachable only by calling the webhook directly. That is a real cost of a long
+ * hold; it is a cost to an OPERATOR retrying by hand, not to the schedule, which is why it does not
+ * move the value.
  *
  * The ceiling is the cron period, and that one is real: stay well below 24h so a hold can never
  * reach the next SCHEDULED run. (A pod that dies pays nothing either way — the redis key carries a
@@ -94,6 +107,20 @@ export const DELETE_OLD_TRAINING_DATA_FIRST_RETRY_SECONDS = 60 * 60;
  * overlap the NEXT day's run, and no value below that period can close that — a lock long enough
  * to cover it would also block legitimate daily runs. The fix for that case is bounding the work
  * done per pass, not growing this number.
+ *
+ * 🔴 WHAT THIS CHANGE TAKES AWAY, WHICH IS EASY TO MISS BECAUSE THE DUPLICATE PASSES LOOK LIKE PURE
+ * WASTE. They are not purely wasteful in general: each pass re-runs the query, which filters on
+ * `dataPurged is not true`, so a later pass skips what an earlier one finished and can make
+ * net-new progress. Going from four passes a day to one therefore removes throughput in principle.
+ * Measured before shipping this, it removes NONE in practice — every row currently eligible fails
+ * its delete and none is ever marked purged, so all four passes achieve nothing and one pass
+ * achieves the same nothing. 🔴 THAT IS A STATEMENT ABOUT TODAY AND IT EXPIRES. Whoever repairs
+ * the delete path must re-ask it, because from that moment a single serial pass per day is the
+ * whole throughput: the query takes no `LIMIT`, the walk is one awaited delete plus one awaited
+ * update per row, and a row whose delete throws is never marked purged and so returns every day
+ * forever. If one pass cannot clear a day's inflow the backlog grows monotonically and files
+ * outlive the retention this job exists to enforce. `deleteManyObjects` already exists in
+ * `~/utils/s3-utils` and is the obvious lever; nothing here needs it yet.
  */
 export const DELETE_OLD_TRAINING_DATA_LOCK_SECONDS = 6 * 60 * 60;
 
