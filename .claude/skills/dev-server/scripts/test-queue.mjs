@@ -219,7 +219,10 @@ export function workerCapArgv(maxWorkers, args) {
  * null; only this flag was asymmetric.
  */
 export function parseMaxWorkersFlag(raw) {
-  if (raw === undefined || raw === 'none') return null;
+  // A MISSING operand is an error, not an uncap. `test config 4 --max-workers` is a truncated
+  // command, and reading it as "remove the cap" is the same silent uncap this function exists to
+  // stop, one keystroke away. `none` is the spelling that means it.
+  if (raw === 'none') return null;
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 1) {
     throw new Error(`--max-workers wants an integer >= 1 or 'none', got: ${raw}`);
@@ -806,7 +809,7 @@ export class TestQueue {
       concurrency: this.limits[run.kind],
       maxWorkers: this.maxWorkers,
       cacheMode: this.cacheMode,
-      paused: this.limits[run.kind] === 0,
+      paused: this.pausedFor(run.kind),
       enqueuedAt: run.enqueuedAt,
       startedAt: run.startedAt,
       finishedAt: run.finishedAt,

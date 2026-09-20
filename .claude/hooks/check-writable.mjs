@@ -10,6 +10,8 @@
 
 import { stdin } from 'process';
 import { readFileSync } from 'fs';
+import { resolve } from 'path';
+import { fileURLToPath } from 'url';
 
 // `prettier --write <targets>`: the incident was a repo-WIDE rewrite, not formatting a directory
 // this change owns. Read the targets instead of matching `--write`, so a scoped path just runs.
@@ -208,37 +210,72 @@ const FULL_SUITE_REASON =
 // Narrow runs are left alone: a sub-project (`-p tsconfig.scripts.json`, which the scripts gate
 // itself recommends), named files, `--build`, and informational flags. TYPECHECK_DIRECT=1 is the
 // deliberate opt-out for diagnosing tsc itself.
-// The runner may carry its own flags before `exec`: `pnpm -w exec tsc` and `pnpm --filter x exec
-// tsc` are the two spellings a monorepo reaches for first, and both walked past the original
-// pattern, which required `exec` IMMEDIATELY after the runner. `npm` and `bunx` were missing
-// outright. Measured on the merged version: five spellings of a full root typecheck ran unguarded.
+// A runner may carry its own flags, and may run a workspace bin with no `exec` at all — `pnpm tsc`
+// and `yarn tsc` are the shortest spellings of the thing this blocks. Review measured eleven
+// spellings of a full root typecheck walking past earlier versions of this pattern, so it is
+// written from the runner outwards: any of the six runners, any of its own flags, `exec`/`dlx` if
+// present. The `(?!tsc\b)` in the flag-value group is what stops `pnpm -w tsc` reading `tsc` as the
+// value of `-w` and matching nothing.
 const TSC_INVOCATION = new RegExp(
   String.raw`^\s*(?:\w+=\S*\s+)*(?:` +
-    String.raw`(?:(?:pnpm|yarn|bun|npm)(?:\s+-{1,2}[\w-]+(?:=\S+)?(?:\s+\S+)?)*\s+(?:exec|dlx)\s+(?:--\s+)?` +
-    String.raw`|npx\s+(?:--\s+)?|bunx\s+|\.?[\\/]?node_modules[\\/]\.bin[\\/])?['"]?tsc['"]?(?=\s|$)` +
-    String.raw`|node\s+(?:--\S+\s+)*\S*typescript[\\/]lib[\\/]tsc\.js\b)`
+    String.raw`(?:(?:pnpm|yarn|bun|npm|npx|bunx)` +
+    String.raw`(?:\s+-{1,2}[\w-]+(?:=\S+)?(?:\s+(?!tsc\b)[^-\s]\S*)?)*` +
+    String.raw`(?:\s+(?:exec|dlx))?\s+(?:--\s+)?` +
+    String.raw`|(?:\S*[\\/])?node_modules[\\/]\.bin[\\/])?['"]?tsc['"]?(?=\s|$)` +
+    String.raw`|node\s+(?:--\S+\s+)*\S*typescript[\\/](?:lib[\\/]tsc\.js|bin[\\/]tsc)\b)`
 );
 const TSC_ROOT_PROJECT = /^(?:\.[\\/]?|(?:\.[\\/])?tsconfig\.json)$/;
 const TSC_NOT_A_CHECK = /(?:^|\s)(?:-v|--version|-h|--help|--init|--showConfig|--all|-b|--build)\b/;
 // A run aimed at ONE workspace package is not the run this guard exists to stop: `pnpm run
 // typecheck` cannot see `apps/` at all (only CI's scripts/ci/typecheck-apps.mjs does), so denying
 // it and printing that remedy sends an agent to a command that cannot check its files.
-const WORKSPACE_TARGET = /(?:^|[\s'"=\\/])(?:apps|packages)[\\/][\w.-]+/;
+//
+// A target is narrow unless it names the ROOT. Written that way round deliberately: a package is
+// addressed by PATH (`./apps/moderator`) or by NAME (`@civitai/moderator-app`), and an earlier
+// version tested for a path, so every by-name `--filter` was denied — the same defect this rule
+// exists to fix, reached by the other spelling.
+const ROOT_TARGET = /^['"]?(?:\.[\\/]?|model-share)['"]?$/;
+const WORKSPACE_PATH = /(?:^|[\s'"=\\/])(?:apps|packages)[\\/][\w.-]+/;
 const RUNNER_DIR_FLAG = /(?:^|\s)(?:-C|--dir|--prefix|--filter|-F)(?:=|\s+)(\S+)/;
 
 /**
- * The directory a segment runs in, as far as the command line says: the last `cd` before it, or a
- * runner's own directory flag. `cd apps/x && npx tsc --noEmit` splits into two segments and the
- * second carries no trace of the first, so the split cannot be per-segment alone.
+ * The directory or package a segment runs in, as far as the command line says: a runner's own
+ * directory/filter flag, or the last `cd` before it. `cd apps/x && npx tsc --noEmit` splits into two
+ * segments and the second carries no trace of the first, so the split cannot be per-segment alone.
+ *
+ * Returns null when the segment names no target, which reads as "the root" — the safe direction,
+ * since an unrecognised spelling then stays guarded rather than exempt.
+ *
+ * KNOWN LIMIT, left open deliberately: a heredoc BODY whose line is itself `cd apps/x` exempts a
+ * later root tsc in the same command. Telling that apart from a real `cd` needs a shell parser, and
+ * the alternatives — refusing to look past any `<<`, or dropping the cross-segment scan — buy a
+ * rare bypass with false positives on ordinary multi-line commands. This guard is a nudge with a
+ * documented opt-out, and a guard people route around protects nothing.
  */
 function segmentTarget(previousSegments, seg) {
   const flag = RUNNER_DIR_FLAG.exec(seg);
-  if (flag) return flag[1];
+  if (flag) return { kind: 'flag', value: flag[1] };
   for (const prev of [...previousSegments].reverse()) {
-    const cd = /^\s*cd\s+(?:\/d\s+)?(['"]?)(.+?)\1\s*$/.exec(prev);
-    if (cd) return cd[2];
+    // A leading `(` for the subshell form: `(cd apps/x && npx tsc --noEmit)`.
+    const cd = /^\s*\(?\s*cd\s+(?:\/d\s+)?(['"]?)(.+?)\1\s*$/.exec(prev);
+    if (cd) return { kind: 'cd', value: cd[2] };
   }
   return null;
+}
+
+/**
+ * Whether a target names one workspace package rather than the root program.
+ *
+ * The two kinds are judged in OPPOSITE directions, and that asymmetry is the point. A `--filter`
+ * names a PACKAGE, by path or by name, so anything that is not the root is narrow — testing it for
+ * a path denied every by-name filter, which is this guard's own bug in miniature. A `cd` names a
+ * DIRECTORY and most directories are not packages, so only a path into `apps/` or `packages/`
+ * counts — otherwise `cd <repo root> && npx tsc` would exempt itself.
+ */
+function isWorkspaceTarget(target) {
+  if (!target) return false;
+  if (target.kind === 'flag') return !ROOT_TARGET.test(target.value);
+  return WORKSPACE_PATH.test(target.value);
 }
 
 export function directRootTypecheck(command) {
@@ -247,8 +284,9 @@ export function directRootTypecheck(command) {
   return segments.some((seg, i) => {
     if (!TSC_INVOCATION.test(seg)) return false;
     if (TSC_NOT_A_CHECK.test(seg)) return false;
-    const target = segmentTarget(segments.slice(0, i), seg);
-    if (target && WORKSPACE_TARGET.test(target)) return false;
+    // `-w` / `--workspace-root` is pnpm for "the root", whatever else the segment says.
+    const atRoot = /(?:^|\s)(?:-w|--workspace-root)(?=\s|$)/.test(seg);
+    if (!atRoot && isWorkspaceTarget(segmentTarget(segments.slice(0, i), seg))) return false;
     const tokens = seg
       .trim()
       .split(/\s+/)
@@ -257,11 +295,17 @@ export function directRootTypecheck(command) {
     if (tokens.some((t) => !t.startsWith('-') && /\.(?:[cm]?tsx?|d\.ts)$/.test(t))) return false;
     const at = tokens.findIndex((t) => /^(?:-p|--project)(?:=|$)/.test(t));
     if (at === -1) return true;
-    const inline = tokens[at]?.includes('=') ? tokens[at].split('=')[1] : tokens[at + 1];
-    if (inline && WORKSPACE_TARGET.test(inline)) return false;
-    if (TSC_ROOT_PROJECT.test(inline ?? '')) return true;
-    // `-p ../another-worktree/tsconfig.json` is the same root program reached by another path.
-    return /(?:^|[\\/])tsconfig\.json$/.test(inline ?? '');
+    // Quotes are stripped per token above, which leaves the opening one on `--project="x"`.
+    const raw = tokens[at].includes('=') ? tokens[at].split('=').slice(1).join('=') : tokens[at + 1];
+    const inline = (raw ?? '').replace(/^['"]|['"]$/g, '');
+    if (inline && !ROOT_TARGET.test(inline) && /[\\/]/.test(inline) && !/^\.{1,2}[\\/]?$/.test(inline)) {
+      // A project file inside a workspace package is a narrow run; one at any other path is the
+      // root program reached by another route.
+      if (!/(?:^|[\\/])tsconfig\.json$/.test(inline)) return false;
+      if (/(?:^|[\s'"=\\/])(?:apps|packages)[\\/][\w.-]+/.test(inline)) return false;
+    }
+    if (TSC_ROOT_PROJECT.test(inline)) return true;
+    return /(?:^|[\\/])tsconfig\.json$/.test(inline);
   });
 }
 
@@ -334,6 +378,11 @@ const GUARDED_PATTERNS = [
 
 let input = '';
 
+// Only when this file IS the hook. Importing it — which its own test does, to exercise the tsc
+// matcher — must not attach a stdin handler: that handler calls process.exit() on EOF, so under
+// vitest it would take the worker down mid-file, which reads as a vanished suite rather than a
+// failure. Measured at the node level: a probe's setTimeout after the import never ran.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
 stdin.setEncoding('utf8');
 stdin.on('data', (chunk) => { input += chunk; });
 stdin.on('end', () => {
@@ -419,3 +468,4 @@ stdin.on('end', () => {
     process.exit(0);
   }
 });
+}

@@ -24,6 +24,26 @@ describe('the direct-tsc guard blocks a full root typecheck', () => {
     ['npm exec tsc -- --noEmit'],
     ['bunx tsc --noEmit'],
     ['npx "tsc" --noEmit'],
+    // `npx`/`bunx` take flags of their own, and the flag-tolerant group was added for the other
+    // runners only. `-y` is what an agent types when npx would otherwise prompt.
+    ['npx -y tsc --noEmit'],
+    ['npx --no-install tsc --noEmit'],
+    ['bunx --bun tsc --noEmit'],
+    // No `exec` at all: both runners run a workspace bin directly, and this is the SHORTEST
+    // spelling of the thing being blocked.
+    ['pnpm tsc --noEmit'],
+    ['yarn tsc --noEmit'],
+    // Quotes are stripped per token, which leaves the opening one attached after the `=` split.
+    ['npx tsc --noEmit --project="tsconfig.json"'],
+    ["npx tsc --noEmit -p 'tsconfig.json'"],
+    // `.bin/tsc` reached by any path, and tsc's other entry point.
+    ['../node_modules/.bin/tsc --noEmit'],
+    ['node ./node_modules/typescript/bin/tsc --noEmit'],
+    // pnpm's own word for "the root", whatever else the segment says.
+    ['pnpm -w exec tsc --noEmit'],
+    // A `cd` out of a package and back to the root does not stay exempt.
+    ['cd apps/x && cd ../.. && npx tsc --noEmit'],
+    ['cd C:/Dev/Repos/work/model-share && npx tsc --noEmit'],
     ['node ./node_modules/typescript/lib/tsc.js --noEmit'],
     // A root program reached by another path is the same program.
     ['npx tsc --noEmit -p ../other-worktree/tsconfig.json'],
@@ -49,6 +69,15 @@ describe('the direct-tsc guard leaves a narrow run alone', () => {
     ['cd apps/notifications && npx tsc --noEmit'],
     ['cd apps/moderator && pnpm exec tsc --noEmit'],
     ['pnpm --filter ./apps/creator-studio exec tsc --noEmit'],
+    // A package is addressed by PATH or by NAME, and no workspace package's NAME contains a path.
+    // Matching a path alone denied every by-name filter — this guard's own bug, by the other
+    // spelling. `@civitai/moderator-app` is a real name in this repo; `model-share` is the root.
+    ['pnpm --filter @civitai/moderator-app exec tsc --noEmit'],
+    ['pnpm --filter @civitai/ui exec tsc --noEmit'],
+    // The subshell form of the same thing.
+    ['(cd apps/moderator && npx tsc --noEmit)'],
+    // `;` is a cd like any other: the shell is in the package when tsc runs.
+    ['cd apps/moderator; npx tsc --noEmit'],
     ['pnpm -C packages/civitai-ui exec tsc --noEmit'],
     ['npx tsc --noEmit -p apps/storage/tsconfig.json'],
     // Not tsc at all.

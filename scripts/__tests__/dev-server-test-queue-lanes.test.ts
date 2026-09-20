@@ -186,7 +186,12 @@ describe('the --max-workers operand', () => {
   it('accepts a positive integer and the explicit escape hatch', () => {
     expect(parseMaxWorkersFlag('8')).toBe(8);
     expect(parseMaxWorkersFlag('none')).toBeNull();
-    expect(parseMaxWorkersFlag(undefined)).toBeNull();
+  });
+
+  // A truncated `test config 4 --max-workers` is a typo, not a request to uncap — the same silent
+  // uncap this parser exists to stop, one keystroke away. `none` is how you say it on purpose.
+  it('refuses a missing operand rather than reading it as none', () => {
+    expect(() => parseMaxWorkersFlag(undefined)).toThrow(/integer >= 1 or 'none'/);
   });
 
   // Why the parser has to refuse rather than coerce: null IS the uncap, on the queue that the CLI
