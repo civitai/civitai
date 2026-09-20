@@ -141,12 +141,18 @@ export function structuralQuoteRole(region: string): QuoteRole {
  * two-space-indented `  name: <anything>Procedure`.
  *
  * 🔴 `\w+Procedure`, NOT `(?:public|protected)Procedure`. `blocks.router.ts` also
- * declares `moderatorProcedure` and `appDeveloperProcedure` handlers — measured,
- * 147 of 189 two-space keys were uncaptured by the narrow form — so an offset
- * inside one of those resolved to the PREVIOUS public/protected procedure and a
- * region swallowed every declaration up to the next one it happened to know.
- * That silently attributes a call site to a path it is not in, which is the one
- * failure mode a structural ledger cannot survive.
+ * declares `moderatorProcedure` and `appDeveloperProcedure` handlers, and an
+ * offset inside one of those resolved to the PREVIOUS public/protected procedure
+ * — so a region swallowed every declaration up to the next one it happened to
+ * know. That silently attributes a call site to a path it is not in, which is the
+ * one failure mode a structural ledger cannot survive.
+ *
+ * ⚠️ MEASURED ON COMMENT-BLANKED SOURCE, AND THE POPULATION IS NAMED because an
+ * earlier note here said "147 of 189 two-space keys" — which counted every
+ * two-space `name:` key, most of which are not procedures at all, and so was not
+ * a statement about this regex. Of the **75** two-space `*Procedure` keys the
+ * narrow form catches **41**, leaving **34** that resolved to the wrong path.
+ * Whole-file totals (async fns + procedure keys): **105** wide, **71** narrow.
  */
 const DECL = /^(?:async function (\w+)\(| {2}(\w+): \w+Procedure)/gm;
 

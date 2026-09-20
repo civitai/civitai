@@ -733,11 +733,22 @@ describe('author fee — the viewer-charge seam', () => {
 
     // 🔴 A DECLARATION COUNT, so a future builder name (`someNewProcedure`)
     // cannot silently shrink the population every region check is taken over.
-    // Measured: the pre-widening `(?:public|protected)Procedure` form captured
-    // 42 of 189 two-space keys, and `uninstallFromModel`'s region then swallowed
-    // 27 procedures whole.
-    // Measured at this revision: the widened `\w+Procedure` form finds 106
-    // declarations where the old `(?:public|protected)Procedure` form found 72.
+    // `uninstallFromModel`'s region swallowed 27 procedures whole under the
+    // pre-widening form.
+    //
+    // ⚠️ MEASURED AT THIS REVISION, AND SAYING WHAT WAS COUNTED — the previous
+    // wording quoted "106 … 72" and "42 of 189", which were a revision old and
+    // could not be reproduced by a reader (this branch's own removal of a
+    // procedure moved every one of them by one). Over comment-blanked source:
+    //   · declarations found by `\w+Procedure`  (async fns + 2-space keys) : 105
+    //   · declarations found by the narrow form                            :  71
+    //   · 2-space `*Procedure` keys in total                               :  75
+    //   ·   …of those, caught by the narrow form                           :  41
+    // So widening recovers 34 procedure keys that previously resolved to the
+    // PREVIOUS public/protected procedure. (A "189"/"190" in an older note
+    // counted every two-space `name:` key, most of which are not procedures at
+    // all — a different population, and not this one.)
+    //
     // The floor is set below today's count so ordinary churn does not trip it,
     // and ABOVE the narrow form's, so silently reverting the widening is red.
     const decls = sourceDecls(source);
