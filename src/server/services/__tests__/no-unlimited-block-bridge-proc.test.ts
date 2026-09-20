@@ -251,7 +251,8 @@ function routerProcedures(source: ts.SourceFile): Map<string, ts.Node> {
   // 🔴 A THROW, NOT A SILENT EMPTY MAP. An unparseable router is the one outcome that would make
   // every assertion below vacuously true, so it has to be a different result from "no procedures
   // matched" — the "not in the set vs could not be parsed" distinction this file's header names.
-  if (found == null) throw new Error(`could not locate the blocksRouter object literal in ${ROUTER}`);
+  if (found == null)
+    throw new Error(`could not locate the blocksRouter object literal in ${ROUTER}`);
 
   for (const prop of (found as ts.ObjectLiteralExpression).properties) {
     if (!ts.isPropertyAssignment(prop)) continue;
@@ -363,8 +364,10 @@ function siblingInputLedger(): string[] {
   const text = read(SIBLING);
   const marker = 'const BRIDGE_INPUT_LEDGER = [';
   const start = text.indexOf(marker);
-  expect(start, `${SIBLING} no longer declares BRIDGE_INPUT_LEDGER — this cross-check is blind`).
-    toBeGreaterThan(-1);
+  expect(
+    start,
+    `${SIBLING} no longer declares BRIDGE_INPUT_LEDGER — this cross-check is blind`
+  ).toBeGreaterThan(-1);
   // 🔴 BOUND THE END TO THE FIRST COLUMN-ZERO `]`, NOT TO THE NEXT `].sort()`. Searching for
   // `].sort()` walks PAST this ledger when the sibling stops spelling it that way and lands on
   // some later array hundreds of lines on — the slice then spans unrelated code and the regex
@@ -431,7 +434,7 @@ describe('the bridge rate-limit scan can actually see what it claims to', () => 
     // The other direction: an entry claiming `catalog` whose limiter call was removed. Without
     // this, `buckets` would be a list nobody checks and the ledger would decay into prose.
     const mutated = read(ROUTER).replace(
-      'const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);\n      if (!rate.allowed) {\n        throw new TRPCError({\n          code: \'TOO_MANY_REQUESTS\',\n          message: \'Rate limit exceeded, please retry shortly.\',\n        });\n      }\n      // getUserBuzzAccounts returns every spend type',
+      "const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);\n      if (!rate.allowed) {\n        throw new TRPCError({\n          code: 'TOO_MANY_REQUESTS',\n          message: 'Rate limit exceeded, please retry shortly.',\n        });\n      }\n      // getUserBuzzAccounts returns every spend type",
       '// getUserBuzzAccounts returns every spend type'
     );
     expect(mutated).not.toEqual(read(ROUTER));
@@ -444,7 +447,7 @@ describe('the bridge rate-limit scan can actually see what it claims to', () => 
     // 🔴 The fail-OPEN hazard the sibling has hit six times, measured here rather than argued
     // away. Both shapes name the function with an argument list; neither is a call.
     const mutated = read(ROUTER).replace(
-      'const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);\n      if (!rate.allowed) {\n        throw new TRPCError({\n          code: \'TOO_MANY_REQUESTS\',\n          message: \'Rate limit exceeded, please retry shortly.\',\n        });\n      }\n      // getUserBuzzAccounts returns every spend type',
+      "const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);\n      if (!rate.allowed) {\n        throw new TRPCError({\n          code: 'TOO_MANY_REQUESTS',\n          message: 'Rate limit exceeded, please retry shortly.',\n        });\n      }\n      // getUserBuzzAccounts returns every spend type",
       `// const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       const note = 'checkBlockCatalogRateLimit(claims.blockInstanceId)';
       void note;
