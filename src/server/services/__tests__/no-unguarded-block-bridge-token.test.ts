@@ -501,9 +501,26 @@ function scanTrivia(source: string, rel: string): TriviaSpans {
   const visit = (node: ts.Node): void => {
     // 🔴 BOTH KINDS. `getLeadingCommentRanges` deliberately does NOT return a comment that
     // sits on the same line as the code before it — that is TRAILING trivia of the previous
-    // token — so collecting only leading ranges leaves every `const x = 1; // …` comment in
-    // the output. That is the exact trailing-comment fail-open this normaliser was written
-    // to close, reintroduced by reading half the trivia.
+    // token — so collecting only leading ranges would leave a `const x = 1; // …` comment in
+    // the output.
+    //
+    // ⚠️ THE TRAILING CALL HERE IS UN-EXERCISED ON THIS CORPUS, exactly like its token-level
+    // counterpart below, and it is described the same way on purpose. An earlier version of this
+    // comment claimed that omitting it "reintroduces the exact trailing-comment fail-open this
+    // normaliser was written to close" — a 🔴 claim the corpus does not support, because the
+    // node-level and token-level collectors overlap almost everywhere and either one alone
+    // handles every same-line comment in the three files these suites read. That is the same
+    // count-doing-the-work-of-a-proof error that got the token-level line deleted, pointing the
+    // other way.
+    //
+    // It is kept, and PINNED, because un-exercised is not unreachable and it is the SOLE source
+    // for one shape: the trailing trivia of a SyntaxList element that is itself a single leaf
+    // token, which `forEachChild` never visits so the token loop cannot reach it. Measured with
+    // this line deleted, `noop(input /* …guard… */, 1)` yields a phantom guard call and the
+    // enclosing procedure reads as REACHING the guard. `a trailing comment inside an ARGUMENT
+    // LIST is not a guard call` is its control — added after restoring the token-level line
+    // silently made the older pin (`the normalisers strip comments AND re-delimit strings`)
+    // vacuous, by giving it a second route to the position it was exercising.
     addComments(ts.getLeadingCommentRanges(source, node.getFullStart()));
     addComments(ts.getTrailingCommentRanges(source, node.end));
     // 🔴 TOKENS TOO, NOT ONLY NODES — AND THIS WAS A LIVE FAIL-OPEN, NOT A TIDY-UP. The walk
@@ -541,9 +558,13 @@ function scanTrivia(source: string, rel: string): TriviaSpans {
     //
     // So the honest state, which is also what this file says twice elsewhere about a latent
     // shape: the trailing half is UN-EXERCISED on today's corpus, not unreachable, and it is kept
-    // because closing a latent shape costs nothing. Restoring it is free — 42/42 green, every
-    // real-router value identical. `a trailing comment after a pure TOKEN is not a guard call`
-    // below is the control, so the next census cannot be read as a licence to delete it again.
+    // because closing a latent shape costs nothing. Restoring it is free — the suite is green and
+    // every real-router value is identical. (No pass-count is quoted here: the first version of
+    // this line said "42/42" and was stale one commit later, which is the rot this file now
+    // deletes unasserted numbers to avoid.) `a trailing comment after a pure TOKEN is not a guard
+    // call` below is its control, so the next census cannot be read as a licence to delete it
+    // again — and `a trailing comment inside an ARGUMENT LIST is not a guard call` is the
+    // node-level line's, because restoring this one made that line's older pin vacuous.
     //
     // ⚠️ THE LEAF TEST BELOW IS AN OPTIMISATION, NOT A CORRECTNESS GUARD — measured, because it
     // reads like one. Replacing `getChildCount(sourceFile) === 0` with `true` leaves the suite
@@ -783,7 +804,8 @@ function astTerminatorCount(source: string, rel: string): number {
  * IN THE ANSWER IT GAVE. The close test reads `codeWithLiterals` lines, so a column-zero line
  * inside a BLOCK COMMENT does NOT end a chunk, while a column-zero continuation of a template
  * LITERAL does. A reader asking "can a column-zero comment cut my procedure?" must get NO, and
- * four places in this file used to imply YES by naming the column without naming the view.
+ * several places in this file — four at the chunking machinery plus the historical list in this
+ * header — used to imply YES by naming the column without naming the view.
  *
  * 🔴 THAT BOUNDARY IS A FORMATTING ASSUMPTION, AND IT CAN CUT A PROC SHORT. A line that
  * legitimately starts in column zero INSIDE a proc — the continuation of a multi-line
@@ -2231,15 +2253,21 @@ describe('no unguarded block-bridge token verification', () => {
         '  (d1) a default value containing a call, `(x, y = z.string()) => ...`, reports `x` ' +
         'and `y`. The names ARE parameters, so widening the parameter-list regex to balance a ' +
         'nested `()` does fix it.\n' +
-        '  (d2) a RETURN-TYPE annotation, `(v): v is Foo => ...`, reports `v` and `is`. ' +
-        'Widening the parameter-list regex CANNOT fix this: the list is just `v`, and `is` ' +
-        'sits between the `)` and the `=>`, which is not a parameter list at all. Measured — a ' +
-        'balanced-paren widening captures `v` and leaves `is`. The fix is to cover that ' +
-        'region: bind the names in `) : ... =>`, or skip it. Do NOT reach for a suppression ' +
-        'set instead: `is` is absent from RESERVED_WORDS, and adding it reds ' +
-        '`every suppressed word is a language keyword`, whose remedy points at ' +
-        'ECMASCRIPT_NON_NAMING_WORDS where `is` would be a false entry — `const is = ' +
-        'z.object({})` is legal TypeScript.\n' +
+        '  (d2) a RETURN-TYPE annotation, `(v): v is Foo => ...`, reports `v` AND `is`, and it ' +
+        'needs TWO changes rather than one. The parameter list is not merely under-captured ' +
+        'here — it is NOT MATCHED AT ALL, because the regex anchors on `)` followed by `=>` and ' +
+        "this `)` is followed by `:`. So (d1)'s balancing alone changes nothing: measured on " +
+        '`mySchema.refine((v): v is Foo => !!v)`, HEAD gives [mySchema, v, is] and a pure ' +
+        'balanced widening gives [mySchema, v, is] — identical. FIRST make the anchor tolerate ' +
+        'the annotation (`\\)\\s*(?::[^=]*)?=>`), which binds `v` and leaves [mySchema, is]; ' +
+        'THEN bind the names between the `)` and the `=>`, which is where `is` lives and which ' +
+        'is not a parameter list at all. Note the ordinary annotated arrow needs only the ' +
+        'first: `(v): boolean => ...` reports `v` at HEAD and under (d1), and the ' +
+        'annotation-tolerant anchor alone clears it — so prescribing only the region fix is ' +
+        'INERT for the commonest shape. Do NOT reach for a suppression set instead: `is` is ' +
+        'absent from RESERVED_WORDS, and adding it reds `every suppressed word is a language ' +
+        'keyword`, whose remedy points at ECMASCRIPT_NON_NAMING_WORDS where `is` would be a ' +
+        'false entry — `const is = z.object({})` is legal TypeScript.\n' +
         'So: identify which of (a)-(d) you are looking at FIRST. An earlier version of this ' +
         'message enumerated only (a)-(c) and closed with "in every case, fix the READER", ' +
         'which is what stops the next reader looking for a fourth cause. Whichever it is, fix ' +
@@ -2885,6 +2913,55 @@ describe('no unguarded block-bridge token verification', () => {
     ].join('\n');
     expect(countCalls(GUARD_CALL_RE, stripNonCode(realCall))).toBe(1);
     expect(procsReachingGuard(realCall)).toEqual(['guardedProc']);
+  });
+
+  it('a trailing comment inside an ARGUMENT LIST is not a guard call', () => {
+    // 🔴 THIS PINS THE NODE-LEVEL TRAILING CALL, AND IT EXISTS BECAUSE RESTORING THE TOKEN-LEVEL
+    // ONE MADE AN EXISTING PIN VACUOUS. Before that restore, deleting
+    // `getTrailingCommentRanges(source, node.end)` reddened
+    // `the normalisers strip comments AND re-delimit strings`; afterwards the token loop gave
+    // that control a second route to the same position, so the same deletion went GREEN. The
+    // line was quietly unpinned without anything about it changing — the hazard of adding a
+    // second collector for an overlapping range.
+    //
+    // WHAT IT UNIQUELY REACHES: the trailing trivia of a SyntaxList element that is itself a
+    // single leaf token. `forEachChild` never visits a SyntaxList, so the token loop cannot get
+    // there. MEASURED with the node-level call deleted — each of these leaks, and the leak is a
+    // phantom guard call:
+    //   `noop(input /* …guard… */, 1)`              -> 1
+    //   `const a = [1 /* …guard… */, 2];`           -> 1
+    //   `new Map<string /* …guard… */, number>();`  -> 1
+    //   and a procedure whose only guard mention is the first of those read as REACHING it.
+    const commentedGuard = 'await authorizeBlockBridgeToken(input.blockToken)';
+    for (const [shape, code] of [
+      ['call argument list', `noop(input /* ${commentedGuard} */, 1)`],
+      ['array literal', `const a = [1 /* ${commentedGuard} */, 2];`],
+      ['type argument list', `new Map<string /* ${commentedGuard} */, number>();`],
+    ] as const) {
+      expect(
+        countCalls(GUARD_CALL_RE, stripNonCode(code)),
+        `${shape}: a comment between a list element and its comma survived normalisation. It is ` +
+          'trailing trivia of a SyntaxList element, which `forEachChild` never visits — so the ' +
+          'NODE-level trailing call is the only thing that reaches it.'
+      ).toBe(0);
+    }
+    const leaky = [
+      'export const r = router({',
+      '  leakProc: publicProcedure',
+      '    .input(z.object({ blockToken: z.string().min(1) }))',
+      `    .mutation(async ({ input }) => noop(input /* ${commentedGuard} */, 1)),`,
+      '});',
+    ].join('\n');
+    expect(
+      procsReachingGuard(leaky),
+      'A procedure whose only mention of the guard is a comment inside an argument list must ' +
+        'not read as reaching it.'
+    ).toEqual([]);
+    // The control, so none of the above is satisfied by blanking everything: a REAL call in the
+    // same argument-list position still counts.
+    expect(
+      countCalls(GUARD_CALL_RE, stripNonCode('noop(input, authorizeBlockBridgeToken(t), 1)'))
+    ).toBe(1);
   });
 
   it('POSITIVE CONTROL — a regex literal does not desync the normaliser', () => {
