@@ -1,5 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
+import { Tracker } from '~/server/clickhouse/client';
+import { createModelFile } from '~/server/controllers/model-file.controller';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -11,6 +13,7 @@ import {
   suggestFileType,
   type HuggingFaceRepo,
 } from '~/server/services/huggingface.service';
+import { constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
 import {
   abortMultipartUpload,
@@ -43,6 +46,13 @@ const STALE_CLAIM_MINUTES = 20;
  * real database. (`minor-hash.service.ts` carries the same note for the same reason.)
  */
 const STALE_CLAIM_INTERVAL = Prisma.raw(`make_interval(mins => ${STALE_CLAIM_MINUTES})`);
+/**
+ * One per run. The sweep only ever has work after a pod died mid-attach, and an attach makes two
+ * external calls with no timeout of their own — so a backlog drains over a few minutes rather than
+ * spending the job lock in one tick.
+ */
+const SWEEP_SIZE = 1;
+
 const MAX_ATTEMPTS = 5;
 const RETRY_BACKOFF_MINUTES = 5;
 /**
@@ -94,6 +104,8 @@ const importSelect = {
   error: true,
   modelFileId: true,
   modelVersionId: true,
+  attachVersionId: true,
+  attachType: true,
   userId: true,
   createdAt: true,
   startedAt: true,
@@ -262,14 +274,17 @@ export async function enqueueImports({
   paths,
   userId,
   groupName,
+  attach,
 }: {
   repo: HuggingFaceRepo;
   paths: string[];
   userId: number;
   groupName?: string;
+  /** Recorded per file so the transfer attaches itself — see `attachIfRequested`. */
+  attach?: { modelVersionId: number; types: Record<string, ModelFileType> };
 }) {
   const wanted = repo.files.filter((file) => paths.includes(file.path));
-  if (!wanted.length) return { queued: 0, skipped: 0 };
+  if (!wanted.length) return { queued: 0, skipped: 0, rows: [] };
 
   // `(repo, revision, filename)` is unique, so re-queueing a repo adds only what is new.
   const result = await dbWrite.huggingFaceImport.createMany({
@@ -282,11 +297,201 @@ export async function enqueueImports({
       sourceSha256: file.sha256,
       groupName: groupName?.trim() || defaultGroupName(repo.repo),
       userId,
+      attachVersionId: attach?.modelVersionId ?? null,
+      attachType: attach?.types[file.path] ?? null,
     })),
     skipDuplicates: true,
   });
 
-  return { queued: result.count, skipped: wanted.length - result.count };
+  // `createMany` returns a count, not rows, so the ids a caller polls need a second read.
+  const rows = await dbWrite.huggingFaceImport.findMany({
+    where: {
+      repo: repo.repo,
+      revision: repo.revision,
+      filename: { in: wanted.map((file) => file.path) },
+    },
+    select: { id: true, filename: true, status: true, modelFileId: true, attachVersionId: true },
+  });
+
+  return { queued: result.count, skipped: wanted.length - result.count, rows };
+}
+
+/**
+ * Puts a file we already store onto a version without transferring it again.
+ *
+ * Hugging Face publishes each LFS file's sha256 before any bytes move, so a byte-identical file we
+ * already hold — a text encoder shared by a dozen repos, say — is decided up front and costs nothing.
+ *
+ * 🔴 Keyed on the sha, never the filename. `ae.safetensors` and `model.safetensors` name different
+ * bytes in different repos, and attaching the wrong weights is invisible until someone generates.
+ *
+ * The row records the provenance and `bucket`/`key` stay null: these bytes are someone else's
+ * object, so deleting this import must never reach for them.
+ */
+export async function reuseStoredFile({
+  repo,
+  revision,
+  path,
+  sizeBytes,
+  sha256,
+  storedUrl,
+  modelVersionId,
+  type,
+  userId,
+  groupName,
+}: {
+  repo: string;
+  revision: string;
+  path: string;
+  sizeBytes: number | null;
+  sha256: string | null;
+  storedUrl: string;
+  modelVersionId: number;
+  type: ModelFileType;
+  userId: number;
+  groupName?: string;
+}) {
+  const existingRow = await dbWrite.huggingFaceImport.findUnique({
+    where: { repo_revision_filename: { repo, revision, filename: path } },
+    select: { id: true, modelFileId: true },
+  });
+  if (existingRow) return { importId: existingRow.id, modelFileId: existingRow.modelFileId };
+
+  const row = await dbWrite.huggingFaceImport.create({
+    data: {
+      repo,
+      revision,
+      filename: path,
+      sourceUrl: huggingFaceResolveUrl(repo, revision, path),
+      sizeBytes: sizeBytes === null ? null : BigInt(sizeBytes),
+      sourceSha256: sha256,
+      groupName: groupName?.trim() || defaultGroupName(repo),
+      userId,
+      status: 'Completed',
+      url: storedUrl,
+      completedAt: new Date(),
+      attachVersionId: modelVersionId,
+      attachType: type,
+    },
+    select: { id: true },
+  });
+
+  const name = path.split('/').pop() ?? path;
+  const file = await createModelFile({
+    input: {
+      modelVersionId,
+      type,
+      name,
+      url: storedUrl,
+      sizeKB: bytesToKB(sizeBytes ?? 0),
+      // No `backend`/`s3Path`: the controller derives both from the url, which is what registers
+      // this new file id against the object the original upload put there.
+      metadata: { format: getModelFileFormat(name) },
+    },
+    userId,
+    isModerator: true,
+    track: new Tracker(),
+  });
+  await linkImportToFile({ id: row.id, modelFileId: file.id, modelVersionId });
+
+  return { importId: row.id, modelFileId: file.id };
+}
+
+/** Imports asked for by tooling rather than a person. Not a real `User` row — `userId` has no FK. */
+export const IMPORT_SYSTEM_USER_ID = constants.system.user.id;
+
+/** Not owner-scoped, unlike `ownedImport` — only reachable behind `WEBHOOK_TOKEN`. */
+export async function getImportStatus(id: number) {
+  // Primary: a caller polls the id the POST just handed it, which the replica may not have yet.
+  const row = await dbWrite.huggingFaceImport.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      repo: true,
+      revision: true,
+      filename: true,
+      status: true,
+      sizeBytes: true,
+      bytesTransferred: true,
+      attachVersionId: true,
+      modelVersionId: true,
+      modelFileId: true,
+      error: true,
+      completedAt: true,
+    },
+  });
+  if (!row) return null;
+  // BigInt does not survive JSON, and these are file sizes: a number is exact well past any of them.
+  return {
+    ...row,
+    sizeBytes: row.sizeBytes === null ? null : Number(row.sizeBytes),
+    bytesTransferred: Number(row.bytesTransferred),
+  };
+}
+
+/**
+ * 🔴 Runs as a moderator — the job has no session, so the version is NOT re-checked against the
+ * requester. Any surface that lets a non-moderator set `attachVersionId` must check that ownership
+ * at enqueue time.
+ *
+ * Never throws: the bytes are already transferred, and an unattached row with its reason recorded is
+ * exactly what the Unattached tab surfaces.
+ */
+export async function attachIfRequested(id: number) {
+  const row = await dbWrite.huggingFaceImport.findUnique({
+    where: { id },
+    select: {
+      attachVersionId: true,
+      attachType: true,
+      userId: true,
+      modelFileId: true,
+      status: true,
+    },
+  });
+  if (!row || row.modelFileId || row.status !== 'Completed') return;
+  if (!row.attachVersionId || !row.attachType) return;
+
+  const userId = row.userId ?? IMPORT_SYSTEM_USER_ID;
+  try {
+    const { importId, ...fileInput } = await buildAttachInput({
+      id,
+      modelVersionId: row.attachVersionId,
+      type: row.attachType as ModelFileType,
+      userId,
+      isModerator: true,
+    });
+    const file = await createModelFile({
+      input: fileInput,
+      userId,
+      isModerator: true,
+      track: new Tracker(),
+    });
+    const linked = await linkImportToFile({
+      id: importId,
+      modelFileId: file.id,
+      modelVersionId: row.attachVersionId,
+    });
+    if (!linked)
+      throw new Error(
+        `Created model file ${file.id}, but this import was attached by someone else first.`
+      );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logToAxiom({
+      type: 'error',
+      name: 'huggingface-import',
+      message: 'auto-attach failed; the file is transferred but unattached',
+      importId: id,
+      modelVersionId: row.attachVersionId,
+      error: message,
+    });
+    await dbWrite.huggingFaceImport
+      .updateMany({
+        where: { id, modelFileId: null },
+        data: { error: `Attach failed: ${message}` },
+      })
+      .catch(() => undefined);
+  }
 }
 
 /** Scoped by owner as well as id — the page is moderator-only today, the service is not. */
@@ -299,7 +504,10 @@ async function ownedImport({
   userId: number;
   isModerator: boolean;
 }) {
-  const row = await dbRead.huggingFaceImport.findFirst({
+  // Primary: the transfer job attaches microseconds after its own completion write, and a replica
+  // that has not caught up reports the row as still transferring — which the caller records as a
+  // permanent failure.
+  const row = await dbWrite.huggingFaceImport.findFirst({
     where: { id, userId: isModerator ? undefined : userId },
     select: {
       id: true,
@@ -337,7 +545,7 @@ export async function buildAttachInput({
   // predicate for the sake of a wider `select`, which left two copies of the rule — and this is the
   // copy that mints a `ModelFile` on a caller-supplied version, so it is the worst one to let drift.
   await ownedImport({ id, userId, isModerator });
-  const row = await dbRead.huggingFaceImport.findUniqueOrThrow({
+  const row = await dbWrite.huggingFaceImport.findUniqueOrThrow({
     where: { id },
     select: {
       id: true,
@@ -418,7 +626,10 @@ export async function detachImport(input: { id: number; userId: number; isModera
   const row = await ownedImport(input);
   const { count } = await dbWrite.huggingFaceImport.updateMany({
     where: { id: row.id, modelFileId: { not: null } },
-    data: { modelFileId: null, modelVersionId: null },
+    // 🔴 The attach target goes too. Detaching is a decision that this file does not belong on that
+    // version, and `retryPendingAttachments` would otherwise re-attach it on the next tick — minting
+    // a SECOND `ModelFile`, since the first one detach leaves alive.
+    data: { modelFileId: null, modelVersionId: null, attachVersionId: null, attachType: null },
   });
   return { ok: count === 1 };
 }
@@ -774,7 +985,9 @@ async function advanceImport(
 
   if (!uploadId || !key) {
     // Refuse rather than invent an owner: `model/0/…` is a key no upload path could produce, and the
-    // userId segment is what `/api/upload/sign-part` authorises against.
+    // userId segment is what `/api/upload/sign-part` authorises against. `IMPORT_SYSTEM_USER_ID` is
+    // the one sanctioned exception — a server transfer never presents a part to `sign-part`. `IMPORT_SYSTEM_USER_ID` is
+    // the one sanctioned exception — a server transfer never presents a part to `sign-part`.
     if (!row.userId)
       throw new Error(`Import ${row.id} has no owner; refusing to build a key for it`);
     key = buildUploadKey(
@@ -878,7 +1091,7 @@ async function advanceImport(
   // Deliberately not `getCustomPutUrl` — that bumps `recordB2PresignIssued`, a counter whose whole
   // purpose is measuring browser-direct uploads, and a server transfer is not one.
   const { url } = await getGetUrlByKey(key, { s3, bucket });
-  await dbWrite.huggingFaceImport.updateMany({
+  const { count: completed } = await dbWrite.huggingFaceImport.updateMany({
     where: { id: row.id, claimedBy: row.claimedBy, status: { not: 'Canceled' } },
     data: {
       status: 'Completed',
@@ -890,15 +1103,56 @@ async function advanceImport(
       // Spent. A retained id makes every later abort fail against a finished upload, burying the
       // one abort failure that means parts are still billed.
       uploadId: null,
+      // The resume ledger, only read while a transfer is in flight. Measured at ~40 bytes per 16 MB
+      // part, so a finished 50 GB import would otherwise carry ~125 KB of dead JSON on a row that
+      // every later query has to read past.
+      parts: Prisma.DbNull,
     },
   });
+
+  // count 0 means a cancel or another run took the row — its attach is theirs to do.
+  if (completed) await attachIfRequested(row.id);
   return movedBytes;
+}
+
+/**
+ * Files that finished but never got attached, because the pod died between the two writes.
+ *
+ * A null error keeps this a crash sweep: a recorded failure is usually permanent — a deleted version,
+ * a type the extension refuses — and retrying those would fill every slot forever.
+ */
+async function retryPendingAttachments(worker: string, deadline: number) {
+  const pending = await dbWrite.huggingFaceImport.findMany({
+    where: { status: 'Completed', modelFileId: null, attachVersionId: { not: null }, error: null },
+    select: { id: true },
+    orderBy: { completedAt: 'asc' },
+    take: SWEEP_SIZE,
+  });
+
+  for (const row of pending) {
+    if (Date.now() >= deadline) return;
+    // 🔴 The same claim the transfer takes. An attach is a read, then an S3 head, then two awaited
+    // external calls, then a write — long enough for a second run to pass the same read and mint a
+    // second `ModelFile` that nothing would ever delete. `linkImportToFile` picks a winner, but only
+    // after both files exist.
+    const { count } = await dbWrite.huggingFaceImport.updateMany({
+      where: { id: row.id, modelFileId: null, claimedBy: null },
+      data: { claimedBy: worker, claimedAt: new Date() },
+    });
+    if (!count) continue;
+    try {
+      await attachIfRequested(row.id);
+    } finally {
+      await yieldClaim(row.id).catch(() => undefined);
+    }
+  }
 }
 
 /**
  * Drains the queue until `deadline`. Bounded work per call by design: a transfer is a sequence of
  * resumable parts, so the job never needs a run longer than its own lock.
  */
+
 export async function processImportQueue({
   deadline,
   worker,
@@ -927,6 +1181,10 @@ export async function processImportQueue({
       await yieldClaim(row.id).catch(() => undefined);
     }
   };
+
+  // Before the drain, not after: the drain runs until the deadline by construction, so anything
+  // queued behind it spends time the job's lock does not have.
+  await retryPendingAttachments(worker, deadline);
 
   const startedAt = Date.now();
   await Promise.all(Array.from({ length: concurrency }, drain));

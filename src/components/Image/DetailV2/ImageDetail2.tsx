@@ -737,6 +737,7 @@ function ImageDetailReactions({
           entityType="image"
           reactions={image.reactions}
           metrics={metrics}
+          metricsUnknown={image.stats?.statsUnknown}
           targetUserId={image.user.id}
           disableBuzzTip={image.poi}
         />

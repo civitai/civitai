@@ -372,7 +372,7 @@ export const getPostsInfinite = async ({
     }
   }
 
-  if (sort === PostSort.RecentlyAdded && !collectionId) {
+  if (sort === PostSort.RecentlyAdded && !collectionId && !draftOnly) {
     throw throwBadRequestError('Recently Added sort requires a collectionId');
   }
 

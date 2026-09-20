@@ -132,8 +132,14 @@ const {
 const { mockRecordStepPriceCheck } = vi.hoisted(() => ({
   mockRecordStepPriceCheck: vi.fn(() => undefined),
 }));
+// A bare factory, so every symbol the router imports from this module must be listed
+// here or it resolves to `undefined` and the router throws the moment it is called.
+// `recordBlockPostSubjectRefusal` is only reached on the post preamble's unreadable-
+// subject branch, which this suite does not drive — it is listed so that stays true by
+// construction rather than by luck.
 vi.mock('~/server/metrics/app-block-runtime.metrics', () => ({
   recordStepPriceCheck: (...a: unknown[]) => mockRecordStepPriceCheck(...(a as [])),
+  recordBlockPostSubjectRefusal: () => undefined,
 }));
 
 vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
@@ -221,7 +227,13 @@ vi.mock('~/server/services/blocks/user-app-surface.service', () => ({
   recordScopeInvocation: vi.fn(async () => undefined),
 }));
 
-vi.mock('~/server/middleware/block-scope.middleware', () => ({
+// Spread the ORIGINAL rather than replacing the module: `blocks.router.ts` also
+// imports `blockPerCallBudget` from here, and every submit gate's budget
+// comparison goes through it. Stubbing the module wholesale drops that export,
+// so each gate would compare against `undefined` — and `x > undefined` is
+// always false, i.e. the budget gate silently stops rejecting anything.
+vi.mock('~/server/middleware/block-scope.middleware', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   verifyBlockToken: mockVerifyBlockToken,
   parseSubjectUserId: (...args: unknown[]) => mockParseSubjectUserId(...args),
 }));

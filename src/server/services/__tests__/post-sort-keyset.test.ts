@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { PostSort } from '~/server/common/enums';
 import {
   buildPostCursorClause,
+  DRAFT_QUEUE_SORT_KEY,
   encodePostCursor,
   getPostSortClauses,
 } from '~/server/services/post-sort';
@@ -21,12 +22,6 @@ type Row = {
 };
 
 const d = (iso: string) => new Date(iso);
-
-const plusCentury = (date: Date) => {
-  const out = new Date(date);
-  out.setUTCFullYear(out.getUTCFullYear() + 100);
-  return out;
-};
 
 // Drafts (publishedAt null) interleaved with scheduled posts (publishedAt in the future),
 // plus a createdAt tie on 102/103 so the id tiebreaker is actually exercised.
@@ -95,16 +90,20 @@ const evalSortKey = (expr: string, row: Row): number => {
     case 'p."publishedAt"':
       if (!row.publishedAt) throw new Error(`row ${row.id} has a null publishedAt under ${expr}`);
       return row.publishedAt.getTime();
-    case 'COALESCE(p."publishedAt", p."createdAt")':
-      return (row.publishedAt ?? row.createdAt).getTime();
-    case `COALESCE(p."publishedAt", p."createdAt" + interval '100 years')`:
-      return (row.publishedAt ?? plusCentury(row.createdAt)).getTime();
+    // A LITERAL copy of the SQL, never the imported constant: labelled with the constant, any
+    // edit to the SQL still matched here and the pager checked this model against itself.
+    // This pins the SQL's spelling only. Changing it means rewriting the body below to model the
+    // new SQL AND re-running that SQL against a real database: nothing here executes it.
+    case `(CASE WHEN p."publishedAt" IS NULL THEN 1e15 + extract(epoch from p."createdAt") * 1000 ELSE -extract(epoch from p."publishedAt") * 1000 END)::float8`:
+      return row.publishedAt ? -row.publishedAt.getTime() : 1e15 + row.createdAt.getTime();
     case 'ci."id"':
       if (row.collectionItemId === undefined)
         throw new Error(`row ${row.id} has no collectionItemId under ${expr}`);
       return row.collectionItemId;
     default:
-      throw new Error(`post-sort pager cannot evaluate sort expression: ${expr}`);
+      throw new Error(
+        `post-sort pager cannot evaluate sort expression: ${expr} — model it in evalSortKey, and check the SQL itself against a database; this pager never runs it`
+      );
   }
 };
 
@@ -267,26 +266,28 @@ describe('getPostSortClauses', () => {
     }
   });
 
-  it('drops the +100 years draft offset under Oldest so old drafts outrank scheduled posts', () => {
-    const oldest = getPostSortClauses({ sort: PostSort.Oldest, draftOnly: true });
-    expect(oldest.primarySortProp).toBe('COALESCE(p."publishedAt", p."createdAt")');
-    expect(oldest.orderBy).toBe('COALESCE(p."publishedAt", p."createdAt") ASC, p.id ASC');
-
-    // Newest still needs the offset to pin drafts ahead of scheduled posts.
-    expect(getPostSortClauses({ sort: PostSort.Newest, draftOnly: true }).primarySortProp).toBe(
-      `COALESCE(p."publishedAt", p."createdAt" + interval '100 years')`
-    );
+  it('ignores the sort picker for the drafts view, which is a publish queue', () => {
+    const queue = getPostSortClauses({ sort: PostSort.Newest, draftOnly: true });
+    expect(queue.primarySortProp).toBe(DRAFT_QUEUE_SORT_KEY);
+    for (const sort of [
+      PostSort.Oldest,
+      PostSort.MostComments,
+      PostSort.MostReactions,
+      PostSort.MostCollected,
+      PostSort.RecentlyAdded,
+    ])
+      expect(getPostSortClauses({ sort, draftOnly: true })).toEqual(queue);
   });
 
   it('orders on the collection item, not the post, under Recently Added', () => {
-    expect(getPostSortClauses({ sort: PostSort.RecentlyAdded, collectionJoined: true })).toMatchObject(
-      {
-        orderBy: 'ci."id" DESC',
-        primarySortProp: 'ci."id"',
-        isDateSort: false,
-        ascending: false,
-      }
-    );
+    expect(
+      getPostSortClauses({ sort: PostSort.RecentlyAdded, collectionJoined: true })
+    ).toMatchObject({
+      orderBy: 'ci."id" DESC',
+      primarySortProp: 'ci."id"',
+      isDateSort: false,
+      ascending: false,
+    });
   });
 
   it('throws rather than silently ordering by publishedAt when the collection was not joined', () => {
@@ -378,20 +379,10 @@ describe('keyset pagination', () => {
     expect(pages).toBeLessThan(PAGE_CAP);
   });
 
-  it('walks the draft feed oldest-first, drafts ahead of scheduled posts', () => {
-    const { seen, pages } = drain({
-      rows: draftFeed,
-      sort: PostSort.Oldest,
-      draftOnly: true,
-      limit: 4,
-    });
-
-    expect(seen).toEqual([101, 102, 103, 104, 105, 106, 107, 108, 201, 202, 203, 204]);
-    expect(pages).toBe(3);
-    expect(pages).toBeLessThan(PAGE_CAP);
-  });
-
-  it('still walks the draft feed newest-first under Newest (unchanged behaviour)', () => {
+  it('walks the drafts view as a queue: drafts newest first, then scheduled soonest first', () => {
+    // Two directions in one keyset walk. Scheduled posts run 201..204 (soonest first) even
+    // though the drafts above them run newest first, and the page boundaries at limit 4 land
+    // inside both halves and on the seam between them.
     const { seen, pages } = drain({
       rows: draftFeed,
       sort: PostSort.Newest,
@@ -399,20 +390,21 @@ describe('keyset pagination', () => {
       limit: 4,
     });
 
-    expect(seen).toEqual([108, 107, 106, 105, 104, 103, 102, 101, 204, 203, 202, 201]);
+    expect(seen).toEqual([108, 107, 106, 105, 104, 103, 102, 101, 201, 202, 203, 204]);
     expect(pages).toBe(3);
+    expect(pages).toBeLessThan(PAGE_CAP);
   });
 
   it('does not stall on a createdAt tie — the id tiebreaker carries the page boundary', () => {
-    // limit 2 lands the page boundary exactly between 102 and 103, which share a createdAt.
+    // limit 2 lands the page boundary exactly between 103 and 102, which share a createdAt.
     const { seen, pages } = drain({
       rows: draftFeed,
-      sort: PostSort.Oldest,
+      sort: PostSort.Newest,
       draftOnly: true,
       limit: 2,
     });
 
-    expect(seen.slice(0, 4)).toEqual([101, 102, 103, 104]);
+    expect(seen.slice(4, 8)).toEqual([104, 103, 102, 101]);
     expect(seen).toHaveLength(draftFeed.length);
     expect(pages).toBe(6);
   });

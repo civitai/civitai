@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import type { ProtectedContext } from '~/server/createContext';
+import type { Tracker } from '~/server/clickhouse/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   HasOfficialFileOfSizeInput,
@@ -133,6 +134,28 @@ export const createFileHandler = async ({
 }: {
   input: ModelFileCreateInput;
   ctx: ProtectedContext;
+}) =>
+  createModelFile({
+    input,
+    userId: ctx.user.id,
+    isModerator: !!ctx.user.isModerator,
+    track: ctx.track,
+  });
+
+/**
+ * The same create path with no request behind it, so a job can run it: a Hugging Face import
+ * attaches its own file when the transfer lands, and has no session to borrow.
+ */
+export const createModelFile = async ({
+  input,
+  userId,
+  isModerator,
+  track,
+}: {
+  input: ModelFileCreateInput;
+  userId: number;
+  isModerator: boolean;
+  track: Tracker;
 }) => {
   try {
     // Extract B2-specific fields before passing to createFile (they aren't DB columns)
@@ -140,8 +163,8 @@ export const createFileHandler = async ({
 
     const file = await createFile({
       ...createInput,
-      userId: ctx.user.id,
-      isModerator: ctx.user.isModerator,
+      userId: userId,
+      isModerator: isModerator,
       select: {
         id: true,
         name: true,
@@ -165,7 +188,7 @@ export const createFileHandler = async ({
     if (resolved) {
       await safeRegisterFileLocation({
         op: 'create',
-        userId: ctx.user.id,
+        userId: userId,
         fileId: file.id,
         modelVersionId: file.modelVersion.id,
         modelId: file.modelVersion.modelId,
@@ -175,7 +198,7 @@ export const createFileHandler = async ({
       });
     }
 
-    ctx.track
+    track
       .modelFile({ type: 'Create', id: file.id, modelVersionId: file.modelVersion.id })
       .catch(handleLogError);
 

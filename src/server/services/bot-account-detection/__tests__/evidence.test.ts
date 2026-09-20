@@ -225,9 +225,15 @@ describe('stagedImageSampleArgs', () => {
     // 🔴 THE PER-MEMBER CAP IS ALSO THE LARGEST COUNT THE HEURISTIC CAN EVER SEE, which the
     // filename cap is not — a filename sample folds into a set, while this one IS the measurement.
     // That is harmless only while the scoring ramp saturates well below it, so the relationship is
-    // asserted rather than left to a reader to notice. The margin WIDENED when the volume boundary
-    // was re-derived downwards, so the assertion is written against the constant rather than
-    // restating its value — a literal here goes stale exactly when the coupling it guards moves.
+    // asserted rather than left to a reader to notice, and it is written against the constant rather
+    // than restating its value — a literal here goes stale exactly when the coupling it guards moves.
+    //
+    // 🔴 READ THE LAST LINE AS 4×, NOT AS THE MARGIN. The actual margin is 25× (50 against a volume
+    // boundary of 2) and prose elsewhere calls it "an order of magnitude"; this assertion only
+    // requires 4×, so it is much weaker than the sentences that cite it. It got WEAKER, not
+    // stronger, when the volume boundary moved down — the bar it enforces fell from 12 to 8 against
+    // an unchanged 50. It is kept at 4× deliberately: the point is to catch a per-member cap
+    // dropped near the ramp, not to re-pin the margin, which the two literals above already do.
     expect(MAX_STAGED_IMAGE_SAMPLES).toBe(20_000);
     expect(MAX_STAGED_IMAGES_PER_MEMBER).toBe(50);
     expect(MAX_STAGED_IMAGES_PER_MEMBER).toBeGreaterThan(STAGED_ONE_AT * 4);

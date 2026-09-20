@@ -34,7 +34,7 @@ import {
  * 🔴 The cardinality bound is the other load-bearing property, same as the siblings. This
  * counter fires once per non-ok REST request with nothing caching or rate-limiting it,
  * across every scraped pod, and prom-client retains every distinct label set in the Node
- * heap for the process lifetime. One label over a 3-value code-owned union = 3 series,
+ * heap for the process lifetime. One label over a 4-value code-owned union = 4 series,
  * total, forever. Widening it is a code change that has to get past these tests.
  */
 
@@ -72,17 +72,23 @@ describe('civitai_app_block_rest_approval_verdicts_total', () => {
 
   /**
    * 🔴 THE SPLIT IS THE WHOLE VALUE OF THIS SIGNAL, and it is a sharper claim here than on
-   * the sibling counters, because the three reasons do not even agree on whether the
+   * the sibling counters, because the four reasons do not even agree on whether the
    * request was served:
    *
    *   not_approved  — REFUSED 403. The gate working; the only branch carrying its value.
    *   not_found     — SERVED. A healthy app; the false-positive channel.
    *   lookup_failed — ROUTE-DEPENDENT: 503 on the routes that fail closed, SERVED on the
    *                   five that declare `onApprovalLookupFailure`. Infra, not policy.
+   *   tunnel_lookup_failed
+   *                 — REFUSED 403 on EVERY route. Infra like `lookup_failed`, but a CACHE
+   *                   fault rather than a replica one, and `onApprovalLookupFailure` does
+   *                   NOT cover it: a known non-approved app must not be served anywhere
+   *                   because a cache was down. Separate from `not_approved` so a sysRedis
+   *                   incident is not counted as the dev-token narrowing working.
    *
    * `sum(rate(...))` across the label adds requests that were turned away to requests that
    * were served, so an operator who cannot split by `reason` has a number with no meaning.
-   * Three separate series is what makes the split possible at all.
+   * Four separate series is what makes the split possible at all.
    *
    * 🔴 BUT SPLITTING BY `reason` NO LONGER SETTLES WHAT HAPPENED, AND THIS DOCBLOCK USED TO
    * SAY IT DID (`lookup_failed — REFUSED 503`). Since the opt-out landed, `lookup_failed`
@@ -117,15 +123,23 @@ describe('civitai_app_block_rest_approval_verdicts_total', () => {
    * attach point sits above the gate — and from `statusToRequestResult`. It is NOT exercised
    * by a test, because the middleware suites stub `res.on` as a no-op.)
    */
-  it('🔴 the three reasons are SEPARATE series — a served not_found never reads as a refusal', async () => {
+  it('🔴 the four reasons are SEPARATE series — a served not_found never reads as a refusal', async () => {
     recordBlockRestApprovalVerdict('not_approved');
     recordBlockRestApprovalVerdict('not_found');
     recordBlockRestApprovalVerdict('not_found');
     recordBlockRestApprovalVerdict('lookup_failed');
+    // The fourth reason is driven here too, so the title's count and the case's coverage
+    // are the same number. Two separate slips, one commit apart: the body was not extended
+    // when the reason was added (under-covered, but the title still said three, so the case
+    // claimed nothing it did not prove), and the title was bumped to four in the following
+    // docs pass — which is where it became a coverage claim wider than the test. The same
+    // shape is corrected in the `emits AT MOST 4 series` case below.
+    recordBlockRestApprovalVerdict('tunnel_lookup_failed');
 
     expect(await readReason('not_approved')).toBe(1);
     expect(await readReason('not_found')).toBe(2);
     expect(await readReason('lookup_failed')).toBe(1);
+    expect(await readReason('tunnel_lookup_failed')).toBe(1);
   });
 
   it('🔴 DECLARES exactly one label, `reason` — the cardinality bound is structural', async () => {
@@ -151,21 +165,32 @@ describe('civitai_app_block_rest_approval_verdicts_total', () => {
     }
   });
 
-  it('🔴 the reason union is EXACTLY these three values — 3 series is the whole budget', () => {
+  it('🔴 the reason union is EXACTLY these four values — 4 series is the whole budget', () => {
     // Literal, not derived: this is the number an operator's cardinality budget is sized
     // against, and the union is simultaneously the metric label AND the non-`ok` half of
-    // `AppBlockApprovalVerdict | 'lookup_failed'`, so a fourth verdict added on the service
+    // `AppBlockApprovalVerdict | 'lookup_failed'`, so a new verdict added on the service
     // side has to come through here.
+    //
+    // ⚠️ WENT FROM THREE TO FOUR WITH clawgate #571, AND THE GUARD WORKING IS WHY.
+    // `tunnel_lookup_failed` is the dev-tunnel re-check failing. It refuses exactly like
+    // `not_approved` and could have shared its label for free — which is precisely what
+    // this test exists to make someone argue for rather than default into. The argument
+    // against sharing: that series is the one the dev-token narrowing ships to be watched
+    // on, so a sysRedis fault folded into it reads as the narrowing working, and on this
+    // deployment there is no log to fall back on (application-container logs are not
+    // collected). One more series is the price of being able to tell an incident from the
+    // population it would otherwise hide in.
     expect([...APP_BLOCK_REST_APPROVAL_VERDICT_REASONS]).toEqual([
       'not_approved',
       'not_found',
       'lookup_failed',
+      'tunnel_lookup_failed',
     ]);
   });
 
-  it('🔴 emits AT MOST 3 series no matter how many verdicts land', async () => {
-    // The end-state assertion the label-name check implies: drive 300 verdicts across
-    // every reason and the scrape still carries 3 lines for this metric.
+  it('🔴 emits AT MOST 4 series no matter how many verdicts land', async () => {
+    // The end-state assertion the label-name check implies: drive 400 verdicts across
+    // every reason and the scrape still carries 4 lines for this metric.
     for (let i = 0; i < 100; i++) {
       for (const reason of APP_BLOCK_REST_APPROVAL_VERDICT_REASONS) {
         recordBlockRestApprovalVerdict(reason);
@@ -175,8 +200,16 @@ describe('civitai_app_block_rest_approval_verdicts_total', () => {
       get(): Promise<{ values: Array<{ labels: Record<string, string> }> }>;
     };
     const { values } = await metric.get();
-    expect(values).toHaveLength(3);
+    expect(values).toHaveLength(4);
     expect(await readReason('not_found')).toBe(100);
+    // ⚠️ THIS ASSERTS THE LOOP DROVE IT, NOT THAT A PRODUCTION CALLER DOES, and an earlier
+    // comment here claimed the stronger thing. The loop iterates the union itself, so a
+    // phantom reason no caller ever emits would satisfy this exactly as well. What pins a
+    // real emitter is `block-scope.approved-gate.test.ts`'s
+    // `expect(recordVerdictMock.mock.calls).toEqual([['tunnel_lookup_failed']])`, in a
+    // different file and against the real middleware. Kept here only as the
+    // cardinality-budget half: 100 increments on a 4th reason still yield one series.
+    expect(await readReason('tunnel_lookup_failed')).toBe(100);
   });
 
   it('is idempotent to register — a double module import does not throw', () => {
@@ -191,7 +224,7 @@ describe('civitai_app_block_rest_approval_verdicts_total', () => {
 
   /**
    * 🔴 THE ASSERTION AN ALERT RULE ACTUALLY DEPENDS ON — the exact scrape text, name and
-   * label key and label VALUE, for all three reasons. Every other case in this file would
+   * label key and label VALUE, for all four reasons. Every other case in this file would
    * still pass if the metric were renamed, because they all reach it through
    * `getSingleMetric(METRIC)` with the same constant; this one reads the rendered
    * exposition the scraper sees.

@@ -284,7 +284,8 @@ describe('the reporting threshold', () => {
     // against a silently changed lone-signal bar and this case would stay green. With it, changing
     // the bar requires editing a test that says out loud that the value is inherited — which is the
     // point at which someone has to supply evidence for a new one. `asset-staging`'s boundaries are
-    // derived against this number, so it is load-bearing for a firing point even while provisional.
+    // CHECKED against this number — they were derived from it until the ordering evidence set that
+    // heuristic's volume boundary instead — so it still bounds a firing point even while provisional.
     expect(LONE_SIGNAL_CUT).toBe(0.45);
     // A worked instance, with literals rather than expressions over the constants — the same
     // reasoning the boundary cases in `heuristics.test.ts` are written with. A registry of four

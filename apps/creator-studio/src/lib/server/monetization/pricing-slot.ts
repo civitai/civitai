@@ -170,8 +170,8 @@ const startOfUtcDay = (date: Date): Date =>
 
 /**
  * How long the charge lookup may take before the caller falls back to the daily mirror. A try/catch
- * cannot catch a hang and the client sets no request_timeout, so without this its own 30s default
- * would hold a creator's save open. The query measures ~4ms; this is a fault budget, not a target.
+ * cannot catch a hang, and the shared client's `request_timeout` is 300s, so without this a wedged
+ * read would hold a creator's save open. The query measures ~4ms; this is a fault budget, not a target.
  */
 const CHARGE_LOOKUP_TIMEOUT_MS = 3000;
 

@@ -596,6 +596,8 @@ model User {
   blockSpendAttributionsAsSpender  BlockSpendAttribution[]   @relation("BlockSpendAttributionSpender")
   blockSpendAttributionsAsAppOwner BlockSpendAttribution[]   @relation("BlockSpendAttributionAppOwner")
   blockSpendAttributionsAsContentAuthor BlockSpendAttribution[] @relation("BlockSpendAttributionContentAuthor")
+  blockAuthorFeeAccrualsAsAppOwner BlockAuthorFeeAccrual[]  @relation("BlockAuthorFeeAccrualAppOwner")
+  blockAuthorFeeAccrualsAsViewer   BlockAuthorFeeAccrual[]  @relation("BlockAuthorFeeAccrualViewer")
   blockSubscriptionAttributionsAsPurchaser BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionPurchaser")
   blockSubscriptionAttributionsAsAppOwner  BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionAppOwner")
   publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
@@ -891,6 +893,10 @@ model HuggingFaceImport {
   userId           Int?
   modelVersionId   Int?
   modelFileId      Int?
+  /// Where this file is headed, recorded before the bytes move so the transfer job can attach it
+  /// itself. `modelVersionId` cannot carry this: it means "attached to", and detaching clears it.
+  attachVersionId  Int?
+  attachType       String?
   /// Worker lease. A transfer outlives any one job run, so a claim plus a heartbeat is what stops two
   /// runs moving the same file and what lets the next run tell "in flight" from "abandoned".
   claimedBy        String?
@@ -904,6 +910,10 @@ model HuggingFaceImport {
   @@unique([repo, revision, filename])
   @@index([status, createdAt])
   @@index([groupName])
+  /// Also `HuggingFaceImport_pending_attach_idx` — a PARTIAL index on ("completedAt") for the attach
+  /// sweep, which Prisma cannot express, so it lives in its migration and will not round-trip here.
+  /// Also `HuggingFaceImport_pending_attach_idx` — a PARTIAL index on ("completedAt") for the attach
+  /// sweep, which Prisma cannot express, so it lives in its migration and will not round-trip here.
 }
 
 enum ModelStatus {
@@ -2491,6 +2501,7 @@ model OauthClient {
   appBlocks      AppBlock[]
   buzzAttributions BlockBuzzAttribution[]
   spendAttributions BlockSpendAttribution[] @relation("BlockSpendAttributionApp")
+  authorFeeAccruals BlockAuthorFeeAccrual[] @relation("BlockAuthorFeeAccrualApp")
   subscriptionAttributions BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionApp")
   connectListings          AppListing[]
 
@@ -2648,6 +2659,7 @@ model AppBlock {
   userSubscriptions  BlockUserSubscription[]
   buzzAttributions   BlockBuzzAttribution[]
   spendAttributions  BlockSpendAttribution[] @relation("BlockSpendAttributionAppBlock")
+  authorFeeAccruals  BlockAuthorFeeAccrual[] @relation("BlockAuthorFeeAccrualAppBlock")
   subscriptionAttributions BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionAppBlock")
   publishRequests    AppBlockPublishRequest[]
   scopeInvocations   BlockScopeInvocation[]
@@ -3709,6 +3721,109 @@ model BlockSpendAttribution {
   @@map("block_spend_attribution")
 }
 
+/// App Blocks per-generation AUTHOR FEE — the accrual ledger (slice 2).
+///
+/// One row = one generation on which an app charged its author fee. The viewer
+/// has ALREADY been debited `feeBuzz` at submit; this row is the platform's
+/// obligation to pay it onward to the app owner, settled in a daily batch.
+/// Mirrors the model licensing fee: the orchestrator charges the viewer at
+/// generation time and writes a per-resource fee row, and a daily job mints to
+/// the creator. Same two hops, same dedup discipline, civitai-owned table.
+///
+/// 🔴 SEPARATE FROM BlockSpendAttribution ON PURPOSE — because of the WRITE
+/// SEAM, not the row shape. `recordSpendAttribution` is invoked inside
+/// `void (async () => { … })()` so that a failed attribution write can never
+/// break the generation; it is droppable telemetry. An accrual is a money
+/// obligation and must be AWAITED. Do not hang an awaited financial write onto a
+/// deliberately fire-and-forget path.
+///
+/// ⚠️ An earlier revision said BlockSpendAttribution is "IMMUTABLE by design".
+/// That is false — it carries `status`, `voidedReason`, `confirmedAt`,
+/// `voidedAt`, `paidOutAt` and `payoutId`, the same lifecycle shape. Those
+/// columns are dead today because the rail that wrote them was removed, which is
+/// a different statement.
+///
+/// 🔴 `feeBuzz` IS AN INTEGER, NOT NUMERIC, AND THAT REVERSES THE "FRACTIONAL
+/// ACCRUAL" THE DESIGN INHERITED FROM THE LICENSING RAIL. The licensing fee is
+/// fractional because it is priced per-IMAGE at 0.01 buzz and the viewer pays
+/// the CEILING of the sum, so the creator's share genuinely has sub-buzz
+/// resolution. This fee does not: `max(flatBuzz, pct × base)` is FLOORED TO
+/// WHOLE BUZZ before the viewer is shown or charged it (D7 requires the viewer
+/// see the exact number before the run, and Buzz cannot express a fraction). The
+/// author is credited exactly what the viewer paid — no more, because the
+/// platform takes no cut; no less, because the platform funds nothing.
+///
+/// ⚠️ Consequence, and it is real: an author who sets a 0 flat leg and a low
+/// percentage earns NOTHING on cheap generations, permanently —
+/// `floor(4 × 500/10000) = 0` every time. Same shape as the $0.00 spend bounty
+/// this arc replaced; the difference is that it is now the author's explicit
+/// choice, and the platform default (flat 1 ⚡) avoids it. Slice 3's config UI
+/// must say so at the point of setting it.
+model BlockAuthorFeeAccrual {
+  id                 String   @id
+
+  /// Orchestrator workflow id — the idempotency anchor. A resubmit of the same
+  /// workflow must never charge or accrue twice.
+  workflowId         String   @map("workflow_id")
+
+  appId              String   @map("app_id")
+  app                OauthClient @relation("BlockAuthorFeeAccrualApp", fields: [appId], references: [id], onDelete: Restrict)
+  appBlockId         String   @map("app_block_id")
+  appBlock           AppBlock @relation("BlockAuthorFeeAccrualAppBlock", fields: [appBlockId], references: [id], onDelete: Restrict)
+
+  /// 🔴 Resolved at WRITE time, never at settlement. An app that changes hands
+  /// must not retroactively move earnings already accrued to the previous owner
+  /// (`app-ownership-transfer.service.ts` is the precedent). Resolving the owner
+  /// in the settlement query would do exactly that.
+  appOwnerUserId     Int      @map("app_owner_user_id")
+  appOwner           User     @relation("BlockAuthorFeeAccrualAppOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
+
+  /// The viewer who paid. What the self-dealing exclusion is measured against,
+  /// and what slice 2b's refund path will join on to reverse a fee.
+  viewerUserId       Int      @map("viewer_user_id")
+  viewer             User     @relation("BlockAuthorFeeAccrualViewer", fields: [viewerUserId], references: [id], onDelete: Restrict)
+
+  /// 🔴 D6 — a viewer spending blue Buzz pays in blue and the author receives
+  /// blue (non-withdrawable). The settlement job groups by this and never
+  /// coerces to yellow; defaulting it would silently convert non-withdrawable
+  /// Buzz into withdrawable earnings. No `@default` for that reason.
+  buzzType           String   @map("buzz_type")
+
+  /// Whole Buzz owed to the author, always > 0 — pinned by a CHECK. There is no
+  /// negative row: the clawback was retired in round 0 (zero production callers,
+  /// and its carry-forward arm unreachable until something had settled). Slice 2b
+  /// adds it together with the refund path that drives it.
+  feeBuzz            Int      @map("fee_buzz")
+
+  /// The pricing inputs, kept so a disputed charge can be explained without
+  /// re-deriving it from a workflow that may no longer exist.
+  baseGenerationBuzz Int      @map("base_generation_buzz")
+  flatLegBuzz        Int      @map("flat_leg_buzz")
+  pctLegBuzz         Int      @map("pct_leg_buzz")
+  governingLeg       String   @map("governing_leg")
+
+  /// The resolved '<coarse>' or '<coarse>:<subtype>' the fee was priced under.
+  /// NULL when the type could not be resolved — the fee still applies, falling
+  /// to the app's default (see `resolveBlockAuthorFeeParams`).
+  generationType     String?  @map("generation_type")
+
+  /// 'accrued' | 'settled'.
+  status             String   @default("accrued")
+
+  /// The externalTransactionId this row settled under, so a row traces to the
+  /// exact mint. NULL until settled; a CHECK keeps it and `settledAt` in step
+  /// with `status`.
+  settlementKey      String?  @map("settlement_key")
+
+  accruedAt          DateTime @default(now()) @map("accrued_at") @db.Timestamptz(6)
+  settledAt          DateTime? @map("settled_at") @db.Timestamptz(6)
+
+  @@unique([workflowId], map: "block_author_fee_accrual_workflow_key")
+  @@index([status, accruedAt], map: "block_author_fee_accrual_settlement_idx")
+  @@index([appOwnerUserId, accruedAt], map: "block_author_fee_accrual_owner_idx")
+  @@map("block_author_fee_accrual")
+}
+
 /// W3 flow C — App Blocks MEMBERSHIP / subscription attribution.
 ///
 /// One row PER PAID INVOICE per app block: a block-initiated membership
@@ -4604,6 +4719,12 @@ model UserCosmeticShopPurchases {
   // reconstruct it after the fact. See UserCosmeticShopPurchaseMeta.
   meta              Json?
   components        UserCosmeticShopPurchaseCosmetic[]
+
+  // Every displayed sold count is a `_count` over this FK, which Prisma resolves
+  // as one whole-table GROUP BY per query. Without the index a single-item read
+  // still scans the table to count one item's rows. Applied by hand — the
+  // migration beside this schema carries the plans and what the index does not fix.
+  @@index([shopItemId])
 }
 
 model UserCosmeticShopPurchaseCosmetic {

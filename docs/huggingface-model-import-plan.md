@@ -1,6 +1,9 @@
 # Importing models from Hugging Face
 
-**Status:** built, not deployed. The migration has not been applied to any database.
+**Status:** the page, the transfer and the *Manage files* picker are merged and live, and both
+`20260914120000_huggingface_import` and `20260918120000_huggingface_import_attach_target` are applied
+to production. The transfer API below is on `feat/huggingface-import-api`, not yet merged, and adds
+`20260918140000_huggingface_import_pending_attach_idx`.
 
 ## The goal
 
@@ -13,12 +16,14 @@ this as the first route.
 
 | Piece | Where |
 | --- | --- |
-| `HuggingFaceImport` table + status enum | `packages/civitai-db-schema/prisma/schema.full.prisma`, migration `20260914120000_huggingface_import` |
+| `HuggingFaceImport` table + status enum | `packages/civitai-db-schema/prisma/schema.full.prisma`, migrations `20260914120000_huggingface_import`, `20260918120000_huggingface_import_attach_target` (`attachVersionId`, `attachType`) and `20260918140000_huggingface_import_pending_attach_idx` |
 | HF API client — parse a URL, resolve a branch to a commit sha, list files with sizes and LFS sha256, ranged reads | `src/server/services/huggingface.service.ts` |
 | Queue + the resumable transfer | `src/server/services/huggingface-import.service.ts` |
 | The runner | `src/server/jobs/process-huggingface-imports.ts`, registered in the `jobs` array in `run-jobs` |
-| tRPC surface (`getAll` — filterable by `groupName`/`repo`, and by `unattached` — `getCounts`, `lookup`, `enqueue`, `attach`, `detach`, `delete`, `renameGroup`, `retry`, `cancel`) | `src/server/routers/huggingface-import.router.ts` |
+| tRPC surface (`getAll` — filterable by `groupName`/`repo`, and by `unattached` — `getCounts`, `getConfig`, `lookup`, `enqueue`, `attach`, `detach`, `delete`, `renameGroup`, `retry`, `cancel`, `setConfig`) | `src/server/routers/huggingface-import.router.ts` |
 | Moderator page | `src/pages/moderator/huggingface-import.tsx` + `src/components/Moderation/HuggingFaceImport/` |
+| Transfer API — queue with a destination, poll one import, list a repo | `src/pages/api/admin/huggingface-import.ts` |
+| The session-free create path the job attaches through | `createModelFile` in `src/server/controllers/model-file.controller.ts` |
 | The *Manage files* picker (moderator-only) | `src/components/Moderation/HuggingFaceImport/AddFromImportsModal.tsx`, opened via `src/components/Dialog/triggers/add-from-hugging-face-imports.ts` from `AddFromImportsButton.tsx` in `src/components/Resource/Files.tsx` |
 | Server-side multipart helpers (`createMultipartUpload`, `uploadPart`) | `src/utils/s3-utils.ts` |
 | The shared key builder (`buildUploadKey`) | `src/utils/upload-key.ts` — used by `/api/upload` **and** the import |
@@ -62,14 +67,19 @@ bytes a model file still points at is refused either way.
 
 ## Attaching to a version
 
-`attach` turns a finished import into a `ModelFile` on a version, going through `createFileHandler`
-rather than writing the row directly — that is what gets the storage-resolver registration and the
-inline scan submission, so scanning and hashing follow on their own.
+`attach` turns a finished import into a `ModelFile` on a version, going through the shared create path in
+`model-file.controller.ts` rather than writing the row directly — that is what gets the
+storage-resolver registration and the inline scan submission, so scanning and hashing follow on their
+own. The tRPC surfaces reach it as `createFileHandler`; the transfer job has no session to borrow, so
+it calls `createModelFile` — the same body with `userId`, `isModerator` and `track` passed in.
 
-Four ways in, one path underneath: the Attach control on a completed row, the **Add from Hugging
+Five ways in, one path underneath: the Attach control on a completed row, the **Add from Hugging
 Face imports** picker inside a version's *Manage files*, the `huggingFaceImport.attach` procedure,
-and two commands on `official-model-admin` — `hf-imports` (what transferred) and `attach-import`
-(put one on a version).
+`POST /api/admin/huggingface-import` (below), and two commands on `official-model-admin` —
+`hf-imports` (what transferred) and `attach-import` (put one on a version).
+
+Four of those attach a file that has already landed. The API is the one that does not: it records
+where each file is headed at enqueue, and the transfer job attaches it on completion.
 
 What that changes for the skill: the 20GB re-upload a person used to perform is gone, and attaching is
 scriptable. A human still queues the repo on the page, and still confirms the file type when the
@@ -137,8 +147,9 @@ No real-world measurement exists yet — nothing has run against a live bucket.
 **Nothing checks that the file you attached is the file you meant.** The scan catches malware, not
 mislabelling.
 
-The direction is a **pull**: an import usually happens before anyone knows which version will want
-it, so the version draws from the pool rather than the import pushing at a version. Both surfaces
+The default direction is a **pull**: an import usually happens before anyone knows which version
+will want it, so the version draws from the pool rather than the import pushing at a version. The
+transfer API is the one push — a caller that already knows the version has nothing to come back for. Both surfaces
 that make that work now exist — the **Unattached** tab on the import page and the **Add from Hugging
 Face imports** picker inside a version's *Manage files*, both grouped and filtered by `groupName`.
 
@@ -151,10 +162,9 @@ understate what we hold.
 clears while leaving the `ModelFile` alive. Judging from the row alone destroys the bytes a
 published version is serving, two clicks after a detach.
 
-**No quota.** Moderator-only at the router; everything underneath is already scoped per owner, so
-opening it up needs a per-user quota — size and count — and a `userId` in the
-`(repo, revision, filename)` unique index — the header comment in `huggingface-import.router.ts` is
-the prerequisite list.
+**No quota.** Moderator-only at the router; everything underneath is already scoped per owner. What
+opening it up needs is listed under *The transfer API* below, and in the header comment of
+`huggingface-import.router.ts`.
 
 **Licenses are shown, not enforced.** The page surfaces the declared license and flags gated repos.
 
@@ -176,6 +186,45 @@ client. Removing `processImportsJob` from the `jobs` array is what stops the sch
 The `Import` table, its `ImportStatus` enum, and the `fromImportId` columns on `Model` and
 `ModelVersion` are left in place: dropping them is a migration over existing rows, and nothing reads
 them any more.
+
+## The transfer API
+
+`POST /api/admin/huggingface-import` is internal tooling only — the same operational surface as the
+rest of `src/pages/api/admin/`, and not something a creator's own tooling reaches.
+
+```
+POST /api/admin/huggingface-import?token=…
+{ "repo": "black-forest-labs/FLUX.1-dev", "modelVersionId": 123,
+  "files": [{ "path": "flux1-dev.safetensors", "type": "Model" },
+            { "path": "ae.safetensors", "type": "VAE" }] }
+→ { repo, revision, files: [{ path, importId, status, modelFileId }] }
+
+GET  /api/admin/huggingface-import?token=…&id=11      # one import's progress
+GET  /api/admin/huggingface-import?token=…&repo=…     # what is in the repo, with sizes and hashes
+```
+
+The caller polls `id` and does nothing else — `attachVersionId` and `attachType` are recorded on the
+row, and `attachIfRequested` runs when the bytes land. A failed attach leaves the file transferred and
+unattached with the reason on the row, where the **Unattached** tab shows it; it is not a failed
+transfer, and the row does not say it is.
+
+Type is required per file and refused when the extension cannot be it, which is the same rule the
+upload UI applies — checked before a transfer that can run for hours, not after. So is the target
+version: an id nothing matches is a 400, not an hours-late attach failure.
+
+**A file whose sha256 we already store is attached without transferring anything** (`reused: true` in
+the response, and nothing to poll). Hugging Face publishes each LFS file's sha in its tree, so this is
+decided before any bytes move — a text encoder shared by a dozen repos costs one `ModelFileHash`
+lookup we already run. The match is on the sha and never on the filename: `ae.safetensors` and
+`model.safetensors` name different bytes in different repos, and the wrong weights on a version are
+invisible until someone generates. The import row records the provenance and carries no `bucket`/`key`
+— the object belongs to the file that first stored it, and the refcounted delete already refuses to
+free bytes another `ModelFile` still points at.
+
+**A user-facing version is a different surface, not a flag on this one.** It needs everything the
+router's header lists — a per-user quota, a `userId` in the `(repo, revision, filename)` unique index
+— plus the target version checked against the caller, and gated repos refused: the importer
+authenticates as one shared account, and its accepted terms are ours rather than theirs.
 
 ## Open questions
 

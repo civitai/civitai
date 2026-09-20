@@ -1,0 +1,73 @@
+import { describe, expect, it } from 'vitest';
+import { toImageV2Stats } from '~/server/services/image.service';
+
+// `toImageV2Stats` is the one place an image's metric row becomes a feed `stats`
+// block. The distinction it has to preserve is the whole ticket: ClickHouse
+// answering "no rows" is a real zero, ClickHouse not answering is unknown, and both
+// arrive as zeros in the counts.
+describe('toImageV2Stats', () => {
+  // ClickHouse answered. `getImageMetricsObject` maps a falsy count to null via
+  // `m?.Like || null`, so an image nobody reacted to is PRESENT with null counts —
+  // which is exactly the shape an unknown image would have if presence were not the
+  // signal. This case is why `statsUnknown` reads `!match` and not the counts.
+  const answeredWithNoReactions = {
+    imageId: 1,
+    reactionLike: null,
+    reactionHeart: null,
+    reactionLaugh: null,
+    reactionCry: null,
+    comment: null,
+    collection: null,
+    buzz: null,
+  };
+
+  it('marks an image the read never answered for as unknown', () => {
+    expect(toImageV2Stats(undefined).statsUnknown).toBe(true);
+  });
+
+  it('does NOT mark a real zero as unknown, though its counts are identical', () => {
+    const unknown = toImageV2Stats(undefined);
+    const zero = toImageV2Stats(answeredWithNoReactions);
+
+    // Both halves stated in this case, so it cannot pass on a mutant that makes
+    // `statsUnknown` undefined rather than true — the comparison below alone would.
+    expect(unknown.statsUnknown).toBe(true);
+    expect(zero.statsUnknown).toBe(false);
+    // Stated as a comparison rather than two separate assertions: the counts are
+    // equal in both, so `statsUnknown` is the ONLY thing carrying the difference. If
+    // it stopped being derived, this is the line that fails.
+    expect(zero.likeCountAllTime).toBe(unknown.likeCountAllTime);
+    expect(zero.heartCountAllTime).toBe(unknown.heartCountAllTime);
+    expect(zero.statsUnknown).not.toBe(unknown.statsUnknown);
+  });
+
+  // Every count distinct, and asserted with toEqual over all nine fields: the helper
+  // now feeds seven call sites, so a single swapped mapping (collection read as
+  // comment, laugh as cry) is a site-wide feed regression. Repeated values or a
+  // partial toMatchObject would let any such swap through.
+  it('maps every count to its own field', () => {
+    const stats = toImageV2Stats({
+      imageId: 1,
+      reactionLike: 7,
+      reactionHeart: 3,
+      reactionLaugh: 11,
+      reactionCry: 13,
+      comment: 2,
+      collection: 17,
+      buzz: 500,
+    });
+
+    expect(stats).toEqual({
+      likeCountAllTime: 7,
+      heartCountAllTime: 3,
+      laughCountAllTime: 11,
+      cryCountAllTime: 13,
+      commentCountAllTime: 2,
+      collectedCountAllTime: 17,
+      tippedAmountCountAllTime: 500,
+      dislikeCountAllTime: 0,
+      viewCountAllTime: 0,
+      statsUnknown: false,
+    });
+  });
+});

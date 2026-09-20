@@ -1,6 +1,7 @@
 import { milestoneNotificationFix } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import { excludedReactorFilter } from '~/shared/utils/excluded-reactor-filter';
 import { getModelCommentThreadUrl } from '~/utils/comment-url-helpers';
 import { humanizeList } from '~/utils/humanizer';
 
@@ -107,7 +108,13 @@ export const reactionNotifications = createNotificationProcessor({
 
       return { message, url: `/articles/${details.articleId}` };
     },
-    prepareQuery: ({ lastSent }) => `
+    prepareQuery: async ({ lastSent, excludedUserIds }) => {
+      // The displayed article count filters metric-suppressed accounts; a milestone that
+      // did not would congratulate someone on a number their own page never shows. The
+      // LENIENT reader on purpose — a failed read here degrades to the pre-exclusion
+      // count, which is how this fired before, rather than to no notification at all.
+      const excludedFilter = excludedReactorFilter(excludedUserIds ?? []);
+      return `
       WITH milestones AS (
         SELECT * FROM (VALUES ${articleReactionMilestones.map((x) => `(${x})`).join(', ')}) m(value)
       ), affected AS (
@@ -120,7 +127,7 @@ export const reactionNotifications = createNotificationProcessor({
           a.affected_id,
           COUNT(r."articleId") reaction_count
         FROM "ArticleReaction" r
-        JOIN affected a ON a.affected_id = r."articleId"
+        JOIN affected a ON a.affected_id = r."articleId" ${excludedFilter}
         GROUP BY a.affected_id
         HAVING COUNT(*) >= ${articleReactionMilestones[0]}
       ), reaction_milestone AS (
@@ -143,6 +150,7 @@ export const reactionNotifications = createNotificationProcessor({
         details
       FROM reaction_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'article-reaction-milestone')
-    `,
+    `;
+    },
   },
 });
