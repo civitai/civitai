@@ -976,8 +976,11 @@ function schemaIdentifiers(arg: string): string[] {
   // literal test short-circuits before identifier resolution is reached. So what was live is
   // the silent drop of the operand, with nothing in `unresolved` to say so; the vanishing
   // procedure was reachable, not reached. Measured after this fix, `blockPostPayloadShape`
-  // resolves and carries no `blockToken` (verdict `false`), and the population is 17 either
-  // way — this change moves no committed expected value.
+  // resolves and carries no `blockToken` (verdict `false`), and `BRIDGE_INPUT_LEDGER` is
+  // unchanged — this change moves no committed expected value. (Stated as "unchanged" rather
+  // than as a count on purpose: the ledger's own length is the asserted fact, so repeating it
+  // here would be a second, unasserted copy of it — see the note on deleted figures above
+  // `MAX_SCHEMA_DEPTH`.)
   //
   // `spreadUnknown` in `UNREADABLE` below is the control, and
   // `a spread operand is a schema reference, not a member name` pins the operand surviving.
@@ -1076,6 +1079,25 @@ function findDefinitionText(file: string, ident: string): string | null {
  * unreadable nested reference fails this test and gets looked at by whoever introduced it;
  * one disappearing fails it too, so the ledger cannot quietly stop meaning anything.
  *
+ * 🔴 THIS MECHANISM IS ELECTIVE, AND IT IS NOT WHAT CLOSED THE FINDING THAT PROMPTED IT. The
+ * finding was that two docstrings claimed coverage the code only had at depth 0, and narrowing
+ * those two docstrings closed it on its own. The ledger is an ADDITION on top of that, taken
+ * because a recorded limit beats a described one — not because anything required it. Read the
+ * next paragraph before extending it.
+ *
+ * 🔴 AND IT CARRIES A FALSE-RED SURFACE, priced rather than hidden. `resolveModule` accepts `~/`
+ * specifiers only, so ANY relative or package import whose local name is referenced inside a
+ * definition body the walk descends into adds an entry — and a new entry reds
+ * `ledgers every procedure that TAKES a block token`, the real-router test, with a message
+ * about a declaration that may have nothing to do with the change the author made. That is a
+ * genuine cost: the trip is not caused by the committer's own code. Today's surface is narrow,
+ * and deliberately not quoted as a figure here (see the note on deleted figures above
+ * `MAX_SCHEMA_DEPTH`) — it depends on which files the walk actually descends into, which is a
+ * much smaller set than the router's import closure, so any number written down would be a
+ * bound rather than a measurement and would rot like the last one did. If this starts tripping
+ * on unrelated changes, the fix is to teach `resolveModule` to reach those specifiers, or to
+ * delete the mechanism and keep the narrowed docstrings — NOT to grow the ledger.
+ *
  * THE SINGLE LIVE ENTRY, and why it is unreadable — stated exactly, because a looser reading
  * of it is wrong in the reassuring direction. `block-scope.constants.ts` does
  * `import { TokenScope } from './token-scope.constants'`, and `resolveModule` resolves `~/`
@@ -1117,26 +1139,26 @@ const NESTED_UNREADABLE_LEDGER = [
  *
  * The wording before this one — "the real corpus resolves every `.input()` identifier within
  * 2" — was false, and the cap it justified was load-bearing on the committed tree, not
- * hypothetically. RE-MEASURED 2026-09-20 on the committed router, because every figure in the
- * paragraph this replaces had drifted:
- *   - the walk terminates on its own at DEPTH 8. That is the number that sets the cap, and it
- *     is the one figure here that did NOT drift.
- *   - at a cap of 5 it truncates 10 calls across 8 identifiers: `TokenScope`,
- *     `SKIP_OAUTH_CHECK` and `SENSITIVE_BLOCK_SCOPES` in
- *     `src/shared/constants/block-scope.constants.ts`, plus five spend bounds in
- *     `src/server/services/blocks/app-cap-limits.constants.ts`. The previous wording said 9
- *     across 7 and did not list `SENSITIVE_BLOCK_SCOPES`.
- *   - no verdict moves at either cap — none of those carries a `blockToken` — and the
- *     population is 17 both ways. The previous wording said 15.
+ * hypothetically: lowering it to 5 does truncate real chains here, in
+ * `src/shared/constants/block-scope.constants.ts` and
+ * `src/server/services/blocks/app-cap-limits.constants.ts`. No verdict moves when it does —
+ * none of those definitions carries a `blockToken` — but nothing used to say so out loud.
+ * MEASURED: the walk terminates on its own at DEPTH 8. The cap is 12, for headroom over that,
+ * and `truncated` is what tells you when a chain outgrows it.
  *
- * 🔴 AND THE "800 resolution calls" FIGURE DID NOT REPRODUCE AT ANY GRANULARITY. The walk makes
- * 120 `schemaCarriesBlockToken` invocations over 96 distinct `file#ident` pairs; the nearest
- * larger quantities are 2,316 `definitionText` calls and 2,271 candidate-loop iterations.
- * Nothing asserts on any of them, which is exactly how 800 survived: it read as a measurement,
- * justified nothing, and was wrong by roughly 7x. Treat the four numbers in this sentence the
- * same way — decoration with a date on it, not a checked fact. The cap is set to 12 for
- * headroom over the measured depth of 8, and `truncated` is what tells you when a chain
- * outgrows it.
+ * 🔴 EVERY OTHER FIGURE THAT USED TO BE HERE IS DELETED — INCLUDING THE ONES THAT REPLACED THE
+ * WRONG ONE, WHICH IS THE PART WORTH READING. This paragraph once asserted "800 resolution
+ * calls". That did not reproduce at any granularity, and the epitaph written for it was that it
+ * "read as a measurement, justified nothing, and was wrong by roughly 7x". The first repair
+ * then swapped that one wrong number for EIGHT freshly measured ones — the same defect class
+ * with eight times the surface — and conceded as much in its own wording, calling them
+ * "decoration with a date on it, not a checked fact". Nothing in this file asserts any of them:
+ * every numeric assertion here is a `toBeGreaterThan` floor, a `toBe` count of 0 or 1, or a
+ * `toHaveLength`, and not one reads a walk-size figure. So they are deleted rather than
+ * re-sourced, and `depth 8` is the single exception because it is the only one that JUSTIFIES
+ * something — the constant directly below. If you need a walk size, measure it at the time; an
+ * unasserted number in this docstring has already rotted once and nothing here can stop it
+ * rotting again.
  */
 const MAX_SCHEMA_DEPTH = 12;
 
@@ -2386,16 +2408,33 @@ describe('no unguarded block-bridge token verification', () => {
     // `src/server/routers/__tests__/blocks.router.bridgeTokenGuard.test.ts`. If you are
     // tempted to read this test as coverage, read that file instead.
     //
-    // 🔴 IT IS NOT "A DIFFERENT VITEST PROJECT", AND THAT CLAIM WAS THE STATED REASON THIS
-    // CHEAP CHECK EXISTS — so a reader deciding whether to delete it was deciding on a false
-    // premise. Project `unit` includes `src/**/*.test.ts` (`vitest.config.mts`), which BOTH
-    // files match; measured, `--project unit` over the two of them collects both in one run.
-    // The real reason to keep a spelling check beside a behavioural one is that they fail on
-    // DIFFERENT things: that file EXECUTES the guard, so it goes red when the behaviour
-    // changes and stays green when a check is rewritten into something equivalent; this one
-    // only READS the text, so it goes red when a check is dropped wholesale even if no test
-    // happened to exercise the path it covered. Neither subsumes the other, and the split is
-    // about what each can SEE — not about when either runs.
+    // 🔴 THIS CHECK'S STATED REASON WAS FALSE, AND NO ESTABLISHED REASON HAS REPLACED IT.
+    // Read that literally — it is a finding, not a placeholder. The original text said the
+    // behavioural pin lives in "a different vitest project, which is why this cheap presence
+    // check exists at all", so a reader deciding whether to delete this test was deciding on a
+    // false premise. Project `unit` includes `src/**/*.test.ts` (`vitest.config.mts`), BOTH
+    // files match it, and measured, `--project unit` over the two collects them in one run.
+    //
+    // 🔴 I AM THE SECOND WRITER OF THIS PARAGRAPH AND THE FIRST REPLACEMENT WAS ALSO WRONG.
+    // Recorded so a third does not quietly appear. That draft claimed the split was "about what
+    // each can SEE" — that the sibling only reds when behaviour changes, while this one catches
+    // a check "dropped wholesale even if no test happened to exercise the path it covered".
+    // Measured against the sibling: it exercises BOTH paths behaviourally, with two tests for a
+    // revoked `blockInstanceId` and two for a non-approved `app_blocks` row. So the "no test
+    // exercises it" half is false. Reaching for a second rationale under the pressure of having
+    // none is how a guard accumulates successive justifications and keeps no real one.
+    //
+    // So the reason is OPEN, deliberately left that way, and what would settle it is a
+    // MEASUREMENT rather than an argument: break each spelled check in
+    // `src/server/services/blocks/block-bridge-auth.service.ts` and see whether the sibling
+    // already goes red WITHOUT this test present —
+    //   1. remove the `BlockRevocation.isRevoked(...)` call;
+    //   2. remove the `resolveAppBlockApprovalVerdict(...)` delegation;
+    //   3. drop that call's second argument (`claims.sub`), which type-checks because the
+    //      parameter is optional by design — the case the note below calls the dangerous one.
+    // Red on all three means this test is subsumed and should be DELETED, not re-justified.
+    // That decision belongs to whoever owns the merge; it is named here so the next reader
+    // inherits a mechanical question instead of a rationale to believe.
     // 🔴 NORMALISED, on EVERY assertion in this test — see `codeWithLiterals`. These used to
     // read the WHOLE file, which is satisfiable by prose: this very file's docblocks name
     // both `BlockRevocation.isRevoked` and `resolveAppBlockApprovalVerdict`. Identifier
