@@ -125,8 +125,11 @@ import { describe, expect, it } from 'vitest';
  *
  *   - `guardIsImportedAndUnshadowed` is deliberately over-broad in the same way
  *     `bindingsOf` is: ONE function-local `const authorizeBlockBridgeToken` anywhere in a
- *     file empties that file's ENTIRE guard population and turns the ledger red. A
- *     NAMESPACE import of the guard module does the same. Loud and fail-closed.
+ *     file empties that file's ENTIRE guard population and turns the ledger red. Loud and
+ *     fail-closed. (A NAMESPACE import does NOT disqualify a file — it simply fails to
+ *     satisfy the named-import requirement, and alongside the named import it changes
+ *     nothing. Calls through it are not identifier calls, so they contribute no guards and
+ *     the ledger reddens that way instead.)
  *   - 🔴 THREE SHAPES STILL SCORE `conditional: false` WHILE THE GUARD MAY NOT RUN, and
  *     they are listed because the conditionality axis has now been "closed" three rounds
  *     running and is not: an OPTIONAL CALL does not evaluate its arguments when its
@@ -499,7 +502,16 @@ function isTrpcProcedure(pa: ts.PropertyAssignment): boolean {
 
 /**
  * STATEMENT forms only — `if` / `try` / `switch` / the loops / `catch`. A call anywhere
- * inside one of these may not run, whichever child it sits in, so no operand test applies.
+ * inside one of these is marked conditional WHICHEVER CHILD it sits in.
+ *
+ * ⚠️ THAT OVER-MARKS THE HEAD POSITIONS, DELIBERATELY. An `if` / `while` / `switch`
+ * CONDITION, a `for…of` iterable and a `do` body all run unconditionally and are marked
+ * conditional anyway — five fail-CLOSED false-REDs, taken because no shape in this corpus
+ * puts the guard there and a per-kind operand test is more machinery than the cases are
+ * worth. An earlier revision of this sentence asserted instead that a call in one of these
+ * "may not run, whichever child it sits in", which is simply false — and it sat two lines
+ * above the paragraph explaining that operand position is exactly what separates a ternary
+ * CONDITION from its branches, i.e. it denied a distinction the next paragraph draws.
  *
  * 🔴 THE EXPRESSION FORMS ARE NOT HERE, AND THAT IS THE POINT. `?:` and the short-circuiting
  * operators are conditional for SOME operands and not others — `guard(t) && x` and the
@@ -776,10 +788,17 @@ type GuardSite = Attribution & { pos: number; enforced: boolean };
  *     the module. With the import requirement above, a MODULE-SCOPE shadow cannot coexist
  *     (TypeScript rejects the duplicate identifier), so what this actually covers is a
  *     NESTED, block-scoped one in a file that does import the guard. ⚠️ Read that list
- *     literally: a PARAMETER, a binding element, a `class` or a `catch (e)` binding of that
- *     name is also a shadow and is NOT detected. None is live — a resolver parameter of
- *     that name is TS-invalid, one in a nested helper is `depth > 1`, and a catch binding
- *     is `conditional` — but the gap is in the code, not merely in the phrasing.
+ *     literally. A `catch (e)` binding IS detected (TypeScript models it as a
+ *     `VariableDeclaration`, so the existing test catches it — an earlier revision of this
+ *     sentence claimed the opposite). A PARAMETER, a `class` declaration and a BINDING
+ *     ELEMENT are NOT.
+ *     🔴 AND THE BINDING ELEMENT IS THE ONE THAT MATTERS, so it gets no all-clear: a
+ *     procedure-local `const { authorizeBlockBridgeToken } = await import('…something
+ *     else');` leaves this helper returning true — the file's top-level import is still
+ *     there — and the call still matches by identifier, so a completely different function
+ *     is accepted as the guard. That is the router's own idiom (105 `= await import(`
+ *     destructures, per the header), which is precisely why `bindingsOf` learned to follow
+ *     it on the SETTLE side. The guard side does not, and that is open.
  *
  * A file failing either has its guard population treated as EMPTY, which turns
  * `THE RELATIONSHIP` red rather than quietly accepting the substitute. Note the
@@ -1303,16 +1322,25 @@ export const r = router({
     const claims = cached ? cached : await ${GUARD}(input.blockToken);
     return claims;
   }),
+  ternaryWhenTrue: publicProcedure.mutation(async ({ input }) => {
+    const claims = force ? await ${GUARD}(input.blockToken) : cached;
+    return claims;
+  }),
 });`
     );
-    // 🔴 BOTH HALVES OF THE TERNARY RULE. Pinning only the CONDITION left the
-    // `whenTrue`/`whenFalse` clause unkilled: measured, replacing it with `return false`
-    // kept the whole file green, because the condition case satisfies the mutant too.
+    // 🔴 ALL THREE POSITIONS OF THE TERNARY RULE, AND IT TOOK TWO GOES. Pinning only the
+    // CONDITION left the `whenTrue`/`whenFalse` clause unkilled — replacing it wholesale
+    // with `return false` kept the file green, because the condition case satisfies that
+    // mutant too. Adding only a `whenFalse` fixture then left the `whenTrue ||` half
+    // unkilled, which is the FAIL-OPEN direction and the more idiomatic spelling:
+    // `force ? await guard(t) : cached` would have scored unconditional. Both branch
+    // positions are fixtures now, so each half of the clause dies on its own.
     expect(guards.map((g) => `${g.owner}=${g.conditional}`).sort()).toEqual([
       'leftOperand=false',
       'rightOperand=true',
       'ternaryBranch=true',
       'ternaryCondition=false',
+      'ternaryWhenTrue=true',
     ]);
   });
 

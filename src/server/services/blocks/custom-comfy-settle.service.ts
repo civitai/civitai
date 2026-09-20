@@ -208,12 +208,13 @@ export async function persistCustomComfySettle(input: {
 // A SUSPENSION or a publisher BAN mutes it only while it lasts — lift either
 // inside the window and the strand is still eating that ceiling, the same
 // "inside the window" case the consent-budget bullet above contemplates. It
-// bites unconditionally for every PER-USER revocation, where the app stays live
-// for everyone else: an uninstall, a `toggleEnabled(false)` disable (which calls
-// `revokeInstance` exactly as an uninstall does), the closed tab, and
-// `cancelAppWorkflow`. One user's unsettled ceiling degrades everyone else's
-// submits on that app until the window rolls. No ranking is offered between
-// those; nobody measured their relative sizes.
+// bites unconditionally for every population where the app stays LIVE for
+// everyone else. Two of those are per-user REVOCATIONS — an uninstall and a
+// `toggleEnabled(false)` disable, which calls `revokeInstance` exactly as an
+// uninstall does, and those two are the complete set — and two revoke nothing at
+// all: the closed tab, and `cancelAppWorkflow`. One user's unsettled ceiling
+// degrades everyone else's submits on that app until the window rolls. No
+// ranking is offered between them; nobody measured their relative sizes.
 //
 // 🔴 AND THE WINDOW IS THE RESERVATION COUNTER'S TTL, NOT THIS RECORD'S. Both
 // are 25h, but they are armed at different instants: `reserveCumulativeBuzzKey`
