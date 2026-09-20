@@ -651,59 +651,6 @@ export const cancelSubscriptionWithFallback = async ({
   }
 };
 
-// DEAD CODE: no live callers. Buzz purchases go through `getPaymentIntent` below,
-// which charges `unitAmount` from our DB `Price` rows and does NOT reference
-// Stripe Price objects. Therefore Stripe's buzz Prices are allowed to drift from
-// our DB (intentionally). Do not resurrect this path without also aligning the
-// Stripe Price catalog — and note that our DB Price IDs for buzz packages may be
-// synthetic (e.g. `price_civitai_buzz_25`) and not valid in Stripe.
-export const createBuzzSession = async ({
-  customerId,
-  user,
-  returnUrl,
-  priceId,
-  customAmount,
-}: Schema.CreateBuzzSessionInput & {
-  customerId?: string;
-  user: Schema.CreateCustomerInput;
-}) => {
-  const stripe = await getServerStripe();
-  if (!stripe) throw throwBadRequestError('Stripe is not available');
-
-  if (!customerId) {
-    customerId = await createCustomer(user);
-  }
-
-  const price = await dbRead.price.findUnique({
-    where: { id: priceId },
-    select: { productId: true, currency: true, type: true },
-  });
-
-  if (!price)
-    throw throwNotFoundError(`The product you are trying to purchase does not exists: ${priceId}`);
-
-  const session = await stripe.checkout.sessions.create({
-    customer: customerId,
-    cancel_url: returnUrl,
-    line_items: [
-      customAmount
-        ? {
-            price_data: {
-              unit_amount: customAmount * 100,
-              currency: price.currency,
-              product: price.productId,
-            },
-            quantity: 1,
-          }
-        : { price: priceId, quantity: 1 },
-    ],
-    mode: price.type === 'recurring' ? 'subscription' : 'payment',
-    success_url: returnUrl,
-  });
-
-  return { sessionId: session.id, url: session.url };
-};
-
 export const upsertSubscription = async (
   subscription: Stripe.Subscription,
   customerId: string,
