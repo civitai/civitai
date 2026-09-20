@@ -125,11 +125,14 @@ import { describe, expect, it } from 'vitest';
  *
  *   - `guardIsImportedAndUnshadowed` is deliberately over-broad in the same way
  *     `bindingsOf` is: ONE function-local `const authorizeBlockBridgeToken` anywhere in a
- *     file empties that file's ENTIRE guard population and turns the ledger red. Loud and
- *     fail-closed. (A NAMESPACE import does NOT disqualify a file — it simply fails to
- *     satisfy the named-import requirement, and alongside the named import it changes
- *     nothing. Calls through it are not identifier calls, so they contribute no guards and
- *     the ledger reddens that way instead.)
+ *     file empties that file's ENTIRE guard population and turns the ledger red. So does a
+ *     NAMESPACE import when it is the file's ONLY import of the guard module — the
+ *     named-import requirement is never satisfied, so even a bare-identifier call in that
+ *     file contributes no guards. Alongside the named import it changes nothing. All loud
+ *     and fail-closed. (An earlier revision claimed a namespace import "does not
+ *     disqualify a file" and that calls through it "are not identifier calls"; measured,
+ *     the namespace-only file yields ZERO guards for a bare-identifier call, so both
+ *     halves were wrong and the sentence they replaced was right.)
  *   - 🔴 THREE SHAPES STILL SCORE `conditional: false` WHILE THE GUARD MAY NOT RUN, and
  *     they are listed because the conditionality axis has now been "closed" three rounds
  *     running and is not: an OPTIONAL CALL does not evaluate its arguments when its
@@ -504,11 +507,15 @@ function isTrpcProcedure(pa: ts.PropertyAssignment): boolean {
  * STATEMENT forms only — `if` / `try` / `switch` / the loops / `catch`. A call anywhere
  * inside one of these is marked conditional WHICHEVER CHILD it sits in.
  *
- * ⚠️ THAT OVER-MARKS THE HEAD POSITIONS, DELIBERATELY. An `if` / `while` / `switch`
- * CONDITION, a `for…of` iterable and a `do` body all run unconditionally and are marked
- * conditional anyway — five fail-CLOSED false-REDs, taken because no shape in this corpus
- * puts the guard there and a per-kind operand test is more machinery than the cases are
- * worth. An earlier revision of this sentence asserted instead that a call in one of these
+ * ⚠️ THAT OVER-MARKS EIGHT HEAD POSITIONS, DELIBERATELY: the `if` / `while` / `switch`
+ * CONDITION, the `for…of` and `for…in` ITERABLE, and a classic `for`'s INITIALIZER and
+ * CONDITION — all of which run unconditionally — plus a `do` BODY, which runs at least
+ * once. Eight fail-CLOSED false-REDs, taken because no shape in this corpus puts the guard
+ * in any of them and a per-kind operand test is more machinery than the cases are worth.
+ * (An earlier revision of this sentence said "five" and named only five; the `for…in`
+ * iterable is the identical position to the `for…of` one it did name, and `isForInStatement`
+ * sits one line below `isForOfStatement` in the list right below. A stated count in a
+ * comment is machine-checkable and this one was not checked.) An earlier revision of this sentence asserted instead that a call in one of these
  * "may not run, whichever child it sits in", which is simply false — and it sat two lines
  * above the paragraph explaining that operand position is exactly what separates a ternary
  * CONDITION from its branches, i.e. it denied a distinction the next paragraph draws.
@@ -536,7 +543,11 @@ const CONDITIONAL_STATEMENT_KINDS: ((n: ts.Node) => boolean)[] = [
   ts.isForInStatement,
   ts.isWhileStatement,
   ts.isDoStatement,
-  ts.isCatchClause,
+  // 🔴 NO `ts.isCatchClause`. It cannot ever be the SOLE cause — a catch clause is always a
+  // child of a `TryStatement`, which the walk also passes through — so the entry was dead
+  // code that no fixture could isolate: measured, deleting it left the whole file green
+  // while `isTryStatement` still went red on the same input. An unkillable list entry reads
+  // as coverage and provides none, which is the thing this file exists to not do.
 ];
 
 /**
@@ -789,9 +800,11 @@ type GuardSite = Attribution & { pos: number; enforced: boolean };
  *     (TypeScript rejects the duplicate identifier), so what this actually covers is a
  *     NESTED, block-scoped one in a file that does import the guard. ⚠️ Read that list
  *     literally. A `catch (e)` binding IS detected (TypeScript models it as a
- *     `VariableDeclaration`, so the existing test catches it — an earlier revision of this
- *     sentence claimed the opposite). A PARAMETER, a `class` declaration and a BINDING
- *     ELEMENT are NOT.
+ *     `VariableDeclaration`, so the existing CHECK catches it — no fixture exercises it —
+ *     and an earlier revision of this sentence claimed the opposite). A PARAMETER, a
+ *     `class` declaration, a local `enum` and a BINDING ELEMENT are NOT; of those only the
+ *     parameter and the binding element are callable, so only they can substitute for the
+ *     guard.
  *     🔴 AND THE BINDING ELEMENT IS THE ONE THAT MATTERS, so it gets no all-clear: a
  *     procedure-local `const { authorizeBlockBridgeToken } = await import('…something
  *     else');` leaves this helper returning true — the file's top-level import is still
@@ -1265,6 +1278,59 @@ export const r = router({
     ]);
   });
 
+  it('POSITIVE CONTROL — EVERY conditional node kind is pinned, one fixture each', () => {
+    // 🔴 WITHOUT THIS, MOST OF THE LIST WAS DECORATION. Measured before it existed: 7 of
+    // the 9 entries in `CONDITIONAL_STATEMENT_KINDS` could each be DELETED with the whole
+    // file still green — only `isIfStatement` and `isTryStatement` were pinned. That is
+    // the fail-OPEN direction: a guard inside a `switch` case, any loop body, or a `catch`
+    // block would have scored unconditional and satisfied `THE RELATIONSHIP`.
+    //
+    // The `do` body is here too, and it is a deliberate FALSE-RED rather than a hazard: it
+    // always runs at least once. Pinning it stops the over-marking being removed by
+    // accident while the docstring still claims it.
+    const { guards } = scanSource(
+      FIXTURE_REL,
+      `import { ${GUARD} } from '~/server/services/blocks/block-bridge-auth.service';
+export const r = router({
+  inSwitch: publicProcedure.mutation(async ({ input }) => {
+    switch (input.mode) { case 'a': return await ${GUARD}(input.blockToken); default: return null; }
+  }),
+  inFor: publicProcedure.mutation(async ({ input }) => {
+    for (let i = 0; i < 1; i++) { return await ${GUARD}(input.blockToken); }
+    return null;
+  }),
+  inForOf: publicProcedure.mutation(async ({ input }) => {
+    for (const x of list) { return await ${GUARD}(input.blockToken); }
+    return null;
+  }),
+  inForIn: publicProcedure.mutation(async ({ input }) => {
+    for (const k in obj) { return await ${GUARD}(input.blockToken); }
+    return null;
+  }),
+  inWhile: publicProcedure.mutation(async ({ input }) => {
+    while (cond) { return await ${GUARD}(input.blockToken); }
+    return null;
+  }),
+  inDoBody: publicProcedure.mutation(async ({ input }) => {
+    do { return await ${GUARD}(input.blockToken); } while (cond);
+  }),
+  // Pins isTryStatement, not a catch-clause entry - see the list for why there is none.
+  inCatch: publicProcedure.mutation(async ({ input }) => {
+    try { return null; } catch { return await ${GUARD}(input.blockToken); }
+  }),
+});`
+    );
+    expect(guards.map((g) => `${g.owner}=${g.conditional}`).sort()).toEqual([
+      'inCatch=true',
+      'inDoBody=true',
+      'inFor=true',
+      'inForIn=true',
+      'inForOf=true',
+      'inSwitch=true',
+      'inWhile=true',
+    ]);
+  });
+
   it('POSITIVE CONTROL — a SHORT-CIRCUIT ASSIGNMENT to the guard is conditional', () => {
     // `??=` / `||=` / `&&=` short-circuit exactly like their plain counterparts, and the
     // guard written this way is awaited, lexically first, at depth 1, in the right owner —
@@ -1318,6 +1384,20 @@ export const r = router({
     const claims = cache.get(input.blockToken) ?? (await ${GUARD}(input.blockToken));
     return claims;
   }),
+  rightOfOr: publicProcedure.mutation(async ({ input }) => {
+    const claims = cache.get(input.blockToken) || (await ${GUARD}(input.blockToken));
+    return claims;
+  }),
+  rightOfAnd: publicProcedure.mutation(async ({ input }) => {
+    const claims = cache.get(input.blockToken) && (await ${GUARD}(input.blockToken));
+    return claims;
+  }),
+  rightOfPlainBinary: publicProcedure.mutation(async ({ input }) => {
+    // A non-short-circuiting binary always evaluates both operands - this is what pins
+    // the token test itself; without it every binary's right operand would be marked.
+    const ok = cached !== (await ${GUARD}(input.blockToken));
+    return ok;
+  }),
   ternaryBranch: publicProcedure.mutation(async ({ input }) => {
     const claims = cached ? cached : await ${GUARD}(input.blockToken);
     return claims;
@@ -1335,8 +1415,15 @@ export const r = router({
     // unkilled, which is the FAIL-OPEN direction and the more idiomatic spelling:
     // `force ? await guard(t) : cached` would have scored unconditional. Both branch
     // positions are fixtures now, so each half of the clause dies on its own.
+    // 🔴 EVERY TOKEN IN `SHORT_CIRCUIT_TOKENS` HAS A FIXTURE. Measured before `||` and
+    // `&&` were added: deleting either token left the file green — i.e. the two plain
+    // spellings the constant's own docstring says it exists for were the two the suite
+    // could not see. Fail-OPEN.
     expect(guards.map((g) => `${g.owner}=${g.conditional}`).sort()).toEqual([
       'leftOperand=false',
+      'rightOfAnd=true',
+      'rightOfOr=true',
+      'rightOfPlainBinary=false',
       'rightOperand=true',
       'ternaryBranch=true',
       'ternaryCondition=false',
