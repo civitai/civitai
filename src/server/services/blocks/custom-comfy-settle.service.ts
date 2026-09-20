@@ -205,10 +205,10 @@ export async function persistCustomComfySettle(input: {
 // 🔴 AND A THIRD COUNTER THAT CROSSES USERS: `appSpendKey` is
 // `appSpendDailyKey(appBlockId)` — per-APP, no user in the key. A strand
 // therefore eats the app's SHARED daily ceiling for every other user of it.
-// That is moot for a suspension (the app is down anyway) but NOT for the
-// `cancelAppWorkflow` population above, where the app stays live: one user's
-// unsettled ceiling degrades everyone else's submits on that app until the
-// window rolls.
+// That is moot for a suspension (the app is down anyway) but it applies to BOTH
+// live-app populations below — `cancelAppWorkflow` AND the closed tab, which is
+// the larger of the two: one user's unsettled ceiling degrades everyone else's
+// submits on that app until the window rolls.
 //
 // 🔴 AND THE WINDOW IS THE RESERVATION COUNTER'S TTL, NOT THIS RECORD'S. Both
 // are 25h, but they are armed at different instants: `reserveCumulativeBuzzKey`
@@ -256,7 +256,11 @@ export async function persistCustomComfySettle(input: {
 //      `block_scope_invocations` between 2026-08-05 and 2026-09-18 — 13.3/day
 //      AVERAGED over those 44 days. Read it as an UPPER BOUND on the affected
 //      population, because it counts every budgeted submit and not only the
-//      post-paid customComfy ones that write a settle record. ⚠️ It is a MEAN,
+//      ones that write a settle record. ⚠️ That record-writing population is
+//      WIDER than customComfy: `persistCustomComfySettle` has three call sites
+//      in `blocks.router.ts` — customComfy and the pass-through step, both
+//      UNCONDITIONAL, plus the `postPaidSettle`-gated registry step in (3). It
+//      is still a strict subset of 585, so the inference holds. ⚠️ It is a MEAN,
 //      so it is NOT an upper bound on the PEAK — a peak day is higher by an
 //      amount nobody derived, and the mean is the weaker figure in the
 //      direction of the re-open trigger below. Net-new scheduled infrastructure

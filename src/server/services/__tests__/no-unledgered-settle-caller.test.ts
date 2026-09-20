@@ -106,13 +106,29 @@ import { describe, expect, it } from 'vitest';
  *     GUARD, which is why `THE RELATIONSHIP` does NOT reuse it: it requires the guard
  *     call to be unconditional and at `depth === 1`. Read those as separate properties —
  *     one sentence about "reachability" covering both is how the fail-open half hid.
- *   - `THE RELATIONSHIP` matches a guard to a settle by OWNER NAME, so two procedures that
- *     share a name would let one borrow the other's guard. The exact-set ledger and the
- *     per-owner counter are what catch that, not this assertion.
  *   - `depth === 1` is a LEXICAL test, not an executional one. It rejects a settle or a
  *     guard buried in a callback the resolver hands to something else, and it equally
  *     rejects a benign `withRetry(async () => …)` wrapper. The scan cannot tell those
  *     apart; the choice is deliberately the fail-CLOSED one.
+ *   - FALSE-RED, and the likeliest one to actually be written: wrapping a procedure body in
+ *     a RETHROWING `try { … } catch (e) { log(e); throw e; }` marks its guard
+ *     `conditional` and turns the ledger red, although enforcement did not change. Same
+ *     for splitting a guard from its await (`const p = guard(t); await p;`), which
+ *     `isEnforcedCall` does not follow. Both are noise, not holes.
+ *   - `isEnforcedCall` reasons about the CALL SITE, not about what the guard does on
+ *     success. A guard that returns a rejected-promise-shaped value rather than throwing,
+ *     or that resolves to garbage claims, satisfies it. This file pins that the guard RUNS
+ *     and can throw into the procedure; `no-unguarded-block-bridge-token.test.ts` owns
+ *     what it checks.
+ *
+ * ⚠️ TWO CLAIMS THAT USED TO BE HERE AND WERE FALSE, recorded so they are not rewritten:
+ *   - *"`THE RELATIONSHIP` matches a guard by OWNER NAME … the exact-set ledger and the
+ *     per-owner counter are what catch that"* — they do not; both enumerate SETTLE sites
+ *     and neither records a guard. It now matches on the owner NODE (`ownerId`), so the
+ *     limit is gone rather than mitigated.
+ *   - *"Every way to defeat the guard's name yields ZERO guards for that procedure"* — a
+ *     module-local binding that SHADOWS the name keeps it. `guardIsImportedAndUnshadowed`
+ *     empties the guard population for any such file.
  *   - A settle performed by writing the Redis key directly rather than through this
  *     function. That is a different shape entirely and no ledger over this symbol can see
  *     it; `no-hand-typed-redis-key-constants.test.ts` is what covers hand-typed keys.
@@ -289,12 +305,18 @@ function isSettleExportExpr(node: ts.Node, b: Bindings, rel: string): boolean {
   if (ts.isConditionalExpression(n)) {
     return isSettleExportExpr(n.whenTrue, b, rel) || isSettleExportExpr(n.whenFalse, b, rel);
   }
-  if (
-    ts.isBinaryExpression(n) &&
-    (n.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
-      n.operatorToken.kind === ts.SyntaxKind.BarBarToken)
-  ) {
-    return isSettleExportExpr(n.left, b, rel) || isSettleExportExpr(n.right, b, rel);
+  if (ts.isBinaryExpression(n)) {
+    // A comma sequence evaluates to its RIGHT operand — `(0, settle)(…)`, the classic
+    // this-stripping idiom, which is a third-caller shape that reached 21/21 green.
+    if (n.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+      return isSettleExportExpr(n.right, b, rel);
+    }
+    if (
+      n.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+      n.operatorToken.kind === ts.SyntaxKind.BarBarToken
+    ) {
+      return isSettleExportExpr(n.left, b, rel) || isSettleExportExpr(n.right, b, rel);
+    }
   }
   const member = memberName(n);
   if (member === SETTLE_EXPORT) {
@@ -448,10 +470,16 @@ function isTrpcProcedure(pa: ts.PropertyAssignment): boolean {
 
 /**
  * Node kinds between a call and its owner that make the call CONDITIONAL — i.e. present in
- * the source but not necessarily executed. `ConditionalExpression` and a short-circuiting
- * `BinaryExpression` are deliberately absent from this list only because they cannot
- * contain a statement; a guard written as `flag && (await guard())` is caught by
- * `isConditionalExpressionLike` below.
+ * the source but not necessarily executed. Statement forms (`if` / `try` / `switch` / the
+ * loops / `catch`) and EXPRESSION forms (`?:` and the short-circuiting `&&` / `||` / `??`)
+ * are both here, so `flag && (await guard())` is conditional exactly like
+ * `if (flag) { await guard(); }` is.
+ *
+ * ⚠️ An earlier revision of this docstring said the two expression forms were deliberately
+ * ABSENT and were handled by a helper called `isConditionalExpressionLike`. Both halves were
+ * false — they are in the list, and no such helper has ever existed anywhere in the repo.
+ * The code was right and the comment was wrong, which is the worse direction: this is the
+ * comment a maintainer reads before editing the list.
  */
 const CONDITIONAL_KINDS: ((n: ts.Node) => boolean)[] = [
   ts.isIfStatement,
@@ -483,8 +511,22 @@ const CONDITIONAL_KINDS: ((n: ts.Node) => boolean)[] = [
  *
  * `conditional` — an `if` / `try` / `switch` / loop / short-circuit intervened, so the call
  * is present in the source but not necessarily executed.
+ *
+ * 🔴 `ownerId` — the owner NODE's position, which makes the owner IDENTITY rather than a
+ * name. Matching a guard to a settle by NAME was a fail-open: `blocks.router.ts` already
+ * holds two distinct entities called `cancelWorkflow` (the imported orchestrator helper and
+ * the tRPC procedure), so same-name collision is the house idiom here, and MEASURED — a
+ * module-scope `async function pollWorkflow(t) { await authorizeBlockBridgeToken(t) }`
+ * added anywhere earlier in the file let the real `pollWorkflow` procedure drop its guard
+ * entirely at 21/21 green. That is the PR's own mutant G revived through a sibling.
  */
-type Attribution = { owner: string; kind: SiteKind; depth: number; conditional: boolean };
+type Attribution = {
+  owner: string;
+  ownerId: number;
+  kind: SiteKind;
+  depth: number;
+  conditional: boolean;
+};
 
 /**
  * The nearest enclosing NAMED PROCEDURE, from the AST. A router-local helper extracted out
@@ -508,9 +550,21 @@ function ownerOf(node: ts.Node): Attribution {
   let conditional = false;
   for (let n: ts.Node | undefined = node.parent; n; n = n.parent) {
     if (ts.isFunctionDeclaration(n) && n.name)
-      return { owner: n.name.text, kind: 'function', depth: depth + 1, conditional };
+      return {
+        owner: n.name.text,
+        ownerId: n.pos,
+        kind: 'function',
+        depth: depth + 1,
+        conditional,
+      };
     if (ts.isMethodDeclaration(n) && ts.isIdentifier(n.name))
-      return { owner: n.name.text, kind: 'function', depth: depth + 1, conditional };
+      return {
+        owner: n.name.text,
+        ownerId: n.pos,
+        kind: 'function',
+        depth: depth + 1,
+        conditional,
+      };
     if (depth > 0) {
       if (
         ts.isPropertyAssignment(n) &&
@@ -518,23 +572,102 @@ function ownerOf(node: ts.Node): Attribution {
       ) {
         return {
           owner: n.name.text,
+          ownerId: n.pos,
           kind: isTrpcProcedure(n) ? 'trpc-procedure' : 'function',
           depth,
           conditional,
         };
       }
       if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name))
-        return { owner: n.name.text, kind: 'function', depth, conditional };
+        return { owner: n.name.text, ownerId: n.pos, kind: 'function', depth, conditional };
     }
     if (CONDITIONAL_KINDS.some((is) => is(n as never))) conditional = true;
     if (ts.isArrowFunction(n) || ts.isFunctionExpression(n)) depth++;
   }
-  return { owner: '<module scope>', kind: 'module-scope', depth, conditional };
+  return { owner: '<module scope>', ownerId: -1, kind: 'module-scope', depth, conditional };
+}
+
+/**
+ * Does this call's REJECTION reach its caller? — i.e. is the guard actually enforcing?
+ *
+ * 🔴 THE ROUND-3 FAIL-OPEN, AND IT IS THE SAME DEFECT THE ROUND-2 FIX CLOSED, ONE SPELLING
+ * OUT. Round 2 closed the STATEMENT spelling of guard-swallowing (`try { guard } catch {}`
+ * → `conditional`). It did not close the EXPRESSION spelling of identical semantics, and
+ * `.catch()` is exactly what someone reaches for on a noisy guard. MEASURED on the real
+ * router, each leaving 21/21 green with the settle reachable and nothing enforcing:
+ *   `await authorizeBlockBridgeToken(t).catch(() => ({} as never))`
+ *   `await authorizeBlockBridgeToken(t).then(c => c, () => ({}))`
+ *   `void authorizeBlockBridgeToken(t);`  /  a bare, un-awaited `authorizeBlockBridgeToken(t);`
+ * The first two swallow the rejection; the last two never wait for it, so the settle runs
+ * before the guard can have thrown. A position check cannot see any of them, because the
+ * call sits exactly where an enforcing guard would.
+ *
+ * So the call must be `await`ed (or `return`ed from an async procedure, which propagates
+ * the rejection to the caller just as well), and must not be the receiver of a
+ * `.catch` / `.then` / `.finally`.
+ *
+ * KNOWN FALSE-RED, fail-closed and stated: splitting the call from its await
+ * (`const p = guard(t); const claims = await p;`) reads as unenforced here. The scan does
+ * not follow a promise through a binding.
+ */
+const REJECTION_SWALLOWING_METHODS = ['catch', 'then', 'finally'];
+
+function isEnforcedCall(node: ts.CallExpression): boolean {
+  let current: ts.Node = node;
+  let parent: ts.Node | undefined = current.parent;
+  while (parent && ts.isParenthesizedExpression(parent)) {
+    current = parent;
+    parent = parent.parent;
+  }
+  if (
+    parent &&
+    ts.isPropertyAccessExpression(parent) &&
+    parent.expression === current &&
+    REJECTION_SWALLOWING_METHODS.includes(parent.name.text)
+  ) {
+    return false;
+  }
+  return !!parent && (ts.isAwaitExpression(parent) || ts.isReturnStatement(parent));
 }
 
 /** A settle call site, with everything the guard-ordering check compares against. */
 type ScanSite = Site & Attribution & { pos: number };
-type GuardSite = Attribution & { pos: number };
+type GuardSite = Attribution & { pos: number; enforced: boolean };
+
+/**
+ * Is `GUARD` in this module the imported one, and only the imported one?
+ *
+ * The guard is matched by NAME (see `scanSource`), so a module-local binding that SHADOWS
+ * that name would be counted as a guard. This is the cheap structural answer: the module
+ * must import the identifier and must not also declare it. A file that fails this has its
+ * guard population treated as EMPTY, which turns `THE RELATIONSHIP` red rather than
+ * quietly accepting a shadow.
+ */
+function guardIsImportedAndUnshadowed(sf: ts.SourceFile): boolean {
+  let imported = false;
+  let shadowed = false;
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) && node.importClause && !node.importClause.isTypeOnly) {
+      const bindings = node.importClause.namedBindings;
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) {
+          if (!element.isTypeOnly && element.name.text === GUARD) imported = true;
+        }
+      }
+    }
+    if (
+      (ts.isVariableDeclaration(node) || ts.isFunctionDeclaration(node)) &&
+      node.name &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === GUARD
+    ) {
+      shadowed = true;
+    }
+    node.forEachChild(visit);
+  };
+  visit(sf);
+  return imported && !shadowed;
+}
 
 function scanSource(
   rel: string,
@@ -544,6 +677,7 @@ function scanSource(
   const bindings = bindingsOf(sf, rel);
   const sites: ScanSite[] = [];
   const guards: GuardSite[] = [];
+  const guardUsable = guardIsImportedAndUnshadowed(sf);
 
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
@@ -553,15 +687,18 @@ function scanSource(
       ) {
         sites.push({ file: rel, ...ownerOf(node), pos: node.getStart(sf) });
       }
-      // 🔴 THE GUARD IS MATCHED BY NAME, AND THAT IS FAIL-CLOSED HERE. It is not the thing
-      // under test — `no-unguarded-block-bridge-token.test.ts` owns its population; what
-      // this file adds is the PER-PROCEDURE ORDERING, which that file does not assert.
-      // Every way to defeat the name (rename it, reach it through an alias, call it
-      // computed) yields ZERO guards for that procedure and turns `THE RELATIONSHIP` RED,
-      // so unlike the #589 family this spelling cannot be walked in the permissive
-      // direction.
-      if (ts.isIdentifier(node.expression) && node.expression.text === GUARD) {
-        guards.push({ ...ownerOf(node), pos: node.getStart(sf) });
+      // 🔴 THE GUARD IS MATCHED BY NAME, AND HERE IS EXACTLY WHY THAT IS FAIL-CLOSED. It is
+      // not the thing under test — `no-unguarded-block-bridge-token.test.ts` owns its
+      // population; what this file adds is the PER-PROCEDURE ORDERING, which that file does
+      // not assert. Renaming the guard, aliasing it, or calling it computed all yield ZERO
+      // guards for that procedure and turn `THE RELATIONSHIP` RED.
+      //
+      // ⚠️ An earlier revision claimed that made the spelling unwalkable in the permissive
+      // direction. It did not: a module-local binding that SHADOWS the name keeps the name
+      // and yields a hit. `guardIsImportedAndUnshadowed` is what closes that, by emptying
+      // the whole guard population for such a file.
+      if (guardUsable && ts.isIdentifier(node.expression) && node.expression.text === GUARD) {
+        guards.push({ ...ownerOf(node), pos: node.getStart(sf), enforced: isEnforcedCall(node) });
       }
     }
     node.forEachChild(visit);
@@ -587,7 +724,13 @@ type RepoScan = {
   sites: ScanSite[];
   importers: string[];
   parsed: string[];
-  guardsByFile: Map<string, { owner: string; pos: number }[]>;
+  /**
+   * A plain frozen record rather than a `Map`, so the freeze below actually reaches it.
+   * A `Map` inside a frozen object is still fully mutable — `.set(…)` and
+   * `.get(f)!.push(…)` both succeed — and these are the arrays `THE RELATIONSHIP` reads,
+   * i.e. the one field the freeze was supposed to protect was the one it did not.
+   */
+  guardsByFile: Record<string, readonly GuardSite[]>;
 };
 
 /**
@@ -604,7 +747,7 @@ function scanRepo(): RepoScan {
   const sites: ScanSite[] = [];
   const importers: string[] = [];
   const parsed: string[] = [];
-  const guardsByFile = new Map<string, { owner: string; pos: number }[]>();
+  const guardsByFile: Record<string, readonly GuardSite[]> = {};
   // The defining module and every ledgered importer are parsed unconditionally, so the
   // PATH prefilter can never quietly drop the files the ledgers are about — it is only an
   // optimisation over everything else.
@@ -617,19 +760,21 @@ function scanRepo(): RepoScan {
       parsed.push(rel);
       const result = scanSource(rel, source);
       sites.push(...result.sites);
-      guardsByFile.set(rel, result.guards);
+      guardsByFile[rel] = Object.freeze(result.guards);
       // The defining module binds its own export; it is not an importer of itself.
       if (result.importsModule && rel !== SETTLE_MODULE) importers.push(rel);
     }
   }
-  // 🔴 FROZEN. The memo hands the SAME arrays to five assertions, so one future
-  // `sites.sort()` or `.shift()` in any of them would silently corrupt the other four —
-  // the classic cost of sharing a cached structure. Freezing makes that a throw.
+  // 🔴 FROZEN, ALL THE WAY DOWN. The memo hands the SAME arrays to five assertions, so one
+  // future `sites.sort()` or `.shift()` in any of them would silently corrupt the other
+  // four — the classic cost of sharing a cached structure. Freezing makes that a throw.
+  // Each `guardsByFile` array is frozen at insertion, above: freezing only the outer object
+  // would have left exactly the arrays `THE RELATIONSHIP` reads mutable.
   repoScanCache = Object.freeze({
     sites: Object.freeze(sites) as ScanSite[],
     importers: Object.freeze(importers.sort()) as string[],
     parsed: Object.freeze(parsed.sort()) as string[],
-    guardsByFile,
+    guardsByFile: Object.freeze(guardsByFile),
   }) as RepoScan;
   return repoScanCache;
 }
@@ -869,10 +1014,31 @@ export async function viaTernary(useNew: boolean) {
     ]);
   });
 
+  it('POSITIVE CONTROL — the remaining value-producing shapes: `??`, `||`, comma', () => {
+    // `??` and `||` shipped in round 2 with no killing mutation of their own; the comma
+    // sequence (`(0, settle)(…)`, the classic this-stripping idiom) was a live third-caller
+    // shape measured at 21/21 green in round 3.
+    const { sites } = scanSource(
+      FIXTURE_REL,
+      `import { settleCustomComfySpend } from '${SETTLE_SPEC}';
+export async function viaNullish(override?: typeof settleCustomComfySpend) {
+  await (override ?? settleCustomComfySpend)({ workflowId: 'a', actualCost: 0 });
+}
+export async function viaOr(override?: typeof settleCustomComfySpend) {
+  await (override || settleCustomComfySpend)({ workflowId: 'b', actualCost: 0 });
+}
+export async function viaComma() {
+  await (0, settleCustomComfySpend)({ workflowId: 'c', actualCost: 0 });
+}`
+    );
+    expect(sites.map((s) => s.owner).sort()).toEqual(['viaComma', 'viaNullish', 'viaOr']);
+  });
+
   it('POSITIVE CONTROL — the guard scan attributes a guard call to its procedure', () => {
     const { guards } = scanSource(
       FIXTURE_REL,
-      `export const r = router({
+      `import { ${GUARD} } from '~/server/services/blocks/block-bridge-auth.service';
+export const r = router({
   guardedProc: publicProcedure.mutation(async ({ input }) => {
     const claims = await ${GUARD}(input.blockToken);
     return claims;
@@ -880,7 +1046,115 @@ export async function viaTernary(useNew: boolean) {
 });`
     );
     expect(guards.map((g) => g.owner)).toEqual(['guardedProc']);
-    expect(guards.map((g) => [g.depth, g.conditional])).toEqual([[1, false]]);
+    expect(guards.map((g) => [g.depth, g.conditional, g.enforced])).toEqual([[1, false, true]]);
+  });
+
+  it('POSITIVE CONTROL — a guard whose REJECTION cannot reach the caller is not `enforced`', () => {
+    // The round-3 fail-open family. Every one of these sits exactly where an enforcing
+    // guard sits — same owner, same depth, unconditional, earlier than the settle — so
+    // position and conditionality cannot separate them from the real thing.
+    const { guards } = scanSource(
+      FIXTURE_REL,
+      `import { ${GUARD} } from '~/server/services/blocks/block-bridge-auth.service';
+export const r = router({
+  swallowedByCatch: publicProcedure.mutation(async ({ input }) => {
+    const claims = await ${GUARD}(input.blockToken).catch(() => ({}));
+    return claims;
+  }),
+  swallowedByThen: publicProcedure.mutation(async ({ input }) => {
+    const claims = await ${GUARD}(input.blockToken).then((c) => c, () => ({}));
+    return claims;
+  }),
+  neverAwaited: publicProcedure.mutation(async ({ input }) => {
+    void ${GUARD}(input.blockToken);
+    return null;
+  }),
+  bareStatement: publicProcedure.mutation(async ({ input }) => {
+    ${GUARD}(input.blockToken);
+    return null;
+  }),
+  enforced: publicProcedure.mutation(async ({ input }) => {
+    const claims = await ${GUARD}(input.blockToken);
+    return claims;
+  }),
+  enforcedByReturn: publicProcedure.mutation(async ({ input }) => {
+    return ${GUARD}(input.blockToken);
+  }),
+});`
+    );
+    expect(guards.map((g) => `${g.owner}=${g.enforced}`).sort()).toEqual([
+      'bareStatement=false',
+      'enforced=true',
+      'enforcedByReturn=true',
+      'neverAwaited=false',
+      'swallowedByCatch=false',
+      'swallowedByThen=false',
+    ]);
+  });
+
+  it('POSITIVE CONTROL — a SHADOWED guard name empties the guard population for that file', () => {
+    // Keeping the name is the one evasion the by-name match could not see: the module
+    // declares its own `authorizeBlockBridgeToken` and every call resolves to that.
+    const shadowed = scanSource(
+      FIXTURE_REL,
+      `const ${GUARD} = async (_t: string) => ({ scopes: [] });
+export const r = router({
+  p: publicProcedure.mutation(async ({ input }) => {
+    const claims = await ${GUARD}(input.blockToken);
+    return claims;
+  }),
+});`
+    );
+    expect(shadowed.guards).toEqual([]);
+    // …and the same file with a real import and no shadow does yield the guard.
+    const clean = scanSource(
+      FIXTURE_REL,
+      `import { ${GUARD} } from '~/server/services/blocks/block-bridge-auth.service';
+export const r = router({
+  p: publicProcedure.mutation(async ({ input }) => {
+    const claims = await ${GUARD}(input.blockToken);
+    return claims;
+  }),
+});`
+    );
+    expect(clean.guards.map((g) => g.owner)).toEqual(['p']);
+  });
+
+  it('POSITIVE CONTROL — a same-named SIBLING does not lend its guard (owner identity)', () => {
+    // `blocks.router.ts` already holds two distinct `cancelWorkflow` entities, so this is
+    // the house idiom rather than a contrivance. Measured at 21/21 green before `ownerId`.
+    const { sites, guards } = scanSource(
+      FIXTURE_REL,
+      `import { settleCustomComfySpend } from '${SETTLE_SPEC}';
+import { ${GUARD} } from '~/server/services/blocks/block-bridge-auth.service';
+async function pollThing(t: string) {
+  const claims = await ${GUARD}(t);
+  return claims;
+}
+export const r = router({
+  pollThing: publicProcedure.mutation(async ({ input }) => {
+    await settleCustomComfySpend({ workflowId: input.id, actualCost: 0 });
+    return pollThing(input.blockToken);
+  }),
+});`
+    );
+    expect(sites).toHaveLength(1);
+    expect(guards).toHaveLength(1);
+    // Same NAME on both sides…
+    expect(guards[0].owner).toBe(sites[0].owner);
+    // …and the predicate `THE RELATIONSHIP` uses still finds nothing, because the owner
+    // NODES differ.
+    expect(guards[0].ownerId).not.toBe(sites[0].ownerId);
+    expect(
+      guards.some(
+        (g) =>
+          g.ownerId === sites[0].ownerId &&
+          g.depth === 1 &&
+          !g.conditional &&
+          g.enforced &&
+          g.pos < sites[0].pos
+      )
+    ).toBe(false);
   });
 
   it('POSITIVE CONTROL — a guard that is PRESENT but does not RUN is not `depth 1, unconditional`', () => {
@@ -888,7 +1162,8 @@ export async function viaTernary(useNew: boolean) {
     // exactly where an unguarded-by-position check wants them.
     const { guards } = scanSource(
       FIXTURE_REL,
-      `export const r = router({
+      `import { ${GUARD} } from '~/server/services/blocks/block-bridge-auth.service';
+export const r = router({
   behindIf: publicProcedure.mutation(async ({ input }) => {
     if (someFlag) { const claims = await ${GUARD}(input.blockToken); return claims; }
     return null;
@@ -988,6 +1263,19 @@ describe('customComfy settle-caller ledger (clawgate #572, option 1)', () => {
     //   `!conditional`     — no `if` / `try` / `switch` / loop / short-circuit between the
     //                        guard call and the procedure;
     //   `g.pos < site.pos` — and it is lexically first.
+    //
+    // 🔴 AND TWO MORE THE ROUND-3 AUDIT ADDED, both of which had revived a mutant this
+    // file already listed as RED:
+    //   `g.enforced`       — the guard is AWAITED (or returned) and its rejection is not
+    //                        swallowed by a chained `.catch` / `.then` / `.finally`. See
+    //                        `isEnforcedCall`: `.catch(() => ({}))` and a bare un-awaited
+    //                        call both sit exactly where an enforcing guard would, so the
+    //                        three conditions above cannot tell them apart.
+    //   `g.ownerId === site.ownerId` — the SAME procedure NODE, not merely the same NAME.
+    //                        `blocks.router.ts` already contains two distinct entities
+    //                        called `cancelWorkflow`, so a same-named sibling declared
+    //                        anywhere earlier in the file was lending the real procedure
+    //                        its guard.
     const { sites, guardsByFile } = scanRepo();
     expect(sites.filter((s) => s.kind !== 'trpc-procedure')).toEqual([]);
     // The settle itself must also be in the procedure's own body: a settle moved into a
@@ -996,9 +1284,14 @@ describe('customComfy settle-caller ledger (clawgate #572, option 1)', () => {
     // CONSTRUCTION" stops meaning.
     expect(sites.filter((s) => s.depth !== 1).map(key)).toEqual([]);
     const unguarded = sites.filter((site) => {
-      const guards = guardsByFile.get(site.file) ?? [];
+      const guards = guardsByFile[site.file] ?? [];
       return !guards.some(
-        (g) => g.owner === site.owner && g.depth === 1 && !g.conditional && g.pos < site.pos
+        (g) =>
+          g.ownerId === site.ownerId &&
+          g.depth === 1 &&
+          !g.conditional &&
+          g.enforced &&
+          g.pos < site.pos
       );
     });
     expect(unguarded.map(key)).toEqual([]);
