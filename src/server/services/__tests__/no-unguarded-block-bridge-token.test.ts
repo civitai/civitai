@@ -61,7 +61,9 @@ import { describe, expect, it } from 'vitest';
  * proc unreadable while every assertion stayed green: an `.input()` schema behind a
  * `.extend(…)` / `.merge(…)` / factory call rather than a bare identifier (`unresolved`
  * demanded resolution only for the bare case); a schema chain deeper than the depth cap; a
- * proc chunk cut short by a column-zero line; and a proc nested in a sub-router. Each is
+ * proc chunk cut short by a column-zero line (specifically a column-zero line in the
+ * COMMENT-STRIPPED view — a template-literal continuation, not a block-comment body line, which
+ * is pinned NOT to cut); and a proc nested in a sub-router. Each is
  * now either closed or ledgered-and-asserted — `schemaIdentifiers`, `truncated`,
  * `every proc chunk keeps its own terminator`, and `PROC_RE`'s indent respectively. The
  * generalisation worth keeping: for a DERIVED population, "this procedure is not in the
@@ -520,24 +522,38 @@ function scanTrivia(source: string, rel: string): TriviaSpans {
     // reintroduce the lexer hazards the docstring on `codeWithLiterals` records — in
     // particular a regex literal's `//` is still never mistaken for a comment.
     //
-    // 🔴 LEADING ONLY, AND THE TRAILING HALF WAS DELETED RATHER THAN LEFT LOOKING LOAD-BEARING.
-    // The first version of this loop also called `getTrailingCommentRanges` here. MEASURED over
-    // the three files these suites read: of 3,782 distinct comment positions, the node-level
-    // pair accounts for 3,610, token-level LEADING is the SOLE source for 172, and token-level
-    // TRAILING is the sole source for 0 — every same-line trailing comment is already reached by
-    // the node-level call. Deleting it leaves the suite green, which is exactly the problem with
-    // keeping it: an unreachable line beside a load-bearing one reads as though both carry
-    // weight, and the loop-level mutant in the matrix could not tell them apart.
+    // 🔴 BOTH HALVES, AND THE TRAILING ONE WAS DELETED ONCE AND RESTORED. What the census says:
+    // over the three files these suites read there are 3,782 distinct comment positions, the
+    // node-level pair accounts for 3,610, token-level LEADING is the sole source for 172, and
+    // token-level TRAILING is the sole source for 0.
     //
-    // ⚠️ AND THE LEAF TEST BELOW IS AN OPTIMISATION, NOT A CORRECTNESS GUARD — measured, because
-    // it reads like one. Replacing `getChildCount(sourceFile) === 0` with `true` leaves the suite
+    // 🔴 THAT NUMBER IS A FACT ABOUT THREE FILES, NOT A PROPERTY OF THE LANGUAGE, AND READING IT
+    // AS THE SECOND IS WHAT REOPENED A FAIL-OPEN. The deletion was justified with "every
+    // same-line trailing comment is already reached by the node-level call", which is FALSE:
+    // `getLeadingCommentRanges` deliberately skips a comment sharing a line with the code before
+    // it, so a same-line comment following a pure TOKEN — `(`, `=`, `.`, `:`, `return` — is
+    // trailing trivia of that token and of nothing else. MEASURED with the line deleted, on a
+    // procedure carrying a commented-out guard call after `.mutation(`:
+    //   `procsReachingGuard` returned the procedure — it verifies nothing and read as GUARDED;
+    //   `scan().guarded` returned it too, i.e. the comment registered as a real call SITE;
+    //   a comment after `=` in a module-scope helper survived the same way.
+    // That is exactly the outcome `scan`'s own docstring says reading normalised code prevents.
+    //
+    // So the honest state, which is also what this file says twice elsewhere about a latent
+    // shape: the trailing half is UN-EXERCISED on today's corpus, not unreachable, and it is kept
+    // because closing a latent shape costs nothing. Restoring it is free — 42/42 green, every
+    // real-router value identical. `a trailing comment after a pure TOKEN is not a guard call`
+    // below is the control, so the next census cannot be read as a licence to delete it again.
+    //
+    // ⚠️ THE LEAF TEST BELOW IS AN OPTIMISATION, NOT A CORRECTNESS GUARD — measured, because it
+    // reads like one. Replacing `getChildCount(sourceFile) === 0` with `true` leaves the suite
     // green and every real-router value identical: `addComments` already dedupes by position, and
-    // a non-leaf node's leading trivia is the same trivia the node-level call above collected. It
-    // is kept only to avoid re-asking for ranges already gathered. Do not read it as the thing
-    // that makes this loop correct; the LEADING call is.
+    // a non-leaf node's trivia is trivia the node-level call above already collected. It is kept
+    // only to avoid re-asking for ranges already gathered.
     for (const child of node.getChildren(sourceFile)) {
       if (child.getChildCount(sourceFile) === 0) {
         addComments(ts.getLeadingCommentRanges(source, child.getFullStart()));
+        addComments(ts.getTrailingCommentRanges(source, child.end));
       }
     }
     if (
@@ -762,6 +778,12 @@ function astTerminatorCount(source: string, rel: string): number {
  * `}` — which is `});` closing the router, or a following `const`/`export`/`function`.
  * Everything inside a proc or a function body is indented, so that boundary is the file's
  * own formatting rather than a brace count.
+ *
+ * 🔴 "COLUMN ZERO" MEANS IN THE COMMENT-STRIPPED VIEW, AND SAYING ONLY "column zero" WAS WRONG
+ * IN THE ANSWER IT GAVE. The close test reads `codeWithLiterals` lines, so a column-zero line
+ * inside a BLOCK COMMENT does NOT end a chunk, while a column-zero continuation of a template
+ * LITERAL does. A reader asking "can a column-zero comment cut my procedure?" must get NO, and
+ * four places in this file used to imply YES by naming the column without naming the view.
  *
  * 🔴 THAT BOUNDARY IS A FORMATTING ASSUMPTION, AND IT CAN CUT A PROC SHORT. A line that
  * legitimately starts in column zero INSIDE a proc — the continuation of a multi-line
@@ -1546,7 +1568,8 @@ function guardedHelpers(source: string): Set<string> {
 
 /**
  * Procedure chunks that lost their tRPC terminator, i.e. were CUT SHORT by a line starting in
- * column zero inside the procedure body. Every tRPC procedure ends in one of the three
+ * column zero — of the COMMENT-STRIPPED view, so a template continuation cuts and a block-comment
+ * body line does not — inside the procedure body. Every tRPC procedure ends in one of the three
  * terminators, so their absence is a cheap structural proof that a chunk did not survive.
  *
  * 🔴 ONE PREDICATE, ONE PLACE, AND THAT IS LOAD-BEARING HERE. Two callers ask this question —
@@ -2200,14 +2223,23 @@ describe('no unguarded block-bridge token verification', () => {
         'importMap does not parse because it reads `import ... from` only — teach importMap, ' +
         'NOT resolveModule, which already succeeded; (c) the declaration is not a ' +
         'const/let/var (a function, type, interface, class or enum) — teach ' +
-        'findDefinitionText; (d) it is NOT A SCHEMA REFERENCE AT ALL but a lambda parameter ' +
-        'that `bound` failed to bind, in which case there is nothing to resolve and none of ' +
-        'the three readers above owns it — widen `bound` in schemaIdentifiers. Two known ' +
-        'shapes do this: an arrow with a RETURN-TYPE annotation, `(v): v is Foo => ...`, ' +
-        'which reports `v` and `is`; and a default value containing a call, ' +
-        '`(x, y = z.string()) => ...`, which reports `x` and `y`. Both defeat the ' +
-        'parameter-list regex for the same reason — what sits between the `)` and the `=>`, ' +
-        'and a nested `()` inside the list.\n' +
+        'findDefinitionText; (d) it is NOT A SCHEMA REFERENCE AT ALL but part of an arrow ' +
+        'function that `bound` failed to bind, in which case there is nothing to resolve and ' +
+        'none of the three readers above owns it. Two known shapes, and they need DIFFERENT ' +
+        'fixes — an earlier version of this message said "widen `bound`" for both, which is ' +
+        'provably wrong for the second:\n' +
+        '  (d1) a default value containing a call, `(x, y = z.string()) => ...`, reports `x` ' +
+        'and `y`. The names ARE parameters, so widening the parameter-list regex to balance a ' +
+        'nested `()` does fix it.\n' +
+        '  (d2) a RETURN-TYPE annotation, `(v): v is Foo => ...`, reports `v` and `is`. ' +
+        'Widening the parameter-list regex CANNOT fix this: the list is just `v`, and `is` ' +
+        'sits between the `)` and the `=>`, which is not a parameter list at all. Measured — a ' +
+        'balanced-paren widening captures `v` and leaves `is`. The fix is to cover that ' +
+        'region: bind the names in `) : ... =>`, or skip it. Do NOT reach for a suppression ' +
+        'set instead: `is` is absent from RESERVED_WORDS, and adding it reds ' +
+        '`every suppressed word is a language keyword`, whose remedy points at ' +
+        'ECMASCRIPT_NON_NAMING_WORDS where `is` would be a false entry — `const is = ' +
+        'z.object({})` is legal TypeScript.\n' +
         'So: identify which of (a)-(d) you are looking at FIRST. An earlier version of this ' +
         'message enumerated only (a)-(c) and closed with "in every case, fix the READER", ' +
         'which is what stops the next reader looking for a fourth cause. Whichever it is, fix ' +
@@ -2250,12 +2282,14 @@ describe('no unguarded block-bridge token verification', () => {
   });
 
   it('keeps every proc chunk intact — a truncated chunk would shrink the population silently', () => {
-    // `chunks` ends a chunk at the next COLUMN-ZERO letter or `}`, which is the router's
-    // own formatting, not a brace count. A line that legitimately starts in column zero
-    // inside a proc — a multi-line template literal's continuation — cuts the chunk short,
-    // and if that lands before `.input(` the proc leaves the population with nothing going
-    // red. Every tRPC procedure ends in one of these three terminators, so their presence
-    // is a cheap structural proof that no chunk was cut.
+    // `chunks` ends a chunk at the next COLUMN-ZERO letter or `}` in the COMMENT-STRIPPED view
+    // (`codeWithLiterals`), which is the router's own formatting, not a brace count. A line that
+    // legitimately starts in column zero inside a proc — a multi-line template literal's
+    // continuation — cuts the chunk short, and if that lands before `.input(` the proc leaves
+    // the population with nothing going red. A column-zero line inside a BLOCK COMMENT does NOT
+    // cut, which is why the view has to be named here and not just the column. Every tRPC
+    // procedure ends in one of these three terminators, so their presence is a cheap structural
+    // proof that no chunk was cut.
     const procChunks = chunks(read(ROUTER)).filter((c) => c.kind === 'proc');
     // The SAME predicate the synthetic control below exercises — see `cutProcChunks`.
     const truncated = cutProcChunks(read(ROUTER));
@@ -2264,8 +2298,11 @@ describe('no unguarded block-bridge token verification', () => {
       truncated,
       'These procedure chunks do not contain the .mutation( / .query( / .subscription( ' +
         'that terminates a tRPC procedure, which means the chunk was cut short — almost ' +
-        'certainly by a line starting in column zero inside the procedure body. Anything ' +
-        'after the cut, .input( included, is invisible to the population scan.'
+        'certainly by a line starting in column zero inside the procedure body, most likely a ' +
+        'multi-line TEMPLATE LITERAL continuation. Note what it is NOT: a column-zero line ' +
+        'inside a block COMMENT cannot do this, because the boundary is measured on the ' +
+        'comment-stripped view. Anything after the cut, .input( included, is invisible to the ' +
+        'population scan.'
     ).toEqual([]);
     // Positive control on the same read: the scan found procedures at all.
     expect(procChunks.length).toBeGreaterThan(50);
@@ -2293,7 +2330,10 @@ describe('no unguarded block-bridge token verification', () => {
    *
    * The cutting line is a column-zero continuation of a multi-line template literal, which is
    * legal TypeScript and formats exactly this way — `chunks` ends a chunk at the next
-   * column-zero letter or `}`, which is the router's formatting rather than a brace count.
+   * column-zero letter or `}` in the COMMENT-STRIPPED view, which is the router's formatting
+   * rather than a brace count. The view is the load-bearing half of that sentence: a template
+   * continuation survives comment-stripping and cuts, a block-comment body line does not and is
+   * pinned NOT to cut by `a column-zero COMMENT body line does not end a procedure`.
    */
   it('POSITIVE CONTROL — a chunk cut short by a column-zero line is CAUGHT, not silently dropped', () => {
     // (a) cut BEFORE `.input(` — the silent case.
@@ -2780,6 +2820,71 @@ describe('no unguarded block-bridge token verification', () => {
     // correctly counts for nothing, which is how this fixture was wrong on its first draft.
     const real = chained('.use(authorizeBlockBridgeToken(ctx))');
     expect(procsReachingGuard(real)).toEqual(['evasiveProc']);
+  });
+
+  it('a trailing comment after a pure TOKEN is not a guard call', () => {
+    // 🔴 THIS EXISTS BECAUSE THE LINE IT PINS WAS DELETED ONCE, ON A CENSUS THAT WAS CORRECT AND
+    // AN INFERENCE THAT WAS NOT. The census said token-level TRAILING was the sole source for 0
+    // of 3,782 comment positions across the three files these suites read; that was read as
+    // "every same-line trailing comment is already reached by the node-level call", which is
+    // false. `getLeadingCommentRanges` deliberately skips a comment sharing a line with the code
+    // before it, so a same-line comment following a pure TOKEN — `(`, `=`, `.`, `:`, `return` —
+    // is trailing trivia of that token and of nothing else. Un-exercised on this corpus is not
+    // unreachable, and the suite could not tell the difference: deleting the line was 42/42 green.
+    //
+    // Both manifestations are asserted, because they fail through different assertions: the proc
+    // reads as REACHING the guard, and the comment also registers as a real call SITE.
+    const commentedGuard = 'await authorizeBlockBridgeToken(input.blockToken)';
+    const afterOpenParen = [
+      'export const r = router({',
+      '  evasiveProc: publicProcedure',
+      '    .input(z.object({ blockToken: z.string().min(1) }))',
+      `    .mutation( // ${commentedGuard}`,
+      '      async ({ input }) => input.blockToken.length',
+      '    ),',
+      '});',
+    ].join('\n');
+    expect(
+      countCalls(GUARD_CALL_RE, stripNonCode(afterOpenParen)),
+      'A comment following `(` on the same line survived normalisation. It is trailing trivia ' +
+        'of a TOKEN, which `getLeadingCommentRanges` does not report and no node-level call ' +
+        'reaches — so the token-level trailing collection is the only thing that sees it.'
+    ).toBe(0);
+    expect(
+      procsReachingGuard(afterOpenParen),
+      'A procedure whose only mention of the guard is a COMMENT must not read as reaching it. ' +
+        'This is the outcome `scan` reads normalised code to prevent.'
+    ).toEqual([]);
+    expect(
+      scan(afterOpenParen).guarded,
+      'A commented-out guard call must not register as a call SITE either — that would put a ' +
+        'phantom entry into GUARD_CALL_SITE_LEDGER.'
+    ).toEqual([]);
+
+    // The same shape one token over: after `=` in a module-scope helper.
+    const afterEquals = [
+      `const helper = // ${commentedGuard}`,
+      '  async (t: string) => t.length;',
+      'export const r = router({',
+      '  evasiveProc: publicProcedure',
+      '    .input(z.object({ blockToken: z.string().min(1) }))',
+      '    .mutation(async ({ input }) => helper(input.blockToken)),',
+      '});',
+    ].join('\n');
+    expect(countCalls(GUARD_CALL_RE, stripNonCode(afterEquals))).toBe(0);
+    expect(scan(afterEquals).guarded).toEqual([]);
+
+    // 🔴 THE CONTROL, so none of the above is satisfied by a normaliser that blanks everything:
+    // a REAL guard call in the very same position still counts.
+    const realCall = [
+      'export const r = router({',
+      '  guardedProc: publicProcedure',
+      '    .input(z.object({ blockToken: z.string().min(1) }))',
+      '    .mutation(async ({ input }) => authorizeBlockBridgeToken(input.blockToken)),',
+      '});',
+    ].join('\n');
+    expect(countCalls(GUARD_CALL_RE, stripNonCode(realCall))).toBe(1);
+    expect(procsReachingGuard(realCall)).toEqual(['guardedProc']);
   });
 
   it('POSITIVE CONTROL — a regex literal does not desync the normaliser', () => {
