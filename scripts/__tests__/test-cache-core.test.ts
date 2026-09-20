@@ -113,6 +113,16 @@ describe('keys are portable between worktrees', () => {
     expect(toRel('/C:/notes/x.md', '/C:')).toBe('notes/x.md');
   });
 
+  // Node refuses an ENCODED separator under the same error code as the cross-platform spelling the
+  // fallback exists for, and decoding one would name a DIFFERENT file. Left to throw instead: the
+  // reporter's per-row catch then records nothing, which is the safe direction.
+  it('refuses an encoded separator rather than decoding it into another path', () => {
+    expect(() => toRel('file:///C:/Dev/a%2Fb/x.ts', 'C:/Dev')).toThrow();
+    expect(() => toRel('file:///C:/Dev/a%5Cb/x.ts', 'C:/Dev')).toThrow();
+    // The spelling the fallback is FOR still resolves, on either platform.
+    expect(toRel('file:///home/u/repo/src/b.ts', '/home/u/repo')).toBe('src/b.ts');
+  });
+
   // A read outside the repo (a temp file the test wrote itself) is not an input anyone else shares.
   it('drops absolute paths outside the repo', () => {
     expect(toRel('D:/elsewhere/x.json', 'C:/Dev/wt/one')).toBeNull();
@@ -191,6 +201,9 @@ describe('tests that always run', () => {
     // pattern rather than copied, so the two cannot drift apart.
     ['const m = await import(`execa/${x}`);'],
     ['const m = await import(`cross-spawn/${x}`);'],
+    // The boundary is "not a continuation of the name", not "a slash": with a separator list,
+    // `execa${x}` walked past the lookahead and was stripped.
+    ['const m = await import(`execa${x}`);'],
     // The form this repo uses, which the first version of the pattern let through.
     ['return import(/* @vite-ignore */ file);'],
     ["const files = globSync('src/**/*.ts');"],
@@ -214,6 +227,9 @@ describe('tests that always run', () => {
     // Whatever it computes lives under node_modules, which the lockfile covers. The real site is
     // src/hooks/useDateLocale.ts, and treating it as opaque cost 44 test files.
     ['const m = await import(`dayjs/locale/${tag}.js`);'],
+    // A different package that merely starts with a wrapper's letters is a different package.
+    ['const m = await import(`execafoo/${x}`);'],
+    ['const m = await import(`zxcvbn/${x}`);'],
   ])('leaves %s cacheable', (source) => {
     expect(alwaysRuns(source)).toBe(false);
   });

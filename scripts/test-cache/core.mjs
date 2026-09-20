@@ -154,7 +154,7 @@ export function isCoveredElsewhere(rel) {
 const BARE_COMPUTED_IMPORT = new RegExp(
   String.raw`import\(\s*(?:/\*[\s\S]*?\*/\s*)*\x60(?!@civitai/|(?:${SPAWN_WRAPPERS.join(
     '|'
-  )})[/\x60])` + String.raw`[A-Za-z@][^\x60$:]*(\$\{[^\x60]*)\x60\s*\)`,
+  )})(?![A-Za-z\d_-]))` + String.raw`[A-Za-z@][^\x60$:]*(\$\{[^\x60]*)\x60\s*\)`,
   'g'
 );
 
