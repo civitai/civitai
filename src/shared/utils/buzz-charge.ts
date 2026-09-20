@@ -7,13 +7,24 @@ export const BUZZ_PER_USD_CENT = 10;
  * Derive the USD charge, in whole cents, for a Buzz amount.
  *
  * Every payment provider we hand this value to expects an amount in the
- * currency's *minor unit*, which must be a whole number. Stripe rejects a
- * fraction outright (`Invalid integer: 1000.4`); Paddle, Coinbase and
- * EmerchantPay declare no integer bound on their input schemas at all, so a
- * fraction reaching them fails — if it fails — somewhere further out. The
- * division is the only place a fraction can be introduced: the Buzz amount is
- * free-typed, so anything that is not a multiple of 10 (e.g. 10,004) divides to
- * a fractional number of cents.
+ * currency's *minor unit*, which must be a whole number. The division is the
+ * only place a fraction can be introduced: the Buzz amount is free-typed, so
+ * anything that is not a multiple of 10 (e.g. 10,004) divides to a fractional
+ * number of cents.
+ *
+ * 🔴 THIS HELPER IS NOT THE ONLY DEFENCE, AND THE SCHEMAS ARE NOT INTERCHANGEABLE
+ * WITH IT. All four provider input schemas now carry `.int()` — Stripe
+ * (`stripe.schema.ts`), Coinbase, EmerchantPay and Paddle — so a fraction is
+ * refused at our own trust boundary on every route rather than on Stripe alone.
+ * That was NOT true until it was measured: with this helper bypassed, a
+ * fractional amount reached `coinbase.service.ts` and left as a sub-cent
+ * `local_price.amount` of "10.004".
+ *
+ * 🔴 Do NOT assume a provider's own tamper check covers this. Coinbase's
+ * (`unitAmount !== buzzAmount / 10`) compares two values derived from the SAME
+ * division, so a fractional pair is perfectly self-consistent and it passes.
+ * Measured: it fires 0/12 on free-typed amounts where `.int()` rejects 12/12.
+ * The schema bound is the defence; the tamper check is blind to this class.
  *
  * Ceil, never round or floor: the buyer must never be granted more Buzz than
  * they are charged for. The submitted Buzz amount is re-derived from the value

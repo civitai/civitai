@@ -130,8 +130,12 @@ describe('getPaymentIntent — amount-tamper guard is a 4xx, not a 500', () => {
     // The guard is correct and unchanged; what changed is its TYPE. It threw a bare `Error`,
     // which `getTRPCErrorFromUnknown` maps to INTERNAL_SERVER_ERROR — so rejected input on
     // this route answered with a 500, the same class of defect as the fractional amount that
-    // Stripe rejected. Unreachable through the purchase form, where both numbers derive from
-    // one field, but this is an exposed authenticated procedure.
+    // Stripe rejected. This is an exposed authenticated procedure.
+    //
+    // ⚠️ A mismatched pair is NOT only reachable by hand: `buzzPriceMetadataSchema.buzzAmount`
+    // is independent of `unitAmount`, so a buzz Price carrying bonus Buzz trips this from an
+    // ordinary package click. That is why the log it emits is named `-mismatch` rather than
+    // `-tamper` — see `stripe.service.ts`.
     await expect(
       getPaymentIntent({
         unitAmount: UNIT_AMOUNT,
