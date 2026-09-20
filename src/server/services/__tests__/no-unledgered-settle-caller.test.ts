@@ -125,14 +125,20 @@ import { describe, expect, it } from 'vitest';
  *
  *   - `guardIsImportedAndUnshadowed` is deliberately over-broad in the same way
  *     `bindingsOf` is: ONE function-local `const authorizeBlockBridgeToken` anywhere in a
- *     file empties that file's ENTIRE guard population and turns the ledger red. So does a
- *     NAMESPACE import when it is the file's ONLY import of the guard module — the
- *     named-import requirement is never satisfied, so even a bare-identifier call in that
- *     file contributes no guards. Alongside the named import it changes nothing. All loud
- *     and fail-closed. (An earlier revision claimed a namespace import "does not
- *     disqualify a file" and that calls through it "are not identifier calls"; measured,
- *     the namespace-only file yields ZERO guards for a bare-identifier call, so both
- *     halves were wrong and the sentence they replaced was right.)
+ *     file empties that file's ENTIRE guard population and turns the ledger red. TWO
+ *     SEPARATE THINGS ARE TRUE OF A NAMESPACE IMPORT and they have been conflated twice:
+ *       (a) when it is the file's ONLY import of the guard module it DOES disqualify the
+ *           file — the named-import requirement is never satisfied, so even a
+ *           bare-identifier call there contributes no guards (measured: 0). Alongside the
+ *           named import it changes nothing (measured: 1).
+ *       (b) INDEPENDENTLY of that, a guard CALLED through the namespace
+ *           (`ns.authorizeBlockBridgeToken(t)`, or the computed form) contributes no
+ *           guards even in a file that fully satisfies the requirement, because guard
+ *           collection is gated on the callee being a bare identifier. The ledger reddens
+ *           that way instead.
+ *     Both are fail-closed. A round-7 edit declared (b) false while correcting (a); it is
+ *     not — it was measured at 0 with the named import present, and striking it deleted a
+ *     live limitation from this list.
  *   - 🔴 THREE SHAPES STILL SCORE `conditional: false` WHILE THE GUARD MAY NOT RUN, and
  *     they are listed because the conditionality axis has now been "closed" three rounds
  *     running and is not: an OPTIONAL CALL does not evaluate its arguments when its
@@ -504,18 +510,25 @@ function isTrpcProcedure(pa: ts.PropertyAssignment): boolean {
 }
 
 /**
- * STATEMENT forms only — `if` / `try` / `switch` / the loops / `catch`. A call anywhere
- * inside one of these is marked conditional WHICHEVER CHILD it sits in.
+ * STATEMENT forms only — `if` / `try` / `switch` / the loops. NOT `catch`: see the note in
+ * the list itself for why that entry was removed (a catch clause is still marked, through
+ * its enclosing `TryStatement`). A call anywhere inside one of these is marked conditional
+ * WHICHEVER CHILD it sits in.
  *
- * ⚠️ THAT OVER-MARKS EIGHT HEAD POSITIONS, DELIBERATELY: the `if` / `while` / `switch`
- * CONDITION, the `for…of` and `for…in` ITERABLE, and a classic `for`'s INITIALIZER and
- * CONDITION — all of which run unconditionally — plus a `do` BODY, which runs at least
- * once. Eight fail-CLOSED false-REDs, taken because no shape in this corpus puts the guard
- * in any of them and a per-kind operand test is more machinery than the cases are worth.
- * (An earlier revision of this sentence said "five" and named only five; the `for…in`
- * iterable is the identical position to the `for…of` one it did name, and `isForInStatement`
- * sits one line below `isForOfStatement` in the list right below. A stated count in a
- * comment is machine-checkable and this one was not checked.) An earlier revision of this sentence asserted instead that a call in one of these
+ * ⚠️ THAT OVER-MARKS TEN POSITIONS THAT ALWAYS RUN, DELIBERATELY: the `if` / `while` /
+ * `switch` CONDITION; the `for…of` and `for…in` ITERABLE; a classic `for`'s INITIALIZER and
+ * CONDITION; a `finally` BLOCK, which runs whenever the `try` is entered — on throw and on
+ * return too, so it is a STRONGER guarantee than anything else in this list; and a `do`
+ * BODY and its `while` CONDITION, which each run at least once. Ten fail-CLOSED false-REDs,
+ * taken because no shape in this corpus puts the guard in any of them and a per-kind
+ * operand test is more machinery than the cases are worth. (The `try` BLOCK is an eleventh
+ * marked position and is NOT in this list, because marking it is deliberate enforcement —
+ * see the rethrowing-`try` entry in the header's limits.)
+ *
+ * ⚠️ THE NUMERAL IS THE PART THAT KEEPS ROTTING. It has been wrong twice: "five" named five
+ * and missed three, and "eight" named eight and missed two — including `finally`, which the
+ * same sentence's own reasoning ranks above a case it did name. It is machine-checkable;
+ * check it, or delete it. An earlier revision of this sentence asserted instead that a call in one of these
  * "may not run, whichever child it sits in", which is simply false — and it sat two lines
  * above the paragraph explaining that operand position is exactly what separates a ternary
  * CONDITION from its branches, i.e. it denied a distinction the next paragraph draws.
@@ -1292,11 +1305,15 @@ export const r = router({
       FIXTURE_REL,
       `import { ${GUARD} } from '~/server/services/blocks/block-bridge-auth.service';
 export const r = router({
+  inIf: publicProcedure.mutation(async ({ input }) => {
+    if (cond) { return await ${GUARD}(input.blockToken); }
+    return null;
+  }),
   inSwitch: publicProcedure.mutation(async ({ input }) => {
     switch (input.mode) { case 'a': return await ${GUARD}(input.blockToken); default: return null; }
   }),
   inFor: publicProcedure.mutation(async ({ input }) => {
-    for (let i = 0; i < 1; i++) { return await ${GUARD}(input.blockToken); }
+    for (let i = 0; i < n; i++) { return await ${GUARD}(input.blockToken); }
     return null;
   }),
   inForOf: publicProcedure.mutation(async ({ input }) => {
@@ -1326,6 +1343,7 @@ export const r = router({
       'inFor=true',
       'inForIn=true',
       'inForOf=true',
+      'inIf=true',
       'inSwitch=true',
       'inWhile=true',
     ]);
