@@ -48,6 +48,10 @@ const GLOBAL_INPUTS = [
 const WORKSPACE_DIRS = ['packages', 'apps'];
 const OWN_CODE = ['core.mjs', 'fs-tracker.mjs', 'sequencer.mjs', 'reporter.mjs'];
 
+// Named once because TWO rules need the same list, and a second copy is how the bare-specifier
+// exclusion below silently stopped agreeing with the pattern it is supposed to defer to.
+const SPAWN_WRAPPERS = ['execa', 'cross-spawn', 'tinyexec', 'nano-spawn', 'zx'];
+
 // What stays uncacheable even with file reads tracked: a child process reads what it likes, and a
 // dynamic import whose specifier is computed is invisible to the module graph. 19 files, 0.7% of
 // modelled worker time, measured 2026-09-19.
@@ -63,7 +67,7 @@ const ALWAYS_RUN_SOURCE = [
   /(?:\bfrom|\bimport\s*\(|\brequire\s*\(|\bgetBuiltinModule\s*\(|\)\s*\()\s*['"`](?:node:)?(?:child_process|worker_threads|cluster)['"`]/,
   // Wrappers that spawn for you. None is a direct dependency today; this keeps one from arriving
   // unnoticed, since node_modules is never scanned.
-  /['"`](?:execa|cross-spawn|tinyexec|nano-spawn|zx)['"`]/,
+  new RegExp(String.raw`['"\x60](?:${SPAWN_WRAPPERS.join('|')})['"\x60]`),
   // Comments allowed between `import(` and the specifier: `import(/* @vite-ignore */ file)` is the
   // form this repo actually uses, and the first version of this pattern let it through.
   /import\(\s*(?:\/\*[\s\S]*?\*\/\s*)*(?:`[^`]*\$\{|[A-Za-z_$])/,
@@ -107,7 +111,12 @@ export function toRel(id, root) {
       // would turn a refused record into a record written without that dependency — the false-skip
       // shape. A URL this host cannot name cannot be a local file, so it lands as null below.
       if (err?.code !== 'ERR_INVALID_FILE_URL_PATH') throw err;
-      p = decodeURIComponent(new URL(p).pathname);
+      const { pathname } = new URL(p);
+      // Node refuses an ENCODED separator under the same error code, and decoding one here would
+      // silently name a different file. Let it throw instead: the reporter records nothing, which
+      // is the safe direction.
+      if (/%2f|%5c/i.test(pathname)) throw err;
+      p = decodeURIComponent(pathname);
     }
     p = p.replace(/^\/([A-Za-z]:)/, '$1');
   }
@@ -143,7 +152,9 @@ export function isCoveredElsewhere(rel) {
  * site, and it alone made 44 test files uncacheable.
  */
 const BARE_COMPUTED_IMPORT = new RegExp(
-  String.raw`import\(\s*(?:/\*[\s\S]*?\*/\s*)*\x60(?!@civitai/)[A-Za-z@][^\x60$:]*(\$\{[^\x60]*)\x60\s*\)`,
+  String.raw`import\(\s*(?:/\*[\s\S]*?\*/\s*)*\x60(?!@civitai/|(?:${SPAWN_WRAPPERS.join(
+    '|'
+  )})[/\x60])` + String.raw`[A-Za-z@][^\x60$:]*(\$\{[^\x60]*)\x60\s*\)`,
   'g'
 );
 

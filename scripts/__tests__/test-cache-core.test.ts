@@ -186,6 +186,11 @@ describe('tests that always run', () => {
     // The interpolated expression survives the strip. Erasing the whole call instead would hide a
     // spawn inside it, which is the one thing these patterns exist to catch.
     ["const m = await import(`dayjs/${require('child_process') ? 'a' : 'b'}.js`);"],
+    // A spawn wrapper's SUBPATH is a bare specifier too, and the wrapper pattern needs the name
+    // quote-delimited — which `` `execa/${x}` `` never is. The exclusion list is shared with that
+    // pattern rather than copied, so the two cannot drift apart.
+    ['const m = await import(`execa/${x}`);'],
+    ['const m = await import(`cross-spawn/${x}`);'],
     // The form this repo uses, which the first version of the pattern let through.
     ['return import(/* @vite-ignore */ file);'],
     ["const files = globSync('src/**/*.ts');"],
