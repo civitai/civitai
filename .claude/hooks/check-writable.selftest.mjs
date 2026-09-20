@@ -6,7 +6,7 @@
  * only mentions a port must all run untouched.
  */
 
-import { directRootTypecheck, fullUnitSuiteRun, unboundedDevRequest } from './check-writable.mjs';
+import { directRootTypecheck, fullUnitSuiteRun, unboundedDevRequest } from './check-writable.logic.mjs';
 
 let failures = 0;
 const check = (name, cmd, expectBlocked) => {

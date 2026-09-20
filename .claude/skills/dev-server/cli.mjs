@@ -8,7 +8,11 @@ import { spawn, execSync } from 'child_process';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'fs';
-import { exitCodeFor, isTerminal as isTerminalStatus } from './scripts/test-queue.mjs';
+import {
+  exitCodeFor,
+  isTerminal as isTerminalStatus,
+  parseMaxWorkersFlag,
+} from './scripts/test-queue.mjs';
 import { resolveDaemonUrl } from './scripts/daemon-port.mjs';
 import { resolveDaemonHome } from './scripts/paths.mjs';
 
@@ -672,8 +676,12 @@ async function cmdTest(sub, rest) {
       if (capAt !== -1) {
         const inline = rest[capAt].split('=')[1];
         const raw = inline !== undefined ? inline : rest[capAt + 1];
-        // `--max-workers none` is the only way back to an uncapped pool without a restart.
-        body.maxWorkers = raw === undefined || raw === 'none' ? null : Number(raw);
+        try {
+          body.maxWorkers = parseMaxWorkersFlag(raw);
+        } catch (err) {
+          console.error(err.message);
+          process.exit(1);
+        }
       }
       result = Object.keys(body).length
         ? await daemonRequest('/test-runs/config', { method: 'POST', body: JSON.stringify(body) })
@@ -1064,7 +1072,8 @@ Commands:
   test wait <run-id>  Block until that run finishes; exits with the run's exit code
   test list           List runs and queue state
   test cancel <id>    Cancel a queued or running run
-  test config [n]     Show or set the concurrency limit (0 pauses the queue)
+  test config [n]     Show or set the UNIT lane's concurrency (0 pauses that lane;
+                      --typecheck n does the same for the typecheck lane)
                       [--max-workers <n>|none] also caps each run's vitest pool
                       [--typecheck <n>] sets the typecheck lane's limit
                       [--cache off|shadow|on] result cache: on skips unchanged tests
