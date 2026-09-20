@@ -133,9 +133,11 @@ describe('getPaymentIntent — amount-tamper guard is a 4xx, not a 500', () => {
     // Stripe rejected. This is an exposed authenticated procedure.
     //
     // ⚠️ A mismatched pair is NOT only reachable by hand: `buzzPriceMetadataSchema.buzzAmount`
-    // is independent of `unitAmount`, so a buzz Price carrying bonus Buzz trips this from an
-    // ordinary package click. That is why the log it emits is named `-mismatch` rather than
-    // `-tamper` — see `stripe.service.ts`.
+    // is independent of `unitAmount`, so a buzz Price carrying bonus Buzz WOULD trip this from
+    // an ordinary package click. LATENT, not active — no such Price exists today (all five
+    // live buzz Prices carry empty metadata, checked 2026-09-19). That is why the log it emits
+    // is named `-mismatch` rather than `-tamper` — see `stripe.service.ts`, which carries the
+    // same qualifier.
     await expect(
       getPaymentIntent({
         unitAmount: UNIT_AMOUNT,

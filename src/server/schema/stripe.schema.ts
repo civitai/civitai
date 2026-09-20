@@ -78,24 +78,15 @@ export const paymentIntentCreationSchema = z.object({
     // guard (`unitAmount === metadata.buzzAmount / 10`) agrees with it, so nothing further
     // down the Stripe path looks at whether the number is whole.
     //
-    // Scope: this covers the STRIPE route only. The purchase form hands the same derived
-    // `unitAmount` to the other providers, and their bounds differ from each other — read
-    // them before assuming this one is representative (all verified at this commit):
+    // Scope: `coinbase.schema.ts`, `emerchantpay.schema.ts` and `paddle.schema.ts` now carry
+    // the same `.int()`, so the whole-minor-unit rule is no longer Stripe-only. Their OTHER
+    // bounds still differ and this route remains the tightest — Coinbase's
+    // `createBuzzChargeSchema` declares no lower or upper bound at all, so it accepts a
+    // negative or a 1e15 `unitAmount` where the `.min`/`.max` below reject both. That gap is
+    // pre-existing and deliberately out of scope; do not read the shared `.int()` as parity.
     //
-    //   paddle.schema.ts:33        .min(minChargeAmount).max(maxChargeAmount)  — no .int()
-    //   paddle.schema.ts:9         z.coerce.number().positive()                — no bound
-    //   coinbase.schema.ts:7       z.number()                                  — NO bound at all
-    //   emerchantpay.schema.ts:5   z.number().positive()                       — no bound
-    //
-    // So Coinbase is a strictly wider hole than Stripe's was: it accepts a negative, a
-    // fraction, or 1e15. Through the UI every one of these now receives the ceiled value
-    // from `buzzAmountToUnitAmount`, so the live population is covered; a direct
-    // authenticated tRPC call is not, which is the same trust-boundary argument that
-    // justifies the `.int()` on this line.
-    //
-    // They are left alone here only because whether those providers REJECT a fractional
-    // minor unit was never established, and guessing would change three payment routes on
-    // an assumption. That is a deferral, not a clean bill of health.
+    // No line numbers, deliberately: nothing in this repo checks a cross-file reference, and
+    // the four that stood here were falsified inside this same PR.
     .int({ message: 'The transaction amount must be a whole number of cents' })
     .min(constants.buzz.minChargeAmount, {
       message: `The minimum transaction amount is $${(constants.buzz.minChargeAmount / 100).toFixed(

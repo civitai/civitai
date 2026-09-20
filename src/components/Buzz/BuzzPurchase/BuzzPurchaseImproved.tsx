@@ -601,7 +601,8 @@ export const BuzzPurchaseImproved = ({
                                     // cents, which Stripe answers with `Invalid integer`.
                                     // `buzzAmountToUnitAmount` owns the rule (and why it
                                     // ceils); it is the only derivation that reaches every
-                                    // provider, Stripe's `.int()` covering Stripe alone.
+                                    // provider. All four provider schemas now carry `.int()`
+                                    // as well, so this is no longer the sole defence.
                                     // The USD field beside this one needs no such guard:
                                     // NumberInputWrapper already applies
                                     // `Math.ceil(value * 100)` to a `format="currency"`

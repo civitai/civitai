@@ -13,18 +13,26 @@ export const BUZZ_PER_USD_CENT = 10;
  * number of cents.
  *
  * 🔴 THIS HELPER IS NOT THE ONLY DEFENCE, AND THE SCHEMAS ARE NOT INTERCHANGEABLE
- * WITH IT. All four provider input schemas now carry `.int()` — Stripe
- * (`stripe.schema.ts`), Coinbase, EmerchantPay and Paddle — so a fraction is
- * refused at our own trust boundary on every route rather than on Stripe alone.
- * That was NOT true until it was measured: with this helper bypassed, a
- * fractional amount reached `coinbase.service.ts` and left as a sub-cent
- * `local_price.amount` of "10.004".
+ * WITH IT. All four provider input schemas that accept a `unitAmount` now carry
+ * `.int()` — Stripe (`stripe.schema.ts`), Coinbase, EmerchantPay and Paddle — so a
+ * fraction handed to one of THOSE routes is refused at our own trust boundary
+ * rather than on Stripe alone. That was NOT true until it was measured: with this
+ * helper bypassed, a fractional amount reached `coinbase.service.ts` and left as a
+ * sub-cent `local_price.amount` of "10.004".
+ *
+ * 🔴 "Those routes" is not "every route". `coinbase.createCodeOrder` takes a
+ * `buzzAmount` and no `unitAmount` at all, then divides by 10 inside
+ * `coinbase.service.ts` — downstream of every schema bound above, so it can still
+ * produce a sub-cent `local_price.amount`. It is unreached from the UI and
+ * deliberately out of scope here. It is NOT covered.
  *
  * 🔴 Do NOT assume a provider's own tamper check covers this. Coinbase's
  * (`unitAmount !== buzzAmount / 10`) compares two values derived from the SAME
- * division, so a fractional pair is perfectly self-consistent and it passes.
- * Measured: it fires 0/12 on free-typed amounts where `.int()` rejects 12/12.
- * The schema bound is the defence; the tamper check is blind to this class.
+ * division, so a fractional pair is perfectly self-consistent and it passes. That
+ * is structural rather than a sampled rate: every Buzz amount that is not a
+ * multiple of ten yields such a pair, so there is no population on which the check
+ * does better. The schema bound is the defence; the tamper check is blind to this
+ * class.
  *
  * Ceil, never round or floor: the buyer must never be granted more Buzz than
  * they are charged for. The submitted Buzz amount is re-derived from the value
