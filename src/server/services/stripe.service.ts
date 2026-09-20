@@ -1357,9 +1357,8 @@ export const getPaymentIntent = async ({
     //
     // Typed rather than a bare `Error`: `getTRPCErrorFromUnknown` maps a plain Error to
     // INTERNAL_SERVER_ERROR, so rejected input on this route answered with a 500 — the same
-    // defect class as the fractional amount above. The pair is unreachable through the UI
-    // (both values derive from one field), but this is an exposed authenticated procedure.
-    // The condition is unchanged; only its type.
+    // defect class as the fractional amount above. This is an exposed authenticated
+    // procedure. The condition is unchanged; only its type.
     //
     // 🔴 The demotion costs this guard its only COUNTER, which is why the explicit log
     // below is not optional. `recordTrpcError` (`server/prom/http-errors.ts`) increments
