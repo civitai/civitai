@@ -158,6 +158,11 @@ describe('tests that always run', () => {
     ["const { Worker } = require('worker_threads');"],
     ['const m = await import(`./pages/${name}`);'],
     ['const m = await import(target);'],
+    // A bare-specifier computed import is cacheable (below), but only where its head cannot name
+    // first-party source or a builtin. Whoever widens that: these three are why it is narrow.
+    ['const m = await import(`~/server/${name}`);'],
+    ['const m = await import(`@civitai/ui/${name}`);'],
+    ['const m = await import(`node:${mod}`);'],
     // The form this repo uses, which the first version of the pattern let through.
     ['return import(/* @vite-ignore */ file);'],
     ["const files = globSync('src/**/*.ts');"],
@@ -178,6 +183,9 @@ describe('tests that always run', () => {
     // test's setup. Matching the bare word made all 1880 unit tests uncacheable.
     ["const opts = { client: 'cluster' };"],
     ["// Module not found: Can't resolve 'cluster'"],
+    // Whatever it computes lives under node_modules, which the lockfile covers. The real site is
+    // src/hooks/useDateLocale.ts, and treating it as opaque cost 44 test files.
+    ['const m = await import(`dayjs/locale/${tag}.js`);'],
   ])('leaves %s cacheable', (source) => {
     expect(alwaysRuns(source)).toBe(false);
   });

@@ -44,13 +44,15 @@ describe('the cache, run for real', () => {
 
     const cold = runOnce(cacheDir);
     expect(cold.status).toBe(0);
+    // Both fixtures, one of which is a happy-dom file: that one resolves a node builtin to a vite
+    // virtual id, and a key that treats such an id as a path records nothing for it.
     expect({ recorded: cold.last.recorded, notRecorded: cold.last.notRecorded }).toEqual({
-      recorded: 1,
+      recorded: 2,
       notRecorded: {},
     });
 
     const warm = runOnce(cacheDir);
     expect(warm.status).toBe(0);
-    expect({ ran: warm.last.ran, skipped: warm.last.skipped }).toEqual({ ran: 0, skipped: 1 });
+    expect({ ran: warm.last.ran, skipped: warm.last.skipped }).toEqual({ ran: 0, skipped: 2 });
   }, 300_000);
 });

@@ -96,7 +96,16 @@ export function toRel(id, root) {
     // `toRel('/C:/notes/x.md', '/C:')` returned 'notes/x.md' before and null after. Only a
     // `file://` id can carry the platform artefact, so only a `file://` id needs the repair,
     // and confining it here leaves every non-URL input byte-for-byte as it was.
-    p = fileURLToPath(p).replace(/^\/([A-Za-z]:)/, '$1');
+    // 🔴 And it THROWS rather than returning the other platform's spelling: on Windows a POSIX
+    // `file:///home/u/x.ts` is `ERR_INVALID_FILE_URL_PATH`, which took this file's own POSIX
+    // invariant test red on every Windows run of `main`. The URL's pathname is the same string
+    // `fileURLToPath` would have produced on the host that wrote it, so fall back to it.
+    try {
+      p = fileURLToPath(p);
+    } catch {
+      p = decodeURIComponent(new URL(p).pathname);
+    }
+    p = p.replace(/^\/([A-Za-z]:)/, '$1');
   }
   p = p.split('?')[0].replace(/\\/g, '/');
   const r = root.replace(/\\/g, '/').replace(/\/$/, '');
@@ -111,13 +120,31 @@ export function isCoveredElsewhere(rel) {
   // like `src`, which the convention guards list — dropping the one read that sees a new file.
   if (isBuiltin(rel)) return true;
   if (rel.startsWith('node:')) return true;
+  // A vite virtual module is not a file on disk, so fingerprinting it yields `missing` and the
+  // reporter reads that as a module deleted mid-run. Measured 2026-09-19: every happy-dom test
+  // depends on `__vite-browser-external:crypto`, and all 44 of them fell out of the cache this
+  // way. A `\0` prefix, a plugin scheme and vite's browser shims are all ids no path can name.
+  if (rel.startsWith('\0') || /^[A-Za-z_][A-Za-z\d_+.-]*:/.test(rel)) return true;
   if (rel.startsWith('node_modules/') || rel.includes('/node_modules/')) return true;
   if (rel.startsWith('.git/')) return true;
   return false;
 }
 
+/**
+ * A computed import whose literal head is a BARE package specifier — `dayjs/locale/${tag}.js` —
+ * resolves under node_modules whatever it computes, and the lockfile already covers that. Three
+ * heads are deliberately not bare: `@civitai/*` is a workspace symlink into `packages/`, a head
+ * carrying a `:` can be `node:${mod}` (a builtin, and one of them spawns), and `./` or `~/` is
+ * first-party source. Measured 2026-09-19: `src/hooks/useDateLocale.ts` is the repo's only such
+ * site, and it alone made 44 test files uncacheable.
+ */
+const BARE_COMPUTED_IMPORT = new RegExp(
+  String.raw`import\(\s*(?:/\*[\s\S]*?\*/\s*)*\x60(?!@civitai/)[A-Za-z@][^\x60$:]*\$\{[^\x60]*\x60\s*\)`,
+  'g'
+);
+
 export function alwaysRuns(source) {
-  return ALWAYS_RUN_SOURCE.some((re) => re.test(source));
+  return ALWAYS_RUN_SOURCE.some((re) => re.test(source.replace(BARE_COMPUTED_IMPORT, '')));
 }
 
 const RESOLVABLE_EXTS = ['ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs', 'json'];
@@ -173,7 +200,9 @@ export function makeFingerprinter(root) {
     let fp;
     try {
       const st = statSync(abs);
-      fp = st.isDirectory() ? `dir:${sha(listTree(abs).join('\n'))}` : `file:${sha(readFileSync(abs))}`;
+      fp = st.isDirectory()
+        ? `dir:${sha(listTree(abs).join('\n'))}`
+        : `file:${sha(readFileSync(abs))}`;
     } catch {
       fp = 'missing';
     }
@@ -243,7 +272,9 @@ export function keyFor({ salt, project, testRel, entries, fingerprint }) {
   const shadows = [...new Set(deps.flatMap(shadowCandidates))]
     .filter((rel) => fingerprint(rel) !== 'missing')
     .sort();
-  return sha([salt, project, testRel, fingerprint(testRel), ...parts, '--shadows--', ...shadows].join('\n'));
+  return sha(
+    [salt, project, testRel, fingerprint(testRel), ...parts, '--shadows--', ...shadows].join('\n')
+  );
 }
 
 /**
@@ -295,7 +326,11 @@ export function cacheDir(root) {
   const common = execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: root })
     .toString()
     .trim();
-  return join(isAbsolute(common) ? common : join(root, common), 'civitai-test-cache', `v${CACHE_FORMAT}`);
+  return join(
+    isAbsolute(common) ? common : join(root, common),
+    'civitai-test-cache',
+    `v${CACHE_FORMAT}`
+  );
 }
 
 /**
@@ -309,7 +344,10 @@ export function recordsFor(dir, project, testRel) {
   for (const name of readdirSync(d)) {
     if (!name.endsWith('.json')) continue;
     try {
-      out.push({ ...JSON.parse(readFileSync(join(d, name), 'utf8')), mtime: statSync(join(d, name)).mtimeMs });
+      out.push({
+        ...JSON.parse(readFileSync(join(d, name), 'utf8')),
+        mtime: statSync(join(d, name)).mtimeMs,
+      });
     } catch {
       /* a half-written or foreign file is not a record */
     }
@@ -329,7 +367,8 @@ export function writeRecord(dir, project, testRel, record) {
     const byAge = all
       .map((n) => ({ n, t: statSync(join(d, n)).mtimeMs }))
       .sort((a, b) => a.t - b.t);
-    for (const { n } of byAge.slice(0, all.length - RECORDS_PER_TEST)) rmSync(join(d, n), { force: true });
+    for (const { n } of byAge.slice(0, all.length - RECORDS_PER_TEST))
+      rmSync(join(d, n), { force: true });
   }
 }
 
