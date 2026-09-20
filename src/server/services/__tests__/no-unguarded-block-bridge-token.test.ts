@@ -76,6 +76,31 @@ import { describe, expect, it } from 'vitest';
  *     field is invisible here. That spelling is the repo's convention across every proc in
  *     `BRIDGE_INPUT_LEDGER` (17 of them, measured 2026-09-19 — the long-quoted "15" was
  *     stale), but it is a convention, not something this test enforces.
+ *   - 🔴 A NESTED SCHEMA REFERENCE THE CANDIDATE FILTER REJECTS BEFORE THE WALK EVER RUNS, AND
+ *     THIS IS THE WIDEST HOLE ON THE LIST — it is a live fail-OPEN, not a latent shape.
+ *     `schemaCarriesBlockToken` only descends into a name for which `definitionText` finds a
+ *     `const|let|var` declaration in the same file, or which that file's `import { … } from`
+ *     map carries. Anything else is `continue`d: no recursion, so no `null`, so NOTHING in
+ *     `unresolved`, `truncated` or `NESTED_UNREADABLE_LEDGER`, and the branch is scored as
+ *     carrying no token. The proc then leaves the population with BOTH ledgers silent — the
+ *     merged outcome this header forbids two paragraphs above.
+ *     MEASURED, and the pair is the whole argument: a proc whose token arrives through a
+ *     `function`-declared factory referenced at depth ≥ 1 passed the suite 36/36 SILENTLY;
+ *     the byte-identical source with that factory written `const f = () => …` failed 2 tests
+ *     naming the proc. One variable, opposite verdicts.
+ *     The class is everything the two readers miss: a local `function`, `type`, `interface`,
+ *     `class` or `enum` declaration; a default or namespace import (`importMap` parses named
+ *     `import { … } from` only); a re-exported declaration (`export … from`, which `importMap`
+ *     also does not parse); and a `$`-bearing name, since the nested candidate regex is
+ *     `[A-Za-z_][A-Za-z0-9_]*` — no `$` — so `$bridgeInput` is captured as `bridgeInput` and
+ *     may resolve against a DIFFERENT declaration entirely.
+ *     Widening `findDefinitionText` to read `function` was tried and BACKED OUT, deliberately:
+ *     it closes this and moves no verdict (`procs`, `unresolved` and the nested ledger all
+ *     unchanged), but the deeper walk pushes two chains in
+ *     `src/server/services/blocks/app-cap-limits.constants.ts` to depth 13, which trips
+ *     `truncated` against `MAX_SCHEMA_DEPTH`. With the cap lifted the walk terminates on its
+ *     own with nothing truncated, so the fix is viable — it needs a cap change, which is a
+ *     separate decision and is not taken here.
  *   - Verification performed in a module this file does not read. Reachability is
  *     computed inside `blocks.router.ts` only: a proc that delegates to an imported
  *     helper which calls the guard reads as UNGUARDED here and will fail. That is
@@ -470,6 +495,27 @@ function scanTrivia(source: string, rel: string): TriviaSpans {
     // to close, reintroduced by reading half the trivia.
     addComments(ts.getLeadingCommentRanges(source, node.getFullStart()));
     addComments(ts.getTrailingCommentRanges(source, node.end));
+    // 🔴 TOKENS TOO, NOT ONLY NODES — AND THIS WAS A LIVE FAIL-OPEN, NOT A TIDY-UP. The walk
+    // recurses with `forEachChild`, which visits NODES and skips pure tokens. So a comment
+    // whose following token is punctuation — the `.` between two links of a call chain — is
+    // leading trivia of nothing this walk ever asked about, and survived normalisation intact.
+    //
+    // MEASURED, and it is finding (2) of clawgate #589 reopened one position further out: a
+    // procedure with `/* await authorizeBlockBridgeToken(input.blockToken) */` on its own line
+    // between `.input(...)` and `.mutation(...)`, verifying nothing, was returned by
+    // `procsReachingGuard` — while the IDENTICAL comment inside the `.mutation` body was
+    // correctly stripped and returned nothing. The position was the only variable. On the real
+    // router, 18 of 157 block-comment openers were surviving normalisation this way.
+    //
+    // A token IS part of the parse, so this keeps the parser as the authority and does not
+    // reintroduce the lexer hazards the docstring on `codeWithLiterals` records — in
+    // particular a regex literal's `//` is still never mistaken for a comment.
+    for (const child of node.getChildren(sourceFile)) {
+      if (child.getChildCount(sourceFile) === 0) {
+        addComments(ts.getLeadingCommentRanges(source, child.getFullStart()));
+        addComments(ts.getTrailingCommentRanges(source, child.end));
+      }
+    }
     if (
       ts.isStringLiteral(node) ||
       ts.isNoSubstitutionTemplateLiteral(node) ||
@@ -724,18 +770,34 @@ function chunks(source: string): Chunk[] {
   };
 
   lines.forEach((line, i) => {
-    const proc = PROC_RE.exec(line);
+    // 🔴 DETECTION READS THE NORMALISED LINE, THE WAY `scan` ALREADY DID. It used to read the
+    // RAW one, so a COMMENT or a template-literal line merely SHAPED like a procedure at indent
+    // two — `  fooProc: publicProcedure` inside a docblock, or the same text inside a multi-line
+    // template — opened a chunk and SPLIT the real procedure it sat inside. The halves then
+    // carry a terminator count of two and zero, so `every proc chunk keeps its own terminator`
+    // does go red; but its message blames "a line starting in column zero", which is not what
+    // happened, and the reader is sent looking for the wrong thing. Latent on today's router —
+    // measured, raw and normalised detect the same 75 procedures and the same 56 helpers — so
+    // this is a shape being closed, not a bug being fixed, and it costs nothing to close.
+    const proc = PROC_RE.exec(codeLines[i] ?? '');
     if (proc) {
       close(i);
       open = { name: proc[1], kind: 'proc', start: i };
       return;
     }
-    const fn = fnName(line);
+    const fn = fnName(codeLines[i] ?? '');
     if (fn) {
       close(i);
       open = { name: fn, kind: 'fn', start: i };
       return;
     }
+    // 🔴 THE CLOSE TEST DELIBERATELY STAYS ON THE RAW LINE, and the asymmetry is not an
+    // oversight. `stripNonCode` EMPTIES literal bodies, so a column-zero continuation of a
+    // multi-line template — the exact cut this boundary exists to notice — normalises to blanks
+    // and would stop closing the chunk. Detection asks "is this text a procedure", which a
+    // comment must not be able to answer; closing asks "did the file's own formatting end the
+    // procedure", which is a question about the raw bytes. `a chunk cut short by a column-zero
+    // line is CAUGHT` pins this half, and it goes red if this is switched to `codeLines`.
     if (open && /^[A-Za-z}]/.test(line)) close(i);
   });
   close(lines.length);
@@ -924,11 +986,25 @@ const NON_SCHEMA_WORDS = new Set([...RESERVED_WORDS, ...MODULE_EXEMPTIONS]);
  *     member rule is "preceded by a dot", and `...someInput` puts an identifier directly
  *     after a dot. See the lookbehind's own comment in the body;
  *   - an object KEY (`blockToken:`, `page:`) — a field name;
- *   - a parameter bound INSIDE the argument (`.refine((v) => !!v.slug)`) — `v` is local;
+ *   - a parameter bound INSIDE the argument (`.refine((v) => !!v.slug)`, and the multi-parameter
+ *     and destructured forms — see the `bound` block in the body) — those names are local;
  *   - a keyword or literal (`z.boolean().default(true)`);
  *   - the zod namespace, per `NON_SCHEMA_WORDS`.
- * Everything else survives and MUST resolve. An identifier the router neither imports nor
- * declares cannot appear in a valid argument at all, so flagging it is fail-closed.
+ * Everything else survives and MUST resolve.
+ *
+ * 🔴 THE JUSTIFICATION THAT USED TO CLOSE THIS PARAGRAPH WAS FALSE, AND IT IS WORTH KNOWING WHY.
+ * It read: "An identifier the router neither imports nor declares cannot appear in a valid
+ * argument at all, so flagging it is fail-closed." The second clause is right — an unresolvable
+ * identifier is reported, never silently dropped, which is the safe direction. The FIRST clause
+ * is simply wrong, and it was the load-bearing half: a LAMBDA PARAMETER is an identifier the
+ * router neither imports nor declares, and it appears in a perfectly valid argument every time
+ * anyone writes `.superRefine((val, ctx) => …)`. Measured on the pre-change code, that argument
+ * produced exactly such a flag. So the sentence was not describing a property of valid
+ * arguments; it was describing a gap in the `bound` set, and reading it as the former is what
+ * let the gap sit there while the paragraph read as a proof.
+ * What is actually true: a flagged identifier is REPORTED rather than dropped, so the error is
+ * in the fail-closed direction — but "it cannot happen on valid input" is not a claim this
+ * function can make, and the `bound` set is the only thing keeping the false reds down.
  *
  * 🔴 KNOWINGLY OPEN — the object-KEY rule drops a schema in a TERNARY, and drops it SILENTLY.
  * "followed by a colon" means "object key", and a conditional puts the interesting operand in
@@ -948,13 +1024,36 @@ const NON_SCHEMA_WORDS = new Set([...RESERVED_WORDS, ...MODULE_EXEMPTIONS]);
 function schemaIdentifiers(arg: string): string[] {
   const code = stripNonCode(arg);
 
-  // Parameters bound by an arrow function inside the argument: `(v) => …` and `v => …`.
+  // Parameters bound by an arrow function inside the argument. All the shapes the corpus
+  // writes: `v => …`, `(v) => …`, `(val, ctx) => …` and `({ slug }, ctx) => …`.
+  //
+  // 🔴 THE MULTI-PARAMETER FORMS WERE MISSING, AND THAT MADE THIS A FALSE-RED FACTORY. The old
+  // pair of regexes recognised a parenthesised SINGLE parameter and a bare one, so a canonical
+  // zod `.superRefine((val, ctx) => …)` bound NEITHER name: `val` and `ctx` came back as schema
+  // POSITIONS and were then required to resolve. MEASURED on the pre-change code —
+  // `(val, ctx)` yielded `['val', 'ctx']`, `({ slug }, ctx)` yielded `['slug', 'ctx']`, and
+  // `(val: Foo, ctx)` yielded `['Foo', 'ctx']` — so any procedure adopting `superRefine` in its
+  // `.input()` reddened `unresolved` on ordinary zod. `superRefine` appears in 11 files under
+  // `src/server/schema` and 28 under `src/`, so this was a question of when, not whether.
+  //
+  // 🔴 AND THE PRINTED REMEDY WAS WRONG IN THE DIRECTION THAT DOES DAMAGE. The failure message
+  // tells the committer to "teach resolveModule about it; do not exempt the procedure" — but
+  // `ctx` is a lambda parameter, so there is nothing to resolve and that instruction cannot be
+  // followed. The only exits left were to revert the refinement or to edit this guard, and a
+  // guard that trains people to edit it is the failure this whole file is written against.
+  //
+  // ⚠️ IT BINDS EVERY IDENTIFIER IN THE PARAMETER LIST, INCLUDING ONES THAT ARE NOT BINDINGS —
+  // a type annotation's type (`(v: Foo) =>` binds `Foo` as well) and both halves of a renaming
+  // destructure (`({ a: b }) =>`). Separating those needs the parse, and this function is handed
+  // an argument FRAGMENT. Binding is a SUPPRESSION, so over-binding is the fail-OPEN direction;
+  // what bounds it is that the blast radius is names written inside an arrow's OWN parameter
+  // list, where this corpus never spells a schema reference. A default value naming a schema
+  // (`(v = someSchema) => …`) WOULD be suppressed — stated because it is open, not covered.
   const bound = new Set<string>();
-  for (const re of [
-    /\(\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^)]*)?\)\s*=>/g,
-    /\b([A-Za-z_$][A-Za-z0-9_$]*)\s*=>/g,
-  ]) {
-    for (let m = re.exec(code); m; m = re.exec(code)) bound.add(m[1]);
+  for (const re of [/\(([^()]*)\)\s*=>/g, /(?:^|[^.\w$])([A-Za-z_$][A-Za-z0-9_$]*)\s*=>/g]) {
+    for (let m = re.exec(code); m; m = re.exec(code)) {
+      for (const name of m[1].match(/[A-Za-z_$][A-Za-z0-9_$]*/g) ?? []) bound.add(name);
+    }
   }
 
   const out = new Set<string>();
@@ -1053,8 +1152,16 @@ function findDefinitionText(file: string, ident: string): string | null {
   const source = readIfPresent(file);
   if (source == null) return null;
   const lines = source.split('\n');
+  // 🔴 ESCAPED. `ident` is interpolated into a regex, and `$` is legal in a JavaScript
+  // identifier but an ANCHOR in a pattern — so `foo$bar` compiled to "foo, end of input, bar"
+  // and could never match its own declaration. The failure is silent and lands in the
+  // reassuring direction: `definitionText` returns null, the candidate filter then drops the
+  // name, and the reference is skipped without reaching `unreadable`. No `$`-bearing schema
+  // exists in this corpus today, so this is latent — but it costs one call to remove, and an
+  // unescaped interpolation is a defect whether or not the corpus currently triggers it.
+  const escaped = ident.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const start = lines.findIndex((l) =>
-    new RegExp(`^(?:export\\s+)?(?:const|let|var)\\s+${ident}\\b`).test(l)
+    new RegExp(`^(?:export\\s+)?(?:const|let|var)\\s+${escaped}\\b`).test(l)
   );
   if (start < 0) return null;
   let end = start + 1;
@@ -1063,8 +1170,22 @@ function findDefinitionText(file: string, ident: string): string | null {
 }
 
 /**
- * 🔴 THE NESTED-UNREADABLE LEDGER — the references the schema walk CANNOT read and does not
- * treat as a failure, enumerated so the swallow is loud instead of silent.
+ * 🔴 THE NESTED-UNREADABLE LEDGER — the nested references that resolve to `null`, enumerated so
+ * THAT swallow is loud instead of silent.
+ *
+ * ⚠️ READ THE SCOPE BEFORE TRUSTING IT, because the first version of this sentence claimed the
+ * whole class. It said this ledger holds "the references the schema walk CANNOT read", and that
+ * is WIDER THAN THE MECHANISM. There are two ways a nested reference goes unread and only one
+ * of them arrives here:
+ *   - the candidate filter ADMITS the name and the recursion then fails to resolve it — that is
+ *     a `null`, and it is ledgered below. LOUD.
+ *   - the candidate filter REJECTS the name first (`definitionText` finds no `const|let|var`
+ *     declaration AND it is not in this file's `import { … } from` map), so the loop `continue`s
+ *     and the recursion never runs. No `null` is ever produced, nothing is ledgered, and the
+ *     branch is scored as carrying no token. STILL SILENT — see the `WHAT IS STILL OUT OF REACH`
+ *     entry in this file's header, which states the shapes that fall into it.
+ * So this ledger makes the `null` swallow loud. It does not make the `continue` swallow loud,
+ * and no part of this file currently does.
  *
  * `schemaCarriesBlockToken` returns `null` for a reference it cannot resolve. At DEPTH 0 that
  * null reaches `unresolved`, which is asserted empty — the loud path. Deeper in the descent it
@@ -1161,6 +1282,15 @@ const NESTED_UNREADABLE_LEDGER = [
  * rotting again.
  */
 const MAX_SCHEMA_DEPTH = 12;
+
+/**
+ * A fixture for `resolves a declaration whose name contains $` below, and nothing else reads it.
+ * It exists to BE FOUND: `findDefinitionText` interpolates an identifier into a RegExp, `$` is
+ * legal in a JavaScript identifier but an anchor in a pattern, and this file is the only place
+ * that can hold a `$`-bearing declaration without adding a fixture module to the repo. The
+ * corpus has no such name today, which is exactly why the escaping had no witness.
+ */
+const dollar$Fixture = 'found by name, never by value';
 
 function schemaCarriesBlockToken(
   ident: string,
@@ -1565,6 +1695,107 @@ describe('the bridge scan can actually see what it claims to', () => {
     expect(schemaIdentifiers(arg)).toEqual([]);
   });
 
+  it('binds EVERY arrow parameter, not just a lone one — a multi-arg refinement is not a schema', () => {
+    // 🔴 THE FALSE-RED PIN. The `bound` set used to recognise `(v) => …` and `v => …` only, so
+    // the canonical zod `.superRefine((val, ctx) => …)` bound neither name and both came back
+    // as schema positions that then had to RESOLVE. That reds `unresolved` for a procedure
+    // whose author wrote ordinary zod, and the printed remedy — "teach resolveModule about it"
+    // — cannot be followed for a lambda parameter, leaving "edit the guard" as the only exit.
+    // `superRefine` appears in 11 files under `src/server/schema`; this was a matter of time.
+    for (const arg of [
+      'z.object({ id: z.number() }).superRefine((val, ctx) => ctx.addIssue({}))',
+      'z.object({ id: z.number() }).superRefine(({ slug }, ctx) => ctx.addIssue({}))',
+      'z.object({ id: z.number() }).superRefine((val: Foo, ctx) => ctx.addIssue({}))',
+      'z.object({ id: z.number() }).refine((v) => !!v.id)',
+      'z.object({ id: z.number() }).refine((v, extra) => !!v.id)',
+    ]) {
+      expect(
+        schemaIdentifiers(arg),
+        `${arg}\nEvery name here is a lambda parameter or a zod member. A non-empty result ` +
+          'means one of them is about to be required to resolve, which is a false red on ' +
+          'ordinary zod — and one the committer cannot act on, because there is nothing to ' +
+          'resolve.'
+      ).toEqual([]);
+    }
+    // 🔴 THE NEGATIVE HALF, or the loop above is satisfied by binding EVERYTHING. A real schema
+    // reference standing beside a multi-parameter refinement must still survive, and the
+    // parameters beside it must still be dropped — both in one assertion.
+    expect(
+      schemaIdentifiers('mysteryBridgeInput.superRefine((val, ctx) => ctx.addIssue({}))'),
+      'The schema operand must survive while the lambda parameters are dropped. Empty here ' +
+        'means the binding rule now swallows real schema references — the fail-OPEN direction.'
+    ).toEqual(['mysteryBridgeInput']);
+    // …and end to end, because the cost being fixed was a red on the real-router test.
+    const refined = [
+      'export const r = router({',
+      '  refinedProc: publicProcedure',
+      '    .input(z.object({ blockToken: z.string() }).superRefine((val, ctx) => ctx.addIssue({})))',
+      '    .mutation(async ({ input }) => authorizeBlockBridgeToken(input.blockToken)),',
+      '});',
+    ].join('\n');
+    const { procs, unresolved } = bridgeInputProcs(ROUTER, refined);
+    expect(procs).toEqual(['refinedProc']);
+    expect(unresolved).toEqual([]);
+  });
+
+  it('detects procedures on NORMALISED lines — text shaped like a proc inside trivia cannot split one', () => {
+    // 🔴 `chunks` used to run `PROC_RE` and `fnName` over the RAW line while `scan` ran them
+    // over the normalised one. So a COMMENT or a TEMPLATE-LITERAL line that merely LOOKS like
+    // `  someProc: publicProcedure` opened a chunk and cut the real procedure it sat inside.
+    // The halves then carry two terminators and zero, so the integrity check does go red — but
+    // its message blames "a line starting in column zero", which is not what happened, and the
+    // reader is sent hunting for the wrong thing. Latent on today's router (raw and normalised
+    // detect the same 75 procs and 56 helpers), so this is a shape closed, not a bug fixed.
+    for (const [label, decoy] of [
+      ['block comment', ['    /*', '  decoyProc: publicProcedure', '    */']],
+      ['template literal', ['    .describe(`', '  decoyProc: publicProcedure', '    `)']],
+    ] as const) {
+      const source = [
+        'export const r = router({',
+        '  realProc: publicProcedure',
+        '    .input(z.object({ blockToken: z.string().min(1) }))',
+        ...decoy,
+        '    .mutation(async ({ input }) => authorizeBlockBridgeToken(input.blockToken)),',
+        '});',
+      ].join('\n');
+      expect(
+        chunks(source)
+          .filter((c) => c.kind === 'proc')
+          .map((c) => c.name),
+        `${label}: a procedure-shaped line inside trivia must not open a chunk. Seeing ` +
+          '`decoyProc` here means detection is reading raw lines again, and `realProc` has ' +
+          'just been split in half.'
+      ).toEqual(['realProc']);
+      // …and the consequences the split would have had, asserted rather than described.
+      expect(cutProcChunks(source), `${label}: the real proc must keep its terminator`).toEqual([]);
+      expect(bridgeInputProcs(ROUTER, source).procs).toEqual(['realProc']);
+      expect(procsReachingGuard(source)).toEqual(['realProc']);
+    }
+  });
+
+  it('resolves a declaration whose name contains `$` — the identifier is escaped into the regex', () => {
+    // 🔴 `findDefinitionText` interpolates `ident` into a RegExp. `$` is legal in a JavaScript
+    // identifier and an ANCHOR in a pattern, so an unescaped `dollar$Fixture` compiled to
+    // "dollar, end of input, Fixture" and could never match its own declaration. The failure is
+    // silent AND lands in the reassuring direction: `definitionText` returns null, the candidate
+    // filter then drops the name, and the reference is skipped without reaching `unreadable`.
+    const SELF = 'src/server/services/__tests__/no-unguarded-block-bridge-token.test.ts';
+    const found = definitionText(SELF, 'dollar$Fixture');
+    expect(
+      found,
+      'A `$`-bearing declaration was not found in the file that declares it. The identifier ' +
+        'is reaching the RegExp unescaped, so `$` is acting as an anchor.'
+    ).toMatch(/dollar\$Fixture/);
+    // Reading the declaration's own VALUE back proves the slice is the right one, and is what
+    // makes the fixture a used binding rather than a lint warning.
+    expect(found).toContain(dollar$Fixture);
+    // Positive control: the reader works on this file at all, so the assertion above is about
+    // the `$` and not about an unreadable path.
+    expect(definitionText(SELF, 'MAX_SCHEMA_DEPTH')).toMatch(/MAX_SCHEMA_DEPTH/);
+    // Negative control: it does not simply answer for every name it is asked about.
+    expect(definitionText(SELF, 'notDeclaredAnywhereInThisFile')).toBeNull();
+  });
+
   it('POSITIVE CONTROL — an annotated argument KEEPS its schema identifier (the OVER-strip direction)', () => {
     // 🔴 THE DIRECTION NOTHING HERE COVERED, AND THE ONE THE DOCSTRING GOT BACKWARDS. Every
     // other normaliser control asks whether trivia can IMPERSONATE code (under-strip). This
@@ -1814,9 +2045,16 @@ describe('no unguarded block-bridge token verification', () => {
         'unreadable schema scores the same as one with no token in it, which is how a ' +
         'population check stops covering things without going red. This covers ANY shape ' +
         'of argument — a bare schema, a .extend(...)/.merge(...) chain, a factory call — ' +
-        'not only the bare-identifier case. If the schema legitimately lives somewhere ' +
-        'this scan does not read (a relative path, an @civitai/* package), teach ' +
-        'resolveModule about it; do not exempt the procedure. Listed as proc -> ident.'
+        'not only the bare-identifier case. Listed as proc -> ident.\n' +
+        'WHICH FIX APPLIES DEPENDS ON WHY IT FAILED, and the previous wording named only ' +
+        'one cause, which sent people to the wrong function: (a) the specifier is relative ' +
+        'or a package path, so resolveModule refused it — teach resolveModule; (b) the ' +
+        'specifier resolved but the DECLARATION is re-exported (`export ... from`), which ' +
+        'importMap does not parse because it reads `import ... from` only — teach importMap, ' +
+        'NOT resolveModule, which already succeeded; (c) the declaration is not a ' +
+        'const/let/var (a function, type, interface, class or enum) — teach ' +
+        'findDefinitionText. In every case, fix the READER; do not exempt the procedure and ' +
+        'do not add the name to a suppression set.'
     ).toEqual([]);
 
     expect(
@@ -2309,6 +2547,48 @@ describe('no unguarded block-bridge token verification', () => {
       '`bridge ${authorizeBlockBridgeToken(input.blockToken)} done`'
     );
     expect(procsReachingGuard(interpolated)).toEqual(['evilProc']);
+  });
+
+  it('POSITIVE CONTROL — a commented-out guard call is stripped BETWEEN CHAINED CALLS too', () => {
+    // 🔴 THE POSITION WAS THE WHOLE BUG, AND IT WAS LIVE. `scanTrivia` recursed with
+    // `forEachChild`, which visits NODES and skips pure tokens — so a comment whose next token
+    // is the `.` joining two links of a call chain was leading trivia of nothing the walk asked
+    // about, and survived normalisation. That is clawgate #589 finding (2) — a guard call
+    // satisfied by a COMMENT — reopened one position further out, and the comparison below is
+    // what makes it unarguable: the identical comment inside the `.mutation` body was stripped
+    // correctly the whole time. On the real router, 18 of 157 block-comment openers survived.
+    const chained = (comment: string) =>
+      [
+        'export const r = router({',
+        '  evasiveProc: publicProcedure',
+        '    .input(z.object({ blockToken: z.string().min(1) }))',
+        `    ${comment}`,
+        '    .mutation(async ({ input }) => input.blockToken.length),',
+        '});',
+      ].join('\n');
+
+    for (const comment of [
+      '/* await authorizeBlockBridgeToken(input.blockToken) */',
+      '// await authorizeBlockBridgeToken(input.blockToken)',
+    ]) {
+      const source = chained(comment);
+      // It IS in the population — it takes a blockToken — which is what makes the next
+      // assertion the one that matters.
+      expect(bridgeInputProcs(ROUTER, source).procs).toEqual(['evasiveProc']);
+      expect(
+        procsReachingGuard(source),
+        `${comment}\nA guard call written in a COMMENT between two chained calls is not a ` +
+          'guard call. Returning the procedure here means a proc that verifies nothing reads ' +
+          'as reaching the guard — the exact shape this normaliser exists to close.'
+      ).toEqual([]);
+    }
+
+    // The mirror image, so the fix is not "blank everything in that position": a REAL guard
+    // CALL between the chained links still counts. Note it must be a call — `GUARD_CALL_RE`
+    // requires the `(`, so passing the guard by REFERENCE (`withAudit(authorizeBlockBridgeToken)`)
+    // correctly counts for nothing, which is how this fixture was wrong on its first draft.
+    const real = chained('.use(authorizeBlockBridgeToken(ctx))');
+    expect(procsReachingGuard(real)).toEqual(['evasiveProc']);
   });
 
   it('POSITIVE CONTROL — a regex literal does not desync the normaliser', () => {
