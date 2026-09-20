@@ -1020,11 +1020,7 @@ describe('customComfy settle-caller ledger (clawgate #572, option 1)', () => {
     const sf = parse(SETTLE_MODULE, source);
     let record: string | null = null;
     const visit = (node: ts.Node): void => {
-      if (
-        ts.isFunctionDeclaration(node) &&
-        node.name?.text === SETTLE_EXPORT &&
-        record == null
-      ) {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === SETTLE_EXPORT && record == null) {
         const ranges = ts.getLeadingCommentRanges(source, node.getFullStart()) ?? [];
         record = ranges.map((r) => source.slice(r.pos, r.end)).join('\n');
       }
