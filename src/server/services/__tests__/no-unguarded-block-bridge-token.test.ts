@@ -127,6 +127,14 @@ const ROUTER = 'src/server/routers/blocks.router.ts';
 const GUARD = 'src/server/services/blocks/block-bridge-auth.service.ts';
 /** The shared row-lookup + `approved` comparison both halves of the runtime resolve through. */
 const APPROVAL_PREDICATE = 'src/server/services/blocks/block-approval.service.ts';
+/**
+ * Reached by the schema walk, and — measured on the committed router — the one place in the
+ * real corpus where it hits a reference it cannot read BELOW depth 0:
+ * `import { TokenScope } from './token-scope.constants'`, a RELATIVE specifier
+ * `resolveModule` refuses by design. Named once so `NESTED_UNREADABLE_LEDGER` and the control
+ * that exercises it cannot drift to two spellings of the same path.
+ */
+const BLOCK_SCOPE_CONSTANTS = 'src/shared/constants/block-scope.constants.ts';
 
 /**
  * The bridge call sites, by owning procedure. `authorizeBlockBuzzRead` is the router's
@@ -377,9 +385,18 @@ const LITERAL_SENTINEL = '\u0000';
  *     isolation is not a comment to a parser any more than it is to a reader — there is no
  *     `/**` open above it — so every comment fixture below is a whole block. One caller
  *     feeds it a fragment ON PURPOSE: `schemaIdentifiers` hands it a single `.input(...)`
- *     argument, which is a complete EXPRESSION and parses as one. The tell that this stays
- *     true is `unresolved` being empty against the real router, asserted below; a fragment
- *     the parser could not make sense of would fill it with word-shaped noise.
+ *     argument, which is a complete EXPRESSION and parses as one.
+ *     🔴 `unresolved` IS NOT THE TELL FOR THAT, AND THE CLAIM THAT IT WAS POINTED THE WRONG
+ *     WAY. An earlier draft here said a fragment the parser could not make sense of would
+ *     fill `unresolved` with word-shaped noise. That is the UNDER-strip direction only —
+ *     trivia leaking out as code — and it is real. The OVER-strip direction is the mirror
+ *     image and `unresolved` is structurally blind to it: over-stripping REMOVES candidates,
+ *     so it produces an EMPTY `unresolved`, which is exactly what every assertion in this
+ *     file expects to see. MEASURED: with `stripNonCode` over-stripping — a comment blanking
+ *     the remainder of its own line — the whole suite stayed GREEN at 32/32. What covers it
+ *     is a control that requires real code to SURVIVE, which is
+ *     `an annotated argument KEEPS its schema identifier` below; `unresolved` being empty
+ *     against the real router is evidence about under-stripping and nothing else.
  *   - `ts.createSourceFile` is error-TOLERANT: a syntactically invalid module still yields a
  *     tree, and the ranges recovered from it are whatever the parser made of the wreckage.
  *     Every file these suites read also has to compile, so this is not load-bearing here.
@@ -888,7 +905,10 @@ const NON_SCHEMA_WORDS = new Set([...RESERVED_WORDS, ...MODULE_EXEMPTIONS]);
  * `.input(makeInput())`, and any schema behind a relative-path or package import.
  *
  * What is dropped, and why each is not a schema reference:
- *   - a member NAME (`.extend`, `.object`, `.min`) — the thing being called ON a schema;
+ *   - a member NAME (`.extend`, `.object`, `.min`) — the thing being called ON a schema.
+ *     🔴 A SPREAD's OPERAND IS NOT ONE, and treating it as one was a live fail-open: the
+ *     member rule is "preceded by a dot", and `...someInput` puts an identifier directly
+ *     after a dot. See the lookbehind's own comment in the body;
  *   - an object KEY (`blockToken:`, `page:`) — a field name;
  *   - a parameter bound INSIDE the argument (`.refine((v) => !!v.slug)`) — `v` is local;
  *   - a keyword or literal (`z.boolean().default(true)`);
@@ -924,9 +944,36 @@ function schemaIdentifiers(arg: string): string[] {
   }
 
   const out = new Set<string>();
-  // `(\.\s*)?` — preceded by a dot, so a member name. `(\s*:)?` — followed by a colon, so
-  // an object key. Either match disqualifies the token.
-  const re = /(\.\s*)?\b([A-Za-z_$][A-Za-z0-9_$]*)\b(\s*:)?/g;
+  // `((?<!\.\.)\.\s*)?` — preceded by a single dot, so a member name. `(\s*:)?` — followed by
+  // a colon, so an object key. Either match disqualifies the token.
+  //
+  // 🔴 `(?<!\.\.)` ON THE DOT GROUP ONLY, AND THAT PLACEMENT IS THE WHOLE FIX. A SPREAD's
+  // third dot is a dot immediately preceding an identifier, so the member-name rule matched it
+  // and dropped the OPERAND. `.input(z.object({ ...someInput.shape, page: z.number() }))`
+  // yielded NO identifiers at all, so the procedure left the population with `procs: []` AND
+  // `unresolved: []` — verbatim the merged outcome this file's header forbids. MEASURED by
+  // adding exactly that procedure, unguarded, to the router: the whole suite passed 32/32.
+  //
+  // ⚠️ BE EXACT ABOUT WHAT WAS LIVE, because the strong reading is wrong. The SHAPE was live on
+  // two procedures — `previewPostFromApp` and `createPostFromApp` both spread
+  // `blockPostPayloadShape` into their `.input()` argument — so the drop was exercised against
+  // the real corpus rather than only against a synthetic. But NEITHER procedure ever left the
+  // population: each also spells a literal `blockToken:` in the same `z.object({…})`, and that
+  // literal test short-circuits before identifier resolution is reached. So what was live is
+  // the silent drop of the operand, with nothing in `unresolved` to say so; the vanishing
+  // procedure was reachable, not reached. Measured after this fix, `blockPostPayloadShape`
+  // resolves and carries no `blockToken` (verdict `false`), and the population is 17 either
+  // way — this change moves no committed expected value.
+  //
+  // `spreadUnknown` in `UNREADABLE` below is the control, and
+  // `a spread operand is a schema reference, not a member name` pins the operand surviving.
+  //
+  // The lookbehind must sit INSIDE the optional group, not in front of the whole pattern. In
+  // front, it also rejects the position of the identifier itself — for `...foo`, the two
+  // characters before `foo` are `..`, so a leading `(?<!\.\.)` drops `foo` as well and the
+  // fix reads as working while changing nothing. Inside, it only ever refuses to CONSUME a
+  // spread's dot, which is what leaves the operand to be matched on the next position.
+  const re = /((?<!\.\.)\.\s*)?\b([A-Za-z_$][A-Za-z0-9_$]*)\b(\s*:)?/g;
   for (let m = re.exec(code); m; m = re.exec(code)) {
     if (m[1] || m[3]) continue;
     const ident = m[2];
@@ -999,25 +1046,83 @@ function findDefinitionText(file: string, ident: string): string | null {
 }
 
 /**
+ * 🔴 THE NESTED-UNREADABLE LEDGER — the references the schema walk CANNOT read and does not
+ * treat as a failure, enumerated so the swallow is loud instead of silent.
+ *
+ * `schemaCarriesBlockToken` returns `null` for a reference it cannot resolve. At DEPTH 0 that
+ * null reaches `unresolved`, which is asserted empty — the loud path. Deeper in the descent it
+ * used to be DISCARDED: the candidate loop kept only a `true`, so a `null` from a nested
+ * reference was indistinguishable from a `false`, and the branch was scored "no token here"
+ * without anybody reading it. Two docstrings claimed coverage that was only ever depth-0.
+ *
+ * Rather than force those nulls into `unresolved` — which would need `resolveModule` taught
+ * about relative paths AND `definitionText` taught about `enum`/`type` declarations, both
+ * changes to the walk's reach rather than to its reporting — they are ledgered here and
+ * compared as a SET, failing in BOTH directions like `GUARD_CALL_SITE_LEDGER` does. A new
+ * unreadable nested reference fails this test and gets looked at by whoever introduced it;
+ * one disappearing fails it too, so the ledger cannot quietly stop meaning anything.
+ *
+ * THE SINGLE LIVE ENTRY, and why it is unreadable — stated exactly, because a looser reading
+ * of it is wrong in the reassuring direction. `block-scope.constants.ts` does
+ * `import { TokenScope } from './token-scope.constants'`, and `resolveModule` resolves `~/`
+ * specifiers ONLY, so the relative one is refused by design. Following it would not help
+ * either: that file is a re-export shim (`export * from '@civitai/auth/token-scope'`) and the
+ * declaration is `export const TokenScope = {…}` in a workspace package this scan does not
+ * read. 🔴 NOTE WHAT THAT RULES OUT — it is a `const`, not a `type`, so the tempting argument
+ * "a type declaration can never carry a `blockToken` anyway" does NOT apply here. Whether this
+ * reference carries one is precisely the question the scan cannot answer, which is the reason
+ * it is ledgered rather than dismissed.
+ *
+ * The judgement that it does not is a HUMAN one, stated as such: `TokenScope` is an OAuth
+ * scope bitmask (`{ None: 0, UserRead: 1 << 0, … }`) rather than a zod schema, and it contains
+ * no occurrence of `blockToken`. What the ledger contributes is not that assurance — it is
+ * that the discard path is EXERCISED against the real corpus, so the limit is a measured fact
+ * instead of a paragraph.
+ */
+const NESTED_UNREADABLE_LEDGER = [
+  `${BLOCK_SCOPE_CONSTANTS}#BLOCK_SCOPE_TO_OAUTH_BIT -> #TokenScope`,
+].sort();
+
+/**
  * Does `ident`, resolved from `file`, define a `blockToken` field — following imports and
- * same-file references? Returns `null` when the definition could NOT be located, which the
- * suite treats as a failure rather than a `false`: an unresolvable schema is exactly the
- * silent hole this scan exists to not have.
+ * same-file references? Returns `null` when the definition could NOT be located.
+ *
+ * 🔴 WHAT THE CALLER DOES WITH THAT NULL DEPENDS ON DEPTH, AND THIS DOCSTRING USED TO SAY
+ * OTHERWISE. At depth 0 — the identifiers `schemaIdentifiers` hands `bridgeInputProcs` — the
+ * null reaches `unresolved` and the suite treats it as a failure, because an unresolvable
+ * schema is exactly the silent hole this scan exists to not have. DEEPER, inside the recursive
+ * descent below, it does NOT: the candidate loop can only act on a `true`, so a nested null is
+ * recorded in `unreadable` and the branch continues as if it were `false`. That recording is
+ * what makes it visible; see `NESTED_UNREADABLE_LEDGER` above for why it is a ledger rather
+ * than an `unresolved` entry.
  *
  * 🔴 DEPTH. The cap is `MAX_SCHEMA_DEPTH`, and hitting it returns `false` — i.e. "no token
  * here" for a branch nobody actually read, which is the same silent scoring `unresolved`
  * exists to prevent. So a truncation is RECORDED in `truncated` and asserted empty, rather
  * than described as a blind spot in prose.
  *
- * The previous wording here — "the real corpus resolves every `.input()` identifier within
+ * The wording before this one — "the real corpus resolves every `.input()` identifier within
  * 2" — was false, and the cap it justified was load-bearing on the committed tree, not
- * hypothetically: at a cap of 5 the walk reached depth 6 and truncated 9 calls across 7
- * identifiers (`TokenScope` and `SKIP_OAUTH_CHECK` in `block-scope.constants.ts`, five
- * spend bounds in `app-cap-limits.constants.ts`). No verdict moved — none of those carries
- * a `blockToken` and the population was 15 either way — but nothing said so out loud.
- * MEASURED: the walk terminates on its own at depth 8, with 800 resolution calls and no
- * change in wall time between a cap of 5 and a cap of 12. The cap is set to 12 for that
- * headroom, and `truncated` is what tells you when a chain outgrows it.
+ * hypothetically. RE-MEASURED 2026-09-20 on the committed router, because every figure in the
+ * paragraph this replaces had drifted:
+ *   - the walk terminates on its own at DEPTH 8. That is the number that sets the cap, and it
+ *     is the one figure here that did NOT drift.
+ *   - at a cap of 5 it truncates 10 calls across 8 identifiers: `TokenScope`,
+ *     `SKIP_OAUTH_CHECK` and `SENSITIVE_BLOCK_SCOPES` in
+ *     `src/shared/constants/block-scope.constants.ts`, plus five spend bounds in
+ *     `src/server/services/blocks/app-cap-limits.constants.ts`. The previous wording said 9
+ *     across 7 and did not list `SENSITIVE_BLOCK_SCOPES`.
+ *   - no verdict moves at either cap — none of those carries a `blockToken` — and the
+ *     population is 17 both ways. The previous wording said 15.
+ *
+ * 🔴 AND THE "800 resolution calls" FIGURE DID NOT REPRODUCE AT ANY GRANULARITY. The walk makes
+ * 120 `schemaCarriesBlockToken` invocations over 96 distinct `file#ident` pairs; the nearest
+ * larger quantities are 2,316 `definitionText` calls and 2,271 candidate-loop iterations.
+ * Nothing asserts on any of them, which is exactly how 800 survived: it read as a measurement,
+ * justified nothing, and was wrong by roughly 7x. Treat the four numbers in this sentence the
+ * same way — decoration with a date on it, not a checked fact. The cap is set to 12 for
+ * headroom over the measured depth of 8, and `truncated` is what tells you when a chain
+ * outgrows it.
  */
 const MAX_SCHEMA_DEPTH = 12;
 
@@ -1026,7 +1131,9 @@ function schemaCarriesBlockToken(
   file: string,
   seen = new Set<string>(),
   depth = 0,
-  truncated: string[] = []
+  truncated: string[] = [],
+  /** Nested references that resolved to NEITHER true nor false. See the ledger above. */
+  unreadable: string[] = []
 ): boolean | null {
   const key = `${file}#${ident}`;
   if (depth > MAX_SCHEMA_DEPTH) {
@@ -1042,7 +1149,17 @@ function schemaCarriesBlockToken(
     if (!imported) return null;
     const target = resolveModule(imported.spec);
     if (!target) return null;
-    return schemaCarriesBlockToken(imported.imported, target, seen, depth + 1, truncated);
+    // A null from here propagates to THIS call's own caller, which records it if that caller
+    // is the candidate loop below, or surfaces it in `unresolved` if it is depth 0. So it is
+    // deliberately not recorded twice.
+    return schemaCarriesBlockToken(
+      imported.imported,
+      target,
+      seen,
+      depth + 1,
+      truncated,
+      unreadable
+    );
   }
 
   if (/\bblockToken\b/.test(def)) return true;
@@ -1051,7 +1168,12 @@ function schemaCarriesBlockToken(
   for (const other of new Set(def.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? [])) {
     if (other === ident) continue;
     if (definitionText(file, other) == null && !localImports.has(other)) continue;
-    if (schemaCarriesBlockToken(other, file, seen, depth + 1, truncated) === true) return true;
+    const nested = schemaCarriesBlockToken(other, file, seen, depth + 1, truncated, unreadable);
+    // 🔴 A NULL IS NOT A FALSE, AND CONTINUING AS IF IT WERE IS WHAT USED TO BE SILENT. The
+    // loop can only act on a `true`, so the branch does carry on either way — but the null is
+    // RECORDED first, which is the difference between a stated limit and a hidden one.
+    if (nested === null) unreadable.push(`${key} -> #${other}`);
+    if (nested === true) return true;
   }
   return false;
 }
@@ -1062,6 +1184,17 @@ function schemaCarriesBlockToken(
  * schema we cannot read is indistinguishable from a schema with no `blockToken` in it, and
  * silently scoring it as "not a bridge proc" is how a population check quietly stops
  * covering things.
+ *
+ * 🔴 `unresolved` IS DEPTH-0 ONLY, AND THIS DOCSTRING USED TO READ AS THOUGH IT WERE THE WHOLE
+ * WALK. It carries the identifiers `schemaIdentifiers` returned for an argument — the top of
+ * each chain. A reference the walk could not read DEEPER than that never reached here: the
+ * recursive descent could act only on a `true`, so a nested `null` was scored as `false` and
+ * `unresolved` stayed empty. `const wrapperInput = packageBridgeInput.extend({…})`, with the
+ * inner identifier behind an `@civitai/*` or relative import, is the shape — it resolved to
+ * "no token here". Those nulls now arrive in `unreadableNested` and are compared against
+ * `NESTED_UNREADABLE_LEDGER`. The test named
+ * "depth-0 nulls reach unresolved, deeper ones reach the nested ledger" pins both halves, so
+ * neither claim can rot into the other.
  *
  * 🔴 THE RULE IS NOW THE ARGUMENT'S SCHEMA POSITIONS, NOT ITS SHAPE. Every identifier
  * `schemaIdentifiers` returns has to resolve, whatever the argument looks like around it.
@@ -1078,10 +1211,11 @@ function schemaCarriesBlockToken(
 function bridgeInputProcs(
   routerFile: string,
   source: string
-): { procs: string[]; unresolved: string[]; truncated: string[] } {
+): { procs: string[]; unresolved: string[]; truncated: string[]; unreadableNested: string[] } {
   const procs: string[] = [];
   const unresolved: string[] = [];
   const truncated: string[] = [];
+  const unreadableNested: string[] = [];
 
   for (const chunk of chunks(source)) {
     if (chunk.kind !== 'proc') continue;
@@ -1100,7 +1234,14 @@ function bridgeInputProcs(
     }
     let carries = false;
     for (const ident of schemaIdentifiers(arg)) {
-      const verdict = schemaCarriesBlockToken(ident, routerFile, new Set(), 0, truncated);
+      const verdict = schemaCarriesBlockToken(
+        ident,
+        routerFile,
+        new Set(),
+        0,
+        truncated,
+        unreadableNested
+      );
       if (verdict === true) {
         carries = true;
         break;
@@ -1109,7 +1250,14 @@ function bridgeInputProcs(
     }
     if (carries) procs.push(chunk.name);
   }
-  return { procs: procs.sort(), unresolved, truncated };
+  // Deduped and sorted: the same nested reference is reachable from several top-level
+  // identifiers, and the ledger is a SET of what the walk cannot read, not a visit count.
+  return {
+    procs: procs.sort(),
+    unresolved,
+    truncated,
+    unreadableNested: [...new Set(unreadableNested)].sort(),
+  };
 }
 
 /**
@@ -1149,6 +1297,25 @@ function guardedHelpers(source: string): Set<string> {
     }
   }
   return reached;
+}
+
+/**
+ * Procedure chunks that lost their tRPC terminator, i.e. were CUT SHORT by a line starting in
+ * column zero inside the procedure body. Every tRPC procedure ends in one of the three
+ * terminators, so their absence is a cheap structural proof that a chunk did not survive.
+ *
+ * 🔴 ONE PREDICATE, ONE PLACE, AND THAT IS LOAD-BEARING HERE. Two callers ask this question —
+ * `keeps every proc chunk intact` over the real router, where the answer must be empty, and
+ * `a chunk cut short by a column-zero line is CAUGHT` over synthetics, where it must not be.
+ * Open-coding it at both sites would leave the control testing a COPY of the guard: the copy
+ * could go red on a mutation the real assertion sails through, which is precisely the
+ * reassurance a control is supposed to make impossible.
+ */
+function cutProcChunks(source: string): string[] {
+  return chunks(source)
+    .filter((c) => c.kind === 'proc')
+    .filter((c) => countCalls(PROC_TERMINATOR_RE, c.code) === 0)
+    .map((c) => c.name);
 }
 
 /** Procedures in `source` that reach `authorizeBlockBridgeToken`, directly or via a helper. */
@@ -1255,6 +1422,16 @@ describe('the bridge scan can actually see what it claims to', () => {
    * `mysteryBridgeInput` / `otherInput` / `makeBridgeInput` are resolved against the REAL
    * router, which neither declares nor imports them — the same position a schema behind an
    * `@civitai/*` package or a relative path is in.
+   *
+   * 🔴 `spreadUnknown` AND `bareSpreadUnknown` ARE THE FIFTH AND SIXTH SHAPES, AND THEY WERE
+   * MISSING WHILE THE LIST READ AS EXHAUSTIVE. `schemaIdentifiers`' member-name rule is
+   * "preceded by a dot", and a SPREAD's third dot is a dot immediately preceding an identifier
+   * — so the operand was dropped and the procedure left the population with `procs: []` AND
+   * `unresolved: []`. Both forms are here because a `.shape`-shaped search sees only the first:
+   * the router's own two live spreads are of a BARE identifier (`...blockPostPayloadShape`).
+   * Neither of those two procedures was actually scored as tokenless — each also spells a
+   * literal `blockToken:`, which short-circuits first — so what was live was the silent drop,
+   * not a vanished procedure. See the lookbehind's comment in `schemaIdentifiers`.
    */
   const UNREADABLE = [
     'export const r = router({',
@@ -1270,6 +1447,12 @@ describe('the bridge scan can actually see what it claims to', () => {
     '  factoryUnknown: publicProcedure',
     '    .input(makeBridgeInput())',
     '    .mutation(async () => 1),',
+    '  spreadUnknown: publicProcedure',
+    '    .input(z.object({ ...mysteryBridgeInput.shape, page: z.number().optional() }))',
+    '    .mutation(async () => 1),',
+    '  bareSpreadUnknown: publicProcedure',
+    '    .input(z.object({ ...otherInput, page: z.number().optional() }))',
+    '    .mutation(async () => 1),',
     '});',
   ].join('\n');
 
@@ -1280,14 +1463,54 @@ describe('the bridge scan can actually see what it claims to', () => {
     // this scan cannot read must not quietly leave the population.
     expect(procs).toEqual([]);
     expect([...unresolved].sort()).toEqual([
+      'bareSpreadUnknown -> otherInput',
       'bareUnknown -> mysteryBridgeInput',
       'extendedUnknown -> mysteryBridgeInput',
       'factoryUnknown -> makeBridgeInput',
       'mergedUnknown -> mysteryBridgeInput',
       'mergedUnknown -> otherInput',
+      'spreadUnknown -> mysteryBridgeInput',
     ]);
-    // Report the pair, never the zero alone: 5 here, 0 against the real router below.
+    // Report the pair, never the zero alone: 7 here, 0 against the real router below.
     expect(unresolved.length).toBeGreaterThan(0);
+  });
+
+  it('a spread operand is a schema reference, not a member name', () => {
+    // 🔴 THE REGRESSION PIN FOR THE `(?<!\.\.)` LOOKBEHIND. Without it the member-name rule
+    // ("preceded by a dot") swallowed a spread's third dot and dropped the OPERAND, so a
+    // token-carrying schema left the population with BOTH ledgers silent. This asserts the
+    // operand survives while the member name after it is still dropped — the two halves have
+    // to hold together, or a regex that simply stopped dropping member names would pass.
+    expect(
+      schemaIdentifiers('z.object({ ...getMyBuzzAccountsInput.shape, page: z.number() })')
+    ).toEqual(['getMyBuzzAccountsInput']);
+    // The bare-identifier spread form, which a `.shape`-shaped search does not see and which
+    // is the form the real router uses.
+    expect(
+      schemaIdentifiers('z.object({ blockToken: z.string().min(1), ...blockPostPayloadShape })')
+    ).toEqual(['blockPostPayloadShape']);
+    // The member-name rule still holds either side of the change: `extend` is dropped, the
+    // receiver is not. A lookbehind placed in front of the WHOLE pattern instead of inside
+    // the dot group drops the operand too — this pair is what separates the two placements.
+    expect(schemaIdentifiers('getMyBuzzAccountsInput.extend({ page: z.number() })')).toEqual([
+      'getMyBuzzAccountsInput',
+    ]);
+    // …and end to end: the procedure is scored as carrying the token it carries.
+    const spread = [
+      'export const r = router({',
+      '  spreadProc: publicProcedure',
+      '    .input(z.object({ ...getMyBuzzAccountsInput.shape, page: z.number() }))',
+      '    .mutation(async ({ input }) => authorizeBlockBridgeToken(input.blockToken)),',
+      '});',
+    ].join('\n');
+    const { procs, unresolved } = bridgeInputProcs(ROUTER, spread);
+    expect(
+      procs,
+      'A spread operand resolving to a schema that carries a blockToken must put its ' +
+        'procedure IN the population. Empty here means the operand was dropped as a member ' +
+        'name — and with `unresolved` empty too, that is the merged outcome this file forbids.'
+    ).toEqual(['spreadProc']);
+    expect(unresolved).toEqual([]);
   });
 
   it('NEGATIVE CONTROL — prose and field names inside an inline z.object are NOT schema identifiers', () => {
@@ -1304,6 +1527,65 @@ describe('the bridge scan can actually see what it claims to', () => {
       '  .refine((v) => !!v.page, { message: `page is required` })',
     ].join('\n');
     expect(schemaIdentifiers(arg)).toEqual([]);
+  });
+
+  it('POSITIVE CONTROL — an annotated argument KEEPS its schema identifier (the OVER-strip direction)', () => {
+    // 🔴 THE DIRECTION NOTHING HERE COVERED, AND THE ONE THE DOCSTRING GOT BACKWARDS. Every
+    // other normaliser control asks whether trivia can IMPERSONATE code (under-strip). This
+    // asks the mirror question — can real code be REMOVED with it — and `unresolved` cannot
+    // answer that one: over-stripping deletes candidates, so it yields an EMPTY `unresolved`,
+    // which is what every assertion in this file already expects. The two shapes that used to
+    // stand in for this both pass under ANY amount of over-stripping: the inline-`z.object`
+    // control asserts `schemaIdentifiers(arg)` is `[]`, and `UNREADABLE` carries no comment
+    // and no string, so it never exercises the removal at all.
+    //
+    // MEASURED before this control existed: over-stripping `stripNonCode` so that a comment
+    // blanks the remainder of its own line left the suite GREEN at 32 passed / 32.
+    //
+    // The fixture carries all three things at once — a comment, a string, and an imported
+    // identifier — and the comment and the string each name a DIFFERENT schema-shaped word, so
+    // one assertion pins both directions: the code identifier must survive, and neither
+    // trivia word may appear beside it.
+    const arg = [
+      '/* minted into commentOnlySchema by mintBlockToken (see notes */ mysteryBridgeInput.extend({',
+      "  page: z.number().describe('aka stringOnlySchema (1-based'),",
+      '})',
+    ].join('\n');
+    expect(
+      schemaIdentifiers(arg),
+      'The schema identifier must SURVIVE normalisation while the comment’s and the ' +
+        'string’s own words must not appear. An empty array here is the over-strip ' +
+        'failure: the identifier was removed with the trivia, so its procedure leaves the ' +
+        'population with `procs` AND `unresolved` both silent.'
+    ).toEqual(['mysteryBridgeInput']);
+
+    // The same claim on the normaliser directly, so a failure above is attributable.
+    const code = stripNonCode('/* commentOnlySchema */ mysteryBridgeInput.extend({})');
+    expect(code, 'code sharing a line with a comment must survive').toMatch(
+      /\bmysteryBridgeInput\b/
+    );
+    expect(code, 'a comment’s words must not survive').not.toMatch(/\bcommentOnlySchema\b/);
+
+    // …and end to end through the population scan: the identifier has to REACH `unresolved`
+    // rather than be dropped. This is the assertion an over-strip turns into an empty list.
+    const annotated = [
+      'export const r = router({',
+      '  annotatedProc: publicProcedure',
+      '    .input(',
+      '      /* minted into commentOnlySchema (see notes */ mysteryBridgeInput.extend({',
+      "        page: z.number().describe('aka stringOnlySchema (1-based'),",
+      '      })',
+      '    )',
+      '    .mutation(async () => 1),',
+      '});',
+    ].join('\n');
+    const { procs, unresolved } = bridgeInputProcs(ROUTER, annotated);
+    expect(procs).toEqual([]);
+    expect(
+      unresolved,
+      'An annotated argument’s unreadable schema must still be REPORTED. Empty here ' +
+        'means the identifier was over-stripped away before it could be resolved.'
+    ).toEqual(['annotatedProc -> mysteryBridgeInput']);
   });
 
   it('the identifier exemption set is exactly the zod namespace', () => {
@@ -1398,6 +1680,53 @@ describe('the bridge scan can actually see what it claims to', () => {
     // resolver that answered `true` for everything would satisfy the three above.
     expect(schemaCarriesBlockToken('getAppDetailSchema', ROUTER)).toBe(false);
   });
+
+  it('depth-0 nulls reach `unresolved`, deeper ones reach the nested ledger', () => {
+    // 🔴 THIS PINS AN ASYMMETRY, AND HALF OF IT IS A GAP RATHER THAN A GUARANTEE — the same
+    // reason `the object-key rule drops a ternary branch` is asserted below. Two docstrings
+    // used to describe `unresolved` as though it covered the whole walk; it covers the TOP of
+    // each chain. Asserting both halves means neither claim can rot into the other, and the
+    // day the descent learns to report a nested null as `unresolved`, this test goes red and
+    // points at the prose that has to stop saying otherwise.
+    //
+    // (a) DEPTH 0 — an identifier `schemaIdentifiers` returned, unreadable, IS reported.
+    const wrapper = [
+      'export const r = router({',
+      '  wrapped: publicProcedure',
+      '    .input(wrapperInput.extend({ page: z.number() }))',
+      '    .mutation(async () => 1),',
+      '});',
+    ].join('\n');
+    const depth0 = bridgeInputProcs(ROUTER, wrapper);
+    expect(depth0.procs).toEqual([]);
+    expect(depth0.unresolved).toEqual(['wrapped -> wrapperInput']);
+    expect(depth0.unreadableNested).toEqual([]);
+
+    // (b) DEEPER — a reference the walk cannot read is still scored `false`, i.e. "no token
+    // here", but it is RECORDED rather than discarded. Taken from the real corpus because
+    // that is where the shape lives: `definitionText` finds the outer const, and its body
+    // references an identifier imported by a RELATIVE specifier that `resolveModule` refuses.
+    const unreadable: string[] = [];
+    const verdict = schemaCarriesBlockToken(
+      'BLOCK_SCOPE_TO_OAUTH_BIT',
+      BLOCK_SCOPE_CONSTANTS,
+      new Set(),
+      0,
+      [],
+      unreadable
+    );
+    expect(
+      verdict,
+      'The nested null is still scored as `false`. That is the OPEN limit this test pins: ' +
+        'change it to report and the docstrings on schemaCarriesBlockToken and ' +
+        'bridgeInputProcs both have to stop saying coverage is depth-0.'
+    ).toBe(false);
+    expect(
+      unreadable,
+      'A nested reference the walk could not read must be RECORDED. Empty here means the ' +
+        'null was discarded again, which is the silent scoring this ledger exists to end.'
+    ).toEqual([`${BLOCK_SCOPE_CONSTANTS}#BLOCK_SCOPE_TO_OAUTH_BIT -> #TokenScope`]);
+  });
 });
 
 describe('no unguarded block-bridge token verification', () => {
@@ -1420,7 +1749,22 @@ describe('no unguarded block-bridge token verification', () => {
   });
 
   it('ledgers every procedure that TAKES a block token — the population, not the call sites', () => {
-    const { procs, unresolved, truncated } = bridgeInputProcs(ROUTER, read(ROUTER));
+    const { procs, unresolved, truncated, unreadableNested } = bridgeInputProcs(
+      ROUTER,
+      read(ROUTER)
+    );
+
+    expect(
+      unreadableNested,
+      'The set of references the schema walk cannot read BELOW depth 0 changed. Each one is ' +
+        'scored as carrying no blockToken without anybody having read it, so the set is ' +
+        'ledgered in NESTED_UNREADABLE_LEDGER and compared in both directions. If you ADDED ' +
+        'one, note that this scan CANNOT tell you whether it carries a blockToken — that is ' +
+        'what unreadable means — so go and read the declaration yourself before ledgering ' +
+        'it. If one DISAPPEARED the walk got wider, which is good: drop it from the ledger. ' +
+        'Do NOT widen the ledger to silence a reference you have not read: teach ' +
+        'resolveModule or definitionText to reach it instead.'
+    ).toEqual(NESTED_UNREADABLE_LEDGER);
 
     expect(
       unresolved,
@@ -1477,9 +1821,8 @@ describe('no unguarded block-bridge token verification', () => {
     // red. Every tRPC procedure ends in one of these three terminators, so their presence
     // is a cheap structural proof that no chunk was cut.
     const procChunks = chunks(read(ROUTER)).filter((c) => c.kind === 'proc');
-    const truncated = procChunks
-      .filter((c) => countCalls(PROC_TERMINATOR_RE, c.code) === 0)
-      .map((c) => c.name);
+    // The SAME predicate the synthetic control below exercises — see `cutProcChunks`.
+    const truncated = cutProcChunks(read(ROUTER));
 
     expect(
       truncated,
@@ -1490,6 +1833,84 @@ describe('no unguarded block-bridge token verification', () => {
     ).toEqual([]);
     // Positive control on the same read: the scan found procedures at all.
     expect(procChunks.length).toBeGreaterThan(50);
+  });
+
+  /**
+   * 🔴 THE COMMITTED CONTROL FOR THE ASSERTION ABOVE, WHICH HAD NONE. `> 50` against 75 is a
+   * real positive control for the COUNT — it proves the scan found procedures at all — but it
+   * says nothing about the FAILURE MODE, and a guard nobody has watched fail is a claim about
+   * its own regex. The truncation had been reproduced by hand and the result written into a
+   * review; that is not a test, and a review does not run again next week.
+   *
+   * WHY A SYNTHETIC AND NOT THE REAL ROUTER. The real router is 75 of 75 intact, which is the
+   * whole point of the assertion above — so the only way to exercise the red path is to build
+   * the cut. Both shapes are built here because they harm the population differently and only
+   * one of them leaves any other trace:
+   *
+   *   (a) the cut lands BEFORE `.input(` — `inputArg` finds no `.input(` at all, the caller
+   *       `continue`s, and the procedure leaves the population with `procs` AND `unresolved`
+   *       BOTH EMPTY. Nothing else in this file can see that. It is the merged outcome the
+   *       header forbids, and the terminator count is the only witness.
+   *   (b) the cut lands INSIDE `.input(` — the argument no longer closes, so this one also
+   *       surfaces as an `<unbalanced .input( argument>`. Asserted too, so the two shapes
+   *       cannot be confused for one another.
+   *
+   * The cutting line is a column-zero continuation of a multi-line template literal, which is
+   * legal TypeScript and formats exactly this way — `chunks` ends a chunk at the next
+   * column-zero letter or `}`, which is the router's formatting rather than a brace count.
+   */
+  it('POSITIVE CONTROL — a chunk cut short by a column-zero line is CAUGHT, not silently dropped', () => {
+    // (a) cut BEFORE `.input(` — the silent case.
+    const cutBeforeInput = [
+      'export const r = router({',
+      '  cutProc: publicProcedure',
+      '    .use(withAudit(`audit note line one',
+      'column-zero continuation`))',
+      '    .input(z.object({ blockToken: z.string().min(1) }))',
+      '    .mutation(async ({ input }) => authorizeBlockBridgeToken(input.blockToken)),',
+      '  intactProc: publicProcedure.query(async () => 1),',
+      '});',
+    ].join('\n');
+    expect(
+      cutProcChunks(cutBeforeInput),
+      'A procedure chunk cut before its terminator must be REPORTED. Empty here means the ' +
+        'assertion above would stay green while a bridge procedure left the population.'
+    ).toEqual(['cutProc']);
+    // …and the harm it is standing in for: the population is silent in BOTH directions.
+    const harmed = bridgeInputProcs(ROUTER, cutBeforeInput);
+    expect(harmed.procs).toEqual([]);
+    expect(harmed.unresolved).toEqual([]);
+
+    // (b) cut INSIDE `.input(` — caught here AND by the unbalanced-argument report.
+    const cutInsideInput = [
+      'export const r = router({',
+      '  cutProc: publicProcedure',
+      '    .input(z.object({ blockToken: z.string().describe(`note line one',
+      'column-zero continuation`) }))',
+      '    .mutation(async ({ input }) => authorizeBlockBridgeToken(input.blockToken)),',
+      '  intactProc: publicProcedure.query(async () => 1),',
+      '});',
+    ].join('\n');
+    expect(cutProcChunks(cutInsideInput)).toEqual(['cutProc']);
+    expect(bridgeInputProcs(ROUTER, cutInsideInput).unresolved).toEqual([
+      'cutProc -> <unbalanced .input( argument>',
+    ]);
+
+    // 🔴 THE NEGATIVE CONTROL, without which the two positives above are satisfied by a
+    // predicate that flags every chunk. The SAME sources with the template moved to an
+    // indented continuation — the only difference — must yield NOTHING, and `intactProc` must
+    // be absent from every list above rather than merely unmentioned.
+    const notCut = cutBeforeInput.replace(
+      '\ncolumn-zero continuation`))',
+      '\n      indented continuation`))'
+    );
+    expect(notCut).not.toEqual(cutBeforeInput);
+    expect(
+      cutProcChunks(notCut),
+      'Indenting the continuation is the only change, so a non-empty list here means the ' +
+        'predicate flags intact chunks and the positives above prove nothing.'
+    ).toEqual([]);
+    expect(bridgeInputProcs(ROUTER, notCut).procs).toEqual(['cutProc']);
   });
 
   /**
@@ -1942,9 +2363,20 @@ describe('no unguarded block-bridge token verification', () => {
     // either check is correct — it only catches one dropped wholesale while everything
     // still type-checks.
     //
-    // What actually pins the behaviour is `blocks.router.bridgeTokenGuard.test.ts` (a
-    // different vitest project, which is why this cheap presence check exists at all). If
-    // you are tempted to read this test as coverage, read that file instead.
+    // What actually pins the behaviour is
+    // `src/server/routers/__tests__/blocks.router.bridgeTokenGuard.test.ts`. If you are
+    // tempted to read this test as coverage, read that file instead.
+    //
+    // 🔴 IT IS NOT "A DIFFERENT VITEST PROJECT", AND THAT CLAIM WAS THE STATED REASON THIS
+    // CHEAP CHECK EXISTS — so a reader deciding whether to delete it was deciding on a false
+    // premise. Project `unit` includes `src/**/*.test.ts` (`vitest.config.mts`), which BOTH
+    // files match; measured, `--project unit` over the two of them collects both in one run.
+    // The real reason to keep a spelling check beside a behavioural one is that they fail on
+    // DIFFERENT things: that file EXECUTES the guard, so it goes red when the behaviour
+    // changes and stays green when a check is rewritten into something equivalent; this one
+    // only READS the text, so it goes red when a check is dropped wholesale even if no test
+    // happened to exercise the path it covered. Neither subsumes the other, and the split is
+    // about what each can SEE — not about when either runs.
     // 🔴 NORMALISED, on EVERY assertion in this test — see `codeWithLiterals`. These used to
     // read the WHOLE file, which is satisfiable by prose: this very file's docblocks name
     // both `BlockRevocation.isRevoked` and `resolveAppBlockApprovalVerdict`. Identifier
@@ -2024,8 +2456,9 @@ describe('no unguarded block-bridge token verification', () => {
    * ⚠️ WHAT THIS CAN SEE: that the guard file does not name the REST policy helper. It is
    * a spelling check like the one above and inherits every limit of one. The BEHAVIOUR it
    * protects — `NOT_FOUND` on a missing row — is pinned in
-   * `blocks.router.bridgeTokenGuard.test.ts`, which is the file to change if this ever
-   * becomes a decision rather than an accident.
+   * `src/server/routers/__tests__/blocks.router.bridgeTokenGuard.test.ts`, which is the file
+   * to change if this ever becomes a decision rather than an accident. (Same vitest project
+   * as this one — see the note on `still SPELLS the two checks the guard exists for`.)
    */
   it('does NOT route the bridge through the REST policy wrapper — the two differ on a missing row', () => {
     // Normalised for the same reason as `only in PROSE` above: a line opening with a block
