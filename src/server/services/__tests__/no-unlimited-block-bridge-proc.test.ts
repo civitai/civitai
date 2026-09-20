@@ -219,9 +219,12 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
  *       `withdraw` are unlimited (`withdraw` is a write); its `append`, `update`, `vote`, `unvote`
  *       and `report` do carry their own bucket family.
  *
- * Stated the honest way: across every block-JWT tRPC procedure the figure is ~11 still unlimited,
- * not 1. These are named, not fixed — extending this guard across routers is a larger change than
- * #569 asked for. **Closing condition: a PR that either limits them or adds them to a ledger like
+ * Stated the honest way: across every block-JWT tRPC procedure the figure is **13 unlimited** — the
+ * 10 above, plus this file's own three (`submitWorkflow`, `listMyWorkflows`, `updateUserSettings`)
+ * — not the 1 that the `blocks.router.ts`-only view suggests. The 10 are named, not fixed;
+ * extending this guard across routers is a larger change than #569 asked for. ⚠️ Three of the 10
+ * are WRITES, and `shared.withdraw` is an unbounded `DELETE FROM shared_kv` with FK cascade, which
+ * is a materially different shape from anything this ledger covers. **Closing condition: a PR that either limits them or adds them to a ledger like
  * this one; until then this paragraph is the record that they were seen.**
  */
 
