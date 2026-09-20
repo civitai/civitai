@@ -136,10 +136,10 @@ import { describe, expect, it } from 'vitest';
  *           guards even in a file that fully satisfies the requirement, because guard
  *           collection is gated on the callee being a bare identifier. The ledger reddens
  *           that way instead.
- *     Both are fail-closed, and BOTH ARE PINNED by `the two NAMESPACE facts the header
- *     states, measured separately` — (b) with the named import present, so its zero cannot
+ *     Both are fail-closed, and BOTH ARE PINNED by `POSITIVE CONTROL — the two NAMESPACE
+ *     facts the header states, measured separately` — (b) with the named import present, so its zero cannot
  *     be (a) in disguise. A round-7 edit declared (b) false while correcting (a); it is
- *     not, and striking it deleted a live limitation from this list. It is a test now
+ *     not, and striking it deleted a live limitation from this list. (b) is a test now
  *     rather than a claim, for exactly that reason.
  *   - 🔴 THREE SHAPES STILL SCORE `conditional: false` WHILE THE GUARD MAY NOT RUN, and
  *     they are listed because the conditionality axis has now been "closed" three rounds
@@ -517,31 +517,29 @@ function isTrpcProcedure(pa: ts.PropertyAssignment): boolean {
  * its enclosing `TryStatement`). A call anywhere inside one of these is marked conditional
  * WHICHEVER CHILD it sits in.
  *
- * ⚠️ THAT OVER-MARKS EVERY CHILD SLOT THAT RUNS ON ENTERING THE STATEMENT, DELIBERATELY —
- * an `if` / `while` / `switch` condition, a `for…of` or `for…in` iterable, a classic
- * `for`'s initializer and condition, a `switch`'s first `case` expression, a `do` body, a
- * `finally` block. All fail-CLOSED false-REDs, taken because no shape in this corpus puts
- * the guard in any of them and a per-slot test is more machinery than the cases are worth.
- * Slots that do NOT qualify — a loop or branch BODY, a classic `for`'s incrementor, a
- * `do…while` CONDITION (both gated on the body completing normally) — are marked too, and
- * marking those is simply correct.
+ * ⚠️ THAT OVER-MARKS EVERY SLOT THAT IS GUARANTEED TO RUN ONCE THE STATEMENT IS ENTERED,
+ * DELIBERATELY: an `if` / `while` / `switch` condition, a `switch`'s first `case`
+ * expression, a `for…of` or `for…in` iterable, a classic `for`'s initializer and condition,
+ * a `do` body, a `finally` block (which runs on EXIT — hence "once entered", not "on
+ * entering"), and the `try` BLOCK. All fail-CLOSED false-REDs, taken because no shape in
+ * this corpus puts the guard in any of them and a per-slot test is more machinery than the
+ * cases are worth. Slots that do NOT satisfy it and are marked anyway — a `while` / `for` /
+ * `for…of` / `for…in` body, an `if`/`else` or `case` body, a classic `for`'s incrementor, a
+ * `do…while` condition (the last two reached only after an iteration, by normal completion
+ * or by `continue`) — are marked correctly, not over-marked.
  *
- * 🔴 DELIBERATELY NO COUNT. There used to be one and it rotted three times: "five" named
- * five and missed three; "eight" named eight and missed two; "ten" had the right total by
- * two errors cancelling — it included the `do…while` condition, which does not qualify (it
- * is gated exactly as the incrementor the same list excludes), and omitted the first `case`
- * expression, which does. Each revision was written to fix the previous one's count. The
- * CRITERION above is stable and checkable; a roll-call is neither, so there is no numeral
- * to re-derive. If you add a kind to the list, check the criterion, not a total.
+ * 🔴 THE `try` BLOCK IS THE ONE SLOT WHOSE MARKING IS NOT ALWAYS NOISE, and it cuts both
+ * ways: where the `catch` SWALLOWS, marking is ENFORCEMENT (that is the statement spelling
+ * `isEnforcedCall`'s docstring describes, pinned by the `swallowed` fixture in
+ * `POSITIVE CONTROL — a guard that is PRESENT but does not RUN is not 'depth 1,
+ * unconditional'`, which is the test that asserts `conditional`); where it RETHROWS it is a
+ * false-RED, as the header's limits entry records. Both entries are true, of different
+ * `try`s.
  *
- * ⚠️ The `try` BLOCK is marked and is NOT one of these false-REDs: a guard inside a `try`
- * whose `catch` swallows genuinely does not enforce, so marking it is ENFORCEMENT. That is
- * the statement spelling `isEnforcedCall`'s docstring describes, pinned by the `swallowed`
- * fixture in `a guard whose REJECTION cannot reach the caller is not 'enforced'`. (Do not
- * cite the header's rethrowing-`try` limit here, as an earlier revision did — that entry
- * says the opposite, that a RETHROWING try is noise, and so argues the try block INTO this
- * list rather than out of it. Both are true of different `try`s; the distinction is
- * whether the `catch` swallows.)
+ * 🔴 DELIBERATELY NO COUNT, AND NO REVISION HISTORY. A numeral here rotted three times in
+ * three rounds, and the paragraph recording THAT then carried a wrong figure of its own.
+ * The criterion above is the durable part; a roll-call and a changelog are not, and git
+ * holds the history. Add a kind, check the criterion.
  *
  * ⚠️ An earlier revision of THE OPENING SENTENCE asserted that a call in one of these "may
  * not run, whichever child it sits in", which is simply false — and it sat two lines above
@@ -1313,9 +1311,10 @@ export const r = router({
     // the fail-OPEN direction: a guard inside a `switch` case, any loop body, or a `catch`
     // block would have scored unconditional and satisfied `THE RELATIONSHIP`.
     //
-    // The `do` body is here too, and it is a deliberate FALSE-RED rather than a hazard: it
-    // always runs at least once. Pinning it stops the over-marking being removed by
-    // accident while the docstring still claims it.
+    // The `do` body is here too, and its marking is a deliberate FALSE-RED rather than a
+    // hazard — it runs at least once, so it is one of the slots the list's docstring says
+    // are over-marked. Pinning it stops that over-marking being removed by accident while
+    // the docstring still claims it.
     const { guards } = scanSource(
       FIXTURE_REL,
       `import { ${GUARD} } from '~/server/services/blocks/block-bridge-auth.service';
@@ -1361,6 +1360,34 @@ export const r = router({
       'inIf=true',
       'inSwitch=true',
       'inWhile=true',
+    ]);
+  });
+
+  it('POSITIVE CONTROL — the SLOT-level claims the kinds docstring makes', () => {
+    // 🔴 THE KIND-LEVEL CONTROL ABOVE PINS ONE FIXTURE PER `CONDITIONAL_STATEMENT_KINDS`
+    // ENTRY, NEVER PER SLOT. So the docstring's two genuinely new slot classifications —
+    // a `switch`'s FIRST CASE EXPRESSION qualifies (it is evaluated whenever the switch is
+    // entered, whether or not a `default` precedes it in source order), while a classic
+    // `for`'s INCREMENTOR does not (reached only after an iteration) — were prose in a
+    // paragraph whose own point is that the criterion is checkable. Both are marked
+    // conditional either way; what these pin is the CLASSIFICATION the docstring asserts,
+    // so a future per-slot test cannot silently disagree with it.
+    const { guards } = scanSource(
+      FIXTURE_REL,
+      `import { ${GUARD} } from '~/server/services/blocks/block-bridge-auth.service';
+export const r = router({
+  firstCaseExpr: publicProcedure.mutation(async ({ input }) => {
+    switch (input.mode) { default: return null; case await ${GUARD}(input.blockToken): return 'a'; }
+  }),
+  forIncrementor: publicProcedure.mutation(async ({ input }) => {
+    for (let i = 0; i < n; i = await ${GUARD}(input.blockToken)) { noop(); }
+    return null;
+  }),
+});`
+    );
+    expect(guards.map((g) => `${g.owner}=${g.conditional}`).sort()).toEqual([
+      'firstCaseExpr=true',
+      'forIncrementor=true',
     ]);
   });
 
