@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -56,6 +57,27 @@ import { describe, expect, it } from 'vitest';
  *     is written that way today.
  *   - The population is Next PAGE routes under `src/pages/api`. A block-JWT surface
  *     added somewhere else entirely (an app-router handler, a rewrite) is outside it.
+ *   - The VALUE of an option inside a route's `withBlockScope` literal is not evaluated.
+ *     `every wrapped route passes an INLINE options object` pins the literal's SHAPE so the
+ *     option is READABLE from the route file, and `declaresLookupFailureOptOut` reads the
+ *     KEY however it is spelled — bare, quoted or computed — so a declaration written any of
+ *     those ways owes a ledger line. What is NOT known is what the VALUE resolves to:
+ *     `onApprovalLookupFailure: SOME_CONST` is ledgered without this file being able to say
+ *     whether that const is `'serve'`. The type admits only `'serve'`, which is the same
+ *     reasoning the identifier-not-value repair already rests on.
+ *   - `namesWrapperInCode` and `proseOnlyMentions` remain LINE-WISE and deliberately wide:
+ *     a file naming the wrapper inside a string enters the population and is then required
+ *     to wrap its default export. That is the fail-CLOSED direction, so it was left alone
+ *     when the rest of the file moved to `stripNonCode` in the 2026-09-19 pass.
+ *
+ * 🔴 WHAT CHANGED IN THAT PASS (clawgate #589), for this file: `codeLinesOnly` — a line
+ * filter that could see neither a trailing comment nor a string — became the `codeWithLiterals`
+ * / `stripNonCode` pair, and the opt-out population gained a SHAPE assertion on the options
+ * object. MEASURED before it: `tip.ts`, the irreversible Buzz transfer, opted out of failing
+ * closed via `...SERVE_ON_LOOKUP_FAILURE` spread from another module at 26/26 GREEN (measured
+ * 2026-09-19 against the pre-change guard), invisible
+ * to the ledger check, the cross-ledger `READ_PUBLIC` check and the hand-written fail-closed
+ * list alike, because all three read the same population.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
@@ -265,8 +287,25 @@ function walk(relDir: string, out: string[] = []): string[] {
 const MENTIONS_RE = /\bwithBlockScope\b/;
 /** `export default withBlockScope(` — the wrapper applied AT the export site. */
 const DEFAULT_EXPORT_WRAPPED_RE = /export\s+default\s+withBlockScope\s*\(/;
-/** A CALL, not a type position — `ReturnType<typeof verifyBlockToken>` must not count. */
-const DIRECT_VERIFY_RE = /\bverifyBlockToken\s*\(/;
+/**
+ * The bare IDENTIFIER, not a call — this is a PROHIBITION, so every route to the verifier
+ * must be seen: a direct call, an aliased static import, a dynamic
+ * `const { verifyBlockToken: v } = await import(...)` destructure, and a member access on a
+ * namespace import. A `\s*\(` form sees only the first of those, which is why the shipped
+ * assertion keys on the identifier. Type positions are admitted as offenders deliberately:
+ * no page route has business naming this at all.
+ */
+const DIRECT_VERIFY_RE = /\bverifyBlockToken\b/;
+
+/** How many times `re` (a /g/ regex) matches `text` — CALLS, not lines carrying one. */
+function countCalls(re: RegExp, text: string): number {
+  return (text.match(re) ?? []).length;
+}
+
+/** `resolveRestApprovalVerdict(` — the REST approval predicate, as a CALL. */
+const REST_VERDICT_CALL_RE = /\bresolveRestApprovalVerdict\s*\(/g;
+/** `resolveAppBlockApprovalVerdict(` — the shared predicate the bridge guard delegates to. */
+const SHARED_VERDICT_CALL_RE = /\bresolveAppBlockApprovalVerdict\s*\(/g;
 /**
  * 🔴 THE OPT-OUT DECLARATION, DETECTED ON THE BARE IDENTIFIER — NOT ON ITS VALUE.
  *
@@ -298,19 +337,255 @@ function read(rel: string): string {
 }
 
 /**
- * Strip comment lines before a spelling check, so a DOCBLOCK that merely names the thing
- * cannot satisfy an assertion about the CODE. Deliberately duplicated from the bridge
- * sibling (`no-unguarded-block-bridge-token.test.ts`) rather than shared: these two files
- * are standalone structural guards with no common helper module, and the four measured
- * instances of the failure this prevents are recorded in full on that copy. Line-wise, not
- * a parser — a trailing `// comment` on a code line survives, which is the fail-open
- * direction for a presence check.
+ * 🔴 THE LITERAL SENTINEL. A character that cannot be written from INSIDE a TypeScript
+ * string literal, used by `codeWithLiterals` below to re-delimit literals so that a spelling
+ * check can tell `status === 'approved'` from `"status === 'approved'"`. Writing `\u0000`
+ * inside a string puts the six characters `\u0000` in the SOURCE, not a raw NUL, so the
+ * sentinel survives as a delimiter no literal body can forge. If a raw one ever appears in a
+ * scanned file the normaliser throws rather than normalising into an ambiguous form.
  */
-function codeLinesOnly(source: string): string {
-  return source
-    .split('\n')
-    .filter((line) => !/^\s*(?:\/\/|\*|\/\*)/.test(line))
-    .join('\n');
+const LITERAL_SENTINEL = '\u0000';
+
+/**
+ * 🔴 NORMALISE BEFORE ANY SPELLING CHECK — COMMENTS AND STRINGS BOTH. A `toMatch` over a
+ * WHOLE FILE asks "does this text appear anywhere", and a docblock is anywhere, and so is a
+ * string literal. Either one makes the assertion satisfiable by something that DESCRIBES the
+ * check rather than by the check. Once that happens the test is not weak, it is INERT: it
+ * reads as coverage, which stops anyone looking, while the thing it names can be deleted.
+ *
+ * The COMMENT half has been found FIVE times in this family of guards:
+ *   1. `status === 'approved'` — the predicate module's docblock quotes that exact
+ *      expression while describing the mint endpoint. MEASURED: weakening the real
+ *      comparison to `!== 'suspended'` left the whole-file form GREEN.
+ *   2. `appBlock.findUnique` — same file, same shape, fixed alongside it.
+ *   3. `resolveAppBlockApprovalVerdict\s*\(` in the bridge file. It happened to be
+ *      NON-vacuous only by luck of punctuation: the guard docblock's one occurrence is
+ *      followed by a backtick and a newline, which `\s*` cannot bridge to a `(`.
+ *   4. The same regex over the same file in the REST sibling, on the identical luck.
+ *   5. `THE RELATIONSHIP` in the REST sibling, which read the RAW file: a COMMENTED-OUT
+ *      `export default withBlockScope(...)` above a bare `export default baseHandler;` gave
+ *      24/24 PASS on a live route with no token verification at all.
+ *
+ * 🔴 AND THE STRING HALF, WHICH THE LINE-WISE PREDECESSOR (`codeLinesOnly`) COULD NOT SEE AT
+ * ALL. It filtered whole comment LINES, so every assertion downstream of it was still
+ * satisfiable by a string: `const doc = "status === 'approved'";` satisfied
+ * `toMatch(/status === 'approved'/)` exactly as well as the real comparison did, and a
+ * trailing `// authorizeBlockBridgeToken(x)` on a line of code survived the filter outright.
+ * Both are the fail-OPEN direction. That is clawgate #589 findings (2), (3) and (6).
+ *
+ * 🔴 WHY THE TypeScript PARSER AND NOT A HAND-ROLLED LEXER. This was first written as a
+ * character scanner, and the scanner was MEASURED WRONG on this corpus — the reason it is
+ * worth the dependency, given `typescript` is already one and two sibling guards in this
+ * directory (`no-unguarded-user-text.test.ts`, `collection-item-count-clamp-wiring.test.ts`)
+ * already parse rather than lex. Three live defects, all fail-OPEN, all closed by parsing:
+ *
+ *   (a) A NESTED TEMPLATE inverts which regions are code. A hand lexer pairs backticks
+ *       1-2 and 3-4, so in ``logger.info(`call ${`authorizeBlockBridgeToken(t)`} done`)``
+ *       it emits the INNER literal's body as code — a FAKE guard call that satisfies
+ *       `THE RELATIONSHIP`, which is finding (2) reached through a literal instead of a
+ *       comment. Measured 2026-09-19: 35 nested template literals across 14 files under
+ *       `src/pages/api`, so this is an ordinary shape rather than an exotic one.
+ *   (b) A REGEX LITERAL desyncs it. `blocks.router.ts` contains `/^https?:\/\//` TWICE:
+ *       the `\/\/` yields an adjacent `//`, which a lexer reads as a line comment and
+ *       discards the rest of the line. An earlier draft of this docstring claimed "none
+ *       appears in the files scanned here" — that claim was false when written.
+ *   (c) `${...}` INTERPOLATION is real code, and a lexer swallows it into the literal body.
+ *       Measured 2026-09-19 over 1,724 files under `src/server` and `src/pages`, the lexer's
+ *       notion of "what is code" disagreed with the parser's on 858 of them — and that wider
+ *       sweep, rather than the 345 these two suites read, is the number actually taken, so
+ *       read it as "this is endemic in the corpus", not as a rate for the scanned set.
+ *
+ * WHAT IT PRODUCES. Comments are removed. Every string, template part and regex literal is
+ * re-delimited as `<sentinel><body><sentinel>`, so the body is still READABLE (needed to pin
+ * the value in `status === 'approved'`) while being unable to impersonate code: the evasion
+ * normalises to `const doc = ␀status === 'approved'␀;`, which the sentinel-bearing assertion
+ * regex does not match, while the real comparison normalises to `block.status === ␀approved␀`,
+ * which it does. `stripNonCode` empties the bodies for checks where a literal's CONTENT is
+ * pure noise or an outright hazard.
+ *
+ * 🔴 LINE STRUCTURE IS PRESERVED EXACTLY — every newline inside a removed comment or a
+ * literal body is re-emitted in place, so line N of the result is line N of the input and a
+ * line number taken from it indexes the original file. `scan` reports line numbers off this
+ * and `chunks` slices raw and normalised lines at the same indices; both are wrong if that
+ * stops holding, which is why `preserves the line structure exactly` asserts it.
+ *
+ * LIMITS, stated because they are real and this docstring must not read wider than the body:
+ *   - It PARSES, so it must be given a whole module, not a fragment. A ` * …` docblock
+ *     continuation fed in isolation is not a comment to a parser any more than it is to a
+ *     reader — there is no `/**` open above it. Every fixture below is a whole block.
+ *   - `ts.createSourceFile` is error-TOLERANT: a syntactically invalid module still yields a
+ *     tree, and the ranges recovered from it are whatever the parser made of the wreckage.
+ *     Every file these suites read also has to compile, so this is not load-bearing here.
+ *   - JSX is parsed only when the path says so (`.tsx`/`.jsx` → `ScriptKind.TSX`). A `.ts`
+ *     file containing JSX would be mis-parsed, which the repo's own typecheck already forbids.
+ */
+type TriviaSpans = {
+  /** [start, end] of each comment. */
+  comments: [number, number][];
+  /** [start, end, prefixLen, suffixLen] of each literal; prefix/suffix are its delimiters. */
+  literals: [number, number, number, number][];
+};
+
+/**
+ * The parse is the expensive step, and it answers BOTH modes — so it is taken once per
+ * (path, source) and the spans are reused. Measured on the 551 KB router, parsing twice
+ * (once for the kept-bodies view, once for the emptied one) roughly doubled this suite's
+ * wall time for no additional information.
+ */
+const triviaCache = new Map<string, TriviaSpans>();
+
+function triviaSpans(source: string, rel: string): TriviaSpans {
+  const key = `${rel}\u0001${source}`;
+  const cached = triviaCache.get(key);
+  if (cached) return cached;
+  const spans = scanTrivia(source, rel);
+  triviaCache.set(key, spans);
+  return spans;
+}
+
+function scanTrivia(source: string, rel: string): TriviaSpans {
+  const sourceFile = ts.createSourceFile(
+    rel,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    /\.(tsx|jsx)$/.test(rel) ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+  );
+
+  const literals: TriviaSpans['literals'] = [];
+  const comments: TriviaSpans['comments'] = [];
+  const seenComment = new Set<number>();
+
+  const addComments = (ranges: ts.CommentRange[] | undefined) => {
+    for (const range of ranges ?? []) {
+      if (seenComment.has(range.pos)) continue;
+      seenComment.add(range.pos);
+      comments.push([range.pos, range.end]);
+    }
+  };
+
+  const visit = (node: ts.Node): void => {
+    // 🔴 BOTH KINDS. `getLeadingCommentRanges` deliberately does NOT return a comment that
+    // sits on the same line as the code before it — that is TRAILING trivia of the previous
+    // token — so collecting only leading ranges leaves every `const x = 1; // …` comment in
+    // the output. That is the exact trailing-comment fail-open this normaliser was written
+    // to close, reintroduced by reading half the trivia.
+    addComments(ts.getLeadingCommentRanges(source, node.getFullStart()));
+    addComments(ts.getTrailingCommentRanges(source, node.end));
+    if (
+      ts.isStringLiteral(node) ||
+      ts.isNoSubstitutionTemplateLiteral(node) ||
+      ts.isRegularExpressionLiteral(node)
+    ) {
+      literals.push([node.getStart(sourceFile), node.end, 1, 1]);
+    } else if (node.kind === ts.SyntaxKind.TemplateHead) {
+      // `` `head${ `` — one backtick in, two characters out.
+      literals.push([node.getStart(sourceFile), node.end, 1, 2]);
+    } else if (node.kind === ts.SyntaxKind.TemplateMiddle) {
+      // `}middle${` — one character in, two out.
+      literals.push([node.getStart(sourceFile), node.end, 1, 2]);
+    } else if (node.kind === ts.SyntaxKind.TemplateTail) {
+      // `` }tail` `` — one in, one out.
+      literals.push([node.getStart(sourceFile), node.end, 1, 1]);
+    }
+    node.forEachChild(visit);
+  };
+  visit(sourceFile);
+  addComments(ts.getLeadingCommentRanges(source, sourceFile.endOfFileToken.getFullStart()));
+  addComments(ts.getTrailingCommentRanges(source, source.length));
+  return { comments, literals };
+}
+
+function normaliseSource(source: string, rel: string, keepLiteralBodies: boolean): string {
+  if (source.includes(LITERAL_SENTINEL)) {
+    throw new Error(
+      'Source carries a raw U+0000, which this scan uses as the literal delimiter. Every ' +
+        'spelling assertion downstream would be reading an ambiguous normalisation, so this ' +
+        'fails loudly rather than answering.'
+    );
+  }
+  const { comments, literals } = triviaSpans(source, rel);
+
+  // 🔴 SPACES, NOT DELETION — the normalisation is LENGTH-preserving as well as
+  // line-preserving, so an offset into the result is the same offset in the original file.
+  // That is what lets `inputArg` balance parentheses over the normalised text (where a stray
+  // `(` in a comment or a string cannot exist) and then slice the argument out of the RAW
+  // text at the identical offsets, keeping the deliberate raw-`blockToken` reading.
+  const blanked = (text: string) => text.replace(/[^\n]/g, ' ');
+  type Span = { start: number; end: number; render: () => string };
+  const spans: Span[] = [
+    ...comments.map(([start, end]) => ({
+      start,
+      end,
+      // One space so two tokens a comment separated do not fuse into one identifier.
+      render: () => ` ${blanked(source.slice(start + 1, end))}`,
+    })),
+    ...literals.map(([start, end, pre, suf]) => ({
+      start,
+      end,
+      render: () => {
+        const body = source.slice(start + pre, end - suf);
+        // Delimiters become the sentinel plus spaces for any extra delimiter characters, so
+        // the rendered span is exactly as long as the span it replaces.
+        return (
+          LITERAL_SENTINEL +
+          blanked(source.slice(start + 1, start + pre)) +
+          (keepLiteralBodies ? body : blanked(body)) +
+          blanked(source.slice(end - suf, end - 1)) +
+          LITERAL_SENTINEL
+        );
+      },
+    })),
+  ].sort((a, b) => a.start - b.start);
+
+  let out = '';
+  let cursor = 0;
+  for (const span of spans) {
+    if (span.start < cursor) continue; // a comment inside a literal, or vice versa
+    out += source.slice(cursor, span.start) + span.render();
+    cursor = span.end;
+  }
+  return out + source.slice(cursor);
+}
+
+/**
+ * Memoised per (source, mode): the two suites normalise the same handful of files many times
+ * over, and parsing is the one part of this that is not free. Keyed on the source TEXT, so a
+ * file edited between calls is a different key rather than a stale hit.
+ */
+const normaliseCache = new Map<string, string>();
+function normalised(source: string, rel: string, keepLiteralBodies: boolean): string {
+  const key = `${keepLiteralBodies ? 'K' : 'E'}${rel}${source}`;
+  let hit = normaliseCache.get(key);
+  if (hit === undefined) {
+    hit = normaliseSource(source, rel, keepLiteralBodies);
+    normaliseCache.set(key, hit);
+  }
+  return hit;
+}
+
+/**
+ * Comments removed; string, template and regex literal bodies KEPT but re-delimited. The view
+ * for a check that needs a literal's VALUE (`status === 'approved'`), and for a PROHIBITION —
+ * a check whose failure direction is "this identifier must not appear" — because a name
+ * written inside a string is exactly as reachable as one written outside it
+ * (`mod['verifyBlockToken'](t)`), so it must still be seen.
+ */
+function codeWithLiterals(source: string, rel = 'scanned.ts'): string {
+  return normalised(source, rel, true);
+}
+
+/**
+ * Comments removed; literal bodies EMPTIED. The view for a COUNT and for an identifier scan,
+ * where a string is pure noise and an outright hazard: a literal spelling
+ * `authorizeBlockBridgeToken(` must not satisfy a reachability check, and a
+ * `.describe('…')` argument must not yield English words as candidate schema names.
+ *
+ * It is the wrong view for pinning a VALUE — `status === 'approved'` and
+ * `status === 'suspended'` are the same text here — and the wrong view for a prohibition.
+ */
+function stripNonCode(source: string, rel = 'scanned.ts'): string {
+  return normalised(source, rel, false);
 }
 
 /** True when `source` names `withBlockScope` on at least one line that is not a comment. */
@@ -320,16 +595,75 @@ function namesWrapperInCode(source: string): boolean {
     .some((line) => MENTIONS_RE.test(line) && !/^\s*(?:\/\/|\*|\/\*)/.test(line));
 }
 
-/** True when `source` NAMES the lookup-failure opt-out on a line that is not a comment. */
-function declaresLookupFailureOptOut(source: string): boolean {
-  return LOOKUP_FAILURE_OPT_OUT_RE.test(codeLinesOnly(source));
+/**
+ * True when `source` NAMES the lookup-failure opt-out anywhere outside a comment.
+ *
+ * 🔴 READS `codeWithLiterals`, WHICH KEEPS LITERAL BODIES, AND THAT IS THE WHOLE POINT. This
+ * is a PROHIBITION-shaped probe — its job is to force a ledger entry — so every way the
+ * identifier can reach the option must be seen, including the ways that are string literals:
+ *
+ *     { 'onApprovalLookupFailure': 'serve' }      // a quoted key
+ *     { ['onApprovalLookupFailure']: 'serve' }    // a computed key
+ *
+ * Both type-check (the option is a plain optional property), and the runtime reads
+ * `opts.onApprovalLookupFailure !== 'serve'`, a property access that does not care how the
+ * key was spelled — so both are fully LIVE. Under the emptied view they vanish, and the route
+ * silently leaves the derived population that the ledger check, the cross-ledger
+ * `READ_PUBLIC` check and the hand-written fail-closed list ALL read. That is finding 4's
+ * fail-open reached through the key instead of the spread, and it is not hypothetical: it was
+ * measured on `tip.ts`, the irreversible Buzz transfer, during clawgate #589's own review.
+ *
+ * The cost of keeping bodies is a route that merely MENTIONS the option in a string being
+ * forced into the ledger. That is the fail-CLOSED direction and costs one line to record,
+ * which is exactly the trade the identifier-not-value repair already chose.
+ */
+function declaresLookupFailureOptOut(source: string, rel = 'route.ts'): boolean {
+  // A RAW pre-filter before the parse. Sound in one direction only, which is the direction
+  // that matters: a name absent from the raw text is absent from every view of it, so this
+  // can produce a false POSITIVE (a file mentioning it in a comment, which then gets the full
+  // treatment and is correctly rejected) and never a false negative. It exists because the
+  // scan is over 341 route files and only a handful name this at all.
+  if (!LOOKUP_FAILURE_OPT_OUT_RE.test(source)) return false;
+  return LOOKUP_FAILURE_OPT_OUT_RE.test(codeWithLiterals(source, rel));
 }
 
 /** Routes under `src/pages/api` that declare `onApprovalLookupFailure` at all, any spelling. */
 function lookupFailureServeRoutes(): string[] {
   return walk(API_DIR)
-    .filter((rel) => declaresLookupFailureOptOut(read(rel)))
+    .filter((rel) => declaresLookupFailureOptOut(read(rel), rel))
     .sort();
+}
+
+/**
+ * The OPTIONS argument of `export default withBlockScope(handler, <options>)` in `source`,
+ * read off normalised code, or `null` when there is no wrapped default export or no second
+ * argument. Balanced-delimiter, so a nested object or call in the first argument cannot be
+ * mistaken for the argument separator.
+ */
+function wrappedExportOptionsArg(source: string, rel = 'route.ts'): string | null {
+  const code = stripNonCode(source, rel);
+  const m = DEFAULT_EXPORT_WRAPPED_RE.exec(code);
+  if (!m) return null;
+  const open = m.index + m[0].length - 1;
+  let depth = 0;
+  let end = -1;
+  for (let i = open; i < code.length; i++) {
+    if (code[i] === '(') depth++;
+    else if (code[i] === ')' && --depth === 0) {
+      end = i;
+      break;
+    }
+  }
+  if (end < 0) return null;
+  const args = code.slice(open + 1, end);
+  let nesting = 0;
+  for (let i = 0; i < args.length; i++) {
+    const c = args[i];
+    if (c === '(' || c === '[' || c === '{') nesting++;
+    else if (c === ')' || c === ']' || c === '}') nesting--;
+    else if (c === ',' && nesting === 0) return args.slice(i + 1).trim();
+  }
+  return null;
 }
 
 /** Routes under `src/pages/api` that USE the wrapper in code — the population. */
@@ -417,7 +751,12 @@ describe('the REST route scan can actually see what it claims to', () => {
     ).toBe(false);
     expect(
       declaresLookupFailureOptOut(
-        [" * Set `onApprovalLookupFailure: 'serve'` to opt out.", 'export default h;'].join('\n')
+        [
+          '/**',
+          " * Set `onApprovalLookupFailure: 'serve'` to opt out.",
+          ' */',
+          'export default h;',
+        ].join('\n')
       )
     ).toBe(false);
   });
@@ -463,7 +802,7 @@ describe('the REST route scan can actually see what it claims to', () => {
     // thing that can separate it, and it must read the code, not the prose.
     expect(namesWrapperInCode(commentedOut)).toBe(true);
     expect(DEFAULT_EXPORT_WRAPPED_RE.test(commentedOut)).toBe(true); // raw file: FALSE PASS
-    expect(DEFAULT_EXPORT_WRAPPED_RE.test(codeLinesOnly(commentedOut))).toBe(false); // the fix
+    expect(DEFAULT_EXPORT_WRAPPED_RE.test(stripNonCode(commentedOut))).toBe(false); // the fix
   });
 
   it('POSITIVE CONTROL — the one-place predicate check counts CALLS and ignores prose', () => {
@@ -475,11 +814,16 @@ describe('the REST route scan can actually see what it claims to', () => {
       twoOnOneLine.split('\n').filter((l) => /\bresolveRestApprovalVerdict\s*\(/.test(l)).length
     ).toBe(1);
     // And a prose mention WITH an argument list must not count at all.
+    // 🔴 A WHOLE DOCBLOCK, NOT AN ORPHAN LINE. `stripNonCode` is a scanner rather than a
+    // line filter, so a ` * …` continuation is only a comment because a `/**` is open above
+    // it — a fixture without the opener tests a shape no real file has.
     const prose = [
+      '/**',
       ' * resolveRestApprovalVerdict(claims) resolves the verdict.',
+      ' */',
       'const x = 1;',
     ].join('\n');
-    expect((codeLinesOnly(prose).match(/\bresolveRestApprovalVerdict\s*\(/g) ?? []).length).toBe(0);
+    expect((stripNonCode(prose).match(/\bresolveRestApprovalVerdict\s*\(/g) ?? []).length).toBe(0);
   });
 
   it('POSITIVE CONTROL — a prose-only mention is NOT in the wrapped population', () => {
@@ -494,11 +838,161 @@ describe('the REST route scan can actually see what it claims to', () => {
     expect(namesWrapperInCode(proseOnly)).toBe(false);
   });
 
-  it('POSITIVE CONTROL — the direct-verify regex flags a call and ignores a type position', () => {
-    expect(DIRECT_VERIFY_RE.test('type C = Awaited<ReturnType<typeof verifyBlockToken>>;')).toBe(
-      false
-    );
+  it('POSITIVE CONTROL — the direct-verify regex is the one the shipped assertion uses', () => {
+    // 🔴 THIS CONTROL USED TO PROVE NOTHING ABOUT ANYTHING THAT SHIPS. `DIRECT_VERIFY_RE` was
+    // `/\bverifyBlockToken\s*\(/` and was referenced ONLY here, while the real assertion
+    // (`no page route verifies a block token itself`) carried its own inline
+    // `/\bverifyBlockToken\b/` — two literals, so editing the shipped one could not turn this
+    // red. One regex, one place; this now exercises the constant the assertion reads.
+    //
+    // It is the bare IDENTIFIER, and a type position is therefore an offender BY DESIGN: no
+    // page route has business naming the bare verifier in any position, and narrowing to a
+    // call is what a dynamic `await import()` destructure walks through.
     expect(DIRECT_VERIFY_RE.test('const claims = await verifyBlockToken(bearer);')).toBe(true);
+    expect(DIRECT_VERIFY_RE.test('type C = Awaited<ReturnType<typeof verifyBlockToken>>;')).toBe(
+      true
+    );
+    expect(DIRECT_VERIFY_RE.test("const { verifyBlockToken: v } = await import('~/x');")).toBe(
+      true
+    );
+    // The negative half, or the assertions above pass on a regex that matches anything.
+    expect(DIRECT_VERIFY_RE.test('export default withBlockScope(baseHandler, {});')).toBe(false);
+  });
+
+  /**
+   * 🔴 THE POSITIVE CONTROL FOR THIS FILE'S OWN COPY OF THE NORMALISERS. Every assertion
+   * below is filtered through `stripNonCode`, so an identity mutation (`return source;`) on
+   * either helper must fail here — the bridge sibling's copy had NO such control and a
+   * `return source;` left it green at 21/21, which is exactly what the deliberate
+   * duplication makes possible. Both the comment half and the string half are exercised.
+   */
+  it('POSITIVE CONTROL — the normalisers strip comments, trailing comments and string bodies', () => {
+    // Comments, in the shape a real file carries them: a whole block, not an orphan line.
+    const docblock = [
+      '/**',
+      ' * resolveRestApprovalVerdict(claims) resolves the verdict for the REST surface.',
+      ' */',
+      'const unrelated = 1;',
+    ].join('\n');
+    expect((stripNonCode(docblock).match(/\bresolveRestApprovalVerdict\s*\(/g) ?? []).length).toBe(
+      0
+    );
+    expect(stripNonCode(docblock)).toMatch(/const unrelated = 1;/);
+    // A TRAILING comment on a line of code — invisible to the line-wise predecessor.
+    expect(stripNonCode('const x = 1; // resolveRestApprovalVerdict(a)')).not.toMatch(
+      /resolveRestApprovalVerdict\(/
+    );
+    // 🔴 THE STRING HALF. A literal spelling the call must not satisfy or inflate a count.
+    // With the line-wise filter this line counted as a call, so a middleware carrying it
+    // could DELETE the real call and still report "exactly once".
+    expect(
+      (
+        stripNonCode("const s = 'resolveRestApprovalVerdict(a)';").match(
+          /\bresolveRestApprovalVerdict\s*\(/g
+        ) ?? []
+      ).length
+    ).toBe(0);
+    // …and a REAL call still counts, or the filter strips everything and the assertions
+    // below pass for the wrong reason.
+    expect(
+      (
+        stripNonCode('const v = await resolveRestApprovalVerdict(claims);').match(
+          /\bresolveRestApprovalVerdict\s*\(/g
+        ) ?? []
+      ).length
+    ).toBe(1);
+    // Line structure is preserved, which `wrappedExportOptionsArg` and every line-indexed
+    // read downstream depend on.
+    const spanning = ['/* a', ' b */ const c = 1;', 'const d = `e', 'f`;'].join('\n');
+    expect(stripNonCode(spanning).split('\n')).toHaveLength(4);
+    expect(stripNonCode(spanning).split('\n')[1]).toContain('const c = 1;');
+  });
+
+  /**
+   * 🔴 THE THREE SPELLINGS THAT DEFEATED AN EARLIER DRAFT OF THIS VERY PASS. Each was
+   * measured live on `tip.ts` — the irreversible Buzz transfer and the highest-value entry in
+   * the exposure ledger — and each left the route outside the derived population, i.e.
+   * outside the ledger check, the cross-ledger `READ_PUBLIC` check AND the hand-written
+   * fail-closed list simultaneously, because all three read that one population.
+   *
+   * The first is the clawgate #589 finding. The second and third are the regression that a
+   * careless repair introduced: routing this probe through the body-EMPTYING view made a
+   * quoted key invisible, which the line-wise filter it replaced had caught.
+   */
+  it('POSITIVE CONTROL — the opt-out is detected however the KEY is spelled', () => {
+    for (const declaration of [
+      "  onApprovalLookupFailure: 'serve',", // a bare key
+      "  'onApprovalLookupFailure': 'serve',", // a quoted key — a string literal
+      "  ['onApprovalLookupFailure']: 'serve',", // a computed key — also a string literal
+      '  "onApprovalLookupFailure": "serve",', // double-quoted key and value
+    ]) {
+      expect(
+        declaresLookupFailureOptOut(
+          ['export default withBlockScope(h, {', declaration, '});'].join('\n')
+        ),
+        `${declaration.trim()} must be detected — the runtime reads the property, so it is live`
+      ).toBe(true);
+    }
+    // The negative half, or the loop above passes on a probe that matches anything.
+    expect(
+      declaresLookupFailureOptOut("export default withBlockScope(h, { endpoint: 'tip' });")
+    ).toBe(false);
+  });
+
+  it('POSITIVE CONTROL — a nested template literal cannot smuggle code past the normaliser', () => {
+    // A hand-rolled lexer pairs backticks 1-2 and 3-4, which INVERTS the code and literal
+    // regions of a nested template and emits the inner body as code. Measured on an earlier
+    // draft: a fake `resolveRestApprovalVerdict(...)` written this way counted as a call.
+    // Measured 2026-09-19: 35 nested template literals across 14 files under src/pages/api,
+    // so this is an ordinary shape rather than an exotic one.
+    const nested = ['const m = `outer ${`resolveRestApprovalVerdict(a)`} tail`;'].join('\n');
+    expect(countCalls(REST_VERDICT_CALL_RE, stripNonCode(nested))).toBe(0);
+    // …and the interpolation of a REAL call is still code, which the lexer also got wrong,
+    // in the opposite direction.
+    const interpolated = ['const m = `outer ${resolveRestApprovalVerdict(a)} tail`;'].join('\n');
+    expect(countCalls(REST_VERDICT_CALL_RE, stripNonCode(interpolated))).toBe(1);
+  });
+
+  it('POSITIVE CONTROL — a regex literal does not desync the normaliser', () => {
+    // `/^https?:\/\//` puts an adjacent `//` in the source, which a lexer reads as a line
+    // comment and then discards the rest of the line. `blocks.router.ts` contains exactly
+    // this, twice. Anything after the regex on that line must survive.
+    const withRegex = ["const h = raw.replace(/^https?:\\/\\//, '');", 'const after = 1;'].join(
+      '\n'
+    );
+    expect(stripNonCode(withRegex)).toMatch(/const after = 1;/);
+    expect(stripNonCode(withRegex).split('\n')).toHaveLength(2);
+  });
+
+  it('rejects a source that already carries the literal sentinel', () => {
+    // The re-delimiting is unambiguous only while no literal body can contain the delimiter.
+    // This file's copy of the guard clause needs its own control, for the same reason the
+    // normaliser does: deleting it in one copy must not be silent in the other.
+    expect(() => codeWithLiterals(`const x = ${String.fromCharCode(0)};`)).toThrow(/U\+0000/);
+    expect(() => stripNonCode(`const x = ${String.fromCharCode(0)};`)).toThrow(/U\+0000/);
+    // Reachability: an ordinary source does NOT throw.
+    expect(() => codeWithLiterals('const x = 1;')).not.toThrow();
+  });
+
+  it('POSITIVE CONTROL — the options-argument reader separates an inline literal from a bundle', () => {
+    // The derivation behind `every wrapped route passes an INLINE options object`. A reader
+    // that silently returned null for everything would make that check vacuously green.
+    const inline = "export default withBlockScope(baseHandler, { endpoint: 'tip' });";
+    expect(wrappedExportOptionsArg(inline)?.startsWith('{')).toBe(true);
+    expect(wrappedExportOptionsArg(inline)).toMatch(/\bendpoint\b/);
+    // A nested call in the FIRST argument must not be mistaken for the separator.
+    const nestedFirst = "export default withBlockScope(wrap(h, 1), { endpoint: 'tip' });";
+    expect(wrappedExportOptionsArg(nestedFirst)?.startsWith('{')).toBe(true);
+    // The two evasions, which must NOT read as an inline literal.
+    expect(
+      wrappedExportOptionsArg(
+        "export default withBlockScope(h, { endpoint: 'tip', ...SERVE_OPTS });"
+      )
+    ).toContain('...');
+    expect(wrappedExportOptionsArg('export default withBlockScope(h, TIP_OPTS);')).toBe('TIP_OPTS');
+    // No wrapped default export, and no second argument, are both `null` rather than a throw.
+    expect(wrappedExportOptionsArg('export default baseHandler;')).toBeNull();
+    expect(wrappedExportOptionsArg('export default withBlockScope(h);')).toBeNull();
   });
 
   it('the walk reaches real files at every depth the routes actually use', () => {
@@ -540,12 +1034,22 @@ describe('no unguarded block-REST token verification', () => {
   });
 
   it('every rationale says something — an empty string is not a decision', () => {
+    // 🔴 KEYED BY LEDGER, NOT BY ROUTE. These three records overlap: all five
+    // LOOKUP_FAILURE_SERVE_RATIONALE keys are ALSO REST_ROUTE_RATIONALE keys, so a merge on
+    // the bare route path let the last spread overwrite the first and five exposure
+    // rationales — the sentence this file calls the whole point of the ledger — were never
+    // checked at all. Measured: emptying `why` on images.ts passed. 13 statements, 8
+    // checked. Prefixing the key keeps every one of them.
     const thin = Object.entries({
       ...Object.fromEntries(
-        Object.entries(REST_ROUTE_RATIONALE).map(([rel, { why }]) => [rel, why])
+        Object.entries(REST_ROUTE_RATIONALE).map(([rel, { why }]) => [`exposure:${rel}`, why])
       ),
-      ...DELIBERATELY_UNWRAPPED,
-      ...LOOKUP_FAILURE_SERVE_RATIONALE,
+      ...Object.fromEntries(
+        Object.entries(DELIBERATELY_UNWRAPPED).map(([rel, why]) => [`unwrapped:${rel}`, why])
+      ),
+      ...Object.fromEntries(
+        Object.entries(LOOKUP_FAILURE_SERVE_RATIONALE).map(([rel, why]) => [`optout:${rel}`, why])
+      ),
     })
       .filter(([, why]) => why.trim().length < 40)
       .map(([route]) => route);
@@ -633,6 +1137,71 @@ describe('no unguarded block-REST token verification', () => {
   });
 
   /**
+   * 🔴 THE OPTIONS OBJECT MUST BE READABLE FROM THE ROUTE FILE (clawgate #589, finding 4).
+   *
+   * `LOOKUP_FAILURE_OPT_OUT_RE` was repaired once already — it used to pin the VALUE as a
+   * single-quoted `'serve'`, and `"serve"` walked past it onto `tip.ts` at 21/21 GREEN. The
+   * repair moved it to the bare IDENTIFIER, which closes every spelling of the VALUE and
+   * NONE of the ways the identifier can be absent from the file while the option is live:
+   *
+   *     import { SERVE_ON_LOOKUP_FAILURE } from './_shared-opts';
+   *     export default withBlockScope(baseHandler, { endpoint: 'tip', ...SERVE_ON_LOOKUP_FAILURE });
+   *
+   * and the whole-argument form, `withBlockScope(baseHandler, TIP_OPTIONS)`. In both, the
+   * route never writes `onApprovalLookupFailure`, so it is outside the derived population —
+   * and therefore outside the ledger check, the cross-ledger `READ_PUBLIC` check AND the
+   * hand-written fail-closed list, all three of which read that same population. MEASURED
+   * before this check, 2026-09-19: the spread form on `tip.ts` — the irreversible Buzz
+   * transfer, the highest-value entry in the exposure ledger — passed the pre-change guard
+   * whole, 26/26.
+   *
+   * 🔴 THE REPAIR IS NOT A FOURTH REGEX. Following a spread means resolving an import and
+   * reading another module, which is a call graph this file has already declined to build
+   * twice, and every such walk has its own next evasion. Instead the SHAPE is pinned: the
+   * options argument must be an inline object literal with no spread, so the population scan
+   * can read it. That is fail-closed and loud — a route that wants a shared options bundle
+   * gets a red naming this assertion, and the answer is to write the option out.
+   *
+   * ⚠️ WHAT THIS STILL DOES NOT COVER, stated because it is open: the VALUE inside the
+   * literal is not evaluated, so `onApprovalLookupFailure: SOME_CONST` is detected as a
+   * declaration (correctly — it must be ledgered) but this file cannot say what it resolves
+   * to. The type admits only `'serve'`, which is what makes that acceptable rather than a
+   * gap, and it is the same reasoning the identifier-not-value repair already rests on.
+   */
+  it('every wrapped route passes an INLINE options object — a spread or a named bundle hides the opt-out', () => {
+    const offenders = blockScopedRoutes()
+      .map((rel) => ({ rel, options: wrappedExportOptionsArg(read(rel)) }))
+      .filter(
+        ({ options }) => options == null || !options.startsWith('{') || options.includes('...')
+      )
+      // The sentinel stands in for every emptied string body; render it readably, or the
+      // failure message arrives as a NUL-bearing blob that tooling reports as binary.
+      .map(
+        ({ rel, options }) =>
+          `${rel}: ${
+            options == null
+              ? '<no wrapped default export, or no options argument>'
+              : options.replace(new RegExp(LITERAL_SENTINEL, 'g'), "'").slice(0, 80)
+          }`
+      );
+
+    expect(
+      offenders,
+      'These routes do not pass withBlockScope an inline options object literal. Every ' +
+        'check in this file that decides whether a route opted out of failing closed reads ' +
+        'the ROUTE FILE for the bare identifier `onApprovalLookupFailure`, so an option ' +
+        'arriving by spread (`...SHARED_OPTS`) or as a whole named bundle ' +
+        '(`withBlockScope(h, TIP_OPTS)`) is live at runtime and invisible to all of them — ' +
+        'including on tip.ts, which SPENDS. Write the options out at the call site. If a ' +
+        'shared bundle is genuinely wanted, teaching this file to resolve it is the ' +
+        'prerequisite, not an exemption.'
+    ).toEqual([]);
+
+    // Report the pair, never the zero: the scan read a real, non-empty population.
+    expect(blockScopedRoutes().length).toBeGreaterThan(10);
+  });
+
+  /**
    * Stated in the direction a reader will look for it, and HAND-WRITTEN rather than derived:
    * these are the entries whose refusal is the point of the gate. Keeping it a literal list
    * is what makes it a second, independent statement — the assertion after it is what stops
@@ -685,11 +1254,11 @@ describe('no unguarded block-REST token verification', () => {
     // Measured on `blocks/me.ts`: that shape gave 24/24 PASS — no token verification, no
     // revocation check, no approved-status gate, and the guard whose stated purpose is this
     // exact regression said nothing. It is regression #2 from this file's own header, and
-    // the same prose-satisfies-a-code-assertion shape as `codeLinesOnly`'s four recorded
-    // instances. The population check (`namesWrapperInCode`) already filtered comments; the
+    // the same prose-satisfies-a-code-assertion shape as the five instances recorded on
+    // `normaliseSource` in the bridge sibling. The population check (`namesWrapperInCode`) already filtered comments; the
     // RELATIONSHIP check did not, so the two halves disagreed about what counts as code.
     const unwrapped = blockScopedRoutes().filter(
-      (rel) => !DEFAULT_EXPORT_WRAPPED_RE.test(codeLinesOnly(read(rel)))
+      (rel) => !DEFAULT_EXPORT_WRAPPED_RE.test(stripNonCode(read(rel)))
     );
 
     expect(
@@ -707,14 +1276,23 @@ describe('no unguarded block-REST token verification', () => {
     // file's `only in PROSE` assertion. A static import can be aliased and a dynamic
     // `const { verifyBlockToken: v } = await import(...)` defeats both an alias check and
     // a call regex. Pinning the identifier to comment lines only sees all of them.
+    // 🔴 NORMALISED, NOT A LEADING-COMMENT REGEX. The line test was
+    // `!/^\s*(?:\/\/|\*|\/\*)/`, which drops any line whose FIRST token is a comment — so
+    // `/* istanbul ignore next */ const c = await verifyBlockToken(bearer);` was invisible,
+    // and this is the ONLY assertion in this file that looks for the bare verifier at all.
+    // `codeWithLiterals` removes the comment and leaves the code, and preserves line
+    // structure exactly, so the reported numbers still index the original file. Literal
+    // bodies are KEPT on purpose: `mod['verifyBlockToken'](t)` must still be an offender.
     const offenders: string[] = [];
     for (const rel of walk(API_DIR)) {
-      read(rel)
+      // Raw pre-filter, per `declaresLookupFailureOptOut`: false positives only.
+      if (!DIRECT_VERIFY_RE.test(read(rel))) continue;
+      const raw = read(rel).split('\n');
+      codeWithLiterals(read(rel), rel)
         .split('\n')
         .forEach((line, i) => {
-          if (!/\bverifyBlockToken\b/.test(line)) return;
-          if (/^\s*(?:\/\/|\*|\/\*)/.test(line)) return;
-          offenders.push(`${rel}:${i + 1}: ${line.trim()}`);
+          if (!DIRECT_VERIFY_RE.test(line)) return;
+          offenders.push(`${rel}:${i + 1}: ${(raw[i] ?? line).trim()}`);
         });
     }
 
@@ -748,10 +1326,10 @@ describe('no unguarded block-REST token verification', () => {
     // gate gone, GREEN. (b) Counting matching LINES means two calls on one line —
     // `cond ? await resolveRestApprovalVerdict(a) : await resolveRestApprovalVerdict(b)` —
     // scored 1, i.e. two predicates passing a check whose message says "exactly once".
-    const middleware = codeLinesOnly(read(MIDDLEWARE));
-    const calls = middleware.match(/\bresolveRestApprovalVerdict\s*\(/g) ?? [];
+    const middleware = stripNonCode(read(MIDDLEWARE));
+    const calls = countCalls(REST_VERDICT_CALL_RE, middleware);
     expect(
-      calls.length,
+      calls,
       `${MIDDLEWARE} must call resolveRestApprovalVerdict exactly once. A second call is ` +
         'a second predicate, which is how the thirteen open-coded copies the bridge guard ' +
         'replaced came to disagree with each other.'
@@ -827,9 +1405,16 @@ function backingRowLookupSites(): string[] {
   const hits: string[] = [];
   for (const root of BACKING_ROW_SCAN_ROOTS) {
     for (const rel of walkSource(root)) {
-      const names = read(rel)
+      // Raw pre-filter, per `declaresLookupFailureOptOut`: this walk covers ~1,950 files
+      // and a handful name the unique, so parsing all of them buys nothing.
+      if (!BACKING_ROW_LOOKUP_RE.test(read(rel))) continue;
+      // Normalised rather than a leading-comment regex, for the reason given on
+      // `no page route verifies a block token itself`: a line opening with a block comment
+      // was dropped whole. Literal bodies KEPT — a raw query naming the unique inside a
+      // template still resolves the row and still owes a ledger line.
+      const names = codeWithLiterals(read(rel), rel)
         .split('\n')
-        .some((line) => BACKING_ROW_LOOKUP_RE.test(line) && !/^\s*(?:\/\/|\*|\/\*)/.test(line));
+        .some((line) => BACKING_ROW_LOOKUP_RE.test(line));
       if (names) hits.push(rel);
     }
   }
@@ -898,9 +1483,10 @@ describe('the approval predicate is not open-coded a second time', () => {
     // bridge to a `(`. One future sentence writing `resolveAppBlockApprovalVerdict(claims)`
     // in prose would have re-inerted it silently, and a spelling check its own prose
     // satisfies reads as coverage while providing none. The same shape was found and fixed
-    // three other times in this family — see `codeLinesOnly` in the bridge sibling.
-    const guard = codeLinesOnly(read('src/server/services/blocks/block-bridge-auth.service.ts'));
-    expect(guard).toMatch(/\bresolveAppBlockApprovalVerdict\s*\(/);
+    // three other times in this family — see `normaliseSource` in the bridge sibling,
+    // which records all five.
+    const guard = stripNonCode(read('src/server/services/blocks/block-bridge-auth.service.ts'));
+    expect(countCalls(SHARED_VERDICT_CALL_RE, guard)).toBeGreaterThan(0);
     expect(BACKING_ROW_LOOKUP_LEDGER).not.toHaveProperty(
       'src/server/services/blocks/block-bridge-auth.service.ts'
     );
