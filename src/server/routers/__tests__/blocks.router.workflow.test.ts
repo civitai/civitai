@@ -473,6 +473,10 @@ vi.mock('~/server/services/buzz.service', () => ({
 }));
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: (...args: unknown[]) => mockCheckBlockCatalogRateLimit(...args),
+  // `pollWorkflow` charges the DEDICATED `:poll:` bucket, not the catalog one. Declared here
+  // because the router imports it: a factory that omits an export the module under test binds
+  // makes every call through it throw `No "…" export is defined on the mock`.
+  checkBlockPollRateLimit: async () => ({ allowed: true }),
 }));
 // 🔴 `getResourceData` IS HERE ON PURPOSE, AND IS NOT MOCKED AWAY AT THE SERVICE
 // BOUNDARY. The customComfy INLINE arm's entitlement belt
