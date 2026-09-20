@@ -136,9 +136,11 @@ import { describe, expect, it } from 'vitest';
  *           guards even in a file that fully satisfies the requirement, because guard
  *           collection is gated on the callee being a bare identifier. The ledger reddens
  *           that way instead.
- *     Both are fail-closed. A round-7 edit declared (b) false while correcting (a); it is
- *     not — it was measured at 0 with the named import present, and striking it deleted a
- *     live limitation from this list.
+ *     Both are fail-closed, and BOTH ARE PINNED by `the two NAMESPACE facts the header
+ *     states, measured separately` — (b) with the named import present, so its zero cannot
+ *     be (a) in disguise. A round-7 edit declared (b) false while correcting (a); it is
+ *     not, and striking it deleted a live limitation from this list. It is a test now
+ *     rather than a claim, for exactly that reason.
  *   - 🔴 THREE SHAPES STILL SCORE `conditional: false` WHILE THE GUARD MAY NOT RUN, and
  *     they are listed because the conditionality axis has now been "closed" three rounds
  *     running and is not: an OPTIONAL CALL does not evaluate its arguments when its
@@ -515,22 +517,35 @@ function isTrpcProcedure(pa: ts.PropertyAssignment): boolean {
  * its enclosing `TryStatement`). A call anywhere inside one of these is marked conditional
  * WHICHEVER CHILD it sits in.
  *
- * ⚠️ THAT OVER-MARKS TEN POSITIONS THAT ALWAYS RUN, DELIBERATELY: the `if` / `while` /
- * `switch` CONDITION; the `for…of` and `for…in` ITERABLE; a classic `for`'s INITIALIZER and
- * CONDITION; a `finally` BLOCK, which runs whenever the `try` is entered — on throw and on
- * return too, so it is a STRONGER guarantee than anything else in this list; and a `do`
- * BODY and its `while` CONDITION, which each run at least once. Ten fail-CLOSED false-REDs,
- * taken because no shape in this corpus puts the guard in any of them and a per-kind
- * operand test is more machinery than the cases are worth. (The `try` BLOCK is an eleventh
- * marked position and is NOT in this list, because marking it is deliberate enforcement —
- * see the rethrowing-`try` entry in the header's limits.)
+ * ⚠️ THAT OVER-MARKS EVERY CHILD SLOT THAT RUNS ON ENTERING THE STATEMENT, DELIBERATELY —
+ * an `if` / `while` / `switch` condition, a `for…of` or `for…in` iterable, a classic
+ * `for`'s initializer and condition, a `switch`'s first `case` expression, a `do` body, a
+ * `finally` block. All fail-CLOSED false-REDs, taken because no shape in this corpus puts
+ * the guard in any of them and a per-slot test is more machinery than the cases are worth.
+ * Slots that do NOT qualify — a loop or branch BODY, a classic `for`'s incrementor, a
+ * `do…while` CONDITION (both gated on the body completing normally) — are marked too, and
+ * marking those is simply correct.
  *
- * ⚠️ THE NUMERAL IS THE PART THAT KEEPS ROTTING. It has been wrong twice: "five" named five
- * and missed three, and "eight" named eight and missed two — including `finally`, which the
- * same sentence's own reasoning ranks above a case it did name. It is machine-checkable;
- * check it, or delete it. An earlier revision of this sentence asserted instead that a call in one of these
- * "may not run, whichever child it sits in", which is simply false — and it sat two lines
- * above the paragraph explaining that operand position is exactly what separates a ternary
+ * 🔴 DELIBERATELY NO COUNT. There used to be one and it rotted three times: "five" named
+ * five and missed three; "eight" named eight and missed two; "ten" had the right total by
+ * two errors cancelling — it included the `do…while` condition, which does not qualify (it
+ * is gated exactly as the incrementor the same list excludes), and omitted the first `case`
+ * expression, which does. Each revision was written to fix the previous one's count. The
+ * CRITERION above is stable and checkable; a roll-call is neither, so there is no numeral
+ * to re-derive. If you add a kind to the list, check the criterion, not a total.
+ *
+ * ⚠️ The `try` BLOCK is marked and is NOT one of these false-REDs: a guard inside a `try`
+ * whose `catch` swallows genuinely does not enforce, so marking it is ENFORCEMENT. That is
+ * the statement spelling `isEnforcedCall`'s docstring describes, pinned by the `swallowed`
+ * fixture in `a guard whose REJECTION cannot reach the caller is not 'enforced'`. (Do not
+ * cite the header's rethrowing-`try` limit here, as an earlier revision did — that entry
+ * says the opposite, that a RETHROWING try is noise, and so argues the try block INTO this
+ * list rather than out of it. Both are true of different `try`s; the distinction is
+ * whether the `catch` swallows.)
+ *
+ * ⚠️ An earlier revision of THE OPENING SENTENCE asserted that a call in one of these "may
+ * not run, whichever child it sits in", which is simply false — and it sat two lines above
+ * the paragraph explaining that operand position is exactly what separates a ternary
  * CONDITION from its branches, i.e. it denied a distinction the next paragraph draws.
  *
  * 🔴 THE EXPRESSION FORMS ARE NOT HERE, AND THAT IS THE POINT. `?:` and the short-circuiting
@@ -1554,6 +1569,56 @@ export const r = router({
 });`
     );
     expect(aliasedWithinGuardModule.guards).toEqual([]);
+  });
+
+  it('POSITIVE CONTROL — the two NAMESPACE facts the header states, measured separately', () => {
+    // Both are fail-CLOSED limitations the header records, and the settle side's namespace
+    // behaviour is pinned by a test while the guard side's was prose only — which matters
+    // because the plausible future edit is exactly the one `bindingsOf` already made on the
+    // settle side (teach the scan to follow namespaces), and it would silently falsify the
+    // header with nothing red.
+    const NS_IMPORT = `import * as auth from '~/server/services/blocks/block-bridge-auth.service';`;
+    const NAMED_IMPORT = `import { ${GUARD} } from '~/server/services/blocks/block-bridge-auth.service';`;
+    const proc = (body: string) => `export const r = router({
+  p: publicProcedure.mutation(async ({ input }) => {
+${body}
+  }),
+});`;
+    // (a) A namespace import as the file's ONLY guard-module import disqualifies the file:
+    //     the named-import requirement is never satisfied, so even a bare-identifier call
+    //     contributes nothing.
+    expect(
+      scanSource(
+        FIXTURE_REL,
+        `${NS_IMPORT}\n${proc(`    return await ${GUARD}(input.blockToken);`)}`
+      ).guards
+    ).toEqual([]);
+    // …and alongside the named import it changes nothing.
+    expect(
+      scanSource(
+        FIXTURE_REL,
+        `${NAMED_IMPORT}\n${NS_IMPORT}\n${proc(`    return await ${GUARD}(input.blockToken);`)}`
+      ).guards.map((g) => g.owner)
+    ).toEqual(['p']);
+    // (b) INDEPENDENTLY of (a): a guard CALLED through a namespace contributes no guards
+    //     even in a file that fully qualifies — collection is gated on a bare-identifier
+    //     callee. The named import is present here, so this zero is not (a) in disguise.
+    expect(
+      scanSource(
+        FIXTURE_REL,
+        `${NAMED_IMPORT}\n${NS_IMPORT}\n${proc(
+          `    return await auth.${GUARD}(input.blockToken);`
+        )}`
+      ).guards
+    ).toEqual([]);
+    expect(
+      scanSource(
+        FIXTURE_REL,
+        `${NAMED_IMPORT}\n${NS_IMPORT}\n${proc(
+          `    return await auth['${GUARD}'](input.blockToken);`
+        )}`
+      ).guards
+    ).toEqual([]);
   });
 
   it('POSITIVE CONTROL — a SHADOWED guard name empties the guard population for that file', () => {
