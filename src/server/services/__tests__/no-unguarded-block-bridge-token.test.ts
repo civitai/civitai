@@ -91,9 +91,18 @@ import { describe, expect, it } from 'vitest';
  *     The class is everything the two readers miss: a local `function`, `type`, `interface`,
  *     `class` or `enum` declaration; a default or namespace import (`importMap` parses named
  *     `import { … } from` only); a re-exported declaration (`export … from`, which `importMap`
- *     also does not parse); and a `$`-bearing name, since the nested candidate regex is
- *     `[A-Za-z_][A-Za-z0-9_]*` — no `$` — so `$bridgeInput` is captured as `bridgeInput` and
- *     may resolve against a DIFFERENT declaration entirely.
+ *     also does not parse); and a `$`-bearing name.
+ *     🔴 THE `$` HOLE IS AT BOTH SITES, NOT JUST THE NESTED ONE — an earlier draft of this entry
+ *     blamed only the nested candidate regex (`[A-Za-z_][A-Za-z0-9_]*`, no `$`), which would
+ *     have sent someone to widen one character class and believe they had closed it. The DEPTH-0
+ *     regex in `schemaIdentifiers` has `$` in its class but a `\b` in front of it, and `$` is
+ *     not a word character, so the boundary cannot match before it either. MEASURED:
+ *     `schemaIdentifiers('$bridgeInput')` returns `['bridgeInput']` and
+ *     `schemaIdentifiers('$a.extend({}))')` returns `['a']`. At depth 0 that mangled name is
+ *     then REQUIRED to resolve, so it either reds against a name nobody wrote or — the bad case
+ *     — resolves against a DIFFERENT declaration that happens to bear the trimmed name, with
+ *     `unresolved` staying empty. Both sites need fixing together, and neither is fixed here:
+ *     no `$`-bearing schema exists in the corpus, and widening the classes moves the walk.
  *     Widening `findDefinitionText` to read `function` was tried and BACKED OUT, deliberately:
  *     it closes this and moves no verdict (`procs`, `unresolved` and the nested ledger all
  *     unchanged), but the deeper walk pushes two chains in
@@ -510,10 +519,25 @@ function scanTrivia(source: string, rel: string): TriviaSpans {
     // A token IS part of the parse, so this keeps the parser as the authority and does not
     // reintroduce the lexer hazards the docstring on `codeWithLiterals` records — in
     // particular a regex literal's `//` is still never mistaken for a comment.
+    //
+    // 🔴 LEADING ONLY, AND THE TRAILING HALF WAS DELETED RATHER THAN LEFT LOOKING LOAD-BEARING.
+    // The first version of this loop also called `getTrailingCommentRanges` here. MEASURED over
+    // the three files these suites read: of 3,782 distinct comment positions, the node-level
+    // pair accounts for 3,610, token-level LEADING is the SOLE source for 172, and token-level
+    // TRAILING is the sole source for 0 — every same-line trailing comment is already reached by
+    // the node-level call. Deleting it leaves the suite green, which is exactly the problem with
+    // keeping it: an unreachable line beside a load-bearing one reads as though both carry
+    // weight, and the loop-level mutant in the matrix could not tell them apart.
+    //
+    // ⚠️ AND THE LEAF TEST BELOW IS AN OPTIMISATION, NOT A CORRECTNESS GUARD — measured, because
+    // it reads like one. Replacing `getChildCount(sourceFile) === 0` with `true` leaves the suite
+    // green and every real-router value identical: `addComments` already dedupes by position, and
+    // a non-leaf node's leading trivia is the same trivia the node-level call above collected. It
+    // is kept only to avoid re-asking for ranges already gathered. Do not read it as the thing
+    // that makes this loop correct; the LEADING call is.
     for (const child of node.getChildren(sourceFile)) {
       if (child.getChildCount(sourceFile) === 0) {
         addComments(ts.getLeadingCommentRanges(source, child.getFullStart()));
-        addComments(ts.getTrailingCommentRanges(source, child.end));
       }
     }
     if (
@@ -755,6 +779,10 @@ function astTerminatorCount(source: string, rel: string): number {
 function chunks(source: string): Chunk[] {
   const lines = source.split('\n');
   const codeLines = stripNonCode(source).split('\n');
+  // Comments gone, literal bodies KEPT — the view the column-zero close test reads, for the
+  // reason set out at that test. Distinct from `codeLines`, which empties literal bodies and is
+  // what every reachability decision reads.
+  const closeLines = codeWithLiterals(source).split('\n');
   const out: Chunk[] = [];
   let open: { name: string; kind: 'proc' | 'fn'; start: number } | null = null;
 
@@ -791,14 +819,24 @@ function chunks(source: string): Chunk[] {
       open = { name: fn, kind: 'fn', start: i };
       return;
     }
-    // 🔴 THE CLOSE TEST DELIBERATELY STAYS ON THE RAW LINE, and the asymmetry is not an
-    // oversight. `stripNonCode` EMPTIES literal bodies, so a column-zero continuation of a
-    // multi-line template — the exact cut this boundary exists to notice — normalises to blanks
-    // and would stop closing the chunk. Detection asks "is this text a procedure", which a
-    // comment must not be able to answer; closing asks "did the file's own formatting end the
-    // procedure", which is a question about the raw bytes. `a chunk cut short by a column-zero
-    // line is CAUGHT` pins this half, and it goes red if this is switched to `codeLines`.
-    if (open && /^[A-Za-z}]/.test(line)) close(i);
+    // 🔴 THE CLOSE TEST READS `codeWithLiterals`, WHICH IS THE ONE VIEW THAT ANSWERS BOTH HALVES.
+    // The previous round argued this had to stay on the RAW line because "`stripNonCode` EMPTIES
+    // literal bodies", so a column-zero template continuation — the exact cut this boundary
+    // exists to notice — would stop closing the chunk. That was true of `stripNonCode` and it
+    // was the wrong conclusion: the file already has a second normalised view which strips
+    // comments AND keeps literal bodies, and it satisfies both requirements at once. Measured on
+    // the three views, which is what settles it rather than the argument:
+    //   column-zero BLOCK-COMMENT body line  raw: closes  stripNonCode: no   codeWithLiterals: NO
+    //   column-zero TEMPLATE continuation    raw: closes  stripNonCode: no   codeWithLiterals: YES
+    //
+    // The raw version was a false RED reachable from prettier-clean source — prettier does not
+    // reindent the body lines of a block comment. Measured: a procedure with a column-zero
+    // comment body line between `.input(` and `.mutation(` gave `cutProcChunks: ['realProc']`
+    // and `procsReachingGuard: []` for a procedure that calls the guard on the very next line,
+    // and the message blamed a column-zero line the committer was entitled to write.
+    // `a chunk cut short by a column-zero line is CAUGHT` still pins the template half, and
+    // `a column-zero COMMENT body line does not end a procedure` pins this one.
+    if (open && /^[A-Za-z}]/.test(closeLines[i] ?? '')) close(i);
   });
   close(lines.length);
   return out;
@@ -1045,13 +1083,29 @@ function schemaIdentifiers(arg: string): string[] {
   // ⚠️ IT BINDS EVERY IDENTIFIER IN THE PARAMETER LIST, INCLUDING ONES THAT ARE NOT BINDINGS —
   // a type annotation's type (`(v: Foo) =>` binds `Foo` as well) and both halves of a renaming
   // destructure (`({ a: b }) =>`). Separating those needs the parse, and this function is handed
-  // an argument FRAGMENT. Binding is a SUPPRESSION, so over-binding is the fail-OPEN direction;
-  // what bounds it is that the blast radius is names written inside an arrow's OWN parameter
-  // list, where this corpus never spells a schema reference. A default value naming a schema
-  // (`(v = someSchema) => …`) WOULD be suppressed — stated because it is open, not covered.
+  // an argument FRAGMENT. Binding is a SUPPRESSION, so over-binding is the fail-OPEN direction.
+  //
+  // 🔴 THIS PARAGRAPH USED TO BOUND THAT RADIUS WRONGLY, AND THE OMISSION CAUSED A REAL FLIP. It
+  // said "the blast radius is names written inside an arrow's OWN parameter list, where this
+  // corpus never spells a schema reference". Both halves of that are true and it still misleads,
+  // because what it does NOT say is where the suppression is APPLIED — and the answer was
+  // argument-wide, which put the chain OPERAND in range whenever it shared a name with something
+  // in the list. So the radius was never limited to the parameter list at all. I wrote that
+  // sentence, in the round that corrected the previous over-claiming sentence in this very
+  // function; the failure is not the claim being false but the claim being narrower than the
+  // mechanism, which is the same shape twice running.
+  // The suppression is now POSITIONAL — see `firstArrowAt` below and the note inside the scan
+  // loop, which carries the measurements and the one residual case.
+  //
+  // A default value naming a schema (`(v = someSchema) => …`) is bound and therefore suppressed
+  // from the first arrow onward — stated because it is open, not covered.
   const bound = new Set<string>();
+  // 🔴 AND WHERE THE SUPPRESSION MAY APPLY, WHICH IS THE HALF THE PREVIOUS ROUND GOT WRONG. See
+  // the note below `out` for the flip this caused; `firstArrowAt` is the whole remedy.
+  let firstArrowAt = Number.POSITIVE_INFINITY;
   for (const re of [/\(([^()]*)\)\s*=>/g, /(?:^|[^.\w$])([A-Za-z_$][A-Za-z0-9_$]*)\s*=>/g]) {
     for (let m = re.exec(code); m; m = re.exec(code)) {
+      firstArrowAt = Math.min(firstArrowAt, m.index);
       for (const name of m[1].match(/[A-Za-z_$][A-Za-z0-9_$]*/g) ?? []) bound.add(name);
     }
   }
@@ -1093,7 +1147,32 @@ function schemaIdentifiers(arg: string): string[] {
   for (let m = re.exec(code); m; m = re.exec(code)) {
     if (m[1] || m[3]) continue;
     const ident = m[2];
-    if (NON_SCHEMA_WORDS.has(ident) || bound.has(ident)) continue;
+    if (NON_SCHEMA_WORDS.has(ident)) continue;
+    // 🔴 SUPPRESSION IS POSITIONAL, NOT ARGUMENT-WIDE, AND THE PREVIOUS ROUND'S VERSION OF THIS
+    // LINE FLIPPED A CASE FROM FAIL-CLOSED TO FAIL-OPEN. It read `|| bound.has(ident)`, applied
+    // across the WHOLE argument — so when a name inside an arrow's parameter list happened to
+    // match the CHAIN OPERAND, the operand was dropped. The operand is indisputably a schema
+    // reference, so a noisy red became a silent absence, and with no literal `blockToken` in the
+    // raw argument the procedure left the population with BOTH ledgers quiet.
+    //
+    // MEASURED on that version, and the third row is the control that makes it attributable to
+    // the shared NAME rather than to the rule dropping everything:
+    //   `mySchema.superRefine((val: z.infer<typeof mySchema>, ctx) => …)`  -> []
+    //   `someInput.superRefine((someInput, ctx) => …)`                     -> []
+    //   `keptSchema.superRefine((val, ctx) => …)`                          -> ['keptSchema']
+    // The first is the realistic one: `z.infer<typeof mySchema>` is ordinary zod.
+    //
+    // Nothing BEFORE the first arrow can be a reference to that arrow's parameter, so gating the
+    // suppression on position keeps the operand while still suppressing the parameter's uses in
+    // the list and in the body — which is the only reason `bound` exists.
+    //
+    // ⚠️ RESIDUAL, DISCLOSED RATHER THAN CLOSED: an operand appearing AFTER the first arrow and
+    // sharing a bound name is still suppressed. Measured — `a.refine((b) => !!b).merge(b)` yields
+    // `['a']`, dropping the second operand. Closing that needs per-arrow scoping, which needs the
+    // parse this function does not have. It is a name COLLISION between a parameter and a later
+    // operand; the corpus has none, and this sentence exists so the next reader does not have to
+    // discover the boundary by hitting it.
+    if (bound.has(ident) && m.index >= firstArrowAt) continue;
     out.add(ident);
   }
   return [...out];
@@ -1779,21 +1858,89 @@ describe('the bridge scan can actually see what it claims to', () => {
     // "dollar, end of input, Fixture" and could never match its own declaration. The failure is
     // silent AND lands in the reassuring direction: `definitionText` returns null, the candidate
     // filter then drops the name, and the reference is skipped without reaching `unreadable`.
-    const SELF = 'src/server/services/__tests__/no-unguarded-block-bridge-token.test.ts';
+    // 🔴 DERIVED FROM `__filename`, NOT HARDCODED, AND THE CONTROLS RUN FIRST. Both of those are
+    // corrections. A hardcoded repo-relative path to this very file breaks on a rename, and it
+    // breaks in the worst way: the FIRST assertion would fail claiming `$` is acting as an
+    // anchor, which is not the cause, while the control that would have disambiguated it sat
+    // after the failure and never ran. Ordering the controls first means an unreadable path
+    // reports itself as an unreadable path.
+    const SELF = path.relative(REPO_ROOT, __filename);
+    // Positive control: the reader can read this file at all.
+    // 🔴 ASSERTED AS A BOOLEAN, because `toMatch` on a `null` throws "expects to receive a
+    // string, but got object" and DISCARDS the custom message — so the one failure this control
+    // exists to explain would have printed the least explanatory error in the file. Measured by
+    // pointing `SELF` at a path that does not exist.
+    expect(
+      definitionText(SELF, 'MAX_SCHEMA_DEPTH') !== null,
+      `Could not read ${SELF}, so nothing below is about escaping — this file has been renamed ` +
+        'or moved and the derivation of SELF from __filename is what to look at.'
+    ).toBe(true);
+    // Negative control: it does not answer for every name it is asked about.
+    expect(definitionText(SELF, 'notDeclaredAnywhereInThisFile')).toBeNull();
+    // …and only now the claim itself, with the same null-safety for the same reason.
     const found = definitionText(SELF, 'dollar$Fixture');
     expect(
-      found,
-      'A `$`-bearing declaration was not found in the file that declares it. The identifier ' +
-        'is reaching the RegExp unescaped, so `$` is acting as an anchor.'
-    ).toMatch(/dollar\$Fixture/);
+      found !== null,
+      'A `$`-bearing declaration was not found in the file that declares it, and the controls ' +
+        'above have already shown the file is readable. The identifier is reaching the RegExp ' +
+        'unescaped, so `$` is acting as an anchor and can never match.'
+    ).toBe(true);
+    expect(found).toMatch(/dollar\$Fixture/);
     // Reading the declaration's own VALUE back proves the slice is the right one, and is what
     // makes the fixture a used binding rather than a lint warning.
     expect(found).toContain(dollar$Fixture);
-    // Positive control: the reader works on this file at all, so the assertion above is about
-    // the `$` and not about an unreadable path.
-    expect(definitionText(SELF, 'MAX_SCHEMA_DEPTH')).toMatch(/MAX_SCHEMA_DEPTH/);
-    // Negative control: it does not simply answer for every name it is asked about.
-    expect(definitionText(SELF, 'notDeclaredAnywhereInThisFile')).toBeNull();
+  });
+
+  it('a parameter name colliding with the chain operand does NOT suppress the operand', () => {
+    // 🔴 THE FAIL-OPEN THIS PINS WAS INTRODUCED BY THE FIX IN THE ROUND BEFORE IT, which is the
+    // reason it gets its own test rather than a line in the one above. `bound` suppresses by
+    // NAME; applying it across the whole argument meant that when a name inside an arrow's
+    // parameter list matched the CHAIN OPERAND, the operand — indisputably a schema reference —
+    // was dropped. A noisy red became a silent absence, and with no literal `blockToken` in the
+    // raw argument the procedure left the population with both ledgers quiet.
+    expect(
+      schemaIdentifiers(
+        'mySchema.superRefine((val: z.infer<typeof mySchema>, ctx) => ctx.addIssue({}))'
+      ),
+      'The annotation mentions the operand. `z.infer<typeof X>` is ordinary zod, so this is the ' +
+        'realistic shape: an empty result means the operand was suppressed by its own ' +
+        'parameter list and the procedure is about to be scored as carrying no token.'
+    ).toEqual(['mySchema']);
+    expect(
+      schemaIdentifiers('someInput.superRefine((someInput, ctx) => ctx.addIssue({}))'),
+      'A parameter that shadows the operand must not delete the operand.'
+    ).toEqual(['someInput']);
+    // 🔴 THE CONTROL THAT MAKES THE TWO ABOVE ATTRIBUTABLE. Same shape, no shared name — so a
+    // failure above is about the COLLISION and not about the rule having stopped working.
+    expect(schemaIdentifiers('keptSchema.superRefine((val, ctx) => ctx.addIssue({}))')).toEqual([
+      'keptSchema',
+    ]);
+    // …and the suppression still has to WORK, or this test is satisfied by deleting it: a
+    // parameter's uses inside the list and the body must still be dropped.
+    expect(
+      schemaIdentifiers('z.object({ id: z.number() }).superRefine((val, ctx) => ctx.addIssue({}))')
+    ).toEqual([]);
+    // End to end, the loud outcome: unreadable, and SAID so, rather than silently absent.
+    const collide = [
+      'export const r = router({',
+      '  collideProc: publicProcedure',
+      '    .input(bridgeTokenInput.superRefine((bridgeTokenInput, ctx) => ctx.addIssue({})))',
+      '    .mutation(async () => 1),',
+      '});',
+    ].join('\n');
+    const r = bridgeInputProcs(ROUTER, collide);
+    expect(r.procs).toEqual([]);
+    expect(
+      r.unresolved,
+      'With the operand suppressed this was `procs: []` AND `unresolved: []` — the merged ' +
+        "outcome this file's header forbids. It must be reported instead."
+    ).toEqual(['collideProc -> bridgeTokenInput']);
+    // 🔴 THE DISCLOSED RESIDUAL, PINNED AS A FACT rather than described — same convention as
+    // `the object-key rule drops a ternary branch`. An operand appearing AFTER the first arrow
+    // and sharing a bound name is still suppressed, because closing that needs per-arrow scoping
+    // and therefore the parse. The day someone fixes it, this goes red and points at the
+    // docstring that has to stop saying the limit exists.
+    expect(schemaIdentifiers('a.refine((b) => !!b).merge(b)')).toEqual(['a']);
   });
 
   it('POSITIVE CONTROL — an annotated argument KEEPS its schema identifier (the OVER-strip direction)', () => {
@@ -2053,8 +2200,18 @@ describe('no unguarded block-bridge token verification', () => {
         'importMap does not parse because it reads `import ... from` only — teach importMap, ' +
         'NOT resolveModule, which already succeeded; (c) the declaration is not a ' +
         'const/let/var (a function, type, interface, class or enum) — teach ' +
-        'findDefinitionText. In every case, fix the READER; do not exempt the procedure and ' +
-        'do not add the name to a suppression set.'
+        'findDefinitionText; (d) it is NOT A SCHEMA REFERENCE AT ALL but a lambda parameter ' +
+        'that `bound` failed to bind, in which case there is nothing to resolve and none of ' +
+        'the three readers above owns it — widen `bound` in schemaIdentifiers. Two known ' +
+        'shapes do this: an arrow with a RETURN-TYPE annotation, `(v): v is Foo => ...`, ' +
+        'which reports `v` and `is`; and a default value containing a call, ' +
+        '`(x, y = z.string()) => ...`, which reports `x` and `y`. Both defeat the ' +
+        'parameter-list regex for the same reason — what sits between the `)` and the `=>`, ' +
+        'and a nested `()` inside the list.\n' +
+        'So: identify which of (a)-(d) you are looking at FIRST. An earlier version of this ' +
+        'message enumerated only (a)-(c) and closed with "in every case, fix the READER", ' +
+        'which is what stops the next reader looking for a fourth cause. Whichever it is, fix ' +
+        'the READER; do not exempt the procedure and do not add the name to a suppression set.'
     ).toEqual([]);
 
     expect(
@@ -2190,6 +2347,40 @@ describe('no unguarded block-bridge token verification', () => {
         'predicate flags intact chunks and the positives above prove nothing.'
     ).toEqual([]);
     expect(bridgeInputProcs(ROUTER, notCut).procs).toEqual(['cutProc']);
+  });
+
+  it('a column-zero COMMENT body line does not end a procedure', () => {
+    // 🔴 THE OTHER SIDE OF THE SAME BOUNDARY, and a false RED reachable from prettier-clean
+    // source: prettier does not reindent the body lines of a block comment, so a committer may
+    // legitimately leave one in column zero. While the close test read RAW lines, that ended the
+    // chunk — `cutProcChunks` returned the procedure and `procsReachingGuard` returned nothing,
+    // for a procedure whose very next line calls the guard. The message then blamed a column-zero
+    // line, which the committer was entitled to write and could not act on.
+    //
+    // The pair matters: this asserts a comment body line does NOT close, while
+    // `a chunk cut short by a column-zero line is CAUGHT` asserts a template continuation DOES.
+    // Only `codeWithLiterals` answers both — comments stripped, literal bodies kept — so a
+    // change to either of the other two views breaks exactly one of these two tests.
+    const withComment = [
+      'export const r = router({',
+      '  realProc: publicProcedure',
+      '    .input(z.object({ blockToken: z.string().min(1) }))',
+      '    /*',
+      'Foo bar — a block-comment body line left in column zero by the formatter.',
+      '    */',
+      '    .mutation(async ({ input }) => authorizeBlockBridgeToken(input.blockToken)),',
+      '});',
+    ].join('\n');
+    expect(
+      cutProcChunks(withComment),
+      'A column-zero line inside a COMMENT must not end the chunk. Returning the procedure ' +
+        'here is a false red on source the formatter produces, and its message names a cause ' +
+        'the committer cannot act on.'
+    ).toEqual([]);
+    // …and the procedure is still scored correctly on both ledgers, which is what the false red
+    // was costing: it reported the guard as unreachable from a proc that calls it.
+    expect(bridgeInputProcs(ROUTER, withComment).procs).toEqual(['realProc']);
+    expect(procsReachingGuard(withComment)).toEqual(['realProc']);
   });
 
   /**
