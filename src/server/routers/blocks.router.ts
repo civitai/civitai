@@ -43,6 +43,7 @@ import {
   getUserBuzzTransactions,
 } from '~/server/services/buzz.service';
 import { projectBlockBuzzTransaction } from '~/server/services/blocks/block-buzz-read.projection';
+import { recordBlockBridgeRateLimitRefusal } from '~/server/metrics/app-block-runtime.metrics';
 import {
   checkBlockCatalogRateLimit,
   checkBlockPollRateLimit,
@@ -3906,6 +3907,7 @@ export const blocksRouter = router({
       // should get. Fail-open on a redis incident.
       const pollRate = await checkBlockPollRateLimit(claims.blockInstanceId, userId);
       if (!pollRate.allowed) {
+        recordBlockBridgeRateLimitRefusal('pollWorkflow', 'poll');
         // 🔴 IT RETURNS A NON-TERMINAL SNAPSHOT. IT DOES NOT THROW, AND THAT IS THE
         // WHOLE DESIGN — A THROWN 429 HERE DESTROYS A PAID GENERATION.
         //
@@ -4118,20 +4120,26 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
-      // RATE LIMIT — the CATALOG bucket, weight 1, per `blockInstanceId`. Same
-      // bucket and posture as `queryAppWorkflows` / `getImagesByIds`, because
-      // this is the same kind of thing: a bounded, keyset-paginated read (≤50
-      // rows) whose legitimate cadence is set by a person reloading a page, not
-      // by a generation. It is NOT the `:poll:` bucket — that one is sized for a
-      // loop, and a queue read placed in it would inherit a ceiling 100× looser
-      // than it needs. Fail-open on a redis incident, like every sibling.
-      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
-      if (!rate.allowed) {
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
-      }
+      // RATE LIMIT: NONE, DELIBERATELY — and this is a REVERSAL, recorded as one.
+      //
+      // clawgate #569 added a catalog-bucket limit here and the round-0 audit asked for
+      // it back out. The audit is right, and the tell was in the limit's own written
+      // justification: it argued that this is "a ≤50-row keyset read whose cadence is a
+      // page reload" — i.e. it conceded, in the sentence meant to justify the ceiling,
+      // that the ceiling is four orders of magnitude above the traffic. **A limit whose
+      // rationale is its own enormous margin bounds nothing.** What it does do is real:
+      // it adds a throw path to a read, on a bucket whose key is `page_<appBlockId>` for
+      // a page app — shared platform-wide by every viewer of that app — so this
+      // procedure's only measurable effect was to spend another viewer's allowance.
+      //
+      // WHAT BOUNDS IT INSTEAD: the work is one indexed keyset query capped at 50 rows
+      // by the input schema, server-scoped to (viewer, appBlockId) off the verified
+      // token. Cost per call is flat and small, and a block cannot widen it.
+      //
+      // 🔴 THE GENERAL RULE THIS IS AN INSTANCE OF, because #569's own non-goals say it
+      // and it still happened: do not add a limit reflexively. This one was named by
+      // neither the card nor any review lane — it arrived because the procedure was in
+      // the population and everything else in the population had one.
       const { listMyBlockWorkflows } = await import(
         '~/server/services/blocks/block-workflows.service'
       );
@@ -4208,10 +4216,37 @@ export const blocksRouter = router({
       // does not guarantee a ceiling.
       const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       if (!rate.allowed) {
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
+        recordBlockBridgeRateLimitRefusal('cancelWorkflow', 'catalog');
+        // 🔴 IT RETURNS A NON-TERMINAL SNAPSHOT, FOR EXACTLY THE REASON `pollWorkflow`
+        // DOES — AND THIS SITE IS WHERE THAT INSIGHT WAS NEARLY MISSED. An earlier
+        // revision of this change threw `TOO_MANY_REQUESTS` here while carefully
+        // returning from the poll, as though the hazard were a property of polling. It
+        // is not: it is a property of the HOST WRAPPER, and both cancel hosts have the
+        // identical one. `PageBlockHost.tsx` and `IframeHost.tsx` wrap
+        // `cancelWorkflowMutation` in `catch (err) { send('WORKFLOW_CANCELED', {
+        // snapshot: failureSnapshot(err) }) }`, and `failureSnapshot` returns
+        // `status: 'failed'` — terminal.
+        //
+        // WHAT THAT DID: a block cancels a RUNNING, PAID workflow while the shared
+        // catalog bucket is exhausted → the 429 throws → the host converts it to a
+        // failed snapshot → the block stops watching. The workflow is still running on
+        // the orchestrator, the Buzz is still spent, and the cancel never happened. The
+        // block has been told the opposite of the truth in both directions at once.
+        //
+        // Returning still sheds everything the bucket exists to bound — the orchestrator
+        // token fetch, the scope read, the PATCH, the re-read, the moderation scan and
+        // both money observers — for one Redis INCR.
+        //
+        // ⚠️ `status: 'processing'` is the HONEST answer here, more so than at the poll:
+        // we did not issue the cancel, so the workflow IS still running. The caller can
+        // retry the cancel, which is the correct next action and the one a terminal
+        // `failed` forecloses.
+        return {
+          snapshot: {
+            workflowId: input.workflowId,
+            status: 'processing' as const,
+          },
+        };
       }
       // VIEWER SCOPE, before any orchestrator call: the id must name this viewer as its owner.
       assertBlockWorkflowMintedForViewer({ workflowId: input.workflowId, userId });
@@ -5231,8 +5266,20 @@ export const blocksRouter = router({
       // customComfy body specifically for this.
       //
       // Fail-open on a redis incident, like every sibling.
+      //
+      // 🔴 THIS ONE STILL THROWS, AND THAT IS A DECISION RATHER THAN AN OMISSION —
+      // stated because its two neighbours (`pollWorkflow`, `cancelWorkflow`) deliberately
+      // do NOT, and a reader comparing them deserves to know which way this was settled.
+      // The hazard there is that the host converts a throw into a TERMINAL snapshot, so
+      // the block is told a running, paid workflow has finished. An estimate has no
+      // workflow and no money behind it: the host surfaces a failed ESTIMATE_RESULT, the
+      // SDK reports an error rather than a false completion, and the block's correct next
+      // action — re-estimate — stays available. An error is the truthful answer to "what
+      // does this cost?" when we declined to compute it; a non-terminal snapshot would
+      // not be, because there is no in-flight thing for it to describe.
       const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       if (!rate.allowed) {
+        recordBlockBridgeRateLimitRefusal('estimateWorkflow', 'catalog');
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: 'Rate limit exceeded, please retry shortly.',
@@ -5478,11 +5525,32 @@ export const blocksRouter = router({
    * posture, and a Redis incident stops spend here while it removes the ceiling
    * everywhere else on this bridge.
    *
-   * Closing (a) and (c) would mean a per-instance request bucket at the TOP of this
-   * resolver, above the `kind` branch, where no reservation has been taken and
-   * nothing needs refunding. It is not shipped here because the spend path is the
-   * highest-blast-radius surface in this file and the card that raised the question
-   * asks for limits to be argued rather than added reflexively.
+   * 🔴 THE DECISION WAS RE-OPENED IN THE ROUND-0 AUDIT AND IS STILL `none` — BUT THE
+   * ORIGINAL REASON WAS WRONG AND IS RETRACTED HERE RATHER THAN QUIETLY RESTATED. It
+   * read: "not shipped because the spend path is the highest-blast-radius surface in
+   * this file". That objection does not reach the placement this same docblock names —
+   * the TOP of the resolver, above the `kind` branch, where nothing has been reserved,
+   * nothing needs refunding, and the usual counter (a throw breaks a paid generation) is
+   * at its weakest because no money has moved and this procedure already returns a
+   * failed-shape snapshot for the over-budget case. An objection that does not apply to
+   * the option under discussion is not an argument; it was a reflex dressed as one.
+   *
+   * THE REASON THAT SURVIVES IS NARROWER AND IT IS ABOUT FIT, NOT RISK. Hole (c) is not
+   * "this procedure is called too often" — it is "the counter stands in for a request
+   * limit and cannot tell a burnt reservation from a delivered generation". A
+   * per-instance request bucket is a blunt instrument for that: it would bound one
+   * install's call RATE while leaving the shared velocity counter just as unrefundable,
+   * so an app with two installs still drains it. The precise fix is to make the velocity
+   * key refundable — `AppSpendResult` exposes only `dailyKey`, so the throw-path rollback
+   * has no velocity key to return even in principle — and that is a change to
+   * `app-spend-cap.service.ts`'s contract, not to this resolver.
+   * **Closing condition: a PR that returns the velocity key alongside `dailyKey` and
+   * refunds it on the same paths that refund the daily reservation.** Until then hole (c)
+   * stands, stated, as the open item it is.
+   *
+   * It is also not shipped here because the card that raised the question asks for limits
+   * to be argued rather than added reflexively, and because nothing on this surface can
+   * currently grade one: see the refusal counter noted at hole (a).
    *
    * 🔴 AND THE EVIDENCE THAT WOULD SETTLE IT DOES NOT EXIST — an earlier revision of
    * this docblock named `block_scope_invocations` as the source for "the rejected-
@@ -6659,6 +6727,7 @@ export const blocksRouter = router({
       // procedure's rejection messages. Fail-open on a redis incident.
       const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       if (!rate.allowed) {
+        recordBlockBridgeRateLimitRefusal('getMyBuzzBalance', 'catalog');
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: 'Rate limit exceeded, please retry shortly.',
@@ -7037,20 +7106,19 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
-      // RATE LIMIT — the CATALOG bucket, weight 1, per `blockInstanceId`. This is
-      // the only bridge WRITE outside the post/publish paths: it resolves the
-      // install, reads the app block's manifest, validates against it and upserts
-      // a settings row, so it is a DB read + write per call. Its legitimate
-      // cadence is a viewer changing a dropdown — single digits per session —
-      // against a ceiling of 120/10 s, so the margin is several orders of
-      // magnitude. Fail-open on a redis incident, like every sibling.
-      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
-      if (!rate.allowed) {
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
-      }
+      // RATE LIMIT: NONE, DELIBERATELY — the same reversal as `listMyWorkflows`, and
+      // the same tell. #569 added a catalog limit here whose stated justification was
+      // that the cadence is "a viewer changing a dropdown — single digits per session —
+      // against a ceiling of 120/10 s, so the margin is several orders of magnitude".
+      // That sentence argues against the limit it introduces. Removed in the round-0
+      // audit round.
+      //
+      // WHAT BOUNDS IT INSTEAD, and it is more than the read above has: this is a
+      // developer-only surface — `assertViewerIsAppDeveloper` below gates every call —
+      // the payload is capped by `settingsSchema` (4KB, JSON-safe), the write is a
+      // single upsert on a resolved install, and the fields that survive are filtered
+      // against the app block's own manifest. A block cannot make this call do more
+      // work by calling it differently.
       await assertViewerIsAppDeveloper(userId);
       const ctxModelId = Number((claims.ctx as { modelId?: unknown } | undefined)?.modelId ?? NaN);
       if (!Number.isInteger(ctxModelId)) {

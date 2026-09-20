@@ -356,14 +356,35 @@ describe('blocks.pollWorkflow — the POLL bucket', () => {
 });
 
 describe('blocks.cancelWorkflow — the asymmetry with cancelAppWorkflow, resolved', () => {
-  it('REFUSES past the ceiling, with TOO_MANY_REQUESTS, before the orchestrator PATCH', async () => {
+  it('SHEDS THE WORK past the ceiling — no orchestrator PATCH, no re-read', async () => {
     mockCheckBlockCatalogRateLimit.mockResolvedValue(REFUSED);
 
-    await expect(
-      caller().cancelWorkflow({ blockToken: 'tok', workflowId: OWN_ID })
-    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    const result = await caller().cancelWorkflow({ blockToken: 'tok', workflowId: OWN_ID });
+
     expect(mockCancelWorkflow).not.toHaveBeenCalled();
     expect(mockGetWorkflow).not.toHaveBeenCalled();
+    expect(result.snapshot.workflowId).toBe(OWN_ID);
+  });
+
+  it('🔴 DOES NOT THROW, and returns a NON-TERMINAL status — the poll insight applied here', async () => {
+    // 🔴 THE FINDING THAT ALMOST SHIPPED. An earlier revision of this change threw
+    // TOO_MANY_REQUESTS here while carefully returning from `pollWorkflow`, as though the hazard
+    // were about polling. It is about the HOST WRAPPER, and both cancel hosts have the identical
+    // one: `catch (err) => send('WORKFLOW_CANCELED', { snapshot: failureSnapshot(err) })`, and
+    // `failureSnapshot` returns `status: 'failed'` — terminal. A block cancelling a RUNNING, PAID
+    // workflow while the shared bucket is exhausted would be told two false things at once: that
+    // the workflow had finished, and that its cancel had been carried out.
+    //
+    // Asserted by VALUE against the terminal set, and paired with the absence of the PATCH, so it
+    // cannot pass on a path that returns `failed` or on one that cancelled anyway.
+    const TERMINAL = ['succeeded', 'failed', 'expired', 'canceled'];
+    mockCheckBlockCatalogRateLimit.mockResolvedValue(REFUSED);
+
+    const result = await caller().cancelWorkflow({ blockToken: 'tok', workflowId: OWN_ID });
+
+    expect(TERMINAL).not.toContain(result.snapshot.status);
+    expect(result.snapshot.workflowId).not.toBe('');
+    expect(mockCancelWorkflow).not.toHaveBeenCalled();
   });
 
   it('INVARIANT GUARD — an allowed cancel still reaches the orchestrator', async () => {
@@ -372,18 +393,24 @@ describe('blocks.cancelWorkflow — the asymmetry with cancelAppWorkflow, resolv
   });
 });
 
-describe('blocks.listMyWorkflows — the queue read', () => {
-  it('REFUSES past the ceiling, with TOO_MANY_REQUESTS, before the read-model query', async () => {
-    mockCheckBlockCatalogRateLimit.mockResolvedValue(REFUSED);
-
-    await expect(caller().listMyWorkflows({ blockToken: 'tok' })).rejects.toMatchObject({
-      code: 'TOO_MANY_REQUESTS',
-    });
-    expect(mockListMyBlockWorkflows).not.toHaveBeenCalled();
-  });
-
-  it('INVARIANT GUARD — an allowed list still queries the read model', async () => {
+describe('the two procedures whose limits were WITHDRAWN', () => {
+  it('listMyWorkflows and updateUserSettings charge NO bucket — the decision, pinned', async () => {
+    // 🔴 A REMOVAL NEEDS A GUARD AS MUCH AS AN ADDITION DOES. #569 limited both of these; its
+    // round-0 audit withdrew both, because each limit's own written justification conceded a
+    // margin of 10³–10⁴ — a ceiling that bounds nothing while spending an app-wide shared
+    // allowance. Without this case, re-adding either is a silent one-line change; with it, the
+    // re-adder has to come here and argue.
+    //
+    // The limiter is stubbed ALLOWING, so this cannot pass merely because a refusal was skipped —
+    // it asserts the bucket is not consulted at all.
     await caller().listMyWorkflows({ blockToken: 'tok' });
+    await caller()
+      .updateUserSettings({ blockToken: 'tok', settings: { checkpointVersionId: 5 } })
+      .catch(() => undefined);
+
+    expect(mockCheckBlockCatalogRateLimit).not.toHaveBeenCalled();
+    expect(mockCheckBlockPollRateLimit).not.toHaveBeenCalled();
+    // …and the unlimited read still does its work.
     expect(mockListMyBlockWorkflows).toHaveBeenCalledTimes(1);
   });
 });
@@ -447,28 +474,6 @@ describe('blocks.getMyBuzzBalance — the one buzz read outside the helper', () 
     const result = await caller().getMyBuzzBalance({ blockToken: 'tok' });
     // Pairwise-distinct pool values: a stub returning one number for all three cannot pass.
     expect(result).toEqual({ blue: 11, green: 22, yellow: 33 });
-  });
-});
-
-describe('blocks.updateUserSettings — the settings write', () => {
-  it('REFUSES past the ceiling, with TOO_MANY_REQUESTS, before the install resolve', async () => {
-    mockCheckBlockCatalogRateLimit.mockResolvedValue(REFUSED);
-
-    await expect(
-      caller().updateUserSettings({ blockToken: 'tok', settings: { checkpointVersionId: 5 } })
-    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
-  });
-
-  it('REACHABILITY CONTROL — the limiter is consulted, and does not refuse when allowed', async () => {
-    // Same control as the estimate one, and RED at base for the same reason: it proves the fixture
-    // reaches the limiter rather than being rejected upstream, without requiring the whole write
-    // path to be stubbed.
-    await caller()
-      .updateUserSettings({ blockToken: 'tok', settings: { checkpointVersionId: 5 } })
-      .catch((e: { code?: string }) => {
-        expect(e.code).not.toBe('TOO_MANY_REQUESTS');
-      });
-    expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledWith(INSTANCE);
   });
 });
 

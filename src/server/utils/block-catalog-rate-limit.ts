@@ -52,21 +52,40 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 //      app-wide ceiling, not a per-user one, and one viewer can be refused because
 //      of strangers' traffic. The new `:poll:` bucket below does NOT inherit this:
 //      it puts the viewer in the key, and says why.
-//   2. ITS TENANCY DOUBLED IN ONE COMMIT. #569 added `cancelWorkflow`,
-//      `estimateWorkflow`, `getMyBuzzBalance`, `listMyWorkflows` and
-//      `updateUserSettings` to this bucket, taking it from 5 bridge procedures to 10
-//      (plus the REST catalog routes) against an unchanged ceiling that was sized
-//      for "a model/image selector" alone. Each addition is individually
-//      low-frequency — a cancel, a debounced estimate, a balance read on load, a
-//      queue read on load, a settings write on change — and the high-frequency
-//      procedure deliberately went elsewhere. But the headroom argument above was
-//      never re-made for ten tenants, and combined with (1) the debounced
-//      `estimateWorkflow` is the one worth watching at GA.
+//   2. ITS TENANCY GREW, SO THE CEILING MOVED WITH IT — clawgate #569 plus its round-0
+//      audit. #569 first added FIVE bridge procedures to this bucket against an
+//      UNCHANGED ceiling sized for "a model/image selector" alone. That is a tightening
+//      of five limits the change never intended to touch, on a key that is shared
+//      platform-wide per app, and it is not excused by the key being pre-existing: this
+//      was the change that raised the tenancy, so it owned the consequence.
 //
-// **Closing condition for revisiting this ceiling and this key: the bridge-call
-// counter described at the `:poll:` constants exists and has recorded a full GA week
-// of per-procedure volume on this bucket.**
-export const BLOCK_CATALOG_RATE_LIMIT_MAX = 120;
+//      Two things were done about it rather than one.
+//
+//      (a) TWO OF THE FIVE WERE WITHDRAWN. `listMyWorkflows` and `updateUserSettings`
+//          are back to no limit; each one's own justification had conceded a margin of
+//          10³–10⁴, which is a limit that bounds nothing while spending a shared
+//          allowance. The reasons are recorded at those procedures.
+//      (b) THE CEILING WAS RAISED, and the number is derived rather than picked. A page
+//          app's load previously charged this bucket roughly four times (`getMyViewer`,
+//          `getImagesByIds`, and 2 REST catalog calls); with `getMyBuzzBalance` — the
+//          one surviving addition at page-load frequency — it charges roughly five. So
+//          the app-wide concurrent-page-load headroom fell by a fifth. 150 = 120 × 5/4
+//          restores it exactly. `cancelWorkflow` and `estimateWorkflow`, the other two
+//          survivors, are user-action-driven rather than per-load and do not enter this
+//          arithmetic.
+//
+//      ⚠️ RAISING IS THE SAFE DIRECTION AND IT IS NOT FREE. It loosens the bound for the
+//      8 REST endpoints on this counter too, which never asked for it. That is accepted
+//      knowingly: on a surface whose whole measured traffic is ~1,037 REST requests over
+//      15 days, a 25% looser abuse ceiling is a smaller risk than throttling a legitimate
+//      app, and this card's blast radius is explicitly asymmetric in that direction.
+//
+// **Closing condition for revisiting this ceiling and this key:
+// `civitai_app_block_bridge_rate_limit_refusals_total` (added alongside this, in
+// `~/server/metrics/app-block-runtime.metrics`) shows refusals on this bucket, or a GA
+// week passes with none.** That series is what makes the sentence above checkable rather
+// than merely reasonable.
+export const BLOCK_CATALOG_RATE_LIMIT_MAX = 150;
 export const BLOCK_CATALOG_RATE_LIMIT_WINDOW_SECONDS = 10;
 
 // PUBLISH bucket (blocks.publishGenerationOutputs). A publish is FAR heavier than
@@ -182,13 +201,24 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 // `pollWorkflow` docblock names:
 //   - the SDK's sequential short poll is ~1 per 2 s per workflow (0.5/s) — this is ~40×
 //     that for one workflow, or ~4× a viewer running ten concurrent generations;
-//   - the long poll would be ~1 per 15 s per workflow, i.e. 30× looser again. ⚠️ NO
-//     SHIPPED CLIENT TAKES THAT PATH: `@civitai/app-sdk`'s `POLL_WORKFLOW` payload
-//     carries `requestId` and `workflowId` only, and neither host passes `waitSeconds`
-//     (`components/AppBlocks/PageBlockHost.tsx`, `components/AppBlocks/IframeHost.tsx`).
-//     Every poll in production today is the short poll, so this bullet and the stacking
-//     case below describe headroom against a cadence nothing currently produces. They
-//     are kept because the long poll is reachable by any block that asks for it.
+//   - the long poll would be ~1 per 15 s per workflow, i.e. 30× looser again. ⚠️ NO HOLD
+//     REACHES THE SERVER TODAY, BUT THE REASON IS NARROWER THAN AN EARLIER REVISION OF
+//     THIS COMMENT CLAIMED, and the difference matters to anyone sizing for GA.
+//
+//     What is MEASURED here: neither host passes `waitSeconds` — zero occurrences of the
+//     identifier in `components/AppBlocks/` — and `@civitai/app-sdk`'s `POLL_WORKFLOW`
+//     payload type (0.14.0, the version this repo installs) carries `requestId` and
+//     `workflowId` only. The hosts are the choke point, so the server sees no hold.
+//
+//     What that earlier revision got WRONG: it generalised from the app-sdk payload to
+//     "no shipped client takes that path". The round-0 audit reports that
+//     `@civitai/blocks-react` (0.53.1) DOES send `waitSeconds` from `pollOnce`, with
+//     `watch` defaulting it to 15 — and the server already accepts the field. That
+//     package is not installed in this repo, so it is recorded here as the audit's
+//     finding rather than as something measured at this call site. If it holds, blocks
+//     are ALREADY asking and the hosts are dropping it: the ~300-concurrent-hold figure
+//     below is one line in each host away, not a hypothetical a future block might
+//     reach. Size for it rather than against it.
 //   - the pathological shape the resolver warns about — `setInterval(poll, 2000)` against
 //     a 15 s hold, stacking ~7 concurrent requests per workflow — fits at ~5 concurrent
 //     workflows for one viewer.
@@ -246,11 +276,19 @@ export type BlockCatalogRateLimitResult =
  * buckets between them with zero copies. The reason one of them gives is the one
  * that matters: *"shared by both counters so the two ceilings cannot drift in their
  * TTL self-heal or their retry-after arithmetic — the duplication this replaces is
- * what lets one of a pair of limiters quietly become TTL-less."* That drift has
- * ALREADY happened in this family: `block-tip-rate-limit.ts` is the same copied body
- * with its `catch` flipped to fail-CLOSED, while every comment here asserts fail-open
- * is the convention every blocks limiter follows. One copy left the convention and
- * nothing noticed, because there was nothing for it to disagree with.
+ * what lets one of a pair of limiters quietly become TTL-less."*
+ *
+ * The drift is not hypothetical: `block-tip-rate-limit.ts` is the same copied body with
+ * its `catch` flipped to fail-CLOSED, while every comment here asserts fail-open is the
+ * convention every blocks limiter follows. ⚠️ BUT BE PRECISE ABOUT WHAT THIS HELPER
+ * DELIVERS, because an earlier revision cited that drift as though consolidating this
+ * file addressed it. It does not: `block-tip-rate-limit.ts` is a DIFFERENT MODULE, it is
+ * untouched here, and no guard in the repo would notice if a third copy appeared
+ * tomorrow. What this helper buys is that the FIVE buckets in THIS file can no longer
+ * diverge from each other — which is exactly what made the fail-closed reply defect
+ * below a one-line fix instead of a five-line one. The cross-file convention remains
+ * unenforced. **Closing condition: a guard that pins every blocks limiter's `catch` to
+ * fail-open, or a single shared module all of them call.**
  *
  * @param weight how much this call costs. 1 for a per-call bucket; the image count
  *   for the publish bucket, whose expense is per image rather than per request. The
@@ -284,13 +322,22 @@ async function checkFixedWindow(
   try {
     const count = await redis.incrBy(key as never, weight);
     // 🔴 FAIL OPEN ON A NON-THROWING BAD REPLY, NOT JUST ON A THROW. Without this the
-    // whole family fails CLOSED in the one failure mode a `catch` cannot see: a client
-    // that returns `undefined`/`null` instead of raising makes `count <= max` FALSE —
-    // `undefined <= 120` is false — so every caller is refused while every docblock in
-    // this file, the six router call sites and the decision ledger all promise
-    // unconditional fail-open. Found by driving two router suites that do not stub this
-    // module: the real limiter met an unstubbed mock client and 429'd a positive control.
-    // A `catch` is a guard against THROWS; this is the guard against ANSWERS.
+    // whole family fails CLOSED in the one failure mode a `catch` cannot see: a reply of
+    // `undefined`/`null` makes `count <= max` FALSE — `undefined <= 150` is false — so
+    // every caller is refused while every docblock in this file, the router call sites
+    // and the decision ledger all promise unconditional fail-open. A `catch` is a guard
+    // against THROWS; this is the guard against ANSWERS.
+    //
+    // ⚠️ CALL IT WHAT IT IS: A LATENT DEFECT, DEMONSTRATED AGAINST A TEST DOUBLE. The
+    // round-0 audit reproduced the fail-closed behaviour on the pre-fix file with a
+    // positive control, so the CODE defect is real and this line is the right fix. What
+    // is NOT established is that any production client can produce such a reply:
+    // `packages/civitai-redis/src/client.ts` types `incrBy` as `Promise<number>`, and
+    // every failure path found in that client — the deadline wrapper, the cluster-routing
+    // retry, the single-shot runner — REJECTS rather than resolving to a non-number. So
+    // this is a guard against a contract violation nobody has observed, not a fix for a
+    // live incident, and an earlier revision of the PR that called it "a production bug"
+    // overstated it. It is cheap, it is correct, and it costs one `typeof`.
     if (typeof count !== 'number' || !Number.isFinite(count)) return { allowed: true };
     if (count === weight) {
       await redis.expire(key as never, windowSeconds);

@@ -133,7 +133,7 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   },
   cancelWorkflow: {
     buckets: ['catalog'],
-    why: '#569 criterion 3 — the asymmetry with cancelAppWorkflow, resolved toward limiting. GET + PATCH + GET plus an inline moderation scan: the heavier of the two.',
+    why: '#569 criterion 3 — the asymmetry with cancelAppWorkflow, resolved toward limiting. GET + PATCH + GET plus an inline moderation scan: the heavier of the two. Like pollWorkflow it RETURNS a non-terminal refusal rather than throwing — both cancel hosts convert a throw into failureSnapshot status:failed, which would tell the block a still-running paid workflow had finished AND that a cancel it never issued had succeeded.',
   },
   createPostFromApp: {
     buckets: ['post', 'post-app', 'publish'],
@@ -168,8 +168,8 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     why: 'The per-call viewer identity read every block makes on load; a session-user resolve per call, so it is bounded; pre-existing.',
   },
   listMyWorkflows: {
-    buckets: ['catalog'],
-    why: '#569 — a ≤50-row keyset read of the block_workflows read model. Catalog, not poll: its cadence is a page reload, not a loop.',
+    buckets: [],
+    why: 'DELIBERATELY NONE. #569 gave it a catalog limit; the round-0 audit took it back out and was right. Its own justification conceded a 10³–10⁴ margin — a limit whose rationale is its own margin bounds nothing, while adding a throw path that spends an app-wide shared allowance. Bounded instead by shape: one indexed keyset query, ≤50 rows by schema, server-scoped to (viewer, appBlockId).',
   },
   pollWorkflow: {
     buckets: ['poll'],
@@ -192,8 +192,8 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     why: 'DELIBERATELY NONE. Bounded by the per-app generation VELOCITY ceiling in reserveAppSpend (120 gens/60 s aggregate on the standard tier — and that tier qualifier is load-bearing: trusted is 600 and platform 3,000) plus the per-user and per-app daily Buzz caps, which unlike every limiter here fail CLOSED. Three stated holes (a pre-reserve rejection loop; the dev-token skip; the velocity counter is app-wide and never refunded) are written out at the procedure.',
   },
   updateUserSettings: {
-    buckets: ['catalog'],
-    why: '#569 — the only bridge write outside post/publish: an install resolve, a manifest read and a settings upsert per call, against a cadence of a viewer changing a dropdown.',
+    buckets: [],
+    why: 'DELIBERATELY NONE, same reversal as listMyWorkflows. Bounded instead by being developer-only (assertViewerIsAppDeveloper), a 4KB JSON-safe settingsSchema cap, a single upsert on a resolved install, and manifest-filtered fields — a block cannot make the call do more work by calling it differently.',
   },
 });
 
@@ -434,7 +434,12 @@ describe('the bridge rate-limit scan can actually see what it claims to', () => 
     // The other direction: an entry claiming `catalog` whose limiter call was removed. Without
     // this, `buckets` would be a list nobody checks and the ledger would decay into prose.
     const mutated = read(ROUTER).replace(
-      "const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);\n      if (!rate.allowed) {\n        throw new TRPCError({\n          code: 'TOO_MANY_REQUESTS',\n          message: 'Rate limit exceeded, please retry shortly.',\n        });\n      }\n      // getUserBuzzAccounts returns every spend type",
+      // ⚠️ AN EXACT LITERAL FROM THE ROUTER, AND THE COUPLING IS DELIBERATE. It goes stale the
+      // moment that site is edited — which it did, when the refusal counter was added — and the
+      // `expect(mutated).not.toEqual(read(ROUTER))` line below turns that into a LOUD failure
+      // rather than a mutation that silently applies to nothing and scores the guard GREEN for
+      // free. A stale mutation target is the classic way a control stops controlling.
+      "const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);\n      if (!rate.allowed) {\n        recordBlockBridgeRateLimitRefusal('getMyBuzzBalance', 'catalog');\n        throw new TRPCError({\n          code: 'TOO_MANY_REQUESTS',\n          message: 'Rate limit exceeded, please retry shortly.',\n        });\n      }\n      // getUserBuzzAccounts returns every spend type",
       '// getUserBuzzAccounts returns every spend type'
     );
     expect(mutated).not.toEqual(read(ROUTER));
@@ -447,7 +452,12 @@ describe('the bridge rate-limit scan can actually see what it claims to', () => 
     // 🔴 The fail-OPEN hazard the sibling has hit six times, measured here rather than argued
     // away. Both shapes name the function with an argument list; neither is a call.
     const mutated = read(ROUTER).replace(
-      "const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);\n      if (!rate.allowed) {\n        throw new TRPCError({\n          code: 'TOO_MANY_REQUESTS',\n          message: 'Rate limit exceeded, please retry shortly.',\n        });\n      }\n      // getUserBuzzAccounts returns every spend type",
+      // ⚠️ AN EXACT LITERAL FROM THE ROUTER, AND THE COUPLING IS DELIBERATE. It goes stale the
+      // moment that site is edited — which it did, when the refusal counter was added — and the
+      // `expect(mutated).not.toEqual(read(ROUTER))` line below turns that into a LOUD failure
+      // rather than a mutation that silently applies to nothing and scores the guard GREEN for
+      // free. A stale mutation target is the classic way a control stops controlling.
+      "const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);\n      if (!rate.allowed) {\n        recordBlockBridgeRateLimitRefusal('getMyBuzzBalance', 'catalog');\n        throw new TRPCError({\n          code: 'TOO_MANY_REQUESTS',\n          message: 'Rate limit exceeded, please retry shortly.',\n        });\n      }\n      // getUserBuzzAccounts returns every spend type",
       `// const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       const note = 'checkBlockCatalogRateLimit(claims.blockInstanceId)';
       void note;
@@ -517,14 +527,18 @@ describe('no unlimited block-bridge procedure without a recorded decision', () =
 
   it('the UNLIMITED procedures are exactly the ones argued to be unlimited', () => {
     // 🔴 PINNED AS A LITERAL SET rather than derived from the ledger, so that moving a procedure
-    // to `buckets: []` is a change to THIS line and cannot pass as bookkeeping. Today that set is
-    // `submitWorkflow` alone, and the argument for it — the per-app generation velocity ceiling,
-    // plus its two stated holes — is written out at the procedure in `blocks.router.ts`.
+    // to `buckets: []` is a change to THIS line and cannot pass as bookkeeping — and it earned its
+    // keep immediately: all three members arrived by a DIFFERENT route. `submitWorkflow` was never
+    // limited and is argued from the per-app velocity ceiling; `listMyWorkflows` and
+    // `updateUserSettings` were limited by #569 and UN-limited by its round-0 audit, because each
+    // limit's own written justification conceded a margin of 10³–10⁴. Each argument is at its
+    // procedure in `blocks.router.ts`. Removing a limit is as much a decision as adding one, and
+    // this line is where both kinds have to be declared.
     const unlimited = Object.entries(RATE_LIMIT_DECISION_LEDGER)
       .filter(([, d]) => d.buckets.length === 0)
       .map(([name]) => name)
       .sort();
-    expect(unlimited).toEqual(['submitWorkflow']);
+    expect(unlimited).toEqual(['listMyWorkflows', 'submitWorkflow', 'updateUserSettings']);
   });
 
   it('pollWorkflow charges a bucket of its OWN — not the catalog one', () => {
