@@ -137,10 +137,10 @@ import { describe, expect, it } from 'vitest';
  *           collection is gated on the callee being a bare identifier. The ledger reddens
  *           that way instead.
  *     Both are fail-closed, and BOTH ARE PINNED by `POSITIVE CONTROL — the two NAMESPACE
- *     facts the header states, measured separately` — (b) with the named import present, so its zero cannot
- *     be (a) in disguise. A round-7 edit declared (b) false while correcting (a); it is
- *     not, and striking it deleted a live limitation from this list. (b) is a test now
- *     rather than a claim, for exactly that reason.
+ *     facts the header states, measured separately` — (b) with the named import present,
+ *     so its zero cannot be (a) in disguise. A round-7 edit declared (b) false while
+ *     correcting (a); it is not, and striking it deleted a live limitation from this
+ *     list. (b) is a test now rather than a claim, for exactly that reason.
  *   - 🔴 THREE SHAPES STILL SCORE `conditional: false` WHILE THE GUARD MAY NOT RUN, and
  *     they are listed because the conditionality axis has now been "closed" three rounds
  *     running and is not: an OPTIONAL CALL does not evaluate its arguments when its
@@ -523,10 +523,20 @@ function isTrpcProcedure(pa: ts.PropertyAssignment): boolean {
  * a `do` body, a `finally` block (which runs on EXIT — hence "once entered", not "on
  * entering"), and the `try` BLOCK. All fail-CLOSED false-REDs, taken because no shape in
  * this corpus puts the guard in any of them and a per-slot test is more machinery than the
- * cases are worth. Slots that do NOT satisfy it and are marked anyway — a `while` / `for` /
- * `for…of` / `for…in` body, an `if`/`else` or `case` body, a classic `for`'s incrementor, a
- * `do…while` condition (the last two reached only after an iteration, by normal completion
- * or by `continue`) — are marked correctly, not over-marked.
+ * cases are worth. ⚠️ ALL BUT THE `try` BLOCK — both halves of that sentence are false of
+ * it: its marking is enforcement rather than noise where the `catch` swallows, a per-slot
+ * fixture for it already exists, and the header calls the rethrowing-`try` wrapper the
+ * likeliest shape anyone actually writes. See the next paragraph.
+ *
+ * Slots that do NOT satisfy the criterion and are marked anyway — a `while` / `for` /
+ * `for…of` / `for…in` body, an `if`/`else` body, a `case` or `default` body, a CATCH
+ * CLAUSE, a NON-FIRST `case` expression (never reached when an earlier case matches), a
+ * classic `for`'s incrementor and a `do…while` condition (the last two reached only after
+ * an iteration, by normal completion or by `continue`) — are marked correctly, not
+ * over-marked. That enumeration is meant to be EXHAUSTIVE over the children of the eight
+ * kinds, and an earlier revision of it was not: it said "a loop or branch BODY", which both
+ * swallowed the `do` body listed as qualifying two lines above and left the catch clause
+ * and the non-first case expression in neither list.
  *
  * 🔴 THE `try` BLOCK IS THE ONE SLOT WHOSE MARKING IS NOT ALWAYS NOISE, and it cuts both
  * ways: where the `catch` SWALLOWS, marking is ENFORCEMENT (that is the statement spelling
@@ -1364,14 +1374,26 @@ export const r = router({
   });
 
   it('POSITIVE CONTROL — the SLOT-level claims the kinds docstring makes', () => {
-    // 🔴 THE KIND-LEVEL CONTROL ABOVE PINS ONE FIXTURE PER `CONDITIONAL_STATEMENT_KINDS`
-    // ENTRY, NEVER PER SLOT. So the docstring's two genuinely new slot classifications —
-    // a `switch`'s FIRST CASE EXPRESSION qualifies (it is evaluated whenever the switch is
-    // entered, whether or not a `default` precedes it in source order), while a classic
-    // `for`'s INCREMENTOR does not (reached only after an iteration) — were prose in a
-    // paragraph whose own point is that the criterion is checkable. Both are marked
-    // conditional either way; what these pin is the CLASSIFICATION the docstring asserts,
-    // so a future per-slot test cannot silently disagree with it.
+    // The kind-level control above pins one fixture per `CONDITIONAL_STATEMENT_KINDS`
+    // ENTRY, never per SLOT. These two are slot-level, and they earn their place for
+    // DIFFERENT reasons — stated separately because an earlier version of this comment
+    // claimed they both "pin the CLASSIFICATION the docstring asserts, so a future
+    // per-slot test cannot silently disagree with it", and that was measurably false:
+    // `crossesConditional` is slot-BLIND for statement kinds, so every slot of a listed
+    // kind yields `true` and BOTH assertions stay green if you swap the two
+    // classifications in the prose.
+    //
+    //   `forIncrementor` — a REAL unique kill, in the FAIL-OPEN direction. Measured: a
+    //     slot-aware `for` arm (`return child === node.statement`) leaves the kind-level
+    //     `inFor` fixture green and turns this one red. That refactor would stop marking
+    //     the incrementor, so a guard there — reached only after an iteration — would
+    //     score unconditional.
+    //   `firstCaseExpr` — the same role as the `do` body pin above: it locks in an
+    //     over-marking the docstring calls a false-RED, so the over-marking cannot be
+    //     removed while the docstring still claims it. It has NO reachable unique killing
+    //     mutant — expressing it would need `CaseBlock`-level descent state that
+    //     `crossesConditional(node, child)` cannot carry — and it is here as a ratchet,
+    //     not as a discriminator. Said plainly rather than dressed up as coverage.
     const { guards } = scanSource(
       FIXTURE_REL,
       `import { ${GUARD} } from '~/server/services/blocks/block-bridge-auth.service';
