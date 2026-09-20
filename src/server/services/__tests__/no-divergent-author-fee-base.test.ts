@@ -1038,6 +1038,26 @@ describe('author fee — the viewer-charge seam', () => {
       // commit Buzz. An entry here must say why its subject does not.
     };
 
+    // 🔴 THE REASON IS THE WHOLE COST OF THIS ESCAPE HATCH, SO IT IS ENFORCED,
+    // NOT REQUESTED. Without this, the cheapest way to green a reddened
+    // completeness guard is `{ someNewPrimitive: '' }` — which removes the
+    // identifier from the comparison, leaves MONEY_MARKERS short, and puts the
+    // structural half of the reservation guards back exactly where this PR
+    // found them, with nothing on the record saying why. Measured: a new
+    // `reserveFreshBuzzThing(` in the router reddens this guard; the same
+    // change plus an empty-reason exemption turned it green again.
+    //
+    // The 40-character floor is the one `QUOTE_SITE_LEDGER` already applies in
+    // this file, and `NO_FEE_PATHS` requires a reason on every exemption too —
+    // this hatch was the only one of the three that asked without checking.
+    for (const [identifier, reason] of Object.entries(NOT_MONEY)) {
+      expect(
+        reason.trim().length,
+        `NOT_MONEY['${identifier}'] must say WHY that identifier does not move Buzz. An ` +
+          'exemption without a stated reason is indistinguishable from silencing this guard.'
+      ).toBeGreaterThan(40);
+    }
+
     const found = moneyIdentifiersIn(source);
     // Positive control: the enumeration really ran. A pattern that matched
     // nothing would make the set comparison below trivially satisfiable by an

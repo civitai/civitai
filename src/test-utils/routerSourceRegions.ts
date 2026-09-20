@@ -44,11 +44,20 @@
  * A guard whose name says "reserves nothing" while its body knows only two of
  * four reservation primitives reads as coverage and provides none.
  *
- * The list is the one the divergence ledger already names as the three
- * reservations the folded fee must be taken with, plus the charge. Both guards
- * that classify a quote site read it from HERE so the two cannot drift: a
- * primitive added to one copy and not the other is exactly how a region check
- * goes quietly blind.
+ * 🔴 SO DO NOT CURATE THIS LIST. Its membership rule is the `MONEY_IDENTIFIER`
+ * pattern documented below, enforced by the completeness guard in
+ * `no-divergent-author-fee-base.test.ts`: every identifier that pattern finds
+ * in the router is either HERE or in that guard's `NOT_MONEY` with a stated
+ * reason. An earlier revision of this paragraph said the list was "the three
+ * reservations the folded fee must be taken with, plus the charge" — four
+ * entries. That was true when written and was falsified by the very next
+ * commit, which grew it to fifteen; it is recorded here because pruning back
+ * to a hand-picked four is precisely the defect this module exists to prevent,
+ * and the stale sentence was an instruction to commit it.
+ *
+ * Both guards that classify a quote site read the list from HERE so the two
+ * cannot drift: a primitive added to one copy and not the other is exactly how
+ * a region check goes quietly blind.
  *
  * ⚠️ IT DESCRIBES WHAT A ROUTER REGION CAN CONTAIN, NOT EVERY WAY MONEY MOVES.
  * `accrueBlockAuthorFee` is deliberately absent: it is called by
