@@ -211,12 +211,29 @@ export function workerCapArgv(maxWorkers, args) {
   return [`--max-workers=${maxWorkers}`];
 }
 
+/**
+ * The `--max-workers` operand as typed. `none` (or no operand) is the ONLY way back to an uncapped
+ * pool, and it has to stay the only one: `Number('1O')` is NaN, `JSON.stringify` writes NaN as
+ * `null`, and the daemon reads null as "no cap" — so a typo silently removed the cap this setting
+ * exists to impose. `concurrency` already rejects the same input, because its normalizer refuses
+ * null; only this flag was asymmetric.
+ */
+export function parseMaxWorkersFlag(raw) {
+  if (raw === undefined || raw === 'none') return null;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error(`--max-workers wants an integer >= 1 or 'none', got: ${raw}`);
+  }
+  return n;
+}
+
 export const CACHE_MODES = ['off', 'shadow', 'on'];
 
 // The WORKTREE's copy, not the daemon's: the sequencer and fs tracker come from that tree's
 // vitest config, and all three must share one key definition (scripts/test-cache/core.mjs) or
 // every lookup misses. A tree without the files simply runs uncached.
-export const cacheReporterPath = (worktree) => join(worktree, 'scripts', 'test-cache', 'reporter.mjs');
+export const cacheReporterPath = (worktree) =>
+  join(worktree, 'scripts', 'test-cache', 'reporter.mjs');
 
 /**
  * The reporter arguments a queued unit run should carry. The reporter is passed on the command line
@@ -436,8 +453,13 @@ export class TestQueue {
     return this.order.reduce((n, id) => n + (this.runs.get(id)?.kind === want ? 1 : 0), 0);
   }
 
+  pausedFor(kind) {
+    return this.limits[normalizeKind(kind)] === 0;
+  }
+
+  /** The UNIT lane, for the callers that predate lanes. Ask `pausedFor` for any other. */
   get paused() {
-    return this.concurrency === 0;
+    return this.pausedFor(DEFAULT_KIND);
   }
 
   request({ worktree, args = [], kind = DEFAULT_KIND } = {}) {
@@ -775,8 +797,9 @@ export class TestQueue {
       status: run.status,
       worktree: run.worktree,
       args: run.args,
-      // Exact, not estimated: the index in one ordered array. 0 means "not waiting behind anyone".
       kind: run.kind,
+      // Exact, not estimated, and LANE-SCOPED: the index among queued runs of this kind. 0 means
+      // "not waiting behind anyone" in its own lane, which is the only lane that can delay it.
       position: this.positionOf(id),
       queueLength: this.queuedFor(run.kind),
       running: this.runningFor(run.kind),
@@ -798,12 +821,6 @@ export class TestQueue {
   }
 }
 
-/**
- * Same defensive shape as normalizeConcurrency, with one difference that matters: 0 is REJECTED
- * rather than treated as a pause. `--max-workers=0` is not a smaller run, it is a run with no
- * workers, and vitest's own resolution treats a falsy value as "unset" — so a 0 that slipped
- * through here would silently restore the uncapped pool the setting exists to prevent.
- */
 function normalizeCacheMode(value) {
   const mode = value === undefined || value === null || value === '' ? 'off' : String(value);
   if (!CACHE_MODES.includes(mode)) {
@@ -812,6 +829,12 @@ function normalizeCacheMode(value) {
   return mode;
 }
 
+/**
+ * Same defensive shape as normalizeConcurrency, with one difference that matters: 0 is REJECTED
+ * rather than treated as a pause. `--max-workers=0` is not a smaller run, it is a run with no
+ * workers, and vitest's own resolution treats a falsy value as "unset" — so a 0 that slipped
+ * through here would silently restore the uncapped pool the setting exists to prevent.
+ */
 function normalizeMaxWorkers(value) {
   if (value === null || value === undefined || value === '') return null;
   const parsed = typeof value === 'number' ? value : parseInt(value, 10);

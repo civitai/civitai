@@ -208,26 +208,60 @@ const FULL_SUITE_REASON =
 // Narrow runs are left alone: a sub-project (`-p tsconfig.scripts.json`, which the scripts gate
 // itself recommends), named files, `--build`, and informational flags. TYPECHECK_DIRECT=1 is the
 // deliberate opt-out for diagnosing tsc itself.
+// The runner may carry its own flags before `exec`: `pnpm -w exec tsc` and `pnpm --filter x exec
+// tsc` are the two spellings a monorepo reaches for first, and both walked past the original
+// pattern, which required `exec` IMMEDIATELY after the runner. `npm` and `bunx` were missing
+// outright. Measured on the merged version: five spellings of a full root typecheck ran unguarded.
 const TSC_INVOCATION = new RegExp(
   String.raw`^\s*(?:\w+=\S*\s+)*(?:` +
-    String.raw`(?:(?:pnpm|yarn|bun)\s+(?:exec|dlx)\s+|npx\s+|\.?[\\/]?node_modules[\\/]\.bin[\\/])?tsc(?=\s|$)` +
+    String.raw`(?:(?:pnpm|yarn|bun|npm)(?:\s+-{1,2}[\w-]+(?:=\S+)?(?:\s+\S+)?)*\s+(?:exec|dlx)\s+(?:--\s+)?` +
+    String.raw`|npx\s+(?:--\s+)?|bunx\s+|\.?[\\/]?node_modules[\\/]\.bin[\\/])?['"]?tsc['"]?(?=\s|$)` +
     String.raw`|node\s+(?:--\S+\s+)*\S*typescript[\\/]lib[\\/]tsc\.js\b)`
 );
 const TSC_ROOT_PROJECT = /^(?:\.[\\/]?|(?:\.[\\/])?tsconfig\.json)$/;
 const TSC_NOT_A_CHECK = /(?:^|\s)(?:-v|--version|-h|--help|--init|--showConfig|--all|-b|--build)\b/;
+// A run aimed at ONE workspace package is not the run this guard exists to stop: `pnpm run
+// typecheck` cannot see `apps/` at all (only CI's scripts/ci/typecheck-apps.mjs does), so denying
+// it and printing that remedy sends an agent to a command that cannot check its files.
+const WORKSPACE_TARGET = /(?:^|[\s'"=\\/])(?:apps|packages)[\\/][\w.-]+/;
+const RUNNER_DIR_FLAG = /(?:^|\s)(?:-C|--dir|--prefix|--filter|-F)(?:=|\s+)(\S+)/;
+
+/**
+ * The directory a segment runs in, as far as the command line says: the last `cd` before it, or a
+ * runner's own directory flag. `cd apps/x && npx tsc --noEmit` splits into two segments and the
+ * second carries no trace of the first, so the split cannot be per-segment alone.
+ */
+function segmentTarget(previousSegments, seg) {
+  const flag = RUNNER_DIR_FLAG.exec(seg);
+  if (flag) return flag[1];
+  for (const prev of [...previousSegments].reverse()) {
+    const cd = /^\s*cd\s+(?:\/d\s+)?(['"]?)(.+?)\1\s*$/.exec(prev);
+    if (cd) return cd[2];
+  }
+  return null;
+}
 
 export function directRootTypecheck(command) {
   if (/TYPECHECK_DIRECT\s*=\s*1|\$env:TYPECHECK_DIRECT/.test(command)) return false;
-  return command.split(/[;&|\n]+/).some((seg) => {
+  const segments = command.split(/[;&|\n]+/);
+  return segments.some((seg, i) => {
     if (!TSC_INVOCATION.test(seg)) return false;
     if (TSC_NOT_A_CHECK.test(seg)) return false;
-    const tokens = seg.trim().split(/\s+/).map((t) => t.replace(/^['"]|['"]$/g, ''));
+    const target = segmentTarget(segments.slice(0, i), seg);
+    if (target && WORKSPACE_TARGET.test(target)) return false;
+    const tokens = seg
+      .trim()
+      .split(/\s+/)
+      .map((t) => t.replace(/^['"]|['"]$/g, ''));
     // Named source files make tsc ignore tsconfig entirely: a narrow check of those files only.
     if (tokens.some((t) => !t.startsWith('-') && /\.(?:[cm]?tsx?|d\.ts)$/.test(t))) return false;
     const at = tokens.findIndex((t) => /^(?:-p|--project)(?:=|$)/.test(t));
     if (at === -1) return true;
-    const inline = tokens[at].includes('=') ? tokens[at].split('=')[1] : tokens[at + 1];
-    return TSC_ROOT_PROJECT.test(inline ?? '');
+    const inline = tokens[at]?.includes('=') ? tokens[at].split('=')[1] : tokens[at + 1];
+    if (inline && WORKSPACE_TARGET.test(inline)) return false;
+    if (TSC_ROOT_PROJECT.test(inline ?? '')) return true;
+    // `-p ../another-worktree/tsconfig.json` is the same root program reached by another path.
+    return /(?:^|[\\/])tsconfig\.json$/.test(inline ?? '');
   });
 }
 
@@ -235,8 +269,10 @@ const DIRECT_TSC_REASON =
   'Direct full-program tsc blocked: use `pnpm run typecheck`. That script queues the run in the ' +
   "dev-server typecheck lane (several agents' 8 GB tsc heaps at once is what pegs the box), and it " +
   'is also the only form that cannot report a crashed run as clean — plain tsc at the default ' +
-  'heap can abort with zero diagnostics. A sub-project (`-p tsconfig.scripts.json`) or named ' +
-  'files still run directly. To diagnose tsc itself, prefix the command with TYPECHECK_DIRECT=1.';
+  'heap can abort with zero diagnostics. A sub-project (`-p tsconfig.scripts.json`), named files, ' +
+  'and a run aimed at one workspace package (`cd apps/<name> && …`, `pnpm --filter <name> exec …`) ' +
+  'still run directly — `pnpm run typecheck` does not cover `apps/`. To diagnose tsc itself, ' +
+  'prefix the command with TYPECHECK_DIRECT=1.';
 
 // Patterns that would kill Claude Code or critical processes - BLOCK OUTRIGHT
 const DANGEROUS_PATTERNS = [

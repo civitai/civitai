@@ -21,11 +21,16 @@ type Queue = {
   list: () => View[];
   setConcurrency: (value: number, kind?: Kind) => number;
   concurrencyFor: (kind: Kind) => number;
+  pausedFor: (kind: Kind) => boolean;
+  paused: boolean;
+  setMaxWorkers: (value: number | null) => number | null;
+  maxWorkers: number | null;
 };
 type Runner = EventEmitter & { finish: (code: number) => void; kind: Kind; worktree: string };
 type RunnerArgs = { worktree: string; kind: Kind };
 
-const { TestQueue } = QueueModule as unknown as {
+const { TestQueue, parseMaxWorkersFlag } = QueueModule as unknown as {
+  parseMaxWorkersFlag: (raw: string | undefined) => number | null;
   TestQueue: new (options: Record<string, unknown>) => Queue;
 };
 
@@ -151,5 +156,47 @@ describe('configuring the lanes', () => {
 
     expect(() => queue.request({ worktree: '/wt/x', kind: 'lint' })).toThrow(/unknown run kind/);
     expect(queue.list()).toEqual([]);
+  });
+
+  // `paused` is the unit lane, for the callers that predate lanes. A pause reported against the
+  // wrong lane is worse than none: a typecheck stopped by `--typecheck 0` sat at position 1 and
+  // read as merely waiting its turn.
+  it('reports a pause against the lane that is actually paused', () => {
+    const queue = build({ unit: 2, typecheck: 0 });
+
+    expect(queue.pausedFor('typecheck')).toBe(true);
+    expect(queue.pausedFor('unit')).toBe(false);
+    expect(queue.paused).toBe(false);
+  });
+});
+
+describe('the --max-workers operand', () => {
+  /**
+   * `none` has to be the only spelling that uncaps the pool. `Number('1O')` is NaN, JSON writes NaN
+   * as `null`, and the daemon reads null as "no cap" — so before this, a typo was indistinguishable
+   * from the deliberate escape hatch and silently removed the cap.
+   */
+  it.each([['1O'], ['eight'], ['--cache'], ['0'], ['-4'], ['2.5'], ['']])(
+    'refuses %j rather than uncapping',
+    (raw) => {
+      expect(() => parseMaxWorkersFlag(raw)).toThrow(/integer >= 1 or 'none'/);
+    }
+  );
+
+  it('accepts a positive integer and the explicit escape hatch', () => {
+    expect(parseMaxWorkersFlag('8')).toBe(8);
+    expect(parseMaxWorkersFlag('none')).toBeNull();
+    expect(parseMaxWorkersFlag(undefined)).toBeNull();
+  });
+
+  // Why the parser has to refuse rather than coerce: null IS the uncap, on the queue that the CLI
+  // is posting to. Nothing downstream can tell an accidental null from a deliberate one.
+  it('treats null as the uncap it is, so nothing may produce one by accident', () => {
+    const queue = build({ unit: 1, typecheck: 1 });
+    queue.setMaxWorkers(4);
+    expect(queue.maxWorkers).toBe(4);
+
+    queue.setMaxWorkers(null);
+    expect(queue.maxWorkers).toBeNull();
   });
 });

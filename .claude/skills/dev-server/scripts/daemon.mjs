@@ -2658,10 +2658,17 @@ async function main() {
             queued: testQueue.order.length,
             running: testQueue.running.size,
             lanes: {
-              unit: { queued: testQueue.queuedFor('unit'), running: testQueue.runningFor('unit') },
+              unit: {
+                queued: testQueue.queuedFor('unit'),
+                running: testQueue.runningFor('unit'),
+                paused: testQueue.pausedFor('unit'),
+              },
               typecheck: {
                 queued: testQueue.queuedFor('typecheck'),
                 running: testQueue.runningFor('typecheck'),
+                // Top-level `paused` is the unit lane, so `--typecheck 0` was a pause nothing
+                // reported: a queued typecheck sat at position 1 and read as merely waiting.
+                paused: testQueue.pausedFor('typecheck'),
               },
             },
           }));
