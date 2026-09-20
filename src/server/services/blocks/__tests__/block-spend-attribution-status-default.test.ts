@@ -55,15 +55,46 @@ function migrationColumnState() {
   let checkList: string[] | null = null;
 
   for (const file of files) {
+    // 🔴 SCOPE TO STATEMENTS THAT TARGET THIS TABLE, NOT TO FILES THAT MENTION IT.
+    // This used to be a file-level `if (!sql.includes(TABLE)) continue`, and it
+    // read PROSE. A later migration creating a DIFFERENT table mentioned
+    // `block_spend_attribution` only in its comment header — explaining why it was
+    // a separate table — which passed the file filter; the `"status" TEXT … DEFAULT`
+    // regex then matched THAT table's own status column, and because the match is
+    // last-wins across sorted filenames the newer file won. The guard reported
+    // `provisions DEFAULT 'accrued' … while the schema says @default("tracked")`
+    // about a column neither the migration nor the schema had changed.
+    //
+    // That failure mode is worse than a false red: this guard exists because a
+    // default the payout read does not select makes an omitted-status row invisible
+    // to payout with no error and no drift (#4036). Anyone "fixing" it by following
+    // its message and setting `@default("accrued")` on BlockSpendAttribution ships
+    // precisely that defect. So the fix is here, not a reworded comment in the
+    // other migration — a comment-level workaround leaves the next table to trip it.
+    //
+    // Comments are stripped first — BOTH `/* */` and `--`; Prisma-generated
+    // migrations in this repo open with `/* Warnings */` headers, so stripping only
+    // `--` would have left that half of the hole open — then the file is split into
+    // statements, and only statements naming the table are scanned. A statement
+    // about another table can no longer contribute a default, a CHECK, or anything
+    // else.
     const sql = readOrThrow(file);
     if (!sql.includes(TABLE)) continue;
 
-    for (const m of sql.matchAll(/"status"\s+TEXT[^,\n]*DEFAULT\s+'([^']+)'/g))
-      columnDefault = m[1];
-    for (const m of sql.matchAll(/ALTER\s+COLUMN\s+"status"\s+SET\s+DEFAULT\s+'([^']+)'/gi))
-      columnDefault = m[1];
-    for (const m of sql.matchAll(/CHECK\s*\(\s*"status"\s+IN\s*\(([^)]*)\)/gi))
-      checkList = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+    const statements = sql
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/--[^\n]*/g, '')
+      .split(';')
+      .filter((stmt) => stmt.includes(TABLE));
+
+    for (const stmt of statements) {
+      for (const m of stmt.matchAll(/"status"\s+TEXT[^,\n]*DEFAULT\s+'([^']+)'/g))
+        columnDefault = m[1];
+      for (const m of stmt.matchAll(/ALTER\s+COLUMN\s+"status"\s+SET\s+DEFAULT\s+'([^']+)'/gi))
+        columnDefault = m[1];
+      for (const m of stmt.matchAll(/CHECK\s*\(\s*"status"\s+IN\s*\(([^)]*)\)/gi))
+        checkList = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+    }
   }
 
   if (columnDefault === null)

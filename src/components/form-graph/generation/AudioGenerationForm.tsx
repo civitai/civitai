@@ -41,6 +41,7 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
                 modalTitle="Select Model"
                 options={meta?.options}
                 allowRemove={false}
+                allowSwap={!meta?.modelLocked}
               />
               {meta?.versions ? (
                 <VersionGroupSelector

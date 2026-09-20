@@ -663,6 +663,8 @@ export interface User {
   blockSpendAttributionsAsSpender?: BlockSpendAttribution[];
   blockSpendAttributionsAsAppOwner?: BlockSpendAttribution[];
   blockSpendAttributionsAsContentAuthor?: BlockSpendAttribution[];
+  blockAuthorFeeAccrualsAsAppOwner?: BlockAuthorFeeAccrual[];
+  blockAuthorFeeAccrualsAsViewer?: BlockAuthorFeeAccrual[];
   blockSubscriptionAttributionsAsPurchaser?: BlockSubscriptionAttribution[];
   blockSubscriptionAttributionsAsAppOwner?: BlockSubscriptionAttribution[];
   publishRequestsSubmitted?: AppBlockPublishRequest[];
@@ -860,6 +862,8 @@ export interface HuggingFaceImport {
   userId: number | null;
   modelVersionId: number | null;
   modelFileId: number | null;
+  attachVersionId: number | null;
+  attachType: string | null;
   claimedBy: string | null;
   claimedAt: Date | null;
   heartbeatAt: Date | null;
@@ -1905,6 +1909,7 @@ export interface OauthClient {
   appBlocks?: AppBlock[];
   buzzAttributions?: BlockBuzzAttribution[];
   spendAttributions?: BlockSpendAttribution[];
+  authorFeeAccruals?: BlockAuthorFeeAccrual[];
   subscriptionAttributions?: BlockSubscriptionAttribution[];
   connectListings?: AppListing[];
 }
@@ -1972,6 +1977,7 @@ export interface AppBlock {
   userSubscriptions?: BlockUserSubscription[];
   buzzAttributions?: BlockBuzzAttribution[];
   spendAttributions?: BlockSpendAttribution[];
+  authorFeeAccruals?: BlockAuthorFeeAccrual[];
   subscriptionAttributions?: BlockSubscriptionAttribution[];
   publishRequests?: AppBlockPublishRequest[];
   scopeInvocations?: BlockScopeInvocation[];
@@ -2339,6 +2345,30 @@ export interface BlockSpendAttribution {
   voidedAt: Date | null;
   paidOutAt: Date | null;
   payoutId: string | null;
+}
+
+export interface BlockAuthorFeeAccrual {
+  id: string;
+  workflowId: string;
+  appId: string;
+  app?: OauthClient;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  appOwnerUserId: number;
+  appOwner?: User;
+  viewerUserId: number;
+  viewer?: User;
+  buzzType: string;
+  feeBuzz: number;
+  baseGenerationBuzz: number;
+  flatLegBuzz: number;
+  pctLegBuzz: number;
+  governingLeg: string;
+  generationType: string | null;
+  status: string;
+  settlementKey: string | null;
+  accruedAt: Date;
+  settledAt: Date | null;
 }
 
 export interface BlockSubscriptionAttribution {

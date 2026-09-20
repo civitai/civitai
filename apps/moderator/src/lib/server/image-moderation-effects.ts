@@ -140,7 +140,7 @@ export async function removeImagesFromBlocklist(pHashes: (string | null)[]): Pro
     )}) AND disabled = false`,
     format: 'JSONEachRow',
   });
-  const blocked = await resultSet.json<{ hash: string; reason: string }[]>();
+  const blocked = await resultSet.json<{ hash: string; reason: string }>();
   if (!blocked.length) return;
   await ch.insert({
     table: 'blocked_images',

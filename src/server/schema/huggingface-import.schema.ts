@@ -56,5 +56,28 @@ export const renameHuggingFaceGroupSchema = z.object({
   groupName: z.string().trim().min(1).max(120),
 });
 
+/** `POST /api/admin/huggingface-import`. Composed from the enqueue shape so the two cannot drift. */
+export type TransferHuggingFaceImportInput = z.infer<typeof transferHuggingFaceImportSchema>;
+export const transferHuggingFaceImportSchema = enqueueHuggingFaceImportSchema
+  .omit({ paths: true })
+  .extend({
+    /** Optional here, unlike the UI enqueue: a caller may name a branch, tag or sha, or let the
+     * repo default stand. */
+    revision: z.string().trim().min(1).optional(),
+    modelVersionId: z.number().int().positive(),
+    /** Attribution only. Defaults to the system user, which is what tooling imports are filed under. */
+    userId: z.number().int().positive().optional(),
+    files: z
+      .array(
+        z.object({
+          path: z.string().trim().min(1),
+          // Explicit, never inferred: this is what decides whether the version is loadable.
+          type: z.enum(constants.modelFileTypes),
+        })
+      )
+      .min(1)
+      .max(100),
+  });
+
 export type SetHuggingFaceImportConfigInput = z.infer<typeof setHuggingFaceImportConfigSchema>;
 export const setHuggingFaceImportConfigSchema = huggingFaceImportConfigSchema.partial();

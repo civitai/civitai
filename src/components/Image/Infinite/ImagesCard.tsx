@@ -365,6 +365,7 @@ function ImageReactions({ image, readonly }: { image: ImagesInfiniteModel; reado
           entityType="image"
           reactions={image.reactions}
           metrics={metrics}
+          metricsUnknown={image.stats?.statsUnknown}
           targetUserId={image.user.id}
           readonly={readonly}
           className="justify-between p-2"

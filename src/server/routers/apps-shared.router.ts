@@ -145,6 +145,17 @@ export async function resolveSharedContext(
     });
   }
 
+  // 🔴 THE STRICTEST OF THE THREE RESOLVERS THAT READ THIS ROW, AND DELIBERATELY SO.
+  // The other two are `resolveAppBlockApprovalVerdict`
+  // (`~/server/services/blocks/block-approval.service`), the shared predicate for the REST
+  // middleware and the tRPC bridge, which exempts a run-for-real review token, a token
+  // with no backing row, and an owner with a live dev tunnel; and `resolveStorageContext`
+  // (`apps.router`), which exempts only the run-for-real review token. This one exempts
+  // NOTHING, because shared storage is cross-user, app-global state and the review mint
+  // never grants `apps:storage:shared:*` at all — so there is no case here to exempt, not
+  // a disagreement about what approval means. Do not "align" these three without deciding
+  // it; the reconciliation and its rationale are ledgered, and enforced on both growth and
+  // shrink, in `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts`.
   const block = await dbRead.appBlock.findUnique({
     where: { appId_blockId: { appId: claims.appId, blockId: claims.blockId } },
     select: { id: true, status: true },
@@ -156,12 +167,18 @@ export async function resolveSharedContext(
 
   // Per-instance revocation — the missing containment leg (audit M-1). The REST
   // `withBlockScope` path enforces this; the tRPC shared path must too, so an
-  // uninstalled / toggled-off instance can't keep writing until token expiry.
-  // Mirrors block-scope.middleware's check. (Was "/ publisher-banned": there is
-  // no publisher-ban marker writer. `revokeInstance` has exactly two production
-  // call sites, `uninstallFromModel` and `toggleEnabled(false)`, both in
-  // `block-registry.service.ts`. Do not reason about a ban path from here.)
-  if (await BlockRevocation.isRevoked(claims.blockInstanceId)) {
+  // uninstalled / toggled-off / publisher-banned instance can't keep writing
+  // until token expiry. Mirrors block-scope.middleware's check. (The ban leg is new as
+  // of clawgate #618 and lives in its OWN keyspace: install writes go through
+  // `revokeInstance` — `uninstallFromModel`, `toggleEnabled(false)` — and ban writes
+  // through `revokeInstanceForBan`, from `revokeBlockInstancesForPublisher`. Read
+  // `block-scope.middleware.ts` before reasoning about the ban path from here.)
+
+  // `claims.sub` is passed for the same reason the two runtime guards pass it: the
+  // subject-scoped ban keyspace. Latent on THIS path today — it requires an `approved`
+  // AppBlock row and an ephemeral app has none — but the argument costs nothing and
+  // the alternative is a silent trap pointed at unsubmitted-app storage.
+  if (await BlockRevocation.isRevoked(claims.blockInstanceId, claims.sub)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'block instance revoked' });
   }
 

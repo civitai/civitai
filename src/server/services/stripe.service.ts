@@ -117,6 +117,110 @@ export async function deriveSubscriptionAttributionMetadata({
   return encodeAttributionMetadata(derived);
 }
 
+/**
+ * Resolve the membership Price this customer can actually be charged.
+ *
+ * Stripe pins a customer to ONE billing currency the first time they are invoiced
+ * (`customer.currency`) and it is immutable thereafter. Every subscription price billed to
+ * that customer has to be payable in it, or Stripe rejects the call with
+ *
+ *   The price specified only supports `usd`. This doesn't match the expected currency: `aud`.
+ *
+ * That rejection is a raw throw out of `checkout.sessions.create` / `subscriptions.update`,
+ * so it reached the client as a tRPC INTERNAL_SERVER_ERROR (HTTP 500).
+ *
+ * The membership IS purchasable in that currency — each membership Product carries an
+ * active monthly sibling Price per supported currency, and the pricing page ships the whole
+ * set to the browser (`getPlans` selects `product.prices`). What the client cannot know is
+ * which one the customer is pinned to: `customer.currency` is a Stripe-side fact with no
+ * representation in our database and no endpoint that exposes it. So the substitution
+ * belongs here, where both the customer and the price are already in hand, rather than in
+ * the price picker — and putting it here also covers the plan-change path and any caller
+ * that reaches the procedure without going through the pricing page at all.
+ *
+ * Returns the Price to charge. Throws a typed BAD_REQUEST only in the two cases where no
+ * single correct answer exists; it never guesses an amount.
+ */
+async function resolvePriceForCustomerCurrency({
+  stripe,
+  customer,
+  price,
+}: {
+  stripe: Stripe;
+  customer: Stripe.Customer;
+  price: Stripe.Price;
+}): Promise<Stripe.Price> {
+  // Null until Stripe has invoiced them — an unpinned customer constrains nothing.
+  const customerCurrency = customer.currency?.toLowerCase();
+  if (!customerCurrency) return price;
+
+  // Lower-cased on both sides. Stripe's API returns lower-case currency codes, but this
+  // value is also compared against data that reaches us from the price picker, and the
+  // Product/Price tables carry upper-case codes for the other payment provider, so a
+  // case-sensitive comparison is one catalog edit away from being wrong in both directions.
+  // `Stripe.Price.currency` is non-optional, so there is no absent-currency case here.
+  if (price.currency.toLowerCase() === customerCurrency) return price;
+
+  // A multi-currency Price is payable in every currency it declares, so there is nothing to
+  // substitute. Our membership catalog does not use this — it uses sibling Prices, which is
+  // what the lookup below is for — but Stripe supports both, and without this check
+  // provisioning `currency_options` on a Price would turn a purchase that works today into
+  // the error below. `currency_options` is an expandable field and is NOT returned by
+  // default, hence the expand at the call site; without it this branch is dead.
+  if (price.currency_options?.[customerCurrency]) return price;
+
+  const productId = typeof price.product === 'string' ? price.product : price.product.id;
+  const interval = price.recurring?.interval;
+
+  // Every membership price is recurring (the caller has already checked the price belongs to
+  // a membership product), so this is a shape assertion rather than a reachable branch.
+  if (!interval) {
+    throw throwBadRequestError(
+      `This membership cannot be billed in ${customerCurrency.toUpperCase()}, the currency your billing account is set up in.`
+    );
+  }
+
+  // Scoped to the SAME product, so the substitute is the same membership tier. `product` is
+  // read off the Stripe Price we just retrieved, which also keeps the lookup inside Stripe's
+  // catalog — the Product/Price tables hold rows for other payment providers under the same
+  // tier names, and one of those price ids handed to Stripe would be a different failure.
+  const { data: siblings } = await stripe.prices.list({
+    product: productId,
+    currency: customerCurrency,
+    active: true,
+    type: 'recurring',
+    recurring: { interval },
+    limit: 100,
+  });
+
+  // `interval_count` is not a list filter, so it is applied here. Without it a monthly
+  // membership could be substituted by a price billed every 3 months at the same interval.
+  const intervalCount = price.recurring?.interval_count ?? 1;
+  const candidates = siblings.filter((p) => (p.recurring?.interval_count ?? 1) === intervalCount);
+
+  if (candidates.length === 1) return candidates[0];
+
+  if (candidates.length === 0) {
+    // The genuine fallback: the membership really is not sold in this currency. Says that,
+    // and does not claim the account is unusable — the other tiers may well be sold in it.
+    throw throwBadRequestError(
+      `Your billing account is set up in ${customerCurrency.toUpperCase()}, and this ` +
+        `membership is not currently sold in ${customerCurrency.toUpperCase()}. Stripe does ` +
+        `not allow an account's billing currency to change once it is set. Please contact ` +
+        `support and we can look at the options for your account.`
+    );
+  }
+
+  // More than one active price matches. Picking one would charge an amount nobody chose, and
+  // the amounts in a duplicated row are not necessarily close — so refuse instead. This is a
+  // catalog problem support can actually get fixed, unlike the currency pin.
+  throw throwBadRequestError(
+    `We could not determine the price of this membership in ${customerCurrency.toUpperCase()}, ` +
+      `the currency your billing account is set up in. Please contact support so we can ` +
+      `correct it — you have not been charged.`
+  );
+}
+
 export const createSubscribeSession = async ({
   priceId,
   refCode,
@@ -157,11 +261,26 @@ export const createSubscribeSession = async ({
     throw throwBadRequestError(`Could not find customer with id: ${customerId}`);
   }
 
-  const price = await stripe.prices.retrieve(priceId);
+  // `currency_options` is an expandable field and is NOT returned by default, so without
+  // this expand the multi-currency branch of resolvePriceForCustomerCurrency is dead and a
+  // Price that Stripe would happily charge in the customer's currency gets substituted (or
+  // rejected) anyway. Expanding costs no extra round trip, only a larger response body.
+  const requestedPrice = await stripe.prices.retrieve(priceId, { expand: ['currency_options'] });
 
-  if (!price || !membershipProducts.find((x) => x.id === (price.product as string))) {
+  if (
+    !requestedPrice ||
+    !membershipProducts.find((x) => x.id === (requestedPrice.product as string))
+  ) {
     throw throwNotFoundError(`The product you are trying to purchase does not exists`);
   }
+
+  // Everything downstream charges `price`, never the requested id: the customer may be
+  // pinned to a billing currency the requested Price is not sold in, in which case this is
+  // the same membership's sibling Price in that currency. Resolved once, ahead of BOTH
+  // price-carrying Stripe calls — the in-place `subscriptions.update` plan change rejects on
+  // a currency mismatch exactly as `checkout.sessions.create` does, so substituting in front
+  // of only one of them would still 500 every pinned member's upgrade.
+  const price = await resolvePriceForCustomerCurrency({ stripe, customer, price: requestedPrice });
 
   const activeSubscription = subscriptions.find((x) => x.status !== 'canceled');
   const subscriptionItem = activeSubscription?.items.data.find((d) =>
@@ -304,10 +423,12 @@ export const createSubscribeSession = async ({
     }
   }
 
-  // array of items we are charging the customer
+  // array of items we are charging the customer. `price.id`, NOT the requested `priceId` —
+  // they differ whenever the customer is pinned to a currency the requested Price is not
+  // sold in, and Checkout rejects a mismatched currency exactly as the plan-change path does.
   const lineItems = [
     {
-      price: priceId,
+      price: price.id,
       quantity: 1,
     },
   ];

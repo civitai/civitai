@@ -14,7 +14,7 @@ import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
 import { isProd } from '~/env/other';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { submitWorkflowWithRetry } from '~/server/services/orchestrator/workflows';
 import { hashContent } from '~/server/services/entity-moderation.service';
@@ -43,6 +43,17 @@ import {
 // per-attempt backstop. Only applied when NOT `wait`ing (a caller that passes `wait`
 // explicitly wants to block for the workflow, so we must not abort it early).
 const IMAGE_INGEST_SUBMIT_ATTEMPT_TIMEOUT_MS = 15_000;
+
+/**
+ * The scan submit passes no `wait`, so this is an enqueue: the orchestrator accepts the workflow and
+ * returns. Without a signal it inherits undici's 300s default, and every caller awaits it — the
+ * upload response, and the import job inside its own lock. Sized like its sibling above rather than
+ * to a measured P99, which nothing records for this call.
+ *
+ * A fired timeout throws, which every caller already treats as a transient failure: `scanRequestedAt`
+ * stays null and `scanFilesFallbackJob` re-submits within five minutes.
+ */
+const MODEL_FILE_SCAN_SUBMIT_TIMEOUT_MS = 15_000;
 
 const IMAGE_TAGGING_MODEL =
   'urn:air:siglip2:repository:huggingface:cella110n/cl_tagger_v2@b57909b8e9c63f71e208a26473e7aabdf45ed6b6.tar';
@@ -191,6 +202,7 @@ export async function createImageIngestionRequest({
 
   // Re-submit transient infra failures (5xx / no-response), reusing the same
   // `externalId` so a 500 that actually created the workflow isn't duplicated.
+  const submitStartedAt = Date.now();
   const result = await submitWorkflowWithRetry(
     {
       client: internalOrchestratorClient,
@@ -222,7 +234,14 @@ export async function createImageIngestionRequest({
       attempts,
       responseStatus: response?.status,
       serverTiming,
-      error,
+      // JSON.stringify(new Error()) is `{}` — Error carries no enumerable own
+      // properties — so logging the error directly recorded nothing at all, and
+      // a no-response submit is exactly the case where its name is the whole
+      // diagnosis (an abort is not a connection reset).
+      error: safeError(error),
+      // Wall time across every attempt. Distinguishes three per-attempt aborts
+      // (~45s) from a fast rejection, which the attempt count alone does not.
+      elapsedMs: Date.now() - submitStartedAt,
     });
   }
 
@@ -773,6 +792,7 @@ export async function createModelFileScanRequest({
 
   const { data, error, response } = await submitWorkflow({
     client: internalOrchestratorClient,
+    signal: AbortSignal.timeout(MODEL_FILE_SCAN_SUBMIT_TIMEOUT_MS),
     body: {
       metadata,
       currencies: [],

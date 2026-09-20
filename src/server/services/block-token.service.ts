@@ -3,6 +3,7 @@ import { SignJWT } from 'jose';
 import { env } from '~/env/server';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { BLOCK_TOKEN_LIFETIMES_SECONDS } from '~/server/services/block-token-lifetimes';
+import { ANON_SUBJECT, subjectForUserId } from '~/server/services/block-token-subject';
 
 // L7 (audit-10): shared issuer/audience constants exported for the
 // middleware so a typo in one place can't desynchronize sign-vs-verify.
@@ -248,7 +249,12 @@ export class BlockTokenService {
         ? BLOCK_TOKEN_LIFETIMES_SECONDS.settings
         : BLOCK_TOKEN_LIFETIMES_SECONDS.default;
     const exp = iat + lifetime;
-    const sub = input.userId == null ? 'anon' : `user:${input.userId}`;
+    // Built through the shared encoder rather than open-coded. This template used to be
+    // written here AND in `block-revocation.service` (whose docblock claimed to be "THE
+    // ONE PLACE this format is written on the WRITE side" while this line existed), and
+    // every consumer pinned its own copy with its own literal — so nothing in the suite
+    // could see them diverge. See `block-token-subject.ts`.
+    const sub = input.userId == null ? ANON_SUBJECT : subjectForUserId(input.userId);
 
     const claims: Record<string, unknown> = {
       blockId: input.blockId,

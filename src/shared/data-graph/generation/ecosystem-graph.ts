@@ -149,7 +149,6 @@ const FEATURE_FLAG_GATED_ECOSYSTEMS: Array<{ key: string; flag: keyof FeatureAcc
   { key: 'Hunyuan3D', flag: 'hunyuan3dGenerator' },
   { key: 'Pixal3D', flag: 'pixal3dGenerator' },
   { key: 'Trellis2', flag: 'trellis2Generator' },
-  { key: 'YuE2', flag: 'yue2Generator' },
 ];
 
 /**

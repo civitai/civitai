@@ -47,7 +47,7 @@ export async function getDownleveledImages({
     query_params: params,
     format: 'JSONEachRow',
   });
-  const rows = await resp.json<ChRow[]>();
+  const rows = await resp.json<ChRow>();
 
   let nextCursor: string | undefined;
   if (limit && rows.length > limit) nextCursor = rows.pop()?.createdAt;

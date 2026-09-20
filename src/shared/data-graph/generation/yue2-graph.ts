@@ -6,7 +6,16 @@ import {
   yue2Steps,
 } from '~/shared/constants/yue2.constants';
 import type { GenerationCtx } from './context';
-import { createTextEditorGraph, enumNode, seedNode, sliderNode, textNode } from './common';
+import {
+  createCheckpointGraph,
+  createTextEditorGraph,
+  enumNode,
+  seedNode,
+  sliderNode,
+  textNode,
+} from './common';
+
+export const yue2VersionIds = { v2: 3337846 } as const;
 
 type YuE2ModeCtx = {
   ecosystem: string;
@@ -40,6 +49,14 @@ const custom = new DataGraph<YuE2ModeCtx, GenerationCtx>()
   ]);
 
 export const yue2Graph = new DataGraph<{ ecosystem: string; workflow: string }, GenerationCtx>()
+  .merge(
+    () =>
+      createCheckpointGraph({
+        versions: { options: [{ label: 'v2', value: yue2VersionIds.v2 }] },
+        defaultModelId: yue2VersionIds.v2,
+      }),
+    []
+  )
   .node('duration', sliderNode({ ...yue2Duration, defaultValue: yue2Duration.default }))
   .node('seed', seedNode())
   .node('yue2MusicMode', enumNode({ options: yue2MusicModeOptions, defaultValue: 'simple' }))

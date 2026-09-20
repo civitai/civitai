@@ -107,7 +107,7 @@ function SummaryCards({ summary }: { summary: SummaryShape }) {
             Confirmed (unpaid)
           </Text>
           <Tooltip
-            label="Past the refund window. Will be included in your next payout."
+            label="Past the refund window. This amount accrues; automated payouts are not yet enabled."
             position="top"
           >
             <IconInfoCircle size={14} />

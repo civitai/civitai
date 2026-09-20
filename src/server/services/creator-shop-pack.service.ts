@@ -23,7 +23,7 @@ import { assertQuotedFee, getCreatorShopFees } from '~/server/services/creator-s
 import { getCosmeticArtworkUrl } from '~/server/services/cosmetic-phash.service';
 import {
   REJECTED_IS_FINAL,
-  packDisplayMeta,
+  shopItemDisplayMeta,
   wasLastReviewARejection,
 } from '~/server/services/creator-shop.data';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
@@ -491,6 +491,10 @@ export const getPackDetail = async ({
       meta: true,
       addedById: true,
       members: { select: { cosmeticId: true, floorAmount: true }, orderBy: { index: 'asc' } },
+      // This select is its own, not the shared `cosmeticShopItemSelect`, so the
+      // row count has to be asked for here too or the pack page is the one
+      // surface left reading the drifting counter.
+      _count: { select: { purchases: true } },
     },
   });
   if (!item) throw throwNotFoundError('Pack not found');
@@ -546,13 +550,9 @@ export const getPackDetail = async ({
     status: item.status,
     listed: item.listed,
     availableQuantity: item.availableQuantity,
-    // Named fields, not the column, and the same whitelist the storefront
-    // sanitizers spread — a second list here is a list that stops agreeing.
-    meta: {
-      purchases: packMeta.purchases ?? 0,
-      acceptsBlueBuzz: packMeta.acceptsBlueBuzz ?? false,
-      ...packDisplayMeta(packMeta),
-    },
+    // Named fields, not the column, and the same list every other shop surface
+    // publishes — a second list here is a list that stops agreeing.
+    meta: shopItemDisplayMeta(packMeta, item._count.purchases),
     // Archiving overwrites `status`, so this is the only thing that tells a
     // rejected pack from an ordinary archived one. Derived here rather than
     // client-side, and answered only for the two viewers whose editor asks the

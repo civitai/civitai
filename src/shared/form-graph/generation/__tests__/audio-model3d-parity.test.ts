@@ -21,7 +21,6 @@ const FLAGS_3D = {
   hunyuan3dGenerator: true,
   pixal3dGenerator: true,
   trellis2Generator: true,
-  yue2Generator: true,
 } as GenerationCtx['flags'];
 
 const BASE: GenerationCtx = {

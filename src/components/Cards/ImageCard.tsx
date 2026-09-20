@@ -63,6 +63,7 @@ export function ImageCard({ data }: Props) {
               entityId={data.id}
               entityType="image"
               reactions={data.reactions}
+              metricsUnknown={data.stats?.statsUnknown}
               metrics={{
                 likeCount: data.stats?.likeCountAllTime,
                 dislikeCount: data.stats?.dislikeCountAllTime,

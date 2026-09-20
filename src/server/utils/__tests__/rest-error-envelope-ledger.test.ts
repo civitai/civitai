@@ -319,6 +319,23 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   'v1/image-upload/multipart/index.ts',
   'v1/model-versions/early-access.ts',
   // ── TIER 3 — operator / token-gated (WebhookEndpoint or ModEndpoint) ────────
+  // `WebhookEndpoint` — WEBHOOK_TOKEN only. The flagged value is
+  // `HuggingFaceError.message`: a class declared in `huggingface.service.ts` whose
+  // text this repo writes, never a Prisma or pg error, so no table, column or row
+  // value can reach it. Stated honestly, one branch (`hfFetch`) does forward up to
+  // 200 chars of Hugging Face's OWN response body — third-party text, not our
+  // internals, and only to a token-holding operator.
+  //
+  // 🔴 Deliberately NOT delegated to `handleEndpointError`. That 400 is the whole
+  // answer the caller acts on ("the repo is gated or private; importing it needs a
+  // HUGGING_FACE_TOKEN whose account has accepted its terms"); genericizing it
+  // leaves an operator with a bare 400 and nothing to fix. Same reasoning the
+  // TIER-1 block above records for its zod arms — a blind delegation trades a
+  // legitimate, actionable client 4xx for a useless one. The passthrough is pinned
+  // behaviourally in `src/server/__tests__/huggingface-import-endpoint.test.ts`
+  // ("passes Hugging Face's own refusal back as a 400"), so it cannot drift
+  // silently just because this ledger stops looking at it.
+  'admin/huggingface-import.ts',
   'admin/temp/backfill-b2-file-locations.ts',
   'admin/temp/backfill-metric-agg.ts',
   'admin/temp/backfill-user-downloads.ts',

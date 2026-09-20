@@ -31,6 +31,8 @@ let DAEMON = null;
 // Whether the queue has taken ownership of this run. Once it has, a later failure must NOT be
 // answered by starting a second, unqueued suite — see the note where this is set.
 let accepted = false;
+/** Read by a caller of `runQueued` deciding what a later failure may do. */
+export const queueAccepted = () => accepted;
 const POLL_MS = 2000;
 
 /**
@@ -118,7 +120,15 @@ function warnIfLogsDropped(state) {
   );
 }
 
-async function runQueued(args) {
+/**
+ * Exported so `scripts/typecheck.mjs` can queue through the SAME client rather than a copy of it.
+ * Everything below — the accepted flag, the 404-means-restarted rule, the drain before exit — was
+ * learned the hard way on this path, and a second client would have to relearn each of them.
+ *
+ * `fallback` is what an unusable queue degrades to. It is only ever called BEFORE the daemon has
+ * accepted the run; after acceptance a failure exits 2 instead, for the reason given at `accepted`.
+ */
+export async function runQueued(args, { kind = 'unit', fallback = runDirect } = {}) {
   // Resolved once, up front: this is the module that decides pass from fail, and a waiter that
   // discovers it cannot load that rule at the moment it must apply it has no verdict to give.
   const { exitCodeFor } = await import(pathToFileURL(QUEUE).href);
@@ -133,20 +143,20 @@ async function runQueued(args) {
     DAEMON = resolveDaemonUrl();
   } catch (err) {
     console.error(`Test queue address unusable (${err.message}); running directly.`);
-    return runDirect(args);
+    return fallback(args);
   }
 
   let run;
   try {
-    run = await post('/test-runs', { worktree: repoRoot, args });
+    run = await post('/test-runs', { worktree: repoRoot, args, kind });
   } catch {
     await ensureDaemon();
     try {
-      run = await post('/test-runs', { worktree: repoRoot, args });
+      run = await post('/test-runs', { worktree: repoRoot, args, kind });
     } catch (err) {
       // Never leave a caller unable to run tests because the queue is unavailable.
       console.error(`Test queue unreachable (${err.message}); running directly.`);
-      return runDirect(args);
+      return fallback(args);
     }
   }
 

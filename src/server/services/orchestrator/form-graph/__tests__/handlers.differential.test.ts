@@ -50,7 +50,6 @@ const CASES: Record<string, unknown>[] = [
     ecosystem: 'YuE2',
     prompt: 'A hopeful synth-pop song about sunrise',
     seed: 42,
-    expectFlags: { yue2Generator: true },
   },
   {
     workflow: 'txt2music',
@@ -64,7 +63,6 @@ const CASES: Record<string, unknown>[] = [
     steps: 80,
     duration: 60,
     seed: 42,
-    expectFlags: { yue2Generator: true },
   },
   {
     workflow: 'txt2music',
@@ -73,7 +71,6 @@ const CASES: Record<string, unknown>[] = [
     musicDescription: 'synth-pop',
     lyrics: '[verse] Morning light',
     seed: 42,
-    expectFlags: { yue2Generator: true },
   },
   {
     workflow: 'txt2music',
@@ -86,7 +83,6 @@ const CASES: Record<string, unknown>[] = [
     yue2Abc: 'X:1\nK:C\nC D E G |',
     duration: 90,
     steps: 50,
-    expectFlags: { yue2Generator: true },
   },
   {
     workflow: 'txt2music',
@@ -97,7 +93,6 @@ const CASES: Record<string, unknown>[] = [
     seed: 42,
     yue2Mode: 'off',
     yue2Abc: 'X:1\nK:C\nC D E G |',
-    expectFlags: { yue2Generator: true },
   },
 
   // SD family: textToImage, draft batching, comfy (img2img + hires), controlnets
