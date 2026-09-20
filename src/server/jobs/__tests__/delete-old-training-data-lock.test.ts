@@ -17,12 +17,14 @@ import { describe, expect, it, vi } from 'vitest';
  * the budget away before it can govern anything. `keepLockOnDisconnect` alone leaves the lock
  * expiring five minutes in, long before the first retry.
  *
- * ⚠ AN EARLIER DRAFT OF THIS HEADER SAID "every case below therefore exists to fail when EITHER
- * half is reverted". That was false of most of them, and it is the kind of sentence that stops a
- * reader checking. What each case actually covers: the first two and the handler pair fail when a
- * half is reverted; the ceiling, exact-pin, CONTROL and dispatch cases do not, and are not meant
- * to — they pin the sizing argument, the deliberate-choice-of-value, the harness itself, and the
- * seam that lets any of it reach a run.
+ * ⚠ THIS HEADER NO LONGER CLAIMS WHICH CASE CATCHES WHAT, AND THE ABSENCE IS DELIBERATE. Two
+ * drafts tried and both were false: first "every case below exists to fail when EITHER half is
+ * reverted" (untrue of four of the seven), then a per-case list that still over-claimed by one —
+ * reverting a half reds exactly ONE case, and in particular the floor case never does, because it
+ * compares two module constants and never reads the job's options at all. A hand-maintained
+ * coverage table in a comment is wrong the moment a case moves, and it is read as authoritative
+ * precisely because it looks specific. The mapping from mutation to failing case is established by
+ * running the mutants, not by this paragraph; what each case is FOR is written on the case.
  *
  * The generic both-arms contract for the disconnect handler, and the check that the route still
  * installs it in a position where it can fire, live in `job-disconnect-lock.test.ts`.
@@ -89,10 +91,11 @@ describe('delete-old-training-data asks for a lock that outlasts the caller’s 
     // times the cut is roughly sixty times that. An earlier draft of this comment claimed `2 *`
     // was "the least margin that cannot be satisfied by a value inside the backoff window" — false
     // on this file's own evidence, since the docblock on CALLER_CUT_SECONDS quantifies the backoff
-    // four lines from where that draft called it unquantifiable. You are the third writer to
-    // explain this multiple; the first two both supplied a derivation that did not exist. If you
-    // find yourself reaching for a better reason than "round number, comfortably past the floor",
-    // that is the failure repeating — the margin is a choice, and it does not need one.
+    // four lines from where that draft called it unquantifiable. More than one previous writer
+    // supplied a derivation for this multiple and each one was retracted; no count is given here
+    // because counting them has itself gone wrong. If you find yourself reaching for a better
+    // reason than "round number, comfortably past the floor", that is the failure repeating — the
+    // margin is a choice, and it does not need one.
     expect(DELETE_OLD_TRAINING_DATA_LOCK_SECONDS).toBeGreaterThanOrEqual(
       2 * DELETE_OLD_TRAINING_DATA_CALLER_CUT_SECONDS
     );
@@ -183,7 +186,7 @@ describe('the options above can actually reach a run', () => {
         .join('\n');
 
     expect(live(source)).toMatch(
-      /^import \{ deleteOldTrainingData \} from '~\/server\/jobs\/delete-old-training-data';$/m
+      /^import\s+\{\s*deleteOldTrainingData\s*\}\s+from\s+'~\/server\/jobs\/delete-old-training-data';$/m
     );
 
     // 🔴 BOTH SLICE MARKERS ARE ASSERTED BEFORE THE SLICE IS TAKEN. `indexOf` returns -1 for a

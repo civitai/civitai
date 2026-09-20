@@ -22,7 +22,10 @@ type OldTrainingRow = {
  *
  * 🔴 THIS IS THE CUT, NOT THE RETRY'S POST, AND THE DIFFERENCE IS WHY THE FLOOR BELOW IS A MULTIPLE
  * RATHER THAN A BARE `>`. The moment that actually matters is the retry's POST, which lands at the
- * cut plus the caller's own retry backoff — observed at about a minute.
+ * cut plus the caller's own retry backoff. That backoff is RANDOMISED, not fixed: about a minute
+ * is what has been observed, and the band's low end is shorter. No literal is given for it here on
+ * purpose — the floor below does not need one, and inventing one is how the last two drafts of
+ * that argument went wrong.
  *
  * ⚠ THE CUT IS AN **UNDER**-ESTIMATE OF THAT MOMENT, WHICH FOR A FLOOR IS THE UNSAFE DIRECTION, NOT
  * THE SAFE ONE. An earlier draft of this paragraph called it "a conservative stand-in" — precisely
@@ -88,10 +91,14 @@ export const DELETE_OLD_TRAINING_DATA_CALLER_CUT_SECONDS = 60 * 60;
  * the next tick 24h later: a hold of two hours and a hold of six block exactly the same set of
  * requests, namely none. So the value is chosen at the top of the flat region rather than the
  * bottom — it absorbs a raised `WebhookTimeoutMinutes` without anyone having to remember this
- * file. ⚠ Concretely, and stated as a bound rather than as "several-fold" because the guard that
- * enforces it moved: the floor test requires the lock to be at least twice the cut, so at this
- * value a cut raised as far as THREE HOURS still passes. Past that the test fails and this file
- * has to be re-argued, which is the intent. ⚠ An earlier draft of this block asserted the opposite
+ * file. ⚠ To be exact about what "absorbs" means here, because two drafts of this sentence got it
+ * wrong in opposite directions: the answer is that there is NO silent headroom at all. The floor
+ * case pins the cut to its own literal before comparing anything, so ANY change to
+ * CALLER_CUT_SECONDS reds that test and sends the next person to this paragraph — which is the
+ * intent. What the value buys is that the re-argument will usually end in "still fine", not that
+ * it can be skipped. (The previous draft said a cut could be raised "as far as three hours"
+ * without failing; measured, two hours reds the floor case on the pin. The draft before it said
+ * "several-fold" and named no guard at all.) ⚠ An earlier draft of this block asserted the opposite
  * about cost — that a longer hold costs more because an alive-but-wedged run holds it longer. That
  * is false here for the same reason: the wedged run's day has no further caller to block. Do not
  * re-derive it.
