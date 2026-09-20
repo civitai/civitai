@@ -30,8 +30,8 @@ vi.mock('~/utils/s3-utils', () => ({
 }));
 
 import {
+  DELETE_OLD_TRAINING_DATA_FIRST_RETRY_SECONDS,
   DELETE_OLD_TRAINING_DATA_LOCK_SECONDS,
-  DELETE_OLD_TRAINING_DATA_RETRY_LADDER_SECONDS,
   deleteOldTrainingData,
 } from '~/server/jobs/delete-old-training-data';
 import { createDisconnectHandler, createJob } from '~/server/jobs/job';
@@ -59,30 +59,42 @@ describe('delete-old-training-data asks for a lock that outlasts the caller’s 
     expect(DELETE_OLD_TRAINING_DATA_LOCK_SECONDS).toBeGreaterThan(inherited.options.lockExpiration);
   });
 
-  it('🔴 clears the RETRY LADDER it is sized against, with headroom', () => {
-    // 🔴 The yardstick is pinned to its own literal FIRST, and that is what makes the ratio below
-    // a guard at all. Both constants live in the same module, so with only the lock pinned,
-    // shrinking the ladder satisfies the ratio for any lock value — and the exact mutant this case
-    // exists to kill, a lock cut back to just over the caller's one-hour timeout, would survive a
-    // one-token edit to the constant it is supposedly measured against. Re-measuring the ladder
-    // must land here and force the lock to be re-argued.
-    expect(DELETE_OLD_TRAINING_DATA_RETRY_LADDER_SECONDS).toBe(4 * 60 * 60);
-    expect(DELETE_OLD_TRAINING_DATA_LOCK_SECONDS).toBeGreaterThanOrEqual(
-      1.5 * DELETE_OLD_TRAINING_DATA_RETRY_LADDER_SECONDS
+  it('🔴 outlives the FIRST retry — the one moment the lock has to survive', () => {
+    // 🔴 The yardstick is pinned to its own literal FIRST, and that is what makes the comparison
+    // below a guard at all. Both constants live in the same module, so with only the lock pinned,
+    // shrinking the yardstick satisfies any ratio for any lock value — and the exact mutant this
+    // case exists to kill, a lock cut back under the caller's timeout, would survive a one-token
+    // edit to the constant it is supposedly measured against.
+    expect(DELETE_OLD_TRAINING_DATA_FIRST_RETRY_SECONDS).toBe(60 * 60);
+
+    // 🔴 The FIRST retry, not the last of the four seen today. A retry that finds the lock held is
+    // answered 200, the caller scores that as success, and a caller that did not fail does not
+    // retry again — so the first suppressed retry ends the ladder. Sizing against the fourth
+    // attempt would be sizing against attempts that only exist while the bug does.
+    expect(DELETE_OLD_TRAINING_DATA_LOCK_SECONDS).toBeGreaterThan(
+      DELETE_OLD_TRAINING_DATA_FIRST_RETRY_SECONDS
     );
   });
 
-  it('stays far enough below the cron period that a wedged run cannot delay a scheduled run', () => {
+  it('stays far enough below the cron period that a hold cannot reach a scheduled run', () => {
     // Asserting the SCHEDULE as well as the number is what makes this a relationship rather than
     // two unrelated literals: if the cron is ever made faster, this fails instead of silently
     // comparing the lock against a period the job no longer runs at.
     expect(deleteOldTrainingData.cron).toBe('5 11 * * *'); // once daily
     const cronPeriodSeconds = 24 * 60 * 60;
 
-    // The direction `keepLockOnDisconnect` turned into a real cost: an alive-but-wedged run now
-    // holds this lock for its full duration instead of losing it at the disconnect. Growing the
-    // value toward the cron period should have to be argued here, not discovered in production.
-    expect(DELETE_OLD_TRAINING_DATA_LOCK_SECONDS).toBeLessThanOrEqual(cronPeriodSeconds / 4);
+    expect(DELETE_OLD_TRAINING_DATA_LOCK_SECONDS).toBeLessThan(cronPeriodSeconds);
+  });
+
+  it('is an exact pin, not a range — any change to the value must be re-argued here', () => {
+    // 🔴 WHY THIS IS SPELLED OUT. The two cases above read like a range with headroom at both
+    // ends, and they are not: between the floor and the cron period the cost of a longer hold is
+    // FLAT, because once the first retry is answered 200 nothing POSTs again until the next daily
+    // tick. So there is no optimum for an inequality to converge on, and a reader who takes those
+    // two bounds as the whole argument will think any value between them is equally justified by
+    // measurement. It is not — the choice is explained in the constant's own docblock. This pin is
+    // what forces an edit to go and read it.
+    expect(DELETE_OLD_TRAINING_DATA_LOCK_SECONDS).toBe(6 * 60 * 60);
   });
 });
 
@@ -91,9 +103,12 @@ describe('delete-old-training-data’s lock survives the caller hanging up', () 
   // route installs, using this job's own options object, so they fail if the opt-in is dropped
   // from the job OR broken in the factory.
 
-  it('a disconnect cancels the context but leaves the lock held', () => {
-    expect(deleteOldTrainingData.options.keepLockOnDisconnect).toBe(true);
-  });
+  // 🔴 There is deliberately NO case here asserting `options.keepLockOnDisconnect === true` on its
+  // own. One was written and cut: its name promised "a disconnect cancels the context but leaves
+  // the lock held" while its body read a single boolean, driving no handler and asserting nothing
+  // about `cancel` — a description claiming coverage the implementation did not provide, which is
+  // worse than no case because it stops the next reader looking. The case below subsumes it: it
+  // fails on the same mutant, through the real factory, for the behaviour the name describes.
 
   it('drives the real handler: cancel fires, release does not', async () => {
     const { cancel, release, handler } = harness(deleteOldTrainingData.options);
