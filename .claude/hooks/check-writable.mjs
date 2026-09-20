@@ -39,11 +39,15 @@ stdin.on('end', () => {
       // terminator, and a heredoc written inside an indented block has one too. Requiring column 0
       // leaked those bodies into the matcher, so writing the incident down got flagged.
       .replace(/<<-?\s*['"]?(\w+)['"]?[\s\S]*?^[ \t]*\1[ \t]*$/gm, ' ')
-      .replace(/-m\s+(['"])[\s\S]*?\1/g, ' ')
-      // A script passed to `node -e '…'` is data too, not a command line. Measured while writing
-      // this PR: a `node -e` probe whose STRINGS named blocked commands was denied, and the denial
-      // named a command nobody had asked to run.
-      .replace(/\s-{1,2}e(?:val)?\s+(['"])[\s\S]*?\1/g, ' ');
+      .replace(/-m\s+(['"])[\s\S]*?\1/g, ' ');
+    //
+    // 🔴 Do NOT add `-e`/`--eval` to that list. It was tried, to stop a `node -e` probe whose
+    // STRINGS named blocked commands from being denied, and it disabled every guard in this file:
+    // the strip runs in front of all of them, so `node -e "require('child_process').execSync(
+    // 'taskkill /F /IM node.exe')"` was ALLOWED while the bare command blocks — measured, by
+    // spawning this hook. A heredoc body and a `-m` message are inert text; an `-e` body is the
+    // code that runs, and it is the one place where hiding the text hides the act. If a probe of
+    // your own trips a guard, put the script in a file.
 
     // Check for dangerous commands that should be blocked outright (no confirmation possible)
     for (const { pattern, check, reason } of DANGEROUS_PATTERNS) {

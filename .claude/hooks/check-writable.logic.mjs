@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Every decision the PreToolUse Bash hook makes. The hook itself is check-writable.mjs, which
  * is nothing but stdin wiring around this file.
@@ -238,7 +237,6 @@ const TSC_INVOCATION = new RegExp(
     String.raw`|(?:\S*[\\/])?node_modules[\\/]\.bin[\\/])?['"]?tsc['"]?(?=\s|$)` +
     String.raw`|node\s+(?:--\S+\s+)*\S*typescript[\\/](?:lib[\\/]tsc\.js|bin[\\/]tsc)\b)`
 );
-const TSC_ROOT_PROJECT = /^(?:\.[\\/]?|(?:\.[\\/])?tsconfig\.json)$/;
 const TSC_NOT_A_CHECK = /(?:^|\s)(?:-v|--version|-h|--help|--init|--showConfig|--all|-b|--build)\b/;
 // A run aimed at ONE workspace package is not the run this guard exists to stop: `pnpm run
 // typecheck` cannot see `apps/` at all (only CI's scripts/ci/typecheck-apps.mjs does), so denying
@@ -253,7 +251,8 @@ const ROOT_TARGET = /^['"]?(?:\.[\\/]?|model-share)['"]?$/;
 // and its dependents, `*` and `./...` are everything — each selects N packages, which is worse than
 // the root program rather than narrower, and each read as "one package" while the recursive
 // spelling (`pnpm -r`) was correctly denied.
-const MULTI_PACKAGE_FILTER = /^['"]?[!*]|\.\.\./;
+// `*` anywhere (`@civitai/*`), a leading `!`, `[since]`, `{path-glob}`, or `...deps`.
+const MULTI_PACKAGE_FILTER = /[*]|^['"]?[![{]|\.\.\./;
 const WORKSPACE_PATH = /(?:^|[\s'"=\\/])(?:apps|packages)[\\/][\w.-]+/;
 const RUNNER_DIR_FLAG = /(?:^|\s)(?:-C|--dir|--prefix|--filter|-F)(?:=|\s+)(\S+)/;
 

@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { directRootTypecheck } from '../../.claude/hooks/check-writable.logic.mjs';
 
@@ -126,9 +126,16 @@ describe('the direct-tsc guard leaves a narrow run alone', () => {
  */
 describe('the hook answers when it is run as a process', () => {
   const hooks = resolve(__dirname, '../../.claude/hooks');
-  const tmp = mkdtempSync(join(tmpdir(), 'hook-link-'));
-  const linked = join(tmp, 'hooks');
-  symlinkSync(hooks, linked, 'junction');
+  let tmp: string;
+  let linked: string;
+
+  // In `beforeAll`, not the describe body: a throw while creating the junction would otherwise
+  // happen at COLLECTION time, and this file would contribute 0 tests instead of one red one.
+  beforeAll(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'hook-link-'));
+    linked = join(tmp, 'hooks');
+    symlinkSync(hooks, linked, 'junction');
+  });
   afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
   const ask = (hookPath: string) =>
@@ -145,6 +152,34 @@ describe('the hook answers when it is run as a process', () => {
     const r = ask(path());
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision).toBe('deny');
+  });
+
+  /**
+   * 🔴 The strip step that removes heredoc bodies and `-m` messages runs in front of EVERY guard
+   * in the hook, so widening it is not a tsc change. Adding `-e`/`--eval` to it was tried, to stop
+   * a `node -e` probe whose STRINGS named blocked commands from being denied, and it made an
+   * evaluator body invisible to the outright block: the wrapped form below was ALLOWED while the
+   * bare command blocked. A heredoc body is inert text; an `-e` body is the code that runs.
+   *
+   * These cases are built from fragments so this file's own text cannot be what a future matcher
+   * keys on, and they assert the neighbouring-command shapes too — an unrelated `-e` flag must not
+   * hide what follows it.
+   */
+  const KILL = ['taskkill', '/F', '/IM', 'node' + '.exe'].join(' ');
+  const EXEC = "require('child_' + 'process').execSync";
+
+  it.each([
+    ['bare', () => KILL],
+    ['inside a node -e body', () => `node -e "${EXEC}('${KILL}')"`],
+    ['inside a node --eval body', () => `node --eval "${EXEC}('${KILL}')"`],
+    ['after an unrelated -e flag', () => `echo -e "x" && ${KILL}`],
+  ])('blocks a process-killing command %s', (_label, command) => {
+    const r = spawnSync(process.execPath, [join(hooks, 'check-writable.mjs')], {
+      input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: command() } }),
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    expect(r.status).toBe(2);
   });
 
   it('allows an ordinary command, so the deny above is not just "it always denies"', () => {

@@ -329,7 +329,9 @@ describe('nothing outside daemon-port.mjs decides the daemon port', () => {
     expect(files).toContain('.claude/skills/dev-server/cli.mjs');
     expect(files).toContain('.claude/skills/dev-server/console.mjs');
     expect(files).toContain('.claude/skills/dev-server/scripts/daemon.mjs');
-    expect(files).toContain('.claude/hooks/check-writable.mjs');
+    // The entry AND the logic module: the ports live in the logic file now, so naming only the
+    // entry would leave this control proving the walk reaches a file with nothing to find.
+    expect(files).toContain('.claude/hooks/check-writable.logic.mjs');
     expect(files).toContain('scripts/test-unit-run.mjs');
   });
 
