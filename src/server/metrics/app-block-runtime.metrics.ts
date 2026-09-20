@@ -494,6 +494,7 @@ type Bundle = {
   spendCapRejectionsTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
   revocationRefusalsTotal: Counter<string>;
+  bridgeRateLimitRefusalsTotal: Counter<string>;
   postSubjectRefusalsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
   launchTotalSeconds: Histogram<string>;
@@ -878,6 +879,33 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['surface', 'namespace']
   );
 
+  // 🔴 THE ONLY SERIES ON THIS PLATFORM THAT COUNTS A BRIDGE RATE-LIMIT REFUSAL, and it
+  // exists because every ceiling on the tRPC bridge was previously UNGRADEABLE. The one
+  // App Blocks request counter, `civitai_app_block_requests_total` above, is incremented
+  // solely by the REST `withBlockScope` wrapper — it never counts a bridge call — so
+  // before this there was no way to answer "has any of these limits ever fired?" for any
+  // bucket, old or new. Three separate comments in `block-catalog-rate-limit.ts` name a
+  // closing condition that depends on this series existing.
+  //
+  // REFUSALS ONLY, NOT A DENOMINATOR, and that asymmetry is deliberate. The question a
+  // ceiling has to answer is "is it biting?", and the blast radius on this surface is
+  // asymmetric: too tight throttles a paid generation and presents as a broken block.
+  // A refusal count answers that directly and costs one in-heap increment on a path that
+  // should be empty; a total-calls counter would add an increment to EVERY bridge call
+  // including the poll loop, for a number nothing currently acts on. Add the denominator
+  // when someone needs a RATE rather than an alarm.
+  //
+  // Cardinality: procedure (≤ ~20 bridge procs) × bucket (5 buckets) ≈ 100 worst case,
+  // and in practice far less — each procedure charges exactly one bucket. Both labels are
+  // SERVER-CHOSEN constants from the call site, never request input, so a hostile block
+  // cannot inflate the label set.
+  const bridgeRateLimitRefusalsTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_bridge_rate_limit_refusals_total',
+    'App Block tRPC bridge rate-limit refusals by procedure and bucket',
+    ['procedure', 'bucket']
+  );
+
   // ── POST-FROM-APP: UNREADABLE SUBJECT ────────────────────────────────────────
   // 🔴 THIS BRANCH WAS PREVIOUSLY INDISTINGUISHABLE FROM A FLAG DENIAL, AND THAT IS
   // THE DEFECT THIS COUNTER EXISTS TO MAKE READABLE. `authorizeBlockPostRequest`
@@ -1081,6 +1109,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     spendCapRejectionsTotal,
     restApprovalVerdictsTotal,
     revocationRefusalsTotal,
+    bridgeRateLimitRefusalsTotal,
     postSubjectRefusalsTotal,
     stepPriceCheckTotal,
     launchTotalSeconds,
@@ -1325,6 +1354,42 @@ export function recordBlockRevocationRefusal(
       surface,
       namespace: revocationNamespaceLabel(blockInstanceId),
     });
+  } catch {
+    /* instrument-only — never let a metrics error change a refusal into a 500 */
+  }
+}
+
+/**
+ * The buckets a bridge procedure can charge. Mirrors the sub-namespaces in
+ * `~/server/utils/block-catalog-rate-limit` — a label, not a lookup, so adding a bucket
+ * there and forgetting it here yields a type error at the call site rather than a silent
+ * mislabel.
+ */
+export type AppBlockRateLimitBucket = 'catalog' | 'publish' | 'post' | 'post-app' | 'poll';
+
+/**
+ * Fail-soft emit of ONE bridge rate-limit refusal.
+ *
+ * Called from the refusal branch of each limiter site in `blocks.router.ts` — the branch
+ * that either throws `TOO_MANY_REQUESTS` or (for `pollWorkflow` and `cancelWorkflow`)
+ * returns a non-terminal snapshot. Both are refusals; the difference is how the client is
+ * told, and the ceiling is equally worth grading either way.
+ *
+ * 🔴 TOTAL, like every emitter in this module: a metrics error must never convert a
+ * refusal the limiter has already decided into a 500, and on the two returning paths it
+ * must never convert one into a thrown error at all — which is precisely the failure the
+ * returning paths exist to avoid.
+ *
+ * COST: one in-heap counter increment, only on the refusal path. A fleet under its
+ * ceilings emits zero, which is also the reading that says the ceilings are not biting.
+ */
+export function recordBlockBridgeRateLimitRefusal(
+  procedure: string,
+  bucket: AppBlockRateLimitBucket
+): void {
+  try {
+    const { bridgeRateLimitRefusalsTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    bridgeRateLimitRefusalsTotal.inc({ procedure, bucket });
   } catch {
     /* instrument-only — never let a metrics error change a refusal into a 500 */
   }

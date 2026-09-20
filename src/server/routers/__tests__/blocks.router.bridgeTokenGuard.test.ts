@@ -132,6 +132,19 @@ vi.mock('~/server/services/block-registry.service', () => ({
     listUserSubscriptions: vi.fn(),
   },
 }));
+// 🔴 THE BLOCKS RATE LIMITERS, ALWAYS ALLOWING. Declared because the procedures this file drives
+// now charge a bucket, and the REAL limiter reads `redisMock`, whose `incrBy` returns `undefined`
+// when a test has not configured it — `undefined <= MAX` is false, so the unconfigured mock reads
+// as OVER the ceiling and every case here would fail with TOO_MANY_REQUESTS instead of reaching
+// the guard it is about. Refusal behaviour is covered by
+// `blocks.router.bridgeRateLimits.test.ts`; this file is about something else.
+vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
+  checkBlockCatalogRateLimit: async () => ({ allowed: true }),
+  checkBlockPollRateLimit: async () => ({ allowed: true }),
+  checkBlockPublishRateLimit: async () => ({ allowed: true }),
+  checkBlockPostRateLimit: async () => ({ allowed: true }),
+  checkBlockPostAppRateLimit: async () => ({ allowed: true }),
+}));
 vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');
   return { rateLimit: () => middleware(async ({ next }) => next()) };

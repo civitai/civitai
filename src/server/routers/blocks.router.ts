@@ -43,8 +43,10 @@ import {
   getUserBuzzTransactions,
 } from '~/server/services/buzz.service';
 import { projectBlockBuzzTransaction } from '~/server/services/blocks/block-buzz-read.projection';
+import { recordBlockBridgeRateLimitRefusal } from '~/server/metrics/app-block-runtime.metrics';
 import {
   checkBlockCatalogRateLimit,
+  checkBlockPollRateLimit,
   checkBlockPostAppRateLimit,
   checkBlockPostRateLimit,
   checkBlockPublishRateLimit,
@@ -710,12 +712,30 @@ async function recordBlockPostInvocation(opts: {
  *
  * ⚠️ `getMyBuzzBalance` IS NOT SCOPE-FREE ANY MORE — this docblock said it was until
  * the round-1 audit caught the contradiction with the one on `getMyBuzzBalance`
- * itself. That proc now performs the SAME `buzz:read:self` check inline (it cannot
- * call this helper: it is not rate-limited on `blockInstanceId` and its error copy
- * differs). What still separates these bridges from it is SENSITIVITY, not the scope:
- * the full ledger / all-pool balances incl. creator payout pools / per-model earnings,
- * versus a spendable-balance read — which is why these three also carry the
- * per-instance rate limit below.
+ * itself. That proc now performs the SAME `buzz:read:self` check inline.
+ *
+ * 🔴 AND THE SECOND HALF OF THAT REASON IS NOW GONE, WHICH IS WHY THIS PARAGRAPH
+ * WAS REWRITTEN RATHER THAN LEFT (clawgate #569). It used to read "it cannot call
+ * this helper: it is NOT rate-limited on `blockInstanceId` and its error copy
+ * differs", and the first clause was true until #569 added exactly that limiter to
+ * `getMyBuzzBalance`. Leaving it would have had this helper document a
+ * justification for the duplicate that the duplicate no longer has — which is how a
+ * duplicate gets re-justified by the next reader.
+ *
+ * WHAT IS LEFT OF THE DIFFERENCE, stated honestly because it is thin: ONE WORD in
+ * ONE `UNAUTHORIZED` message (`'buzz balance requires…'` there vs `'buzz read
+ * requires…'` here). The ladders are otherwise step-for-step identical. 🔴 THE
+ * STANDING HAZARD, and the reason this note is long: **this card exists because the
+ * last gate added to this helper — the rate limit — did not reach that proc.** The
+ * next one (a new consent scope, a second revocation check, a different bucket)
+ * misses it the same way. Routing it through here, or parameterising that one
+ * string, is the durable fix; it was not taken in #569 because that card's scope was
+ * the rate-limit decision, and it is recorded here so the next reader inherits the
+ * question rather than the stale answer.
+ *
+ * What still separates these three bridges from that proc is SENSITIVITY, not the
+ * scope and no longer the limiter: the full ledger / all-pool balances incl. creator
+ * payout pools / per-model earnings, versus a spendable-balance read.
  *
  * Order (each step fail-closed, except where noted): `authorizeBlockBridgeToken`
  * — which is itself verify token → revocation (a Redis GET, fail-OPEN) → approved
@@ -3800,6 +3820,27 @@ export const blocksRouter = router({
    * the status code, and adding a branch that treated 202 as a failure would
    * turn the normal timeout into a broken generation.
    *
+   * 🔴 RATE LIMIT — THE `:poll:` BUCKET, weight 1, per `blockInstanceId`
+   * (`checkBlockPollRateLimit`, 1200 / 60 s). It is its OWN bucket, not the
+   * catalog one; the three-part argument for that, and how the number was
+   * chosen, are at the constants in `~/server/utils/block-catalog-rate-limit`.
+   *
+   * 🔴 WHY THERE IS A SERVER-SIDE LIMIT HERE AT ALL, since the docblock below
+   * used to close by saying the SDK "only requests it from a sequential,
+   * non-overlapping loop". That sentence is TRUE and it is NOT a bound. It
+   * describes how the FIRST-PARTY client behaves, and the callers of this
+   * procedure are sandboxed third-party code that can issue whatever it likes —
+   * so what it actually documents is the HONEST client's rate, not a ceiling
+   * anything enforces. Before this limit the answer to "what stops a block
+   * polling in a tight loop" was: the viewer-scope and app-tag assertions (which
+   * bound WHOSE workflow, not how often), and nothing else. Now it is this
+   * bucket. Keep the sentence — it is still the right thing to say about the
+   * SDK — but do not let it be read as the bound.
+   *
+   * ⚠️ AND READ THE BOUND FOR WHAT IT IS: the limiter FAILS OPEN on a Redis
+   * error, by the convention every blocks limiter here follows. It bounds abuse;
+   * it does not guarantee a ceiling.
+   *
    * 🔴 WHAT THIS DOES TO SCAN COST — the direction is FAVOURABLE, and it is
    * worth stating because the moderation wrapper below runs on EVERY poll.
    * `screenGeneratedText` memoizes a decided CONTENT verdict for 5 minutes but
@@ -3845,6 +3886,79 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
+      // POLL rate limit — the DEDICATED `:poll:` bucket, not the catalog one, so a
+      // generation in flight can never exhaust a catalog read's allowance (and vice
+      // versa). Keyed on the install AND the self-bound viewer; see the constants in
+      // `~/server/utils/block-catalog-rate-limit` for why the viewer half is
+      // load-bearing rather than decorative. Placed after the guard and the flag
+      // gate, ahead of the orchestrator token fetch, the orchestrator GET and the
+      // inline moderation scan.
+      //
+      // ⚠️ NOT "ahead of everything this procedure spends", which an earlier revision
+      // of this comment claimed. Three awaits precede it and a refused poll still pays
+      // them: the ES256 verify, the revocation Redis read, an UNCACHED
+      // `dbRead.appBlock.findUnique` on the replica (inside the guard's approval
+      // check), and the session-user resolve plus Flipt eval in the flag gate. It
+      // cannot be hoisted above the guard — it needs `claims.blockInstanceId`, which
+      // does not exist until the token is verified — and it is deliberately NOT
+      // hoisted above the flag gate either: this limiter RETURNS rather than throws
+      // (below), so hoisting it would answer a viewer whose App Blocks access is
+      // switched off with a bland "still processing" instead of the refusal they
+      // should get. Fail-open on a redis incident.
+      const pollRate = await checkBlockPollRateLimit(claims.blockInstanceId, userId);
+      if (!pollRate.allowed) {
+        recordBlockBridgeRateLimitRefusal('pollWorkflow', 'poll');
+        // 🔴 IT RETURNS A NON-TERMINAL SNAPSHOT. IT DOES NOT THROW, AND THAT IS THE
+        // WHOLE DESIGN — A THROWN 429 HERE DESTROYS A PAID GENERATION.
+        //
+        // Both hosts wrap this mutation in `try { … } catch (err) { send(
+        // 'WORKFLOW_STATUS', { snapshot: failureSnapshot(err) }) }`
+        // (`components/AppBlocks/PageBlockHost.tsx`,
+        // `components/AppBlocks/IframeHost.tsx`), and `failureSnapshot` returns
+        // `status: 'failed'` — which is in the SDK's TERMINAL set. So ANY throw from
+        // this procedure reaches the block as a finished, failed workflow and its
+        // watch loop STOPS. Applied to a rate limit that means: the viewer's Buzz is
+        // already spent, the orchestrator is still working, and one refused poll
+        // makes the block render the generation as failed and stop looking. Nothing
+        // then refunds it — `reverseBlockAuthorFee` and `settleCustomComfySpend` fire
+        // only on an OBSERVED terminal status, and after the loop stops there is no
+        // observer. A limiter that converts load into lost paid work is worse than no
+        // limiter, which is exactly the asymmetry this card was told to respect.
+        //
+        // SHED THE WORK, NOT THE REQUEST. Returning here still skips everything the
+        // bucket exists to bound — the orchestrator token fetch, the held GET, the
+        // inline `screenGeneratedText` scan, the read-model write and both money
+        // observers — at the cost of one Redis INCR and a small reply. The block sees
+        // "no new information yet", keeps its loop, and converges on the next poll
+        // that gets through.
+        //
+        // PRECEDENT, not invention: `submitWorkflow` below already returns a
+        // snapshot rather than throwing for an over-budget submit, for the same
+        // reason in the opposite direction — "the SDK treats throws as block
+        // lifecycle errors but expects budget rejections as workflow outcomes the
+        // block can recover from".
+        //
+        // ⚠️ WHAT THE RETURNED SNAPSHOT IS AND IS NOT. `status: 'processing'` is a
+        // PLACEHOLDER meaning "not read this time", not an observation: the contract
+        // has no `unknown` member, and both non-terminal values (`pending`,
+        // `processing`) are equally uninformed about a workflow we deliberately did
+        // not fetch. `workflowId` echoes the caller's own id because the SDK's
+        // inbound validator DROPS a snapshot with an empty one (see
+        // `components/AppBlocks/failureSnapshot.ts`), which would hang the block to
+        // its 120s transport timeout instead of letting it re-poll.
+        //
+        // ⚠️ STATED COST: while a viewer is over this ceiling, a workflow that has
+        // ALREADY gone terminal has its settle and its fee reversal DEFERRED, because
+        // both observers live behind the read this skips. Bounded by the window, and
+        // strictly smaller than the 25h stranded-reservation window clawgate #572
+        // already accepted on this path — but it is a real deferral, not zero.
+        return {
+          snapshot: {
+            workflowId: input.workflowId,
+            status: 'processing' as const,
+          },
+        };
+      }
       // VIEWER SCOPE, before any orchestrator call: the id must name this viewer as its owner.
       assertBlockWorkflowMintedForViewer({ workflowId: input.workflowId, userId });
       const token = await getOrchestratorToken(userId, ctx);
@@ -4006,6 +4120,26 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
+      // RATE LIMIT: NONE, DELIBERATELY — and this is a REVERSAL, recorded as one.
+      //
+      // clawgate #569 added a catalog-bucket limit here and the round-0 audit asked for
+      // it back out. The audit is right, and the tell was in the limit's own written
+      // justification: it argued that this is "a ≤50-row keyset read whose cadence is a
+      // page reload" — i.e. it conceded, in the sentence meant to justify the ceiling,
+      // that the ceiling is four orders of magnitude above the traffic. **A limit whose
+      // rationale is its own enormous margin bounds nothing.** What it does do is real:
+      // it adds a throw path to a read, on a bucket whose key is `page_<appBlockId>` for
+      // a page app — shared platform-wide by every viewer of that app — so this
+      // procedure's only measurable effect was to spend another viewer's allowance.
+      //
+      // WHAT BOUNDS IT INSTEAD: the work is one indexed keyset query capped at 50 rows
+      // by the input schema, server-scoped to (viewer, appBlockId) off the verified
+      // token. Cost per call is flat and small, and a block cannot widen it.
+      //
+      // 🔴 THE GENERAL RULE THIS IS AN INSTANCE OF, because #569's own non-goals say it
+      // and it still happened: do not add a limit reflexively. This one was named by
+      // neither the card nor any review lane — it arrived because the procedure was in
+      // the population and everything else in the population had one.
       const { listMyBlockWorkflows } = await import(
         '~/server/services/blocks/block-workflows.service'
       );
@@ -4064,6 +4198,56 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
+      // 🔴 RATE LIMIT — the CATALOG bucket, weight 1, per `blockInstanceId`. THIS
+      // RESOLVES THE cancelWorkflow / cancelAppWorkflow ASYMMETRY (clawgate #569,
+      // criterion 3) IN THE DIRECTION OF LIMITING, and the reason is that the
+      // asymmetry was backwards: `cancelAppWorkflow` already carries this exact
+      // limiter, and its comment justifies it by saying "cancel is the HEAVIER
+      // path (2 orchestrator GETs + 1 DELETE + 1 DB lookup per call), so it MUST
+      // be bounded exactly like the sibling queryAppWorkflows". Every word of
+      // that applies here and then some: this procedure is GET + PATCH + GET, and
+      // it additionally runs the inline output-moderation scan on the re-read
+      // snapshot, which `cancelAppWorkflow` does not. So the limited sibling was
+      // the cheaper of the two. The other direction — removing the limit from
+      // `cancelAppWorkflow` — would have meant deleting a bound from a path whose
+      // own comment argues for it, on the strength of nothing.
+      //
+      // Fail-open on a redis incident, like every sibling; it bounds abuse, it
+      // does not guarantee a ceiling.
+      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      if (!rate.allowed) {
+        recordBlockBridgeRateLimitRefusal('cancelWorkflow', 'catalog');
+        // 🔴 IT RETURNS A NON-TERMINAL SNAPSHOT, FOR EXACTLY THE REASON `pollWorkflow`
+        // DOES — AND THIS SITE IS WHERE THAT INSIGHT WAS NEARLY MISSED. An earlier
+        // revision of this change threw `TOO_MANY_REQUESTS` here while carefully
+        // returning from the poll, as though the hazard were a property of polling. It
+        // is not: it is a property of the HOST WRAPPER, and both cancel hosts have the
+        // identical one. `PageBlockHost.tsx` and `IframeHost.tsx` wrap
+        // `cancelWorkflowMutation` in `catch (err) { send('WORKFLOW_CANCELED', {
+        // snapshot: failureSnapshot(err) }) }`, and `failureSnapshot` returns
+        // `status: 'failed'` — terminal.
+        //
+        // WHAT THAT DID: a block cancels a RUNNING, PAID workflow while the shared
+        // catalog bucket is exhausted → the 429 throws → the host converts it to a
+        // failed snapshot → the block stops watching. The workflow is still running on
+        // the orchestrator, the Buzz is still spent, and the cancel never happened. The
+        // block has been told the opposite of the truth in both directions at once.
+        //
+        // Returning still sheds everything the bucket exists to bound — the orchestrator
+        // token fetch, the scope read, the PATCH, the re-read, the moderation scan and
+        // both money observers — for one Redis INCR.
+        //
+        // ⚠️ `status: 'processing'` is the HONEST answer here, more so than at the poll:
+        // we did not issue the cancel, so the workflow IS still running. The caller can
+        // retry the cancel, which is the correct next action and the one a terminal
+        // `failed` forecloses.
+        return {
+          snapshot: {
+            workflowId: input.workflowId,
+            status: 'processing' as const,
+          },
+        };
+      }
       // VIEWER SCOPE, before any orchestrator call: the id must name this viewer as its owner.
       assertBlockWorkflowMintedForViewer({ workflowId: input.workflowId, userId });
       const token = await getOrchestratorToken(userId, ctx);
@@ -5020,6 +5204,11 @@ export const blocksRouter = router({
       // App-blocks runtime/visibility gate (the token subject) — NOT the author
       // gate: a viewer of the app can read images the app published.
       await assertAppBlocksEnabledForTokenUser(userId);
+      // RATE LIMIT — the CATALOG bucket, weight 1, per `blockInstanceId`. Pre-existing;
+      // a site comment was added in clawgate #569 only because that card's decision
+      // ledger promises each entry's argument lives at its procedure, and this was the
+      // one limited proc with nothing here to inherit. A by-id image read that forces
+      // `no-store`, so the origin absorbs every call and Cloudflare absorbs none.
       const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       if (!rate.allowed) {
         throw new TRPCError({
@@ -5057,6 +5246,44 @@ export const blocksRouter = router({
       const claims = await authorizeBlockBridgeToken(input.blockToken);
       if (!claims.scopes.includes('ai:write:budgeted')) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+      }
+      // RATE LIMIT — the CATALOG bucket, weight 1, per `blockInstanceId`. An
+      // estimate is a real origin cost with no spend attached to bound it: a
+      // version-context read, a checkpoint resolve, the page entitlement gate,
+      // and an orchestrator `whatif` submit, on every call. Its legitimate
+      // cadence is a person adjusting parameters (debounced), so the catalog
+      // ceiling is generous by a wide margin.
+      //
+      // 🔴 PLACED ABOVE THE `kind` BRANCH, DELIBERATELY, AND THAT IS WHY IT IS
+      // NOT AT THE SAME LINE AS EVERY OTHER LIMITER IN THIS ROUTER. The
+      // `customComfy` and `step` branches below RETURN before `parseSubjectUserId`
+      // and `assertAppBlocksEnabledForTokenUser` — so a limiter at the house
+      // position (after the flag gate) would bound ONE of the three branches and
+      // leave the other two unlimited, while reading, to anyone scanning the file,
+      // exactly like the sibling sites that bound everything. `blockInstanceId`
+      // exists from `authorizeBlockBridgeToken` above, so nothing forces it lower.
+      // Covered by `blocks.router.bridgeRateLimits.test.ts`, which drives a
+      // customComfy body specifically for this.
+      //
+      // Fail-open on a redis incident, like every sibling.
+      //
+      // 🔴 THIS ONE STILL THROWS, AND THAT IS A DECISION RATHER THAN AN OMISSION —
+      // stated because its two neighbours (`pollWorkflow`, `cancelWorkflow`) deliberately
+      // do NOT, and a reader comparing them deserves to know which way this was settled.
+      // The hazard there is that the host converts a throw into a TERMINAL snapshot, so
+      // the block is told a running, paid workflow has finished. An estimate has no
+      // workflow and no money behind it: the host surfaces a failed ESTIMATE_RESULT, the
+      // SDK reports an error rather than a false completion, and the block's correct next
+      // action — re-estimate — stays available. An error is the truthful answer to "what
+      // does this cost?" when we declined to compute it; a non-terminal snapshot would
+      // not be, because there is no in-flight thing for it to describe.
+      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      if (!rate.allowed) {
+        recordBlockBridgeRateLimitRefusal('estimateWorkflow', 'catalog');
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
       }
       // App Blocks customComfy bridge (v1): a fixed server-authored recipe has no
       // whatIf-able cost, so estimate returns the recipe's per-engine DISPLAY
@@ -5238,6 +5465,105 @@ export const blocksRouter = router({
    * failed-shape snapshot instead of throwing, since the SDK treats throws
    * as block lifecycle errors but expects budget rejections as workflow
    * outcomes the block can recover from (e.g. by opening BuyBuzzModal).
+   *
+   * 🔴 RATE LIMIT: NONE, DELIBERATELY — AND HERE IS WHAT BOUNDS IT INSTEAD
+   * (clawgate #569, criterion 1). This is the one bridge procedure in the
+   * decision ledger that takes no per-request bucket, so the reason is recorded
+   * here rather than left to be re-derived.
+   *
+   * WHAT BOUNDS IT SERVER-SIDE, all inside `reserveAppSpend`
+   * (`services/blocks/app-spend-cap.service`) and the per-user reservation above
+   * it, on every `kind` (txt2img here; customComfy, step and pass-through each
+   * call the same belt in their own handler):
+   *   1. A per-app generation VELOCITY ceiling — a fixed-window count of GENS,
+   *      `velocityMaxGens` per `BLOCK_APP_SPEND_VELOCITY_WINDOW_SECONDS`. On the
+   *      `standard` tier every app has today that is 120 per 60 s, i.e. 2/s
+   *      AGGREGATE ACROSS EVERY INSTALL of the app — tighter than any per-instance
+   *      request-rate limit worth shipping here, so a second bound on the same
+   *      quantity would bound nothing while adding a way to break a generation.
+   *      🔴 THAT CONCLUSION IS TIER-SCOPED, AND AN EARLIER REVISION OF THIS
+   *      DOCBLOCK GENERALISED IT WITHOUT SAYING SO. `trusted` is 600/60 s and
+   *      `platform` is 3,000/60 s = 50 gens/s (`app-cap-limits.constants.ts`), and
+   *      a moderator `velocityOverride` is clamped only by the absolute max — so on
+   *      a promoted app this ceiling is LOOSER than the poll bucket this same
+   *      change judged appropriate. The argument below holds on `standard`, which
+   *      is every app today; it weakens as apps are promoted, and that is the
+   *      trigger to revisit rather than a reason to act now.
+   *   2. The per-user daily Buzz cap, and the per-app aggregate daily Buzz
+   *      ceiling (`dailyBuzz`), both reserved before the orchestrator is called.
+   *   3. The per-call budget the token itself carries (`claims.buzzBudget`).
+   *
+   * 🔴 THE TWO HOLES IN THAT, STATED BECAUSE THEY ARE OPEN. Do not read the
+   * paragraph above as a ceiling on REQUESTS; it is a ceiling on ACCEPTED
+   * generations.
+   *   (a) A submit REJECTED BEFORE `reserveAppSpend` never increments the
+   *       velocity counter — a version resolve, a checkpoint resolve, the
+   *       entitlement gate and the cost computation have all run by then. A block
+   *       looping on a body that fails one of those gates is doing real origin
+   *       work that no counter sees.
+   *   (b) G8 is SKIPPED for `claims.dev === true`. A dev token is self-bound (only
+   *       the owner can spend, only their own Buzz, still under the per-user daily
+   *       cap and the dev-session backstop), so the anti-Sybil aggregate does not
+   *       apply — but neither does its velocity half.
+   *   (c) 🔴 THE VELOCITY COUNTER IS NEVER REFUNDED, AND IT IS APP-WIDE. Its key is
+   *       `…:vel:<appBlockId>:<bucket>` — no user, no install — and the throw-path
+   *       rollback in this file refunds the per-user reservation, the per-app DAILY
+   *       key and the dev-session key, but not the velocity key (`refundAppSpend`
+   *       takes an `AppSpendDailyKey` and can only decrement that one). So a submit
+   *       that fails AFTER the reserve permanently consumes one slot of the app's
+   *       shared allowance at zero net Buzz cost. Since that allowance is the whole
+   *       thing standing in for a request limit here, one install can degrade
+   *       generation for every other viewer of the same app. A per-instance bucket
+   *       is precisely the control that would bound one install's share of it —
+   *       which is the sharpest argument AGAINST the decision recorded here, and it
+   *       is written down rather than omitted.
+   *
+   * 🔴 THE OTHER DIRECTION, BECAUSE THE RECORD MUST NOT BE ONE-SIDED EITHER:
+   * `reserveAppSpend` FAILS CLOSED on a Redis error (`denyAppSpend('unavailable')`),
+   * where every limiter in `block-catalog-rate-limit.ts` fails OPEN. So the one
+   * procedure left without a request bucket is the one bounded by the stricter
+   * posture, and a Redis incident stops spend here while it removes the ceiling
+   * everywhere else on this bridge.
+   *
+   * 🔴 THE DECISION WAS RE-OPENED IN THE ROUND-0 AUDIT AND IS STILL `none` — BUT THE
+   * ORIGINAL REASON WAS WRONG AND IS RETRACTED HERE RATHER THAN QUIETLY RESTATED. It
+   * read: "not shipped because the spend path is the highest-blast-radius surface in
+   * this file". That objection does not reach the placement this same docblock names —
+   * the TOP of the resolver, above the `kind` branch, where nothing has been reserved,
+   * nothing needs refunding, and the usual counter (a throw breaks a paid generation) is
+   * at its weakest because no money has moved and this procedure already returns a
+   * failed-shape snapshot for the over-budget case. An objection that does not apply to
+   * the option under discussion is not an argument; it was a reflex dressed as one.
+   *
+   * THE REASON THAT SURVIVES IS NARROWER AND IT IS ABOUT FIT, NOT RISK. Hole (c) is not
+   * "this procedure is called too often" — it is "the counter stands in for a request
+   * limit and cannot tell a burnt reservation from a delivered generation". A
+   * per-instance request bucket is a blunt instrument for that: it would bound one
+   * install's call RATE while leaving the shared velocity counter just as unrefundable,
+   * so an app with two installs still drains it. The precise fix is to make the velocity
+   * key refundable — `AppSpendResult` exposes only `dailyKey`, so the throw-path rollback
+   * has no velocity key to return even in principle — and that is a change to
+   * `app-spend-cap.service.ts`'s contract, not to this resolver.
+   * **Closing condition: a PR that returns the velocity key alongside `dailyKey` and
+   * refunds it on the same paths that refund the daily reservation.** Until then hole (c)
+   * stands, stated, as the open item it is.
+   *
+   * It is also not shipped here because the card that raised the question asks for limits
+   * to be argued rather than added reflexively, and because nothing on this surface can
+   * currently grade one: see the refusal counter noted at hole (a).
+   *
+   * 🔴 AND THE EVIDENCE THAT WOULD SETTLE IT DOES NOT EXIST — an earlier revision of
+   * this docblock named `block_scope_invocations` as the source for "the rejected-
+   * submit rate per instance", and that source is STRUCTURALLY EMPTY for exactly the
+   * population in question: this resolver's single `recordScopeInvocation` write sits
+   * AFTER every `TRPCError` throw in it, so a rejected submit — the thing hole (a) is
+   * about — records nothing, under any load. The companion claim that "nothing is
+   * under load" cited `civitai_app_block_requests_total`, which is incremented only
+   * inside the REST `withBlockScope` wrapper and never counts a bridge call at all.
+   * Both were wrong in the reassuring direction. **What would create the evidence: a
+   * counter on bridge calls and on pre-reserve submit rejections, labelled by
+   * procedure. Closing condition for reopening this decision: that counter exists and
+   * shows a non-trivial pre-reserve rejection rate on any instance.**
    */
   submitWorkflow: publicProcedure
     // Block-JWT-authed (no session for dev:live) — flag evaluated against the
@@ -6385,6 +6711,28 @@ export const blocksRouter = router({
       // The App-Blocks kill-switch, evaluated against the TOKEN subject. (The
       // author capability is deliberately NOT checked — see the docblock.)
       await assertAppBlocksEnabledForTokenUser(userId);
+      // 🔴 RATE LIMIT — the CATALOG bucket, weight 1, per `blockInstanceId`. This
+      // closes an asymmetry the helper's own docblock describes: the three sibling
+      // buzz self-reads (`getMyBuzzAccounts`, `getMyBuzzTransactions`,
+      // `getMyDailyCompensation`) reach this limiter through
+      // `authorizeBlockBuzzRead`, and this procedure is the one that does not go
+      // through the helper — so it was the single Buzz read on the bridge with no
+      // ceiling at all. The helper's note that these three carry the limit because
+      // they are the more SENSITIVE reads is about which data is exposed; it is
+      // not an argument about origin COST, which is what a limiter bounds, and a
+      // balance read still costs a buzz-service round trip per call.
+      //
+      // It stays inline rather than moving this procedure onto the helper: the
+      // helper's error copy differs, and routing through it would change this
+      // procedure's rejection messages. Fail-open on a redis incident.
+      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      if (!rate.allowed) {
+        recordBlockBridgeRateLimitRefusal('getMyBuzzBalance', 'catalog');
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
       // getUserBuzzAccounts returns every spend type; project to just the three
       // spendable types the UI needs (omit red / creator-program / cash).
       const accounts = await getUserBuzzAccounts({ userId });
@@ -6758,6 +7106,19 @@ export const blocksRouter = router({
       }
       // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
       await assertAppBlocksEnabledForTokenUser(userId);
+      // RATE LIMIT: NONE, DELIBERATELY — the same reversal as `listMyWorkflows`, and
+      // the same tell. #569 added a catalog limit here whose stated justification was
+      // that the cadence is "a viewer changing a dropdown — single digits per session —
+      // against a ceiling of 120/10 s, so the margin is several orders of magnitude".
+      // That sentence argues against the limit it introduces. Removed in the round-0
+      // audit round.
+      //
+      // WHAT BOUNDS IT INSTEAD, and it is more than the read above has: this is a
+      // developer-only surface — `assertViewerIsAppDeveloper` below gates every call —
+      // the payload is capped by `settingsSchema` (4KB, JSON-safe), the write is a
+      // single upsert on a resolved install, and the fields that survive are filtered
+      // against the app block's own manifest. A block cannot make this call do more
+      // work by calling it differently.
       await assertViewerIsAppDeveloper(userId);
       const ctxModelId = Number((claims.ctx as { modelId?: unknown } | undefined)?.modelId ?? NaN);
       if (!Number.isInteger(ctxModelId)) {
