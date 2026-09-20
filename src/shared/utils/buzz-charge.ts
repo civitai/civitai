@@ -32,12 +32,15 @@ export const BUZZ_PER_USD_CENT = 10;
  * 🔴 Do NOT assume a provider's own tamper check covers this. Coinbase's
  * (`unitAmount !== buzzAmount / 10`) compares two values derived from the SAME
  * division, so a fractional pair is perfectly self-consistent and it passes. That
- * is structural rather than a sampled rate: every Buzz amount the double
- * arithmetic represents exactly that is not a multiple of ten yields such a pair,
- * so there is no population on which the check does better. (Above 2^53 that
- * qualifier bites — 2^55+2 ends in 8 yet divides to an integer — but there NEITHER
- * defence fires, so the conclusion is unchanged.) The schema bound is the defence;
- * the tamper check is blind to this class.
+ * is structural rather than a sampled rate: below 2^53, every Buzz amount that is
+ * not a multiple of ten yields such a pair, so there is no population on which the
+ * check does better. (The bound is MAGNITUDE, not representability — an earlier
+ * version said "the double arithmetic represents exactly" and that does not close
+ * it, because the counterexample is itself exactly representable: at 2^55 the
+ * quotient's ulp is 0.5, so half of the non-multiples of ten divide to an integer
+ * and neither defence fires. Measured: 0 counterexamples below 2^53, 50% at 2^55,
+ * 100% at 2^56 and above.) The schema bound is the defence; the tamper check is
+ * blind to this class.
  *
  * Ceil, never round or floor: the buyer must never be granted more Buzz than
  * they are charged for. The submitted Buzz amount is re-derived from the value
