@@ -19,7 +19,7 @@ import { describe, expect, it, vi } from 'vitest';
  *
  * ⚠ THIS HEADER NO LONGER CLAIMS WHICH CASE CATCHES WHAT, AND THE ABSENCE IS DELIBERATE. Two
  * drafts tried and both were false: first "every case below exists to fail when EITHER half is
- * reverted" (untrue of four of the seven), then a per-case list that still over-claimed by one —
+ * reverted", then a per-case list that still over-claimed —
  * reverting a half reds exactly ONE case, and in particular the floor case never does, because it
  * compares two module constants and never reads the job's options at all. A hand-maintained
  * coverage table in a comment is wrong the moment a case moves, and it is read as authoritative
