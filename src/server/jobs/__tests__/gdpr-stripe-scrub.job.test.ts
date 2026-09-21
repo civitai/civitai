@@ -61,7 +61,7 @@ describe('gdpr-stripe-scrub — what it selects', () => {
     expect(JSON.stringify(args.where)).not.toMatch(/gte|"gt"/);
   });
 
-  it('leaves a just-deleted account for the next run', async () => {
+  it('an account becomes eligible as it AGES — this is a delay, never a floor', async () => {
     await runJob();
 
     // Our own cancel's customer.subscription.deleted is resolved BY customerId, and the webhook
@@ -74,12 +74,12 @@ describe('gdpr-stripe-scrub — what it selects', () => {
     expect(delay).toBeLessThan(16 * 60 * 1000);
   });
 
-  it('takes the least recently touched first, so a stuck account cannot hold the queue', async () => {
+  it('reads a window several batches wide, so held-back accounts do not fill it', async () => {
     await runJob();
 
-    // Recording an attempt writes the row, which bumps updatedAt; ordering by deletedAt instead
-    // would leave an account that can never finish at the head of every window forever.
-    expect(dbMock.dbWrite.user.findMany.mock.calls[0][0].orderBy).toEqual({ updatedAt: 'asc' });
+    const [args] = dbMock.dbWrite.user.findMany.mock.calls[0];
+    expect(args.orderBy).toEqual({ deletedAt: 'asc' });
+    expect(args.take).toBeGreaterThan(25 * 2);
   });
 
   it('skips a customerId that is not a Stripe id, without stripping anything, and counts it', async () => {
@@ -106,7 +106,6 @@ describe('gdpr-stripe-scrub — what it selects', () => {
     const summary = (await runJob()) as { processed: number };
 
     expect(summary.processed).toBe(25);
-    expect(dbMock.dbWrite.user.findMany.mock.calls[0][0].take).toBe(100);
   });
 });
 
@@ -148,7 +147,10 @@ describe('gdpr-stripe-scrub — dropping the pointer', () => {
   });
 
   it.each([
-    ['a step failed', complete({ complete: false, errors: [{ step: 'customer', message: 'down' }] })],
+    [
+      'a step failed',
+      complete({ complete: false, errors: [{ step: 'customer', message: 'down' }] }),
+    ],
     ['work is pending', complete({ complete: false, pending: true })],
   ])('keeps customerId when %s', async (_, outcome) => {
     scrubStripeAccount.mockResolvedValue(outcome);

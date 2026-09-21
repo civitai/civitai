@@ -49,8 +49,6 @@ export const gdprStripeScrubJob = createJob(
   '*/10 * * * *',
   async (jobContext) => {
     const now = new Date();
-    // Over-fetch, then drop the ones still inside their backoff, so a stuck account cannot hold
-    // the head of the queue and starve everything behind it.
     // 🔴 Eligibility is STATE, never a cutoff. A deleted account that still points at a Stripe
     // customer has not been scrubbed — that is the whole definition. An earlier draft carried a
     // start date of 2026-09-18 22:40 UTC, meant to keep the job off the accounts the one-time pass
@@ -70,11 +68,12 @@ export const gdprStripeScrubJob = createJob(
         customerId: { not: null },
       },
       select: { id: true, customerId: true, meta: true },
-      // Least recently touched first. `recordAttempt` writes the row, which bumps `updatedAt`, so
-      // an account that cannot finish rotates to the back instead of holding the window and
-      // starving every deletion behind it.
-      orderBy: { updatedAt: 'asc' },
-      take: BATCH_SIZE * 4,
+      orderBy: { deletedAt: 'asc' },
+      // The window is deliberately several batches wide. An account that cannot finish keeps its
+      // pointer and stays in this window, but its backoff drops it before the batch is formed, so
+      // it costs a window slot rather than a run. `User` carries no updated-at column to rotate
+      // on; the alert at ALERT_AFTER_ATTEMPTS is what says the head of the queue needs a person.
+      take: BATCH_SIZE * 8,
     })) as Candidate[];
 
     // Two prod rows hold a value that is not a Stripe id (a `_MERGED` suffix, and an empty

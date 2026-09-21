@@ -76,7 +76,9 @@ const isStripeError = (err: unknown): err is Stripe.StripeRawError & { type?: st
  */
 const isCardError = (err: unknown) =>
   isStripeError(err) &&
-  (err.type === 'card_error' || err.type === 'StripeCardError') &&
+  // stripe-node reports the raw `card_error` on a thrown error's `type`, and its own class name
+  // on an instance; both spellings reach here.
+  ((err.type as string) === 'card_error' || (err.type as string) === 'StripeCardError') &&
   // Stripe documents `processing_error` as retryable, and it arrives as a card error. Detaching on
   // it would unlink a payment method whose details a later pass could have cleared properly.
   err.code !== 'processing_error';
@@ -250,7 +252,7 @@ async function clearPaymentMethod(stripe: Stripe, pm: Stripe.PaymentMethod, outc
       // A declined card, or a required field we cannot drop, can never be cleared. Both take the
       // detach route; left in the error bucket they would retry for the life of the account.
       if (isCardError(error) || isRequiredField(error)) {
-        await block(stripe, pm.id, error, outcome);
+        await block(stripe, pm.id, isStripeError(error) ? error.code ?? null : null, outcome);
         return;
       }
       outcome.errors.push({ step: 'paymentMethod', message: message(error) });
@@ -258,7 +260,7 @@ async function clearPaymentMethod(stripe: Stripe, pm: Stripe.PaymentMethod, outc
     }
   }
   // The loop bound reached. Only possible if Stripe named a third required field.
-  await block(stripe, pm.id, { code: 'parameter_missing' }, outcome);
+  await block(stripe, pm.id, 'parameter_missing', outcome);
 }
 
 const isRequiredField = (err: unknown) => isStripeError(err) && err.code === 'parameter_missing';
@@ -267,7 +269,7 @@ const isRequiredField = (err: unknown) => isStripeError(err) && err.code === 'pa
 async function block(
   stripe: Stripe,
   paymentMethodId: string,
-  error: { code?: string | null },
+  code: string | null,
   outcome: ScrubOutcome
 ) {
   let detached = true;
@@ -280,7 +282,7 @@ async function block(
     if (!detached)
       outcome.errors.push({ step: 'paymentMethod.detach', message: message(detachError) });
   }
-  outcome.blocked.push({ id: paymentMethodId, code: error.code ?? null, detached });
+  outcome.blocked.push({ id: paymentMethodId, code, detached });
 }
 
 /**

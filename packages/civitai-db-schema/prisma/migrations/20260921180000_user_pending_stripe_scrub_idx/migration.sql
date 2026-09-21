@@ -8,6 +8,9 @@
 -- This partial index holds only the rows the job can act on: 51 entries today, and it shrinks
 -- again as each account is scrubbed and its pointer nulled.
 --
+-- SQL-only, and absent from schema.full.prisma, because Prisma cannot express a partial index.
+-- That drift is deliberate: do not "fix" it by dropping the WHERE clause.
+--
 -- CONCURRENTLY, so it takes no write lock on "User". It cannot run inside a transaction block;
 -- if it is interrupted it leaves an INVALID index that must be dropped before retrying.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS "User_pendingStripeScrub_idx"
