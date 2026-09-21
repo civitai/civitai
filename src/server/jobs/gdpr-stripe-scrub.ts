@@ -146,7 +146,7 @@ export const gdprStripeScrubJob = createJob(
         // still takes the backoff, so it is not re-attempted every ten minutes for a day.
         if (outcome.errors.length) summary.failed++;
         else summary.pending++;
-        await recordAttempt(user.id, live.meta, outcome.errors[0], now);
+        await recordAttempt(user.id, live.meta, outcome.errors[0], now, outcome.pendingUnbounded);
         continue;
       }
 
@@ -156,14 +156,10 @@ export const gdprStripeScrubJob = createJob(
       // behind for the event to have landed.
       if (outcome.canceledSubscriptions.length) {
         summary.pending++;
-        await recordAttempt(user.id, live.meta, undefined, now);
+        await recordAttempt(user.id, live.meta, undefined, now, false);
         continue;
       }
 
-      // Guarded so a restore between the read and this write keeps its pointer, and so a second
-      // run cannot null a pointer it did not scrub. `meta` is re-read here rather than reused from
-      // the selection: a scrub is many seconds of Stripe calls, and this write replaces the whole
-      // object, so the stale copy would clobber anything written meanwhile.
       // One statement, and `meta - key` rather than a read-modify-write: `User.meta` is shared
       // with moderation paths (ban details, mute reason, contest state) that know nothing about
       // this job, and writing the whole object back drops whichever of theirs landed in between.
@@ -203,7 +199,9 @@ async function recordAttempt(
   userId: number,
   currentMeta: Prisma.JsonValue,
   failure: { step: string; message: string } | undefined,
-  now: Date
+  now: Date,
+  /** A wait with no end the job can name — the only kind worth a person's attention. */
+  unbounded: boolean
 ) {
   // From the PRIMARY's copy, not the replica selection's: a lagging read would recompute the
   // count from a stale value and reset the backoff it is supposed to grow.
@@ -213,20 +211,24 @@ async function recordAttempt(
 
   // jsonb_set, for the same reason as the pointer write above: this key is ours, the rest of
   // `meta` belongs to paths that are writing it concurrently.
-  await dbWrite.$executeRaw`
+  const written = await dbWrite.$executeRaw`
     UPDATE "User"
     SET "meta" = jsonb_set(COALESCE("meta", '{}'::jsonb), '{gdprStripeScrub}', ${JSON.stringify(
       state
     )}::jsonb)
     WHERE id = ${userId} AND "deletedAt" IS NOT NULL
   `;
+  // Restored mid-scrub: the guard refused the write, so there is no attempt to count and nothing
+  // to alert about — the account is live and this snapshot is no longer true of it.
+  if (!written) return;
   userUpdateCounter?.inc({ location: 'jobs:gdpr-stripe-scrub:attempt' });
 
   // Only a real failure is worth a person's time. An account merely waiting out its own payment
   // would otherwise alert with no step and no message to act on.
-  // A restore between the selection and here strips this key again; the guard above is what stops
-  // us writing it back onto a live account.
-  if (attempts >= ALERT_AFTER_ATTEMPTS) {
+  // Only a wait nobody can end. The credit window and an in-flight payment clear themselves, and
+  // the backoff reaches attempt 8 in under 11 hours against a 4-day window — so alerting on those
+  // would fire four or five times for an account behaving exactly as designed.
+  if ((failure || unbounded) && attempts >= ALERT_AFTER_ATTEMPTS) {
     await logToAxiom({
       name: 'gdpr-stripe-scrub-stuck',
       type: 'error',

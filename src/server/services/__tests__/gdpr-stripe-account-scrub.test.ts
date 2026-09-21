@@ -493,8 +493,6 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
       where: { id: 'sub_old' },
     });
     expect(outcome.canceledSubscriptions).toEqual(['sub_live']);
-    // The userId is threaded for this: the cached paid tier and multipliers are busted in exactly
-    // the case this job exists for, a deletion whose own cancel never got that far.
     // DECISION, pinned so it is not quietly reversed: the caches are NOT busted here. That
     // helper's vault step throws for an account with no active subscription — one error log per
     // cancel, forever. The stale window is 10 minutes on one key another person can read; the
@@ -697,6 +695,41 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
     expect(stripe.charges.list.mock.calls[0][0].expand).toEqual(['data.balance_transaction']);
     expect(stripe.paymentIntents.update).not.toHaveBeenCalled();
     expect(outcome.pending).toBe(true);
+  });
+
+  it('holds an intent whose balance transaction came back UNEXPANDED', async () => {
+    stripe.paymentIntents.list.mockResolvedValue(
+      page([
+        {
+          id: 'pi_str',
+          status: 'succeeded',
+          created: secondsAgo(30 * DAY),
+          metadata: { userId: '42' },
+        },
+      ])
+    );
+    stripe.charges.list.mockResolvedValue(
+      page([
+        {
+          id: 'ch_str',
+          payment_intent: 'pi_str',
+          status: 'succeeded',
+          created: secondsAgo(10 * DAY),
+          // What Stripe returns without the expand: an id, not an object.
+          balance_transaction: 'txn_abc',
+          metadata: {},
+        },
+      ])
+    );
+
+    const outcome = await scrub();
+
+    // Reading `.created` off a string gives undefined, and a window computed from NaN passes
+    // every comparison — the intent would be stripped immediately, which is worse than the early
+    // clock this commit removed. An unreadable settle time must read as MISSING.
+    expect(stripe.paymentIntents.update).not.toHaveBeenCalled();
+    expect(outcome.pending).toBe(true);
+    expect(outcome.pendingUnbounded).toBe(true);
   });
 
   it('ignores a FAILED charge when deciding when the money settled', async () => {

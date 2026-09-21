@@ -30,6 +30,7 @@ const complete = (overrides: Partial<AccountScrub.ScrubOutcome> = {}) =>
     complete: true,
     customerGone: false,
     pending: false,
+    pendingUnbounded: false,
     cleared: { paymentMethods: 0, charges: 0, paymentIntents: 0 },
     blocked: [],
     canceledSubscriptions: [],
@@ -187,6 +188,10 @@ describe('gdpr-stripe-scrub — dropping the pointer', () => {
       complete({ complete: false, errors: [{ step: 'customer', message: 'down' }] }),
     ],
     ['work is pending', complete({ complete: false, pending: true, errors: [] })],
+    [
+      'the wait has no end in sight',
+      complete({ complete: false, pending: true, pendingUnbounded: true, errors: [] }),
+    ],
   ])('keeps customerId when %s', async (_, outcome) => {
     scrubStripeAccount.mockResolvedValue(outcome);
 
@@ -201,7 +206,9 @@ describe('gdpr-stripe-scrub — dropping the pointer', () => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue(
       live({ gdprStripeScrub: { attempts: 9, lastAttemptAt: '2020-01-01T00:00:00.000Z' } })
     );
-    scrubStripeAccount.mockResolvedValue(complete({ complete: false, pending: true, errors: [] }));
+    scrubStripeAccount.mockResolvedValue(
+      complete({ complete: false, pending: true, pendingUnbounded: true, errors: [] })
+    );
 
     const summary = (await runJob()) as { pending: number; failed: number };
 
@@ -338,6 +345,9 @@ describe('gdpr-stripe-scrub — retry state', () => {
     expect(String(sql)).toMatch(
       /jsonb_set\(COALESCE\("meta", '\{\}'::jsonb\), '\{gdprStripeScrub\}'/
     );
+    // The guard is what stops a restore landing mid-scrub getting the retry state written back
+    // onto a live account, undoing restoreUser's strip.
+    expect(String(sql)).toContain('"deletedAt" IS NOT NULL');
     expect(JSON.parse(String(params[0]))).toMatchObject({ attempts: 1, lastError: 'stripe down' });
     expect(params[1]).toBe(USER_ID);
   });
@@ -362,6 +372,21 @@ describe('gdpr-stripe-scrub — retry state', () => {
         // The step is what says whether this needs Stripe support or a code fix.
         step: 'paymentMethod',
       })
+    );
+  });
+
+  it('does not alert on a wait that ends by itself, however long it takes', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(
+      live({ gdprStripeScrub: { attempts: 9, lastAttemptAt: '2020-01-01T00:00:00.000Z' } })
+    );
+    scrubStripeAccount.mockResolvedValue(complete({ complete: false, pending: true, errors: [] }));
+
+    await runJob();
+
+    // The backoff reaches attempt 8 in under 11 hours; the credit window is 4 days. Alerting on a
+    // bounded wait would fire four or five times for an account behaving exactly as designed.
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'gdpr-stripe-scrub-stuck' })
     );
   });
 

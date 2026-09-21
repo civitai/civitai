@@ -69,6 +69,12 @@ export type ScrubOutcome = {
   blocked: { id: string; code: string | null; detached: boolean }[];
   /** Work that is not failing but is not finishable yet, e.g. a payment still in flight. */
   pending: boolean;
+  /**
+   * True when the wait has no end the job can name. A bounded wait — the credit window, an
+   * in-flight payment, an authorisation that expires — clears itself and must not be reported as
+   * a problem, or the alert fires four or five times for an account behaving exactly as designed.
+   */
+  pendingUnbounded: boolean;
   canceledSubscriptions: string[];
   errors: { step: string; message: string }[];
 };
@@ -138,6 +144,7 @@ export async function scrubStripeAccount({
     complete: false,
     customerGone: false,
     pending: false,
+    pendingUnbounded: false,
     cleared: { paymentMethods: 0, charges: 0, paymentIntents: 0 },
     blocked: [],
     canceledSubscriptions: [],
@@ -410,7 +417,10 @@ async function clearMetadata(stripe: Stripe, customerId: string, outcome: ScrubO
         // expanded. Either way nothing here can say when the money landed, and the intent's own
         // timestamp is the wrong clock for exactly the payment types this protects.
         if (settled === undefined) {
+          // Nothing can say when the money landed, and nothing will start saying it: this one
+          // needs a person.
           outcome.pending = true;
+          outcome.pendingUnbounded = true;
           continue;
         }
         if (settled * 1000 > Date.now() - CREDIT_SETTLE_MS) {
