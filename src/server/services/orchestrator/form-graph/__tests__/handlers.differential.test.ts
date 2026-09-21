@@ -702,7 +702,6 @@ const CASES: Record<string, unknown>[] = [
     texture: 'HD',
     pbr: true,
     faceLimit: 20000,
-    expectFlags: { tripoGenerator: true },
   },
   {
     workflow: 'img2model3d',
@@ -712,7 +711,6 @@ const CASES: Record<string, unknown>[] = [
     hunyuanPrompt: 'shiny metal',
     hunyuanModelVersion: 'v2',
     hunyuanSteps: 45,
-    expectFlags: { hunyuan3dGenerator: true },
   },
   {
     workflow: 'img2model3d',
@@ -720,7 +718,6 @@ const CASES: Record<string, unknown>[] = [
     seed: 42,
     images: [IMAGE],
     enablePbr: true,
-    expectFlags: { pixal3dGenerator: true },
   },
   {
     workflow: 'img2model3d',
@@ -728,13 +725,12 @@ const CASES: Record<string, unknown>[] = [
     seed: 42,
     images: [IMAGE],
     shouldTexture: false,
-    expectFlags: { trellis2Generator: true },
   },
 ];
 
 async function bothLanes({ expectEcosystem, expectFlags, ...input }: Record<string, unknown>) {
-  // flag-gated ecosystems (v7 meshy, the newer 3D generators) need their flag
-  // in ext or the selection is hidden and falls back to the default
+  // meshy v7 needs its flag in ext or the selection is hidden and falls back
+  // to the default
   const ext = expectFlags
     ? { ...BASE, flags: { ...BASE.flags, ...(expectFlags as object) } as GenerationCtx['flags'] }
     : BASE;

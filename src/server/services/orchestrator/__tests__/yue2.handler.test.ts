@@ -221,6 +221,27 @@ describe.each([getEcosystemStates, getFormEcosystemStates])('YuE2 visibility', (
       expect.arrayContaining(['Ace', 'MiniMaxMusic3', 'YuE2'])
     );
   });
+
+  // Gate rules are the ONLY mechanism that hides an ecosystem now that the
+  // feature-flag gate is gone, and this is the only absolute assertion that the
+  // fold runs at all — deleting it from both lanes otherwise breaks no test.
+  it('hides an ecosystem a gate rule targets, and leaves its siblings alone', () => {
+    const gateRules = [
+      {
+        id: 'hide-yue2',
+        name: '',
+        availableTo: 'nobody' as const,
+        presentation: 'hidden' as const,
+        ecosystems: ['YuE2'],
+        workflows: [],
+        modelVersionIds: [],
+      },
+    ];
+    const gated = getStates('txt2music', { ...ext, gateRules });
+    expect(gated.hiddenEcosystems).toContain('YuE2');
+    expect(gated.compatibleEcosystems).not.toContain('YuE2');
+    expect(gated.compatibleEcosystems).toEqual(expect.arrayContaining(['Ace', 'MiniMaxMusic3']));
+  });
 });
 
 it('formats a completed YuE2 song as playable audio', () => {
