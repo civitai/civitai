@@ -269,8 +269,13 @@ function MyApp(props: CustomAppProps) {
                   <RouterTransition />
                   {/* <ChadGPT isAuthed={!!session} /> */}
                   <FeatureFlagsProvider flags={flags} userFlags={userFeatureFlags}>
-                    {/* Faro RUM bootstrap — dark until the `faro` flag + build-args are on */}
-                    <FaroProvider />
+                    {/* Faro RUM bootstrap — dark until the `faro` flag + build-args are on.
+                        `region` is the SAME SSR-derived country code ThirdPartyConsentProvider
+                        receives above (getRegion → cf-ipcountry/cf-region-code/x-isuk), threaded
+                        in as a prop so RUM beacons carry a geography dimension (→ Loki
+                        session_attr_region / session_attr_timezone). See
+                        src/utils/faro/geoAttributes.ts. */}
+                    <FaroProvider region={region.countryCode} />
                     <GoogleAnalytics />
                     <AccountProvider>
                       <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
