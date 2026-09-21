@@ -24,10 +24,10 @@ import {
 import { Page } from '~/components/AppLayout/Page';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { HubsLayout } from '~/components/Hubs/HubsLayout';
-import { HubsSidebar } from '~/components/Hubs/HubsSidebar';
 import { HubPageNav } from '~/components/Hubs/HubPageNav';
 import HubUpsertModal from '~/components/Hubs/HubUpsertModal';
 import {
+  useHubExcludedSources,
   useHubSessionBrowsingLevel,
   useHubSessionFeedFilters,
 } from '~/components/Hubs/hub-session.store';
@@ -207,6 +207,7 @@ export default Page(
 
     const sessionBrowsingLevel = useHubSessionBrowsingLevel(hubId);
     const sessionFilters = useHubSessionFeedFilters(hubId);
+    const excludedSources = useHubExcludedSources(hubId);
     const currentUser = useCurrentUser();
     const invalidateHub = useInvalidateHub();
 
@@ -483,6 +484,10 @@ export default Page(
                   disableStoreFilters
                   filters={{
                     hubId: hub.id,
+                    // What this viewer muted in the sidebar, for this session only.
+                    // The server reads it as a subtraction from what `hubId` resolves
+                    // to, so it can only narrow the feed in front of them.
+                    hubExcludedSources: excludedSources.length ? excludedSources : undefined,
                     sort,
                     period: feed.period,
                     // Enumerated so a key added to `hubFeedFiltersSchema` is a
@@ -513,5 +518,5 @@ export default Page(
       </>
     );
   },
-  { InnerLayout: HubsLayout, left: <HubsSidebar />, pageNav: <HubPageNav /> }
+  { InnerLayout: HubsLayout, pageNav: <HubPageNav /> }
 );

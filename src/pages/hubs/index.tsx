@@ -2,7 +2,6 @@ import { Container } from '@mantine/core';
 import { Page } from '~/components/AppLayout/Page';
 import { HubsLayout } from '~/components/Hubs/HubsLayout';
 import { HubsLanding } from '~/components/Hubs/HubsLanding';
-import { HubsSidebar } from '~/components/Hubs/HubsSidebar';
 import { hubUrl, LAST_HUB_COOKIE } from '~/components/Hubs/hub.utils';
 import { Meta } from '~/components/Meta/Meta';
 import { getUserHubs } from '~/server/services/user-hub.service';
@@ -42,5 +41,5 @@ export default Page(
       </>
     );
   },
-  { InnerLayout: HubsLayout, left: <HubsSidebar /> }
+  { InnerLayout: HubsLayout }
 );

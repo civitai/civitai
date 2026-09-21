@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import type { HubFeedFilters } from '~/server/schema/user-hub.schema';
+import type { HubFeedFilters, HubSourceExclusionInput } from '~/server/schema/user-hub.schema';
+import { hubSourceKey } from '~/server/schema/user-hub.schema';
 import type { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 
 /**
@@ -8,8 +9,10 @@ import type { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
  * condition is that a reload leaves the owner's stored settings alone (subtasks
  * 868kwp5fn, 868kwp5gt).
  *
- * A viewer cannot switch the owner's SOURCES off — Justin's call, 2026-09-17: you see
- * what the owner curated, and duplicating the hub is how you get a different one.
+ * A viewer CAN switch the owner's sources off, for their own session only — Justin
+ * reversed the 2026-09-17 call on 2026-09-21, after using the version without it.
+ * Duplicating the hub is not the same affordance: a copy stops tracking the original,
+ * so "mute one creator while I read your hub" became "fork it and maintain it".
  */
 /**
  * Sort, period, media types and the filter menu, for a viewer of someone else's hub.
@@ -28,15 +31,24 @@ type HubSessionState = {
   browsingLevel: Record<number, number>;
   includePG13: Record<number, boolean>;
   feedFilters: Record<number, HubSessionFeedFilters>;
+  /**
+   * The rows themselves rather than keys: this array is handed straight to the feed
+   * query, and it is the shape the API takes. Membership is asked with `hubSourceKey`,
+   * so a tag and a creator sharing an id stay apart.
+   */
+  excludedSources: Record<number, HubSourceExclusionInput[]>;
   setBrowsingLevel: (hubId: number, level: number) => void;
   setIncludePG13: (hubId: number, include: boolean) => void;
   setFeedFilters: (hubId: number, next: HubSessionFeedFilters) => void;
+  toggleSource: (hubId: number, source: HubSourceExclusionInput) => void;
+  clearExcludedSources: (hubId: number) => void;
 };
 
 export const hubSessionStore = create<HubSessionState>((set) => ({
   browsingLevel: {},
   includePG13: {},
   feedFilters: {},
+  excludedSources: {},
   setBrowsingLevel: (hubId, level) =>
     set((state) => ({ browsingLevel: { ...state.browsingLevel, [hubId]: level } })),
   setIncludePG13: (hubId, include) =>
@@ -45,6 +57,20 @@ export const hubSessionStore = create<HubSessionState>((set) => ({
     set((state) => ({
       feedFilters: { ...state.feedFilters, [hubId]: { ...state.feedFilters[hubId], ...next } },
     })),
+  toggleSource: (hubId, source) =>
+    set((state) => {
+      const key = hubSourceKey(source);
+      const held = state.excludedSources[hubId] ?? [];
+      const without = held.filter((s) => hubSourceKey(s) !== key);
+      return {
+        excludedSources: {
+          ...state.excludedSources,
+          [hubId]: without.length < held.length ? without : [...held, source],
+        },
+      };
+    }),
+  clearExcludedSources: (hubId) =>
+    set((state) => ({ excludedSources: { ...state.excludedSources, [hubId]: [] } })),
 }));
 
 export const useHubSessionBrowsingLevel = (hubId: number) =>
@@ -72,3 +98,20 @@ export const useHubSessionFeedFilters = (hubId: number) =>
   hubSessionStore(selectHubSessionFeedFilters(hubId));
 
 export const useSetHubSessionFeedFilters = () => hubSessionStore((state) => state.setFeedFilters);
+
+// A stable empty array, for the same reason `NO_FEED_FILTERS` is a stable object: this
+// feeds a react-query key, and a fresh [] every render refetches the feed forever.
+const NO_EXCLUSIONS: HubSourceExclusionInput[] = [];
+
+// Split out the way `selectHubSessionFeedFilters` is, so the stable-empty property is
+// reachable from a test without rendering anything.
+export const selectHubExcludedSources = (hubId: number) => (state: HubSessionState) =>
+  state.excludedSources[hubId] ?? NO_EXCLUSIONS;
+
+export const useHubExcludedSources = (hubId: number) =>
+  hubSessionStore(selectHubExcludedSources(hubId));
+
+export const useToggleHubSource = () => hubSessionStore((state) => state.toggleSource);
+
+export const useClearHubExcludedSources = () =>
+  hubSessionStore((state) => state.clearExcludedSources);

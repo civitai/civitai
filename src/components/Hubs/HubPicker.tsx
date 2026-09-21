@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { MobileMenuDrawer } from '~/components/Drawer/MobileMenuDrawer';
-import { useHubNav } from '~/components/Hubs/HubsSidebar';
+import { useHubNav } from '~/components/Hubs/HubsLayout';
 import { describeHubSources, hubUrl } from '~/components/Hubs/hub.utils';
 import type { UserHubSummary } from '~/server/services/user-hub.service';
 
