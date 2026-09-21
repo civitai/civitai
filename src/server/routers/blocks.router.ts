@@ -194,7 +194,6 @@ import {
   assertStepTypeAllowed,
   PlatformInternalStepTypeError,
 } from '~/server/services/blocks/steps/orchestrator-denylist';
-import { passThroughTimeoutSeconds } from '~/server/services/blocks/steps/passthrough-timeouts';
 // APP-FACING generation type for the spend-attribution row, resolved from the
 // submitted body. Imported (not open-coded at each of the three submit paths) so
 // the `kind` → key and step-id → key mapping has exactly one definition — and so
@@ -9079,32 +9078,54 @@ function assertPassThroughStepTypeAllowed($type: string): void {
  * that the quote and the submit hold ONE step object, which is what makes
  * "the quote priced the same work" true; building the step twice kills it.
  *
- * `timeout` DEFAULTS to the declared `maxBuzz`, exactly as the inline-comfy arm
- * derives it, and a `$type` with an entry in `passthrough-timeouts` gets its
- * reviewed wall clock instead.
+ * 🔴 NO `timeout` IS STAMPED HERE. It is added after the quote, and ONLY when
+ * there is no quote — see `stampUnquotedTimeout`.
  *
- * 🔴 WHY THAT IS NOT A WEAKENED CEILING. `maxBuzz === ceil(stepTimeoutSeconds)`
- * is a Buzz bound only under the premise `createBlockCustomComfyStep` states:
- * the job is "billed for measured runtime, so worst-case Buzz =
- * ceil(timeout_s × 1)". That premise is true of a step the orchestrator cannot
- * quote — inline Comfy, where a real `whatIf` returns 0 — and false of one it
- * prices from a rate card. A six-second `minimax-h3-comfy` clip is quoted 210
- * Buzz before it starts and takes ~330 seconds to produce; killing it at 250
- * does not cap the spend at 250, because the rate card already fixed it at 210.
- * It only bills the viewer for a clip they never receive.
+ * `timeout = maxBuzz` is a BUZZ bound only where Buzz tracks runtime, which is
+ * the premise `createBlockCustomComfyStep` states: the job is "billed for
+ * measured runtime, so worst-case Buzz = ceil(timeout_s × 1)". True of inline
+ * Comfy, which the orchestrator cannot quote. False of anything it prices from
+ * a rate card — a six-second `minimax-h3-comfy` clip is quoted 210 Buzz before
+ * it starts and takes ~330 seconds, so cutting it off at 250 caps no spend and
+ * only bills the viewer for a clip they never receive.
  *
- * For those types the spend control is the one this arm already runs: the
- * orchestrator `whatif`, the `max(declared, quoted)` reservation, and the
- * `buzzBudget` gate over it. The table is a worker-occupancy bound, reviewed
- * per `$type`; every unlisted `$type` keeps today's behaviour unchanged.
+ * Every one of civitai.com's own ten `videoGen` handlers stamps no timeout at
+ * all; a block was the only caller that did, and it derived one from a Buzz
+ * number. A quoted step now gets what the rest of the platform gets — the
+ * orchestrator's own default.
  */
-function buildPassThroughOrchestratorStep(body: PassThroughStepBody) {
+function buildPassThroughOrchestratorStep(body: PassThroughStepBody): {
+  $type: string;
+  name: string;
+  input: Record<string, unknown>;
+  timeout?: string;
+} {
   return {
     $type: body.$type,
     name: BLOCK_STEP_NAME,
-    timeout: formatStepTimeout(passThroughTimeoutSeconds(body.$type, body.maxBuzz)),
     input: body.input,
   };
+}
+
+/**
+ * Add the `maxBuzz`-derived timeout when the orchestrator gave no quote.
+ *
+ * 🔴 IN PLACE, ON THE ONE STEP OBJECT, and that is load-bearing. The quote and
+ * the submit must hold the SAME object — `blocks.router.workflow.test.ts`
+ * asserts it by reference — because that is what makes "the quote priced the
+ * same work" true. Returning a copy here would break it, and rebuilding would
+ * reopen the gap the identity assertion exists to close.
+ *
+ * Only reached when `quotePassThroughBuzz` returned null. The arm deliberately
+ * does not fail closed there, so for a GPU-second-metered `$type` this stamped
+ * timeout is the only thing bounding the spend — which is exactly the case
+ * where `maxBuzz` IS the right number.
+ */
+function stampUnquotedTimeout(
+  step: ReturnType<typeof buildPassThroughOrchestratorStep>,
+  maxBuzz: number
+): void {
+  step.timeout = formatStepTimeout(maxBuzz);
 }
 
 /**
@@ -10554,17 +10575,12 @@ async function submitPassThroughStepWorkflow(opts: {
   // GPU-second-metered `$type` the stamped `timeout` still bounds it, but most
   // reachable types are priced per unit at submit, where a timeout bounds
   // wall-clock and nothing else. Operator decision, recorded in the PR.
-  //
-  // 🔴 WHEN THERE IS NO QUOTE, RESERVE AGAINST THE GRANTED WALL CLOCK, NOT THE
-  // DECLARED `maxBuzz`. The paragraph above is why: with no quote, the stamped
-  // timeout is the only bound on a GPU-second-metered `$type`, so a `$type`
-  // granted a longer clock by `passthrough-timeouts` must have that longer
-  // clock covered by the reservation — otherwise the allowance would widen the
-  // worst case while the reservation stayed where it was. For every `$type`
-  // WITHOUT an allowance this is `quotedBuzz ?? body.maxBuzz`, unchanged, since
-  // `passThroughTimeoutSeconds` returns `maxBuzz` for those.
-  const unquotedFloorBuzz = passThroughTimeoutSeconds(body.$type, body.maxBuzz);
-  const ceiling = Math.max(body.maxBuzz, quotedBuzz ?? unquotedFloorBuzz);
+  const ceiling = Math.max(body.maxBuzz, quotedBuzz ?? body.maxBuzz);
+
+  // The unquoted case keeps the timeout it always had: with no quote it is the
+  // only bound on a GPU-second-metered `$type`, and it matches the reservation
+  // above by construction.
+  if (quotedBuzz === null) stampUnquotedTimeout(orchestratorStep, body.maxBuzz);
 
   // (1) STATIC pre-submit gate against the token's per-call budget.
   //

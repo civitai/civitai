@@ -10091,88 +10091,42 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
     // physically enforces. It must track the DECLARED number, never the
     // reservation — an app that declares 20 has consented to 20 seconds of
     // runtime, not to whatever the quote came back as.
-    it('stamps a step timeout derived from maxBuzz, NOT from the reservation', async () => {
+    // 🔴 A QUOTED STEP CARRIES NO TIMEOUT, and that is the whole change.
+    // `timeout = maxBuzz` is a BUZZ bound only where Buzz tracks runtime. Once
+    // the orchestrator has priced the job from its rate card the clock bounds
+    // nothing about the money — it only decides whether the viewer gets output
+    // they are already being charged for. Every one of civitai.com's own
+    // videoGen handlers stamps no timeout; a quoted block step now matches them
+    // and takes the orchestrator's default.
+    it('stamps NO step timeout once the orchestrator has quoted the job', async () => {
       mockVerifyBlockToken.mockResolvedValue(ptClaims());
       happyUser();
       ptQuoting(31, 31);
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      expect(ptRealSubmits()[0][0].body.steps[0].timeout).toBeUndefined();
+      expect(ptWhatIfs()[0][0].body.steps[0].timeout).toBeUndefined();
+    });
+
+    // The other half, and the control for the one above: with NO quote the
+    // stamped timeout is the only bound on a GPU-second-metered `$type`, so it
+    // is still derived from the declared maxBuzz — never from the reservation.
+    it('stamps the maxBuzz timeout when the orchestrator gives no quote', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(null, 31);
       await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
       // 20 s → HH:MM:SS. 31 would render `00:00:31`, so this cannot pass on the
       // reservation.
       expect(ptRealSubmits()[0][0].body.steps[0].timeout).toBe('00:00:20');
-      expect(ptWhatIfs()[0][0].body.steps[0].timeout).toBe('00:00:20');
     });
 
-    // ── The per-`$type` wall-clock allowance ────────────────────────────────
-    //
-    // 🔴 `maxBuzz === timeout` is a BUZZ bound only where Buzz tracks runtime.
-    // For a `$type` the orchestrator prices from a rate card, the price is
-    // already fixed before the job starts, so killing it early caps no spend —
-    // it only bills the viewer for output they never receive. A six-second
-    // `minimax-h3-comfy` clip quotes 210 Buzz and takes ~330 seconds.
-    //
-    // The two tests above are the control for this one: they use an UNLISTED
-    // `$type` and still assert the maxBuzz-derived timeout, so a change that
-    // granted every type the allowance would redden them.
-    it('grants a listed $type its reviewed wall clock instead of maxBuzz', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ptClaims());
-      happyUser();
-      ptQuoting(31, 31);
-      await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ptBody({ $type: 'videoGen' }),
-      });
-      // 900 s → 00:15:00. The declared maxBuzz of 20 would render 00:00:20.
-      expect(ptRealSubmits()[0][0].body.steps[0].timeout).toBe('00:15:00');
-      expect(ptWhatIfs()[0][0].body.steps[0].timeout).toBe('00:15:00');
-    });
-
-    // 🔴 AN UNQUOTED LISTED TYPE RESERVES AGAINST THE GRANTED CLOCK. With no
-    // quote the stamped timeout is the ONLY bound on a GPU-second-metered
-    // `$type` — the arm deliberately does not fail closed there — so granting a
-    // longer clock without widening the reservation would widen the worst case
-    // and leave the reservation behind it. 900s granted → 900 reserved, and the
-    // per-call budget gate then refuses unless the viewer can cover it.
-    it('reserves against the granted clock when the orchestrator gives no quote', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ptClaims({ buzzBudget: 1000 }));
-      happyUser();
-      ptQuoting(null, 31);
-      await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ptBody({ $type: 'videoGen' }),
-      });
-      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 900);
-    });
-
-    // The control for the row above: an UNLISTED type with no quote still
-    // reserves its declared maxBuzz, exactly as it did before this change.
-    it('reserves the declared maxBuzz when an unlisted type has no quote', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ptClaims({ buzzBudget: 1000 }));
-      happyUser();
-      ptQuoting(null, 31);
-      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
-      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', MAX_BUZZ);
-    });
-
-    // The allowance changes the CLOCK, never the money. The reservation is the
-    // same number it was, from the same `max(declared, quoted)` rule.
-    it('leaves the reservation untouched when it grants an allowance', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ptClaims());
-      happyUser();
-      ptQuoting(31, 31);
-      await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ptBody({ $type: 'videoGen' }),
-      });
-      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 31);
-    });
-
-    it('scales the timeout with maxBuzz (two points, not one)', async () => {
+    it('scales the unquoted timeout with maxBuzz (two points, not one)', async () => {
       // 125 is above the default per-call budget, so raise it — otherwise the
       // static gate refuses before a step is ever built and the assertion below
       // reads `undefined`, which is how this case first failed.
       mockVerifyBlockToken.mockResolvedValue(ptClaims({ buzzBudget: 200 }));
       happyUser();
-      ptQuoting(1, 1);
+      ptQuoting(null, 1);
       await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ maxBuzz: 125 }) });
       expect(ptRealSubmits()[0][0].body.steps[0].timeout).toBe('00:02:05');
     });
