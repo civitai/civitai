@@ -61,7 +61,9 @@ import { describe, expect, it } from 'vitest';
  * proc unreadable while every assertion stayed green: an `.input()` schema behind a
  * `.extend(…)` / `.merge(…)` / factory call rather than a bare identifier (`unresolved`
  * demanded resolution only for the bare case); a schema chain deeper than the depth cap; a
- * proc chunk cut short by a column-zero line; and a proc nested in a sub-router. Each is
+ * proc chunk cut short by a column-zero line (specifically a column-zero line in the
+ * COMMENT-STRIPPED view — a template-literal continuation, not a block-comment body line, which
+ * is pinned NOT to cut); and a proc nested in a sub-router. Each is
  * now either closed or ledgered-and-asserted — `schemaIdentifiers`, `truncated`,
  * `every proc chunk keeps its own terminator`, and `PROC_RE`'s indent respectively. The
  * generalisation worth keeping: for a DERIVED population, "this procedure is not in the
@@ -76,6 +78,40 @@ import { describe, expect, it } from 'vitest';
  *     field is invisible here. That spelling is the repo's convention across every proc in
  *     `BRIDGE_INPUT_LEDGER` (17 of them, measured 2026-09-19 — the long-quoted "15" was
  *     stale), but it is a convention, not something this test enforces.
+ *   - 🔴 A NESTED SCHEMA REFERENCE THE CANDIDATE FILTER REJECTS BEFORE THE WALK EVER RUNS, AND
+ *     THIS IS THE WIDEST HOLE ON THE LIST — it is a live fail-OPEN, not a latent shape.
+ *     `schemaCarriesBlockToken` only descends into a name for which `definitionText` finds a
+ *     `const|let|var` declaration in the same file, or which that file's `import { … } from`
+ *     map carries. Anything else is `continue`d: no recursion, so no `null`, so NOTHING in
+ *     `unresolved`, `truncated` or `NESTED_UNREADABLE_LEDGER`, and the branch is scored as
+ *     carrying no token. The proc then leaves the population with BOTH ledgers silent — the
+ *     merged outcome this header forbids two paragraphs above.
+ *     MEASURED, and the pair is the whole argument: a proc whose token arrives through a
+ *     `function`-declared factory referenced at depth ≥ 1 passed the suite 36/36 SILENTLY;
+ *     the byte-identical source with that factory written `const f = () => …` failed 2 tests
+ *     naming the proc. One variable, opposite verdicts.
+ *     The class is everything the two readers miss: a local `function`, `type`, `interface`,
+ *     `class` or `enum` declaration; a default or namespace import (`importMap` parses named
+ *     `import { … } from` only); a re-exported declaration (`export … from`, which `importMap`
+ *     also does not parse); and a `$`-bearing name.
+ *     🔴 THE `$` HOLE IS AT BOTH SITES, NOT JUST THE NESTED ONE — an earlier draft of this entry
+ *     blamed only the nested candidate regex (`[A-Za-z_][A-Za-z0-9_]*`, no `$`), which would
+ *     have sent someone to widen one character class and believe they had closed it. The DEPTH-0
+ *     regex in `schemaIdentifiers` has `$` in its class but a `\b` in front of it, and `$` is
+ *     not a word character, so the boundary cannot match before it either. MEASURED:
+ *     `schemaIdentifiers('$bridgeInput')` returns `['bridgeInput']` and
+ *     `schemaIdentifiers('$a.extend({}))')` returns `['a']`. At depth 0 that mangled name is
+ *     then REQUIRED to resolve, so it either reds against a name nobody wrote or — the bad case
+ *     — resolves against a DIFFERENT declaration that happens to bear the trimmed name, with
+ *     `unresolved` staying empty. Both sites need fixing together, and neither is fixed here:
+ *     no `$`-bearing schema exists in the corpus, and widening the classes moves the walk.
+ *     Widening `findDefinitionText` to read `function` was tried and BACKED OUT, deliberately:
+ *     it closes this and moves no verdict (`procs`, `unresolved` and the nested ledger all
+ *     unchanged), but the deeper walk pushes two chains in
+ *     `src/server/services/blocks/app-cap-limits.constants.ts` to depth 13, which trips
+ *     `truncated` against `MAX_SCHEMA_DEPTH`. With the cap lifted the walk terminates on its
+ *     own with nothing truncated, so the fix is viable — it needs a cap change, which is a
+ *     separate decision and is not taken here.
  *   - Verification performed in a module this file does not read. Reachability is
  *     computed inside `blocks.router.ts` only: a proc that delegates to an imported
  *     helper which calls the guard reads as UNGUARDED here and will fail. That is
@@ -127,6 +163,14 @@ const ROUTER = 'src/server/routers/blocks.router.ts';
 const GUARD = 'src/server/services/blocks/block-bridge-auth.service.ts';
 /** The shared row-lookup + `approved` comparison both halves of the runtime resolve through. */
 const APPROVAL_PREDICATE = 'src/server/services/blocks/block-approval.service.ts';
+/**
+ * Reached by the schema walk, and — measured on the committed router — the one place in the
+ * real corpus where it hits a reference it cannot read BELOW depth 0:
+ * `import { TokenScope } from './token-scope.constants'`, a RELATIVE specifier
+ * `resolveModule` refuses by design. Named once so `NESTED_UNREADABLE_LEDGER` and the control
+ * that exercises it cannot drift to two spellings of the same path.
+ */
+const BLOCK_SCOPE_CONSTANTS = 'src/shared/constants/block-scope.constants.ts';
 
 /**
  * The bridge call sites, by owning procedure. `authorizeBlockBuzzRead` is the router's
@@ -377,9 +421,32 @@ const LITERAL_SENTINEL = '\u0000';
  *     isolation is not a comment to a parser any more than it is to a reader — there is no
  *     `/**` open above it — so every comment fixture below is a whole block. One caller
  *     feeds it a fragment ON PURPOSE: `schemaIdentifiers` hands it a single `.input(...)`
- *     argument, which is a complete EXPRESSION and parses as one. The tell that this stays
- *     true is `unresolved` being empty against the real router, asserted below; a fragment
- *     the parser could not make sense of would fill it with word-shaped noise.
+ *     argument, which is a complete EXPRESSION and parses as one.
+ *     🔴 `unresolved` IS NOT THE TELL FOR THAT, AND THE CLAIM THAT IT WAS POINTED THE WRONG
+ *     WAY. An earlier draft here said a fragment the parser could not make sense of would
+ *     fill `unresolved` with word-shaped noise. That is the UNDER-strip direction only —
+ *     trivia leaking out as code — and it is real. The OVER-strip direction is the mirror
+ *     image and `unresolved` is structurally blind to it: over-stripping REMOVES candidates,
+ *     so it produces an EMPTY `unresolved`, which is exactly what every assertion in this
+ *     file expects to see. What covers it is a control that requires real code to SURVIVE,
+ *     which is `an annotated argument KEEPS its schema identifier` below; `unresolved` being
+ *     empty against the real router is evidence about under-stripping and nothing else.
+ *
+ *     🔴 AND THE GAP WAS IN THE EMPTIED VIEW SPECIFICALLY. Stated that precisely because the
+ *     first version of this paragraph claimed "the whole suite stayed GREEN at 32/32" for "an
+ *     over-strip" without saying WHERE the over-strip was applied — and a reviewer who
+ *     implemented the sentence as written, in the shared normaliser, measured a RED and was
+ *     right to challenge it. That is this file's own failure mode: a docstring claiming more
+ *     than the measurement behind it. The two variants, both blanking the remainder of a
+ *     comment's own line, differ only in which function they patch:
+ *       - in `stripNonCode` ALONE, leaving `codeWithLiterals` untouched — the pre-change
+ *         suite passed 32/32. NOT caught.
+ *       - in the SHARED `normaliseSource`, so both views over-strip — the pre-change suite
+ *         went red on `the normalisers preserve the line structure exactly`. CAUGHT.
+ *     The asymmetry IS the finding, and it is mechanical: that control asserts code after a
+ *     same-line block comment survives `codeWithLiterals`, and code BEFORE a line comment
+ *     survives `stripNonCode`. So the KEPT view had a survival assertion and the EMPTIED view
+ *     had none — which is the hole `an annotated argument KEEPS its schema identifier` fills.
  *   - `ts.createSourceFile` is error-TOLERANT: a syntactically invalid module still yields a
  *     tree, and the ranges recovered from it are whatever the parser made of the wreckage.
  *     Every file these suites read also has to compile, so this is not load-bearing here.
@@ -434,11 +501,82 @@ function scanTrivia(source: string, rel: string): TriviaSpans {
   const visit = (node: ts.Node): void => {
     // 🔴 BOTH KINDS. `getLeadingCommentRanges` deliberately does NOT return a comment that
     // sits on the same line as the code before it — that is TRAILING trivia of the previous
-    // token — so collecting only leading ranges leaves every `const x = 1; // …` comment in
-    // the output. That is the exact trailing-comment fail-open this normaliser was written
-    // to close, reintroduced by reading half the trivia.
+    // token — so collecting only leading ranges would leave a `const x = 1; // …` comment in
+    // the output.
+    //
+    // ⚠️ THE TRAILING CALL HERE IS UN-EXERCISED ON THIS CORPUS, exactly like its token-level
+    // counterpart below, and it is described the same way on purpose. An earlier version of this
+    // comment claimed that omitting it "reintroduces the exact trailing-comment fail-open this
+    // normaliser was written to close" — a 🔴 claim the corpus does not support, because the
+    // node-level and token-level collectors overlap almost everywhere and either one alone
+    // handles every same-line comment in the three files these suites read. That is the same
+    // count-doing-the-work-of-a-proof error that got the token-level line deleted, pointing the
+    // other way.
+    //
+    // It is kept, and PINNED, because un-exercised is not unreachable and it is the SOLE source
+    // for one shape: the trailing trivia of a SyntaxList element that is itself a single leaf
+    // token, which `forEachChild` never visits so the token loop cannot reach it. Measured with
+    // this line deleted, `noop(input /* …guard… */, 1)` yields a phantom guard call and the
+    // enclosing procedure reads as REACHING the guard. `a trailing comment inside an ARGUMENT
+    // LIST is not a guard call` is its control — added after restoring the token-level line
+    // silently made the older pin (`the normalisers strip comments AND re-delimit strings`)
+    // vacuous, by giving it a second route to the position it was exercising.
     addComments(ts.getLeadingCommentRanges(source, node.getFullStart()));
     addComments(ts.getTrailingCommentRanges(source, node.end));
+    // 🔴 TOKENS TOO, NOT ONLY NODES — AND THIS WAS A LIVE FAIL-OPEN, NOT A TIDY-UP. The walk
+    // recurses with `forEachChild`, which visits NODES and skips pure tokens. So a comment
+    // whose following token is punctuation — the `.` between two links of a call chain — is
+    // leading trivia of nothing this walk ever asked about, and survived normalisation intact.
+    //
+    // MEASURED, and it is finding (2) of clawgate #589 reopened one position further out: a
+    // procedure with `/* await authorizeBlockBridgeToken(input.blockToken) */` on its own line
+    // between `.input(...)` and `.mutation(...)`, verifying nothing, was returned by
+    // `procsReachingGuard` — while the IDENTICAL comment inside the `.mutation` body was
+    // correctly stripped and returned nothing. The position was the only variable. On the real
+    // router, 18 of 157 block-comment openers were surviving normalisation this way.
+    //
+    // A token IS part of the parse, so this keeps the parser as the authority and does not
+    // reintroduce the lexer hazards the docstring on `codeWithLiterals` records — in
+    // particular a regex literal's `//` is still never mistaken for a comment.
+    //
+    // 🔴 BOTH HALVES, AND THE TRAILING ONE WAS DELETED ONCE AND RESTORED. What the census says:
+    // over the three files these suites read there are 3,782 distinct comment positions, the
+    // node-level pair accounts for 3,610, token-level LEADING is the sole source for 172, and
+    // token-level TRAILING is the sole source for 0.
+    //
+    // 🔴 THAT NUMBER IS A FACT ABOUT THREE FILES, NOT A PROPERTY OF THE LANGUAGE, AND READING IT
+    // AS THE SECOND IS WHAT REOPENED A FAIL-OPEN. The deletion was justified with "every
+    // same-line trailing comment is already reached by the node-level call", which is FALSE:
+    // `getLeadingCommentRanges` deliberately skips a comment sharing a line with the code before
+    // it, so a same-line comment following a pure TOKEN — `(`, `=`, `.`, `:`, `return` — is
+    // trailing trivia of that token and of nothing else. MEASURED with the line deleted, on a
+    // procedure carrying a commented-out guard call after `.mutation(`:
+    //   `procsReachingGuard` returned the procedure — it verifies nothing and read as GUARDED;
+    //   `scan().guarded` returned it too, i.e. the comment registered as a real call SITE;
+    //   a comment after `=` in a module-scope helper survived the same way.
+    // That is exactly the outcome `scan`'s own docstring says reading normalised code prevents.
+    //
+    // So the honest state, which is also what this file says twice elsewhere about a latent
+    // shape: the trailing half is UN-EXERCISED on today's corpus, not unreachable, and it is kept
+    // because closing a latent shape costs nothing. Restoring it is free — the suite is green and
+    // every real-router value is identical. (No pass-count is quoted here: the first version of
+    // this line said "42/42" and was stale one commit later, which is the rot this file now
+    // deletes unasserted numbers to avoid.) `a trailing comment after a pure TOKEN is not a guard
+    // call` below is its control, so the next census cannot be read as a licence to delete it
+    // again — and `a trailing comment inside an ARGUMENT LIST is not a guard call` is the
+    // node-level line's, because restoring this one made that line's older pin vacuous.
+    //
+    // ⚠️ THE LEAF TEST BELOW IS AN OPTIMISATION, NOT A CORRECTNESS GUARD — measured, because it
+    // reads like one. Replacing `getChildCount(sourceFile) === 0` with `true` leaves the suite
+    // green and every real-router value identical: `addComments` already dedupes by position, and
+    // a non-leaf node's trivia is trivia the node-level call above already collected. It is kept
+    // only to avoid re-asking for ranges already gathered.
+    for (const child of node.getChildren(sourceFile)) {
+      if (child.getChildCount(sourceFile) === 0) {
+        addComments(ts.getLeadingCommentRanges(source, child.getFullStart()));
+        addComments(ts.getTrailingCommentRanges(source, child.end));
+      }
+    }
     if (
       ts.isStringLiteral(node) ||
       ts.isNoSubstitutionTemplateLiteral(node) ||
@@ -662,6 +800,13 @@ function astTerminatorCount(source: string, rel: string): number {
  * Everything inside a proc or a function body is indented, so that boundary is the file's
  * own formatting rather than a brace count.
  *
+ * 🔴 "COLUMN ZERO" MEANS IN THE COMMENT-STRIPPED VIEW, AND SAYING ONLY "column zero" WAS WRONG
+ * IN THE ANSWER IT GAVE. The close test reads `codeWithLiterals` lines, so a column-zero line
+ * inside a BLOCK COMMENT does NOT end a chunk, while a column-zero continuation of a template
+ * LITERAL does. A reader asking "can a column-zero comment cut my procedure?" must get NO, and
+ * several places in this file — four at the chunking machinery plus the historical list in this
+ * header — used to imply YES by naming the column without naming the view.
+ *
  * 🔴 THAT BOUNDARY IS A FORMATTING ASSUMPTION, AND IT CAN CUT A PROC SHORT. A line that
  * legitimately starts in column zero INSIDE a proc — the continuation of a multi-line
  * template literal, say — closes the chunk early. If that happens before the proc's
@@ -678,6 +823,10 @@ function astTerminatorCount(source: string, rel: string): number {
 function chunks(source: string): Chunk[] {
   const lines = source.split('\n');
   const codeLines = stripNonCode(source).split('\n');
+  // Comments gone, literal bodies KEPT — the view the column-zero close test reads, for the
+  // reason set out at that test. Distinct from `codeLines`, which empties literal bodies and is
+  // what every reachability decision reads.
+  const closeLines = codeWithLiterals(source).split('\n');
   const out: Chunk[] = [];
   let open: { name: string; kind: 'proc' | 'fn'; start: number } | null = null;
 
@@ -693,19 +842,45 @@ function chunks(source: string): Chunk[] {
   };
 
   lines.forEach((line, i) => {
-    const proc = PROC_RE.exec(line);
+    // 🔴 DETECTION READS THE NORMALISED LINE, THE WAY `scan` ALREADY DID. It used to read the
+    // RAW one, so a COMMENT or a template-literal line merely SHAPED like a procedure at indent
+    // two — `  fooProc: publicProcedure` inside a docblock, or the same text inside a multi-line
+    // template — opened a chunk and SPLIT the real procedure it sat inside. The halves then
+    // carry a terminator count of two and zero, so `every proc chunk keeps its own terminator`
+    // does go red; but its message blames "a line starting in column zero", which is not what
+    // happened, and the reader is sent looking for the wrong thing. Latent on today's router —
+    // measured, raw and normalised detect the same 75 procedures and the same 56 helpers — so
+    // this is a shape being closed, not a bug being fixed, and it costs nothing to close.
+    const proc = PROC_RE.exec(codeLines[i] ?? '');
     if (proc) {
       close(i);
       open = { name: proc[1], kind: 'proc', start: i };
       return;
     }
-    const fn = fnName(line);
+    const fn = fnName(codeLines[i] ?? '');
     if (fn) {
       close(i);
       open = { name: fn, kind: 'fn', start: i };
       return;
     }
-    if (open && /^[A-Za-z}]/.test(line)) close(i);
+    // 🔴 THE CLOSE TEST READS `codeWithLiterals`, WHICH IS THE ONE VIEW THAT ANSWERS BOTH HALVES.
+    // The previous round argued this had to stay on the RAW line because "`stripNonCode` EMPTIES
+    // literal bodies", so a column-zero template continuation — the exact cut this boundary
+    // exists to notice — would stop closing the chunk. That was true of `stripNonCode` and it
+    // was the wrong conclusion: the file already has a second normalised view which strips
+    // comments AND keeps literal bodies, and it satisfies both requirements at once. Measured on
+    // the three views, which is what settles it rather than the argument:
+    //   column-zero BLOCK-COMMENT body line  raw: closes  stripNonCode: no   codeWithLiterals: NO
+    //   column-zero TEMPLATE continuation    raw: closes  stripNonCode: no   codeWithLiterals: YES
+    //
+    // The raw version was a false RED reachable from prettier-clean source — prettier does not
+    // reindent the body lines of a block comment. Measured: a procedure with a column-zero
+    // comment body line between `.input(` and `.mutation(` gave `cutProcChunks: ['realProc']`
+    // and `procsReachingGuard: []` for a procedure that calls the guard on the very next line,
+    // and the message blamed a column-zero line the committer was entitled to write.
+    // `a chunk cut short by a column-zero line is CAUGHT` still pins the template half, and
+    // `a column-zero COMMENT body line does not end a procedure` pins this one.
+    if (open && /^[A-Za-z}]/.test(closeLines[i] ?? '')) close(i);
   });
   close(lines.length);
   return out;
@@ -888,13 +1063,30 @@ const NON_SCHEMA_WORDS = new Set([...RESERVED_WORDS, ...MODULE_EXEMPTIONS]);
  * `.input(makeInput())`, and any schema behind a relative-path or package import.
  *
  * What is dropped, and why each is not a schema reference:
- *   - a member NAME (`.extend`, `.object`, `.min`) — the thing being called ON a schema;
+ *   - a member NAME (`.extend`, `.object`, `.min`) — the thing being called ON a schema.
+ *     🔴 A SPREAD's OPERAND IS NOT ONE, and treating it as one was a live fail-open: the
+ *     member rule is "preceded by a dot", and `...someInput` puts an identifier directly
+ *     after a dot. See the lookbehind's own comment in the body;
  *   - an object KEY (`blockToken:`, `page:`) — a field name;
- *   - a parameter bound INSIDE the argument (`.refine((v) => !!v.slug)`) — `v` is local;
+ *   - a parameter bound INSIDE the argument (`.refine((v) => !!v.slug)`, and the multi-parameter
+ *     and destructured forms — see the `bound` block in the body) — those names are local;
  *   - a keyword or literal (`z.boolean().default(true)`);
  *   - the zod namespace, per `NON_SCHEMA_WORDS`.
- * Everything else survives and MUST resolve. An identifier the router neither imports nor
- * declares cannot appear in a valid argument at all, so flagging it is fail-closed.
+ * Everything else survives and MUST resolve.
+ *
+ * 🔴 THE JUSTIFICATION THAT USED TO CLOSE THIS PARAGRAPH WAS FALSE, AND IT IS WORTH KNOWING WHY.
+ * It read: "An identifier the router neither imports nor declares cannot appear in a valid
+ * argument at all, so flagging it is fail-closed." The second clause is right — an unresolvable
+ * identifier is reported, never silently dropped, which is the safe direction. The FIRST clause
+ * is simply wrong, and it was the load-bearing half: a LAMBDA PARAMETER is an identifier the
+ * router neither imports nor declares, and it appears in a perfectly valid argument every time
+ * anyone writes `.superRefine((val, ctx) => …)`. Measured on the pre-change code, that argument
+ * produced exactly such a flag. So the sentence was not describing a property of valid
+ * arguments; it was describing a gap in the `bound` set, and reading it as the former is what
+ * let the gap sit there while the paragraph read as a proof.
+ * What is actually true: a flagged identifier is REPORTED rather than dropped, so the error is
+ * in the fail-closed direction — but "it cannot happen on valid input" is not a claim this
+ * function can make, and the `bound` set is the only thing keeping the false reds down.
  *
  * 🔴 KNOWINGLY OPEN — the object-KEY rule drops a schema in a TERNARY, and drops it SILENTLY.
  * "followed by a colon" means "object key", and a conditional puts the interesting operand in
@@ -914,23 +1106,117 @@ const NON_SCHEMA_WORDS = new Set([...RESERVED_WORDS, ...MODULE_EXEMPTIONS]);
 function schemaIdentifiers(arg: string): string[] {
   const code = stripNonCode(arg);
 
-  // Parameters bound by an arrow function inside the argument: `(v) => …` and `v => …`.
+  // Parameters bound by an arrow function inside the argument. All the shapes the corpus
+  // writes: `v => …`, `(v) => …`, `(val, ctx) => …` and `({ slug }, ctx) => …`.
+  //
+  // 🔴 THE MULTI-PARAMETER FORMS WERE MISSING, AND THAT MADE THIS A FALSE-RED FACTORY. The old
+  // pair of regexes recognised a parenthesised SINGLE parameter and a bare one, so a canonical
+  // zod `.superRefine((val, ctx) => …)` bound NEITHER name: `val` and `ctx` came back as schema
+  // POSITIONS and were then required to resolve. MEASURED on the pre-change code —
+  // `(val, ctx)` yielded `['val', 'ctx']`, `({ slug }, ctx)` yielded `['slug', 'ctx']`, and
+  // `(val: Foo, ctx)` yielded `['Foo', 'ctx']` — so any procedure adopting `superRefine` in its
+  // `.input()` reddened `unresolved` on ordinary zod. `superRefine` appears in 11 files under
+  // `src/server/schema` and 28 under `src/`, so this was a question of when, not whether.
+  //
+  // 🔴 AND THE PRINTED REMEDY WAS WRONG IN THE DIRECTION THAT DOES DAMAGE. The failure message
+  // tells the committer to "teach resolveModule about it; do not exempt the procedure" — but
+  // `ctx` is a lambda parameter, so there is nothing to resolve and that instruction cannot be
+  // followed. The only exits left were to revert the refinement or to edit this guard, and a
+  // guard that trains people to edit it is the failure this whole file is written against.
+  //
+  // ⚠️ IT BINDS EVERY IDENTIFIER IN THE PARAMETER LIST, INCLUDING ONES THAT ARE NOT BINDINGS —
+  // a type annotation's type (`(v: Foo) =>` binds `Foo` as well) and both halves of a renaming
+  // destructure (`({ a: b }) =>`). Separating those needs the parse, and this function is handed
+  // an argument FRAGMENT. Binding is a SUPPRESSION, so over-binding is the fail-OPEN direction.
+  //
+  // 🔴 THIS PARAGRAPH USED TO BOUND THAT RADIUS WRONGLY, AND THE OMISSION CAUSED A REAL FLIP. It
+  // said "the blast radius is names written inside an arrow's OWN parameter list, where this
+  // corpus never spells a schema reference". Both halves of that are true and it still misleads,
+  // because what it does NOT say is where the suppression is APPLIED — and the answer was
+  // argument-wide, which put the chain OPERAND in range whenever it shared a name with something
+  // in the list. So the radius was never limited to the parameter list at all. I wrote that
+  // sentence, in the round that corrected the previous over-claiming sentence in this very
+  // function; the failure is not the claim being false but the claim being narrower than the
+  // mechanism, which is the same shape twice running.
+  // The suppression is now POSITIONAL — see `firstArrowAt` below and the note inside the scan
+  // loop, which carries the measurements and the one residual case.
+  //
+  // A default value naming a schema (`(v = someSchema) => …`) is bound and therefore suppressed
+  // from the first arrow onward — stated because it is open, not covered.
   const bound = new Set<string>();
-  for (const re of [
-    /\(\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^)]*)?\)\s*=>/g,
-    /\b([A-Za-z_$][A-Za-z0-9_$]*)\s*=>/g,
-  ]) {
-    for (let m = re.exec(code); m; m = re.exec(code)) bound.add(m[1]);
+  // 🔴 AND WHERE THE SUPPRESSION MAY APPLY, WHICH IS THE HALF THE PREVIOUS ROUND GOT WRONG. See
+  // the note below `out` for the flip this caused; `firstArrowAt` is the whole remedy.
+  let firstArrowAt = Number.POSITIVE_INFINITY;
+  for (const re of [/\(([^()]*)\)\s*=>/g, /(?:^|[^.\w$])([A-Za-z_$][A-Za-z0-9_$]*)\s*=>/g]) {
+    for (let m = re.exec(code); m; m = re.exec(code)) {
+      firstArrowAt = Math.min(firstArrowAt, m.index);
+      for (const name of m[1].match(/[A-Za-z_$][A-Za-z0-9_$]*/g) ?? []) bound.add(name);
+    }
   }
 
   const out = new Set<string>();
-  // `(\.\s*)?` — preceded by a dot, so a member name. `(\s*:)?` — followed by a colon, so
-  // an object key. Either match disqualifies the token.
-  const re = /(\.\s*)?\b([A-Za-z_$][A-Za-z0-9_$]*)\b(\s*:)?/g;
+  // `((?<!\.\.)\.\s*)?` — preceded by a single dot, so a member name. `(\s*:)?` — followed by
+  // a colon, so an object key. Either match disqualifies the token.
+  //
+  // 🔴 `(?<!\.\.)` ON THE DOT GROUP ONLY, AND THAT PLACEMENT IS THE WHOLE FIX. A SPREAD's
+  // third dot is a dot immediately preceding an identifier, so the member-name rule matched it
+  // and dropped the OPERAND. `.input(z.object({ ...someInput.shape, page: z.number() }))`
+  // yielded NO identifiers at all, so the procedure left the population with `procs: []` AND
+  // `unresolved: []` — verbatim the merged outcome this file's header forbids. MEASURED by
+  // adding exactly that procedure, unguarded, to the router: the whole suite passed 32/32.
+  //
+  // ⚠️ BE EXACT ABOUT WHAT WAS LIVE, because the strong reading is wrong. The SHAPE was live on
+  // two procedures — `previewPostFromApp` and `createPostFromApp` both spread
+  // `blockPostPayloadShape` into their `.input()` argument — so the drop was exercised against
+  // the real corpus rather than only against a synthetic. But NEITHER procedure ever left the
+  // population: each also spells a literal `blockToken:` in the same `z.object({…})`, and that
+  // literal test short-circuits before identifier resolution is reached. So what was live is
+  // the silent drop of the operand, with nothing in `unresolved` to say so; the vanishing
+  // procedure was reachable, not reached. Measured after this fix, `blockPostPayloadShape`
+  // resolves and carries no `blockToken` (verdict `false`), and `BRIDGE_INPUT_LEDGER` is
+  // unchanged — this change moves no committed expected value. (Stated as "unchanged" rather
+  // than as a count on purpose: the ledger's own length is the asserted fact, so repeating it
+  // here would be a second, unasserted copy of it — see the note on deleted figures above
+  // `MAX_SCHEMA_DEPTH`.)
+  //
+  // `spreadUnknown` in `UNREADABLE` below is the control, and
+  // `a spread operand is a schema reference, not a member name` pins the operand surviving.
+  //
+  // The lookbehind must sit INSIDE the optional group, not in front of the whole pattern. In
+  // front, it also rejects the position of the identifier itself — for `...foo`, the two
+  // characters before `foo` are `..`, so a leading `(?<!\.\.)` drops `foo` as well and the
+  // fix reads as working while changing nothing. Inside, it only ever refuses to CONSUME a
+  // spread's dot, which is what leaves the operand to be matched on the next position.
+  const re = /((?<!\.\.)\.\s*)?\b([A-Za-z_$][A-Za-z0-9_$]*)\b(\s*:)?/g;
   for (let m = re.exec(code); m; m = re.exec(code)) {
     if (m[1] || m[3]) continue;
     const ident = m[2];
-    if (NON_SCHEMA_WORDS.has(ident) || bound.has(ident)) continue;
+    if (NON_SCHEMA_WORDS.has(ident)) continue;
+    // 🔴 SUPPRESSION IS POSITIONAL, NOT ARGUMENT-WIDE, AND THE PREVIOUS ROUND'S VERSION OF THIS
+    // LINE FLIPPED A CASE FROM FAIL-CLOSED TO FAIL-OPEN. It read `|| bound.has(ident)`, applied
+    // across the WHOLE argument — so when a name inside an arrow's parameter list happened to
+    // match the CHAIN OPERAND, the operand was dropped. The operand is indisputably a schema
+    // reference, so a noisy red became a silent absence, and with no literal `blockToken` in the
+    // raw argument the procedure left the population with BOTH ledgers quiet.
+    //
+    // MEASURED on that version, and the third row is the control that makes it attributable to
+    // the shared NAME rather than to the rule dropping everything:
+    //   `mySchema.superRefine((val: z.infer<typeof mySchema>, ctx) => …)`  -> []
+    //   `someInput.superRefine((someInput, ctx) => …)`                     -> []
+    //   `keptSchema.superRefine((val, ctx) => …)`                          -> ['keptSchema']
+    // The first is the realistic one: `z.infer<typeof mySchema>` is ordinary zod.
+    //
+    // Nothing BEFORE the first arrow can be a reference to that arrow's parameter, so gating the
+    // suppression on position keeps the operand while still suppressing the parameter's uses in
+    // the list and in the body — which is the only reason `bound` exists.
+    //
+    // ⚠️ RESIDUAL, DISCLOSED RATHER THAN CLOSED: an operand appearing AFTER the first arrow and
+    // sharing a bound name is still suppressed. Measured — `a.refine((b) => !!b).merge(b)` yields
+    // `['a']`, dropping the second operand. Closing that needs per-arrow scoping, which needs the
+    // parse this function does not have. It is a name COLLISION between a parameter and a later
+    // operand; the corpus has none, and this sentence exists so the next reader does not have to
+    // discover the boundary by hitting it.
+    if (bound.has(ident) && m.index >= firstArrowAt) continue;
     out.add(ident);
   }
   return [...out];
@@ -989,8 +1275,16 @@ function findDefinitionText(file: string, ident: string): string | null {
   const source = readIfPresent(file);
   if (source == null) return null;
   const lines = source.split('\n');
+  // 🔴 ESCAPED. `ident` is interpolated into a regex, and `$` is legal in a JavaScript
+  // identifier but an ANCHOR in a pattern — so `foo$bar` compiled to "foo, end of input, bar"
+  // and could never match its own declaration. The failure is silent and lands in the
+  // reassuring direction: `definitionText` returns null, the candidate filter then drops the
+  // name, and the reference is skipped without reaching `unreadable`. No `$`-bearing schema
+  // exists in this corpus today, so this is latent — but it costs one call to remove, and an
+  // unescaped interpolation is a defect whether or not the corpus currently triggers it.
+  const escaped = ident.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const start = lines.findIndex((l) =>
-    new RegExp(`^(?:export\\s+)?(?:const|let|var)\\s+${ident}\\b`).test(l)
+    new RegExp(`^(?:export\\s+)?(?:const|let|var)\\s+${escaped}\\b`).test(l)
   );
   if (start < 0) return null;
   let end = start + 1;
@@ -999,34 +1293,136 @@ function findDefinitionText(file: string, ident: string): string | null {
 }
 
 /**
+ * 🔴 THE NESTED-UNREADABLE LEDGER — the nested references that resolve to `null`, enumerated so
+ * THAT swallow is loud instead of silent.
+ *
+ * ⚠️ READ THE SCOPE BEFORE TRUSTING IT, because the first version of this sentence claimed the
+ * whole class. It said this ledger holds "the references the schema walk CANNOT read", and that
+ * is WIDER THAN THE MECHANISM. There are two ways a nested reference goes unread and only one
+ * of them arrives here:
+ *   - the candidate filter ADMITS the name and the recursion then fails to resolve it — that is
+ *     a `null`, and it is ledgered below. LOUD.
+ *   - the candidate filter REJECTS the name first (`definitionText` finds no `const|let|var`
+ *     declaration AND it is not in this file's `import { … } from` map), so the loop `continue`s
+ *     and the recursion never runs. No `null` is ever produced, nothing is ledgered, and the
+ *     branch is scored as carrying no token. STILL SILENT — see the `WHAT IS STILL OUT OF REACH`
+ *     entry in this file's header, which states the shapes that fall into it.
+ * So this ledger makes the `null` swallow loud. It does not make the `continue` swallow loud,
+ * and no part of this file currently does.
+ *
+ * `schemaCarriesBlockToken` returns `null` for a reference it cannot resolve. At DEPTH 0 that
+ * null reaches `unresolved`, which is asserted empty — the loud path. Deeper in the descent it
+ * used to be DISCARDED: the candidate loop kept only a `true`, so a `null` from a nested
+ * reference was indistinguishable from a `false`, and the branch was scored "no token here"
+ * without anybody reading it. Two docstrings claimed coverage that was only ever depth-0.
+ *
+ * Rather than force those nulls into `unresolved` — which would need `resolveModule` taught
+ * about relative paths AND `definitionText` taught about `enum`/`type` declarations, both
+ * changes to the walk's reach rather than to its reporting — they are ledgered here and
+ * compared as a SET, failing in BOTH directions like `GUARD_CALL_SITE_LEDGER` does. A new
+ * unreadable nested reference fails this test and gets looked at by whoever introduced it;
+ * one disappearing fails it too, so the ledger cannot quietly stop meaning anything.
+ *
+ * 🔴 THIS MECHANISM IS ELECTIVE, AND IT IS NOT WHAT CLOSED THE FINDING THAT PROMPTED IT. The
+ * finding was that two docstrings claimed coverage the code only had at depth 0, and narrowing
+ * those two docstrings closed it on its own. The ledger is an ADDITION on top of that, taken
+ * because a recorded limit beats a described one — not because anything required it. Read the
+ * next paragraph before extending it.
+ *
+ * 🔴 AND IT CARRIES A FALSE-RED SURFACE, priced rather than hidden. `resolveModule` accepts `~/`
+ * specifiers only, so ANY relative or package import whose local name is referenced inside a
+ * definition body the walk descends into adds an entry — and a new entry reds
+ * `ledgers every procedure that TAKES a block token`, the real-router test, with a message
+ * about a declaration that may have nothing to do with the change the author made. That is a
+ * genuine cost: the trip is not caused by the committer's own code. Today's surface is narrow,
+ * and deliberately not quoted as a figure here (see the note on deleted figures above
+ * `MAX_SCHEMA_DEPTH`) — it depends on which files the walk actually descends into, which is a
+ * much smaller set than the router's import closure, so any number written down would be a
+ * bound rather than a measurement and would rot like the last one did. If this starts tripping
+ * on unrelated changes, the fix is to teach `resolveModule` to reach those specifiers, or to
+ * delete the mechanism and keep the narrowed docstrings — NOT to grow the ledger.
+ *
+ * THE SINGLE LIVE ENTRY, and why it is unreadable — stated exactly, because a looser reading
+ * of it is wrong in the reassuring direction. `block-scope.constants.ts` does
+ * `import { TokenScope } from './token-scope.constants'`, and `resolveModule` resolves `~/`
+ * specifiers ONLY, so the relative one is refused by design. Following it would not help
+ * either: that file is a re-export shim (`export * from '@civitai/auth/token-scope'`) and the
+ * declaration is `export const TokenScope = {…}` in a workspace package this scan does not
+ * read. 🔴 NOTE WHAT THAT RULES OUT — it is a `const`, not a `type`, so the tempting argument
+ * "a type declaration can never carry a `blockToken` anyway" does NOT apply here. Whether this
+ * reference carries one is precisely the question the scan cannot answer, which is the reason
+ * it is ledgered rather than dismissed.
+ *
+ * The judgement that it does not is a HUMAN one, stated as such: `TokenScope` is an OAuth
+ * scope bitmask (`{ None: 0, UserRead: 1 << 0, … }`) rather than a zod schema, and it contains
+ * no occurrence of `blockToken`. What the ledger contributes is not that assurance — it is
+ * that the discard path is EXERCISED against the real corpus, so the limit is a measured fact
+ * instead of a paragraph.
+ */
+const NESTED_UNREADABLE_LEDGER = [
+  `${BLOCK_SCOPE_CONSTANTS}#BLOCK_SCOPE_TO_OAUTH_BIT -> #TokenScope`,
+].sort();
+
+/**
  * Does `ident`, resolved from `file`, define a `blockToken` field — following imports and
- * same-file references? Returns `null` when the definition could NOT be located, which the
- * suite treats as a failure rather than a `false`: an unresolvable schema is exactly the
- * silent hole this scan exists to not have.
+ * same-file references? Returns `null` when the definition could NOT be located.
+ *
+ * 🔴 WHAT THE CALLER DOES WITH THAT NULL DEPENDS ON DEPTH, AND THIS DOCSTRING USED TO SAY
+ * OTHERWISE. At depth 0 — the identifiers `schemaIdentifiers` hands `bridgeInputProcs` — the
+ * null reaches `unresolved` and the suite treats it as a failure, because an unresolvable
+ * schema is exactly the silent hole this scan exists to not have. DEEPER, inside the recursive
+ * descent below, it does NOT: the candidate loop can only act on a `true`, so a nested null is
+ * recorded in `unreadable` and the branch continues as if it were `false`. That recording is
+ * what makes it visible; see `NESTED_UNREADABLE_LEDGER` above for why it is a ledger rather
+ * than an `unresolved` entry.
  *
  * 🔴 DEPTH. The cap is `MAX_SCHEMA_DEPTH`, and hitting it returns `false` — i.e. "no token
  * here" for a branch nobody actually read, which is the same silent scoring `unresolved`
  * exists to prevent. So a truncation is RECORDED in `truncated` and asserted empty, rather
  * than described as a blind spot in prose.
  *
- * The previous wording here — "the real corpus resolves every `.input()` identifier within
+ * The wording before this one — "the real corpus resolves every `.input()` identifier within
  * 2" — was false, and the cap it justified was load-bearing on the committed tree, not
- * hypothetically: at a cap of 5 the walk reached depth 6 and truncated 9 calls across 7
- * identifiers (`TokenScope` and `SKIP_OAUTH_CHECK` in `block-scope.constants.ts`, five
- * spend bounds in `app-cap-limits.constants.ts`). No verdict moved — none of those carries
- * a `blockToken` and the population was 15 either way — but nothing said so out loud.
- * MEASURED: the walk terminates on its own at depth 8, with 800 resolution calls and no
- * change in wall time between a cap of 5 and a cap of 12. The cap is set to 12 for that
- * headroom, and `truncated` is what tells you when a chain outgrows it.
+ * hypothetically: lowering it to 5 does truncate real chains here, in
+ * `src/shared/constants/block-scope.constants.ts` and
+ * `src/server/services/blocks/app-cap-limits.constants.ts`. No verdict moves when it does —
+ * none of those definitions carries a `blockToken` — but nothing used to say so out loud.
+ * MEASURED: the walk terminates on its own at DEPTH 8. The cap is 12, for headroom over that,
+ * and `truncated` is what tells you when a chain outgrows it.
+ *
+ * 🔴 EVERY OTHER FIGURE THAT USED TO BE HERE IS DELETED — INCLUDING THE ONES THAT REPLACED THE
+ * WRONG ONE, WHICH IS THE PART WORTH READING. This paragraph once asserted "800 resolution
+ * calls". That did not reproduce at any granularity, and the epitaph written for it was that it
+ * "read as a measurement, justified nothing, and was wrong by roughly 7x". The first repair
+ * then swapped that one wrong number for EIGHT freshly measured ones — the same defect class
+ * with eight times the surface — and conceded as much in its own wording, calling them
+ * "decoration with a date on it, not a checked fact". Nothing in this file asserts any of them:
+ * every numeric assertion here is a `toBeGreaterThan` floor, a `toBe` count of 0 or 1, or a
+ * `toHaveLength`, and not one reads a walk-size figure. So they are deleted rather than
+ * re-sourced, and `depth 8` is the single exception because it is the only one that JUSTIFIES
+ * something — the constant directly below. If you need a walk size, measure it at the time; an
+ * unasserted number in this docstring has already rotted once and nothing here can stop it
+ * rotting again.
  */
 const MAX_SCHEMA_DEPTH = 12;
+
+/**
+ * A fixture for `resolves a declaration whose name contains $` below, and nothing else reads it.
+ * It exists to BE FOUND: `findDefinitionText` interpolates an identifier into a RegExp, `$` is
+ * legal in a JavaScript identifier but an anchor in a pattern, and this file is the only place
+ * that can hold a `$`-bearing declaration without adding a fixture module to the repo. The
+ * corpus has no such name today, which is exactly why the escaping had no witness.
+ */
+const dollar$Fixture = 'found by name, never by value';
 
 function schemaCarriesBlockToken(
   ident: string,
   file: string,
   seen = new Set<string>(),
   depth = 0,
-  truncated: string[] = []
+  truncated: string[] = [],
+  /** Nested references that resolved to NEITHER true nor false. See the ledger above. */
+  unreadable: string[] = []
 ): boolean | null {
   const key = `${file}#${ident}`;
   if (depth > MAX_SCHEMA_DEPTH) {
@@ -1042,7 +1438,17 @@ function schemaCarriesBlockToken(
     if (!imported) return null;
     const target = resolveModule(imported.spec);
     if (!target) return null;
-    return schemaCarriesBlockToken(imported.imported, target, seen, depth + 1, truncated);
+    // A null from here propagates to THIS call's own caller, which records it if that caller
+    // is the candidate loop below, or surfaces it in `unresolved` if it is depth 0. So it is
+    // deliberately not recorded twice.
+    return schemaCarriesBlockToken(
+      imported.imported,
+      target,
+      seen,
+      depth + 1,
+      truncated,
+      unreadable
+    );
   }
 
   if (/\bblockToken\b/.test(def)) return true;
@@ -1051,7 +1457,12 @@ function schemaCarriesBlockToken(
   for (const other of new Set(def.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? [])) {
     if (other === ident) continue;
     if (definitionText(file, other) == null && !localImports.has(other)) continue;
-    if (schemaCarriesBlockToken(other, file, seen, depth + 1, truncated) === true) return true;
+    const nested = schemaCarriesBlockToken(other, file, seen, depth + 1, truncated, unreadable);
+    // 🔴 A NULL IS NOT A FALSE, AND CONTINUING AS IF IT WERE IS WHAT USED TO BE SILENT. The
+    // loop can only act on a `true`, so the branch does carry on either way — but the null is
+    // RECORDED first, which is the difference between a stated limit and a hidden one.
+    if (nested === null) unreadable.push(`${key} -> #${other}`);
+    if (nested === true) return true;
   }
   return false;
 }
@@ -1062,6 +1473,17 @@ function schemaCarriesBlockToken(
  * schema we cannot read is indistinguishable from a schema with no `blockToken` in it, and
  * silently scoring it as "not a bridge proc" is how a population check quietly stops
  * covering things.
+ *
+ * 🔴 `unresolved` IS DEPTH-0 ONLY, AND THIS DOCSTRING USED TO READ AS THOUGH IT WERE THE WHOLE
+ * WALK. It carries the identifiers `schemaIdentifiers` returned for an argument — the top of
+ * each chain. A reference the walk could not read DEEPER than that never reached here: the
+ * recursive descent could act only on a `true`, so a nested `null` was scored as `false` and
+ * `unresolved` stayed empty. `const wrapperInput = packageBridgeInput.extend({…})`, with the
+ * inner identifier behind an `@civitai/*` or relative import, is the shape — it resolved to
+ * "no token here". Those nulls now arrive in `unreadableNested` and are compared against
+ * `NESTED_UNREADABLE_LEDGER`. The test named
+ * "depth-0 nulls reach unresolved, deeper ones reach the nested ledger" pins both halves, so
+ * neither claim can rot into the other.
  *
  * 🔴 THE RULE IS NOW THE ARGUMENT'S SCHEMA POSITIONS, NOT ITS SHAPE. Every identifier
  * `schemaIdentifiers` returns has to resolve, whatever the argument looks like around it.
@@ -1078,10 +1500,11 @@ function schemaCarriesBlockToken(
 function bridgeInputProcs(
   routerFile: string,
   source: string
-): { procs: string[]; unresolved: string[]; truncated: string[] } {
+): { procs: string[]; unresolved: string[]; truncated: string[]; unreadableNested: string[] } {
   const procs: string[] = [];
   const unresolved: string[] = [];
   const truncated: string[] = [];
+  const unreadableNested: string[] = [];
 
   for (const chunk of chunks(source)) {
     if (chunk.kind !== 'proc') continue;
@@ -1100,7 +1523,14 @@ function bridgeInputProcs(
     }
     let carries = false;
     for (const ident of schemaIdentifiers(arg)) {
-      const verdict = schemaCarriesBlockToken(ident, routerFile, new Set(), 0, truncated);
+      const verdict = schemaCarriesBlockToken(
+        ident,
+        routerFile,
+        new Set(),
+        0,
+        truncated,
+        unreadableNested
+      );
       if (verdict === true) {
         carries = true;
         break;
@@ -1109,7 +1539,14 @@ function bridgeInputProcs(
     }
     if (carries) procs.push(chunk.name);
   }
-  return { procs: procs.sort(), unresolved, truncated };
+  // Deduped and sorted: the same nested reference is reachable from several top-level
+  // identifiers, and the ledger is a SET of what the walk cannot read, not a visit count.
+  return {
+    procs: procs.sort(),
+    unresolved,
+    truncated,
+    unreadableNested: [...new Set(unreadableNested)].sort(),
+  };
 }
 
 /**
@@ -1149,6 +1586,26 @@ function guardedHelpers(source: string): Set<string> {
     }
   }
   return reached;
+}
+
+/**
+ * Procedure chunks that lost their tRPC terminator, i.e. were CUT SHORT by a line starting in
+ * column zero — of the COMMENT-STRIPPED view, so a template continuation cuts and a block-comment
+ * body line does not — inside the procedure body. Every tRPC procedure ends in one of the three
+ * terminators, so their absence is a cheap structural proof that a chunk did not survive.
+ *
+ * 🔴 ONE PREDICATE, ONE PLACE, AND THAT IS LOAD-BEARING HERE. Two callers ask this question —
+ * `keeps every proc chunk intact` over the real router, where the answer must be empty, and
+ * `a chunk cut short by a column-zero line is CAUGHT` over synthetics, where it must not be.
+ * Open-coding it at both sites would leave the control testing a COPY of the guard: the copy
+ * could go red on a mutation the real assertion sails through, which is precisely the
+ * reassurance a control is supposed to make impossible.
+ */
+function cutProcChunks(source: string): string[] {
+  return chunks(source)
+    .filter((c) => c.kind === 'proc')
+    .filter((c) => countCalls(PROC_TERMINATOR_RE, c.code) === 0)
+    .map((c) => c.name);
 }
 
 /** Procedures in `source` that reach `authorizeBlockBridgeToken`, directly or via a helper. */
@@ -1255,6 +1712,16 @@ describe('the bridge scan can actually see what it claims to', () => {
    * `mysteryBridgeInput` / `otherInput` / `makeBridgeInput` are resolved against the REAL
    * router, which neither declares nor imports them — the same position a schema behind an
    * `@civitai/*` package or a relative path is in.
+   *
+   * 🔴 `spreadUnknown` AND `bareSpreadUnknown` ARE THE FIFTH AND SIXTH SHAPES, AND THEY WERE
+   * MISSING WHILE THE LIST READ AS EXHAUSTIVE. `schemaIdentifiers`' member-name rule is
+   * "preceded by a dot", and a SPREAD's third dot is a dot immediately preceding an identifier
+   * — so the operand was dropped and the procedure left the population with `procs: []` AND
+   * `unresolved: []`. Both forms are here because a `.shape`-shaped search sees only the first:
+   * the router's own two live spreads are of a BARE identifier (`...blockPostPayloadShape`).
+   * Neither of those two procedures was actually scored as tokenless — each also spells a
+   * literal `blockToken:`, which short-circuits first — so what was live was the silent drop,
+   * not a vanished procedure. See the lookbehind's comment in `schemaIdentifiers`.
    */
   const UNREADABLE = [
     'export const r = router({',
@@ -1270,6 +1737,12 @@ describe('the bridge scan can actually see what it claims to', () => {
     '  factoryUnknown: publicProcedure',
     '    .input(makeBridgeInput())',
     '    .mutation(async () => 1),',
+    '  spreadUnknown: publicProcedure',
+    '    .input(z.object({ ...mysteryBridgeInput.shape, page: z.number().optional() }))',
+    '    .mutation(async () => 1),',
+    '  bareSpreadUnknown: publicProcedure',
+    '    .input(z.object({ ...otherInput, page: z.number().optional() }))',
+    '    .mutation(async () => 1),',
     '});',
   ].join('\n');
 
@@ -1280,14 +1753,54 @@ describe('the bridge scan can actually see what it claims to', () => {
     // this scan cannot read must not quietly leave the population.
     expect(procs).toEqual([]);
     expect([...unresolved].sort()).toEqual([
+      'bareSpreadUnknown -> otherInput',
       'bareUnknown -> mysteryBridgeInput',
       'extendedUnknown -> mysteryBridgeInput',
       'factoryUnknown -> makeBridgeInput',
       'mergedUnknown -> mysteryBridgeInput',
       'mergedUnknown -> otherInput',
+      'spreadUnknown -> mysteryBridgeInput',
     ]);
-    // Report the pair, never the zero alone: 5 here, 0 against the real router below.
+    // Report the pair, never the zero alone: 7 here, 0 against the real router below.
     expect(unresolved.length).toBeGreaterThan(0);
+  });
+
+  it('a spread operand is a schema reference, not a member name', () => {
+    // 🔴 THE REGRESSION PIN FOR THE `(?<!\.\.)` LOOKBEHIND. Without it the member-name rule
+    // ("preceded by a dot") swallowed a spread's third dot and dropped the OPERAND, so a
+    // token-carrying schema left the population with BOTH ledgers silent. This asserts the
+    // operand survives while the member name after it is still dropped — the two halves have
+    // to hold together, or a regex that simply stopped dropping member names would pass.
+    expect(
+      schemaIdentifiers('z.object({ ...getMyBuzzAccountsInput.shape, page: z.number() })')
+    ).toEqual(['getMyBuzzAccountsInput']);
+    // The bare-identifier spread form, which a `.shape`-shaped search does not see and which
+    // is the form the real router uses.
+    expect(
+      schemaIdentifiers('z.object({ blockToken: z.string().min(1), ...blockPostPayloadShape })')
+    ).toEqual(['blockPostPayloadShape']);
+    // The member-name rule still holds either side of the change: `extend` is dropped, the
+    // receiver is not. A lookbehind placed in front of the WHOLE pattern instead of inside
+    // the dot group drops the operand too — this pair is what separates the two placements.
+    expect(schemaIdentifiers('getMyBuzzAccountsInput.extend({ page: z.number() })')).toEqual([
+      'getMyBuzzAccountsInput',
+    ]);
+    // …and end to end: the procedure is scored as carrying the token it carries.
+    const spread = [
+      'export const r = router({',
+      '  spreadProc: publicProcedure',
+      '    .input(z.object({ ...getMyBuzzAccountsInput.shape, page: z.number() }))',
+      '    .mutation(async ({ input }) => authorizeBlockBridgeToken(input.blockToken)),',
+      '});',
+    ].join('\n');
+    const { procs, unresolved } = bridgeInputProcs(ROUTER, spread);
+    expect(
+      procs,
+      'A spread operand resolving to a schema that carries a blockToken must put its ' +
+        'procedure IN the population. Empty here means the operand was dropped as a member ' +
+        'name — and with `unresolved` empty too, that is the merged outcome this file forbids.'
+    ).toEqual(['spreadProc']);
+    expect(unresolved).toEqual([]);
   });
 
   it('NEGATIVE CONTROL — prose and field names inside an inline z.object are NOT schema identifiers', () => {
@@ -1304,6 +1817,239 @@ describe('the bridge scan can actually see what it claims to', () => {
       '  .refine((v) => !!v.page, { message: `page is required` })',
     ].join('\n');
     expect(schemaIdentifiers(arg)).toEqual([]);
+  });
+
+  it('binds EVERY arrow parameter, not just a lone one — a multi-arg refinement is not a schema', () => {
+    // 🔴 THE FALSE-RED PIN. The `bound` set used to recognise `(v) => …` and `v => …` only, so
+    // the canonical zod `.superRefine((val, ctx) => …)` bound neither name and both came back
+    // as schema positions that then had to RESOLVE. That reds `unresolved` for a procedure
+    // whose author wrote ordinary zod, and the printed remedy — "teach resolveModule about it"
+    // — cannot be followed for a lambda parameter, leaving "edit the guard" as the only exit.
+    // `superRefine` appears in 11 files under `src/server/schema`; this was a matter of time.
+    for (const arg of [
+      'z.object({ id: z.number() }).superRefine((val, ctx) => ctx.addIssue({}))',
+      'z.object({ id: z.number() }).superRefine(({ slug }, ctx) => ctx.addIssue({}))',
+      'z.object({ id: z.number() }).superRefine((val: Foo, ctx) => ctx.addIssue({}))',
+      'z.object({ id: z.number() }).refine((v) => !!v.id)',
+      'z.object({ id: z.number() }).refine((v, extra) => !!v.id)',
+    ]) {
+      expect(
+        schemaIdentifiers(arg),
+        `${arg}\nEvery name here is a lambda parameter or a zod member. A non-empty result ` +
+          'means one of them is about to be required to resolve, which is a false red on ' +
+          'ordinary zod — and one the committer cannot act on, because there is nothing to ' +
+          'resolve.'
+      ).toEqual([]);
+    }
+    // 🔴 THE NEGATIVE HALF, or the loop above is satisfied by binding EVERYTHING. A real schema
+    // reference standing beside a multi-parameter refinement must still survive, and the
+    // parameters beside it must still be dropped — both in one assertion.
+    expect(
+      schemaIdentifiers('mysteryBridgeInput.superRefine((val, ctx) => ctx.addIssue({}))'),
+      'The schema operand must survive while the lambda parameters are dropped. Empty here ' +
+        'means the binding rule now swallows real schema references — the fail-OPEN direction.'
+    ).toEqual(['mysteryBridgeInput']);
+    // …and end to end, because the cost being fixed was a red on the real-router test.
+    const refined = [
+      'export const r = router({',
+      '  refinedProc: publicProcedure',
+      '    .input(z.object({ blockToken: z.string() }).superRefine((val, ctx) => ctx.addIssue({})))',
+      '    .mutation(async ({ input }) => authorizeBlockBridgeToken(input.blockToken)),',
+      '});',
+    ].join('\n');
+    const { procs, unresolved } = bridgeInputProcs(ROUTER, refined);
+    expect(procs).toEqual(['refinedProc']);
+    expect(unresolved).toEqual([]);
+  });
+
+  it('detects procedures on NORMALISED lines — text shaped like a proc inside trivia cannot split one', () => {
+    // 🔴 `chunks` used to run `PROC_RE` and `fnName` over the RAW line while `scan` ran them
+    // over the normalised one. So a COMMENT or a TEMPLATE-LITERAL line that merely LOOKS like
+    // `  someProc: publicProcedure` opened a chunk and cut the real procedure it sat inside.
+    // The halves then carry two terminators and zero, so the integrity check does go red — but
+    // its message blames "a line starting in column zero", which is not what happened, and the
+    // reader is sent hunting for the wrong thing. Latent on today's router (raw and normalised
+    // detect the same 75 procs and 56 helpers), so this is a shape closed, not a bug fixed.
+    for (const [label, decoy] of [
+      ['block comment', ['    /*', '  decoyProc: publicProcedure', '    */']],
+      ['template literal', ['    .describe(`', '  decoyProc: publicProcedure', '    `)']],
+    ] as const) {
+      const source = [
+        'export const r = router({',
+        '  realProc: publicProcedure',
+        '    .input(z.object({ blockToken: z.string().min(1) }))',
+        ...decoy,
+        '    .mutation(async ({ input }) => authorizeBlockBridgeToken(input.blockToken)),',
+        '});',
+      ].join('\n');
+      expect(
+        chunks(source)
+          .filter((c) => c.kind === 'proc')
+          .map((c) => c.name),
+        `${label}: a procedure-shaped line inside trivia must not open a chunk. Seeing ` +
+          '`decoyProc` here means detection is reading raw lines again, and `realProc` has ' +
+          'just been split in half.'
+      ).toEqual(['realProc']);
+      // …and the consequences the split would have had, asserted rather than described.
+      expect(cutProcChunks(source), `${label}: the real proc must keep its terminator`).toEqual([]);
+      expect(bridgeInputProcs(ROUTER, source).procs).toEqual(['realProc']);
+      expect(procsReachingGuard(source)).toEqual(['realProc']);
+    }
+  });
+
+  it('resolves a declaration whose name contains `$` — the identifier is escaped into the regex', () => {
+    // 🔴 `findDefinitionText` interpolates `ident` into a RegExp. `$` is legal in a JavaScript
+    // identifier and an ANCHOR in a pattern, so an unescaped `dollar$Fixture` compiled to
+    // "dollar, end of input, Fixture" and could never match its own declaration. The failure is
+    // silent AND lands in the reassuring direction: `definitionText` returns null, the candidate
+    // filter then drops the name, and the reference is skipped without reaching `unreadable`.
+    // 🔴 DERIVED FROM `__filename`, NOT HARDCODED, AND THE CONTROLS RUN FIRST. Both of those are
+    // corrections. A hardcoded repo-relative path to this very file breaks on a rename, and it
+    // breaks in the worst way: the FIRST assertion would fail claiming `$` is acting as an
+    // anchor, which is not the cause, while the control that would have disambiguated it sat
+    // after the failure and never ran. Ordering the controls first means an unreadable path
+    // reports itself as an unreadable path.
+    const SELF = path.relative(REPO_ROOT, __filename);
+    // Positive control: the reader can read this file at all.
+    // 🔴 ASSERTED AS A BOOLEAN, because `toMatch` on a `null` throws "expects to receive a
+    // string, but got object" and DISCARDS the custom message — so the one failure this control
+    // exists to explain would have printed the least explanatory error in the file. Measured by
+    // pointing `SELF` at a path that does not exist.
+    expect(
+      definitionText(SELF, 'MAX_SCHEMA_DEPTH') !== null,
+      `Could not read ${SELF}, so nothing below is about escaping — this file has been renamed ` +
+        'or moved and the derivation of SELF from __filename is what to look at.'
+    ).toBe(true);
+    // Negative control: it does not answer for every name it is asked about.
+    expect(definitionText(SELF, 'notDeclaredAnywhereInThisFile')).toBeNull();
+    // …and only now the claim itself, with the same null-safety for the same reason.
+    const found = definitionText(SELF, 'dollar$Fixture');
+    expect(
+      found !== null,
+      'A `$`-bearing declaration was not found in the file that declares it, and the controls ' +
+        'above have already shown the file is readable. The identifier is reaching the RegExp ' +
+        'unescaped, so `$` is acting as an anchor and can never match.'
+    ).toBe(true);
+    expect(found).toMatch(/dollar\$Fixture/);
+    // Reading the declaration's own VALUE back proves the slice is the right one, and is what
+    // makes the fixture a used binding rather than a lint warning.
+    expect(found).toContain(dollar$Fixture);
+  });
+
+  it('a parameter name colliding with the chain operand does NOT suppress the operand', () => {
+    // 🔴 THE FAIL-OPEN THIS PINS WAS INTRODUCED BY THE FIX IN THE ROUND BEFORE IT, which is the
+    // reason it gets its own test rather than a line in the one above. `bound` suppresses by
+    // NAME; applying it across the whole argument meant that when a name inside an arrow's
+    // parameter list matched the CHAIN OPERAND, the operand — indisputably a schema reference —
+    // was dropped. A noisy red became a silent absence, and with no literal `blockToken` in the
+    // raw argument the procedure left the population with both ledgers quiet.
+    expect(
+      schemaIdentifiers(
+        'mySchema.superRefine((val: z.infer<typeof mySchema>, ctx) => ctx.addIssue({}))'
+      ),
+      'The annotation mentions the operand. `z.infer<typeof X>` is ordinary zod, so this is the ' +
+        'realistic shape: an empty result means the operand was suppressed by its own ' +
+        'parameter list and the procedure is about to be scored as carrying no token.'
+    ).toEqual(['mySchema']);
+    expect(
+      schemaIdentifiers('someInput.superRefine((someInput, ctx) => ctx.addIssue({}))'),
+      'A parameter that shadows the operand must not delete the operand.'
+    ).toEqual(['someInput']);
+    // 🔴 THE CONTROL THAT MAKES THE TWO ABOVE ATTRIBUTABLE. Same shape, no shared name — so a
+    // failure above is about the COLLISION and not about the rule having stopped working.
+    expect(schemaIdentifiers('keptSchema.superRefine((val, ctx) => ctx.addIssue({}))')).toEqual([
+      'keptSchema',
+    ]);
+    // …and the suppression still has to WORK, or this test is satisfied by deleting it: a
+    // parameter's uses inside the list and the body must still be dropped.
+    expect(
+      schemaIdentifiers('z.object({ id: z.number() }).superRefine((val, ctx) => ctx.addIssue({}))')
+    ).toEqual([]);
+    // End to end, the loud outcome: unreadable, and SAID so, rather than silently absent.
+    const collide = [
+      'export const r = router({',
+      '  collideProc: publicProcedure',
+      '    .input(bridgeTokenInput.superRefine((bridgeTokenInput, ctx) => ctx.addIssue({})))',
+      '    .mutation(async () => 1),',
+      '});',
+    ].join('\n');
+    const r = bridgeInputProcs(ROUTER, collide);
+    expect(r.procs).toEqual([]);
+    expect(
+      r.unresolved,
+      'With the operand suppressed this was `procs: []` AND `unresolved: []` — the merged ' +
+        "outcome this file's header forbids. It must be reported instead."
+    ).toEqual(['collideProc -> bridgeTokenInput']);
+    // 🔴 THE DISCLOSED RESIDUAL, PINNED AS A FACT rather than described — same convention as
+    // `the object-key rule drops a ternary branch`. An operand appearing AFTER the first arrow
+    // and sharing a bound name is still suppressed, because closing that needs per-arrow scoping
+    // and therefore the parse. The day someone fixes it, this goes red and points at the
+    // docstring that has to stop saying the limit exists.
+    expect(schemaIdentifiers('a.refine((b) => !!b).merge(b)')).toEqual(['a']);
+  });
+
+  it('POSITIVE CONTROL — an annotated argument KEEPS its schema identifier (the OVER-strip direction)', () => {
+    // 🔴 THE DIRECTION NOTHING HERE COVERED, AND THE ONE THE DOCSTRING GOT BACKWARDS. Every
+    // other normaliser control asks whether trivia can IMPERSONATE code (under-strip). This
+    // asks the mirror question — can real code be REMOVED with it — and `unresolved` cannot
+    // answer that one: over-stripping deletes candidates, so it yields an EMPTY `unresolved`,
+    // which is what every assertion in this file already expects. The two shapes that used to
+    // stand in for this both pass under ANY amount of over-stripping: the inline-`z.object`
+    // control asserts `schemaIdentifiers(arg)` is `[]`, and `UNREADABLE` carries no comment
+    // and no string, so it never exercises the removal at all.
+    //
+    // MEASURED before this control existed, and stated with the mutation site named because
+    // the first draft of this comment did not name it: an over-strip applied to
+    // `stripNonCode` ALONE — blanking the remainder of a comment's own line, with
+    // `codeWithLiterals` left untouched — left the pre-change suite GREEN at 32 passed / 32.
+    // The SAME over-strip applied to the shared `normaliseSource` instead is CAUGHT at base,
+    // by `the normalisers preserve the line structure exactly`. The emptied view is the half
+    // that had no survival assertion; see the LIMITS block on `stripNonCode` for the pair.
+    //
+    // The fixture carries all three things at once — a comment, a string, and an imported
+    // identifier — and the comment and the string each name a DIFFERENT schema-shaped word, so
+    // one assertion pins both directions: the code identifier must survive, and neither
+    // trivia word may appear beside it.
+    const arg = [
+      '/* minted into commentOnlySchema by mintBlockToken (see notes */ mysteryBridgeInput.extend({',
+      "  page: z.number().describe('aka stringOnlySchema (1-based'),",
+      '})',
+    ].join('\n');
+    expect(
+      schemaIdentifiers(arg),
+      'The schema identifier must SURVIVE normalisation while the comment’s and the ' +
+        'string’s own words must not appear. An empty array here is the over-strip ' +
+        'failure: the identifier was removed with the trivia, so its procedure leaves the ' +
+        'population with `procs` AND `unresolved` both silent.'
+    ).toEqual(['mysteryBridgeInput']);
+
+    // The same claim on the normaliser directly, so a failure above is attributable.
+    const code = stripNonCode('/* commentOnlySchema */ mysteryBridgeInput.extend({})');
+    expect(code, 'code sharing a line with a comment must survive').toMatch(
+      /\bmysteryBridgeInput\b/
+    );
+    expect(code, 'a comment’s words must not survive').not.toMatch(/\bcommentOnlySchema\b/);
+
+    // …and end to end through the population scan: the identifier has to REACH `unresolved`
+    // rather than be dropped. This is the assertion an over-strip turns into an empty list.
+    const annotated = [
+      'export const r = router({',
+      '  annotatedProc: publicProcedure',
+      '    .input(',
+      '      /* minted into commentOnlySchema (see notes */ mysteryBridgeInput.extend({',
+      "        page: z.number().describe('aka stringOnlySchema (1-based'),",
+      '      })',
+      '    )',
+      '    .mutation(async () => 1),',
+      '});',
+    ].join('\n');
+    const { procs, unresolved } = bridgeInputProcs(ROUTER, annotated);
+    expect(procs).toEqual([]);
+    expect(
+      unresolved,
+      'An annotated argument’s unreadable schema must still be REPORTED. Empty here ' +
+        'means the identifier was over-stripped away before it could be resolved.'
+    ).toEqual(['annotatedProc -> mysteryBridgeInput']);
   });
 
   it('the identifier exemption set is exactly the zod namespace', () => {
@@ -1398,6 +2144,53 @@ describe('the bridge scan can actually see what it claims to', () => {
     // resolver that answered `true` for everything would satisfy the three above.
     expect(schemaCarriesBlockToken('getAppDetailSchema', ROUTER)).toBe(false);
   });
+
+  it('depth-0 nulls reach `unresolved`, deeper ones reach the nested ledger', () => {
+    // 🔴 THIS PINS AN ASYMMETRY, AND HALF OF IT IS A GAP RATHER THAN A GUARANTEE — the same
+    // reason `the object-key rule drops a ternary branch` is asserted below. Two docstrings
+    // used to describe `unresolved` as though it covered the whole walk; it covers the TOP of
+    // each chain. Asserting both halves means neither claim can rot into the other, and the
+    // day the descent learns to report a nested null as `unresolved`, this test goes red and
+    // points at the prose that has to stop saying otherwise.
+    //
+    // (a) DEPTH 0 — an identifier `schemaIdentifiers` returned, unreadable, IS reported.
+    const wrapper = [
+      'export const r = router({',
+      '  wrapped: publicProcedure',
+      '    .input(wrapperInput.extend({ page: z.number() }))',
+      '    .mutation(async () => 1),',
+      '});',
+    ].join('\n');
+    const depth0 = bridgeInputProcs(ROUTER, wrapper);
+    expect(depth0.procs).toEqual([]);
+    expect(depth0.unresolved).toEqual(['wrapped -> wrapperInput']);
+    expect(depth0.unreadableNested).toEqual([]);
+
+    // (b) DEEPER — a reference the walk cannot read is still scored `false`, i.e. "no token
+    // here", but it is RECORDED rather than discarded. Taken from the real corpus because
+    // that is where the shape lives: `definitionText` finds the outer const, and its body
+    // references an identifier imported by a RELATIVE specifier that `resolveModule` refuses.
+    const unreadable: string[] = [];
+    const verdict = schemaCarriesBlockToken(
+      'BLOCK_SCOPE_TO_OAUTH_BIT',
+      BLOCK_SCOPE_CONSTANTS,
+      new Set(),
+      0,
+      [],
+      unreadable
+    );
+    expect(
+      verdict,
+      'The nested null is still scored as `false`. That is the OPEN limit this test pins: ' +
+        'change it to report and the docstrings on schemaCarriesBlockToken and ' +
+        'bridgeInputProcs both have to stop saying coverage is depth-0.'
+    ).toBe(false);
+    expect(
+      unreadable,
+      'A nested reference the walk could not read must be RECORDED. Empty here means the ' +
+        'null was discarded again, which is the silent scoring this ledger exists to end.'
+    ).toEqual([`${BLOCK_SCOPE_CONSTANTS}#BLOCK_SCOPE_TO_OAUTH_BIT -> #TokenScope`]);
+  });
 });
 
 describe('no unguarded block-bridge token verification', () => {
@@ -1420,7 +2213,22 @@ describe('no unguarded block-bridge token verification', () => {
   });
 
   it('ledgers every procedure that TAKES a block token — the population, not the call sites', () => {
-    const { procs, unresolved, truncated } = bridgeInputProcs(ROUTER, read(ROUTER));
+    const { procs, unresolved, truncated, unreadableNested } = bridgeInputProcs(
+      ROUTER,
+      read(ROUTER)
+    );
+
+    expect(
+      unreadableNested,
+      'The set of references the schema walk cannot read BELOW depth 0 changed. Each one is ' +
+        'scored as carrying no blockToken without anybody having read it, so the set is ' +
+        'ledgered in NESTED_UNREADABLE_LEDGER and compared in both directions. If you ADDED ' +
+        'one, note that this scan CANNOT tell you whether it carries a blockToken — that is ' +
+        'what unreadable means — so go and read the declaration yourself before ledgering ' +
+        'it. If one DISAPPEARED the walk got wider, which is good: drop it from the ledger. ' +
+        'Do NOT widen the ledger to silence a reference you have not read: teach ' +
+        'resolveModule or definitionText to reach it instead.'
+    ).toEqual(NESTED_UNREADABLE_LEDGER);
 
     expect(
       unresolved,
@@ -1429,9 +2237,41 @@ describe('no unguarded block-bridge token verification', () => {
         'unreadable schema scores the same as one with no token in it, which is how a ' +
         'population check stops covering things without going red. This covers ANY shape ' +
         'of argument — a bare schema, a .extend(...)/.merge(...) chain, a factory call — ' +
-        'not only the bare-identifier case. If the schema legitimately lives somewhere ' +
-        'this scan does not read (a relative path, an @civitai/* package), teach ' +
-        'resolveModule about it; do not exempt the procedure. Listed as proc -> ident.'
+        'not only the bare-identifier case. Listed as proc -> ident.\n' +
+        'WHICH FIX APPLIES DEPENDS ON WHY IT FAILED, and the previous wording named only ' +
+        'one cause, which sent people to the wrong function: (a) the specifier is relative ' +
+        'or a package path, so resolveModule refused it — teach resolveModule; (b) the ' +
+        'specifier resolved but the DECLARATION is re-exported (`export ... from`), which ' +
+        'importMap does not parse because it reads `import ... from` only — teach importMap, ' +
+        'NOT resolveModule, which already succeeded; (c) the declaration is not a ' +
+        'const/let/var (a function, type, interface, class or enum) — teach ' +
+        'findDefinitionText; (d) it is NOT A SCHEMA REFERENCE AT ALL but part of an arrow ' +
+        'function that `bound` failed to bind, in which case there is nothing to resolve and ' +
+        'none of the three readers above owns it. Two known shapes, and they need DIFFERENT ' +
+        'fixes — an earlier version of this message said "widen `bound`" for both, which is ' +
+        'provably wrong for the second:\n' +
+        '  (d1) a default value containing a call, `(x, y = z.string()) => ...`, reports `x` ' +
+        'and `y`. The names ARE parameters, so widening the parameter-list regex to balance a ' +
+        'nested `()` does fix it.\n' +
+        '  (d2) a RETURN-TYPE annotation, `(v): v is Foo => ...`, reports `v` AND `is`, and it ' +
+        'needs TWO changes rather than one. The parameter list is not merely under-captured ' +
+        'here — it is NOT MATCHED AT ALL, because the regex anchors on `)` followed by `=>` and ' +
+        "this `)` is followed by `:`. So (d1)'s balancing alone changes nothing: measured on " +
+        '`mySchema.refine((v): v is Foo => !!v)`, HEAD gives [mySchema, v, is] and a pure ' +
+        'balanced widening gives [mySchema, v, is] — identical. FIRST make the anchor tolerate ' +
+        'the annotation (`\\)\\s*(?::[^=]*)?=>`), which binds `v` and leaves [mySchema, is]; ' +
+        'THEN bind the names between the `)` and the `=>`, which is where `is` lives and which ' +
+        'is not a parameter list at all. Note the ordinary annotated arrow needs only the ' +
+        'first: `(v): boolean => ...` reports `v` at HEAD and under (d1), and the ' +
+        'annotation-tolerant anchor alone clears it — so prescribing only the region fix is ' +
+        'INERT for the commonest shape. Do NOT reach for a suppression set instead: `is` is ' +
+        'absent from RESERVED_WORDS, and adding it reds `every suppressed word is a language ' +
+        'keyword`, whose remedy points at ECMASCRIPT_NON_NAMING_WORDS where `is` would be a ' +
+        'false entry — `const is = z.object({})` is legal TypeScript.\n' +
+        'So: identify which of (a)-(d) you are looking at FIRST. An earlier version of this ' +
+        'message enumerated only (a)-(c) and closed with "in every case, fix the READER", ' +
+        'which is what stops the next reader looking for a fourth cause. Whichever it is, fix ' +
+        'the READER; do not exempt the procedure and do not add the name to a suppression set.'
     ).toEqual([]);
 
     expect(
@@ -1470,26 +2310,145 @@ describe('no unguarded block-bridge token verification', () => {
   });
 
   it('keeps every proc chunk intact — a truncated chunk would shrink the population silently', () => {
-    // `chunks` ends a chunk at the next COLUMN-ZERO letter or `}`, which is the router's
-    // own formatting, not a brace count. A line that legitimately starts in column zero
-    // inside a proc — a multi-line template literal's continuation — cuts the chunk short,
-    // and if that lands before `.input(` the proc leaves the population with nothing going
-    // red. Every tRPC procedure ends in one of these three terminators, so their presence
-    // is a cheap structural proof that no chunk was cut.
+    // `chunks` ends a chunk at the next COLUMN-ZERO letter or `}` in the COMMENT-STRIPPED view
+    // (`codeWithLiterals`), which is the router's own formatting, not a brace count. A line that
+    // legitimately starts in column zero inside a proc — a multi-line template literal's
+    // continuation — cuts the chunk short, and if that lands before `.input(` the proc leaves
+    // the population with nothing going red. A column-zero line inside a BLOCK COMMENT does NOT
+    // cut, which is why the view has to be named here and not just the column. Every tRPC
+    // procedure ends in one of these three terminators, so their presence is a cheap structural
+    // proof that no chunk was cut.
     const procChunks = chunks(read(ROUTER)).filter((c) => c.kind === 'proc');
-    const truncated = procChunks
-      .filter((c) => countCalls(PROC_TERMINATOR_RE, c.code) === 0)
-      .map((c) => c.name);
+    // The SAME predicate the synthetic control below exercises — see `cutProcChunks`.
+    const truncated = cutProcChunks(read(ROUTER));
 
     expect(
       truncated,
       'These procedure chunks do not contain the .mutation( / .query( / .subscription( ' +
         'that terminates a tRPC procedure, which means the chunk was cut short — almost ' +
-        'certainly by a line starting in column zero inside the procedure body. Anything ' +
-        'after the cut, .input( included, is invisible to the population scan.'
+        'certainly by a line starting in column zero inside the procedure body, most likely a ' +
+        'multi-line TEMPLATE LITERAL continuation. Note what it is NOT: a column-zero line ' +
+        'inside a block COMMENT cannot do this, because the boundary is measured on the ' +
+        'comment-stripped view. Anything after the cut, .input( included, is invisible to the ' +
+        'population scan.'
     ).toEqual([]);
     // Positive control on the same read: the scan found procedures at all.
     expect(procChunks.length).toBeGreaterThan(50);
+  });
+
+  /**
+   * 🔴 THE COMMITTED CONTROL FOR THE ASSERTION ABOVE, WHICH HAD NONE. `> 50` against 75 is a
+   * real positive control for the COUNT — it proves the scan found procedures at all — but it
+   * says nothing about the FAILURE MODE, and a guard nobody has watched fail is a claim about
+   * its own regex. The truncation had been reproduced by hand and the result written into a
+   * review; that is not a test, and a review does not run again next week.
+   *
+   * WHY A SYNTHETIC AND NOT THE REAL ROUTER. The real router is 75 of 75 intact, which is the
+   * whole point of the assertion above — so the only way to exercise the red path is to build
+   * the cut. Both shapes are built here because they harm the population differently and only
+   * one of them leaves any other trace:
+   *
+   *   (a) the cut lands BEFORE `.input(` — `inputArg` finds no `.input(` at all, the caller
+   *       `continue`s, and the procedure leaves the population with `procs` AND `unresolved`
+   *       BOTH EMPTY. Nothing else in this file can see that. It is the merged outcome the
+   *       header forbids, and the terminator count is the only witness.
+   *   (b) the cut lands INSIDE `.input(` — the argument no longer closes, so this one also
+   *       surfaces as an `<unbalanced .input( argument>`. Asserted too, so the two shapes
+   *       cannot be confused for one another.
+   *
+   * The cutting line is a column-zero continuation of a multi-line template literal, which is
+   * legal TypeScript and formats exactly this way — `chunks` ends a chunk at the next
+   * column-zero letter or `}` in the COMMENT-STRIPPED view, which is the router's formatting
+   * rather than a brace count. The view is the load-bearing half of that sentence: a template
+   * continuation survives comment-stripping and cuts, a block-comment body line does not and is
+   * pinned NOT to cut by `a column-zero COMMENT body line does not end a procedure`.
+   */
+  it('POSITIVE CONTROL — a chunk cut short by a column-zero line is CAUGHT, not silently dropped', () => {
+    // (a) cut BEFORE `.input(` — the silent case.
+    const cutBeforeInput = [
+      'export const r = router({',
+      '  cutProc: publicProcedure',
+      '    .use(withAudit(`audit note line one',
+      'column-zero continuation`))',
+      '    .input(z.object({ blockToken: z.string().min(1) }))',
+      '    .mutation(async ({ input }) => authorizeBlockBridgeToken(input.blockToken)),',
+      '  intactProc: publicProcedure.query(async () => 1),',
+      '});',
+    ].join('\n');
+    expect(
+      cutProcChunks(cutBeforeInput),
+      'A procedure chunk cut before its terminator must be REPORTED. Empty here means the ' +
+        'assertion above would stay green while a bridge procedure left the population.'
+    ).toEqual(['cutProc']);
+    // …and the harm it is standing in for: the population is silent in BOTH directions.
+    const harmed = bridgeInputProcs(ROUTER, cutBeforeInput);
+    expect(harmed.procs).toEqual([]);
+    expect(harmed.unresolved).toEqual([]);
+
+    // (b) cut INSIDE `.input(` — caught here AND by the unbalanced-argument report.
+    const cutInsideInput = [
+      'export const r = router({',
+      '  cutProc: publicProcedure',
+      '    .input(z.object({ blockToken: z.string().describe(`note line one',
+      'column-zero continuation`) }))',
+      '    .mutation(async ({ input }) => authorizeBlockBridgeToken(input.blockToken)),',
+      '  intactProc: publicProcedure.query(async () => 1),',
+      '});',
+    ].join('\n');
+    expect(cutProcChunks(cutInsideInput)).toEqual(['cutProc']);
+    expect(bridgeInputProcs(ROUTER, cutInsideInput).unresolved).toEqual([
+      'cutProc -> <unbalanced .input( argument>',
+    ]);
+
+    // 🔴 THE NEGATIVE CONTROL, without which the two positives above are satisfied by a
+    // predicate that flags every chunk. The SAME sources with the template moved to an
+    // indented continuation — the only difference — must yield NOTHING, and `intactProc` must
+    // be absent from every list above rather than merely unmentioned.
+    const notCut = cutBeforeInput.replace(
+      '\ncolumn-zero continuation`))',
+      '\n      indented continuation`))'
+    );
+    expect(notCut).not.toEqual(cutBeforeInput);
+    expect(
+      cutProcChunks(notCut),
+      'Indenting the continuation is the only change, so a non-empty list here means the ' +
+        'predicate flags intact chunks and the positives above prove nothing.'
+    ).toEqual([]);
+    expect(bridgeInputProcs(ROUTER, notCut).procs).toEqual(['cutProc']);
+  });
+
+  it('a column-zero COMMENT body line does not end a procedure', () => {
+    // 🔴 THE OTHER SIDE OF THE SAME BOUNDARY, and a false RED reachable from prettier-clean
+    // source: prettier does not reindent the body lines of a block comment, so a committer may
+    // legitimately leave one in column zero. While the close test read RAW lines, that ended the
+    // chunk — `cutProcChunks` returned the procedure and `procsReachingGuard` returned nothing,
+    // for a procedure whose very next line calls the guard. The message then blamed a column-zero
+    // line, which the committer was entitled to write and could not act on.
+    //
+    // The pair matters: this asserts a comment body line does NOT close, while
+    // `a chunk cut short by a column-zero line is CAUGHT` asserts a template continuation DOES.
+    // Only `codeWithLiterals` answers both — comments stripped, literal bodies kept — so a
+    // change to either of the other two views breaks exactly one of these two tests.
+    const withComment = [
+      'export const r = router({',
+      '  realProc: publicProcedure',
+      '    .input(z.object({ blockToken: z.string().min(1) }))',
+      '    /*',
+      'Foo bar — a block-comment body line left in column zero by the formatter.',
+      '    */',
+      '    .mutation(async ({ input }) => authorizeBlockBridgeToken(input.blockToken)),',
+      '});',
+    ].join('\n');
+    expect(
+      cutProcChunks(withComment),
+      'A column-zero line inside a COMMENT must not end the chunk. Returning the procedure ' +
+        'here is a false red on source the formatter produces, and its message names a cause ' +
+        'the committer cannot act on.'
+    ).toEqual([]);
+    // …and the procedure is still scored correctly on both ledgers, which is what the false red
+    // was costing: it reported the guard as unreachable from a proc that calls it.
+    expect(bridgeInputProcs(ROUTER, withComment).procs).toEqual(['realProc']);
+    expect(procsReachingGuard(withComment)).toEqual(['realProc']);
   });
 
   /**
@@ -1849,6 +2808,162 @@ describe('no unguarded block-bridge token verification', () => {
     expect(procsReachingGuard(interpolated)).toEqual(['evilProc']);
   });
 
+  it('POSITIVE CONTROL — a commented-out guard call is stripped BETWEEN CHAINED CALLS too', () => {
+    // 🔴 THE POSITION WAS THE WHOLE BUG, AND IT WAS LIVE. `scanTrivia` recursed with
+    // `forEachChild`, which visits NODES and skips pure tokens — so a comment whose next token
+    // is the `.` joining two links of a call chain was leading trivia of nothing the walk asked
+    // about, and survived normalisation. That is clawgate #589 finding (2) — a guard call
+    // satisfied by a COMMENT — reopened one position further out, and the comparison below is
+    // what makes it unarguable: the identical comment inside the `.mutation` body was stripped
+    // correctly the whole time. On the real router, 18 of 157 block-comment openers survived.
+    const chained = (comment: string) =>
+      [
+        'export const r = router({',
+        '  evasiveProc: publicProcedure',
+        '    .input(z.object({ blockToken: z.string().min(1) }))',
+        `    ${comment}`,
+        '    .mutation(async ({ input }) => input.blockToken.length),',
+        '});',
+      ].join('\n');
+
+    for (const comment of [
+      '/* await authorizeBlockBridgeToken(input.blockToken) */',
+      '// await authorizeBlockBridgeToken(input.blockToken)',
+    ]) {
+      const source = chained(comment);
+      // It IS in the population — it takes a blockToken — which is what makes the next
+      // assertion the one that matters.
+      expect(bridgeInputProcs(ROUTER, source).procs).toEqual(['evasiveProc']);
+      expect(
+        procsReachingGuard(source),
+        `${comment}\nA guard call written in a COMMENT between two chained calls is not a ` +
+          'guard call. Returning the procedure here means a proc that verifies nothing reads ' +
+          'as reaching the guard — the exact shape this normaliser exists to close.'
+      ).toEqual([]);
+    }
+
+    // The mirror image, so the fix is not "blank everything in that position": a REAL guard
+    // CALL between the chained links still counts. Note it must be a call — `GUARD_CALL_RE`
+    // requires the `(`, so passing the guard by REFERENCE (`withAudit(authorizeBlockBridgeToken)`)
+    // correctly counts for nothing, which is how this fixture was wrong on its first draft.
+    const real = chained('.use(authorizeBlockBridgeToken(ctx))');
+    expect(procsReachingGuard(real)).toEqual(['evasiveProc']);
+  });
+
+  it('a trailing comment after a pure TOKEN is not a guard call', () => {
+    // 🔴 THIS EXISTS BECAUSE THE LINE IT PINS WAS DELETED ONCE, ON A CENSUS THAT WAS CORRECT AND
+    // AN INFERENCE THAT WAS NOT. The census said token-level TRAILING was the sole source for 0
+    // of 3,782 comment positions across the three files these suites read; that was read as
+    // "every same-line trailing comment is already reached by the node-level call", which is
+    // false. `getLeadingCommentRanges` deliberately skips a comment sharing a line with the code
+    // before it, so a same-line comment following a pure TOKEN — `(`, `=`, `.`, `:`, `return` —
+    // is trailing trivia of that token and of nothing else. Un-exercised on this corpus is not
+    // unreachable, and the suite could not tell the difference: deleting the line was 42/42 green.
+    //
+    // Both manifestations are asserted, because they fail through different assertions: the proc
+    // reads as REACHING the guard, and the comment also registers as a real call SITE.
+    const commentedGuard = 'await authorizeBlockBridgeToken(input.blockToken)';
+    const afterOpenParen = [
+      'export const r = router({',
+      '  evasiveProc: publicProcedure',
+      '    .input(z.object({ blockToken: z.string().min(1) }))',
+      `    .mutation( // ${commentedGuard}`,
+      '      async ({ input }) => input.blockToken.length',
+      '    ),',
+      '});',
+    ].join('\n');
+    expect(
+      countCalls(GUARD_CALL_RE, stripNonCode(afterOpenParen)),
+      'A comment following `(` on the same line survived normalisation. It is trailing trivia ' +
+        'of a TOKEN, which `getLeadingCommentRanges` does not report and no node-level call ' +
+        'reaches — so the token-level trailing collection is the only thing that sees it.'
+    ).toBe(0);
+    expect(
+      procsReachingGuard(afterOpenParen),
+      'A procedure whose only mention of the guard is a COMMENT must not read as reaching it. ' +
+        'This is the outcome `scan` reads normalised code to prevent.'
+    ).toEqual([]);
+    expect(
+      scan(afterOpenParen).guarded,
+      'A commented-out guard call must not register as a call SITE either — that would put a ' +
+        'phantom entry into GUARD_CALL_SITE_LEDGER.'
+    ).toEqual([]);
+
+    // The same shape one token over: after `=` in a module-scope helper.
+    const afterEquals = [
+      `const helper = // ${commentedGuard}`,
+      '  async (t: string) => t.length;',
+      'export const r = router({',
+      '  evasiveProc: publicProcedure',
+      '    .input(z.object({ blockToken: z.string().min(1) }))',
+      '    .mutation(async ({ input }) => helper(input.blockToken)),',
+      '});',
+    ].join('\n');
+    expect(countCalls(GUARD_CALL_RE, stripNonCode(afterEquals))).toBe(0);
+    expect(scan(afterEquals).guarded).toEqual([]);
+
+    // 🔴 THE CONTROL, so none of the above is satisfied by a normaliser that blanks everything:
+    // a REAL guard call in the very same position still counts.
+    const realCall = [
+      'export const r = router({',
+      '  guardedProc: publicProcedure',
+      '    .input(z.object({ blockToken: z.string().min(1) }))',
+      '    .mutation(async ({ input }) => authorizeBlockBridgeToken(input.blockToken)),',
+      '});',
+    ].join('\n');
+    expect(countCalls(GUARD_CALL_RE, stripNonCode(realCall))).toBe(1);
+    expect(procsReachingGuard(realCall)).toEqual(['guardedProc']);
+  });
+
+  it('a trailing comment inside an ARGUMENT LIST is not a guard call', () => {
+    // 🔴 THIS PINS THE NODE-LEVEL TRAILING CALL, AND IT EXISTS BECAUSE RESTORING THE TOKEN-LEVEL
+    // ONE MADE AN EXISTING PIN VACUOUS. Before that restore, deleting
+    // `getTrailingCommentRanges(source, node.end)` reddened
+    // `the normalisers strip comments AND re-delimit strings`; afterwards the token loop gave
+    // that control a second route to the same position, so the same deletion went GREEN. The
+    // line was quietly unpinned without anything about it changing — the hazard of adding a
+    // second collector for an overlapping range.
+    //
+    // WHAT IT UNIQUELY REACHES: the trailing trivia of a SyntaxList element that is itself a
+    // single leaf token. `forEachChild` never visits a SyntaxList, so the token loop cannot get
+    // there. MEASURED with the node-level call deleted — each of these leaks, and the leak is a
+    // phantom guard call:
+    //   `noop(input /* …guard… */, 1)`              -> 1
+    //   `const a = [1 /* …guard… */, 2];`           -> 1
+    //   `new Map<string /* …guard… */, number>();`  -> 1
+    //   and a procedure whose only guard mention is the first of those read as REACHING it.
+    const commentedGuard = 'await authorizeBlockBridgeToken(input.blockToken)';
+    for (const [shape, code] of [
+      ['call argument list', `noop(input /* ${commentedGuard} */, 1)`],
+      ['array literal', `const a = [1 /* ${commentedGuard} */, 2];`],
+      ['type argument list', `new Map<string /* ${commentedGuard} */, number>();`],
+    ] as const) {
+      expect(
+        countCalls(GUARD_CALL_RE, stripNonCode(code)),
+        `${shape}: a comment between a list element and its comma survived normalisation. It is ` +
+          'trailing trivia of a SyntaxList element, which `forEachChild` never visits — so the ' +
+          'NODE-level trailing call is the only thing that reaches it.'
+      ).toBe(0);
+    }
+    const leaky = [
+      'export const r = router({',
+      '  leakProc: publicProcedure',
+      '    .input(z.object({ blockToken: z.string().min(1) }))',
+      `    .mutation(async ({ input }) => noop(input /* ${commentedGuard} */, 1)),`,
+      '});',
+    ].join('\n');
+    expect(
+      procsReachingGuard(leaky),
+      'A procedure whose only mention of the guard is a comment inside an argument list must ' +
+        'not read as reaching it.'
+    ).toEqual([]);
+    // The control, so none of the above is satisfied by blanking everything: a REAL call in the
+    // same argument-list position still counts.
+    expect(
+      countCalls(GUARD_CALL_RE, stripNonCode('noop(input, authorizeBlockBridgeToken(t), 1)'))
+    ).toBe(1);
+  });
+
   it('POSITIVE CONTROL — a regex literal does not desync the normaliser', () => {
     // `/^https?:\/\//` puts an adjacent `//` in the source, which a lexer takes as a line
     // comment and then discards the rest of the line. `blocks.router.ts` contains exactly
@@ -1942,9 +3057,37 @@ describe('no unguarded block-bridge token verification', () => {
     // either check is correct — it only catches one dropped wholesale while everything
     // still type-checks.
     //
-    // What actually pins the behaviour is `blocks.router.bridgeTokenGuard.test.ts` (a
-    // different vitest project, which is why this cheap presence check exists at all). If
-    // you are tempted to read this test as coverage, read that file instead.
+    // What actually pins the behaviour is
+    // `src/server/routers/__tests__/blocks.router.bridgeTokenGuard.test.ts`. If you are
+    // tempted to read this test as coverage, read that file instead.
+    //
+    // 🔴 THIS CHECK'S STATED REASON WAS FALSE, AND NO ESTABLISHED REASON HAS REPLACED IT.
+    // Read that literally — it is a finding, not a placeholder. The original text said the
+    // behavioural pin lives in "a different vitest project, which is why this cheap presence
+    // check exists at all", so a reader deciding whether to delete this test was deciding on a
+    // false premise. Project `unit` includes `src/**/*.test.ts` (`vitest.config.mts`), BOTH
+    // files match it, and measured, `--project unit` over the two collects them in one run.
+    //
+    // 🔴 I AM THE SECOND WRITER OF THIS PARAGRAPH AND THE FIRST REPLACEMENT WAS ALSO WRONG.
+    // Recorded so a third does not quietly appear. That draft claimed the split was "about what
+    // each can SEE" — that the sibling only reds when behaviour changes, while this one catches
+    // a check "dropped wholesale even if no test happened to exercise the path it covered".
+    // Measured against the sibling: it exercises BOTH paths behaviourally, with two tests for a
+    // revoked `blockInstanceId` and two for a non-approved `app_blocks` row. So the "no test
+    // exercises it" half is false. Reaching for a second rationale under the pressure of having
+    // none is how a guard accumulates successive justifications and keeps no real one.
+    //
+    // So the reason is OPEN, deliberately left that way, and what would settle it is a
+    // MEASUREMENT rather than an argument: break each spelled check in
+    // `src/server/services/blocks/block-bridge-auth.service.ts` and see whether the sibling
+    // already goes red WITHOUT this test present —
+    //   1. remove the `BlockRevocation.isRevoked(...)` call;
+    //   2. remove the `resolveAppBlockApprovalVerdict(...)` delegation;
+    //   3. drop that call's second argument (`claims.sub`), which type-checks because the
+    //      parameter is optional by design — the case the note below calls the dangerous one.
+    // Red on all three means this test is subsumed and should be DELETED, not re-justified.
+    // That decision belongs to whoever owns the merge; it is named here so the next reader
+    // inherits a mechanical question instead of a rationale to believe.
     // 🔴 NORMALISED, on EVERY assertion in this test — see `codeWithLiterals`. These used to
     // read the WHOLE file, which is satisfiable by prose: this very file's docblocks name
     // both `BlockRevocation.isRevoked` and `resolveAppBlockApprovalVerdict`. Identifier
@@ -2024,8 +3167,9 @@ describe('no unguarded block-bridge token verification', () => {
    * ⚠️ WHAT THIS CAN SEE: that the guard file does not name the REST policy helper. It is
    * a spelling check like the one above and inherits every limit of one. The BEHAVIOUR it
    * protects — `NOT_FOUND` on a missing row — is pinned in
-   * `blocks.router.bridgeTokenGuard.test.ts`, which is the file to change if this ever
-   * becomes a decision rather than an accident.
+   * `src/server/routers/__tests__/blocks.router.bridgeTokenGuard.test.ts`, which is the file
+   * to change if this ever becomes a decision rather than an accident. (Same vitest project
+   * as this one — see the note on `still SPELLS the two checks the guard exists for`.)
    */
   it('does NOT route the bridge through the REST policy wrapper — the two differ on a missing row', () => {
     // Normalised for the same reason as `only in PROSE` above: a line opening with a block
