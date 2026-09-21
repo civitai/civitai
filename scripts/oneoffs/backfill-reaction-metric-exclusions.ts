@@ -60,6 +60,9 @@ type Entity = (typeof ENTITIES)[number];
 /** The endpoint caps `entityIds` at 1000; this must not exceed it. */
 const SEARCH_INDEX_BATCH = 1000;
 
+/** Keys per clear-cache call. 60 keeps the query string well inside any proxy's limit. */
+const CACHE_BUST_BATCH = 60;
+
 /** Pinned against this file's own name by a test — see the entrypoint guard at the end. */
 const SCRIPT_BASENAME = 'backfill-reaction-metric-exclusions';
 
@@ -543,16 +546,40 @@ export async function propagateArticles(ids: number[], fetchImpl: typeof fetch =
     console.log(`[article] queued ${batch.length} id(s) for reindex`);
   }
 
-  const res = await fetchImpl(
-    `${base}/api/admin/clear-cache-by-pattern?token=${token}&pattern=packed:caches:article-stats`
-  );
-  if (!res.ok) throw new Error(`clear-cache-by-pattern ${res.status}: ${await res.text()}`);
-  // 🔴 This evicts the stats of EVERY article on the site, not only the ids just written:
-  // `packed:caches:article-stats` is one packed hash keyed by articleId, and the endpoint
-  // takes a pattern rather than fields. Every article stat read then falls through to
-  // ArticleMetric until the hash refills. There is no per-field route through this
-  // endpoint, so it is a constraint of going over HTTP rather than a slip — run off-peak.
-  console.log('[article] article-stats cache cleared (whole hash, site-wide)');
+  // 🔴 ONE KEY PER ARTICLE — `packed:caches:article-stats:<id>` — not one hash keyed by
+  // id. `createCachedObject`'s bust writes `${key}:${id}` (packages/civitai-redis/src/
+  // cached-array.ts), so clearing the bare prefix matches NOTHING.
+  //
+  // This was wrong in production on 2026-09-21. The clear returned `{"ok":true,
+  // "cleared":0}`, this function logged success, and the feed served the pre-backfill
+  // counts afterwards — article 14410 still read 18/18 against a corrected row of 12/12.
+  // Nothing failed; the run simply had no effect and said it did. Clearing the right
+  // keys flipped the same article to 12/12 on the next read.
+  //
+  // Hence both halves of the fix: address the per-id keys, and READ THE COUNT BACK.
+  let cleared = 0;
+  for (let i = 0; i < ids.length; i += CACHE_BUST_BATCH) {
+    const batch = ids.slice(i, i + CACHE_BUST_BATCH);
+    const params = new URLSearchParams({
+      token,
+      patterns: batch.map((id) => `packed:caches:article-stats:${id}`).join(','),
+    });
+    const res = await fetchImpl(`${base}/api/admin/clear-cache-by-pattern?${params}`);
+    if (!res.ok) throw new Error(`clear-cache-by-pattern ${res.status}: ${await res.text()}`);
+    cleared += Number((await res.json())?.cleared ?? 0);
+  }
+
+  // A zero here means the pattern matched nothing, which is indistinguishable from a
+  // successful clear unless it is checked. Not every id must match — an article nobody
+  // has read recently has no cached entry — but ALL of them missing means the key shape
+  // is wrong again, and the feed will keep serving stale counts for rows the metric job
+  // will never revisit.
+  if (!cleared)
+    throw new Error(
+      `cleared 0 of ${ids.length} article-stats keys — the key shape is probably wrong; ` +
+        `expected packed:caches:article-stats:<id>`
+    );
+  console.log(`[article] cleared ${cleared} of ${ids.length} article-stats cache key(s)`);
 }
 
 // Only when run as a script — importing the builders above must not execute a run. The

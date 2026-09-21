@@ -259,6 +259,9 @@ describe('reaction-metric exclusion backfill', () => {
         ok: true,
         status: 200,
         text: async () => '',
+        // The clear endpoint answers with the number of keys it removed, and the script
+        // reads it back — a `cleared: 0` is what a wrong key shape looks like.
+        json: async () => ({ ok: true, cleared: 1 }),
       })) as unknown as typeof fetch;
 
     it('queues every id, in batches the endpoint will accept', async () => {
@@ -282,14 +285,61 @@ describe('reaction-metric exclusion backfill', () => {
       }
     });
 
-    it('clears the article stat cache after queueing', async () => {
+    /**
+     * Named for the decision, because "clear the parent key" is the obvious simplification
+     * and it is the bug this test exists for. `createCachedObject` writes ONE KEY PER ID —
+     * `packed:caches:article-stats:<id>` — so a clear of the bare prefix matches nothing.
+     *
+     * That shipped to production on 2026-09-21. The endpoint answered
+     * `{"ok":true,"cleared":0}`, the script logged success, and the feed kept serving the
+     * pre-backfill counts: article 14410 read 18/18 against a corrected row of 12/12.
+     * Nothing failed — the run had no effect and said it did.
+     */
+    it('clears the PER-ID cache keys, not the bare prefix', async () => {
       const f = okFetch();
 
-      await propagateArticles([1], f);
+      await propagateArticles([7, 9], f);
 
       const urls = (f as unknown as { mock: { calls: [string][] } }).mock.calls.map(([u]) => u);
-      expect(urls[urls.length - 1]).toContain('clear-cache-by-pattern');
-      expect(urls[urls.length - 1]).toContain('packed:caches:article-stats');
+      const clear = urls.find((u) => u.includes('clear-cache-by-pattern'));
+      expect(clear).toBeDefined();
+      const patterns = decodeURIComponent(clear!);
+      expect(patterns).toContain('packed:caches:article-stats:7');
+      expect(patterns).toContain('packed:caches:article-stats:9');
+    });
+
+    it('THROWS when the clear matched nothing, rather than logging success', async () => {
+      // `cleared: 0` is what a wrong key shape looks like, and it is indistinguishable
+      // from a successful clear unless the count is read back. It was not, once.
+      const f = vi.fn(async (url: string) =>
+        String(url).includes('clear-cache-by-pattern')
+          ? {
+              ok: true,
+              status: 200,
+              json: async () => ({ ok: true, cleared: 0 }),
+              text: async () => '',
+            }
+          : { ok: true, status: 200, json: async () => ({}), text: async () => '' }
+      ) as unknown as typeof fetch;
+
+      await expect(propagateArticles([7], f)).rejects.toThrow('cleared 0 of 1');
+    });
+
+    it('accepts a partial clear — the control for the assertion above', async () => {
+      // Not every id must match: an article nobody has read recently has no cached entry.
+      // Only ALL of them missing means the key shape is wrong.
+      const f = vi.fn(async (url: string) =>
+        String(url).includes('clear-cache-by-pattern')
+          ? {
+              ok: true,
+              status: 200,
+              json: async () => ({ ok: true, cleared: 1 }),
+              text: async () => '',
+            }
+          : { ok: true, status: 200, json: async () => ({}), text: async () => '' }
+      ) as unknown as typeof fetch;
+
+      await expect(propagateArticles([7, 9], f)).resolves.toBeUndefined();
     });
 
     it('does nothing at all for an empty id list', async () => {
