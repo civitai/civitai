@@ -59,11 +59,13 @@ pnpm run build            # Production build
 
 ### Code Quality
 ```bash
-pnpm run typecheck        # Run TypeScript type checking
+pnpm run typecheck        # Run TypeScript type checking (5.9 — the authoritative one)
+pnpm run typecheck:fast   # TypeScript 7, edit loop only, NOT authoritative. Needs a one-time install
 pnpm run lint             # Run ESLint
 pnpm run prettier:check   # Check Prettier formatting
 pnpm run prettier:write   # Auto-fix Prettier formatting
 ```
+
 
 #### SvelteKit apps have their own standard
 
