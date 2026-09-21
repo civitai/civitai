@@ -307,10 +307,8 @@ export function ResourceSelectMultipleInput({
         // Cast existing values since they should be hydrated by now
         onChange?.([...(value as ResourceSelectValue[]), resource]);
       },
-      onSelectMultiple:
-        role === 'resource'
-          ? (resources) => onChange?.([...(value as ResourceSelectValue[]), ...resources])
-          : undefined,
+      onSelectMultiple: (resources) =>
+        onChange?.([...(value as ResourceSelectValue[]), ...resources]),
       limit: limit !== undefined ? Math.max(limit - value.length, 0) : undefined,
       options: {
         ...resolvedOptions,

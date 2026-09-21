@@ -203,48 +203,53 @@ export function GenerationForm() {
   // no-op (we just don't re-add the id).
   const loadFromModelVersion = trpc.wildcardSet.loadFromModelVersion.useMutation();
   const handleAddWildcardSet = useCallback(() => {
+    const addOne = async (resource: GenerationResource) => {
+      try {
+        const result = await loadFromModelVersion.mutateAsync({ modelVersionId: resource.id });
+        const snap = graph.getSnapshot() as { snippets?: SnippetsNodeValue };
+        // Fallback shape mirrors `snippetsNode([])`'s default. `targets` is
+        // empty here because we can't infer the active subgraph's target list
+        // from the form layer — if no snippets node was hydrated yet, the
+        // graph's defaultValue will replace this on the next evaluation.
+        const current = snap.snippets ?? {
+          wildcardSetIds: [],
+          mode: 'random' as const,
+          batchCount: 1,
+          targets: {},
+        };
+        if (current.wildcardSetIds.includes(result.wildcardSetId)) return;
+        graph.set({
+          snippets: {
+            ...current,
+            wildcardSetIds: [...current.wildcardSetIds, result.wildcardSetId],
+          },
+        } as Parameters<typeof graph.set>[0]);
+        if (result.invalidated) {
+          showNotification({
+            title: 'Wildcard set added with warnings',
+            message: result.reason ?? 'The set was added but its content is currently invalidated.',
+            color: 'yellow',
+          });
+        }
+      } catch (e) {
+        showNotification({
+          title: 'Could not add wildcard set',
+          message: e instanceof Error ? e.message : String(e),
+          color: 'red',
+        });
+      }
+    };
+
     openResourceSelectModal({
       title: 'Add wildcard set',
       selectSource: 'addResource',
       // Filter the modal to Wildcards-type models only. `baseModels`
       // omitted intentionally — wildcard packs are model-agnostic.
       options: { resources: [{ type: 'Wildcards' }] },
-      onSelect: async (resource) => {
-        try {
-          const result = await loadFromModelVersion.mutateAsync({ modelVersionId: resource.id });
-          const snap = graph.getSnapshot() as { snippets?: SnippetsNodeValue };
-          // Fallback shape mirrors `snippetsNode([])`'s default. `targets` is
-          // empty here because we can't infer the active subgraph's target list
-          // from the form layer — if no snippets node was hydrated yet, the
-          // graph's defaultValue will replace this on the next evaluation.
-          const current = snap.snippets ?? {
-            wildcardSetIds: [],
-            mode: 'random' as const,
-            batchCount: 1,
-            targets: {},
-          };
-          if (current.wildcardSetIds.includes(result.wildcardSetId)) return;
-          graph.set({
-            snippets: {
-              ...current,
-              wildcardSetIds: [...current.wildcardSetIds, result.wildcardSetId],
-            },
-          } as Parameters<typeof graph.set>[0]);
-          if (result.invalidated) {
-            showNotification({
-              title: 'Wildcard set added with warnings',
-              message:
-                result.reason ?? 'The set was added but its content is currently invalidated.',
-              color: 'yellow',
-            });
-          }
-        } catch (e) {
-          showNotification({
-            title: 'Could not add wildcard set',
-            message: e instanceof Error ? e.message : String(e),
-            color: 'red',
-          });
-        }
+      onSelect: addOne,
+      // Sequential: keeps pick order, and each first pick imports the set server-side.
+      onSelectMultiple: async (resources) => {
+        for (const resource of resources) await addOne(resource);
       },
     });
   }, [graph, loadFromModelVersion]);
