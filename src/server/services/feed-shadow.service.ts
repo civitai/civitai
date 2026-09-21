@@ -92,8 +92,6 @@ const UNSUPPORTED_KEYS = [
 const UNSUPPORTED_FLAGS = [
   'hidden',
   'requiringMeta',
-  'hideAutoResources',
-  'hideManualResources',
   'pending',
   'publishedOnly',
   'remixesOnly',
@@ -137,6 +135,10 @@ export function mapSearchInputToFeedQuery(
   const skip = (reason: string): FeedQueryMapping => ({ ok: false, reason });
   for (const key of UNSUPPORTED_KEYS) if (present(input[key])) return skip(`input:${key}`);
   for (const flag of UNSUPPORTED_FLAGS) if (input[flag] === true) return skip(`flag:${flag}`);
+  // These only narrow a model version's gallery; without one they filter nothing.
+  if (present(input.modelVersionId))
+    for (const flag of ['hideAutoResources', 'hideManualResources'] as const)
+      if (input[flag] === true) return skip(`flag:${flag}`);
   const followed = input.followed === true ? input.followedUserIds : undefined;
   if (input.followed === true) {
     if (!Array.isArray(followed)) return skip('flag:followed');

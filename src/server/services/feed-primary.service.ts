@@ -27,18 +27,26 @@ export function reasonLabel(reason: string) {
 const count = (outcome: string, reason = '') =>
   requestCounter.inc({ outcome, reason: reasonLabel(reason) });
 
-const CURSOR_LOG_INTERVAL_MS = 10_000;
-let cursorLoggedAt = 0;
-function logUnparsedCursor(cursor: unknown) {
+const UNMAPPED_LOG_INTERVAL_MS = 60_000;
+const unmappedLoggedAt = new Map<string, number>();
+function logUnmapped(reason: string, input: CapturableSearchInput) {
   const now = Date.now();
-  if (now - cursorLoggedAt < CURSOR_LOG_INTERVAL_MS) return;
-  cursorLoggedAt = now;
+  if (now - (unmappedLoggedAt.get(reason) ?? 0) < UNMAPPED_LOG_INTERVAL_MS) return;
+  unmappedLoggedAt.set(reason, now);
+  const keys = Object.keys(input).filter((k) => {
+    const v = input[k];
+    return v !== undefined && v !== null && v !== false && !(Array.isArray(v) && !v.length);
+  });
   logToAxiom(
     {
       type: 'warning',
-      name: 'feed-primary-cursor-unparsed',
-      cursorType: typeof cursor,
-      cursor: String(cursor).slice(0, 80),
+      name: 'feed-primary-unmapped',
+      reason,
+      keys,
+      sort: input.sort,
+      period: input.period,
+      cursorType: typeof input.cursor,
+      cursor: reason === 'cursor:unparsed' ? String(input.cursor).slice(0, 80) : undefined,
     },
     'civitai-prod'
   ).catch(() => undefined);
@@ -133,7 +141,7 @@ export async function serveFromFeed<T extends { id: number }>(
   const mapping = mapSearchInputToFeedQuery(input, 'primary');
   if (!mapping.ok) {
     count(mapping.reason === DEEP_OFFSET ? 'rejected' : 'unmapped', mapping.reason);
-    if (mapping.reason === 'cursor:unparsed') logUnparsedCursor(input.cursor);
+    if (mapping.reason !== DEEP_OFFSET) logUnmapped(reasonLabel(mapping.reason), input);
     return { ok: false, reason: mapping.reason };
   }
   let answer: FeedAnswer;
