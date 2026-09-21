@@ -6,7 +6,6 @@ import {
   getBounties,
   getBountyEntries,
   getShopPurchases,
-  getBuzzBalance,
   getComments,
   getCommentsV2,
   getCosmetics,
@@ -16,13 +15,13 @@ import {
   getTrainingRuns,
 } from '$lib/server/user-account.service';
 
-// Client-fetched: the Buzz balance is an external HTTP call and the lists are only wanted once an
-// investigation is already underway. Keeping them off the load means identity still renders immediately.
+// Client-fetched: these lists are only wanted once an investigation is already underway, so keeping
+// them off the load means identity still renders immediately. Every panel fed by this waits on the
+// slowest member — `getReactionTargets`, an aggregate over 744M rows.
 export const GET: RequestHandler = async ({ params, locals }) => {
   const userId = requireUserIdParam(locals, params, '/retool/user-lookup');
 
   const [
-    buzz,
     reviews,
     receivedReviews,
     comments,
@@ -35,7 +34,6 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     shopPurchases,
     availableBadges,
   ] = await Promise.all([
-    getBuzzBalance(userId),
     getReviews(userId),
     getReceivedReviews(userId),
     getComments(userId),
@@ -50,7 +48,6 @@ export const GET: RequestHandler = async ({ params, locals }) => {
   ]);
 
   return json({
-    buzz,
     reviews,
     receivedReviews,
     comments,

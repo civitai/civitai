@@ -88,8 +88,10 @@ is absent, so the page reads as unconfigured rather than broken in dev.
 
 ## Known gaps
 
-- **`edit` has no emitter.** `updateMessage` is still unrouted, so the type is
-  declared and unused.
+- **Two readers, and only one is in this repo's main app.** `chat.getAudit` backs
+  `/moderator/chat-audit`; `apps/moderator`'s Chat Audit transcript reads `type
+  = 'edit'` rows per message to show the text before an edit, since
+  `ChatMessage.content` is overwritten in place and Postgres keeps no copy.
 - **Retention is not absolute.** Account deletion and the auto-mute-scam cron
   both hard-delete `ChatMessage` rows from Postgres. The audit row survives with
   its content copy, but the thread around it does not.
