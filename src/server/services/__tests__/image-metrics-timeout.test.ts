@@ -300,6 +300,12 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
     expect(rejectionLogs[0][0]).toMatchObject({
       message: 'Metric cache read rejected for 1 of 2 ids',
     });
+    // The DATASET too: filtering on the payload alone passes a log routed to an
+    // Axiom stream nobody alerts on.
+    expect(logToAxiomMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'getCachedImageMetrics rejected' }),
+      'clickhouse'
+    );
   });
 
   it('says NOTHING about rejections when every read succeeds', async () => {
@@ -349,6 +355,14 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
     // bound alone passes at 700ms and at 1ms.
     expect(elapsed).toBeLessThan(800);
     expect(staleCounterIncMock).toHaveBeenCalledTimes(1);
+    // The counter alone left the log unpinned: its name, message and dataset were
+    // all free, and this is the half of an outage the comment says must be audible.
+    const timeoutLogs = logToAxiomMock.mock.calls.filter(
+      ([payload]) => (payload as { name?: string })?.name === 'getCachedImageMetrics timeout'
+    );
+    expect(timeoutLogs).toHaveLength(1);
+    expect(timeoutLogs[0][0]).toMatchObject({ message: 'Stale metric cache read exceeded 500ms' });
+    expect(timeoutLogs[0][1]).toBe('clickhouse');
   });
 
   it('leaves the deadline wide enough to admit a real round trip', async () => {
