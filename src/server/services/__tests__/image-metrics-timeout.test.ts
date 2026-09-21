@@ -299,9 +299,8 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
       ([payload]) => (payload as { name?: string })?.name === 'getCachedImageMetrics rejected'
     );
     expect(rejectionLogs).toHaveLength(1);
-    expect(rejectionLogs[0][0]).toMatchObject({
-      message: 'Metric cache read rejected for 1 of 2 ids',
-    });
+    expect(rejectionLogs[0][0].message).toBe('Metric cache read rejected for 1 of 2 ids');
+    expect(rejectionLogs[0][0].type).toBe('warning');
     // The DATASET too: filtering on the payload alone passes a log routed to an
     // Axiom stream nobody alerts on.
     expect(logToAxiomMock).toHaveBeenCalledWith(
@@ -349,7 +348,8 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
     );
 
     const start = Date.now();
-    const result = await getImageMetricsObject([{ id: 1 }]);
+    // TWO ids, so "one log per outage" is distinguishable from "one log per id".
+    const result = await getImageMetricsObject([{ id: 1 }, { id: 2 }]);
     const elapsed = Date.now() - start;
 
     expect(result).toEqual({});
@@ -363,7 +363,13 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
       ([payload]) => (payload as { name?: string })?.name === 'getCachedImageMetrics timeout'
     );
     expect(timeoutLogs).toHaveLength(1);
-    expect(timeoutLogs[0][0]).toMatchObject({ message: 'Stale metric cache read exceeded 500ms' });
+    // `.message` directly, not toMatchObject: a mismatch then prints both strings
+    // instead of "(3 matching properties omitted)".
+    expect(timeoutLogs[0][0].message).toBe('Stale metric cache read exceeded 500ms');
+    // `type` is what this codebase queries Axiom on, so an alertable line that
+    // silently becomes `info` is the same defect as one sent to another dataset.
+    expect(timeoutLogs[0][0].type).toBe('warning');
+    expect(timeoutLogs[0][0].idCount).toBe(2);
     expect(timeoutLogs[0][1]).toBe('clickhouse');
   });
 
@@ -375,6 +381,30 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
     // pinned separately below, where it costs no wall clock at all.
     redisMock.redis.hGetAll.mockImplementation(
       (key: string) => new Promise((resolve) => setTimeout(() => resolve(CACHED[key] ?? {}), 10))
+    );
+
+    const result = await getImageMetricsObject([{ id: 1 }]);
+
+    expect(result[1]?.reactionLike).toBe(62);
+    expect(staleCounterIncMock).not.toHaveBeenCalled();
+    // The timeout log's NEGATIVE control: without it, hoisting that log out of the
+    // onTimeout callback so it fires on every fallback passes the whole file.
+    expect(
+      logToAxiomMock.mock.calls.filter(
+        ([payload]) => (payload as { name?: string })?.name === 'getCachedImageMetrics timeout'
+      )
+    ).toHaveLength(0);
+  });
+
+  it('admits a read that takes a QUARTER SECOND, not just a token one', async () => {
+    fetchMock.mockRejectedValue(new Error('Socket hang up after 3 retries'));
+    // The text pin below fixes the constant's DECLARATION; it cannot see the
+    // deadline actually passed to withTimeoutFallback. Hardcoding 150 there
+    // leaves the declaration reading 500 and the log still saying "500ms", so
+    // only a behavioural floor catches a decoupled deadline. 250ms against 500ms
+    // is 250ms of headroom - not the 84ms that made the old case flake.
+    redisMock.redis.hGetAll.mockImplementation(
+      (key: string) => new Promise((resolve) => setTimeout(() => resolve(CACHED[key] ?? {}), 250))
     );
 
     const result = await getImageMetricsObject([{ id: 1 }]);
