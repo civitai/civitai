@@ -71,7 +71,7 @@ beforeEach(() => {
   dbMock.dbWrite.customerSubscription.deleteMany.mockResolvedValue({ count: 0 });
 });
 
-const scrub = () => scrubStripeAccount({ userId: 42, customerId: CUSTOMER });
+const scrub = () => scrubStripeAccount({ customerId: CUSTOMER });
 
 describe('isFinished — DECISION: an unbounded wait can never finish an account', () => {
   it.each([
@@ -159,7 +159,7 @@ describe('scrubStripeAccount — the customer object', () => {
   it.each([['cus_example_MERGED'], [''], ['cus_'], ['nope']])(
     'refuses the malformed customerId %s without calling Stripe',
     async (customerId) => {
-      const outcome = await scrubStripeAccount({ userId: 42, customerId });
+      const outcome = await scrubStripeAccount({ customerId });
 
       // The `_MERGED` suffix must never be stripped: the base id resolves to a customer whose
       // ownership could not be established, so scrubbing it would hit someone else's record.

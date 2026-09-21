@@ -66,9 +66,9 @@ export const CUSTOMER_ID_SHAPE = /^cus_[A-Za-z0-9]+$/;
  * The `pendingUnbounded` conjunct is deliberately redundant: today that flag is only ever set
  * beside `pending`, so the state it guards cannot arise. It is here because a future site that
  * sets only the flag would otherwise finish the account and drop the pointer over the exact
- * condition it was flagging as needing a person. Exported so that impossible state can be
- * constructed in a test — a guard no test can reach is the defect class this file spent its
- * review removing. Do not delete it as dead code.
+ * condition it was flagging as needing a person. Exported so that state can be constructed in a
+ * test: a guard no test can reach is the defect class this file's review spent twelve rounds
+ * removing. Do not delete the conjunct as dead code.
  */
 export const isFinished = (
   outcome: Pick<ScrubOutcome, 'errors' | 'pending' | 'pendingUnbounded'>
@@ -242,11 +242,7 @@ export async function scrubStripeAccount({
   if (!outcome.customerGone) await clearPaymentMethods(stripe, customerId, outcome);
   await clearMetadata(stripe, customerId, outcome);
 
-  // The last conjunct is deliberately redundant — today the flag is only ever set alongside
-  // `pending`. It is here so a future site that sets only `pendingUnbounded` cannot produce a
-  // completing account: that would drop the pointer over the exact condition it was flagging as
-  // needing a person. Do not delete it as dead code.
-  outcome.complete = outcome.errors.length === 0 && !outcome.pending && !outcome.pendingUnbounded;
+  outcome.complete = isFinished(outcome);
   return outcome;
 }
 
