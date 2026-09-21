@@ -25,13 +25,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * exclude-id, and that only a reported delete marks the row.
  */
 
-const { mockDeleteModelFileObject, mockIsFlipt } = vi.hoisted(() => ({
+const { mockDeleteModelFileObject, mockIsFlipt, mockResolveTarget } = vi.hoisted(() => ({
   mockDeleteModelFileObject: vi.fn(),
   mockIsFlipt: vi.fn(),
+  mockResolveTarget: vi.fn(),
 }));
 
 vi.mock('~/utils/s3-utils', () => ({
   deleteModelFileObject: mockDeleteModelFileObject,
+  resolveModelFileDeleteTarget: mockResolveTarget,
 }));
 
 vi.mock('~/server/flipt/client', () => ({
@@ -81,6 +83,8 @@ beforeEach(() => {
   // case would pass vacuously over a job that did nothing.
   // Purge ON, dry-run OFF, for every case except the ones that are about those switches.
   mockIsFlipt.mockImplementation(async (flag: string) => flag === 'training-data-purge');
+  // Deletable by default; the would-skip arm says so explicitly.
+  mockResolveTarget.mockReturnValue({ ok: true, backend: 'b2', bucket: 'b', key: 'k' });
 });
 
 describe('delete-old-training-data routes its deletes through the ModelFile helper', () => {
@@ -275,6 +279,39 @@ describe('the dry run stops short of the delete', () => {
       .find((arg) => arg?.message === 'Dry run, would delete');
     expect(line?.data?.modelFileId).toBe(503);
     expect(line?.data?.url).toBe('https://example.invalid/bucket/key-503');
+  });
+
+  it('🔴 says would SKIP for a row the real pass would not delete', async () => {
+    // The defect this closes: the dry run labelled EVERY row "would delete", including ones
+    // several outcomes leave undeleted by design. An operator reading a night of that would
+    // project a drain rate the real pass cannot reach. The classification comes from the same
+    // function the real path uses, so the preview cannot drift from the behaviour it previews.
+    mockIsFlipt.mockImplementation(async () => true);
+    mockResolveTarget.mockReturnValueOnce({ ok: false, reason: 'bucket-not-allowed' });
+    selects([row(505)]);
+
+    await deleteOldTrainingData.run({}).result;
+
+    const messages = loggingMock.logToAxiom.mock.calls.map(
+      ([arg]) => (arg as { message?: string })?.message
+    );
+    expect(messages).toContain('Dry run, would skip');
+    expect(messages).not.toContain('Dry run, would delete');
+    const skip = loggingMock.logToAxiom.mock.calls
+      .map(([arg]) => arg as { message?: string; data?: { reason?: string } })
+      .find((arg) => arg?.message === 'Dry run, would skip');
+    expect(skip?.data?.reason).toBe('bucket-not-allowed');
+  });
+
+  it('asks the SAME resolver the real delete path uses', async () => {
+    // One authority, not two: a preview that re-implements backend selection and the allowlist
+    // drifts from the original the first time either changes.
+    mockIsFlipt.mockImplementation(async () => true);
+    selects([row(506)]);
+
+    await deleteOldTrainingData.run({}).result;
+
+    expect(mockResolveTarget).toHaveBeenCalledWith('https://example.invalid/bucket/key-506');
   });
 
   it('CONTROL: with dry-run OFF the same setup really deletes', async () => {

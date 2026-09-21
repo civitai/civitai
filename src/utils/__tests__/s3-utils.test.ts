@@ -93,6 +93,7 @@ import {
   parseKey,
   parseB2Url,
   deleteModelFileObject,
+  resolveModelFileDeleteTarget,
   deleteModelFileObjects,
   classifyS3MultipartError,
   checkFileExists,
@@ -212,6 +213,58 @@ describe('deleteModelFileObject — bucket allowlist gate', () => {
 
   it('returns silently for empty url', async () => {
     await deleteModelFileObject('');
+    expect(mocks.deleteObjectCalls).toHaveLength(0);
+  });
+});
+
+describe('resolveModelFileDeleteTarget — the LOCAL half of the decision', () => {
+  // 🔴 Tested directly, not only through deleteModelFileObject, because the dry-run path calls it
+  // on its own. Covering it solely through the delete path would leave the preview's one source
+  // of truth unguarded — and the preview is what an operator reads before destroying anything.
+
+  it('routes a B2-hosted url to the b2 backend', () => {
+    expect(
+      resolveModelFileDeleteTarget(
+        'https://s3.us-west-004.backblazeb2.com/civitai-modelfiles-b2/some/key.bin'
+      )
+    ).toEqual({ ok: true, backend: 'b2', bucket: 'civitai-modelfiles-b2', key: 'some/key.bin' });
+  });
+
+  it('routes an R2-hosted url to the default backend', () => {
+    expect(
+      resolveModelFileDeleteTarget(
+        'https://civitai-prod-settled.abcd1234.r2.cloudflarestorage.com/k/f.bin'
+      )
+    ).toEqual({ ok: true, backend: 'default', bucket: 'civitai-prod-settled', key: 'k/f.bin' });
+  });
+
+  it('refuses a non-allowlisted bucket on either backend', () => {
+    expect(
+      resolveModelFileDeleteTarget('https://attacker.abcd1234.r2.cloudflarestorage.com/v.bin')
+    ).toEqual({ ok: false, reason: 'bucket-not-allowed' });
+    expect(
+      resolveModelFileDeleteTarget('https://s3.us-west-004.backblazeb2.com/attacker/v.bin')
+    ).toEqual({ ok: false, reason: 'bucket-not-allowed' });
+  });
+
+  it('refuses an unresolvable url and an empty one, distinctly', () => {
+    expect(resolveModelFileDeleteTarget('not-a-url')).toEqual({
+      ok: false,
+      reason: 'unparseable',
+    });
+    expect(resolveModelFileDeleteTarget('')).toEqual({ ok: false, reason: 'empty-url' });
+  });
+
+  it('🔴 touches neither the database nor the network', async () => {
+    // It is the half a dry run can afford to run per row, and that is only true while it stays
+    // free. A refcount query creeping in here would make the preview as expensive as the pass.
+    mocks.findManyMock.mockClear();
+
+    resolveModelFileDeleteTarget(
+      'https://civitai-prod-settled.abcd1234.r2.cloudflarestorage.com/k/f.bin'
+    );
+
+    expect(mocks.findManyMock).not.toHaveBeenCalled();
     expect(mocks.deleteObjectCalls).toHaveLength(0);
   });
 });

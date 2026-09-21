@@ -182,10 +182,22 @@ export enum FLIPT_FEATURE_FLAGS {
 // than bypassing this one flag.
 // ⚠ DELIBERATELY NOT HERE: TRAINING_DATA_PURGE. It is a stop button for irreversible deletes, so
 // it looks like it belongs — a draft of it was added on exactly that reasoning and then removed.
-// The entry would be INERT: that flag is evaluated once per NIGHTLY run, and the cache TTL is ten
-// seconds, so a cached entry has expired long before the next evaluation and bypassing the cache
-// can never change what that job sees. The entries below are each evaluated far more often than
-// the TTL, which is the property that makes bypassing them mean anything.
+// The entry would be INERT: that flag is evaluated exactly once per NIGHTLY run against a
+// ten-second TTL, so a cached entry has always expired before the next evaluation and bypassing
+// can never change what that job sees.
+//
+// ⚠ THE CRITERION IS "CACHING BUYS NOTHING AND STALENESS COSTS SOMETHING", NOT "EVALUATED OFTEN".
+// An earlier draft of this paragraph said the entries below are each evaluated far more often
+// than the TTL. Two of them say otherwise in their own comments a few lines down — one is
+// evaluated only from Redis error handlers at near-zero volume, another once per scan and once
+// per nightly run — so that criterion would argue for removing an entry that belongs here. What
+// they have in common is the second half: each is read at a moment when someone is trying to
+// change behaviour NOW, and the cache can only delay them.
+//
+// 🔴 The purge flag fails the FIRST half today only because it is read once per run. If it is
+// ever made loop-evaluated — and the comment on the job's switch openly regrets that it cannot
+// stop a pass already running — then it starts being read often enough for the cache to matter,
+// and this entry should come back.
 const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
   FLIPT_FEATURE_FLAGS.HIGH_REPLICATION_LAG_MODE,

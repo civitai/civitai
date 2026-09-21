@@ -1,7 +1,7 @@
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import { deleteModelFileObject } from '~/utils/s3-utils';
+import { deleteModelFileObject, resolveModelFileDeleteTarget } from '~/utils/s3-utils';
 import { createJob } from './job';
 
 const logJob = (data: MixedObject) => {
@@ -171,9 +171,18 @@ export const DELETE_OLD_TRAINING_DATA_LOCK_SECONDS = 6 * 60 * 60;
  * 🔴 THE ARMING ORDER, WRITTEN DOWN BECAUSE TWO DEFAULT-OFF FLAGS THAT NOBODY RECORDS ARE A TRAP
  * RATHER THAN A SAFEGUARD. Both `training-data-purge` and `training-data-purge-dry-run` default
  * off, so turning ON only the purge goes straight to real deletes — the dry run cannot protect a
- * first pass unless it is turned on FIRST. The order is: dry-run on, purge on, read one night's
- * `Dry run, would delete` lines and the `eligibleTotal`, then dry-run off. Skipping a step is a
- * choice someone may make; not knowing there was a step is the failure this paragraph prevents.
+ * first pass unless it is turned on FIRST.
+ *
+ * 🔴 STEP ZERO, WHICH AN EARLIER DRAFT OF THIS PARAGRAPH OMITTED AND WHICH IS THE ONE THAT BITES:
+ * BOTH flags must exist and be flippable before any of the steps below can be taken. `isFlipt`
+ * returns false for an UNKNOWN flag, so an undeclared `training-data-purge-dry-run` is
+ * indistinguishable from "dry run is off" — an operator would open the console, find only the
+ * purge switch, turn it on, and go straight to irreversible deletes on night one. That is exactly
+ * the outcome this paragraph exists to prevent, so the paragraph has to name the step.
+ *
+ * Then: dry-run on, purge on, read one night's `Dry run, would delete` / `would skip` lines and
+ * the `eligibleTotal`, then dry-run off. Skipping a step is a choice someone may make; not
+ * knowing there was a step is the failure this paragraph prevents.
  *
  * A consequence worth knowing rather than discovering: a capped pass finishes far inside the
  * caller's timeout, which is exactly the condition under which the run lock above stops being the
@@ -244,8 +253,15 @@ export const deleteOldTrainingData = createJob(
       -- the first LIMIT slots every single night, so the pass does the same futile work forever
       -- and never reaches the rest of the set — a starvation the uncapped loop could not have,
       -- because it walked everything. Sampling bounds the expected wait for every row instead.
-      -- The cost is real and accepted: this must find the whole eligible set to sort it, where
-      -- an unordered LIMIT could stop early.
+      -- 🔴 TWO COSTS, AND AN EARLIER DRAFT NAMED ONLY THE FIRST. (1) This must find the whole
+      -- eligible set to sort it, where an unordered LIMIT could stop early. (2) The count query
+      -- above evaluates the SAME predicate, so a pass now walks the eligible set TWICE per night
+      -- rather than once. Both are accepted for a job that then performs thousands of network
+      -- deletes, and against the pre-fix branch it is still a reduction, because the retry storm
+      -- ran the uncapped query up to four times a night. If it ever matters, a count(*) OVER ()
+      -- in this query returns the full total beside the capped rows and collapses the two to one.
+      -- (No backticks in here: this comment lives inside a tagged template literal, and a
+      -- backtick closes it. An earlier draft did, and the file stopped parsing.)
       ORDER BY random()
       LIMIT ${DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS}
     `;
@@ -291,15 +307,35 @@ export const deleteOldTrainingData = createJob(
         // 🔴 THE DRY RUN STOPS SHORT OF THE DELETE, AND IT IS THE ONLY WAY TO SEE WHAT THIS PASS
         // WOULD TOUCH BEFORE IT TOUCHES IT. An S3 delete is not reversible from here, and until
         // the switch is first thrown this path has never been observed working in production —
-        // so "what would it have deleted" is not a question any amount of reading answers. It
-        // deliberately skips the refcount query too: that query is the expensive part per row,
-        // and a dry run exists to be cheap enough to leave on for a night.
+        // so "what would it have deleted" is not a question any amount of reading answers.
+        //
+        // 🔴 IT REPORTS would-skip SEPARATELY, AND AN EARLIER DRAFT DID NOT — IT LABELLED EVERY
+        // ROW "would delete". That was wrong in the direction that matters: several outcomes
+        // leave a row undeleted by design, this file says so forty lines up, and an operator
+        // reading a night of "would delete" would have projected a drain rate the real pass
+        // cannot hit. The classification comes from the same function the real path uses, so the
+        // preview cannot drift from the behaviour it previews.
+        //
+        // ⚠ WHAT IT STILL CANNOT TELL YOU, stated because a silent gap here is the whole hazard:
+        // it does NOT run the refcount query, so a row shown as would-delete may still come back
+        // `still-referenced` on the real pass. That query is the expensive part per row and a dry
+        // run exists to be cheap enough to leave on for a night. And because the slice is sampled
+        // randomly, a dry-run night and a deleting night see DIFFERENT rows — the output is a
+        // sample of the eligible set, not a preview of the next pass. Finally, a clean dry-run
+        // night says nothing about the S3 path itself: not the client, not the credential, not
+        // whether that credential may delete. Only an armed night answers those.
         if (dryRun) {
           dryRunJobs += 1;
+          const target = resolveModelFileDeleteTarget(url);
           logJob({
             type: 'info',
-            message: `Dry run, would delete`,
-            data: { jobId: job_id, modelFileId: mf_id, url },
+            message: target.ok ? `Dry run, would delete` : `Dry run, would skip`,
+            data: {
+              jobId: job_id,
+              modelFileId: mf_id,
+              url,
+              ...(target.ok ? { backend: target.backend } : { reason: target.reason }),
+            },
           });
           continue;
         }

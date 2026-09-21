@@ -394,45 +394,69 @@ export type DeleteModelFileObjectOutcome =
  * 🔴 Returns a `DeleteModelFileObjectOutcome`; see the type above for why. A caller that only
  * cares about "best effort, don't block" may ignore it, and several do.
  */
+/**
+ * Where a ModelFile url would be deleted from, or why it would not be — the LOCAL half of the
+ * decision, with no database access and no network.
+ *
+ * 🔴 IT EXISTS SO THERE IS ONE AUTHORITY, NOT TWO. A caller that wants to preview a delete
+ * without performing one (a dry run) otherwise has to re-implement backend selection and the
+ * allowlist, and the copy drifts from the original the first time either changes — which is
+ * exactly the defect class this whole change came out of. `deleteModelFileObject` below is a
+ * consumer of this function, not a parallel implementation of it.
+ *
+ * What it deliberately CANNOT tell you: whether the object is still referenced. That answer needs
+ * a query, so a preview built on this function must say it has not checked rather than imply the
+ * delete would succeed.
+ */
+export type ModelFileDeleteTarget =
+  | { ok: true; backend: 'b2' | 'default'; bucket: string; key: string }
+  | { ok: false; reason: 'empty-url' | 'bucket-not-allowed' | 'unparseable' };
+
+export function resolveModelFileDeleteTarget(url: string): ModelFileDeleteTarget {
+  if (!url) return { ok: false, reason: 'empty-url' };
+  const b2 = parseB2Url(url);
+  if (b2) {
+    if (!isAllowedModelFileBucket(b2.bucket)) return { ok: false, reason: 'bucket-not-allowed' };
+    return { ok: true, backend: 'b2', bucket: b2.bucket, key: b2.key };
+  }
+  const { key, bucket } = parseKey(url);
+  if (!key || !bucket) return { ok: false, reason: 'unparseable' };
+  if (!isAllowedModelFileBucket(bucket)) return { ok: false, reason: 'bucket-not-allowed' };
+  return { ok: true, backend: 'default', bucket, key };
+}
+
 export async function deleteModelFileObject(
   url: string,
   excludeId?: number
 ): Promise<DeleteModelFileObjectOutcome> {
-  if (!url) return { deleted: false, reason: 'empty-url' };
+  // ⚠ THE LOCAL CHECKS NOW RUN BEFORE THE REFCOUNT QUERY, WHERE THEY USED TO RUN AFTER. Both are
+  // still required before anything is deleted, so the guarantee is unchanged; what changes is
+  // that a url which can never be deleted no longer costs a database round-trip, and a url that
+  // is both still-referenced and non-allowlisted now reports the latter. Ordering the free checks
+  // first is also what lets a dry run reuse this decision without touching the database.
+  const target = resolveModelFileDeleteTarget(url);
+  if (!target.ok) {
+    if (target.reason === 'bucket-not-allowed') {
+      logToAxiom({
+        type: 'warn',
+        name: 'model-file-delete-s3-object-blocked',
+        backend: parseB2Url(url) ? 'b2' : 'r2',
+        url,
+      });
+    }
+    return { deleted: false, reason: target.reason };
+  }
   // Refcount check: skip if any live ModelFile row still references this URL.
   // Closes the user-supplied-url hijack: an attacker plants a row with
   // url=victim's url, then deletes their own row. Without this check, the
   // S3 cleanup would delete the victim's bytes.
   const { safe } = await urlsSafeToDelete([url], excludeId);
   if (safe.length === 0) return { deleted: false, reason: 'still-referenced' };
-  const b2 = parseB2Url(url);
-  if (b2) {
-    if (!isAllowedModelFileBucket(b2.bucket)) {
-      logToAxiom({
-        type: 'warn',
-        name: 'model-file-delete-s3-object-blocked',
-        backend: 'b2',
-        bucket: b2.bucket,
-        url,
-      });
-      return { deleted: false, reason: 'bucket-not-allowed' };
-    }
-    await deleteObject(b2.bucket, b2.key, getB2S3Client());
-    return { deleted: true };
-  }
-  const { key, bucket } = parseKey(url);
-  if (!key || !bucket) return { deleted: false, reason: 'unparseable' };
-  if (!isAllowedModelFileBucket(bucket)) {
-    logToAxiom({
-      type: 'warn',
-      name: 'model-file-delete-s3-object-blocked',
-      backend: 'r2',
-      bucket,
-      url,
-    });
-    return { deleted: false, reason: 'bucket-not-allowed' };
-  }
-  await deleteObject(bucket, key);
+  await deleteObject(
+    target.bucket,
+    target.key,
+    target.backend === 'b2' ? getB2S3Client() : undefined
+  );
   return { deleted: true };
 }
 
