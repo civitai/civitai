@@ -46,6 +46,21 @@ describe('meta flags', () => {
   });
 });
 
+describe('real-person and minor settings', () => {
+  it('asks the feed to drop flagged media, keeping a signed-in viewer their own', () => {
+    const query = (i: Record<string, unknown>) => {
+      const m = mapSearchInputToFeedQuery({ ...base, ...i });
+      return new URLSearchParams(m.ok ? m.query : '');
+    };
+    const viewer = query({ disablePoi: true, disableMinor: true, currentUserId: 42 });
+    expect(viewer.get('excludePoi')).toBe('1');
+    expect(viewer.get('excludeMinor')).toBe('1');
+    expect(viewer.get('viewerId')).toBe('42');
+    expect(query({ disablePoi: true }).get('viewerId')).toBeNull();
+    expect(query({ currentUserId: 42 }).get('viewerId')).toBeNull();
+  });
+});
+
 describe('mapSearchInputToFeedQuery', () => {
   it('maps the search shape onto the feed query', () => {
     const m = mapSearchInputToFeedQuery({
