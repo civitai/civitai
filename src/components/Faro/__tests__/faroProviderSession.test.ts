@@ -70,7 +70,7 @@ vi.mock('~/components/Faro/ResourceTimingInstrumentation', () => ({
 /** Pin `Intl.DateTimeFormat().resolvedOptions().timeZone` to a deterministic IANA zone. */
 const mockTimeZone = (zone: string) => {
   vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(
-    () => ({ resolvedOptions: () => ({ timeZone: zone }) }) as Intl.DateTimeFormat
+    () => ({ resolvedOptions: () => ({ timeZone: zone }) } as Intl.DateTimeFormat)
   );
 };
 
