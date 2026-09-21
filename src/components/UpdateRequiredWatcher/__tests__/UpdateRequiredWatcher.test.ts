@@ -335,7 +335,39 @@ describe('isFirstPartyRequest — fastPathMatchesParse', () => {
     'blob:https://evil.example/abc',
   ];
 
-  it.each(shapes)('agrees with the full parse for %j', (url) => {
-    expect(isFirstPartyRequest(url, ORIGIN)).toBe(viaParseOnly(url, ORIGIN));
+  // Run every shape against MORE THAN ONE origin: a fast path that misbehaves only when the
+  // origin carries a port or a subdomain is invisible against a single bare origin.
+  const origins = [ORIGIN, 'https://civitai.com:8443', 'https://preview.civitai.com'];
+  const cases = origins.flatMap((o) => shapes.map((u) => [o, u] as const));
+
+  it.each(cases)('agrees with the full parse: origin %s, url %j', (origin, url) => {
+    expect(isFirstPartyRequest(url, origin)).toBe(viaParseOnly(url, origin));
+  });
+});
+
+describe('createUpdateAwareFetch — the first-party arm must not swallow a rejection', () => {
+  // The third-party arm is a bare `return baseFetch(...)` and cannot break. The FIRST-party arm
+  // rebuilds the promise chain, so a stray `.catch` there would resolve every failed API request
+  // to `undefined` and every caller would throw on `response.ok` instead of seeing the network
+  // error. Nothing else in the suite can see that.
+  it('rejects with the original error on the first-party path', async () => {
+    const boom = new TypeError('Failed to fetch');
+    const base = vi.fn().mockRejectedValue(boom);
+    const wrapped = createUpdateAwareFetch(base as unknown as typeof fetch, ORIGIN);
+
+    await expect(wrapped('/api/trpc/orchestrator.generate')).rejects.toBe(boom);
+    expect(trigger).not.toHaveBeenCalled();
+  });
+
+  it('rejects rather than resolving undefined when a header read would have run', async () => {
+    const boom = new TypeError('NetworkError when attempting to fetch resource.');
+    const base = vi.fn().mockRejectedValue(boom);
+    const wrapped = createUpdateAwareFetch(base as unknown as typeof fetch, ORIGIN);
+
+    const settled = await wrapped('/api/trpc/x').then(
+      (v) => ({ ok: true as const, v }),
+      (e) => ({ ok: false as const, e })
+    );
+    expect(settled).toEqual({ ok: false, e: boom });
   });
 });

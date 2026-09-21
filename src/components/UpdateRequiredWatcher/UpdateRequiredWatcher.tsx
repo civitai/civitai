@@ -41,8 +41,8 @@ export function isFirstPartyRequest(input: unknown, origin: string): boolean {
     // handed to the parser instead: `/` (protocol-relative), `\` (the URL parser treats it as a
     // separator for http(s)), and any C0 control or space (stripped BEFORE parsing, so it can
     // expose one of the other two). These are equivalence bugs, not theoretical — the shortcut
-    // must agree with the parse it replaces, and `isFirstPartyRequest.fastPathMatchesParse` in
-    // the tests fuzzes exactly that.
+    // must agree with the parse it replaces, which the `fastPathMatchesParse` suite asserts over
+    // a table of shapes, against more than one origin.
     const first = url.charCodeAt(0);
     const second = url.charCodeAt(1); // NaN for a 1-char url, which fails every test below
     if (first === 47 /* / */ && !(second === 47 || second === 92 || second <= 0x20)) return true;

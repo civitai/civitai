@@ -649,3 +649,47 @@ describe('classifyException — the client-lib allowlist requires a direct packa
     expect(r.category).toBe('network');
   });
 });
+
+// Round-3 review: `FIRST_PARTY_ASSET_PATH_RE` became the SOLE decider for every remote frame once
+// the absolute-URL branch moved first, and both of its slashes were unpinned. Dropping either one
+// silently re-admits third-party traffic into `real`.
+describe('classifyException — the first-party asset path needs both slashes', () => {
+  it.each([
+    ['https://cdn.ads.example/js/webworkers/loader.js'], // matches without the LEADING slash
+    ['https://cdn.ads.example/workersfoo/x.js'], // matches without the TRAILING slash
+    ['https://cdn.ads.example/my_next/bundle.js'],
+    ['https://cdn.ads.example/_nextgen/bundle.js'],
+  ])('does NOT count the look-alike asset path %s as project source', (filename) => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', { frames: [OTEL_FETCH_FRAME, { filename }] })
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('network');
+  });
+
+  // 🔴 A DECISION ON RECORD, not an accident: the absolute branch judges the PATH and never the
+  // HOST, so a foreign site's `/_next/` frame reads as ours and blocks the drop. Accepted because
+  // it fails safe (keeps noise, never drops a real bug) and because our own assets may be
+  // CDN-served from a host this module cannot enumerate. If a first-party host set is ever
+  // threaded in, this expectation is the one that should flip.
+  it('counts ANY host’s /_next/ path as project source — host is not checked, by design', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [OTEL_FETCH_FRAME, { filename: 'https://cdn.unrelated.example/_next/static/x.js' }],
+      })
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // Windows-style separators in the two `[/\\]` patterns are not dead: a frame can carry them.
+  it('excludes a dependency frame spelled with Windows separators', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [{ filename: 'webpack://[project]\\node_modules\\some-pkg\\dist\\index.js' }],
+      })
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('network');
+  });
+});

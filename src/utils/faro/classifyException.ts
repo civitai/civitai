@@ -190,15 +190,25 @@ const GLOBAL_FETCH_WRAPPER_PATH_RES = [
 
 // 3) Third-party scripts. A bare `.js` extension test matches every script on the web, so an ad
 //    or analytics bundle (`…/pubads_impl.js`) used to read as project source. An ABSOLUTE
-//    http(s) frame is only ours when it points at a first-party asset path: Next's `/_next/`
-//    bundles, or the hand-built workers in `public/workers/`. Non-absolute filenames (bundler
-//    schemes, bare source paths) are unaffected and still match on extension below.
-// Protocol-relative (`//host/path`) counts too: a frame spelled that way is still a fetch from
-// some host, and without it a `//securepubads…/pubads_impl.js` frame falls through to the bare
-// extension test and reads as project source — exactly the traffic this guard exists to exclude.
+//    http(s) frame is judged purely on its PATH: Next's `/_next/` bundles, or the hand-built
+//    workers in `public/workers/`. Non-absolute filenames (bundler schemes, bare source paths)
+//    are unaffected and still match on extension below.
+// Protocol-relative (`//host/path`) counts as absolute too: a frame spelled that way is still a
+// fetch from some host, and without it a `//securepubads…/pubads_impl.js` frame falls through to
+// the bare extension test and reads as project source — exactly the traffic this guard excludes.
 // A bundler scheme (`turbopack:///…`) does NOT match: the optional `https?:` cannot consume
 // `turbopack:`, so the `//` is not at position 0.
+//
+// 🔴 THE HOST IS DELIBERATELY NOT CHECKED, and that is a real hole, not an oversight: our assets
+// may be served from a CDN host this module cannot enumerate, and a pure classifier has no
+// trustworthy first-party host list to compare against. The cost is that ANY site's `/_next/`
+// or `/workers/` path reads as ours — and every Next.js site on the web serves `/_next/`, so a
+// third-party embed frame can block a drop. That fails SAFE (noise kept, never a real bug
+// dropped), which is why it is accepted here; a test records the decision so it is not
+// rediscovered as a bug. Adding a host check means feeding this module a first-party host set.
 const ABSOLUTE_URL_RE = /^(?:https?:)?\/\//i;
+// Both slashes are load-bearing: without the leading one `…/js/webworkers/loader.js` matches,
+// and without the trailing one `…/workersfoo/x.js` does. Both would silently re-admit the noise.
 const FIRST_PARTY_ASSET_PATH_RE = /\/(?:_next|workers)\//i;
 
 // 🔴 EXCEPTION TO (1) — our API client stack. `node_modules` normally proves nothing, but these
