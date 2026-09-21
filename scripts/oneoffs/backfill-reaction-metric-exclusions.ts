@@ -39,10 +39,20 @@
  */
 import { PrismaClient } from '@prisma/client';
 import { createHash } from 'crypto';
+import { excludedReactorFilter } from '~/shared/utils/excluded-reactor-filter';
 import { ReviewReactions } from '~/shared/utils/prisma/enums';
 
 const ENTITIES = ['article', 'bountyEntry'] as const;
 type Entity = (typeof ENTITIES)[number];
+
+/** The endpoint caps `entityIds` at 1000; this must not exceed it. */
+const SEARCH_INDEX_BATCH = 1000;
+
+/** Pinned against this file's own name by a test — see the entrypoint guard at the end. */
+const SCRIPT_BASENAME = 'backfill-reaction-metric-exclusions';
+
+/** Issues one statement and returns its rows. Injected so a test can see what a run sends. */
+export type Executor = (sql: string) => Promise<{ id: number }[]>;
 
 const REACTIONS = Object.keys(ReviewReactions) as (keyof typeof ReviewReactions)[];
 
@@ -98,12 +108,18 @@ export const reactionDiffers = REACTIONS.map(
   (r) => `m."${r.toLowerCase()}Count" IS DISTINCT FROM s."${r.toLowerCase()}Count"`
 ).join('\n          OR ');
 
-type EntitySpec = {
+export type EntitySpec = {
   maxIdSql: string;
   metricTable: string;
   idColumn: string;
   timeframed: boolean;
   ctes: (args: { start: number; end: number; excluded: string }) => string;
+  /**
+   * Everything downstream of the metric row that has to learn the new value. The metric
+   * JOB is the reference for what belongs here. bountyEntry has none: `bountyEntry.metrics.ts`
+   * busts no cache and queues no index, so there is nothing downstream to tell.
+   */
+  propagate?: (ids: number[]) => Promise<void>;
 };
 
 export const specs: Record<Entity, EntitySpec> = {
@@ -126,6 +142,11 @@ export const specs: Record<Entity, EntitySpec> = {
           ON r."articleId" = a.id AND r."userId" NOT IN (${excluded})
         GROUP BY a.id
       )`,
+    // Article is the only entity with anything downstream. Carried on the spec rather
+    // than as an `entity === 'article'` test in the loop: that condition sat in `main`,
+    // where dropping it would have POSTed bountyEntry ids as article ids to a production
+    // reindex with nothing going red.
+    propagate: (ids) => propagateArticles(ids),
   },
   bountyEntry: {
     maxIdSql: 'SELECT MAX(id) AS max FROM "BountyEntry"',
@@ -149,6 +170,16 @@ export const specs: Record<Entity, EntitySpec> = {
       )`,
   },
 };
+
+/** The discovery half on its own — entities carrying a reaction from an excluded account. */
+export function affectedSql(
+  spec: EntitySpec,
+  args: { start: number; end: number; excluded: string }
+) {
+  return `
+      WITH ${spec.ctes(args)}
+      SELECT id FROM affected`;
+}
 
 export function buildSql(spec: EntitySpec, args: { start: number; end: number; excluded: string }) {
   const timeframeMatch = spec.timeframed ? 'm.timeframe = s.timeframe' : "m.timeframe = 'AllTime'";
@@ -278,35 +309,144 @@ export function parseArgs(argv: string[]): RunOptions {
   if (entityArg !== 'all' && !ENTITIES.includes(entityArg as Entity))
     throw new Error(`--entity must be one of ${ENTITIES.join(', ')}, all`);
 
+  // Every numeric option is validated rather than coerced. `--end abc` is `NaN`, which
+  // `planRanges` turns into ZERO batches and a `0 row(s) would change` report — a typo
+  // and a clean sweep are then the same output, which is the failure this script exists
+  // to remove. `--end` with no value reads as undefined, i.e. the whole table, which
+  // differs from `--end 100` by one missing token.
+  const num = (name: string, fallback?: number) => {
+    const raw = val(name);
+    if (raw === undefined || raw.startsWith('--')) {
+      if (fallback !== undefined) return fallback;
+      if (raw === undefined) return undefined;
+      throw new Error(`--${name} needs a value`);
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n)) throw new Error(`--${name} must be a number, got ${raw}`);
+    return n;
+  };
+
+  const batchSize = num('batch-size', 10000) as number;
+  // `planRanges` advances by batchSize, so anything below 1 is a synchronous loop that
+  // never terminates — an out-of-memory crash, not a failure anyone can read.
+  if (!Number.isInteger(batchSize) || batchSize < 1)
+    throw new Error(`--batch-size must be a positive integer, got ${batchSize}`);
+
   const write = has('write');
+  const propagate = has('propagate') && write;
+  // Checked here rather than inside the propagation itself, which runs AFTER the whole
+  // table is written: a missing token would otherwise fail a run that had already done
+  // all of its work.
+  if (propagate) propagationTarget();
+
   return {
     write,
     // Gated on `write` here rather than at the call site, so there is one place to read
     // and one place to test. Propagation busts the production article cache and queues a
     // production reindex, and the app's .env points both at production whichever database
     // is configured — so a dry run must not reach them even if asked.
-    propagate: has('propagate') && write,
+    propagate,
     entities: entityArg === 'all' ? [...ENTITIES] : [entityArg as Entity],
-    batchSize: Number(val('batch-size') ?? 10000),
-    start: val('start') === undefined ? undefined : Number(val('start')),
-    end: val('end') === undefined ? undefined : Number(val('end')),
+    batchSize,
+    start: num('start'),
+    end: num('end'),
   };
 }
 
+/**
+ * Where propagation sends its requests, and the token it uses.
+ *
+ * `INTERNAL_BASE_URL` has NO default. Propagation is always a production action — it
+ * flushes the production article cache and queues a production reindex — and the hazard
+ * is running it during what feels like a dev rehearsal, because `DATABASE_URL` pointing
+ * at the dev snapshot does not move either of those. Requiring the variable means
+ * propagation cannot happen unless somebody consciously aimed it.
+ */
+export function propagationTarget() {
+  const base = process.env.INTERNAL_BASE_URL;
+  const token = process.env.WEBHOOK_TOKEN;
+  if (!base)
+    throw new Error(
+      'INTERNAL_BASE_URL must be set explicitly to propagate — it has no default, ' +
+        'because propagation hits production regardless of which database you wrote to'
+    );
+  if (!token) throw new Error('WEBHOOK_TOKEN must be set to propagate');
+  return { base, token };
+}
+
+/**
+ * The per-entity run, with the statement executor INJECTED.
+ *
+ * This is its own exported function because `main` is unreachable from a test, and the
+ * decisions that live in a loop body turn out to be the ones that matter. An earlier
+ * round moved the dry/write choice into `sqlFor` so a test could reach it — and the CALL
+ * SITE passing `write` stayed in `main`, where mutating it to a literal `true` still
+ * passed every assertion. Extraction relocates an untested boundary; it does not remove
+ * one. With the executor injected a fake can assert which statements a run actually
+ * issues, which is the property itself rather than a proxy for it.
+ */
+export async function runEntity(args: {
+  exec: Executor;
+  spec: EntitySpec;
+  excluded: string;
+  write: boolean;
+  ranges: Array<[number, number]>;
+}) {
+  const { exec, spec, excluded, write, ranges } = args;
+  const changed: number[] = [];
+  const failures: Array<{ range: [number, number]; message: string }> = [];
+
+  for (const [lo, hi] of ranges) {
+    try {
+      const rows = await exec(sqlFor(spec, { start: lo, end: hi, excluded }, write));
+      for (const row of rows) changed.push(row.id);
+    } catch (e) {
+      // Counted and carried rather than thrown: the batches before this one are already
+      // committed, and letting the error escape discards the id list. The brief asked for
+      // this counter, an earlier revision had it, and it was lost in the move to a script.
+      failures.push({ range: [lo, hi], message: (e as Error).message });
+    }
+  }
+
+  return { changed: [...new Set(changed)], failures };
+}
+
+/**
+ * Ids carrying a reaction from an excluded account, whether or not this run changed them.
+ *
+ * Propagation reads from HERE rather than from the rows a run happened to write, because
+ * the two diverge in the ordinary case. The natural operator flow is `--write`, read the
+ * numbers, then `--write --propagate` — and by the second run `IS DISTINCT FROM` matches
+ * nothing, so a propagation driven by "what changed this time" would queue nothing at
+ * all. Same after an interrupted run: those rows are committed, never selected again,
+ * and their ids would be gone for good. Re-queueing an article that was already correct
+ * costs one reindex and is otherwise a no-op, which is the cheap side of the trade.
+ */
+export async function collectAffected(args: {
+  exec: Executor;
+  spec: EntitySpec;
+  excluded: string;
+  ranges: Array<[number, number]>;
+}) {
+  const { exec, spec, excluded, ranges } = args;
+  const ids: number[] = [];
+  for (const [lo, hi] of ranges) {
+    const rows = await exec(affectedSql(spec, { start: lo, end: hi, excluded }));
+    for (const row of rows) ids.push(row.id);
+  }
+  return [...new Set(ids)];
+}
+
 async function main() {
-  const {
-    write,
-    propagate,
-    entities,
-    batchSize,
-    start: argStart,
-    end: argEnd,
-  } = parseArgs(process.argv);
+  const opts = parseArgs(process.argv);
+  const { write, propagate, entities, batchSize } = opts;
 
   const excludedIds = await fetchExcludedUserIds();
-  for (const id of excludedIds) {
-    if (!Number.isInteger(id)) throw new Error(`non-integer excluded user id: ${id}`);
-  }
+  // Validated by the shared module, which already throws on a non-integer and is covered
+  // by the existing suite. The hand-rolled copy that used to sit here was the only guard
+  // on interpolated SQL text, and it lived in this unreachable function.
+  const notIn = excludedReactorFilter(excludedIds);
+  if (!notIn) throw new Error('exclusion list produced no filter — refusing to run');
   const excluded = excludedIds.join(',');
 
   console.log(
@@ -318,58 +458,66 @@ async function main() {
   );
 
   const prisma = new PrismaClient();
+  const exec: Executor = (sql) => prisma.$queryRawUnsafe<{ id: number }[]>(sql);
+  let failed = false;
+
   try {
     for (const entity of entities) {
       const spec = specs[entity];
       const [{ max }] = await prisma.$queryRawUnsafe<{ max: number | null }[]>(spec.maxIdSql);
-      const start = argStart ?? 0;
-      const end = argEnd ?? max ?? 0;
-
-      const changed: number[] = [];
+      const start = opts.start ?? 0;
+      const end = opts.end ?? Number(max ?? 0);
       const ranges = planRanges(start, end, batchSize);
-      for (const [lo, hi] of ranges) {
-        const sql = sqlFor(spec, { start: lo, end: hi, excluded }, write);
-        const rows = await prisma.$queryRawUnsafe<{ id: number }[]>(sql);
-        for (const row of rows) changed.push(row.id);
-      }
 
-      const ids = [...new Set(changed)];
+      const { changed, failures } = await runEntity({ exec, spec, excluded, write, ranges });
+
       console.log(
         `[${entity}] ${start}-${end} in ${ranges.length} batch(es): ` +
-          `${changed.length} row(s) ${write ? 'written' : 'would change'}, ${
-            ids.length
-          } distinct id(s)`
+          `${changed.length} row(s) ${write ? 'written' : 'would change'}` +
+          `${failures.length ? `, ${failures.length} FAILED batch(es)` : ''}`
       );
+      for (const f of failures) {
+        failed = true;
+        console.error(`[${entity}] ${f.range[0]}-${f.range[1]} FAILED: ${f.message}`);
+      }
 
-      if (entity === 'article' && ids.length)
-        console.log(`[article] ids: ${ids.slice(0, 50).join(',')}${ids.length > 50 ? ' …' : ''}`);
-
-      if (propagate && entity === 'article' && ids.length) await propagateArticles(ids);
+      if (propagate && spec.propagate) {
+        const affected = await collectAffected({ exec, spec, excluded, ranges });
+        console.log(`[${entity}] propagating ${affected.length} affected id(s)`);
+        await spec.propagate(affected);
+      }
     }
   } finally {
     await prisma.$disconnect();
   }
+
+  // A run with a failed batch wrote some rows and not others. Repeating it is safe —
+  // `IS DISTINCT FROM` makes the second pass a no-op over what landed — but it must not
+  // exit 0, or the failure is invisible to whoever reads the exit code.
+  if (failed) throw new Error('one or more batches failed; re-run to converge');
 }
 
 /**
+ * Queue the article search index and clear the article stat cache.
+ *
  * Both halves, because `article.metrics.ts` does both after writing the same rows: the
- * Meilisearch document carries the AllTime reaction counts verbatim, and these rows are
- * by definition ones the job will never revisit, so an unqueued document is wrong
+ * Meilisearch document carries the AllTime reaction counts verbatim, and these are by
+ * definition rows the job will never revisit, so an unqueued document is wrong
  * permanently rather than merely stale.
  *
- * Routed through the deployed internal endpoint rather than calling the app's own
- * `queueUpdate`, which goes through `addToQueue` and FAILS OPEN in a standalone script:
- * `sysRedis` is never connected, every enqueue is skipped, and the script prints success
- * and exits 0. Measured here 2026-08-31 — 332 ids "queued", 0 of them in the queue.
+ * Routed through the DEPLOYED internal endpoint rather than the app's own `queueUpdate`,
+ * which goes through `addToQueue` and FAILS OPEN in a standalone script: `sysRedis` is
+ * never connected, every enqueue is skipped, and the script prints success and exits 0.
+ * Measured 2026-08-31 — 332 ids "queued", 0 of them in the queue. Do not simplify this
+ * back to `queueUpdate`.
  */
-async function propagateArticles(ids: number[]) {
-  const base = process.env.INTERNAL_BASE_URL ?? 'https://civitai.com';
-  const token = process.env.WEBHOOK_TOKEN;
-  if (!token) throw new Error('WEBHOOK_TOKEN must be set to propagate');
+export async function propagateArticles(ids: number[], fetchImpl: typeof fetch = fetch) {
+  if (!ids.length) return;
+  const { base, token } = propagationTarget();
 
-  for (let i = 0; i < ids.length; i += 1000) {
-    const batch = ids.slice(i, i + 1000);
-    const res = await fetch(`${base}/api/internal/search-index-update?token=${token}`, {
+  for (let i = 0; i < ids.length; i += SEARCH_INDEX_BATCH) {
+    const batch = ids.slice(i, i + SEARCH_INDEX_BATCH);
+    const res = await fetchImpl(`${base}/api/internal/search-index-update?token=${token}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ entityType: 'article', entityIds: batch, action: 'update' }),
@@ -378,20 +526,22 @@ async function propagateArticles(ids: number[]) {
     console.log(`[article] queued ${batch.length} id(s) for reindex`);
   }
 
-  const res = await fetch(
+  const res = await fetchImpl(
     `${base}/api/admin/clear-cache-by-pattern?token=${token}&pattern=packed:caches:article-stats`
   );
   if (!res.ok) throw new Error(`clear-cache-by-pattern ${res.status}: ${await res.text()}`);
-  // The whole hash, not the changed fields: the endpoint is pattern-based, and article
-  // stats repopulate from ArticleMetric on read. Stated because it is a wider bust than
-  // the ids we changed, and somebody will ask.
-  console.log('[article] article-stats cache cleared');
+  // 🔴 This evicts the stats of EVERY article on the site, not only the ids just written:
+  // `packed:caches:article-stats` is one packed hash keyed by articleId, and the endpoint
+  // takes a pattern rather than fields. Every article stat read then falls through to
+  // ArticleMetric until the hash refills. There is no per-field route through this
+  // endpoint, so it is a constraint of going over HTTP rather than a slip — run off-peak.
+  console.log('[article] article-stats cache cleared (whole hash, site-wide)');
 }
 
-// Only when run as a script. Without this the builders below cannot be imported — a test
-// that reads the SQL would execute the whole run on import, and `process.exit` inside a
-// vitest worker is an unhandled rejection rather than a failed assertion.
-if (process.argv[1]?.includes('backfill-reaction-metric-exclusions')) {
+// Only when run as a script — importing the builders above must not execute a run. The
+// basename is asserted against this file's own name by a test, because a rename would
+// otherwise make this an import-only no-op that exits 0 having done nothing.
+if (process.argv[1]?.includes(SCRIPT_BASENAME)) {
   main()
     .then(() => process.exit(0))
     .catch((e) => {
