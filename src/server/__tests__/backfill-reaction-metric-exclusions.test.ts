@@ -31,15 +31,19 @@ vi.mock('~/server/services/metric-excluded-users.service', () => ({
   getMetricExcludedUserIdsOrThrow: h.excludedIds,
 }));
 
-vi.mock('~/server/db/pgDb', () => ({
-  pgDbWrite: {
+// All three pools, though only the write one is exercised: `pgDbMock.parity` requires a
+// factory for this module to name every export, so that a test cannot accidentally
+// assert against a pool the module no longer has.
+vi.mock('~/server/db/pgDb', () => {
+  const pool = () => ({
     cancellableQuery: vi.fn(async (sql: string) => {
       h.captured.push(sql);
       const rows = h.rowsFor(sql);
       return { result: async () => rows, cancel: async () => undefined };
     }),
-  },
-}));
+  });
+  return { pgDbWrite: pool(), pgDbRead: pool(), pgDbReadLong: pool() };
+});
 
 vi.mock('~/server/redis/caches', () => ({
   articleStatCache: { bust: h.articleBust },

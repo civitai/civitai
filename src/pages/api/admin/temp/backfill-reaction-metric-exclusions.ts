@@ -304,7 +304,17 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
             dryRun ? sql.dry : sql.write
           );
           cancelFns.push(query.cancel);
-          const rows = await query.result();
+          let rows;
+          try {
+            rows = await query.result();
+          } finally {
+            // Dropped once the batch is done, because a post run is ~31k batches and an
+            // HTTP close runs `Promise.all` over whatever is still in here. Left to grow,
+            // it holds every finished batch's closure for the life of the request and
+            // cancels 31k already-completed queries on disconnect.
+            const i = cancelFns.indexOf(query.cancel);
+            if (i !== -1) cancelFns.splice(i, 1);
+          }
 
           rowsChanged += rows.length;
           changed = [...new Set(rows.map((r) => r.id))];
