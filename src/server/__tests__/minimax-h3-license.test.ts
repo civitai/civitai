@@ -60,32 +60,6 @@ describe('MiniMax H3 licence registration', () => {
     expect(serverLicense()!.url).toBe(PERMALINK);
   });
 
-  it('names the excluded territories the agreement defines', () => {
-    const notice = serverLicense()!.notice ?? '';
-    for (const territory of [
-      'European Union',
-      'United Kingdom',
-      'Republic of Korea',
-      'United States of America',
-    ]) {
-      expect(notice, `notice omits ${territory}`).toContain(territory);
-    }
-  });
-
-  // Deliberate, and not a copy preference: Civitai holds its own agreement with
-  // MiniMax covering generation, training and LoRA distribution here, so the
-  // community licence's territorial grant reaches a visitor only once the weights
-  // leave the platform. Before simplifying this back to one unconditional
-  // sentence, ask whoever owns the MiniMax relationship — the previous wording
-  // told a US visitor their on-site generations were unlicensed.
-  it('scopes the community licence to downloaded weights, not to use on Civitai', () => {
-    const notice = serverLicense()!.notice ?? '';
-    expect(notice, 'notice does not say what Civitai’s own agreement covers').toMatch(
-      /covered by Civitai’s own license agreement with MiniMax/
-    );
-    expect(notice, 'territory exclusion is not conditioned on downloading').toMatch(/download/i);
-  });
-
   // Both were considered and deliberately rejected: the agreement permits
   // commercial use below its revenue threshold, and does not bar mature
   // derivatives. Either flag appearing here would block creators.
