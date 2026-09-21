@@ -34,8 +34,12 @@ vi.mock('~/env/server', () => ({
 const mocks = vi.hoisted(() => {
   const findManyMock = vi.fn(async () => [] as { url: string; id: number }[]);
   const deleteObjectCalls: { bucket: string; key: string }[] = [];
+  // 🔴 Kept SEPARATE from deleteObjectCalls rather than added as a field on it. Widening that
+  // tuple would break every existing `toEqual` in this file, and those assertions are about
+  // (bucket, key) — a different question from WHICH CLIENT the call went to.
+  const deleteObjectEndpoints: (string | undefined)[] = [];
   const deleteManyObjectsCalls: { bucket: string; keys: string[] }[] = [];
-  return { findManyMock, deleteObjectCalls, deleteManyObjectsCalls };
+  return { findManyMock, deleteObjectCalls, deleteManyObjectsCalls, deleteObjectEndpoints };
 });
 
 // Capture deleteObject / deleteManyObjects calls so we can assert which
@@ -51,6 +55,14 @@ vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
   const mocked = {
     ...actual,
     S3Client: class {
+      // 🔴 The config is RECORDED, and it is the only way a test can tell the two backends
+      // apart. Every S3Client in this file is the same class, so a call captured by
+      // (bucket, key) alone looks identical whether it went to the default client or the
+      // other one — which is exactly the production defect this file now guards.
+      cfg: { endpoint?: string };
+      constructor(cfg: { endpoint?: string } = {}) {
+        this.cfg = cfg;
+      }
       send = vi.fn(
         async (cmd: {
           input?: {
@@ -68,6 +80,7 @@ vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
             return { Errors: [] };
           }
           mocks.deleteObjectCalls.push({ bucket: Bucket, key: cmd?.input?.Key ?? '' });
+          mocks.deleteObjectEndpoints.push(this.cfg?.endpoint);
           return {};
         }
       );
@@ -94,6 +107,7 @@ dbMock.dbWrite.modelFile.findMany.mockImplementation((...args: unknown[]) =>
 
 beforeEach(() => {
   mocks.deleteObjectCalls.length = 0;
+  mocks.deleteObjectEndpoints.length = 0;
   mocks.deleteManyObjectsCalls.length = 0;
   mocks.findManyMock.mockReset();
   mocks.findManyMock.mockResolvedValue([]);
@@ -198,6 +212,96 @@ describe('deleteModelFileObject — bucket allowlist gate', () => {
 
   it('returns silently for empty url', async () => {
     await deleteModelFileObject('');
+    expect(mocks.deleteObjectCalls).toHaveLength(0);
+  });
+});
+
+describe('deleteModelFileObject — which BACKEND the delete is sent to', () => {
+  // 🔴 THE PRODUCTION DEFECT THIS GUARDS, stated so nobody relaxes it. A caller resolved the
+  // bucket from a path-style url correctly and then issued the delete on the DEFAULT client.
+  // The bucket is real — on the other backend — so every such delete failed with "The specified
+  // bucket does not exist." and nothing was ever purged from that backend. Asserting only
+  // (bucket, key) cannot see this: both clients are the same class and the tuple is identical.
+  const B2_ENDPOINT = 'https://s3.us-west-004.backblazeb2.com';
+  const DEFAULT_ENDPOINT = 'https://abcd1234.r2.cloudflarestorage.com';
+
+  it('sends a B2-hosted url to the B2 endpoint, not the default one', async () => {
+    await deleteModelFileObject(`${B2_ENDPOINT}/civitai-modelfiles-b2/some/key.safetensors`);
+
+    expect(mocks.deleteObjectCalls).toEqual([
+      { bucket: 'civitai-modelfiles-b2', key: 'some/key.safetensors' },
+    ]);
+    expect(mocks.deleteObjectEndpoints).toEqual([B2_ENDPOINT]);
+  });
+
+  it('CONTROL: an R2-hosted url still goes to the default endpoint', async () => {
+    // Without this arm, a mutant that sent EVERYTHING to B2 would pass the case above. The pair
+    // is what pins routing rather than a single destination.
+    await deleteModelFileObject(
+      'https://civitai-prod-settled.abcd1234.r2.cloudflarestorage.com/k/f.bin'
+    );
+
+    expect(mocks.deleteObjectEndpoints).toEqual([DEFAULT_ENDPOINT]);
+  });
+});
+
+describe('deleteModelFileObject — the OUTCOME it reports', () => {
+  // 🔴 WHY THE RETURN VALUE IS GUARDED AT ALL. Callers that keep their row and set
+  // `dataPurged: true` decide from this. Every non-deleting branch below leaves the object in
+  // place, so reporting one as deleted makes such a caller record a deletion that never
+  // happened — the row leaves its query forever while the bytes remain. That is worse than the
+  // error it replaces, because an error leaves the row to be retried.
+
+  it('reports deleted for an allowlisted R2 bucket', async () => {
+    const outcome = await deleteModelFileObject(
+      'https://civitai-prod-settled.abcd1234.r2.cloudflarestorage.com/k/f.bin'
+    );
+    expect(outcome).toEqual({ deleted: true });
+  });
+
+  it('reports deleted for an allowlisted B2 bucket', async () => {
+    const outcome = await deleteModelFileObject(
+      'https://s3.us-west-004.backblazeb2.com/civitai-modelfiles-b2/k.bin'
+    );
+    expect(outcome).toEqual({ deleted: true });
+  });
+
+  it('reports still-referenced when the refcount guard declines', async () => {
+    mocks.findManyMock.mockResolvedValueOnce([
+      { url: 'https://civitai-prod-settled.abcd1234.r2.cloudflarestorage.com/k', id: 7 },
+    ]);
+    const outcome = await deleteModelFileObject(
+      'https://civitai-prod-settled.abcd1234.r2.cloudflarestorage.com/k'
+    );
+    expect(outcome).toEqual({ deleted: false, reason: 'still-referenced' });
+    expect(mocks.deleteObjectCalls).toHaveLength(0);
+  });
+
+  it('reports bucket-not-allowed for a non-allowlisted R2 bucket', async () => {
+    const outcome = await deleteModelFileObject(
+      'https://attacker-bucket.abcd1234.r2.cloudflarestorage.com/victim.bin'
+    );
+    expect(outcome).toEqual({ deleted: false, reason: 'bucket-not-allowed' });
+    expect(mocks.deleteObjectCalls).toHaveLength(0);
+  });
+
+  it('reports bucket-not-allowed for a non-allowlisted B2 bucket', async () => {
+    const outcome = await deleteModelFileObject(
+      'https://s3.us-west-004.backblazeb2.com/attacker-bucket/victim.bin'
+    );
+    expect(outcome).toEqual({ deleted: false, reason: 'bucket-not-allowed' });
+    expect(mocks.deleteObjectCalls).toHaveLength(0);
+  });
+
+  it('reports unparseable when no bucket can be resolved', async () => {
+    const outcome = await deleteModelFileObject('not-a-url');
+    expect(outcome).toEqual({ deleted: false, reason: 'unparseable' });
+    expect(mocks.deleteObjectCalls).toHaveLength(0);
+  });
+
+  it('reports empty-url for an empty string', async () => {
+    const outcome = await deleteModelFileObject('');
+    expect(outcome).toEqual({ deleted: false, reason: 'empty-url' });
     expect(mocks.deleteObjectCalls).toHaveLength(0);
   });
 });

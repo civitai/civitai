@@ -1,6 +1,6 @@
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { deleteObject, parseKey } from '~/utils/s3-utils';
+import { deleteModelFileObject } from '~/utils/s3-utils';
 import { createJob } from './job';
 
 const logJob = (data: MixedObject) => {
@@ -181,54 +181,69 @@ export const deleteOldTrainingData = createJob(
 
     let goodJobs = 0;
     let errorJobs = 0;
+    let skippedJobs = 0;
 
     for (const { mf_id, job_id, url } of oldTraining) {
-      const { key, bucket } = parseKey(url);
-      if (bucket) {
-        try {
-          await deleteObject(bucket, key);
+      try {
+        // 🔴 `deleteModelFileObject`, NOT a bare `deleteObject(bucket, key)` off `parseKey`.
+        // That is what this loop used to do, and it is why nothing was ever purged from the
+        // newer backend: `parseKey` resolves a path-style url's bucket correctly, but the bare
+        // call then sends it to the DEFAULT client, where that bucket does not exist. Measured
+        // in production before this change: every failure was one error, `The specified bucket
+        // does not exist.`, for a bucket that is real — on the other backend. The helper picks
+        // the client from the url, and also applies the bucket allowlist and the refcount guard
+        // that this loop never had.
+        //
+        // 🔴 `mf_id` as `excludeId` is REQUIRED and is not a refinement. This job KEEPS its row
+        // and only sets `dataPurged`, so the refcount guard would otherwise find the row as a
+        // live reference to its own url and veto every delete, forever and silently — trading a
+        // loud failure for a quiet one. `urlsSafeToDelete` documents this case by name.
+        const outcome = await deleteModelFileObject(url, mf_id);
 
-          try {
-            await dbWrite.modelFile.update({
-              where: { id: mf_id },
-              data: {
-                dataPurged: true,
-              },
-            });
-            goodJobs += 1;
-          } catch (e) {
-            errorJobs += 1;
-            logJob({
-              message: `Update model file error`,
-              data: {
-                error: (e as Error)?.message,
-                cause: (e as Error)?.cause,
-                jobId: job_id,
-                modelFileId: mf_id,
-              },
-            });
-          }
-        } catch (e) {
+        // 🔴 Only a real delete may set `dataPurged`. A skip means THE OBJECT IS STILL THERE, and
+        // marking it purged would drop the row out of this job's query permanently while the
+        // bytes remain — a durable lie, and worse than the error it replaces, because an error
+        // leaves the row to be retried. A skip is not a failure either: `still-referenced` is
+        // the guard doing its job, so it is counted and logged separately from both.
+        if (!outcome.deleted) {
+          skippedJobs += 1;
           logJob({
-            message: `Delete object error`,
+            type: 'info',
+            message: `Skipped, object left in place`,
+            data: { reason: outcome.reason, jobId: job_id, modelFileId: mf_id },
+          });
+          continue;
+        }
+
+        try {
+          await dbWrite.modelFile.update({
+            where: { id: mf_id },
+            data: {
+              dataPurged: true,
+            },
+          });
+          goodJobs += 1;
+        } catch (e) {
+          errorJobs += 1;
+          logJob({
+            message: `Update model file error`,
             data: {
               error: (e as Error)?.message,
               cause: (e as Error)?.cause,
               jobId: job_id,
               modelFileId: mf_id,
-              key,
-              bucket,
             },
           });
-          errorJobs += 1;
         }
-      } else {
+      } catch (e) {
         logJob({
-          message: `Missing bucket`,
+          message: `Delete object error`,
           data: {
+            error: (e as Error)?.message,
+            cause: (e as Error)?.cause,
             jobId: job_id,
             modelFileId: mf_id,
-            key,
+            url,
           },
         });
         errorJobs += 1;
@@ -238,7 +253,7 @@ export const deleteOldTrainingData = createJob(
     logJob({
       type: 'info',
       message: `Finished`,
-      data: { successes: goodJobs, failures: errorJobs },
+      data: { successes: goodJobs, failures: errorJobs, skipped: skippedJobs },
     });
 
     return { status: 'ok' };

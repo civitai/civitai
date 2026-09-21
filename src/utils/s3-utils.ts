@@ -358,6 +358,26 @@ export async function urlsSafeToDelete(
 }
 
 /**
+ * Why this reports an OUTCOME rather than returning void.
+ *
+ * Every early return below is a case where the object is STILL THERE: the refcount guard
+ * declined, the bucket is not allowlisted, the url did not parse. A caller that treats "did not
+ * throw" as "deleted" therefore records a deletion that did not happen — and for the two callers
+ * that keep their row and set `dataPurged: true`, that writes a durable lie: the row leaves the
+ * eligible set forever while the bytes remain. That is strictly worse than a thrown error, which
+ * at least leaves the row to be retried.
+ *
+ * So a skip is reported, not silent. `deleted: false` is not an error and must not be logged as
+ * one — `still-referenced` in particular is the guard working as designed.
+ */
+export type DeleteModelFileObjectOutcome =
+  | { deleted: true }
+  | {
+      deleted: false;
+      reason: 'empty-url' | 'still-referenced' | 'bucket-not-allowed' | 'unparseable';
+    };
+
+/**
  * Delete the S3 object referenced by a ModelFile URL.
  * Resolves the correct backend (R2 vs B2) and bucket from the URL itself —
  * never assumes a single bucket env var, since ModelFile URLs span historical
@@ -368,17 +388,23 @@ export async function urlsSafeToDelete(
  * pointing the delete at an arbitrary bucket (defense in depth — schema
  * validation is z.url() only).
  *
- * `excludeId` is for callers that keep their own row (e.g. `purge-replaced-files`)
- * — see `urlsSafeToDelete`.
+ * `excludeId` is for callers that keep their own row (e.g. `purge-replaced-files`,
+ * `delete-old-training-data`) — see `urlsSafeToDelete`.
+ *
+ * 🔴 Returns a `DeleteModelFileObjectOutcome`; see the type above for why. A caller that only
+ * cares about "best effort, don't block" may ignore it, and several do.
  */
-export async function deleteModelFileObject(url: string, excludeId?: number) {
-  if (!url) return;
+export async function deleteModelFileObject(
+  url: string,
+  excludeId?: number
+): Promise<DeleteModelFileObjectOutcome> {
+  if (!url) return { deleted: false, reason: 'empty-url' };
   // Refcount check: skip if any live ModelFile row still references this URL.
   // Closes the user-supplied-url hijack: an attacker plants a row with
   // url=victim's url, then deletes their own row. Without this check, the
   // S3 cleanup would delete the victim's bytes.
   const { safe } = await urlsSafeToDelete([url], excludeId);
-  if (safe.length === 0) return;
+  if (safe.length === 0) return { deleted: false, reason: 'still-referenced' };
   const b2 = parseB2Url(url);
   if (b2) {
     if (!isAllowedModelFileBucket(b2.bucket)) {
@@ -389,12 +415,13 @@ export async function deleteModelFileObject(url: string, excludeId?: number) {
         bucket: b2.bucket,
         url,
       });
-      return;
+      return { deleted: false, reason: 'bucket-not-allowed' };
     }
-    return deleteObject(b2.bucket, b2.key, getB2S3Client());
+    await deleteObject(b2.bucket, b2.key, getB2S3Client());
+    return { deleted: true };
   }
   const { key, bucket } = parseKey(url);
-  if (!key || !bucket) return;
+  if (!key || !bucket) return { deleted: false, reason: 'unparseable' };
   if (!isAllowedModelFileBucket(bucket)) {
     logToAxiom({
       type: 'warn',
@@ -403,9 +430,10 @@ export async function deleteModelFileObject(url: string, excludeId?: number) {
       bucket,
       url,
     });
-    return;
+    return { deleted: false, reason: 'bucket-not-allowed' };
   }
   await deleteObject(bucket, key);
+  return { deleted: true };
 }
 
 /**
