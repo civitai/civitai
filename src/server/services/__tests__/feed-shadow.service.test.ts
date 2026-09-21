@@ -1,6 +1,8 @@
 import { readFileSync } from 'fs';
 import path from 'path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { context, propagation, trace } from '@opentelemetry/api';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import {
   buildFeedShadowRow,
   compareIds,
@@ -10,6 +12,7 @@ import {
   parseFeedCursor,
   parseShadowConfig,
   type FeedShadowConfig,
+  fetchFeedAnswer,
 } from '../feed-shadow.service';
 import type { FeedShadowRow } from '~/server/common/feed-shadow.constants';
 
@@ -34,6 +37,30 @@ describe('parseShadowConfig', () => {
         maxInflight: 32,
       }
     );
+  });
+});
+
+describe('fetchFeedAnswer', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('sends the active trace context so the feed joins the request trace', async () => {
+    const provider = new NodeTracerProvider();
+    provider.register();
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const span = provider.getTracer('t').startSpan('page');
+    try {
+      await context.with(trace.setSpan(context.active(), span), () =>
+        fetchFeedAnswer('http://feed', 'levels=1', 1000, 'primary')
+      );
+    } finally {
+      span.end();
+      await provider.shutdown();
+      propagation.disable();
+    }
+    const headers = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].headers as Record<string, string>;
+    expect(headers.traceparent).toBe(`00-${span.spanContext().traceId}-${span.spanContext().spanId}-01`);
+    expect(headers['x-request-source']).toBe('primary');
   });
 });
 

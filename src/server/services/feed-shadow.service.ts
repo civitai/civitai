@@ -5,6 +5,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels } from '~/server/prom/client';
 import type { FeedShadowRow } from '~/server/common/feed-shadow.constants';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { traceContextHeaders } from '~/server/utils/otel-helpers';
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
 import {
   buildFeedRequestRow,
@@ -419,7 +420,7 @@ export async function fetchFeedAnswer(
   const started = Date.now();
   const res = await fetch(`${baseUrl.replace(/\/$/, '')}/v1/feed?${query}`, {
     signal: AbortSignal.timeout(timeoutMs),
-    headers: { 'x-request-source': source },
+    headers: { ...traceContextHeaders(), 'x-request-source': source },
   });
   const ms = Date.now() - started;
   if (!res.ok) return { status: res.status, ms, ids: [] };
