@@ -433,7 +433,7 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
     expect(outcome.errors).toEqual([]);
   });
 
-  it('holds a recently settled intent, because the credit webhook may still be retrying', async () => {
+  it('holds a succeeded intent with no charge to read a settle time from', async () => {
     stripe.paymentIntents.list.mockResolvedValue(
       page([
         {
@@ -447,8 +447,8 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
 
     const outcome = await scrub();
 
-    // The Buzz-crediting webhook reads metadata.userId and throws without it. Stripe retries a
-    // failing endpoint for about three days, so stripping it early strands a real payment.
+    // Not the credit window — that is the 3.5-day arm above. There is no charge here, so nothing
+    // says when the money landed, now or later.
     expect(stripe.paymentIntents.update).not.toHaveBeenCalled();
     expect(outcome.pending).toBe(true);
     // No charge for a succeeded intent is not a wait with an end — there is nothing to read a

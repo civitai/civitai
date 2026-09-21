@@ -210,11 +210,11 @@ describe('gdpr-stripe-scrub — dropping the pointer', () => {
       complete({ complete: false, pending: true, pendingUnbounded: true, errors: [] })
     );
 
-    const summary = (await runJob()) as { pending: number; failed: number };
+    const summary = (await runJob()) as { pending: number; pendingStuck: number; failed: number };
 
-    // It is waiting on its own payment, not on us. Alerting here would page someone with no step
-    // and no message to act on.
-    expect(summary).toMatchObject({ pending: 1, failed: 0 });
+    // Counted as the kind a person WOULD work, separately from the kind that clears itself: a
+    // full-window alert reporting one number for both cannot be acted on.
+    expect(summary).toMatchObject({ pending: 0, pendingStuck: 1, failed: 0 });
     // Pending is not failure, but an account pending forever holds its window slot and nothing
     // else reports it — so past the attempt bound it says so, with 'pending' as the step.
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
@@ -375,6 +375,14 @@ describe('gdpr-stripe-scrub — retry state', () => {
     );
   });
 
+  it('counts a self-clearing wait apart from one that needs a person', async () => {
+    scrubStripeAccount.mockResolvedValue(complete({ complete: false, pending: true, errors: [] }));
+
+    const summary = (await runJob()) as { pending: number; pendingStuck: number };
+
+    expect(summary).toMatchObject({ pending: 1, pendingStuck: 0 });
+  });
+
   it('does not alert on a wait that ends by itself, however long it takes', async () => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue(
       live({ gdprStripeScrub: { attempts: 9, lastAttemptAt: '2020-01-01T00:00:00.000Z' } })
@@ -409,7 +417,13 @@ describe('gdpr-stripe-scrub — retry state', () => {
   });
 
   it('does not alert on an ordinary first failure', async () => {
-    scrubStripeAccount.mockResolvedValue(complete({ complete: false, errors: [] }));
+    // A REAL failure at attempt 1: without one this passes on the failure-or-unbounded gate and
+    // says nothing about the attempt bound, which is what it exists to pin. Remove the bound and
+    // every transient Stripe error alerts on its first attempt — 25 accounts a run, every ten
+    // minutes.
+    scrubStripeAccount.mockResolvedValue(
+      complete({ complete: false, errors: [{ step: 'customer', message: 'stripe down' }] })
+    );
 
     await runJob();
 

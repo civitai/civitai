@@ -104,6 +104,7 @@ export const gdprStripeScrubJob = createJob(
       scrubbed: 0,
       blocked: 0,
       pending: 0,
+      pendingStuck: 0,
       failed: 0,
     };
 
@@ -145,7 +146,12 @@ export const gdprStripeScrubJob = createJob(
       if (!outcome.complete) {
         // Pending is not failure: the account is waiting on a payment of its own, not on us. It
         // still takes the backoff, so it is not re-attempted every ten minutes for a day.
+        //
+        // Counted in two buckets because a full-window alert reporting "12 pending" cannot be
+        // acted on when 3 of them are the actionable kind. `pendingStuck` is the number a person
+        // would work; `pending` clears itself.
         if (outcome.errors.length) summary.failed++;
+        else if (outcome.pendingUnbounded) summary.pendingStuck++;
         else summary.pending++;
         await recordAttempt(user.id, live.meta, outcome.errors[0], now, outcome.pendingUnbounded);
         continue;
