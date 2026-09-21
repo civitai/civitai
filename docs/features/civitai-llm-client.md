@@ -176,7 +176,7 @@ const body = {
 };
 ```
 
-Measured 2026-08-11 against the abliterated Qwen3 model: both return 200 on every attempt. `chat_template_kwargs` collapses reasoning from ~377 completion tokens to ~20 and emits a ` ```json ` fence that `extractJsonSlice`'s fenced candidate already unwraps; `response_format` returns bare JSON. Neither is wired into the client yet.
+Measured 2026-09-21 against the abliterated Qwen3 model: both return 200. `response_format` returns bare JSON (31 completion tokens, `finish_reason: stop`, no preamble and no fence), though accuracy was not evaluated, and in the probe run its answer to an arithmetic word problem was wrong while the un-flagged arms had derived the correct value. `chat_template_kwargs: { enable_thinking: false }` is accepted but does NOT suppress reasoning on this model: probed at `max_tokens: 400` with and without it on an identical prompt, both arms returned 400 completion tokens with `finish_reason: length`, both still mid-derivation, with ~1,000 characters of prose before the JSON in each, and neither emitted a fence. Do not reach for it to control cost or latency without measuring the model you are actually calling. Neither is wired into the client yet.
 
 ## Env Vars
 
