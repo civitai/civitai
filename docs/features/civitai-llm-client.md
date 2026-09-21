@@ -114,7 +114,7 @@ analysis, planning, thinking steps, markdown fences, or preamble before
 or after the JSON. Begin your response with `{` and end with `}`.
 ```
 
-Off by default — the client stays model-agnostic. Note that this directive only trims the preamble; it does not stop the model reasoning. The soft `/no_think` token is ignored by the current proxy build, but `chat_template_kwargs: { enable_thinking: false }` and `response_format: { type: 'json_object' }` both work and are stronger — see [Routing to a Civitai-hosted Model](#routing-to-a-civitai-hosted-model).
+Off by default — the client stays model-agnostic. Note that this directive only trims the preamble; it does not stop the model reasoning. The soft `/no_think` token is ignored by the current proxy build, but `chat_template_kwargs: { enable_thinking: false }` and `response_format: { type: 'json_object' }` are both accepted. Only `response_format` is stronger; `chat_template_kwargs` does not suppress reasoning either — see [Routing to a Civitai-hosted Model](#routing-to-a-civitai-hosted-model).
 
 ### 3. JSON extraction fallbacks (`extractJsonSlice`)
 

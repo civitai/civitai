@@ -52,12 +52,11 @@ function normalizeMessage(msg: SimpleMessage): SimpleMessage {
 
 // Opt-in helper for models that emit chain-of-thought before JSON (e.g. Qwen3
 // thinking variants). This instruction only trims the preamble; it does not stop
-// the reasoning. Two request-body flags do, and the current orchestrator proxy
-// accepts both: `chat_template_kwargs: { enable_thinking: false }` cuts ~377
-// completion tokens to ~20 and returns a ```json fence that the `fenced`
-// candidate below already unwraps, and `response_format: { type: 'json_object' }`
-// returns bare JSON. Callers opt into this weaker instruction via
-// `suppressThinking: true` on a per-request basis.
+// the reasoning. Neither does `chat_template_kwargs: { enable_thinking: false }`,
+// which the proxy accepts but which changed nothing measurable on the abliterated
+// Qwen3 model; `response_format: { type: 'json_object' }` does return bare JSON.
+// Numbers in docs/features/civitai-llm-client.md. Callers opt into this
+// instruction via `suppressThinking: true` on a per-request basis.
 const NO_PREAMBLE_INSTRUCTION =
   '\n\nIMPORTANT: Respond with ONLY the raw JSON object. Do NOT include any analysis, planning, thinking steps, markdown fences, or preamble before or after the JSON. Begin your response with `{` and end with `}`.';
 
