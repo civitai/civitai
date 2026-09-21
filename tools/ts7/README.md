@@ -51,8 +51,8 @@ alias wins, and every `npx tsc` and `pnpm run tsc:trace` in the repo silently be
 
 ## Upgrading
 
-Bump the version in `package.json`, re-run the install here, then check three things rather than
-one. **From the repo root:**
+Bump the version in `tools/ts7/package.json`, re-run `pnpm -C tools/ts7 install`, then check three
+things rather than one. **All of these run from the repo root:**
 
 ```bash
 git diff --stat pnpm-lock.yaml        # must be EMPTY: the root lockfile must not move

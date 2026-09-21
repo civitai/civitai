@@ -14,6 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
  */
 
 const WRAPPER = path.resolve(__dirname, '../typecheck-fast.mjs');
+const REPO_ROOT = path.resolve(__dirname, '../..');
 
 let dir: string;
 const stub = (name: string, body: string) => {
@@ -110,20 +111,26 @@ describe('typecheck:fast constrains what the compiler is asked to check', () => 
   // which a compiler asked to check one file — or none — also satisfies. Reported against
   // 8183a2e75a, where `typecheck-fast.mjs --version` printed "0 diagnostics" and exited 0.
   it('asks for exactly --noEmit over the whole project, and nothing else', () => {
-    const res = run(stub('argv', 'console.log(process.argv.slice(2).join(" "));\n'));
-    // The stub echoes its argv on the line after the wrapper's banner.
-    const echoed = res.stdout.split(/\r?\n/)[1];
+    // Whole-string equality, not `toContain` and not equality over the flags alone. A
+    // substring check is blind to an insertion BESIDE the anchor — one appended token undoes
+    // the guard, and `--noCheck` measured at exit 0 with no output on a project holding a
+    // real type error. Comparing only the dash-prefixed tokens has the same hole one layer
+    // in: it cannot see a trailing filename, and it leaves the one argument whose VALUE
+    // changes what gets checked — the incremental buildinfo path — entirely unconstrained.
+    const res = run(
+      stub('argv', 'console.log(process.argv.slice(2).join(" "));\nconsole.log(process.cwd());\n')
+    );
+    const [, echoedArgs, echoedCwd] = res.stdout.split(/\r?\n/);
 
     expect(res.status).toBe(0);
-    expect(echoed.startsWith('--noEmit -p tsconfig.json --tsBuildInfoFile ')).toBe(true);
-    // Asserted by equality, not by `toContain`: a substring check is blind to an insertion
-    // BESIDE the anchor, and one appended token is enough to undo the guard — `--noCheck`
-    // measured at exit 0 with no output on a project holding a real type error.
-    expect(echoed.split(' ').filter((token) => token.startsWith('-'))).toEqual([
-      '--noEmit',
-      '-p',
-      '--tsBuildInfoFile',
-    ]);
+    expect(echoedArgs).toBe(
+      `--noEmit -p tsconfig.json --tsBuildInfoFile ${path.resolve(
+        REPO_ROOT,
+        'node_modules/.cache/typecheck-fast/tsconfig.tsbuildinfo'
+      )}`
+    );
+    // `-p tsconfig.json` is relative, so cwd picks the project as much as argv does.
+    expect(echoedCwd).toBe(REPO_ROOT);
   });
 
   it('refuses caller arguments rather than forwarding them to the compiler', () => {
