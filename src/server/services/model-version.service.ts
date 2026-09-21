@@ -2174,9 +2174,8 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
 
   const date = dayjs().startOf('day').subtract(timeframe, 'day').toDate();
 
-  // A transient ClickHouse connection blip in this read (e.g. `socket hang up`) is a
-  // retryable dependency outage, not a query fault — map it to a retryable 503 instead
-  // of 500ing. A real query/schema fault still surfaces raw.
+  // A transient ClickHouse blip here is a retryable dependency outage, not a query
+  // fault — 503 rather than 500.
   const generationData = await runClickHouseRead(
     () => ch.$query<Row>`
       SELECT

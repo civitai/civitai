@@ -850,12 +850,11 @@ export async function updatePendingImageRatings({
 
   // Get players that rated this image (uses by_imageId projection via GROUP BY pattern)
   //
-  // A transient ClickHouse connection blip in this READ (e.g. `socket hang up`) is a
-  // retryable dependency outage, not a query fault — map it to a retryable 503 instead
-  // of 500ing. This read is on the `games.newOrder.addRating` path via
-  // processImageRating, which is where the 500s were observed. The `$exec` INSERT
-  // below is deliberately NOT wrapped: runClickHouseRead is for reads only, since a
-  // tRPC-typed 503 on a half-applied write would be semantically wrong.
+  // A transient ClickHouse blip here is a retryable dependency outage, not a query
+  // fault — 503 rather than 500. The message is deliberately NOT "please try again":
+  // every caller has already committed a non-idempotent prefix (an nsfwLevel write,
+  // and on the consensus path the vote counters) before reaching this read, and
+  // nothing dedupes a repeat.
   const votes = await runClickHouseRead(
     () => ch.$query<{ userId: number; createdAt: Date; rating: number }>`
       SELECT userId, lastCreatedAt as createdAt, latestRating as rating
@@ -870,7 +869,8 @@ export async function updatePendingImageRatings({
         GROUP BY imageId, userId
       )
       WHERE latestStatus = '${NewOrderImageRatingStatus.Pending}'
-    `
+    `,
+    'Your rating may already have been recorded. Refresh rather than rating again.'
   );
 
   await clickhouse.$exec`
