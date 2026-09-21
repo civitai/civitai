@@ -48,7 +48,8 @@ const featureAvailability = [
   ...serverAvailability,
   ...roleAvailablity,
 ] as const;
-// Tracks which flags have ENV overrides so Flipt is skipped for those
+// Tracks which flags an ENV override was actually APPLIED to, so Flipt is skipped for those.
+// A flag declared `availability: []` that has a `fliptKey` is never added — see `isDeclaredDark`.
 const envOverriddenFlags = new Set<string>();
 const featureFlags = createFeatureFlags({
   canWrite: ['public'],
@@ -212,10 +213,12 @@ const featureFlags = createFeatureFlags({
   // default, flag-off is an 800px webp and flag-on a 1600px one, so failing open costs ~2.2x the
   // bytes. That was the opposite way round before compressed became the default.
   //
-  // 🔴 DO NOT create `hi-dpi-previews` in flipt-state to ship this. While it does not exist,
-  // evaluation returns null and static evaluation keeps it on; creating it as a boolean with
-  // `enabled: false` and no rollout IS the kill switch — Flipt's answer overrides static
-  // evaluation in both directions.
+  // 🔴 Flipt is authoritative over this static `['public']` in BOTH directions wherever the
+  // `hi-dpi-previews` key exists: `enabled: false` with no rollout IS the kill switch. The
+  // `['public']` decides only when the key is absent or Flipt is unreachable. Read the live value
+  // from Flipt — a comment cannot hold flag state (see the as-merged-note warning in
+  // `src/server/services/app-blocks-flag.ts`). An earlier note here said this key must not be
+  // created; that instruction is retired.
   hiDpiPreviews: { availability: ['public'], fliptKey: 'hi-dpi-previews' },
   // `availability: []` is the Flipt-down fallback, and off is the right one here: the search
   // refinement is useless until the gated documents carry `hasActivePaidAccess`, which is a backfill
@@ -895,7 +898,7 @@ const hasFeature = (
   // --- Static evaluation (used when no Flipt override or Flipt unavailable) ---
 
   // Check environment availability
-  const envRequirement = availability.includes('dev') ? isDev : availability.length > 0;
+  const envRequirement = availability.includes('dev') ? isDev : !isDeclaredDark(availability);
 
   // Check granted access
   const grantedAccess = availability.includes('granted')
@@ -1232,14 +1235,6 @@ type FeatureFlagInput =
   | FeatureAvailability[] // Legacy format: ['public']
   | (Partial<FeatureFlag> & { availability: FeatureAvailability[] }); // Object with at least availability
 
-/**
- * `availability: []` declares a flag dark: static evaluation is false for everyone, so its
- * `fliptKey` is the only on-switch. A `FEATURE_FLAG_<KEY>` variable must not lift that — it
- * grants the access the registry withheld, and marking the key env-overridden also removes it
- * from Flipt evaluation, leaving the flag unreachable from the switch that is meant to own it.
- * Dark flags are turned on in development with `FLIPT_LOCAL_OVERRIDES`, which reaches the
- * direct-Flipt gates as well.
- */
 function isDeclaredDark(availability: FeatureAvailability[]) {
   return availability.length === 0;
 }
@@ -1261,7 +1256,18 @@ function createFeatureFlags<T extends Record<string, FeatureFlagInput>>(flags: T
 
     // Apply ENV overrides
     const override = envOverrides[key as FeatureFlagKey];
-    if (override && !isDeclaredDark(flagData.availability)) {
+    // An override may not GRANT availability to a dark flag that has a `fliptKey`: that pairing
+    // makes Flipt the only on-switch. Applying it would also add the key to `envOverriddenFlags`,
+    // which `hasFeature` reads to suppress Flipt evaluation — leaving the flag unreachable from
+    // the switch meant to own it. The other two cases keep their old behaviour deliberately: a
+    // dark flag with no `fliptKey` has no other switch, and an override granting nothing still
+    // pins the flag out of its Flipt rollout.
+    const liftsDarkFlag =
+      !!override &&
+      !!flagData.fliptKey &&
+      isDeclaredDark(flagData.availability) &&
+      !isDeclaredDark(override);
+    if (override && !liftsDarkFlag) {
       features[key as keyof T].availability = override;
       envOverriddenFlags.add(key);
     }

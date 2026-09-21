@@ -1,24 +1,30 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import snapshot from './fixtures/flipt-store-scope.snapshot.json';
-import { startFliptFixtureServer, type FliptFixtureServer } from './fixtures/flipt-fixture-server';
+import sourceSnapshot from './fixtures/flipt-store-scope.snapshot.json';
+import {
+  deriveSnapshotFromFlagShape,
+  startFliptFixtureServer,
+  type FliptFixtureServer,
+} from './fixtures/flipt-fixture-server';
 
 /**
- * A `FEATURE_FLAG_<KEY>` variable must not switch on a flag the registry declares dark
- * (`availability: []`). It used to, and it also removed the key from Flipt evaluation, so a
- * stale variable both shipped a feature the registry said was off and made the flag's own
- * `fliptKey` unable to turn it back off.
- *
- * `image-search` is the worked case: `availability: []`, no such flag in Flipt, and a
- * long-lived `FEATURE_FLAG_IMAGE_SEARCH` variable left over from before the Flipt migration.
+ * The full matrix of what a `FEATURE_FLAG_<KEY>` variable may and may not do, one flag per case.
+ * Only the first is a change: an override used to be able to switch on a flag the registry
+ * declares dark, which also took the key out of Flipt evaluation. The other four pin behaviour
+ * that must NOT move, and each is chosen so that a plausible over-broad rewrite of the guard
+ * turns exactly it red.
  */
 
 vi.hoisted(() => {
   process.env.SERVER_DOMAIN_GREEN = 'civitai.com';
   process.env.SERVER_DOMAIN_BLUE = 'civitai.blue';
   process.env.SERVER_DOMAIN_RED = 'civitai.red';
-  // Read once, at module load, by `getEnvOverrides`.
+  // All read once, at module load, by `getEnvOverrides`.
   process.env.FEATURE_FLAG_IMAGE_SEARCH = 'public';
   process.env.FEATURE_FLAG_CIVITAI_LINK = 'public';
+  process.env.FEATURE_FLAG_API_KEY_BUZZ_LIMIT = 'public';
+  process.env.FEATURE_FLAG_COINBASE_PAYMENTS = 'public';
+  // Parses to an empty availability — `getEnvOverrides` keeps no unrecognised token.
+  process.env.FEATURE_FLAG_USER_HUBS = 'nonsense';
 });
 
 let server: FliptFixtureServer;
@@ -29,37 +35,84 @@ vi.mock('~/server/flipt/client', async () => {
 });
 
 beforeAll(async () => {
+  // `user-hubs` is served ON so that "pinned out of Flipt" is observable: a flag that reached
+  // Flipt would come back true, and every assertion below expects false.
+  const snapshot = deriveSnapshotFromFlagShape(sourceSnapshot, 'app-blocks-enabled', [
+    { key: 'app-blocks-enabled', enabled: false },
+    { key: 'user-hubs', enabled: true },
+  ]);
   server = await startFliptFixtureServer(snapshot);
   process.env.__TEST_FLIPT_URL = server.url;
 });
 
 afterAll(async () => {
   await server.close();
+  // Inert under the `unit` project's per-file process isolation, but `getEnvOverrides` reads
+  // `process.env` at module load: under a shared-worker pool these would silently re-scope every
+  // later file's registry.
+  for (const key of Object.keys(process.env).filter((k) => k.startsWith('FEATURE_FLAG_'))) {
+    delete process.env[key];
+  }
 });
 
-describe('an env override cannot lift a flag the registry declares dark', () => {
-  it('INSTRUMENT CONTROL: the engine is live and `image-search` is absent from Flipt', async () => {
+describe('what a FEATURE_FLAG_<KEY> override may and may not do', () => {
+  it('INSTRUMENT CONTROL: the engine is live, and the keys under test are present or absent as intended', async () => {
     const { ensureFliptInitialized, isFliptSync } = await import('~/server/flipt/client');
+    const { buildFliptContext } = await import('~/server/services/feature-flags.service');
     await ensureFliptInitialized();
+    const anon = buildFliptContext(undefined);
 
     expect(server.received.length).toBeGreaterThan(0);
-    expect(isFliptSync('app-blocks-enabled', 'anonymous', {})).toBe(false);
-    expect(isFliptSync('image-search', 'anonymous', {})).toBe(null);
+    // A present key answers with a boolean, so a `null` below is the engine reporting
+    // "flag not found" and not an uninitialized client.
+    expect(isFliptSync('app-blocks-enabled', 'anonymous', anon)).toBe(false);
+    expect(isFliptSync('user-hubs', 'anonymous', anon)).toBe(true);
+    expect(isFliptSync('image-search', 'anonymous', anon)).toBe(null);
+    expect(isFliptSync('api-key-buzz-limit', 'anonymous', anon)).toBe(null);
   });
 
-  it('`FEATURE_FLAG_IMAGE_SEARCH=public` does not turn on an `availability: []` flag', async () => {
+  it('does NOT switch on a dark flag that has a fliptKey', async () => {
     const { getFeatureFlagsAsync } = await import('~/server/services/feature-flags.service');
     const features = await getFeatureFlagsAsync({});
 
+    // `imageSearch` is `{ availability: [], fliptKey: 'image-search' }`.
     expect(features.imageSearch).toBeFalsy();
   });
 
-  it('CONTROL: an env override still applies to a flag with static availability', async () => {
+  it('CONTROL: still applies to a flag with static availability and no fliptKey', async () => {
     const { getFeatureFlagsAsync } = await import('~/server/services/feature-flags.service');
     const features = await getFeatureFlagsAsync({});
 
-    // `civitaiLink` is declared `['mod', 'member']`, so an anonymous request resolves it false
-    // without the override. Its `true` here is the override being honoured.
+    // Chosen because it is role-gated, so an anonymous request resolves it false without the
+    // override.
     expect(features.civitaiLink).toBe(true);
+  });
+
+  it('CONTROL: still applies to a flag with static availability that HAS a fliptKey', async () => {
+    const { getFeatureFlagsAsync } = await import('~/server/services/feature-flags.service');
+    const features = await getFeatureFlagsAsync({});
+
+    // Separates "declared dark" from "has a fliptKey" as the reason an override is skipped:
+    // `apiKeyBuzzLimit` is `{ availability: ['mod'], fliptKey: 'api-key-buzz-limit' }`, so a guard
+    // keyed on the fliptKey alone would leave an anonymous request without it.
+    expect(features.apiKeyBuzzLimit).toBe(true);
+  });
+
+  it('CONTROL: still applies to a dark flag that has NO fliptKey — it has no other switch', async () => {
+    const { getFeatureFlagsAsync } = await import('~/server/services/feature-flags.service');
+    const features = await getFeatureFlagsAsync({});
+
+    // `coinbasePayments: []` in the legacy array form. Ignoring its override would make the flag
+    // unconditionally false everywhere, with no runtime lever, on a payment path.
+    expect(features.coinbasePayments).toBe(true);
+  });
+
+  it('CONTROL: an override granting nothing still pins a dark flag out of its Flipt rollout', async () => {
+    const { getFeatureFlagsAsync } = await import('~/server/services/feature-flags.service');
+    const features = await getFeatureFlagsAsync({});
+
+    // Flipt serves `user-hubs` ON, so this can only be falsy because the override kept the key
+    // out of Flipt evaluation — the behaviour an override with no availability always had.
+    expect(features.userHubs).toBeFalsy();
   });
 });

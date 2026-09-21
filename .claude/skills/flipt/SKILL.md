@@ -32,6 +32,23 @@ within about a poll interval.
 opening a PR against the state repo, never by calling the API. This skill refuses
 writes for that reason.
 
+## What a key does to the app
+
+The monolith's flag registry (`src/server/services/feature-flags.service.ts`) declares a
+static `availability` per flag, and **Flipt overrides it in both directions wherever the key
+exists**. Two consequences before you add or toggle a key:
+
+- A flag declared `availability: []` is **dark**: static evaluation is false for everyone and
+  its `fliptKey` is the only on-switch. A `FEATURE_FLAG_<KEY>` environment variable cannot
+  lift it. Creating the key and enabling it is what ships the feature.
+- A flag declared `['public']` (or any role) is **live**: creating its key with
+  `enabled: false` and no rollout turns the feature off for everyone. That is the intended
+  kill switch — and the intended accident.
+
+To switch a dark flag on locally, set `FLIPT_LOCAL_OVERRIDES=<fliptKey>=on` rather than
+touching shared flag state; it is ignored when `NODE_ENV=production`, and it does not reach
+`getFliptBoolean` call sites.
+
 Treat `FLIPT_API_TOKEN` as a live secret: read it from env, never inline it, and
 don't copy it into anything new.
 

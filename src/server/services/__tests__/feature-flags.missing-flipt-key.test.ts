@@ -3,10 +3,10 @@ import snapshot from './fixtures/flipt-store-scope.snapshot.json';
 import { startFliptFixtureServer, type FliptFixtureServer } from './fixtures/flipt-fixture-server';
 
 /**
- * A flag whose `fliptKey` does not exist in Flipt must be decided by the registry's static
- * `availability`, in both directions: `[]` stays off, `['public']` stays on. The evaluator is
- * the REAL `createFliptClient` + wasm engine against a fixture snapshot that omits both keys,
- * so "the key is missing" is produced by the engine rather than asserted by a stub.
+ * The evaluator is the REAL `createFliptClient` + wasm engine against a fixture snapshot that
+ * omits both keys, so "the key is missing" is produced by the engine, not asserted by a stub.
+ * The same propositions are pinned against a stubbed `isFliptSync` in `user-hubs-flag-gate` and
+ * `feed-tag-bar-flag-gate`, which sweep more principals but cannot witness the engine's `null`.
  */
 
 vi.hoisted(() => {
@@ -34,14 +34,16 @@ afterAll(async () => {
 describe('a flag whose Flipt key does not exist falls back to static availability', () => {
   it('INSTRUMENT CONTROL: the engine is live and the two keys under test really are absent', async () => {
     const { ensureFliptInitialized, isFliptSync } = await import('~/server/flipt/client');
+    const { buildFliptContext } = await import('~/server/services/feature-flags.service');
     await ensureFliptInitialized();
+    const anon = buildFliptContext(undefined);
 
     expect(server.received.length).toBeGreaterThan(0);
-    // A key the fixture DOES carry answers with a boolean, so a `null` below is the engine
-    // reporting "flag not found" and not an uninitialized client.
-    expect(isFliptSync('app-blocks-enabled', 'anonymous', {})).toBe(false);
-    expect(isFliptSync('image-search', 'anonymous', {})).toBe(null);
-    expect(isFliptSync('hi-dpi-previews', 'anonymous', {})).toBe(null);
+    // `isEnabledSync` returns null for BOTH "flag not found" and "client not initialized", so a
+    // present key answering with a boolean is what makes the two nulls below attributable.
+    expect(isFliptSync('app-blocks-enabled', 'anonymous', anon)).toBe(false);
+    expect(isFliptSync('image-search', 'anonymous', anon)).toBe(null);
+    expect(isFliptSync('hi-dpi-previews', 'anonymous', anon)).toBe(null);
   });
 
   it('`availability: []` stays OFF on the server path', async () => {

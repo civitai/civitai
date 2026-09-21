@@ -62,7 +62,9 @@ Each has exactly one real consumer; the question is whether the feature itself i
 
 These have been `['public']` forever with no Flipt key, so the gate always evaluates `true`. Each `features.X` consumer can be inlined to `true` (or just the gate removed). This is mostly a code-tidying pass — there's no risk of behavior change.
 
-`canWrite`, `apiKeys`, `articles`, `articleCreate`, `articleImageScanning`, `imageGeneration`, `collections`, `profileCollections`, `imageSearch`, `buzz`, `cosmeticShop`, `donationGoals`, `appTour`, `privateModels`, `toolSearch`, `vault`, `draftMode`, `membershipsV2`, `prepaidMemberships`, `newsroom`, `bounties` (mostly public), `creatorComp`, `alternateHome`, `auctions` (public), `disablePayments`, `challengePlatform`, `largerGenerationImages` (toggleable but defaulted), `air` (toggleable but defaulted), `assistant` (toggleable but defaulted).
+⚠️ **Re-read the registry entry before inlining any of these — this list has drifted, three times in the unsafe direction.** `imageSearch` is `availability: []` with a live `image-search` Flipt key: image search is retired, so inlining it to `true` re-ships it against a deleted index with no flag left to switch it back off. `challengePlatform` has a `challenge-platform-enabled` Flipt key that is a live kill switch. `vault` is `['user']`, not `['public']`. A flag carrying a `fliptKey` is never decorative — Flipt overrides static availability in both directions, so inlining it deletes a no-deploy off-switch.
+
+`canWrite`, `apiKeys`, `articles`, `articleCreate`, `articleImageScanning`, `imageGeneration`, `collections`, `profileCollections`, `buzz`, `cosmeticShop`, `donationGoals`, `appTour`, `privateModels`, `toolSearch`, `draftMode`, `membershipsV2`, `prepaidMemberships`, `newsroom`, `bounties` (mostly public), `creatorComp`, `alternateHome`, `auctions` (public), `disablePayments`, `largerGenerationImages` (toggleable but defaulted), `air` (toggleable but defaulted), `assistant` (toggleable but defaulted).
 
 ⚠️ Before promoting any of these, double-check that `ENV` overrides via `FEATURE_FLAG_X` are not expected to flip them off in some deployment.
 
