@@ -537,25 +537,11 @@ const featureFlags = createFeatureFlags({
   // Both mod-only at launch; Flipt key allows broadening without a code change.
   model3dFeed: { availability: ['mod'], fliptKey: 'model3d-feed' },
   model3dGenerator: { availability: ['mod'], fliptKey: 'model3d-generator' },
-  // Per-model 3D generator gates, layered UNDER `model3dGenerator` (which gates
-  // the whole 3D surface), so each can ship dark and roll out independently via
-  // Flipt. Tripo & Hunyuan3D are whole ecosystems — off ⇒ hidden from the
-  // img2model3d picker and rejected on submit (see ecosystem-graph.ts).
-  // `meshyV7Generator` instead gates ONE version inside PolyGen: off ⇒ v7 is
+  // Gates PolyGen's v7 build, which is a `polygenVersion` option rather than a
+  // model version, so generation gate rules cannot target it: off ⇒ v7 is
   // dropped from the version options, which both hides it and makes a submitted
   // `polygenVersion: 'v7'` fail the node's schema (see polygen-graph.ts).
-  tripoGenerator: { availability: ['mod'], fliptKey: 'tripo-generator' },
-  hunyuan3dGenerator: { availability: ['public'], fliptKey: 'hunyuan3d-generator' },
-  pixal3dGenerator: { availability: ['mod'], fliptKey: 'pixal3d-generator' },
-  trellis2Generator: { availability: ['mod'], fliptKey: 'trellis2-generator' },
   meshyV7Generator: { availability: ['mod'], fliptKey: 'meshy-v7-generator' },
-  // Grok Imagine Image 2.0 — gates ONLY the v2.0 entry in the Grok version
-  // picker; v1.0 / v1.5 stay live regardless, so Grok image + video generation
-  // is unaffected when this is off. Mod-only until the `grok-imagine-2` Flipt
-  // flag exists (absent ⇒ this static fallback), which is also the widen and
-  // kill lever. Off ⇒ v2.0 is dropped from the picker and a submitted v2.0
-  // version id falls back to the ecosystem default (see grok-graph.ts).
-  grokImagine2: { availability: ['mod'], fliptKey: 'grok-imagine-2' },
   // THE form-graph cutover flag: swaps GenerationTabs' form for the form-graph
   // lane AND serves the hub parse for the user's submits/whatIfs (validateInput
   // reads it from the generation ctx). Every parse shadow-compares regardless.

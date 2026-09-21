@@ -1054,8 +1054,14 @@ export function createCheckpointGraph(
           },
         };
       },
-      // Include 'workflow' in deps so transform runs when workflow changes
-      options?.workflowVersions ? ['ecosystem', 'workflow'] : ['ecosystem']
+      // Include 'workflow' in deps so transform runs when workflow changes.
+      // 'ext:gateRules' because the version list is filtered from them here and
+      // captured in the meta closure: they arrive from getGenerationConfig AFTER
+      // init, and without the dep a gated version stays in the picker until the
+      // ecosystem changes.
+      options?.workflowVersions
+        ? ['ecosystem', 'workflow', 'ext:gateRules']
+        : ['ecosystem', 'ext:gateRules']
     )
     .effect(
       (ctx, _ext, set) => {

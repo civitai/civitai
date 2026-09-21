@@ -10,33 +10,19 @@ import type { GenerationCtx } from '~/shared/data-graph/generation/context';
  * Differential parity for the ported AUDIO and MODEL3D slices against the live
  * `generationGraph.safeParse`, generated the same way as the image/video
  * suites: ecosystem x supported workflow x input shape x external context.
- *
- * The 3D ecosystems other than PolyGen are feature-flag gated (fail-closed),
- * so the base context enables their flags; the `gated` context withholds them
- * to pin the hidden-fallback path.
  */
-
-const FLAGS_3D = {
-  tripoGenerator: true,
-  hunyuan3dGenerator: true,
-  pixal3dGenerator: true,
-  trellis2Generator: true,
-} as GenerationCtx['flags'];
 
 const BASE: GenerationCtx = {
   limits: { maxQuantity: 4, maxResources: 9, vidQuantity: 4 },
   user: { isMember: true, tier: 'gold' },
-  flags: FLAGS_3D,
+  flags: {} as GenerationCtx['flags'],
   gateRules: [],
 };
 
 const CONTEXTS: [string, GenerationCtx][] = [
   ['base', BASE],
-  ['wildcards', { ...BASE, flags: { ...FLAGS_3D, wildcards: true } as GenerationCtx['flags'] }],
-  [
-    'meshyV7',
-    { ...BASE, flags: { ...FLAGS_3D, meshyV7Generator: true } as GenerationCtx['flags'] },
-  ],
+  ['wildcards', { ...BASE, flags: { wildcards: true } as GenerationCtx['flags'] }],
+  ['meshyV7', { ...BASE, flags: { meshyV7Generator: true } as GenerationCtx['flags'] }],
   [
     'freeTier',
     {
@@ -45,9 +31,24 @@ const CONTEXTS: [string, GenerationCtx][] = [
       limits: { maxQuantity: 1, maxResources: 1, vidQuantity: 1 },
     },
   ],
-  // no 3D flags at all: flag-gated ecosystems are hidden, stale selections
-  // fall back to the default (PolyGen)
-  ['unflagged', { ...BASE, flags: {} as GenerationCtx['flags'] }],
+  // hidden ecosystems drop out and stale selections fall back to the default (PolyGen)
+  [
+    'gated',
+    {
+      ...BASE,
+      gateRules: [
+        {
+          id: 'hide-3d',
+          name: '',
+          availableTo: 'moderators',
+          presentation: 'hidden',
+          ecosystems: ['Tripo', 'Hunyuan3D', 'Pixal3D', 'Trellis2'],
+          workflows: [],
+          modelVersionIds: [],
+        },
+      ],
+    },
+  ],
 ];
 
 const IMAGE = { url: 'https://example.com/a.png', width: 1280, height: 720 };
