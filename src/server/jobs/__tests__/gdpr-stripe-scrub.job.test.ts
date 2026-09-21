@@ -390,6 +390,24 @@ describe('gdpr-stripe-scrub — retry state', () => {
     );
   });
 
+  it('says nothing about an account restored while the scrub was running', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(
+      live({ gdprStripeScrub: { attempts: 9, lastAttemptAt: '2020-01-01T00:00:00.000Z' } })
+    );
+    scrubStripeAccount.mockResolvedValue(
+      complete({ complete: false, errors: [{ step: 'customer', message: 'stripe down' }] })
+    );
+    // The guarded write matched no row: the account is live again, so this snapshot is no longer
+    // true of it. Alerting a moderator about an account they just restored is the visible harm.
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
+
+    await runJob();
+
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'gdpr-stripe-scrub-stuck' })
+    );
+  });
+
   it('does not alert on an ordinary first failure', async () => {
     scrubStripeAccount.mockResolvedValue(complete({ complete: false, errors: [] }));
 

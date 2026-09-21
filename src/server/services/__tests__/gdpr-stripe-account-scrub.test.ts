@@ -403,6 +403,10 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
     expect(stripe.paymentIntents.cancel).not.toHaveBeenCalled();
     expect(stripe.paymentIntents.update).not.toHaveBeenCalled();
     expect(outcome.pending).toBe(true);
+    // An authorisation expires on its own, and Stripe then moves the intent to canceled — which
+    // this job strips. A bounded wait must never alert, or the channel fills with accounts
+    // behaving exactly as designed.
+    expect(outcome.pendingUnbounded).toBe(false);
   });
 
   it('waits on an intent that is genuinely in flight', async () => {
@@ -423,6 +427,8 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
     expect(stripe.paymentIntents.cancel).not.toHaveBeenCalled();
     expect(stripe.paymentIntents.update).not.toHaveBeenCalled();
     expect(outcome.pending).toBe(true);
+    // Bounded: it settles or fails, and both land somewhere this job finishes.
+    expect(outcome.pendingUnbounded).toBe(false);
     expect(outcome.complete).toBe(false);
     expect(outcome.errors).toEqual([]);
   });
@@ -445,6 +451,9 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
     // failing endpoint for about three days, so stripping it early strands a real payment.
     expect(stripe.paymentIntents.update).not.toHaveBeenCalled();
     expect(outcome.pending).toBe(true);
+    // No charge for a succeeded intent is not a wait with an end — there is nothing to read a
+    // settle time from, now or later, so this one does need a person.
+    expect(outcome.pendingUnbounded).toBe(true);
     expect(outcome.complete).toBe(false);
   });
 
@@ -620,6 +629,9 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
 
     expect(stripe.paymentIntents.update).toHaveBeenCalledTimes(stripped ? 1 : 0);
     expect(outcome.complete).toBe(stripped);
+    // The held arm is BOUNDED — a wall clock against a fixed settle time, so it cannot fail to
+    // expire, and alerting on it would fire for an account behaving exactly as designed.
+    if (!stripped) expect(outcome.pendingUnbounded).toBe(false);
   });
 
   it('takes the LATEST succeeded charge as the settle time', async () => {
