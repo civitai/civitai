@@ -1160,6 +1160,11 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
         meta,
       },
     }),
+    // Raw because the column is absent from the Prisma User model — no delegate reaches it.
+    // It is a second pointer to the billing record, so it outlives paddleCustomerId above:
+    // subscription -> customer -> charges, whose receipt_email and billing_details.name
+    // still identify the person.
+    dbWrite.$executeRaw`UPDATE "User" SET "subscriptionId" = NULL WHERE id = ${user.id}`,
   ]);
 
   userUpdateCounter?.inc({ location: 'user.service:deleteUser' });

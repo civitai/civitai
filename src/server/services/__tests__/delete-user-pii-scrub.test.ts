@@ -148,6 +148,36 @@ describe('deleteUser — payment-provider ids', () => {
     expect(ops).toContain(user.update.mock.results[softDeleteIndex()].value);
   });
 
+  it('nulls subscriptionId inside the transaction, via raw SQL', async () => {
+    await deleteUser();
+
+    // Prisma cannot reach this column — it is absent from the User model — so the scan over
+    // WRITE_PATHS is what sees it at all. 3,339 already-deleted accounts still held one when
+    // this shipped: a pointer to the subscription, hence the customer, hence charges carrying
+    // receipt_email. Nulling paddleCustomerId above does not close it.
+    expect(dbWriteCallsMentioning('subscriptionId')).toEqual(['dbWrite.$executeRaw']);
+
+    const rawCall = dbMock.dbWrite.$executeRaw.mock.calls.findIndex((call) =>
+      JSON.stringify(call)?.includes('subscriptionId')
+    );
+    expect(rawCall).toBeGreaterThan(-1);
+    // The bound id, not an interpolated one: `id = ${user.id}` in a tagged template is a
+    // parameter, so it arrives as its own argument rather than inside the SQL string.
+    expect(dbMock.dbWrite.$executeRaw.mock.calls[rawCall]).toContain(USER_ID);
+
+    // Atomic with the soft delete. In the post-transaction tail it would be skippable, which
+    // is the defect #4978 exists to fix.
+    const [ops] = dbMock.dbWrite.$transaction.mock.calls[0] as [unknown[]];
+    expect(ops).toContain(dbMock.dbWrite.$executeRaw.mock.results[rawCall].value);
+  });
+
+  it('CONTROL: the scan reports nothing for subscriptionId when the delete does not write it', () => {
+    // Pairs with the assertion above the way the customerId controls pair with its zero: it
+    // shows the ['dbWrite.$executeRaw'] result comes from the call deleteUser makes, not from
+    // a scan that answers the same thing for any input.
+    expect(dbWriteCallsMentioning('subscriptionId')).toEqual([]);
+  });
+
   it('does NOT purge the Stripe customerId — deleting it breaks our own webhook', async () => {
     await deleteUser();
 
