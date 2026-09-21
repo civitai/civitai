@@ -1160,6 +1160,11 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
         meta,
       },
     }),
+    // Raw because the column is absent from the Prisma User model — no delegate reaches it.
+    // It is a second pointer to the billing record, so it outlives paddleCustomerId above:
+    // subscription -> customer -> charges, whose receipt_email and billing_details.name
+    // still identify the person.
+    dbWrite.$executeRaw`UPDATE "User" SET "subscriptionId" = NULL WHERE id = ${user.id}`,
   ]);
 
   userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
@@ -1214,8 +1219,12 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
 /**
  * Restore a soft-deleted user account (the inverse of deleteUser).
  *
- * deleteUser scrubs username, email, name, paddleCustomerId, image, profilePictureId from the
- * User row and sets deletedAt. It also hard-deletes Account / Session / UserProfile / UserLink
+ * deleteUser scrubs username, email, name, paddleCustomerId, subscriptionId, image,
+ * profilePictureId from the User row and sets deletedAt. subscriptionId is not restored, and
+ * do NOT read that as "the subscription is gone": the cancels below run through runStep, which
+ * swallows, the Paddle one never deletes the CustomerSubscription row, and the Stripe one only
+ * deletes it for an active/past_due/trialing row. 6,816 soft-deleted accounts hold a surviving
+ * row today, 96 of them still live (prod, 2026-09-21). Check the billing record independently. It also hard-deletes Account / Session / UserProfile / UserLink
  * rows and every
  * UserEngagement row the account appears in EXCEPT Blocks — those survive precisely so
  * a restore cannot leave someone unblocked without telling them — and reassigns
