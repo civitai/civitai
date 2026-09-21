@@ -1,8 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  type ClassifiableException,
-  classifyException,
-} from '~/utils/faro/classifyException';
+import { type ClassifiableException, classifyException } from '~/utils/faro/classifyException';
 
 // Helper: build an exception payload. `frames` are raw stack frames (filename/lineno/colno).
 const exc = (
@@ -14,8 +11,52 @@ const exc = (
 // A realistic project-source frame (so an exception looks like a genuine app bug).
 const APP_FRAME = {
   frames: [
-    { filename: 'turbopack://[project]/src/components/Feed.tsx', function: 'render', lineno: 42, colno: 7 },
+    {
+      filename: 'turbopack://[project]/src/components/Feed.tsx',
+      function: 'render',
+      lineno: 42,
+      colno: 7,
+    },
   ],
+};
+
+// ── Realistic production frames for a `Failed to fetch` ──────────────────────────────────────
+// A browser builds a fetch-rejection stack from the SYNCHRONOUS CALL STACK at the moment
+// `fetch()` is invoked, so every global wrapper between the caller and the network appears on
+// EVERY fetch rejection — whoever initiated the request. These two are therefore present on
+// first-party and third-party failures alike, and neither proves our code was involved.
+
+/** The OpenTelemetry fetch instrumentation that wraps every request (a dependency). */
+const OTEL_FETCH_FRAME = {
+  filename:
+    'turbopack:///[project]/node_modules/.pnpm/@opentelemetry+instrumentation-fetch@0.219.0_@opentelemetry+api@1.9.0/node_modules/@opentelemetry/instrumentation-fetch/src/fetch.ts',
+  function: '_patchConstructor',
+  lineno: 253,
+  colno: 21,
+};
+
+/** Our own global `window.fetch` patch, which reads update-prompt response headers. */
+const UPDATE_WATCHER_FRAME = {
+  filename: 'turbopack:///[project]/src/components/UpdateRequiredWatcher/UpdateRequiredWatcher.tsx',
+  function: 'window.fetch',
+  lineno: 23,
+  colno: 30,
+};
+
+/** The third-party ad script that actually initiated the request. */
+const AD_SCRIPT_FRAME = {
+  filename: 'https://securepubads.g.doubleclick.net/gpt/pubads_impl_2025092301.js',
+  function: 'Bs',
+  lineno: 132,
+  colno: 419,
+};
+
+/** A genuine first-party caller — OUR code asking for something over the network. */
+const OUR_FETCH_CALLER_FRAME = {
+  filename: 'turbopack:///[project]/src/components/Generate/useGenerate.ts',
+  function: 'submitGenerationRequest',
+  lineno: 118,
+  colno: 24,
 };
 
 describe('classifyException — DROP: request aborts', () => {
@@ -33,7 +74,9 @@ describe('classifyException — DROP: request aborts', () => {
   });
 
   it('drops nextjs route-change aborts (UnhandledRejection)', () => {
-    expect(classifyException(exc('UnhandledRejection', 'nextjs route change aborted')).drop).toBe(true);
+    expect(classifyException(exc('UnhandledRejection', 'nextjs route change aborted')).drop).toBe(
+      true
+    );
     expect(classifyException(exc('UnhandledRejection', 'routeChange aborted')).drop).toBe(true);
   });
 });
@@ -65,7 +108,10 @@ describe('classifyException — DROP: ad-blocker / 3p script blocks', () => {
 describe('classifyException — DROP: autoplay / opaque / injected / network', () => {
   it('drops autoplay NotAllowedError', () => {
     const r = classifyException(
-      exc('NotAllowedError', 'The play method is not allowed by the user agent or the platform in the current context, possibly because the user denied permission.')
+      exc(
+        'NotAllowedError',
+        'The play method is not allowed by the user agent or the platform in the current context, possibly because the user denied permission.'
+      )
     );
     expect(r.drop).toBe(true);
     expect(r.category).toBe('autoplay');
@@ -81,7 +127,7 @@ describe('classifyException — DROP: autoplay / opaque / injected / network', (
 
   it('drops an extension-injected error whose stack has only undefined: frames', () => {
     const r = classifyException(
-      exc("ReferenceError", "Can't find variable: EmptyRanges", {
+      exc('ReferenceError', "Can't find variable: EmptyRanges", {
         frames: [{ filename: 'undefined', lineno: 1705, colno: 541 }],
       })
     );
@@ -140,7 +186,7 @@ describe('classifyException — TAG but keep', () => {
 });
 
 describe('classifyException — default real (the real-app-bug stream)', () => {
-  it("keeps a novel TypeError with a turbopack:// app frame as real", () => {
+  it('keeps a novel TypeError with a turbopack:// app frame as real', () => {
     const r = classifyException(
       exc('TypeError', "Cannot read properties of undefined (reading 'x')", APP_FRAME)
     );
@@ -219,7 +265,12 @@ describe('classifyException — conservative allowlist (NEVER drop a real bug)',
     const r = classifyException(
       exc('Error', 'The operation was aborted while writing user settings', {
         frames: [
-          { filename: 'turbopack://[project]/src/store/user.ts', function: 'save', lineno: 88, colno: 12 },
+          {
+            filename: 'turbopack://[project]/src/store/user.ts',
+            function: 'save',
+            lineno: 88,
+            colno: 12,
+          },
         ],
       })
     );
@@ -240,6 +291,108 @@ describe('classifyException — conservative allowlist (NEVER drop a real bug)',
     expect(() => {
       r = classifyException(malformed);
     }).not.toThrow();
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+});
+
+// A browser builds a `Failed to fetch` stack from the synchronous call stack at the moment
+// `fetch()` runs, so the fetch instrumentation and our own global `window.fetch` patch are on
+// EVERY fetch rejection. Neither is evidence that our code failed; only a frame belonging to a
+// genuine first-party CALLER is. These pin that distinction in both directions.
+describe('classifyException — third-party network failures (fetch-wrapper frames)', () => {
+  it('drops a third-party ad `Failed to fetch` carrying instrumentation + fetch-wrapper frames', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        // innermost-first, exactly as the browser reports it
+        frames: [OTEL_FETCH_FRAME, UPDATE_WATCHER_FRAME, AD_SCRIPT_FRAME],
+      })
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('network');
+  });
+
+  it('does NOT count a node_modules frame as project source', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', { frames: [OTEL_FETCH_FRAME] })
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('network');
+  });
+
+  it('does NOT count the global fetch wrapper alone as project source', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', { frames: [UPDATE_WATCHER_FRAME] })
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('network');
+  });
+
+  it('does NOT count a third-party absolute .js URL as project source', () => {
+    const r = classifyException(exc('TypeError', 'Failed to fetch', { frames: [AD_SCRIPT_FRAME] }));
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('network');
+  });
+
+  // 🔴 THE GUARD THAT MUST NOT REGRESS. The whole point of the project-source check is to keep
+  // genuine first-party fetch bugs. The instrumentation and wrapper frames are present here too
+  // (they always are) — what makes this `real` is the one frame belonging to OUR caller.
+  it('KEEPS a first-party `Failed to fetch` that has a real app caller frame', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [OTEL_FETCH_FRAME, UPDATE_WATCHER_FRAME, OUR_FETCH_CALLER_FRAME],
+      })
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  it('KEEPS a first-party `Failed to fetch` whose app frame is a /_next/ bundle URL', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [
+          OTEL_FETCH_FRAME,
+          UPDATE_WATCHER_FRAME,
+          {
+            filename: 'https://civitai.com/_next/static/chunks/app-layout-9f2c1d.js',
+            function: 'o',
+            lineno: 1,
+            colno: 4821,
+          },
+        ],
+      })
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  it('KEEPS a first-party `Failed to fetch` raised from one of our /workers/ bundles', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [
+          OTEL_FETCH_FRAME,
+          {
+            filename: 'https://civitai.com/workers/signals.worker.js',
+            function: 'connect',
+            lineno: 88,
+            colno: 12,
+          },
+        ],
+      })
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // The node_modules exclusion is scoped to the project-source guard. It must NOT make a
+  // dependency frame look "injected" — that would widen the `injected` DROP to swallow genuine
+  // bugs raised inside a library.
+  it('does NOT treat a node_modules-only stack as an injected-extension stack', () => {
+    const r = classifyException(
+      exc('TypeError', "Cannot read properties of null (reading 'useState')", {
+        frames: [OTEL_FETCH_FRAME],
+      })
+    );
     expect(r.drop).toBe(false);
     expect(r.category).toBe('real');
   });
