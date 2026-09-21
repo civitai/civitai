@@ -114,7 +114,7 @@ describe('gdpr-stripe-scrub — what it selects', () => {
     dbMock.dbRead.user.findMany.mockResolvedValue([
       // Both shapes exist in prod: a `_MERGED` suffix and an empty string. The suffix must never
       // be stripped — the base id resolves to a customer whose owner could not be established.
-      { id: 1, customerId: 'cus_NL1pYvDpkPS6fN_MERGED', meta: {} },
+      { id: 1, customerId: 'cus_example_MERGED', meta: {} },
       { id: 2, customerId: '', meta: {} },
       { id: 3, customerId: CUSTOMER, meta: {} },
     ]);
@@ -302,7 +302,7 @@ describe('gdpr-stripe-scrub — the queue alert', () => {
 
   it('CONTROL: an ordinary run does not alert, malformed rows included', async () => {
     dbMock.dbRead.user.findMany.mockResolvedValue([
-      { id: 1, customerId: 'cus_NL1pYvDpkPS6fN_MERGED', meta: {} },
+      { id: 1, customerId: 'cus_example_MERGED', meta: {} },
       { id: 2, customerId: CUSTOMER, meta: {} },
     ]);
 

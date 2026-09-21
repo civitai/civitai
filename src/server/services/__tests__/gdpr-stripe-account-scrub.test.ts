@@ -126,7 +126,7 @@ describe('scrubStripeAccount — the customer object', () => {
     expect(outcome.errors[0].step).toBe('customer');
   });
 
-  it.each([['cus_NL1pYvDpkPS6fN_MERGED'], [''], ['cus_'], ['nope']])(
+  it.each([['cus_example_MERGED'], [''], ['cus_'], ['nope']])(
     'refuses the malformed customerId %s without calling Stripe',
     async (customerId) => {
       const outcome = await scrubStripeAccount({ customerId });
