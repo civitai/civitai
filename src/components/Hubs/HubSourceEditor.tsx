@@ -1,29 +1,19 @@
-import {
-  ActionIcon,
-  Button,
-  Card,
-  Collapse,
-  Popover,
-  SegmentedControl,
-  Stack,
-  Text,
-  Tooltip,
-} from '@mantine/core';
+import { Badge, Popover, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { IconPlus, IconX } from '@tabler/icons-react';
+import clsx from 'clsx';
 import { useState } from 'react';
-import { HubSourceCard } from '~/components/Hubs/HubSourceCard';
-import type { HubSourceSuggestion } from '~/components/Hubs/HubSourceSearch';
-import { HubSourceSearch } from '~/components/Hubs/HubSourceSearch';
-import { HubSourceUrlInput } from '~/components/Hubs/HubSourceUrlInput';
+import { HubSourceInput } from '~/components/Hubs/HubSourceInput';
 import type { HubSourceGroup } from '~/components/Hubs/hub.utils';
 import {
   addTagToHubGroup,
+  excludeGroupRule,
   findHubSource,
   groupAddHint,
   groupHubSources,
   groupMemberKeys,
+  hubSourceKindLabel,
+  kindColor,
   removeHubGroup,
-  setHubGroupEnabled,
   removeHubTag,
 } from '~/components/Hubs/hub.utils';
 import { hubLimits, hubSourceKey } from '~/server/schema/user-hub.schema';
@@ -45,24 +35,24 @@ export type HubSourceValue = {
   groupKey?: number | null;
 };
 
-type AddMode = 'include' | 'exclude';
-
 /**
- * The add-another-tag affordance on a tag card. The Tooltip sits OUTSIDE the Popover
- * rather than inside `Popover.Target`: both components clone their child to attach a
- * ref, and stacking them on one element is the shape that silently stops the trigger
- * opening (CLAUDE.md records it for `Menu.Target`).
+ * The add-another-tag affordance. The Tooltip sits OUTSIDE the Popover rather than
+ * inside `Popover.Target`: both clone their child to attach a ref, and stacking them on
+ * one element is the shape that silently stops the trigger opening (CLAUDE.md records
+ * it for `Menu.Target`).
  */
-function AddTagToGroup({
+function AddToGroup({
   exclude,
   disabled,
   isAdded,
   onSelect,
+  onRemove,
 }: {
   exclude?: boolean;
   disabled?: boolean;
-  isAdded: (suggestion: HubSourceSuggestion) => boolean;
-  onSelect: (suggestion: HubSourceSuggestion) => void;
+  isAdded: (source: { type: UserHubSourceType; targetId: number }) => boolean;
+  onSelect: (item: { type: UserHubSourceType; targetId: number; alias: string }) => void;
+  onRemove: (target: { type: UserHubSourceType; targetId: number }) => void;
 }) {
   const [opened, setOpened] = useState(false);
 
@@ -72,34 +62,36 @@ function AddTagToGroup({
         <Popover
           opened={opened}
           onChange={setOpened}
-          position="bottom-end"
-          width={260}
+          position="bottom-start"
+          width={280}
           shadow="md"
           // 🔴 Explicit. ThemeProvider defaults every Popover to withinPortal={false},
-          // and the card this renders inside is an overflow-hidden Paper, so the
-          // dropdown is drawn clipped without it.
+          // and a chip row is a flex container that clips, so the dropdown is drawn
+          // truncated without it.
           withinPortal
         >
           <Popover.Target>
-            <ActionIcon
-              size="sm"
-              variant="subtle"
+            <UnstyledButton
               disabled={disabled}
-              aria-label="Add another tag to this group"
+              aria-label={groupAddHint(exclude)}
               onClick={() => setOpened((open) => !open)}
+              className="shrink-0 text-gray-6 hover:text-gray-9 dark:text-dark-2 dark:hover:text-white"
             >
               <IconPlus size={14} />
-            </ActionIcon>
+            </UnstyledButton>
           </Popover.Target>
           <Popover.Dropdown p="xs">
-            <HubSourceSearch
-              onlyType={UserHubSourceType.Tag}
+            <HubSourceInput
+              autoFocus
+              only="tags"
               disabled={disabled}
+              remaining={hubLimits.sourcesPerHub}
               isAdded={isAdded}
-              onSelect={(item) => {
+              onAdd={(item) => {
                 onSelect(item);
                 setOpened(false);
               }}
+              onRemove={onRemove}
             />
           </Popover.Dropdown>
         </Popover>
@@ -108,211 +100,334 @@ function AddTagToGroup({
   );
 }
 
+/**
+ * One chip per GROUP, not per source: tag sources sharing a `groupKey` are ANDed, so
+ * they are one thing the feed does and have to read as one thing here. Every other kind
+ * is always a group of one.
+ */
+function SourceChip({
+  group,
+  exclude,
+  disabled,
+  onRemoveGroup,
+  onRemoveTag,
+  addControl,
+}: {
+  group: HubSourceGroup;
+  exclude?: boolean;
+  disabled?: boolean;
+  onRemoveGroup: VoidFunction;
+  onRemoveTag: (targetId: number) => void;
+  addControl?: React.ReactNode;
+}) {
+  const [first] = group.sources;
+  const grouped = group.sources.length > 1;
+  const name = (source: HubSourceValue) => source.alias ?? `#${source.targetId}`;
+
+  return (
+    <div
+      className={clsx(
+        'flex max-w-full items-center gap-1.5 rounded-full border py-1 pl-3 pr-1.5',
+        exclude
+          ? 'border-red-4 bg-red-0 dark:border-red-9 dark:bg-red-9/20'
+          : 'border-gray-3 dark:border-dark-4'
+      )}
+    >
+      {group.sources.map((source, index) => (
+        <div key={source.targetId} className="flex min-w-0 items-center gap-1">
+          {/* The AND, said with a glyph rather than a word: the chip is already
+              narrow, and "and" beside a tag name reads as part of the tag. */}
+          {index > 0 && (
+            <Text size="xs" c="dimmed" className="shrink-0">
+              +
+            </Text>
+          )}
+          <Text size="sm" lineClamp={1}>
+            {name(source)}
+          </Text>
+          {/* Only once the group holds more than one: at one member the chip's own ✕
+              already means this, and two ✕ on one chip is a choice nobody has. */}
+          {grouped && (
+            <UnstyledButton
+              aria-label={`Remove ${name(source)} from this hub`}
+              disabled={disabled}
+              onClick={() => onRemoveTag(source.targetId)}
+              className="shrink-0 text-gray-6 hover:text-gray-9 dark:text-dark-2 dark:hover:text-white"
+            >
+              <IconX size={12} />
+            </UnstyledButton>
+          )}
+        </div>
+      ))}
+
+      <Badge
+        size="xs"
+        variant="light"
+        color={exclude ? 'red' : kindColor[first.type] ?? 'gray'}
+        className="shrink-0"
+      >
+        {hubSourceKindLabel(first.type)}
+      </Badge>
+
+      {addControl}
+
+      {!grouped && (
+        <UnstyledButton
+          aria-label={`Remove ${name(first)}`}
+          disabled={disabled}
+          onClick={onRemoveGroup}
+          className="shrink-0 text-gray-6 hover:text-gray-9 dark:text-dark-2 dark:hover:text-white"
+        >
+          <IconX size={14} />
+        </UnstyledButton>
+      )}
+    </div>
+  );
+}
+
+/**
+ * What goes in a hub, and what never does.
+ *
+ * An always-present picker per list rather than an "add source" mode with an
+ * include/exclude switch: both were things to learn before anything could be added,
+ * and the exclusions are better said as their own short list than as a state of the
+ * same one. The picker's tabs are not the old type tabs — those gated adding until you
+ * declared a kind; these only choose which shelf you browse.
+ *
+ * Sources carry an `enabled` flag that nothing here sets any more. A source is in the
+ * hub or removed from it; the flag stays true for everything this writes.
+ */
 export function HubSourceEditor({
   value,
   onChange,
-  maxSources = hubLimits.sourcesPerHub,
-  maxExclusions = hubLimits.exclusionsPerHub,
   disabled,
-  hideAdd,
-  readOnly,
-  emptyMessage = 'Nothing here yet. Add a creator or a model to start filling it.',
+  emptyMessage = 'Nothing here yet — search above to start filling it.',
 }: {
   value: HubSourceValue[];
   onChange: (next: HubSourceValue[]) => void;
-  maxSources?: number;
-  maxExclusions?: number;
   disabled?: boolean;
-  /** Drop the add affordance, for surfaces too small to hold it open. */
-  hideAdd?: boolean;
-  /**
-   * A hub you do not own: no add, no remove. Toggles stay live — the caller decides
-   * where they land, and on someone else's hub that is session state, not a write.
-   */
-  readOnly?: boolean;
   emptyMessage?: string;
 }) {
-  const [adding, setAdding] = useState(false);
-  const [addMode, setAddMode] = useState<AddMode>('include');
-  const exclude = addMode === 'exclude';
+  const [addingExclusion, setAddingExclusion] = useState(false);
 
   const included = value.filter((source) => !source.exclude);
   const excluded = value.filter((source) => source.exclude);
-  const includedGroups = groupHubSources(included);
-  const excludedGroups = groupHubSources(excluded);
 
-  const held = (target: { type: UserHubSourceType; targetId: number }) =>
-    findHubSource(value, target);
+  const held = (type: UserHubSourceType, targetId: number) =>
+    findHubSource(value, { type, targetId });
 
-  // Told, not silently dropped: either list can be long enough that the clashing row
-  // is off screen, so the same click would otherwise appear to do nothing whether the
-  // target was already collected or currently kept out.
-  const notifyClash = (clash: HubSourceValue, targetId: number) =>
-    showErrorNotification({
-      title: 'Already in this hub',
-      error: new Error(
-        clash.exclude
-          ? `"${
-              clash.alias ?? targetId
-            }" is currently kept out of this hub. Remove it from the kept-out list first.`
-          : `"${clash.alias ?? targetId}" is already one of this hub's sources.`
-      ),
-    });
-
-  /** True when the list this source would join is full, and the caller must stop. */
-  const refuseForCap = (asExclusion: boolean) => {
-    const count = asExclusion ? excluded.length : included.length;
-    const cap = asExclusion ? maxExclusions : maxSources;
+  const atCap = (exclude: boolean) => {
+    const count = exclude ? excluded.length : included.length;
+    const cap = exclude ? hubLimits.exclusionsPerHub : hubLimits.sourcesPerHub;
     if (count < cap) return false;
     showErrorNotification({
-      title: asExclusion ? 'Exclusion list is full' : 'Hub is full',
+      title: exclude ? 'Never-show list is full' : 'Hub is full',
       error: new Error(
-        asExclusion
-          ? `A hub can exclude at most ${cap} sources.`
-          : `A hub can hold at most ${cap} sources.`
+        exclude
+          ? `A hub can keep out at most ${cap} things.`
+          : `A hub can hold at most ${cap} things.`
       ),
     });
     return true;
   };
 
-  const addSource = (type: UserHubSourceType, targetId: number, rawAlias: string) => {
+  const addSource = (
+    {
+      type,
+      targetId,
+      alias: rawAlias,
+    }: { type: UserHubSourceType; targetId: number; alias: string },
+    exclude: boolean
+  ) => {
+    // Match what the server stores, so the optimistic chip is not a different string
+    // from the one that comes back.
+    const alias = rawAlias.trim().slice(0, hubLimits.aliasLength);
+
     // Across BOTH lists, matching the row's unique key: a target the hub already
-    // collects cannot also be excluded.
-    const clash = held({ type, targetId });
-    if (clash) return notifyClash(clash, targetId);
-    if (refuseForCap(exclude)) return;
-    onChange([
-      ...value,
-      {
-        type,
-        targetId,
-        // Match what the server stores, so the optimistic row is not a different
-        // string from the one that comes back.
-        alias: rawAlias.trim().slice(0, hubLimits.aliasLength),
-        enabled: true,
-        exclude,
-        index: value.length,
-        groupKey: null,
-      },
-    ]);
+    // collects cannot also be excluded. Told, not silently dropped — either list can
+    // be long enough that the clash is off screen.
+    const clash = held(type, targetId);
+    if (clash) {
+      showErrorNotification({
+        title: 'Already in this hub',
+        error: new Error(
+          clash.exclude
+            ? `"${clash.alias ?? targetId}" is on the never-show list. Remove it from there first.`
+            : `"${clash.alias ?? targetId}" is already in this hub.`
+        ),
+      });
+      return;
+    }
+
+    if (atCap(exclude)) return;
+
+    onChange([...value, { type, targetId, alias, enabled: true, exclude, index: value.length }]);
   };
 
-  const addToGroup = (group: HubSourceGroup, item: HubSourceSuggestion) => {
-    const first = group.sources[0];
-    const clash = held(item);
-    // A tag already on the OTHER side of `exclude` is refused, not moved: that would
-    // flip it from blocking content to surfacing it, which is a different decision
-    // from grouping. One on THIS side is moved in, and spends no cap — no new row.
-    if (clash && !!clash.exclude !== !!first.exclude) return notifyClash(clash, item.targetId);
-    if (!clash && refuseForCap(!!first.exclude)) return;
+  /**
+   * Add a tag to an existing group. The transform MOVES a tag the hub already holds
+   * rather than adding a row, so the cap is only spent on a genuinely new one — and
+   * the caller owns both checks because only it can say why a click was refused.
+   */
+  const addToGroup = (
+    group: HubSourceGroup,
+    item: { type: UserHubSourceType; targetId: number; alias: string }
+  ) => {
+    if (item.type !== UserHubSourceType.Tag) {
+      showErrorNotification({
+        title: 'Tags only',
+        error: new Error('Only tags can be required together. Add that to the hub itself instead.'),
+      });
+      return;
+    }
+
+    const target = { type: UserHubSourceType.Tag, targetId: item.targetId };
+    const existing = findHubSource(value, target);
+    const exclude = !!group.sources[0].exclude;
+
+    // The transform returns `value` untouched for this case; the message is the half
+    // it cannot show. Moving it anyway would give the row one side's group key and the
+    // other side's `exclude`, quietly weakening an exclusion the owner set.
+    if (existing && !!existing.exclude !== exclude) {
+      showErrorNotification({
+        title: 'Already in this hub',
+        error: new Error(
+          existing.exclude
+            ? `"${
+                existing.alias ?? item.targetId
+              }" is on the never-show list. Remove it from there first.`
+            : `"${existing.alias ?? item.targetId}" is already in this hub.`
+        ),
+      });
+      return;
+    }
+
+    if (!existing && atCap(exclude)) return;
+
     onChange(addTagToHubGroup(value, group, item));
   };
 
-  const renderGroup = (group: HubSourceGroup) => {
-    const [first, ...rest] = group.sources;
-    const isTag = first.type === UserHubSourceType.Tag;
-    const members = groupMemberKeys(group);
+  // A group's "Add 50" — everything that still fits, in the order it was gathered.
+  // Capped here rather than refused, because overrunning is the expected case for the
+  // people these actions are for: 568 follows, 50 slots.
+  const addMany = (incoming: HubSourceValue[]) => {
+    const room = hubLimits.sourcesPerHub - included.length;
+    if (room <= 0) return;
 
-    return (
-      <HubSourceCard
-        key={group.key}
-        source={first}
-        extraTags={rest.map((source) => ({ targetId: source.targetId, alias: source.alias }))}
-        onRemoveTag={
-          readOnly || rest.length === 0
-            ? undefined
-            : (targetId) => onChange(removeHubTag(value, targetId))
-        }
-        addControl={
-          isTag && !readOnly ? (
-            <AddTagToGroup
-              exclude={first.exclude}
-              disabled={disabled}
-              // "Added" means "cannot join this group", which is narrower than
-              // "already in this hub": a tag the hub holds on the same side is
-              // selectable, and picking it MOVES it in.
-              isAdded={(item) => {
-                const clash = held(item);
-                if (!clash) return false;
-                return !!clash.exclude !== !!first.exclude || members.has(hubSourceKey(clash));
-              }}
-              onSelect={(item) => addToGroup(group, item)}
-            />
-          ) : undefined
-        }
-        disabled={disabled}
-        onToggle={(enabled) => onChange(setHubGroupEnabled(value, group, enabled))}
-        hideRemove={readOnly}
-        onRemove={() => onChange(removeHubGroup(value, group))}
-      />
-    );
+    const fresh = incoming.filter((source) => !held(source.type, source.targetId));
+    const taken = fresh.slice(0, room).map((source) => ({ ...source, exclude: false }));
+    if (!taken.length) return;
+
+    onChange([...value, ...taken].map((source, index) => ({ ...source, index })));
   };
 
+  // A row in the list toggles, so taking something back out does not mean hunting
+  // down its chip.
+  const removeByTarget = (target: { type: UserHubSourceType; targetId: number }) =>
+    onChange(value.filter((source) => hubSourceKey(source) !== hubSourceKey(target)));
+
+  const chipsFor = (sources: HubSourceValue[], exclude: boolean) =>
+    groupHubSources(sources).map((group) => {
+      const [first] = group.sources;
+      const members = groupMemberKeys(group);
+      return (
+        <SourceChip
+          key={group.key}
+          group={group}
+          exclude={exclude}
+          disabled={disabled}
+          onRemoveGroup={() => onChange(removeHubGroup(value, group))}
+          onRemoveTag={(targetId) => onChange(removeHubTag(value, targetId))}
+          addControl={
+            first.type === UserHubSourceType.Tag && (
+              <AddToGroup
+                exclude={exclude}
+                disabled={disabled}
+                isAdded={(source) => members.has(hubSourceKey(source))}
+                onSelect={(item) => addToGroup(group, item)}
+                onRemove={(target) => onChange(removeHubTag(value, target.targetId))}
+              />
+            )
+          }
+        />
+      );
+    });
+
+  // EXCLUDE ONLY. The include-side line was cut after seeing it rendered: a row of
+  // chips joined by `+` reads as "all of these" unaided, while the exclude side means
+  // the opposite of what people assume — `NOT (x AND y)` keeps an image carrying only
+  // x, so grouping there removes LESS.
+  const hasExcludeGroup = groupHubSources(excluded).some((group) => group.sources.length > 1);
+
   return (
-    <Stack gap="sm">
-      {!hideAdd && !readOnly && (
-        <>
-          <Button
-            size="compact-sm"
-            variant={adding ? 'light' : 'filled'}
-            leftSection={adding ? <IconX size={14} /> : <IconPlus size={14} />}
-            disabled={disabled}
-            onClick={() => setAdding((open) => !open)}
-          >
-            {adding ? 'Done adding' : 'Add source'}
-          </Button>
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1.5">
+        <Text size="sm" fw={600}>
+          What goes in it
+        </Text>
+        <HubSourceInput
+          disabled={disabled}
+          remaining={hubLimits.sourcesPerHub - included.length}
+          isAdded={(source) => !!held(source.type, source.targetId)}
+          onAdd={(source) => addSource(source, false)}
+          onRemove={removeByTarget}
+          onAddMany={addMany}
+        />
+      </div>
 
-          <Collapse in={adding}>
-            {adding && (
-              <Card withBorder p="xs">
-                <Stack gap="xs">
-                  <SegmentedControl
-                    size="xs"
-                    fullWidth
-                    value={addMode}
-                    onChange={(next) => setAddMode(next as AddMode)}
-                    data={[
-                      { value: 'include', label: 'Include' },
-                      { value: 'exclude', label: 'Exclude' },
-                    ]}
-                  />
-                  <Text size="xs" c="dimmed">
-                    {exclude
-                      ? 'Content from what you pick is kept out of this hub.'
-                      : 'Content from what you pick fills this hub.'}
-                  </Text>
-                  <HubSourceSearch
-                    disabled={disabled}
-                    isAdded={(item) => !!held(item)}
-                    onSelect={(item) => addSource(item.type, item.targetId, item.alias)}
-                  />
-                  <HubSourceUrlInput
-                    disabled={disabled}
-                    onResolved={(source) => addSource(source.type, source.targetId, source.alias)}
-                  />
-                </Stack>
-              </Card>
-            )}
-          </Collapse>
-        </>
-      )}
-
-      {includedGroups.length === 0 ? (
+      {included.length ? (
+        <div className="flex flex-wrap gap-2">{chipsFor(included, false)}</div>
+      ) : (
         <Text size="sm" c="dimmed">
           {emptyMessage}
         </Text>
-      ) : (
-        <Stack gap={6}>{includedGroups.map(renderGroup)}</Stack>
       )}
 
-      {excludedGroups.length > 0 && (
-        <Stack gap={6}>
-          <Text size="xs" fw={700} tt="uppercase" c="dimmed" className="tracking-wide">
-            Kept out
-          </Text>
-          {excludedGroups.map(renderGroup)}
-        </Stack>
+      {!!included.length && (
+        <Text size="xs" c="dimmed">
+          {included.length} of {hubLimits.sourcesPerHub} — creators, models and tags share one
+          budget
+        </Text>
       )}
-    </Stack>
+
+      <div className="flex flex-col gap-2">
+        <Text size="xs" fw={700} tt="uppercase" c="dimmed">
+          Never show
+        </Text>
+
+        <div className="flex flex-wrap gap-2">
+          {chipsFor(excluded, true)}
+
+          {!addingExclusion && (
+            <UnstyledButton
+              disabled={disabled}
+              onClick={() => setAddingExclusion(true)}
+              className="flex items-center gap-1 rounded-full border border-dashed border-gray-4 px-3 py-1 text-sm text-gray-6 hover:text-gray-9 dark:border-dark-4 dark:text-dark-2 dark:hover:text-white"
+            >
+              <IconPlus size={14} />
+              Keep something out
+            </UnstyledButton>
+          )}
+        </div>
+
+        {hasExcludeGroup && (
+          <Text size="xs" c="dimmed">
+            {excludeGroupRule}
+          </Text>
+        )}
+
+        {addingExclusion && (
+          <HubSourceInput
+            autoFocus
+            exclude
+            disabled={disabled}
+            remaining={hubLimits.exclusionsPerHub - excluded.length}
+            isAdded={(source) => !!held(source.type, source.targetId)}
+            onAdd={(source) => addSource(source, true)}
+            onRemove={removeByTarget}
+          />
+        )}
+      </div>
+    </div>
   );
 }

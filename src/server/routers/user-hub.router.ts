@@ -1,9 +1,11 @@
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addUserHubSourceSchema,
-  getHubSourceSuggestionsSchema,
+  getHubSourceCandidatesSchema,
+  hubSourceTargetSchema,
   getUserHubByKeySchema,
   resolveHubSourceSchema,
+  getHubSourceScopeSchema,
   setUserHubOrderSchema,
   userHubFollowSchema,
   upsertUserHubSchema,
@@ -11,14 +13,16 @@ import {
 } from '~/server/schema/user-hub.schema';
 import {
   addUserHubSource,
+  getHubSourceCandidates,
   deleteUserHub,
   followUserHub,
   getFollowedHubs,
   getUserHubByKey,
-  getHubSourceSuggestions,
+  getHubSourceState,
   getUserHubs,
   removeUserHubSource,
   resolveHubSourceFromUrl,
+  getHubSourceScope,
   setUserHubOrder,
   unfollowUserHub,
   upsertUserHub,
@@ -30,6 +34,10 @@ export const userHubRouter = router({
   getAll: userHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .query(({ ctx }) => getUserHubs({ userId: ctx.user.id })),
+  sourceState: userHubProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .input(hubSourceTargetSchema)
+    .query(({ input, ctx }) => getHubSourceState({ ...input, userId: ctx.user.id })),
   getFollowed: userHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .query(({ ctx }) => getFollowedHubs({ userId: ctx.user.id })),
@@ -57,6 +65,22 @@ export const userHubRouter = router({
     .mutation(({ input, ctx }) =>
       upsertUserHub({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
+  sourceScope: userHubProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .input(getHubSourceScopeSchema)
+    .query(({ input, ctx }) =>
+      getHubSourceScope({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+  sourceCandidates: userHubProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .input(getHubSourceCandidatesSchema)
+    .query(({ input, ctx }) =>
+      getHubSourceCandidates({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
   addSource: userHubProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(addUserHubSourceSchema)
@@ -70,16 +94,6 @@ export const userHubRouter = router({
     .input(getByIdSchema)
     .mutation(({ input, ctx }) =>
       deleteUserHub({ id: input.id, userId: ctx.user.id, isModerator: ctx.user.isModerator })
-    ),
-  sourceSuggestions: userHubProcedure
-    .meta({ requiredScope: TokenScope.UserRead })
-    .input(getHubSourceSuggestionsSchema)
-    .query(({ input, ctx }) =>
-      getHubSourceSuggestions({
-        ...input,
-        userId: ctx.user.id,
-        isModerator: ctx.user.isModerator,
-      })
     ),
   resolveSource: userHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })

@@ -5,6 +5,7 @@ import { isEqual } from 'lodash-es';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -35,7 +36,14 @@ const SEARCH_ABORT_THRESHOLD_MS = 8_000;
 
 type ImagesInfiniteProps = {
   withTags?: boolean;
-  filters?: ImagesQueryParamSchema;
+  /**
+   * `ImagesQueryParamSchema` is the URL-param shape, and a couple of API filters are
+   * not URL-serialisable — an array of objects has no query-string form. They are named
+   * here rather than added to that schema, and rather than smuggled past the prop with
+   * a spread, which is how this call site used to typecheck: a spread defeats excess
+   * property checking, so a misspelled key silently sent nothing.
+   */
+  filters?: ImagesQueryParamSchema & Partial<Pick<GetInfiniteImagesInput, 'hubExcludedSources'>>;
   showEof?: boolean;
   renderItem?: React.ComponentType<MasonryRenderItemProps<ImageGetInfinite[number]>>;
   filterType?: 'images' | 'videos';
