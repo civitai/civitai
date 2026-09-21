@@ -37,7 +37,7 @@ vi.mock('~/server/utils/subscription.utils', async (importOriginal) => ({
   invalidateSubscriptionCaches,
 }));
 
-import { scrubStripeAccount } from '~/server/services/gdpr/stripe-account-scrub';
+import { isFinished, scrubStripeAccount } from '~/server/services/gdpr/stripe-account-scrub';
 
 const CUSTOMER = 'cus_live1';
 const OPTIONS = { maxNetworkRetries: 2, timeout: 10_000 };
@@ -72,6 +72,25 @@ beforeEach(() => {
 });
 
 const scrub = () => scrubStripeAccount({ userId: 42, customerId: CUSTOMER });
+
+describe('isFinished — DECISION: an unbounded wait can never finish an account', () => {
+  it.each([
+    ['nothing outstanding', { errors: [], pending: false, pendingUnbounded: false }, true],
+    [
+      'an error',
+      { errors: [{ step: 'customer', message: 'x' }], pending: false, pendingUnbounded: false },
+      false,
+    ],
+    ['a wait that clears itself', { errors: [], pending: true, pendingUnbounded: false }, false],
+    // The state that cannot arise today: the flag without `pending`. Constructed here precisely
+    // because it cannot be reached through scrubStripeAccount — a guard no test can see is the
+    // defect class this file's review spent ten rounds removing, and this is the one that would
+    // drop the pointer over the condition it was flagging.
+    ['an unbounded wait alone', { errors: [], pending: false, pendingUnbounded: true }, false],
+  ])('%s -> %s', (_, outcome, finished) => {
+    expect(isFinished(outcome)).toBe(finished);
+  });
+});
 
 describe('scrubStripeAccount — the customer object', () => {
   it('clears every PII field, and sends shipping WHOLE', async () => {
@@ -144,6 +163,9 @@ describe('scrubStripeAccount — the customer object', () => {
 
       // The `_MERGED` suffix must never be stripped: the base id resolves to a customer whose
       // ownership could not be established, so scrubbing it would hit someone else's record.
+      // Asserted on the CLIENT, not on one method: move the shape check below the subscriptions
+      // block and `customers.update` is still untouched while that id goes to Stripe anyway.
+      expect(getServerStripe).not.toHaveBeenCalled();
       expect(stripe.customers.update).not.toHaveBeenCalled();
       expect(outcome.complete).toBe(false);
     }
@@ -854,5 +876,7 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
     const outcome = await scrub();
 
     expect(outcome.complete).toBe(false);
+    // Where it failed, not just that something did: `complete: false` is true of any broken step.
+    expect(outcome.errors[0].step).toBe('charges');
   });
 });

@@ -302,6 +302,8 @@ describe('gdpr-stripe-scrub — dropping the pointer', () => {
 
     const summary = (await runJob()) as { scrubbed: number };
 
+    // The write RAN and matched nothing — a mutation that skips it entirely gives the same 0.
+    expect(pointerWrites()).toHaveLength(1);
     expect(summary.scrubbed).toBe(0);
   });
 });

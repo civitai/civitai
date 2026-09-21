@@ -60,6 +60,20 @@ const CREDIT_SETTLE_MS = 4 * 24 * 60 * 60 * 1000;
 
 export const CUSTOMER_ID_SHAPE = /^cus_[A-Za-z0-9]+$/;
 
+/**
+ * When the caller may drop `User.customerId` — the only route back to these Stripe records.
+ *
+ * The `pendingUnbounded` conjunct is deliberately redundant: today that flag is only ever set
+ * beside `pending`, so the state it guards cannot arise. It is here because a future site that
+ * sets only the flag would otherwise finish the account and drop the pointer over the exact
+ * condition it was flagging as needing a person. Exported so that impossible state can be
+ * constructed in a test — a guard no test can reach is the defect class this file spent its
+ * review removing. Do not delete it as dead code.
+ */
+export const isFinished = (
+  outcome: Pick<ScrubOutcome, 'errors' | 'pending' | 'pendingUnbounded'>
+) => outcome.errors.length === 0 && !outcome.pending && !outcome.pendingUnbounded;
+
 export type ScrubOutcome = {
   /** True only when every step reached a terminal state, so the caller may drop the pointer. */
   complete: boolean;
