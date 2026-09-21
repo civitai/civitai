@@ -513,6 +513,105 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
     expect(outcome.complete).toBe(true);
   });
 
+  it('never strips an intent whose cancel failed', async () => {
+    stripe.paymentIntents.list.mockResolvedValue(
+      page([
+        {
+          id: 'pi_abandoned',
+          status: 'requires_payment_method',
+          created: secondsAgo(5 * DAY),
+          metadata: { userId: '42' },
+        },
+      ])
+    );
+    stripe.paymentIntents.cancel.mockRejectedValue(stripeError({ type: 'api_error' }));
+
+    const outcome = await scrub();
+
+    // Falling through here would strip the userId off a LIVE intent — the link the crediting
+    // webhook reads — and then finish the account over it.
+    expect(stripe.paymentIntents.update).not.toHaveBeenCalled();
+    expect(outcome.errors[0].step).toBe('paymentIntent.cancel');
+    expect(outcome.complete).toBe(false);
+  });
+
+  it.each([
+    ['3.5 days after settling, inside the webhook retry horizon', 3.5, false],
+    ['4.5 days after settling', 4.5, true],
+  ])('%s', async (_, days, stripped) => {
+    stripe.paymentIntents.list.mockResolvedValue(
+      page([
+        {
+          id: 'pi_x',
+          status: 'succeeded',
+          created: secondsAgo(30 * DAY),
+          metadata: { userId: '42' },
+        },
+      ])
+    );
+    // The SETTLE time, from the charge — an intent's own `created` is when it was opened, and for
+    // ACH that is days earlier, which would strip the link while the webhook was still retrying.
+    stripe.charges.list.mockResolvedValue(
+      page([
+        {
+          id: 'ch_x',
+          payment_intent: 'pi_x',
+          status: 'succeeded',
+          created: secondsAgo(days * DAY),
+          metadata: {},
+        },
+      ])
+    );
+
+    const outcome = await scrub();
+
+    expect(stripe.paymentIntents.update).toHaveBeenCalledTimes(stripped ? 1 : 0);
+    expect(outcome.complete).toBe(stripped);
+  });
+
+  it('strips a canceled intent immediately — no webhook was ever owed', async () => {
+    stripe.paymentIntents.list.mockResolvedValue(
+      page([
+        { id: 'pi_c', status: 'canceled', created: secondsAgo(60_000), metadata: { userId: '42' } },
+      ])
+    );
+
+    const outcome = await scrub();
+
+    expect(stripe.paymentIntents.update).toHaveBeenCalledTimes(1);
+    expect(outcome.complete).toBe(true);
+  });
+
+  it.each([
+    ['charges', () => stripe.charges.list],
+    ['paymentIntents', () => stripe.paymentIntents.list],
+  ])('treats a missing %s list as nothing to do, not a failure', async (_, list) => {
+    list().mockRejectedValue(stripeError({ code: 'resource_missing' }));
+
+    const outcome = await scrub();
+
+    // Nothing is reachable through a customer that does not exist, so the account is finished.
+    expect(outcome.complete).toBe(true);
+    expect(outcome.errors).toEqual([]);
+  });
+
+  it('refuses to finish an account whose list never ended', async () => {
+    let calls = 0;
+    stripe.charges.list.mockImplementation(async () => {
+      calls++;
+      if (calls > 150) return page([]);
+      return page([{ id: `ch_${calls}`, metadata: {} }], true);
+    });
+
+    const outcome = await scrub();
+
+    // Returning the first 10,000 quietly would let the account complete over records nobody
+    // enumerated.
+    expect(calls).toBe(100);
+    expect(outcome.complete).toBe(false);
+    expect(outcome.errors[0].step).toBe('charges');
+  });
+
   it('is incomplete when a metadata write fails', async () => {
     stripe.charges.list.mockResolvedValue(page([{ id: 'ch_1', metadata: { userId: '42' } }]));
     stripe.charges.update.mockRejectedValue(stripeError({ type: 'api_error' }));

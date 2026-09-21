@@ -39,16 +39,32 @@ const complete = (overrides: Partial<AccountScrub.ScrubOutcome> = {}) =>
 
 const runJob = () => gdprStripeScrubJob.run({}).result;
 
+/** What the PRIMARY returns for the eligibility re-read plus the meta read, in one object. */
+const live = (meta: Record<string, unknown> = {}) => ({
+  deletedAt: new Date('2026-09-01T00:00:00Z'),
+  customerId: CUSTOMER,
+  meta,
+});
+
 afterEach(() => {
   // Not inline at the end of the one test that uses them: a test appended after it would inherit
   // frozen time, and this file stamps lastAttemptAt from the clock.
   vi.useRealTimers();
 });
 
+/** The primary agrees with whatever the replica selected, for a many-account fixture. */
+const liveForAny = () =>
+  dbMock.dbWrite.user.findUnique.mockImplementation(
+    async ({ where }: { where: { id: number } }) => ({
+      ...live(),
+      customerId: `cus_${where.id - 1}`,
+    })
+  );
+
 beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbRead.user.findMany.mockResolvedValue([{ id: USER_ID, customerId: CUSTOMER, meta: {} }]);
-  dbMock.dbWrite.user.findUnique.mockResolvedValue({ meta: {} });
+  dbMock.dbWrite.user.findUnique.mockResolvedValue(live());
   dbMock.dbWrite.user.updateMany.mockResolvedValue({ count: 1 });
   dbMock.dbWrite.user.update.mockResolvedValue({});
   scrubStripeAccount.mockResolvedValue(complete());
@@ -89,6 +105,8 @@ describe('gdpr-stripe-scrub — what it selects', () => {
 
     const [args] = dbMock.dbRead.user.findMany.mock.calls[0];
     expect(args.orderBy).toEqual({ deletedAt: 'asc' });
+    // The expensive query stays off the primary; the writes stay on it.
+    expect(dbMock.dbWrite.user.findMany).not.toHaveBeenCalled();
     expect(args.take).toBeGreaterThan(25 * 2);
   });
 
@@ -112,6 +130,7 @@ describe('gdpr-stripe-scrub — what it selects', () => {
     dbMock.dbRead.user.findMany.mockResolvedValue(
       Array.from({ length: 80 }, (_, i) => ({ id: i + 1, customerId: `cus_${i}`, meta: {} }))
     );
+    liveForAny();
 
     const summary = (await runJob()) as { processed: number };
 
@@ -123,12 +142,12 @@ describe('gdpr-stripe-scrub — dropping the pointer', () => {
   it('nulls customerId only through a guarded update, and clears only the retry state', async () => {
     // A fixture that tells the fix from an identity function: the retry state must go and the
     // rest of meta must survive.
-    dbMock.dbWrite.user.findUnique.mockResolvedValue({
-      meta: {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(
+      live({
         imageRemoval: 'grace',
         gdprStripeScrub: { attempts: 3, lastAttemptAt: '2020-01-01T00:00:00.000Z' },
-      },
-    });
+      })
+    );
 
     await runJob();
 
@@ -147,7 +166,7 @@ describe('gdpr-stripe-scrub — dropping the pointer', () => {
     ]);
     // Written by something else while the scrub was busy with Stripe. The whole object is
     // replaced here, so a stale copy would silently undo it.
-    dbMock.dbWrite.user.findUnique.mockResolvedValue({ meta: { imageRemoval: 'immediate' } });
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(live({ imageRemoval: 'immediate' }));
 
     await runJob();
 
@@ -173,9 +192,9 @@ describe('gdpr-stripe-scrub — dropping the pointer', () => {
   });
 
   it('counts a waiting account as pending, not failed, and does not alert on it', async () => {
-    dbMock.dbWrite.user.findUnique.mockResolvedValue({
-      meta: { gdprStripeScrub: { attempts: 9, lastAttemptAt: '2020-01-01T00:00:00.000Z' } },
-    });
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(
+      live({ gdprStripeScrub: { attempts: 9, lastAttemptAt: '2020-01-01T00:00:00.000Z' } })
+    );
     scrubStripeAccount.mockResolvedValue(complete({ complete: false, pending: true, errors: [] }));
 
     const summary = (await runJob()) as { pending: number; failed: number };
@@ -217,6 +236,46 @@ describe('gdpr-stripe-scrub — dropping the pointer', () => {
     expect(summary).toMatchObject({ blocked: 1, scrubbed: 1 });
   });
 
+  it('defers the pointer when THIS run cancelled a subscription', async () => {
+    scrubStripeAccount.mockResolvedValue(complete({ canceledSubscriptions: ['sub_1'] }));
+
+    const summary = (await runJob()) as { pending: number };
+
+    // That cancel emits customer.subscription.deleted asynchronously, and the webhook resolves it
+    // BY customerId. Dropping the pointer seconds later 400s it, and Stripe retries a 4xx for
+    // days. The next run finds the subscription already canceled and finishes the account.
+    expect(dbMock.dbWrite.user.updateMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.user.update).toHaveBeenCalled();
+    expect(summary.pending).toBe(1);
+  });
+
+  it('CONTROL: with nothing cancelled, the same outcome DOES drop the pointer', async () => {
+    scrubStripeAccount.mockResolvedValue(complete({ canceledSubscriptions: [] }));
+
+    await runJob();
+
+    expect(dbMock.dbWrite.user.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips an account the primary says is no longer eligible', async () => {
+    // The selection reads a replica. A restore that has not replicated yet would otherwise be
+    // cancelled, detached and stripped — none of which the guard on the final write can undo.
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ ...live(), deletedAt: null });
+
+    const summary = (await runJob()) as { processed: number };
+
+    expect(scrubStripeAccount).not.toHaveBeenCalled();
+    expect(summary.processed).toBe(0);
+  });
+
+  it('skips an account whose pointer changed under the replica read', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ ...live(), customerId: 'cus_other' });
+
+    await runJob();
+
+    expect(scrubStripeAccount).not.toHaveBeenCalled();
+  });
+
   it('does not count a guarded update that matched nothing', async () => {
     dbMock.dbWrite.user.updateMany.mockResolvedValue({ count: 0 });
 
@@ -226,12 +285,43 @@ describe('gdpr-stripe-scrub — dropping the pointer', () => {
   });
 });
 
+describe('gdpr-stripe-scrub — the queue alert', () => {
+  it('alerts when the window comes back full', async () => {
+    dbMock.dbRead.user.findMany.mockResolvedValue(
+      Array.from({ length: 200 }, (_, i) => ({ id: i + 1, customerId: `cus_${i}`, meta: {} }))
+    );
+
+    await runJob();
+
+    // A full window means newer deletions may not be visible at all — the only thing that tells a
+    // blocked queue from an empty one.
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'gdpr-stripe-scrub-queue', type: 'error' })
+    );
+  });
+
+  it('CONTROL: an ordinary run does not alert, malformed rows included', async () => {
+    dbMock.dbRead.user.findMany.mockResolvedValue([
+      { id: 1, customerId: 'cus_NL1pYvDpkPS6fN_MERGED', meta: {} },
+      { id: 2, customerId: CUSTOMER, meta: {} },
+    ]);
+
+    await runJob();
+
+    // The two malformed rows are permanent. Alerting on them would emit the same warning every
+    // ten minutes forever, which is how a channel gets muted — taking the full-window error too.
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'gdpr-stripe-scrub-queue' })
+    );
+  });
+});
+
 describe('gdpr-stripe-scrub — retry state', () => {
   it('records the attempt, the step and the error on failure', async () => {
     scrubStripeAccount.mockResolvedValue(
       complete({ complete: false, errors: [{ step: 'customer', message: 'stripe down' }] })
     );
-    dbMock.dbWrite.user.findUnique.mockResolvedValue({ meta: { imageRemoval: 'grace' } });
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(live({ imageRemoval: 'grace' }));
 
     await runJob();
 
@@ -244,9 +334,9 @@ describe('gdpr-stripe-scrub — retry state', () => {
   });
 
   it('alerts once an account has failed long enough to need a person, naming the step', async () => {
-    dbMock.dbWrite.user.findUnique.mockResolvedValue({
-      meta: { gdprStripeScrub: { attempts: 7, lastAttemptAt: '2020-01-01T00:00:00.000Z' } },
-    });
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(
+      live({ gdprStripeScrub: { attempts: 7, lastAttemptAt: '2020-01-01T00:00:00.000Z' } })
+    );
     scrubStripeAccount.mockResolvedValue(
       complete({ complete: false, errors: [{ step: 'paymentMethod', message: 'stripe down' }] })
     );
@@ -306,6 +396,7 @@ describe('gdpr-stripe-scrub — retry state', () => {
     dbMock.dbRead.user.findMany.mockResolvedValue(
       Array.from({ length: 30 }, (_, i) => ({ id: i + 1, customerId: `cus_${i}`, meta: {} }))
     );
+    liveForAny();
     let processed = 0;
     scrubStripeAccount.mockImplementation(async () => {
       processed++;

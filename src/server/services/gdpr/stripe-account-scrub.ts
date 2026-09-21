@@ -114,7 +114,9 @@ async function listAll<T extends { id: string }>(
     if (!result.has_more || !result.data.length) return items;
     startingAfter = result.data[result.data.length - 1].id;
   }
-  return items;
+  // Returning what we have would let the account complete over records nobody enumerated. The
+  // cap exists to stop a bad cursor looping; hitting it is a fact the caller has to hear.
+  throw new Error('list exceeded the page cap');
 }
 
 const pmIsDirty = (pm: Stripe.PaymentMethod) => {
@@ -174,8 +176,10 @@ export async function scrubStripeAccount({
           // Through the service, so the cancel, the row delete and the retry/timeout options have
           // ONE definition. Passing the id read from Stripe skips the service's own lookup, which
           // is the part that could not be trusted here.
+          // removeRecord deletes our row too, so nothing more is owed for this one.
           await cancelSubscription({ subscriptionId: subscription.id, removeRecord: true });
           outcome.canceledSubscriptions.push(subscription.id);
+          continue;
         } catch (error) {
           // A cancel of something already gone is done, not missing-customer: this catch is
           // per-subscription precisely so `resource_missing` here cannot be read as "the customer
@@ -303,6 +307,11 @@ async function block(
  * from settled records: an intent that has not reached a terminal status is left for a later pass.
  */
 async function clearMetadata(stripe: Stripe, customerId: string, outcome: ScrubOutcome) {
+  // When a charge settled, keyed by the intent it belongs to. An intent's own `created` is when
+  // it was OPENED, and for ACH or SEPA that is days before it settles — measuring the credit
+  // window from it would strip a userId while the purchase webhook was still minutes into its
+  // retries. The charges are listed here anyway, so this costs nothing.
+  const settledAt = new Map<string, number>();
   try {
     const charges = await listAll<Stripe.Charge>((startingAfter) =>
       stripe.charges.list(
@@ -311,6 +320,12 @@ async function clearMetadata(stripe: Stripe, customerId: string, outcome: ScrubO
       )
     );
     for (const charge of charges) {
+      const intentId =
+        typeof charge.payment_intent === 'string'
+          ? charge.payment_intent
+          : charge.payment_intent?.id;
+      if (intentId && charge.status === 'succeeded')
+        settledAt.set(intentId, Math.max(settledAt.get(intentId) ?? 0, charge.created));
       if (!charge.metadata?.userId) continue;
       await stripe.charges.update(charge.id, { metadata: { userId: '' } }, requestOptions);
       outcome.cleared.charges++;
@@ -350,12 +365,14 @@ async function clearMetadata(stripe: Stripe, customerId: string, outcome: ScrubO
             continue;
           }
         }
-      } else if (
-        !intent.metadata.transactionId &&
-        intent.created * 1000 > Date.now() - CREDIT_SETTLE_MS
-      ) {
-        outcome.pending = true;
-        continue;
+      } else if (intent.status === 'succeeded' && !intent.metadata.transactionId) {
+        // From the SETTLE time, not the intent's own `created`.  A `canceled` intent never had a
+        // purchase webhook to strand, so it skips the wait entirely.
+        const settled = (settledAt.get(intent.id) ?? intent.created) * 1000;
+        if (settled > Date.now() - CREDIT_SETTLE_MS) {
+          outcome.pending = true;
+          continue;
+        }
       }
       await stripe.paymentIntents.update(intent.id, { metadata: { userId: '' } }, requestOptions);
       outcome.cleared.paymentIntents++;

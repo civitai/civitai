@@ -28,6 +28,8 @@ const RUN_BUDGET_MS = 8 * 60 * 1000;
 
 /** Sequential, small, and deliberately not adaptive: the rate limit is shared with live checkout. */
 const BATCH_SIZE = 25;
+/** Several batches of headroom, so held-back accounts cannot fill the window. */
+const WINDOW_SIZE = BATCH_SIZE * 8;
 const BASE_BACKOFF_MS = 5 * 60 * 1000;
 const MAX_BACKOFF_MS = 24 * 60 * 60 * 1000;
 /** ~2 days of backoff. Past this the account needs a human, so say so once per run. */
@@ -77,7 +79,7 @@ export const gdprStripeScrubJob = createJob(
       // pointer and stays in this window, but its backoff drops it before the batch is formed, so
       // it costs a window slot rather than a run. `User` carries no updated-at column to rotate
       // on; the alert at ALERT_AFTER_ATTEMPTS is what says the head of the queue needs a person.
-      take: BATCH_SIZE * 8,
+      take: WINDOW_SIZE,
     })) as Candidate[];
 
     // Two prod rows hold a value that is not a Stripe id (a `_MERGED` suffix, and an empty
@@ -107,6 +109,18 @@ export const gdprStripeScrubJob = createJob(
       // account not reached here is simply taken next tick, which is how the queue already works.
       if (Date.now() - now.getTime() > RUN_BUDGET_MS) break;
       const customerId = user.customerId as string;
+
+      // The selection came off a replica, and nothing below has an inverse: cancels, detaches and
+      // metadata strips cannot be undone by the guard on the final write. Re-read the two fields
+      // that decide eligibility from the PRIMARY first, so a restore that has not replicated yet
+      // cannot be scrubbed. One findUnique against an account that is about to cost dozens of
+      // Stripe round-trips.
+      const live = await dbWrite.user.findUnique({
+        where: { id: user.id },
+        select: { deletedAt: true, customerId: true },
+      });
+      if (!live?.deletedAt || live.customerId !== customerId) continue;
+
       summary.processed++;
 
       const outcome = await scrubStripeAccount({ customerId }).catch(
@@ -155,12 +169,13 @@ export const gdprStripeScrubJob = createJob(
     // Held-back and malformed rows keep their pointer, so they keep their place in an
     // ordered-by-deletedAt window. A full window means newer deletions may not be visible at all,
     // and it is the only thing that tells a blocked queue from an empty one.
-    if (candidates.length >= BATCH_SIZE * 8 || summary.malformed)
-      await logToAxiom({
-        name: 'gdpr-stripe-scrub-queue',
-        type: candidates.length >= BATCH_SIZE * 8 ? 'error' : 'warning',
-        ...summary,
-      }).catch(() => null);
+    // Only on a full window. `malformed` is a permanent two-row condition, so alerting on it would
+    // emit the same warning every ten minutes until someone hand-fixes those rows, which is how a
+    // channel gets muted — taking this error with it. The count stays in the returned summary.
+    if (candidates.length >= WINDOW_SIZE)
+      await logToAxiom({ name: 'gdpr-stripe-scrub-queue', type: 'error', ...summary }).catch(
+        () => null
+      );
 
     return summary;
   }
