@@ -1216,6 +1216,7 @@ export const cancelSubscription = async ({
   userId,
   subscriptionId,
   atPeriodEnd,
+  removeRecord,
 }: {
   userId?: number;
   subscriptionId?: string;
@@ -1224,6 +1225,10 @@ export const cancelSubscription = async ({
   // restriction flows so the user keeps what they paid for and the action is
   // reversible via reinstateSubscription.
   atPeriodEnd?: boolean;
+  // Delete our CustomerSubscription row once Stripe has confirmed the cancel. Only after:
+  // every cancel path finds the subscription through that row, so deleting it first turns a
+  // failed cancel into a silent no-op that keeps billing.
+  removeRecord?: boolean;
 }) => {
   if (!subscriptionId && userId) {
     const subscription = await dbWrite.customerSubscription.findFirst({
@@ -1251,7 +1256,19 @@ export const cancelSubscription = async ({
     return;
   }
 
-  await stripe.subscriptions.del(subscriptionId);
+  // The shared client retries nothing (stripe-node's default is 0), so one transient error
+  // would otherwise leave a deleted account billing. The timeout bounds the retries: at the
+  // default 80s per attempt, three attempts outlast the gateway and a completed deletion 504s.
+  await stripe.subscriptions.del(
+    subscriptionId,
+    {},
+    removeRecord ? { maxNetworkRetries: 2, timeout: 10_000 } : {}
+  );
+  if (!removeRecord) return;
+
+  // deleteMany: the customer.subscription.deleted webhook may have removed the row already.
+  await dbWrite.customerSubscription.deleteMany({ where: { id: subscriptionId } });
+  if (userId) await invalidateSubscriptionCaches(userId);
 };
 
 // Reverses a cancel_at_period_end cancellation while the subscription is still
