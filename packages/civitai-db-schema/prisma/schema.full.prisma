@@ -1181,13 +1181,6 @@ model ModelVersion {
   earlyAccessTimeFrame Int               @default(0)
   flags                Int               @default(0)
 
-  // Last time the sync job saw this version resident in the orchestrator. A timestamp rather than a
-  // flag because the UI claim is "recently loaded": a version near the eviction line would otherwise
-  // flip its badge — and force a row write plus a Meilisearch update — on every poll. Nothing ever
-  // clears it; a version ages out of "recent" with no write at all. Display and filtering only, never
-  // the generation-time check, which stays the orchestrator's.
-  generatorLoadedAt DateTime?
-
   licensingFee                   Decimal?                        @db.Decimal(10, 2)
   licensingFeeType               LicensingFeeType?               @default(PerImageBuzz)
   licensingFeeSettlementCurrency LicensingFeeSettlementCurrency? @default(Buzz)
@@ -1227,7 +1220,6 @@ model ModelVersion {
 
   @@index([modelId], type: Hash)
   @@index([licensingSourceVersionId])
-  @@index([generatorLoadedAt])
 }
 
 // A version registered as a chargeable licensing root for its (baseModel,
