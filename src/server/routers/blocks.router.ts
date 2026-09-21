@@ -9078,21 +9078,7 @@ function assertPassThroughStepTypeAllowed($type: string): void {
  * that the quote and the submit hold ONE step object, which is what makes
  * "the quote priced the same work" true; building the step twice kills it.
  *
- * 🔴 NO `timeout` IS STAMPED HERE. It is added after the quote, and ONLY when
- * there is no quote — see `stampUnquotedTimeout`.
- *
- * `timeout = maxBuzz` is a BUZZ bound only where Buzz tracks runtime, which is
- * the premise `createBlockCustomComfyStep` states: the job is "billed for
- * measured runtime, so worst-case Buzz = ceil(timeout_s × 1)". True of inline
- * Comfy, which the orchestrator cannot quote. False of anything it prices from
- * a rate card — a six-second `minimax-h3-comfy` clip is quoted 210 Buzz before
- * it starts and takes ~330 seconds, so cutting it off at 250 caps no spend and
- * only bills the viewer for a clip they never receive.
- *
- * Every one of civitai.com's own ten `videoGen` handlers stamps no timeout at
- * all; a block was the only caller that did, and it derived one from a Buzz
- * number. A quoted step now gets what the rest of the platform gets — the
- * orchestrator's own default.
+ * No `timeout` is stamped here; see `stampUnquotedTimeout`.
  */
 function buildPassThroughOrchestratorStep(body: PassThroughStepBody): {
   $type: string;
@@ -9108,18 +9094,12 @@ function buildPassThroughOrchestratorStep(body: PassThroughStepBody): {
 }
 
 /**
- * Add the `maxBuzz`-derived timeout when the orchestrator gave no quote.
+ * Stamp the timeout for a step the orchestrator would not quote, where it is
+ * the only bound on spend. A quoted step is bounded by its quote instead.
  *
- * 🔴 IN PLACE, ON THE ONE STEP OBJECT, and that is load-bearing. The quote and
- * the submit must hold the SAME object — `blocks.router.workflow.test.ts`
- * asserts it by reference — because that is what makes "the quote priced the
- * same work" true. Returning a copy here would break it, and rebuilding would
- * reopen the gap the identity assertion exists to close.
- *
- * Only reached when `quotePassThroughBuzz` returned null. The arm deliberately
- * does not fail closed there, so for a GPU-second-metered `$type` this stamped
- * timeout is the only thing bounding the spend — which is exactly the case
- * where `maxBuzz` IS the right number.
+ * 🔴 Mutates the one step object rather than returning a copy: the quote and
+ * the submit must hold the same reference, asserted in
+ * `blocks.router.workflow.test.ts`.
  */
 function stampUnquotedTimeout(
   step: ReturnType<typeof buildPassThroughOrchestratorStep>,
@@ -10577,9 +10557,6 @@ async function submitPassThroughStepWorkflow(opts: {
   // wall-clock and nothing else. Operator decision, recorded in the PR.
   const ceiling = Math.max(body.maxBuzz, quotedBuzz ?? body.maxBuzz);
 
-  // The unquoted case keeps the timeout it always had: with no quote it is the
-  // only bound on a GPU-second-metered `$type`, and it matches the reservation
-  // above by construction.
   if (quotedBuzz === null) stampUnquotedTimeout(orchestratorStep, body.maxBuzz);
 
   // (1) STATIC pre-submit gate against the token's per-call budget.

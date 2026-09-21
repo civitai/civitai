@@ -10091,13 +10091,6 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
     // physically enforces. It must track the DECLARED number, never the
     // reservation — an app that declares 20 has consented to 20 seconds of
     // runtime, not to whatever the quote came back as.
-    // 🔴 A QUOTED STEP CARRIES NO TIMEOUT, and that is the whole change.
-    // `timeout = maxBuzz` is a BUZZ bound only where Buzz tracks runtime. Once
-    // the orchestrator has priced the job from its rate card the clock bounds
-    // nothing about the money — it only decides whether the viewer gets output
-    // they are already being charged for. Every one of civitai.com's own
-    // videoGen handlers stamps no timeout; a quoted block step now matches them
-    // and takes the orchestrator's default.
     it('stamps NO step timeout once the orchestrator has quoted the job', async () => {
       mockVerifyBlockToken.mockResolvedValue(ptClaims());
       happyUser();
@@ -10107,9 +10100,8 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect(ptWhatIfs()[0][0].body.steps[0].timeout).toBeUndefined();
     });
 
-    // The other half, and the control for the one above: with NO quote the
-    // stamped timeout is the only bound on a GPU-second-metered `$type`, so it
-    // is still derived from the declared maxBuzz — never from the reservation.
+    // The control for the one above: with no quote the timeout is the only bound
+    // on spend, so it is still derived from maxBuzz — never from the reservation.
     it('stamps the maxBuzz timeout when the orchestrator gives no quote', async () => {
       mockVerifyBlockToken.mockResolvedValue(ptClaims());
       happyUser();
