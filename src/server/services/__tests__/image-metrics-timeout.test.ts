@@ -349,7 +349,7 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
   it('gives up on a WEDGED cache read instead of waiting out the redis backstop', async () => {
     fetchMock.mockRejectedValue(new Error('Socket hang up after 3 retries'));
     redisMock.redis.hGetAll.mockImplementation(
-      () => new Promise((resolve) => setTimeout(() => resolve(CACHED['metrics:Image:1']), 1500))
+      () => new Promise((resolve) => setTimeout(() => resolve(CACHED['metrics:Image:1']), 600))
     );
 
     const start = Date.now();
@@ -367,8 +367,13 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
     //
     // 490 rather than a wider margin: a setTimeout NEVER fires early, so elapsed
     // cannot fall below the deadline in force. Load only pushes it up, which the
-    // 800 ceiling covers. So this floor can sit just under 500 with no flake
-    // risk, and it leaves only (490, 500) decoupled instead of (250, 500).
+    // 800 ceiling covers, so this floor can sit just under 500 without flaking.
+    //
+    // The read below is armed at 600ms, which pins the OTHER side behaviourally:
+    // at 500 it is still dropped and the result is {}, but a deadline decoupled
+    // upward to 600 or more admits it and this case fails on a value. Undetected
+    // range is therefore [490, 600) - the 800 ceiling is the load-tolerant outer
+    // bound, not the tight one.
     expect(elapsed).toBeGreaterThanOrEqual(490);
     expect(elapsed).toBeLessThan(800);
     expect(staleCounterIncMock).toHaveBeenCalledTimes(1);
