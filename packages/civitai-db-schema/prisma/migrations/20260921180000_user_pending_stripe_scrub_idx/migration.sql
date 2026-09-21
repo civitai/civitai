@@ -8,6 +8,10 @@
 -- This partial index holds only the rows the job can act on: 51 entries today, and it shrinks
 -- again as each account is scrubbed and its pointer nulled.
 --
+-- Measured on the prod replica, same query, before and after: 1,346,705 buffers and 21.4s cold
+-- (1.44s warm) becomes 52 buffers and 1.1ms, with the customerId predicate absorbed into the
+-- index so the plan carries no Filter at all.
+--
 -- SQL-only, and absent from schema.full.prisma, because Prisma cannot express a partial index.
 -- That drift is deliberate: do not "fix" it by dropping the WHERE clause.
 --

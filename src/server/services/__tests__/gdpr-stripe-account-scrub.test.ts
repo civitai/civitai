@@ -359,6 +359,27 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
     expect(outcome.complete).toBe(true);
   });
 
+  it('never cancels an authorised-but-uncaptured payment', async () => {
+    stripe.paymentIntents.list.mockResolvedValue(
+      page([
+        {
+          id: 'pi_auth',
+          status: 'requires_capture',
+          created: secondsAgo(5 * DAY),
+          metadata: { userId: '42' },
+        },
+      ])
+    );
+
+    const outcome = await scrub();
+
+    // Cancelling this RELEASES the authorisation — a money action. Unreachable today (nothing
+    // sets capture_method), and a cleanup job must not be what finds out if that changes.
+    expect(stripe.paymentIntents.cancel).not.toHaveBeenCalled();
+    expect(stripe.paymentIntents.update).not.toHaveBeenCalled();
+    expect(outcome.pending).toBe(true);
+  });
+
   it('waits on an intent that is genuinely in flight', async () => {
     stripe.paymentIntents.list.mockResolvedValue(
       page([
@@ -507,8 +528,8 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
 
     const outcome = await scrub();
 
-    // Pins the 24h window from the other side: a shorter one would clear the minutes-old intent
-    // above, a much longer one would leave this one.
+    // No charge accompanies this intent, so there is no settle time to read: this is the fallback
+    // to the intent's own `created`. The window itself is bracketed by the 3.5/4.5-day pair above.
     expect(stripe.paymentIntents.update).toHaveBeenCalledTimes(1);
     expect(outcome.complete).toBe(true);
   });

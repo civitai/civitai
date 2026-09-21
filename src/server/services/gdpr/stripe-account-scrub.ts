@@ -352,8 +352,11 @@ async function clearMetadata(stripe: Stripe, customerId: string, outcome: ScrubO
         // An abandoned buy-Buzz flow leaves an intent parked forever: these are created directly,
         // not through a Checkout Session, so Stripe never expires them. Cancelling is what makes
         // the account finishable — nobody is going to complete a payment for a deleted account.
-        // `processing` is the exception: it is genuinely in flight and cannot be cancelled.
-        if (intent.status === 'processing') {
+        // `processing` cannot be cancelled and may still succeed. `requires_capture` is a money
+        // action: cancelling it RELEASES an authorised-but-uncaptured payment. Nothing sets
+        // capture_method today, so nothing reaches that status — and a cleanup job must not be
+        // what discovers it if someone ever does.
+        if (intent.status === 'processing' || intent.status === 'requires_capture') {
           outcome.pending = true;
           continue;
         }
