@@ -604,6 +604,11 @@ which looks like a broken query. **Take the flag's real key from `fliptKey` in t
 service; never infer it from the camelCase name** — an unknown key evaluates false and
 is indistinguishable from a feature that is legitimately off.
 
+🔴 **A flag declared `availability: []` cannot be switched on with `FEATURE_FLAG_<KEY>` at
+all** — that declaration means Flipt is its only on-switch, so the env override is ignored
+for it. Use `FLIPT_LOCAL_OVERRIDES=<fliptKey>=on` instead (comma-separated `key=value`
+pairs, non-production only), which is the one mechanism that reaches both paths.
+
 🔴 **App Blocks need a signing keypair or they 503.** With `BLOCK_TOKEN_PRIVATE_KEY` /
 `BLOCK_TOKEN_PUBLIC_KEY` unset, `POST /api/v1/block-tokens` returns
 `Block tokens not configured` and the UI shows **"Couldn't authenticate this app"** —

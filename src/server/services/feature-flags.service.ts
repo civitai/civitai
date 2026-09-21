@@ -1232,6 +1232,18 @@ type FeatureFlagInput =
   | FeatureAvailability[] // Legacy format: ['public']
   | (Partial<FeatureFlag> & { availability: FeatureAvailability[] }); // Object with at least availability
 
+/**
+ * `availability: []` declares a flag dark: static evaluation is false for everyone, so its
+ * `fliptKey` is the only on-switch. A `FEATURE_FLAG_<KEY>` variable must not lift that — it
+ * grants the access the registry withheld, and marking the key env-overridden also removes it
+ * from Flipt evaluation, leaving the flag unreachable from the switch that is meant to own it.
+ * Dark flags are turned on in development with `FLIPT_LOCAL_OVERRIDES`, which reaches the
+ * direct-Flipt gates as well.
+ */
+function isDeclaredDark(availability: FeatureAvailability[]) {
+  return availability.length === 0;
+}
+
 function createFeatureFlags<T extends Record<string, FeatureFlagInput>>(flags: T) {
   const features = {} as { [K in keyof T]: FeatureFlag };
   const envOverrides = getEnvOverrides();
@@ -1249,7 +1261,7 @@ function createFeatureFlags<T extends Record<string, FeatureFlagInput>>(flags: T
 
     // Apply ENV overrides
     const override = envOverrides[key as FeatureFlagKey];
-    if (override) {
+    if (override && !isDeclaredDark(flagData.availability)) {
       features[key as keyof T].availability = override;
       envOverriddenFlags.add(key);
     }
