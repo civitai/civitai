@@ -71,6 +71,7 @@
     "deploy": "pnpm run build && pnpm run db:deploy",
     "postinstall": "pnpm run db:generate",
     "typecheck": "node scripts/typecheck.mjs",
+    "typecheck:fast": "node scripts/typecheck-fast.mjs",
     "lint": "eslint src/ --cache --cache-strategy metadata",
     "lint:packages": "eslint packages --ext .ts",
     "eslint": "cross-env TIMING=1 eslint src/ --quiet --cache --cache-strategy metadata",
