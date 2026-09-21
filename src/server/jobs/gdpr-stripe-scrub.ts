@@ -133,6 +133,7 @@ export const gdprStripeScrubJob = createJob(
           complete: false,
           customerGone: false,
           pending: false,
+          pendingUnbounded: false,
           cleared: { paymentMethods: 0, charges: 0, paymentIntents: 0 },
           blocked: [],
           canceledSubscriptions: [],
