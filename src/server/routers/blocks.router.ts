@@ -194,6 +194,7 @@ import {
   assertStepTypeAllowed,
   PlatformInternalStepTypeError,
 } from '~/server/services/blocks/steps/orchestrator-denylist';
+import { passThroughTimeoutSeconds } from '~/server/services/blocks/steps/passthrough-timeouts';
 // APP-FACING generation type for the spend-attribution row, resolved from the
 // submitted body. Imported (not open-coded at each of the three submit paths) so
 // the `kind` → key and step-id → key mapping has exactly one definition — and so
@@ -9078,16 +9079,30 @@ function assertPassThroughStepTypeAllowed($type: string): void {
  * that the quote and the submit hold ONE step object, which is what makes
  * "the quote priced the same work" true; building the step twice kills it.
  *
- * `timeout` is the PHYSICAL Buzz ceiling, derived from the single declared
- * `maxBuzz` exactly as the inline-comfy arm derives it: `stepTimeoutSeconds =
- * maxBuzz`, so `maxBuzz === ceil(stepTimeoutSeconds)` is not asserted, it is
- * unrepresentable.
+ * `timeout` DEFAULTS to the declared `maxBuzz`, exactly as the inline-comfy arm
+ * derives it, and a `$type` with an entry in `passthrough-timeouts` gets its
+ * reviewed wall clock instead.
+ *
+ * 🔴 WHY THAT IS NOT A WEAKENED CEILING. `maxBuzz === ceil(stepTimeoutSeconds)`
+ * is a Buzz bound only under the premise `createBlockCustomComfyStep` states:
+ * the job is "billed for measured runtime, so worst-case Buzz =
+ * ceil(timeout_s × 1)". That premise is true of a step the orchestrator cannot
+ * quote — inline Comfy, where a real `whatIf` returns 0 — and false of one it
+ * prices from a rate card. A six-second `minimax-h3-comfy` clip is quoted 210
+ * Buzz before it starts and takes ~330 seconds to produce; killing it at 250
+ * does not cap the spend at 250, because the rate card already fixed it at 210.
+ * It only bills the viewer for a clip they never receive.
+ *
+ * For those types the spend control is the one this arm already runs: the
+ * orchestrator `whatif`, the `max(declared, quoted)` reservation, and the
+ * `buzzBudget` gate over it. The table is a worker-occupancy bound, reviewed
+ * per `$type`; every unlisted `$type` keeps today's behaviour unchanged.
  */
 function buildPassThroughOrchestratorStep(body: PassThroughStepBody) {
   return {
     $type: body.$type,
     name: BLOCK_STEP_NAME,
-    timeout: formatStepTimeout(body.maxBuzz),
+    timeout: formatStepTimeout(passThroughTimeoutSeconds(body.$type, body.maxBuzz)),
     input: body.input,
   };
 }

@@ -10102,6 +10102,43 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect(ptWhatIfs()[0][0].body.steps[0].timeout).toBe('00:00:20');
     });
 
+    // ── The per-`$type` wall-clock allowance ────────────────────────────────
+    //
+    // 🔴 `maxBuzz === timeout` is a BUZZ bound only where Buzz tracks runtime.
+    // For a `$type` the orchestrator prices from a rate card, the price is
+    // already fixed before the job starts, so killing it early caps no spend —
+    // it only bills the viewer for output they never receive. A six-second
+    // `minimax-h3-comfy` clip quotes 210 Buzz and takes ~330 seconds.
+    //
+    // The two tests above are the control for this one: they use an UNLISTED
+    // `$type` and still assert the maxBuzz-derived timeout, so a change that
+    // granted every type the allowance would redden them.
+    it('grants a listed $type its reviewed wall clock instead of maxBuzz', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(31, 31);
+      await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ptBody({ $type: 'videoGen' }),
+      });
+      // 900 s → 00:15:00. The declared maxBuzz of 20 would render 00:00:20.
+      expect(ptRealSubmits()[0][0].body.steps[0].timeout).toBe('00:15:00');
+      expect(ptWhatIfs()[0][0].body.steps[0].timeout).toBe('00:15:00');
+    });
+
+    // The allowance changes the CLOCK, never the money. The reservation is the
+    // same number it was, from the same `max(declared, quoted)` rule.
+    it('leaves the reservation untouched when it grants an allowance', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(31, 31);
+      await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ptBody({ $type: 'videoGen' }),
+      });
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 31);
+    });
+
     it('scales the timeout with maxBuzz (two points, not one)', async () => {
       // 125 is above the default per-call budget, so raise it — otherwise the
       // static gate refuses before a step is ever built and the assertion below
