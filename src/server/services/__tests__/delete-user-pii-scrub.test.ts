@@ -161,6 +161,15 @@ describe('deleteUser — payment-provider ids', () => {
       JSON.stringify(call)?.includes('subscriptionId')
     );
     expect(rawCall).toBeGreaterThan(-1);
+
+    // What the statement DOES, not just that it mentions the column. Without this, a
+    // statement reading `SET "image" = NULL WHERE id = ${user.id} AND "subscriptionId" IS
+    // NOT NULL` satisfies every other assertion here and leaves the pointer on the row.
+    // Anchored on the assignment rather than the bare column name, which an insertion
+    // beside it would slip past.
+    const [strings] = dbMock.dbWrite.$executeRaw.mock.calls[rawCall] as [string[]];
+    expect(strings.join('?')).toContain('SET "subscriptionId" = NULL');
+
     // The bound id, not an interpolated one: `id = ${user.id}` in a tagged template is a
     // parameter, so it arrives as its own argument rather than inside the SQL string.
     expect(dbMock.dbWrite.$executeRaw.mock.calls[rawCall]).toContain(USER_ID);
@@ -172,9 +181,10 @@ describe('deleteUser — payment-provider ids', () => {
   });
 
   it('CONTROL: the scan reports nothing for subscriptionId when the delete does not write it', () => {
-    // Pairs with the assertion above the way the customerId controls pair with its zero: it
-    // shows the ['dbWrite.$executeRaw'] result comes from the call deleteUser makes, not from
-    // a scan that answers the same thing for any input.
+    // A BLEED control, not a visibility one: it shows the ['dbWrite.$executeRaw'] above comes
+    // from the call deleteUser makes rather than from mock state left by an earlier test.
+    // That the scan can SEE a $executeRaw write at all is a different property, carried by
+    // the tagged-raw-SQL control further down.
     expect(dbWriteCallsMentioning('subscriptionId')).toEqual([]);
   });
 

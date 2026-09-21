@@ -1219,8 +1219,10 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
 /**
  * Restore a soft-deleted user account (the inverse of deleteUser).
  *
- * deleteUser scrubs username, email, name, paddleCustomerId, image, profilePictureId from the
- * User row and sets deletedAt. It also hard-deletes Account / Session / UserProfile / UserLink
+ * deleteUser scrubs username, email, name, paddleCustomerId, subscriptionId, image,
+ * profilePictureId from the User row and sets deletedAt. subscriptionId is NOT restorable —
+ * the cancel deletes the CustomerSubscription row it pointed at, so there is nothing left to
+ * resolve. It also hard-deletes Account / Session / UserProfile / UserLink
  * rows and every
  * UserEngagement row the account appears in EXCEPT Blocks — those survive precisely so
  * a restore cannot leave someone unblocked without telling them — and reassigns
