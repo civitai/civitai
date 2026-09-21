@@ -185,6 +185,25 @@ export function planRanges(start: number, end: number, batchSize: number) {
   return ranges;
 }
 
+/**
+ * Which database this run is about to write to, printed before it writes. There is no
+ * `--prod` / `--dev` flag here — the target is whatever `DATABASE_URL` happens to name,
+ * and in a worktree that is usually the dev snapshot while every other credential in the
+ * same `.env` points at production. "I thought it was pointed at dev" is not a thing that
+ * can be checked after the fact, so it is stated before.
+ *
+ * Never includes the password: this line ends up in logs and in reports.
+ */
+export function describeTarget(url: string | undefined) {
+  if (!url) return 'DATABASE_URL is not set';
+  try {
+    const u = new URL(url);
+    return `${u.username}@${u.hostname}:${u.port || '5432'}${u.pathname}`;
+  } catch {
+    return 'DATABASE_URL is set but unparseable';
+  }
+}
+
 export function digestOf(ids: number[]) {
   return createHash('sha256')
     .update([...ids].sort((a, b) => a - b).join(','))
@@ -291,8 +310,11 @@ async function main() {
   const excluded = excludedIds.join(',');
 
   console.log(
-    `exclusion list: ${excludedIds.length} ids, digest ${digestOf(excludedIds)}` +
-      `\nmode: ${write ? 'WRITE' : 'dry run'}${propagate ? ' + propagate' : ''}`
+    `target: ${describeTarget(process.env.DATABASE_URL)}` +
+      `\nexclusion list: ${excludedIds.length} ids, digest ${digestOf(excludedIds)}` +
+      `\nmode: ${write ? 'WRITE' : 'dry run'}${
+        propagate ? ' + propagate (PRODUCTION cache + index)' : ''
+      }`
   );
 
   const prisma = new PrismaClient();

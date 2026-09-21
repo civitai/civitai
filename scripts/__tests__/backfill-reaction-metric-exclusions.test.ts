@@ -3,6 +3,7 @@ import { snippets } from '~/server/metrics/metric-helpers';
 import { ReviewReactions } from '~/shared/utils/prisma/enums';
 import {
   buildSql,
+  describeTarget,
   digestOf,
   fetchExcludedUserIds,
   parseArgs,
@@ -116,6 +117,21 @@ describe('reaction-metric exclusion backfill', () => {
       // so a dry run against a dev database must not reach them.
       expect(parseArgs(['node', 's.ts', '--propagate']).propagate).toBe(false);
       expect(parseArgs(['node', 's.ts', '--propagate', '--write']).propagate).toBe(true);
+    });
+
+    it('names the database it is pointed at, without leaking the password', () => {
+      // There is no --prod/--dev flag: the target is whatever DATABASE_URL names, and in
+      // a worktree that is usually the dev snapshot while every other credential in the
+      // same .env points at production. This line is the only chance to notice.
+      const described = describeTarget('postgresql://civitai:hunter2@db.example:25061/civitai');
+
+      expect(described).toBe('civitai@db.example:25061/civitai');
+      expect(described, 'the password reached a log line').not.toContain('hunter2');
+    });
+
+    it('says so rather than guessing when DATABASE_URL is missing or junk', () => {
+      expect(describeTarget(undefined)).toBe('DATABASE_URL is not set');
+      expect(describeTarget('not-a-url')).toContain('unparseable');
     });
 
     it('rejects an unknown entity rather than silently running all of them', () => {
