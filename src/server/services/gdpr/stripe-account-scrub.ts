@@ -177,10 +177,16 @@ export async function scrubStripeAccount({
           // ONE definition. Passing the id read from Stripe skips the service's own lookup, which
           // is the part that could not be trusted here.
           // removeRecord deletes our row too, so nothing more is owed for this one.
-          // Deliberately WITHOUT userId. That would run invalidateSubscriptionCaches, whose vault
-          // step re-queries active subscriptions, finds none (this call just deleted the row) and
-          // throws — one error-level log per cancelled subscription, with nothing to act on. The
-          // cost of leaving it out is a cached tier on a deleted account until its key's own TTL.
+          // 🔴 Deliberately WITHOUT userId, and a future review will correctly suggest adding it.
+          // Read this first. Passing it runs invalidateSubscriptionCaches, whose vault step
+          // re-queries active subscriptions, finds none — this call just deleted the row — and
+          // throws. That is one error-level log per cancelled subscription, forever, with nothing
+          // to act on, which is how an alert channel gets muted.
+          // What it costs: the caches that helper busts go stale for this account. Measured, not
+          // assumed: the account's SESSION is already invalidated by deleteUser, so nothing can
+          // authenticate as them; the creator-membership-validity key is the only one another
+          // person's read can reach, and it expires in 10 minutes (CacheTTL.md). Ten minutes of a
+          // stale flag on a deleted account is worth less than a permanently noisy channel.
           await cancelSubscription({ subscriptionId: subscription.id, removeRecord: true });
           outcome.canceledSubscriptions.push(subscription.id);
           continue;

@@ -495,9 +495,11 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
     expect(outcome.canceledSubscriptions).toEqual(['sub_live']);
     // The userId is threaded for this: the cached paid tier and multipliers are busted in exactly
     // the case this job exists for, a deletion whose own cancel never got that far.
-    // Deliberately NOT busting the subscription caches: that helper's vault step throws for an
-    // account with no active subscription, which is one error log per cancel with nothing to act
-    // on. The cost is a cached tier on a deleted account until its own TTL.
+    // DECISION, pinned so it is not quietly reversed: the caches are NOT busted here. That
+    // helper's vault step throws for an account with no active subscription — one error log per
+    // cancel, forever. The stale window is 10 minutes on one key another person can read; the
+    // session is already gone, so nothing can authenticate as this account. See the comment at
+    // the call site before changing this.
     expect(invalidateSubscriptionCaches).not.toHaveBeenCalled();
   });
 
