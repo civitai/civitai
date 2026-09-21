@@ -230,10 +230,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   const excluded = excludedIds.join(',');
 
   const targets = params.entity === 'all' ? [...ENTITIES] : [params.entity as Entity];
-  const results: Record<
-    string,
-    { rowsChanged: number; batchErrors: number; batchSize: number }
-  > = {};
+  const results: Record<string, { rowsChanged: number; batchErrors: number; batchSize: number }> =
+    {};
 
   for (const entity of targets) {
     const spec = specs[entity];

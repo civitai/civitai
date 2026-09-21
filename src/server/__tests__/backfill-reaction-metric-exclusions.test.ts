@@ -69,7 +69,10 @@ async function run(query: Record<string, string>): Promise<RunResult> {
     on: () => undefined,
   };
   // Serialised so the captured statements are in batch order.
-  await handler({ query: { concurrency: '1', ...query } } as unknown as NextApiRequest, res as unknown as NextApiResponse);
+  await handler(
+    { query: { concurrency: '1', ...query } } as unknown as NextApiRequest,
+    res as unknown as NextApiResponse
+  );
   return result;
 }
 
@@ -164,8 +167,10 @@ describe('reaction-metric exclusion backfill', () => {
         return [Number(m[1]), Number(m[2])] as const;
       });
 
-      expect(ranges.length, 'the space was covered in one batch, so there is no gap to find')
-        .toBeGreaterThan(1);
+      expect(
+        ranges.length,
+        'the space was covered in one batch, so there is no gap to find'
+      ).toBeGreaterThan(1);
       expect(ranges[0][0]).toBe(0);
       expect(ranges[ranges.length - 1][1]).toBe(25);
       for (let i = 1; i < ranges.length; i++) {
@@ -243,12 +248,10 @@ describe('reaction-metric exclusion backfill', () => {
       const a = (await run({ entity: 'article', dryRun: 'true' })).body.excludedUsersDigest;
 
       h.excludedIds.mockResolvedValue([22, 11]);
-      const reordered = (await run({ entity: 'article', dryRun: 'true' })).body
-        .excludedUsersDigest;
+      const reordered = (await run({ entity: 'article', dryRun: 'true' })).body.excludedUsersDigest;
 
       h.excludedIds.mockResolvedValue([11, 23]);
-      const different = (await run({ entity: 'article', dryRun: 'true' })).body
-        .excludedUsersDigest;
+      const different = (await run({ entity: 'article', dryRun: 'true' })).body.excludedUsersDigest;
 
       expect(reordered).toBe(a);
       expect(different).not.toBe(a);
