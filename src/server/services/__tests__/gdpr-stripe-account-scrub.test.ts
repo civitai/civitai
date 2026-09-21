@@ -1,41 +1,52 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { resetHybridNodes } from '~/__tests__/mocks/hybrid';
 
 /**
- * The Stripe half of a deleted account's scrub. Every assertion below stands for something that
- * was measured against the live API during the 2026-09-18 backfill and is not obvious from the
- * docs: shipping rejects the whole update unless it is sent whole, a declined card can never have
- * its billing details cleared, some payment-method types refuse to drop a field they require, and
- * detach unlinks without scrubbing.
+ * The Stripe half of a deleted account's scrub. Each assertion stands for something measured
+ * against the live API during the 2026-09-18 backfill and not obvious from the docs: shipping
+ * rejects the whole update unless sent whole, a declined card can never have its billing details
+ * cleared, some payment-method types refuse to drop a field they require, and detach unlinks
+ * without scrubbing.
+ *
+ * The caller drops `User.customerId` when `complete` is true, and that pointer is the only route
+ * back to these records — so every test below is really about when `complete` may be true.
  */
 
-const stripe = vi.hoisted(() => ({
-  subscriptions: { list: vi.fn(), del: vi.fn() },
-  customers: { update: vi.fn() },
-  paymentMethods: { list: vi.fn(), update: vi.fn(), detach: vi.fn() },
-  charges: { list: vi.fn(), update: vi.fn() },
-  paymentIntents: { list: vi.fn(), update: vi.fn() },
-}));
+const { stripe, getServerStripe } = vi.hoisted(() => {
+  const stripe = {
+    subscriptions: { list: vi.fn(), del: vi.fn() },
+    customers: { update: vi.fn() },
+    paymentMethods: { list: vi.fn(), update: vi.fn(), detach: vi.fn() },
+    charges: { list: vi.fn(), update: vi.fn() },
+    paymentIntents: { list: vi.fn(), update: vi.fn() },
+  };
+  return { stripe, getServerStripe: vi.fn(async () => stripe) };
+});
 
-vi.mock('~/server/utils/get-server-stripe', () => ({ getServerStripe: async () => stripe }));
+vi.mock('~/server/utils/get-server-stripe', () => ({ getServerStripe }));
 
 import { scrubStripeAccount } from '~/server/services/gdpr/stripe-account-scrub';
 
-const USER_ID = 42;
 const CUSTOMER = 'cus_live1';
+const OPTIONS = { maxNetworkRetries: 2, timeout: 10_000 };
+const DAY = 24 * 60 * 60 * 1000;
+const secondsAgo = (ms: number) => Math.floor((Date.now() - ms) / 1000);
 
 const page = <T>(data: T[], has_more = false) => ({ data, has_more });
 const stripeError = (fields: Record<string, unknown>) => Object.assign(new Error('stripe'), fields);
-
 const paymentMethod = (id: string, billing_details: Record<string, unknown>) => ({
   id,
   billing_details,
 });
 
 beforeEach(() => {
-  // resetAllMocks, not clearAllMocks: a `mockRejectedValueOnce` left unconsumed by one test
-  // survives clearAllMocks and fires in the next one, which is how three tests here first failed.
+  // resetAllMocks, not clearAllMocks: an unconsumed `mockRejectedValueOnce` survives clearAllMocks
+  // and fires in the NEXT test, which is how three tests here first failed. resetAllMocks also
+  // strips the shared mocks' registered defaults, so they are restored right after.
   vi.resetAllMocks();
+  resetHybridNodes();
+  getServerStripe.mockResolvedValue(stripe);
   stripe.subscriptions.list.mockResolvedValue(page([]));
   stripe.customers.update.mockResolvedValue({});
   stripe.paymentMethods.list.mockResolvedValue(page([]));
@@ -48,7 +59,7 @@ beforeEach(() => {
   dbMock.dbWrite.customerSubscription.deleteMany.mockResolvedValue({ count: 0 });
 });
 
-const scrub = () => scrubStripeAccount({ userId: USER_ID, customerId: CUSTOMER });
+const scrub = () => scrubStripeAccount({ customerId: CUSTOMER });
 
 describe('scrubStripeAccount — the customer object', () => {
   it('clears every PII field, and sends shipping WHOLE', async () => {
@@ -62,13 +73,25 @@ describe('scrubStripeAccount — the customer object', () => {
       phone: '',
       description: '',
       address: { line1: '', line2: '', city: '', state: '', postal_code: '', country: '' },
+      // A shipping SUBFIELD without shipping[address] makes Stripe reject the ENTIRE update,
+      // which is how a 400-account run wrote nothing while reporting success. Sent whole, as a
+      // string, it unsets the object.
       shipping: '',
     });
-    // A shipping SUBFIELD without shipping[address] makes Stripe reject the ENTIRE update, which
-    // is how a 400-account run wrote nothing while reporting success.
-    expect(Object.keys(params).filter((k) => k.startsWith('shipping['))).toEqual([]);
-    expect(options).toEqual({ maxNetworkRetries: 2, timeout: 10_000 });
+    expect(typeof params.shipping).toBe('string');
+    expect(options).toEqual(OPTIONS);
     expect(outcome.complete).toBe(true);
+  });
+
+  it('is incomplete when Stripe is not configured at all', async () => {
+    getServerStripe.mockResolvedValue(undefined as never);
+
+    const outcome = await scrub();
+
+    // Without this the job would null every pointer on its first pass in an environment with no
+    // Stripe key, having scrubbed nothing, and the pointer is the only way back.
+    expect(outcome.complete).toBe(false);
+    expect(outcome.errors[0].step).toBe('stripe');
   });
 
   it('treats a customer that is gone from Stripe as finished, not failed', async () => {
@@ -78,8 +101,19 @@ describe('scrubStripeAccount — the customer object', () => {
 
     expect(outcome.customerGone).toBe(true);
     expect(outcome.complete).toBe(true);
-    // Nothing else is reachable through a customer that does not exist.
     expect(stripe.paymentMethods.list).not.toHaveBeenCalled();
+  });
+
+  it('still strips metadata when the customer is gone — charges outlive it', async () => {
+    stripe.customers.update.mockRejectedValue(stripeError({ code: 'resource_missing' }));
+    stripe.charges.list.mockResolvedValue(page([{ id: 'ch_1', metadata: { userId: '42' } }]));
+
+    const outcome = await scrub();
+
+    // Deleting a customer at Stripe does not delete its charges, and metadata.userId is the link
+    // this job exists to remove.
+    expect(stripe.charges.update).toHaveBeenCalledTimes(1);
+    expect(outcome.cleared.charges).toBe(1);
   });
 
   it('reports a transient customer failure as incomplete', async () => {
@@ -94,7 +128,7 @@ describe('scrubStripeAccount — the customer object', () => {
   it.each([['cus_NL1pYvDpkPS6fN_MERGED'], [''], ['cus_'], ['nope']])(
     'refuses the malformed customerId %s without calling Stripe',
     async (customerId) => {
-      const outcome = await scrubStripeAccount({ userId: USER_ID, customerId });
+      const outcome = await scrubStripeAccount({ customerId });
 
       // The `_MERGED` suffix must never be stripped: the base id resolves to a customer whose
       // ownership could not be established, so scrubbing it would hit someone else's record.
@@ -141,22 +175,47 @@ describe('scrubStripeAccount — payment methods', () => {
       page([paymentMethod('pm_dead', { email: 'a@b.c' })])
     );
     stripe.paymentMethods.update.mockRejectedValue(
-      // Classified on type/code. The message wording is Stripe's to change and has at least three
-      // forms, including one that reads nothing like a decline.
+      // Classified on type/code. The wording is Stripe's to change and has at least three forms,
+      // one of which reads nothing like a decline.
       stripeError({ type: 'card_error', code: 'card_declined', message: 'Your card was declined' })
     );
 
     const outcome = await scrub();
 
-    expect(stripe.paymentMethods.detach).toHaveBeenCalledWith(
-      'pm_dead',
-      {},
-      { maxNetworkRetries: 2, timeout: 10_000 }
-    );
+    expect(stripe.paymentMethods.detach).toHaveBeenCalledWith('pm_dead', {}, OPTIONS);
     // Detach only unlinks; this payment method still holds billing PII.
     expect(outcome.blocked).toEqual([{ id: 'pm_dead', code: 'card_declined', detached: true }]);
     expect(outcome.cleared.paymentMethods).toBe(0);
     expect(outcome.complete).toBe(true);
+  });
+
+  it('retries a processing_error later instead of detaching it', async () => {
+    stripe.paymentMethods.list.mockResolvedValue(
+      page([paymentMethod('pm_busy', { email: 'a@b.c' })])
+    );
+    stripe.paymentMethods.update.mockRejectedValue(
+      stripeError({ type: 'card_error', code: 'processing_error' })
+    );
+
+    const outcome = await scrub();
+
+    // Stripe documents this one as retryable, so detaching would unlink a payment method a later
+    // pass could have cleared properly.
+    expect(stripe.paymentMethods.detach).not.toHaveBeenCalled();
+    expect(outcome.complete).toBe(false);
+  });
+
+  it('needs nothing from a payment method that vanished mid-run', async () => {
+    stripe.paymentMethods.list.mockResolvedValue(
+      page([paymentMethod('pm_gone', { email: 'a@b.c' })])
+    );
+    stripe.paymentMethods.update.mockRejectedValue(stripeError({ code: 'resource_missing' }));
+
+    const outcome = await scrub();
+
+    expect(outcome.complete).toBe(true);
+    expect(outcome.blocked).toEqual([]);
+    expect(outcome.cleared.paymentMethods).toBe(0);
   });
 
   it('retries without the field a payment-method type requires', async () => {
@@ -178,52 +237,86 @@ describe('scrubStripeAccount — payment methods', () => {
     expect(stripe.paymentMethods.detach).not.toHaveBeenCalled();
   });
 
-  it('gives up and detaches when two fields are required, as SEPA does', async () => {
+  it('stops at the attempt bound when every field is required in turn', async () => {
     stripe.paymentMethods.list.mockResolvedValue(
       page([paymentMethod('pm_sepa', { email: 'a@b.c', name: 'A B' })])
     );
-    stripe.paymentMethods.update
-      .mockRejectedValueOnce(
-        stripeError({ code: 'parameter_missing', param: 'billing_details[name]' })
-      )
-      .mockRejectedValueOnce(
-        stripeError({ code: 'parameter_missing', param: 'billing_details[email]' })
-      )
-      .mockRejectedValueOnce(
-        stripeError({ code: 'parameter_missing', param: 'billing_details[name]' })
-      );
-
-    const outcome = await scrub();
-
-    // Bounded: at most one attempt per clearable field, so a stubborn payment method cannot loop.
-    expect(stripe.paymentMethods.update.mock.calls.length).toBeLessThanOrEqual(3);
-    expect(outcome.blocked[0]).toMatchObject({ id: 'pm_sepa', detached: true });
-    expect(outcome.cleared.paymentMethods).toBe(0);
-  });
-
-  it('pages through payment methods and stops at the end', async () => {
-    let calls = 0;
-    stripe.paymentMethods.list.mockImplementation(async () => {
-      calls++;
-      // Terminates on its own: a fake that never ends would hang the runner rather than fail,
-      // and vitest's timeout cannot fire inside a pure microtask loop.
-      if (calls > 3) return page([]);
-      return page([paymentMethod(`pm_${calls}`, { email: 'a@b.c' })], calls < 2);
+    // Would go forever if the loop were unbounded: each attempt names another required field, so
+    // the in-loop exit is never reached and only the bound stops it.
+    const required = ['name', 'email', 'phone', 'name', 'email'];
+    let call = 0;
+    stripe.paymentMethods.update.mockImplementation(async () => {
+      throw stripeError({
+        code: 'parameter_missing',
+        param: `billing_details[${required[call++ % required.length]}]`,
+      });
     });
 
     const outcome = await scrub();
 
-    expect(calls).toBeLessThan(5);
-    expect(outcome.cleared.paymentMethods).toBe(2);
+    expect(stripe.paymentMethods.update).toHaveBeenCalledTimes(3);
+    expect(outcome.blocked[0]).toMatchObject({ id: 'pm_sepa', detached: true });
+    expect(outcome.cleared.paymentMethods).toBe(0);
+  });
+
+  it('detaches on a required field it cannot name, rather than retrying forever', async () => {
+    stripe.paymentMethods.list.mockResolvedValue(
+      page([paymentMethod('pm_odd', { email: 'a@b.c' })])
+    );
+    stripe.paymentMethods.update.mockRejectedValue(
+      stripeError({ code: 'parameter_missing', param: 'something_else' })
+    );
+
+    const outcome = await scrub();
+
+    expect(stripe.paymentMethods.update).toHaveBeenCalledTimes(1);
+    expect(outcome.blocked[0]).toMatchObject({ id: 'pm_odd', detached: true });
+    expect(outcome.complete).toBe(true);
+  });
+
+  it('stays incomplete when a blocked payment method cannot even be detached', async () => {
+    stripe.paymentMethods.list.mockResolvedValue(
+      page([paymentMethod('pm_stuck', { email: 'a@b.c' })])
+    );
+    stripe.paymentMethods.update.mockRejectedValue(stripeError({ type: 'card_error' }));
+    stripe.paymentMethods.detach.mockRejectedValue(stripeError({ type: 'api_error' }));
+
+    const outcome = await scrub();
+
+    // Still attached, still holding billing PII: finishing here would drop the pointer over it.
+    expect(outcome.blocked[0]).toMatchObject({ id: 'pm_stuck', detached: false });
+    expect(outcome.complete).toBe(false);
+  });
+
+  it('pages through payment methods and stops at the page cap', async () => {
+    let calls = 0;
+    stripe.paymentMethods.list.mockImplementation(async () => {
+      calls++;
+      // Would never end on its own — the cap is the only thing that stops it — but hard-stops far
+      // past the bound so an unbounded loop FAILS in a second instead of hanging the runner.
+      if (calls > 150) return page([]);
+      return page([paymentMethod(`pm_${calls}`, {})], true);
+    });
+
+    await scrub();
+
+    expect(calls).toBe(100);
     expect(stripe.paymentMethods.list.mock.calls[1][0].starting_after).toBe('pm_1');
   });
 });
 
 describe('scrubStripeAccount — metadata and subscriptions', () => {
-  it('removes metadata.userId from charges and settled intents', async () => {
+  it('removes metadata.userId from charges and long-settled intents', async () => {
     stripe.charges.list.mockResolvedValue(page([{ id: 'ch_1', metadata: { userId: '42' } }]));
     stripe.paymentIntents.list.mockResolvedValue(
-      page([{ id: 'pi_1', status: 'succeeded', metadata: { userId: '42' } }])
+      page([
+        {
+          id: 'pi_1',
+          status: 'succeeded',
+          created: secondsAgo(3 * DAY),
+          metadata: { userId: '42' },
+        },
+      ])
     );
 
     const outcome = await scrub();
@@ -231,25 +324,35 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
     expect(stripe.charges.update).toHaveBeenCalledWith(
       'ch_1',
       { metadata: { userId: '' } },
-      { maxNetworkRetries: 2, timeout: 10_000 }
+      OPTIONS
     );
+    expect(stripe.charges.update).toHaveBeenCalledTimes(1);
     expect(stripe.paymentIntents.update).toHaveBeenCalledWith(
       'pi_1',
       { metadata: { userId: '' } },
-      { maxNetworkRetries: 2, timeout: 10_000 }
+      OPTIONS
     );
     expect(outcome.cleared).toMatchObject({ charges: 1, paymentIntents: 1 });
+    expect(outcome.complete).toBe(true);
   });
 
-  it('leaves an in-flight payment intent for a later pass', async () => {
+  it.each([
+    ['still in flight', { status: 'requires_payment_method', created: secondsAgo(3 * DAY) }],
+    ['settled minutes ago', { status: 'succeeded', created: secondsAgo(60_000) }],
+  ])('leaves a payment intent %s, and stays unfinished', async (_, intent) => {
     stripe.paymentIntents.list.mockResolvedValue(
-      page([{ id: 'pi_open', status: 'requires_payment_method', metadata: { userId: '42' } }])
+      page([{ id: 'pi_open', ...intent, metadata: { userId: '42' } }])
     );
 
-    await scrub();
+    const outcome = await scrub();
 
-    // userId is load-bearing at purchase time: Buzz crediting and the spender-spoof guard read it.
+    // userId is load-bearing at purchase time: the Buzz-crediting webhook reads it and throws
+    // without it, so a retry still in progress would be stranded.
     expect(stripe.paymentIntents.update).not.toHaveBeenCalled();
+    // Pending, not failed — and NOT complete, or the pointer would be dropped with work left.
+    expect(outcome.pending).toBe(true);
+    expect(outcome.complete).toBe(false);
+    expect(outcome.errors).toEqual([]);
   });
 
   it('cancels a live subscription at Stripe and drops our row', async () => {
@@ -264,16 +367,34 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
 
     // Read from Stripe, not from our rows: this is what recovers a deletion whose inline cancel
     // failed, and our row is exactly the thing that might be wrong.
-    expect(stripe.subscriptions.del).toHaveBeenCalledWith(
-      'sub_live',
-      {},
-      { maxNetworkRetries: 2, timeout: 10_000 }
-    );
+    expect(stripe.subscriptions.list.mock.calls[0][0].status).toBe('all');
+    expect(stripe.subscriptions.del).toHaveBeenCalledWith('sub_live', {}, OPTIONS);
     expect(stripe.subscriptions.del).toHaveBeenCalledTimes(1);
+    // Both rows go: a subscription already canceled at Stripe still leaves our row behind unless
+    // its buzzType is green, because only green is cleaned up by the webhook.
     expect(dbMock.dbWrite.customerSubscription.deleteMany).toHaveBeenCalledWith({
       where: { id: 'sub_live' },
     });
+    expect(dbMock.dbWrite.customerSubscription.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'sub_old' },
+    });
     expect(outcome.canceledSubscriptions).toEqual(['sub_live']);
+  });
+
+  it('does not read a missing SUBSCRIPTION as a missing customer', async () => {
+    stripe.subscriptions.list.mockResolvedValue(page([{ id: 'sub_gone', status: 'active' }]));
+    stripe.subscriptions.del.mockRejectedValue(stripeError({ code: 'resource_missing' }));
+
+    const outcome = await scrub();
+
+    // Cancelled already — by deleteUser, by Stripe, or by an earlier run. Reading it as "customer
+    // gone" would end the scrub as complete with the customer, payment methods and metadata
+    // untouched, and drop the only pointer back to them.
+    expect(outcome.customerGone).toBe(false);
+    expect(stripe.customers.update).toHaveBeenCalled();
+    expect(dbMock.dbWrite.customerSubscription.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'sub_gone' },
+    });
   });
 
   it('is incomplete when a metadata write fails', async () => {

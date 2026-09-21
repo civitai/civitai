@@ -19,19 +19,11 @@ import { createJob } from './job';
  * reality. Nothing is enqueued, so no failure can lose a deletion.
  */
 
-/**
- * The backfill's customer list was snapshotted at 2026-09-18 22:47:33 UTC; this floor sits a
- * margin earlier because that timestamp is when the file finished WRITING, not when its SELECT
- * ran, and an account deleted in between belongs to neither side.
- *
- * 🔴 `User.deletedAt` is `timestamp` WITHOUT time zone and stores UTC. Postgres DROPS the offset
- * when casting a literal that carries one, silently meaning a different instant, so this is a JS
- * Date sent through Prisma (which serialises UTC) and never a hand-written offset literal.
- *
- * Accounts deleted BEFORE it belong to the one-time backfill's own `customerId` purge, which is
- * bounded by membership of that list and is not this job's work.
- */
-export const GDPR_STRIPE_SCRUB_FLOOR = new Date('2026-09-18T22:40:00Z');
+/** How long a deletion is left alone so its own Stripe webhook can land first. */
+const WEBHOOK_SETTLE_MS = 15 * 60 * 1000;
+
+/** Stops a degraded-Stripe run outlasting the 10-minute cron and stacking on the next one. */
+const RUN_BUDGET_MS = 8 * 60 * 1000;
 
 /** Sequential, small, and deliberately not adaptive: the rate limit is shared with live checkout. */
 const BATCH_SIZE = 25;
@@ -59,29 +51,61 @@ export const gdprStripeScrubJob = createJob(
     const now = new Date();
     // Over-fetch, then drop the ones still inside their backoff, so a stuck account cannot hold
     // the head of the queue and starve everything behind it.
+    // 🔴 Eligibility is STATE, never a cutoff. A deleted account that still points at a Stripe
+    // customer has not been scrubbed — that is the whole definition. An earlier draft carried a
+    // start date of 2026-09-18 22:40 UTC, meant to keep the job off the accounts the one-time pass
+    // had already done; the one-time pass has since run, and that date was measured to STRAND 2
+    // accounts it never covered, both still holding an email at Stripe.
+    //
+    // `lte` is the one date here and it postpones rather than excludes: an account becomes
+    // eligible as it ages past the delay, so nothing can be stranded by it.
     const candidates = (await dbWrite.user.findMany({
       where: {
-        deletedAt: { gte: GDPR_STRIPE_SCRUB_FLOOR },
-        customerId: { startsWith: 'cus_' },
+        // Our own cancel's `customer.subscription.deleted` is resolved BY customerId, and
+        // `upsertSubscription` throws above every branch when it cannot find the user. Waiting
+        // lets that event land while the pointer still resolves, which is why the webhook needed
+        // no change. A JS Date, never a literal: `deletedAt` is timestamp WITHOUT time zone and
+        // Postgres drops the offset of a literal that carries one.
+        deletedAt: { not: null, lte: new Date(now.getTime() - WEBHOOK_SETTLE_MS) },
+        customerId: { not: null },
       },
       select: { id: true, customerId: true, meta: true },
-      orderBy: { deletedAt: 'asc' },
+      // Least recently touched first. `recordAttempt` writes the row, which bumps `updatedAt`, so
+      // an account that cannot finish rotates to the back instead of holding the window and
+      // starving every deletion behind it.
+      orderBy: { updatedAt: 'asc' },
       take: BATCH_SIZE * 4,
     })) as Candidate[];
 
-    const due = candidates
-      .filter((user) => !!user.customerId && CUSTOMER_ID_SHAPE.test(user.customerId))
+    // Two prod rows hold a value that is not a Stripe id (a `_MERGED` suffix, and an empty
+    // string). The suffix must never be stripped — the base id resolves to a customer whose owner
+    // could not be established — so they are counted and left alone rather than retried forever.
+    const usable = candidates.filter(
+      (user) => !!user.customerId && CUSTOMER_ID_SHAPE.test(user.customerId)
+    );
+    const due = usable
       .filter((user) => isDue((user.meta as UserMeta | null)?.gdprStripeScrub, now))
       .slice(0, BATCH_SIZE);
 
-    const summary = { considered: candidates.length, processed: 0, scrubbed: 0, blocked: 0, failed: 0 };
+    const summary = {
+      considered: candidates.length,
+      malformed: candidates.length - usable.length,
+      processed: 0,
+      scrubbed: 0,
+      blocked: 0,
+      failed: 0,
+    };
 
     for (const user of due) {
       jobContext.checkIfCanceled();
+      // While Stripe is degraded every call can burn its full retry budget, and 25 accounts of
+      // that outlast the 10-minute cron: runs would then stack, each holding a request open. An
+      // account not reached here is simply taken next tick, which is how the queue already works.
+      if (Date.now() - now.getTime() > RUN_BUDGET_MS) break;
       const customerId = user.customerId as string;
       summary.processed++;
 
-      const outcome = await scrubStripeAccount({ userId: user.id, customerId }).catch((error) => ({
+      const outcome = await scrubStripeAccount({ customerId }).catch((error) => ({
         complete: false,
         errors: [{ step: 'scrub', message: (error as Error)?.message ?? 'unknown' }],
         blocked: [],
@@ -90,15 +114,17 @@ export const gdprStripeScrubJob = createJob(
 
       if (!outcome.complete) {
         summary.failed++;
-        await recordAttempt(user, outcome.errors[0]?.message, now);
+        await recordAttempt(user.id, outcome.errors[0], now);
         continue;
       }
 
       // Guarded so a restore between the read and this write keeps its pointer, and so a second
-      // run cannot null a pointer it did not scrub.
+      // run cannot null a pointer it did not scrub. `meta` is re-read here rather than reused from
+      // the selection: a scrub is many seconds of Stripe calls, and this write replaces the whole
+      // object, so the stale copy would clobber anything written meanwhile.
       const { count } = await dbWrite.user.updateMany({
         where: { id: user.id, deletedAt: { not: null }, customerId },
-        data: { customerId: null, meta: clearScrubState(user.meta) },
+        data: { customerId: null, meta: clearScrubState(await currentMeta(user.id)) },
       });
       if (count) summary.scrubbed++;
     }
@@ -112,16 +138,28 @@ const clearScrubState = (meta: Prisma.JsonValue) => {
   return rest as Prisma.JsonObject;
 };
 
-async function recordAttempt(user: Candidate, lastError: string | undefined, now: Date) {
-  const previous = (user.meta as UserMeta | null)?.gdprStripeScrub;
-  const attempts = (previous?.attempts ?? 0) + 1;
+const currentMeta = async (userId: number) =>
+  ((await dbWrite.user.findUnique({ where: { id: userId }, select: { meta: true } }))?.meta ??
+    {}) as Prisma.JsonValue;
+
+async function recordAttempt(
+  userId: number,
+  failure: { step: string; message: string } | undefined,
+  now: Date
+) {
+  const meta = await currentMeta(userId);
+  const attempts = ((meta as UserMeta | null)?.gdprStripeScrub?.attempts ?? 0) + 1;
 
   await dbWrite.user.update({
-    where: { id: user.id },
+    where: { id: userId },
     data: {
       meta: {
-        ...((user.meta ?? {}) as Prisma.JsonObject),
-        gdprStripeScrub: { attempts, lastAttemptAt: now.toISOString(), lastError },
+        ...((meta ?? {}) as Prisma.JsonObject),
+        gdprStripeScrub: {
+          attempts,
+          lastAttemptAt: now.toISOString(),
+          lastError: failure?.message,
+        },
       } as Prisma.JsonObject,
     },
   });
@@ -130,9 +168,11 @@ async function recordAttempt(user: Candidate, lastError: string | undefined, now
     await logToAxiom({
       name: 'gdpr-stripe-scrub-stuck',
       type: 'error',
-      userId: user.id,
+      userId,
       attempts,
-      message: lastError,
+      // The step is what tells a reader whether this account needs Stripe support or a code fix.
+      step: failure?.step,
+      message: failure?.message,
     }).catch(() => null);
   }
 }

@@ -46,6 +46,9 @@ const billingDetailsClear = () => ({
 /** Bounds every Stripe call. The shared client sets neither, so one blip would fail a step. */
 const requestOptions: Stripe.RequestOptions = { maxNetworkRetries: 2, timeout: 10_000 };
 
+/** How long a settled payment intent keeps its userId, so a retrying purchase webhook can use it. */
+const CREDIT_SETTLE_MS = 24 * 60 * 60 * 1000;
+
 export const CUSTOMER_ID_SHAPE = /^cus_[A-Za-z0-9]+$/;
 
 export type ScrubOutcome = {
@@ -55,6 +58,8 @@ export type ScrubOutcome = {
   cleared: { paymentMethods: number; charges: number; paymentIntents: number };
   /** Payment methods that could not be scrubbed and were detached instead. Still hold PII. */
   blocked: { id: string; code: string | null; detached: boolean }[];
+  /** Work that is not failing but is not finishable yet, e.g. a payment still in flight. */
+  pending: boolean;
   canceledSubscriptions: string[];
   errors: { step: string; message: string }[];
 };
@@ -70,7 +75,11 @@ const isStripeError = (err: unknown): err is Stripe.StripeRawError & { type?: st
  * messages and the wording is Stripe's to change.
  */
 const isCardError = (err: unknown) =>
-  isStripeError(err) && (err.type === 'card_error' || err.type === 'StripeCardError');
+  isStripeError(err) &&
+  (err.type === 'card_error' || err.type === 'StripeCardError') &&
+  // Stripe documents `processing_error` as retryable, and it arrives as a card error. Detaching on
+  // it would unlink a payment method whose details a later pass could have cleared properly.
+  err.code !== 'processing_error';
 const isMissing = (err: unknown) => isStripeError(err) && err.code === 'resource_missing';
 
 /** `billing_details[name]` on a us_bank_account, and name AND email on sepa_debit. */
@@ -108,15 +117,14 @@ const pmIsDirty = (pm: Stripe.PaymentMethod) => {
 };
 
 export async function scrubStripeAccount({
-  userId,
   customerId,
 }: {
-  userId: number;
   customerId: string;
 }): Promise<ScrubOutcome> {
   const outcome: ScrubOutcome = {
     complete: false,
     customerGone: false,
+    pending: false,
     cleared: { paymentMethods: 0, charges: 0, paymentIntents: 0 },
     blocked: [],
     canceledSubscriptions: [],
@@ -141,13 +149,30 @@ export async function scrubStripeAccount({
   // deletion whose inline cancel failed, and our row is exactly what might be wrong.
   try {
     const subscriptions = await listAll<Stripe.Subscription>((startingAfter) =>
-      stripe.subscriptions.list({ customer: customerId, limit: 100, starting_after: startingAfter })
+      stripe.subscriptions.list(
+        { customer: customerId, status: 'all', limit: 100, starting_after: startingAfter },
+        requestOptions
+      )
     );
     for (const subscription of subscriptions) {
-      if (subscription.status === 'canceled') continue;
-      await stripe.subscriptions.del(subscription.id, {}, requestOptions);
+      // `status: 'all'` so a subscription already canceled at Stripe is seen: our row for it is
+      // cleaned up by the webhook only when its buzzType is green, so the other rows would
+      // otherwise sit `active` forever against an account that stopped billing long ago.
+      if (subscription.status !== 'canceled') {
+        try {
+          await stripe.subscriptions.del(subscription.id, {}, requestOptions);
+          outcome.canceledSubscriptions.push(subscription.id);
+        } catch (error) {
+          // A cancel of something already gone is done, not missing-customer: this catch is
+          // per-subscription precisely so `resource_missing` here cannot be read as "the customer
+          // does not exist" and end the whole scrub as complete.
+          if (!isMissing(error)) {
+            outcome.errors.push({ step: 'subscription', message: message(error) });
+            continue;
+          }
+        }
+      }
       await dbWrite.customerSubscription.deleteMany({ where: { id: subscription.id } });
-      outcome.canceledSubscriptions.push(subscription.id);
     }
   } catch (error) {
     if (isMissing(error)) outcome.customerGone = true;
@@ -163,20 +188,24 @@ export async function scrubStripeAccount({
     else outcome.errors.push({ step: 'customer', message: message(error) });
   }
 
-  if (outcome.customerGone) {
-    outcome.complete = outcome.errors.length === 0;
-    return outcome;
-  }
+  // A deleted customer has no payment methods to list, but its charges and payment intents
+  // survive it and still carry our userId, so the metadata pass below still runs.
+  if (!outcome.customerGone) await clearPaymentMethods(stripe, customerId, outcome);
+  await clearMetadata(stripe, customerId, outcome);
 
+  outcome.complete = outcome.errors.length === 0 && !outcome.pending;
+  return outcome;
+}
+
+async function clearPaymentMethods(stripe: Stripe, customerId: string, outcome: ScrubOutcome) {
   try {
     // No `type` filter: omitting it returns every type, and a card filter would skip link, paypal
     // and sepa payment methods that carry billing_details too.
     const paymentMethods = await listAll<Stripe.PaymentMethod>((startingAfter) =>
-      stripe.paymentMethods.list({
-        customer: customerId,
-        limit: 100,
-        starting_after: startingAfter,
-      })
+      stripe.paymentMethods.list(
+        { customer: customerId, limit: 100, starting_after: startingAfter },
+        requestOptions
+      )
     );
     for (const pm of paymentMethods) {
       if (!pmIsDirty(pm)) continue;
@@ -185,11 +214,6 @@ export async function scrubStripeAccount({
   } catch (error) {
     outcome.errors.push({ step: 'paymentMethods', message: message(error) });
   }
-
-  await clearMetadata(stripe, customerId, outcome);
-
-  outcome.complete = outcome.errors.length === 0;
-  return outcome;
 }
 
 /**
@@ -202,11 +226,7 @@ export async function scrubStripeAccount({
  * something only because we persist no route back to a payment method: there is no `pm_` column
  * in the schema.
  */
-async function clearPaymentMethod(
-  stripe: Stripe,
-  pm: Stripe.PaymentMethod,
-  outcome: ScrubOutcome
-) {
+async function clearPaymentMethod(stripe: Stripe, pm: Stripe.PaymentMethod, outcome: ScrubOutcome) {
   const details = billingDetailsClear() as Record<string, unknown>;
 
   // At most two fields can be required (sepa_debit requires name AND email), so this terminates.
@@ -225,29 +245,42 @@ async function clearPaymentMethod(
         delete details[required];
         continue;
       }
-      if (isCardError(error) || required) {
-        outcome.blocked.push({
-          id: pm.id,
-          code: isStripeError(error) ? error.code ?? null : null,
-          detached: await detach(stripe, pm.id),
-        });
+      // Gone between the list and the update: nothing left to clear.
+      if (isMissing(error)) return;
+      // A declined card, or a required field we cannot drop, can never be cleared. Both take the
+      // detach route; left in the error bucket they would retry for the life of the account.
+      if (isCardError(error) || isRequiredField(error)) {
+        await block(stripe, pm.id, error, outcome);
         return;
       }
-      if (isMissing(error)) return;
       outcome.errors.push({ step: 'paymentMethod', message: message(error) });
       return;
     }
   }
-  outcome.blocked.push({ id: pm.id, code: 'parameter_missing', detached: await detach(stripe, pm.id) });
+  // The loop bound reached. Only possible if Stripe named a third required field.
+  await block(stripe, pm.id, { code: 'parameter_missing' }, outcome);
 }
 
-async function detach(stripe: Stripe, paymentMethodId: string) {
+const isRequiredField = (err: unknown) => isStripeError(err) && err.code === 'parameter_missing';
+
+/** Records a payment method we could not scrub, and unlinks it as the nearest thing available. */
+async function block(
+  stripe: Stripe,
+  paymentMethodId: string,
+  error: { code?: string | null },
+  outcome: ScrubOutcome
+) {
+  let detached = true;
   try {
     await stripe.paymentMethods.detach(paymentMethodId, {}, requestOptions);
-    return true;
-  } catch {
-    return false;
+  } catch (detachError) {
+    // Already unlinked is unlinked. Anything else may work later, so the account stays in the
+    // queue rather than being declared finished over a payment method that still holds PII.
+    detached = isMissing(detachError);
+    if (!detached)
+      outcome.errors.push({ step: 'paymentMethod.detach', message: message(detachError) });
   }
+  outcome.blocked.push({ id: paymentMethodId, code: error.code ?? null, detached });
 }
 
 /**
@@ -258,7 +291,10 @@ async function detach(stripe: Stripe, paymentMethodId: string) {
 async function clearMetadata(stripe: Stripe, customerId: string, outcome: ScrubOutcome) {
   try {
     const charges = await listAll<Stripe.Charge>((startingAfter) =>
-      stripe.charges.list({ customer: customerId, limit: 100, starting_after: startingAfter })
+      stripe.charges.list(
+        { customer: customerId, limit: 100, starting_after: startingAfter },
+        requestOptions
+      )
     );
     for (const charge of charges) {
       if (!charge.metadata?.userId) continue;
@@ -271,15 +307,22 @@ async function clearMetadata(stripe: Stripe, customerId: string, outcome: ScrubO
 
   try {
     const intents = await listAll<Stripe.PaymentIntent>((startingAfter) =>
-      stripe.paymentIntents.list({
-        customer: customerId,
-        limit: 100,
-        starting_after: startingAfter,
-      })
+      stripe.paymentIntents.list(
+        { customer: customerId, limit: 100, starting_after: startingAfter },
+        requestOptions
+      )
     );
     for (const intent of intents) {
       if (!intent.metadata?.userId) continue;
-      if (intent.status !== 'succeeded' && intent.status !== 'canceled') continue;
+      // Not terminal yet, or terminal so recently that our own purchase webhook may still be
+      // retrying: that handler reads metadata.userId to credit the Buzz and throws without it, so
+      // stripping it here would strand the payment. Left pending, which keeps the account in the
+      // queue instead of finishing it with work outstanding.
+      const settled = intent.status === 'succeeded' || intent.status === 'canceled';
+      if (!settled || intent.created * 1000 > Date.now() - CREDIT_SETTLE_MS) {
+        outcome.pending = true;
+        continue;
+      }
       await stripe.paymentIntents.update(intent.id, { metadata: { userId: '' } }, requestOptions);
       outcome.cleared.paymentIntents++;
     }
