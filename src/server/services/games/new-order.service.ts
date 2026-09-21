@@ -851,11 +851,9 @@ export async function updatePendingImageRatings({
   // Get players that rated this image (uses by_imageId projection via GROUP BY pattern)
   //
   // A transient ClickHouse blip here is a retryable dependency outage, not a query
-  // fault — 503 rather than 500. The message deliberately carries NO retry advice,
-  // and neither "try again" nor "don't" belongs here: whether a retry is safe
-  // INVERTS between this function's callers, and it cannot tell them apart. Two
-  // earlier drafts each asserted one of the two and each was wrong for the other;
-  // if you are tempted to supply a third, that is the trap, not the fix.
+  // fault — 503 rather than 500. The explicit message drops the default's "Please
+  // try again": whether a retry is safe INVERTS between this function's callers,
+  // and it cannot tell them apart.
   const votes = await runClickHouseRead(
     () => ch.$query<{ userId: number; createdAt: Date; rating: number }>`
       SELECT userId, lastCreatedAt as createdAt, latestRating as rating
