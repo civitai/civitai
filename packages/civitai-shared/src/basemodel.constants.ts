@@ -137,6 +137,7 @@ export const ECO = {
   Flux2Klein_4B_base: 57,
   Qwen: 10,
   Qwen2: 62,
+  Qwen21: 88,
   Qwen3: 80,
   Chroma: 11,
   HyDit1: 12,
@@ -603,11 +604,18 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 91,
   },
   {
+    id: ECO.Qwen21,
+    key: 'Qwen21',
+    displayName: 'Qwen 2.1',
+    familyId: 10,
+    sortOrder: 92,
+  },
+  {
     id: ECO.Qwen3,
     key: 'Qwen3',
     displayName: 'Qwen 3',
     familyId: 10,
-    sortOrder: 92,
+    sortOrder: 93,
   },
 
   // ZImage Family (familyId: 11)
@@ -2214,6 +2222,7 @@ export const BM = {
   Anima: 77,
   Grok: 78,
   Qwen2: 79,
+  Qwen21: 107,
   Qwen3: 99,
   WanImage27: 86,
   WanVideo27: 81,
@@ -2554,6 +2563,14 @@ export const licenses: LicenseRecord[] = [
     id: 44,
     name: 'CC BY-NC 4.0',
     url: 'https://creativecommons.org/licenses/by-nc/4.0/',
+  },
+  {
+    id: 45,
+    name: 'Qwen Research License Agreement',
+    url: 'https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE',
+    notice:
+      'Qwen is licensed under the Qwen RESEARCH LICENSE AGREEMENT, Copyright (c) 2026 Hangzhou Tongyi Laboratory Technology Co., Ltd. All Rights Reserved.',
+    nonCommercial: true,
   },
 ];
 
@@ -3156,6 +3173,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Qwen2,
     licenseId: 13,
+  },
+  {
+    // The 7B 2.1 weights have their own addon compatibility. The shared Qwen
+    // family groups the picker without accepting older 20B Qwen LoRAs.
+    id: BM.Qwen21,
+    name: 'Qwen 2.1',
+    description: "Qwen's 7B model for text-to-image generation and multi-reference image editing",
+    type: 'image',
+    ecosystemId: ECO.Qwen21,
+    licenseId: 45,
   },
   {
     id: BM.Qwen3,
