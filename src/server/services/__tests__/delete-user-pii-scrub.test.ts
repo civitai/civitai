@@ -162,13 +162,17 @@ describe('deleteUser — payment-provider ids', () => {
     );
     expect(rawCall).toBeGreaterThan(-1);
 
-    // What the statement DOES, not just that it mentions the column. Without this, a
-    // statement reading `SET "image" = NULL WHERE id = ${user.id} AND "subscriptionId" IS
-    // NOT NULL` satisfies every other assertion here and leaves the pointer on the row.
-    // Anchored on the assignment rather than the bare column name, which an insertion
-    // beside it would slip past.
+    // The WHOLE statement, by equality. Nothing here executes SQL, so the text is the only
+    // artifact carrying the semantics, and every substring of it is a guess about which part
+    // matters. A `toContain('SET "subscriptionId" = NULL')` was tried and let three mutants
+    // through: a neutered `AND "deletedAt" IS NULL` (false by then — the update above sets it),
+    // the wrong table, and the anchor text parked in a `/* ... */` comment beside `SET
+    // "image" = NULL`. Each left the pointer on the row with the suite green.
+    // Whitespace is normalised so reformatting the statement is not a failure.
     const [strings] = dbMock.dbWrite.$executeRaw.mock.calls[rawCall] as [string[]];
-    expect(strings.join('?')).toContain('SET "subscriptionId" = NULL');
+    expect(strings.join('?').replace(/\s+/g, ' ').trim()).toBe(
+      'UPDATE "User" SET "subscriptionId" = NULL WHERE id = ?'
+    );
 
     // The bound id, not an interpolated one: `id = ${user.id}` in a tagged template is a
     // parameter, so it arrives as its own argument rather than inside the SQL string.
