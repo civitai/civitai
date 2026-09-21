@@ -4,20 +4,10 @@ import { CryptoTransactionStatus } from '~/shared/utils/prisma/enums';
 
 export type CreateBuzzCharge = z.infer<typeof createBuzzChargeSchema>;
 export const createBuzzChargeSchema = z.object({
-  // Whole minor units — the same WHOLENESS rule as the Stripe route, and nothing else from
-  // it: Stripe also carries `.min(minChargeAmount).max(maxChargeAmount)`, this schema carries
-  // neither, so a negative or a 1e15 `unitAmount` still parses here. That is pre-existing and
-  // out of scope; this line closes the fraction only.
-  //
-  // The purchase form derives this by dividing a free-typed Buzz amount by 10, so any amount
-  // that is not a multiple of ten yields a fraction — and `coinbase.service.ts` forwards it to
-  // `createCharge` as `local_price.amount`, i.e. a sub-cent USD price like "10.004".
-  //
-  // 🔴 The service-side tamper check (`unitAmount !== buzzAmount / 10`) does NOT catch this:
-  // both values come from the same division, so a fractional pair is perfectly self-consistent
-  // and the check passes — structurally, for every non-multiple of ten the double arithmetic
-  // represents exactly, not at some sampled rate. This line is the only thing on this route
-  // that rejects the fraction.
+  // No `.min`/`.max` here, unlike the Stripe route: a negative or a 1e15 `unitAmount` parses.
+  // Keep `.int()` — the service's `unitAmount !== buzzAmount / 10` check compares two
+  // client-supplied values against each other, so a consistent fractional pair passes it and
+  // reaches `createCharge` as a sub-cent `local_price.amount` like "10.004".
   unitAmount: z.number().int('The transaction amount must be a whole number of cents'),
   buzzAmount: z.number(),
 });
