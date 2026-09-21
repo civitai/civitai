@@ -788,7 +788,8 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.MiniMaxH3,
     key: 'MiniMaxH3',
-    displayName: 'Hailuo H3 by MiniMax',
+    displayName: 'MiniMax H3',
+    familyId: 26,
     sortOrder: 211,
     // txt2vid + img2vid (no vid2vid support currently)
   },
@@ -820,6 +821,7 @@ export const ecosystems: EcosystemRecord[] = [
     id: ECO.Seedance,
     key: 'Seedance',
     displayName: 'Seedance',
+    familyId: 12,
     sortOrder: 215,
   },
   { id: ECO.Lens, key: 'Lens', displayName: 'Lens', sortOrder: 207 },
@@ -854,6 +856,7 @@ export const ecosystems: EcosystemRecord[] = [
     id: ECO.MiniMaxMusic3,
     key: 'MiniMaxMusic3',
     displayName: 'MiniMax Music 3',
+    familyId: 26,
     // 301-305 were taken by the 3D block before this landed.
     sortOrder: 306,
   },
@@ -2527,9 +2530,10 @@ export const licenses: LicenseRecord[] = [
     url: 'https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/42ed227ee7df40d41602854ae760620d6eb651fe/LICENSE',
     notice:
       'Generation, training and LoRA distribution on Civitai are covered by Civitai’s own license agreement with MiniMax. If you download these weights and run them yourself, your use is instead governed by the MiniMax H3 Community License Agreement, whose grant excludes the European Union, the United Kingdom, the Republic of Korea and the United States of America.',
-    // Section IV.2 demands this exact string in the product UI. "Powered by
-    // MiniMax H3" is the separate, merely encouraged notice in III.3(a).
-    attribution: 'MiniMax H3',
+    // Section IV.2 wants "MiniMax H3" in the product UI. The generator's model
+    // header and ecosystem label both render it, so no `attribution` line is
+    // needed under the generate button. "Powered by MiniMax H3" is the separate,
+    // merely encouraged notice in III.3(a).
     poweredBy: 'MiniMax H3',
   },
   {
@@ -2688,6 +2692,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 25,
     name: 'Meta',
     description: "Meta Superintelligence Labs' agentic image generation and editing models",
+  },
+  {
+    id: 26,
+    name: 'MiniMax',
+    description: "MiniMax's video, image and music generation models",
   },
 ];
 
@@ -3589,7 +3598,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     licenseId: 32,
   },
 
-  // Hailuo H3 by MiniMax
+  // MiniMax H3
   {
     id: BM.MiniMaxH3,
     name: 'MiniMax H3',

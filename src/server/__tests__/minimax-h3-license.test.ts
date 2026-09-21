@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ECO,
   baseModelRecords,
+  ecosystemById,
   getBaseModelLicense,
   getBaseModelsByEcosystemId,
   licenses as sharedLicenses,
@@ -16,9 +17,9 @@ const PERMALINK =
   'https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/42ed227ee7df40d41602854ae760620d6eb651fe/LICENSE';
 
 // Section IV.2 names the string verbatim: "You shall prominently display
-// "MiniMax H3" on the user interface". Not the on-site display name
-// ("Hailuo H3 by MiniMax"), and not III.3(a)'s encouraged "Powered by" form.
-const REQUIRED_ATTRIBUTION = 'MiniMax H3';
+// "MiniMax H3" on the user interface". The generator renders it as the model
+// header and the ecosystem label, so the licence carries no `attribution`.
+const REQUIRED_UI_STRING = 'MiniMax H3';
 
 // Throws rather than returning undefined so a removed record fails as a named
 // error everywhere, instead of a TypeError in whichever test dereferences first.
@@ -42,8 +43,17 @@ describe('MiniMax H3 licence registration', () => {
   it('resolves through the chain the generator actually walks', () => {
     const license = getBaseModelsByEcosystemId(ECO.MiniMaxH3)
       .map((baseModel) => getBaseModelLicense(baseModel.id))
-      .find((found) => !!found?.attribution);
-    expect(license?.attribution).toBe(REQUIRED_ATTRIBUTION);
+      .find((found) => found?.name === 'MiniMax H3 Community License Agreement');
+    expect(license, 'the generator’s own lookup reaches no H3 licence').toBeDefined();
+  });
+
+  // What satisfies section IV.2 now that the licence carries no `attribution`:
+  // the ecosystem label the picker renders IS the required string. A rename back
+  // to a Hailuo-branded label puts the string nowhere in the generator except
+  // the selected model's name, which is a product decision rather than a copy one.
+  it('shows the required string as the ecosystem label', () => {
+    const ecosystem = ecosystemById.get(ECO.MiniMaxH3);
+    expect(ecosystem?.displayName).toBe(REQUIRED_UI_STRING);
   });
 
   // Hand-listing the fields would let a policy flag added to one copy alone pass
@@ -79,10 +89,7 @@ describe('attribution is not a dumping ground', () => {
   // spot-check, because the cost of a wrong entry is paid on every ecosystem.
   it('is set only where a licence demands in-product naming', () => {
     const carrying = sharedLicenses.filter((l) => !!l.attribution).map((l) => l.name);
-    expect(carrying).toEqual([
-      'MiniMax H3 Community License Agreement',
-      'MiniMax-Music3 Community License',
-    ]);
+    expect(carrying).toEqual(['MiniMax-Music3 Community License']);
   });
 
   // Same whitelist over the other copy, which the shared one cannot see.
@@ -90,7 +97,7 @@ describe('attribution is not a dumping ground', () => {
     const carrying = Object.entries(baseModelLicenses)
       .filter(([, license]) => !!license?.attribution)
       .map(([baseModel]) => baseModel);
-    expect(carrying).toEqual([h3Record().name, 'MiniMax Music 3']);
+    expect(carrying).toEqual(['MiniMax Music 3']);
   });
 
   // The disclaimer that motivated the split is 300 characters.

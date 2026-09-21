@@ -773,9 +773,10 @@ const baseLicenses: Record<string, LicenseDetails> = {
     name: 'MiniMax H3 Community License Agreement',
     notice:
       'Generation, training and LoRA distribution on Civitai are covered by Civitai’s own license agreement with MiniMax. If you download these weights and run them yourself, your use is instead governed by the MiniMax H3 Community License Agreement, whose grant excludes the European Union, the United Kingdom, the Republic of Korea and the United States of America.',
-    // Section IV.2 demands this exact string in the product UI. "Powered by
-    // MiniMax H3" is the separate, merely encouraged notice in III.3(a).
-    attribution: 'MiniMax H3',
+    // Section IV.2 wants "MiniMax H3" in the product UI. The generator's model
+    // header and ecosystem label both render it, so no `attribution` line is
+    // needed under the generate button. "Powered by MiniMax H3" is the separate,
+    // merely encouraged notice in III.3(a).
     poweredBy: 'MiniMax H3',
   },
   'minimax music 3': {
