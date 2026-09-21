@@ -8,7 +8,10 @@ export function createEmail<T, T2>(email: {
   };
   html: (data: T) => string;
   text?: (data: T) => string;
-  testData?: ((testDataInput: T2) => Promise<T>) | (() => Promise<T>);
+  // T must come from the annotated header/html params: TS 7 otherwise infers it from testData's
+  // literal return, so send() demands the fixture shape. TS 5.9 resolves it correctly either
+  // way, so dropping NoInfer stays green in CI.
+  testData?: ((testDataInput: T2) => Promise<NoInfer<T>>) | (() => Promise<NoInfer<T>>);
 }) {
   const send = async (data: T) => {
     await sendEmail({
