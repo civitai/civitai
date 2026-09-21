@@ -760,9 +760,10 @@ describe('classifyException — separators and asset paths in the remaining patt
   });
 });
 
-// Round-5 review: five more mutants survived a green suite. Three flip a KEEP into a DROP — the
-// direction this module's header forbids — and two re-admit noise. Each fixture below is the
-// sole observer of one of them.
+// Round-5 review: seven more mutants survived a green suite. Two flip a KEEP into a DROP — the
+// direction this module's header forbids — and three re-admit noise. Most fixtures below are the
+// sole observer of one of them; the abort one instead pins the behaviour the wrapper exclusion's
+// scope note describes.
 describe('classifyException — the last unobserved branches', () => {
   it('KEEPS a react-query failure whose frame is spelled with Windows separators', () => {
     const r = classifyException(
@@ -839,5 +840,71 @@ describe('classifyException — the last unobserved branches', () => {
     );
     expect(r.drop).toBe(true);
     expect(r.category).toBe('injected');
+  });
+});
+
+// Round-6 review: the bundler-scheme clause of the project-source test had NO observer at all.
+// Every `turbopack://` fixture in this file also ends in a source extension, so the extension
+// clause co-satisfied the guard and the scheme test never decided anything — and every
+// `webpack://` fixture returned earlier via the dependency or wrapper branch, so that half had
+// never executed. Deleting the clause left the suite fully green while flipping a real
+// first-party frame to DROPPED. Its two siblings on the same `return` are both pinned; this is
+// the third.
+describe('classifyException — the bundler-scheme clause is the only thing keeping these', () => {
+  it.each([
+    ['turbopack:///[project]/src/styles/globals.css'],
+    ['turbopack:///[project]/src/components/Feed.module.css'],
+    ['turbopack:///[project]/src/data/prompts.json'],
+    ['turbopack:///[project]/src/app/page'],
+    ['webpack://_N_E/./src/styles/globals.css'],
+  ])('counts the extensionless/non-source bundler frame %s as project source', (filename) => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', { frames: [OTEL_FETCH_FRAME, { filename }] })
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+});
+
+// The network and abort patterns accept an optional `TypeError: ` prefix because Faro sometimes
+// carries the type only in the message. Nothing observed that prefix: every fixture built by
+// `exc()` supplies a `type`, so the branch that folds the type into the message was never the
+// thing that matched.
+describe('classifyException — the message-only form (no `type` field)', () => {
+  it.each([
+    ['TypeError: Failed to fetch'],
+    ['TypeError: Load failed'],
+    ['TypeError: NetworkError when attempting to fetch resource.'],
+  ])('drops the bare network failure %s carried entirely in the message', (value) => {
+    const r = classifyException({ value });
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('network');
+  });
+
+  it('tags a ChunkLoadError carried only in the message', () => {
+    const r = classifyException({
+      type: 'Error',
+      value: 'ChunkLoadError: Loading chunk 12 failed.',
+    });
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('chunkload');
+  });
+
+  it('tags a MeiliSearchCommunicationError carried only in the message', () => {
+    const r = classifyException({
+      type: 'Error',
+      value: 'MeiliSearchCommunicationError: request failed',
+    });
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('meili');
+  });
+
+  // `securepubads` had no sole observer: its only fixture also matched the `doubleclick` pattern.
+  it('drops an ad script-load failure on a host only the securepubads pattern matches', () => {
+    const r = classifyException(
+      exc('UnhandledRejection', 'Failed to load script: //securepubads.example.net/tag.js')
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('adblock');
   });
 });
