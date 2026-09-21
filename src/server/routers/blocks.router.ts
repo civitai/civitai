@@ -10554,7 +10554,17 @@ async function submitPassThroughStepWorkflow(opts: {
   // GPU-second-metered `$type` the stamped `timeout` still bounds it, but most
   // reachable types are priced per unit at submit, where a timeout bounds
   // wall-clock and nothing else. Operator decision, recorded in the PR.
-  const ceiling = Math.max(body.maxBuzz, quotedBuzz ?? body.maxBuzz);
+  //
+  // 🔴 WHEN THERE IS NO QUOTE, RESERVE AGAINST THE GRANTED WALL CLOCK, NOT THE
+  // DECLARED `maxBuzz`. The paragraph above is why: with no quote, the stamped
+  // timeout is the only bound on a GPU-second-metered `$type`, so a `$type`
+  // granted a longer clock by `passthrough-timeouts` must have that longer
+  // clock covered by the reservation — otherwise the allowance would widen the
+  // worst case while the reservation stayed where it was. For every `$type`
+  // WITHOUT an allowance this is `quotedBuzz ?? body.maxBuzz`, unchanged, since
+  // `passThroughTimeoutSeconds` returns `maxBuzz` for those.
+  const unquotedFloorBuzz = passThroughTimeoutSeconds(body.$type, body.maxBuzz);
+  const ceiling = Math.max(body.maxBuzz, quotedBuzz ?? unquotedFloorBuzz);
 
   // (1) STATIC pre-submit gate against the token's per-call budget.
   //

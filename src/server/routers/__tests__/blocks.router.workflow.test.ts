@@ -10126,6 +10126,33 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect(ptWhatIfs()[0][0].body.steps[0].timeout).toBe('00:15:00');
     });
 
+    // 🔴 AN UNQUOTED LISTED TYPE RESERVES AGAINST THE GRANTED CLOCK. With no
+    // quote the stamped timeout is the ONLY bound on a GPU-second-metered
+    // `$type` — the arm deliberately does not fail closed there — so granting a
+    // longer clock without widening the reservation would widen the worst case
+    // and leave the reservation behind it. 900s granted → 900 reserved, and the
+    // per-call budget gate then refuses unless the viewer can cover it.
+    it('reserves against the granted clock when the orchestrator gives no quote', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims({ buzzBudget: 1000 }));
+      happyUser();
+      ptQuoting(null, 31);
+      await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ptBody({ $type: 'videoGen' }),
+      });
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 900);
+    });
+
+    // The control for the row above: an UNLISTED type with no quote still
+    // reserves its declared maxBuzz, exactly as it did before this change.
+    it('reserves the declared maxBuzz when an unlisted type has no quote', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims({ buzzBudget: 1000 }));
+      happyUser();
+      ptQuoting(null, 31);
+      await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', MAX_BUZZ);
+    });
+
     // The allowance changes the CLOCK, never the money. The reservation is the
     // same number it was, from the same `max(declared, quoted)` rule.
     it('leaves the reservation untouched when it grants an allowance', async () => {
