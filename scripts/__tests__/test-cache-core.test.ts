@@ -1,6 +1,14 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { describe, expect, it } from 'vitest';
 
 import * as Core from '../test-cache/core.mjs';
@@ -105,6 +113,25 @@ describe('keys are portable between worktrees', () => {
     expect(toRel('/C:/notes/x.md', '/C:')).toBe('notes/x.md');
   });
 
+  // Node refuses an ENCODED separator under the same error code as the cross-platform spelling the
+  // fallback exists for, and decoding one would name a DIFFERENT file. Left to throw instead: the
+  // reporter's per-row catch then records nothing, which is the safe direction.
+  //
+  // Asserted as the PROPERTY, not as "it throws": whether `fileURLToPath` rejects an encoded
+  // separator is platform-dependent, and a `toThrow` here passed on Windows and failed on CI.
+  // What must hold everywhere is that `%2F` never becomes a path separator.
+  it('never decodes an encoded separator into another path', () => {
+    // The same answer on both platforms, which is the point: Windows threw here and POSIX returned
+    // `a/b/x.ts`, a path naming a different file. Asserting `null` rather than "it throws" is what
+    // makes this test mean the same thing on the machine it was written on and on CI.
+    expect(toRel('file:///C:/Dev/a%2Fb/x.ts', 'C:/Dev')).toBeNull();
+    expect(toRel('file:///C:/Dev/a%5Cb/x.ts', 'C:/Dev')).toBeNull();
+    // The spelling the fallback is FOR still resolves, on either platform.
+    expect(toRel('file:///home/u/repo/src/b.ts', '/home/u/repo')).toBe('src/b.ts');
+    // And ordinary percent-encoding still decodes.
+    expect(toRel('file:///C:/Dev/wt/a%20b/x.ts', 'C:/Dev/wt')).toBe('a b/x.ts');
+  });
+
   // A read outside the repo (a temp file the test wrote itself) is not an input anyone else shares.
   it('drops absolute paths outside the repo', () => {
     expect(toRel('D:/elsewhere/x.json', 'C:/Dev/wt/one')).toBeNull();
@@ -115,6 +142,18 @@ describe('keys are portable between worktrees', () => {
     expect(isCoveredElsewhere('node_modules/.vite/vitest/x/deps_ssr/zod.js')).toBe(true);
     expect(isCoveredElsewhere('crypto')).toBe(true);
     expect(isCoveredElsewhere('src/server/services/image.service.ts')).toBe(false);
+  });
+
+  // A vite virtual id is not a path, so fingerprinting it returns `missing` and the reporter reads
+  // that as "a module this test imported was deleted mid-run" — a correct refusal for a real file
+  // and nonsense for an id no path can name. It cost every happy-dom test its record.
+  // The pair matters: the second half is what keeps the scheme rule from swallowing repo files.
+  it('ignores a vite virtual id without ignoring anything that names a file', () => {
+    expect(isCoveredElsewhere('__vite-browser-external:crypto')).toBe(true);
+    expect(isCoveredElsewhere('\0__vite-browser-external:crypto')).toBe(true);
+    expect(isCoveredElsewhere('virtual:my-plugin/entry')).toBe(true);
+    expect(isCoveredElsewhere('src/hooks/useDateLocale.ts')).toBe(false);
+    expect(isCoveredElsewhere('scripts/test-cache/core.mjs')).toBe(false);
   });
 });
 
@@ -158,6 +197,22 @@ describe('tests that always run', () => {
     ["const { Worker } = require('worker_threads');"],
     ['const m = await import(`./pages/${name}`);'],
     ['const m = await import(target);'],
+    // A bare-specifier computed import is cacheable (below), but only where its head cannot name
+    // first-party source or a builtin. Whoever widens that: these three are why it is narrow.
+    ['const m = await import(`~/server/${name}`);'],
+    ['const m = await import(`@civitai/ui/${name}`);'],
+    ['const m = await import(`node:${mod}`);'],
+    // The interpolated expression survives the strip. Erasing the whole call instead would hide a
+    // spawn inside it, which is the one thing these patterns exist to catch.
+    ["const m = await import(`dayjs/${require('child_process') ? 'a' : 'b'}.js`);"],
+    // A spawn wrapper's SUBPATH is a bare specifier too, and the wrapper pattern needs the name
+    // quote-delimited — which `` `execa/${x}` `` never is. The exclusion list is shared with that
+    // pattern rather than copied, so the two cannot drift apart.
+    ['const m = await import(`execa/${x}`);'],
+    ['const m = await import(`cross-spawn/${x}`);'],
+    // The boundary is "not a continuation of the name", not "a slash": with a separator list,
+    // `execa${x}` walked past the lookahead and was stripped.
+    ['const m = await import(`execa${x}`);'],
     // The form this repo uses, which the first version of the pattern let through.
     ['return import(/* @vite-ignore */ file);'],
     ["const files = globSync('src/**/*.ts');"],
@@ -178,8 +233,34 @@ describe('tests that always run', () => {
     // test's setup. Matching the bare word made all 1880 unit tests uncacheable.
     ["const opts = { client: 'cluster' };"],
     ["// Module not found: Can't resolve 'cluster'"],
+    // Whatever it computes lives under node_modules, which the lockfile covers. The real site is
+    // src/hooks/useDateLocale.ts, and treating it as opaque cost 44 test files.
+    ['const m = await import(`dayjs/locale/${tag}.js`);'],
+    // A different package that merely starts with a wrapper's letters is a different package.
+    ['const m = await import(`execafoo/${x}`);'],
+    ['const m = await import(`zxcvbn/${x}`);'],
   ])('leaves %s cacheable', (source) => {
     expect(alwaysRuns(source)).toBe(false);
+  });
+
+  /**
+   * The bare-specifier rule excludes first-party code by NAME — `@civitai/*` — so it is only sound
+   * while that is what a workspace package is called. An unscoped or differently-scoped workspace
+   * package would read as a node_modules specifier while symlinking into `packages/`, and a test
+   * importing it could then be skipped over a change to its source.
+   */
+  it('assumes every workspace package is @civitai/-scoped, so check that it is', () => {
+    const repo = resolve(__dirname, '../..');
+    const names = ['packages', 'apps'].flatMap((dir) =>
+      readdirSync(join(repo, dir), { withFileTypes: true })
+        .filter((e) => e.isDirectory() && existsSync(join(repo, dir, e.name, 'package.json')))
+        .map((e) => JSON.parse(readFileSync(join(repo, dir, e.name, 'package.json'), 'utf8')).name)
+    );
+
+    // Without this the assertion below passes over an empty list — the directories are read off
+    // disk, and a rename or a wrong root would otherwise report all-clear.
+    expect(names.length).toBeGreaterThan(10);
+    expect(names.filter((n: string) => !n.startsWith('@civitai/'))).toEqual([]);
   });
 });
 

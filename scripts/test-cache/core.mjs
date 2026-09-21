@@ -48,6 +48,10 @@ const GLOBAL_INPUTS = [
 const WORKSPACE_DIRS = ['packages', 'apps'];
 const OWN_CODE = ['core.mjs', 'fs-tracker.mjs', 'sequencer.mjs', 'reporter.mjs'];
 
+// Named once because TWO rules need the same list, and a second copy is how the bare-specifier
+// exclusion below silently stopped agreeing with the pattern it is supposed to defer to.
+const SPAWN_WRAPPERS = ['execa', 'cross-spawn', 'tinyexec', 'nano-spawn', 'zx'];
+
 // What stays uncacheable even with file reads tracked: a child process reads what it likes, and a
 // dynamic import whose specifier is computed is invisible to the module graph. 19 files, 0.7% of
 // modelled worker time, measured 2026-09-19.
@@ -63,7 +67,7 @@ const ALWAYS_RUN_SOURCE = [
   /(?:\bfrom|\bimport\s*\(|\brequire\s*\(|\bgetBuiltinModule\s*\(|\)\s*\()\s*['"`](?:node:)?(?:child_process|worker_threads|cluster)['"`]/,
   // Wrappers that spawn for you. None is a direct dependency today; this keeps one from arriving
   // unnoticed, since node_modules is never scanned.
-  /['"`](?:execa|cross-spawn|tinyexec|nano-spawn|zx)['"`]/,
+  new RegExp(String.raw`['"\x60](?:${SPAWN_WRAPPERS.join('|')})['"\x60]`),
   // Comments allowed between `import(` and the specifier: `import(/* @vite-ignore */ file)` is the
   // form this repo actually uses, and the first version of this pattern let it through.
   /import\(\s*(?:\/\*[\s\S]*?\*\/\s*)*(?:`[^`]*\$\{|[A-Za-z_$])/,
@@ -96,7 +100,27 @@ export function toRel(id, root) {
     // `toRel('/C:/notes/x.md', '/C:')` returned 'notes/x.md' before and null after. Only a
     // `file://` id can carry the platform artefact, so only a `file://` id needs the repair,
     // and confining it here leaves every non-URL input byte-for-byte as it was.
-    p = fileURLToPath(p).replace(/^\/([A-Za-z]:)/, '$1');
+    // 🔴 And it THROWS rather than returning the other platform's spelling: on Windows a POSIX
+    // `file:///home/u/x.ts` is `ERR_INVALID_FILE_URL_PATH`, which took this file's own POSIX
+    // invariant test red on every Windows run of `main`. The URL's pathname is the same string
+    // `fileURLToPath` would have produced on the host that wrote it, so fall back to it.
+    // 🔴 An ENCODED separator is refused BEFORE either branch, because the two platforms disagree
+    // about it: Windows raises ERR_INVALID_FILE_URL_PATH, while POSIX decodes `%2F` into a real
+    // `/` and hands back a path naming a DIFFERENT file. Guarding only the fallback fixed the
+    // platform that already threw and left the one that silently lied — CI caught that. `null` is
+    // the answer this function already has for "not a file in this repo", and it is the same
+    // answer on both.
+    if (/%2f|%5c/i.test(new URL(p).pathname)) return null;
+    try {
+      p = fileURLToPath(p);
+    } catch (err) {
+      // ONLY the cross-platform spelling. Any other failure is a malformed id, and swallowing it
+      // would turn a refused record into a record written without that dependency — the false-skip
+      // shape. A URL this host cannot name cannot be a local file, so it lands as null below.
+      if (err?.code !== 'ERR_INVALID_FILE_URL_PATH') throw err;
+      p = decodeURIComponent(new URL(p).pathname);
+    }
+    p = p.replace(/^\/([A-Za-z]:)/, '$1');
   }
   p = p.split('?')[0].replace(/\\/g, '/');
   const r = root.replace(/\\/g, '/').replace(/\/$/, '');
@@ -111,13 +135,36 @@ export function isCoveredElsewhere(rel) {
   // like `src`, which the convention guards list — dropping the one read that sees a new file.
   if (isBuiltin(rel)) return true;
   if (rel.startsWith('node:')) return true;
+  // A vite virtual module is not a file on disk, so fingerprinting it yields `missing` and the
+  // reporter reads that as a module deleted mid-run. Measured 2026-09-19: every happy-dom test
+  // depends on `__vite-browser-external:crypto`, and all 44 of them fell out of the cache this
+  // way. A `\0` prefix, a plugin scheme and vite's browser shims are all ids no path can name.
+  if (rel.startsWith('\0') || /^[A-Za-z_][A-Za-z\d_+.-]*:/.test(rel)) return true;
   if (rel.startsWith('node_modules/') || rel.includes('/node_modules/')) return true;
   if (rel.startsWith('.git/')) return true;
   return false;
 }
 
+/**
+ * A computed import whose literal head is a BARE package specifier — `dayjs/locale/${tag}.js` —
+ * resolves under node_modules whatever it computes, and the lockfile already covers that. Three
+ * heads are deliberately not bare: `@civitai/*` is a workspace symlink into `packages/`, a head
+ * carrying a `:` can be `node:${mod}` (a builtin, and one of them spawns), and `./` or `~/` is
+ * first-party source. Measured 2026-09-19: `src/hooks/useDateLocale.ts` is the repo's only such
+ * site, and it alone made 44 test files uncacheable.
+ */
+const BARE_COMPUTED_IMPORT = new RegExp(
+  String.raw`import\(\s*(?:/\*[\s\S]*?\*/\s*)*\x60(?!@civitai/|(?:${SPAWN_WRAPPERS.join(
+    '|'
+  )})(?![A-Za-z\d_-]))` + String.raw`[A-Za-z@][^\x60$:]*(\$\{[^\x60]*)\x60\s*\)`,
+  'g'
+);
+
 export function alwaysRuns(source) {
-  return ALWAYS_RUN_SOURCE.some((re) => re.test(source));
+  // The interpolated EXPRESSION is kept, only the import call around it goes. Dropping the whole
+  // call would erase a spawn inside it — `` import(`dayjs/${require('child_process') ? a : b}.js`) ``
+  // read as cacheable, which is the one thing the patterns below exist to catch.
+  return ALWAYS_RUN_SOURCE.some((re) => re.test(source.replace(BARE_COMPUTED_IMPORT, '$1')));
 }
 
 const RESOLVABLE_EXTS = ['ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs', 'json'];
@@ -173,7 +220,9 @@ export function makeFingerprinter(root) {
     let fp;
     try {
       const st = statSync(abs);
-      fp = st.isDirectory() ? `dir:${sha(listTree(abs).join('\n'))}` : `file:${sha(readFileSync(abs))}`;
+      fp = st.isDirectory()
+        ? `dir:${sha(listTree(abs).join('\n'))}`
+        : `file:${sha(readFileSync(abs))}`;
     } catch {
       fp = 'missing';
     }
@@ -243,7 +292,9 @@ export function keyFor({ salt, project, testRel, entries, fingerprint }) {
   const shadows = [...new Set(deps.flatMap(shadowCandidates))]
     .filter((rel) => fingerprint(rel) !== 'missing')
     .sort();
-  return sha([salt, project, testRel, fingerprint(testRel), ...parts, '--shadows--', ...shadows].join('\n'));
+  return sha(
+    [salt, project, testRel, fingerprint(testRel), ...parts, '--shadows--', ...shadows].join('\n')
+  );
 }
 
 /**
@@ -295,7 +346,11 @@ export function cacheDir(root) {
   const common = execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: root })
     .toString()
     .trim();
-  return join(isAbsolute(common) ? common : join(root, common), 'civitai-test-cache', `v${CACHE_FORMAT}`);
+  return join(
+    isAbsolute(common) ? common : join(root, common),
+    'civitai-test-cache',
+    `v${CACHE_FORMAT}`
+  );
 }
 
 /**
@@ -309,7 +364,10 @@ export function recordsFor(dir, project, testRel) {
   for (const name of readdirSync(d)) {
     if (!name.endsWith('.json')) continue;
     try {
-      out.push({ ...JSON.parse(readFileSync(join(d, name), 'utf8')), mtime: statSync(join(d, name)).mtimeMs });
+      out.push({
+        ...JSON.parse(readFileSync(join(d, name), 'utf8')),
+        mtime: statSync(join(d, name)).mtimeMs,
+      });
     } catch {
       /* a half-written or foreign file is not a record */
     }
@@ -329,7 +387,8 @@ export function writeRecord(dir, project, testRel, record) {
     const byAge = all
       .map((n) => ({ n, t: statSync(join(d, n)).mtimeMs }))
       .sort((a, b) => a.t - b.t);
-    for (const { n } of byAge.slice(0, all.length - RECORDS_PER_TEST)) rmSync(join(d, n), { force: true });
+    for (const { n } of byAge.slice(0, all.length - RECORDS_PER_TEST))
+      rmSync(join(d, n), { force: true });
   }
 }
 
