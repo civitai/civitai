@@ -94,7 +94,6 @@ const UNSUPPORTED_FLAGS = [
   'requiringMeta',
   'hideAutoResources',
   'hideManualResources',
-  'hideChallenges',
   'pending',
   'publishedOnly',
   'remixesOnly',
@@ -158,11 +157,12 @@ export function mapSearchInputToFeedQuery(
   if (feedCursor) {
     if (mode !== 'primary') return skip('cursor:feed');
   } else if (typeof cursor === 'string' && cursor) {
-    const m = /^(\d{1,12})\|(\d{1,15})$/.exec(cursor);
+    const m = /^(\d{1,12})(?:\|(\d{1,15}))?$/.exec(cursor);
     if (!m) return skip('cursor:unparsed');
     offset = Number(m[1]);
-    before = Math.floor(Number(m[2]) / 60_000) * 60_000;
-  } else if (cursor) return skip('cursor:unparsed');
+    if (m[2]) before = Math.floor(Number(m[2]) / 60_000) * 60_000;
+  } else if (typeof cursor === 'number' && Number.isInteger(cursor) && cursor >= 0) offset = cursor;
+  else if (cursor) return skip('cursor:unparsed');
   if (typeof input.offset === 'number' && input.offset > 0) offset = Math.max(offset, input.offset);
 
   const sort = SORTS[String(input.sort)];

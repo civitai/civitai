@@ -1,4 +1,5 @@
 import { env } from '~/env/server';
+import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels, registerHistogram } from '~/server/prom/client';
 import type { CapturableSearchInput } from '~/server/services/feed-request-capture.service';
 import {
@@ -25,6 +26,23 @@ export function reasonLabel(reason: string) {
 }
 const count = (outcome: string, reason = '') =>
   requestCounter.inc({ outcome, reason: reasonLabel(reason) });
+
+const CURSOR_LOG_INTERVAL_MS = 10_000;
+let cursorLoggedAt = 0;
+function logUnparsedCursor(cursor: unknown) {
+  const now = Date.now();
+  if (now - cursorLoggedAt < CURSOR_LOG_INTERVAL_MS) return;
+  cursorLoggedAt = now;
+  logToAxiom(
+    {
+      type: 'warning',
+      name: 'feed-primary-cursor-unparsed',
+      cursorType: typeof cursor,
+      cursor: String(cursor).slice(0, 80),
+    },
+    'civitai-prod'
+  ).catch(() => undefined);
+}
 
 const hydrateDuration = registerHistogram({
   name: 'feed_primary_hydrate_duration_seconds',
@@ -115,6 +133,7 @@ export async function serveFromFeed<T extends { id: number }>(
   const mapping = mapSearchInputToFeedQuery(input, 'primary');
   if (!mapping.ok) {
     count(mapping.reason === DEEP_OFFSET ? 'rejected' : 'unmapped', mapping.reason);
+    if (mapping.reason === 'cursor:unparsed') logUnparsedCursor(input.cursor);
     return { ok: false, reason: mapping.reason };
   }
   let answer: FeedAnswer;
