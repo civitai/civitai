@@ -18,10 +18,10 @@ export const BUZZ_PER_USD_CENT = 10;
  * emerchantpay's `createBuzzChargeSchema`, paddle's `transactionCreateSchema` — so
  * a fraction handed to one of THOSE routes is refused at our own trust boundary
  * rather than on Stripe alone. Per SCHEMA, not per file: paddle's and stripe's
- * nested METADATA schemas each carry a second, still-unbounded `unitAmount`. See
- * the Scope block in `stripe.schema.ts`. That was NOT true until it was measured: with this
- * helper bypassed, a fractional amount reached `coinbase.service.ts` and left as a
- * sub-cent `local_price.amount` of "10.004".
+ * nested METADATA schemas each carry a second, still-unbounded `unitAmount`.
+ * That was NOT true until it was measured: with this helper bypassed, a fractional
+ * amount reached `coinbase.service.ts` and left as a sub-cent `local_price.amount`
+ * of "10.004".
  *
  * 🔴 "Those routes" is not "every route". `coinbase.createCodeOrder` takes a
  * `buzzAmount` and no `unitAmount` at all, then divides by 10 inside
@@ -31,16 +31,8 @@ export const BUZZ_PER_USD_CENT = 10;
  *
  * 🔴 Do NOT assume a provider's own tamper check covers this. Coinbase's
  * (`unitAmount !== buzzAmount / 10`) compares two values derived from the SAME
- * division, so a fractional pair is perfectly self-consistent and it passes. That
- * is structural rather than a sampled rate: below 2^53, every Buzz amount that is
- * not a multiple of ten yields such a pair, so there is no population on which the
- * check does better. (The bound is MAGNITUDE, not representability — an earlier
- * version said "the double arithmetic represents exactly" and that does not close
- * it, because the counterexample is itself exactly representable: at 2^55 the
- * quotient's ulp is 0.5, so half of the non-multiples of ten divide to an integer
- * and neither defence fires. Measured: 0 counterexamples below 2^53, 50% at 2^55,
- * 100% at 2^56 and above.) The schema bound is the defence; the tamper check is
- * blind to this class.
+ * division, so a fractional pair is perfectly self-consistent and it passes. The
+ * schema bound is the defence; the tamper check is blind to this class.
  *
  * Ceil, never round or floor: the buyer must never be granted more Buzz than
  * they are charged for. The submitted Buzz amount is re-derived from the value

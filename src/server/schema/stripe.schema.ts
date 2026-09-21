@@ -71,56 +71,10 @@ export type PaymentIntentCreationSchema = z.infer<typeof paymentIntentCreationSc
 export const paymentIntentCreationSchema = z.object({
   unitAmount: z
     .number()
-    // Stripe amounts are in the currency's MINOR unit and must be whole: `amount: 1000.4`
-    // comes back as `Invalid integer: 1000.4`, which surfaced as a 500. A fraction arrives
-    // honestly — the purchase form derives cents from the Buzz amount by dividing by 10, so
-    // any Buzz amount that is not a multiple of 10 lands here — and the service-side tamper
-    // guard (`unitAmount === metadata.buzzAmount / 10`) agrees with it, so nothing further
-    // down the Stripe path looks at whether the number is whole.
-    //
-    // Scope, per SCHEMA and not per file — the distinction is load-bearing, because two of
-    // these files hold more than one schema with a `unitAmount`. Carrying the same `.int()`:
-    // coinbase's `createBuzzChargeSchema`, emerchantpay's `createBuzzChargeSchema` and
-    // paddle's `transactionCreateSchema`. So the whole-minor-unit rule is no longer
-    // Stripe-only on the ROUTE inputs. Their other bounds still differ — coinbase's declares
-    // no lower or upper bound at all, so it accepts a negative or a 1e15 `unitAmount` where
-    // the `.min`/`.max` below reject both, and emerchantpay's adds only `.positive()`. Paddle's
-    // route input is at exact parity with this one (same `.int()`, same min/max constants).
-    //
-    // 🔴 STILL UNBOUNDED, and recorded here because deleting the stale table that used to say
-    // so left it written down nowhere: paddle's `buzzPurchaseMetadataSchema.unitAmount` is
-    // `z.coerce.number().positive()` — no `.int()`, no `.max()` — and it is NESTED inside the
-    // bounded `transactionCreateSchema`, so "paddle is covered" is true of the route input and
-    // false of the metadata. `paymentIntentMetadataSchema` in THIS file has the same shape.
-    //
-    // 🔴 THE TWO PROVIDERS ARE NOT ALIKE HERE, AND AN EARLIER VERSION OF THIS COMMENT SAID THEY
-    // WERE. It claimed both were "inert only because the services rebuild metadata server-side"
-    // and that forwarding the client's would be "a one-line refactor". That is TRUE OF PADDLE
-    // ONLY. `paddle.service.ts` rebuilds via `getBuzzTransactionMetadata` from the route input
-    // at both call sites, discarding the client's object. STRIPE FORWARDS IT, TODAY, WITH NO
-    // REFACTOR: `validateBuzzPurchaseAttribution` pins `userId` and re-derives only the block
-    // attribution fields, returning the caller's object otherwise unchanged (its own comment
-    // says "Unchanged passthrough"), and `getPaymentIntent` then spreads that straight onto the
-    // PaymentIntent. Nothing between the schema and the Stripe write re-derives
-    // `metadata.unitAmount`. So a client-chosen fractional or 1e15 value is already stored on
-    // live PaymentIntents.
-    //
-    // It is harmless only because the webhook prefers `paymentIntent.amount` — a required
-    // Stripe field, so the `?? metadata.unitAmount` fallback beside it is effectively dead —
-    // when it records `usdAmountCents` into the publisher-payout ledger. That is a property of
-    // ONE consumer, not of the value. Do not restate it as "server-derived", do not read the
-    // shared `.int()` as parity, and do not delete a guard on the strength of either.
-    //
-    // ⚠️ To whoever edits this next: you are at least the seventh writer of this paragraph.
-    // Six earlier versions were each falsified by the next audit round, and every one of them
-    // went wrong the same way — asserting a SCOPE wider than what had been measured. If you
-    // cannot measure a claim, delete it rather than replacing it with a better-sounding one.
-    //
-    // No line numbers, deliberately: this repo DOES pin doc-vs-tree claims in places
-    // (`no-lint-rules-script-drift.test.ts` pins literal sentences and asserts referenced
-    // paths exist; `no-stale-moderator-route-probe.test.ts` pins route paths), but nothing
-    // checks a `file:LINE` reference written inside a source comment — and the four that
-    // stood here were falsified inside this same PR.
+    // Stripe amounts must be whole minor units: `1000.4` answers `Invalid integer: 1000.4`,
+    // which reached the client as a 500. The service-side tamper guard
+    // (`unitAmount === metadata.buzzAmount / 10`) compares two values from the same division, so
+    // a fractional pair passes it and nothing further down the Stripe path re-checks wholeness.
     .int({ message: 'The transaction amount must be a whole number of cents' })
     .min(constants.buzz.minChargeAmount, {
       message: `The minimum transaction amount is $${(constants.buzz.minChargeAmount / 100).toFixed(

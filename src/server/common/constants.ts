@@ -347,7 +347,7 @@ export const constants = {
   },
   buzz: {
     minChargeAmount: 500, // $5.00
-    maxChargeAmount: 500000, // $500.00
+    maxChargeAmount: 500000, // $5,000.00
     cutoffDate: new Date('2023-10-17T00:00:00.000Z'),
     referralBonusAmount: 500,
     maxTipAmount: 100000000,
