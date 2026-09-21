@@ -51,6 +51,10 @@ describe('prompt derivation has one threshold and one route', () => {
     // as 2 there and slips past. The parameter list is pinned textually too.
     const OPEN = 'export function promptDerivationHolds(';
     const src = read(MODULE);
+    // Exactly once, or the slice below pins whichever comes first: an overload
+    // declaration listing two parameters in front of an implementation taking a
+    // threshold passes both this test and the arity check above.
+    expect(src.split(OPEN).length - 1).toBe(1);
     const open = src.indexOf(OPEN);
     expect(open).toBeGreaterThan(-1);
     const params = src.slice(open + OPEN.length, src.indexOf(')', open));

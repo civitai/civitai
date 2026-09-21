@@ -236,8 +236,10 @@ export function startPromptReuse(image: RemixSourceImage) {
   trpcVanilla.orchestrator.mintPromptProvenance
     .mutate({ imageId: image.id })
     .then((r) => {
-      // A newer reuse click owns the form, the same check `startRemix` makes
-      // before it applies anything.
+      // A newer reuse click owns the form. Counted separately from the panel's
+      // own sequence, which every open bumps: a media-remix click supersedes the
+      // panel but leaves an in-flight prompt mint alone, and the id match is what
+      // refuses that token rather than this.
       if (sequence !== promptReuseSequence) return;
       if (r.provenance) remixProvenanceStore.setPromptToken(r.provenance, image.id);
     })

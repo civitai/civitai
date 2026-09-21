@@ -110,12 +110,24 @@ describe('remixProvenanceStore', () => {
     expect(remixProvenanceStore.getPromptToken(undefined)).toBeUndefined();
   });
 
-  /** A second reuse replaces the first rather than joining it. */
+  /**
+   * A second reuse replaces the first rather than joining it. Both images are
+   * asserted because varying the token and the id together cannot tell
+   * last-write-wins from "a new image replaces the entry".
+   */
   it('supersedes an earlier prompt token', () => {
     remixProvenanceStore.setPromptToken('first', 111);
     remixProvenanceStore.setPromptToken('second', 222);
 
     expect(remixProvenanceStore.getPromptToken(222)).toBe('second');
     expect(remixProvenanceStore.getPromptToken(111)).toBeUndefined();
+  });
+
+  /** Re-clicking the SAME image takes the newer token, not the stored one. */
+  it('replaces the token when the image is unchanged', () => {
+    remixProvenanceStore.setPromptToken('first', 111);
+    remixProvenanceStore.setPromptToken('second', 111);
+
+    expect(remixProvenanceStore.getPromptToken(111)).toBe('second');
   });
 });
