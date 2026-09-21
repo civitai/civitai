@@ -1,14 +1,7 @@
-import {
-  Accordion,
-  Button,
-  Container,
-  Group,
-  Stack,
-  Text,
-  Title,
-} from '@mantine/core';
+import { Accordion, Button, Container, Group, Stack, Text, Title } from '@mantine/core';
 import { IconArrowRight, IconBolt, IconRocket, IconWand } from '@tabler/icons-react';
 import { Meta } from '~/components/Meta/Meta';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
 import classes from '~/pages/train.module.scss';
 
@@ -47,7 +40,7 @@ const faqs = [
   },
   {
     q: 'What if I stop my membership?',
-    a: "You have a 30-day window after your membership ends. Inside that window you can download your private models to keep them offline, publish them to the community so anyone can use them, delete them to remove them immediately, or reactivate your membership to keep them private on Civitai. Anything left private and unreactivated after 30 days is deleted.",
+    a: 'You have a 30-day window after your membership ends. Inside that window you can download your private models to keep them offline, publish them to the community so anyone can use them, delete them to remove them immediately, or reactivate your membership to keep them private on Civitai. Anything left private and unreactivated after 30 days is deleted.',
   },
 ];
 
@@ -87,6 +80,10 @@ const schema = {
 };
 
 export default function TrainPage() {
+  // With the Training Studio on, every "train" CTA starts there instead of the old wizard —
+  // same swap the header menu makes. Logged-out visitors have no flags and keep the old path.
+  const features = useFeatureFlags();
+  const trainHref = features.trainingStudioUi ? '/training-studio?view=new' : '/models/train';
   return (
     <>
       <Meta
@@ -119,7 +116,7 @@ export default function TrainPage() {
               <Group gap="sm" mt="sm">
                 <Button
                   component={NextLink}
-                  href="/models/train"
+                  href={trainHref}
                   size="md"
                   leftSection={<IconBolt size={18} fill="currentColor" />}
                   variant="gradient"
@@ -174,21 +171,21 @@ export default function TrainPage() {
             <Stack gap="md" maw={720} mx="auto">
               <Text c="dimmed" fz="lg" style={{ lineHeight: 1.65 }}>
                 You&apos;ve been sketching the same character for a year. You have a style people
-                recognized before you had a name for it. You have a concept nobody else has
-                trained. Stock models don&apos;t know any of that. They give you a close cousin.
-                They give you a guess.
+                recognized before you had a name for it. You have a concept nobody else has trained.
+                Stock models don&apos;t know any of that. They give you a close cousin. They give
+                you a guess.
               </Text>
               <Text c="dimmed" fz="lg" style={{ lineHeight: 1.65 }}>
-                You write a 400-word prompt to get the character right. You regenerate nine times
-                to get one usable frame. You finally get the face right, but the jacket changes.
-                You fix the jacket and the style evaporates. You open a commercial image-editor,
-                pay per edit, and still end up with a jawline that drifts every third generation.
+                You write a 400-word prompt to get the character right. You regenerate nine times to
+                get one usable frame. You finally get the face right, but the jacket changes. You
+                fix the jacket and the style evaporates. You open a commercial image-editor, pay per
+                edit, and still end up with a jawline that drifts every third generation.
               </Text>
               <p className={classes.bigQuote}>
                 <span>The problem isn&apos;t your prompt.</span>
                 <span>
-                  The problem is that the model has never seen the thing you&apos;re actually
-                  trying to make.
+                  The problem is that the model has never seen the thing you&apos;re actually trying
+                  to make.
                 </span>
               </p>
             </Stack>
@@ -208,10 +205,9 @@ export default function TrainPage() {
               <Text fz="lg" style={{ lineHeight: 1.65 }}>
                 A <strong>fine-tuned model</strong> solves that. You take a base model that already
                 understands images in general, and you show it a small, focused set of examples,
-                usually 15 to 30. Training nudges the model until it can reliably reproduce
-                whatever those examples have in common. What you&apos;re left with is a{' '}
-                <strong>LoRA</strong>, a lightweight add-on that plugs into the base model and
-                teaches it one new trick.
+                usually 15 to 30. Training nudges the model until it can reliably reproduce whatever
+                those examples have in common. What you&apos;re left with is a <strong>LoRA</strong>
+                , a lightweight add-on that plugs into the base model and teaches it one new trick.
               </Text>
               <p className={classes.bigQuote}>
                 <span>A general model learns general things.</span>
@@ -267,8 +263,8 @@ export default function TrainPage() {
                 <div className={classes.benefitBody}>
                   <div className={classes.benefitTitle}>A signature style, not a preset</div>
                   <div className={classes.benefitText}>
-                    A line weight, a palette, a grain, the look people clock as yours. Train it
-                    once and stop describing it every prompt.
+                    A line weight, a palette, a grain, the look people clock as yours. Train it once
+                    and stop describing it every prompt.
                   </div>
                 </div>
               </div>
@@ -286,8 +282,8 @@ export default function TrainPage() {
                   </div>
                   <div className={classes.benefitText}>
                     A prop you invented, a creature from your worldbuilding, a mascot, a uniform, a
-                    piece of architecture. Fifteen good references can teach the model something
-                    the internet has never trained on.
+                    piece of architecture. Fifteen good references can teach the model something the
+                    internet has never trained on.
                   </div>
                 </div>
               </div>
@@ -302,11 +298,11 @@ export default function TrainPage() {
                 <div className={classes.benefitBody}>
                   <div className={classes.benefitTitle}>Predictable, affordable costs</div>
                   <div className={classes.benefitText}>
-                    Commercial image-editors bill per edit, and the total climbs every iteration.
-                    On Civitai, training starts at <strong>~50¢</strong> and every generation
-                    afterward runs at the regular generator rate. Generate{' '}
-                    <strong>30 times as many images</strong> for the cost of a single edit on
-                    other platforms.
+                    Commercial image-editors bill per edit, and the total climbs every iteration. On
+                    Civitai, training starts at <strong>~50¢</strong> and every generation afterward
+                    runs at the regular generator rate. Generate{' '}
+                    <strong>30 times as many images</strong> for the cost of a single edit on other
+                    platforms.
                   </div>
                 </div>
               </div>
@@ -327,9 +323,9 @@ export default function TrainPage() {
                 <div className={classes.stepTitle}>Upload your examples</div>
                 <div className={classes.stepText}>
                   Drop in 15 to 30 images (or video clips) of your subject. Our trainer reads each
-                  one and writes a short caption describing what&apos;s in it. Captions are the
-                  text labels the model uses to learn what each image contains. Auto works for
-                  most jobs; you can edit captions when you want more precise control.
+                  one and writes a short caption describing what&apos;s in it. Captions are the text
+                  labels the model uses to learn what each image contains. Auto works for most jobs;
+                  you can edit captions when you want more precise control.
                 </div>
               </div>
               <div className={classes.stepCard}>
@@ -345,8 +341,8 @@ export default function TrainPage() {
                 <div className={classes.stepNum}>3</div>
                 <div className={classes.stepTitle}>Generate onsite</div>
                 <div className={classes.stepText}>
-                  When training finishes, your model lands in your Civitai library. Load it into
-                  the generator like any other model and start prompting.
+                  When training finishes, your model lands in your Civitai library. Load it into the
+                  generator like any other model and start prompting.
                 </div>
               </div>
             </div>
@@ -354,7 +350,7 @@ export default function TrainPage() {
             <Group justify="center" mt="xl">
               <Button
                 component={NextLink}
-                href="/models/train"
+                href={trainHref}
                 size="md"
                 variant="gradient"
                 gradient={{ from: 'yellow.4', to: 'orange.5', deg: 135 }}
@@ -365,8 +361,8 @@ export default function TrainPage() {
             </Group>
 
             <p className={classes.priceCallout}>
-              Training starts at <strong>500 Buzz (~50¢)</strong>. Once it&apos;s done, your
-              trained model is free to use for 30 days.
+              Training starts at <strong>500 Buzz (~50¢)</strong>. Once it&apos;s done, your trained
+              model is free to use for 30 days.
             </p>
           </Container>
         </section>
@@ -393,16 +389,16 @@ export default function TrainPage() {
                   <div className={classes.timelineLabel}>Day 1 to 30</div>
                   <div className={classes.timelineTitle}>Use it free</div>
                   <div className={classes.timelineText}>
-                    Generate with it inside the Civitai generator, no subscription needed. Try it
-                    on real work.
+                    Generate with it inside the Civitai generator, no subscription needed. Try it on
+                    real work.
                   </div>
                 </div>
                 <div className={classes.timelineCard}>
                   <div className={classes.timelineLabel}>After Day 30</div>
                   <div className={classes.timelineTitle}>Keep it or publish it</div>
                   <div className={classes.timelineText}>
-                    Keep it private with a membership, or publish it to the community for free.
-                    Your call.
+                    Keep it private with a membership, or publish it to the community for free. Your
+                    call.
                   </div>
                 </div>
               </div>
@@ -416,9 +412,9 @@ export default function TrainPage() {
             <h2 className={classes.sectionTitle}>Keep your model private.</h2>
             <p className={classes.sectionLead}>
               You curated the dataset. You designed the character. You own the IP. A private model
-              stays on your account, out of the public library, and nobody else can load, scrape,
-              or data-mine it. A Civitai membership is how you keep it past the 30-day window. The
-              tier decides how many private models you can have in rotation.
+              stays on your account, out of the public library, and nobody else can load, scrape, or
+              data-mine it. A Civitai membership is how you keep it past the 30-day window. The tier
+              decides how many private models you can have in rotation.
             </p>
             <div className={classes.tierGrid}>
               <div className={classes.tierCard}>
@@ -427,9 +423,7 @@ export default function TrainPage() {
                 <Text fz="sm" fw={600} mt={4}>
                   Private models
                 </Text>
-                <div className={classes.tierBlurb}>
-                  A character, a world, a style. Start here.
-                </div>
+                <div className={classes.tierBlurb}>A character, a world, a style. Start here.</div>
               </div>
               <div className={classes.tierCard}>
                 <div className={classes.tierName}>Silver</div>
@@ -446,8 +440,7 @@ export default function TrainPage() {
                   Private models
                 </Text>
                 <div className={classes.tierBlurb}>
-                  A studio&apos;s worth. Series, franchises, clients, experiments, all live at
-                  once.
+                  A studio&apos;s worth. Series, franchises, clients, experiments, all live at once.
                 </div>
               </div>
             </div>
@@ -463,7 +456,7 @@ export default function TrainPage() {
               </Button>
               <Button
                 component={NextLink}
-                href="/models/train"
+                href={trainHref}
                 size="md"
                 variant="default"
                 rightSection={<IconArrowRight size={16} />}
@@ -519,7 +512,7 @@ export default function TrainPage() {
             <Group justify="center" gap="sm">
               <Button
                 component={NextLink}
-                href="/models/train"
+                href={trainHref}
                 size="lg"
                 variant="gradient"
                 gradient={{ from: 'yellow.4', to: 'orange.5', deg: 135 }}
