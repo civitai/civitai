@@ -116,9 +116,20 @@ describe('keys are portable between worktrees', () => {
   // Node refuses an ENCODED separator under the same error code as the cross-platform spelling the
   // fallback exists for, and decoding one would name a DIFFERENT file. Left to throw instead: the
   // reporter's per-row catch then records nothing, which is the safe direction.
-  it('refuses an encoded separator rather than decoding it into another path', () => {
-    expect(() => toRel('file:///C:/Dev/a%2Fb/x.ts', 'C:/Dev')).toThrow();
-    expect(() => toRel('file:///C:/Dev/a%5Cb/x.ts', 'C:/Dev')).toThrow();
+  //
+  // Asserted as the PROPERTY, not as "it throws": whether `fileURLToPath` rejects an encoded
+  // separator is platform-dependent, and a `toThrow` here passed on Windows and failed on CI.
+  // What must hold everywhere is that `%2F` never becomes a path separator.
+  it('never decodes an encoded separator into another path', () => {
+    for (const url of ['file:///C:/Dev/a%2Fb/x.ts', 'file:///C:/Dev/a%5Cb/x.ts']) {
+      let out: string | null | 'threw';
+      try {
+        out = toRel(url, 'C:/Dev');
+      } catch {
+        out = 'threw';
+      }
+      expect(out).not.toBe('a/b/x.ts');
+    }
     // The spelling the fallback is FOR still resolves, on either platform.
     expect(toRel('file:///home/u/repo/src/b.ts', '/home/u/repo')).toBe('src/b.ts');
   });
