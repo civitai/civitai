@@ -21,6 +21,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // construction: isFlipt returns false for an unknown flag or an unreachable Flipt,
   // so the purge stays dormant until someone turns it on deliberately.
   TRAINING_DATA_PURGE = 'training-data-purge',
+  // Resolve every row and log what WOULD be deleted, without deleting it. Also default-off, which
+  // means it cannot make the purge safer on its own — the operator procedure is to turn this ON
+  // FIRST, then the purge, read a night's output, and only then turn this off. Written down on
+  // DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS because a two-flag order that nobody records is a
+  // trap rather than a safeguard.
+  TRAINING_DATA_PURGE_DRY_RUN = 'training-data-purge-dry-run',
   IMAGE_TRAINING = 'image-training',
   VIDEO_TRAINING = 'video-training',
   AI_TOOLKIT_SD15 = 'ai-toolkit-sd15',
@@ -174,6 +180,12 @@ export enum FLIPT_FEATURE_FLAGS {
 // per-request wasm eval on the hot path. If its propagation latency ever
 // matters during an incident, lower FLIPT_EVAL_CACHE_TTL_MS globally rather
 // than bypassing this one flag.
+// ⚠ DELIBERATELY NOT HERE: TRAINING_DATA_PURGE. It is a stop button for irreversible deletes, so
+// it looks like it belongs — a draft of it was added on exactly that reasoning and then removed.
+// The entry would be INERT: that flag is evaluated once per NIGHTLY run, and the cache TTL is ten
+// seconds, so a cached entry has expired long before the next evaluation and bypassing the cache
+// can never change what that job sees. The entries below are each evaluated far more often than
+// the TTL, which is the property that makes bypassing them mean anything.
 const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
   FLIPT_FEATURE_FLAGS.HIGH_REPLICATION_LAG_MODE,
@@ -186,11 +198,6 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   // five-minute tick, so the cache saves nothing measurable and the staleness is
   // all cost at the moment someone is trying to turn it off.
   FLIPT_FEATURE_FLAGS.PLACEMENT_METRIC_SWEEP,
-  // The stop button for a nightly sweep that deletes S3 objects IRREVERSIBLY —
-  // nothing brings an object back. Evaluated once per nightly run, so the cache
-  // saves nothing measurable and its staleness is all cost at the moment someone
-  // is trying to turn it off.
-  FLIPT_FEATURE_FLAGS.TRAINING_DATA_PURGE,
 ]);
 
 // 🔴 SHARED_STATE — this module is emitted TWICE in the production server build.

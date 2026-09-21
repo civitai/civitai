@@ -140,11 +140,15 @@ export const DELETE_OLD_TRAINING_DATA_CALLER_CUT_SECONDS = 60 * 60;
  * whole caveat is spent. (At the time of writing the purged arm's newest trailed the unpurged
  * arm's by months.) 🔴 THAT IS A STATEMENT ABOUT TODAY AND IT EXPIRES. Whoever repairs
  * the delete path must re-ask it, because from that moment a single serial pass per day is the
- * whole throughput: the query takes no `LIMIT`, the walk is one awaited delete plus one awaited
- * update per row, and a row whose delete throws is never marked purged and so returns every day
- * forever. If one pass cannot clear a day's inflow the backlog grows monotonically and files
- * outlive the retention this job exists to enforce. `deleteManyObjects` already exists in
- * `~/utils/s3-utils` and is the obvious lever; nothing here needs it yet.
+ * whole throughput: the walk is one awaited delete plus one awaited update per row, and a row
+ * whose delete throws is never marked purged and so returns every day forever. If one pass cannot
+ * clear a day's inflow the backlog grows monotonically and files outlive the retention this job
+ * exists to enforce. `deleteManyObjects` already exists in `~/utils/s3-utils` and is the obvious
+ * lever.
+ *
+ * ⚠ An earlier draft of this paragraph said "the query takes no `LIMIT`". It does now — see
+ * DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS, added in the same change that repaired the delete
+ * path, 60-odd lines below the sentence that denied it.
  */
 export const DELETE_OLD_TRAINING_DATA_LOCK_SECONDS = 6 * 60 * 60;
 
@@ -164,6 +168,13 @@ export const DELETE_OLD_TRAINING_DATA_LOCK_SECONDS = 6 * 60 * 60;
  * it went wrong. Nothing here derives it from a rate, and no rate has been measured that would.
  * `minor-hash-sweep.ts` caps its own destructive sweep the same way and for the same reason.
  *
+ * 🔴 THE ARMING ORDER, WRITTEN DOWN BECAUSE TWO DEFAULT-OFF FLAGS THAT NOBODY RECORDS ARE A TRAP
+ * RATHER THAN A SAFEGUARD. Both `training-data-purge` and `training-data-purge-dry-run` default
+ * off, so turning ON only the purge goes straight to real deletes — the dry run cannot protect a
+ * first pass unless it is turned on FIRST. The order is: dry-run on, purge on, read one night's
+ * `Dry run, would delete` lines and the `eligibleTotal`, then dry-run off. Skipping a step is a
+ * choice someone may make; not knowing there was a step is the failure this paragraph prevents.
+ *
  * A consequence worth knowing rather than discovering: a capped pass finishes far inside the
  * caller's timeout, which is exactly the condition under which the run lock above stops being the
  * mitigation — see DELETE_OLD_TRAINING_DATA_LOCK_SECONDS, which says so in those words.
@@ -178,12 +189,42 @@ export const deleteOldTrainingData = createJob(
     // false for an unknown flag OR an unreachable Flipt, so this job deletes nothing until
     // someone turns it on deliberately — which is what turns "the first release after merge
     // silently starts deleting" into "somebody flips it and watches". It also stays the only
-    // stop button that works WITHOUT a deploy, and that matters here specifically: this app
-    // ships from a `release` branch on a cadence the person watching does not control.
+    // stop button for the NEXT run that works WITHOUT a deploy, and that matters here
+    // specifically: this app ships from a `release` branch on a cadence the person watching does
+    // not control.
+    //
+    // ⚠ IT CANNOT STOP A PASS ALREADY RUNNING, and an earlier draft of this comment implied it
+    // could by calling it "the only stop button" without qualification. It is read once, here;
+    // the loop below never re-reads it and takes no `jobContext` (deliberately — see the lock
+    // constant). To stop a pass that is already deleting, delete the jobs pod: the run lock's
+    // redis key carries a ~10s TTL refreshed in-process, so it lapses within seconds of the pod
+    // going away.
     if (!(await isFlipt(FLIPT_FEATURE_FLAGS.TRAINING_DATA_PURGE))) {
       logJob({ type: 'info', message: `Skipped, purge switch is off` });
       return { status: 'ok', skipped: 'disabled' };
     }
+
+    // 🔴 THE UNCAPPED TOTAL, AND IT IS NOT DECORATION — WITHOUT IT THE CAP MAKES THE BACKLOG
+    // INVISIBLE, which is the exact opposite of the reason the cap exists. With a backlog well
+    // above the cap, every night reports the cap and nothing else: the same number whether the
+    // set is a little over it or a thousand times over it, and the same number whether it is
+    // shrinking or growing. The drain is only "readable" if something reports the quantity that
+    // is actually draining. `minor-hash.service.ts` pairs its capped slice with a separate
+    // uncapped count for this reason; so does this.
+    // Resolved once, beside the switch, so a pass cannot change mode halfway through.
+    const dryRun = await isFlipt(FLIPT_FEATURE_FLAGS.TRAINING_DATA_PURGE_DRY_RUN);
+
+    const [{ total }] = await dbWrite.$queryRaw<{ total: bigint }[]>`
+      SELECT count(*) as total
+      FROM "ModelVersion" mv
+             JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
+      WHERE mv."uploadType" = 'Trained'
+        AND mv."trainingStatus" in ('InReview', 'Approved')
+        AND (timezone('utc', current_timestamp) -
+             (mf.metadata -> 'trainingResults' ->> 'completedAt')::timestamp) > '30 days'
+        AND mf."dataPurged" is not true
+        AND mf.visibility != 'Public'
+    `;
 
     const oldTraining = await dbWrite.$queryRaw<OldTrainingRow[]>`
       SELECT mf.id                                        as mf_id,
@@ -197,6 +238,15 @@ export const deleteOldTrainingData = createJob(
              (mf.metadata -> 'trainingResults' ->> 'completedAt')::timestamp) > '30 days'
         AND mf."dataPurged" is not true
         AND mf.visibility != 'Public'
+      -- 🔴 RANDOM, AND A DETERMINISTIC ORDER WOULD BE A BUG HERE. Several outcomes leave a row
+      -- eligible forever by design: a non-allowlisted bucket and an unparseable url can never
+      -- succeed, and a still-referenced object must not. Under any stable order those rows hold
+      -- the first LIMIT slots every single night, so the pass does the same futile work forever
+      -- and never reaches the rest of the set — a starvation the uncapped loop could not have,
+      -- because it walked everything. Sampling bounds the expected wait for every row instead.
+      -- The cost is real and accepted: this must find the whole eligible set to sort it, where
+      -- an unordered LIMIT could stop early.
+      ORDER BY random()
       LIMIT ${DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS}
     `;
 
@@ -211,12 +261,17 @@ export const deleteOldTrainingData = createJob(
     logJob({
       type: 'info',
       message: `Found jobs`,
-      data: { count: oldTraining.length },
+      data: {
+        count: oldTraining.length,
+        eligibleTotal: Number(total),
+        cap: DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS,
+      },
     });
 
     let goodJobs = 0;
     let errorJobs = 0;
     let skippedJobs = 0;
+    let dryRunJobs = 0;
 
     for (const { mf_id, job_id, url } of oldTraining) {
       try {
@@ -233,6 +288,22 @@ export const deleteOldTrainingData = createJob(
         // and only sets `dataPurged`, so the refcount guard would otherwise find the row as a
         // live reference to its own url and veto every delete, forever and silently — trading a
         // loud failure for a quiet one. `urlsSafeToDelete` documents this case by name.
+        // 🔴 THE DRY RUN STOPS SHORT OF THE DELETE, AND IT IS THE ONLY WAY TO SEE WHAT THIS PASS
+        // WOULD TOUCH BEFORE IT TOUCHES IT. An S3 delete is not reversible from here, and until
+        // the switch is first thrown this path has never been observed working in production —
+        // so "what would it have deleted" is not a question any amount of reading answers. It
+        // deliberately skips the refcount query too: that query is the expensive part per row,
+        // and a dry run exists to be cheap enough to leave on for a night.
+        if (dryRun) {
+          dryRunJobs += 1;
+          logJob({
+            type: 'info',
+            message: `Dry run, would delete`,
+            data: { jobId: job_id, modelFileId: mf_id, url },
+          });
+          continue;
+        }
+
         const outcome = await deleteModelFileObject(url, mf_id);
 
         // 🔴 Only a real delete may set `dataPurged`. A skip means THE OBJECT IS STILL THERE, and
@@ -288,7 +359,13 @@ export const deleteOldTrainingData = createJob(
     logJob({
       type: 'info',
       message: `Finished`,
-      data: { successes: goodJobs, failures: errorJobs, skipped: skippedJobs },
+      data: {
+        successes: goodJobs,
+        failures: errorJobs,
+        skipped: skippedJobs,
+        eligibleTotal: Number(total),
+        dryRun: dryRunJobs,
+      },
     });
 
     return { status: 'ok' };

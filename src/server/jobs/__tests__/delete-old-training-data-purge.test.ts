@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -34,7 +36,10 @@ vi.mock('~/utils/s3-utils', () => ({
 
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: mockIsFlipt,
-  FLIPT_FEATURE_FLAGS: { TRAINING_DATA_PURGE: 'training-data-purge' },
+  FLIPT_FEATURE_FLAGS: {
+    TRAINING_DATA_PURGE: 'training-data-purge',
+    TRAINING_DATA_PURGE_DRY_RUN: 'training-data-purge-dry-run',
+  },
 }));
 
 import {
@@ -55,6 +60,15 @@ const row = (mf_id: number, url = `https://example.invalid/bucket/key-${mf_id}`)
 
 const DELETED = { deleted: true } as const;
 
+/**
+ * The job issues TWO reads: an uncapped `count(*)` and then the capped slice. A bare
+ * `mockResolvedValueOnce(rows)` would satisfy the COUNT and leave the slice empty, which reads as
+ * a job that found nothing — green, and about nothing. Every case sets both through here.
+ */
+const selects = (rows: ReturnType<typeof row>[], total = rows.length) => {
+  dbWrite.$queryRaw.mockResolvedValueOnce([{ total: BigInt(total) }]).mockResolvedValueOnce(rows);
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   loggingMock.logToAxiom.mockImplementation(() => ({ catch: () => undefined }));
@@ -65,12 +79,13 @@ beforeEach(() => {
   // The switch is ON for every case below except the ones that are ABOUT the switch. Stated
   // rather than defaulted, because `isFlipt` resolving to undefined would read as OFF and every
   // case would pass vacuously over a job that did nothing.
-  mockIsFlipt.mockResolvedValue(true);
+  // Purge ON, dry-run OFF, for every case except the ones that are about those switches.
+  mockIsFlipt.mockImplementation(async (flag: string) => flag === 'training-data-purge');
 });
 
 describe('delete-old-training-data routes its deletes through the ModelFile helper', () => {
   it('🔴 calls deleteModelFileObject with the url AND the row id as excludeId', async () => {
-    dbWrite.$queryRaw.mockResolvedValueOnce([row(101)]);
+    selects([row(101)]);
 
     await deleteOldTrainingData.run({}).result;
 
@@ -85,7 +100,7 @@ describe('delete-old-training-data routes its deletes through the ModelFile help
   });
 
   it('marks dataPurged only after the helper reports an actual delete', async () => {
-    dbWrite.$queryRaw.mockResolvedValueOnce([row(102)]);
+    selects([row(102)]);
 
     await deleteOldTrainingData.run({}).result;
 
@@ -103,7 +118,7 @@ describe('a SKIP must not be recorded as a purge', () => {
       // Every one of these means the object is STILL THERE. Marking the row purged would remove
       // it from this job's query permanently while the bytes remain.
       mockDeleteModelFileObject.mockResolvedValueOnce({ deleted: false, reason });
-      dbWrite.$queryRaw.mockResolvedValueOnce([row(103)]);
+      selects([row(103)]);
 
       await deleteOldTrainingData.run({}).result;
 
@@ -115,7 +130,7 @@ describe('a SKIP must not be recorded as a purge', () => {
     mockDeleteModelFileObject
       .mockResolvedValueOnce({ deleted: false, reason: 'still-referenced' })
       .mockResolvedValueOnce(DELETED);
-    dbWrite.$queryRaw.mockResolvedValueOnce([row(201), row(202)]);
+    selects([row(201), row(202)]);
 
     await deleteOldTrainingData.run({}).result;
 
@@ -134,7 +149,7 @@ describe('a SKIP must not be recorded as a purge', () => {
       deleted: false,
       reason: 'still-referenced',
     });
-    dbWrite.$queryRaw.mockResolvedValueOnce([row(104)]);
+    selects([row(104)]);
 
     await deleteOldTrainingData.run({}).result;
 
@@ -152,7 +167,7 @@ describe('a thrown delete is still a failure, and still does not mark the row', 
     mockDeleteModelFileObject
       .mockRejectedValueOnce(new Error('The specified bucket does not exist.'))
       .mockResolvedValueOnce(DELETED);
-    dbWrite.$queryRaw.mockResolvedValueOnce([row(301), row(302)]);
+    selects([row(301), row(302)]);
 
     await deleteOldTrainingData.run({}).result;
 
@@ -166,7 +181,7 @@ describe('a thrown delete is still a failure, and still does not mark the row', 
   it('POSITIVE CONTROL: an empty selection does no work at all', async () => {
     // Without this, every assertion above is also satisfied by a job that selects nothing and
     // silently returns — the shape the whole suite would take if `$queryRaw` stopped resolving.
-    dbWrite.$queryRaw.mockResolvedValueOnce([]);
+    selects([]);
 
     await deleteOldTrainingData.run({}).result;
 
@@ -191,7 +206,7 @@ describe('the purge is OFF unless someone turns it on', () => {
 
   it('CONTROL: with the flag on, the same setup DOES delete', async () => {
     // Without this arm the case above is satisfied by a job that is broken in any other way.
-    dbWrite.$queryRaw.mockResolvedValueOnce([row(401)]);
+    selects([row(401)]);
 
     await deleteOldTrainingData.run({}).result;
 
@@ -200,7 +215,7 @@ describe('the purge is OFF unless someone turns it on', () => {
   });
 
   it('gates on the training-data purge flag specifically', async () => {
-    dbWrite.$queryRaw.mockResolvedValueOnce([]);
+    selects([]);
     await deleteOldTrainingData.run({}).result;
     expect(mockIsFlipt).toHaveBeenCalledWith('training-data-purge');
   });
@@ -208,14 +223,24 @@ describe('the purge is OFF unless someone turns it on', () => {
 
 describe('a pass is capped', () => {
   it('binds the cap into the query rather than selecting the whole backlog', async () => {
-    dbWrite.$queryRaw.mockResolvedValueOnce([]);
+    selects([]);
 
     await deleteOldTrainingData.run({}).result;
 
     // The tagged template passes interpolated values as trailing arguments, so the cap is
     // asserted where it actually lands — bound, not spliced into the SQL text.
-    const args = dbWrite.$queryRaw.mock.calls[0];
+    //
+    // 🔴 calls[1], NOT calls[0]. The first read is the uncapped `count(*)`; the capped slice is
+    // the second. This assertion pointed at calls[0] until the count query was added and went
+    // red immediately, which is the behaviour I want from it — an index that silently drifts
+    // onto the wrong query would assert the cap against a statement that has none.
+    expect(dbWrite.$queryRaw).toHaveBeenCalledTimes(2);
+    const args = dbWrite.$queryRaw.mock.calls[1];
     expect(args).toContain(DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS);
+    // ...and the COUNT query must NOT carry it, or the "uncapped total" is capped too.
+    expect(dbWrite.$queryRaw.mock.calls[0]).not.toContain(
+      DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS
+    );
   });
 
   it('🔴 the cap is a real bound, not a number larger than any backlog', () => {
@@ -223,5 +248,82 @@ describe('a pass is capped', () => {
     // review as though the hazard were addressed. Pinned to its literal so raising it has to be
     // argued in the docblock, which says the value is a choice rather than a derivation.
     expect(DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS).toBe(2000);
+  });
+});
+
+describe('the dry run stops short of the delete', () => {
+  it('🔴 resolves the rows and deletes NOTHING', async () => {
+    mockIsFlipt.mockImplementation(async () => true); // purge on AND dry-run on
+    selects([row(501), row(502)]);
+
+    await deleteOldTrainingData.run({}).result;
+
+    expect(mockDeleteModelFileObject).not.toHaveBeenCalled();
+    expect(dbWrite.modelFile.update).not.toHaveBeenCalled();
+  });
+
+  it('names each row it WOULD have deleted, which is the whole point of the mode', async () => {
+    // A dry run that reports only a count tells an operator nothing they could check. The
+    // identifying fields are what make the output auditable before anything is destroyed.
+    mockIsFlipt.mockImplementation(async () => true);
+    selects([row(503)]);
+
+    await deleteOldTrainingData.run({}).result;
+
+    const line = loggingMock.logToAxiom.mock.calls
+      .map(([arg]) => arg as { message?: string; data?: { modelFileId?: number; url?: string } })
+      .find((arg) => arg?.message === 'Dry run, would delete');
+    expect(line?.data?.modelFileId).toBe(503);
+    expect(line?.data?.url).toBe('https://example.invalid/bucket/key-503');
+  });
+
+  it('CONTROL: with dry-run OFF the same setup really deletes', async () => {
+    // Without this arm, a job broken in any other way also passes the two cases above.
+    selects([row(504)]);
+
+    await deleteOldTrainingData.run({}).result;
+
+    expect(mockDeleteModelFileObject).toHaveBeenCalledTimes(1);
+    expect(dbWrite.modelFile.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('gates the dry run on its OWN flag, not the purge flag', async () => {
+    // Both default off, and reading the wrong one would silently make the dry run unreachable.
+    selects([]);
+    await deleteOldTrainingData.run({}).result;
+    expect(mockIsFlipt).toHaveBeenCalledWith('training-data-purge-dry-run');
+  });
+});
+
+describe('the uncapped backlog total is reported', () => {
+  it('🔴 reports the FULL eligible count beside the capped slice', async () => {
+    // Without this the cap makes the backlog invisible: a pass reports the cap and nothing else,
+    // identically whether the set is a little over it or vastly over it, and identically whether
+    // it is shrinking or growing — the opposite of the readability the cap is justified by.
+    selects([row(601), row(602)], 987654);
+
+    await deleteOldTrainingData.run({}).result;
+
+    const found = loggingMock.logToAxiom.mock.calls
+      .map(
+        ([arg]) => arg as { message?: string; data?: { eligibleTotal?: number; count?: number } }
+      )
+      .find((arg) => arg?.message === 'Found jobs');
+    expect(found?.data?.eligibleTotal).toBe(987654);
+    // The slice and the total are DIFFERENT numbers here on purpose: reporting the slice twice
+    // would satisfy any assertion that only checked the field exists.
+    expect(found?.data?.count).toBe(2);
+  });
+});
+
+describe('a capped pass cannot starve the rest of the backlog', () => {
+  it('🔴 orders randomly, so a permanently-skipping head cannot hold the slice forever', () => {
+    // Several outcomes leave a row eligible for ever by design (non-allowlisted bucket,
+    // unparseable url, still-referenced). Under ANY stable order those rows occupy the first
+    // LIMIT slots every night and the pass never reaches the rest — a starvation the uncapped
+    // loop could not have. This is a source read because the ordering lives in raw SQL; it
+    // cannot tell you the plan, only that the clause was not dropped.
+    const sql = readFileSync(path.resolve(__dirname, '../delete-old-training-data.ts'), 'utf8');
+    expect(sql).toMatch(/ORDER BY random\(\)\s*\n\s*LIMIT/);
   });
 });
