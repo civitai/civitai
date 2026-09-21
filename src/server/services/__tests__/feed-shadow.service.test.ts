@@ -107,6 +107,15 @@ describe('mapSearchInputToFeedQuery', () => {
     }
   });
 
+  it('ignores the resource filters unless a model version gives them something to narrow', () => {
+    const flags = { hideAutoResources: true, hideManualResources: true };
+    expect(mapSearchInputToFeedQuery({ ...base, ...flags }).ok).toBe(true);
+    expect(mapSearchInputToFeedQuery({ ...base, ...flags, modelVersionId: 9 })).toEqual({
+      ok: false,
+      reason: 'flag:hideAutoResources',
+    });
+  });
+
   it('names the first thing it cannot express', () => {
     const reason = (i: Record<string, unknown>) => {
       const m = mapSearchInputToFeedQuery({ ...base, ...i });
