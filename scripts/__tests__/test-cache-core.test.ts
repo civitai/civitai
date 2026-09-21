@@ -121,17 +121,15 @@ describe('keys are portable between worktrees', () => {
   // separator is platform-dependent, and a `toThrow` here passed on Windows and failed on CI.
   // What must hold everywhere is that `%2F` never becomes a path separator.
   it('never decodes an encoded separator into another path', () => {
-    for (const url of ['file:///C:/Dev/a%2Fb/x.ts', 'file:///C:/Dev/a%5Cb/x.ts']) {
-      let out: string | null | 'threw';
-      try {
-        out = toRel(url, 'C:/Dev');
-      } catch {
-        out = 'threw';
-      }
-      expect(out).not.toBe('a/b/x.ts');
-    }
+    // The same answer on both platforms, which is the point: Windows threw here and POSIX returned
+    // `a/b/x.ts`, a path naming a different file. Asserting `null` rather than "it throws" is what
+    // makes this test mean the same thing on the machine it was written on and on CI.
+    expect(toRel('file:///C:/Dev/a%2Fb/x.ts', 'C:/Dev')).toBeNull();
+    expect(toRel('file:///C:/Dev/a%5Cb/x.ts', 'C:/Dev')).toBeNull();
     // The spelling the fallback is FOR still resolves, on either platform.
     expect(toRel('file:///home/u/repo/src/b.ts', '/home/u/repo')).toBe('src/b.ts');
+    // And ordinary percent-encoding still decodes.
+    expect(toRel('file:///C:/Dev/wt/a%20b/x.ts', 'C:/Dev/wt')).toBe('a b/x.ts');
   });
 
   // A read outside the repo (a temp file the test wrote itself) is not an input anyone else shares.

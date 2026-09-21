@@ -104,6 +104,13 @@ export function toRel(id, root) {
     // `file:///home/u/x.ts` is `ERR_INVALID_FILE_URL_PATH`, which took this file's own POSIX
     // invariant test red on every Windows run of `main`. The URL's pathname is the same string
     // `fileURLToPath` would have produced on the host that wrote it, so fall back to it.
+    // 🔴 An ENCODED separator is refused BEFORE either branch, because the two platforms disagree
+    // about it: Windows raises ERR_INVALID_FILE_URL_PATH, while POSIX decodes `%2F` into a real
+    // `/` and hands back a path naming a DIFFERENT file. Guarding only the fallback fixed the
+    // platform that already threw and left the one that silently lied — CI caught that. `null` is
+    // the answer this function already has for "not a file in this repo", and it is the same
+    // answer on both.
+    if (/%2f|%5c/i.test(new URL(p).pathname)) return null;
     try {
       p = fileURLToPath(p);
     } catch (err) {
@@ -111,12 +118,7 @@ export function toRel(id, root) {
       // would turn a refused record into a record written without that dependency — the false-skip
       // shape. A URL this host cannot name cannot be a local file, so it lands as null below.
       if (err?.code !== 'ERR_INVALID_FILE_URL_PATH') throw err;
-      const { pathname } = new URL(p);
-      // Node refuses an ENCODED separator under the same error code, and decoding one here would
-      // silently name a different file. Let it throw instead: the reporter records nothing, which
-      // is the safe direction.
-      if (/%2f|%5c/i.test(pathname)) throw err;
-      p = decodeURIComponent(pathname);
+      p = decodeURIComponent(new URL(p).pathname);
     }
     p = p.replace(/^\/([A-Za-z]:)/, '$1');
   }
