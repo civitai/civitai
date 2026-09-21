@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 
 // getImageMetricsObject is the metric leg of the getAllImages 12-way Promise.all
 // fan-out on the image feed / SSR hot path. It reads counts from ClickHouse via
@@ -367,11 +369,12 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
 
   it('leaves the deadline wide enough to admit a real round trip', async () => {
     fetchMock.mockRejectedValue(new Error('Socket hang up after 3 retries'));
-    // 400ms, not 100: with a 100ms read every deadline above ~100 passed, so
-    // tightening 500 to 150 for SSR safety - under a real p99 round trip - was
-    // green. With the `elapsed < 800` ceiling this pins the constant to (400, 800).
+    // 10ms against a 500ms deadline: two orders of magnitude, so no event-loop
+    // stall can flip this. A 400ms read had 84ms of headroom on a 31-worker
+    // suite, which is a false red waiting to happen. The deadline VALUE is
+    // pinned separately below, where it costs no wall clock at all.
     redisMock.redis.hGetAll.mockImplementation(
-      (key: string) => new Promise((resolve) => setTimeout(() => resolve(CACHED[key] ?? {}), 400))
+      (key: string) => new Promise((resolve) => setTimeout(() => resolve(CACHED[key] ?? {}), 10))
     );
 
     const result = await getImageMetricsObject([{ id: 1 }]);
@@ -396,6 +399,18 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
     // Both land inside the deadline, in reverse order.
     expect(result[1]?.reactionLike).toBe(62);
     expect(result[3]?.reactionLike).toBe(8);
+  });
+
+  it('ships a deadline that admits a real round trip, not a token one', async () => {
+    // The behavioural case above proves a read INSIDE the deadline is admitted;
+    // it cannot prove the shipped number is sane, because any positive deadline
+    // admits a 10ms fake. This pins the value itself, with no wall clock: 500ms
+    // is chosen to clear a p99 redis round trip (~23ms measured) with room for a
+    // degraded cluster, while staying well inside the SSR budget the outer
+    // ClickHouse deadline already spends. Tightening it toward the p99 silently
+    // turns the stale arm off during exactly the outage it exists for.
+    const source = readFileSync(join(__dirname, '..', 'image.service.ts'), 'utf-8');
+    expect(source).toContain('const STALE_METRIC_CACHE_TIMEOUT_MS = 500;');
   });
 
   it('reads each id once when the caller repeats one, and keeps the ids aligned', async () => {
