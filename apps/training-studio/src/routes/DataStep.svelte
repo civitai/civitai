@@ -158,7 +158,7 @@
   // price is visible here rather than only at Review. Null (unpriced) hides the badge. `estSteps` surfaces
   // WHY the number moves.
   const estTotal = $derived(estimatedTotal(prices, selection, uploadedCount));
-  const estSteps = $derived(defaultStepsFor(selection.loraType, uploadedCount));
+  const estSteps = $derived(defaultStepsFor(selection.loraType, selection.media, uploadedCount));
   const busy = $derived(images.some((i) => i.status === 'uploading'));
   const blockedCount = $derived(images.filter((i) => i.status === 'blocked').length);
   // A trainable image needs a label — tags or a caption (a global trigger word isn't a per-image label).

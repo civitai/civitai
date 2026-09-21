@@ -20,9 +20,9 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import {
-    loraTypeById,
     paramBounds,
     paramsForVersion,
+    seenFor,
     TE_TRAINING_UNSUPPORTED,
     typesForMedia,
     type FromPrices,
@@ -86,8 +86,7 @@
   const LR_SCHEDULERS = ['cosine', 'constant', 'constant_with_warmup', 'linear'];
 
   const presetTypes = $derived(typesForMedia(selection.media));
-  const seenFor = (id: string) => loraTypeById(id).seen;
-  const defaultSteps = (id: string) => defaultStepsFor(id, imageCount);
+  const defaultSteps = (id: string) => defaultStepsFor(id, selection.media, imageCount);
 
   // Seeded once from the (stable) selection; the parent remounts this step via {#if}, so a fresh
   // selection gets a fresh component. untrack documents the intentional one-time capture.
@@ -131,7 +130,7 @@
   let promptSeq = initialPrompts.length;
   let openAdv = $state(-1);
 
-  const presetSeen = $derived(seenFor(presetType));
+  const presetSeen = $derived(seenFor(presetType, selection.media));
   const sampleCost = $derived(prompts.length * SAMPLE_RATE);
   // Per-run cost from the model's live quote; `null` for any run the orchestrator couldn't price, which
   // makes the whole total `null` (shown as "—") rather than a total quietly missing a run.
