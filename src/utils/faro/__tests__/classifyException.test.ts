@@ -760,7 +760,7 @@ describe('classifyException — separators and asset paths in the remaining patt
   });
 });
 
-// Round-5 review: seven more mutants survived a green suite. Two flip a KEEP into a DROP — the
+// Round-5 review: five more mutants survived a green suite. Two flip a KEEP into a DROP — the
 // direction this module's header forbids — and three re-admit noise. Most fixtures below are the
 // sole observer of one of them; the abort one instead pins the behaviour the wrapper exclusion's
 // scope note describes.
@@ -906,5 +906,53 @@ describe('classifyException — the message-only form (no `type` field)', () => 
     );
     expect(r.drop).toBe(true);
     expect(r.category).toBe('adblock');
+  });
+});
+
+// Round-7 review: two more code paths with no observer, both reachable, both in the direction
+// this module's header forbids.
+describe('classifyException — the ad-block rule needs BOTH of its conjuncts', () => {
+  // Rule 2 requires a script-load SHAPE *and* an ad host. Only the host half was pinned, and
+  // unlike rules 1 and 6 this rule has no project-frame guard at all — so dropping the shape
+  // requirement would discard any exception whose message merely NAMES an ad host, app frame and
+  // all. Those are real bugs in our own ad-integration code.
+  it.each([
+    ['TypeError', 'window.googletag.cmd.push is not a function'],
+    ['ReferenceError', "Can't find variable: adsbygoogle"],
+    ['TypeError', "Cannot read properties of undefined (reading 'doubleclick')"],
+  ])('KEEPS a real app error that merely NAMES an ad host: %s / %s', (type, value) => {
+    const r = classifyException(exc(type, value, APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+});
+
+// There are TWO identical malformed-`frames` guards — one in `isInjectedOnlyStack`, one in
+// `hasProjectSourceFrame`. The existing malformed-payload test reaches only the first, because
+// its message matches no DROP pattern so the second guard is never called. These give the
+// payload a message that DOES reach it, one per rule that consults it.
+describe('classifyException — a malformed frames value reaches both guards', () => {
+  const malformed = (value: string) => ({
+    type: 'TypeError',
+    value,
+    stacktrace: { frames: {} as unknown as [] },
+  });
+
+  it('classifies a network failure with malformed frames without throwing', () => {
+    let r!: ReturnType<typeof classifyException>;
+    expect(() => {
+      r = classifyException(malformed('Failed to fetch'));
+    }).not.toThrow();
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('network');
+  });
+
+  it('classifies an abort with malformed frames without throwing', () => {
+    let r!: ReturnType<typeof classifyException>;
+    expect(() => {
+      r = classifyException(malformed('The user aborted a request.'));
+    }).not.toThrow();
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('abort');
   });
 });
