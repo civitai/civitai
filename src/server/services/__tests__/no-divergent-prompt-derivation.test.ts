@@ -46,6 +46,15 @@ describe('prompt derivation has one threshold and one route', () => {
     ]);
     // A third parameter is a second threshold waiting to happen.
     expect(promptSimilarityModule.promptDerivationHolds.length).toBe(2);
+    // `Function.length` stops counting at the first DEFAULTED parameter, so an
+    // `options = {}` bag - the exact spelling the threshold used to have - reads
+    // as 2 there and slips past. The parameter list is pinned textually too.
+    const OPEN = 'export function promptDerivationHolds(';
+    const src = read(MODULE);
+    const open = src.indexOf(OPEN);
+    expect(open).toBeGreaterThan(-1);
+    const params = src.slice(open + OPEN.length, src.indexOf(')', open));
+    expect(params.replace(/\s+/g, ' ').trim()).toBe('source: string, current: string');
   });
 
   it('defines the threshold in exactly one place', () => {

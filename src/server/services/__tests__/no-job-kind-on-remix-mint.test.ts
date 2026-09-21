@@ -81,7 +81,8 @@ describe('remix provenance mint audience', () => {
     );
 
     expect(provenance).toMatch(/expect:\s*ProvenanceKind\s*=\s*'job'/);
-    // And the submit path is the one place that opts out of it.
+    // The upload path opts out to 'mint'; the prompt gate opts out to 'prompt'
+    // and is pinned behaviourally in remix-provenance.test.ts instead.
     expect(provenance).toMatch(/verifyProvenance\(token,\s*userId,\s*'mint'\)/);
   });
 });

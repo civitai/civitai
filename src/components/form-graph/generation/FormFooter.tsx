@@ -860,12 +860,12 @@ export function FormFooter({
     // generation_v2/FormFooter.tsx for why both of those matter.
     const sourceProvenance = [
       ...(snapshot.images ?? []).map((img) => remixProvenanceStore.getToken(img.url)),
-      // The reuse-prompt entry point's token, keyed to no image because that path
-      // seeds none. It lives exactly as long as the remix claim it came with, so
-      // it inherits that claim's expiry and every place that clears it — a form
-      // reset or a non-remix open. Past that, a similar prompt typed by hand
-      // would otherwise still spend it.
-      remixStore.getData() ? remixProvenanceStore.getPromptToken() : undefined,
+      // The reuse-prompt entry point's token. It seeds no source image, so the
+      // image it was minted for is the only thing tying it to this submission —
+      // the store returns it only when that matches the claim this form is
+      // submitting under. Gating on "some claim is fresh" instead let one reuse
+      // click pay for unrelated later submits, crediting the wrong gallery.
+      remixProvenanceStore.getPromptToken(remixOfId),
     ].filter(isDefined);
 
     const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;

@@ -40,21 +40,30 @@ type Entry = {
   storedAt: number;
 };
 
+type PromptEntry = Entry & {
+  /** The image the token was minted for. Checked on read, never sent. */
+  imageId: number;
+};
+
 interface RemixProvenanceState {
   tokensByUrl: Record<string, Entry>;
   /**
    * The token for a source whose PROMPT was reused. One, not a map: reusing a
    * prompt replaces the whole form, so a second reuse supersedes the first
    * rather than joining it.
-   *
-   * Read only while the remix claim is fresh (the FormFooters gate on
-   * `remixStore.getData()`), which is what bounds its life on the client.
    */
-  promptToken?: Entry;
+  promptToken?: PromptEntry;
   setToken: (url: string, token: string) => void;
   getToken: (url: string) => string | undefined;
-  setPromptToken: (token: string) => void;
-  getPromptToken: () => string | undefined;
+  setPromptToken: (token: string, imageId: number) => void;
+  /**
+   * Returns the token only when it was minted for `imageId`. The caller passes
+   * the image the live remix claim names, so a token cannot be spent against a
+   * form that was later pointed at a different source — gating on "a claim
+   * exists" would have let one reuse click pay for unrelated later submits, and
+   * credited the free submission to the wrong creator's gallery.
+   */
+  getPromptToken: (imageId: number | undefined) => string | undefined;
   /**
    * Move a token from the URL it was minted against to the URL that replaced it.
    * No-op when there is nothing to move, so the upload path can call it
@@ -85,9 +94,13 @@ export const useRemixProvenanceStore = create<RemixProvenanceState>()(
 
       getToken: (url) => get().tokensByUrl[url]?.token,
 
-      setPromptToken: (token) => set({ promptToken: { token, storedAt: Date.now() } }),
+      setPromptToken: (token, imageId) =>
+        set({ promptToken: { token, imageId, storedAt: Date.now() } }),
 
-      getPromptToken: () => get().promptToken?.token,
+      getPromptToken: (imageId) => {
+        const entry = get().promptToken;
+        return entry && entry.imageId === imageId ? entry.token : undefined;
+      },
 
       transfer: (fromUrl, toUrl) => {
         set((state) => {
@@ -110,7 +123,7 @@ export const useRemixProvenanceStore = create<RemixProvenanceState>()(
     {
       name: 'remix-provenance',
       storage: createJSONStorage(() => sessionStorage),
-      version: 1,
+      version: 2,
     }
   )
 );
@@ -119,8 +132,10 @@ export const useRemixProvenanceStore = create<RemixProvenanceState>()(
 export const remixProvenanceStore = {
   setToken: (url: string, token: string) => useRemixProvenanceStore.getState().setToken(url, token),
   getToken: (url: string) => useRemixProvenanceStore.getState().getToken(url),
-  setPromptToken: (token: string) => useRemixProvenanceStore.getState().setPromptToken(token),
-  getPromptToken: () => useRemixProvenanceStore.getState().getPromptToken(),
+  setPromptToken: (token: string, imageId: number) =>
+    useRemixProvenanceStore.getState().setPromptToken(token, imageId),
+  getPromptToken: (imageId: number | undefined) =>
+    useRemixProvenanceStore.getState().getPromptToken(imageId),
   transfer: (fromUrl: string, toUrl: string) =>
     useRemixProvenanceStore.getState().transfer(fromUrl, toUrl),
   removeToken: (url: string) => useRemixProvenanceStore.getState().removeToken(url),

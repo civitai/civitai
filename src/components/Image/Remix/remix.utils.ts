@@ -214,6 +214,14 @@ export async function startRemix({ kind, image }: { kind: RemixKind; image: Remi
 }
 
 /**
+ * Counts reuse clicks so a slower mint cannot land after a newer one. There is
+ * one prompt token, and the mints resolve in whatever order the network gives
+ * them, so without this two quick clicks can leave the token naming the image
+ * the user clicked FIRST.
+ */
+let promptReuseSequence = 0;
+
+/**
  * Open the generator seeded from this image's prompt and resources.
  *
  * The mint is what makes the link knowable at all: this path seeds no media, so
@@ -223,10 +231,15 @@ export async function startRemix({ kind, image }: { kind: RemixKind; image: Remi
  * generator.
  */
 export function startPromptReuse(image: RemixSourceImage) {
+  const sequence = ++promptReuseSequence;
+
   trpcVanilla.orchestrator.mintPromptProvenance
     .mutate({ imageId: image.id })
     .then((r) => {
-      if (r.provenance) remixProvenanceStore.setPromptToken(r.provenance);
+      // A newer reuse click owns the form, the same check `startRemix` makes
+      // before it applies anything.
+      if (sequence !== promptReuseSequence) return;
+      if (r.provenance) remixProvenanceStore.setPromptToken(r.provenance, image.id);
     })
     .catch(() => undefined);
 
