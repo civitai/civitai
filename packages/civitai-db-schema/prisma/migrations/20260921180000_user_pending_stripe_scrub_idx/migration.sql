@@ -11,8 +11,17 @@
 -- SQL-only, and absent from schema.full.prisma, because Prisma cannot express a partial index.
 -- That drift is deliberate: do not "fix" it by dropping the WHERE clause.
 --
--- CONCURRENTLY, so it takes no write lock on "User". It cannot run inside a transaction block;
--- if it is interrupted it leaves an INVALID index that must be dropped before retrying.
+-- CONCURRENTLY, so it takes no write lock on "User". It cannot run inside a transaction block.
+--
+-- RECOVERY: an interrupted CONCURRENTLY build leaves the index behind as INVALID, and re-running
+-- the statement below will NOT rebuild it — IF NOT EXISTS sees the name and does nothing, silently.
+-- Check first, and drop before retrying:
+--   SELECT i.indisvalid FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+--    WHERE c.relname = 'User_pendingStripeScrub_idx';
+--   DROP INDEX CONCURRENTLY IF EXISTS "User_pendingStripeScrub_idx";
+--
+-- Executed on dev 2026-09-21 as a validity check only (indisvalid = true). Dev is not prod-sized,
+-- so nothing about dev's timing says anything about prod's.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS "User_pendingStripeScrub_idx"
   ON "User" ("deletedAt")
   WHERE "customerId" IS NOT NULL AND "deletedAt" IS NOT NULL;
