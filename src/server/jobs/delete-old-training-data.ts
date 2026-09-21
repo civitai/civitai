@@ -184,8 +184,9 @@ export const DELETE_OLD_TRAINING_DATA_LOCK_SECONDS = 6 * 60 * 60;
  * because a runbook that says "read the output" is not one: the `Finished` line carries
  * `eligibleTotal` (the whole backlog, uncapped), `dryRunWouldDelete` and `dryRunWouldSkip` (the
  * capped sample, split — divide by the FIRST of those, not their sum, or you project a rate the
- * real pass cannot hit); the per-row `Dry run, would delete` / `Dry run, would skip` lines carry
- * the reason and the identifiers behind those two totals. Skipping a step is a choice someone may make; not
+ * real pass cannot hit). Both per-row line kinds carry the identifiers behind those totals; only
+ * the `Dry run, would skip` lines carry a `reason`, because a row that would be deleted has
+ * none — it reports the backend instead. Skipping a step is a choice someone may make; not
  * knowing there was a step is the failure this paragraph prevents.
  *
  * A consequence worth knowing rather than discovering: a capped pass finishes far inside the
