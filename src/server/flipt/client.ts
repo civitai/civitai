@@ -17,6 +17,10 @@ export enum FLIPT_FEATURE_FLAGS {
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
   GIFT_CARD_VENDOR_CRYPTO = 'gift-card-vendor-crypto',
+  // The stop button for `delete-old-training-data`'s S3 deletes. Default-OFF by
+  // construction: isFlipt returns false for an unknown flag or an unreachable Flipt,
+  // so the purge stays dormant until someone turns it on deliberately.
+  TRAINING_DATA_PURGE = 'training-data-purge',
   IMAGE_TRAINING = 'image-training',
   VIDEO_TRAINING = 'video-training',
   AI_TOOLKIT_SD15 = 'ai-toolkit-sd15',
@@ -182,6 +186,11 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   // five-minute tick, so the cache saves nothing measurable and the staleness is
   // all cost at the moment someone is trying to turn it off.
   FLIPT_FEATURE_FLAGS.PLACEMENT_METRIC_SWEEP,
+  // The stop button for a nightly sweep that deletes S3 objects IRREVERSIBLY —
+  // nothing brings an object back. Evaluated once per nightly run, so the cache
+  // saves nothing measurable and its staleness is all cost at the moment someone
+  // is trying to turn it off.
+  FLIPT_FEATURE_FLAGS.TRAINING_DATA_PURGE,
 ]);
 
 // 🔴 SHARED_STATE — this module is emitted TWICE in the production server build.

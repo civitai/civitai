@@ -23,15 +23,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * exclude-id, and that only a reported delete marks the row.
  */
 
-const { mockDeleteModelFileObject } = vi.hoisted(() => ({
+const { mockDeleteModelFileObject, mockIsFlipt } = vi.hoisted(() => ({
   mockDeleteModelFileObject: vi.fn(),
+  mockIsFlipt: vi.fn(),
 }));
 
 vi.mock('~/utils/s3-utils', () => ({
   deleteModelFileObject: mockDeleteModelFileObject,
 }));
 
-import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
+vi.mock('~/server/flipt/client', () => ({
+  isFlipt: mockIsFlipt,
+  FLIPT_FEATURE_FLAGS: { TRAINING_DATA_PURGE: 'training-data-purge' },
+}));
+
+import {
+  DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS,
+  deleteOldTrainingData,
+} from '~/server/jobs/delete-old-training-data';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
@@ -53,6 +62,10 @@ beforeEach(() => {
   // `undefined.deleted` is falsy — i.e. every case would silently become a SKIP case and a
   // green suite would say nothing about the purge path.
   mockDeleteModelFileObject.mockResolvedValue(DELETED);
+  // The switch is ON for every case below except the ones that are ABOUT the switch. Stated
+  // rather than defaulted, because `isFlipt` resolving to undefined would read as OFF and every
+  // case would pass vacuously over a job that did nothing.
+  mockIsFlipt.mockResolvedValue(true);
 });
 
 describe('delete-old-training-data routes its deletes through the ModelFile helper', () => {
@@ -159,5 +172,56 @@ describe('a thrown delete is still a failure, and still does not mark the row', 
 
     expect(mockDeleteModelFileObject).not.toHaveBeenCalled();
     expect(dbWrite.modelFile.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('the purge is OFF unless someone turns it on', () => {
+  it('🔴 does nothing at all when the flag is off — not even the SELECT', async () => {
+    // Default-off is the whole rollout plan: the first release carrying this change must not
+    // start deleting on its own. Asserting the QUERY never runs, not merely that no delete
+    // happened, is what makes this a real gate rather than an empty-batch coincidence.
+    mockIsFlipt.mockResolvedValueOnce(false);
+
+    await deleteOldTrainingData.run({}).result;
+
+    expect(dbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(mockDeleteModelFileObject).not.toHaveBeenCalled();
+    expect(dbWrite.modelFile.update).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: with the flag on, the same setup DOES delete', async () => {
+    // Without this arm the case above is satisfied by a job that is broken in any other way.
+    dbWrite.$queryRaw.mockResolvedValueOnce([row(401)]);
+
+    await deleteOldTrainingData.run({}).result;
+
+    expect(dbWrite.$queryRaw).toHaveBeenCalled();
+    expect(mockDeleteModelFileObject).toHaveBeenCalledTimes(1);
+  });
+
+  it('gates on the training-data purge flag specifically', async () => {
+    dbWrite.$queryRaw.mockResolvedValueOnce([]);
+    await deleteOldTrainingData.run({}).result;
+    expect(mockIsFlipt).toHaveBeenCalledWith('training-data-purge');
+  });
+});
+
+describe('a pass is capped', () => {
+  it('binds the cap into the query rather than selecting the whole backlog', async () => {
+    dbWrite.$queryRaw.mockResolvedValueOnce([]);
+
+    await deleteOldTrainingData.run({}).result;
+
+    // The tagged template passes interpolated values as trailing arguments, so the cap is
+    // asserted where it actually lands — bound, not spliced into the SQL text.
+    const args = dbWrite.$queryRaw.mock.calls[0];
+    expect(args).toContain(DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS);
+  });
+
+  it('🔴 the cap is a real bound, not a number larger than any backlog', () => {
+    // A "cap" set above the population it caps is indistinguishable from no cap, and reads in
+    // review as though the hazard were addressed. Pinned to its literal so raising it has to be
+    // argued in the docblock, which says the value is a choice rather than a derivation.
+    expect(DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS).toBe(2000);
   });
 });

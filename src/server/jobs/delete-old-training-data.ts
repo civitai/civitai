@@ -1,4 +1,5 @@
 import { dbWrite } from '~/server/db/client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { deleteModelFileObject } from '~/utils/s3-utils';
 import { createJob } from './job';
@@ -147,10 +148,43 @@ export const DELETE_OLD_TRAINING_DATA_CALLER_CUT_SECONDS = 60 * 60;
  */
 export const DELETE_OLD_TRAINING_DATA_LOCK_SECONDS = 6 * 60 * 60;
 
+/**
+ * How many files one pass may delete.
+ *
+ * 🔴 WHY A CAP EXISTS AT ALL, since the job ran uncapped for years: it ran uncapped while its
+ * deletes were FAILING. The routing fix turns a large standing backlog from never-deleting into
+ * deleting, and an S3 delete is not reversible on a demand from this job. An uncapped first pass
+ * would therefore issue tens of thousands of irreversible deletes, unattended, on a path whose
+ * behaviour has never once been observed working in production.
+ *
+ * ⚠ THE NUMBER IS A CHOICE, NOT A DERIVATION, and saying so is the point. It is a round number
+ * picked so that a pass is bounded and the standing backlog drains over weeks rather than in one
+ * night, which is what makes the drain READABLE: a capped pass gives a monotone decline you can
+ * watch over several days, where one uncapped pass gives a single cliff that tells you nothing if
+ * it went wrong. Nothing here derives it from a rate, and no rate has been measured that would.
+ * `minor-hash-sweep.ts` caps its own destructive sweep the same way and for the same reason.
+ *
+ * A consequence worth knowing rather than discovering: a capped pass finishes far inside the
+ * caller's timeout, which is exactly the condition under which the run lock above stops being the
+ * mitigation — see DELETE_OLD_TRAINING_DATA_LOCK_SECONDS, which says so in those words.
+ */
+export const DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS = 2000;
+
 export const deleteOldTrainingData = createJob(
   'delete-old-training-data',
   '5 11 * * *',
   async () => {
+    // 🔴 DEFAULT-OFF KILL SWITCH, and default-off is the load-bearing half. `isFlipt` returns
+    // false for an unknown flag OR an unreachable Flipt, so this job deletes nothing until
+    // someone turns it on deliberately — which is what turns "the first release after merge
+    // silently starts deleting" into "somebody flips it and watches". It also stays the only
+    // stop button that works WITHOUT a deploy, and that matters here specifically: this app
+    // ships from a `release` branch on a cadence the person watching does not control.
+    if (!(await isFlipt(FLIPT_FEATURE_FLAGS.TRAINING_DATA_PURGE))) {
+      logJob({ type: 'info', message: `Skipped, purge switch is off` });
+      return { status: 'ok', skipped: 'disabled' };
+    }
+
     const oldTraining = await dbWrite.$queryRaw<OldTrainingRow[]>`
       SELECT mf.id                                        as mf_id,
              mf.metadata -> 'trainingResults' ->> 'jobId' as job_id,
@@ -163,6 +197,7 @@ export const deleteOldTrainingData = createJob(
              (mf.metadata -> 'trainingResults' ->> 'completedAt')::timestamp) > '30 days'
         AND mf."dataPurged" is not true
         AND mf.visibility != 'Public'
+      LIMIT ${DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS}
     `;
 
     if (oldTraining.length === 0) {
