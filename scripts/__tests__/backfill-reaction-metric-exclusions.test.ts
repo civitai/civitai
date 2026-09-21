@@ -298,14 +298,16 @@ describe('reaction-metric exclusion backfill', () => {
       // that propagated would flush the real article cache. No default means it cannot
       // happen unless somebody aimed it.
       vi.stubEnv('WEBHOOK_TOKEN', 'tok');
-      vi.stubEnv('INTERNAL_BASE_URL', '');
+      // undefined DELETES the variable; '' only blanks it, and an empty string is falsy
+      // either way -- so a re-added `?? 'https://civitai.com'` default would slip past.
+      vi.stubEnv('INTERNAL_BASE_URL', undefined as unknown as string);
 
       expect(() => propagationTarget()).toThrow('INTERNAL_BASE_URL must be set explicitly');
     });
 
     it('requires a token', () => {
       vi.stubEnv('INTERNAL_BASE_URL', 'https://example.test');
-      vi.stubEnv('WEBHOOK_TOKEN', '');
+      vi.stubEnv('WEBHOOK_TOKEN', undefined as unknown as string);
 
       expect(() => propagationTarget()).toThrow('WEBHOOK_TOKEN must be set');
     });
@@ -318,8 +320,8 @@ describe('reaction-metric exclusion backfill', () => {
     });
 
     it('is checked at parse time, not after the table has been written', () => {
-      vi.stubEnv('INTERNAL_BASE_URL', '');
-      vi.stubEnv('WEBHOOK_TOKEN', '');
+      vi.stubEnv('INTERNAL_BASE_URL', undefined as unknown as string);
+      vi.stubEnv('WEBHOOK_TOKEN', undefined as unknown as string);
 
       expect(() => parseArgs(['node', 's.ts', '--write', '--propagate'])).toThrow(
         'INTERNAL_BASE_URL'
