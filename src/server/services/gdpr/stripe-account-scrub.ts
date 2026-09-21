@@ -1,5 +1,6 @@
 import type Stripe from 'stripe';
 import { dbWrite } from '~/server/db/client';
+import { cancelSubscription } from '~/server/services/stripe.service';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 
 /**
@@ -162,7 +163,10 @@ export async function scrubStripeAccount({
       // otherwise sit `active` forever against an account that stopped billing long ago.
       if (subscription.status !== 'canceled') {
         try {
-          await stripe.subscriptions.del(subscription.id, {}, requestOptions);
+          // Through the service, so the cancel, the row delete and the retry/timeout options have
+          // ONE definition. Passing the id read from Stripe skips the service's own lookup, which
+          // is the part that could not be trusted here.
+          await cancelSubscription({ subscriptionId: subscription.id, removeRecord: true });
           outcome.canceledSubscriptions.push(subscription.id);
         } catch (error) {
           // A cancel of something already gone is done, not missing-customer: this catch is
