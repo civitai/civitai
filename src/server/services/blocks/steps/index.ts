@@ -1,6 +1,7 @@
 import type * as z from 'zod';
 import { chatCompletionStep } from './chat-completion.step';
 import { convertImageStep } from './convert-image.step';
+import { h3VideoStep } from './h3-video.step';
 import { assertStepTypeAllowed } from './orchestrator-denylist';
 import type { StepOutputMedia } from './output';
 
@@ -1485,6 +1486,7 @@ export function isModerationPostureImplemented(posture: StepModerationPosture): 
 const stepRegistry = Object.freeze({
   'convert-image': Object.freeze(convertImageStep),
   'chat-completion': Object.freeze(chatCompletionStep),
+  'h3-video': Object.freeze(h3VideoStep),
 });
 
 export type RegisteredStepId = keyof typeof stepRegistry & string;

@@ -12,6 +12,9 @@ import type {
   ConvertImageOutput,
   ConvertImageStep,
   ImageBlob,
+  VideoBlob,
+  VideoGenOutput,
+  VideoGenStep,
 } from '@civitai/client';
 import type * as z from 'zod';
 import type {
@@ -20,6 +23,7 @@ import type {
   ChatCompletionOutputStepLike,
 } from './chat-completion.step';
 import type { ConvertImageOutputStepLike } from './convert-image.step';
+import type { VideoGenOutputStepLike } from './h3-video.step';
 import type { BlockStep } from './index';
 import type { OrchestratorBlobLike, StepOutputMedia } from './output';
 
@@ -276,6 +280,44 @@ type _ConvertImageBlobReadKeysExist = Expect<
   > extends keyof ImageBlob
     ? true
     : false
+>;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `h3-video` — the same anchoring, on the axis that actually bit.
+//
+// `videoGen` returns its blob under `output.video`, while the neighbouring
+// `composeMedia` step returns one under `output.videoBlob`. Those are one
+// plausible guess apart, and a wrong guess is an entry that charges the viewer,
+// succeeds, and publishes nothing — the inert-capability failure. The keys are
+// asserted against the GENERATED output type rather than against a reading of
+// it, so the guess cannot survive a compile.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The read shape is satisfied by a real completed `videoGen` step. */
+type _VideoGenStepSatisfiesReadShape = Expect<
+  VideoGenStep extends VideoGenOutputStepLike ? true : false
+>;
+
+/**
+ * Every key the extractor reads off `output` is a real `VideoGenOutput` key.
+ * Assignability alone would not catch this: an all-optional read shape is
+ * satisfied by anything, so `video` → `videoBlob` would still compile. `keyof`
+ * is what makes the key NAME load-bearing.
+ */
+type _VideoGenReadKeysExist = Expect<
+  keyof NonNullable<VideoGenOutputStepLike['output']> extends keyof VideoGenOutput ? true : false
+>;
+
+/** Same, one level down: every blob field the extractor reads is a real `VideoBlob` field. */
+type _VideoGenBlobReadKeysExist = Expect<
+  keyof NonNullable<NonNullable<VideoGenOutputStepLike['output']>['video']> extends keyof VideoBlob
+    ? true
+    : false
+>;
+
+/** The shared filter must accept a generated `VideoBlob`, as it does an `ImageBlob`. */
+type _MediaFromBlobsAcceptsGeneratedVideoBlob = Expect<
+  VideoBlob extends OrchestratorBlobLike ? true : false
 >;
 
 /**

@@ -87,7 +87,7 @@ describe('the value grammar — <coarse>:<subtype>, coarse before the FIRST colo
   // parameters through `blockGenerationCoarseType` and labels its counters with the
   // result.
 
-  it('the coarse key is exactly these five', () => {
+  it('the coarse key is exactly these six', () => {
     // Literal, not derived. Widening this set is a wire-contract decision and a
     // fee-table decision; it must not happen by accident.
     //
@@ -96,8 +96,17 @@ describe('the value grammar — <coarse>:<subtype>, coarse before the FIRST colo
     // hand: every `kind:'step'` submit carrying a bare `$type` rather than a
     // registry id groups under it, and it exists so that such a submit can never
     // group under `textToImage` (which is also a real orchestrator `$type`).
+    //
+    // 🔴 `h3-video` IS THE SIXTH, AND IT IS A NEW FEE GROUP. Registering a step
+    // widens this list automatically, so this literal is the only place a human
+    // has to agree. The decision that was checked before widening it: an app
+    // whose `byType` carries no entry for this coarse key falls through to
+    // `config.default` in `resolveBlockAuthorFeeParams` — it does not throw and
+    // it does not silently resolve to a zero fee. So an existing app's default
+    // fee applies to a video generation on the day this ships, and an author
+    // who wants a different rate for video adds a `byType` override.
     expect([...BLOCK_GENERATION_COARSE_TYPES].sort()).toEqual(
-      ['chat-completion', 'convert-image', 'customComfy', 'step', 'textToImage'].sort()
+      ['chat-completion', 'convert-image', 'customComfy', 'h3-video', 'step', 'textToImage'].sort()
     );
   });
 
