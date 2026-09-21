@@ -211,6 +211,11 @@ export function mapSearchInputToFeedQuery(
   if (types.length) params.set('types', types.join(','));
   if (input.withMeta === true) params.set('withMeta', '1');
   if (input.fromPlatform === true) params.set('fromPlatform', '1');
+  if (input.disableMinor === true) params.set('excludeMinor', '1');
+  if (input.disablePoi === true) {
+    params.set('excludePoi', '1');
+    if (present(input.currentUserId)) params.set('viewerId', String(input.currentUserId));
+  }
   const baseModels = Array.isArray(input.baseModels)
     ? input.baseModels.map(String).filter(Boolean)
     : [];
