@@ -220,20 +220,69 @@ export async function fetchExcludedUserIds(): Promise<number[]> {
   return ids;
 }
 
-function arg(name: string) {
-  const i = process.argv.indexOf(`--${name}`);
-  return i === -1 ? undefined : process.argv[i + 1];
+/**
+ * Which statement a run issues. Extracted from `main` and exported ONLY so a test can
+ * reach it: with the choice inlined, replacing it with `sql.write` left every assertion
+ * green, because nothing executed the function it lived in. The one guard between a dry
+ * run and a production write cannot sit in untested code.
+ */
+export function sqlFor(
+  spec: EntitySpec,
+  args: { start: number; end: number; excluded: string },
+  write: boolean
+) {
+  const sql = buildSql(spec, args);
+  return write ? sql.write : sql.dry;
 }
-const flag = (name: string) => process.argv.includes(`--${name}`);
 
-async function main() {
-  const write = flag('write');
-  const propagate = flag('propagate');
-  const entityArg = arg('entity') ?? 'all';
+export type RunOptions = {
+  write: boolean;
+  propagate: boolean;
+  entities: Entity[];
+  batchSize: number;
+  start?: number;
+  end?: number;
+};
+
+/**
+ * Exported for the same reason as `sqlFor` — the defaults ARE the safety, and a default
+ * nothing asserts is a default that can be flipped without anything going red.
+ */
+export function parseArgs(argv: string[]): RunOptions {
+  const has = (name: string) => argv.includes(`--${name}`);
+  const val = (name: string) => {
+    const i = argv.indexOf(`--${name}`);
+    return i === -1 ? undefined : argv[i + 1];
+  };
+
+  const entityArg = val('entity') ?? 'all';
   if (entityArg !== 'all' && !ENTITIES.includes(entityArg as Entity))
     throw new Error(`--entity must be one of ${ENTITIES.join(', ')}, all`);
-  const targets: Entity[] = entityArg === 'all' ? [...ENTITIES] : [entityArg as Entity];
-  const batchSize = Number(arg('batch-size') ?? 10000);
+
+  const write = has('write');
+  return {
+    write,
+    // Gated on `write` here rather than at the call site, so there is one place to read
+    // and one place to test. Propagation busts the production article cache and queues a
+    // production reindex, and the app's .env points both at production whichever database
+    // is configured — so a dry run must not reach them even if asked.
+    propagate: has('propagate') && write,
+    entities: entityArg === 'all' ? [...ENTITIES] : [entityArg as Entity],
+    batchSize: Number(val('batch-size') ?? 10000),
+    start: val('start') === undefined ? undefined : Number(val('start')),
+    end: val('end') === undefined ? undefined : Number(val('end')),
+  };
+}
+
+async function main() {
+  const {
+    write,
+    propagate,
+    entities,
+    batchSize,
+    start: argStart,
+    end: argEnd,
+  } = parseArgs(process.argv);
 
   const excludedIds = await fetchExcludedUserIds();
   for (const id of excludedIds) {
@@ -248,17 +297,17 @@ async function main() {
 
   const prisma = new PrismaClient();
   try {
-    for (const entity of targets) {
+    for (const entity of entities) {
       const spec = specs[entity];
       const [{ max }] = await prisma.$queryRawUnsafe<{ max: number | null }[]>(spec.maxIdSql);
-      const start = Number(arg('start') ?? 0);
-      const end = Number(arg('end') ?? max ?? 0);
+      const start = argStart ?? 0;
+      const end = argEnd ?? max ?? 0;
 
       const changed: number[] = [];
       const ranges = planRanges(start, end, batchSize);
       for (const [lo, hi] of ranges) {
-        const sql = buildSql(spec, { start: lo, end: hi, excluded });
-        const rows = await prisma.$queryRawUnsafe<{ id: number }[]>(write ? sql.write : sql.dry);
+        const sql = sqlFor(spec, { start: lo, end: hi, excluded }, write);
+        const rows = await prisma.$queryRawUnsafe<{ id: number }[]>(sql);
         for (const row of rows) changed.push(row.id);
       }
 
@@ -273,7 +322,7 @@ async function main() {
       if (entity === 'article' && ids.length)
         console.log(`[article] ids: ${ids.slice(0, 50).join(',')}${ids.length > 50 ? ' …' : ''}`);
 
-      if (write && propagate && entity === 'article' && ids.length) await propagateArticles(ids);
+      if (propagate && entity === 'article' && ids.length) await propagateArticles(ids);
     }
   } finally {
     await prisma.$disconnect();

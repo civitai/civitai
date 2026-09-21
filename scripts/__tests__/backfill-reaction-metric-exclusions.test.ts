@@ -5,9 +5,11 @@ import {
   buildSql,
   digestOf,
   fetchExcludedUserIds,
+  parseArgs,
   planRanges,
   reactionAssignments,
   specs,
+  sqlFor,
   timeframedReactionSums,
 } from '../oneoffs/backfill-reaction-metric-exclusions';
 
@@ -69,6 +71,56 @@ describe('reaction-metric exclusion backfill', () => {
       for (const reaction of Object.keys(ReviewReactions)) {
         expect(timeframedReactionSums).toContain(`WHEN (r.reaction = '${reaction}') IS NOT TRUE`);
       }
+    });
+  });
+
+  describe('the guard between a dry run and a production write', () => {
+    /**
+     * Named for the decision. `sqlFor` and `parseArgs` exist as separate exported
+     * functions ONLY so these assertions can reach them, and inlining either back into
+     * `main` is the obvious tidy-up. Do not: with the choice inlined, replacing
+     * `write ? sql.write : sql.dry` with `sql.write` left all 21 tests green, because
+     * nothing in the suite executes `main`. A dry run that writes to production is the
+     * worst failure this script has, and it was the one thing nothing could see.
+     */
+    it('issues the SELECT unless asked to write', () => {
+      const dryRun = sqlFor(specs.article, range, false);
+
+      expect(dryRun, 'a dry run issued an UPDATE').not.toMatch(/UPDATE|RETURNING/);
+      expect(dryRun).toMatch(/SELECT m\."articleId"/);
+    });
+
+    it('issues the UPDATE when asked — the control for the assertion above', () => {
+      const real = sqlFor(specs.article, range, true);
+
+      expect(real).toMatch(/UPDATE "ArticleMetric" m/);
+      expect(real).toMatch(/RETURNING/);
+    });
+
+    it('defaults to a dry run with no arguments at all', () => {
+      const opts = parseArgs(['node', 'script.ts']);
+
+      expect(opts.write, 'the bare invocation writes to production').toBe(false);
+      expect(opts.propagate).toBe(false);
+      expect(opts.entities).toEqual(['article', 'bountyEntry']);
+      expect(opts.batchSize).toBe(10000);
+    });
+
+    it('writes only when --write is given', () => {
+      expect(parseArgs(['node', 's.ts', '--write']).write).toBe(true);
+    });
+
+    it('refuses to propagate without --write, however it is asked', () => {
+      // Propagation busts the production article cache and queues a production reindex,
+      // and the app's .env points both at production whichever database is configured —
+      // so a dry run against a dev database must not reach them.
+      expect(parseArgs(['node', 's.ts', '--propagate']).propagate).toBe(false);
+      expect(parseArgs(['node', 's.ts', '--propagate', '--write']).propagate).toBe(true);
+    });
+
+    it('rejects an unknown entity rather than silently running all of them', () => {
+      expect(() => parseArgs(['node', 's.ts', '--entity', 'post'])).toThrow('--entity must be one');
+      expect(parseArgs(['node', 's.ts', '--entity', 'article']).entities).toEqual(['article']);
     });
   });
 
