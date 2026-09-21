@@ -297,3 +297,45 @@ describe('installUpdateAwareFetch — the install seam', () => {
     expect(win.base).toHaveBeenCalledTimes(1);
   });
 });
+
+// 🔴 The fast paths exist for speed and must therefore be EQUIVALENT to the parse they skip.
+// A shortcut that disagrees with `new URL` is a silent misclassification, so this pins the
+// relationship rather than a list of inputs: for every shape, the shortcut's answer must equal
+// what the full parse would have said. Adding a fast path that disagrees fails here.
+describe('isFirstPartyRequest — fastPathMatchesParse', () => {
+  /** What the function would return with no fast paths at all: the parse, and only the parse. */
+  const viaParseOnly = (url: string, origin: string): boolean => {
+    try {
+      return new URL(url, origin).origin === origin;
+    } catch {
+      return true; // same fail-open posture as the function under test
+    }
+  };
+
+  const shapes = [
+    '/api/trpc/x',
+    '/',
+    '//evil.example/x',
+    '/\\evil.example/x',
+    '/\\/evil.example',
+    '/\tevil.example',
+    '/\n/evil.example',
+    '/\r/evil.example',
+    '/ /evil.example',
+    '/%2F%2Fevil.example',
+    '/path/with?query=1#hash',
+    'data:text/plain,hi',
+    'DATA:text/plain,hi',
+    'dATa:text/plain,hi',
+    'domain-relative/path',
+    'https://civitai.com/api/x',
+    'https://evil.example/x',
+    'http://civitai.com/api/x',
+    'blob:https://civitai.com/abc',
+    'blob:https://evil.example/abc',
+  ];
+
+  it.each(shapes)('agrees with the full parse for %j', (url) => {
+    expect(isFirstPartyRequest(url, ORIGIN)).toBe(viaParseOnly(url, ORIGIN));
+  });
+});

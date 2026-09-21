@@ -515,3 +515,137 @@ describe('classifyException — first-party API failures survive the narrowing',
     expect(r.category).toBe('network');
   });
 });
+
+// Round-2 review: several guards were pinned only against being NARROWED. A guard widened by
+// accident is the dangerous direction here — a wider exclusion means a FALSE DROP, and a wider
+// allowlist means the third-party noise comes back. These pin the other side.
+describe('classifyException — guards pinned against WIDENING', () => {
+  it('does NOT allowlist a neighbouring @tanstack package that is not react-query', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [
+          OTEL_FETCH_FRAME,
+          {
+            filename:
+              'turbopack:///[project]/node_modules/.pnpm/@tanstack+react-virtual@3.0.0/node_modules/@tanstack/react-virtual/dist/index.js',
+            lineno: 44,
+            colno: 2,
+          },
+        ],
+      })
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('network');
+  });
+
+  // The allowlist must not be reachable from a REMOTE url. A third-party script served from a
+  // path containing `/node_modules/@trpc/` is still third-party.
+  it('does NOT allowlist a third-party absolute URL whose path contains the allowlist token', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [
+          OTEL_FETCH_FRAME,
+          {
+            filename: 'https://cdn.evil.example/node_modules/@trpc/client/x.js',
+            lineno: 1,
+            colno: 1,
+          },
+        ],
+      })
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('network');
+  });
+
+  // A protocol-relative third-party frame is the same traffic spelled differently.
+  it('does NOT count a protocol-relative third-party script as project source', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [
+          OTEL_FETCH_FRAME,
+          { filename: '//securepubads.g.doubleclick.net/gpt/pubads_impl.js', lineno: 1, colno: 1 },
+        ],
+      })
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('network');
+  });
+
+  // The wrapper exclusion must stay scoped to the wrapper. Its SIBLING file is ordinary app code
+  // and must still prove project involvement — otherwise a widened exclusion drops real bugs.
+  it('still counts the wrapper module’s sibling file as project source', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [
+          OTEL_FETCH_FRAME,
+          {
+            filename:
+              'turbopack:///[project]/src/components/UpdateRequiredWatcher/UpdateRequiredModal.tsx',
+            lineno: 18,
+            colno: 5,
+          },
+        ],
+      })
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // The generic extension test carries the same `(?:[?#:]|$)` terminator as the wrapper rule, and
+  // NARROWING it here causes a false drop: a real app frame spelled as a bare source path with a
+  // position would stop counting as ours.
+  it('counts a bare app source path carrying :line:col as project source', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [OTEL_FETCH_FRAME, { filename: 'src/utils/media-upload.ts:212:9' }],
+      })
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // The allowlist feeds `hasProjectSourceFrame`, which the ABORT drop also consults. A cancelled
+  // tRPC query (route change, unmount) is the highest-volume abort shape in this app, so pin what
+  // it does rather than leaving it to be discovered.
+  it('KEEPS an aborted tRPC request as real, not dropped as an abort', () => {
+    const r = classifyException(
+      exc('AbortError', 'The user aborted a request.', {
+        frames: [
+          OTEL_FETCH_FRAME,
+          UPDATE_WATCHER_FRAME,
+          {
+            filename:
+              'turbopack:///[project]/node_modules/.pnpm/@trpc+client@11.17.0/node_modules/@trpc/client/dist/httpBatchLink.mjs',
+            lineno: 112,
+            colno: 9,
+          },
+        ],
+      })
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+});
+
+// The allowlist patterns require `node_modules/@scope/` DIRECTLY, not `@scope/` anywhere under a
+// dependency. Without the prefix, an unrelated package that vendors a directory named `@trpc`
+// would be treated as our API client.
+describe('classifyException — the client-lib allowlist requires a direct package path', () => {
+  it('does NOT allowlist an @trpc directory vendored inside an unrelated dependency', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [
+          OTEL_FETCH_FRAME,
+          {
+            filename:
+              'turbopack:///[project]/node_modules/.pnpm/some-vendor@1.0.0/node_modules/some-vendor/vendor/@trpc/shim.js',
+            lineno: 7,
+            colno: 3,
+          },
+        ],
+      })
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('network');
+  });
+});

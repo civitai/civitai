@@ -193,7 +193,12 @@ const GLOBAL_FETCH_WRAPPER_PATH_RES = [
 //    http(s) frame is only ours when it points at a first-party asset path: Next's `/_next/`
 //    bundles, or the hand-built workers in `public/workers/`. Non-absolute filenames (bundler
 //    schemes, bare source paths) are unaffected and still match on extension below.
-const ABSOLUTE_URL_RE = /^https?:\/\//i;
+// Protocol-relative (`//host/path`) counts too: a frame spelled that way is still a fetch from
+// some host, and without it a `//securepubads…/pubads_impl.js` frame falls through to the bare
+// extension test and reads as project source — exactly the traffic this guard exists to exclude.
+// A bundler scheme (`turbopack:///…`) does NOT match: the optional `https?:` cannot consume
+// `turbopack:`, so the `//` is not at position 0.
+const ABSOLUTE_URL_RE = /^(?:https?:)?\/\//i;
 const FIRST_PARTY_ASSET_PATH_RE = /\/(?:_next|workers)\//i;
 
 // 🔴 EXCEPTION TO (1) — our API client stack. `node_modules` normally proves nothing, but these
@@ -204,6 +209,12 @@ const FIRST_PARTY_ASSET_PATH_RE = /\/(?:_next|workers)\//i;
 // Without this, a genuine first-party API failure — an unreachable origin, a CORS or certificate
 // regression, a bad deploy — would be dropped as a transient network blip.
 // Third-party ad/analytics requests never touch these, so this does not reopen the gate.
+//
+// ⚠️ NOT listed, deliberately: the RUM SDK's own beacon transport. A failed telemetry POST is a
+// first-party request, and it is now dropped as `network` noise rather than surfacing as an app
+// error. That is the right call — an undeliverable beacon is not an app bug — but it means
+// "our telemetry ingest is being blocked for real users" has to be read off the ingest RATE, not
+// off this exception stream. Do not read its absence here as health.
 const FIRST_PARTY_CLIENT_LIB_RES = [
   /[/\\]node_modules[/\\]@trpc[/\\]/i,
   /[/\\]node_modules[/\\]@tanstack[/\\]react-query/i,
@@ -213,10 +224,17 @@ function isProjectSourceFrame(frame: ClassifiableStackFrame): boolean {
   // Covers the empty / `undefined` filename cases, so no further blank check is needed below.
   if (isInjectedFrame(frame)) return false;
   const filename = (frame.filename ?? '').trim();
-  if (anyMatch(FIRST_PARTY_CLIENT_LIB_RES, filename)) return true;
-  if (DEPENDENCY_PATH_RE.test(filename)) return false;
   if (anyMatch(GLOBAL_FETCH_WRAPPER_PATH_RES, filename)) return false;
+  // 🔴 The absolute-URL test runs BEFORE the dependency allowlist, and the order is load-bearing:
+  // a remote URL is decided purely by whether its PATH is one of ours. Otherwise a third-party
+  // script served from a path that merely contains `/node_modules/@trpc/` would be allowlisted
+  // into counting as our code. A real dependency frame carries a bundler scheme, not `http(s)`,
+  // so it reaches the check below.
   if (ABSOLUTE_URL_RE.test(filename)) return FIRST_PARTY_ASSET_PATH_RE.test(filename);
+  // Every `FIRST_PARTY_CLIENT_LIB_RES` pattern requires `node_modules/`, a strict subset of what
+  // `DEPENDENCY_PATH_RE` matches — so nesting the allowlist inside the dependency check is
+  // equivalent to testing it separately, and skips two scans on every non-dependency frame.
+  if (DEPENDENCY_PATH_RE.test(filename)) return anyMatch(FIRST_PARTY_CLIENT_LIB_RES, filename);
   return (
     /^(?:turbopack|webpack):\/\//i.test(filename) ||
     FIRST_PARTY_ASSET_PATH_RE.test(filename) ||

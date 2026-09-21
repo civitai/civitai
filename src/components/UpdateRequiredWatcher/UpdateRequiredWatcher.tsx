@@ -35,11 +35,20 @@ export function isFirstPartyRequest(input: unknown, origin: string): boolean {
     // Fast paths, so the common cases never pay for a URL parse. This runs on EVERY fetch the
     // document makes, and `new URL` is linear in the length of its input — a multi-KB ad URL or
     // a large `data:` payload would otherwise be parsed in full just to be thrown away.
-    // A root-relative path (`/api/trpc/…`, the client tRPC url) is ours by definition, but
-    // `//host/path` is protocol-relative and must fall through to the real parse.
-    if (url.charCodeAt(0) === 47 /* / */ && url.charCodeAt(1) !== 47) return true;
-    // `data:` always has an opaque origin, so it can never be ours.
-    if (url.charCodeAt(0) === 100 /* d */ && url.startsWith('data:')) return false;
+    //
+    // A root-relative path (`/api/trpc/…`, the client tRPC url) is ours — but ONLY once the
+    // second character cannot turn it into an authority. Three spellings can, and all three are
+    // handed to the parser instead: `/` (protocol-relative), `\` (the URL parser treats it as a
+    // separator for http(s)), and any C0 control or space (stripped BEFORE parsing, so it can
+    // expose one of the other two). These are equivalence bugs, not theoretical — the shortcut
+    // must agree with the parse it replaces, and `isFirstPartyRequest.fastPathMatchesParse` in
+    // the tests fuzzes exactly that.
+    const first = url.charCodeAt(0);
+    const second = url.charCodeAt(1); // NaN for a 1-char url, which fails every test below
+    if (first === 47 /* / */ && !(second === 47 || second === 92 || second <= 0x20)) return true;
+    // `data:` always has an opaque origin, so it can never be ours. Case-insensitive: the scheme
+    // is, and a `DATA:` url would otherwise pay the full linear parse to reach the same answer.
+    if ((first === 100 /* d */ || first === 68) /* D */ && /^data:/i.test(url)) return false;
 
     return new URL(url, origin).origin === origin;
   } catch {
@@ -53,9 +62,11 @@ export function isFirstPartyRequest(input: unknown, origin: string): boolean {
  *
  * 🔴 This patches fetch for the WHOLE document, so it sits on the call stack of every request
  * any script on the page makes. Two consequences:
- *   - Third-party requests are returned untouched. They can never carry our headers, so the
- *     header reads were wasted — and skipping the `.then` link removes a promise allocation and
- *     a microtask tick from every third-party request on the page.
+ *   - Third-party requests are returned untouched: the header reads are skipped, along with a
+ *     promise allocation and a microtask tick. That saving is real but small (~150ns), and for an
+ *     ABSOLUTE url the origin check that decides it costs more than the reads it saves. Measured,
+ *     so nobody re-derives it: this is a correctness change on that branch, not a CPU win. The
+ *     win is on the first-party branch, which short-circuits before any parse.
  *   - This wrapper's stack frame is present on every fetch rejection regardless of who initiated
  *     it, so it is NOT evidence that our own code failed. (Measured in Chromium: a browser builds
  *     a `Failed to fetch` stack from the synchronous call stack at the moment `fetch()` runs, so
