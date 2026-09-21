@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { UserMeta } from '~/server/schema/user.schema';
+import type { ScrubOutcome } from '~/server/services/gdpr/stripe-account-scrub';
 import { CUSTOMER_ID_SHAPE, scrubStripeAccount } from '~/server/services/gdpr/stripe-account-scrub';
 import { createJob } from './job';
 
@@ -108,11 +109,17 @@ export const gdprStripeScrubJob = createJob(
       const customerId = user.customerId as string;
       summary.processed++;
 
-      const outcome = await scrubStripeAccount({ customerId }).catch((error) => ({
-        complete: false,
-        errors: [{ step: 'scrub', message: (error as Error)?.message ?? 'unknown' }],
-        blocked: [],
-      }));
+      const outcome = await scrubStripeAccount({ customerId }).catch(
+        (error): ScrubOutcome => ({
+          complete: false,
+          customerGone: false,
+          pending: false,
+          cleared: { paymentMethods: 0, charges: 0, paymentIntents: 0 },
+          blocked: [],
+          canceledSubscriptions: [],
+          errors: [{ step: 'scrub', message: (error as Error)?.message ?? 'unknown' }],
+        })
+      );
       summary.blocked += outcome.blocked.length;
 
       if (!outcome.complete) {
