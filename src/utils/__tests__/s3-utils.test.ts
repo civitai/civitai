@@ -48,10 +48,11 @@ const mocks = vi.hoisted(() => {
 // `default` key as the hand-listed factories: the spread copies the original's NAMED exports
 // and does not synthesise a `default`. Pre-bundling wraps this CJS dep for interop, so the
 // consumer resolves through `default`; without one it gets undefined, and the file collects
-// almost no tests instead of going red. This file's own count is worth asserting on its own rather than
-// through a total. (A prior version of this comment quoted fixed figures for both; they were
-// already stale when checked and drifted further. Counts in prose rot — the assertion below is
-// the durable half.)
+// almost no tests instead of going red. (A prior version of this comment quoted fixed test
+// counts for this file and for the group it belongs to. Both were already stale when checked and
+// drifted further with every case added. They are dropped rather than corrected, and NOT replaced
+// by an assertion — nothing here counts this file's tests, and a later draft of this comment
+// claimed otherwise, pointing at an assertion that does not exist.)
 vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@aws-sdk/client-s3')>();
   const mocked = {

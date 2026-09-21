@@ -309,10 +309,17 @@ describe('the dry run stops short of the delete', () => {
     // a drain rate the real pass cannot hit. This file's own argument for reporting an uncapped
     // total is that an aggregate must carry the quantity actually draining.
     mockIsFlipt.mockImplementation(async () => true);
+    // 🔴 TWO SKIPS AND ONE DELETE, AND THE ASYMMETRY IS THE GUARD. An earlier fixture used one of
+    // each, so both assertions read `toBe(1)` — under which a summary reporting ONE counter TWICE
+    // passes, and so does a summary with the two classifications SWAPPED. Both were measured to
+    // survive it. The comment above that fixture claimed the numbers were "different on purpose"
+    // while they were identical, which is the worse half: it reported coverage that was not there
+    // and would have stopped the next reader checking.
     mockResolveTarget
       .mockReturnValueOnce({ ok: false, reason: 'bucket-not-allowed', backend: 'b2', bucket: 'x' })
+      .mockReturnValueOnce({ ok: false, reason: 'unparseable' })
       .mockReturnValueOnce({ ok: true, backend: 'b2', bucket: 'b', key: 'k' });
-    selects([row(601), row(602)], 5000);
+    selects([row(601), row(602), row(603)], 5000);
 
     await deleteOldTrainingData.run({}).result;
 
@@ -325,10 +332,8 @@ describe('the dry run stops short of the delete', () => {
           }
       )
       .find((arg) => arg?.message === 'Finished');
-    // Different numbers on purpose: one counter reported twice satisfies any check that only
-    // asserts both fields exist.
     expect(fin?.data?.dryRunWouldDelete).toBe(1);
-    expect(fin?.data?.dryRunWouldSkip).toBe(1);
+    expect(fin?.data?.dryRunWouldSkip).toBe(2);
   });
 
   it('asks the SAME resolver the real delete path uses', async () => {

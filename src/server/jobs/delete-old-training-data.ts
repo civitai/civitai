@@ -180,8 +180,12 @@ export const DELETE_OLD_TRAINING_DATA_LOCK_SECONDS = 6 * 60 * 60;
  * purge switch, turn it on, and go straight to irreversible deletes on night one. That is exactly
  * the outcome this paragraph exists to prevent, so the paragraph has to name the step.
  *
- * Then: dry-run on, purge on, read one night's `Dry run, would delete` / `would skip` lines and
- * the `eligibleTotal`, then dry-run off. Skipping a step is a choice someone may make; not
+ * Then: dry-run on, purge on, read one night's output, then dry-run off. What to read, named
+ * because a runbook that says "read the output" is not one: the `Finished` line carries
+ * `eligibleTotal` (the whole backlog, uncapped), `dryRunWouldDelete` and `dryRunWouldSkip` (the
+ * capped sample, split — divide by the FIRST of those, not their sum, or you project a rate the
+ * real pass cannot hit); the per-row `Dry run, would delete` / `Dry run, would skip` lines carry
+ * the reason and the identifiers behind those two totals. Skipping a step is a choice someone may make; not
  * knowing there was a step is the failure this paragraph prevents.
  *
  * A consequence worth knowing rather than discovering: a capped pass finishes far inside the
