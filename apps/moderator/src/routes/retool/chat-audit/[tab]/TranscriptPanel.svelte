@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { LINK_CLASS, num } from '$lib/format';
+  import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import MessageMeta from './MessageMeta.svelte';
   import ListFilterBar from '$lib/components/ListFilterBar.svelte';
@@ -37,7 +37,8 @@
       Transcript — chat {chatId} ({num(transcript.rows.length)}{transcript.truncated ? '+' : ''})
     </h3>
     <p class="mb-3 text-xs text-dark-2">
-      Private messages, oldest first. System join lines are excluded.
+      Private messages, oldest first. System join lines are excluded. Deleted messages are shown —
+      they are hidden from both participants, which is usually why a report was filed about one.
     </p>
 
     {#if transcript.truncated}
@@ -65,9 +66,34 @@
 
       <ul class="space-y-2 text-sm">
         {#each shown as m (m.id)}
-          <li>
+          {@const edit = transcript.edits?.[m.id]}
+          <li class={m.deletedAt ? 'rounded-md border-l-2 border-red-500/50 pl-2' : ''}>
             <MessageMeta {...m} />
             <p class="min-w-0 wrap-break-word whitespace-pre-wrap text-dark-0">{m.content}</p>
+
+            {#if m.editedAt}
+              {#if edit}
+                <details class="mt-1 text-xs">
+                  <summary class="cursor-pointer text-dark-2">
+                    Before this edit ({dateTime(edit.at)}{edit.actorRole === 'moderator'
+                      ? ', by a moderator'
+                      : ''})
+                  </summary>
+                  <p class="mt-1 wrap-break-word whitespace-pre-wrap text-amber-200/80">
+                    {edit.oldValue}{edit.truncated ? '…' : ''}
+                  </p>
+                </details>
+              {:else if transcript.edits === null}
+                <p class="mt-1 text-xs text-amber-300">
+                  Edited — the audit log could not be read, so the original is unknown here, not
+                  absent.
+                </p>
+              {:else}
+                <p class="mt-1 text-xs text-dark-2">
+                  Edited — the original was not recorded, so what it said before is unrecoverable.
+                </p>
+              {/if}
+            {/if}
           </li>
         {/each}
       </ul>

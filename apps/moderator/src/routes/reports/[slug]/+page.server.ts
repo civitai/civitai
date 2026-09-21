@@ -60,6 +60,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
   // while it is hiding it — once reasons are chosen explicitly, the choice is the whole story.
   return {
     type,
+    wide: true,
     // A `?report=` view ran with no status/reason filter, so echoing the defaults would put chips
     // saying "Pending + Processing" above an Actioned row and a note about hiding Automated above an
     // Automated one — the operator reads that as the filters being broken.

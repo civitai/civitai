@@ -1,8 +1,12 @@
 <script lang="ts">
+  import { browser } from '$app/environment';
   import { num } from '$lib/format';
-  import type { Account } from './user-account';
+  import { fetchBuzzBalance } from './buzz-balance';
 
-  let { account }: { account: Promise<Account> | null } = $props();
+  let { userId }: { userId: number } = $props();
+
+  // Its own fetch, not a slice of the account payload — see `/api/user-buzz-balance`.
+  const balance = $derived(browser ? fetchBuzzBalance(userId) : null);
 
   // Retool showed the three balances as coloured headings on the left and their lifetime totals on the
   // right, on both Buzz tabs — the colour IS the identifier a moderator reads by.
@@ -12,7 +16,9 @@
     { key: 'green', label: 'Green', class: 'text-emerald-400' },
   ] as const;
 
-  const balances = (buzz: NonNullable<Account['buzz']>) => [
+  type Buzz = NonNullable<Awaited<ReturnType<typeof fetchBuzzBalance>>>;
+
+  const balances = (buzz: Buzz) => [
     { ...ROWS[0], balance: buzz.balance, lifetime: buzz.lifetimeBalance },
     { ...ROWS[1], balance: buzz.blue, lifetime: buzz.blueLifetime },
     { ...ROWS[2], balance: buzz.green, lifetime: buzz.greenLifetime },
@@ -22,24 +28,22 @@
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
-  {#await account}
+  {#await balance}
     <p class="text-sm text-dark-2">Loading balance…</p>
   {:then result}
     {#if !result}
-      <p class="text-sm text-dark-2">Loading balance…</p>
-    {:else if !result.buzz}
       <p class="text-sm text-dark-2">Balance unavailable.</p>
     {:else}
       <div class="flex flex-wrap justify-between gap-x-10 gap-y-2">
         <div class="space-y-1">
-          {#each balances(result.buzz) as row (row.key)}
+          {#each balances(result) as row (row.key)}
             <div class="text-lg font-semibold tabular-nums {row.class}">
               {row.label} Buzz Balance: {value(row.balance)}
             </div>
           {/each}
         </div>
         <div class="space-y-1 text-right">
-          {#each balances(result.buzz) as row (row.key)}
+          {#each balances(result) as row (row.key)}
             <div class="text-lg font-semibold tabular-nums text-white">
               Lifetime {row.label} Buzz Balance: {value(row.lifetime)}
             </div>
