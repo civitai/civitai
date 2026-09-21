@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type * as LoggingClient from '~/server/logging/client';
 
 // getImageMetricsObject is the metric leg of the getAllImages 12-way Promise.all
 // fan-out on the image feed / SSR hot path. It reads counts from ClickHouse via
@@ -17,12 +16,10 @@ const {
   fetch: fetchMock,
   counterIncMock,
   staleCounterIncMock,
-  logToAxiomMock,
 } = vi.hoisted(() => ({
   fetch: vi.fn(),
   counterIncMock: vi.fn().mockName('image_metrics_clickhouse_timeout_total'),
   staleCounterIncMock: vi.fn().mockName('image_metrics_stale_cache_timeout_total'),
-  logToAxiomMock: vi.fn(() => Promise.resolve()),
 }));
 
 // Capture the soft-fallback Prometheus counters. image.service registers two on this
@@ -47,13 +44,6 @@ vi.mock('~/server/prom/client', async (importOriginal) => {
     }),
   };
 });
-
-// The rejection path's only signal is a log line, so the sink has to be visible to
-// pin it. Spread the real module: image.service logs from several other paths.
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof LoggingClient>()),
-  logToAxiom: logToAxiomMock,
-}));
 
 // event-engine-common is a git submodule, not checked out by default — stub the
 // value imports image.service pulls from it. MetricService
@@ -98,6 +88,8 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 import { getImageMetricsObject } from '../image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const logToAxiomMock = loggingMock.logToAxiom;
 
 const never = () => new Promise<never>(() => {});
 
