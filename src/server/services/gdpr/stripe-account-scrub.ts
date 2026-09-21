@@ -228,7 +228,11 @@ export async function scrubStripeAccount({
   if (!outcome.customerGone) await clearPaymentMethods(stripe, customerId, outcome);
   await clearMetadata(stripe, customerId, outcome);
 
-  outcome.complete = outcome.errors.length === 0 && !outcome.pending;
+  // The last conjunct is deliberately redundant — today the flag is only ever set alongside
+  // `pending`. It is here so a future site that sets only `pendingUnbounded` cannot produce a
+  // completing account: that would drop the pointer over the exact condition it was flagging as
+  // needing a person. Do not delete it as dead code.
+  outcome.complete = outcome.errors.length === 0 && !outcome.pending && !outcome.pendingUnbounded;
   return outcome;
 }
 

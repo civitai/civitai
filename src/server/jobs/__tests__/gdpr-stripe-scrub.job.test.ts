@@ -120,8 +120,9 @@ describe('gdpr-stripe-scrub — what it selects', () => {
 
   it('skips a customerId that is not a Stripe id, without stripping anything, and counts it', async () => {
     dbMock.dbRead.user.findMany.mockResolvedValue([
-      // Both shapes exist in prod: a `_MERGED` suffix and an empty string. The suffix must never
-      // be stripped — the base id resolves to a customer whose owner could not be established.
+      // The `_MERGED` shape is what the SQL filter lets through — it does start with `cus_` — and
+      // the service's full pattern is what rejects it. The empty string is already excluded by
+      // the query; it is here because the JS filter is deliberately defensive about both.
       { id: 1, customerId: 'cus_example_MERGED', meta: {} },
       { id: 2, customerId: '', meta: {} },
       { id: 3, customerId: CUSTOMER, meta: {} },
@@ -143,6 +144,9 @@ describe('gdpr-stripe-scrub — what it selects', () => {
     const summary = (await runJob()) as { processed: number };
 
     expect(summary.processed).toBe(25);
+    // Exact, not a lower bound: halving the window would leave every other assertion green while
+    // the full-window alert started firing at half the real queue depth.
+    expect(dbMock.dbRead.user.findMany.mock.calls[0][0].take).toBe(200);
   });
 });
 
@@ -236,7 +240,9 @@ describe('gdpr-stripe-scrub — dropping the pointer', () => {
 
     await runJob();
 
-    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalled();
+    // The precise helper, not `$executeRaw`: BOTH writes go through it, so the loose form passes
+    // when the account takes the deferral branch and only an attempt row is written.
+    expect(pointerWrites()).toHaveLength(1);
   });
 
   it('drops the pointer when a payment method is blocked, and counts it', async () => {
@@ -311,7 +317,14 @@ describe('gdpr-stripe-scrub — the queue alert', () => {
     // A full window means newer deletions may not be visible at all — the only thing that tells a
     // blocked queue from an empty one.
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'gdpr-stripe-scrub-queue', type: 'error' })
+      // The numbers are the point of the alert: a reader has to be able to tell a queue of
+      // self-clearing waits from one that needs a person.
+      expect.objectContaining({
+        name: 'gdpr-stripe-scrub-queue',
+        type: 'error',
+        pending: 0,
+        pendingStuck: 0,
+      })
     );
   });
 
