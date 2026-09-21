@@ -36,6 +36,7 @@
     isCustom,
     runCard,
     runCost,
+    runVersion,
     runVersionLabel,
     type LaunchedRun,
     type Run,
@@ -174,11 +175,7 @@
 
   // Per-model input bounds and Flux.2 gating (imageResourceTraining takes no hyperparameters).
   const boundsFor = (i: number) => paramBounds(runCard(selection.runs[i]!));
-  function runEngine(run: Run): string | undefined {
-    const card = runCard(run);
-    return (card.versions.find((v) => v.key === run.versionKey) ?? card.versions[0]!).engine;
-  }
-  const noAdvancedParams = (run: Run) => runEngine(run) === 'flux2-dev';
+  const noAdvancedParams = (run: Run) => runVersion(run).engine === 'flux2-dev';
 
   type NumField = 'unetLr' | 'textEncoderLr' | 'networkDim' | 'networkAlpha' | 'resolution' | 'batchSize';
   // Clamp a numeric string field into the model's [min, max] on blur, so a user can't submit out-of-range.
@@ -467,7 +464,8 @@
 
     <p class="mt-3 font-mono text-xs text-dark-2">
       Paid with <span class="text-blue-400">Blue</span> first, then your
-      <span class="capitalize text-buzz">{buzzMode.value}</span> Buzz — switch in the top bar.
+      <span class="capitalize text-buzz">{buzzMode.value}</span>
+      Buzz{buzzMode.locked ? '.' : ' — switch in the top bar.'}
     </p>
 
     {#if needsAttestation}
@@ -523,7 +521,9 @@
           <strong>{confirmSpend?.amount.toLocaleString()}</strong> will come out of your
           {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz.
         {/if}
-        You can switch which Buzz is used from the balance at the top of the page.
+        {#if !buzzMode.locked}
+          You can switch which Buzz is used from the balance at the top of the page.
+        {/if}
       </Dialog.Description>
     </Dialog.Header>
     <Dialog.Footer>
