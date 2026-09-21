@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as SubscriptionUtils from '~/server/utils/subscription.utils';
 import { resetHybridNodes } from '~/__tests__/mocks/hybrid';
 
 /**
@@ -13,7 +14,7 @@ import { resetHybridNodes } from '~/__tests__/mocks/hybrid';
  * back to these records — so every test below is really about when `complete` may be true.
  */
 
-const { stripe, getServerStripe } = vi.hoisted(() => {
+const { stripe, getServerStripe, invalidateSubscriptionCaches } = vi.hoisted(() => {
   const stripe = {
     subscriptions: { list: vi.fn(), del: vi.fn() },
     customers: { update: vi.fn() },
@@ -21,10 +22,20 @@ const { stripe, getServerStripe } = vi.hoisted(() => {
     charges: { list: vi.fn(), update: vi.fn() },
     paymentIntents: { list: vi.fn(), update: vi.fn(), cancel: vi.fn() },
   };
-  return { stripe, getServerStripe: vi.fn(async () => stripe) };
+  return {
+    stripe,
+    getServerStripe: vi.fn(async () => stripe),
+    invalidateSubscriptionCaches: vi.fn(),
+  };
 });
 
 vi.mock('~/server/utils/get-server-stripe', () => ({ getServerStripe }));
+// A different module from stripe.service, so the REAL cancelSubscription still runs and the row
+// delete is observed where it happens; this only stops six live subsystems firing in a unit test.
+vi.mock('~/server/utils/subscription.utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof SubscriptionUtils>()),
+  invalidateSubscriptionCaches,
+}));
 
 import { scrubStripeAccount } from '~/server/services/gdpr/stripe-account-scrub';
 
@@ -311,7 +322,18 @@ describe('scrubStripeAccount — payment methods', () => {
 
 describe('scrubStripeAccount — metadata and subscriptions', () => {
   it('removes metadata.userId from charges and long-settled intents', async () => {
-    stripe.charges.list.mockResolvedValue(page([{ id: 'ch_1', metadata: { userId: '42' } }]));
+    stripe.charges.list.mockResolvedValue(
+      page([
+        {
+          id: 'ch_1',
+          payment_intent: 'pi_1',
+          status: 'succeeded',
+          created: secondsAgo(5 * DAY),
+          balance_transaction: { created: secondsAgo(5 * DAY) },
+          metadata: { userId: '42' },
+        },
+      ])
+    );
     stripe.paymentIntents.list.mockResolvedValue(
       page([
         {
@@ -471,6 +493,12 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
       where: { id: 'sub_old' },
     });
     expect(outcome.canceledSubscriptions).toEqual(['sub_live']);
+    // The userId is threaded for this: the cached paid tier and multipliers are busted in exactly
+    // the case this job exists for, a deletion whose own cancel never got that far.
+    // Deliberately NOT busting the subscription caches: that helper's vault step throws for an
+    // account with no active subscription, which is one error log per cancel with nothing to act
+    // on. The cost is a cached tier on a deleted account until its own TTL.
+    expect(invalidateSubscriptionCaches).not.toHaveBeenCalled();
   });
 
   it('does not read a missing SUBSCRIPTION as a missing customer', async () => {
@@ -517,7 +545,7 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
     expect(outcome.errors.map((e) => e.step)).toContain(step);
   });
 
-  it('clears a payment intent once it is older than the credit window', async () => {
+  it('holds an intent with no charge to read a settle time from', async () => {
     stripe.paymentIntents.list.mockResolvedValue(
       page([
         {
@@ -531,10 +559,10 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
 
     const outcome = await scrub();
 
-    // No charge accompanies this intent, so there is no settle time to read: this is the fallback
-    // to the intent's own `created`. The window itself is bracketed by the 3.5/4.5-day pair above.
-    expect(stripe.paymentIntents.update).toHaveBeenCalledTimes(1);
-    expect(outcome.complete).toBe(true);
+    // No charge, so nothing says when the money landed. The intent's own timestamp is the wrong
+    // clock for ACH and SEPA, so this waits rather than guessing.
+    expect(stripe.paymentIntents.update).not.toHaveBeenCalled();
+    expect(outcome.pending).toBe(true);
   });
 
   it('never strips an intent whose cancel failed', async () => {
@@ -582,6 +610,7 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
           payment_intent: 'pi_x',
           status: 'succeeded',
           created: secondsAgo(days * DAY),
+          balance_transaction: { created: secondsAgo(days * DAY) },
           metadata: {},
         },
       ])
@@ -613,6 +642,7 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
           payment_intent: 'pi_r',
           status: 'succeeded',
           created: secondsAgo(10 * DAY),
+          balance_transaction: { created: secondsAgo(10 * DAY) },
           metadata: {},
         },
         {
@@ -620,6 +650,7 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
           payment_intent: 'pi_r',
           status: 'succeeded',
           created: secondsAgo(1 * DAY),
+          balance_transaction: { created: secondsAgo(1 * DAY) },
           metadata: {},
         },
       ])
@@ -627,6 +658,41 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
 
     const outcome = await scrub();
 
+    expect(stripe.paymentIntents.update).not.toHaveBeenCalled();
+    expect(outcome.pending).toBe(true);
+  });
+
+  it('settles by the BALANCE TRANSACTION, which is the object that appears when the money lands', async () => {
+    stripe.paymentIntents.list.mockResolvedValue(
+      page([
+        {
+          id: 'pi_ach',
+          status: 'succeeded',
+          created: secondsAgo(30 * DAY),
+          metadata: { userId: '42' },
+        },
+      ])
+    );
+    stripe.charges.list.mockResolvedValue(
+      page([
+        {
+          id: 'ch_ach',
+          payment_intent: 'pi_ach',
+          status: 'succeeded',
+          // Opened 10 days ago, money landed yesterday. This is the ACH/SEPA shape the window
+          // exists for, and the charge's own `created` would say it is long past.
+          created: secondsAgo(10 * DAY),
+          balance_transaction: { created: secondsAgo(1 * DAY) },
+          metadata: {},
+        },
+      ])
+    );
+
+    const outcome = await scrub();
+
+    // The expansion and the read are coupled ONLY by a typeof check: without `expand`, Stripe
+    // returns an id string and this silently falls back to the wrong clock, with no error.
+    expect(stripe.charges.list.mock.calls[0][0].expand).toEqual(['data.balance_transaction']);
     expect(stripe.paymentIntents.update).not.toHaveBeenCalled();
     expect(outcome.pending).toBe(true);
   });
@@ -649,6 +715,7 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
           payment_intent: 'pi_f',
           status: 'succeeded',
           created: secondsAgo(10 * DAY),
+          balance_transaction: { created: secondsAgo(10 * DAY) },
           metadata: {},
         },
         {

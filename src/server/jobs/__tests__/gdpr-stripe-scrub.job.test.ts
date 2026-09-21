@@ -43,7 +43,8 @@ const runJob = () => gdprStripeScrubJob.run({}).result;
 const rawCalls = (needle: string) =>
   dbMock.dbWrite.$executeRaw.mock.calls.filter((c: unknown[]) => String(c[0]).includes(needle));
 const pointerWrites = () => rawCalls('SET "customerId" = NULL');
-const attemptWrites = () => rawCalls('gdprStripeScrub');
+// `jsonb_set`, not the key name: the pointer statement also mentions the key, as `- 'key'`.
+const attemptWrites = () => rawCalls('jsonb_set');
 
 /** What the PRIMARY returns for the eligibility re-read plus the meta read, in one object. */
 const live = (meta: Record<string, unknown> = {}) => ({
@@ -128,7 +129,7 @@ describe('gdpr-stripe-scrub — what it selects', () => {
     const summary = (await runJob()) as { processed: number; malformed: number };
 
     expect(scrubStripeAccount).toHaveBeenCalledTimes(1);
-    expect(scrubStripeAccount).toHaveBeenCalledWith({ userId: 3, customerId: CUSTOMER });
+    expect(scrubStripeAccount).toHaveBeenCalledWith({ customerId: CUSTOMER });
     expect(summary).toMatchObject({ processed: 1, malformed: 2 });
   });
 
@@ -166,7 +167,7 @@ describe('gdpr-stripe-scrub — dropping the pointer', () => {
     expect(params).toEqual([USER_ID, CUSTOMER]);
   });
 
-  it('re-reads meta rather than writing back the copy it selected with', async () => {
+  it('edits only our meta key in SQL, never rewriting the whole object', async () => {
     dbMock.dbRead.user.findMany.mockResolvedValue([
       { id: USER_ID, customerId: CUSTOMER, meta: { imageRemoval: 'grace' } },
     ]);
@@ -174,9 +175,10 @@ describe('gdpr-stripe-scrub — dropping the pointer', () => {
 
     // `meta - 'gdprStripeScrub'` in SQL, so nothing is read back and rewritten: a ban or mute
     // landing mid-scrub keeps its key instead of being clobbered by a stale copy.
-    const sql = String(pointerWrites()[0][0]);
-    expect(sql).toContain("- 'gdprStripeScrub'");
-    expect(sql).not.toMatch(/SET "meta" = \$/);
+    const [sql, ...params] = pointerWrites()[0];
+    expect(String(sql)).toContain("- 'gdprStripeScrub'");
+    // The params are what prove it: a read-modify-write would bind a meta blob here.
+    expect(params).toEqual([USER_ID, CUSTOMER]);
   });
 
   it.each([
@@ -195,7 +197,7 @@ describe('gdpr-stripe-scrub — dropping the pointer', () => {
     expect(summary.scrubbed).toBe(0);
   });
 
-  it('counts a waiting account as pending, not failed, and does not alert on it', async () => {
+  it('counts a waiting account as pending, not failed, and says so when it stays that way', async () => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue(
       live({ gdprStripeScrub: { attempts: 9, lastAttemptAt: '2020-01-01T00:00:00.000Z' } })
     );
@@ -206,8 +208,10 @@ describe('gdpr-stripe-scrub — dropping the pointer', () => {
     // It is waiting on its own payment, not on us. Alerting here would page someone with no step
     // and no message to act on.
     expect(summary).toMatchObject({ pending: 1, failed: 0 });
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'gdpr-stripe-scrub-stuck' })
+    // Pending is not failure, but an account pending forever holds its window slot and nothing
+    // else reports it — so past the attempt bound it says so, with 'pending' as the step.
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'gdpr-stripe-scrub-stuck', step: 'pending' })
     );
   });
 
@@ -248,7 +252,6 @@ describe('gdpr-stripe-scrub — dropping the pointer', () => {
     // That cancel emits customer.subscription.deleted asynchronously, and the webhook resolves it
     // BY customerId. Dropping the pointer seconds later 400s it, and Stripe retries a 4xx for
     // days. The next run finds the subscription already canceled and finishes the account.
-    expect(pointerWrites()).toEqual([]);
     expect(pointerWrites()).toEqual([]);
     expect(attemptWrites()).toHaveLength(1);
     expect(summary.pending).toBe(1);
@@ -340,13 +343,10 @@ describe('gdpr-stripe-scrub — retry state', () => {
   });
 
   it('alerts once an account has failed long enough to need a person, naming the step', async () => {
-    dbMock.dbRead.user.findMany.mockResolvedValue([
-      {
-        id: USER_ID,
-        customerId: CUSTOMER,
-        meta: { gdprStripeScrub: { attempts: 7, lastAttemptAt: '2020-01-01T00:00:00.000Z' } },
-      },
-    ]);
+    // The count comes from the PRIMARY's copy, not the replica selection's.
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(
+      live({ gdprStripeScrub: { attempts: 7, lastAttemptAt: '2020-01-01T00:00:00.000Z' } })
+    );
     scrubStripeAccount.mockResolvedValue(
       complete({ complete: false, errors: [{ step: 'paymentMethod', message: 'stripe down' }] })
     );

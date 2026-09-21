@@ -72,9 +72,10 @@ export const gdprStripeScrubJob = createJob(
         // no change. A JS Date, never a literal: `deletedAt` is timestamp WITHOUT time zone and
         // Postgres drops the offset of a literal that carries one.
         deletedAt: { not: null, lte: new Date(now.getTime() - WEBHOOK_SETTLE_MS) },
-        // Shape-filtered here as well as in the scrub: the malformed rows would otherwise hold
-        // window slots at the head of a deletedAt-ordered window forever. Prisma cannot express
-        // the full `^cus_[A-Za-z0-9]+$`, so the service checks it again before any Stripe call.
+        // Prisma cannot express `^cus_[A-Za-z0-9]+$`, so this only excludes the empty-string row;
+        // a `cus_..._MERGED` value still starts with `cus_` and is caught by the service's own
+        // check before any Stripe call. Those few rows do keep their window slots — the window is
+        // 8 batches wide for that reason, and the full-window alert is what would say otherwise.
         customerId: { startsWith: 'cus_' },
       },
       select: { id: true, customerId: true, meta: true },
@@ -121,13 +122,13 @@ export const gdprStripeScrubJob = createJob(
       // Stripe round-trips.
       const live = await dbWrite.user.findUnique({
         where: { id: user.id },
-        select: { deletedAt: true, customerId: true },
+        select: { deletedAt: true, customerId: true, meta: true },
       });
       if (!live?.deletedAt || live.customerId !== customerId) continue;
 
       summary.processed++;
 
-      const outcome = await scrubStripeAccount({ userId: user.id, customerId }).catch(
+      const outcome = await scrubStripeAccount({ customerId }).catch(
         (error): ScrubOutcome => ({
           complete: false,
           customerGone: false,
@@ -145,7 +146,7 @@ export const gdprStripeScrubJob = createJob(
         // still takes the backoff, so it is not re-attempted every ten minutes for a day.
         if (outcome.errors.length) summary.failed++;
         else summary.pending++;
-        await recordAttempt(user, outcome.errors[0], now);
+        await recordAttempt(user.id, live.meta, outcome.errors[0], now);
         continue;
       }
 
@@ -155,7 +156,7 @@ export const gdprStripeScrubJob = createJob(
       // behind for the event to have landed.
       if (outcome.canceledSubscriptions.length) {
         summary.pending++;
-        await recordAttempt(user, undefined, now);
+        await recordAttempt(user.id, live.meta, undefined, now);
         continue;
       }
 
@@ -199,11 +200,14 @@ export const gdprStripeScrubJob = createJob(
 );
 
 async function recordAttempt(
-  user: Candidate,
+  userId: number,
+  currentMeta: Prisma.JsonValue,
   failure: { step: string; message: string } | undefined,
   now: Date
 ) {
-  const attempts = ((user.meta as UserMeta | null)?.gdprStripeScrub?.attempts ?? 0) + 1;
+  // From the PRIMARY's copy, not the replica selection's: a lagging read would recompute the
+  // count from a stale value and reset the backoff it is supposed to grow.
+  const attempts = ((currentMeta as UserMeta | null)?.gdprStripeScrub?.attempts ?? 0) + 1;
   const state: ScrubState = { attempts, lastAttemptAt: now.toISOString() };
   if (failure) state.lastError = failure.message;
 
@@ -214,20 +218,25 @@ async function recordAttempt(
     SET "meta" = jsonb_set(COALESCE("meta", '{}'::jsonb), '{gdprStripeScrub}', ${JSON.stringify(
       state
     )}::jsonb)
-    WHERE id = ${user.id}
+    WHERE id = ${userId} AND "deletedAt" IS NOT NULL
   `;
   userUpdateCounter?.inc({ location: 'jobs:gdpr-stripe-scrub:attempt' });
 
   // Only a real failure is worth a person's time. An account merely waiting out its own payment
   // would otherwise alert with no step and no message to act on.
-  if (failure && attempts >= ALERT_AFTER_ATTEMPTS) {
+  // A restore between the selection and here strips this key again; the guard above is what stops
+  // us writing it back onto a live account.
+  if (attempts >= ALERT_AFTER_ATTEMPTS) {
     await logToAxiom({
       name: 'gdpr-stripe-scrub-stuck',
       type: 'error',
-      userId: user.id,
+      userId,
       attempts,
       // The step is what tells a reader whether this account needs Stripe support or a code fix.
-      step: failure?.step,
+      // Absent it, the account is not failing — it is waiting on a payment of its own — and that
+      // is worth saying rather than staying silent, because a permanently pending account holds
+      // its place in the window and nothing else reports it.
+      step: failure?.step ?? 'pending',
       message: failure?.message,
     }).catch(() => null);
   }

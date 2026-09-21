@@ -130,11 +130,8 @@ const pmIsDirty = (pm: Stripe.PaymentMethod) => {
 };
 
 export async function scrubStripeAccount({
-  userId,
   customerId,
 }: {
-  /** Only for cache invalidation after a cancel — never used to decide what to scrub. */
-  userId: number;
   customerId: string;
 }): Promise<ScrubOutcome> {
   const outcome: ScrubOutcome = {
@@ -180,10 +177,11 @@ export async function scrubStripeAccount({
           // ONE definition. Passing the id read from Stripe skips the service's own lookup, which
           // is the part that could not be trusted here.
           // removeRecord deletes our row too, so nothing more is owed for this one.
-          // userId so the subscription caches are busted: this path exists because deleteUser's
-          // own cancel failed, which is exactly the case where that bust never ran, and the
-          // account would otherwise keep its cached paid tier until each key's TTL.
-          await cancelSubscription({ subscriptionId: subscription.id, userId, removeRecord: true });
+          // Deliberately WITHOUT userId. That would run invalidateSubscriptionCaches, whose vault
+          // step re-queries active subscriptions, finds none (this call just deleted the row) and
+          // throws — one error-level log per cancelled subscription, with nothing to act on. The
+          // cost of leaving it out is a cached tier on a deleted account until its key's own TTL.
+          await cancelSubscription({ subscriptionId: subscription.id, removeRecord: true });
           outcome.canceledSubscriptions.push(subscription.id);
           continue;
         } catch (error) {
@@ -327,9 +325,6 @@ async function clearMetadata(stripe: Stripe, customerId: string, outcome: ScrubO
   // window from it would strip a userId while the purchase webhook was still minutes into its
   // retries. The charges are listed here anyway, so this costs nothing.
   const settledAt = new Map<string, number>();
-  // Whether that map can be trusted. A fallback to the intent's own timestamp is only sound if the
-  // enumeration that would have contradicted it actually finished.
-  let chargesEnumerated = false;
   try {
     const charges = await listAll<Stripe.Charge>((startingAfter) =>
       stripe.charges.list(
@@ -352,14 +347,17 @@ async function clearMetadata(stripe: Stripe, customerId: string, outcome: ScrubO
           : charge.payment_intent?.id;
       if (intentId && charge.status === 'succeeded') {
         const balance = charge.balance_transaction;
-        const at = typeof balance === 'object' && balance ? balance.created : charge.created;
-        settledAt.set(intentId, Math.max(settledAt.get(intentId) ?? 0, at));
+        // Only an EXPANDED balance transaction is a settle time. Unexpanded it is an id string,
+        // and using the charge's own `created` there would be the confirmation time — days early
+        // for ACH or SEPA. A missing settle time is missing, not zero: leave the entry unset and
+        // let the caller hold the intent.
+        if (typeof balance === 'object' && balance)
+          settledAt.set(intentId, Math.max(settledAt.get(intentId) ?? 0, balance.created));
       }
       if (!charge.metadata?.userId) continue;
       await stripe.charges.update(charge.id, { metadata: { userId: '' } }, requestOptions);
       outcome.cleared.charges++;
     }
-    chargesEnumerated = true;
   } catch (error) {
     // A deleted customer may not be listable at all; nothing is reachable, so nothing is owed.
     if (!isMissing(error)) outcome.errors.push({ step: 'charges', message: message(error) });
@@ -402,13 +400,14 @@ async function clearMetadata(stripe: Stripe, customerId: string, outcome: ScrubO
         // From the SETTLE time, not the intent's own `created`.  A `canceled` intent never had a
         // purchase webhook to strand, so it skips the wait entirely.
         const settled = settledAt.get(intent.id);
-        // No settle time AND no complete enumeration to say there is none: the intent's own
-        // timestamp would read as old for exactly the slow payment types this protects.
-        if (settled === undefined && !chargesEnumerated) {
+        // No settle time to read — the enumeration failed, or the balance transaction was not
+        // expanded. Either way nothing here can say when the money landed, and the intent's own
+        // timestamp is the wrong clock for exactly the payment types this protects.
+        if (settled === undefined) {
           outcome.pending = true;
           continue;
         }
-        if ((settled ?? intent.created) * 1000 > Date.now() - CREDIT_SETTLE_MS) {
+        if (settled * 1000 > Date.now() - CREDIT_SETTLE_MS) {
           outcome.pending = true;
           continue;
         }
