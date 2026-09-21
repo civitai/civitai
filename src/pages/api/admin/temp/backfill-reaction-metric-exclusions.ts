@@ -13,18 +13,34 @@
  *   entity=bountyEntry   Recompute BountyEntryMetric, every timeframe.
  *   entity=post          Recompute PostMetric AllTime rows. Much the largest of the
  *                        three, and the one that wants a real batch budget.
- *   entity=all           All three, in that order.
+ *   entity=all           All three, cheapest first, post last.
  *
- * Params: dryRun (default false), batchSize, concurrency, start, end. `batchSize`
+ * Params: dryRun (default TRUE), batchSize, concurrency, start, end. `batchSize`
  * defaults per entity and an explicit value overrides it — see the post spec for why
- * that default is not one number.
+ * that default is not one number. `dryRun` defaults to a dry run because the shortest
+ * possible call is the endpoint and a token, and that should not be a production write.
  *
- * Each entity's timeframe coverage matches what its job maintains, so the backfill
- * cannot leave behind a row the job will never touch again: post and article write
- * `AllTime` only, bountyEntry writes every timeframe.
+ * Each entity's timeframe coverage matches what its job maintains TODAY: post and
+ * article `AllTime` only, bountyEntry every timeframe. Two consequences worth stating
+ * rather than leaving to be rediscovered:
  *
- * The exclusion list grows over time, so a run's numbers only mean something next to
- * the list it used. The response reports that list's size and a digest of it.
+ *   - `PostMetric` Day/Week/Month/Year rows still hold pre-exclusion totals and this
+ *     does not correct them. Measured on prod 2026-09-21 over a 1,000-post window, they
+ *     last moved on 2026-08-12 while AllTime moved that day — no post job writes them
+ *     any more, under either arm of the `simplified-post-metrics` flag. Correcting them
+ *     would write rows nothing maintains.
+ *   - For bountyEntry, `rowsChanged` is NOT a measure of exclusion damage. Its
+ *     non-AllTime windows are relative to `NOW()` while the stored value is frozen at
+ *     the job's last write, so most of those rows differ for reasons unrelated to the
+ *     exclusion list. Measured on prod 2026-09-21 across 1,204 affected entries,
+ *     heartCount differing: AllTime 489, Year 492, Month 118, Week 79, Day 30. Read
+ *     the AllTime figure as the damage; the rest is window catch-up.
+ *
+ * The exclusion list grows over time (557 -> 571 between this being drafted and first
+ * run), so a run's numbers only mean something next to the list it used. The response
+ * reports that list's size and a digest of it, and echoes each entity's resolved
+ * `start`/`end` — a transposed slice issues zero batches and would otherwise answer
+ * `rowsChanged: 0`, which reads exactly like a slice that was already correct.
  *
  * Post is far too big for one request: ~31M ids at 1,000 per batch is hours of held-open
  * HTTP, which no proxy in front of this will allow. Run it in slices with `start`/`end`
@@ -32,13 +48,13 @@
  *
  * Interrupted runs are safe to repeat: each batch is a single statement, and the
  * `IS DISTINCT FROM` predicate makes a second pass a no-op over rows already correct.
- * The one thing a repeat does not redo is the cache bust for a row written just before
- * the interrupt, since that row no longer differs — those entities serve a stale stat
- * until the 24h cache TTL expires.
+ * That same idempotency is why a non-zero `propagationErrors` cannot be repaired by
+ * re-running — see the propagation catch below.
  */
 import { createHash } from 'crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';
@@ -46,20 +62,21 @@ import { snippets } from '~/server/metrics/metric-helpers';
 import { articleStatCache, postStatCache } from '~/server/redis/caches';
 import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { ReviewReactions } from '~/shared/utils/prisma/enums';
 
-const ENTITIES = ['post', 'article', 'bountyEntry'] as const;
+const ENTITIES = ['article', 'bountyEntry', 'post'] as const;
 type Entity = (typeof ENTITIES)[number];
 
 const schema = z.object({
   entity: z.enum([...ENTITIES, 'all']).default('all'),
-  dryRun: z.enum(['true', 'false']).default('false'),
+  dryRun: z.enum(['true', 'false']).default('true'),
   concurrency: z.coerce.number().min(1).max(50).optional().default(4),
   batchSize: z.coerce.number().min(1).optional(),
   start: z.coerce.number().min(0).optional().default(0),
   end: z.coerce.number().min(0).optional(),
 });
 
-const REACTIONS = ['Heart', 'Like', 'Dislike', 'Laugh', 'Cry'] as const;
+const REACTIONS = Object.keys(ReviewReactions) as (keyof typeof ReviewReactions)[];
 
 /**
  * AllTime-only sums, for the two jobs that maintain only that timeframe. Under the LEFT
@@ -101,7 +118,13 @@ type EntitySpec = {
   /** Emits `affected` (id) and `sums` (id, the reaction columns, timeframe if timeframed). */
   ctes: (args: { start: number; end: number; excluded: string }) => string;
   timeframed: boolean;
-  bustCache?: (ids: number[]) => Promise<void>;
+  /**
+   * Everything downstream of the metric row that has to learn about the new value.
+   * The metric JOB is the reference for what belongs here — a surface the job refreshes
+   * and this does not keeps its pre-exclusion number forever, because the entities this
+   * endpoint targets are by definition ones the job will never revisit.
+   */
+  propagate?: (ids: number[]) => Promise<void>;
 };
 
 const specs: Record<Entity, EntitySpec> = {
@@ -125,7 +148,16 @@ const specs: Record<Entity, EntitySpec> = {
           ON r."articleId" = a.id AND r."userId" NOT IN (${excluded})
         GROUP BY a.id
       )`,
-    bustCache: (ids) => articleStatCache.bust(ids),
+    // Both halves, because `article.metrics.ts` does both: the search index stores the
+    // AllTime reaction counts verbatim, and a search card reads the document, not the
+    // stat cache.
+    propagate: async (ids) => {
+      const { articlesSearchIndex } = await import('~/server/search-index');
+      await articlesSearchIndex.queueUpdate(
+        ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+      );
+      await articleStatCache.bust(ids);
+    },
   },
   /**
    * 1,000 because the post scan has a cliff between 1,000 and 10,000 ids, not a slope.
@@ -157,7 +189,7 @@ const specs: Record<Entity, EntitySpec> = {
           ON r."imageId" = i.id AND r."userId" NOT IN (${excluded})
         GROUP BY a.id
       )`,
-    bustCache: (ids) => postStatCache.bust(ids),
+    propagate: (ids) => postStatCache.bust(ids),
   },
   bountyEntry: {
     maxIdSql: 'SELECT MAX(id) AS max FROM "BountyEntry"',
@@ -230,24 +262,43 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   const excluded = excludedIds.join(',');
 
   const targets = params.entity === 'all' ? [...ENTITIES] : [params.entity as Entity];
-  const results: Record<string, { rowsChanged: number; batchErrors: number; batchSize: number }> =
-    {};
+  const results: Record<
+    string,
+    {
+      rowsChanged: number;
+      batchErrors: number;
+      propagationErrors: number;
+      batchSize: number;
+      batches: number;
+      start: number;
+      end: number;
+    }
+  > = {};
 
   for (const entity of targets) {
     const spec = specs[entity];
     const batchSize = params.batchSize ?? spec.defaultBatchSize;
     let rowsChanged = 0;
     let batchErrors = 0;
+    let propagationErrors = 0;
+    let batches = 0;
+
+    // Resolved here rather than left to `dataProcessor`'s `rangeFetcher`, so the range
+    // can be echoed back. The documented way to run post is a series of start/end slices
+    // kept as the record that the space was covered, and that record is only checkable
+    // if each response says what it actually walked.
+    const rangeStart = params.start;
+    const [{ max }] = await dbWrite.$queryRawUnsafe<{ max: number | null }[]>(spec.maxIdSql);
+    const rangeEnd = params.end ?? max ?? 0;
 
     await dataProcessor({
-      params: { ...params, batchSize },
+      params: { ...params, batchSize, start: rangeStart, end: rangeEnd },
       runContext: res,
-      rangeFetcher: async (context) => {
-        const [{ max }] = await dbWrite.$queryRawUnsafe<{ max: number | null }[]>(spec.maxIdSql);
-        return { start: context.start, end: max ?? 0 };
-      },
+      rangeFetcher: async () => ({ start: rangeStart, end: rangeEnd }),
       processor: async ({ start, end, cancelFns }) => {
+        batches++;
         const sql = buildSql(spec, { start, end, excluded });
+        let changed: number[];
         try {
           const query = await pgDbWrite.cancellableQuery<{ id: number }>(
             dryRun ? sql.dry : sql.write
@@ -256,9 +307,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
           const rows = await query.result();
 
           rowsChanged += rows.length;
-          if (!dryRun && rows.length && spec.bustCache) {
-            await spec.bustCache([...new Set(rows.map((r) => r.id))]);
-          }
+          changed = [...new Set(rows.map((r) => r.id))];
           console.log(`[${entity}] ${start} - ${end}: ${rows.length} rows`);
         } catch (e) {
           // Counted rather than rethrown: `dataProcessor` catches and logs a throwing
@@ -266,11 +315,38 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
           // low row count and no indication that anything went wrong.
           batchErrors++;
           console.error(`[${entity}] ${start} - ${end} FAILED: ${(e as Error).message}`);
+          return;
+        }
+
+        if (dryRun || !changed.length) return;
+        // Counted apart from the scan's failures because the two need different remedies
+        // and one number cannot say which happened. A failed SCAN wrote nothing, so a
+        // re-run repairs it. A failed PROPAGATION happens after the rows are committed,
+        // so `IS DISTINCT FROM` will never select them again and a re-run CANNOT repair
+        // it — which is why the ids are logged rather than only counted.
+        try {
+          await spec.propagate?.(changed);
+        } catch (e) {
+          propagationErrors++;
+          console.error(
+            `[${entity}] ${start} - ${end} PROPAGATION FAILED, rows are written but ` +
+              `downstream is stale, replay these ids: ${changed.join(',')} :: ${
+                (e as Error).message
+              }`
+          );
         }
       },
     });
 
-    results[entity] = { rowsChanged, batchErrors, batchSize };
+    results[entity] = {
+      rowsChanged,
+      batchErrors,
+      propagationErrors,
+      batchSize,
+      batches,
+      start: rangeStart,
+      end: rangeEnd,
+    };
   }
 
   res.status(200).json({
