@@ -52,17 +52,17 @@ alias wins, and every `npx tsc` and `pnpm run tsc:trace` in the repo silently be
 ## Upgrading
 
 Bump the version in `package.json`, re-run the install here, then check three things rather than
-one:
+one. **From the repo root:**
 
 ```bash
-git -C ../.. diff --stat pnpm-lock.yaml            # must be empty: the root lockfile must not move
-../../node_modules/.bin/tsc --version              # must still be 5.9.x
-node -e "import('./node_modules/typescript/lib/getExePath.js').then(m=>console.log(m.default()))"
+git diff --stat pnpm-lock.yaml        # must be EMPTY: the root lockfile must not move
+node_modules/.bin/tsc --version       # must still be 5.9.x: the root compiler is not this one
+"$(cd tools/ts7 && node -e "import('./node_modules/typescript/lib/getExePath.js').then(m=>console.log(m.default()))")" --version
 ```
 
-Run that last path with `--version` — it is the **binary**, which is what actually runs. The
-version in `node_modules/typescript/package.json` is the shim's, and would not tell you about a
-stale native binary.
+The third resolves the **native binary** and runs it. The version in
+`tools/ts7/node_modules/typescript/package.json` is the shim's, and would not tell you about a
+stale binary underneath it.
 
 ## A note on the measurements above
 

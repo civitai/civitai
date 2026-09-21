@@ -3,10 +3,9 @@
  * A fast, NON-AUTHORITATIVE typecheck, for the edit loop only.
  *
  * Runs TypeScript 7 (native) instead of the 5.9 the repo is pinned to. Measured 2026-09-21 on
- * this repo, `pnpm run typecheck:fast`: 29s cold, 6s warm. `pnpm run typecheck` on the same
- * tree the same evening: 192s, 340s, 385s, 539s across four runs — it varies that much because
- * the box is shared, which is the honest comparison rather than a single ratio. TS7's program
- * is 12,698 files against 5.9's 12,761, so it is not reaching its answer by checking less.
+ * this repo, with the spread on both sides because the box is shared: `typecheck:fast` 29-98s
+ * cold and 6-56s warm, `pnpm run typecheck` 192-539s. An order of magnitude, not a ratio.
+ * TS7's program is 12,698 files against 5.9's 12,761, so it is not checking less.
  *
  * It is a DIFFERENT compiler, it disagrees with 5.9 in both directions, and
  * `pnpm run typecheck` remains the only verdict that counts.
@@ -41,7 +40,9 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // `--version` made it print nothing and exit 0 — which this wrapper then reported as
 // "0 diagnostics". A clean verdict for a check that never ran is the exact failure the
 // whole script exists to prevent.
-const passthrough = process.argv.slice(2);
+// A bare `--` is dropped: pnpm forwards it as a literal argv entry, so `pnpm run
+// typecheck:fast --` would otherwise be refused for having typed nothing.
+const passthrough = process.argv.slice(2).filter((arg) => arg !== '--');
 if (passthrough.length) {
   console.error(`typecheck:fast: takes no arguments (got: ${passthrough.join(' ')}).`);
   console.error('  It always checks the whole project, so that "0 diagnostics" cannot mean');
@@ -56,7 +57,16 @@ const ts7Dir = resolve(repoRoot, 'tools/ts7/node_modules/typescript');
 // lets the suite drive this classifier with a stub that exits clean / erroring / crashed.
 // The stub is a node script, so it runs under process.execPath; the real compiler is a
 // native binary and is spawned directly.
-const seam = process.env.TYPECHECK_FAST_TSC_PATH;
+// Gated on VITEST: constraining the compiler's ARGUMENTS is pointless while an exported
+// variable can still choose which program IS the compiler. A stray export in a shell made
+// `pnpm run typecheck:fast` report "0 diagnostics" for a script that compiled nothing.
+if (process.env.TYPECHECK_FAST_TSC_PATH && !process.env.VITEST) {
+  console.error('typecheck:fast: TYPECHECK_FAST_TSC_PATH is a test seam, honoured only under vitest.');
+  console.error('  Left exported, it would make this report "0 diagnostics" for whatever it names.');
+  console.error('  Unset it and re-run.');
+  process.exit(2);
+}
+const seam = process.env.VITEST ? process.env.TYPECHECK_FAST_TSC_PATH : undefined;
 let exe = seam;
 let resolvedVersion = 'unknown (test seam)';
 

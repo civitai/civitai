@@ -109,12 +109,21 @@ describe('typecheck:fast constrains what the compiler is asked to check', () => 
   // Without these two, "0 diagnostics" means only "the process I spawned exited 0 quietly",
   // which a compiler asked to check one file — or none — also satisfies. Reported against
   // 8183a2e75a, where `typecheck-fast.mjs --version` printed "0 diagnostics" and exited 0.
-  it('always asks for --noEmit over the whole project', () => {
+  it('asks for exactly --noEmit over the whole project, and nothing else', () => {
     const res = run(stub('argv', 'console.log(process.argv.slice(2).join(" "));\n'));
+    // The stub echoes its argv on the line after the wrapper's banner.
+    const echoed = res.stdout.split(/\r?\n/)[1];
 
     expect(res.status).toBe(0);
-    expect(res.stdout).toContain('--noEmit');
-    expect(res.stdout).toContain('-p tsconfig.json');
+    expect(echoed.startsWith('--noEmit -p tsconfig.json --tsBuildInfoFile ')).toBe(true);
+    // Asserted by equality, not by `toContain`: a substring check is blind to an insertion
+    // BESIDE the anchor, and one appended token is enough to undo the guard — `--noCheck`
+    // measured at exit 0 with no output on a project holding a real type error.
+    expect(echoed.split(' ').filter((token) => token.startsWith('-'))).toEqual([
+      '--noEmit',
+      '-p',
+      '--tsBuildInfoFile',
+    ]);
   });
 
   it('refuses caller arguments rather than forwarding them to the compiler', () => {
@@ -124,5 +133,27 @@ describe('typecheck:fast constrains what the compiler is asked to check', () => 
     expect(res.status).toBe(2);
     expect(res.stdout).not.toContain(OK_MARKER);
     expect(res.stderr).toContain('takes no arguments');
+  });
+
+  it('accepts the bare -- that pnpm forwards', () => {
+    const res = run(stub('dashdash', 'process.exit(0);\n'), ['--']);
+
+    expect(res.status).toBe(0);
+    expect(res.stdout).toContain(OK_MARKER);
+  });
+
+  it('ignores the test seam outside vitest, rather than compiling whatever it names', () => {
+    // Constraining the compiler's arguments is worth nothing while an exported variable can
+    // still choose which program IS the compiler: a stray export made this report
+    // "0 diagnostics" for a script that compiled nothing.
+    const { VITEST, VITEST_WORKER_ID, VITEST_POOL_ID, ...envWithoutVitest } = process.env;
+    const res = spawnSync(process.execPath, [WRAPPER], {
+      encoding: 'utf8',
+      env: { ...envWithoutVitest, TYPECHECK_FAST_TSC_PATH: stub('stray', 'process.exit(0);\n') },
+    });
+
+    expect(res.status).toBe(2);
+    expect(res.stdout).not.toContain(OK_MARKER);
+    expect(res.stderr).toContain('only under vitest');
   });
 });

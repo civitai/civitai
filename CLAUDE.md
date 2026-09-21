@@ -68,10 +68,10 @@ pnpm run prettier:write   # Auto-fix Prettier formatting
 
 #### `typecheck:fast` is a different compiler, not a faster mode of the same one
 
-TypeScript 7. Measured 2026-09-21 on this repo: `pnpm run typecheck:fast` 29s cold, 6s warm;
-`pnpm run typecheck` 192s / 340s / 385s / 539s across four runs the same evening — it spreads
-that far because the box is shared, so treat the pair as an order of magnitude rather than a
-ratio. Use it between edits; settle every question with `pnpm run typecheck`, which is what CI
+TypeScript 7. Measured 2026-09-21 on this repo, both sides with their spread: `typecheck:fast`
+29-98s cold and 6-56s warm; `pnpm run typecheck` 192-539s across four runs. Both spread that far
+because the box is shared, so treat the pair as an order of magnitude rather than a ratio — a
+single flattering number for either side is how this comparison goes wrong. Use it between edits; settle every question with `pnpm run typecheck`, which is what CI
 and the pre-commit checklist mean. The two disagree in both directions, so a diagnostic from
 the fast lane is a lead, not a fact.
 
