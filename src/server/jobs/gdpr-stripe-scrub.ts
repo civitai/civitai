@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { userUpdateCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { UserMeta } from '~/server/schema/user.schema';
 import type { ScrubOutcome } from '~/server/services/gdpr/stripe-account-scrub';
@@ -71,7 +72,10 @@ export const gdprStripeScrubJob = createJob(
         // no change. A JS Date, never a literal: `deletedAt` is timestamp WITHOUT time zone and
         // Postgres drops the offset of a literal that carries one.
         deletedAt: { not: null, lte: new Date(now.getTime() - WEBHOOK_SETTLE_MS) },
-        customerId: { not: null },
+        // Shape-filtered here as well as in the scrub: the malformed rows would otherwise hold
+        // window slots at the head of a deletedAt-ordered window forever. Prisma cannot express
+        // the full `^cus_[A-Za-z0-9]+$`, so the service checks it again before any Stripe call.
+        customerId: { startsWith: 'cus_' },
       },
       select: { id: true, customerId: true, meta: true },
       orderBy: { deletedAt: 'asc' },
@@ -123,7 +127,7 @@ export const gdprStripeScrubJob = createJob(
 
       summary.processed++;
 
-      const outcome = await scrubStripeAccount({ customerId }).catch(
+      const outcome = await scrubStripeAccount({ userId: user.id, customerId }).catch(
         (error): ScrubOutcome => ({
           complete: false,
           customerGone: false,
@@ -141,7 +145,7 @@ export const gdprStripeScrubJob = createJob(
         // still takes the backoff, so it is not re-attempted every ten minutes for a day.
         if (outcome.errors.length) summary.failed++;
         else summary.pending++;
-        await recordAttempt(user.id, outcome.errors[0], now);
+        await recordAttempt(user, outcome.errors[0], now);
         continue;
       }
 
@@ -151,7 +155,7 @@ export const gdprStripeScrubJob = createJob(
       // behind for the event to have landed.
       if (outcome.canceledSubscriptions.length) {
         summary.pending++;
-        await recordAttempt(user.id, undefined, now);
+        await recordAttempt(user, undefined, now);
         continue;
       }
 
@@ -159,11 +163,18 @@ export const gdprStripeScrubJob = createJob(
       // run cannot null a pointer it did not scrub. `meta` is re-read here rather than reused from
       // the selection: a scrub is many seconds of Stripe calls, and this write replaces the whole
       // object, so the stale copy would clobber anything written meanwhile.
-      const { count } = await dbWrite.user.updateMany({
-        where: { id: user.id, deletedAt: { not: null }, customerId },
-        data: { customerId: null, meta: clearScrubState(await currentMeta(user.id)) },
-      });
-      if (count) summary.scrubbed++;
+      // One statement, and `meta - key` rather than a read-modify-write: `User.meta` is shared
+      // with moderation paths (ban details, mute reason, contest state) that know nothing about
+      // this job, and writing the whole object back drops whichever of theirs landed in between.
+      const count = await dbWrite.$executeRaw`
+        UPDATE "User"
+        SET "customerId" = NULL, "meta" = COALESCE("meta", '{}'::jsonb) - 'gdprStripeScrub'
+        WHERE id = ${user.id} AND "deletedAt" IS NOT NULL AND "customerId" = ${customerId}
+      `;
+      if (count) {
+        userUpdateCounter?.inc({ location: 'jobs:gdpr-stripe-scrub:pointer' });
+        summary.scrubbed++;
+      }
     }
 
     // Held-back and malformed rows keep their pointer, so they keep their place in an
@@ -178,39 +189,34 @@ export const gdprStripeScrubJob = createJob(
       );
 
     return summary;
-  }
+  },
+  // 🔴 The lock is the ONLY thing stopping two runs of this job overlapping, and it must outlast
+  // the work. At the default 5 minutes it expires 3 minutes before RUN_BUDGET_MS, releasing
+  // mid-run so the next tick starts a second pass over the same accounts — re-issuing the same
+  // Stripe calls against a rate limit shared with live checkout. `checkIfCanceled` does not
+  // substitute: the release never touches the job context.
+  { lockExpiration: 30 * 60 }
 );
 
-const clearScrubState = (meta: Prisma.JsonValue) => {
-  const { gdprStripeScrub: _, ...rest } = (meta ?? {}) as UserMeta;
-  return rest as Prisma.JsonObject;
-};
-
-const currentMeta = async (userId: number) =>
-  ((await dbWrite.user.findUnique({ where: { id: userId }, select: { meta: true } }))?.meta ??
-    {}) as Prisma.JsonValue;
-
 async function recordAttempt(
-  userId: number,
+  user: Candidate,
   failure: { step: string; message: string } | undefined,
   now: Date
 ) {
-  const meta = await currentMeta(userId);
-  const attempts = ((meta as UserMeta | null)?.gdprStripeScrub?.attempts ?? 0) + 1;
+  const attempts = ((user.meta as UserMeta | null)?.gdprStripeScrub?.attempts ?? 0) + 1;
+  const state: ScrubState = { attempts, lastAttemptAt: now.toISOString() };
+  if (failure) state.lastError = failure.message;
 
-  await dbWrite.user.update({
-    where: { id: userId },
-    data: {
-      meta: {
-        ...((meta ?? {}) as Prisma.JsonObject),
-        gdprStripeScrub: {
-          attempts,
-          lastAttemptAt: now.toISOString(),
-          lastError: failure?.message,
-        },
-      } as Prisma.JsonObject,
-    },
-  });
+  // jsonb_set, for the same reason as the pointer write above: this key is ours, the rest of
+  // `meta` belongs to paths that are writing it concurrently.
+  await dbWrite.$executeRaw`
+    UPDATE "User"
+    SET "meta" = jsonb_set(COALESCE("meta", '{}'::jsonb), '{gdprStripeScrub}', ${JSON.stringify(
+      state
+    )}::jsonb)
+    WHERE id = ${user.id}
+  `;
+  userUpdateCounter?.inc({ location: 'jobs:gdpr-stripe-scrub:attempt' });
 
   // Only a real failure is worth a person's time. An account merely waiting out its own payment
   // would otherwise alert with no step and no message to act on.
@@ -218,7 +224,7 @@ async function recordAttempt(
     await logToAxiom({
       name: 'gdpr-stripe-scrub-stuck',
       type: 'error',
-      userId,
+      userId: user.id,
       attempts,
       // The step is what tells a reader whether this account needs Stripe support or a code fix.
       step: failure?.step,

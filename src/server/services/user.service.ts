@@ -1298,7 +1298,14 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     }
   }
 
-  const { imageRemoval: _removalChoice, ...meta } = (user.meta ?? {}) as UserMeta;
+  // The scrub's retry state goes with the deletion it belonged to. Left behind, a re-deleted
+  // account would inherit its old attempt count, so its first failure would already be backed off
+  // for hours and it would alert as stuck long before it is.
+  const {
+    imageRemoval: _removalChoice,
+    gdprStripeScrub: _scrubState,
+    ...meta
+  } = (user.meta ?? {}) as UserMeta;
 
   // Deliberately NOT domain-guarded, same exempt class as `forceUpdateUserIdentity`: this is a
   // moderator putting back the address a closed account already had, and re-judging it against a

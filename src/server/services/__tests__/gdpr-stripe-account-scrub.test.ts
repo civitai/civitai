@@ -60,7 +60,7 @@ beforeEach(() => {
   dbMock.dbWrite.customerSubscription.deleteMany.mockResolvedValue({ count: 0 });
 });
 
-const scrub = () => scrubStripeAccount({ customerId: CUSTOMER });
+const scrub = () => scrubStripeAccount({ userId: 42, customerId: CUSTOMER });
 
 describe('scrubStripeAccount — the customer object', () => {
   it('clears every PII field, and sends shipping WHOLE', async () => {
@@ -129,7 +129,7 @@ describe('scrubStripeAccount — the customer object', () => {
   it.each([['cus_example_MERGED'], [''], ['cus_'], ['nope']])(
     'refuses the malformed customerId %s without calling Stripe',
     async (customerId) => {
-      const outcome = await scrubStripeAccount({ customerId });
+      const outcome = await scrubStripeAccount({ userId: 42, customerId });
 
       // The `_MERGED` suffix must never be stripped: the base id resolves to a customer whose
       // ownership could not be established, so scrubbing it would hit someone else's record.
@@ -234,8 +234,11 @@ describe('scrubStripeAccount — payment methods', () => {
     const second = stripe.paymentMethods.update.mock.calls[1][1].billing_details;
     expect(second).not.toHaveProperty('name');
     expect(second.email).toBe('');
-    expect(outcome.cleared.paymentMethods).toBe(1);
-    expect(stripe.paymentMethods.detach).not.toHaveBeenCalled();
+    // The name is still on the record, so this is NOT a clear: it is blocked with the rest
+    // removed, and detached like anything else we cannot finish. Counting it cleared would
+    // overstate the erasure in the run summary.
+    expect(outcome.cleared.paymentMethods).toBe(0);
+    expect(outcome.blocked[0]).toMatchObject({ id: 'pm_bank', detached: true });
   });
 
   it('stops at the attempt bound when every field is required in turn', async () => {
@@ -588,6 +591,103 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
 
     expect(stripe.paymentIntents.update).toHaveBeenCalledTimes(stripped ? 1 : 0);
     expect(outcome.complete).toBe(stripped);
+  });
+
+  it('takes the LATEST succeeded charge as the settle time', async () => {
+    stripe.paymentIntents.list.mockResolvedValue(
+      page([
+        {
+          id: 'pi_r',
+          status: 'succeeded',
+          created: secondsAgo(30 * DAY),
+          metadata: { userId: '42' },
+        },
+      ])
+    );
+    // A retried purchase settles twice. Taking the earlier one would start the credit window
+    // before the money actually arrived, and strip the link mid-retry.
+    stripe.charges.list.mockResolvedValue(
+      page([
+        {
+          id: 'ch_old',
+          payment_intent: 'pi_r',
+          status: 'succeeded',
+          created: secondsAgo(10 * DAY),
+          metadata: {},
+        },
+        {
+          id: 'ch_new',
+          payment_intent: 'pi_r',
+          status: 'succeeded',
+          created: secondsAgo(1 * DAY),
+          metadata: {},
+        },
+      ])
+    );
+
+    const outcome = await scrub();
+
+    expect(stripe.paymentIntents.update).not.toHaveBeenCalled();
+    expect(outcome.pending).toBe(true);
+  });
+
+  it('ignores a FAILED charge when deciding when the money settled', async () => {
+    stripe.paymentIntents.list.mockResolvedValue(
+      page([
+        {
+          id: 'pi_f',
+          status: 'succeeded',
+          created: secondsAgo(30 * DAY),
+          metadata: { userId: '42' },
+        },
+      ])
+    );
+    stripe.charges.list.mockResolvedValue(
+      page([
+        {
+          id: 'ch_ok',
+          payment_intent: 'pi_f',
+          status: 'succeeded',
+          created: secondsAgo(10 * DAY),
+          metadata: {},
+        },
+        {
+          id: 'ch_bad',
+          payment_intent: 'pi_f',
+          status: 'failed',
+          created: secondsAgo(1 * DAY),
+          metadata: {},
+        },
+      ])
+    );
+
+    const outcome = await scrub();
+
+    // A failed attempt is not a settlement; letting it set the clock would hold the account for
+    // days over money that never arrived.
+    expect(stripe.paymentIntents.update).toHaveBeenCalledTimes(1);
+    expect(outcome.complete).toBe(true);
+  });
+
+  it('holds an intent whose charges could not be enumerated', async () => {
+    stripe.charges.list.mockRejectedValue(stripeError({ type: 'api_error' }));
+    stripe.paymentIntents.list.mockResolvedValue(
+      page([
+        {
+          id: 'pi_u',
+          status: 'succeeded',
+          created: secondsAgo(30 * DAY),
+          metadata: { userId: '42' },
+        },
+      ])
+    );
+
+    const outcome = await scrub();
+
+    // Falling back to the intent's own timestamp here would read as old for exactly the slow
+    // payment types the window protects — with no completed enumeration to contradict it.
+    expect(stripe.paymentIntents.update).not.toHaveBeenCalled();
+    expect(outcome.pending).toBe(true);
   });
 
   it('strips a canceled intent immediately — no webhook was ever owed', async () => {

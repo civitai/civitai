@@ -130,8 +130,11 @@ const pmIsDirty = (pm: Stripe.PaymentMethod) => {
 };
 
 export async function scrubStripeAccount({
+  userId,
   customerId,
 }: {
+  /** Only for cache invalidation after a cancel — never used to decide what to scrub. */
+  userId: number;
   customerId: string;
 }): Promise<ScrubOutcome> {
   const outcome: ScrubOutcome = {
@@ -177,7 +180,10 @@ export async function scrubStripeAccount({
           // ONE definition. Passing the id read from Stripe skips the service's own lookup, which
           // is the part that could not be trusted here.
           // removeRecord deletes our row too, so nothing more is owed for this one.
-          await cancelSubscription({ subscriptionId: subscription.id, removeRecord: true });
+          // userId so the subscription caches are busted: this path exists because deleteUser's
+          // own cancel failed, which is exactly the case where that bust never ran, and the
+          // account would otherwise keep its cached paid tier until each key's TTL.
+          await cancelSubscription({ subscriptionId: subscription.id, userId, removeRecord: true });
           outcome.canceledSubscriptions.push(subscription.id);
           continue;
         } catch (error) {
@@ -246,6 +252,7 @@ async function clearPaymentMethods(stripe: Stripe, customerId: string, outcome: 
  */
 async function clearPaymentMethod(stripe: Stripe, pm: Stripe.PaymentMethod, outcome: ScrubOutcome) {
   const details = billingDetailsClear() as Record<string, unknown>;
+  const kept: string[] = [];
 
   // At most two fields can be required (sepa_debit requires name AND email), so this terminates.
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -255,12 +262,20 @@ async function clearPaymentMethod(stripe: Stripe, pm: Stripe.PaymentMethod, outc
         { billing_details: details as Stripe.PaymentMethodUpdateParams.BillingDetails },
         requestOptions
       );
+      // A clear that had to drop a required field is not a clear: that field's value is still on
+      // the record. It counts as blocked, with the rest removed, and is detached like any other
+      // payment method we cannot finish — reporting it cleared would overstate the erasure.
+      if (kept.length) {
+        await block(stripe, pm.id, 'parameter_missing', outcome);
+        return;
+      }
       outcome.cleared.paymentMethods++;
       return;
     } catch (error) {
       const required = missingParam(error);
       if (required && required in details) {
         delete details[required];
+        kept.push(required);
         continue;
       }
       // Gone between the list and the update: nothing left to clear.
@@ -312,10 +327,21 @@ async function clearMetadata(stripe: Stripe, customerId: string, outcome: ScrubO
   // window from it would strip a userId while the purchase webhook was still minutes into its
   // retries. The charges are listed here anyway, so this costs nothing.
   const settledAt = new Map<string, number>();
+  // Whether that map can be trusted. A fallback to the intent's own timestamp is only sound if the
+  // enumeration that would have contradicted it actually finished.
+  let chargesEnumerated = false;
   try {
     const charges = await listAll<Stripe.Charge>((startingAfter) =>
       stripe.charges.list(
-        { customer: customerId, limit: 100, starting_after: startingAfter },
+        {
+          customer: customerId,
+          limit: 100,
+          starting_after: startingAfter,
+          // The charge's own `created` is when it was OPENED. For ACH and SEPA that is days before
+          // the money settles, and `created` does not move when the status flips to succeeded. The
+          // balance transaction is the object that appears at settlement.
+          expand: ['data.balance_transaction'],
+        },
         requestOptions
       )
     );
@@ -324,12 +350,16 @@ async function clearMetadata(stripe: Stripe, customerId: string, outcome: ScrubO
         typeof charge.payment_intent === 'string'
           ? charge.payment_intent
           : charge.payment_intent?.id;
-      if (intentId && charge.status === 'succeeded')
-        settledAt.set(intentId, Math.max(settledAt.get(intentId) ?? 0, charge.created));
+      if (intentId && charge.status === 'succeeded') {
+        const balance = charge.balance_transaction;
+        const at = typeof balance === 'object' && balance ? balance.created : charge.created;
+        settledAt.set(intentId, Math.max(settledAt.get(intentId) ?? 0, at));
+      }
       if (!charge.metadata?.userId) continue;
       await stripe.charges.update(charge.id, { metadata: { userId: '' } }, requestOptions);
       outcome.cleared.charges++;
     }
+    chargesEnumerated = true;
   } catch (error) {
     // A deleted customer may not be listable at all; nothing is reachable, so nothing is owed.
     if (!isMissing(error)) outcome.errors.push({ step: 'charges', message: message(error) });
@@ -371,8 +401,14 @@ async function clearMetadata(stripe: Stripe, customerId: string, outcome: ScrubO
       } else if (intent.status === 'succeeded' && !intent.metadata.transactionId) {
         // From the SETTLE time, not the intent's own `created`.  A `canceled` intent never had a
         // purchase webhook to strand, so it skips the wait entirely.
-        const settled = (settledAt.get(intent.id) ?? intent.created) * 1000;
-        if (settled > Date.now() - CREDIT_SETTLE_MS) {
+        const settled = settledAt.get(intent.id);
+        // No settle time AND no complete enumeration to say there is none: the intent's own
+        // timestamp would read as old for exactly the slow payment types this protects.
+        if (settled === undefined && !chargesEnumerated) {
+          outcome.pending = true;
+          continue;
+        }
+        if ((settled ?? intent.created) * 1000 > Date.now() - CREDIT_SETTLE_MS) {
           outcome.pending = true;
           continue;
         }
