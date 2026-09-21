@@ -47,8 +47,16 @@ const billingDetailsClear = () => ({
 /** Bounds every Stripe call. The shared client sets neither, so one blip would fail a step. */
 const requestOptions: Stripe.RequestOptions = { maxNetworkRetries: 2, timeout: 10_000 };
 
-/** How long a settled payment intent keeps its userId, so a retrying purchase webhook can use it. */
-const CREDIT_SETTLE_MS = 24 * 60 * 60 * 1000;
+/**
+ * How long a settled payment intent keeps its userId, so a purchase webhook still being retried
+ * can credit the Buzz. Past Stripe's ~3-day retry horizon, not one day: inside that horizon a
+ * stripped userId makes every remaining retry fail permanently.
+ *
+ * `metadata.transactionId` is the fast path out of the wait — `completeStripeBuzzTransaction`
+ * writes it once the Buzz is granted, so its presence means crediting is finished. Its ABSENCE
+ * proves nothing (not every intent is a Buzz purchase), which is why it cannot be the gate.
+ */
+const CREDIT_SETTLE_MS = 4 * 24 * 60 * 60 * 1000;
 
 export const CUSTOMER_ID_SHAPE = /^cus_[A-Za-z0-9]+$/;
 
@@ -308,7 +316,8 @@ async function clearMetadata(stripe: Stripe, customerId: string, outcome: ScrubO
       outcome.cleared.charges++;
     }
   } catch (error) {
-    outcome.errors.push({ step: 'charges', message: message(error) });
+    // A deleted customer may not be listable at all; nothing is reachable, so nothing is owed.
+    if (!isMissing(error)) outcome.errors.push({ step: 'charges', message: message(error) });
   }
 
   try {
@@ -324,8 +333,27 @@ async function clearMetadata(stripe: Stripe, customerId: string, outcome: ScrubO
       // retrying: that handler reads metadata.userId to credit the Buzz and throws without it, so
       // stripping it here would strand the payment. Left pending, which keeps the account in the
       // queue instead of finishing it with work outstanding.
-      const settled = intent.status === 'succeeded' || intent.status === 'canceled';
-      if (!settled || intent.created * 1000 > Date.now() - CREDIT_SETTLE_MS) {
+      if (intent.status !== 'succeeded' && intent.status !== 'canceled') {
+        // An abandoned buy-Buzz flow leaves an intent parked forever: these are created directly,
+        // not through a Checkout Session, so Stripe never expires them. Cancelling is what makes
+        // the account finishable — nobody is going to complete a payment for a deleted account.
+        // `processing` is the exception: it is genuinely in flight and cannot be cancelled.
+        if (intent.status === 'processing') {
+          outcome.pending = true;
+          continue;
+        }
+        try {
+          await stripe.paymentIntents.cancel(intent.id, {}, requestOptions);
+        } catch (error) {
+          if (!isMissing(error)) {
+            outcome.errors.push({ step: 'paymentIntent.cancel', message: message(error) });
+            continue;
+          }
+        }
+      } else if (
+        !intent.metadata.transactionId &&
+        intent.created * 1000 > Date.now() - CREDIT_SETTLE_MS
+      ) {
         outcome.pending = true;
         continue;
       }
@@ -333,6 +361,6 @@ async function clearMetadata(stripe: Stripe, customerId: string, outcome: ScrubO
       outcome.cleared.paymentIntents++;
     }
   } catch (error) {
-    outcome.errors.push({ step: 'paymentIntents', message: message(error) });
+    if (!isMissing(error)) outcome.errors.push({ step: 'paymentIntents', message: message(error) });
   }
 }

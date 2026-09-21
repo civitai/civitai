@@ -19,7 +19,7 @@ const { stripe, getServerStripe } = vi.hoisted(() => {
     customers: { update: vi.fn() },
     paymentMethods: { list: vi.fn(), update: vi.fn(), detach: vi.fn() },
     charges: { list: vi.fn(), update: vi.fn() },
-    paymentIntents: { list: vi.fn(), update: vi.fn() },
+    paymentIntents: { list: vi.fn(), update: vi.fn(), cancel: vi.fn() },
   };
   return { stripe, getServerStripe: vi.fn(async () => stripe) };
 });
@@ -56,6 +56,7 @@ beforeEach(() => {
   stripe.charges.update.mockResolvedValue({});
   stripe.paymentIntents.list.mockResolvedValue(page([]));
   stripe.paymentIntents.update.mockResolvedValue({});
+  stripe.paymentIntents.cancel.mockResolvedValue({});
   dbMock.dbWrite.customerSubscription.deleteMany.mockResolvedValue({ count: 0 });
 });
 
@@ -313,7 +314,7 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
         {
           id: 'pi_1',
           status: 'succeeded',
-          created: secondsAgo(3 * DAY),
+          created: secondsAgo(5 * DAY),
           metadata: { userId: '42' },
         },
       ])
@@ -336,23 +337,90 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
     expect(outcome.complete).toBe(true);
   });
 
-  it.each([
-    ['still in flight', { status: 'requires_payment_method', created: secondsAgo(3 * DAY) }],
-    ['settled minutes ago', { status: 'succeeded', created: secondsAgo(60_000) }],
-  ])('leaves a payment intent %s, and stays unfinished', async (_, intent) => {
+  it('cancels an abandoned intent, then strips it, so the account can finish', async () => {
     stripe.paymentIntents.list.mockResolvedValue(
-      page([{ id: 'pi_open', ...intent, metadata: { userId: '42' } }])
+      page([
+        {
+          id: 'pi_abandoned',
+          status: 'requires_payment_method',
+          created: secondsAgo(5 * DAY),
+          metadata: { userId: '42' },
+        },
+      ])
     );
 
     const outcome = await scrub();
 
-    // userId is load-bearing at purchase time: the Buzz-crediting webhook reads it and throws
-    // without it, so a retry still in progress would be stranded.
+    // Buy-Buzz intents are created directly, not through a Checkout Session, so Stripe never
+    // expires them: an abandoned one would keep this account in the queue forever. Nobody is
+    // going to finish paying for a deleted account.
+    expect(stripe.paymentIntents.cancel).toHaveBeenCalledWith('pi_abandoned', {}, OPTIONS);
+    expect(stripe.paymentIntents.update).toHaveBeenCalledTimes(1);
+    expect(outcome.complete).toBe(true);
+  });
+
+  it('waits on an intent that is genuinely in flight', async () => {
+    stripe.paymentIntents.list.mockResolvedValue(
+      page([
+        {
+          id: 'pi_processing',
+          status: 'processing',
+          created: secondsAgo(5 * DAY),
+          metadata: { userId: '42' },
+        },
+      ])
+    );
+
+    const outcome = await scrub();
+
+    // `processing` cannot be cancelled and may still succeed, so the money question is open.
+    expect(stripe.paymentIntents.cancel).not.toHaveBeenCalled();
     expect(stripe.paymentIntents.update).not.toHaveBeenCalled();
-    // Pending, not failed — and NOT complete, or the pointer would be dropped with work left.
     expect(outcome.pending).toBe(true);
     expect(outcome.complete).toBe(false);
     expect(outcome.errors).toEqual([]);
+  });
+
+  it('holds a recently settled intent, because the credit webhook may still be retrying', async () => {
+    stripe.paymentIntents.list.mockResolvedValue(
+      page([
+        {
+          id: 'pi_fresh',
+          status: 'succeeded',
+          created: secondsAgo(60_000),
+          metadata: { userId: '42' },
+        },
+      ])
+    );
+
+    const outcome = await scrub();
+
+    // The Buzz-crediting webhook reads metadata.userId and throws without it. Stripe retries a
+    // failing endpoint for about three days, so stripping it early strands a real payment.
+    expect(stripe.paymentIntents.update).not.toHaveBeenCalled();
+    expect(outcome.pending).toBe(true);
+    expect(outcome.complete).toBe(false);
+  });
+
+  it('strips a recently settled intent once the credit is recorded', async () => {
+    stripe.paymentIntents.list.mockResolvedValue(
+      page([
+        {
+          id: 'pi_credited',
+          status: 'succeeded',
+          created: secondsAgo(60_000),
+          metadata: { userId: '42', transactionId: 'tx_1' },
+        },
+      ])
+    );
+
+    const outcome = await scrub();
+
+    // transactionId is written when the Buzz is granted, so there is nothing left to retry. Its
+    // absence proves nothing — not every intent is a Buzz purchase — which is why the wait above
+    // is the default and this is only a fast path out of it.
+    expect(stripe.paymentIntents.update).toHaveBeenCalledTimes(1);
+    expect(outcome.complete).toBe(true);
   });
 
   it('cancels a live subscription at Stripe and drops our row', async () => {
@@ -395,6 +463,54 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
     expect(dbMock.dbWrite.customerSubscription.deleteMany).toHaveBeenCalledWith({
       where: { id: 'sub_gone' },
     });
+  });
+
+  it('keeps our row when a LIVE subscription fails to cancel', async () => {
+    stripe.subscriptions.list.mockResolvedValue(page([{ id: 'sub_live', status: 'active' }]));
+    stripe.subscriptions.del.mockRejectedValue(stripeError({ type: 'api_error' }));
+
+    const outcome = await scrub();
+
+    // Deleting the row here would stop us reconciling a subscription that is still billing.
+    expect(dbMock.dbWrite.customerSubscription.deleteMany).not.toHaveBeenCalled();
+    expect(outcome.errors[0].step).toBe('subscription');
+    expect(outcome.complete).toBe(false);
+  });
+
+  it.each([
+    ['subscriptions', () => stripe.subscriptions.list],
+    ['paymentMethods', () => stripe.paymentMethods.list],
+    ['charges', () => stripe.charges.list],
+    ['paymentIntents', () => stripe.paymentIntents.list],
+  ])('is incomplete when the %s list cannot be read', async (step, list) => {
+    list().mockRejectedValue(stripeError({ type: 'api_error' }));
+
+    const outcome = await scrub();
+
+    // Nothing was enumerated, so nothing can be claimed scrubbed — and the pointer is what the
+    // next pass needs to try again.
+    expect(outcome.complete).toBe(false);
+    expect(outcome.errors.map((e) => e.step)).toContain(step);
+  });
+
+  it('clears a payment intent once it is older than the credit window', async () => {
+    stripe.paymentIntents.list.mockResolvedValue(
+      page([
+        {
+          id: 'pi_day_old',
+          status: 'succeeded',
+          created: secondsAgo(5 * DAY),
+          metadata: { userId: '42' },
+        },
+      ])
+    );
+
+    const outcome = await scrub();
+
+    // Pins the 24h window from the other side: a shorter one would clear the minutes-old intent
+    // above, a much longer one would leave this one.
+    expect(stripe.paymentIntents.update).toHaveBeenCalledTimes(1);
+    expect(outcome.complete).toBe(true);
   });
 
   it('is incomplete when a metadata write fails', async () => {

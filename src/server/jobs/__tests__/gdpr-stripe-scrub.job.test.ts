@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as AccountScrub from '~/server/services/gdpr/stripe-account-scrub';
@@ -39,9 +39,15 @@ const complete = (overrides: Partial<AccountScrub.ScrubOutcome> = {}) =>
 
 const runJob = () => gdprStripeScrubJob.run({}).result;
 
+afterEach(() => {
+  // Not inline at the end of the one test that uses them: a test appended after it would inherit
+  // frozen time, and this file stamps lastAttemptAt from the clock.
+  vi.useRealTimers();
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
-  dbMock.dbWrite.user.findMany.mockResolvedValue([{ id: USER_ID, customerId: CUSTOMER, meta: {} }]);
+  dbMock.dbRead.user.findMany.mockResolvedValue([{ id: USER_ID, customerId: CUSTOMER, meta: {} }]);
   dbMock.dbWrite.user.findUnique.mockResolvedValue({ meta: {} });
   dbMock.dbWrite.user.updateMany.mockResolvedValue({ count: 1 });
   dbMock.dbWrite.user.update.mockResolvedValue({});
@@ -52,13 +58,17 @@ describe('gdpr-stripe-scrub — what it selects', () => {
   it('selects by STATE, with no cutoff date', async () => {
     await runJob();
 
-    const [args] = dbMock.dbWrite.user.findMany.mock.calls[0];
+    const [args] = dbMock.dbRead.user.findMany.mock.calls[0];
     expect(args.where.deletedAt).toMatchObject({ not: null });
     expect(args.where.customerId).toEqual({ not: null });
     // 🔴 Do not reintroduce a start date. A draft carried one at 2026-09-18 22:40 UTC to keep the
     // job off the accounts the one-time pass had done; that pass has since run, and the date was
     // measured to STRAND 2 accounts it never covered, both still holding an email at Stripe.
-    expect(JSON.stringify(args.where)).not.toMatch(/gte|"gt"/);
+    // The SHAPE, not a spelling: a floor could come back as `NOT: { deletedAt: { lt: FLOOR } }`
+    // and a substring check would miss it. These two keys are also what makes the partial index
+    // usable, since its predicate is customerId IS NOT NULL AND deletedAt IS NOT NULL.
+    expect(Object.keys(args.where.deletedAt).sort()).toEqual(['lte', 'not']);
+    expect(Object.keys(args.where).sort()).toEqual(['customerId', 'deletedAt']);
   });
 
   it('an account becomes eligible as it AGES — this is a delay, never a floor', async () => {
@@ -67,7 +77,7 @@ describe('gdpr-stripe-scrub — what it selects', () => {
     // Our own cancel's customer.subscription.deleted is resolved BY customerId, and the webhook
     // throws when it cannot find the user. Waiting lets it land while the pointer still resolves,
     // which is why the webhook itself needed no change.
-    const { lte } = dbMock.dbWrite.user.findMany.mock.calls[0][0].where.deletedAt;
+    const { lte } = dbMock.dbRead.user.findMany.mock.calls[0][0].where.deletedAt;
     expect(lte).toBeInstanceOf(Date);
     const delay = Date.now() - lte.getTime();
     expect(delay).toBeGreaterThanOrEqual(15 * 60 * 1000);
@@ -77,13 +87,13 @@ describe('gdpr-stripe-scrub — what it selects', () => {
   it('reads a window several batches wide, so held-back accounts do not fill it', async () => {
     await runJob();
 
-    const [args] = dbMock.dbWrite.user.findMany.mock.calls[0];
+    const [args] = dbMock.dbRead.user.findMany.mock.calls[0];
     expect(args.orderBy).toEqual({ deletedAt: 'asc' });
     expect(args.take).toBeGreaterThan(25 * 2);
   });
 
   it('skips a customerId that is not a Stripe id, without stripping anything, and counts it', async () => {
-    dbMock.dbWrite.user.findMany.mockResolvedValue([
+    dbMock.dbRead.user.findMany.mockResolvedValue([
       // Both shapes exist in prod: a `_MERGED` suffix and an empty string. The suffix must never
       // be stripped — the base id resolves to a customer whose owner could not be established.
       { id: 1, customerId: 'cus_NL1pYvDpkPS6fN_MERGED', meta: {} },
@@ -99,7 +109,7 @@ describe('gdpr-stripe-scrub — what it selects', () => {
   });
 
   it('processes at most one batch per run', async () => {
-    dbMock.dbWrite.user.findMany.mockResolvedValue(
+    dbMock.dbRead.user.findMany.mockResolvedValue(
       Array.from({ length: 80 }, (_, i) => ({ id: i + 1, customerId: `cus_${i}`, meta: {} }))
     );
 
@@ -132,7 +142,7 @@ describe('gdpr-stripe-scrub — dropping the pointer', () => {
   });
 
   it('re-reads meta rather than writing back the copy it selected with', async () => {
-    dbMock.dbWrite.user.findMany.mockResolvedValue([
+    dbMock.dbRead.user.findMany.mockResolvedValue([
       { id: USER_ID, customerId: CUSTOMER, meta: { imageRemoval: 'grace' } },
     ]);
     // Written by something else while the scrub was busy with Stripe. The whole object is
@@ -151,7 +161,7 @@ describe('gdpr-stripe-scrub — dropping the pointer', () => {
       'a step failed',
       complete({ complete: false, errors: [{ step: 'customer', message: 'down' }] }),
     ],
-    ['work is pending', complete({ complete: false, pending: true })],
+    ['work is pending', complete({ complete: false, pending: true, errors: [] })],
   ])('keeps customerId when %s', async (_, outcome) => {
     scrubStripeAccount.mockResolvedValue(outcome);
 
@@ -159,7 +169,23 @@ describe('gdpr-stripe-scrub — dropping the pointer', () => {
 
     // The pointer IS the queue. Dropping it here would lose the account for good.
     expect(dbMock.dbWrite.user.updateMany).not.toHaveBeenCalled();
-    expect(summary).toMatchObject({ failed: 1, scrubbed: 0 });
+    expect(summary.scrubbed).toBe(0);
+  });
+
+  it('counts a waiting account as pending, not failed, and does not alert on it', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({
+      meta: { gdprStripeScrub: { attempts: 9, lastAttemptAt: '2020-01-01T00:00:00.000Z' } },
+    });
+    scrubStripeAccount.mockResolvedValue(complete({ complete: false, pending: true, errors: [] }));
+
+    const summary = (await runJob()) as { pending: number; failed: number };
+
+    // It is waiting on its own payment, not on us. Alerting here would page someone with no step
+    // and no message to act on.
+    expect(summary).toMatchObject({ pending: 1, failed: 0 });
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'gdpr-stripe-scrub-stuck' })
+    );
   });
 
   it('keeps customerId when the scrub throws outright', async () => {
@@ -262,7 +288,7 @@ describe('gdpr-stripe-scrub — retry state', () => {
   });
 
   it('skips a held-back account without calling Stripe', async () => {
-    dbMock.dbWrite.user.findMany.mockResolvedValue([
+    dbMock.dbRead.user.findMany.mockResolvedValue([
       {
         id: USER_ID,
         customerId: CUSTOMER,
@@ -277,7 +303,7 @@ describe('gdpr-stripe-scrub — retry state', () => {
   });
 
   it('stops early rather than outrunning its own schedule', async () => {
-    dbMock.dbWrite.user.findMany.mockResolvedValue(
+    dbMock.dbRead.user.findMany.mockResolvedValue(
       Array.from({ length: 30 }, (_, i) => ({ id: i + 1, customerId: `cus_${i}`, meta: {} }))
     );
     let processed = 0;
@@ -285,16 +311,20 @@ describe('gdpr-stripe-scrub — retry state', () => {
       processed++;
       // Every account eats most of the budget, as a fully-degraded Stripe would: three attempts
       // at a 10s timeout each, per call, several calls per account.
-      vi.setSystemTime(Date.now() + 5 * 60 * 1000);
+      vi.setSystemTime(Date.now() + 3 * 60 * 1000);
       return complete();
     });
     vi.useFakeTimers({ shouldAdvanceTime: true });
+    const startedAt = Date.now();
 
     const summary = (await runJob()) as { processed: number };
+    const elapsed = Date.now() - startedAt;
 
     vi.useRealTimers();
-    // Runs must not stack: the cron fires every 10 minutes and each run holds a request open.
-    expect(summary.processed).toBeLessThan(5);
+    // The invariant is the cron interval, not a count: a budget of 15 minutes would still process
+    // "few" accounts while stacking runs exactly as this exists to prevent.
+    expect(elapsed).toBeLessThan(10 * 60 * 1000);
+    expect(summary.processed).toBe(3);
     expect(processed).toBe(summary.processed);
   });
 });

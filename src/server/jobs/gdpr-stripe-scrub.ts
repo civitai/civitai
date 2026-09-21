@@ -1,5 +1,5 @@
 import type { Prisma } from '@prisma/client';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { CUSTOMER_ID_SHAPE, scrubStripeAccount } from '~/server/services/gdpr/stripe-account-scrub';
@@ -57,7 +57,10 @@ export const gdprStripeScrubJob = createJob(
     //
     // `lte` is the one date here and it postpones rather than excludes: an account becomes
     // eligible as it ages past the delay, so nothing can be stranded by it.
-    const candidates = (await dbWrite.user.findMany({
+    // Read from the replica: the guarded update below makes a stale read harmless (at worst an
+    // account is attempted a tick early or late), and without the partial index this query reads
+    // every deleted row — 1.3M today — which has no business running on the primary.
+    const candidates = (await dbRead.user.findMany({
       where: {
         // Our own cancel's `customer.subscription.deleted` is resolved BY customerId, and
         // `upsertSubscription` throws above every branch when it cannot find the user. Waiting
@@ -92,6 +95,7 @@ export const gdprStripeScrubJob = createJob(
       processed: 0,
       scrubbed: 0,
       blocked: 0,
+      pending: 0,
       failed: 0,
     };
 
@@ -112,8 +116,21 @@ export const gdprStripeScrubJob = createJob(
       summary.blocked += outcome.blocked.length;
 
       if (!outcome.complete) {
-        summary.failed++;
+        // Pending is not failure: the account is waiting on a payment of its own, not on us. It
+        // still takes the backoff, so it is not re-attempted every ten minutes for a day.
+        if (outcome.errors.length) summary.failed++;
+        else summary.pending++;
         await recordAttempt(user.id, outcome.errors[0], now);
+        continue;
+      }
+
+      // A subscription cancelled THIS run emits customer.subscription.deleted asynchronously, and
+      // that event is resolved BY customerId. Dropping the pointer seconds later would 400 it, and
+      // Stripe retries a 4xx endpoint for days. Leave it to the next run, which is far enough
+      // behind for the event to have landed.
+      if (outcome.canceledSubscriptions.length) {
+        summary.pending++;
+        await recordAttempt(user.id, undefined, now);
         continue;
       }
 
@@ -127,6 +144,16 @@ export const gdprStripeScrubJob = createJob(
       });
       if (count) summary.scrubbed++;
     }
+
+    // Held-back and malformed rows keep their pointer, so they keep their place in an
+    // ordered-by-deletedAt window. A full window means newer deletions may not be visible at all,
+    // and it is the only thing that tells a blocked queue from an empty one.
+    if (candidates.length >= BATCH_SIZE * 8 || summary.malformed)
+      await logToAxiom({
+        name: 'gdpr-stripe-scrub-queue',
+        type: candidates.length >= BATCH_SIZE * 8 ? 'error' : 'warning',
+        ...summary,
+      }).catch(() => null);
 
     return summary;
   }
@@ -163,7 +190,9 @@ async function recordAttempt(
     },
   });
 
-  if (attempts >= ALERT_AFTER_ATTEMPTS) {
+  // Only a real failure is worth a person's time. An account merely waiting out its own payment
+  // would otherwise alert with no step and no message to act on.
+  if (failure && attempts >= ALERT_AFTER_ATTEMPTS) {
     await logToAxiom({
       name: 'gdpr-stripe-scrub-stuck',
       type: 'error',
