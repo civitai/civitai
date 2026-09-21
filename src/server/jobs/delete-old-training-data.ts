@@ -261,7 +261,8 @@ export const deleteOldTrainingData = createJob(
       -- ran the uncapped query up to four times a night. If it ever matters, a count(*) OVER ()
       -- in this query returns the full total beside the capped rows and collapses the two to one.
       -- (No backticks in here: this comment lives inside a tagged template literal, and a
-      -- backtick closes it. An earlier draft did, and the file stopped parsing.)
+      -- backtick closes it. A working-tree draft of this comment had one and the file stopped
+      -- parsing; no such revision was committed, so do not go looking for it in the history.)
       ORDER BY random()
       LIMIT ${DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS}
     `;
@@ -287,7 +288,8 @@ export const deleteOldTrainingData = createJob(
     let goodJobs = 0;
     let errorJobs = 0;
     let skippedJobs = 0;
-    let dryRunJobs = 0;
+    let dryRunWouldDelete = 0;
+    let dryRunWouldSkip = 0;
 
     for (const { mf_id, job_id, url } of oldTraining) {
       try {
@@ -311,7 +313,7 @@ export const deleteOldTrainingData = createJob(
         //
         // 🔴 IT REPORTS would-skip SEPARATELY, AND AN EARLIER DRAFT DID NOT — IT LABELLED EVERY
         // ROW "would delete". That was wrong in the direction that matters: several outcomes
-        // leave a row undeleted by design, this file says so forty lines up, and an operator
+        // leave a row undeleted by design, this file says so further up, and an operator
         // reading a night of "would delete" would have projected a drain rate the real pass
         // cannot hit. The classification comes from the same function the real path uses, so the
         // preview cannot drift from the behaviour it previews.
@@ -325,8 +327,15 @@ export const deleteOldTrainingData = createJob(
         // night says nothing about the S3 path itself: not the client, not the credential, not
         // whether that credential may delete. Only an armed night answers those.
         if (dryRun) {
-          dryRunJobs += 1;
           const target = resolveModelFileDeleteTarget(url);
+          // 🔴 COUNTED SEPARATELY, AND THE SEPARATION HAS TO REACH THE SUMMARY. An earlier version
+          // split would-delete from would-skip on the per-row lines and then reported ONE total,
+          // which is the same misreading one level up: an operator dividing the eligible total by
+          // that number projects a drain rate the real pass cannot hit. This file's own argument
+          // for reporting an uncapped total is that an aggregate must carry the quantity actually
+          // draining; a conflated dry-run total does not.
+          if (target.ok) dryRunWouldDelete += 1;
+          else dryRunWouldSkip += 1;
           logJob({
             type: 'info',
             message: target.ok ? `Dry run, would delete` : `Dry run, would skip`,
@@ -400,7 +409,8 @@ export const deleteOldTrainingData = createJob(
         failures: errorJobs,
         skipped: skippedJobs,
         eligibleTotal: Number(total),
-        dryRun: dryRunJobs,
+        dryRunWouldDelete,
+        dryRunWouldSkip,
       },
     });
 

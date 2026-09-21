@@ -410,18 +410,27 @@ export type DeleteModelFileObjectOutcome =
  */
 export type ModelFileDeleteTarget =
   | { ok: true; backend: 'b2' | 'default'; bucket: string; key: string }
-  | { ok: false; reason: 'empty-url' | 'bucket-not-allowed' | 'unparseable' };
+  | { ok: false; reason: 'empty-url' | 'unparseable' }
+  // 🔴 `bucket-not-allowed` CARRIES THE BUCKET, and the other two refusals cannot. A refusal that
+  // only says "not allowed" is unqueryable: the field that names WHICH foreign bucket was
+  // targeted is the whole value of this event to anyone investigating. An earlier version of this
+  // type collapsed all three refusals into a bare `reason`, which silently dropped that field
+  // from the warn below — the plural helper still logs it, so one event name had two payload
+  // shapes and nothing said so.
+  | { ok: false; reason: 'bucket-not-allowed'; backend: 'b2' | 'default'; bucket: string };
 
 export function resolveModelFileDeleteTarget(url: string): ModelFileDeleteTarget {
   if (!url) return { ok: false, reason: 'empty-url' };
   const b2 = parseB2Url(url);
   if (b2) {
-    if (!isAllowedModelFileBucket(b2.bucket)) return { ok: false, reason: 'bucket-not-allowed' };
+    if (!isAllowedModelFileBucket(b2.bucket))
+      return { ok: false, reason: 'bucket-not-allowed', backend: 'b2', bucket: b2.bucket };
     return { ok: true, backend: 'b2', bucket: b2.bucket, key: b2.key };
   }
   const { key, bucket } = parseKey(url);
   if (!key || !bucket) return { ok: false, reason: 'unparseable' };
-  if (!isAllowedModelFileBucket(bucket)) return { ok: false, reason: 'bucket-not-allowed' };
+  if (!isAllowedModelFileBucket(bucket))
+    return { ok: false, reason: 'bucket-not-allowed', backend: 'default', bucket };
   return { ok: true, backend: 'default', bucket, key };
 }
 
@@ -440,7 +449,11 @@ export async function deleteModelFileObject(
       logToAxiom({
         type: 'warn',
         name: 'model-file-delete-s3-object-blocked',
-        backend: parseB2Url(url) ? 'b2' : 'r2',
+        // 'r2' rather than 'default' so this payload stays identical to the plural helper's,
+        // which is the other producer of this event name. Two shapes under one name is how a
+        // group-by silently returns half the truth.
+        backend: target.backend === 'b2' ? 'b2' : 'r2',
+        bucket: target.bucket,
         url,
       });
     }

@@ -186,18 +186,19 @@ export enum FLIPT_FEATURE_FLAGS {
 // ten-second TTL, so a cached entry has always expired before the next evaluation and bypassing
 // can never change what that job sees.
 //
-// ⚠ THE CRITERION IS "CACHING BUYS NOTHING AND STALENESS COSTS SOMETHING", NOT "EVALUATED OFTEN".
-// An earlier draft of this paragraph said the entries below are each evaluated far more often
-// than the TTL. Two of them say otherwise in their own comments a few lines down — one is
-// evaluated only from Redis error handlers at near-zero volume, another once per scan and once
-// per nightly run — so that criterion would argue for removing an entry that belongs here. What
-// they have in common is the second half: each is read at a moment when someone is trying to
-// change behaviour NOW, and the cache can only delay them.
+// 🔴 NO GENERAL CRITERION IS STATED HERE, AND THAT IS DELIBERATE — THREE DRAFTS OF ONE HAVE NOW
+// BEEN WRONG. The first said the entries below are each "evaluated far more often than the TTL";
+// at least three of them say otherwise in their own comments. The second offered "caching buys
+// nothing AND staleness costs something", which is satisfied by the purge flag it was written to
+// exclude — that flag is the clearest case of caching buying nothing. Each attempt was a rule
+// invented to justify a membership list that was decided case by case.
 //
-// 🔴 The purge flag fails the FIRST half today only because it is read once per run. If it is
-// ever made loop-evaluated — and the comment on the job's switch openly regrets that it cannot
-// stop a pass already running — then it starts being read often enough for the cache to matter,
-// and this entry should come back.
+// So: the list is case by case, and the only thing recorded here is the one case that was
+// examined and rejected. TRAINING_DATA_PURGE is read exactly ONCE per nightly run, so a cached
+// entry has always expired before the next read and bypassing cannot change what that job sees —
+// inert, whatever the rule would have been. If the job is ever changed to re-read it inside its
+// loop, that fact stops holding and the question is open again. Do not derive a fourth rule from
+// this paragraph; read the entries' own comments.
 const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
   FLIPT_FEATURE_FLAGS.HIGH_REPLICATION_LAG_MODE,

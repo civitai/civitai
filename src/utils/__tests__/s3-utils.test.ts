@@ -48,8 +48,10 @@ const mocks = vi.hoisted(() => {
 // `default` key as the hand-listed factories: the spread copies the original's NAMED exports
 // and does not synthesise a `default`. Pre-bundling wraps this CJS dep for interop, so the
 // consumer resolves through `default`; without one it gets undefined, and the file collects
-// almost no tests instead of going red. This file is 66 of the six files' 106 tests, so its
-// count is worth asserting on its own rather than through the total.
+// almost no tests instead of going red. This file's own count is worth asserting on its own rather than
+// through a total. (A prior version of this comment quoted fixed figures for both; they were
+// already stale when checked and drifted further. Counts in prose rot — the assertion below is
+// the durable half.)
 vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@aws-sdk/client-s3')>();
   const mocked = {
@@ -102,6 +104,7 @@ import {
 } from '~/utils/s3-utils';
 import { env } from '~/env/server';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 dbMock.dbWrite.modelFile.findMany.mockImplementation((...args: unknown[]) =>
   (mocks.findManyMock as (...a: unknown[]) => unknown)(...args)
 );
@@ -217,6 +220,61 @@ describe('deleteModelFileObject — bucket allowlist gate', () => {
   });
 });
 
+describe('the blocked-delete warn names WHICH bucket was refused', () => {
+  // 🔴 THIS GUARD EXISTS BECAUSE THE FIELD WAS SILENTLY LOST ONCE. Extracting the local decision
+  // into a shared resolver collapsed all three refusals into a bare `reason`, so the refused
+  // bucket became structurally unavailable at the log site and the warn shipped without it —
+  // while the BATCH helper, the other producer of this same event name, kept logging it. One
+  // event, two payload shapes, and an Axiom group-by on `bucket` silently returning nothing for
+  // half its sources. Measured at the time: deleting the entire log call reddened NOTHING in this
+  // suite, which is why the field had no guard to lose.
+  // 🔴 This file's beforeEach clears its own capture arrays but NOT the shared logging mock, so
+  // warns accumulate across cases. Without this the assertions below read an EARLIER test's warn
+  // and pass or fail for reasons that have nothing to do with the case being run — which is what
+  // they did on first execution.
+  beforeEach(() => loggingMock.logToAxiom.mockClear());
+
+  const blockedWarns = () =>
+    loggingMock.logToAxiom.mock.calls
+      .map(([arg]) => arg as { name?: string; backend?: string; bucket?: string; url?: string })
+      .filter((arg) => arg?.name === 'model-file-delete-s3-object-blocked');
+
+  it('carries the refused bucket and backend for an R2 url', async () => {
+    await deleteModelFileObject('https://attacker.abcd1234.r2.cloudflarestorage.com/victim.bin');
+
+    const [warn] = blockedWarns();
+    expect(warn?.bucket).toBe('attacker');
+    expect(warn?.backend).toBe('r2');
+  });
+
+  it('carries the refused bucket and backend for a B2 url', async () => {
+    await deleteModelFileObject('https://s3.us-west-004.backblazeb2.com/attacker/victim.bin');
+
+    const [warn] = blockedWarns();
+    expect(warn?.bucket).toBe('attacker');
+    expect(warn?.backend).toBe('b2');
+  });
+
+  it('does NOT fire for a refusal that is not about the bucket', async () => {
+    // The event is named for the bucket and carries one. Firing it for an unresolvable or empty
+    // url would put records with no bucket into a stream whose whole purpose is grouping by that
+    // field — the same one-name-two-shapes problem, arrived at from the other direction.
+    await deleteModelFileObject('not-a-url');
+    await deleteModelFileObject('');
+
+    expect(blockedWarns()).toHaveLength(0);
+  });
+
+  it('CONTROL: an allowlisted bucket produces no blocked warn at all', async () => {
+    // Without this, a mutant that warned unconditionally would satisfy both cases above.
+    await deleteModelFileObject(
+      'https://civitai-prod-settled.abcd1234.r2.cloudflarestorage.com/k/f.bin'
+    );
+
+    expect(blockedWarns()).toHaveLength(0);
+  });
+});
+
 describe('resolveModelFileDeleteTarget — the LOCAL half of the decision', () => {
   // 🔴 Tested directly, not only through deleteModelFileObject, because the dry-run path calls it
   // on its own. Covering it solely through the delete path would leave the preview's one source
@@ -238,13 +296,15 @@ describe('resolveModelFileDeleteTarget — the LOCAL half of the decision', () =
     ).toEqual({ ok: true, backend: 'default', bucket: 'civitai-prod-settled', key: 'k/f.bin' });
   });
 
-  it('refuses a non-allowlisted bucket on either backend', () => {
+  it('refuses a non-allowlisted bucket on either backend, naming the bucket', () => {
+    // The bucket is part of the refusal, not decoration: it is what the blocked-delete warn
+    // reports, and it was silently dropped once when this variant carried only a reason.
     expect(
       resolveModelFileDeleteTarget('https://attacker.abcd1234.r2.cloudflarestorage.com/v.bin')
-    ).toEqual({ ok: false, reason: 'bucket-not-allowed' });
+    ).toEqual({ ok: false, reason: 'bucket-not-allowed', backend: 'default', bucket: 'attacker' });
     expect(
       resolveModelFileDeleteTarget('https://s3.us-west-004.backblazeb2.com/attacker/v.bin')
-    ).toEqual({ ok: false, reason: 'bucket-not-allowed' });
+    ).toEqual({ ok: false, reason: 'bucket-not-allowed', backend: 'b2', bucket: 'attacker' });
   });
 
   it('refuses an unresolvable url and an empty one, distinctly', () => {

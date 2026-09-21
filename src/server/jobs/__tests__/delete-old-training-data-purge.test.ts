@@ -303,6 +303,34 @@ describe('the dry run stops short of the delete', () => {
     expect(skip?.data?.reason).toBe('bucket-not-allowed');
   });
 
+  it('🔴 the SUMMARY separates would-delete from would-skip, not just the per-row lines', async () => {
+    // The same misreading one level up: an earlier version split the per-row lines correctly and
+    // then reported ONE dry-run total, so an operator dividing the eligible total by it projects
+    // a drain rate the real pass cannot hit. This file's own argument for reporting an uncapped
+    // total is that an aggregate must carry the quantity actually draining.
+    mockIsFlipt.mockImplementation(async () => true);
+    mockResolveTarget
+      .mockReturnValueOnce({ ok: false, reason: 'bucket-not-allowed', backend: 'b2', bucket: 'x' })
+      .mockReturnValueOnce({ ok: true, backend: 'b2', bucket: 'b', key: 'k' });
+    selects([row(601), row(602)], 5000);
+
+    await deleteOldTrainingData.run({}).result;
+
+    const fin = loggingMock.logToAxiom.mock.calls
+      .map(
+        ([arg]) =>
+          arg as {
+            message?: string;
+            data?: { dryRunWouldDelete?: number; dryRunWouldSkip?: number };
+          }
+      )
+      .find((arg) => arg?.message === 'Finished');
+    // Different numbers on purpose: one counter reported twice satisfies any check that only
+    // asserts both fields exist.
+    expect(fin?.data?.dryRunWouldDelete).toBe(1);
+    expect(fin?.data?.dryRunWouldSkip).toBe(1);
+  });
+
   it('asks the SAME resolver the real delete path uses', async () => {
     // One authority, not two: a preview that re-implements backend selection and the allowlist
     // drifts from the original the first time either changes.
