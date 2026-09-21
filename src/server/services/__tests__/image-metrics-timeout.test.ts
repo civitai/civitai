@@ -284,14 +284,19 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
   it('keeps the other ids when ONE key rejects, and says so', async () => {
     fetchMock.mockRejectedValue(new Error('Socket hang up after 3 retries'));
     redisMock.redis.hGetAll.mockImplementation(async (key: string) => {
-      if (key === 'metrics:Image:2') throw new Error('MOVED 1234 10.0.0.1:6379');
+      // TWO rejecting keys: with one, a log moved into the per-key catch still
+      // reads "1 of 2" and still appears once, so a line-per-image storm on the
+      // feed hot path is invisible.
+      if (key === 'metrics:Image:2' || key === 'metrics:Image:3')
+        throw new Error('MOVED 1234 10.0.0.1:6379');
       return CACHED[key] ?? {};
     });
 
-    const result = await getImageMetricsObject([{ id: 1 }, { id: 1 }, { id: 2 }]);
+    const result = await getImageMetricsObject([{ id: 1 }, { id: 1 }, { id: 2 }, { id: 3 }]);
 
     expect(result[1]?.reactionLike).toBe(62);
     expect(result[2]).toBeUndefined();
+    expect(result[3]).toBeUndefined();
 
     // The rejection's only signal. Counted per KEY, not per call, and the
     // denominator is the DE-DUPLICATED id set - hence three ids in, 'of 2' out.
@@ -299,7 +304,7 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
       ([payload]) => (payload as { name?: string })?.name === 'getCachedImageMetrics rejected'
     );
     expect(rejectionLogs).toHaveLength(1);
-    expect(rejectionLogs[0][0].message).toBe('Metric cache read rejected for 1 of 2 ids');
+    expect(rejectionLogs[0][0].message).toBe('Metric cache read rejected for 2 of 3 ids');
     expect(rejectionLogs[0][0].type).toBe('warning');
     // The DATASET too: filtering on the payload alone passes a log routed to an
     // Axiom stream nobody alerts on.
@@ -348,13 +353,23 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
     );
 
     const start = Date.now();
-    // TWO ids, so "one log per outage" is distinguishable from "one log per id".
-    const result = await getImageMetricsObject([{ id: 1 }, { id: 2 }]);
+    // TWO ids, so "one log per outage" is distinguishable from "one log per id",
+    // and a duplicate so `idCount` pins the DE-DUPLICATED set rather than the
+    // caller's array.
+    const result = await getImageMetricsObject([{ id: 1 }, { id: 1 }, { id: 2 }]);
     const elapsed = Date.now() - start;
 
     expect(result).toEqual({});
-    // Excludes a widening past ~800ms. The FLOOR is pinned separately below - this
-    // bound alone passes at 700ms and at 1ms.
+    // Both ends, and this case already waits the deadline out so the floor costs
+    // no extra wall clock. A text pin on the constant cannot see the value handed
+    // to withTimeoutFallback: hardcoding 300 there left the declaration reading
+    // 500, the log still saying "exceeded 500ms", and everything green.
+    //
+    // 490 rather than a wider margin: a setTimeout NEVER fires early, so elapsed
+    // cannot fall below the deadline in force. Load only pushes it up, which the
+    // 800 ceiling covers. So this floor can sit just under 500 with no flake
+    // risk, and it leaves only (490, 500) decoupled instead of (250, 500).
+    expect(elapsed).toBeGreaterThanOrEqual(490);
     expect(elapsed).toBeLessThan(800);
     expect(staleCounterIncMock).toHaveBeenCalledTimes(1);
     // The counter alone left the log unpinned: its name, message and dataset were
@@ -376,9 +391,10 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
   it('leaves the deadline wide enough to admit a real round trip', async () => {
     fetchMock.mockRejectedValue(new Error('Socket hang up after 3 retries'));
     // 10ms against a 500ms deadline: two orders of magnitude, so no event-loop
-    // stall can flip this. A 400ms read had 84ms of headroom on a 31-worker
-    // suite, which is a false red waiting to happen. The deadline VALUE is
-    // pinned separately below, where it costs no wall clock at all.
+    // stall can flip this. The deadline's own bounds are pinned in the WEDGED
+    // case, which waits it out anyway; this case exists for the ADMIT path and
+    // for the timeout log's negative control below. Do not delete it as a
+    // duplicate of a floor case - the control goes with it.
     redisMock.redis.hGetAll.mockImplementation(
       (key: string) => new Promise((resolve) => setTimeout(() => resolve(CACHED[key] ?? {}), 10))
     );
@@ -394,23 +410,6 @@ describe('getImageMetricsObject serves STALE cached counts when ClickHouse is un
         ([payload]) => (payload as { name?: string })?.name === 'getCachedImageMetrics timeout'
       )
     ).toHaveLength(0);
-  });
-
-  it('admits a read that takes a QUARTER SECOND, not just a token one', async () => {
-    fetchMock.mockRejectedValue(new Error('Socket hang up after 3 retries'));
-    // The text pin below fixes the constant's DECLARATION; it cannot see the
-    // deadline actually passed to withTimeoutFallback. Hardcoding 150 there
-    // leaves the declaration reading 500 and the log still saying "500ms", so
-    // only a behavioural floor catches a decoupled deadline. 250ms against 500ms
-    // is 250ms of headroom - not the 84ms that made the old case flake.
-    redisMock.redis.hGetAll.mockImplementation(
-      (key: string) => new Promise((resolve) => setTimeout(() => resolve(CACHED[key] ?? {}), 250))
-    );
-
-    const result = await getImageMetricsObject([{ id: 1 }]);
-
-    expect(result[1]?.reactionLike).toBe(62);
-    expect(staleCounterIncMock).not.toHaveBeenCalled();
   });
 
   it('keeps each id with its own counts when the replies arrive OUT OF ORDER', async () => {
