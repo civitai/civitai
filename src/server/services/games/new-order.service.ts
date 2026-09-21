@@ -851,10 +851,11 @@ export async function updatePendingImageRatings({
   // Get players that rated this image (uses by_imageId projection via GROUP BY pattern)
   //
   // A transient ClickHouse blip here is a retryable dependency outage, not a query
-  // fault — 503 rather than 500. The message is deliberately NOT "please try again":
-  // every caller has already committed a non-idempotent prefix (an nsfwLevel write,
-  // and on the consensus path the vote counters) before reaching this read, and
-  // nothing dedupes a repeat.
+  // fault — 503 rather than 500. The message deliberately carries NO retry advice,
+  // and neither "try again" nor "don't" belongs here: whether a retry is safe
+  // INVERTS between this function's callers, and it cannot tell them apart. Two
+  // earlier drafts each asserted one of the two and each was wrong for the other;
+  // if you are tempted to supply a third, that is the trap, not the fix.
   const votes = await runClickHouseRead(
     () => ch.$query<{ userId: number; createdAt: Date; rating: number }>`
       SELECT userId, lastCreatedAt as createdAt, latestRating as rating
@@ -870,7 +871,7 @@ export async function updatePendingImageRatings({
       )
       WHERE latestStatus = '${NewOrderImageRatingStatus.Pending}'
     `,
-    'Your rating may already have been recorded. Refresh rather than rating again.'
+    'This service is temporarily unavailable.'
   );
 
   await clickhouse.$exec`
