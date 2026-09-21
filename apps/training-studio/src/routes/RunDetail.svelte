@@ -36,7 +36,6 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
   import { Toggle } from '@civitai/ui/components/ui/toggle/index.js';
-  import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
   import TrainingTrace from '$lib/components/TrainingTrace.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import SampleImage from '$lib/components/SampleImage.svelte';
@@ -489,7 +488,6 @@
 
   <header class="rounded-xl border border-dark-4 bg-dark-6 p-5">
     <div class="flex flex-wrap items-start gap-4">
-      <ModelCodeBadge code={d.code} size="lg" />
       <div class="min-w-0 flex-1">
         {#if renaming}
           <form class="flex flex-wrap items-center gap-2" onsubmit={saveRename} use:focusInput>

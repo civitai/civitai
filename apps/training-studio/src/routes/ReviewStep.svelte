@@ -28,7 +28,6 @@
     type FromPrices,
     type ParamBound,
   } from '$lib/data/trainingModels';
-  import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
   import {
     SAMPLE_RATE,
     cardBaseQuote,
@@ -289,7 +288,6 @@
         {@const card = runCard(run)}
         <div class="overflow-hidden rounded-xl border border-dark-4">
           <div class="flex flex-wrap items-center gap-3 bg-dark-6 px-4 py-3">
-            <ModelCodeBadge code={card.code} size="sm" />
             <div>
               <div class="text-sm font-bold text-dark-0">
                 {multi ? `Run ${i + 1} · ` : ''}{card.name}

@@ -16,7 +16,6 @@
   import { browser, hrefFor } from '$lib/host';
   import { locationHref } from '$lib/actions/locationHref';
   import { remixFromRun } from '$lib/reuse';
-  import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import SampleGrid from '$lib/components/SampleGrid.svelte';
   import GradientTile from '$lib/components/GradientTile.svelte';
@@ -151,10 +150,7 @@
                 {/if}
               </TableCell>
               <TableCell class="whitespace-nowrap px-4 py-2.5">
-                <span class="inline-flex items-center gap-2">
-                  <ModelCodeBadge code={r.code} />
-                  <span class="font-mono text-xs text-dark-2">{r.base}</span>
-                </span>
+                <span class="font-mono text-xs text-dark-2">{r.base}</span>
               </TableCell>
               <TableCell class="px-4 py-2.5"><RunStateBadge state={r.state} /></TableCell>
               <TableCell class="max-w-[32ch] truncate px-4 py-2.5 font-mono text-xs text-dark-2">

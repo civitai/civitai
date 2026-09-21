@@ -1,7 +1,6 @@
 <script lang="ts">
   import { backend, browser, portalProps } from '$lib/host';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
-  import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
   import type { TrainingRow } from '$lib/data/trainingRows';
   import type { Media } from '$lib/data/trainingModels';
   import { toReuseItems } from '$lib/reuse';
@@ -84,7 +83,6 @@
                 disabled={loadingId != null}
                 class="flex items-center gap-3 rounded-lg border border-dark-4 bg-dark-6 p-3 text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
               >
-                <ModelCodeBadge code={row.code} size="lg" />
                 <div class="min-w-0">
                   <div class="truncate text-sm font-semibold text-dark-0">{row.name}</div>
                   <div class="truncate font-mono text-xs text-dark-2">
