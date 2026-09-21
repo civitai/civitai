@@ -44,6 +44,7 @@ import { challengeAutoQueueJob } from '~/server/jobs/challenge-auto-queue';
 import { challengeCompletionJob } from '~/server/jobs/challenge-completion';
 import { challengeHealthCheckJob } from '~/server/jobs/challenge-health-check';
 import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
+import { gdprStripeScrubJob } from '~/server/jobs/gdpr-stripe-scrub';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { deliverAnnualSubscriptionBuzz } from '~/server/jobs/deliver-annual-sub-buzz';
 import { purgeReplacedFilesJob } from '~/server/jobs/purge-replaced-files';
@@ -130,6 +131,7 @@ import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
 
 export const jobs: Job[] = [
+  gdprStripeScrubJob,
   scanFilesFallbackJob,
   processHuggingFaceImportsJob,
   sendNotificationsJob,
