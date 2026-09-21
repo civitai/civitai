@@ -10,6 +10,7 @@ import {
   type LabelType,
   type Media,
   type ModelCard,
+  type ModelVersionInfo,
 } from '$lib/data/trainingModels';
 import type { TrainingRunPayload } from '$lib/backend';
 
@@ -28,6 +29,9 @@ export interface Run {
   versionKey: string;
   /** For the `Custom…` version: the AIR of a Civitai model to train on, pasted by the user. */
   customAir?: string;
+  /** The picked model's display name when `customAir` came from the host's model picker; cleared
+   *  when the AIR is edited by hand, so it never labels an AIR it doesn't describe. */
+  customName?: string;
 }
 
 /** A pasted custom-model AIR looks usable (urn:air:…). Not exhaustive — the orchestrator is the real check. */
@@ -88,6 +92,15 @@ export function runCard(run: Run): ModelCard {
 
 export function isCustom(run: Run): boolean {
   return run.versionKey === CUSTOM_VERSION_KEY;
+}
+
+/** The run's effective catalog version: the chosen key, or the card's default when the key names
+ *  no catalog entry (the Custom key never does). The single resolution the submit payload, the
+ *  engine lookup and the host model-picker pre-filter all share — divergence here means the
+ *  picker filters against one ecosystem while the submit trains against another. */
+export function runVersion(run: Run): ModelVersionInfo {
+  const card = runCard(run);
+  return card.versions.find((v) => v.key === run.versionKey) ?? card.versions[0]!;
 }
 
 export function runVersionLabel(run: Run): string {
@@ -302,8 +315,7 @@ export function buildTrainingRuns(
   const t = trigger.trim();
 
   return launched.map(({ run, params }) => {
-    const card = runCard(run);
-    const version = card.versions.find((v) => v.key === run.versionKey) ?? card.versions[0]!;
+    const version = runVersion(run);
     return {
       ecosystem: version.ecosystem,
       modelVariant: version.modelVariant,
