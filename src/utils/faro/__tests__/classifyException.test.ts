@@ -397,3 +397,121 @@ describe('classifyException — third-party network failures (fetch-wrapper fram
     expect(r.category).toBe('real');
   });
 });
+
+// Edges that a green suite would otherwise leave unpinned. Each of these was found by breaking
+// the implementation on purpose and noticing that nothing went red.
+describe('classifyException — project-source frame edges', () => {
+  // Without this, `frames.some(...)` and `isProjectSourceFrame(frames[frames.length - 1])` are
+  // indistinguishable across the whole file: every other fixture puts its app frame last.
+  // Shape: a third-party script invokes OUR callback, which calls fetch.
+  it('KEEPS a stack whose only app frame is in the MIDDLE, not at either end', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [OTEL_FETCH_FRAME, UPDATE_WATCHER_FRAME, OUR_FETCH_CALLER_FRAME, AD_SCRIPT_FRAME],
+      })
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // Faro frames sometimes carry the position in the filename (the module's own comment cites
+  // `undefined:1705:541`). If the wrapper exclusion stopped matching that spelling the gate would
+  // close again and the whole fix would silently revert to inert, with every other test green.
+  it.each([
+    ['turbopack:///[project]/src/components/UpdateRequiredWatcher/UpdateRequiredWatcher.tsx:23:30'],
+    ['turbopack:///[project]/src/components/UpdateRequiredWatcher/UpdateRequiredWatcher.tsx?rsc=1'],
+  ])('excludes the global fetch wrapper when its filename carries a suffix: %s', (filename) => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', { frames: [OTEL_FETCH_FRAME, { filename }] })
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('network');
+  });
+
+  // 🔴 DOCUMENTS AN ASSUMPTION THE WHOLE FIX RESTS ON. These exclusions can only work while
+  // beacons carry source-resolved paths. If frames ever arrive as minified bundle URLs, our code
+  // and our dependencies are indistinguishable — everything is `/_next/`, the guard says
+  // "project source", and this fix drops NOTHING. That is the safe direction (no false drops),
+  // but it is silent, so pin it: this test passing with `real` is the tell.
+  it('an all-minified-bundle stack is KEPT as real (the fix is inert on unmapped frames)', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [
+          { filename: 'https://civitai.com/_next/static/chunks/8154-7d2a.js', lineno: 1, colno: 9 },
+          {
+            filename: 'https://civitai.com/_next/static/chunks/main-app-11ab.js',
+            lineno: 1,
+            colno: 4,
+          },
+          AD_SCRIPT_FRAME,
+        ],
+      })
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // The abort rule shares this guard and matches its phrases as UNANCHORED substrings, so
+  // narrowing what counts as project source widens that DROP too. Pinned deliberately: a stack of
+  // nothing but dependency frames carrying an abort phrase is now dropped.
+  it('drops an abort-phrased error whose stack is only dependency frames', () => {
+    const r = classifyException(
+      exc('Error', 'The operation was aborted', { frames: [OTEL_FETCH_FRAME] })
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('abort');
+  });
+});
+
+// 🔴 The app's dominant fetch path is tRPC, and it is the one with NO app frame of its own:
+// `@trpc/client` batches and dispatches from a `setTimeout`, so the synchronous stack at
+// `fetch()` is library frames only. These pin that a real API failure survives, while the
+// third-party traffic this PR exists to drop still drops.
+describe('classifyException — first-party API failures survive the narrowing', () => {
+  const TRPC_FRAME = {
+    filename:
+      'turbopack:///[project]/node_modules/.pnpm/@trpc+client@11.17.0/node_modules/@trpc/client/dist/httpBatchLink.mjs',
+    function: 'dispatch',
+    lineno: 112,
+    colno: 9,
+  };
+  const REACT_QUERY_FRAME = {
+    filename:
+      'turbopack:///[project]/node_modules/.pnpm/@tanstack+react-query@5.0.0/node_modules/@tanstack/react-query/build/modern/queryObserver.js',
+    function: 'fetchOptimistic',
+    lineno: 402,
+    colno: 18,
+  };
+
+  it('KEEPS a failed tRPC request, whose stack carries no app frame at all', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [OTEL_FETCH_FRAME, UPDATE_WATCHER_FRAME, TRPC_FRAME],
+      })
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  it('KEEPS a failed react-query fetch', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [OTEL_FETCH_FRAME, UPDATE_WATCHER_FRAME, REACT_QUERY_FRAME],
+      })
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // The guard above must not become a hole: an ad request that happens to sit on a page where
+  // tRPC is loaded still has no tRPC frame on ITS stack, so it still drops.
+  it('still drops the third-party ad fetch on a page that also uses tRPC', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [OTEL_FETCH_FRAME, UPDATE_WATCHER_FRAME, AD_SCRIPT_FRAME],
+      })
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('network');
+  });
+});

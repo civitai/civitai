@@ -213,3 +213,87 @@ describe('createUpdateAwareFetch — third-party requests pass through untouched
     await expect(wrapped('https://securepubads.g.doubleclick.net/x')).rejects.toBe(boom);
   });
 });
+
+describe('createUpdateAwareFetch — argument fidelity and header interaction', () => {
+  // The third-party arm of this is covered above, but that path is a bare `return baseFetch(...)`.
+  // The FIRST-party path rebuilds the call, so dropping `init` there would strip the method, body
+  // and headers from every tRPC request while every other test stayed green.
+  it('forwards init verbatim on the FIRST-party path too', async () => {
+    const base = vi.fn().mockResolvedValue(responseWith({}));
+    const wrapped = createUpdateAwareFetch(base as unknown as typeof fetch, ORIGIN);
+    const init = {
+      method: 'POST',
+      body: '{"json":1}',
+      headers: { 'content-type': 'application/json' },
+    };
+
+    await wrapped('/api/trpc/orchestrator.generate', init);
+
+    expect(base).toHaveBeenCalledWith('/api/trpc/orchestrator.generate', init);
+  });
+
+  // The generation-specific modal suppresses the global one. Without a response carrying BOTH
+  // headers, deleting `&& !generationWarnedVersion` changes nothing any test can see.
+  it('shows only ONE modal when a response carries both update headers', async () => {
+    const base = vi
+      .fn()
+      .mockResolvedValue(
+        responseWith({ 'x-generation-update-required': '2.4.0', 'x-update-required': 'true' })
+      );
+    const wrapped = createUpdateAwareFetch(base as unknown as typeof fetch, ORIGIN);
+
+    await wrapped('/api/trpc/a');
+
+    expect(trigger).toHaveBeenCalledTimes(1);
+    expect(trigger.mock.calls[0][0].props.title).toBe('Generator Update Available');
+  });
+});
+
+describe('installUpdateAwareFetch — the install seam', () => {
+  /** A window stub whose `origin` and `href` DIFFER, so using the wrong one is detectable. */
+  const makeWin = () => {
+    const base = vi.fn().mockResolvedValue(responseWith({ 'x-update-required': 'true' }));
+    return {
+      fetch: base as unknown as typeof fetch,
+      location: { origin: ORIGIN, href: `${ORIGIN}/models/123` } as Location,
+      base,
+    };
+  };
+
+  const freshModule = async () => {
+    vi.resetModules();
+    return import('~/components/UpdateRequiredWatcher/UpdateRequiredWatcher');
+  };
+
+  it('replaces win.fetch', async () => {
+    const mod = await freshModule();
+    const win = makeWin();
+    const before = win.fetch;
+    mod.installUpdateAwareFetch(win);
+    expect(win.fetch).not.toBe(before);
+  });
+
+  // Uses an ABSOLUTE same-origin url on purpose: a root-relative path short-circuits before the
+  // origin comparison, so it could not tell `location.origin` from `location.href`.
+  it('passes location.ORIGIN, not location.href', async () => {
+    const mod = await freshModule();
+    const win = makeWin();
+    mod.installUpdateAwareFetch(win);
+
+    await win.fetch(`${ORIGIN}/api/trpc/x`);
+
+    expect(trigger).toHaveBeenCalledTimes(1);
+  });
+
+  it('is idempotent — a second install does not stack another wrapper', async () => {
+    const mod = await freshModule();
+    const win = makeWin();
+    mod.installUpdateAwareFetch(win);
+    const afterFirst = win.fetch;
+    mod.installUpdateAwareFetch(win);
+    expect(win.fetch).toBe(afterFirst);
+
+    await win.fetch(`${ORIGIN}/api/trpc/x`);
+    expect(win.base).toHaveBeenCalledTimes(1);
+  });
+});

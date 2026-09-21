@@ -196,16 +196,30 @@ const GLOBAL_FETCH_WRAPPER_PATH_RES = [
 const ABSOLUTE_URL_RE = /^https?:\/\//i;
 const FIRST_PARTY_ASSET_PATH_RE = /\/(?:_next|workers)\//i;
 
+// 🔴 EXCEPTION TO (1) — our API client stack. `node_modules` normally proves nothing, but these
+// libraries only ever appear on a stack because OUR code asked them for something, so they DO
+// attribute the request to us. They need naming because our own frames are frequently absent
+// from a tRPC failure: `@trpc/client` batches and dispatches from a `setTimeout`, so by the time
+// `fetch()` runs the synchronous stack is library frames only and every frame above it is gone.
+// Without this, a genuine first-party API failure — an unreachable origin, a CORS or certificate
+// regression, a bad deploy — would be dropped as a transient network blip.
+// Third-party ad/analytics requests never touch these, so this does not reopen the gate.
+const FIRST_PARTY_CLIENT_LIB_RES = [
+  /[/\\]node_modules[/\\]@trpc[/\\]/i,
+  /[/\\]node_modules[/\\]@tanstack[/\\]react-query/i,
+];
+
 function isProjectSourceFrame(frame: ClassifiableStackFrame): boolean {
+  // Covers the empty / `undefined` filename cases, so no further blank check is needed below.
   if (isInjectedFrame(frame)) return false;
   const filename = (frame.filename ?? '').trim();
-  if (!filename) return false;
+  if (anyMatch(FIRST_PARTY_CLIENT_LIB_RES, filename)) return true;
   if (DEPENDENCY_PATH_RE.test(filename)) return false;
   if (anyMatch(GLOBAL_FETCH_WRAPPER_PATH_RES, filename)) return false;
   if (ABSOLUTE_URL_RE.test(filename)) return FIRST_PARTY_ASSET_PATH_RE.test(filename);
   return (
     /^(?:turbopack|webpack):\/\//i.test(filename) ||
-    /\/_next\//i.test(filename) ||
+    FIRST_PARTY_ASSET_PATH_RE.test(filename) ||
     /\.(?:tsx?|jsx?|mjs|cjs)(?:[?#:]|$)/i.test(filename)
   );
 }
