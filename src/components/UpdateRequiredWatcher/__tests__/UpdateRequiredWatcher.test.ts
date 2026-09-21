@@ -357,13 +357,7 @@ describe('createUpdateAwareFetch — the first-party arm must not swallow a reje
 
     await expect(wrapped('/api/trpc/orchestrator.generate')).rejects.toBe(boom);
     expect(trigger).not.toHaveBeenCalled();
-  });
-
-  it('rejects rather than resolving undefined when a header read would have run', async () => {
-    const boom = new TypeError('NetworkError when attempting to fetch resource.');
-    const base = vi.fn().mockRejectedValue(boom);
-    const wrapped = createUpdateAwareFetch(base as unknown as typeof fetch, ORIGIN);
-
+    // ...and specifically NOT resolved to undefined, which is what a stray `.catch` produces.
     const settled = await wrapped('/api/trpc/x').then(
       (v) => ({ ok: true as const, v }),
       (e) => ({ ok: false as const, e })

@@ -179,11 +179,17 @@ const DEPENDENCY_PATH_RE = /(?:^|[/\\])node_modules[/\\]/i;
 //    every fetch — including third-party ad/analytics requests that never touch any other app
 //    code. It is genuine project source, which is exactly why it has to be named here: the
 //    `node_modules` rule above cannot exclude it.
-//    🔴 Keep this in sync with the wrapper itself; the file names each other in a comment.
-//    Scope note: this only suppresses the frame's ability to PROVE project involvement. An
-//    actual bug inside the watcher surfaces with its own message, and every DROP rule that
-//    consults this guard also requires an anchored known-benign message, so a real watcher bug
-//    can still never be dropped.
+//    🔴 Keep this in sync with the wrapper itself; the two files reference each other in
+//    comments.
+//    Scope note: this only suppresses the frame's ability to PROVE project involvement — an
+//    actual bug inside the watcher still surfaces under its own message. But be precise about
+//    how much that protects, because the two DROP rules consulting this guard differ:
+//      - rule 6 (network) matches the WHOLE message, anchored, so any watcher error with a
+//        message of its own is kept;
+//      - rule 1 (abort) matches an enumerated set of abort phrases as UNANCHORED substrings, so
+//        a watcher message that happens to contain one ("…the operation was aborted while
+//        reading update headers") IS droppable.
+//    So message anchoring is not a blanket protection. Weigh that before adding a file here.
 const GLOBAL_FETCH_WRAPPER_PATH_RES = [
   /[/\\]UpdateRequiredWatcher[/\\]UpdateRequiredWatcher\.tsx?(?:[?#:]|$)/i,
 ];
@@ -199,9 +205,10 @@ const GLOBAL_FETCH_WRAPPER_PATH_RES = [
 // A bundler scheme (`turbopack:///…`) does NOT match: the optional `https?:` cannot consume
 // `turbopack:`, so the `//` is not at position 0.
 //
-// 🔴 THE HOST IS DELIBERATELY NOT CHECKED, and that is a real hole, not an oversight: our assets
-// may be served from a CDN host this module cannot enumerate, and a pure classifier has no
-// trustworthy first-party host list to compare against. The cost is that ANY site's `/_next/`
+// 🔴 THE HOST IS DELIBERATELY NOT CHECKED, and that is a real hole, not an oversight: the app is
+// served from several first-party domains, plus per-PR preview hosts, so a static host list is
+// exactly the thing that would start producing FALSE DROPS the first time a new domain appears.
+// A pure classifier has no trustworthy way to enumerate them. The cost is that ANY site's `/_next/`
 // or `/workers/` path reads as ours — and every Next.js site on the web serves `/_next/`, so a
 // third-party embed frame can block a drop. That fails SAFE (noise kept, never a real bug
 // dropped), which is why it is accepted here; a test records the decision so it is not

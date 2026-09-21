@@ -682,7 +682,9 @@ describe('classifyException — the first-party asset path needs both slashes', 
     expect(r.category).toBe('real');
   });
 
-  // Windows-style separators in the two `[/\\]` patterns are not dead: a frame can carry them.
+  // The `[/\\]` alternatives across all three pattern groups are not dead: a frame can carry
+  // Windows separators. Each group is exercised separately below, because losing them has a
+  // different consequence in each — and for the client-lib allowlist it is a FALSE DROP.
   it('excludes a dependency frame spelled with Windows separators', () => {
     const r = classifyException(
       exc('TypeError', 'Failed to fetch', {
@@ -691,5 +693,61 @@ describe('classifyException — the first-party asset path needs both slashes', 
     );
     expect(r.drop).toBe(true);
     expect(r.category).toBe('network');
+  });
+});
+
+// 🔴 These three close mutants that survived a fully green suite. The first is the one that
+// matters: without the backslash alternatives in the client-lib allowlist, a Windows-spelled
+// tRPC frame stops attributing the request to us and a genuine API failure is DROPPED — the one
+// direction this module's header forbids.
+describe('classifyException — separators and asset paths in the remaining pattern groups', () => {
+  it('KEEPS a tRPC failure whose frame is spelled with Windows separators', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [
+          OTEL_FETCH_FRAME,
+          {
+            filename:
+              'webpack://[project]\\node_modules\\.pnpm\\@trpc+client@11.17.0\\node_modules\\@trpc\\client\\dist\\httpBatchLink.mjs',
+            lineno: 112,
+            colno: 9,
+          },
+        ],
+      })
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  it('excludes the global fetch wrapper when its frame is spelled with Windows separators', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [
+          OTEL_FETCH_FRAME,
+          {
+            filename:
+              'webpack://[project]\\src\\components\\UpdateRequiredWatcher\\UpdateRequiredWatcher.tsx',
+            lineno: 23,
+            colno: 30,
+          },
+        ],
+      })
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('network');
+  });
+
+  // The asset-path test is consulted on the NON-absolute branch too, but every other fixture
+  // there also ends in a js-ish extension, so the extension test decided the outcome and this
+  // clause never determined anything. A first-party asset with a non-js extension is the only
+  // input it can decide.
+  it('counts a relative first-party asset path with a non-js extension as project source', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [OTEL_FETCH_FRAME, { filename: '/_next/static/css/app.css' }],
+      })
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
   });
 });
