@@ -185,7 +185,7 @@
         onSuccess={() => (version += 1)}
       />
     {:else if section === 'reactions'}
-      <ReactionsPanel {account} />
+      <ReactionsPanel userId={result.identity.id} />
     {:else if section === 'mod-activity'}
       <ModActivityPanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
       <!-- Beside the human record, not in a section of its own: "what did WE do about this account"

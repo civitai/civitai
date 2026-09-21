@@ -8,11 +8,15 @@
     TableHeader,
     TableRow,
   } from '@civitai/ui/components/ui/table/index.js';
+  import { browser } from '$app/environment';
   import { LINK_CLASS, num } from '$lib/format';
   import { MIN_FLAGGED } from '$lib/reactions';
-  import type { Account, Reactions } from './user-account';
+  import { fetchReactions, type Reactions } from './reactions';
 
-  let { account }: { account: Promise<Account> | null } = $props();
+  let { userId }: { userId: number } = $props();
+
+  // Its own fetch — see `/api/user-reactions`.
+  const reactions = $derived(browser ? fetchReactions(userId) : null);
 
   type Target = Reactions['targets'][number];
 
@@ -41,11 +45,13 @@
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
-  {#await account}
-    <p class="text-sm text-dark-2">Loading reactions…</p>
-  {:then result}
-    {#if result}
-      {@const reactions = result.reactions}
+  {#await reactions}
+    <p class="text-sm text-dark-2">
+      Loading reactions… on a high-volume account this counts every reaction ever given and can take
+      a while.
+    </p>
+  {:then reactions}
+    {#if reactions}
       <h3 class="mb-1 text-sm font-semibold text-white">
         Image reactions given ({num(reactions.total)})
       </h3>

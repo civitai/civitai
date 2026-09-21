@@ -9,15 +9,17 @@ import {
   getComments,
   getCommentsV2,
   getCosmetics,
-  getReactionTargets,
   getReceivedReviews,
   getReviews,
   getTrainingRuns,
 } from '$lib/server/user-account.service';
 
 // Client-fetched: these lists are only wanted once an investigation is already underway, so keeping
-// them off the load means identity still renders immediately. Every panel fed by this waits on the
-// slowest member — `getReactionTargets`, an aggregate over 744M rows.
+// them off the load means identity still renders immediately.
+//
+// Everything here resolves in about a second. Two things that did not have their own endpoints — the
+// Buzz balance and the reaction aggregate — because a `Promise.all` is only as fast as its slowest
+// member, and both were slow enough to make every other panel look broken.
 export const GET: RequestHandler = async ({ params, locals }) => {
   const userId = requireUserIdParam(locals, params, '/retool/user-lookup');
 
@@ -27,7 +29,6 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     comments,
     commentsV2,
     cosmetics,
-    reactions,
     trainings,
     bounties,
     bountyEntries,
@@ -39,7 +40,6 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     getComments(userId),
     getCommentsV2(userId),
     getCosmetics(userId),
-    getReactionTargets(userId),
     getTrainingRuns(userId),
     getBounties(userId),
     getBountyEntries(userId),
@@ -53,7 +53,6 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     comments,
     commentsV2,
     cosmetics,
-    reactions,
     trainings,
     bounties,
     bountyEntries,

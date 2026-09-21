@@ -426,14 +426,26 @@ slice); the four left are unbuilt rather than blocked.
       90 days a descending read measures ~2.5s. The window bound is mandatory, not tuning — Retool bounded
       it too. Account id 0 is Civitai itself (generation spend, purchases, rewards).
       Not ported: "add / subtract buzz", which the ticket itself flags as probably a separate app.
-- [x] **Reactions** — `ReactionsGrouped` as "reactions given, by creator reacted to", in
-      `/api/user-account`. The concentration is the signal; a normal account spreads reactions over
-      hundreds of creators.
+- [x] **Reactions** — `ReactionsGrouped` as "reactions given, by creator reacted to", on its own
+      `/api/user-reactions/[userId]`. The concentration is the signal; a normal account spreads
+      reactions over hundreds of creators.
       **`UserStat.reactionCountAllTime` is NOT this number** — it counts reactions *received*
       (measured: 51,775 received against 312 given on the same account). The total comes from a
       `sum(count(*)) over ()` window instead, which totals every group before `LIMIT` trims them.
-      `ImageReaction` is 744M rows but indexed on `userId`: ~47ms at 49K reactions, ~605ms for the
-      heaviest account on the site (6M). Off the page load for that reason.
+      **It is unbounded, and it is the slowest thing this page can ask for.** Measured 2026-09-21:
+      **1.9s** at 46,744 reactions over 2,058 creators, **20s** at 852,729 over 7,131. 317 accounts are
+      past 100k, and they are disproportionately the ones a farming investigation looks up. There is no
+      `statement_timeout` on the pool, so it does not fail — it waits.
+
+      🔴 **The cost is the `Image` join, not the `ImageReaction` scan.** On the same account the scan
+      alone is **0.6s** and the scan plus `JOIN "Image"` is **20.4s** — 34x, with the grouping and
+      window functions on top of it measuring nothing. The earlier figures here (~47ms, ~605ms) are
+      scan-shaped and describe only the indexed half, which is why nothing about this read looked
+      expensive until a moderator reported the panel as broken. Any future attempt to bound this should
+      bound what reaches the join.
+      Hence its OWN endpoint rather than a slot in `/api/user-account`: sharing that `Promise.all` made
+      ten other panels wait on it, and a moderator reported the result as the reactions panel failing
+      to load. Pinned by `user-account-bundle-latency.test.ts`.
       `ReactionsAll` (every raw reaction row) not ported — unbounded, and the grouped view answers
       what the raw rows were being scanned for.
 - [x] **Civitai score** — `SocialScore`, in the page load, rendered in `ReputationPanel`.

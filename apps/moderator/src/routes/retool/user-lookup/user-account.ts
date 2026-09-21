@@ -3,13 +3,11 @@ import type {
   ReceivedReview as ReceivedReviewRow,
   UserBounty,
   UserBountyEntry,
-  ReactionSummary,
 } from '$lib/server/user-account.service';
 import type { Jsonified } from '$lib/format';
 
-// The `/api/user-account` payload, declared once. Two panels render slices of it — Subscription takes
-// the Buzz balance, UserContent takes the lists — and each previously declared its own copy and issued
-// its own fetch, so every lookup ran the whole endpoint twice, including the 744M-row reaction scan.
+// The `/api/user-account` payload, declared once. Several panels render slices of it, and each used to
+// declare its own copy and issue its own fetch, so every lookup ran the whole endpoint more than once.
 //
 // The row shapes are DERIVED from the service's, through `Jsonified` for the Date→string boundary.
 // Hand-copied duplicates drifted within a day: `nsfw` and `details` were added to the query and stayed
@@ -54,8 +52,6 @@ export type Cosmetic = {
   equipped: boolean;
   obtainedAt: string | null;
 };
-
-export type Reactions = Jsonified<ReactionSummary>;
 
 export type TrainingRun = {
   modelVersionId: number;
@@ -130,7 +126,6 @@ export type Account = {
   comments: Capped<Comment>;
   commentsV2: Capped<CommentV2>;
   cosmetics: Capped<Cosmetic>;
-  reactions: Reactions;
   trainings: { runs: TrainingRun[]; truncated: boolean; charges: TrainingCharges | null };
   bounties: Capped<Bounty>;
   bountyEntries: Capped<BountyEntry>;
