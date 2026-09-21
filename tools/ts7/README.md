@@ -51,6 +51,21 @@ alias wins, and every `npx tsc` and `pnpm run tsc:trace` in the repo silently be
 
 ## Upgrading
 
-Bump the version in `package.json`, re-run the install here, and check three things rather than
-one: `git diff pnpm-lock.yaml` at the repo root is still empty, the root `.bin/tsc` still reports
-5.9.x, and `pnpm run typecheck:fast` still names the version you expect in its first line.
+Bump the version in `package.json`, re-run the install here, then check three things rather than
+one:
+
+```bash
+git -C ../.. diff --stat pnpm-lock.yaml            # must be empty: the root lockfile must not move
+../../node_modules/.bin/tsc --version              # must still be 5.9.x
+node -e "import('./node_modules/typescript/lib/getExePath.js').then(m=>console.log(m.default()))"
+```
+
+Run that last path with `--version` — it is the **binary**, which is what actually runs. The
+version in `node_modules/typescript/package.json` is the shim's, and would not tell you about a
+stale native binary.
+
+## A note on the measurements above
+
+The msw peer re-resolution and the `.bin` hijack were measured on 2026-09-21 and describe states
+this repo is deliberately no longer in, so neither is reproducible from the tree as it stands.
+They are recorded as the reason for the shape, not as something to re-verify.

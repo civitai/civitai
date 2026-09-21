@@ -22,8 +22,8 @@ const stub = (name: string, body: string) => {
   return file;
 };
 
-const run = (tscPath: string) =>
-  spawnSync(process.execPath, [WRAPPER], {
+const run = (tscPath: string, args: string[] = []) =>
+  spawnSync(process.execPath, [WRAPPER, ...args], {
     encoding: 'utf8',
     env: { ...process.env, TYPECHECK_FAST_TSC_PATH: tscPath },
   });
@@ -102,5 +102,27 @@ describe('typecheck:fast does not pass for the authoritative check', () => {
 
     expect(combined).toContain(NOT_AUTHORITATIVE);
     expect(lines[lines.length - 1]).toContain(NOT_AUTHORITATIVE);
+  });
+});
+
+describe('typecheck:fast constrains what the compiler is asked to check', () => {
+  // Without these two, "0 diagnostics" means only "the process I spawned exited 0 quietly",
+  // which a compiler asked to check one file — or none — also satisfies. Reported against
+  // 8183a2e75a, where `typecheck-fast.mjs --version` printed "0 diagnostics" and exited 0.
+  it('always asks for --noEmit over the whole project', () => {
+    const res = run(stub('argv', 'console.log(process.argv.slice(2).join(" "));\n'));
+
+    expect(res.status).toBe(0);
+    expect(res.stdout).toContain('--noEmit');
+    expect(res.stdout).toContain('-p tsconfig.json');
+  });
+
+  it('refuses caller arguments rather than forwarding them to the compiler', () => {
+    // tsc's parser is last-wins, so a forwarded `-p` silently replaces the project.
+    const res = run(stub('rejects', 'process.exit(0);\n'), ['-p', 'somewhere/else.json']);
+
+    expect(res.status).toBe(2);
+    expect(res.stdout).not.toContain(OK_MARKER);
+    expect(res.stderr).toContain('takes no arguments');
   });
 });

@@ -2,10 +2,14 @@
 /**
  * A fast, NON-AUTHORITATIVE typecheck, for the edit loop only.
  *
- * Runs TypeScript 7 (native) instead of the 5.9 the repo is pinned to. Measured on this
- * repo: ~29s cold / ~5s warm against 5.9's ~179s/34s, over 12,698 files vs 12,761 — so it
- * is not reaching its answer by checking less. But it is a DIFFERENT compiler, it disagrees
- * with 5.9 in both directions, and `pnpm run typecheck` remains the only verdict that counts.
+ * Runs TypeScript 7 (native) instead of the 5.9 the repo is pinned to. Measured 2026-09-21 on
+ * this repo, `pnpm run typecheck:fast`: 29s cold, 6s warm. `pnpm run typecheck` on the same
+ * tree the same evening: 192s, 340s, 385s, 539s across four runs — it varies that much because
+ * the box is shared, which is the honest comparison rather than a single ratio. TS7's program
+ * is 12,698 files against 5.9's 12,761, so it is not reaching its answer by checking less.
+ *
+ * It is a DIFFERENT compiler, it disagrees with 5.9 in both directions, and
+ * `pnpm run typecheck` remains the only verdict that counts.
  *
  * Known disagreement in this direction: TS 7.0.2 reports `(a ?? null) ?? b` as TS2871
  * "This expression is always nullish", while typing that same operand `string | null` in
@@ -31,6 +35,21 @@ const NOT_AUTHORITATIVE =
   'typecheck:fast is NOT authoritative — `pnpm run typecheck` (TypeScript 5.9) is the verdict.';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+// This lane takes NO arguments, and forwarding them is not a harmless convenience: tsc's
+// parser is last-wins, so a caller-supplied `-p` silently replaced the project and
+// `--version` made it print nothing and exit 0 — which this wrapper then reported as
+// "0 diagnostics". A clean verdict for a check that never ran is the exact failure the
+// whole script exists to prevent.
+const passthrough = process.argv.slice(2);
+if (passthrough.length) {
+  console.error(`typecheck:fast: takes no arguments (got: ${passthrough.join(' ')}).`);
+  console.error('  It always checks the whole project, so that "0 diagnostics" cannot mean');
+  console.error('  "the compiler was asked to check nothing".');
+  console.error('');
+  console.error('  To narrow a check, use the authoritative lane: pnpm run typecheck <args>');
+  process.exit(2);
+}
 const ts7Dir = resolve(repoRoot, 'tools/ts7/node_modules/typescript');
 
 // TYPECHECK_FAST_TSC_PATH is a test seam, matching TYPECHECK_TSC_PATH in typecheck.mjs: it
@@ -72,14 +91,7 @@ console.log(`typecheck:fast — TypeScript ${resolvedVersion}. ${NOT_AUTHORITATI
 
 const buildInfo = resolve(repoRoot, 'node_modules/.cache/typecheck-fast/tsconfig.tsbuildinfo');
 const startedAt = Date.now();
-const args = [
-  '--noEmit',
-  '-p',
-  'tsconfig.json',
-  '--tsBuildInfoFile',
-  buildInfo,
-  ...process.argv.slice(2),
-];
+const args = ['--noEmit', '-p', 'tsconfig.json', '--tsBuildInfoFile', buildInfo];
 const child = seam
   ? spawn(process.execPath, [exe, ...args], { cwd: repoRoot, stdio: ['inherit', 'pipe', 'pipe'] })
   : spawn(exe, args, { cwd: repoRoot, stdio: ['inherit', 'pipe', 'pipe'] });
