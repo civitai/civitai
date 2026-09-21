@@ -594,11 +594,18 @@ describe('classifyException — guards pinned against WIDENING', () => {
   // The generic extension test carries the same `(?:[?#:]|$)` terminator as the wrapper rule, and
   // NARROWING it here causes a false drop: a real app frame spelled as a bare source path with a
   // position would stop counting as ours.
-  it('counts a bare app source path carrying :line:col as project source', () => {
+  // Every branch of the extension alternation, not just `.ts` — otherwise dropping `jsx?` or
+  // `mjs|cjs` flips a real app frame to DROPPED with a fully green suite.
+  it.each([
+    ['src/utils/media-upload.ts:212:9'],
+    ['src/utils/media-upload.tsx:212:9'],
+    ['src/utils/media-upload.js:212:9'],
+    ['src/utils/media-upload.jsx:212:9'],
+    ['src/utils/media-upload.mjs:212:9'],
+    ['src/utils/media-upload.cjs:212:9'],
+  ])('counts the bare app source path %s as project source', (filename) => {
     const r = classifyException(
-      exc('TypeError', 'Failed to fetch', {
-        frames: [OTEL_FETCH_FRAME, { filename: 'src/utils/media-upload.ts:212:9' }],
-      })
+      exc('TypeError', 'Failed to fetch', { frames: [OTEL_FETCH_FRAME, { filename }] })
     );
     expect(r.drop).toBe(false);
     expect(r.category).toBe('real');
@@ -669,9 +676,9 @@ describe('classifyException — the first-party asset path needs both slashes', 
 
   // 🔴 A DECISION ON RECORD, not an accident: the absolute branch judges the PATH and never the
   // HOST, so a foreign site's `/_next/` frame reads as ours and blocks the drop. Accepted because
-  // it fails safe (keeps noise, never drops a real bug) and because our own assets may be
-  // CDN-served from a host this module cannot enumerate. If a first-party host set is ever
-  // threaded in, this expectation is the one that should flip.
+  // it fails safe (keeps noise, never drops a real bug) and because the app serves from several
+  // first-party domains plus per-PR preview hosts, so a static host list is what would start
+  // producing false drops. If a host set is ever threaded in, this expectation is what flips.
   it('counts ANY host’s /_next/ path as project source — host is not checked, by design', () => {
     const r = classifyException(
       exc('TypeError', 'Failed to fetch', {
@@ -682,9 +689,10 @@ describe('classifyException — the first-party asset path needs both slashes', 
     expect(r.category).toBe('real');
   });
 
-  // The `[/\\]` alternatives across all three pattern groups are not dead: a frame can carry
-  // Windows separators. Each group is exercised separately below, because losing them has a
-  // different consequence in each — and for the client-lib allowlist it is a FALSE DROP.
+  // The `[/\\]` alternatives are not dead in ANY pattern: a frame can carry Windows separators.
+  // Every pattern is exercised separately — the dependency rule here, the wrapper rule and BOTH
+  // client-lib entries below — because losing them has a different consequence in each, and for
+  // the client-lib allowlist it is a FALSE DROP.
   it('excludes a dependency frame spelled with Windows separators', () => {
     const r = classifyException(
       exc('TypeError', 'Failed to fetch', {
@@ -749,5 +757,87 @@ describe('classifyException — separators and asset paths in the remaining patt
     );
     expect(r.drop).toBe(false);
     expect(r.category).toBe('real');
+  });
+});
+
+// Round-5 review: five more mutants survived a green suite. Three flip a KEEP into a DROP — the
+// direction this module's header forbids — and two re-admit noise. Each fixture below is the
+// sole observer of one of them.
+describe('classifyException — the last unobserved branches', () => {
+  it('KEEPS a react-query failure whose frame is spelled with Windows separators', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [
+          OTEL_FETCH_FRAME,
+          {
+            filename:
+              'webpack://[project]\\node_modules\\@tanstack\\react-query\\build\\modern\\queryObserver.js',
+            lineno: 402,
+            colno: 18,
+          },
+        ],
+      })
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // 🔴 WIDER THAN THE FETCH PATH — rule 5 applies to every exception type. `[].every()` is `true`,
+  // so an EMPTY frames array is one token away from being classified `injected` and dropped. The
+  // absent-stacktrace case was pinned; this one was not, while the docstring claimed both.
+  it('does NOT treat an empty frames array as an injected-extension stack', () => {
+    const r = classifyException({
+      type: 'TypeError',
+      value: "Cannot read properties of undefined (reading 'id')",
+      stacktrace: { frames: [] },
+    });
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // The scope note on the wrapper exclusion states that rule 1 (abort) matches UNANCHORED, so a
+  // watcher error whose message merely contains an abort phrase IS droppable. That is the
+  // sentence a future maintainer reads before adding a file to the list, so pin the behaviour it
+  // describes rather than only asserting it in prose.
+  it('drops a wrapper-framed error whose message contains an abort phrase', () => {
+    const r = classifyException(
+      exc('Error', 'The operation was aborted while reading update headers', {
+        frames: [UPDATE_WATCHER_FRAME],
+      })
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('abort');
+  });
+
+  // Safe-direction survivors (they re-admit noise rather than dropping a real bug), pinned so
+  // they are not rediscovered as new findings.
+  it('excludes a dependency frame whose filename STARTS with node_modules/', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [{ filename: 'node_modules/some-pkg/dist/index.js', lineno: 3, colno: 1 }],
+      })
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('network');
+  });
+
+  it('does NOT count a plain http:// third-party script as project source', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [OTEL_FETCH_FRAME, { filename: 'http://ads.example/tag.js', lineno: 1, colno: 1 }],
+      })
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('network');
+  });
+
+  it('treats a capitalised "Undefined" filename as an injected frame', () => {
+    const r = classifyException(
+      exc('ReferenceError', "Can't find variable: Foo", {
+        frames: [{ filename: 'Undefined', lineno: 1705, colno: 541 }],
+      })
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('injected');
   });
 });
