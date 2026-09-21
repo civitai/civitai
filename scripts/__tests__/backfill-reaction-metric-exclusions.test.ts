@@ -116,7 +116,7 @@ describe('reaction-metric exclusion backfill', () => {
     it('returns the changed ids, deduplicated', async () => {
       const { exec } = fakeExec(() => [{ id: 3 }, { id: 3 }, { id: 9 }]);
 
-      const { changed } = await runEntity({
+      const { ids: changed } = await runEntity({
         exec,
         spec: specs.article,
         excluded: EXCLUDED,
@@ -125,6 +125,25 @@ describe('reaction-metric exclusion backfill', () => {
       });
 
       expect(changed).toEqual([3, 9]);
+    });
+
+    it('counts ROWS and IDS separately, because for bountyEntry they differ by 5x', async () => {
+      // bountyEntry writes one row per timeframe, so the UPDATE returns the same id five
+      // times. Reporting the deduplicated count under the word "rows" understated a dev
+      // run's write by exactly that factor — 10 rows reported as 2 — and it was a
+      // deliberately-corrupted control that caught it, not the suite.
+      const { exec } = fakeExec(() => [{ id: 5 }, { id: 5 }, { id: 5 }, { id: 6 }]);
+
+      const { rows, ids } = await runEntity({
+        exec,
+        spec: specs.bountyEntry,
+        excluded: EXCLUDED,
+        write: true,
+        ranges,
+      });
+
+      expect(rows, 'the row count was deduplicated').toBe(8);
+      expect(ids, 'the id set was not deduplicated').toEqual([5, 6]);
     });
 
     it('carries a failed batch instead of aborting the ones after it', async () => {
@@ -138,7 +157,7 @@ describe('reaction-metric exclusion backfill', () => {
         return [{ id: 7 }];
       });
 
-      const { changed, failures } = await runEntity({
+      const { ids: changed, failures } = await runEntity({
         exec,
         spec: specs.article,
         excluded: EXCLUDED,
@@ -196,7 +215,7 @@ describe('reaction-metric exclusion backfill', () => {
         sql.includes('SELECT id FROM affected') ? [{ id: 5 }] : []
       );
 
-      const { changed } = await runEntity({
+      const { ids: changed } = await runEntity({
         exec,
         spec: specs.article,
         excluded: EXCLUDED,

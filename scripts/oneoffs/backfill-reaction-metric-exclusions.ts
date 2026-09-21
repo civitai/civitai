@@ -18,6 +18,18 @@
  * affected ones. It returns as its own change driven from the affected set, which reads
  * out of `ImageReaction_userId` in ~6 s. Tracked by the same ticket, 868m6vftv.
  *
+ * Two measurements from the post arm, kept here because the repo squash-merges and they
+ * would otherwise survive only in a commit body that the squash discards:
+ *   - The post scan has a batch-size CLIFF, not a slope. Measured on the prod replica
+ *     2026-09-21: at 1,000 ids the planner loops `Image (postId_covered_idx)` into
+ *     `ImageReaction_imageId_createdAt` and takes ~0.9 s; at 10,000 it flips to a hash
+ *     join whose probe side is a whole-index scan of `ImageReaction` (est. 6.9M rows) and
+ *     does not finish inside the pooler's ~60 s ceiling. The flip bisects to 3,700-3,800.
+ *     A growing exclusion list and a growing `ImageReaction` both move it LATER.
+ *   - Article and bountyEntry have no cliff to find: their entire id spaces aggregate in
+ *     166 ms and 643 ms. That is why this file has one batch size and no concurrency knob
+ *     — both existed for post, and left with it.
+ *
  * Usage:
  *   pnpm run tsscript scripts/oneoffs/backfill-reaction-metric-exclusions.ts [options]
  *
@@ -408,7 +420,12 @@ export async function runEntity(args: {
     }
   }
 
-  return { changed: [...new Set(changed)], failures };
+  // Both numbers, because for bountyEntry they differ by a factor of five and each
+  // answers a different question. `rows` is the blast radius — the count of metric rows
+  // rewritten, which is what a reviewer wants. `ids` is the propagation set, which is
+  // per entity. Reporting one under the other's name understates bountyEntry's write by
+  // 5x, which is exactly what happened when this returned only the deduplicated ids.
+  return { rows: changed.length, ids: [...new Set(changed)], failures };
 }
 
 /**
@@ -469,11 +486,11 @@ async function main() {
       const end = opts.end ?? Number(max ?? 0);
       const ranges = planRanges(start, end, batchSize);
 
-      const { changed, failures } = await runEntity({ exec, spec, excluded, write, ranges });
+      const { rows, ids, failures } = await runEntity({ exec, spec, excluded, write, ranges });
 
       console.log(
         `[${entity}] ${start}-${end} in ${ranges.length} batch(es): ` +
-          `${changed.length} row(s) ${write ? 'written' : 'would change'}` +
+          `${rows} row(s) ${write ? 'written' : 'would change'} across ${ids.length} ${entity}(s)` +
           `${failures.length ? `, ${failures.length} FAILED batch(es)` : ''}`
       );
       for (const f of failures) {
