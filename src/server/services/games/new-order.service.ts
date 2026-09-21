@@ -55,6 +55,7 @@ import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import {
   handleLogError,
+  runClickHouseRead,
   throwBadRequestError,
   throwInternalServerError,
   throwNotFoundError,
@@ -843,22 +844,34 @@ export async function updatePendingImageRatings({
   rating?: NsfwLevel | null;
 }) {
   if (!clickhouse) throw throwInternalServerError('Not supported');
+  // Capture the narrowed (non-undefined) client so the read closure below keeps the
+  // type guard — TS doesn't propagate the `!clickhouse` narrowing into a callback.
+  const ch = clickhouse;
 
   // Get players that rated this image (uses by_imageId projection via GROUP BY pattern)
-  const votes = await clickhouse.$query<{ userId: number; createdAt: Date; rating: number }>`
-    SELECT userId, lastCreatedAt as createdAt, latestRating as rating
-    FROM (
-      SELECT
-        userId,
-        max(createdAt) as lastCreatedAt,
-        argMax(rating, createdAt) as latestRating,
-        argMax(status, createdAt) as latestStatus
-      FROM knights_new_order_image_rating
-      WHERE imageId = ${imageId}
-      GROUP BY imageId, userId
-    )
-    WHERE latestStatus = '${NewOrderImageRatingStatus.Pending}'
-  `;
+  //
+  // A transient ClickHouse connection blip in this READ (e.g. `socket hang up`) is a
+  // retryable dependency outage, not a query fault — map it to a retryable 503 instead
+  // of 500ing. This read is on the `games.newOrder.addRating` path via
+  // processImageRating, which is where the 500s were observed. The `$exec` INSERT
+  // below is deliberately NOT wrapped: runClickHouseRead is for reads only, since a
+  // tRPC-typed 503 on a half-applied write would be semantically wrong.
+  const votes = await runClickHouseRead(
+    () => ch.$query<{ userId: number; createdAt: Date; rating: number }>`
+      SELECT userId, lastCreatedAt as createdAt, latestRating as rating
+      FROM (
+        SELECT
+          userId,
+          max(createdAt) as lastCreatedAt,
+          argMax(rating, createdAt) as latestRating,
+          argMax(status, createdAt) as latestStatus
+        FROM knights_new_order_image_rating
+        WHERE imageId = ${imageId}
+        GROUP BY imageId, userId
+      )
+      WHERE latestStatus = '${NewOrderImageRatingStatus.Pending}'
+    `
+  );
 
   await clickhouse.$exec`
     INSERT INTO knights_rating_updates_buffer (imageId, rating)
