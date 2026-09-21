@@ -60,31 +60,12 @@ pnpm run build            # Production build
 ### Code Quality
 ```bash
 pnpm run typecheck        # Run TypeScript type checking (5.9 — the authoritative one)
-pnpm run typecheck:fast   # TypeScript 7, 6-56s warm. Edit loop only; NOT authoritative
+pnpm run typecheck:fast   # TypeScript 7, edit loop only, NOT authoritative. Needs a one-time install
 pnpm run lint             # Run ESLint
 pnpm run prettier:check   # Check Prettier formatting
 pnpm run prettier:write   # Auto-fix Prettier formatting
 ```
 
-#### `typecheck:fast` is a different compiler, not a faster mode of the same one
-
-TypeScript 7. Measured 2026-09-21 on this repo, with the spread and the denominator on both
-sides because the box is shared: `typecheck:fast` 29-98s cold and 6-56s warm over 8 runs;
-`pnpm run typecheck` 192-539s over 4. An order of magnitude, not a ratio — quoting one end of
-either range is how this comparison goes wrong. Use it between edits; settle every question with
-`pnpm run typecheck`, which is what CI and the pre-commit checklist mean. The two compilers
-disagree in both directions, so a diagnostic from the fast lane is a lead, not a fact.
-
-It takes **no arguments** — it always checks the whole project, so that "0 diagnostics" cannot
-mean "the compiler was asked to check nothing". To narrow a check, use `pnpm run typecheck`.
-
-⚠️ Unlike `pnpm run typecheck` it is **not** routed through the dev-server queue, so N agents
-running it at once are N unserialised native compilers. The 56s end of that warm range IS the
-busy-box figure, so size the risk from that end rather than the 6s one.
-
-Needs `pnpm -C tools/ts7 install` once — see [`tools/ts7/README.md`](tools/ts7/README.md) for why
-it is deliberately outside the pnpm workspace, and for the two ways installing it wrong silently
-repoints another compiler.
 
 #### SvelteKit apps have their own standard
 

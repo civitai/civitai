@@ -75,10 +75,15 @@ if (!exe) {
   if (!existsSync(resolver)) {
     console.error('typecheck:fast: TypeScript 7 is not installed.');
     console.error('');
-    console.error('  run: pnpm -C tools/ts7 install');
+    console.error('  run:  pnpm -C tools/ts7 install     (~30s, one time)');
     console.error('');
-    console.error('  It is intentionally outside the pnpm workspace, so a root `pnpm install`');
-    console.error('  does not fetch it. That one command is the whole setup.');
+    console.error('  That is the whole setup. It lives outside the pnpm workspace on purpose, so');
+    console.error('  a root `pnpm install` does not fetch it and does not move the root lockfile.');
+    console.error('');
+    console.error('  What you get: a second compiler for the edit loop, ~6-56s warm against');
+    console.error('  `pnpm run typecheck`\'s 192-539s. It is NOT authoritative and the two');
+    console.error('  disagree in both directions, so treat a diagnostic from it as a lead.');
+    console.error('  Background: tools/ts7/README.md');
     process.exit(2);
   }
   try {

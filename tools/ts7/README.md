@@ -8,6 +8,24 @@ the only consumer is `scripts/typecheck-fast.mjs`, which resolves the binary thr
 pnpm -C tools/ts7 install     # once — a root `pnpm install` does NOT fetch this
 ```
 
+## What it is for
+
+A second compiler for the edit loop. Measured 2026-09-21 on this repo, with the spread on both
+sides because the box is shared: `pnpm run typecheck:fast` 29-98s cold and 6-56s warm over 8 runs;
+`pnpm run typecheck` 192-539s over 4. An order of magnitude, not a ratio.
+
+`pnpm run typecheck` stays authoritative — it is what CI, `lint` and `svelte-check` run. The two
+compilers disagree in both directions (TS 7.0.2 reports `(a ?? null) ?? b` as TS2871 "always
+nullish" while typing that same operand `string | null` in assignment position), so a diagnostic
+from the fast lane is a lead, not a fact.
+
+It takes **no arguments**: it always checks the whole project, so that "0 diagnostics" cannot mean
+"the compiler was asked to check nothing". Narrow a check with `pnpm run typecheck` instead.
+
+⚠️ It is **not** routed through the dev-server queue that `pnpm run typecheck` uses, so N agents
+running it at once are N unserialised native compilers. The 56s end of that warm range is the
+busy-box figure — size the risk from that end, not the 6s one.
+
 ## Why this is not a pnpm workspace package
 
 It was, briefly. Adding `tools/*` to `pnpm-workspace.yaml` made `pnpm install` re-resolve
