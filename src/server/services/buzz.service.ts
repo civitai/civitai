@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import type { BuzzWriteOptions } from '@civitai/buzz';
+import type { BuzzReadOptions, BuzzWriteOptions } from '@civitai/buzz';
 import { createBuzzClient } from '@civitai/buzz';
 import type { Dayjs } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
@@ -1245,8 +1245,8 @@ export async function pingBuzzService() {
   return buzzService.ping();
 }
 
-export async function getTransactionByExternalId(externalId: string) {
-  const data = await buzzService.getTransactionByExternalId(externalId);
+export async function getTransactionByExternalId(externalId: string, opts?: BuzzReadOptions) {
+  const data = await buzzService.getTransactionByExternalId(externalId, opts);
   if (data === null) return null;
   return getBuzzTransactionResponse.parse(data);
 }
