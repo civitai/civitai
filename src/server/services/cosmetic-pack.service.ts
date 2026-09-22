@@ -213,7 +213,8 @@ export const assertPackPurchasable = async ({
 };
 
 /**
- * Grants every member to the buyer.
+ * Grants the members it is given — which is not every member of the pack. The
+ * caller decides what the buyer was charged for; see `grantable`.
  *
  * Two behaviours, per D16 and D23. A consumable the buyer already holds is not a
  * duplicate — the purchase adds uses, so it lands as `remaining + n` on the
@@ -479,11 +480,12 @@ export const purchaseCosmeticPack = async ({
   // listing never sells out.
   const grantable = members.filter((m) => !isSelfAuthoredPackMember(m, userId, shopItem.addedById));
 
-  // A pack can price to zero, and not only through the discount: `selfAuthored`
-  // is computed over the members the buyer created, so a pack made entirely of
-  // someone else's listings of the buyer's own work reaches zero with no
-  // discount involved at all. Nothing to pay means nothing left to buy.
-  if (amountCharged <= 0) throw throwBadRequestError('You already own everything in this pack');
+  // Two ways a pack has nothing left to sell this buyer, and the price catches
+  // only one of them. A pack of the buyer's own work priced at the floor reaches
+  // zero; priced ABOVE it, the same pack charges the markup and delivers nothing,
+  // because every member was subtracted and so every member is withheld.
+  if (amountCharged <= 0 || !grantable.length)
+    throw throwBadRequestError('You already own everything in this pack');
 
   // Random rather than a timestamp: a pack is repeatable (a consumable member
   // tops up), so two calls in the same millisecond would share an external id —
@@ -681,6 +683,7 @@ export const purchaseCosmeticPack = async ({
   return {
     transactionId,
     // Names, not ids: the completion modal tells the buyer what they just got.
-    granted: members.map((m) => ({ cosmeticId: m.cosmeticId, name: m.name, type: m.type })),
+    // `grantable`, because a withheld member is not something they got.
+    granted: grantable.map((m) => ({ cosmeticId: m.cosmeticId, name: m.name, type: m.type })),
   };
 };

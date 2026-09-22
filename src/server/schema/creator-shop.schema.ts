@@ -280,9 +280,14 @@ export const computePackOwnershipDiscount = ({
  * The buyer is neither charged for it, paid for it, nor granted it — charging
  * and then paying them back through the bank would cost them the platform's cut
  * to buy their own work, and a creator cannot buy their own cosmetic at all (see
- * purchaseCosmeticShopItem). All three derive from here so they cannot drift:
- * while the grant read its own rule, a subtracted member was still granted, and
- * a pack of the buyer's own uncapped stickers minted free top-ups indefinitely.
+ * purchaseCosmeticShopItem). The charge and the grant derive from here; while
+ * the grant read its own rule, a subtracted member was still granted, and a pack
+ * of the buyer's own uncapped stickers minted free top-ups indefinitely.
+ *
+ * `computePackPayouts` states the rule a third time and is deliberately NOT
+ * routed through this: its filter runs where `buyerId` may be absent, and `0`
+ * is a real account id there, so the two disagree on a falsy buyer. Widen one
+ * and you must widen the other by hand.
  */
 export const isSelfAuthoredPackMember = (
   member: { createdById: number | null },
