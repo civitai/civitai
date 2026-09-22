@@ -41,11 +41,56 @@ export const READ_WINDOW_BYTES = 64 * 1024;
  * so handing it the flag would be an unknown argument rather than a smaller run.
  */
 export const RUN_KINDS = {
-  unit: { script: 'test:unit:run', capWorkers: true, defaultConcurrency: 1 },
-  typecheck: { script: 'typecheck', capWorkers: false, defaultConcurrency: 1 },
+  unit: {
+    script: 'test:unit:run',
+    capWorkers: true,
+    defaultConcurrency: 1,
+    // The wire name this lane's limit takes in /test-runs/config, and the CLI operand that sets
+    // it. The unit lane is the bare `concurrency` and the bare positional operand because it was
+    // the only lane once; renaming it now would break every caller and every doc for nothing.
+    configKey: 'concurrency',
+    flag: null,
+  },
+  typecheck: {
+    script: 'typecheck',
+    capWorkers: false,
+    defaultConcurrency: 1,
+    configKey: 'typecheckConcurrency',
+    flag: '--typecheck',
+  },
+  typecheckApps: {
+    script: 'typecheck:apps',
+    capWorkers: false,
+    defaultConcurrency: 1,
+    configKey: 'typecheckAppsConcurrency',
+    flag: '--typecheck-apps',
+  },
 };
 
 export const DEFAULT_KIND = 'unit';
+
+/**
+ * The `{ <configKey>: n }` body that a `test config` command's arguments ask for, one entry per
+ * lane whose flag was typed. Lives here rather than inline in the CLI because the collision rule
+ * below is the whole reason it is not a one-line findIndex, and inline it could not be tested.
+ *
+ * The unit lane has no flag: it is the bare positional operand, parsed by the caller.
+ */
+export function laneConcurrencyArgs(rest) {
+  const body = {};
+  for (const spec of Object.values(RUN_KINDS)) {
+    if (!spec.flag) continue;
+    // Anchored on the whole flag or on `flag=`, never a bare prefix: `--typecheck` matching
+    // `--typecheck-apps` as a prefix would set the WRONG lane's limit and then report back the
+    // lane you asked for, which reads as the command having worked.
+    const at = rest.findIndex((a) => a === spec.flag || String(a).startsWith(spec.flag + '='));
+    if (at === -1) continue;
+    const typed = String(rest[at]);
+    const inline = typed.includes('=') ? typed.slice(spec.flag.length + 1) : rest[at + 1];
+    body[spec.configKey] = Number(inline);
+  }
+  return body;
+}
 
 export function normalizeKind(kind) {
   if (kind === undefined || kind === null || kind === '') return DEFAULT_KIND;

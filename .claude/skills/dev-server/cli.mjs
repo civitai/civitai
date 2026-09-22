@@ -11,6 +11,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'f
 import {
   exitCodeFor,
   isTerminal as isTerminalStatus,
+  laneConcurrencyArgs,
   parseMaxWorkersFlag,
 } from './scripts/test-queue.mjs';
 import { resolveDaemonUrl } from './scripts/daemon-port.mjs';
@@ -660,13 +661,7 @@ async function cmdTest(sub, rest) {
       // did not mean to change is how the cap gets dropped while raising concurrency.
       const body = {};
       if (rest[0] !== undefined && !rest[0].startsWith('--')) body.concurrency = Number(rest[0]);
-      // Both spellings, because a caller who types the `=` form and silently gets no cap has no
-      // way to tell that from a cap that was applied — the reply prints maxWorkers either way.
-      const typecheckAt = rest.findIndex((a) => /^--typecheck(=|$)/.test(a));
-      if (typecheckAt !== -1) {
-        const inline = rest[typecheckAt].split('=')[1];
-        body.typecheckConcurrency = Number(inline !== undefined ? inline : rest[typecheckAt + 1]);
-      }
+      Object.assign(body, laneConcurrencyArgs(rest));
       const cacheAt = rest.findIndex((a) => /^--cache(=|$)/.test(a));
       if (cacheAt !== -1) {
         const inline = rest[cacheAt].split('=')[1];
@@ -1076,6 +1071,7 @@ Commands:
                       --typecheck n does the same for the typecheck lane)
                       [--max-workers <n>|none] also caps each run's vitest pool
                       [--typecheck <n>] sets the typecheck lane's limit
+                      [--typecheck-apps <n>] sets the app-typecheck lane's limit
                       [--cache off|shadow|on] result cache: on skips unchanged tests
   wt stale            List worktrees whose PR merged (read-only)
   wt rm <path>        Remove a worktree safely (unlinks junctions first)

@@ -25,7 +25,7 @@ import { access } from 'fs/promises';
 import { isPortFree } from './port-probe.mjs';
 import { samePath, canonicalPath, resolvePrimaryCheckout } from './paths.mjs';
 import { parsePort, resolveDaemonPort } from './daemon-port.mjs';
-import { TestQueue } from './test-queue.mjs';
+import { RUN_KINDS, TestQueue } from './test-queue.mjs';
 import {
   loadModeDefinitions,
   resolveSessionModes,
@@ -2634,11 +2634,16 @@ async function main() {
             }
             try {
               // Each key is applied only when the caller sent it. A POST carrying one field must
-              // not reset the other to its default — that is how a concurrency change would
+              // not reset the others to their defaults: that is how a concurrency change would
               // silently drop the worker cap and hand the box an uncapped pair.
-              if (parsed.concurrency !== undefined) testQueue.setConcurrency(parsed.concurrency);
-              if (parsed.typecheckConcurrency !== undefined) {
-                testQueue.setConcurrency(parsed.typecheckConcurrency, 'typecheck');
+              //
+              // Read from RUN_KINDS rather than one `if` per lane. A lane declared there but
+              // missed here runs at its default limit and cannot be seen or changed, which fails
+              // in the direction that reads as working.
+              for (const [kind, spec] of Object.entries(RUN_KINDS)) {
+                if (parsed[spec.configKey] !== undefined) {
+                  testQueue.setConcurrency(parsed[spec.configKey], kind);
+                }
               }
               if (parsed.maxWorkers !== undefined) testQueue.setMaxWorkers(parsed.maxWorkers);
               if (parsed.cacheMode !== undefined) testQueue.setCacheMode(parsed.cacheMode);
@@ -2648,29 +2653,27 @@ async function main() {
               return;
             }
           }
+          const laneLimits = {};
+          const lanes = {};
+          for (const [kind, spec] of Object.entries(RUN_KINDS)) {
+            laneLimits[spec.configKey] = testQueue.concurrencyFor(kind);
+            lanes[kind] = {
+              queued: testQueue.queuedFor(kind),
+              running: testQueue.runningFor(kind),
+              // Top-level `paused` is the unit lane alone, so `--typecheck 0` was a pause nothing
+              // reported: a queued typecheck sat at position 1 and read as merely waiting.
+              paused: testQueue.pausedFor(kind),
+            };
+          }
           res.writeHead(200);
           res.end(JSON.stringify({
-            concurrency: testQueue.concurrency,
-            typecheckConcurrency: testQueue.concurrencyFor('typecheck'),
+            ...laneLimits,
             maxWorkers: testQueue.maxWorkers,
             cacheMode: testQueue.cacheMode,
             paused: testQueue.paused,
             queued: testQueue.order.length,
             running: testQueue.running.size,
-            lanes: {
-              unit: {
-                queued: testQueue.queuedFor('unit'),
-                running: testQueue.runningFor('unit'),
-                paused: testQueue.pausedFor('unit'),
-              },
-              typecheck: {
-                queued: testQueue.queuedFor('typecheck'),
-                running: testQueue.runningFor('typecheck'),
-                // Top-level `paused` is the unit lane, so `--typecheck 0` was a pause nothing
-                // reported: a queued typecheck sat at position 1 and read as merely waiting.
-                paused: testQueue.pausedFor('typecheck'),
-              },
-            },
+            lanes,
           }));
           return;
         }
