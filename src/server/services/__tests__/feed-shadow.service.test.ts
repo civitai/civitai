@@ -56,6 +56,8 @@ describe('fetchFeedAnswer', () => {
     } finally {
       span.end();
       await provider.shutdown();
+      context.disable();
+      trace.disable();
       propagation.disable();
     }
     const headers = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].headers as Record<string, string>;
