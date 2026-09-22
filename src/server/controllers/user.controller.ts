@@ -1611,8 +1611,8 @@ export const setUserSettingHandler = async ({
     // endpoint's schema, so turning ads off left the session serving `allowAds: true` for up
     // to 4h. The gate is a set now, so adding a projected key is one edit here rather than a
     // silent re-introduction of the same bug (#4298's defect class).
-    // `redBrowsingLevel` is deliberately absent — it is not part of `setUserSettingsInput`;
-    // it is written by `updateContentSettings`, which performs its own bust.
+    // `redBrowsingLevel` is deliberately absent — it is not part of `setUserSettingsInput`,
+    // and nothing writes it any more.
     //
     // Gated on a CHANGE, not on key presence, and compared against `restInput` — the keys
     // THIS request sent — rather than against the stored blob. Mirrors the

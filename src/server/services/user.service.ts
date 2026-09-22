@@ -3026,14 +3026,15 @@ export async function updateContentSettings({
   showNsfw,
   browsingLevel,
   autoplayGifs,
-  domain,
+  // One browsing level on every domain. Red used to keep its own copy in
+  // settings.redBrowsingLevel, which nothing read, so a change made on red never stuck.
+  domain: _domain,
   ...data
 }: UpdateContentSettingsInput & { userId: number }) {
   if (
     blurNsfw !== undefined ||
     showNsfw !== undefined ||
-    // Red domain we'll store in the settings.
-    (browsingLevel !== undefined && domain !== 'red') ||
+    browsingLevel !== undefined ||
     autoplayGifs !== undefined
   ) {
     await dbWrite.user.update({
@@ -3043,16 +3044,11 @@ export async function updateContentSettings({
     userUpdateCounter?.inc({ location: 'user.service:updateUserContentSettings' });
     await userSettingsCache().bust([userId]);
   }
-  if (Object.keys(data).length > 0 || (domain === 'red' && browsingLevel !== undefined)) {
+  if (Object.keys(data).length > 0) {
     // Only the keys this call is changing. Re-reading the blob and writing it back
     // would restore every other key to the value it held at read time, discarding a
     // concurrent write to any of them (notice dismissals, feature toggles, …).
-    await setUserSetting(userId, {
-      ...removeEmpty(data),
-      ...(domain === 'red' && browsingLevel !== undefined
-        ? { redBrowsingLevel: browsingLevel }
-        : {}),
-    });
+    await setUserSetting(userId, removeEmpty(data));
   }
   // Await so the refresh marker is set in Redis before this mutation returns.
   // Otherwise the fire-and-forget can race the next API call / session read
