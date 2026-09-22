@@ -2,6 +2,7 @@ import { MantineProvider } from '@mantine/core';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as React from 'react';
 import { renderToString } from 'react-dom/server';
+import type { Root } from 'react-dom/client';
 import { hydrateRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { RegionInfo } from '~/server/utils/region-blocking';
@@ -41,6 +42,12 @@ import type { ConsentDecision } from '~/components/Consent/consent.utils';
  * that the fix costs nothing at hydration.
  */
 
+// 🔴 SIBLING FILE, SAME STUB. `ThirdPartyConsentProvider.browser.test.tsx` stubs
+// the SAME four ambient queries. `AppProvider` has accreted them one at a time, so a fifth must
+// be added to BOTH — and the reason this is a comment rather than a shared module is that the
+// failure is LOUD: an unstubbed query is a `TypeError` naming the missing property during
+// render, not a silent zero. A shared factory would have to be pulled in inside the hoisted
+// `vi.mock` callback, which trades a loud failure for a hoisting trap.
 // Only the ambient queries `AppProvider` fires. Spread of the real module, not a wholesale
 // replacement (`local-rules/no-wholesale-module-mock`).
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -100,6 +107,29 @@ function Probe() {
 }
 
 /**
+ * 🔴 THE POSITIVE CONTROL FOR HYDRATION ITSELF — without it every assertion in this file is a
+ * zero of unknown provenance.
+ *
+ * `hydrateInto` plants the server HTML into the container BEFORE hydrating, so every
+ * post-hydration DOM assertion here is already satisfied by that planted markup, and
+ * `recoverable`/`hydrationConsoleErrors()` being EMPTY is exactly what you also get when
+ * hydration never ran. Shorten the macrotask yield loop to zero and the three content tests
+ * below would stay green while reporting a clean hydration of a tree that never hydrated — the
+ * INSTRUMENT CHECK would catch it, but only because its tree is a single element, i.e. the
+ * cheapest possible point on the one dimension (tree size) that decides how many ticks
+ * hydration needs. Found by the `civitai-test-review` lane.
+ *
+ * This beacon is an ARRIVAL assertion that only the client can satisfy: `false` in the server
+ * HTML, `true` once React has hydrated and run passive effects. Server and first client render
+ * both emit `false`, so it cannot itself create the mismatch it is here to let us rule out.
+ */
+function HydrationBeacon() {
+  const [hydrated, setHydrated] = React.useState(false);
+  React.useEffect(() => setHydrated(true), []);
+  return <i data-testid="hydrated" data-hydrated={String(hydrated)} />;
+}
+
+/**
  * The `_app` wiring, reduced to the two providers that matter, under the providers the
  * consent banner needs. `region` here is the SSR value — present on BOTH the server render and
  * the hydration render, which is exactly the premise under test.
@@ -136,6 +166,7 @@ function Tree({
             loggedIn={false}
           >
             <Probe />
+            <HydrationBeacon />
           </ConsentProviderWithLegacyRegionProp>
         </AppProvider>
       </MantineProvider>
@@ -155,6 +186,15 @@ let consoleErrors: string[] = [];
 let recoverable: string[] = [];
 let restoreConsole: (() => void) | null = null;
 const containers: HTMLElement[] = [];
+/**
+ * Every root this file hydrates, so `afterEach` can unmount it. Detaching the container alone
+ * leaves the root MOUNTED against detached nodes, still able to write into a later test's
+ * freshly-armed `recoverable`/`consoleErrors` arrays. That direction fails red rather than
+ * green, so it is a flake vector rather than a false-confidence one — but it is free to close.
+ * (The pre-existing `AppsRailNav.ssrHydration.browser.test.tsx` this pattern came from does not
+ * do this; it is bounded at 4 roots there and harmless, so it is not a defect being carried.)
+ */
+const roots: Root[] = [];
 
 beforeEach(() => {
   consoleErrors = [];
@@ -172,6 +212,9 @@ beforeEach(() => {
 afterEach(() => {
   restoreConsole?.();
   restoreConsole = null;
+  // Unmount BEFORE detaching — a root unmounted after its container is gone still runs, and a
+  // surviving root can report into the next test's arrays.
+  for (const r of roots.splice(0)) r.unmount();
   for (const c of containers.splice(0)) c.remove();
 });
 
@@ -185,25 +228,35 @@ function hydrationConsoleErrors() {
 /**
  * Plant `html` in a fresh container and hydrate it with `tree`, capturing every recoverable
  * error React reports. No `act()` — React 18.3's lives in `react-dom/test-utils`, which this
- * repo's `@types/react-dom` cannot resolve through its `exports` map. Yielding macrotasks is
- * only sound because the INSTRUMENT CHECK would report ZERO recoverable errors if the
- * hydration had not run at all, so "no mismatch" cannot come from "nothing happened".
+ * repo's `@types/react-dom` cannot resolve through its `exports` map. The yield budget is not
+ * taken on trust: every caller asserts `hydrated()` flipped to `'true'`, which only the client
+ * can produce, so "no mismatch" can never come from "nothing happened" — see `HydrationBeacon`.
  */
 async function hydrateInto(html: string, tree: React.ReactElement) {
   const container = document.createElement('div');
   container.innerHTML = html;
   document.body.appendChild(container);
   containers.push(container);
-  hydrateRoot(container, tree, {
-    onRecoverableError: (err) => {
-      recoverable.push(err instanceof Error ? err.message : String(err));
-    },
-  });
+  roots.push(
+    hydrateRoot(container, tree, {
+      onRecoverableError: (err) => {
+        recoverable.push(err instanceof Error ? err.message : String(err));
+      },
+    })
+  );
   for (let i = 0; i < 20; i++) {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   return container;
 }
+
+/**
+ * `'true'` ONLY after React hydrated the planted markup and ran passive effects — the control
+ * that stops `recoverable: []` being an unproven zero. `'false'` means the markup is still the
+ * server's and nothing hydrated.
+ */
+const hydratedFlag = (container: HTMLElement) =>
+  container.querySelector('[data-testid="hydrated"]')?.getAttribute('data-hydrated') ?? '(absent)';
 
 const probeAttrs = (container: HTMLElement) => {
   const el = container.querySelector('[data-testid="consent-probe"]');
@@ -239,12 +292,16 @@ describe('ThirdPartyConsentProvider — real SSR → hydrate', () => {
     expect(html).toContain('data-required="true"');
     // The banner must NOT be in the server HTML for an already-decided visitor.
     expect(html).not.toContain('Your privacy choices');
+    expect(html).toContain('data-hydrated="false"');
 
     const container = await hydrateInto(
       html,
       <Tree region={CALIFORNIA} initialConsent="rejected" />
     );
 
+    // POSITIVE CONTROL FIRST: hydration actually ran on THIS tree. Everything below is a zero
+    // or a read of planted markup, and neither means anything until this holds.
+    expect(hydratedFlag(container)).toBe('true');
     expect(recoverable).toEqual([]);
     expect(hydrationConsoleErrors()).toEqual([]);
     expect(probeAttrs(container)).toEqual({
@@ -259,9 +316,11 @@ describe('ThirdPartyConsentProvider — real SSR → hydrate', () => {
 
     expect(html).toContain('Your privacy choices');
     expect(html).toContain('data-allowed="false"');
+    expect(html).toContain('data-hydrated="false"');
 
     const container = await hydrateInto(html, <Tree region={CALIFORNIA} initialConsent={null} />);
 
+    expect(hydratedFlag(container)).toBe('true');
     expect(recoverable).toEqual([]);
     expect(hydrationConsoleErrors()).toEqual([]);
     expect(container.textContent).toContain('Your privacy choices');
@@ -275,9 +334,11 @@ describe('ThirdPartyConsentProvider — real SSR → hydrate', () => {
     expect(html).toContain('data-allowed="true"');
     expect(html).toContain('data-required="false"');
     expect(html).not.toContain('Your privacy choices');
+    expect(html).toContain('data-hydrated="false"');
 
     const container = await hydrateInto(html, <Tree region={TEXAS} initialConsent={null} />);
 
+    expect(hydratedFlag(container)).toBe('true');
     expect(recoverable).toEqual([]);
     expect(hydrationConsoleErrors()).toEqual([]);
     expect(probeAttrs(container)).toEqual({

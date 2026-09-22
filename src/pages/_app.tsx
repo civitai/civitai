@@ -275,11 +275,17 @@ function MyApp(props: CustomAppProps) {
                   {/* <ChadGPT isAuthed={!!session} /> */}
                   <FeatureFlagsProvider flags={flags} userFlags={userFeatureFlags}>
                     {/* Faro RUM bootstrap — dark until the `faro` flag + build-args are on.
-                        `region` is the SAME SSR-derived country code ThirdPartyConsentProvider
-                        receives above (getRegion → cf-ipcountry/cf-region-code/x-isuk), threaded
-                        in as a prop so RUM beacons carry a geography dimension (→ Loki
+                        `region` is the SAME SSR-derived country code AppProvider is seeded with
+                        above (getRegion → cf-ipcountry/cf-region-code/x-isuk), threaded in as a
+                        prop so RUM beacons carry a geography dimension (→ Loki
                         session_attr_region / session_attr_timezone). See
                         src/utils/faro/geoAttributes.ts.
+                        🔴 THE CONSENT GATE MAY NOT READ IT THIS WAY AND FaroProvider MAY — the
+                        difference is re-evaluation, not correctness of the value. FaroProvider
+                        initialises ONCE behind a module-scope guard and its effect depends only
+                        on `enabled`, so the `undefined` that arrives on a later navigation is
+                        never read. ThirdPartyConsentProvider re-evaluates on every render, which
+                        is why it reads the frozen `useAppContext().region` instead.
                         🔴 OPTIONAL-CHAIN IT. `region` is an SSR-ONLY prop: `getInitialProps`
                         early-returns before `getRegion(request)` on a CLIENT-SIDE navigation
                         (no `req`), so `region` is `undefined` on every route transition even

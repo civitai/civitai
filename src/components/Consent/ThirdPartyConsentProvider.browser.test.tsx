@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as TrpcModule from '~/utils/trpc';
 import type { RegionInfo } from '~/server/utils/region-blocking';
@@ -47,6 +47,12 @@ import type { ServerDomains } from '~/shared/constants/domain.constants';
  * does not read.
  */
 
+// 🔴 SIBLING FILE, SAME STUB. `ThirdPartyConsentProvider.ssrHydration.browser.test.tsx` stubs
+// the SAME four ambient queries. `AppProvider` has accreted them one at a time, so a fifth must
+// be added to BOTH — and the reason this is a comment rather than a shared module is that the
+// failure is LOUD: an unstubbed query is a `TypeError` naming the missing property during
+// render, not a silent zero. A shared factory would have to be pulled in inside the hoisted
+// `vi.mock` callback, which trades a loud failure for a hoisting trap.
 // Only the AMBIENT queries `AppProvider` fires on mount. Spread of the original module, not a
 // wholesale replacement — `local-rules/no-wholesale-module-mock` bans the latter, and an
 // omitted export fails the whole file at COLLECTION, reported as "no tests" rather than red.
@@ -83,8 +89,39 @@ const SERVER_DOMAINS: ServerDomains = {
   red: { primary: 'civitai.red', aliases: [] },
 };
 
+/**
+ * 🔴 TWO CONTROLS THE CONSENT ASSERTIONS CANNOT PROVIDE FOR THEMSELVES.
+ *
+ * Post-fix the simulated navigation is a semantic NO-OP by construction — `region` is the only
+ * prop that moves, `AppProvider` freezes it, and the consent provider no longer reads it — so
+ * every post-navigation assertion is identical to its pre-navigation twin. Green therefore
+ * cannot distinguish "the navigation happened and the gate survived" from "`rerender` did
+ * nothing at all". The red-at-base run proves the mechanism TODAY, but it lives in a PR
+ * description, not in this file: one harness change (a `wrapper` tweak, a vitest-browser-react
+ * bump, a "simplification" of `AppShell`) and the file goes inert with a full green.
+ *
+ *   - `data-nav` is an arrival assertion that the re-render REACHED this subtree. It is
+ *     gate-independent — children render on both branches of `isConsentRequired` — so it stays
+ *     valid pre- and post-fix, and it fails fast and legibly if propagation stops.
+ *   - `data-mounts` counts how many times this subtree MOUNTED. Pre-fix, flipping the gate
+ *     predicate changed the child element's type at that position (`CAConsentManager` →
+ *     Fragment), so React unmounted and remounted EVERYTHING below the consent provider — which
+ *     in `_app` is the whole app. Post-fix it must stay at 1. That makes the remount a measured
+ *     quantity rather than a claim.
+ *
+ * Both flagged by the `civitai-test-review` lane, which named the exact inert-harness mutant.
+ */
+let subtreeMounts = 0;
+
+function MountLedger() {
+  React.useEffect(() => {
+    subtreeMounts += 1;
+  }, []);
+  return null;
+}
+
 /** Mirrors what a `useThirdPartyConsent()` consumer (GoogleAnalytics, AdsProvider, the embeds) reads. */
-function Probe() {
+function Probe({ nav }: { nav: number }) {
   const { consent, required, allowed } = useThirdPartyConsent();
   return (
     <div
@@ -92,6 +129,7 @@ function Probe() {
       data-required={String(required)}
       data-allowed={String(allowed)}
       data-consent={consent ?? 'none'}
+      data-nav={String(nav)}
     />
   );
 }
@@ -110,9 +148,12 @@ const ConsentProviderWithLegacyRegionProp =
 function AppShell({
   region,
   initialConsent,
+  nav,
 }: {
   region: RegionInfo | undefined;
   initialConsent: ConsentDecision | null;
+  /** Bumped on the simulated navigation; see the two controls above. */
+  nav: number;
 }) {
   return (
     <AppProvider
@@ -133,7 +174,8 @@ function AppShell({
         initialConsent={initialConsent}
         loggedIn={false}
       >
-        <Probe />
+        <MountLedger />
+        <Probe nav={nav} />
       </ConsentProviderWithLegacyRegionProp>
     </AppProvider>
   );
@@ -141,22 +183,31 @@ function AppShell({
 
 const probe = () => page.getByTestId('consent-probe');
 
+beforeEach(() => {
+  subtreeMounts = 0;
+});
+
 describe('ThirdPartyConsentProvider — the consent gate must survive a client-side navigation', () => {
   test('🔴 a CA visitor who REJECTED stays rejected after `_app` loses its region prop', async () => {
     const { rerender } = await renderWithProviders(
-      <AppShell region={CALIFORNIA} initialConsent="rejected" />
+      <AppShell region={CALIFORNIA} initialConsent="rejected" nav={0} />
     );
 
     // First (server-rendered) page load: the gate is up and the rejection is honoured.
     await expect.element(probe()).toHaveAttribute('data-required', 'true');
     await expect.element(probe()).toHaveAttribute('data-allowed', 'false');
     await expect.element(probe()).toHaveAttribute('data-consent', 'rejected');
+    await vi.waitFor(() => expect(subtreeMounts).toBe(1));
 
     // The client-side navigation. `_app` re-renders with `region` absent from pageProps;
     // AppProvider stays MOUNTED (same element type, same position) so its frozen context
     // value is unchanged, and this is the only thing standing between the visitor and
     // `allowed: true`.
-    await rerender(<AppShell region={undefined} initialConsent="rejected" />);
+    await rerender(<AppShell region={undefined} initialConsent="rejected" nav={1} />);
+
+    // LIVENESS FIRST: the re-render reached this subtree. Without it a `rerender` that
+    // silently did nothing would satisfy every consent assertion below.
+    await expect.element(probe()).toHaveAttribute('data-nav', '1');
 
     await expect.element(probe()).toHaveAttribute(
       'data-allowed',
@@ -167,18 +218,30 @@ describe('ThirdPartyConsentProvider — the consent gate must survive a client-s
     );
     await expect.element(probe()).toHaveAttribute('data-required', 'true');
     await expect.element(probe()).toHaveAttribute('data-consent', 'rejected');
+
+    // 🔴 And the gate did not merely survive — nothing below it remounted. Pre-fix the
+    // predicate flipped, which changed the child element's TYPE at this position, so React
+    // tore down and rebuilt the whole subtree (in `_app`, the entire app). This is 2 on the
+    // pre-fix tree and 1 here.
+    expect(
+      subtreeMounts,
+      'the subtree under the consent provider remounted on a client-side navigation — pre-fix ' +
+        'behaviour, caused by the gate predicate flipping and changing the child element type'
+    ).toBe(1);
   });
 
   test('🔴 a CA visitor who has NOT decided is still ASKED after a client-side navigation', async () => {
     const { rerender } = await renderWithProviders(
-      <AppShell region={CALIFORNIA} initialConsent={null} />
+      <AppShell region={CALIFORNIA} initialConsent={null} nav={0} />
     );
 
     await expect.element(probe()).toHaveAttribute('data-required', 'true');
     await expect.element(probe()).toHaveAttribute('data-allowed', 'false');
     await expect.element(page.getByText('Your privacy choices', { exact: true })).toBeVisible();
 
-    await rerender(<AppShell region={undefined} initialConsent={null} />);
+    await rerender(<AppShell region={undefined} initialConsent={null} nav={1} />);
+
+    await expect.element(probe()).toHaveAttribute('data-nav', '1');
 
     // Still pending, still blocked, still asking. Pre-fix the banner disappeared and
     // `allowed` flipped to true — the visitor was never asked and was tracked anyway.
@@ -189,7 +252,7 @@ describe('ThirdPartyConsentProvider — the consent gate must survive a client-s
 
   test('a non-consent region is NOT gated — the control for the two tests above', async () => {
     const { rerender } = await renderWithProviders(
-      <AppShell region={TEXAS} initialConsent={null} />
+      <AppShell region={TEXAS} initialConsent={null} nav={0} />
     );
 
     // No Provider is rendered, so consumers read the context default. This is the arm that
@@ -199,9 +262,14 @@ describe('ThirdPartyConsentProvider — the consent gate must survive a client-s
     await expect.element(probe()).toHaveAttribute('data-allowed', 'true');
     await expect.element(probe()).toHaveAttribute('data-consent', 'none');
 
-    await rerender(<AppShell region={undefined} initialConsent={null} />);
+    await rerender(<AppShell region={undefined} initialConsent={null} nav={1} />);
 
+    await expect.element(probe()).toHaveAttribute('data-nav', '1');
     await expect.element(probe()).toHaveAttribute('data-required', 'false');
     await expect.element(probe()).toHaveAttribute('data-allowed', 'true');
+    // Never gated, so the predicate never flipped and nothing remounted — on the pre-fix tree
+    // too. This arm is what says `subtreeMounts === 1` above is about the GATE and not about
+    // `rerender` being incapable of remounting anything.
+    expect(subtreeMounts).toBe(1);
   });
 });

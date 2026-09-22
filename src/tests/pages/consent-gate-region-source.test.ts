@@ -39,11 +39,18 @@ import { describe, expect, it } from 'vitest';
  *
  * ## What it checks, stated as narrowly as it is implemented
  *
+ *   0a. `_app` passes `region={region}` to `<AppProvider>`. THE PRODUCER SIDE, and since the
+ *      consent prop was removed it is the gate's only remaining input — see that test's own
+ *      header for why dropping it is silent and universal.
+ *   0b. `<ThirdPartyConsentProvider>` is a DESCENDANT of `<AppProvider>` in `_app`. This is what
+ *      makes `useAppContext()`'s throw unreachable; nothing else here asserts a tree shape.
  *   1. `_app` renders exactly one `<ThirdPartyConsentProvider>`, and that element carries
  *      neither a `region` attribute nor ANY JSX spread — a spread could smuggle one in without
  *      the attribute ever appearing.
- *   2. The component's `Props` type declares no `region` member, so re-adding the call site
- *      alone is a compile error rather than a silently-ignored prop.
+ *   2. The component's `Props` type declares no `region` member AND its parameter is annotated
+ *      with the bare `Props` identifier, so re-adding the call site is a compile error rather
+ *      than a silently-ignored prop. Both halves are needed: widening the annotation in place
+ *      (`Props & { region?: … }`) leaves the alias untouched and re-opens the call site.
  *   3. The component binds `region` by DESTRUCTURING a `useAppContext()` call.
  *   4. `useMaybeAppContext` is used nowhere in the component file — its own `it`, not a
  *      trailing assertion on (3), because every mutant that reaches for it ALSO breaks (3)'s
@@ -59,7 +66,8 @@ import { describe, expect, it } from 'vitest';
  * ## What it does NOT check
  *
  * That `AppProvider` still freezes its value (the browser test owns that), and anything about
- * `CONSENT_REQUIRED_REGIONS`' membership. It is deliberately over-strict about spelling: a
+ * how `region` is DERIVED or which regions are in `CONSENT_REQUIRED_REGIONS` — this file pins
+ * the wiring only. It is deliberately over-strict about spelling: a
  * renamed import of `ThirdPartyConsentProvider` or `useAppContext`, or reading region via
  * `useAppContext().region` without destructuring, fails here even though it is safe. That
  * direction cannot pass while the hazard exists — update it if you change the spelling on
@@ -105,30 +113,94 @@ function consentComponentBody(sourceFile: ts.SourceFile): ts.Block {
   return decl.body;
 }
 
-/** The opening elements of every `<ThirdPartyConsentProvider …>` in a file. */
-function consentProviderElements(scope: ts.Node) {
+type JsxOpener = ts.JsxSelfClosingElement | ts.JsxOpeningElement;
+
+/** The opening elements of every `<Tag …>` in a subtree. */
+function jsxOpeners(scope: ts.Node, tag: string): JsxOpener[] {
   return collect(
     scope,
     (n) =>
       (ts.isJsxSelfClosingElement(n) || ts.isJsxOpeningElement(n)) &&
       ts.isIdentifier(n.tagName) &&
-      n.tagName.text === 'ThirdPartyConsentProvider'
-  ) as (ts.JsxSelfClosingElement | ts.JsxOpeningElement)[];
+      n.tagName.text === tag
+  ) as JsxOpener[];
+}
+
+/** The single `<Tag …>` in a file, or a loud error naming what moved. */
+function soleJsxOpener(sourceFile: ts.SourceFile, tag: string, file: string): JsxOpener {
+  const found = jsxOpeners(sourceFile, tag);
+  if (found.length !== 1) {
+    throw new Error(
+      `expected exactly one <${tag}> in ${file}, found ${found.length}. If it was renamed or ` +
+        `aliased on import, re-point this guard; if it was removed, this guard's subject is ` +
+        `gone and the removal needs a deliberate decision, not a silently-passing test.`
+    );
+  }
+  return found[0];
+}
+
+/** A named attribute on a JSX opener, or `undefined`. */
+function jsxAttr(el: JsxOpener, name: string): ts.JsxAttribute | undefined {
+  return el.attributes.properties.find(
+    (p): p is ts.JsxAttribute =>
+      ts.isJsxAttribute(p) && ts.isIdentifier(p.name) && p.name.text === name
+  );
 }
 
 describe('the consent gate reads `region` from context, never from an `_app` prop', () => {
+  /**
+   * 🔴 THE PRODUCER SIDE. Removing the `region` prop from the consent provider made
+   * `<AppProvider region={region}>` the gate's ONLY remaining input, and nothing else guards it:
+   * deleting that attribute compiles (`AppProviderProps.region` is optional), lints (`region` is
+   * still read by `<FaroProvider region={region?.countryCode} />`), and leaves every other
+   * assertion in this file AND both browser tests green — the browser tests build their own
+   * `AppProvider` and feed it `region` directly, which is their stated limitation. The result
+   * would be `useAppContext().region === undefined` for every visitor on every page, i.e. the
+   * gate never mounting AT ALL — strictly worse than the bug this PR fixes, and with no compile
+   * error, no failing test and no log line. Found by the `civitai-test-review` lane.
+   */
+  it("`_app` seeds AppProvider with `region` — the gate's only remaining input", () => {
+    const appProvider = soleJsxOpener(parse(APP_FILE), 'AppProvider', APP_FILE);
+
+    expect(
+      jsxAttr(appProvider, 'region')?.initializer?.getText() ?? '(absent)',
+      'AppProvider is the ONLY region source ThirdPartyConsentProvider has since the prop was ' +
+        'removed. Dropping this attribute compiles, lints and leaves every consent test green ' +
+        'while the gate silently never applies to anyone'
+    ).toBe('{region}');
+  });
+
+  /**
+   * 🔴 WHAT MAKES THE THROW UNREACHABLE. `useAppContext()` throws `missing AppProvider in tree`
+   * without a provider, and the nearest `<ErrorBoundary>` in `_app` is a DESCENDANT of the
+   * consent provider — React boundaries never catch a throw from an ancestor — so a misnesting
+   * here is an SSR 500 and a client white-screen, with nothing to catch it. Every other
+   * assertion in this file inspects props; a reorder of `_app`'s provider stack that lifted the
+   * consent gate above `AppProvider` would pass all of them. Found by the
+   * `civitai-correctness-review` lane.
+   */
+  it('`_app` nests the consent provider INSIDE AppProvider, or `useAppContext()` throws', () => {
+    const app = parse(APP_FILE);
+    const appProvider = soleJsxOpener(app, 'AppProvider', APP_FILE);
+    const consentProvider = soleJsxOpener(app, 'ThirdPartyConsentProvider', APP_FILE);
+
+    // `<AppProvider>`'s opener is the child of the JsxElement whose subtree is everything it
+    // wraps, so containment is a position test on that element's span — not on the opener's.
+    const appProviderElement = appProvider.parent;
+    const enclosed =
+      appProviderElement.getStart() < consentProvider.getStart() &&
+      consentProvider.getEnd() < appProviderElement.getEnd();
+
+    expect(
+      enclosed,
+      '<ThirdPartyConsentProvider> must be a DESCENDANT of <AppProvider> in _app — it calls ' +
+        'useAppContext(), which THROWS without one, above every ErrorBoundary in the tree'
+    ).toBe(true);
+  });
+
   it('`_app` passes no `region` — and no spread that could carry one — to the consent provider', () => {
-    const elements = consentProviderElements(parse(APP_FILE));
-
-    if (elements.length !== 1) {
-      throw new Error(
-        `expected exactly one <ThirdPartyConsentProvider> in ${APP_FILE}, found ` +
-          `${elements.length}. If it was renamed or aliased on import, re-point this guard; ` +
-          `if it was removed, the consent gate is gone and this file should go with it.`
-      );
-    }
-
-    const props = elements[0].attributes.properties;
+    const props = soleJsxOpener(parse(APP_FILE), 'ThirdPartyConsentProvider', APP_FILE).attributes
+      .properties;
 
     const named = props
       .filter((p): p is ts.JsxAttribute => ts.isJsxAttribute(p) && ts.isIdentifier(p.name))
@@ -178,6 +250,24 @@ describe('the consent gate reads `region` from context, never from an `_app` pro
     ).not.toContain('region');
     // A floor on the ledger: without this, deleting every member would pass.
     expect(members).toEqual(expect.arrayContaining(['children', 'initialConsent', 'loggedIn']));
+
+    // 🔴 The title above claims the compile error; `Props` alone does not deliver it. A
+    // signature of `(props: Props & { region?: RegionInfo })` leaves `Props` untouched, passes
+    // every other assertion in this file, and makes `<ThirdPartyConsentProvider region={…}>`
+    // compile again. Assert the parameter is annotated with the bare `Props` identifier, so the
+    // body is as wide as the sentence. Found by the `civitai-test-review` lane.
+    const params = (
+      collect(
+        parse(CONSENT_FILE),
+        (n) => ts.isFunctionDeclaration(n) && n.name?.text === 'ThirdPartyConsentProvider'
+      )[0] as ts.FunctionDeclaration
+    ).parameters;
+    expect(
+      params.map((p) => p.type?.getText() ?? '(untyped)'),
+      "the component's parameter must be annotated with the bare `Props` identifier — widening " +
+        'it in place (`Props & { region?: RegionInfo }`) re-opens the call site without touching ' +
+        'the `Props` alias this test just checked'
+    ).toEqual(['Props']);
   });
 
   it('`region` is destructured from `useAppContext()`', () => {
