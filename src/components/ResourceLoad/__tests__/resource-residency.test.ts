@@ -2,6 +2,23 @@ import { describe, expect, it } from 'vitest';
 import { describeResidency } from '~/components/ResourceLoad/ResourceResidency';
 
 describe('describeResidency', () => {
+  it.each([
+    [{ status: 'available', workers: 1 }, true],
+    [{ status: 'loading', progress: 0.99, workers: 1, lane: 'low' }, false],
+    [{ status: 'queued', queuePosition: 0, lane: 'low' }, false],
+    [{ status: 'unavailable', queuePosition: 2 }, false],
+    [{ status: 'unavailable' }, false],
+  ] as const)('%o is loaded: %s', (availability, loaded) => {
+    expect(describeResidency(availability)?.loaded).toBe(loaded);
+  });
+
+  it.each([[{ status: 'unsupported' }], [{ status: 'unknown' }]] as const)(
+    'says nothing for %o',
+    (availability) => {
+      expect(describeResidency(availability)).toBeNull();
+    }
+  );
+
   it('quotes a settled transfer’s ETA', () => {
     const residency = describeResidency({
       status: 'loading',

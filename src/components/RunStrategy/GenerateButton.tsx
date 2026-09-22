@@ -1,8 +1,7 @@
 import type { ButtonProps } from '@mantine/core';
 import { Badge, Button, Group, Text, Tooltip, useMantineTheme } from '@mantine/core';
-import { IconBolt, IconBrush, IconCloudDownload } from '@tabler/icons-react';
+import { IconBolt, IconBrush } from '@tabler/icons-react';
 import React from 'react';
-import { useResidencyDescription } from '~/components/ResourceLoad/ResourceResidency';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -20,13 +19,10 @@ export function GenerateButton({
   versionId,
   modelId,
   wildcardSetId,
-  showLoadState,
   ...buttonProps
 }: Props) {
   const theme = useMantineTheme();
   const { trackAction } = useTrackEvent();
-  const residency = useResidencyDescription(showLoadState ? versionId : undefined);
-  const notLoaded = residency && !residency.loaded ? residency : null;
   // `generationPrice` is what THIS viewer must pay and turns the button into a purchase action.
   // `listedPrice` is what buyers pay, shown to the owner/mod who already has access — it must never
   // reach onClickHandler, or a creator clicking Generate on their own model would be asked to buy it.
@@ -150,18 +146,10 @@ export function GenerateButton({
           <Text inherit inline fw={600} className="hide-mobile">
             Create
           </Text>
-          {notLoaded && <IconCloudDownload size={18} aria-label={notLoaded.label} />}
         </Group>
       )}
     </Button>
   );
-
-  if (notLoaded)
-    return (
-      <Tooltip label={notLoaded.description} multiline w={260} withArrow>
-        {button}
-      </Tooltip>
-    );
 
   return iconOnly ? (
     <Tooltip label="Start Generating" withArrow>
@@ -196,6 +184,4 @@ type Props = Omit<ButtonProps, 'onClick' | 'children'> & {
    * `modelVersion.getById` stamps `wildcardSetId` on the version response.
    */
   wildcardSetId?: number;
-  /** Mark the button when `versionId` is not loaded on the generator. */
-  showLoadState?: boolean;
 };

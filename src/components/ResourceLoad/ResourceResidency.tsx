@@ -1,19 +1,20 @@
-import { HoverCard, Text, ThemeIcon } from '@mantine/core';
-import { IconCloudDownload } from '@tabler/icons-react';
+import { Badge, Group, Text, Tooltip } from '@mantine/core';
+import clsx from 'clsx';
 import { chunk } from 'lodash-es';
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ResourceLoadAvailability } from '~/server/schema/resource-load.schema';
-import { isQueuedAvailability } from '~/server/schema/resource-load.schema';
+import { isQueuedAvailability, RESIDENCY_MAX_IDS } from '~/server/schema/resource-load.schema';
 import { formatDownloadEta } from '~/components/ResourceLoad/download-eta';
 import { settledEtaSeconds } from '~/shared/orchestrator/download-preparation';
 import { trpc } from '~/utils/trpc';
+import cardClasses from '~/components/Cards/Cards.module.css';
 
 export function useResourceResidency(modelVersionId: number | undefined) {
   const currentUser = useCurrentUser();
   const { data } = trpc.resourceLoad.getResidency.useQuery(
     { modelVersionIds: [modelVersionId ?? 0] },
-    { enabled: !!currentUser && !!modelVersionId, staleTime: 30_000 }
+    { enabled: !!currentUser && modelVersionId != null && modelVersionId > 0, staleTime: 30_000 }
   );
   return data?.find((x) => x.modelVersionId === modelVersionId)?.availability;
 }
@@ -72,19 +73,11 @@ export function describeResidency(availability: ResourceLoadAvailability): Resid
   }
 }
 
-export function useResidencyDescription(modelVersionId: number | undefined) {
-  const availability = useResourceResidency(modelVersionId);
-  return availability ? describeResidency(availability) : null;
-}
-
 const ResidencyBatchContext = createContext<Map<number, ResourceLoadAvailability> | null>(null);
 
-/** One page of picker results. The endpoint takes a page at a time; more than that is paging. */
-const RESIDENCY_BATCH_SIZE = 50;
-
 /**
- * Loads one page of results' load state in a single request. Without it every card asks on its own,
- * and request batching is off for most users, so a page of results is a page of HTTP requests.
+ * One request for the whole list instead of one per row: tRPC request batching is off for most
+ * users, so a row each is an HTTP request each.
  */
 export function ResidencyBatchProvider({
   modelVersionIds,
@@ -94,8 +87,11 @@ export function ResidencyBatchProvider({
   children: ReactNode;
 }) {
   const currentUser = useCurrentUser();
-  const ids = useMemo(() => [...new Set(modelVersionIds)].sort((a, b) => a - b), [modelVersionIds]);
-  const batches = useMemo(() => chunk(ids, RESIDENCY_BATCH_SIZE), [ids]);
+  const ids = useMemo(
+    () => [...new Set(modelVersionIds.filter((id) => id > 0))].sort((a, b) => a - b),
+    [modelVersionIds]
+  );
+  const batches = useMemo(() => chunk(ids, RESIDENCY_MAX_IDS), [ids]);
 
   const results = trpc.useQueries((t) =>
     batches.map((modelVersionIds) =>
@@ -117,27 +113,119 @@ export function ResidencyBatchProvider({
   return <ResidencyBatchContext.Provider value={value}>{children}</ResidencyBatchContext.Provider>;
 }
 
-/** Nothing to show for a loaded resource — a compact row needs no mark. */
-export function ResourceResidencyIcon({ modelVersionId }: { modelVersionId: number }) {
+/** Under a `ResidencyBatchProvider` this reads the batch and never fetches, so an id the provider was not given returns null. */
+export function useResidency(modelVersionId: number | undefined) {
   const batched = useContext(ResidencyBatchContext);
   const fetched = useResourceResidency(batched ? undefined : modelVersionId);
-  const availability = batched ? batched.get(modelVersionId) : fetched;
-  const residency = availability ? describeResidency(availability) : null;
-  if (!residency || residency.loaded) return null;
+  const availability = batched
+    ? modelVersionId
+      ? batched.get(modelVersionId)
+      : undefined
+    : fetched;
+  return availability ? describeResidency(availability) : null;
+}
+
+/** Hollow rather than a second colour, so the state reads without relying on colour. */
+function StatusDot({ color, filled }: { color: string; filled: boolean }) {
+  const fill = `var(--mantine-color-${color}-5)`;
+  return (
+    <span
+      style={{
+        width: 8,
+        height: 8,
+        flex: '0 0 8px',
+        boxSizing: 'border-box',
+        borderRadius: '50%',
+        background: filled ? fill : 'transparent',
+        border: filled ? undefined : `1.5px solid ${fill}`,
+        boxShadow: filled ? `0 0 0 2px color-mix(in srgb, ${fill} 25%, transparent)` : undefined,
+      }}
+    />
+  );
+}
+
+type LoadedMarkVariant = 'dot' | 'label' | 'overlay';
+
+const LOADED = describeResidency({ status: 'available', workers: 1 }) as Residency;
+
+/** Renders nothing unless loaded: loaded is the rare state, which is what keeps the mark worth reading. */
+export function ResourceLoadedDot({
+  modelVersionId,
+  variant,
+}: {
+  modelVersionId: number;
+  variant?: LoadedMarkVariant;
+}) {
+  const residency = useResidency(modelVersionId);
+  return residency?.loaded ? <LoadedMark variant={variant} /> : null;
+}
+
+/** For callers that already know the version is loaded, e.g. from the search index. */
+export function LoadedMark({ variant = 'dot' }: { variant?: LoadedMarkVariant }) {
+  const dot = <StatusDot color={LOADED.color} filled />;
+  return (
+    <Tooltip label={LOADED.description} withArrow multiline w={240}>
+      {variant === 'dot' ? (
+        <span role="img" aria-label={LOADED.label} className="inline-flex shrink-0">
+          {dot}
+        </span>
+      ) : variant === 'label' ? (
+        <Group gap={6} wrap="nowrap" className="w-fit shrink-0 cursor-default">
+          {dot}
+          <Text size="xs" c={`${LOADED.color}.5`}>
+            {LOADED.label}
+          </Text>
+        </Group>
+      ) : (
+        <Badge
+          className={clsx(cardClasses.infoChip, cardClasses.chip, 'cursor-default')}
+          variant="light"
+          radius="xl"
+          leftSection={dot}
+        >
+          {LOADED.label}
+        </Badge>
+      )}
+    </Tooltip>
+  );
+}
+
+const NOT_LOADED = describeResidency({ status: 'unavailable' }) as Residency;
+
+/**
+ * Top-left because `GenerateButton` owns the right corner for its price badge. Binary on purpose: a
+ * download already running still means Create will not start now — the version details row names
+ * that state.
+ */
+export function LoadedCornerBadge({ loaded }: { loaded: boolean }) {
+  const residency = loaded ? LOADED : NOT_LOADED;
+  return (
+    <Tooltip label={residency.description} withArrow multiline w={240}>
+      <Badge
+        className="absolute -left-2 -top-2 z-10 cursor-default border border-solid border-gray-3 bg-white pl-1.5 pr-2 dark:border-dark-4 dark:bg-dark-6"
+        size="sm"
+        radius="xl"
+        leftSection={<StatusDot color={residency.color} filled={loaded} />}
+      >
+        <Text size="10px" fw={600} tt="none">
+          {loaded ? 'Loaded' : 'Needs download'}
+        </Text>
+      </Badge>
+    </Tooltip>
+  );
+}
+
+/** States both outcomes: in a labelled row an empty value reads as missing data, not "not loaded". */
+export function ResourceResidencyStatus({ modelVersionId }: { modelVersionId: number }) {
+  const residency = useResidency(modelVersionId);
+  if (!residency) return null;
 
   return (
-    <HoverCard position="bottom" withArrow width={240}>
-      <HoverCard.Target>
-        <ThemeIcon size={18} color={residency.color} variant="filled" className="shrink-0">
-          <IconCloudDownload size={14} />
-        </ThemeIcon>
-      </HoverCard.Target>
-      <HoverCard.Dropdown>
-        <Text size="sm" fw={500}>
-          {residency.label}
-        </Text>
-        <Text size="xs">{residency.description}</Text>
-      </HoverCard.Dropdown>
-    </HoverCard>
+    <Tooltip multiline w={260} withArrow label={residency.description}>
+      <Group gap={6} wrap="nowrap" className="cursor-default">
+        <StatusDot color={residency.color} filled={residency.loaded} />
+        <Text size="xs">{residency.label}</Text>
+      </Group>
+    </Tooltip>
   );
 }

@@ -27,11 +27,9 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useStepContext } from '~/components/Generation/Providers/StepProvider';
 import type { ResourceSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
 import { useAppContext } from '~/providers/AppProvider';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getGenerationBaseModelResourceOptions } from '~/shared/constants/basemodel.constants';
@@ -211,13 +209,6 @@ function CheckpointInfo({
               {resource.name}
             </Text>
           )}
-          {/* {selectSource === 'generation' && features.modelVersionPopularity && (
-            <ModelVersionPopularity
-              versionId={resource.id}
-              isCheckpoint={resource.model.type === ModelType.Checkpoint}
-              listenForUpdates={true}
-            />
-          )} */}
         </Stack>
       </Group>
       <Group gap={4} wrap="nowrap">

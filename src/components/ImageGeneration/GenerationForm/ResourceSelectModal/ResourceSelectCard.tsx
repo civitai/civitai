@@ -27,7 +27,6 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
-import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
@@ -50,7 +49,11 @@ import { isDefined } from '~/utils/type-guards';
 import type { ResourceSelectSource } from '../resource-select.types';
 import { getResourceCompatibility } from '~/components/generation_v2/inputs/ResourceItemContent';
 import { TopRightIcons } from './TopRightIcons';
-import { ResourceResidencyIcon } from '~/components/ResourceLoad/ResourceResidency';
+import {
+  LoadedMark,
+  useResidency,
+  ResourceResidencyStatus,
+} from '~/components/ResourceLoad/ResourceResidency';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -234,11 +237,9 @@ export function ResourceSelectCard({
                       </div>
                       <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
                       <Group className="absolute bottom-2 right-2 flex items-center gap-1">
-                        {selectSource === 'generation' &&
-                          data.type === ModelType.Checkpoint &&
-                          selectedVersion && (
-                            <ResourceResidencyIcon modelVersionId={selectedVersion.id} />
-                          )}
+                        {selectSource === 'generation' && selectedVersion?.generatorLoaded && (
+                          <LoadedMark variant="overlay" />
+                        )}
                         {data.availability === Availability.Private && (
                           <Tooltip
                             label="This is a private model which requires permission to generate with."
@@ -418,6 +419,7 @@ function ModelDetailsPanel({
   selectSource?: ResourceSelectSource;
 }) {
   const features = useFeatureFlags();
+  const residency = useResidency(selectedVersion.id);
 
   const modelDetails: DescriptionTableProps['items'] = [
     {
@@ -456,17 +458,8 @@ function ModelDetailsPanel({
     },
     {
       label: 'Generation',
-      value: (
-        <ModelVersionPopularity
-          versionId={selectedVersion.id}
-          isCheckpoint={data.type === ModelType.Checkpoint}
-          listenForUpdates={false}
-        />
-      ),
-      visible:
-        selectSource === 'generation' &&
-        data.type === ModelType.Checkpoint &&
-        features.modelVersionPopularity,
+      value: <ResourceResidencyStatus modelVersionId={selectedVersion.id} />,
+      visible: selectSource === 'generation' && !!residency,
     },
     { label: 'Created', value: formatDate(selectedVersion.createdAt) },
     {

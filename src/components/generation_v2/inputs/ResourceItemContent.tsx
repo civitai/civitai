@@ -21,7 +21,7 @@ import type { GenerationResource } from '~/shared/types/generation.types';
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { getModelUrl } from '~/utils/string-helpers';
 import { ExperimentalFlask } from '~/components/generation_v2/Experimental';
-import { ResourceResidencyIcon } from '~/components/ResourceLoad/ResourceResidency';
+import { ResourceLoadedDot } from '~/components/ResourceLoad/ResourceResidency';
 
 // =============================================================================
 // Types
@@ -233,9 +233,6 @@ export function ResourceItemContent({
               </Badge>
             )}
             <ExperimentalFlask target={{ kind: 'modelVersion', key: resource.id }} />
-            {resource.model.type === 'Checkpoint' && !isDisabled && (
-              <ResourceResidencyIcon modelVersionId={resource.id} />
-            )}
             {isSfwOnly && (
               <HoverCard position="bottom" withArrow width={200}>
                 <HoverCard.Target>
@@ -299,6 +296,7 @@ export function ResourceItemContent({
               </HoverCard>
             )}
           </Group>
+          {!isDisabled && <ResourceLoadedDot modelVersionId={resource.id} variant="label" />}
         </div>
         {actions && (
           <Group gap={4} className="shrink-0">
