@@ -336,11 +336,12 @@ Everything here is the deploying engineer's, before this branch merges.
 
 ## Post-deploy checklist
 
-- [ ] **Reindex models search.** Its indexed `canGenerate` is derived from coverage, so it keeps the
-      old rule until each model is reindexed — and it advertises generatable without saying "needs
-      loading first".
-      *Closes when:* a newly covered checkpoint (e.g. version 1413133) reports `canGenerate: true` in
-      the models index.
+- [ ] **Re-queue the models that gain coverage.** The index's `canGenerate` stays on the live view
+      until the cutover; `canGenerateNext` (and `versions.canGenerateNext`) carry the new rule
+      beside it, so only the ~12,900 models that gain coverage need re-queueing rather than all
+      ~705K documents. Both fields go at the cutover, when `canGenerate` answers this on its own.
+      *Closes when:* a newly covered checkpoint (e.g. version 1413133) reports
+      `canGenerateNext: true` in the models index.
 - [ ] **Bring `event-engine-common` onto the new coverage.** Its model feed
       (`feeds/models.feed.ts`) and model-data cache (`caches/modelData.cache.ts`) still query
       `GenerationCoverage` in raw SQL, in a separate repo. Either point both at
