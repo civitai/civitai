@@ -32,6 +32,16 @@ const BATCH_RETRY_DELAY = 500;
 // ~2.5s of retries: 1 retry (= 2 attempts) with a short backoff.
 const INLINE_RETRY_COUNT = 1;
 const INLINE_RETRY_DELAY = 200;
+// The ledger read on the refusal path runs inside the same user mutations, and its own
+// failure handling is "leave the cap consumed" — so a failed lookup and a skipped lookup
+// end the same way, and retrying it buys nothing a single bounded attempt does not. The
+// client otherwise retries any error four times with no deadline at all.
+const LEDGER_LOOKUP_TIMEOUT_MS = 1000;
+// Released only for a payment comfortably before the boundary, because the two sides of
+// that comparison are different clocks: the ledger stamps `date`, this process computes
+// midnight. Skew costs a repeat in the last minutes of a day its cap release, which is
+// the direction that does not hand back money.
+const LEDGER_DAY_BOUNDARY_GRACE_MS = 5 * 60 * 1000;
 
 const log = (event: BuzzEventLog, data: MixedObject) => {
   logToAxiom({
@@ -476,10 +486,13 @@ export function createBuzzEvent<T>({
     dedup: { hashField: string; cacheKey: string }
   ) => {
     try {
-      const paid = await getTransactionByExternalId(externalTransactionIdFor(event));
+      const paid = await getTransactionByExternalId(externalTransactionIdFor(event), {
+        timeoutMs: LEDGER_LOOKUP_TIMEOUT_MS,
+        retries: 0,
+      });
       const paidAt = paid?.date?.getTime();
       if (paidAt === undefined || Number.isNaN(paidAt)) return;
-      if (paidAt >= new Date().setUTCHours(0, 0, 0, 0)) return;
+      if (paidAt >= new Date().setUTCHours(0, 0, 0, 0) - LEDGER_DAY_BOUNDARY_GRACE_MS) return;
 
       await redis.eval(ON_DEMAND_ZERO_ENTRY_SCRIPT, {
         keys: [REDIS_KEYS.BUZZ_EVENTS],

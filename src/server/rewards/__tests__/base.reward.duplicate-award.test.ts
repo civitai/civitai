@@ -64,6 +64,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const AWARD_AMOUNT = 2;
+/** Deliberately different from AWARD_AMOUNT: a fix that subtracts the current award rather
+ *  than writing a zero reads as correct while the two are equal. */
+const SIBLING_AWARD = 3;
 const CAP = 100;
 const DAY_ONE = '2026-09-21T12:00:00Z';
 const DAY_TWO = '2026-09-22T12:00:00Z';
@@ -235,27 +238,50 @@ describe('a repeat award the ledger refuses', () => {
     // Past end of UTC day: the hash the dedup entry lives in expires, which is what lets the
     // same reaction re-qualify. The ledger then refuses it and reports the award it already
     // paid, dated the previous day.
+    // A different entity on day two, so the repeat below is zeroed inside a field that has
+    // something else in it. Its award is raised first, which also makes the assertion below
+    // discriminate a fix that subtracts the CURRENT award from one that writes a zero.
     vi.setSystemTime(new Date(DAY_TWO));
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+      value: { rewards: { encouragement: { awardAmount: SIBLING_AWARD } } },
+    } as any);
+    invalidateRewardConfigCache();
+    await reward.apply({ reactorId: 7, entityId: 100 });
+    expect(capConsumed()).toBe(SIBLING_AWARD);
+
     ledgerRefuses(DAY_ONE);
 
     await reward.apply({ reactorId: 7, entityId: 99 });
 
     // The repeat pays nothing, so it must take nothing from the 100/day the user can earn.
+    // Asserted against a POPULATED day: the sibling award above is what separates "zeroed this
+    // entry" from "cleared the field", which would hand back a cap the user really spent.
     // Stated as an amount rather than as `a:2` so an operator changing the award cannot make
     // this assertion wrong about a fix that still works.
-    expect(capConsumed()).toBe(0);
-    // Once, for day one's real award. The refused repeat must not be counted as a payment.
-    expect(rewardGivenCounter?.inc).toHaveBeenCalledTimes(1);
+    expect(capConsumed()).toBe(SIBLING_AWARD);
+
+    // Asked about the transaction the submit actually sent, not one re-derived here - a
+    // re-derivation moves with the code and checks nothing.
+    const submitted = h.createBuzzTransactionMany.mock.calls.at(-1)![0][0].externalTransactionId;
+    // Bounded and not retried: this read runs inside the mutation that triggered the reward,
+    // and a failed lookup ends exactly where a skipped one does - with the cap still consumed.
+    expect(h.getTransactionByExternalId).toHaveBeenCalledWith(submitted, {
+      timeoutMs: expect.any(Number),
+      retries: 0,
+    });
+    expect(evalCalls(ON_DEMAND_ZERO_ENTRY_SCRIPT)).toHaveLength(1);
+    // Day one's award and day two's sibling. The refused repeat must not be counted.
+    expect(rewardGivenCounter?.inc).toHaveBeenCalledTimes(2);
 
     // The entry is ZEROED, not removed - a third reaction the same day must still be deduped,
     // or the same reaction can be re-awarded repeatedly within one day.
     await reward.apply({ reactorId: 7, entityId: 99 });
-    expect(h.createBuzzTransactionMany).toHaveBeenCalledTimes(2);
-    expect(insertedRows()).toHaveLength(2);
+    expect(h.createBuzzTransactionMany).toHaveBeenCalledTimes(3);
+    expect(insertedRows()).toHaveLength(3);
 
     // The audit rows are deliberately left alone: `buzzEvents` is ReplacingMergeTree ordered by
     // the dedup key, so a corrected row replaces the original rather than joining it.
-    expect(insertedRows().map((row) => row.status)).toEqual(['awarded', 'awarded']);
+    expect(insertedRows().map((row) => row.status)).toEqual(['awarded', 'awarded', 'awarded']);
   });
 
   it('zeroes the entry the award script wrote, in the key it wrote it to', async () => {
@@ -286,6 +312,34 @@ describe('a repeat award the ledger refuses', () => {
     // re-send is refused by the award it just made. Freeing the cap here would hand back an
     // award the user really received.
     ledgerRefuses(DAY_TWO);
+
+    await reward.apply({ reactorId: 7, entityId: 99 });
+
+    expect(capConsumed()).toBe(AWARD_AMOUNT);
+    expect(evalCalls(ON_DEMAND_ZERO_ENTRY_SCRIPT)).toHaveLength(0);
+  });
+
+  it('leaves the cap alone for a payment at the day boundary itself', async () => {
+    const reward = encouragementLike();
+
+    vi.setSystemTime(new Date(DAY_TWO));
+    // Exactly 00:00:00.000 of the current UTC day. The ledger's clock and this process's are
+    // not the same clock, so the boundary itself belongs to the side that keeps the cap.
+    ledgerRefuses('2026-09-22T00:00:00.000Z');
+
+    await reward.apply({ reactorId: 7, entityId: 99 });
+
+    expect(capConsumed()).toBe(AWARD_AMOUNT);
+    expect(evalCalls(ON_DEMAND_ZERO_ENTRY_SCRIPT)).toHaveLength(0);
+  });
+
+  it('leaves the cap alone for a payment minutes before the boundary', async () => {
+    const reward = encouragementLike();
+
+    vi.setSystemTime(new Date(DAY_TWO));
+    // Yesterday by the calendar, but within the skew grace: close enough to the boundary that
+    // a clock disagreement could have put it on either side of it.
+    ledgerRefuses('2026-09-21T23:58:00.000Z');
 
     await reward.apply({ reactorId: 7, entityId: 99 });
 
@@ -324,10 +378,12 @@ describe('a repeat award the ledger refuses', () => {
 
     await reward.apply({ reactorId: 7, entityId: 99 });
 
-    // Whatever exists afterwards must carry an expiry. The guard being exercised lives in the
-    // Lua, so what this observes is the transcription of it - the pin above is what keeps the
-    // two in step.
-    expect(store[REDIS_KEYS.BUZZ_EVENTS]).toBeUndefined();
+    // The claim is "no hash exists without an expiry", which is what `HSET` on a missing key
+    // would create and what nothing else reclaims. Asserting that directly rather than
+    // asserting the key is absent, which is only the fake's lazy expiry showing.
+    expect(Object.values(store).filter((hash) => hash.expireAt === undefined)).toEqual([]);
+    // And the release really was attempted - otherwise this passes by doing nothing.
+    expect(evalCalls(ON_DEMAND_ZERO_ENTRY_SCRIPT)).toHaveLength(1);
   });
 
   it('survives a failed correction without failing the user action', async () => {

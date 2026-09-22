@@ -333,9 +333,15 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
       })
     );
 
-  const getTransactionByExternalId = (externalId: string) =>
+  /** `opts` is additive and optional: callers that pass nothing keep the client's
+   *  default retry budget and the absence of a deadline they have today. */
+  const getTransactionByExternalId = (
+    externalId: string,
+    opts?: { timeoutMs?: number; retries?: number }
+  ) =>
     request<BuzzTransactionResponse | null>(`/transactions/${externalId}`, undefined, {
       allow404: true,
+      ...opts,
     });
 
   const getAccountSummary = (

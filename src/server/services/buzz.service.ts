@@ -1245,8 +1245,11 @@ export async function pingBuzzService() {
   return buzzService.ping();
 }
 
-export async function getTransactionByExternalId(externalId: string) {
-  const data = await buzzService.getTransactionByExternalId(externalId);
+export async function getTransactionByExternalId(
+  externalId: string,
+  opts?: { timeoutMs?: number; retries?: number }
+) {
+  const data = await buzzService.getTransactionByExternalId(externalId, opts);
   if (data === null) return null;
   return getBuzzTransactionResponse.parse(data);
 }
