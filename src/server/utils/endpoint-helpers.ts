@@ -228,9 +228,13 @@ function withApiMetrics(
  * collapse two distinct configured secrets into one.
  *
  * 503 rather than 401 so an operator reading logs sees a deployment problem rather than a caller with
- * a bad token, and so `withApiMetrics` records it as a 5xx. Same rule and same status code as
- * apps/moderator/src/lib/server/webhook-endpoint.ts, so the two apps agree about what a blank secret
- * means.
+ * a bad token, and so `withApiMetrics` records it as a 5xx.
+ *
+ * apps/moderator/src/lib/server/webhook-endpoint.ts applies the same BLANK-SECRET rule and the same
+ * status code, so the two apps agree about what a blank secret means. They diverge on the paragraph
+ * above: it trims both the secret and the presented token, deliberately, so a secret carrying a
+ * trailing newline authenticates there and does not here. Do not read one as the template for the
+ * other beyond the blank case.
  */
 export function TokenSecuredEndpoint(
   token: string,
