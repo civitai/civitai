@@ -1,4 +1,9 @@
 import { EventEmitter } from 'events';
+import { readFileSync } from 'fs';
+import { dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 import type * as ChildProcess from 'child_process';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -173,6 +178,37 @@ describe("the queue caps each run's vitest pool", () => {
  * shown none of them. The complete output is on disk the whole time — this is what makes it
  * reachable, and without it the truncation warning is a dead end.
  */
+/**
+ * 🔴 There are TWO waiters and they warn about a truncated log independently — `warnIfLogsDropped`
+ * in scripts/test-unit-run.mjs, and the terminal branch of `test wait` in cli.mjs. Their own
+ * comment says "Both waiters say this, in the same place, for the same reason", and that comment
+ * was already there when this fix updated ONE of them: the file said there were two and the diff
+ * still looked complete. The gap showed only when the string was COUNTED across both, not read in
+ * either. This counts it.
+ */
+describe('both waiters point at the complete log, not just one', () => {
+  const repoRoot = resolve(__dirname, '..', '..');
+  const waiters = ['scripts/test-unit-run.mjs', '.claude/skills/dev-server/cli.mjs'];
+
+  it('warns about truncation in both', () => {
+    for (const file of waiters) {
+      expect(
+        readFileSync(resolve(repoRoot, file), 'utf8'),
+        `${file} lost its truncation warning`
+      ).toContain('this log is INCOMPLETE');
+    }
+  });
+
+  it('names the complete log in both', () => {
+    for (const file of waiters) {
+      expect(
+        readFileSync(resolve(repoRoot, file), 'utf8'),
+        `${file} warns about truncation without saying where the full output is`
+      ).toContain('The complete output is at');
+    }
+  });
+});
+
 describe('the complete output is reachable when the window is not', () => {
   it('publishes the capture file the runner is already writing', () => {
     const handle = defaultStartRun({

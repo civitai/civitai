@@ -625,7 +625,9 @@ async function cmdTestWait(id) {
       if (run.logsDropped) {
         console.error(
           `WARNING: this log is INCOMPLETE — the queue dropped the oldest ${run.logsDropped} of ` +
-            `${run.logIndex} output lines. Do not read the text above as the whole run.`
+            `${run.logIndex} output lines. Do not read the text above as the whole run.` +
+            (run.logPath ? `
+The complete output is at: ${run.logPath}` : '')
         );
       }
       console.log(`Run ${id} ${run.status}${run.error ? ` (${run.error})` : ''}`);
