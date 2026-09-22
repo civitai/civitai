@@ -8,8 +8,8 @@ import {
 
 /**
  * The full matrix of what a `FEATURE_FLAG_<KEY>` variable may and may not do, one flag per case.
- * Only the first is a change: an override used to be able to switch on a flag the registry
- * declares dark, which also took the key out of Flipt evaluation. The other four pin behaviour
+ * Two are changes — a dark flag with a `fliptKey` now ignores its override whether that override
+ * grants access or nothing at all, so Flipt decides in both cases. The other three pin behaviour
  * that must NOT move, and each is chosen so that a plausible over-broad rewrite of the guard
  * turns exactly it red.
  */
@@ -107,12 +107,14 @@ describe('what a FEATURE_FLAG_<KEY> override may and may not do', () => {
     expect(features.coinbasePayments).toBe(true);
   });
 
-  it('CONTROL: an override granting nothing still pins a dark flag out of its Flipt rollout', async () => {
+  it('is ignored even when it grants nothing, leaving Flipt to decide', async () => {
     const { getFeatureFlagsAsync } = await import('~/server/services/feature-flags.service');
     const features = await getFeatureFlagsAsync({});
 
-    // Flipt serves `user-hubs` ON, so this can only be falsy because the override kept the key
-    // out of Flipt evaluation — the behaviour an override with no availability always had.
-    expect(features.userHubs).toBeFalsy();
+    // `getEnvOverrides` keeps no unrecognised token, so `FEATURE_FLAG_USER_HUBS=nonsense` yields
+    // an empty availability. That used to be applied, which pinned the flag out of its Flipt
+    // rollout — indistinguishable from a typo, and the same invisible-override class this guard
+    // closes. Flipt serves `user-hubs` ON, so `true` here can only come from Flipt being consulted.
+    expect(features.userHubs).toBe(true);
   });
 });

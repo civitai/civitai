@@ -38,16 +38,22 @@ The monolith's flag registry (`src/server/services/feature-flags.service.ts`) de
 static `availability` per flag, and **Flipt overrides it in both directions wherever the key
 exists**. Two consequences before you add or toggle a key:
 
-- A flag declared `availability: []` is **dark**: static evaluation is false for everyone and
-  its `fliptKey` is the only on-switch. A `FEATURE_FLAG_<KEY>` environment variable cannot
-  lift it. Creating the key and enabling it is what ships the feature.
+- A flag declared `availability: []` **that has a `fliptKey`** is **dark**: static evaluation is
+  false for everyone and that key is its only on-switch. A `FEATURE_FLAG_<KEY>` environment
+  variable cannot lift it. Creating the key and enabling it is what ships the feature.
+- A flag declared `availability: []` with **no** `fliptKey` has no Flipt switch at all, so its
+  `FEATURE_FLAG_<KEY>` variable still applies and is the only way to turn it on. Today that is
+  `coinbasePayments` and `nowpaymentPayments`, both written in the legacy array form
+  (`coinbasePayments: []`), which a search for `availability: []` does not find. Adding a
+  `fliptKey` to one of these moves ownership to Flipt and makes its variable inert.
 - A flag declared `['public']` (or any role) is **live**: creating its key with
   `enabled: false` and no rollout turns the feature off for everyone. That is the intended
   kill switch — and the intended accident.
 
-To switch a dark flag on locally, set `FLIPT_LOCAL_OVERRIDES=<fliptKey>=on` rather than
-touching shared flag state; it is ignored when `NODE_ENV=production`, and it does not reach
-`getFliptBoolean` call sites.
+To switch on a dark flag **that has a `fliptKey`** locally, set
+`FLIPT_LOCAL_OVERRIDES=<fliptKey>=on` rather than touching shared flag state; it is ignored when
+`NODE_ENV=production`, and it does not reach `getFliptBoolean` call sites. For a dark flag with
+no key there is nothing to name here — use its `FEATURE_FLAG_<KEY>` variable.
 
 Treat `FLIPT_API_TOKEN` as a live secret: read it from env, never inline it, and
 don't copy it into anything new.

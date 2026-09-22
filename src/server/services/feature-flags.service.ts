@@ -1256,18 +1256,13 @@ function createFeatureFlags<T extends Record<string, FeatureFlagInput>>(flags: T
 
     // Apply ENV overrides
     const override = envOverrides[key as FeatureFlagKey];
-    // An override may not GRANT availability to a dark flag that has a `fliptKey`: that pairing
-    // makes Flipt the only on-switch. Applying it would also add the key to `envOverriddenFlags`,
-    // which `hasFeature` reads to suppress Flipt evaluation — leaving the flag unreachable from
-    // the switch meant to own it. The other two cases keep their old behaviour deliberately: a
-    // dark flag with no `fliptKey` has no other switch, and an override granting nothing still
-    // pins the flag out of its Flipt rollout.
-    const liftsDarkFlag =
-      !!override &&
-      !!flagData.fliptKey &&
-      isDeclaredDark(flagData.availability) &&
-      !isDeclaredDark(override);
-    if (override && !liftsDarkFlag) {
+    // `availability: []` plus a `fliptKey` hands the decision to Flipt alone, so no
+    // `FEATURE_FLAG_<KEY>` variable applies: it would grant the access the registry withheld, and
+    // adding the key to `envOverriddenFlags` would also stop `hasFeature` consulting Flipt,
+    // leaving the flag unreachable from the switch that owns it. A dark flag with no `fliptKey`
+    // has no other switch, so its override still applies.
+    const fliptOwnsFlag = !!flagData.fliptKey && isDeclaredDark(flagData.availability);
+    if (override && !fliptOwnsFlag) {
       features[key as keyof T].availability = override;
       envOverriddenFlags.add(key);
     }
