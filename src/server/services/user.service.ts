@@ -3028,38 +3028,47 @@ export async function updateContentSettings({
   autoplayGifs,
   ...data
 }: UpdateContentSettingsInput & { userId: number }) {
-  if (
-    blurNsfw !== undefined ||
-    showNsfw !== undefined ||
-    browsingLevel !== undefined ||
-    autoplayGifs !== undefined
-  ) {
-    await dbWrite.user.update({
-      where: { id: userId },
-      data: { blurNsfw, showNsfw, browsingLevel, autoplayGifs },
+  try {
+    // Settings first: if the column write below then fails, the level did not change and the
+    // only loss is the retired red copy. The other order could commit a new level while
+    // leaving that copy for the one-off fold to apply over it.
+    if (Object.keys(data).length > 0 || browsingLevel !== undefined) {
+      // Only the keys this call is changing. Re-reading the blob and writing it back
+      // would restore every other key to the value it held at read time, discarding a
+      // concurrent write to any of them (notice dismissals, feature toggles, …).
+      await patchUserSettings(userId, {
+        set: removeEmpty(data),
+        // A level set now supersedes any retired red-domain copy, so the one-off fold of those
+        // copies into the column never applies a stale value over it.
+        ...(browsingLevel !== undefined ? { remove: ['redBrowsingLevel'] } : {}),
+        location: 'user.service:updateContentSettings',
+      });
+    }
+    if (
+      blurNsfw !== undefined ||
+      showNsfw !== undefined ||
+      browsingLevel !== undefined ||
+      autoplayGifs !== undefined
+    ) {
+      await dbWrite.user.update({
+        where: { id: userId },
+        data: { blurNsfw, showNsfw, browsingLevel, autoplayGifs },
+      });
+      userUpdateCounter?.inc({ location: 'user.service:updateUserContentSettings' });
+      await userSettingsCache().bust([userId]);
+    }
+  } finally {
+    // Also when a later write throws: an earlier one may already have committed, and the
+    // cached session must not keep serving the old value for its whole lifetime.
+    //
+    // Await so the refresh marker is set in Redis before this mutation returns.
+    // Otherwise the fire-and-forget can race the next API call / session read
+    // and hand back a stale session.user, which then overrides the user's
+    // toggle client-side via BrowserSettingsProvider's smart-merge.
+    await refreshSession(userId, { caller: 'profile' }).catch((err) => {
+      console.error('Failed to refresh session for user', userId, err);
     });
-    userUpdateCounter?.inc({ location: 'user.service:updateUserContentSettings' });
-    await userSettingsCache().bust([userId]);
   }
-  if (Object.keys(data).length > 0 || browsingLevel !== undefined) {
-    // Only the keys this call is changing. Re-reading the blob and writing it back
-    // would restore every other key to the value it held at read time, discarding a
-    // concurrent write to any of them (notice dismissals, feature toggles, …).
-    await patchUserSettings(userId, {
-      set: removeEmpty(data),
-      // A level set now supersedes any retired red-domain copy, so the one-off fold of those
-      // copies into the column never applies a stale value over it.
-      ...(browsingLevel !== undefined ? { remove: ['redBrowsingLevel'] } : {}),
-      location: 'user.service:updateContentSettings',
-    });
-  }
-  // Await so the refresh marker is set in Redis before this mutation returns.
-  // Otherwise the fire-and-forget can race the next API call / session read
-  // and hand back a stale session.user, which then overrides the user's
-  // toggle client-side via BrowserSettingsProvider's smart-merge.
-  await refreshSession(userId, { caller: 'profile' }).catch((err) => {
-    console.error('Failed to refresh session for user', userId, err);
-  });
 }
 
 // #region [user settings]

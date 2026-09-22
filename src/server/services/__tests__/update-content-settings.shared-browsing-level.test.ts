@@ -72,11 +72,30 @@ describe('updateContentSettings: one browsing level on every domain', () => {
   it('a level-only change on red sets nothing in settings and removes the retired red copy', async () => {
     await mutate({ browsingLevel: NARROWED, domain: 'red' });
 
-    const calls = dbMock.dbWrite.$queryRawUnsafe.mock.calls;
-    expect(calls).toHaveLength(1);
-    const [sql, ...params] = calls[0] as [string, ...unknown[]];
-    expect(sql).not.toContain('||');
-    expect(params).toContainEqual(['redBrowsingLevel']);
+    expect(rawStatements()).toHaveLength(1);
+    const [, ...params] = dbMock.dbWrite.$queryRawUnsafe.mock.calls[0] as [string, ...unknown[]];
+    // Only the removal list and the user id are bound: nothing is set.
+    expect(params).toEqual([['redBrowsingLevel'], USER_ID]);
+  });
+
+  it('a failed settings write surfaces, writes no level, and still refreshes the session', async () => {
+    dbMock.dbWrite.$queryRawUnsafe.mockRejectedValueOnce(new Error('settings write failed'));
+
+    await expect(mutate({ browsingLevel: NARROWED, domain: 'red' })).rejects.toThrow(
+      'settings write failed'
+    );
+    expect(dbMock.dbWrite.user.update).not.toHaveBeenCalled();
+    expect(refreshSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed level write after the settings write still refreshes the session', async () => {
+    dbMock.dbWrite.user.update.mockRejectedValueOnce(new Error('level write failed'));
+
+    await expect(mutate({ browsingLevel: NARROWED, allowAds: false })).rejects.toThrow(
+      'level write failed'
+    );
+    expect(dbMock.dbWrite.$queryRawUnsafe).toHaveBeenCalledTimes(1);
+    expect(refreshSession).toHaveBeenCalledTimes(1);
   });
 
   it('CONTROL: a settings key in the same call IS observed in settings', async () => {

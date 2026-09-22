@@ -80,14 +80,34 @@ afterAll(async () => {
   await db?.close();
 });
 
+/** The dry-run SELECT from the migration header, uncommented, as the operator will run it. */
+function headerDryRun() {
+  const lines = readFileSync(MIGRATION, 'utf8').split('\n');
+  const start = lines.findIndex((l) => l.startsWith('--   SELECT'));
+  const end = lines.findIndex((l, i) => i > start && l.includes(') t;'));
+  return lines
+    .slice(start, end + 1)
+    .map((l) => l.replace(/^--   /, ''))
+    .join('\n');
+}
+
 describe('fold_red_browsing_level_into_column', () => {
   let after: Map<number, Row>;
+  let dryRun: { rows: number; disjoint: number; widened: number };
 
   beforeAll(async () => {
     for (const [id, level, settings] of cases) await insert(id, level, settings);
+    const counts = await db.query<Record<string, string | number>>(headerDryRun());
+    const r = counts.rows[0];
+    dryRun = { rows: Number(r.rows), disjoint: Number(r.disjoint), widened: Number(r.widened) };
     await applyMigration();
     const rows = await db.query<Row>(`SELECT id, "browsingLevel", settings FROM "User"`);
     after = new Map(rows.rows.map((r) => [r.id, r]));
+  });
+
+  it('the header dry run counts exactly the rows the fold would widen', () => {
+    // Rows 1-6 carry a foldable red level; only row 6 shares no bit with its column.
+    expect(dryRun).toEqual({ rows: 6, disjoint: 1, widened: 1 });
   });
 
   it.each(cases)(
@@ -128,10 +148,11 @@ describe('a level set after deploy is not folded back', () => {
 
   it('keeps the new level and leaves no red copy for the fold to apply', async () => {
     // Narrowed on red before the deploy (stored only in the retired copy), then widened after it.
-    await insert(USER_ID, 31, { redBrowsingLevel: 3 });
+    await insert(USER_ID, 7, { redBrowsingLevel: 3 });
     await updateContentSettings({ userId: USER_ID, browsingLevel: 31 });
 
     const beforeFold = await read(USER_ID);
+    expect(beforeFold.browsingLevel).toBe(31);
     expect('redBrowsingLevel' in beforeFold.settings).toBe(false);
 
     await applyMigration();
