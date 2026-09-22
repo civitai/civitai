@@ -140,8 +140,8 @@ export function ResourceHitList({ query }: { query: string }) {
   const hiddenPreferences = useHiddenPreferencesContext();
 
   // Auction winners at positions 1-3 bypass the viewer's own hidden users/tags/models/images,
-  // and nothing else: browsing level, system-hidden tags and the POI/minor rules still apply,
-  // through the same filter as the grid below.
+  // and nothing else: blocks, browsing level, system-hidden tags and the POI/minor rules still
+  // apply, through the same filter as the grid below.
   // Filter by resource types AND baseModels to match the current ecosystem's auction.
   const resourceTypes = useMemo(() => resources.map((r) => r.type), [resources]);
   const resourceBaseModels = useMemo(
@@ -175,7 +175,7 @@ export function ResourceHitList({ query }: { query: string }) {
       data: candidates,
       hiddenPreferences: {
         ...hiddenPreferences,
-        hiddenUsers: new Map(),
+        hiddenUsers: hiddenPreferences.blockedUsers,
         hiddenTags: new Map(),
         hiddenModels: new Map(),
         hiddenImages: new Map(),

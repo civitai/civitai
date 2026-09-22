@@ -14,6 +14,10 @@ const state = vi.hoisted(() => ({
   disablePoi: false,
   systemHiddenTags: new Map<number, boolean>(),
   hiddenUsers: new Map<number, boolean>(),
+  blockedUsers: new Map<number, boolean>(),
+  hiddenTags: new Map<number, boolean>(),
+  hiddenModels: new Map<number, boolean>(),
+  hiddenImages: new Map<number, boolean>(),
 }));
 
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', () => ({
@@ -31,10 +35,11 @@ vi.mock('~/components/HiddenPreferences/useApplyHiddenPreferences', async (impor
 vi.mock('~/components/HiddenPreferences/HiddenPreferencesProvider', () => ({
   useHiddenPreferencesContext: () => ({
     hiddenUsers: state.hiddenUsers,
-    hiddenTags: new Map(),
-    hiddenModels: new Map(),
+    blockedUsers: state.blockedUsers,
+    hiddenTags: state.hiddenTags,
+    hiddenModels: state.hiddenModels,
     hiddenModel3Ds: new Map(),
-    hiddenImages: new Map(),
+    hiddenImages: state.hiddenImages,
     hiddenLoading: false,
     moderatedTags: [],
     systemHiddenTags: state.systemHiddenTags,
@@ -131,6 +136,10 @@ beforeEach(() => {
   state.disablePoi = false;
   state.systemHiddenTags = new Map();
   state.hiddenUsers = new Map();
+  state.blockedUsers = new Map();
+  state.hiddenTags = new Map();
+  state.hiddenModels = new Map();
+  state.hiddenImages = new Map();
 });
 
 describe('ResourceHitList featured podium', () => {
@@ -181,5 +190,19 @@ describe('ResourceHitList featured podium', () => {
   it('still shows a winner whose creator the viewer has hidden', () => {
     state.hiddenUsers = new Map([[900 + WINNER, true]]);
     expect(renderPodium([{ id: 12, nsfwLevel: PG }])?.getAttribute('data-image')).toBe('12');
+  });
+
+  it('still shows a winner whose tag, model or image the viewer has hidden', () => {
+    state.hiddenTags = new Map([[55, true]]);
+    state.hiddenModels = new Map([[WINNER, true]]);
+    state.hiddenImages = new Map([[12, true]]);
+    const card = renderPodium([{ id: 12, nsfwLevel: PG, tags: [55] }], { tags: [55] });
+    expect(card?.getAttribute('data-image')).toBe('12');
+  });
+
+  it('drops a winner whose creator has a block with the viewer', () => {
+    state.hiddenUsers = new Map([[900 + WINNER, true]]);
+    state.blockedUsers = new Map([[900 + WINNER, true]]);
+    expect(renderPodium([{ id: 12, nsfwLevel: PG }])).toBeNull();
   });
 });
