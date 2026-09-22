@@ -214,10 +214,7 @@ export default function HubUpsertModal({
           />
         )}
 
-        {/* A cap on what OTHER people see, so it belongs to sharing: on a private hub
-            the only viewer is its owner, whose own browsing settings already decide.
-            Shown whenever the switch above is on, and gone when it is off. */}
-        {canEditSources && features.canViewNsfw && isPublic && (
+        {canEditSources && features.canViewNsfw && (
           <BrowsingLevelsInput
             compact
             label="Content levels"
@@ -248,6 +245,7 @@ export default function HubUpsertModal({
                 onChange={setSources}
                 disabled={upsert.isPending}
                 emptyMessage={emptyMessage}
+                initialScope={template}
               />
             )}
 
