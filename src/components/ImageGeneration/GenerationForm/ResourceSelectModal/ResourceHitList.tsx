@@ -73,7 +73,9 @@ function FillingMasonryGrid({ children }: { children: React.ReactNode }) {
 }
 
 export function ResourceHitList({ query }: { query: string }) {
-  const { canGenerate, resources, selectSource, excludedIds, tab } = useResourceSelectContext();
+  const { canGenerate, resources, selectSource, excludedIds, tab, filters } =
+    useResourceSelectContext();
+  const loadedOnly = filters.loadedOnly;
 
   const { data: featured } = trpc.model.getFeaturedModels.useQuery(undefined, {
     enabled: tab === 'featured',
@@ -115,6 +117,10 @@ export function ResourceHitList({ query }: { query: string }) {
       return model.versions.filter((version) => {
         return (
           (canGenerate ? canGenerate === version.canGenerateNext : true) &&
+          // The index filter keeps a model any of whose versions is resident; this is what keeps the
+          // card off the ones that are not. Versions are newest-first, so the card's default
+          // selection becomes the latest loaded one.
+          (!loadedOnly || version.generatorLoaded) &&
           (skipBaseModel ||
             modelBaseModels.length === 0 ||
             modelBaseModels.includes(version.baseModel)) &&
@@ -122,7 +128,7 @@ export function ResourceHitList({ query }: { query: string }) {
         );
       });
     },
-    [canGenerate, resources, excludedIds, tab, selectSource]
+    [canGenerate, loadedOnly, resources, excludedIds, tab, selectSource]
   );
 
   // Build podium items from raw items (bypassing hidden preferences) so
@@ -165,7 +171,7 @@ export function ResourceHitList({ query }: { query: string }) {
   const topItemIds = useMemo(() => new Set(topItems.map((m) => m.id)), [topItems]);
 
   const filtered = useMemo(() => {
-    if (!canGenerate && !resources.length) return models;
+    if (!canGenerate && !resources.length && !loadedOnly) return models;
 
     const ret = models
       .map((model) => {
@@ -187,7 +193,7 @@ export function ResourceHitList({ query }: { query: string }) {
     }
 
     return ret;
-  }, [canGenerate, featured, models, resources, tab, filterVersions]);
+  }, [canGenerate, loadedOnly, featured, models, resources, tab, filterVersions]);
 
   const renderCard = useCallback(
     ({ data, height }: { data: TransformedModel; height: number }) => (

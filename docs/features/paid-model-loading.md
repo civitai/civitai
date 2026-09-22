@@ -115,9 +115,10 @@ checkpoint input and the two **Generation** rows (version details, picker card's
 their one id. Naming *downloading* or *queued* is the one thing the boolean column cannot do.
 
 **A "Loaded only" filter** in the generation resource picker, beside the type and base-model chips.
-It filters the index on `versions.generatorLoaded`, so it keeps a model any of whose versions is
-resident — Meilisearch matches the nested array, and the card shows whichever version it was going to
-show. A model can therefore survive the filter with the version on the card unmarked.
+The index filter keeps a model any of whose versions is resident, because Meilisearch matches the
+nested array; the hit list then drops the versions that are not, so a card cannot show one. Versions
+are newest-first, so what the card lands on is the latest loaded one, and its dropdown offers only
+loaded versions while the filter is on.
 
 **Moderator tool** at `/moderator/resource-load` (flag `resourceLoad`): the explicit purchase path —
 `resourceLoad.estimate` / `submit`, the flag-gated `getQueue` and uncapped `getState` reads, the
@@ -313,15 +314,16 @@ Everything here is the deploying engineer's, before this branch merges.
       indicator go live to everyone on deploy, so the only rollback is a revert.
       *Closes when:* a flag gates them, or Justin rules that it ships unflagged and that ruling is
       recorded here.
-- [ ] **Apply the models index's filterable attributes.** `versions.generatorLoaded` is in
-      `modelsFilterableAttributes`, but that list is inert on a live index until
-      `/api/admin/temp/apply-models-index-filterable-attributes` runs or a reset rebuilds it — and
-      Meilisearch rejects a search filtering on an attribute it has not been told about, so the
-      picker's **Loaded only** returns nothing rather than fewer results. Reindexing alone does not
-      do it. Budget hours, not minutes: the last settings update took 6.5 min to process after ~2h50m
+- [ ] **Apply the models index's filterable attributes.** `versions.generatorLoaded` and
+      `canGenerateNext` are in `modelsFilterableAttributes`, but that list is inert on a live index
+      until `/api/admin/temp/apply-models-index-filterable-attributes` runs or a reset rebuilds it —
+      and Meilisearch rejects a search filtering on an attribute it has not been told about.
+      `canGenerateNext` is the one that matters: the picker gates **every** query on it, so until
+      this runs the modal is empty rather than merely narrower. Reindexing alone does not do it.
+      Budget hours, not minutes: the last settings update took 6.5 min to process after ~2h50m
       queued.
-      *Closes when:* the models index reports `versions.generatorLoaded` among its filterable
-      attributes, and the picker's **Loaded only** returns results.
+      *Closes when:* the models index reports both among its filterable attributes, and the picker
+      returns results with and without **Loaded only**.
 - [ ] **Check the preview environment before reading anything into it.** The indicators need main's
       `generatorLoaded` migration applied to the database preview points at, and
       `sync-generator-loaded-resources` on for it; without either, the Create badge reads "Needs
