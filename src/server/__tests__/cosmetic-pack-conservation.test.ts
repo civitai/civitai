@@ -795,6 +795,16 @@ describe('purchaseCosmeticPack — purchases that must not complete', () => {
     expect(spend).not.toHaveBeenCalled();
   });
 
+  // A pack with no members left refuses through the same branch as a pack of
+  // only the buyer's own work, and is told it IS their own work. The refusal is
+  // right and the reason is fiction. Reachable: purchaseCosmeticShopItem falls
+  // back to `_count.members` when meta.packMemberCount is absent, so a pack
+  // whose member cosmetics were all deleted arrives here with both at zero.
+  it('refuses an empty pack for being empty, not for being the buyers own work', async () => {
+    await expect(buy({ price: 1500, members: [] })).rejects.toThrow(/no longer available/i);
+    expect(spend).not.toHaveBeenCalled();
+  });
+
   // The ordering case, and the only one that can see it: priced AT the floor
   // both refusals fire, and the price one would tell a buyer they already own
   // members they may hold none of. The case below prices ABOVE the floor and so

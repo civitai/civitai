@@ -482,6 +482,13 @@ export const purchaseCosmeticPack = async ({
   // uncapped listing never sells out.
   const paidFor = members.filter((m) => !isSelfAuthoredPackMember(m, userId, shopItem.addedById));
 
+  // Ahead of both pricing guards, because an empty pack reaches them with an
+  // empty `paidFor` and would be told the pack is the buyer's own work. Empty is
+  // reachable: assertPackPurchasable compares `members.length` against the count
+  // the pack was built with, and a pack whose member cosmetics were all deleted
+  // has both at zero.
+  if (!members.length) throw throwBadRequestError('This pack is no longer available');
+
   // Both fire on an all-own pack priced at the floor, so this one goes first: an
   // empty `paidFor` names the input, while a zero price is an outcome several
   // different inputs reach. The buyer may hold none of these members — telling
