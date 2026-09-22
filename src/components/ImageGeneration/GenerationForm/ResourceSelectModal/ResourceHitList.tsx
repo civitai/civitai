@@ -114,7 +114,7 @@ export function ResourceHitList({ query }: { query: string }) {
 
       return model.versions.filter((version) => {
         return (
-          (canGenerate ? canGenerate === version.canGenerate : true) &&
+          (canGenerate ? canGenerate === version.canGenerateNext : true) &&
           (skipBaseModel ||
             modelBaseModels.length === 0 ||
             modelBaseModels.includes(version.baseModel)) &&

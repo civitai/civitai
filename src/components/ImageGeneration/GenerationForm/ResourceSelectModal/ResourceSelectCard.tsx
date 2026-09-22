@@ -437,7 +437,7 @@ function ModelDetailsPanel({
           <IconBadge radius="xs" icon={<IconDownload size={14} />}>
             <Text>{(selectedVersion.metrics?.downloadCount ?? 0).toLocaleString()}</Text>
           </IconBadge>
-          {selectedVersion.canGenerate && (
+          {selectedVersion.canGenerateNext && (
             <IconBadge radius="xs" icon={<IconBrush size={14} />}>
               <Text>{(selectedVersion.metrics?.generationCount ?? 0).toLocaleString()}</Text>
             </IconBadge>

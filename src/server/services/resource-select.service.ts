@@ -177,7 +177,9 @@ export function buildFilter({
     selectSource === 'auction' || !user?.id
       ? ne('availability', Availability.Private)
       : or(ne('availability', Availability.Private), eq('user.id', user.id)),
-    canGenerate !== undefined && eq('canGenerate', canGenerate),
+    // `canGenerateNext`, not `canGenerate`: the live view still gates checkpoints on the auction's
+    // residency list, which hides the community checkpoints paid loading exists to load.
+    canGenerate !== undefined && eq('canGenerateNext', canGenerate),
     selectSource === 'auction' && not(eq('cannotPromote', true)),
     or(...typeClauses),
     featuredIds.length > 0 && inArray('id', featuredIds),

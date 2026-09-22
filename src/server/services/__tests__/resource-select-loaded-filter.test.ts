@@ -27,6 +27,15 @@ describe('the picker’s loaded-only filter', () => {
     expect(filterFor()).not.toContain('generatorLoaded');
   });
 
+  // The live `canGenerate` still gates checkpoints on the auction's residency list, so filtering on
+  // it hides the community checkpoints this feature exists to load — in preview too, which points at
+  // production.
+  it('gates coverage on the staged rule, not the live one', () => {
+    const filter = filterFor({ canGenerate: true });
+    expect(filter).toContain('canGenerateNext = true');
+    expect(filter).not.toContain('canGenerate = true');
+  });
+
   // `versions.generatorLoaded` has to be in `modelsFilterableAttributes` AND applied to the live
   // index, or Meili rejects the whole search and the picker returns nothing at all.
   it('filters on an attribute the index is told to make filterable', async () => {

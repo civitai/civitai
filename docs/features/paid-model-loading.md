@@ -125,6 +125,9 @@ per-tier caps, the `resource-load:update` signal and the load-complete toast. Ke
 
 **Coverage** — every reader of `GenerationCoverage` reads `GenerationCoverageNext` (Prisma `@@map`
 plus the raw-SQL queries), which is what lets a normal user pick a checkpoint that is not loaded.
+The models index is the exception: its `canGenerate` stays on the live view until the cutover, so
+the picker gates on the staged `canGenerateNext` instead — the live one still requires the weekly
+auction's residency list, and filtering on it hides exactly the checkpoints this feature loads.
 
 **Money-path properties worth keeping true:**
 
