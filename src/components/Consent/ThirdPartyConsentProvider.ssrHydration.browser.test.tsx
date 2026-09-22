@@ -203,21 +203,21 @@ let recoverable: string[] = [];
  *
  * 🔴 AN INSTRUCTION, NOT A CLAIM: numbers written in these comments are measurements at the
  * values in force when someone took them, and nothing checks them. Do not add one that has to be
- * hand-incremented, and do not trust one you find — re-derive it. Six review rounds on this file
- * each corrected a sentence that stated a count, a derived figure or a universal, and each
- * correction minted the next one; every remaining number here is prose, and prose is not a guard.
+ * hand-incremented, and do not trust one you find — re-derive it.
  *
  * 🔴 WHAT IS PINNED, AND BY WHAT:
- *   - `PROJECT_TIMEOUT_MS` — asserted EQUAL to `server.config.testTimeout`, an external ground
- *     truth.
+ *   - `PROJECT_TIMEOUT_MS` — asserted EQUAL to `server.config.testTimeout`, which is an
+ *     external ground truth rather than another value in this file.
  *   - `PRE_WAIT_BUDGET_MS` — asserted, in `afterAll`, against the largest pre-wait this run
  *     observed. That is a measurement on THIS box: a budget cut far below the real cost still
  *     passes on a quiet machine and turns the ledger into a flake source on a loaded one.
  *   - `BEACON_TIMEOUT_MS`, `MIN_MARGIN_MS` — asserted only through the invariant, which
- *     constrains the SUM. Any two terms therefore trade against each other. Worked example:
- *     shrink `PRE_WAIT_BUDGET_MS` and grow `BEACON_TIMEOUT_MS` by the same amount, and both
- *     assertions stay green while `BEACON_TIMEOUT_MS = 12_000` — a value this file's history
- *     records as failing — becomes reachable again.
+ *     constrains the SUM, so these two trade against each other freely. `PROJECT_TIMEOUT_MS`
+ *     does not trade: it is held by the equality assertion. `PRE_WAIT_BUDGET_MS` trades only
+ *     down to the floor the `afterAll` ledger puts under it. Worked example, within that floor:
+ *     shrink `PRE_WAIT_BUDGET_MS` and grow `BEACON_TIMEOUT_MS` by the same amount, and the suite
+ *     stays green while `BEACON_TIMEOUT_MS = 12_000` — a value this file's history records as
+ *     failing — becomes reachable again.
  *
  * 🔴 THE BLIND SPOT: `MIN_MARGIN_MS` is the margin assertion's own threshold, and nothing can
  * bound a threshold from inside the comparison that uses it. Lowering it, or inlining its value
@@ -399,12 +399,11 @@ function hydrationConsoleErrors() {
  * 🔴 "UNDER THE PROJECT TIMEOUT" IS NECESSARY, NOT SUFFICIENT. Everything before the wait —
  * `renderToString` of the full Mantine tree above all — is charged to the TEST's clock and not to
  * this one. The constants' header states the resulting invariant; it is not restated here, so
- * there is one copy to keep true. See `PRE_WAIT_BUDGET_MS` for how that term is sized and
- * measured — not restated here, because the figure it used to carry was retracted and this was
- * the copy that survived
- * the correction. `14_000` is the trap: it is strictly under 15 s, it satisfies any formula that
- * ignores pre-wait, and it leaves under a second of margin — so the first load spike in that
- * `renderToString` restores exactly the bare `Test timed out` this budget exists to remove.
+ * there is one copy to keep true, and `PRE_WAIT_BUDGET_MS`'s own docblock has how that term is
+ * sized and measured. `14_000` is the trap: it is strictly under the project timeout, it
+ * satisfies any formula that ignores pre-wait, and it leaves too little margin — so the first
+ * load spike in that `renderToString` restores exactly the bare `Test timed out` this budget
+ * exists to remove.
  *
  * 🔴 `MIN_MARGIN_MS` IS WHY THIS IS NOT WRITTEN `<=` ALONE — at equality the worst case lands
  * exactly ON the deadline and the deadline wins. See that constant's docblock for the measured
