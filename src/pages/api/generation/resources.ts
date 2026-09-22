@@ -1,8 +1,8 @@
 import { getResourceData } from '~/server/services/generation/generation.service';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
+import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import z from 'zod';
 
 const schema = z.object({
@@ -29,8 +29,8 @@ export default PublicEndpoint(
       const queryResult = await getResourceData(parsed.data.ids, {
         user,
         withPreview: true,
-        browsingLevel: getServerBrowsingLevel({
-          canViewNsfw: getFeatureFlags({ user, req }).canViewNsfw,
+        browsingLevel: getRequestBrowsingLevel({
+          features: getFeatureFlagsLazy({ user, req }),
           user,
         }),
       });

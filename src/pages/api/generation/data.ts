@@ -2,8 +2,8 @@ import { getGenerationDataSchema } from '~/server/schema/generation.schema';
 import { getGenerationData } from '~/server/services/generation/generation.service';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
+import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 
 export default PublicEndpoint(
   async function handler(req, res) {
@@ -38,8 +38,8 @@ export default PublicEndpoint(
       const queryResult = await getGenerationData({
         query: queryInput.data,
         user: session?.user,
-        browsingLevel: getServerBrowsingLevel({
-          canViewNsfw: getFeatureFlags({ user: session?.user, req }).canViewNsfw,
+        browsingLevel: getRequestBrowsingLevel({
+          features: getFeatureFlagsLazy({ user: session?.user, req }),
           user: session?.user,
         }),
       });
