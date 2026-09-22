@@ -83,6 +83,27 @@ export const ON_DEMAND_REWARD_SCRIPT = `
   return toAward
 `;
 
+// Clears what a dedup entry PAID without clearing the entry itself: the entry still
+// dedups the rest of the day, but contributes 0 to the cap sum the script above
+// enforces. Used when the ledger reports the award was a duplicate.
+//
+// An absent hash returns early rather than writing: `HSET` on a missing key would
+// recreate the hash with NO expiry, and `rewardsDailyReset` is the only other thing
+// that removes it.
+export const ON_DEMAND_ZERO_ENTRY_SCRIPT = `
+  local cacheJson = redis.call('HGET', KEYS[1], ARGV[1])
+  if not cacheJson then
+    return 0
+  end
+  local cache = cjson.decode(cacheJson)
+  if cache[ARGV[2]] == nil then
+    return 0
+  end
+  cache[ARGV[2]] = 'a:0'
+  redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(cache))
+  return 1
+`;
+
 /** `a:<amount>` as written by the Lua; `undefined` for a legacy timestamp entry. */
 function parseEntryAmount(entry: unknown): number | undefined {
   const match = /^a:(\d+)$/.exec(String(entry));
@@ -204,7 +225,7 @@ export function createBuzzEvent<T>({
   };
 
   const sendAward = async (events: BuzzEventLog[]) => {
-    await withRetries(() =>
+    return await withRetries(() =>
       createBuzzTransactionMany(
         events
           .map((event) => {
@@ -273,7 +294,7 @@ export function createBuzzEvent<T>({
 
     if (result === -1) return false; // Already awarded
     // `toAward` is what the cap left, which is NOT always the full award.
-    return { toAward: result, effectiveAward };
+    return { toAward: result, effectiveAward, hashField, cacheKey };
   };
 
   const apply = async (input: T, tracking?: { ip?: string }) => {
@@ -327,10 +348,12 @@ export function createBuzzEvent<T>({
       transactionDetails: JSON.stringify(transactionDetails ?? {}),
     };
 
+    let dedup: { hashField: string; cacheKey: string } | undefined;
     if (isOnDemand) {
       const outcome = await processOnDemand(key, rewardsMultiplier, config);
       if (outcome === false) return; // already awarded
       const { toAward, effectiveAward } = outcome;
+      dedup = { hashField: outcome.hashField, cacheKey: outcome.cacheKey };
 
       event.status = toAward > 0 ? 'awarded' : 'capped';
       if (event.status === 'capped') {
@@ -388,9 +411,9 @@ export function createBuzzEvent<T>({
     }
 
     if (event.status === 'awarded') {
+      let result: Awaited<ReturnType<typeof sendAward>>;
       try {
-        await sendAward([event]);
-        rewardGivenCounter?.inc?.();
+        result = await sendAward([event]);
       } catch (error) {
         log(event, {
           message: 'Failed to send award for Buzz event',
@@ -403,6 +426,47 @@ export function createBuzzEvent<T>({
         // credit during the outage; the user's mutation still succeeds.
         return;
       }
+
+      // `externalTransactionId` carries no date, so the ledger's idempotency guard is the
+      // only lifetime memory of an award — the Redis dedup entry dies at 00:00 UTC with the
+      // day's cap accounting it shares a hash field with. A repeat therefore reaches here,
+      // is refused by the ledger, and without this would still consume the user's daily cap
+      // and be reported as earned.
+      //
+      // Reading the refusal from the COUNTS rather than from the conflict identifiers is what
+      // makes this independent of their shape — but it identifies THIS event only because the
+      // on-demand path submits exactly one transaction. Batching that call silently breaks it.
+      // A response missing either array reads as "nothing reported a conflict", which leaves
+      // the award exactly as it is today rather than correcting one that was really paid.
+      const settled = result?.transactions?.length ?? 0;
+      const conflicted = result?.conflicts?.length ?? 0;
+      if (dedup && settled === 0 && conflicted > 0) {
+        await recordDuplicateAward(event, dedup);
+        return;
+      }
+
+      rewardGivenCounter?.inc?.();
+    }
+  };
+
+  const recordDuplicateAward = async (
+    event: BuzzEventLog,
+    dedup: { hashField: string; cacheKey: string }
+  ) => {
+    event.status = 'duplicate';
+    event.awardAmount = 0;
+    try {
+      await redis.eval(ON_DEMAND_ZERO_ENTRY_SCRIPT, {
+        keys: [REDIS_KEYS.BUZZ_EVENTS],
+        arguments: [dedup.hashField, dedup.cacheKey],
+      });
+      await updateBuzzEvents([event]);
+    } catch (error) {
+      log(event, {
+        message: 'Failed to record duplicate Buzz award',
+        error,
+      });
+      rewardFailedCounter?.inc?.();
     }
   };
 
@@ -631,8 +695,8 @@ export function toClickhouseBuzzEvent(event: BuzzEventLog): BuzzEventLog {
   let status = event.status;
   if (status && !CLICKHOUSE_STATUSES.has(status)) {
     coerced.statusRaw = status;
-    // `unqualified` and `capped` both mean seen and paid nothing. Recording it as the nearest
-    // legal value keeps the row; widening the enum would let it keep its own name.
+    // `unqualified`, `duplicate` and `capped` all mean seen and paid nothing. Recording it as
+    // the nearest legal value keeps the row; widening the enum would let it keep its own name.
     status = 'capped';
   }
 
@@ -762,7 +826,7 @@ type BuzzEventKey = {
 export type BuzzEventLog = BuzzEventKey & {
   awardAmount: number;
   multiplier?: number;
-  status?: 'pending' | 'awarded' | 'capped' | 'unqualified';
+  status?: 'pending' | 'awarded' | 'capped' | 'unqualified' | 'duplicate';
   ip?: string;
   version?: number;
   transactionDetails?: string;
