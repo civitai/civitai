@@ -345,8 +345,14 @@ and left waiting.
 unit run saturates every core, while `tsc` is single-threaded and spends its budget on heap. The
 lanes are `unit` (`test:unit:run`), `typecheck` (`typecheck`) and `typecheckApps`
 (`typecheck:apps`), and the bare `test config <n>` sets the unit one. A lane's limit reaches the
-daemon under the `configKey` declared for it in `RUN_KINDS`; the daemon and the CLI both read that
-table rather than naming each lane, so declaring a lane there is the whole registration.
+daemon under the `configKey` declared for it in `RUN_KINDS`, and both the daemon's config endpoint
+and the CLI read that table rather than naming each lane - so a lane declared there is addressable
+at runtime with no further edit.
+
+Its **startup default is not** derived that way yet: `TEST_CONCURRENCY` and `TYPECHECK_CONCURRENCY`
+are still read by name in `daemon.mjs`, and the limits handed to the queue's constructor still name
+their two lanes. So a new lane starts at `defaultConcurrency` and can only be changed at runtime
+until someone wires an env key for it.
 
 Things worth knowing before you rely on it:
 
