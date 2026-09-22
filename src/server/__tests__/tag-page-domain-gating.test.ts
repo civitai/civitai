@@ -42,6 +42,7 @@ const run = async (green: boolean) => {
   isGreen.value = green;
   return (await getServerSideProps({ query: { tagname: 'anime' } } as never)) as {
     props: { deIndexForDomain: boolean; greenCanonical: string | null };
+    suppressAds: boolean;
   };
 };
 
@@ -73,6 +74,22 @@ describe('tag page domain gating', () => {
     expect(shouldDeIndexSafeOnlyTag).toHaveBeenCalledTimes(1);
     expect(shouldDeIndexMatureOnlyTag).not.toHaveBeenCalled();
     expect(props.deIndexForDomain).toBe(true);
+  });
+
+  // GAM policy keys on the page's context, so the flag has to reach ads as well as robots.
+  it('suppresses ads on green for an adult term, whatever its models are rated', async () => {
+    getTagPageSeoData.mockResolvedValue({ count: 40, models: [], nsfwTerm: true });
+
+    const green = await run(true);
+    expect(green.suppressAds).toBe(true);
+  });
+
+  it('leaves ads alone for an ordinary term, and on red, which runs no auction', async () => {
+    getTagPageSeoData.mockResolvedValue({ count: 40, models: [], nsfwTerm: false });
+    expect((await run(true)).suppressAds).toBe(false);
+
+    getTagPageSeoData.mockResolvedValue({ count: 40, models: [], nsfwTerm: true });
+    expect((await run(false)).suppressAds).toBe(false);
   });
 
   it('never hands green a canonical pointing anywhere but itself', async () => {

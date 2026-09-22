@@ -7084,7 +7084,6 @@ model ImageTag {
   tag          Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
   tagName      String
   tagType      TagType
-  tagNsfw      NsfwLevel
   tagNsfwLevel Int
   automated    Boolean
   confidence   Int?

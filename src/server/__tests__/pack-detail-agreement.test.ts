@@ -180,6 +180,10 @@ describe('getPackDetail agrees with what the purchase charges', () => {
   it('marks the lister as such, and the purchase refuses them', async () => {
     const detail = await getPackDetail({ shopItemId: PACK_ID, userId: LISTER });
     expect(detail.isPackCreator).toBe(true);
+    // The only thing pinning the `!== packCreatorId` half of
+    // isSelfAuthoredPackMember: without it the lister's own members read as
+    // self-authored and their quote drops by that much, silently.
+    expect(detail.amountDue).toBe(PRICE);
     await expect(charge(LISTER)).rejects.toThrow(/your own pack/i);
     expect(spend).not.toHaveBeenCalled();
   });

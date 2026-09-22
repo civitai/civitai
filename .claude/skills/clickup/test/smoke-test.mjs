@@ -352,6 +352,78 @@ async function writeTests() {
     assertContains(output, 'Subtask');
   });
 
+  // ── Reparenting an existing task ──
+
+  let reparentChildId = null;
+
+  await test('parent: makes an existing task a subtask', async () => {
+    const { stdout } = await runJson(['create', TEST_LIST_ID, 'SMOKE TEST: reparent child']);
+    reparentChildId = assertJson(stdout).id;
+    assert(reparentChildId, 'Expected created task ID');
+    cleanupTasks.push({ type: 'task', id: reparentChildId });
+
+    const { code } = await run(['parent', reparentChildId, testTaskId]);
+    assert(code === 0, `Expected exit 0, got ${code}`);
+
+    const reread = assertJson((await runJson(['get', reparentChildId])).stdout);
+    assert(
+      reread.parent === testTaskId,
+      `Expected parent ${testTaskId} on re-read, got ${reread.parent}`
+    );
+  });
+
+  await test('parent: refuses a move that would create a cycle', async () => {
+    const { code, output } = await run(['parent', testTaskId, reparentChildId]);
+    assert(code !== 0, 'Expected a non-zero exit for a cycle');
+    assertContains(output, 'cycle');
+
+    // The refusal is only worth anything if nothing was written.
+    const reread = assertJson((await runJson(['get', testTaskId])).stdout);
+    assert(
+      reread.parent !== reparentChildId,
+      `Refused move still wrote: ${testTaskId} now has parent ${reread.parent}`
+    );
+  });
+
+  await test('parent: refuses a task as its own parent', async () => {
+    const { code, output } = await run(['parent', reparentChildId, reparentChildId]);
+    assert(code !== 0, 'Expected a non-zero exit for a self-parent');
+    assertContains(output, 'own parent');
+  });
+
+  // ── Milestones ──
+
+  await test('milestone: on then off, verified by re-read', async () => {
+    const { code: onCode } = await run(['milestone', testTaskId, 'on']);
+    assert(onCode === 0, `Expected exit 0 turning milestone on, got ${onCode}`);
+    const asMilestone = assertJson((await runJson(['get', testTaskId])).stdout);
+    assert(
+      asMilestone.custom_item_id !== 0,
+      `Expected a milestone type on re-read, got custom_item_id ${asMilestone.custom_item_id}`
+    );
+
+    const { code: offCode } = await run(['milestone', testTaskId, 'off']);
+    assert(offCode === 0, `Expected exit 0 turning milestone off, got ${offCode}`);
+    const asTask = assertJson((await runJson(['get', testTaskId])).stdout);
+    assert(
+      asTask.custom_item_id === 0,
+      `Expected custom_item_id 0 on re-read, got ${asTask.custom_item_id}`
+    );
+  });
+
+  await test('milestone: requires a mode and writes nothing without one', async () => {
+    const before = assertJson((await runJson(['get', testTaskId])).stdout);
+    const { code, output } = await run(['milestone', testTaskId]);
+    assert(code !== 0, 'Expected a non-zero exit with no mode');
+    assertContains(output, 'Mode required');
+
+    const after = assertJson((await runJson(['get', testTaskId])).stdout);
+    assert(
+      after.custom_item_id === before.custom_item_id,
+      `A bare "milestone <task>" wrote: custom_item_id ${before.custom_item_id} -> ${after.custom_item_id}`
+    );
+  });
+
   // ── List CRUD ──
 
   await test('create-list: creates a list', async () => {

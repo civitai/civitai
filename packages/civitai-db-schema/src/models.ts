@@ -4627,7 +4627,6 @@ export interface ImageTag {
   tag?: Tag;
   tagName: string;
   tagType: TagType;
-  tagNsfw: NsfwLevel;
   tagNsfwLevel: number;
   automated: boolean;
   confidence: number | null;

@@ -16,6 +16,7 @@ import {
   removeHubGroup,
   removeHubTag,
 } from '~/components/Hubs/hub.utils';
+import type { HubSourceScope } from '~/server/schema/user-hub.schema';
 import { hubLimits, hubSourceKey } from '~/server/schema/user-hub.schema';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
@@ -63,7 +64,7 @@ function AddToGroup({
           opened={opened}
           onChange={setOpened}
           position="bottom-start"
-          width={280}
+          width={400}
           shadow="md"
           // 🔴 Explicit. ThemeProvider defaults every Popover to withinPortal={false},
           // and a chip row is a flex container that clips, so the dropdown is drawn
@@ -80,9 +81,10 @@ function AddToGroup({
               <IconPlus size={14} />
             </UnstyledButton>
           </Popover.Target>
-          <Popover.Dropdown p="xs">
+          <Popover.Dropdown p={0} className="overflow-hidden">
             <HubSourceInput
               autoFocus
+              flush
               only="tags"
               disabled={disabled}
               remaining={hubLimits.sourcesPerHub}
@@ -202,11 +204,13 @@ export function HubSourceEditor({
   onChange,
   disabled,
   emptyMessage = 'Nothing here yet — search above to start filling it.',
+  initialScope,
 }: {
   value: HubSourceValue[];
   onChange: (next: HubSourceValue[]) => void;
   disabled?: boolean;
   emptyMessage?: string;
+  initialScope?: HubSourceScope;
 }) {
   const [addingExclusion, setAddingExclusion] = useState(false);
 
@@ -372,6 +376,7 @@ export function HubSourceEditor({
           onAdd={(source) => addSource(source, false)}
           onRemove={removeByTarget}
           onAddMany={addMany}
+          initialScope={initialScope}
         />
       </div>
 

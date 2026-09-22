@@ -176,7 +176,7 @@ export async function runQueued(args, { kind = 'unit', fallback = runDirect } = 
   if (run.status === 'queued') {
     console.error(
       run.paused
-        ? `Queued at position ${run.position}. The queue is PAUSED (concurrency 0) — nothing starts until it is raised.`
+        ? `Queued at position ${run.position}. Its ${run.pausedBy ?? 'lane'} is PAUSED (limit 0) — nothing starts until \`${run.resumeCommand ?? 'test config 1'}\`.`
         : `Queued at position ${run.position} of ${run.queueLength} (${run.running}/${run.concurrency} running).`
     );
   }

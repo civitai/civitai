@@ -127,6 +127,8 @@ node query.mjs <command> [options]
 | `due <task> "date"` | Set due date (e.g., "tomorrow", "friday", "+3d") |
 | `priority <task> <level>` | Set priority (urgent, high, normal, low, none) |
 | `subtask <task> "title"` | Create a subtask |
+| `parent <task> <parent_task>` | Make an EXISTING task a subtask of another task |
+| `milestone <task> <on\|off>` | Turn a task into a milestone, or back into a normal task |
 | `move <task> <list_id>` | Move task to a different list |
 | `link <task> <url> ["desc"]` | Add external link reference (as comment) |
 | `checklist <task> "item"` | Add checklist item to task |
@@ -317,6 +319,41 @@ node query.mjs priority 86a1b2c3d none  # Clear priority
 node query.mjs subtask 86a1b2c3d "Write unit tests"
 node query.mjs subtask 86a1b2c3d "Update documentation"
 ```
+
+### Reparent an Existing Task
+
+`subtask` creates a new task. `parent` takes one that already exists and files it
+under another:
+
+```bash
+node query.mjs parent 86a1b2c3d 86a9z8y7x   # 86a1b2c3d becomes a subtask of 86a9z8y7x
+```
+
+It refuses to make a task its own parent, refuses a move that would put a task
+under one of its own descendants, and reports the parent it reads back from the
+server afterwards rather than the one you asked for.
+
+Two things to know before using it:
+
+- **There is no detach.** ClickUp's UpdateTask docs: "You cannot convert a subtask
+  to a task by setting `parent` to `null`." Undoing a reparent needs the ClickUp UI.
+- **A cross-list reparent relocates the task into the parent's list.** Moving a task
+  from "Agent Follow-ups" under a parent in "Synced Team" moves it to "Synced Team";
+  the command prints `List moved: ... -> ...` when this happens.
+
+### Milestones
+
+```bash
+node query.mjs milestone 86a1b2c3d on    # mark as milestone
+node query.mjs milestone 86a1b2c3d off   # back to an ordinary task
+```
+
+A milestone is a task *type*, not a status. The type id is per-workspace, so it is
+resolved by name rather than hardcoded. Unlike reparenting, this is reversible.
+
+The mode is required. `milestone <task>` with no `on`/`off` is an error rather than
+a default, because the default would be a write on a command whose name reads like
+a question.
 
 ### Move Tasks
 

@@ -11,6 +11,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'f
 import {
   exitCodeFor,
   isTerminal as isTerminalStatus,
+  laneConcurrencyArgs,
   parseMaxWorkersFlag,
 } from './scripts/test-queue.mjs';
 import { resolveDaemonUrl } from './scripts/daemon-port.mjs';
@@ -535,8 +536,8 @@ function describeRun(run) {
     lines.push(`Run ${run.id} started (nothing ahead of it).`);
   } else if (run.paused) {
     lines.push(
-      `Run ${run.id} queued at position ${run.position}, but the queue is PAUSED (concurrency 0).`,
-      `Nothing will start until someone raises it: node .claude/skills/dev-server/cli.mjs test config 1`
+      `Run ${run.id} queued at position ${run.position}, but its ${run.pausedBy ?? 'lane'} is PAUSED (limit 0).`,
+      `Nothing will start until someone raises it: node .claude/skills/dev-server/cli.mjs ${run.resumeCommand ?? 'test config 1'}`
     );
   } else {
     lines.push(
@@ -604,7 +605,9 @@ async function cmdTestWait(id) {
       lastStatus = run.status;
     }
     if (run.paused && !announcedPause && !isTerminalStatus(run.status)) {
-      console.log('queue is PAUSED (concurrency 0) — nothing will start until it is raised');
+      console.log(
+        'queue is PAUSED (the unit lane is at 0) — nothing will start until it is raised'
+      );
       announcedPause = true;
     }
 
@@ -660,13 +663,7 @@ async function cmdTest(sub, rest) {
       // did not mean to change is how the cap gets dropped while raising concurrency.
       const body = {};
       if (rest[0] !== undefined && !rest[0].startsWith('--')) body.concurrency = Number(rest[0]);
-      // Both spellings, because a caller who types the `=` form and silently gets no cap has no
-      // way to tell that from a cap that was applied — the reply prints maxWorkers either way.
-      const typecheckAt = rest.findIndex((a) => /^--typecheck(=|$)/.test(a));
-      if (typecheckAt !== -1) {
-        const inline = rest[typecheckAt].split('=')[1];
-        body.typecheckConcurrency = Number(inline !== undefined ? inline : rest[typecheckAt + 1]);
-      }
+      Object.assign(body, laneConcurrencyArgs(rest));
       const cacheAt = rest.findIndex((a) => /^--cache(=|$)/.test(a));
       if (cacheAt !== -1) {
         const inline = rest[cacheAt].split('=')[1];
@@ -1076,6 +1073,15 @@ Commands:
                       --typecheck n does the same for the typecheck lane)
                       [--max-workers <n>|none] also caps each run's vitest pool
                       [--typecheck <n>] sets the typecheck lane's limit
+                      [--typecheck-apps <n>] sets the app-typecheck lane's limit
+                      [--component <n>] sets the component (browser) lane's limit
+                      [--packages <n>] sets the packages suite lane's limit
+                      [--apps <n>] sets the apps suite lane's limit
+                      [--geometry <n>] sets the geometry (browser) lane's limit
+                      [--lint <n>] sets the lint lane's limit
+                      [--lint-packages <n>] sets the packages-lint lane's limit
+                      [--saturating <n>] how many box-hungry runs may share the machine
+                      [--light <n>] how many cheap runs may sit beside them
                       [--cache off|shadow|on] result cache: on skips unchanged tests
   wt stale            List worktrees whose PR merged (read-only)
   wt rm <path>        Remove a worktree safely (unlinks junctions first)

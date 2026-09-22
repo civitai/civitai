@@ -5,7 +5,7 @@ import * as QueueModule from '../../.claude/skills/dev-server/scripts/test-queue
 
 // The module is plain .mjs, so TS infers `request`'s payload from nothing and lands on types no
 // call here can satisfy. Named once instead of cast at every call site.
-type Kind = 'unit' | 'typecheck';
+type Kind = 'unit' | 'typecheck' | 'typecheckApps';
 type View = {
   id: string;
   kind: Kind;
@@ -29,8 +29,9 @@ type Queue = {
 type Runner = EventEmitter & { finish: (code: number) => void; kind: Kind; worktree: string };
 type RunnerArgs = { worktree: string; kind: Kind };
 
-const { TestQueue, parseMaxWorkersFlag } = QueueModule as unknown as {
+const { TestQueue, parseMaxWorkersFlag, RUN_KINDS } = QueueModule as unknown as {
   parseMaxWorkersFlag: (raw: string | undefined) => number | null;
+  RUN_KINDS: Record<string, unknown>;
   TestQueue: new (options: Record<string, unknown>) => Queue;
 };
 
@@ -153,8 +154,14 @@ describe('configuring the lanes', () => {
 
   it('refuses an unknown kind without recording a run no lane would ever start', () => {
     const queue = build({ unit: 1, typecheck: 1 });
+    // 🔴 The premise, asserted rather than assumed. This test used to name `lint`, which was an
+    // unknown kind until the day someone added a `lint` LANE - at which point the request stopped
+    // throwing and the test failed for a reason that had nothing to do with what it checks. A name
+    // no lane will ever take needs to be checked, not chosen and trusted.
+    const notALane = '__not-a-lane__';
+    expect(Object.keys(RUN_KINDS)).not.toContain(notALane);
 
-    expect(() => queue.request({ worktree: '/wt/x', kind: 'lint' })).toThrow(/unknown run kind/);
+    expect(() => queue.request({ worktree: '/wt/x', kind: notALane })).toThrow(/unknown run kind/);
     expect(queue.list()).toEqual([]);
   });
 
@@ -203,5 +210,32 @@ describe('the --max-workers operand', () => {
 
     queue.setMaxWorkers(null);
     expect(queue.maxWorkers).toBeNull();
+  });
+});
+
+/**
+ * 🔴 The app typechecks were the check kind with no lane at all: only CI ran them, so locally they
+ * either did not run or ran beside a full suite with nothing arbitrating the box. A lane that is
+ * declared but shares another lane's limit would queue here instead of starting, which is the
+ * "everything waits behind the suite" condition the lanes exist to end.
+ */
+describe('the app-typecheck lane is its own lane', () => {
+  it('starts immediately while the unit lane is full and has runs queued ahead of it', () => {
+    const queue = build({ unit: 1, typecheck: 1, typecheckApps: 1 });
+    queue.request({ worktree: '/wt/suite-a' });
+    queue.request({ worktree: '/wt/suite-b' });
+
+    const apps = queue.request({ worktree: '/wt/apps', kind: 'typecheckApps' });
+
+    expect(apps.status).toBe('running');
+    expect(started.map((h) => h.kind)).toEqual(['unit', 'typecheckApps']);
+  });
+
+  it("does not share the root typecheck lane's limit", () => {
+    const queue = build({ unit: 1, typecheck: 1, typecheckApps: 1 });
+    const root = queue.request({ worktree: '/wt/tc', kind: 'typecheck' });
+    const apps = queue.request({ worktree: '/wt/apps', kind: 'typecheckApps' });
+
+    expect([root.status, apps.status]).toEqual(['running', 'running']);
   });
 });

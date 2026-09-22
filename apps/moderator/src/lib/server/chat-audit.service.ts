@@ -60,12 +60,22 @@ export type ChatMessageRow = {
   deletedAt: Date | null;
 };
 
-/** The text either side of an edit, from the `chatAuditEvents` log — the only place the original
- *  survives. Keyed by message id. */
+/**
+ * ONE edit, from the `chatAuditEvents` log — the only place a superseded version survives.
+ *
+ * A message carries a LIST of these, oldest first, because 144 of the 1,025 edited messages on the
+ * site were edited more than once and one was edited 21 times. Collapsing them to first-and-last
+ * dropped every intermediate version, and pinned the original's text to the newest edit's timestamp —
+ * so the panel dated text to a moment it did not exist at, on the screen that answers "what did this
+ * say when it was reported".
+ */
 export type MessageEdit = {
-  /** ISO, already normalised out of ClickHouse's zoneless format. */
+  /** ISO, already normalised out of ClickHouse's zoneless format. When THIS edit happened. */
   at: string;
+  /** The text this edit replaced. `oldValue` of the first edit is what the message was written with. */
   oldValue: string;
+  /** The text it left behind — equal to the next edit's `oldValue`, and on the last edit to the
+   *  message's current `content`. Verified to chain with no gaps across every multi-edit message. */
   newValue: string;
   /** The log caps each value at 4,000 chars. */
   truncated: boolean;
@@ -353,9 +363,9 @@ export async function getTranscript(
 ): Promise<{
   rows: ChatMessageRow[];
   truncated: boolean;
-  /** Null when the audit log could not be read — distinct from an empty map, which says the log was
-   *  read and holds nothing for these messages. */
-  edits: Record<number, MessageEdit> | null;
+  /** Every edit per message, oldest first. Null when the audit log could not be read — distinct from
+   *  an empty map, which says the log was read and holds nothing for these messages. */
+  edits: Record<number, MessageEdit[]> | null;
 }> {
   if (!isInt4Id(chatId)) return { rows: [], truncated: false, edits: {} };
 
@@ -393,7 +403,7 @@ export async function getTranscript(
 async function getMessageEdits(
   chatId: number,
   messageIds: number[]
-): Promise<Record<number, MessageEdit> | null> {
+): Promise<Record<number, MessageEdit[]> | null> {
   if (!messageIds.length) return {};
 
   try {
@@ -410,23 +420,20 @@ async function getMessageEdits(
       WHERE type = 'edit'
         AND chatId = ${chatId}
         AND messageId IN (${messageIds.join(',')})
-      -- A message can be edited repeatedly; the ORIGINAL is the oldest row's oldValue.
+      -- Oldest first, so the list reads as the order the message was rewritten in.
       ORDER BY createdAt ASC
     `);
 
-    const byMessage: Record<number, MessageEdit> = {};
+    const byMessage: Record<number, MessageEdit[]> = {};
     for (const r of rows) {
       const id = Number(r.messageId);
-      const existing = byMessage[id];
-      byMessage[id] = {
-        // Keep the first edit's `oldValue` — that is the text the message was written with — while
-        // letting later edits move the current text and the timestamp forward.
-        oldValue: existing?.oldValue ?? r.oldValue,
-        newValue: r.newValue,
+      (byMessage[id] ??= []).push({
         at: clickhouseDate(r.createdAt),
-        truncated: existing?.truncated || r.truncated === 1,
+        oldValue: r.oldValue,
+        newValue: r.newValue,
+        truncated: r.truncated === 1,
         actorRole: r.actorRole,
-      };
+      });
     }
     return byMessage;
   } catch (e) {

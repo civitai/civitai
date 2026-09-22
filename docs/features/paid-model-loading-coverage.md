@@ -67,6 +67,13 @@ This is the thing an earlier reading of these docs got wrong, and it inverted a 
 | `CoveredCheckpoint` | 514 rows | Auction-won community checkpoints — a **residency proxy**. Written and pruned weekly by `handle-auctions.ts`. **This is what paid loading replaces.** (638 versions are covered *as checkpoints* — the rest come from `EcosystemCheckpoints`.) |
 | `EcosystemCheckpoints` | 125 | The generator's **default model per ecosystem**. **62 of the 63 checkpoint defaults are covered through it — and zero through `CoveredCheckpoint`.** Not a loophole; the registry that keeps the generator working. |
 
+⚠️ **`CoveredCheckpoint` is out of the view entirely** as of
+`20260922190000_generation_coverage_next_drop_covered_checkpoint`. `20260909180000` had kept it as a
+disjunct excusing auction checkpoints from the SafeTensor requirement; Justin's call, 2026-09-22, is
+that a checkpoint meeting none of the other qualifications should not be covered whether or not the
+auction made it resident. Measured against the replica that day: 5 versions lose coverage
+(940,125 → 940,120 rows).
+
 Dropping `CoveredCheckpoint` **as a conjunct** is the feature — it no longer gates anything. It
 survives as a *disjunct* excusing 6 auction-resident checkpoints from the SafeTensor requirement, and
 is deleted when the auction stops writing rows. Dropping `EcosystemCheckpoints` would remove the

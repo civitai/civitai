@@ -3,7 +3,6 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconCheck, IconPlus, IconSearch, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import type { HubSourceValue } from '~/components/Hubs/HubSourceEditor';
 import type { ProfileImage } from '~/server/selectors/image.selector';
@@ -73,46 +72,25 @@ const tabs: {
 
 const PREVIEW_ROWS = 5;
 
-// A face for a person, an initial for a thing. Both square up at the same size so the
-// names in a list still form a column.
-function RowAvatar({ item }: { item: Suggestion }) {
+function CreatorAvatar({ item }: { item: Suggestion }) {
   // 🔴 A person goes through `UserAvatar`, which is the only place that decides whether
   // a face may be shown — the viewer's browsing level, a Blocked ingestion, a legacy
   // `blob:` url, a deleted account. Rendering `profilePicture.url` here instead looked
   // like four lines of CSS and was a second, permanently stale copy of that gate.
-  if (item.type === 'User')
-    return (
-      <UserAvatar
-        user={{
-          id: item.targetId,
-          username: item.username ?? item.alias,
-          image: item.image,
-          profilePicture: item.profilePicture,
-          deletedAt: item.deletedAt,
-        }}
-        withUsername={false}
-        withDecorations={false}
-        withHoverCard={false}
-        avatarSize={24}
-      />
-    );
-
-  // No component owns a model or a tag the way `UserAvatar` owns a person, and one
-  // call site does not justify inventing one.
-  if (item.image)
-    return (
-      <EdgeMedia
-        src={item.image}
-        width={96}
-        className="size-6 shrink-0 rounded object-cover"
-        alt=""
-      />
-    );
-
   return (
-    <div className="grid size-6 shrink-0 place-items-center rounded bg-gray-3 text-[10px] font-bold uppercase text-gray-7 dark:bg-dark-4 dark:text-dark-0">
-      {item.alias.slice(0, 1)}
-    </div>
+    <UserAvatar
+      user={{
+        id: item.targetId,
+        username: item.username ?? item.alias,
+        image: item.image,
+        profilePicture: item.profilePicture,
+        deletedAt: item.deletedAt,
+      }}
+      withUsername={false}
+      withDecorations={false}
+      withHoverCard={false}
+      avatarSize={24}
+    />
   );
 }
 
@@ -120,10 +98,12 @@ function Row({
   item,
   added,
   onToggle,
+  withKind,
 }: {
   item: Suggestion;
   added: boolean;
   onToggle: VoidFunction;
+  withKind: boolean;
 }) {
   return (
     <UnstyledButton
@@ -140,13 +120,20 @@ function Row({
       ) : (
         <IconPlus size={16} className="shrink-0 text-gray-6 dark:text-dark-2" />
       )}
-      <RowAvatar item={item} />
+      {item.type === 'User' && <CreatorAvatar item={item} />}
       <Text size="sm" lineClamp={1} className="min-w-0 flex-1 text-left">
         {item.alias}
       </Text>
-      <Badge size="xs" variant="light" color={kindColor[item.type] ?? 'gray'} className="shrink-0">
-        {hubSourceKindLabel(item.type)}
-      </Badge>
+      {withKind && (
+        <Badge
+          size="xs"
+          variant="light"
+          color={kindColor[item.type] ?? 'gray'}
+          className="shrink-0"
+        >
+          {hubSourceKindLabel(item.type)}
+        </Badge>
+      )}
       {typeof item.imageCount === 'number' && (
         <Text size="xs" c="dimmed" className="w-16 shrink-0 text-right">
           {abbreviateNumber(item.imageCount)} images
@@ -176,6 +163,8 @@ export function HubSourceInput({
   autoFocus,
   exclude,
   only,
+  initialScope = 'following',
+  flush,
 }: {
   isAdded: (source: { type: HubSourceValue['type']; targetId: number }) => boolean;
   onAdd: (source: Suggestion) => void;
@@ -192,9 +181,12 @@ export function HubSourceInput({
    * models, which cannot join one.
    */
   only?: HubSourceScope;
+  initialScope?: HubSourceScope;
+  /** Edge to edge, for a container that already draws its own frame (a popover). */
+  flush?: boolean;
 }) {
   const utils = trpc.useUtils();
-  const [scope, setScope] = useState<HubSourceScope>(only ?? (exclude ? 'all' : 'following'));
+  const [scope, setScope] = useState<HubSourceScope>(only ?? (exclude ? 'all' : initialScope));
   const [query, setQuery] = useState('');
   const [debounced] = useDebouncedValue(query, 400);
   const [filling, setFilling] = useState(false);
@@ -252,7 +244,7 @@ export function HubSourceInput({
   };
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className={clsx('flex flex-col', !flush && 'gap-2')}>
       {/* No tabs in the keep-out box: it is one short list of things to hide, and a
           second copy of the picker's whole apparatus for it is noise. None when the
           caller has pinned a tab either — there is nothing to choose. */}
@@ -286,10 +278,16 @@ export function HubSourceInput({
         }
         leftSection={loading ? <Loader size={14} /> : <IconSearch size={16} />}
         onChange={(event) => setQuery(event.currentTarget.value)}
+        className={clsx(flush && 'p-2')}
       />
 
       {(!exclude || !!term || !!url) && (
-        <div className="overflow-hidden rounded-md border border-gray-3 dark:border-dark-4">
+        <div
+          className={clsx(
+            'border-gray-3 dark:border-dark-4',
+            flush ? 'border-t' : 'overflow-hidden rounded-md border'
+          )}
+        >
           {!url && !term && !!tab?.resting ? (
             <Text size="xs" c="dimmed" className="px-3 py-4">
               {tab?.resting}
@@ -319,14 +317,17 @@ export function HubSourceInput({
                 </div>
               )}
 
-              {items.slice(0, term || url ? undefined : PREVIEW_ROWS).map((item) => (
-                <Row
-                  key={`${item.type}-${item.targetId}`}
-                  item={item}
-                  added={isAdded(item)}
-                  onToggle={() => (isAdded(item) ? onRemove(item) : add(item))}
-                />
-              ))}
+              <div className="max-h-72 overflow-y-auto">
+                {items.slice(0, term || url ? undefined : PREVIEW_ROWS).map((item) => (
+                  <Row
+                    key={`${item.type}-${item.targetId}`}
+                    item={item}
+                    added={isAdded(item)}
+                    onToggle={() => (isAdded(item) ? onRemove(item) : add(item))}
+                    withKind={!only}
+                  />
+                ))}
+              </div>
 
               {!items.length && !loading && (
                 <div className="flex flex-col gap-1 px-3 py-4">
