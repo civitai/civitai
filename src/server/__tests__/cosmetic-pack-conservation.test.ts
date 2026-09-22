@@ -174,6 +174,24 @@ const SHAPES: Shape[] = [
     owned: [1001],
   },
   {
+    // Distinct balances, so the grant property's per-member `uses` lookup can
+    // disagree with reading one member's balance for all of them. With every
+    // fixture on the same number that assertion cannot fail.
+    name: 'two consumable members with different balances',
+    price: 6300,
+    members: [
+      mkMember({ type: CosmeticType.Sticker, data: { uses: 45 } }),
+      mkMember({
+        cosmeticId: 1002,
+        type: CosmeticType.Sticker,
+        data: { uses: 60 },
+        createdById: OTHER_CREATOR,
+        addedById: OTHER_CREATOR,
+        floorAmount: 2900,
+      }),
+    ],
+  },
+  {
     name: 'a member with no creator at all',
     price: 6300,
     members: [
@@ -472,7 +490,7 @@ describe.each(SHAPES)(
     // Set equality rather than containment: the defect is an EXTRA member in the
     // grant, which `toContain` cannot see.
     it('grants only the members the buyer was charged for', async () => {
-      const { result } = await setup();
+      await setup();
       const consumableGrants = executeRaw.mock.calls.map((call) => {
         // INSERT ... VALUES (${userId}, ${cosmeticId}, ${claimKey}, ${uses}).
         // The neighbours are asserted so a reordered template cannot slide this
@@ -488,7 +506,10 @@ describe.each(SHAPES)(
         expect(claimKey).toMatch(/^cosmetic-pack-/);
         // Nothing else in either pack suite pins the balance, so a purchase that
         // sold a 10x top-up at the same price would otherwise print nothing.
+        // Looked up per member rather than compared to a constant, which only
+        // discriminates because the consumable shapes carry distinct `uses`.
         const member = members.find((m) => m.cosmeticId === cosmeticId);
+        expect(member).toBeDefined();
         expect(uses).toBe((member?.data as { uses?: number } | undefined)?.uses);
         return cosmeticId;
       });
@@ -509,9 +530,17 @@ describe.each(SHAPES)(
         .map((m) => m.cosmeticId);
       const byValue = (a: number, b: number) => a - b;
       expect([...consumableGrants, ...durableGrants].sort(byValue)).toEqual(expected.sort(byValue));
-      // What the completion modal is told the buyer received. It is built from a
-      // different list than the grant, so it can name a member that was withheld
-      // while every assertion above still passes.
+    });
+
+    // Its own case, because when it fails the claim that broke is the modal's,
+    // not the grant's. It reads the return value where the property above reads
+    // the database fake, and the defect it exists for was the two disagreeing.
+    it('tells the buyer only what they were charged for', async () => {
+      const { result } = await setup();
+      const byValue = (a: number, b: number) => a - b;
+      // Deliberately WITHOUT the owned-durable exclusion the grant expectation
+      // applies: a durable the buyer already held is named here and not granted.
+      // That is what the code does, pinned so changing it is a decision.
       expect(result.granted.map((g) => g.cosmeticId).sort(byValue)).toEqual(
         members
           .filter((m) => !(m.createdById === buyerId && m.createdById !== packCreatorId))
@@ -681,27 +710,33 @@ describe('purchaseCosmeticPack — purchases that must not complete', () => {
   // members means a pack of nothing else delivers nothing, and priced ABOVE the
   // floor it still charges. Deleting this leaves money moving for no goods.
   it('refuses a pack of only the buyers own work, even priced above the floor', async () => {
+    const price = 1500;
+    const floorAmounts = [500, 500];
+    // The whole point of the case, asserted rather than described: priced AT the
+    // snapshot sum it refuses through the zero-price branch instead, and the new
+    // one silently stops being tested. Editing either number has to fail here.
+    expect(price).toBeGreaterThan(floorAmounts[0] + floorAmounts[1]);
     await expect(
       buy({
-        // Floor is the 1000 member snapshot sum; the lister asked 1500, so the
-        // buyer is charged 500 and every member is withheld.
-        price: 1500,
+        price,
         members: [
           mkMember({
             cosmeticId: 1001,
             createdById: BUYER,
             addedById: PACK_CREATOR,
-            floorAmount: 500,
+            floorAmount: floorAmounts[0],
           }),
           mkMember({
             cosmeticId: 1002,
             createdById: BUYER,
             addedById: PACK_CREATOR,
-            floorAmount: 500,
+            floorAmount: floorAmounts[1],
           }),
         ],
       })
-    ).rejects.toThrow(/already own everything/i);
+      // Its own message, not the zero-price one: the buyer may hold none of
+      // these. Asserting the wording is what stops the two branches collapsing.
+    ).rejects.toThrow(/your own work/i);
     expect(spend).not.toHaveBeenCalled();
     expect(executeRaw).not.toHaveBeenCalled();
     expect(createManyUserCosmetic).not.toHaveBeenCalled();

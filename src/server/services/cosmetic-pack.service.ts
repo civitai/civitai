@@ -88,7 +88,8 @@ export const getPackMembers = async (shopItemId: number): Promise<PackMemberList
   });
   // A pack sale never writes a purchase row against the member's own listing, so
   // counting only those would let limited members be oversold through bundles.
-  // Refunded components released their grant, so they release their stock too.
+  // Refunded components release their stock. A row is a sale, not a delivery —
+  // a member the buyer authored is recorded and withheld, and still counts.
   const packSales = await dbRead.userCosmeticShopPurchaseCosmetic.groupBy({
     by: ['cosmeticId'],
     where: { cosmeticId: { in: cosmeticIds }, purchase: { refunded: false } },
@@ -474,18 +475,23 @@ export const purchaseCosmeticPack = async ({
   const fromAccountTypes: BuzzSpendType[] =
     payWith === 'blue-first' ? ['blue', buzzType] : [buzzType];
 
-  // What the buyer is charged for, and therefore all they receive. A member they
-  // authored was subtracted from the price, so granting it would hand over a
-  // consumable balance nobody paid for — repeatable forever, since an uncapped
-  // listing never sells out.
+  // What the buyer is charged for, which bounds what they receive without
+  // equalling it — an already-owned durable is in here and is still skipped. A
+  // member they authored was subtracted from the price, so granting it would
+  // hand over a consumable balance nobody paid for, repeatable forever since an
+  // uncapped listing never sells out.
   const grantable = members.filter((m) => !isSelfAuthoredPackMember(m, userId, shopItem.addedById));
 
-  // Two ways a pack has nothing left to sell this buyer, and the price catches
-  // only one of them. A pack of the buyer's own work priced at the floor reaches
-  // zero; priced ABOVE it, the same pack charges the markup and delivers nothing,
-  // because every member was subtracted and so every member is withheld.
-  if (amountCharged <= 0 || !grantable.length)
-    throw throwBadRequestError('You already own everything in this pack');
+  if (amountCharged <= 0) throw throwBadRequestError('You already own everything in this pack');
+
+  // The price catches an all-own pack only at the floor. Priced ABOVE it the
+  // same pack charges the markup and delivers nothing, because every member was
+  // subtracted and so every member is withheld. Its own message: the buyer may
+  // hold none of these, which is exactly the case of an exhausted creator grant.
+  if (!grantable.length)
+    throw throwBadRequestError(
+      "Everything in this pack is your own work, so there's nothing here for you to buy"
+    );
 
   // Random rather than a timestamp: a pack is repeatable (a consumable member
   // tops up), so two calls in the same millisecond would share an external id —
@@ -683,7 +689,8 @@ export const purchaseCosmeticPack = async ({
   return {
     transactionId,
     // Names, not ids: the completion modal tells the buyer what they just got.
-    // `grantable`, because a withheld member is not something they got.
+    // The paid-for set, not the delivered one — a durable they already owned is
+    // still listed here, as it was before packs withheld anything.
     granted: grantable.map((m) => ({ cosmeticId: m.cosmeticId, name: m.name, type: m.type })),
   };
 };
