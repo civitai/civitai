@@ -57,7 +57,13 @@ export const getServerSideProps = createServerSideProps({
       }
     }
 
-    return { props: { tagname, seoData, deIndexForDomain, greenCanonical } };
+    // GAM keys on the page's context, not only its grid: "Hentai AI Models" is a policy risk
+    // however safely green filters the models below it. Viewer-independent for the reason
+    // `isAdGatedContent` is — a single auction from anyone puts the URL in the violation centre.
+    // Red is exempt: it serves direct ads, no auction.
+    const suppressAds = isGreen && seoData.nsfwTerm === true;
+
+    return { props: { tagname, seoData, deIndexForDomain, greenCanonical }, suppressAds };
   },
 });
 
