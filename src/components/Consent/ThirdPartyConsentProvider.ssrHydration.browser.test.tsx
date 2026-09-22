@@ -194,39 +194,38 @@ let consoleErrors: string[] = [];
 let recoverable: string[] = [];
 
 /**
- * THE FOUR TIMING CONSTANTS, AND WHAT EACH IS WORTH.
+ * THE TIMING CONSTANTS BELOW, AND WHAT EACH IS WORTH.
  *
  * They exist so that a hydration which never happens fails as a NAMED assertion rather than as a
- * bare `Test timed out`, which carries no diagnosis. The single invariant is
+ * bare `Test timed out`, which carries no diagnosis. The invariant is
  *
  *     BEACON_TIMEOUT_MS + PRE_WAIT_BUDGET_MS + MIN_MARGIN_MS  <=  PROJECT_TIMEOUT_MS
  *
- * 🔴 NO NUMBER IN THIS FILE'S COMMENTS IS LOAD-BEARING, AND THAT IS DELIBERATE. Every derived
- * figure and every hand-maintained count that has appeared in these docblocks has been wrong at
- * least once — the arithmetic moved, or the tally was not incremented. The constants above and
- * the three assertions below are the only statements here a machine checks; everything else is
- * why, not how much. Do not reintroduce a computed value or a tally into this prose.
+ * 🔴 AN INSTRUCTION, NOT A CLAIM: numbers written in these comments are measurements at the
+ * values in force when someone took them, and nothing checks them. Do not add one that has to be
+ * hand-incremented, and do not trust one you find — re-derive it. Six review rounds on this file
+ * each corrected a sentence that stated a count, a derived figure or a universal, and each
+ * correction minted the next one; every remaining number here is prose, and prose is not a guard.
  *
- * 🔴 WHAT IS ACTUALLY PINNED:
- *   - `PROJECT_TIMEOUT_MS` — asserted EQUAL to `server.config.testTimeout`. The only operand
- *     checked against an EXTERNAL ground truth; the rest are checked against each other or
- *     against this run.
+ * 🔴 WHAT IS PINNED, AND BY WHAT:
+ *   - `PROJECT_TIMEOUT_MS` — asserted EQUAL to `server.config.testTimeout`, an external ground
+ *     truth.
  *   - `PRE_WAIT_BUDGET_MS` — asserted, in `afterAll`, against the largest pre-wait this run
- *     actually observed.
- *   - `BEACON_TIMEOUT_MS` and `MIN_MARGIN_MS` — pinned by nothing. The invariant constrains their
- *     SUM, not either one, so they trade against each other: shrink the pre-wait budget and you
- *     can grow the beacon wait by the same amount with every assertion still green. Doing that
- *     revives `BEACON_TIMEOUT_MS = 12_000` — a mutant this file's history records as dying — by
- *     spending the pre-wait budget's protection on it. So any per-mutant claim below is a
- *     measurement AT TODAY'S VALUES, never a property.
+ *     observed. That is a measurement on THIS box: a budget cut far below the real cost still
+ *     passes on a quiet machine and turns the ledger into a flake source on a loaded one.
+ *   - `BEACON_TIMEOUT_MS`, `MIN_MARGIN_MS` — asserted only through the invariant, which
+ *     constrains the SUM. Any two terms therefore trade against each other. Worked example:
+ *     shrink `PRE_WAIT_BUDGET_MS` and grow `BEACON_TIMEOUT_MS` by the same amount, and both
+ *     assertions stay green while `BEACON_TIMEOUT_MS = 12_000` — a value this file's history
+ *     records as failing — becomes reachable again.
  *
- * 🔴 AND THE BLIND SPOT `MIN_MARGIN_MS` CANNOT COVER: it is the margin assertion's own threshold,
- * and nothing can bound a threshold from inside the comparison that uses it. Lowering it, or
- * inlining its value at the assertion instead of referencing it, is the one edit no guard here
- * catches. That is why it is a named constant rather than a number in an `expect`.
+ * 🔴 THE BLIND SPOT: `MIN_MARGIN_MS` is the margin assertion's own threshold, and nothing can
+ * bound a threshold from inside the comparison that uses it. Lowering it, or inlining its value
+ * at the assertion instead of referencing it, is an edit THAT assertion cannot catch. It is a
+ * named constant rather than a number in an `expect` for that reason.
  *
- * So this guard is a RATCHET — "nobody moved a constant without meaning to" — and not a proof
- * that the margin is adequate. That is the honest ceiling on it.
+ * So this is a RATCHET — "nobody moved a constant without meaning to" — and not a proof that the
+ * margin is adequate. That is the honest ceiling on it.
  */
 
 /** The beacon wait's own budget. `hydrateInto` has the reasoning. */
@@ -246,9 +245,12 @@ const BEACON_TIMEOUT_MS = 10_000;
  * below `BEACON_TIMEOUT_MS` the beacon wait loses the race and the bare `Test timed out` returns.
  *
  * ⚠️ `src/components/AppBlocks/PageBlockHost.browser.test.tsx` SIZES a poll budget against this
- * deadline ("THE ITERATION COUNT IS SIZED AGAINST TWO CEILINGS, NOT PICKED"), so it is the one
- * other site a downward move actually breaks rather than merely making stale — update it in the
- * same change. Other files reason about the same number in prose, in several spellings, and an
+ * deadline ("THE ITERATION COUNT IS SIZED AGAINST TWO CEILINGS, NOT PICKED"), with headroom of
+ * roughly 3x — so a large downward move breaks it outright and any downward move makes its stated
+ * reasoning wrong. Update it in the same change. Note the ordering: this file breaks below
+ * `BEACON_TIMEOUT_MS`, which is the higher of the two, so it goes first.
+ *
+ * Other files reason about the same number in prose, in several spellings, and an
  * unrelated PRODUCT timeout shares the value; no sweep pattern is given here, because two were
  * tried and both returned nothing in the files they named. Start from `CLAUDE.md` and read each
  * hit rather than counting it.
@@ -398,8 +400,8 @@ function hydrationConsoleErrors() {
  * `renderToString` of the full Mantine tree above all — is charged to the TEST's clock and not to
  * this one. The constants' header states the resulting invariant; it is not restated here, so
  * there is one copy to keep true. See `PRE_WAIT_BUDGET_MS` for how that term is sized and
- * measured — deliberately not restated
- * here, because the figure it used to carry was retracted and this was the copy that survived
+ * measured — not restated here, because the figure it used to carry was retracted and this was
+ * the copy that survived
  * the correction. `14_000` is the trap: it is strictly under 15 s, it satisfies any formula that
  * ignores pre-wait, and it leaves under a second of margin — so the first load spike in that
  * `renderToString` restores exactly the bare `Test timed out` this budget exists to remove.
