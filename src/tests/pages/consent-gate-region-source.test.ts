@@ -33,7 +33,9 @@ import { describe, expect, it } from 'vitest';
  * convention (measured at this commit: 25 files under `src/` call `ts.createSourceFile`,
  * across 34 call sites, and none imports an AST-scanning helper from another module — though
  * shared test helpers do exist, so the convention rests on habit and on divergent policies, not
- * on there being nowhere to put one),
+ * on there being nowhere to put one — and `test/strip-comments.ts` exists precisely BECAUSE a
+ * scanning technique was copied to a second site, diverged, and produced a false pass, so this
+ * is a bet the repo has already lost once),
  * and the duplication was left in place deliberately — but it is recorded here so the next
  * person sees it rather than rediscovering it. The ASYMMETRIC pair is `jsxOpeners` /
  * `soleJsxOpener` / `jsxAttr`: the sibling open-codes the same find-by-tag → assert-exactly-one →
@@ -123,10 +125,25 @@ function collect(node: ts.Node, predicate: (n: ts.Node) => boolean): ts.Node[] {
  * guard has lost its subject and must say so rather than silently checking nothing.
  */
 function consentComponentDecl(sourceFile: ts.SourceFile): ts.FunctionDeclaration {
-  const decl = collect(
+  const found = collect(
     sourceFile,
     (n) => ts.isFunctionDeclaration(n) && n.name?.text === 'ThirdPartyConsentProvider'
-  )[0] as ts.FunctionDeclaration | undefined;
+  ) as ts.FunctionDeclaration[];
+
+  // 🔴 NON-UNIQUE IS REFUSED TOO, and this is the likelier of the two locators to need it:
+  // `collect` walks nested scopes, and a nested `function ThirdPartyConsentProvider(){}` inside
+  // another function is legal TS, so `[0]` could silently pick a decoy. (A second MODULE-scope
+  // `type Props` is a TS duplicate-identifier error, which is why the alias locator's version of
+  // this is the weaker of the pair.) Found by the `civitai-reuse-review` lane, which caught the
+  // comment below claiming this refusal before it existed.
+  if (found.length > 1) {
+    throw new Error(
+      `${CONSENT_FILE}: found ${found.length} \`function ThirdPartyConsentProvider\` ` +
+        `declarations. Re-point this locator at the one that renders the gate rather than ` +
+        `letting it pick whichever comes first.`
+    );
+  }
+  const decl = found[0] as ts.FunctionDeclaration | undefined;
 
   if (!decl) {
     throw new Error(
@@ -283,9 +300,10 @@ describe('the consent gate reads `region` from context, never from an `_app` pro
     const consent = parse(CONSENT_FILE);
 
     // Same subject discipline as `soleJsxOpener` / `consentComponentDecl`: refuse an absent OR a
-    // non-unique subject rather than silently taking `[0]`. Two module-scope `type Props` is a TS
-    // error, so this is about a block-scoped decoy — implausible, but the rest of this file
-    // refuses on principle and an inconsistent locator is the one nobody checks.
+    // non-unique subject rather than silently taking `[0]`. This one is the WEAKER of the pair —
+    // two module-scope `type Props` is a TS duplicate-identifier error, so only a block-scoped
+    // decoy is reachable — but the rest of this file refuses on principle, and an inconsistent
+    // locator is the one nobody checks.
     const propsAliases = collect(
       consent,
       (n) => ts.isTypeAliasDeclaration(n) && n.name.text === 'Props'
@@ -293,7 +311,8 @@ describe('the consent gate reads `region` from context, never from an `_app` pro
     if (propsAliases.length !== 1) {
       throw new Error(
         `${CONSENT_FILE}: expected exactly one \`type Props\`, found ${propsAliases.length}. ` +
-          `If it became an interface or moved, re-point this ledger rather than deleting it.`
+          `If it became an interface or moved, re-point this ledger; if a second one appeared, ` +
+          `point it at the one the component's parameter is annotated with. Do not delete it.`
       );
     }
     const propsAlias = propsAliases[0];
@@ -357,10 +376,11 @@ describe('the consent gate reads `region` from context, never from an `_app` pro
 
     // Every survivor is `readable`, so the name read below cannot silently produce `''`.
     //
-    // ⚠️ THE REFUSE-TO-GUESS POLICY IS NOT NEW HERE — `clampStateOf` in
+    // ⚠️ THE REFUSE-TO-GUESS PRINCIPLE IS NOT NEW HERE — `clampStateOf` in
     // `src/server/services/__tests__/collection-item-count-clamp-wiring.test.ts` reached the same
-    // conclusion first, for the same reason, and refuses a spread as well as a computed key. Read
-    // it before revisiting this policy. It is one of at least FIVE member-name readers under
+    // conclusion first, for the same reason, and refuses a spread as well as a computed key. Same
+    // conclusion, DIFFERENT MECHANISM: it returns an `'unreadable'` sentinel because its caller
+    // can act on one, where this ledger has to fail on the spot. Read it before revisiting. It is one of at least FIVE member-name readers under
     // `src/` with five different unreadable-name policies (refuse / `'unreadable'` sentinel /
     // `null` / implicit skip / `''`), plus one that reads `isStringLiteralLike` and is therefore
     // strictly wider than the rest. They do not have to agree, and deliberately are not

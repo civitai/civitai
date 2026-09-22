@@ -192,10 +192,28 @@ const HYDRATION_RE =
 let consoleErrors: string[] = [];
 let recoverable: string[] = [];
 /**
- * Strictly under the `component` project's effective 15 s test timeout, so THIS wait is what
- * fails and what gets to say why. See `hydrateInto`.
+ * 🔴 SEVERAL SECONDS under the `component` project's effective 15 s test timeout — not merely
+ * "strictly under", which is necessary and NOT sufficient. See `hydrateInto` for the invariant
+ * and for what goes wrong at, say, `14_000`. Pinned by the guard test at the bottom of this file
+ * so the margin is machine-checked rather than left to this comment.
  */
 const BEACON_TIMEOUT_MS = 10_000;
+
+/**
+ * The `component` project's effective per-test timeout. `vitest.config.mts` sets `testTimeout`
+ * only inside `unitTestConfig`, which the `component` project does not spread — so this is
+ * browser mode's default, MEASURED here with a deliberately hanging probe test rather than read
+ * off a config block that does not apply. Re-measure if the project ever sets one explicitly.
+ */
+const PROJECT_TIMEOUT_MS = 15_000;
+
+/**
+ * Worst-case cost of everything that runs on the TEST's clock before the beacon wait starts —
+ * `renderToString` of the full Mantine tree, four `toContain`s, an `innerHTML` parse and the
+ * `hydrateRoot` call. Measured at ~75 ms on a quiet box (the neutered-beacon mutant fails at
+ * 10.07-10.09 s against a 10.00 s wait); budgeted at 40x that for load.
+ */
+const PRE_WAIT_BUDGET_MS = 3_000;
 
 let restoreConsole: (() => void) | null = null;
 const containers: HTMLElement[] = [];
@@ -274,11 +292,17 @@ function hydrationConsoleErrors() {
  * At 10 s this `waitFor` fails first and prints what it was waiting for. Measured both ways by
  * the `civitai-test-review` lane.
  *
- * 🔴 "UNDER THE PROJECT TIMEOUT" IS NECESSARY, NOT SUFFICIENT — keep it several seconds under.
- * The real invariant is `BEACON_TIMEOUT_MS < projectTimeout − (everything before the wait
- * starts)`: the `renderToString` of the full Mantine tree is charged to the TEST's clock and not
- * to this one (~75 ms measured, but load-dependent). `14_000` would satisfy the sentence and
- * restore exactly the bare `Test timed out` this budget exists to remove.
+ * 🔴 "UNDER THE PROJECT TIMEOUT" IS NECESSARY, NOT SUFFICIENT. Everything before the wait —
+ * `renderToString` of the full Mantine tree above all — is charged to the TEST's clock and not to
+ * this one, so the invariant is
+ *
+ *     BEACON_TIMEOUT_MS + worst-case pre-wait  <=  PROJECT_TIMEOUT_MS
+ *
+ * Pre-wait measures ~75 ms on a quiet box and load-scales, which is why `PRE_WAIT_BUDGET_MS` is
+ * 3 s rather than 0.1 s. `14_000` is the trap: it is strictly under 15 s, it satisfies any
+ * formula that ignores pre-wait, and it leaves under a second of margin — so the first load spike
+ * in that `renderToString` restores exactly the bare `Test timed out` this budget exists to
+ * remove. The margin is pinned by a test rather than by this paragraph; prose is not a guard.
  *
  * Ordering assumption that makes the early return safe: React reports recoverable errors during
  * the commit that hydrates, and the beacon flips in a PASSIVE effect after it — so by the time
@@ -396,6 +420,21 @@ describe('ThirdPartyConsentProvider — real SSR → hydrate', () => {
     expect(recoverable).toEqual([]);
     expect(hydrationConsoleErrors()).toEqual([]);
     expect(container.textContent).toContain('Your privacy choices');
+  });
+
+  /**
+   * 🔴 THE MARGIN, AS A TEST RATHER THAN AS A COMMENT. `hydrateInto`'s docblock argues that
+   * `BEACON_TIMEOUT_MS` must leave room for the pre-wait work on the test's own clock; nothing
+   * mechanical enforced that, and the value it warns against (`14_000`) is one edit away. This
+   * is the cheapest deterministic form of that argument.
+   */
+  test('the beacon budget leaves real margin under the project timeout', () => {
+    expect(
+      BEACON_TIMEOUT_MS + PRE_WAIT_BUDGET_MS,
+      'BEACON_TIMEOUT_MS must leave room for everything charged to the TEST clock before the ' +
+        'wait starts — otherwise the enclosing test deadline wins and the failure is a bare ' +
+        '"Test timed out", with no mention of the beacon. See `hydrateInto`'
+    ).toBeLessThanOrEqual(PROJECT_TIMEOUT_MS);
   });
 
   test('a non-consent region renders NO gate and NO banner, and hydrates clean', async () => {
