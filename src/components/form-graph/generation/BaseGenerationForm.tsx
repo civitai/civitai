@@ -157,6 +157,10 @@ function useResourceHydrationSync(store: GenerationStore) {
     const registered = registeredIdsRef.current;
     return () => {
       for (const id of registered) unregisterResourceId(id);
+      // Without this the sync above skips every id it believes it already registered, so a
+      // teardown-and-remount — every strict-mode mount — leaves them registered by nobody and
+      // stuck on their skeletons.
+      registered.clear();
     };
   }, [unregisterResourceId]);
 }
