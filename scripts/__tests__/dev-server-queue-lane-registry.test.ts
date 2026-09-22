@@ -21,6 +21,19 @@ const { RUN_KINDS, laneConcurrencyArgs } = QueueModule as unknown as {
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const cliSource = readFileSync(resolve(repoRoot, '.claude/skills/dev-server/cli.mjs'), 'utf8');
+// The usage block alone. Searching the whole file would let a passing MENTION of a flag in any
+// comment satisfy the help-text assertion below, which is the thing it exists to detect.
+const cliUsage = cliSource.slice(cliSource.indexOf('Commands:'));
+const packageScripts = JSON.parse(readFileSync(resolve(repoRoot, 'package.json'), 'utf8')).scripts;
+const appsWrapperSource = readFileSync(resolve(repoRoot, 'scripts/typecheck-apps-run.mjs'), 'utf8');
+
+/**
+ * Keys the daemon's `/test-runs/config` reply writes AFTER spreading the lane limits into it
+ * (daemon.mjs). A lane whose `configKey` were one of these would have its limit overwritten by the
+ * literal on the way out, and would read a client's unrelated field as a limit on the way in -
+ * silently, with a plausible-looking value printed either way.
+ */
+const RESERVED_REPLY_KEYS = ['maxWorkers', 'cacheMode', 'paused', 'queued', 'running', 'lanes'];
 
 /**
  * 🔴 The daemon's `/test-runs/config` and the CLI's `test config` both read these fields instead
@@ -30,10 +43,37 @@ const cliSource = readFileSync(resolve(repoRoot, '.claude/skills/dev-server/cli.
  * relax the assertion.
  */
 describe('the lane registry is addressable', () => {
-  it('gives every lane a distinct configKey', () => {
+  it('gives every lane a distinct, non-empty configKey', () => {
     const keys = Object.values(RUN_KINDS).map((spec) => spec.configKey);
-    expect(keys).toEqual(expect.arrayContaining([expect.any(String)]));
+    // Per lane, not `arrayContaining`: that form passes as long as ONE entry is a string, so a
+    // lane with no configKey at all would satisfy it and then publish its limit under "undefined".
+    for (const [kind, spec] of Object.entries(RUN_KINDS)) {
+      expect(typeof spec.configKey, `${kind} has no configKey`).toBe('string');
+      expect(spec.configKey.length, `${kind}'s configKey is empty`).toBeGreaterThan(0);
+    }
     expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it('never gives a lane a configKey the config reply already uses', () => {
+    for (const [kind, spec] of Object.entries(RUN_KINDS)) {
+      expect(RESERVED_REPLY_KEYS, `${kind}'s configKey collides with a reply field`).not.toContain(
+        spec.configKey
+      );
+    }
+  });
+
+  /**
+   * 🔴 `RUN_KINDS[kind].script` is spawned as `pnpm run <script>`. Renaming that script in
+   * package.json alone leaves the lane pointing at a name that no longer exists, and the breakage
+   * surfaces only when someone next uses that lane - in the daemon's child, not here.
+   */
+  it('names a package script that exists for every lane', () => {
+    for (const [kind, spec] of Object.entries(RUN_KINDS)) {
+      expect(
+        Object.keys(packageScripts),
+        `${kind} is spawned as \`pnpm run ${spec.script}\`, which package.json does not define`
+      ).toContain(spec.script);
+    }
   });
 
   it('gives every flagged lane a distinct flag', () => {
@@ -47,7 +87,7 @@ describe('the lane registry is addressable', () => {
     for (const [kind, spec] of Object.entries(RUN_KINDS)) {
       if (!spec.flag) continue;
       expect(
-        cliSource,
+        cliUsage,
         `${kind}'s flag ${spec.flag} is missing from the cli.mjs usage text`
       ).toContain(`[${spec.flag} <n>]`);
     }
@@ -81,5 +121,32 @@ describe('laneConcurrencyArgs picks exactly the lane that was named', () => {
 
   it('sets nothing from the bare positional operand, which is the unit lane', () => {
     expect(laneConcurrencyArgs(['2'])).toEqual({});
+  });
+});
+
+/**
+ * 🔴 A TEXT pin, with the blind spot that implies: it reads the wrapper's source, so it cannot see
+ * a `kind` chosen at runtime or behind a condition. It exists because nothing executes
+ * `scripts/typecheck-apps-run.mjs`, and the mutation it guards is one character of damage with no
+ * other detector - point the wrapper at `kind: 'typecheck'` and app typechecks silently queue in
+ * the ROOT typecheck lane, sharing its limit. That is the exact lane-sharing condition
+ * `dev-server-test-queue-lanes.test.ts` claims to rule out, and that test builds its own queue, so
+ * it never sees this file and stays green.
+ *
+ * Replace this with a test that runs the wrapper if you ever make its queue client injectable.
+ */
+describe('the app-typecheck wrapper asks for its own lane', () => {
+  it('names a kind that exists in RUN_KINDS', () => {
+    const named = appsWrapperSource.match(/kind:\s*'([^']+)'/)?.[1];
+    expect(named, 'no `kind:` literal found in scripts/typecheck-apps-run.mjs').toBeDefined();
+    expect(Object.keys(RUN_KINDS)).toContain(named);
+  });
+
+  it('names typecheckApps, not another lane', () => {
+    expect(appsWrapperSource).toContain("kind: 'typecheckApps'");
+  });
+
+  it('is what package.json runs for typecheck:apps', () => {
+    expect(packageScripts['typecheck:apps']).toContain('typecheck-apps-run.mjs');
   });
 });

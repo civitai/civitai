@@ -13,13 +13,23 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { typecheckAppsQueueDecision } from './typecheck-queue.mjs';
+import {
+  typecheckAppsArgvComplaint,
+  typecheckAppsQueueDecision,
+} from './typecheck-queue.mjs';
 
 const args = process.argv.slice(2);
 
+// Before anything else, so an argument can never be silently discarded by the direct path below.
+const complaint = typecheckAppsArgvComplaint(args);
+if (complaint) {
+  console.error(complaint);
+  process.exit(2);
+}
+
 // Top-level await on purpose: a queued run never returns, because the client exits the process
 // with the run's own verdict. Everything below is reached only when the queue could not take it.
-if (typecheckAppsQueueDecision(args, process.env).queue) {
+if (typecheckAppsQueueDecision(process.env).queue) {
   const client = resolve(dirname(fileURLToPath(import.meta.url)), 'test-unit-run.mjs');
   if (existsSync(client)) {
     const { runQueued, queueAccepted } = await import(pathToFileURL(client).href);

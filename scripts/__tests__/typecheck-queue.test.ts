@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { typecheckAppsQueueDecision, typecheckQueueDecision } from '../typecheck-queue.mjs';
+import {
+  typecheckAppsArgvComplaint,
+  typecheckAppsQueueDecision,
+  typecheckQueueDecision,
+} from '../typecheck-queue.mjs';
 
 const ON = { CIVITAI_TEST_QUEUE: '1' };
 
@@ -45,19 +49,32 @@ describe('which typechecks go through the queue', () => {
 
 describe('which app typechecks go through the queue', () => {
   it('queues a full app typecheck when the flag is on', () => {
-    expect(typecheckAppsQueueDecision([], ON)).toEqual({ queue: true });
+    expect(typecheckAppsQueueDecision(ON)).toEqual({ queue: true });
   });
 
   it('never queues on CI', () => {
-    expect(typecheckAppsQueueDecision([], { ...ON, CI: 'true' }).queue).toBe(false);
+    expect(typecheckAppsQueueDecision({ ...ON, CI: 'true' }).queue).toBe(false);
   });
 
   it.each(['', '0', 'false', 'off', 'no'])('stays direct when the flag is %j', (flag) => {
-    expect(typecheckAppsQueueDecision([], { CIVITAI_TEST_QUEUE: flag }).queue).toBe(false);
+    expect(typecheckAppsQueueDecision({ CIVITAI_TEST_QUEUE: flag }).queue).toBe(false);
   });
 
-  it('stays direct when any argument narrows the run', () => {
-    expect(typecheckAppsQueueDecision(['moderator'], ON).queue).toBe(false);
+  /**
+   * 🔴 An argument is REFUSED, not honoured and not quietly ignored. `runTypecheckApps` reads
+   * `apps/*` from disk and has no filter, so the "an argument narrows the run, stay direct" rule
+   * that the two lanes beside this one use would discard the argument AND push the run out of the
+   * queue: you would ask for one app, get all of them, unarbitrated, with nothing printed. If you
+   * are here to add narrowing, give the underlying script a filter first, then relax this.
+   */
+  it('refuses an argument rather than discarding it', () => {
+    expect(typecheckAppsArgvComplaint(['moderator'])).toMatch(
+      /takes no arguments, and got: moderator/
+    );
+  });
+
+  it('has nothing to complain about when there are no arguments', () => {
+    expect(typecheckAppsArgvComplaint([])).toBeNull();
   });
 
   /**
@@ -70,12 +87,12 @@ describe('which app typechecks go through the queue', () => {
    * the box while still reporting that it ran.
    */
   it('still queues when the root typecheck tsc seam is set, which is not its seam', () => {
-    expect(
-      typecheckAppsQueueDecision([], { ...ON, TYPECHECK_TSC_PATH: '/stub/tsc.js' }).queue
-    ).toBe(true);
+    expect(typecheckAppsQueueDecision({ ...ON, TYPECHECK_TSC_PATH: '/stub/tsc.js' }).queue).toBe(
+      true
+    );
   });
 
   it('still queues when the root typecheck heap override is set, which is not its heap', () => {
-    expect(typecheckAppsQueueDecision([], { ...ON, TYPECHECK_HEAP_MB: '4096' }).queue).toBe(true);
+    expect(typecheckAppsQueueDecision({ ...ON, TYPECHECK_HEAP_MB: '4096' }).queue).toBe(true);
   });
 });
