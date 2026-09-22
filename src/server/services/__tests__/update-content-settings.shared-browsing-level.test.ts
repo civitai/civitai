@@ -69,19 +69,24 @@ describe('updateContentSettings: one browsing level on every domain', () => {
     }
   );
 
-  it('a level-only change on red writes nothing into settings', async () => {
+  it('a level-only change on red sets nothing in settings and removes the retired red copy', async () => {
     await mutate({ browsingLevel: NARROWED, domain: 'red' });
 
-    expect(rawStatements()).toEqual([]);
+    const calls = dbMock.dbWrite.$queryRawUnsafe.mock.calls;
+    expect(calls).toHaveLength(1);
+    const [sql, ...params] = calls[0] as [string, ...unknown[]];
+    expect(sql).not.toContain('||');
+    expect(params).toContainEqual(['redBrowsingLevel']);
   });
 
   it('CONTROL: a settings key in the same call IS observed in settings', async () => {
     await mutate({ browsingLevel: NARROWED, allowAds: false, domain: 'red' });
 
-    const statements = rawStatements();
-    expect(statements.some((s) => s.includes('allowAds'))).toBe(true);
-    expect(
-      statements.filter((s) => s.includes('redBrowsingLevel') || s.includes('domain'))
-    ).toEqual([]);
+    const calls = dbMock.dbWrite.$queryRawUnsafe.mock.calls;
+    expect(calls).toHaveLength(1);
+    const [, setParam] = calls[0] as [string, string, ...unknown[]];
+    // Only the key the caller sent is SET; the red copy is only ever removed.
+    expect(JSON.parse(setParam)).toEqual({ allowAds: false });
+    expect(rawStatements().filter((s) => s.includes('domain'))).toEqual([]);
   });
 });

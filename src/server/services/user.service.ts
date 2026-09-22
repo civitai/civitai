@@ -3041,11 +3041,17 @@ export async function updateContentSettings({
     userUpdateCounter?.inc({ location: 'user.service:updateUserContentSettings' });
     await userSettingsCache().bust([userId]);
   }
-  if (Object.keys(data).length > 0) {
+  if (Object.keys(data).length > 0 || browsingLevel !== undefined) {
     // Only the keys this call is changing. Re-reading the blob and writing it back
     // would restore every other key to the value it held at read time, discarding a
     // concurrent write to any of them (notice dismissals, feature toggles, …).
-    await setUserSetting(userId, removeEmpty(data));
+    await patchUserSettings(userId, {
+      set: removeEmpty(data),
+      // A level set now supersedes any retired red-domain copy, so the one-off fold of those
+      // copies into the column never applies a stale value over it.
+      ...(browsingLevel !== undefined ? { remove: ['redBrowsingLevel'] } : {}),
+      location: 'user.service:updateContentSettings',
+    });
   }
   // Await so the refresh marker is set in Redis before this mutation returns.
   // Otherwise the fire-and-forget can race the next API call / session read

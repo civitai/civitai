@@ -7,6 +7,22 @@
 --     level the column excluded; confirm it matches no rows before applying.
 --   - A value that is not a non-negative whole number is left in place, untouched.
 -- Data only; apply by hand AFTER the code that stops writing the key has deployed.
+--
+-- Dry run first (read-only). `disjoint` must be 0 and `widened` must be 0:
+--   SELECT count(*) AS rows,
+--          count(*) FILTER (WHERE (col & red) <> 0 AND (col & red) <> col
+--                              OR (col & red) = 0 AND red <> col) AS level_changes,
+--          count(*) FILTER (WHERE (col & red) = 0) AS disjoint,
+--          count(*) FILTER (WHERE (col & red) = 0 AND (red & ~col) <> 0) AS widened
+--   FROM (
+--     SELECT "browsingLevel" AS col,
+--       CASE WHEN (settings->>'redBrowsingLevel')::int > 0
+--         THEN (settings->>'redBrowsingLevel')::int ELSE 1 END AS red
+--     FROM "User"
+--     WHERE settings ? 'redBrowsingLevel'
+--       AND jsonb_typeof(settings->'redBrowsingLevel') = 'number'
+--       AND (settings->>'redBrowsingLevel') ~ '^[0-9]{1,9}$'
+--   ) t;
 UPDATE "User" u
 SET
   "browsingLevel" = CASE
@@ -24,6 +40,6 @@ FROM (
   FROM "User"
   WHERE settings ? 'redBrowsingLevel'
     AND jsonb_typeof(settings->'redBrowsingLevel') = 'number'
-    AND (settings->>'redBrowsingLevel') ~ '^[0-9]+$'
+    AND (settings->>'redBrowsingLevel') ~ '^[0-9]{1,9}$'
 ) r
 WHERE u.id = r.id;
