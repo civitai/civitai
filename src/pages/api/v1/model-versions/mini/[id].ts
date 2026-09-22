@@ -57,6 +57,7 @@ type VersionRow = {
   requireAuth: boolean;
   checkPermission: boolean;
   covered?: boolean;
+  isPromoted: boolean;
   generationAlias?: GenerationAlias | null;
   freeTrialLimit?: number;
   minor: boolean;
@@ -149,6 +150,11 @@ export default MixedAuthEndpoint(async function handler(
       -- decide what prepareResource may load, and the live view excludes the community checkpoints
       -- paid model loading exists for. See docs/features/paid-model-loading-coverage.md.
       (SELECT covered FROM "GenerationCoverageNext" WHERE "modelVersionId" = mv.id) AS "covered",
+      -- Auction winners, for the orchestrator to prioritise their downloads. It does not read this yet.
+      EXISTS (
+        SELECT 1 FROM "CoveredCheckpoint" cc
+        WHERE cc.model_id = mv."modelId" AND cc.version_id = mv.id
+      ) AS "isPromoted",
       mv."meta"->'generationAlias' AS "generationAlias",
       (
         CASE
@@ -469,6 +475,7 @@ export default MixedAuthEndpoint(async function handler(
     format, // nullable
     canGenerate,
     isFeatured,
+    isPromoted: modelVersion.isPromoted,
     requireAuth: modelVersion.requireAuth,
     checkPermission: modelVersion.checkPermission,
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,

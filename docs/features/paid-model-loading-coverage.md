@@ -73,14 +73,16 @@ is deleted when the auction stops writing rows. Dropping `EcosystemCheckpoints` 
 default model from half the ecosystems the generator supports — see
 [the defaults audit](#the-defaults-audit).
 
-`CoveredCheckpoint` has exactly four uses, all generation:
+`CoveredCheckpoint` has five uses:
 
 - the `GenerationCoverage` view
 - `handle-auctions.ts` — inserts winners, deletes everything outside the weekly set
 - `toggleCheckpointCoverage` — a moderator tRPC tool
 - `getCheckpointGenerationCoverage` — **zero callers; dead code**
+- `/api/v1/model-versions/mini/[id]` — reports a winner as `isPromoted` for the orchestrator to
+  prioritise its download. Not a coverage read, and not internal: it is on the public v1 API.
 
-So it can go, and nothing outside generation notices.
+So dropping it from coverage costs nothing, but deleting the table now also retires a public API field.
 
 ---
 
