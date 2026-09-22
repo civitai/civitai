@@ -35,7 +35,10 @@ import { describe, expect, it } from 'vitest';
  * shared test helpers do exist, so the convention rests on habit and on divergent policies, not
  * on there being nowhere to put one — and `test/strip-comments.ts` exists precisely BECAUSE a
  * scanning technique was copied to a second site, diverged, and produced a false pass, so this
- * is a bet the repo has already lost once),
+ * is a bet the repo has already lost once — against which
+ * `src/components/Apps/AppsBuildBodySkeleton.ssr.browser.test.tsx` records the opposite
+ * precedent deliberately, for a copy of this same shape: "four lines of scanner, and each copy
+ * carries its own positive control below, which is the thing that actually keeps it honest"),
  * and the duplication was left in place deliberately — but it is recorded here so the next
  * person sees it rather than rediscovering it. The ASYMMETRIC pair is `jsxOpeners` /
  * `soleJsxOpener` / `jsxAttr`: the sibling open-codes the same find-by-tag → assert-exactly-one →
@@ -132,7 +135,9 @@ function consentComponentDecl(sourceFile: ts.SourceFile): ts.FunctionDeclaration
 
   // 🔴 NON-UNIQUE IS REFUSED TOO, and this is the likelier of the two locators to need it:
   // `collect` walks nested scopes, and a nested `function ThirdPartyConsentProvider(){}` inside
-  // another function is legal TS, so `[0]` could silently pick a decoy. (A second MODULE-scope
+  // another function is legal TS, so `[0]` could pick the decoy. Measured: pre-hardening that
+  // was not SILENT — it turned three tests red with three misleading diagnoses. The win here is
+  // the message, not the detection. (A second MODULE-scope
   // `type Props` is a TS duplicate-identifier error, which is why the alias locator's version of
   // this is the weaker of the pair.) Found by the `civitai-reuse-review` lane, which caught the
   // comment below claiming this refusal before it existed.
@@ -348,8 +353,8 @@ describe('the consent gate reads `region` from context, never from an `_app` pro
     // name axis and left the kind axis wide open. `get region(): RegionInfo | undefined;` is not a
     // PropertySignature, so it was invisible to the very refusal meant to catch this — and a
     // getter-only member is still satisfied by a JSX attribute, so it compiled clean too, with all
-    // six assertions in THIS test green. Both axes found by the `civitai-test-review` lane, one round apart, with
-    // the mutants and the `ts.createProgram` run each time.
+    // six assertions in THIS test green. Both axes found by the `civitai-test-review` lane, one
+    // round apart, with the mutants and the `ts.createProgram` run each time.
     //
     // So START FROM EVERY MEMBER and refuse anything this ledger cannot read — accessors, methods,
     // call/construct signatures, computed and numeric keys alike. Refusing is deliberate: widening
@@ -380,7 +385,9 @@ describe('the consent gate reads `region` from context, never from an `_app` pro
     // `src/server/services/__tests__/collection-item-count-clamp-wiring.test.ts` reached the same
     // conclusion first, for the same reason, and refuses a spread as well as a computed key. Same
     // conclusion, DIFFERENT MECHANISM: it returns an `'unreadable'` sentinel because its caller
-    // can act on one, where this ledger has to fail on the spot. Read it before revisiting. It is one of at least FIVE member-name readers under
+    // can act on one, where this ledger has to fail on the spot. Read it before revisiting.
+    //
+    // It is one of at least FIVE member-name readers under
     // `src/` with five different unreadable-name policies (refuse / `'unreadable'` sentinel /
     // `null` / implicit skip / `''`), plus one that reads `isStringLiteralLike` and is therefore
     // strictly wider than the rest. They do not have to agree, and deliberately are not

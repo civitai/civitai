@@ -128,7 +128,10 @@ function MountLedger() {
   return <i data-testid="mount-ledger" data-mounts={String(ordinal)} />;
 }
 
-/** Mirrors what a `useThirdPartyConsent()` consumer (GoogleAnalytics, AdsProvider, the embeds) reads. */
+/**
+ * Mirrors what a `useThirdPartyConsent()` consumer (GoogleAnalytics, AdsProvider, the embeds)
+ * reads.
+ */
 function Probe({ nav }: { nav: number }) {
   const { consent, required, allowed } = useThirdPartyConsent();
   return (

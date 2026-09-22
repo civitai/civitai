@@ -1,10 +1,11 @@
+import { server } from '@vitest/browser/context';
 import { MantineProvider } from '@mantine/core';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as React from 'react';
 import { renderToString } from 'react-dom/server';
 import type { Root } from 'react-dom/client';
 import { hydrateRoot } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import type { UserContentSettings } from '~/server/schema/user.schema';
 import type { ServerDomains } from '~/shared/constants/domain.constants';
@@ -192,28 +193,58 @@ const HYDRATION_RE =
 let consoleErrors: string[] = [];
 let recoverable: string[] = [];
 /**
- * 🔴 SEVERAL SECONDS under the `component` project's effective 15 s test timeout — not merely
+ * 🔴 SEVERAL SECONDS under the `component` project's effective test timeout — not merely
  * "strictly under", which is necessary and NOT sufficient. See `hydrateInto` for the invariant
- * and for what goes wrong at, say, `14_000`. Pinned by the guard test at the bottom of this file
- * so the margin is machine-checked rather than left to this comment.
+ * and for what goes wrong at, say, `14_000`. Both sides of that inequality are pinned by the
+ * guard test below, against the live config rather than against this comment.
  */
 const BEACON_TIMEOUT_MS = 10_000;
 
 /**
- * The `component` project's effective per-test timeout. `vitest.config.mts` sets `testTimeout`
- * only inside `unitTestConfig`, which the `component` project does not spread — so this is
- * browser mode's default, MEASURED here with a deliberately hanging probe test rather than read
- * off a config block that does not apply. Re-measure if the project ever sets one explicitly.
+ * The `component` project's effective per-test timeout.
+ *
+ * 🔴 A RESTATEMENT, PINNED — NOT A MEASUREMENT FROZEN INTO A LITERAL. It is not declared
+ * anywhere in this repo: `vitest.config.mts` sets `testTimeout` only inside `unitTestConfig`,
+ * which the `component` project does not spread, so the effective value is vitest's
+ * browser-mode default. The root `CLAUDE.md` states the same fact in prose ("browser-mode
+ * `testTimeout` defaults to 15 s, and the `component` project does not override it"), and
+ * `src/components/AppBlocks/PageBlockHost.browser.test.tsx` reached it independently and sizes
+ * its own poll budget against it — so this is the fifth site holding the number and the first
+ * one a machine can check.
+ *
+ * It is checkable because the guard test asserts this constant EQUALS
+ * `server.config.testTimeout`, which is the component project's own resolved value. That closes
+ * three rot vectors a comment cannot: `browserTestShell()` is shared with the geometry tier, so
+ * tuning that tier moves this one; the 15 s is a vitest default, so a vitest major can move it
+ * with nothing in this repo changing; and `scripts/test-component-run.mjs` forwards a
+ * `--test-timeout` from the command line. All three move it DOWNWARD-capable, which is the
+ * dangerous direction — below `BEACON_TIMEOUT_MS` the beacon wait loses the race again and the
+ * failure goes back to a bare `Test timed out`. Found by the `civitai-test-review` and
+ * `civitai-reuse-review` lanes, which arrived at it from opposite sides.
  */
 const PROJECT_TIMEOUT_MS = 15_000;
 
 /**
- * Worst-case cost of everything that runs on the TEST's clock before the beacon wait starts —
- * `renderToString` of the full Mantine tree, four `toContain`s, an `innerHTML` parse and the
- * `hydrateRoot` call. Measured at ~75 ms on a quiet box (the neutered-beacon mutant fails at
- * 10.07-10.09 s against a 10.00 s wait); budgeted at 40x that for load.
+ * Budget for everything that runs on the TEST's clock before the beacon wait starts —
+ * `renderToString` of the full Mantine tree, the `toContain`s, an `innerHTML` parse and the
+ * `hydrateRoot` call. `beforeEach`/`afterEach` are excluded correctly: vitest charges those to a
+ * separate `hookTimeout`.
+ *
+ * 🔴 A BUDGET, AND MEASURED AGAINST — not an assertion about the world. The ledger below reads
+ * **~5 ms** on a quiet box; the budget is 3 s, i.e. ~600x headroom, which is deliberate because
+ * the quantity is load-scaled. (An earlier comment here said ~75 ms, inferred from the
+ * neutered-beacon mutant failing at 10.07-10.09 s against a 10.00 s wait. That bounded pre-wait
+ * from above but also swept in the wait's own overshoot; the direct measurement replaced it.)
+ * The arithmetic guard alone could never contradict this — add two providers to `Tree` and
+ * pre-wait can triple with every test still green — so `afterAll` compares the budget against
+ * the largest pre-wait this run actually observed.
  */
 const PRE_WAIT_BUDGET_MS = 3_000;
+
+/** Largest pre-wait observed this run, recorded in `hydrateInto` and checked in `afterAll`. */
+let maxPreWaitMs = 0;
+/** Start of the current test's own clock, as near as a hook can get to it. */
+let preWaitStart = 0;
 
 let restoreConsole: (() => void) | null = null;
 const containers: HTMLElement[] = [];
@@ -228,6 +259,9 @@ const containers: HTMLElement[] = [];
 const roots: Root[] = [];
 
 beforeEach(() => {
+  // As near the start of the test's own clock as a hook can get. The hook→body gap over-counts
+  // by well under a millisecond, which is the safe direction for a budget.
+  preWaitStart = performance.now();
   consoleErrors = [];
   recoverable = [];
   const original = console.error;
@@ -238,6 +272,26 @@ beforeEach(() => {
   restoreConsole = () => {
     console.error = original;
   };
+});
+
+/**
+ * 🔴 THE FALSIFIABLE HALF OF `PRE_WAIT_BUDGET_MS`. The arithmetic guard compares the BUDGET
+ * against the ceiling; this compares what actually happened against the budget, so the constant
+ * stops being an unfalsifiable claim. `afterAll` rather than a test, because the guard test does
+ * not run last and a max taken in test order would only see part of the run.
+ *
+ * ⚠️ IT SURFACES AS A FAILED SUITE, NOT A FAILED TEST. Verified by starving the budget to 1 ms:
+ * exit code 1 and `Test Files 1 failed`, while the summary still reads `Tests 5 passed (5)`.
+ * Read the file line, not the test line.
+ */
+afterAll(() => {
+  expect(
+    maxPreWaitMs,
+    'the work charged to the TEST clock before the beacon wait outgrew PRE_WAIT_BUDGET_MS — ' +
+      'so BEACON_TIMEOUT_MS + real pre-wait may now exceed the project timeout, and a stalled ' +
+      'hydration would fail as a bare "Test timed out" again. Either trim the pre-wait work ' +
+      '(the `Tree` render is most of it) or lower BEACON_TIMEOUT_MS and raise this budget'
+  ).toBeLessThanOrEqual(PRE_WAIT_BUDGET_MS);
 });
 
 afterEach(() => {
@@ -332,6 +386,10 @@ async function hydrateInto(
       },
     })
   );
+  // Everything above ran on the TEST's clock; the wait below runs on its own. This is the
+  // boundary `PRE_WAIT_BUDGET_MS` budgets for.
+  maxPreWaitMs = Math.max(maxPreWaitMs, performance.now() - preWaitStart);
+
   if (awaitBeacon) {
     // `hydratedFlag` rather than an inline query so a failure prints `'(absent)'` rather than
     // `undefined` when the beacon element is not there at all.
@@ -425,10 +483,23 @@ describe('ThirdPartyConsentProvider — real SSR → hydrate', () => {
   /**
    * 🔴 THE MARGIN, AS A TEST RATHER THAN AS A COMMENT. `hydrateInto`'s docblock argues that
    * `BEACON_TIMEOUT_MS` must leave room for the pre-wait work on the test's own clock; nothing
-   * mechanical enforced that, and the value it warns against (`14_000`) is one edit away. This
-   * is the cheapest deterministic form of that argument.
+   * mechanical enforced that, and the value it warns against (`14_000`) is one edit away.
+   *
+   * TWO assertions, because the arithmetic one has two operands it does not own. The first pins
+   * the CEILING to the live config — without it the inequality is computed against a literal
+   * that three separate mechanisms can move without touching this file, all of them capable of
+   * moving it DOWN, which is the direction that silently restores the bare `Test timed out`.
+   * `server.config` is the component project's own resolved config; verified to read `15000`
+   * here rather than `undefined` before this was relied on.
    */
   test('the beacon budget leaves real margin under the project timeout', () => {
+    expect(
+      server.config.testTimeout,
+      "`PROJECT_TIMEOUT_MS` restates vitest browser mode's default, which nothing in this repo " +
+        'declares. It has moved — the margin below is being computed against a number that is ' +
+        'no longer the deadline. Update the constant, and check `BEACON_TIMEOUT_MS` still fits'
+    ).toBe(PROJECT_TIMEOUT_MS);
+
     expect(
       BEACON_TIMEOUT_MS + PRE_WAIT_BUDGET_MS,
       'BEACON_TIMEOUT_MS must leave room for everything charged to the TEST clock before the ' +
