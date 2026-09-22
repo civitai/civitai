@@ -1,4 +1,5 @@
 import { Loader, Progress, Text } from '@mantine/core';
+import { useEffect, useRef } from 'react';
 import type { Icon } from '@tabler/icons-react';
 import { IconClock, IconGauge, IconUsers } from '@tabler/icons-react';
 import { create } from 'zustand';
@@ -68,6 +69,8 @@ export function useWorkflowDownloads({
     }
   );
 
+  useInvalidateResidencyOnLanding(data);
+
   const rows = buildDownloadRows({
     resources: request.resources,
     preparation,
@@ -76,6 +79,30 @@ export function useWorkflowDownloads({
   });
 
   return { rows, summary: summarizeDownloads(rows.map((x) => x.row)) };
+}
+
+/**
+ * This poll is the only place the site learns a model became resident, so the load indicators —
+ * which have no push and a 30s server cache — are told from here rather than waiting out their own
+ * backstop. Every batch is invalidated: they are keyed by the ids they asked for, so the one
+ * holding this version cannot be named.
+ */
+function useInvalidateResidencyOnLanding(
+  live: { modelVersionId: number; availability: { status: string } }[] | undefined
+) {
+  const utils = trpc.useUtils();
+  const landed = useRef(new Set<number>());
+
+  useEffect(() => {
+    const fresh = (live ?? [])
+      .filter((x) => x.availability.status === 'available')
+      .map((x) => x.modelVersionId)
+      .filter((id) => !landed.current.has(id));
+    if (!fresh.length) return;
+
+    for (const id of fresh) landed.current.add(id);
+    void utils.resourceLoad.getResidency.invalidate();
+  }, [live, utils]);
 }
 
 export function DownloadBoostPanel({
