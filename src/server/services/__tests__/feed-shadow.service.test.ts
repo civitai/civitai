@@ -150,7 +150,8 @@ describe('mapSearchInputToFeedQuery', () => {
       const m = mapSearchInputToFeedQuery({ ...base, ...i });
       return m.ok ? 'ok' : m.reason;
     };
-    expect(reason({ followed: true })).toBe('flag:followed');
+    expect(reason({ followed: true, currentUserId: 9 })).toBe('flag:followed');
+    expect(reason({ followed: true })).toBe('ok');
     expect(reason({ postId: 4 })).toBe('input:postId');
     expect(reason({ remixOfId: 4 })).toBe('input:remixOfId');
     expect(reason({ remixesOnly: true })).toBe('flag:remixesOnly');
@@ -165,13 +166,16 @@ describe('mapSearchInputToFeedQuery', () => {
   });
 
   it('serves a follow feed only from a resolved follow list the feed can take', () => {
-    const m = mapSearchInputToFeedQuery({ ...base, followed: true, followedUserIds: [7, 3, 0] });
+    const signedIn = { ...base, currentUserId: 9, followed: true };
+    const m = mapSearchInputToFeedQuery({ ...signedIn, followedUserIds: [7, 3, 0] });
     expect(m.ok && new URLSearchParams(m.query).get('userIds')).toBe('7,3');
     const reason = (i: Record<string, unknown>) => {
-      const r = mapSearchInputToFeedQuery({ ...base, followed: true, ...i });
+      const r = mapSearchInputToFeedQuery({ ...signedIn, ...i });
       return r.ok ? 'ok' : r.reason;
     };
     expect(reason({})).toBe('flag:followed');
+    const anon = mapSearchInputToFeedQuery({ ...base, followed: true });
+    expect(anon.ok && new URLSearchParams(anon.query).has('userIds')).toBe(false);
     expect(reason({ followedUserIds: Array.from({ length: 10_001 }, (_, i) => i + 1) })).toBe(
       'followed>10000'
     );
