@@ -13,7 +13,11 @@ import {
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { BuzzAccountType, BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/services/buzz.service';
+import {
+  createBuzzTransactionMany,
+  getMultipliersForUser,
+  getTransactionByExternalId,
+} from '~/server/services/buzz.service';
 import type { ResolvedRewardConfig, RewardConfig } from '~/server/rewards/reward-config';
 import { resolveFromConfig, resolveRewardConfig } from '~/server/rewards/reward-config';
 import { clampRewardMultiplier } from '~/server/rewards/multiplier';
@@ -224,6 +228,11 @@ export function createBuzzEvent<T>({
     return data;
   };
 
+  const externalTransactionIdFor = (event: BuzzEventLog) =>
+    event.type === 'userReferred' || event.type === 'refereeCreated'
+      ? `${event.type}:${event.forId}-${event.ip}`
+      : `${event.type}:${event.forId}-${event.toUserId}-${event.byUserId}`;
+
   const sendAward = async (events: BuzzEventLog[]) => {
     return await withRetries(() =>
       createBuzzTransactionMany(
@@ -241,10 +250,7 @@ export function createBuzzEvent<T>({
                 byUserId: event.byUserId,
                 ...JSON.parse(event?.transactionDetails ?? '{}'),
               },
-              externalTransactionId:
-                event.type === 'userReferred' || event.type === 'refereeCreated'
-                  ? `${event.type}:${event.forId}-${event.ip}`
-                  : `${event.type}:${event.forId}-${event.toUserId}-${event.byUserId}`,
+              externalTransactionId: externalTransactionIdFor(event),
               toAccountType: buzzEvent.toAccountType ?? 'yellow',
             };
           })
@@ -427,21 +433,20 @@ export function createBuzzEvent<T>({
         return;
       }
 
-      // `externalTransactionId` carries no date, so the ledger's idempotency guard is the
-      // only lifetime memory of an award — the Redis dedup entry dies at 00:00 UTC with the
-      // day's cap accounting it shares a hash field with. A repeat therefore reaches here,
-      // is refused by the ledger, and without this would still consume the user's daily cap
-      // and be reported as earned.
+      // `externalTransactionId` carries no date, so the ledger's idempotency guard is the only
+      // lifetime memory of an award — the Redis dedup entry dies at 00:00 UTC together with the
+      // day's cap accounting it shares a hash field with. A repeat therefore re-qualifies, is
+      // refused by the ledger, and without this would still consume the user's daily cap.
       //
-      // Reading the refusal from the COUNTS rather than from the conflict identifiers is what
-      // makes this independent of their shape — but it identifies THIS event only because the
-      // on-demand path submits exactly one transaction. Batching that call silently breaks it.
-      // A response missing either array reads as "nothing reported a conflict", which leaves
-      // the award exactly as it is today rather than correcting one that was really paid.
+      // The counts identify THIS event only because the on-demand path submits exactly one
+      // transaction; batching that call breaks the read with nothing to notice it. The same
+      // reconciliation is hand-rolled at three App Blocks call sites and once more in
+      // `buzz.controller`, each with its own expression — worth one classifier beside
+      // `createBuzzTransactionMany` the next time one of them changes.
       const settled = result?.transactions?.length ?? 0;
       const conflicted = result?.conflicts?.length ?? 0;
       if (dedup && settled === 0 && conflicted > 0) {
-        await recordDuplicateAward(event, dedup);
+        await releaseCapForRefusedAward(event, dedup);
         return;
       }
 
@@ -449,21 +454,44 @@ export function createBuzzEvent<T>({
     }
   };
 
-  const recordDuplicateAward = async (
+  /**
+   * A refusal says the ledger already holds this `externalTransactionId`. It does NOT say this
+   * call paid nothing: `withRetries` here and another layer inside the buzz client both re-send
+   * on any error, so a retry after a committed-but-unreported attempt is refused by the award it
+   * just made. Freeing the cap there would hand back an award the user was really paid.
+   *
+   * The counts cannot separate those, so ask what is on file. Only an award from an earlier UTC
+   * day is the stale one this exists for; today's, a missing record and a failed lookup all leave
+   * the cap consumed, which is what happens without this. The lookup is a GET, so the retrying
+   * that makes the write ambiguous cannot make the answer ambiguous.
+   *
+   * Nothing corrects the ClickHouse row on purpose. `buzzEvents` is ReplacingMergeTree ordered by
+   * the same key this event dedups on, so a corrected row does not sit beside the original — it
+   * REPLACES it, and the surviving row would report 0 paid for an award that really was paid on
+   * an earlier day. The cap is the user-visible harm and `getUserRewardDetails` reads it from
+   * Redis, so fixing Redis alone fixes what the user sees.
+   */
+  const releaseCapForRefusedAward = async (
     event: BuzzEventLog,
     dedup: { hashField: string; cacheKey: string }
   ) => {
-    event.status = 'duplicate';
-    event.awardAmount = 0;
     try {
+      const paid = await getTransactionByExternalId(externalTransactionIdFor(event));
+      const paidAt = paid?.date?.getTime();
+      if (paidAt === undefined || Number.isNaN(paidAt)) return;
+      if (paidAt >= new Date().setUTCHours(0, 0, 0, 0)) return;
+
       await redis.eval(ON_DEMAND_ZERO_ENTRY_SCRIPT, {
         keys: [REDIS_KEYS.BUZZ_EVENTS],
         arguments: [dedup.hashField, dedup.cacheKey],
       });
-      await updateBuzzEvents([event]);
+      log(event, {
+        message: 'Released the cap for an award the ledger had already paid',
+        paidAt: paid?.date?.toISOString(),
+      });
     } catch (error) {
       log(event, {
-        message: 'Failed to record duplicate Buzz award',
+        message: 'Failed to release the cap for a refused award',
         error,
       });
       rewardFailedCounter?.inc?.();
@@ -695,8 +723,8 @@ export function toClickhouseBuzzEvent(event: BuzzEventLog): BuzzEventLog {
   let status = event.status;
   if (status && !CLICKHOUSE_STATUSES.has(status)) {
     coerced.statusRaw = status;
-    // `unqualified`, `duplicate` and `capped` all mean seen and paid nothing. Recording it as
-    // the nearest legal value keeps the row; widening the enum would let it keep its own name.
+    // `unqualified` and `capped` both mean seen and paid nothing. Recording it as the nearest
+    // legal value keeps the row; widening the enum would let it keep its own name.
     status = 'capped';
   }
 
@@ -826,7 +854,7 @@ type BuzzEventKey = {
 export type BuzzEventLog = BuzzEventKey & {
   awardAmount: number;
   multiplier?: number;
-  status?: 'pending' | 'awarded' | 'capped' | 'unqualified' | 'duplicate';
+  status?: 'pending' | 'awarded' | 'capped' | 'unqualified';
   ip?: string;
   version?: number;
   transactionDetails?: string;
