@@ -482,16 +482,16 @@ export const purchaseCosmeticPack = async ({
   // uncapped listing never sells out.
   const grantable = members.filter((m) => !isSelfAuthoredPackMember(m, userId, shopItem.addedById));
 
-  if (amountCharged <= 0) throw throwBadRequestError('You already own everything in this pack');
-
-  // The price catches an all-own pack only at the floor. Priced ABOVE it the
-  // same pack charges the markup and delivers nothing, because every member was
-  // subtracted and so every member is withheld. Its own message: the buyer may
-  // hold none of these, which is exactly the case of an exhausted creator grant.
+  // Both fire on an all-own pack priced at the floor, so this one goes first: an
+  // empty `grantable` names the input, while a zero price is an outcome several
+  // different inputs reach. The buyer may hold none of these members — telling
+  // them they already own it all is false in the case it is most likely to hit.
   if (!grantable.length)
     throw throwBadRequestError(
       "Everything in this pack is your own work, so there's nothing here for you to buy"
     );
+
+  if (amountCharged <= 0) throw throwBadRequestError('You already own everything in this pack');
 
   // Random rather than a timestamp: a pack is repeatable (a consumable member
   // tops up), so two calls in the same millisecond would share an external id —

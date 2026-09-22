@@ -180,9 +180,12 @@ const SHAPES: Shape[] = [
     name: 'two consumable members with different balances',
     price: 6300,
     members: [
-      mkMember({ type: CosmeticType.Sticker, data: { uses: 45 } }),
+      // Durable FIRST, so the consumable sublist is offset from `members` and a
+      // grant indexing one by the other's position reads this one's balance.
+      mkMember(),
+      mkMember({ cosmeticId: 1002, type: CosmeticType.Sticker, data: { uses: 45 } }),
       mkMember({
-        cosmeticId: 1002,
+        cosmeticId: 1003,
         type: CosmeticType.Sticker,
         data: { uses: 60 },
         createdById: OTHER_CREATOR,
@@ -522,7 +525,10 @@ describe.each(SHAPES)(
           (call[0]?.data ?? []).map((row: { cosmeticId: number }) => row.cosmeticId) as number[]
       );
       // Derived from the shape rather than from the code under test, like
-      // expectedCharge above.
+      // expectedCharge above. The withholding rule is spelled out here and in
+      // three other assertions on purpose: importing isSelfAuthoredPackMember
+      // would make all four agree with whatever it becomes, which is the one
+      // change they exist to catch. Do not consolidate them.
       const ownedSet = new Set(owned ?? []);
       const expected = members
         .filter((m) => !(m.createdById === buyerId && m.createdById !== packCreatorId))
@@ -705,6 +711,35 @@ describe('purchaseCosmeticPack — purchases that must not complete', () => {
     expect(spend).not.toHaveBeenCalled();
   });
 
+  // The ordering case, and the only one that can see it: priced AT the floor
+  // both refusals fire, and the price one would tell a buyer they already own
+  // members they may hold none of. The case below prices ABOVE the floor and so
+  // never enters the overlap — on its own it leaves the order unpinned.
+  it('tells an at-floor all-own pack the accurate reason, not the price one', async () => {
+    const floorAmounts = [500, 500];
+    const price = floorAmounts.reduce((a, b) => a + b, 0);
+    await expect(
+      buy({
+        price,
+        members: [
+          mkMember({
+            cosmeticId: 1001,
+            createdById: BUYER,
+            addedById: PACK_CREATOR,
+            floorAmount: floorAmounts[0],
+          }),
+          mkMember({
+            cosmeticId: 1002,
+            createdById: BUYER,
+            addedById: PACK_CREATOR,
+            floorAmount: floorAmounts[1],
+          }),
+        ],
+      })
+    ).rejects.toThrow(/nothing here for you to buy/i);
+    expect(spend).not.toHaveBeenCalled();
+  });
+
   // Named for the decision, because the obvious reading of the code is that the
   // price guard already covers this. It does not: withholding self-authored
   // members means a pack of nothing else delivers nothing, and priced ABOVE the
@@ -715,7 +750,7 @@ describe('purchaseCosmeticPack — purchases that must not complete', () => {
     // The whole point of the case, asserted rather than described: priced AT the
     // snapshot sum it refuses through the zero-price branch instead, and the new
     // one silently stops being tested. Editing either number has to fail here.
-    expect(price).toBeGreaterThan(floorAmounts[0] + floorAmounts[1]);
+    expect(price).toBeGreaterThan(floorAmounts.reduce((a, b) => a + b, 0));
     await expect(
       buy({
         price,
@@ -736,7 +771,7 @@ describe('purchaseCosmeticPack — purchases that must not complete', () => {
       })
       // Its own message, not the zero-price one: the buyer may hold none of
       // these. Asserting the wording is what stops the two branches collapsing.
-    ).rejects.toThrow(/your own work/i);
+    ).rejects.toThrow(/nothing here for you to buy/i);
     expect(spend).not.toHaveBeenCalled();
     expect(executeRaw).not.toHaveBeenCalled();
     expect(createManyUserCosmetic).not.toHaveBeenCalled();
@@ -752,7 +787,10 @@ describe('purchaseCosmeticPack — purchases that must not complete', () => {
         buyerId: PACK_CREATOR,
         members: [mkMember(), mkMember({ cosmeticId: 1002, floorAmount: 1000 })],
       })
-    ).rejects.toThrow();
+      // Matched, because `buyerId` is the lister: this refuses at the pack-creator
+      // guard and never reaches pricing. Unmatched it read as a test of the
+      // zero-price branch and would have passed with that branch deleted.
+    ).rejects.toThrow(/your own pack/i);
     expect(spend).not.toHaveBeenCalled();
     expect(createManyUserCosmetic).not.toHaveBeenCalled();
     expect(executeRaw).not.toHaveBeenCalled();
@@ -782,7 +820,9 @@ describe('purchaseCosmeticPack — purchases that must not complete', () => {
         ],
         buyerId: PACK_CREATOR,
       })
-    ).rejects.toThrow();
+      // Same: the lister is refused before pricing. Three refusals share an
+      // error type here, so an unmatched one pins none of them.
+    ).rejects.toThrow(/your own pack/i);
     expect(executeRaw).not.toHaveBeenCalled();
   });
 });
