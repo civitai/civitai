@@ -231,12 +231,15 @@ const BEACON_TIMEOUT_MS = 10_000;
  * those were distilled from, so treat this as a starting point and not a census: the point is
  * that a population exists and that THIS is the only copy a machine checks.
  *
- * ⚠️ When sweeping for it, note that
- * `TOKEN_WAIT_TIMEOUT_MS = 15_000` is a PRODUCT timeout that merely shares the value, declared
- * independently in BOTH `src/components/AppBlocks/pageBlockHostLogic.ts` and
- * `src/components/AppBlocks/IframeHost.tsx` — and that both kinds co-occur inside
- * `PageBlockHost.browser.test.tsx`, the file cited above. A `15_000` regex mixes them there
- * first.
+ * ⚠️ TWO WARNINGS FOR ANYONE SWEEPING FOR THIS POPULATION, and no pattern is offered here
+ * because every one tried so far was wrong. (a) The value is spelled several ways — `15_000`,
+ * `15000`, `15s`, `15000ms` — and the two prose sites named above use NONE of the underscored
+ * form: `grep 15_000` returns zero in both, so a sweep on that literal misses the very copies
+ * this paragraph enumerates. (b) `TOKEN_WAIT_TIMEOUT_MS = 15_000` is an unrelated PRODUCT
+ * timeout that merely shares the number, declared independently in BOTH
+ * `src/components/AppBlocks/pageBlockHostLogic.ts` and `src/components/AppBlocks/IframeHost.tsx`,
+ * and both kinds appear in `PageBlockHost.browser.test.tsx`. Any numeric sweep mixes the two
+ * kinds; read each hit before counting it.
  *
  * It is checkable because the guard test asserts this constant EQUALS
  * `server.config.testTimeout`, which is the component project's own resolved value. That closes
@@ -269,8 +272,13 @@ const PROJECT_TIMEOUT_MS = 15_000;
 const PRE_WAIT_BUDGET_MS = 3_000;
 
 /**
- * The slack the other three constants currently leave — `15000 - (10000 + 3000)` — FROZEN, so it
- * cannot be eaten silently. It is deliberately NOT a judgement about how much margin is enough:
+ * The slack the other three currently leave —
+ * `PROJECT_TIMEOUT_MS - (BEACON_TIMEOUT_MS + PRE_WAIT_BUDGET_MS)` — FLOORED here, so it cannot be
+ * eaten silently. Floored, not frozen: the slack may GROW freely and nothing fails; only
+ * shrinking is caught. Named rather than restated as digits, because an inlined
+ * `15000 - (10000 + 3000)` goes silently false on any move this ratchet permits.
+ *
+ * It is deliberately NOT a judgement about how much margin is enough:
  * it carries no information the other three do not already carry, and the guard built on it is a
  * ratchet ("nobody moved a constant without meaning to"), not an adequacy test. Two seconds is
  * also less than "several" conventionally reads, which is why that adjective is gone rather than
@@ -393,10 +401,9 @@ function hydrationConsoleErrors() {
  * against the live resolved config by the guard test, so it is no longer a figure anyone has to
  * measure by hand. At `{ timeout: PROJECT_TIMEOUT_MS }` the two clocks tie and the TEST's
  * deadline wins (each content test does a full `renderToString` of a Mantine tree first), so a
- * beacon that
- * never flips printed a bare `Test timed out in 15000ms` — the one failure shape that carries
- * no diagnosis.
- * At 10 s this `waitFor` fails first and prints what it was waiting for. Measured both ways by
+ * beacon that never flips printed a bare `Test timed out in 15000ms` — the one failure shape
+ * that carries no diagnosis. At `BEACON_TIMEOUT_MS` this `waitFor` fails first and prints what
+ * it was waiting for. Measured both ways by
  * the `civitai-test-review` lane.
  *
  * 🔴 "UNDER THE PROJECT TIMEOUT" IS NECESSARY, NOT SUFFICIENT. Everything before the wait —
@@ -548,7 +555,10 @@ describe('ThirdPartyConsentProvider — real SSR → hydrate', () => {
    * mechanical enforced that, and the value it warns against (`14_000`) is one edit away.
    *
    * TWO assertions here, and a THIRD in `afterAll` — see `BEACON_TIMEOUT_MS` for the full
-   * three-operand ledger. The first pins the CEILING to the live config, without which the
+   * operand ledger. (No count restated here on purpose: the bullets carry it, and the last two
+   * rounds each broke a restated count that the same commit had just corrected elsewhere.)
+   *
+   * The first pins the CEILING to the live config, without which the
    * inequality is computed against a literal that three separate mechanisms can move without
    * touching this file, all of them capable of moving it DOWN — the direction that silently
    * restores the bare `Test timed out`. `server.config` is the component project's own resolved
