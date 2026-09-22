@@ -15,6 +15,7 @@ import {
 
 export const MAX_OFFSET = 20_000;
 export const DEEP_OFFSET = `offset>${MAX_OFFSET}`;
+export const CURSOR_SOURCE = 'cursor:source';
 const CONFIG_TTL_MS = 15_000;
 const ERROR_LOG_INTERVAL_MS = 60_000;
 
@@ -162,6 +163,9 @@ export function mapSearchInputToFeedQuery(
   if (feedCursor) {
     if (mode !== 'primary') return skip('cursor:feed');
   } else if (typeof cursor === 'string' && cursor) {
+    // One client sends the response's `source` back as the cursor; the search path reads
+    // it as a restart, so it refetched page 1 on every request.
+    if (/^(feed|meili|db)$/.test(cursor)) return skip(CURSOR_SOURCE);
     const m = /^(\d{1,12})(?:\|(\d{1,15}))?$/.exec(cursor);
     if (!m) return skip('cursor:unparsed');
     offset = Number(m[1]);
