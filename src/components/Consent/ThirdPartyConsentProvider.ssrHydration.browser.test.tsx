@@ -193,104 +193,77 @@ const HYDRATION_RE =
 let consoleErrors: string[] = [];
 let recoverable: string[] = [];
 /**
- * The beacon wait's own budget. It must clear the project's per-test deadline by
- * `MIN_MARGIN_MS` once `PRE_WAIT_BUDGET_MS` is accounted for; `hydrateInto` has the invariant
- * and what goes wrong at, say, `14_000`.
+ * THE FOUR TIMING CONSTANTS, AND WHAT EACH IS WORTH.
  *
- * 🔴 WHO PINS WHAT — FOUR operands, two mechanisms, and TWO of the four are free.
- *   - `PROJECT_TIMEOUT_MS` — pinned by the guard test, against the live resolved config.
- *   - `PRE_WAIT_BUDGET_MS` — pinned by `afterAll`, against what this run actually measured.
- *   - `BEACON_TIMEOUT_MS` (this one) — pinned by nothing directly, but BOUNDED by the margin
- *     assertion: it is the quantity the other three exist to constrain.
- *   - `MIN_MARGIN_MS` — pinned by nothing AND bounded by nothing, because it is the margin
- *     assertion's own threshold. Nothing can bound a threshold from inside the comparison that
- *     uses it. Lowering it, or inlining a literal at the assertion instead of referencing it,
- *     is the one edit this guard cannot catch — which is why it is a named constant carrying
- *     its own warning rather than a number in an `expect`.
- * Stated here once, because FOUR earlier versions of this comment each claimed a coverage the
- * mechanisms did not have — this one included, which enumerated the invariant as it stood before
- * `MIN_MARGIN_MS` was added to it. Found by the `civitai-test-review` lane, four rounds running.
+ * They exist so that a hydration which never happens fails as a NAMED assertion rather than as a
+ * bare `Test timed out`, which carries no diagnosis. The single invariant is
+ *
+ *     BEACON_TIMEOUT_MS + PRE_WAIT_BUDGET_MS + MIN_MARGIN_MS  <=  PROJECT_TIMEOUT_MS
+ *
+ * 🔴 WHAT IS ACTUALLY PINNED, stated narrowly because five earlier versions of this comment each
+ * claimed more coverage than the mechanisms had — found by the `civitai-test-review` and
+ * `civitai-reuse-review` lanes, five rounds running:
+ *   - `PROJECT_TIMEOUT_MS` — asserted EQUAL to `server.config.testTimeout` by the guard test, so
+ *     it is the one operand a machine checks.
+ *   - `PRE_WAIT_BUDGET_MS` — asserted against the largest pre-wait `afterAll` actually observed.
+ *   - `BEACON_TIMEOUT_MS` and `MIN_MARGIN_MS` — pinned by nothing. The invariant constrains their
+ *     SUM, not either one, so they can be traded against each other freely. Worked example: drop
+ *     `PRE_WAIT_BUDGET_MS` to 1 s, then raise `BEACON_TIMEOUT_MS` to 12 s, and the suite stays
+ *     green with zero real margin. Any per-mutant claim below is therefore a measurement AT
+ *     TODAY'S VALUES, never a property.
+ *
+ * So this guard is a RATCHET — "nobody moved a constant without meaning to" — and not a proof
+ * that the margin is adequate. That is the honest ceiling on it.
  */
+
+/** The beacon wait's own budget. `hydrateInto` has the reasoning. */
 const BEACON_TIMEOUT_MS = 10_000;
 
 /**
- * The `component` project's effective per-test timeout.
+ * The `component` project's effective per-test timeout. Nothing in this repo DECLARES it —
+ * `vitest.config.mts` sets `testTimeout` only inside `unitTestConfig`, which the `component`
+ * project does not spread — so this is vitest's browser-mode default, and the root `CLAUDE.md`
+ * states the same fact in prose. This copy is the only one a machine checks, via the guard test's
+ * equality assertion against `server.config.testTimeout` (the project's own resolved config).
  *
- * 🔴 A RESTATEMENT, PINNED — NOT A MEASUREMENT FROZEN INTO A LITERAL. It is not declared
- * anywhere in this repo: `vitest.config.mts` sets `testTimeout` only inside `unitTestConfig`,
- * which the `component` project does not spread, so the effective value is vitest's
- * browser-mode default. The root `CLAUDE.md` states the same fact in prose ("browser-mode
- * `testTimeout` defaults to 15 s, and the `component` project does not override it"), and
- * `src/components/AppBlocks/PageBlockHost.browser.test.tsx` reached it independently and sizes
- * its own poll budget against it — a genuinely SIZED dependency, so a downward move breaks it.
- * `src/components/Account/PlacementSpaceSection.freeSlots.browser.test.tsx` holds the figure four
- * times for a different reason: a failure-COST argument ("a locator that matches nothing spends
- * the whole budget, so read the attribute and fail in milliseconds"), which holds at any value
- * and is merely made STALE by a move in either direction. Two relationships, not one — do not
- * read the second as exposed the way the first is. There are more sites again, including the RCA
- * those were distilled from, so treat this as a starting point and not a census: the point is
- * that a population exists and that THIS is the only copy a machine checks.
+ * That assertion is what closes three rot vectors no comment could: `browserTestShell()` is
+ * shared with the geometry tier, so tuning that tier moves this; the value is a vitest default,
+ * so a vitest major moves it with nothing here changing; and `scripts/test-component-run.mjs`
+ * forwards `--test-timeout`. All three can move it DOWN, which is the dangerous direction —
+ * below `BEACON_TIMEOUT_MS` the beacon wait loses the race and the bare `Test timed out` returns.
  *
- * ⚠️ TWO WARNINGS FOR ANYONE SWEEPING FOR THIS POPULATION, and no pattern is offered here
- * because every one tried so far was wrong. (a) The value is spelled several ways — `15_000`,
- * `15000`, `15s`, `15000ms` — and the two prose sites named above use NONE of the underscored
- * form: `grep 15_000` returns zero in both, so a sweep on that literal misses the very copies
- * this paragraph enumerates. (b) `TOKEN_WAIT_TIMEOUT_MS = 15_000` is an unrelated PRODUCT
- * timeout that merely shares the number, declared independently in BOTH
- * `src/components/AppBlocks/pageBlockHostLogic.ts` and `src/components/AppBlocks/IframeHost.tsx`,
- * and both kinds appear in `PageBlockHost.browser.test.tsx`. Any numeric sweep mixes the two
- * kinds; read each hit before counting it.
- *
- * It is checkable because the guard test asserts this constant EQUALS
- * `server.config.testTimeout`, which is the component project's own resolved value. That closes
- * three rot vectors a comment cannot: `browserTestShell()` is shared with the geometry tier, so
- * tuning that tier moves this one; the 15 s is a vitest default, so a vitest major can move it
- * with nothing in this repo changing; and `scripts/test-component-run.mjs` forwards a
- * `--test-timeout` from the command line. All three move it DOWNWARD-capable, which is the
- * dangerous direction — below `BEACON_TIMEOUT_MS` the beacon wait loses the race again and the
- * failure goes back to a bare `Test timed out`. Found by the `civitai-test-review` and
- * `civitai-reuse-review` lanes, which arrived at it from opposite sides.
+ * ⚠️ Other files reason about this same number in prose, in several spellings, and an unrelated
+ * PRODUCT timeout happens to share the value. No sweep pattern is given here: two were tried and
+ * both returned nothing in the files they named. If you need the population, start from
+ * `CLAUDE.md` and read each hit rather than counting it.
  */
 const PROJECT_TIMEOUT_MS = 15_000;
 
 /**
- * Budget for everything that runs on the TEST's clock before the beacon wait starts —
- * `renderToString` of the full Mantine tree, the `toContain`s, an `innerHTML` parse and the
- * `hydrateRoot` call. `beforeEach`/`afterEach` do not count against the DEADLINE — vitest charges
- * those to a separate `hookTimeout` — but the ledger's clock starts inside `beforeEach`, so its
- * tail is deliberately included by a hair. Over-counting is the safe direction for a budget.
+ * Budget for everything on the TEST's clock before the beacon wait starts — `renderToString` of
+ * the full Mantine tree, the `toContain`s, an `innerHTML` parse and the `hydrateRoot` call.
+ * `beforeEach`/`afterEach` do not count against the DEADLINE (vitest charges those to a separate
+ * `hookTimeout`), but the ledger's clock starts inside `beforeEach`, so its tail is included by a
+ * hair — over-counting, the safe direction for a budget.
  *
- * 🔴 A BUDGET, AND MEASURED AGAINST — not an assertion about the world. The ledger below reads
- * **~5 ms** on a quiet box; the budget is 3 s, i.e. ~600x headroom, which is deliberate because
- * the quantity is load-scaled. (An earlier comment here said ~75 ms, inferred from the
- * neutered-beacon mutant failing at 10.07-10.09 s against a 10.00 s wait. That bounded pre-wait
- * from above but also swept in the wait's own overshoot; the direct measurement replaced it.)
- * The arithmetic guard alone could never contradict this — add two providers to `Tree` and
- * pre-wait can triple with every test still green — so `afterAll` compares the budget against
- * the largest pre-wait this run actually observed.
+ * 🔴 MEASURED AGAINST, not asserted about the world. The ledger reads ~5 ms on a quiet box; the
+ * budget is 3 s because the quantity is load-scaled. The arithmetic guard alone could never
+ * contradict it — add two providers to `Tree` and pre-wait can triple with every test still green
+ * — so `afterAll` compares this against what the run actually observed.
  */
 const PRE_WAIT_BUDGET_MS = 3_000;
 
 /**
- * The slack the other three currently leave —
- * `PROJECT_TIMEOUT_MS - (BEACON_TIMEOUT_MS + PRE_WAIT_BUDGET_MS)` — FLOORED here, so it cannot be
- * eaten silently. Floored, not frozen: the slack may GROW freely and nothing fails; only
- * shrinking is caught. Named rather than restated as digits, because an inlined
- * `15000 - (10000 + 3000)` goes silently false on any move this ratchet permits.
+ * The floor under `PROJECT_TIMEOUT_MS - (BEACON_TIMEOUT_MS + PRE_WAIT_BUDGET_MS)`. The slack may
+ * grow freely and may shrink freely down to this floor; only a shrink PAST it is caught.
  *
- * It is deliberately NOT a judgement about how much margin is enough:
- * it carries no information the other three do not already carry, and the guard built on it is a
- * ratchet ("nobody moved a constant without meaning to"), not an adequacy test. Two seconds is
- * also less than "several" conventionally reads, which is why that adjective is gone rather than
- * restated as this number.
+ * 🔴 WHY THE ASSERTION IS NOT JUST `<=`. Without this term the invariant admits equality, and at
+ * equality the worst case lands exactly ON the deadline and the deadline wins — the failure the
+ * whole apparatus removes. Measured at the time: with `<=` and no floor, raising
+ * `PRE_WAIT_BUDGET_MS` to `5_000` left this file fully green while making the tie reachable.
  *
- * 🔴 WHY IT EXISTS AT ALL. The margin assertion was an adjective in prose for two rounds and a
- * `<=` in code, and `<=` admits the exact tie `hydrateInto` calls fatal. Measured: with `<=` and
- * no margin term, raising `PRE_WAIT_BUDGET_MS` to `5_000` left this file fully green while making
- * the tie reachable — a one-edit restoration of the hazard. With this term it takes two edits
- * (this constant AND that one), and both mutants die: `PRE_WAIT_BUDGET_MS = 5_000` and
- * `BEACON_TIMEOUT_MS = 12_000` each fail the margin assertion. See the ledger on
- * `BEACON_TIMEOUT_MS` for why this constant itself is unpinnable.
+ * Deliberately NOT a judgement about how much margin is enough — see the header for why it
+ * cannot be, and for the two-edit sequence that walks around it.
  */
 const MIN_MARGIN_MS = 2_000;
 
@@ -403,8 +376,7 @@ function hydrationConsoleErrors() {
  * deadline wins (each content test does a full `renderToString` of a Mantine tree first), so a
  * beacon that never flips printed a bare `Test timed out in 15000ms` — the one failure shape
  * that carries no diagnosis. At `BEACON_TIMEOUT_MS` this `waitFor` fails first and prints what
- * it was waiting for. Measured both ways by
- * the `civitai-test-review` lane.
+ * it was waiting for. Measured both ways by the `civitai-test-review` lane.
  *
  * 🔴 "UNDER THE PROJECT TIMEOUT" IS NECESSARY, NOT SUFFICIENT. Everything before the wait —
  * `renderToString` of the full Mantine tree above all — is charged to the TEST's clock and not to
@@ -554,11 +526,8 @@ describe('ThirdPartyConsentProvider — real SSR → hydrate', () => {
    * `BEACON_TIMEOUT_MS` must leave room for the pre-wait work on the test's own clock; nothing
    * mechanical enforced that, and the value it warns against (`14_000`) is one edit away.
    *
-   * TWO assertions here, and a THIRD in `afterAll` — see `BEACON_TIMEOUT_MS` for the full
-   * operand ledger. (No count restated here on purpose: the bullets carry it, and the last two
-   * rounds each broke a restated count that the same commit had just corrected elsewhere.)
-   *
-   * The first pins the CEILING to the live config, without which the
+   * The constants' header has the operand ledger and the honest ceiling on what all of this
+   * pins. The ceiling assertion below is the load-bearing one: without it the
    * inequality is computed against a literal that three separate mechanisms can move without
    * touching this file, all of them capable of moving it DOWN — the direction that silently
    * restores the bare `Test timed out`. `server.config` is the component project's own resolved
