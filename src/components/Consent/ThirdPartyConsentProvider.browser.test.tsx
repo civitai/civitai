@@ -79,7 +79,7 @@ import type { ConsentDecision } from '~/components/Consent/consent.utils';
 
 /** `US:CA` is the only entry in `CONSENT_REQUIRED_REGIONS` today. */
 const CALIFORNIA: RegionInfo = { countryCode: 'US', regionCode: 'CA', fullLocationCode: 'US:CA' };
-/** A region the gate must NOT apply to — the control for the ledger below. */
+/** A region the gate must NOT apply to — the reachability control for `data-allowed: 'true'`. */
 const TEXAS: RegionInfo = { countryCode: 'US', regionCode: 'TX', fullLocationCode: 'US:TX' };
 
 const SERVER_DOMAINS: ServerDomains = {
@@ -89,7 +89,7 @@ const SERVER_DOMAINS: ServerDomains = {
 };
 
 /**
- * 🔴 TWO CONTROLS THE CONSENT ASSERTIONS CANNOT PROVIDE FOR THEMSELVES.
+ * 🔴 ONE CONTROL THE CONSENT ASSERTIONS CANNOT PROVIDE FOR THEMSELVES, AND ONE SEPARATE CLAIM.
  *
  * Post-fix the simulated navigation is a semantic NO-OP by construction — `region` is the only
  * prop that moves, `AppProvider` freezes it, and the consent provider no longer reads it — so
@@ -102,7 +102,8 @@ const SERVER_DOMAINS: ServerDomains = {
  *   - `data-nav` is an arrival assertion that the re-render REACHED this subtree. It is
  *     gate-independent — children render on both branches of `isConsentRequired` — so it stays
  *     valid pre- and post-fix, and it fails fast and legibly if propagation stops.
- *   - `data-mounts` on `<MountLedger>` reports how many times this subtree has MOUNTED. Pre-fix,
+ *   - `data-mounts` on `<MountLedger>` is NOT a control for those two — it is its own test, with
+ *     its own claim. It reports how many times this subtree has MOUNTED. Pre-fix,
  *     flipping the gate predicate changed the child element's type at that position
  *     (`CAConsentManager` → Fragment), so React unmounted and remounted EVERYTHING below the
  *     consent provider — which in `_app` is the whole app. Post-fix it must stay at 1.
@@ -156,11 +157,18 @@ function AppShell({
   region,
   initialConsent,
   nav,
+  remountKey,
 }: {
   region: RegionInfo | undefined;
   initialConsent: ConsentDecision | null;
-  /** Bumped on the simulated navigation; see the two controls above. */
+  /** Bumped on the simulated navigation; see the controls above. */
   nav: number;
+  /**
+   * Forces a remount at the CONSENT PROVIDER's own position when it changes — the exact
+   * position the pre-fix remount happened at, which is why the instrument check keys here
+   * rather than on `AppShell`.
+   */
+  remountKey?: string;
 }) {
   return (
     <AppProvider
@@ -177,6 +185,7 @@ function AppShell({
       isAuthed={false}
     >
       <ConsentProviderWithLegacyRegionProp
+        key={remountKey}
         region={region}
         initialConsent={initialConsent}
         loggedIn={false}
@@ -272,20 +281,23 @@ describe('ThirdPartyConsentProvider — the consent gate must survive a client-s
    * 🔴 INSTRUMENT CHECK for the ledger. The test above asserts a 1, and so does every other arm
    * in this file — none of them can show that a 2 is reachable through this harness at all, so
    * without this the remount test could be green because the ledger is incapable of counting
-   * past one. A `key` change forces a remount at the same position; the ledger must see it.
+   * past one. A `key` change on the CONSENT PROVIDER element — the exact position the pre-fix
+   * remount happened at — forces a remount there; the ledger must see it.
    */
   test('🔴 INSTRUMENT CHECK: the mount ledger DOES report a remount when one happens', async () => {
     const { rerender } = await renderWithProviders(
-      <AppShell key="first" region={CALIFORNIA} initialConsent="rejected" nav={0} />
+      <AppShell region={CALIFORNIA} initialConsent="rejected" nav={0} remountKey="first" />
     );
     await expect.element(mountLedger()).toHaveAttribute('data-mounts', '1');
 
-    await rerender(<AppShell key="second" region={CALIFORNIA} initialConsent="rejected" nav={1} />);
+    await rerender(
+      <AppShell region={CALIFORNIA} initialConsent="rejected" nav={1} remountKey="second" />
+    );
 
     await expect.element(mountLedger()).toHaveAttribute('data-mounts', '2');
   });
 
-  test('a non-consent region is NOT gated — the control for the two tests above', async () => {
+  test('a non-consent region is NOT gated — the control for the two consent tests', async () => {
     const { rerender } = await renderWithProviders(
       <AppShell region={TEXAS} initialConsent={null} nav={0} />
     );

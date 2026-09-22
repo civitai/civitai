@@ -26,6 +26,18 @@ import { describe, expect, it } from 'vitest';
  * `useAppContext().region` is the durable source: `AppProvider` freezes its context value in a
  * `useState` initializer at mount, seeded from the same SSR region.
  *
+ * ⚠️ SECOND COPY. `REPO_ROOT`, `APP_FILE`, `parse`, `collect` and the component/`_app` subject
+ * locators below are duplicated in the directory sibling
+ * `src/tests/pages/app-region-optional-chain.test.ts`, which pins the FaroProvider white-screen
+ * over the same `_app.tsx` and the same `region` variable. Copy-per-guard is this directory's
+ * convention (26 files under `src/` call `ts.createSourceFile`; none share a scanning module),
+ * and the duplication was left in place deliberately — but it is recorded here so the next
+ * person sees it rather than rediscovering it. What does NOT transfer, and is the reason the
+ * two files needed different hardening: every type-literal ledger in the sibling is asserted
+ * with `.toContain(...)`, which fails LOUD on a member it cannot see, while this file's is
+ * `.not.toContain(...)` — the one polarity that can go VACUOUSLY GREEN, which is why the
+ * bare-object-literal and index-signature guards exist here and have no analogue there.
+ *
  * ## Why STRUCTURAL as well as behavioural
  *
  * The behaviour is covered by
@@ -94,21 +106,36 @@ function collect(node: ts.Node, predicate: (n: ts.Node) => boolean): ts.Node[] {
   return out;
 }
 
-/** The `export function ThirdPartyConsentProvider(...) { … }` declaration body. */
-function consentComponentBody(sourceFile: ts.SourceFile): ts.Block {
+/**
+ * The `export function ThirdPartyConsentProvider(...)` declaration. ONE locator for the subject
+ * three of the tests below share: the anticipated evolution (an arrow-function `const`) breaks
+ * every consumer of it at once, and a second copy would give the fixer two failures prescribing
+ * two different remedies for one edit.
+ *
+ * Not `expect(...).toBeDefined()` plus a non-null assertion: if the component is renamed this
+ * guard has lost its subject and must say so rather than silently checking nothing.
+ */
+function consentComponentDecl(sourceFile: ts.SourceFile): ts.FunctionDeclaration {
   const decl = collect(
     sourceFile,
     (n) => ts.isFunctionDeclaration(n) && n.name?.text === 'ThirdPartyConsentProvider'
   )[0] as ts.FunctionDeclaration | undefined;
 
-  // Not `expect(...).toBeDefined()` plus a non-null assertion: if the component is renamed this
-  // guard has lost its subject and must say so rather than silently checking nothing.
-  if (!decl?.body) {
+  if (!decl) {
     throw new Error(
-      `${CONSENT_FILE}: no \`function ThirdPartyConsentProvider\` with a body found. This ` +
-        `guard's subject moved — re-point it at the component that decides whether the ` +
-        `consent gate mounts, rather than deleting it.`
+      `${CONSENT_FILE}: no \`function ThirdPartyConsentProvider\` declaration found. This ` +
+        `guard's subject moved — if it became an arrow-function const, re-point this locator ` +
+        `at the component that decides whether the consent gate mounts, rather than deleting it.`
     );
+  }
+  return decl;
+}
+
+/** Its body block. */
+function consentComponentBody(sourceFile: ts.SourceFile): ts.Block {
+  const decl = consentComponentDecl(sourceFile);
+  if (!decl.body) {
+    throw new Error(`${CONSENT_FILE}: \`function ThirdPartyConsentProvider\` has no body.`);
   }
   return decl.body;
 }
@@ -269,11 +296,29 @@ describe('the consent gate reads `region` from context, never from an `_app` pro
         'compiles again with no member for this ledger to find'
     ).toEqual([]);
 
-    const members = (collect(propsAlias, ts.isTypeLiteralNode) as ts.TypeLiteralNode[]).flatMap(
-      (lit) =>
-        lit.members
-          .filter((m): m is ts.PropertySignature => ts.isPropertySignature(m))
-          .map((m) => (ts.isIdentifier(m.name) ? m.name.text : ''))
+    const signatures = (collect(propsAlias, ts.isTypeLiteralNode) as ts.TypeLiteralNode[]).flatMap(
+      (lit) => lit.members.filter((m): m is ts.PropertySignature => ts.isPropertySignature(m))
+    );
+
+    // 🔴 A MEMBER NAME THE LEDGER CANNOT READ IS A MEMBER THE LEDGER DOES NOT HAVE. An earlier
+    // version mapped a non-`Identifier` name to `''`, so `'region'?: RegionInfo` (a quoted key —
+    // one character) vanished from the ledger while TypeScript treated it as the same property:
+    // measured, that mutant left all seven tests green AND made
+    // `<ThirdPartyConsentProvider region={region}>` compile clean under a real `ts.createProgram`.
+    // A computed key (`[REGION_KEY]?: …`) does the same. Reading string literals closes the
+    // first; the second cannot be read at all, so it is REFUSED rather than widened past.
+    // Found by the `civitai-test-review` lane, with both mutants run.
+    expect(
+      signatures
+        .filter((m) => !ts.isIdentifier(m.name) && !ts.isStringLiteral(m.name))
+        .map((m) => m.getText()),
+      'every member of `Props` must be named by a plain identifier or a string literal — a ' +
+        'computed or numeric key is a prop this ledger cannot see, which is the same thing as ' +
+        'not guarding it'
+    ).toEqual([]);
+
+    const members = signatures.map((m) =>
+      ts.isIdentifier(m.name) || ts.isStringLiteral(m.name) ? m.name.text : m.name.getText()
     );
 
     expect(
@@ -290,21 +335,8 @@ describe('the consent gate reads `region` from context, never from an `_app` pro
     // every other assertion in this file, and makes `<ThirdPartyConsentProvider region={…}>`
     // compile again. Assert the parameter is annotated with the bare `Props` identifier, so the
     // body is as wide as the sentence. Found by the `civitai-test-review` lane.
-    const decl = collect(
-      consent,
-      (n) => ts.isFunctionDeclaration(n) && n.name?.text === 'ThirdPartyConsentProvider'
-    )[0] as ts.FunctionDeclaration | undefined;
-    // Same "subject moved" discipline as `consentComponentBody`/`soleJsxOpener` above: converting
-    // the component to a `const … = (props: Props) => …` makes this a VariableDeclaration, and a
-    // bare index would crash on `.parameters` with an opaque TypeError instead of saying so.
-    if (!decl) {
-      throw new Error(
-        `${CONSENT_FILE}: no \`function ThirdPartyConsentProvider\` declaration found — if it ` +
-          `became an arrow-function const, re-point this parameter check rather than deleting it.`
-      );
-    }
     expect(
-      decl.parameters.map((p) => p.type?.getText() ?? '(untyped)'),
+      consentComponentDecl(consent).parameters.map((p) => p.type?.getText() ?? '(untyped)'),
       "the component's parameter must be annotated with the bare `Props` identifier — widening " +
         'it in place (`Props & { region?: RegionInfo }`) re-opens the call site without touching ' +
         'the `Props` alias this test just checked'

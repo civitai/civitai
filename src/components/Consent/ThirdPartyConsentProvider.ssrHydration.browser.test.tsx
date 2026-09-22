@@ -112,15 +112,23 @@ function Probe() {
  * `hydrateInto` plants the server HTML into the container BEFORE hydrating, so every
  * post-hydration DOM assertion here is already satisfied by that planted markup, and
  * `recoverable`/`hydrationConsoleErrors()` being EMPTY is exactly what you also get when
- * hydration never ran. Shorten the macrotask yield loop to zero and the three content tests
- * below would stay green while reporting a clean hydration of a tree that never hydrated — the
- * INSTRUMENT CHECK would catch it, but only because its tree is a single element, i.e. the
- * cheapest possible point on the one dimension (tree size) that decides how many ticks
- * hydration needs. Found by the `civitai-test-review` lane.
+ * hydration never ran. Before this beacon existed, `hydrateInto` waited a FIXED 20 macrotasks
+ * and then returned: shortening that to zero left all three content tests green while reporting
+ * a clean hydration of a tree that never hydrated. The INSTRUMENT CHECK caught it, but only
+ * because its tree is a single element — the cheapest possible point on the one dimension (tree
+ * size) that decides how many turns hydration needs. Found by the `civitai-test-review` lane.
  *
- * This beacon is an ARRIVAL assertion that only the client can satisfy: `false` in the server
- * HTML, `true` once React has hydrated and run passive effects. Server and first client render
- * both emit `false`, so it cannot itself create the mismatch it is here to let us rule out.
+ * This beacon is an ARRIVAL state that only the client can produce: `false` in the server HTML,
+ * `true` once React has hydrated and run passive effects. Server and first client render both
+ * emit `false`, so it cannot itself create the mismatch it is here to let us rule out.
+ *
+ * 🔴 IT IS NOW ENFORCED IN `hydrateInto`, NOT AT THE CALL SITES. The three content tests take
+ * the `awaitBeacon` branch, which BLOCKS on this flag and throws if it never flips — so the
+ * yield loop is unreachable for them and the mutant described above is no longer expressible
+ * there. The per-test `expect(hydratedFlag(container)).toBe('true')` is therefore a legible
+ * restatement, not the thing doing the work: the guarantee lives in the helper. If that wait is
+ * ever moved back out, these call-site assertions become the guarantee again — do not delete
+ * both.
  */
 function HydrationBeacon() {
   const [hydrated, setHydrated] = React.useState(false);
@@ -234,8 +242,27 @@ function hydrationConsoleErrors() {
  * is — a fixed budget is green on a quiet machine and red on a busy one, with no change to
  * blame. `HydrationBeacon` is an absorbing arrival state, which is exactly the shape `CLAUDE.md`
  * says to await, so the three content tests poll for it instead of guessing. The INSTRUMENT
- * CHECK carries no beacon (its tree is two elements and it is deliberately mismatching), so it
- * keeps a small fixed budget. Raised by the `civitai-test-review` lane.
+ * CHECK carries no beacon (its tree is a single element and it is deliberately mismatching), so
+ * it keeps the fixed budget — and that is safe there because its assertion is that `recoverable`
+ * is NON-empty, so an under-run fails red. Raised by the `civitai-test-review` lane.
+ *
+ * ⚠️ `vi.waitFor` is still a wall-clock budget, not an unbounded wait — it is simply a far
+ * better one: it fails RED rather than green, and it is pinned to the project's own
+ * `testTimeout` rather than to a tick count nobody can reason about. The default 1 s is
+ * deliberately overridden: widening a budget for an ABSORBING arrival state is the case
+ * `CLAUDE.md` exempts from its never-widen rule.
+ *
+ * Ordering assumption that makes the early return safe: React reports recoverable errors during
+ * the commit that hydrates, and the beacon flips in a PASSIVE effect after it — so by the time
+ * the flag reads `true`, every `onRecoverableError` for that commit has already been pushed.
+ *
+ * ⚠️ `src/components/Apps/AppsRailNav.ssrHydration.browser.test.tsx`, which this harness was
+ * copied from, is STILL on the fixed budget at every call site and has no beacon. Recorded
+ * rather than fixed (changing a passing, unrelated suite is outside this PR), and recorded
+ * with its DIRECTION because that is the part that matters: its post-hydrate assertions are
+ * absence-shaped (`expect(recoverable).toEqual([])`), so a starved budget there reads GREEN,
+ * while its own instrument check — a two-element tree — completes inside any budget and cannot
+ * report the shortfall.
  */
 async function hydrateInto(
   html: string,
@@ -254,10 +281,13 @@ async function hydrateInto(
     })
   );
   if (awaitBeacon) {
-    await vi.waitFor(() =>
-      expect(
-        container.querySelector('[data-testid="hydrated"]')?.getAttribute('data-hydrated')
-      ).toBe('true')
+    await vi.waitFor(
+      () =>
+        expect(
+          container.querySelector('[data-testid="hydrated"]')?.getAttribute('data-hydrated')
+        ).toBe('true'),
+      // The project's own testTimeout, not `vi.waitFor`'s 1 s default — see the note above.
+      { timeout: 15_000 }
     );
     return container;
   }
@@ -316,8 +346,9 @@ describe('ThirdPartyConsentProvider — real SSR → hydrate', () => {
       <Tree region={CALIFORNIA} initialConsent="rejected" />
     );
 
-    // POSITIVE CONTROL FIRST: hydration actually ran on THIS tree. Everything below is a zero
-    // or a read of planted markup, and neither means anything until this holds.
+    // Restatement of the barrier `hydrateInto` already enforced — kept because everything below
+    // is a zero or a read of planted markup, and this is the line that says why any of it means
+    // anything. See `HydrationBeacon`.
     expect(hydratedFlag(container)).toBe('true');
     expect(recoverable).toEqual([]);
     expect(hydrationConsoleErrors()).toEqual([]);
